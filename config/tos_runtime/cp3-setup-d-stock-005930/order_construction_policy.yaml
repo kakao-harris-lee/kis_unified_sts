@@ -54,6 +54,22 @@
 # (tos_runtime/transport/kis_mock/codec.py KIS_ORDER_CASH_WIRE_FIELDS) — that
 # is a further NEW policy generation, not an in-place edit.
 #
+# APPROVAL PROVENANCE (`_runtime.wire_codec`, generation 4 — THIS tree only; the
+# operator CONFIRMED generation 4 on 2026-10-24, #956): the
+# operator decision 2026-10-23 (PR-3a, option (a) "K") made this tree the MOCK order
+# tree, whose boot must be `--transport kis-mock` (README "무엇을 하고 무엇을 하지
+# 않는가"). generation 3 still declared `wire_codec: null`, so that boot refused
+# (`_venue_wiring.py::_cross_check_wire_codec`, `VenuePolicyScopeMismatch` — 2026-10-24
+# offline dry-run, B3). generation 4 changes exactly that one leaf to the declaration
+# the paragraph above names, copied from its sources, no new judgement: `kind` =
+# `_venue_wiring.py::_KIS_ORDER_CASH_WIRE_CODEC_KIND`, `wire_fields` = codec.py
+# `KIS_ORDER_CASH_WIRE_FIELDS` (the loader compares the SET, so order is not a fact).
+# The account split (CANO = first 8 digits of the sealed account, ACNT_PRDT_CD = its
+# last 2, `split_kis_account`, #932) and the price scale (venue policy
+# `_runtime.price_scale` 100 == kis_mock_transport.yaml `price_scale`) are enforced by
+# the codec and `_cross_check_price_scale` at send/boot — this document names fields,
+# not values. LONG/SHORT/resident trees stay at `wire_codec: null` (synthetic).
+#
 # OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"): scope.accounts,
 # scope.instruments (same values as venue_constraint_policy.yaml), then
 # `tos-runtime print-policy-digests --config-dir <dir>`
@@ -71,7 +87,7 @@
 artifact_type: ORDER_CONSTRUCTION_POLICY
 schema_version: "1.0-DRAFT"
 policy_id: "ocp-paper-krx-stock"
-policy_generation: 3
+policy_generation: 4
 construction_generation: 1
 canonical_digest: TBD
 status: ISSUED
@@ -129,6 +145,7 @@ approved_by:
   - "operator (System Owner) — 2026-09-16, venue-constraint-service plan §6 ② 채택 (generation 1: scope/admission coordinates)"
   - "operator (System Owner) — 2026-09-16, OCP sizing values proposal §2 채택 (generation 2: _runtime.construction)"
   - "operator (System Owner) — 2026-09-16, OCP effect_dimensions proposal §2/§4 채택 (generation 3: _runtime.construction.effect_dimensions)"
+  - "operator (System Owner) — confirmed 2026-10-24: generation 4 adds wire_codec kis-order-cash-v1, derived from the 2026-10-23 PR-3a decision; fields per codec.py KIS_ORDER_CASH_WIRE_FIELDS (#956)"
 authority:
   grants_approval: false
   creates_capacity: false
@@ -145,11 +162,23 @@ evidence:
   independent_review_id: "PR #694 / #699 independent review (sonnet) — see plan §7"
   evidence_location: "evidence store row ORDER_CONSTRUCTION_POLICY_BOUND"
 _model_view:
-  policy_generation: 3
+  policy_generation: 4
   policy_version: "1.0.0"
 _runtime:
   canonicalization_version: "ev-l1-provisional-0"
-  wire_codec: null
+  # generation 4 (header APPROVAL PROVENANCE): the kis-mock transport's declaration.
+  wire_codec:
+    kind: "kis-order-cash-v1"
+    wire_fields:
+      - "CANO"
+      - "ACNT_PRDT_CD"
+      - "PDNO"
+      - "ORD_DVSN"
+      - "ORD_QTY"
+      - "ORD_UNPR"
+      - "EXCG_ID_DVSN_CD"
+      - "SLL_TYPE"
+      - "CNDT_PRIC"
   # (a′) wave — machine-readable form of the direction_side_and_position_effect_rules /
   # price_tick_lot_quantity_and_rounding_rules / unit_multiplier_currency_and_numeric_rules
   # prose above. Values: OCP sizing values proposal §2 (2026-09-16, operator-adopted).

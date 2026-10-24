@@ -11,13 +11,14 @@ README 가 정본이다. 여기에는 **다른 것만** 적는다.
 
 | 파일 | 다른 값 | 이유 |
 | --- | --- | --- |
-| `RENDER.yaml` | `tree_id` · `account.env_key: KIS_STOCK_ACCOUNT_NO` | 계좌 좌표는 **주식** 모의 계좌 (band 슬롯 3개는 LONG 과 같다) |
+| `RENDER.yaml` | `tree_id` · `account.env_key: KIS_STOCK_ACCOUNT_NO` · 마지막 슬롯 `broker_scopes.yaml::instance_path` | 계좌 좌표는 **주식** 모의 계좌 (band 슬롯 3개는 LONG 과 같다). `instance_path` 슬롯(B2, 2026-10-24)은 커밋된 `../../../docs/…` 를 `--source` 기준으로 푼 절대 경로로 바꾼다 — 렌더본은 저장소 밖이라 상대 경로로는 INSTANCE 문서를 못 찾아 kis-mock 부팅이 거부됐다. INSTANCE 를 읽는 부팅은 이 트리(kis-mock)뿐이라 이 트리만 슬롯을 갖는다 |
 | `construction.yaml` · `marketfeed.yaml` | `instrument_class: krx-stock` · `unit: SHARES` | 이 트리 `calendar.yaml` 의 `krx-stock` 세션(CONTINUOUS 09:00-15:30)을 쓴다 |
 | `venue_constraint_policy.yaml` | 호가단위 `price_band_ticks` 사다리(`tick_size` null) · `max_quantity` 1 · `KRX_STOCK` · `SHARES` | 파일 헤더 참조(출처·등급·실패 방향). band 원천은 LONG 과 같은 `producer_journal` |
 | `broker_scopes.yaml` · `coordinator_preconditions.yaml` · `egress_coordinates.yaml` | `active_scope: MOCK_STOCK_ORDER` · `profile_evidence_ok: true` · `nonlive_broker_consuming.admitted: true` · MOCK 주문 엔드포인트 | PR-3a(운영자 결정 2026-10-23) — **이 트리만** MOCK 주문 트리다 |
 | `broker_facts.yaml` (이 트리에만 있음) | item 12 의 GET 전용 모의 계좌·거래 가능 사실(VTTC8434R · FHKST01010100) | PR-3a option (a) "K" |
 | `fill_observer.yaml` (이 트리에만 있음) | ACK 뒤 체결 관찰(VTTC0081R) · 주식 KIS witness(VTTC8434R + VTTC0081R) TR·경로 · 폴링 간격 · overdue 한계 | PR-3b |
 | `order_construction_policy.yaml` · `aggregate_risk_policy.yaml` · `safety_envelope.yaml` · `safety_profile.yaml` | 수량 단위 `SHARES` | 주식 |
+| `order_construction_policy.yaml` | `policy_generation: 4` · `_runtime.wire_codec: kis-order-cash-v1`(9 필드) · `approved_by` 4번째 줄 | B3(2026-10-24): kis-mock 부팅은 이 선언을 요구한다. 값은 코덱 모듈에서 옮겼다 — 파일 헤더 PROVENANCE |
 | `action_flow_policy.yaml` · `aggregate_risk_policy.yaml` · `order_construction_policy.yaml` · `critical_input_policy.yaml` | `policy_id` | 내용이 달라졌으니 id 도 다르다(LONG VCP 헤더의 규칙) |
 
 나머지 파일은 LONG 과 **바이트 동일**이다(전략 파일 포함 — 규칙 재사용). 이 분류는
