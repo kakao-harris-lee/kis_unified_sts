@@ -246,8 +246,7 @@ for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
 ⛔ 막힘 다섯(2026-10-24 오프라인 드라이런에서 발견) — 고침이 main 에 없으면 결과가 이미 정해져 있다.
 ✅ B2 렌더본 `instance_path` 가 렌더 디렉터리 기준이라 부팅 거부 — **해소**(#956, main `b09cec34`: 렌더러가 `--source` 기준 절대 경로로 쓴다) ·
 ✅ B3 OCP `_runtime.wire_codec: null` → 부팅 거부 — **해소**(#956: OCP 세대 4 · `kis-order-cash-v1`) ·
-B1 승인 파일 `approvals/<proposal digest>.yaml` 은 제안마다 digest 가 새로 나와 세션 안에서 줄 수 없다 → **송신 0**.
-   운영자 결정 2026-10-24: **세션 한정 상시 승인**(트리·전략·005930·LONG·1주·거래일·MOCK scope 결속 · `max_uses` 를 RCL 로 소비 · REAL 불가) — PR #955.
+B1 승인 파일 `approvals/<proposal digest>.yaml` 은 제안마다 digest 가 새로 나와 세션 안에서 줄 수 없다 → **송신 0** — 처분(운영자 10-24): **세션 한정 상시 승인**(트리·전략·005930·LONG·1주·거래일·MOCK scope 결속 · `max_uses` 를 RCL 로 소비 · REAL 불가) — PR #955.
 ✅ B4 `safety_activation.yaml` 의 빈 `approval_ids`·`compatibility_attestation_refs` → 매 틱 1단계 전 `LIVE_SCOPE_NOT_AUTHORIZED` — **해소**(#959 · 운영자 승인 2026-10-24 · main `077666c6`) ·
 B5 `authority.yaml::containment_bound_ms: 1000` — 휴장 중 시간 평가가 60 s 마다라 09:00 개장 때 증인이 죽고 회복하지 못한다 → 송신마다 `SEND_REFUSED`(item `CURRENTNESS`) → **송신 0** — 처분(운영자 2026-10-24): 패스마다 heartbeat + **주식 트리만** `containment_bound_ms: 90000`(paper·LONG·SHORT 는 1000) · PR #957(heartbeat + 90000 둘 다).
 ⛔ **게이트**: #955(B1) · #957(B5) **둘 다** 개장 전에 main 에 머지돼 있어야 한다. 아니면 세션은 하루 미룬다.
@@ -265,7 +264,10 @@ for k in KEY SECRET; do grep "^KIS_STOCK_APP_$k=" $MAIN/.env.mock | cut -d= -f2-
   · `price_scale: 100` · `request_timeout_s: 10` · `min_send_interval_ms: 2000` · `token_reissue_min_interval_s: 60` · `allow_plaintext_for_tests: false`
   · `ACNT_PRDT_CD` = **계좌 뒤 2자리**(다르면 코덱이 송신 거부). §4 표의 「`mode: live` 무조건 거부」는 옛 문장 — 지금은 compose 가 `codec_bound=True` 를 준다.
 - **상시 승인(그날, 운영자 · PR #955)** — 파일 `$C/approvals/standing-session.yaml`(0600). 쓰는 때는 아래 «볼 것» 의 `render ok` 줄 뒤 · 첫 진입 전(런타임이 이미 떠 있어도 된다 — 첫 사용 때 결속).
-  승인 없이는 신호가 와도 4단계에서 멎는다(송신 0). MOCK 트리가 아니면 rc 1 로 아무것도 쓰지 않는다 · 덮어쓰기는 `--replace` 뿐 · 세션 중 재작성은 재기동까지 거부.
+  승인 없이는 신호가 와도 4단계에서 멎는다(송신 0). MOCK 트리가 아니면 rc 1 로 아무것도 쓰지 않는다 · 덮어쓰기는 `--replace` 뿐.
+  **재작성**(예: `max_uses` 를 올림)은 운영자 권한이고 **재기동 뒤에** 적용된다 — 슬롯이 거래일로 키잉돼 이미 쓴 횟수는 그대로 센다.
+  **청산(10-26)**: 이 승인은 1주 진입 BUY 하나만 허락하고 청산은 승인되지 않는다(#960: CLOSE 명령이 BUY 로 만들어진다). 세션 뒤 모의 계좌에
+  1주 롱이 남는다 — 평탄하게 하려면 모의투자 HTS 에서 손으로 판다. ⛔ 청산을 제안별 승인 파일로 **절대** 승인하지 않는다(두 번째 1주를 **산다**).
 - **genesis** = 빈 잎 `$ST/cp3-setup-d-stock-005930-data/005930` 에 대한 첫 `run`(러너가 잎을 만든다 · 되돌릴 수 없다 · 승인 행위는 없다). 다음 날부터는 같은 잎을 잇는다.
 
 **08:55 시작(창 08:52–09:05: 첫 행은 09:01:0x 에 오고 첫 행 대기 상한이 600 s).** LONG 08:38·SHORT 08:40 는 **선물** REAL 키, 이 세션은 **주식** REAL 키(생산자·band)와 모의 키(런타임) — 지문이 서로 달라 분당 1회 토큰 발급이 겹치지 않는다.
