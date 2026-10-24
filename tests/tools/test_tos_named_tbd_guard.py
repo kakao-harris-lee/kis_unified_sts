@@ -381,7 +381,9 @@ def test_main_check_flag_exits_zero_when_clean(tmp_path: Path, capsys) -> None:
 #: SILENT drop below it means the candidate-detection signature itself weakened (round 3
 #: re-review MEDIUM — see ``test_a_weakened_candidate_signature_drops_below_the_floor``
 #: for the mutation this floor is proven against).
-_REAL_TREE_CANDIDATE_FLOOR = 46
+#: Re-measured 2026-10-24 (standing session approval, PR #955 — a new YAML loader,
+#: ``tos_runtime/authority/standing.py``): real tree 50, weakened-signature count 46.
+_REAL_TREE_CANDIDATE_FLOOR = 50
 
 
 def test_check_real_config_and_scope_smoke() -> None:

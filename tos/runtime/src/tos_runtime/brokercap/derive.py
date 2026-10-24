@@ -71,6 +71,7 @@ __all__ = [
     "Item6Item12Fields",
     "derive_item6_item12",
     "is_broker_reaching",
+    "is_mock_order_class",
     "load_active_instance_document",
 ]
 
@@ -154,6 +155,19 @@ def _is_mock_class(scope: BrokerScope, instance: InstanceDocument | None) -> boo
         and instance is not None
         and instance.environment_class_host_bound
         and instance.profile.environment_class is BrokerEnvironment.BROKER_SIMULATION
+    )
+
+
+def is_mock_order_class(scope: BrokerScope, instance: InstanceDocument | None) -> bool:
+    """Public form of :func:`_is_mock_class` for callers outside item 6/12 (the standing
+    session approval, ``tos_runtime.authority.standing``): the scope's tuples are the mock
+    class AND the bound profile is a host-bound ``BROKER_SIMULATION`` one that
+    :func:`_kernel_profile` would hand to the kernel. Reads the same two facts, so the
+    standing approval and the gateway's item-6 skip can never disagree."""
+    return (
+        _is_mock_class(scope, instance)
+        and instance is not None
+        and _kernel_profile(instance) is not None
     )
 
 
