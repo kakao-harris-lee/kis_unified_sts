@@ -500,10 +500,21 @@ def test_production_default_dates_egress_results_through_a_fresh_trusted_referen
         reference._max_age_ms == 60_000
     )  # conftest time.yaml MAX_time_conservative_freshness_age_ms
     date = runtime.session_facts.trading_date_now(fx.INSTRUMENT_CLASS)
-    # The pinned instant's own KST date (fx.LAST_MINUTE_OF_DAY_UNIX_MS = Monday
-    # 2026-09-14 23:59:30 Asia/Seoul) — the window it falls in does not cross midnight,
-    # so `trading_date_at` reports the occurrence's start date rather than `None`.
-    assert date == "20260914"
+    # The expected date is derived from the boot snapshot's OWN observed reading, not from
+    # the pinned constant: fx.LAST_MINUTE_OF_DAY_UNIX_MS is 23:59:30 KST, so a boot slower
+    # than 30s observes the next day (issue #913). Both the reference and this line read
+    # the same TRUSTED snapshot, so the expectation is exact on any runner speed. The
+    # fixture window does not cross midnight, so `trading_date_at` reports the observed
+    # instant's own KST date rather than `None`.
+    observed_ms = runtime.time_service.wall_clock_now()
+    assert observed_ms is not None
+    # The snapshot really is on the pinned timeline (not the host's real clock).
+    assert observed_ms >= fx.LAST_MINUTE_OF_DAY_UNIX_MS
+    expected = datetime.datetime.fromtimestamp(
+        observed_ms / 1000, tz=zoneinfo.ZoneInfo("Asia/Seoul")
+    ).strftime("%Y%m%d")
+    assert expected in ("20260914", "20260915")
+    assert date == expected
     runtime.rcl_log.close()
     runtime.evidence_store.close()
 

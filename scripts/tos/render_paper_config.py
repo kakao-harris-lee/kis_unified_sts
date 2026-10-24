@@ -430,6 +430,7 @@ _VALUE_SOURCES: frozenset[str] = frozenset(
         "journal_path",
         "band_journal_path",
         "approved_source_prefixes",
+        "broker_profile_instance_path",
         "direction_action_class",
         "direction_side",
         "direction",
@@ -452,6 +453,24 @@ _VALUE_SOURCES: frozenset[str] = frozenset(
 _CONSTANT_VALUE_SOURCES: dict[str, str] = {
     "approved_source_prefixes": '", "'.join(APPROVED_REAL_PRODUCER_PREFIXES),
 }
+
+#: The value source a tree's ``broker_scopes.yaml::instance_path`` slot names (B2, 2026-10-24
+#: dry-run). The committed value is relative to the COMMITTED file (``../../../docs/…``), and
+#: the loader resolves a relative value against the directory of the file it reads — which,
+#: after a render, is the off-repo output directory, where no ``docs/`` exists. Measured: the
+#: stock tree's kis-mock boot refused with ``BrokerInstanceConfigError: broker profile instance
+#: file not found``. The value is the committed relative path resolved against ``--source``,
+#: so the rendered copy points back at the SAME document in the source checkout — never a copy
+#: (the INSTANCE is byte-immutable where it is) and never a literal typed into a manifest.
+_INSTANCE_PATH_VALUE_SOURCE = "broker_profile_instance_path"
+
+#: The file and key :data:`_INSTANCE_PATH_VALUE_SOURCE` reads its committed value from.
+_BROKER_SCOPES_NAME = "broker_scopes.yaml"
+_INSTANCE_PATH_KEY = "instance_path"
+
+#: Characters a resolved instance path may not carry: the slot template quotes the value in
+#: YAML double quotes, where these would end or escape the scalar.
+_UNQUOTABLE_PATH_CHARS = frozenset('"\\\n\r')
 
 #: The subset of :data:`_VALUE_SOURCES` whose value is a function of DIRECTION. In
 #: ``declared`` mode these slots are VERIFY-ONLY (design §2.3): the renderer builds the line
@@ -831,6 +850,7 @@ def _slot_rules(
     direction: str,
     journal_path: Path,
     band_journal_path: Path | None,
+    broker_profile_instance_path: Path | None = None,
 ) -> tuple[Rule, ...]:
     """Turn the manifest's slots into the :class:`Rule` tuple :func:`_apply_rules` executes.
 
@@ -862,6 +882,8 @@ def _slot_rules(
     }
     if band_journal_path is not None:
         values["band_journal_path"] = str(band_journal_path)
+    if broker_profile_instance_path is not None:
+        values[_INSTANCE_PATH_VALUE_SOURCE] = str(broker_profile_instance_path)
     rules: list[Rule] = []
     for slot in manifest.slots:
         if slot.value not in values:
@@ -1033,6 +1055,41 @@ def _git_revision(source_checkout: Path) -> str:
     if not revision:
         raise RenderError(f"git rev-parse HEAD produced no output in {source_checkout}")
     return revision
+
+
+def resolve_broker_profile_instance_path(source: Path) -> Path:
+    """The absolute path a rendered ``broker_scopes.yaml::instance_path`` must carry (B2).
+
+    The committed value, resolved against ``source`` — the directory the committed file lives
+    in, which is what the loader (``brokercap/scopes.py::_resolve_instance_path``) resolves it
+    against when it reads the COMMITTED copy. So the rendered copy names the same file the
+    committed one does. A missing file is refused here, before any account byte is written:
+    the runtime would refuse the kis-mock boot on it anyway, an hour later, at 08:55.
+    """
+    scopes_path = source / _BROKER_SCOPES_NAME
+    try:
+        raw = yaml.safe_load(scopes_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise RenderError(f"cannot read {scopes_path}: {exc}") from exc
+    value = raw.get(_INSTANCE_PATH_KEY) if isinstance(raw, dict) else None
+    if not isinstance(value, str) or not value:
+        raise RenderError(
+            f"{scopes_path}: {_INSTANCE_PATH_KEY} must be a non-empty string for a tree whose "
+            f"manifest declares a {_INSTANCE_PATH_VALUE_SOURCE!r} slot, got {value!r}"
+        )
+    candidate = Path(value)
+    resolved = (candidate if candidate.is_absolute() else source / candidate).resolve()
+    if not resolved.is_file():
+        raise RenderError(
+            f"broker profile instance file not found: {scopes_path} {_INSTANCE_PATH_KEY} "
+            f"{value!r} resolves to {resolved}"
+        )
+    if _UNQUOTABLE_PATH_CHARS & set(str(resolved)):
+        raise RenderError(
+            f"broker profile instance path refused: {resolved} carries a quote, backslash or "
+            "line break, which the double-quoted slot template cannot hold"
+        )
+    return resolved
 
 
 def _repo_root_of(path: Path) -> Path | None:
@@ -1633,6 +1690,11 @@ def render(
         # NOT `.resolve()` and NOT an existence check (docstring): the probe has not run yet
         # when the runner renders, so the file is normally absent here and resolving would
         # follow a symlink the session has not created either.
+    instance_path = (
+        resolve_broker_profile_instance_path(source)
+        if any(slot.value == _INSTANCE_PATH_VALUE_SOURCE for slot in manifest.slots)
+        else None
+    )
     out = out.expanduser()
     out = (out if out.is_absolute() else Path.cwd() / out).resolve()
     _refuse_output_inside_repo(out, source)
@@ -1697,6 +1759,7 @@ def render(
             direction=direction,
             journal_path=effective_journal_path,
             band_journal_path=band_journal_path,
+            broker_profile_instance_path=instance_path,
         )
         # ---- the first account byte reaches the disk here ----
         _apply_rules(staging, rules)
