@@ -248,8 +248,8 @@ B2 렌더본 `broker_scopes.yaml::instance_path`(`../../../docs/…`)가 렌더 
 B3 트리 `order_construction_policy.yaml::_runtime.wire_codec: null` → kis-mock **부팅 거부** ·
 B1 승인 파일 `approvals/<proposal digest>.yaml` 은 제안마다 digest 가 새로 나와 세션 안에서 줄 수 없다 → **송신 0**.
    운영자 결정 2026-10-24: **세션 한정 상시 승인**(트리·전략·005930·LONG·1주·거래일·MOCK scope 결속 · `max_uses` 를 RCL 로 소비 · REAL 불가) — PR #955.
-B4 `safety_activation.yaml` 의 `approval_ids: []`·`compatibility_attestation_refs: []` → 활성 DEFERRED · mesh 보류 → 매 틱 1단계 전 `LIVE_SCOPE_NOT_AUTHORIZED` → **송신 0** — 처분: **운영자 승인 행위**(기록은 lane-bootfix 가 준비 · 가짜 id 금지) ·
-B5 `authority.yaml::containment_bound_ms: 1000` — 휴장 중 시간 평가가 60 s 마다라 09:00 개장 때 증인이 죽고 회복하지 못한다 → 송신마다 `SEND_REFUSED`(item `CURRENTNESS`) → **송신 0** — 처분 **운영자 결정 대기**(heartbeat + 한계 값) · `fix/tos-authority-witness-heartbeat`.
+B4 `safety_activation.yaml` 의 `approval_ids: []`·`compatibility_attestation_refs: []` → 활성 DEFERRED · mesh 보류 → 매 틱 1단계 전 `LIVE_SCOPE_NOT_AUTHORIZED` → **송신 0** — 처분: **운영자 승인 대기**(lane-bootfix 의 활성 기록 초안 · 가짜 id 금지) ·
+B5 `authority.yaml::containment_bound_ms: 1000` — 휴장 중 시간 평가가 60 s 마다라 09:00 개장 때 증인이 죽고 회복하지 못한다 → 송신마다 `SEND_REFUSED`(item `CURRENTNESS`) → **송신 0** — 처분(운영자 2026-10-24): 패스마다 heartbeat + **주식 트리만** `containment_bound_ms: 90000`(paper·LONG·SHORT 는 1000) · `fix/tos-authority-witness-heartbeat`.
 ⛔ **게이트**: #955 · #956 · B4·B5 고침이 **모두** 개장 전에 main 에 머지돼 있어야 한다. 아니면 세션은 하루 미룬다.
 B2 **비상용 우회**(bootfix PR 의 B2 부분만 빠졌을 때만): 렌더가 `$ST/cp3-sessions/<dir>/render` 이면 `../../../` = `$ST` 라, 시작 블록 4줄째가 그 자리에 문서를 복사한다.
 
