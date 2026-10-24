@@ -97,7 +97,8 @@ def test_the_shipped_stock_config_loads_as_a_stock_market() -> None:
     )
     transport = config.transport
     assert transport["market"] == "stock"
-    assert transport["initial_cursor"] == "153000"
+    # #924: the close of each fetched day, from the calendar (regular day: 153000).
+    assert transport["initial_cursor"] == config_mod.QUOTE_CURSOR_SESSION_END
     # The futures hour-class parameter has no meaning for the stock TR.
     assert "hour_cls_code" not in transport
 
@@ -422,7 +423,13 @@ def _stock_quotes(handler: Any) -> Any:
     """A real ``Quotes`` over ``httpx.MockTransport`` with a stub auth manager."""
     config = config_mod.load_config(STOCK_CONFIG, repo_root=_REPO_ROOT)
     quotes = object.__new__(quote_client.Quotes)
-    quotes.cfg = {**config.transport, "pace_s": 0.0, "retry_pause_s": 0.0}
+    quotes.cfg = {
+        **config.transport,
+        # As real_quotes builds it: the session_end token resolved per day (#924).
+        "initial_cursor": real_quotes_mod.resolve_initial_cursor(config),
+        "pace_s": 0.0,
+        "retry_pause_s": 0.0,
+    }
     quotes.last = 0.0
     quotes.calls = 0
     quotes.recorder = SimpleNamespace(events=[])
@@ -748,3 +755,119 @@ def test_an_open_anchor_that_disagrees_with_the_calendar_is_refused(
     with pytest.raises(LiveProducerRefused, match="open_anchor 09:05"):
         producer.boot()
     producer.finish()
+
+
+# ---------------------------------------------------------------------------
+# #924 — a dated session override (FICTITIOUS: no KRX notice moves 10-19)
+# ---------------------------------------------------------------------------
+
+OVERRIDE_OPEN, OVERRIDE_END = "10:00", "10:40"
+
+
+def _override_calendar(tmp_path: Path) -> Path:
+    path = _stock_calendar(tmp_path)
+    source = yaml.safe_load(path.read_text(encoding="utf-8"))
+    source["session_overrides"] = {
+        TARGET.isoformat(): {
+            "reason": "test fixture — fictitious late open",
+            "sessions": {
+                "krx-stock": [
+                    {
+                        "phase": "CONTINUOUS",
+                        "start": OVERRIDE_OPEN,
+                        "end": OVERRIDE_END,
+                        "crosses_midnight": False,
+                    }
+                ]
+            },
+        }
+    }
+    path.write_text(yaml.safe_dump(source, allow_unicode=True), encoding="utf-8")
+    return path
+
+
+def _late(bars: list[tuple], minutes: int) -> list[tuple]:
+    return [(b[0], b[1] + timedelta(minutes=minutes), *b[2:]) for b in bars]
+
+
+@pytest.mark.serial
+def test_924_a_late_open_day_shifts_the_first_bar_and_the_session_end(
+    tmp_path: Path, market: StockMarket
+) -> None:
+    """The target day's window comes from its override: no bar is waited for before
+    10:00, the loop ends at the shifted close, and the anchor (regular 09:00) is
+    still accepted — the seed frame was counted with it."""
+    late_market = StockMarket(
+        {**market.sessions, TARGET: _late(market.sessions[TARGET], 60)}
+    )
+    data = _stock_data(
+        calendar_yaml=str(_override_calendar(tmp_path)),
+        env_file=str(tmp_path / "env"),
+        token_cache_dir=str(tmp_path / "token-cache"),
+    )
+    config = config_mod.load_config(_write(tmp_path, data), repo_root=_REPO_ROOT)
+    clock = FakeClock(datetime(TARGET.year, TARGET.month, TARGET.day, 8, 59, 30))
+    quotes = FakeStockQuotes(late_market, clock)
+    producer = producer_mod.LiveProducer(
+        config=config,
+        instrument=SYMBOL,
+        target=TARGET,
+        session_dir=tmp_path / "session",
+        journal_path=tmp_path / "session" / "journal.jsonl",
+        clock=producer_mod.Clock(now=clock.now, sleep=clock.sleep),
+        quotes_factory=lambda _config, _log: quotes,
+    )
+    producer.boot()
+    assert producer.window.start.strftime("%H:%M") == OVERRIDE_OPEN
+    assert producer._first_boundary() == datetime(
+        TARGET.year, TARGET.month, TARGET.day, 10, 1
+    )
+    assert producer.window.end_boundary(TARGET) == datetime(
+        TARGET.year, TARGET.month, TARGET.day, 10, 41
+    )
+    assert producer.anchor.kst == "09:00"
+    producer.run_session()
+    summary = producer.finish()
+    rows = [
+        json.loads(line)
+        for line in producer.journal_path.read_text("utf-8").splitlines()
+        if line.strip()
+    ]
+    assert rows, summary
+    stamps = sorted(row["raw_event_id"].rsplit(":", 1)[-1] for row in rows)
+    assert stamps[0] >= TARGET.strftime("%Y%m%dT1000"), stamps[:3]
+    assert stamps[-1] <= TARGET.strftime("%Y%m%dT1040"), stamps[-3:]
+    assert clock.now().replace(tzinfo=None) >= datetime(
+        TARGET.year, TARGET.month, TARGET.day, 10, 41
+    )
+
+
+def test_924_the_session_end_cursor_follows_each_days_close(tmp_path: Path) -> None:
+    data = _stock_data(
+        calendar_yaml=str(_override_calendar(tmp_path)),
+        env_file=str(tmp_path / "env"),
+        token_cache_dir=str(tmp_path / "token-cache"),
+    )
+    config = config_mod.load_config(_write(tmp_path, data), repo_root=_REPO_ROOT)
+    cursor = real_quotes_mod.resolve_initial_cursor(config)
+    assert callable(cursor)
+    assert cursor(TARGET) == "104000"  # the override's close
+    assert cursor(SEED_DAYS[-1]) == TARGET_SESSION_END.replace(":", "") + "00"
+    # A literal stays a literal (the futures config's "").
+    literal = config_mod.load_config(FUTURES_CONFIG, repo_root=_REPO_ROOT)
+    assert real_quotes_mod.resolve_initial_cursor(literal) == ""
+
+
+def test_924_the_shipped_stock_cursor_is_153000_on_a_regular_day() -> None:
+    config = config_mod.load_config(STOCK_CONFIG, repo_root=_REPO_ROOT)
+    assert (
+        real_quotes_mod.resolve_initial_cursor(config)(date(2026, 10, 26)) == "153000"
+    )
+
+
+def test_924_quotes_page_calls_a_per_day_cursor() -> None:
+    q = object.__new__(quote_client.Quotes)
+    q.cfg = {"initial_cursor": lambda day: f"{day:%d}0000"}
+    assert q._initial_cursor(date(2026, 10, 7)) == "070000"
+    q.cfg = {"initial_cursor": "153000"}
+    assert q._initial_cursor(date(2026, 10, 7)) == "153000"

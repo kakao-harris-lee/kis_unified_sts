@@ -242,6 +242,10 @@ class Quotes:
         self.last = 0.0
         self.calls = 0
 
+    def _initial_cursor(self, day: date) -> str:
+        initial = self.cfg.get("initial_cursor", "")
+        return str(initial(day) if callable(initial) else initial)
+
     def page(self, symbol: str, day: date, cursor: str = "") -> list[dict]:
         market = self.cfg.get("market", "futures")
         tr_id, path, division = QUOTE_ROUTES[market]
@@ -254,8 +258,9 @@ class Quotes:
             "FID_FAKE_TICK_INCU_YN": "N",
             "FID_INPUT_DATE_1": day.strftime("%Y%m%d"),
             # The stock TR refuses an empty time, so the config names the first
-            # page's cursor (the session close) rather than a literal here.
-            "FID_INPUT_HOUR_1": cursor or str(self.cfg.get("initial_cursor", "")),
+            # page's cursor (the session close) rather than a literal here. A
+            # callable is "that day's close" (issue #924, real_quotes.py).
+            "FID_INPUT_HOUR_1": cursor or self._initial_cursor(day),
         }
         if market == "futures":
             params["FID_HOUR_CLS_CODE"] = str(

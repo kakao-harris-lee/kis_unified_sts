@@ -28,6 +28,28 @@ _INSTALLER_REL = "tools/tos_cp3/runners/install_tenant_cron.sh"
 
 _HOLIDAY = "2026-11-03"  # a Tuesday, listed as a holiday in the fixture calendars
 _OPEN_DAY = "2026-10-26"  # a Monday, not a holiday
+#: A FICTITIOUS dated session override (#924 shape): a Thursday the fixture calendar
+#: shifts an hour late. Not a real KRX notice — tests only.
+_OVERRIDE_DAY = "2026-12-03"
+
+_CALENDAR = f"""calendar_version: "t"
+holidays:
+  - "{_HOLIDAY}"
+sessions:
+  krx-index-futures:
+    - {{phase: CONTINUOUS, start: "08:45", end: "15:45", days: [MON,TUE,WED,THU,FRI], crosses_midnight: false}}
+session_overrides:
+  "{_OVERRIDE_DAY}":
+    reason: "test fixture — fictitious late open"
+    sessions:
+      krx-index-futures:
+        - {{phase: CONTINUOUS, start: "09:45", end: "16:45", crosses_midnight: false}}
+"""
+
+_PRODUCER_CONFIG = """calendar_yaml: config/tos_runtime/cp3-setup-d-long/calendar.yaml
+calendar_session_id: krx-index-futures
+calendar_session_phase: CONTINUOUS
+"""
 
 _STUB_RUNNER = """#!/bin/bash
 # Test stub: record what the wrapper handed over, exit with the requested rc.
@@ -100,11 +122,16 @@ class Env:
         _write(
             seed / "tools/tos_cp3/runners/run_tenant_session.sh", _STUB_RUNNER, 0o755
         )
-        calendar = f'calendar_version: "t"\nholidays:\n  - "{_HOLIDAY}"\n'
         for lc in ("long", "short"):
             _write(
-                seed / f"config/tos_runtime/cp3-setup-d-{lc}/calendar.yaml", calendar
+                seed / f"config/tos_runtime/cp3-setup-d-{lc}/calendar.yaml", _CALENDAR
             )
+        _write(seed / "config/tos_probes/cp3-live-producer.yaml", _PRODUCER_CONFIG)
+        # The wrapper derives the stop time through the SHIPPED day-window reader.
+        shutil.copy(
+            _REPO_ROOT / "tools/tos_cp3/session_day.py",
+            seed / "tools/tos_cp3/session_day.py",
+        )
         _write(seed / "shared/__init__.py", "")
         _write(seed / "shared/instruments/__init__.py", "")
         shutil.copy(
@@ -304,6 +331,55 @@ def test_open_day_runs_the_runner_with_every_tenant_value(env: Env) -> None:
     assert _git("rev-parse", "HEAD", cwd=wt) == _git(
         "rev-parse", "origin/main", cwd=env.main
     )
+
+
+def _runner_out(env: Env, lc: str, day: str) -> str:
+    session = env.state / "cp3-sessions" / f"{lc}-{day.replace('-', '')}"
+    return (session / "runner.out").read_text(encoding="utf-8")
+
+
+def test_924_a_dated_override_moves_the_stop_time_with_the_close(env: Env) -> None:
+    """#924: the stop comes from THAT day's close in the tree's calendar (16:45 + 5),
+    not from a literal 15:50 that would kill an exam-day session an hour early."""
+    _data_parents(env)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OVERRIDE_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "TENANT_STOP_AT=16:50" in _runner_out(env, "long", _OVERRIDE_DAY)
+    assert "09:45-16:45 OVERRIDE" in r.stdout
+
+
+def test_924_a_regular_day_keeps_15_50_and_the_knobs_still_work(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily(
+        "SHORT", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_STOP_AFTER_CLOSE_MIN="7"
+    )
+    assert r.returncode == 0, r.stdout
+    assert "TENANT_STOP_AT=15:52" in _runner_out(env, "short", _OPEN_DAY)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OVERRIDE_DAY, CP3_DAILY_STOP_AT="14:00")
+    assert r.returncode == 0, r.stdout
+    assert "TENANT_STOP_AT=14:00" in _runner_out(env, "long", _OVERRIDE_DAY)
+
+
+def test_924_an_unreadable_session_window_is_a_failure_not_a_run(env: Env) -> None:
+    _data_parents(env)
+    cfg = env.main / "config/tos_probes/cp3-live-producer.yaml"
+    cfg.write_text(_PRODUCER_CONFIG.replace("CONTINUOUS", "NOPE"), encoding="utf-8")
+    _git("commit", "-qam", "break the phase", cwd=env.main)
+    _git("push", "-q", "origin", "HEAD:main", cwd=env.main)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 2, r.stdout
+    assert "stop time not derivable" in r.stdout
+    assert not (
+        env.state / "cp3-sessions" / f"long-{_OPEN_DAY.replace('-', '')}"
+    ).exists()
+
+
+def test_924_preflight_shows_the_dated_window_and_stop(env: Env) -> None:
+    r = env.daily("LONG", "--preflight", _OVERRIDE_DAY)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "09:45-16:45 OVERRIDE" in r.stdout and "stop_at=16:50" in r.stdout
+    r = env.daily("LONG", "--preflight", _OPEN_DAY)
+    assert "08:45-15:45 regular" in r.stdout and "stop_at=15:50" in r.stdout
 
 
 def test_normal_sigterm_end_is_not_a_failure(env: Env) -> None:
