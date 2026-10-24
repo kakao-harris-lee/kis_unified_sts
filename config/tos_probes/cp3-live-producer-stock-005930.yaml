@@ -40,9 +40,11 @@ open_anchor: "09:00"
 contract_spec_block: stock_contract_spec
 # 주식 TR 은 FID_INPUT_HOUR_1 빈 값을 받지 않는다 — 하루 첫 페이지는 세션 종료 시각부터
 # 거꾸로 읽는다(레거시 백필 shared/collector/historical/stock.py 와 같은 방식).
+# `session_end` = 「가져오는 그날의 krx-stock CONTINUOUS 종료 시각」(HHMM00) — 달력에서
+# 날마다 읽는다(#924: 개장 지연일은 종료도 늦다). 평일은 15:30 → "153000"(이전 리터럴과 같다).
 # ⚠ 장중에 종료 시각을 커서로 주었을 때 «지금까지의 봉»이 오는지는 **아직 실측되지
 #   않았다** — 첫 세션 전에 GET 한 번으로 확인할 것(PR 본문 참조).
-quote_initial_cursor: "153000"
+quote_initial_cursor: session_end
 calendar_covered_years: [2026]
 
 # --- δ / G · 전송 · 시드 · 정지 조건 — 선물 설정과 같은 값 ---

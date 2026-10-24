@@ -27,13 +27,14 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import yaml
 
 from tools.tos_cp3.live_producer.config import LiveProducerRefused
+from tools.tos_cp3.session_day import OVERRIDES_KEY, SessionDayError, windows_on
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,10 @@ class RuntimeCalendar:
     #: holiday list is a startup refusal.
     covered_years: frozenset[int]
     sessions: dict[str, tuple[SessionWindow, ...]]
+    #: The parsed calendar mapping — kept so :meth:`window` asks
+    #: :mod:`tools.tos_cp3.session_day` for a date's window, the same reader
+    #: the runner and the cron wrapper use (issue #924 dated overrides).
+    raw: dict = field(default_factory=dict, repr=False, compare=False)
 
     def is_trading_day(self, day: date) -> bool:
         self.assert_covers(day)
@@ -103,7 +108,28 @@ class RuntimeCalendar:
                 "silently call a closed day a trading day (plan §3.2 L2)"
             )
 
-    def window(self, session_id: str, phase: str) -> SessionWindow:
+    def window(
+        self, session_id: str, phase: str, day: date | None = None
+    ) -> SessionWindow:
+        """The ONE *phase* window of *session_id*.
+
+        With *day*, that date's window: a ``session_overrides`` entry for the
+        date replaces the regular one (issue #924 — e.g. the exam day's late
+        open and close). Without it, the regular window.
+        """
+        if day is not None:
+            try:
+                dated = [
+                    w for w in windows_on(self.raw, session_id, day) if w.phase == phase
+                ]
+            except SessionDayError as exc:
+                raise LiveProducerRefused(f"{self.path}: {exc}") from exc
+            if len(dated) != 1:
+                raise LiveProducerRefused(
+                    f"{self.path}: session {session_id!r} has {len(dated)} "
+                    f"{phase!r} windows on {day}; exactly one is required"
+                )
+            return SessionWindow(phase=phase, start=dated[0].start, end=dated[0].end)
         windows = self.sessions.get(session_id)
         if not windows:
             raise LiveProducerRefused(
@@ -190,6 +216,30 @@ def load_runtime_calendar(
             for entry in entries
         )
 
+    overrides = data.get(OVERRIDES_KEY, {})
+    if not isinstance(overrides, dict):
+        raise LiveProducerRefused(
+            f"{path}: {OVERRIDES_KEY!r} must be a mapping ({{}} = no dated exceptions)"
+        )
+    for raw_day in overrides:
+        # Every dated window must parse NOW, not on the day it applies.
+        try:
+            override_day = (
+                raw_day
+                if isinstance(raw_day, date)
+                else date.fromisoformat(str(raw_day))
+            )
+            for session_id in sessions:
+                windows_on(data, session_id, override_day)
+        except (SessionDayError, ValueError) as exc:
+            raise LiveProducerRefused(
+                f"{path}: {OVERRIDES_KEY}[{raw_day}]: {exc}"
+            ) from exc
+        if override_day in holidays:
+            raise LiveProducerRefused(
+                f"{path}: {OVERRIDES_KEY}[{raw_day}] is also a holiday"
+            )
+
     version = data.get("calendar_version")
     tz_id = data.get("tz_id")
     if not isinstance(version, str) or not isinstance(tz_id, str):
@@ -223,4 +273,5 @@ def load_runtime_calendar(
         holidays=holidays,
         covered_years=declared,
         sessions=sessions,
+        raw=data,
     )

@@ -27,6 +27,10 @@ import yaml
 
 from tools.tos_cp3.produce_fields import DEFAULT_MIN_BARS_PER_DAY
 
+#: ``quote_initial_cursor`` token: "the close of the day being fetched", from
+#: the tenant calendar (:func:`tools.tos_cp3.live_producer.real_quotes.resolve_initial_cursor`).
+QUOTE_CURSOR_SESSION_END = "session_end"
+
 
 class LiveProducerRefused(RuntimeError):
     """The producer refused to start, or refused to write. Never routed around."""
@@ -158,7 +162,10 @@ class LiveProducerConfig:
     contract_spec_block: str
     #: ``FID_INPUT_HOUR_1`` of the first page of a day. Futures sends ``""``
     #: (latest); the stock TR requires a time, so the stock config names the
-    #: session close.
+    #: session close — as :data:`QUOTE_CURSOR_SESSION_END`, which the real
+    #: transport resolves per fetched day from the calendar's window on that
+    #: day (issue #924: an exam day closes at a different time, and a literal
+    #: ``153000`` would cut its last hour off a seed day and the target day).
     quote_initial_cursor: str
     #: The ``product`` argument of
     #: ``shared.instruments.futures.get_front_month_code``. It names each seed

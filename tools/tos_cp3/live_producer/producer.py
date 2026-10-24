@@ -194,8 +194,12 @@ class LiveProducer:
             raise LiveProducerRefused(
                 f"{self.target} is not a trading day in {self.calendar.path}"
             )
+        # The TARGET day's window: a dated override (issue #924, e.g. the exam
+        # day's late open/close) moves the first boundary and the session end.
         self.window = self.calendar.window(
-            self.config.calendar_session_id, self.config.calendar_session_phase
+            self.config.calendar_session_id,
+            self.config.calendar_session_phase,
+            self.target,
         )
         assert_the_session_can_still_happen(
             first_boundary=self._first_boundary(),
@@ -208,12 +212,18 @@ class LiveProducer:
             first_session=self.target,
             last_session=self.target,
         )
+        # Against the REGULAR window: the anchor counts the whole seed frame,
+        # whose days opened at the regular time, so a dated override moves the
+        # session window and not the anchor (issue #924).
+        regular = self.calendar.window(
+            self.config.calendar_session_id, self.config.calendar_session_phase
+        )
         if self.config.open_anchor != "auto" and self.anchor.kst != (
-            self.window.start.strftime("%H:%M")
+            regular.start.strftime("%H:%M")
         ):
             raise LiveProducerRefused(
                 f"open_anchor {self.anchor.kst} != the calendar's "
-                f"{self.config.calendar_session_id} start {self.window.start}"
+                f"{self.config.calendar_session_id} start {regular.start}"
             )
         registry = ContractSpecRegistry.from_yaml(
             str(self.config.execution_yaml), block=self.config.contract_spec_block
