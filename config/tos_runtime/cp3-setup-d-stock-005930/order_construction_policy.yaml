@@ -54,7 +54,8 @@
 # (tos_runtime/transport/kis_mock/codec.py KIS_ORDER_CASH_WIRE_FIELDS) — that
 # is a further NEW policy generation, not an in-place edit.
 #
-# APPROVAL PROVENANCE (`_runtime.wire_codec`, generation 4 — THIS tree only): the
+# APPROVAL PROVENANCE (`_runtime.wire_codec`, generation 4 — THIS tree only; the
+# operator CONFIRMED generation 4 on 2026-10-24, #956): the
 # operator decision 2026-10-23 (PR-3a, option (a) "K") made this tree the MOCK order
 # tree, whose boot must be `--transport kis-mock` (README "무엇을 하고 무엇을 하지
 # 않는가"). generation 3 still declared `wire_codec: null`, so that boot refused
@@ -144,7 +145,7 @@ approved_by:
   - "operator (System Owner) — 2026-09-16, venue-constraint-service plan §6 ② 채택 (generation 1: scope/admission coordinates)"
   - "operator (System Owner) — 2026-09-16, OCP sizing values proposal §2 채택 (generation 2: _runtime.construction)"
   - "operator (System Owner) — 2026-09-16, OCP effect_dimensions proposal §2/§4 채택 (generation 3: _runtime.construction.effect_dimensions)"
-  - "operator (System Owner) — 2026-10-23, PR-3a option (a) \"K\" MOCK 주문 트리 결정 (generation 4: _runtime.wire_codec = kis-order-cash-v1, kis-mock 전송의 필수 선언)"
+  - "operator (System Owner) — confirmed 2026-10-24: generation 4 adds wire_codec kis-order-cash-v1, derived from the 2026-10-23 PR-3a decision; fields per codec.py KIS_ORDER_CASH_WIRE_FIELDS (#956)"
 authority:
   grants_approval: false
   creates_capacity: false
