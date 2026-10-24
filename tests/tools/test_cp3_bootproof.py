@@ -1381,6 +1381,13 @@ def _runner_repo(
         _REPO_ROOT / "tools/tos_cp3/live_producer/band_line.py",
         repo / "tools/tos_cp3/live_producer/band_line.py",
     )
+    # The day's session window (#924 dated overrides) — band_line reads the open
+    # through it and the runner's first-row bound reads the open delay from it.
+    # stdlib + yaml only, like band_line.
+    shutil.copy2(
+        _REPO_ROOT / "tools/tos_cp3/session_day.py",
+        repo / "tools/tos_cp3/session_day.py",
+    )
 
     # The stub BAND PROBE (band plan v3). It stands in for
     # tools/tos_cp3/live_producer/band_probe.py: one invocation, one verdict
