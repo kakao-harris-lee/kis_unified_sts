@@ -243,13 +243,9 @@ for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
 #### 7.2-f CP-3 주식 MOCK 세션 (M2) — 첫 세션 2026-10-26(월) · 손으로 한 번 · cron 없음
 
 005930 · 1주 · Setup D LONG · 09:00–15:30 · **모의 계좌만**. 수용(rescope §3 M2) = 체결 1건 이상 + 사슬 연결.
-⛔ 막힘 다섯(2026-10-24 오프라인 드라이런에서 발견) — 고침이 main 에 없으면 결과가 이미 정해져 있다.
-✅ B2 렌더본 `instance_path` 가 렌더 디렉터리 기준이라 부팅 거부 — **해소**(#956, main `b09cec34`: 렌더러가 `--source` 기준 절대 경로로 쓴다) ·
-✅ B3 OCP `_runtime.wire_codec: null` → 부팅 거부 — **해소**(#956: OCP 세대 4 · `kis-order-cash-v1`) ·
-B1 승인 파일 `approvals/<proposal digest>.yaml` 은 제안마다 digest 가 새로 나와 세션 안에서 줄 수 없다 → **송신 0** — 처분(운영자 10-24): **세션 한정 상시 승인**(트리·전략·005930·LONG·1주·거래일·MOCK scope 결속 · `max_uses` 를 RCL 로 소비 · REAL 불가) — PR #955.
-✅ B4 `safety_activation.yaml` 의 빈 `approval_ids`·`compatibility_attestation_refs` → 매 틱 1단계 전 `LIVE_SCOPE_NOT_AUTHORIZED` — **해소**(#959 · 운영자 승인 2026-10-24 · main `077666c6`) ·
-✅ B5 `containment_bound_ms: 1000` 이면 09:00 개장 때 권한 증인이 죽어 송신마다 `SEND_REFUSED`(`CURRENTNESS`) — **해소**(#957 · main `2c5797f7`: 패스마다 heartbeat + 주식 트리만 90000 ms, 운영자 10-24).
-⛔ **게이트**: #955(B1)가 개장 전에 main 에 머지돼 있어야 한다. 아니면 세션은 하루 미룬다.
+✅ 2026-10-24 오프라인 드라이런이 찾은 막힘 다섯은 **모두 main 에 해소**됐다(main `957507b9` 로 리허설 — 부팅 수용 · 접속 0) —
+B1 세션 안 승인 불가 → 세션 한정 상시 승인 #955 · B2 렌더본 `instance_path` · B3 OCP `wire_codec` → #956 · B4 활성 기록 빈 승인 id → #959 ·
+B5 개장 때 권한 증인 소멸 → #957(패스마다 heartbeat + 주식 트리만 `containment_bound_ms: 90000`). 다시 보이면 아래 «볼 것» 질의가 잡는다.
 
 **1회 준비(운영자).** `ST=~/.local/state/tos MAIN=/home/deploy/project/kis_unified_sts` · 계좌는 `.env.mock` 의 `KIS_STOCK_ACCOUNT_NO`(10자리 8-2).
 ```bash
@@ -263,7 +259,7 @@ for k in KEY SECRET; do grep "^KIS_STOCK_APP_$k=" $MAIN/.env.mock | cut -d= -f2-
 - `$ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml`(0600) = `tos-kis-mock-transport.md` §4 값 + `mode: live` · `endpoint_rest_base: "https://openapivts.koreainvestment.com:29443"`
   · `price_scale: 100` · `request_timeout_s: 10` · `min_send_interval_ms: 2000` · `token_reissue_min_interval_s: 60` · `allow_plaintext_for_tests: false`
   · `ACNT_PRDT_CD` = **계좌 뒤 2자리**(다르면 코덱이 송신 거부). §4 표의 「`mode: live` 무조건 거부」는 옛 문장 — 지금은 compose 가 `codec_bound=True` 를 준다.
-- **상시 승인(그날, 운영자 · PR #955)** — 파일 `$C/approvals/standing-session.yaml`(0600). 쓰는 때는 아래 «볼 것» 의 `render ok` 줄 뒤 · 첫 진입 전(런타임이 이미 떠 있어도 된다 — 첫 사용 때 결속).
+- **상시 승인(그날, 운영자 · #955)** — 파일 `$C/approvals/standing-session.yaml`(0600). 쓰는 때는 아래 «볼 것» 의 `render ok` 줄 뒤 · 첫 진입 전(런타임이 이미 떠 있어도 된다 — 첫 사용 때 결속).
   승인 없이는 신호가 와도 4단계에서 멎는다(송신 0). MOCK 트리가 아니면 rc 1 로 아무것도 쓰지 않는다 · 덮어쓰기는 `--replace` 뿐.
   **재작성**(예: `max_uses` 를 올림)은 운영자 권한이고 **재기동 뒤에** 적용된다 — 슬롯이 거래일로 키잉돼 이미 쓴 횟수는 그대로 센다.
   **청산(10-26)**: 이 승인은 1주 진입 BUY 하나만 허락하고 청산은 승인되지 않는다(#960: CLOSE 명령이 BUY 로 만들어진다). 세션 뒤 모의 계좌에
@@ -279,8 +275,11 @@ mkdir -m 700 $TOS_STOCK_SESSION_ROOT && cd $WT && set -a && . tools/tos_cp3/runn
 nohup bash tools/tos_cp3/runners/run_tenant_session.sh >$TOS_STOCK_SESSION_ROOT/runner.out 2>&1 & echo $! >$TOS_STOCK_SESSION_ROOT/runner.pid
 ```
 ```bash
-cd $WT && PYTHONPATH=tos/runtime/src:tos/src $MAIN/.venv/bin/python -m tos_runtime.compose.cli write-standing-approval --config-dir "$TOS_STOCK_SESSION_ROOT/render" \
-  --custody-root "$TOS_STOCK_CUSTODY_ROOT" --environment-label paper --trading-date $(TZ=Asia/Seoul date +%F)   # rc 0 · 경로 · artifact_digest= · actions=OPEN-LONG-BUY,CLOSE-SHORT-SELL
+cd $WT && PYTHONPATH=tos/runtime/src:tos/src $MAIN/.venv/bin/python -c "import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))" \
+  write-standing-approval --config-dir "$TOS_STOCK_SESSION_ROOT/render" --custody-root "$TOS_STOCK_CUSTODY_ROOT" --environment-label paper --trading-date $(TZ=Asia/Seoul date +%F)
+# ⚠ `python -m tos_runtime.compose.cli …` 는 아무것도 하지 않고 rc 0 으로 끝난다(cli.py 에 __main__ 없음) — 위 `-c` 꼴만 쓴다. 실제 출력(리허설 10-24):
+#   write-standing-approval: wrote …/approvals/standing-session.yaml (artifact_digest=…, trading_date=20261026, actions=OPEN-LONG-BUY,CLOSE-SHORT-SELL)
+#   write-standing-approval: exit row cannot match until #960 (CLOSE commands are built as BUY)
 ```
 **볼 것.** `session.log`: `credential separation ok` → `transport=kis-mock` → `first real row seen`(≈09:01 — `quote_initial_cursor: "153000"`(#922 미실측)이 장중 봉을 준다는 첫 증거. 600 s 안에 없으면 러너가 ABORT 하고 그날은 실측 결과로 남긴다) → `band line ok`(없으면 `BAND ABSENT` = 송신 0) → `=== BOOT`. `sts tos status` 는 `cp3-sessions/stock-<날짜>` 를 읽는다.
 ```bash
