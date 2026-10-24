@@ -249,7 +249,7 @@ B3 트리 `order_construction_policy.yaml::_runtime.wire_codec: null` → kis-mo
 B1 승인 파일 `approvals/<proposal digest>.yaml` 은 제안마다 digest 가 새로 나와 세션 안에서 줄 수 없다 → **송신 0**.
    운영자 결정 2026-10-24: **세션 한정 상시 승인**(트리·전략·005930·LONG·1주·거래일·MOCK scope 결속 · `max_uses` 를 RCL 로 소비 · REAL 불가) — PR #955.
 B4 `safety_activation.yaml` 의 `approval_ids: []`·`compatibility_attestation_refs: []` → 활성 DEFERRED · mesh 보류 → 매 틱 1단계 전 `LIVE_SCOPE_NOT_AUTHORIZED` → **송신 0** — 처분: **운영자 승인 행위**(기록은 lane-bootfix 가 준비 · 가짜 id 금지) ·
-B5 `authority.yaml::containment_bound_ms: 1000` + 권한 증인은 부팅·송신 경계에서만 재확인 → 부팅 1 s 뒤 신호는 CURRENTNESS UNKNOWN `SEND_REFUSED` → **송신 0** — 처분: 패스마다 증인 heartbeat(1000 ms 유지) · `fix/tos-authority-witness-heartbeat`.
+B5 `authority.yaml::containment_bound_ms: 1000` — 휴장 중 시간 평가가 60 s 마다라 09:00 개장 때 증인이 죽고 회복하지 못한다 → 송신마다 `SEND_REFUSED`(item `CURRENTNESS`) → **송신 0** — 처분 **운영자 결정 대기**(heartbeat + 한계 값) · `fix/tos-authority-witness-heartbeat`.
 ⛔ **게이트**: #955 · #956 · B4·B5 고침이 **모두** 개장 전에 main 에 머지돼 있어야 한다. 아니면 세션은 하루 미룬다.
 B2 **비상용 우회**(bootfix PR 의 B2 부분만 빠졌을 때만): 렌더가 `$ST/cp3-sessions/<dir>/render` 이면 `../../../` = `$ST` 라, 시작 블록 4줄째가 그 자리에 문서를 복사한다.
 
@@ -286,7 +286,7 @@ cd $WT && PYTHONPATH=tos/runtime/src:tos/src $MAIN/.venv/bin/python -m tos_runti
 ```bash
 L=$ST/cp3-setup-d-stock-005930-data/005930; sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,COUNT(*) FROM entries WHERE kind IN ('BROKER_FACTS_OBSERVED','APPROVAL_STANDING_BOUND','APPROVAL_STANDING_CONSUMED','APPROVAL_STANDING_NOT_COVERED','APPROVAL_STANDING_REFUSED','SEND_SEALED','TRANSPORT_SEND','TRANSPORT_DRY_RUN','EGRESS_RESULT_CONSUMED','FILL_OBSERVED','POSTTRADE_FINALITY_PROOF','ENGINE_PROJECTION_RELEASED','MARKETFEED_PASS_OVERRUN') OR kind LIKE 'FILL_OBSERVER_%' GROUP BY 1"
 sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payload.step'),COUNT(*) FROM entries WHERE kind='FLOW_HALTED' GROUP BY 1"   # 어디서 멎나 — INDEPENDENT_APPROVAL 이면 승인 없음
-sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,json_extract(payload_json,'\$.payload.halt_reason'),COUNT(*) FROM entries WHERE kind IN ('EVENT_CONSUMED','COORDINATOR_MESH_HELD') GROUP BY 1,2"   # B4 꼴: 1단계 전에 멎는다(FLOW_HALTED 없음)
+sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,json_extract(payload_json,'\$.payload.halt_reason'),COUNT(*) FROM entries WHERE kind IN ('EVENT_CONSUMED','COORDINATOR_MESH_HELD','SEND_REFUSED') GROUP BY 1,2"   # B4: LIVE_SCOPE_NOT_AUTHORIZED · mesh activation_atomic(FLOW_HALTED 없음) · B5: SEND_REFUSED
 ```
 **정지 · 킬스위치.** 정상: `TENANT_STOP_AT` 에 러너가 스스로 멎는다(rc 0/143). 손 정지 = `kill -TERM $(cat $TOS_STOCK_SESSION_ROOT/runner.pid)`(러너가 런타임 → 생산자 순으로 멈춘다).
 러너가 죽었는데 런타임이 남았으면 `pkill -TERM -f "stock-$D/render"`. 이미 나간 모의 주문의 취소는 런타임에 없다(#948) — KIS 모의투자 HTS 에서 손으로.
