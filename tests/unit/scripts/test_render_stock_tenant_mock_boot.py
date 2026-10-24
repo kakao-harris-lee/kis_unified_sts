@@ -22,20 +22,20 @@ uses: the MOCK_VTS document's ``rest_base`` and the sealed egress endpoint point
 touched. ``kis_mock_transport.yaml``
 is ``mode: dry_run``: no order POST is possible, and the tests assert none happened.
 
-Two further blockers sit behind B2/B3 and are NOT fixed here. Each has a test pinning the
-measured behaviour of the committed tree, so a fix flips a named test:
+Two further blockers sat behind B2/B3:
 
-* **B4** — ``safety_activation.yaml`` carries no ``approval_ids`` /
-  ``compatibility_attestation_refs`` (deliberately — its header), so SPG activation is DEFERRED,
-  the safety mesh is held, and every broker-reaching tick halts before step 1
-  (``LIVE_SCOPE_NOT_AUTHORIZED``).
-* **B5** — ``authority.yaml::containment_bound_ms`` is 1000 and nothing re-verifies the Safety
+* **B4** — fixed: ``safety_activation.yaml`` carried no ``approval_ids`` /
+  ``compatibility_attestation_refs``, so SPG activation was DEFERRED, the safety mesh held, and
+  every broker-reaching tick halted before step 1 (``LIVE_SCOPE_NOT_AUTHORIZED``). The operator
+  approved the activation on 2026-10-24 (``docs/plans/2026-10-24-tos-stock-mock-activation-
+  record.md``); the committed render now reaches step 4.
+* **B5** — pinned here as measured — ``authority.yaml::containment_bound_ms`` is 1000 and nothing re-verifies the Safety
   Authority witness between boot and the send boundary, so once a second has passed the
   witness stays absent and CURRENTNESS is UNKNOWN (send refused).
 
-The positive path stages B4 and B5 in the test's own copy of the render only, then shows: no
-approval stops exactly at step 4 (``INDEPENDENT_APPROVAL``); with an approval for the attempt,
-all 17 verify items are SATISFIED and the dry-run send seals.
+The committed render with no approval stops exactly at step 4 (``INDEPENDENT_APPROVAL``); with an approval for the attempt,
+and B5 staged in the test's own copy of the render, all 17 verify items are SATISFIED and the
+dry-run send seals.
 """
 
 from __future__ import annotations
@@ -370,7 +370,6 @@ def _boot(
     rendered: Path,
     tmp_path: Path,
     *,
-    stage_activation: bool = False,
     containment_bound_ms: int | None = None,
     approve: bool = False,
     idle_before_signal_s: float = 0.0,
@@ -378,16 +377,6 @@ def _boot(
     """Copy the render, apply the named staging edits to the COPY only, boot, drive one row."""
     render = tmp_path / "render"
     shutil.copytree(rendered, render)
-    if stage_activation:  # B4, not fixed here
-        activation = render / "safety_activation.yaml"
-        _replace_once(
-            activation, "  approval_ids: []", '  approval_ids: ["test-approval-1"]'
-        )
-        _replace_once(
-            activation,
-            "  compatibility_attestation_refs: []",
-            '  compatibility_attestation_refs: ["test-attestation-1"]',
-        )
     if containment_bound_ms is not None:  # B5, not fixed here
         _replace_once(
             render / "authority.yaml",
@@ -494,17 +483,19 @@ def test_a_source_whose_instance_document_is_missing_refuses_the_render(
 
 
 # ---------------------------------------------------------------------------
-# The boot chain (B2 + B3 fixed; B4 / B5 pinned as measured)
+# The boot chain (B2 + B3 + B4 fixed; B5 pinned as measured)
 # ---------------------------------------------------------------------------
 
 
-def test_the_committed_render_boots_kis_mock_and_b4_halts_every_tick_before_step_1(
+def test_the_committed_render_boots_kis_mock_and_stops_exactly_at_step_4(
     rendered: Path, tmp_path: Path
 ) -> None:
     """B2 + B3: the committed render boots (it refused on both before). The #932 host facts
     come from the instance file the rendered path names, and the committed egress endpoint is
-    the MOCK host's. B4 (not fixed here): with no recorded activation approval the safety mesh
-    holds and the tick halts before step 1 — no proposal, nothing sealed, no POST."""
+    the MOCK host's. B4: with the recorded activation the safety mesh is clear, so the tick gets
+    past the Coordinator — and with no trading approval it stops exactly at step 4
+    (``INDEPENDENT_APPROVAL``, UNKNOWN — fail-closed, not a DENY). Nothing sealed, no POST.
+    """
     out = _boot(rendered, tmp_path)
     assert out["booted"] is True
     assert Path(out["instance_path"]) == _INSTANCE.resolve()
@@ -513,19 +504,7 @@ def test_the_committed_render_boots_kis_mock_and_b4_halts_every_tick_before_step
     assert out["committed_egress_endpoint"].startswith(out["rest_bases"]["MOCK_VTS"])
 
     assert out["tick"] == "TICKED"
-    assert out["first"]["halt_reasons"] == ["LIVE_SCOPE_NOT_AUTHORIZED"]
-    assert out["first"]["mesh_held"] == [
-        {"identity": "safety-profile-service-spg-v1", "reasons": ["activation_atomic"]}
-    ]
-    assert out["counts"]["SEND_SEALED"] == 0
-    assert out["order_posts"] == 0
-
-
-def test_without_an_approval_the_attempt_stops_exactly_at_step_4(
-    rendered: Path, tmp_path: Path
-) -> None:
-    out = _boot(rendered, tmp_path, stage_activation=True)
-    # An absent approval file is UNKNOWN at step 4 (fail-closed), not a DENY.
+    assert out["first"]["mesh_held"] == []
     assert out["first"]["halt_reasons"] == ["STAGE_UNKNOWN"]
     assert out["first"]["flow_halted_steps"] == ["INDEPENDENT_APPROVAL"]
     assert out["verify_items"] == {}
@@ -536,13 +515,12 @@ def test_without_an_approval_the_attempt_stops_exactly_at_step_4(
 def test_with_an_approval_all_17_items_are_satisfied_and_the_dry_run_send_seals(
     rendered: Path, tmp_path: Path
 ) -> None:
-    """The positive path, with B4 and B5 staged in the copy: the attempt's approval is written
+    """The positive path, with B5 staged in the copy: the attempt's approval is written
     for its own proposal digest and the same event is re-driven (B1 — the per-proposal file;
     the session-scoped standing approval is lane-approval's PR)."""
     out = _boot(
         rendered,
         tmp_path,
-        stage_activation=True,
         containment_bound_ms=60_000,
         approve=True,
     )
@@ -564,7 +542,6 @@ def test_b5_after_a_second_of_idle_the_authority_witness_is_gone_and_currentness
     out = _boot(
         rendered,
         tmp_path,
-        stage_activation=True,
         approve=True,
         idle_before_signal_s=1.2,
     )
