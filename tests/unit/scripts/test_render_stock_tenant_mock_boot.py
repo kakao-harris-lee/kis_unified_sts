@@ -29,11 +29,13 @@ measured behaviour of the committed tree, so a fix flips a named test:
   ``compatibility_attestation_refs`` (deliberately — its header), so SPG activation is DEFERRED,
   the safety mesh is held, and every broker-reaching tick halts before step 1
   (``LIVE_SCOPE_NOT_AUTHORIZED``).
-* **B5** — ``authority.yaml::containment_bound_ms`` is 1000 and nothing re-verifies the Safety
-  Authority witness between boot and the send boundary, so once a second has passed the
-  witness stays absent and CURRENTNESS is UNKNOWN (send refused).
+* **B5** — fixed: ``authority.yaml::containment_bound_ms`` was 1000 and nothing re-verified the
+  Safety Authority witness between boot and the send boundary, so once a second had passed the
+  witness stayed absent and CURRENTNESS was UNKNOWN. Operator decision 2026-10-24 (option A):
+  a per-pass heartbeat (``tos_runtime/compose/_authority_heartbeat.py``) and this tree's bound at
+  90000; the committed render now carries a signal past the first second.
 
-The positive path stages B4 and B5 in the test's own copy of the render only, then shows: no
+The positive path stages B4 in the test's own copy of the render only, then shows: no
 approval stops exactly at step 4 (``INDEPENDENT_APPROVAL``); with an approval for the attempt,
 all 17 verify items are SATISFIED and the dry-run send seals.
 """
@@ -371,7 +373,6 @@ def _boot(
     tmp_path: Path,
     *,
     stage_activation: bool = False,
-    containment_bound_ms: int | None = None,
     approve: bool = False,
     idle_before_signal_s: float = 0.0,
 ) -> dict[str, Any]:
@@ -387,12 +388,6 @@ def _boot(
             activation,
             "  compatibility_attestation_refs: []",
             '  compatibility_attestation_refs: ["test-attestation-1"]',
-        )
-    if containment_bound_ms is not None:  # B5, not fixed here
-        _replace_once(
-            render / "authority.yaml",
-            "containment_bound_ms: 1000",
-            f"containment_bound_ms: {containment_bound_ms}",
         )
     marketfeed = yaml.safe_load((render / "marketfeed.yaml").read_text("utf-8"))
     vcp = yaml.safe_load((render / "venue_constraint_policy.yaml").read_text("utf-8"))
@@ -494,7 +489,7 @@ def test_a_source_whose_instance_document_is_missing_refuses_the_render(
 
 
 # ---------------------------------------------------------------------------
-# The boot chain (B2 + B3 fixed; B4 / B5 pinned as measured)
+# The boot chain (B2 + B3 + B5 fixed; B4 pinned as measured)
 # ---------------------------------------------------------------------------
 
 
@@ -536,14 +531,13 @@ def test_without_an_approval_the_attempt_stops_exactly_at_step_4(
 def test_with_an_approval_all_17_items_are_satisfied_and_the_dry_run_send_seals(
     rendered: Path, tmp_path: Path
 ) -> None:
-    """The positive path, with B4 and B5 staged in the copy: the attempt's approval is written
+    """The positive path, with B4 staged in the copy: the attempt's approval is written
     for its own proposal digest and the same event is re-driven (B1 — the per-proposal file;
     the session-scoped standing approval is lane-approval's PR)."""
     out = _boot(
         rendered,
         tmp_path,
         stage_activation=True,
-        containment_bound_ms=60_000,
         approve=True,
     )
     assert len(out["verify_items"]) == 17
@@ -555,12 +549,15 @@ def test_with_an_approval_all_17_items_are_satisfied_and_the_dry_run_send_seals(
     assert out["order_posts"] == 0
 
 
-def test_b5_after_a_second_of_idle_the_authority_witness_is_gone_and_currentness_is_unknown(
+def test_b5_a_signal_after_a_second_of_idle_is_still_17_of_17(
     rendered: Path, tmp_path: Path
 ) -> None:
-    """B5 (not fixed here): the tree's ``containment_bound_ms`` is 1000, and the witness is
-    checked at boot and next at the send boundary. A signal that arrives more than a second
-    after boot — every real one — reaches item 16 with the witness absent."""
+    """B5: on main before the fix this case was CURRENTNESS UNKNOWN (bound 1000, witness checked
+    only at boot and at the send boundary). With the committed bound (90000) the same idle second
+    is inside the window, so the send boundary's own witness call establishes SAFETY_AUTHORITY.
+    The per-pass heartbeat that carries a whole morning is covered in
+    ``tos/runtime/tests/compose/test_authority_heartbeat.py`` (this driver calls ``tick_once``,
+    not ``run_forever``)."""
     out = _boot(
         rendered,
         tmp_path,
@@ -568,7 +565,8 @@ def test_b5_after_a_second_of_idle_the_authority_witness_is_gone_and_currentness
         approve=True,
         idle_before_signal_s=1.2,
     )
-    assert out["verify_items"]["CURRENTNESS"] == "UNKNOWN"
-    assert out["send_refused"] == ["CURRENTNESS"]
-    assert out["counts"]["SEND_SEALED"] == 0
+    assert out["verify_items"]["CURRENTNESS"] == "SATISFIED"
+    assert set(out["verify_items"].values()) == {"SATISFIED"}, out["verify_items"]
+    assert out["send_refused"] == []
+    assert out["counts"]["SEND_SEALED"] == 1
     assert out["order_posts"] == 0
