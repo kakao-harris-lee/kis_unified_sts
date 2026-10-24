@@ -6,14 +6,19 @@ Two things are pinned here:
    swapped in. Every file is either byte-identical to LONG, or differs ONLY at the parsed-YAML
    leaf paths declared below — so a later edit to LONG that is not carried over (or a stray
    edit here) is a named failure, not a silent fork.
-2. **It boots and fails closed.** With the tree's own calendar and filled policies, the compose
-   root binds the stock venue policy (KRX tick ladder at ×100, 1 share, ``krx-stock``
-   CONTINUOUS 09:00-15:30) and an attempt during the stock session sends nothing: the band is
-   unsourced, so the venue step cannot admit (``VENUE_CONSTRAINT_POLICY`` header).
+2. **It boots with kis-mock and fails closed.** With the tree's own calendar and filled
+   policies, the compose root binds the stock venue policy (KRX tick ladder at ×100, 1 share,
+   ``krx-stock`` CONTINUOUS 09:00-15:30) under ``--transport kis-mock`` — the only transport
+   this MOCK order tree pairs with — and an attempt during the stock session sends nothing:
+   the band is unsourced, so the venue step cannot admit (``VENUE_CONSTRAINT_POLICY`` header).
+   The tree's OWN ``order_construction_policy.yaml`` is what boots (generation 4, B3): the
+   fixture helper that writes ``kis_mock_transport.yaml`` also rewrites the OCP, so the stock
+   OCP is installed after it.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -24,12 +29,15 @@ from tos.engine.vocabulary import CommitmentStep, StageOutcome
 from tos.venue import OrderAdmissibilityResult, OrderShapeFields
 from tos.venue.predicates import order_shape_admissible
 from tos_runtime.calendar.ports import FixedWallClockReference
+from tos_runtime.compose._transport_wiring import TransportKind
+from tos_runtime.compose._venue_wiring import VenuePolicyScopeMismatch
 from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.venue import (
     load_order_construction_policy,
     load_venue_constraint_policy,
 )
 
+from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
 from .conftest import (
     _VENUE_POLICY_ACCOUNT,
@@ -39,6 +47,7 @@ from .conftest import (
 from .test_compose_root import _action_flow_inputs, _aggregate_inputs, _reach_trusted
 from .test_deploy_config import _kst_unix_ms
 from .test_deploy_policies import _filled
+from .test_kis_mock_e2e_honesty import _sealed_mock_deployment
 from .test_venue_wiring import _kind_count, _rewrite_activation, _rows
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
@@ -59,6 +68,9 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
             "instrument",
             # the producer market feeding the tree (#936 review LOW-1)
             "market",
+            # B2: broker_scopes.yaml::instance_path, rewritten to the source checkout's file
+            # (the slot LONG does not have — LONG's boot never reads the INSTANCE)
+            "slots.23",
         }
     ),
     # PR-3a (운영자 결정 2026-10-23): this tree, and only this tree, is the MOCK order tree.
@@ -81,6 +93,12 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
             "policy_id",
             "unit_multiplier_currency_and_numeric_rules.0",
             "_runtime.construction.effect_dimensions.0.unit",
+            # B3, generation 4: the kis-mock wire codec — and the generation bump and approval
+            # line that a content change to an issued policy carries (header PROVENANCE).
+            "_runtime.wire_codec",
+            "policy_generation",
+            "_model_view.policy_generation",
+            "approved_by.3",
         }
     ),
     "venue_constraint_policy.yaml": frozenset(
@@ -362,7 +380,8 @@ def _install_stock_tree(config_dir: Path) -> str:
 
 
 def _boot(config_dir, data_dir, custody_root, *, hour: int, minute: int):
-    """``test_compose_root._compose`` with the construction's class set to ``krx-stock``.
+    """``test_compose_root._compose`` with the construction's class set to ``krx-stock`` and
+    the kis-mock transport (PR-3a: the stock tree is the MOCK order tree).
 
     The venue wiring requires the construction's ``instrument_class`` to equal the policy's,
     so the fixture's futures class would refuse the stock policy at boot.
@@ -376,14 +395,38 @@ def _boot(config_dir, data_dir, custody_root, *, hour: int, minute: int):
         construction=fx.construction_config(instrument_class="krx-stock"),
         aggregate_risk_inputs_provider=_aggregate_inputs,
         action_flow_inputs_provider=_action_flow_inputs,
+        transport_kind=TransportKind.KIS_MOCK,
         wall_clock=FixedWallClockReference(_kst_unix_ms(2026, 10, 19, hour, minute)),
     )
 
 
+@pytest.fixture()
+def server() -> Iterator[FakeKisServer]:
+    srv = FakeKisServer()
+    srv.start()
+    try:
+        yield srv
+    finally:
+        srv.stop()
+
+
+def _mock_stock_deployment(config_dir, custody_root, server, monkeypatch) -> str:
+    """The fixture tree sealed to the fake KIS host (dry_run), THEN the stock tree's files."""
+    _sealed_mock_deployment(
+        config_dir, custody_root, server, monkeypatch, mode="dry_run"
+    )
+    return _install_stock_tree(config_dir)
+
+
 def test_the_stock_tree_boots_and_a_session_attempt_sends_nothing(
-    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    server,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    venue_digest = _install_stock_tree(config_dir)
+    venue_digest = _mock_stock_deployment(config_dir, custody_root, server, monkeypatch)
     # Monday 2026-10-19 10:00 KST — inside krx-stock CONTINUOUS.
     runtime = _boot(config_dir, data_dir, custody_root, hour=10, minute=0)
     _reach_trusted(runtime)
@@ -421,15 +464,67 @@ def test_the_stock_tree_boots_and_a_session_attempt_sends_nothing(
 
 
 def test_at_0850_the_futures_session_is_open_but_the_stock_one_is_not(
-    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    server,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The stock tree's session is ``krx-stock``: 08:50 is futures CONTINUOUS, stock not."""
-    _install_stock_tree(config_dir)
+    _mock_stock_deployment(config_dir, custody_root, server, monkeypatch)
     runtime = _boot(config_dir, data_dir, custody_root, hour=8, minute=50)
     assert runtime.session_facts.phase_for_step3("krx-index-futures") == "CONTINUOUS"
     assert runtime.session_facts.phase_for_step3("krx-stock") != "CONTINUOUS"
     runtime.rcl_log.close()
     runtime.evidence_store.close()
+
+
+def test_the_stock_ocp_declares_the_kis_mock_wire_codec_and_a_null_one_refuses_the_boot(
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    server,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B3 (2026-10-24 dry-run). Generation 3 of this tree's OCP said ``wire_codec: null``, and
+    a kis-mock boot of it refused. Generation 4 declares the codec the transport checks —
+    kind and the codec module's own nine fields, compared as a set exactly as the boot does.
+    The red half is the measured failure: the same tree with the leaf put back to ``null``.
+    """
+    from tos_runtime.transport.kis_mock.codec import KIS_ORDER_CASH_WIRE_FIELDS
+
+    ocp = load_order_construction_policy(
+        _write_filled(config_dir.parent, "order_construction_policy.yaml"),
+        scheme=_SCHEME,
+    )
+    assert ocp.wire_codec_kind == "kis-order-cash-v1"
+    assert ocp.wire_fields == KIS_ORDER_CASH_WIRE_FIELDS
+    assert ocp.policy.policy_generation == 4
+
+    _mock_stock_deployment(config_dir, custody_root, server, monkeypatch)
+    path = config_dir / "order_construction_policy.yaml"
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw["_runtime"]["wire_codec"] = None
+    path.write_text(
+        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    with pytest.raises(VenuePolicyScopeMismatch, match="kis-order-cash-v1"):
+        _boot(config_dir, data_dir, custody_root, hour=10, minute=0)
+
+
+def _write_filled(directory: Path, name: str) -> Path:
+    raw = _filled(
+        _STOCK / name,
+        environment=_VENUE_POLICY_ENVIRONMENT,
+        account=_VENUE_POLICY_ACCOUNT,
+        instrument=_VENUE_POLICY_INSTRUMENT,
+    )
+    path = directory / name
+    path.write_text(
+        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    return path
 
 
 # ---------------------------------------------------------------------------
