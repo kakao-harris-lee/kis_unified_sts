@@ -16,10 +16,19 @@
 # =============================================================================
 
 # [O] 제안표 §4.2 — VER-002 에 이 경계를 이름 붙인 키가 **없다**(example 주석이
-# 2026-09-08 grep 결과로 명시). MAX_time_conservative_freshness_age_ms(1000,
-# VER-002 L1078 승인됨)와 정렬한다 — 봉쇄 경계가 신선도 경계보다 길면 만료된
-# witness 로 봉쇄를 주장하게 된다.
-containment_bound_ms: 1000
+# 2026-09-08 grep 결과로 명시). 1000(MAX_time_conservative_freshness_age_ms 와 정렬)은
+# paper/LONG/SHORT 트리의 값으로 남는다.
+#
+# ⚠ **이 트리만 90000 — operator approved 2026-10-24: covers the 60 s closed-session
+#   evaluation cadence + one pass** (B5, option (A)). 1000 에서는 장 마감 중 시간 평가가
+#   60 s(marketfeed.yaml time_evaluate_closed_interval_ms)마다라 08:55 부팅의 증인이 09:00
+#   개장 순간 영구히 만료됐다(2026-10-24 드라이런 실측 · 시험
+#   tos/runtime/tests/compose/test_authority_heartbeat.py). 같은 결정으로 증인은 이제 매 패스
+#   실제 RCL read_linearizable + TRUSTED 시계로 재검증된다(compose/_authority_heartbeat.py) —
+#   이 값은 「캐시된 증인의 나이」가 아니라 「연속한 두 성공 온라인 검증 사이의 최대 간격」을
+#   묶는다. 위 「신선도 경계와 정렬」 논거는 이 트리에서 이 결정으로 대체된다. 만료 뒤 회복은
+#   여전히 없다(재부팅만).
+containment_bound_ms: 90000
 
 # ⚠ **[D] 지시를 이름 규칙으로 대체한 자리다 (review-794 MEDIUM-3 — 운영자가 볼 자리).**
 # 제안표 §3 4행은 이 키를 **[D] 도출**로 두고 「현재 활성 `TradingApprovalPolicy` 의

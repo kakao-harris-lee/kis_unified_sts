@@ -15,6 +15,7 @@ README 가 정본이다. 여기에는 **다른 것만** 적는다.
 | `construction.yaml` · `marketfeed.yaml` | `instrument_class: krx-stock` · `unit: SHARES` | 이 트리 `calendar.yaml` 의 `krx-stock` 세션(CONTINUOUS 09:00-15:30)을 쓴다 |
 | `venue_constraint_policy.yaml` | 호가단위 `price_band_ticks` 사다리(`tick_size` null) · `max_quantity` 1 · `KRX_STOCK` · `SHARES` | 파일 헤더 참조(출처·등급·실패 방향). band 원천은 LONG 과 같은 `producer_journal` |
 | `broker_scopes.yaml` · `coordinator_preconditions.yaml` · `egress_coordinates.yaml` | `active_scope: MOCK_STOCK_ORDER` · `profile_evidence_ok: true` · `nonlive_broker_consuming.admitted: true` · MOCK 주문 엔드포인트 | PR-3a(운영자 결정 2026-10-23) — **이 트리만** MOCK 주문 트리다 |
+| `authority.yaml` | `containment_bound_ms: 90000` | B5 — operator approved 2026-10-24: 장 마감 중 60 s 시간 평가 간격 + 1 패스. 증인은 매 패스 재검증(`compose/_authority_heartbeat.py`). paper/LONG/SHORT 는 1000 |
 | `broker_facts.yaml` (이 트리에만 있음) | item 12 의 GET 전용 모의 계좌·거래 가능 사실(VTTC8434R · FHKST01010100) | PR-3a option (a) "K" |
 | `fill_observer.yaml` (이 트리에만 있음) | ACK 뒤 체결 관찰(VTTC0081R) · 주식 KIS witness(VTTC8434R + VTTC0081R) TR·경로 · 폴링 간격 · overdue 한계 | PR-3b |
 | `order_construction_policy.yaml` · `aggregate_risk_policy.yaml` · `safety_envelope.yaml` · `safety_profile.yaml` | 수량 단위 `SHARES` | 주식 |

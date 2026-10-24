@@ -18,10 +18,11 @@ baseline forward, exactly as a send-boundary call would. It never establishes wh
 an expired window stays expired, so a missed heartbeat is still a permanent refusal (fail
 closed, now by intent rather than by accident).
 
-**What it does NOT fix.** While the session is known closed, the time pacer evaluates only every
-``marketfeed.yaml::time_evaluate_closed_interval_ms`` (60000), so a witness held across a closed
-period with a 1000 ms bound expires at the open. Whether to widen the bound is an approved-value
-decision, not this module's.
+**The bound it needs.** While the session is known closed, the time pacer evaluates only every
+``marketfeed.yaml::time_evaluate_closed_interval_ms`` (60000), so with a 1000 ms bound a witness
+held across a closed period expires at the open whatever this does. Operator decision
+2026-10-24 (option (A)): the stock tree's ``authority.yaml::containment_bound_ms`` is 90000 (the
+closed cadence + one pass); paper / LONG / SHORT stay at 1000 until their step-4 path exists.
 
 **Cost.** One ``current_snapshot()`` read plus one SQLite ``read_linearizable`` per pass —
 measured on a composed stock render: median 0.048 ms, p99 0.125 ms, max 0.28 ms (2000 calls)
