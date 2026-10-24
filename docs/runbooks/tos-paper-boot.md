@@ -278,7 +278,7 @@ nohup bash tools/tos_cp3/runners/run_tenant_session.sh >$TOS_STOCK_SESSION_ROOT/
 ```
 ```bash
 cd $WT && PYTHONPATH=tos/runtime/src:tos/src $MAIN/.venv/bin/python -m tos_runtime.compose.cli write-standing-approval --config-dir "$TOS_STOCK_SESSION_ROOT/render" \
-  --custody-root "$TOS_STOCK_CUSTODY_ROOT" --environment-label paper --trading-date $(TZ=Asia/Seoul date +%F)   # 기본 1주 · entry,exit · 동작당 1회 — 경로와 digest 를 찍는다
+  --custody-root "$TOS_STOCK_CUSTODY_ROOT" --environment-label paper --trading-date $(TZ=Asia/Seoul date +%F)   # rc 0 · 경로 · artifact_digest= · actions=OPEN-LONG-BUY,CLOSE-SHORT-SELL
 ```
 **볼 것.** `session.log`: `credential separation ok` → `transport=kis-mock` → `first real row seen`(≈09:01 — `quote_initial_cursor: "153000"`(#922 미실측)이 장중 봉을 준다는 첫 증거. 600 s 안에 없으면 러너가 ABORT 하고 그날은 실측 결과로 남긴다) → `band line ok`(없으면 `BAND ABSENT` = 송신 0) → `=== BOOT`. `sts tos status` 는 `cp3-sessions/stock-<날짜>` 를 읽는다.
 ```bash
@@ -288,10 +288,11 @@ sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payl
 **정지 · 킬스위치.** 정상: `TENANT_STOP_AT` 에 러너가 스스로 멎는다(rc 0/143). 손 정지 = `kill -TERM $(cat $TOS_STOCK_SESSION_ROOT/runner.pid)`(러너가 런타임 → 생산자 순으로 멈춘다).
 러너가 죽었는데 런타임이 남았으면 `pkill -TERM -f "stock-$D/render"`. 이미 나간 모의 주문의 취소는 런타임에 없다(#948) — KIS 모의투자 HTS 에서 손으로.
 
-**장 마감 뒤 수용.** 같은 attempt 하나에 아래가 모두 있으면 M2 수용 — 승인(`APPROVAL_STANDING_CONSUMED` 1행 — 그 `rcl_command_id` 가 RCL 에 있다) · `CommitReservation` · VERIFY_ITEM 17 · `SEND_SEALED`/`TRANSPORT_SEND` · `ACK` · `FILL_OBSERVED` + `FULL_FILL|PARTIAL_FILL` · `POSTTRADE_FINALITY_PROOF`(`broker-fqp-proof:<attempt>`) · RCL `release-<attempt>` · `ENGINE_PROJECTION_RELEASED`. 질의는 종류·개수·id 접두만 찍는다(예약 id·payload 에는 계좌가 있다 — 옮겨 적지 않는다).
+**장 마감 뒤 수용.** 같은 attempt 하나에 아래가 모두 있으면 M2 수용 — 승인(`APPROVAL_STANDING_CONSUMED` 의 `rcl_command_id` = RCL `ConsumeApprovalDecision` `iap-consumption:standing-approval:<YYYYMMDD>:…`) · `CommitReservation` · VERIFY_ITEM 17 · `SEND_SEALED`/`TRANSPORT_SEND` · `ACK` · `FILL_OBSERVED` + `FULL_FILL|PARTIAL_FILL` · `POSTTRADE_FINALITY_PROOF`(`broker-fqp-proof:<attempt>`) · RCL `release-<attempt>` · `ENGINE_PROJECTION_RELEASED`. 질의는 종류·개수·id 접두만 찍는다(예약 id·payload 에는 계좌가 있다 — 옮겨 적지 않는다).
 ```bash
-sqlite3 -readonly $L/evidence.sqlite3 "SELECT COALESCE(json_extract(payload_json,'\$.payload.attempt_id'),replace(json_extract(payload_json,'\$.payload.idempotency_key'),'broker-fqp-proof:','')) a,kind,COUNT(*),group_concat(DISTINCT json_extract(payload_json,'\$.payload.egress_result_kind')) FROM entries WHERE kind IN ('APPROVAL_STANDING_CONSUMED','VERIFY_ITEM','SEND_SEALED','TRANSPORT_SEND','EGRESS_RESULT_CONSUMED','FILL_OBSERVED','POSTTRADE_FINALITY_PROOF','ENGINE_PROJECTION_RELEASED') GROUP BY a,kind ORDER BY a,MIN(seq)"
-sqlite3 -readonly $L/rcl.sqlite3 "SELECT seq,kind,substr(command_id,1,48) FROM entries WHERE kind IN ('ConsumeApprovalDecision','CommitReservation','ReleaseReservation') ORDER BY seq"
+sqlite3 -readonly $L/evidence.sqlite3 "SELECT COALESCE(json_extract(payload_json,'\$.payload.attempt_id'),replace(json_extract(payload_json,'\$.payload.idempotency_key'),'broker-fqp-proof:','')) a,kind,COUNT(*),group_concat(DISTINCT json_extract(payload_json,'\$.payload.egress_result_kind')) FROM entries WHERE kind IN ('VERIFY_ITEM','SEND_SEALED','TRANSPORT_SEND','EGRESS_RESULT_CONSUMED','FILL_OBSERVED','POSTTRADE_FINALITY_PROOF','ENGINE_PROJECTION_RELEASED') GROUP BY a,kind ORDER BY a,MIN(seq)"
+sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payload.action'),json_extract(payload_json,'\$.payload.rcl_command_id') FROM entries WHERE kind='APPROVAL_STANDING_CONSUMED'"
+sqlite3 -readonly $L/rcl.sqlite3 "SELECT seq,kind,substr(command_id,1,64) FROM entries WHERE kind IN ('ConsumeApprovalDecision','CommitReservation','ReleaseReservation') ORDER BY seq"
 ```
 - **신호가 없으면**(`SEND_SEALED` 0 · `FLOW_HALTED` 가 `INDEPENDENT_APPROVAL` 이전에서만) 코드 실패가 아니다 — 수용은 다음 거래일로 넘어간다(새 세션 디렉터리 · 같은 잎).
 - **되돌림.** 세션을 시작하지 않으면 끝이다 — LONG·SHORT·상주는 이 트리와 경로·키·잎을 공유하지 않는다. 송신을 영구히 막으려면 `$C/kis_mock.app_*` 를 지운다(부팅이 거부된다). 잎은 append-only 증거라 지우지 않는다.
