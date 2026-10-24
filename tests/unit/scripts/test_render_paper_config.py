@@ -1581,6 +1581,21 @@ def test_external_mode_refuses_a_journal_path_that_does_not_exist(
         )
 
 
+def test_git_revision_refuses_a_source_outside_a_git_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal ``stub_git_revision`` steps around in the CLI tests, kept live here: a
+    source with no repository refuses rather than rendering an empty ``source_revision``.
+    """
+    source = tmp_path / "plain"
+    source.mkdir()
+    # Stop git's upward search at tmp_path so an enclosing repository cannot answer.
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+
+    with pytest.raises(rpc.RenderError, match="git rev-parse HEAD refused in"):
+        rpc._git_revision(source)
+
+
 def test_synthetic_mode_refuses_a_journal_path(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], stub_git_revision: None
 ) -> None:
