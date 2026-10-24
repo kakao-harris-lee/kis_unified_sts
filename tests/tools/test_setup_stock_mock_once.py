@@ -13,15 +13,25 @@ from pathlib import Path
 
 import pytest
 
-_SCRIPT = Path(__file__).resolve().parents[2] / "tools/tos_cp3/runners/setup_stock_mock_once.sh"
+_SCRIPT = (
+    Path(__file__).resolve().parents[2]
+    / "tools/tos_cp3/runners/setup_stock_mock_once.sh"
+)
 
 
 def _run(state: Path, env_mock: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(_SCRIPT), *args],
-        env={"PATH": "/usr/bin:/bin", "HOME": str(state), "TOS_STATE_ROOT": str(state),
-             "TOS_ENV_MOCK": str(env_mock)},
-        capture_output=True, text=True, check=False, timeout=60,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(state),
+            "TOS_STATE_ROOT": str(state),
+            "TOS_ENV_MOCK": str(env_mock),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
     )
 
 
@@ -31,9 +41,9 @@ def host(tmp_path: Path) -> tuple[Path, Path]:
     state.mkdir()
     env_mock = tmp_path / ".env.mock"
     env_mock.write_text(
-        "KIS_STOCK_ACCOUNT_NO=\"50000000-01\"\n"
+        'KIS_STOCK_ACCOUNT_NO="50000000-01"\n'
         "KIS_STOCK_APP_KEY='PSFAKEKEY'\n"
-        "KIS_STOCK_APP_SECRET=\"FAKESECRET\"\n",
+        'KIS_STOCK_APP_SECRET="FAKESECRET"\n',
         encoding="utf-8",
     )
     return state, env_mock
@@ -50,7 +60,9 @@ def test_dry_run_writes_nothing(host: tuple[Path, Path]) -> None:
     assert list(state.iterdir()) == []
 
 
-def test_apply_writes_unquoted_custody_with_narrow_modes(host: tuple[Path, Path]) -> None:
+def test_apply_writes_unquoted_custody_with_narrow_modes(
+    host: tuple[Path, Path],
+) -> None:
     state, env_mock = host
     result = _run(state, env_mock, "--apply")
     assert result.returncode == 0, result.stderr
@@ -65,14 +77,24 @@ def test_apply_writes_unquoted_custody_with_narrow_modes(host: tuple[Path, Path]
         custody / "approvals",
     ):
         assert _mode(directory) == 0o700, directory
-    for name in ("read.principal", "evidence.key", "evidence.key.1", "replay.params",
-                 "kis_mock.app_key", "kis_mock.app_secret", "custody.manifest.yaml"):
+    for name in (
+        "read.principal",
+        "evidence.key",
+        "evidence.key.1",
+        "replay.params",
+        "kis_mock.app_key",
+        "kis_mock.app_secret",
+        "custody.manifest.yaml",
+    ):
         assert _mode(custody / name) == 0o600, name
     transport = state / "cp3-setup-d-stock-ops/kis_mock_transport.yaml"
     assert _mode(transport) == 0o600
     text = transport.read_text(encoding="utf-8")
     assert 'ACNT_PRDT_CD: "01"' in text and "mode: live" in text
-    assert "principal: kis-mock-order-paper" in (custody / "custody.manifest.yaml").read_text()
+    assert (
+        "principal: kis-mock-order-paper"
+        in (custody / "custody.manifest.yaml").read_text()
+    )
     # Secrets never reach the terminal.
     assert "PSFAKEKEY" not in result.stdout + result.stderr
     assert "FAKESECRET" not in result.stdout + result.stderr
