@@ -13,7 +13,9 @@
 * B3 대조 요약(``<session>/b3/report/summary.json`` 이 있으면) — unresolved · divergent.
 * 생산자 지연(journal ``as_of_ms`` − 분 마감) p50/p90 과 생산자 카운터.
 * 상주 paper 세션(``paper-sessions`` · ``paper-ops`` pid) 상태와 그 세션의
-  ``MARKETFEED_PASS_OVERRUN`` 행.
+  ``MARKETFEED_PASS_OVERRUN`` · 권한 행.
+* 세션마다 권한 행 — ``AUTHORITY_WITNESS_LOST``(#957) 수와 standing 세션 승인
+  ``APPROVAL_STANDING_BOUND/CONSUMED/REFUSED/NOT_COVERED``(#955) 수·사유.
 
 **읽기 전용.** sqlite 는 :func:`tools.tos_cp3.session_inputs._connect_ro`
 (``file:…?mode=ro`` + ``PRAGMA user_version`` 핀)로만 연다. 파일은 읽기만 하고, 프로세스
@@ -75,6 +77,25 @@ BAND_OBSERVED_KIND = "VENUE_BAND_OBSERVED"
 #: post-pass hook)가 ``poll_interval_ms + journal_pass_allowance_ms`` 창을 넘을 때만 쓰이는
 #: 진단 행. 날짜도 벽시계도 싣지 않으므로 band 행처럼 부팅 구간 seq 범위로만 세션에 묶인다.
 PASS_OVERRUN_KIND = "MARKETFEED_PASS_OVERRUN"
+#: 런타임 ``compose._authority_heartbeat.AUTHORITY_WITNESS_LOST_KIND`` 의 거울(#957) — 매 pass
+#: heartbeat 가 Safety Authority 증인을 present → absent 로 본 순간 한 행. 런타임은 이 행으로
+#: 멈추지 않고 기록만 한다. 다만 만료된 창은 회복되지 않으므로 이후 송신은 그 프로세스가 끝날
+#: 때까지 거절된다(fail-closed). 장 전에 부팅하는 트리(LONG/SHORT 크론 08:38/08:40)는 개장 때
+#: 설계상 잃는다 — 그래서 막힘이 아니라 확인이다.
+AUTHORITY_WITNESS_LOST_KIND = "AUTHORITY_WITNESS_LOST"
+#: 런타임 ``authority.standing._EVIDENCE_*`` 의 거울(#955) — standing 세션 승인 artifact 의
+#: 바인딩·사용·거절·미적용. 키는 상태판 JSON 의 키다.
+STANDING_APPROVAL_KINDS: Mapping[str, str] = {
+    "bound": "APPROVAL_STANDING_BOUND",
+    "consumed": "APPROVAL_STANDING_CONSUMED",
+    "refused": "APPROVAL_STANDING_REFUSED",
+    "not_covered": "APPROVAL_STANDING_NOT_COVERED",
+}
+#: 부팅 구간으로 세션에 묶어 세는 권한 행 전부.
+AUTHORITY_KINDS: tuple[str, ...] = (
+    AUTHORITY_WITNESS_LOST_KIND,
+    *STANDING_APPROVAL_KINDS.values(),
+)
 #: 부팅마다 한 번 쓰이는 행 — 누적 잎을 «부팅 구간» seq 범위로 나누는 경계다.
 #: band 행처럼 날짜를 싣지 않는 행(REFUSED 는 trading_date 가 없다)은 이 범위로만 세션에 묶인다.
 BOOT_KIND = "TIME_SERVICE_STARTUP"
@@ -441,6 +462,39 @@ def pass_overrun_summary(
     return {"rows": len(rows), "worst": worst}
 
 
+def authority_summary(
+    rows: Iterable[tuple[int, str, Mapping[str, Any]]],
+) -> dict[str, Any]:
+    """권한 행(:data:`AUTHORITY_KINDS`) 요약 — 증인 상실 수와 standing 승인 종류별 수·사유.
+
+    키는 런타임이 쓰는 그대로다: REFUSED·NOT_COVERED 는 ``reason``, CONSUMED 는 ``action``.
+    """
+    lost = 0
+    counts = dict.fromkeys(STANDING_APPROVAL_KINDS, 0)
+    by: dict[str, Counter[str]] = {
+        "consumed": Counter(),
+        "refused": Counter(),
+        "not_covered": Counter(),
+    }
+    names = {kind: key for key, kind in STANDING_APPROVAL_KINDS.items()}
+    for _seq, kind, p in rows:
+        if kind == AUTHORITY_WITNESS_LOST_KIND:
+            lost += 1
+        elif kind in names:
+            key = names[kind]
+            counts[key] += 1
+            if key in by:
+                field_name = "action" if key == "consumed" else "reason"
+                by[key][str(p.get(field_name))] += 1
+    return {
+        "witness_lost": lost,
+        "standing": counts,
+        "standing_consumed_by_action": dict(sorted(by["consumed"].items())),
+        "standing_refused_by_reason": dict(sorted(by["refused"].items())),
+        "standing_not_covered_by_reason": dict(sorted(by["not_covered"].items())),
+    }
+
+
 def read_leaf(data_dir: Path) -> LeafFacts:
     """``session_inputs`` 의 리더로 잎을 읽는다. 거부는 문자열로 돌려준다(상태판은 죽지 않는다)."""
     facts = LeafFacts()
@@ -454,7 +508,13 @@ def read_leaf(data_dir: Path) -> LeafFacts:
         )
         try:
             facts.extra_rows = _kind_rows(
-                conn, (FIELD_REFUSED_KIND, BAND_OBSERVED_KIND, PASS_OVERRUN_KIND)
+                conn,
+                (
+                    FIELD_REFUSED_KIND,
+                    BAND_OBSERVED_KIND,
+                    PASS_OVERRUN_KIND,
+                    *AUTHORITY_KINDS,
+                ),
             )
             facts.boot_seqs = [
                 int(seq)
@@ -581,12 +641,20 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
     if seq_range is None:
         band_rows = None  # 틱이 없어 이 세션의 부팅 구간을 정할 수 없다
         pass_overrun = None
+        authority = None
     else:
         lo, hi = seq_range
         pass_overrun = pass_overrun_summary(
             (seq, p)
             for seq, kind, p in leaf.extra_rows
             if kind == PASS_OVERRUN_KIND and lo <= seq and (hi is None or seq < hi)
+        )
+        authority = authority_summary(
+            row
+            for row in leaf.extra_rows
+            if row[1] in AUTHORITY_KINDS
+            and lo <= row[0]
+            and (hi is None or row[0] < hi)
         )
         band_rows = [
             {
@@ -641,6 +709,7 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
         "field_refused_non_stale": non_stale_refused,
         "band_observed": band_rows,
         "pass_overrun": pass_overrun,
+        "authority": authority,
         "seq_range": list(seq_range) if seq_range else None,
         "code_digests": code_digests,
     }
@@ -820,6 +889,57 @@ def _overrun_issues(overrun: Mapping[str, Any] | None) -> list[tuple[str, str]]:
     ]
 
 
+def _authority_issues(auth: Mapping[str, Any] | None) -> list[tuple[str, str]]:
+    """증인 상실·standing 거절·미적용은 확인이다 — 런타임은 이 행들로 멈추지 않는다(#955/#957)."""
+    if not auth or "error" in auth:
+        return []
+    issues: list[tuple[str, str]] = []
+    if auth["witness_lost"]:
+        issues.append(
+            (
+                WARN,
+                f"{AUTHORITY_WITNESS_LOST_KIND} {auth['witness_lost']}행 — 이후 송신은"
+                " 재부팅 전까지 거절된다(fail-closed)",
+            )
+        )
+    for key, reasons in (
+        ("refused", auth["standing_refused_by_reason"]),
+        ("not_covered", auth["standing_not_covered_by_reason"]),
+    ):
+        if auth["standing"][key]:
+            issues.append(
+                (
+                    WARN,
+                    f"{STANDING_APPROVAL_KINDS[key]} {auth['standing'][key]}행"
+                    f" ({_fmt_counts(reasons)})",
+                )
+            )
+    return issues
+
+
+def _fmt_authority(auth: Mapping[str, Any] | None) -> str:
+    if auth is None:
+        return "권한 행: 부팅 구간을 정할 수 없어 보지 못함"
+    st = auth["standing"]
+    detail = {
+        "consumed": auth["standing_consumed_by_action"],
+        "refused": auth["standing_refused_by_reason"],
+        "not_covered": auth["standing_not_covered_by_reason"],
+    }
+    parts = [f"BOUND {st['bound']}"]
+    for key, label in (
+        ("consumed", "CONSUMED"),
+        ("refused", "REFUSED"),
+        ("not_covered", "NOT_COVERED"),
+    ):
+        extra = f" ({_fmt_counts(detail[key])})" if st[key] else ""
+        parts.append(f"{label} {st[key]}{extra}")
+    return (
+        f"{AUTHORITY_WITNESS_LOST_KIND} {auth['witness_lost']}행"
+        f" · standing 승인 {' · '.join(parts)}"
+    )
+
+
 def _fmt_overrun_worst(overrun: Mapping[str, Any]) -> str:
     w = overrun.get("worst")
     if not w:
@@ -941,6 +1061,7 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
                         )
                     )
             issues.extend(_overrun_issues(st["pass_overrun"]))
+            issues.extend(_authority_issues(st["authority"]))
             if (
                 s.expected_code_digest
                 and st["code_digests"]
@@ -988,10 +1109,14 @@ def _read_pid(path: Path) -> int | None:
         return None
 
 
-def paper_pass_overrun(
-    cfg: BoardConfig, bootproof: Sequence[str], report: Mapping[str, Any] | None
-) -> dict[str, Any] | None:
-    """상주 paper 세션의 ``MARKETFEED_PASS_OVERRUN`` 요약. 잎이나 기준 seq 를 모르면 ``None``.
+def paper_segment_rows(
+    cfg: BoardConfig,
+    bootproof: Sequence[str],
+    report: Mapping[str, Any] | None,
+    kinds: Sequence[str],
+) -> list[tuple[int, str, dict[str, Any]]] | dict[str, str] | None:
+    """상주 paper 세션 부팅 구간의 ``kinds`` 행. 잎이나 기준 seq 를 모르면 ``None``,
+    잎을 읽지 못하면 ``{"error": …}``.
 
     범위는 드라이버가 부팅 전에 잡은 ``baseline_evidence_seq``(= 그때의 ``MAX(seq)``) 다음부터,
     이 세션 부팅 행 다음의 부팅 행 전까지다 — 다음 날 세션의 행을 붙이지 않는다. 잎은
@@ -1023,7 +1148,7 @@ def paper_pass_overrun(
             pinned_version=si.PINNED_EVIDENCE_SCHEMA_VERSION,
         )
         try:
-            rows = _kind_rows(conn, (BOOT_KIND, PASS_OVERRUN_KIND), after_seq=baseline)
+            rows = _kind_rows(conn, (BOOT_KIND, *kinds), after_seq=baseline)
         finally:
             conn.close()
     except (
@@ -1032,11 +1157,7 @@ def paper_pass_overrun(
         return {"error": f"{type(exc).__name__}: {exc}"}
     boots = [seq for seq, kind, _ in rows if kind == BOOT_KIND]
     hi = boots[1] if len(boots) > 1 else None
-    return pass_overrun_summary(
-        (seq, p)
-        for seq, kind, p in rows
-        if kind == PASS_OVERRUN_KIND and (hi is None or seq < hi)
-    )
+    return [row for row in rows if row[1] != BOOT_KIND and (hi is None or row[0] < hi)]
 
 
 def paper_facts(
@@ -1100,16 +1221,25 @@ def paper_facts(
         facts["report"]["flow_halted"] = breakdown.get("flow_halted")
     else:
         facts["report"] = None
-    facts["pass_overrun"] = paper_pass_overrun(cfg, bootproof, report)
-    if facts["pass_overrun"] is not None and "error" in facts["pass_overrun"]:
+    rows = paper_segment_rows(
+        cfg, bootproof, report, (PASS_OVERRUN_KIND, *AUTHORITY_KINDS)
+    )
+    if isinstance(rows, dict):  # {"error": …} — 두 요약 모두 «읽지 못함»
+        facts["pass_overrun"] = facts["authority"] = rows
         facts["issues"].append(
-            (
-                WARN,
-                f"{PASS_OVERRUN_KIND} 를 읽지 못했다 — {facts['pass_overrun']['error']}",
-            )
+            (WARN, f"{PASS_OVERRUN_KIND}·권한 행을 읽지 못했다 — {rows['error']}")
         )
+    elif rows is None:
+        facts["pass_overrun"] = facts["authority"] = None
     else:
+        facts["pass_overrun"] = pass_overrun_summary(
+            (seq, p) for seq, kind, p in rows if kind == PASS_OVERRUN_KIND
+        )
+        facts["authority"] = authority_summary(
+            row for row in rows if row[1] in AUTHORITY_KINDS
+        )
         facts["issues"].extend(_overrun_issues(facts["pass_overrun"]))
+        facts["issues"].extend(_authority_issues(facts["authority"]))
     if not facts["bootproof"] or BOOTPROOF_OK not in facts["bootproof"]:
         facts["issues"].append(
             (BLOCK, f"boot proof 가 OK 가 아니다: {facts['bootproof']!r}")
@@ -1268,6 +1398,7 @@ def _history_row(s: TenantSession) -> dict[str, Any]:
         "other_withheld": len(st.get("other_withheld_post_boot") or []),
         "band": None if st.get("band_observed") is None else len(st["band_observed"]),
         "overrun": (st.get("pass_overrun") or {}).get("rows"),
+        "witness_lost": (st.get("authority") or {}).get("witness_lost"),
         "b3_unresolved": (s.b3 or {}).get("unresolved"),
         "store_error": st.get("error"),
         "blocks": sum(1 for lv, _ in s.issues if lv == BLOCK),
@@ -1367,6 +1498,7 @@ def render_text(board: Mapping[str, Any]) -> str:
             else:
                 add("    VENUE_BAND_OBSERVED 0행")
             add(f"    {_fmt_overrun(st['pass_overrun'])}")
+            add(f"    {_fmt_authority(st['authority'])}")
         else:
             add("    저장소: 부팅 전이라 읽지 않음")
         band = "있음 " + _short(s["band_digest"]) if s["band_line_ok"] else "없음"
@@ -1431,17 +1563,24 @@ def render_text(board: Mapping[str, Any]) -> str:
             add(f"    {PASS_OVERRUN_KIND}: 읽지 못함 — {po['error']}")
         else:
             add(f"    {_fmt_overrun(po)}")
+        pa = paper.get("authority")
+        if pa is None:
+            add("    권한 행: 잎·기준 seq 를 몰라 보지 못함")
+        elif "error" in pa:
+            add(f"    권한 행: 읽지 못함 — {pa['error']}")
+        else:
+            add(f"    {_fmt_authority(pa)}")
     add("")
     if board["history"]:
         add("■ 최근 세션(날짜별)")
         add(
-            "  날짜      세션      상태        rc   틱   stale 기타 band 초과 B3unres 막힘"
+            "  날짜      세션      상태        rc   틱   stale 기타 band 초과 상실 B3unres 막힘"
         )
         for h in board["history"]:
             err = " 저장소모름" if h["store_error"] else ""
             add(
                 f"  {h['day']}  {h['label']:<8}  {h['status']:<10}  {str(h['run_rc']):>3}"
-                f"  {str(h['ticks']):>4}  {str(h['stale']):>4}  {h['other_withheld']:>3}  {str(h['band']):>3}  {str(h['overrun']):>3}"
+                f"  {str(h['ticks']):>4}  {str(h['stale']):>4}  {h['other_withheld']:>3}  {str(h['band']):>3}  {str(h['overrun']):>3}  {str(h['witness_lost']):>3}"
                 f"  {str(h['b3_unresolved']):>6}  {h['blocks']:>3}{err}"
             )
         add("")
