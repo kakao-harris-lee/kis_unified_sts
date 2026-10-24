@@ -61,6 +61,17 @@ def _render(
     )
 
 
+@pytest.fixture
+def stub_git_revision(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``main`` reads ``source_revision`` with ``git rev-parse HEAD`` before rendering.
+
+    A CLI test that is not about that read stubs it to ``_FAKE_REVISION`` — the same value
+    :func:`_render` passes — so it runs in the ``Dockerfile.test`` image, where ``/app`` has no
+    ``.git`` (#835, #895). The git refusal itself stays live in production.
+    """
+    monkeypatch.setattr(rpc, "_git_revision", lambda _source: _FAKE_REVISION)
+
+
 def _source_copy(tmp_path: Path) -> Path:
     dest = tmp_path / "source"
     shutil.copytree(_SOURCE, dest)
@@ -1571,7 +1582,7 @@ def test_external_mode_refuses_a_journal_path_that_does_not_exist(
 
 
 def test_synthetic_mode_refuses_a_journal_path(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], stub_git_revision: None
 ) -> None:
     """The mirror refusal, driven through the CLI so ``--journal-path``'s plumbing into
     :func:`render` is measured rather than assumed. The resident tree writes its own journal; a
@@ -1672,7 +1683,9 @@ def test_check_names_an_edit_to_the_copied_manifest(
 # ---- the 08:45 resident path (design §4.1 item 3) --------------------------
 
 
-def test_the_resident_driver_invocation_needs_no_new_argument(tmp_path: Path) -> None:
+def test_the_resident_driver_invocation_needs_no_new_argument(
+    tmp_path: Path, stub_git_revision: None
+) -> None:
     """Design §4.1 item 3, measured rather than reasoned.
 
     The host driver (``~/.config/kis-probes/tos_paper_session.py:306-316``) passes exactly
@@ -1712,4 +1725,5 @@ def test_the_resident_driver_invocation_needs_no_new_argument(tmp_path: Path) ->
     ):
         assert rendered.get(key), f"the driver reads {key!r} and it is missing or empty"
     assert rendered["instrument"] == _FAKE_INSTRUMENT
+    assert rendered["source_revision"] == _FAKE_REVISION
     assert Path(rendered["journal_path"]).is_file()
