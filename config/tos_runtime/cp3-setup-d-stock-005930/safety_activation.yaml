@@ -21,7 +21,8 @@
 
 activation:
   # 제안표 §4.3 식별자 규칙: `tos-paper-<무엇>-g<세대>`, 세대는 1.
-  activation_id: "tos-paper-activation-g1"
+  # 이 트리만 자기 id — 승인·확약이 들어가 LONG 의 활성화와 내용이 다르다(B4, 2026-10-24).
+  activation_id: "tos-paper-stock-005930-activation-g1"
   # 이 활성화가 고정하는 RuntimeSafetyProfile 세대 — safety_profile.yaml 의
   # `profile.profile_generation` 과 같아야 한다.
   profile_generation: 1
@@ -38,12 +39,15 @@ activation:
   envelope_digest: null
   profile_digest: null
   bundle_digest: null
-  # 제안표 §4.3 — 빈 것이 사실이다. 아직 기록된 승인도, 적합성 확약도 없다.
-  # (이 둘이 비면 ActivationInputs 의 staging_complete/attestation_complete 가
-  #  거짓이 되어 활성화가 보수적으로 막힌다 — 의도된 방향이다.)
-  scope: []
-  approval_ids: []
-  compatibility_attestation_refs: []
+  # B4 — operator approved 2026-10-24, 이 트리만(paper/LONG/SHORT 는 [] 그대로).
+  # 기록: docs/plans/2026-10-24-tos-stock-mock-activation-record.md (§1 승인 · §2 확약).
+  # ⚠ 런타임은 두 목록이 비어 있지 않은지만 본다(safety/profile.py _activation_inputs) —
+  #   id 를 기록으로 풀지도, 기한·서명을 검증하지도 않는다. 이 값의 무결성은 그 기록과
+  #   그것을 들인 PR 의 리뷰에 기댄다. 비우면 활성화가 다시 DEFERRED 로 막힌다.
+  # scope 는 런타임이 읽지 않는다 — 승인 범위를 기록으로 남긴다.
+  scope: ["MOCK_STOCK_ORDER"]
+  approval_ids: ["op-approval-20261024-stock-005930-activation-g1"]
+  compatibility_attestation_refs: ["compat-20261024-stock-005930-g1"]
   # 첫 세대라 선행 세대가 없다.
   predecessor_generation: null
   restrictive_generation_effects: []
