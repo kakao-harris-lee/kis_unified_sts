@@ -53,7 +53,28 @@ def _materialize(tmp_path: Path) -> Path:
             conn.executescript(sql.decode("utf-8"))
             conn.commit()
             conn.close()
+    _paper_leaf(state)
     return state
+
+
+PAPER_LEAF = "paper-data/A05611"
+EVIDENCE_COLUMNS_SQL = (
+    "CREATE TABLE entries (seq INTEGER PRIMARY KEY, segment_id TEXT, kind TEXT NOT NULL,"
+    " record_class TEXT NOT NULL, runtime_identity_json TEXT, payload_json TEXT NOT NULL,"
+    " entry_digest TEXT NOT NULL, chain_digest TEXT NOT NULL,"
+    " key_generation INTEGER NOT NULL, appended_at_monotonic_ns INTEGER NOT NULL)"
+)
+
+
+def _paper_leaf(state: Path) -> None:
+    """상주 paper 잎의 빈 evidence 저장소(픽스처는 paper 잎을 담지 않는다 — 실 호스트엔 늘 있다)."""
+    leaf = state / PAPER_LEAF
+    leaf.mkdir(parents=True)
+    conn = sqlite3.connect(leaf / "evidence.sqlite3")
+    conn.execute(EVIDENCE_COLUMNS_SQL)
+    conn.execute(f"PRAGMA user_version = {sb.si.PINNED_EVIDENCE_SCHEMA_VERSION}")
+    conn.commit()
+    conn.close()
 
 
 def _fake_proc(tmp_path: Path, state: Path, *, alive: bool = True) -> Path:
@@ -659,3 +680,207 @@ def test_n5_history_days_one_is_only_the_day(cfg: sb.BoardConfig):
     ]
     two = _board(replace(cfg, history_days=2), D1023)
     assert [h["day"] for h in two["history"]] == ["20261022", "20261023", "20261023"]
+
+
+# --- MARKETFEED_PASS_OVERRUN (#949) ---------------------------------------------
+#
+# 픽스처 long 잎의 부팅 행: seq 0(10-15) · 51085(10-22) · 113576(10-23). short 잎: seq 0(10-23).
+# 이 행은 날짜도 벽시계도 싣지 않으므로 세션 날짜의 경계는 곧 부팅 구간의 경계다.
+
+SCHEDULER_SRC = (
+    Path(__file__).resolve().parents[2]
+    / "tos/runtime/src/tos_runtime/marketfeed/scheduler.py"
+)
+
+
+def _overrun_payload(pass_ms: int, tick_ms: int) -> dict:
+    """런타임 ``TickScheduler._record_pass_overrun`` 의 행 모양 그대로(#949)."""
+    return {
+        "instrument": "A05611",
+        "budget_ms": 500,
+        "pass_ms": pass_ms,
+        "tick_ms": tick_ms,
+        "after_pass_ms": pass_ms - tick_ms,
+        "poll_interval_ms": 400,
+        "pass_allowance_ms": 100,
+    }
+
+
+def _insert(db: Path, rows: list[tuple[int, str, dict]]) -> None:
+    conn = sqlite3.connect(db)
+    for seq, kind, payload in rows:
+        conn.execute(
+            "INSERT INTO entries (seq, segment_id, kind, record_class, runtime_identity_json,"
+            " payload_json, entry_digest, chain_digest, key_generation, appended_at_monotonic_ns)"
+            " VALUES (?, NULL, ?, ?, NULL, ?, 'x', 'x', 0, 0)",
+            (seq, kind, kind, json.dumps({"masked_keys": [], "payload": payload})),
+        )
+    conn.commit()
+    conn.close()
+
+
+def _append_overrun(state: Path, leaf: str, seq: int, pass_ms: int, tick_ms: int = 50):
+    _insert(
+        state / LEAVES[leaf] / "evidence.sqlite3",
+        [(seq, sb.PASS_OVERRUN_KIND, _overrun_payload(pass_ms, tick_ms))],
+    )
+
+
+def test_overrun_kind_mirrors_the_runtime_constant():
+    # tools/ 는 tos_runtime 를 import 할 수 없다(방화벽) — 소스 줄로 거울을 대조한다.
+    assert (
+        f'_MARKETFEED_PASS_OVERRUN_KIND = "{sb.PASS_OVERRUN_KIND}"'
+        in SCHEDULER_SRC.read_text(encoding="utf-8")
+    )
+
+
+def test_overrun_zero_rows_shows_zero_and_raises_nothing(cfg: sb.BoardConfig):
+    board = _board(cfg, D1022)
+    st = _session(board, "long-20261022")["store"]
+    assert st["pass_overrun"] == {"rows": 0, "worst": None}
+    assert not [i for i in _issues(board) if sb.PASS_OVERRUN_KIND in i]
+    assert f"    {sb.PASS_OVERRUN_KIND} 0행" in sb.render_text(board)
+
+
+def test_overrun_rows_are_counted_per_tree(state: Path, cfg: sb.BoardConfig):
+    _append_overrun(state, "long-A05611", 120001, 640, tick_ms=120)
+    _append_overrun(state, "long-A05611", 120002, 910, tick_ms=150)
+    _append_overrun(state, "short-A05611", 17000, 700, tick_ms=90)
+    board = _board(cfg, D1023)
+    long_ = _session(board, "long-20261023")["store"]["pass_overrun"]
+    short = _session(board, "short-20261023")["store"]["pass_overrun"]
+    assert long_ == {
+        "rows": 2,
+        "worst": {
+            "seq": 120002,
+            "pass_ms": 910,
+            "budget_ms": 500,
+            "tick_ms": 150,
+            "after_pass_ms": 760,
+        },
+    }
+    assert (short["rows"], short["worst"]["pass_ms"]) == (1, 700)
+    warns = [i for i in _issues(board, sb.WARN) if sb.PASS_OVERRUN_KIND in i]
+    assert warns == [
+        f"long-20261023: {sb.PASS_OVERRUN_KIND} 2행 — 최악 pass 910ms > 창 500ms"
+        " (tick 150ms + post-pass 760ms, seq 120002)",
+        f"short-20261023: {sb.PASS_OVERRUN_KIND} 1행 — 최악 pass 700ms > 창 500ms"
+        " (tick 90ms + post-pass 610ms, seq 17000)",
+    ]
+    # 진단 행이다 — 막힘이 아니다.
+    assert not [i for i in _issues(board, sb.BLOCK) if sb.PASS_OVERRUN_KIND in i]
+    text = sb.render_text(board)
+    assert f"    {sb.PASS_OVERRUN_KIND} 2행 · 최악 pass 910ms > 창 500ms" in text
+    history = {(h["day"], h["label"]): h["overrun"] for h in board["history"]}
+    assert (history[("20261023", "long")], history[("20261023", "short")]) == (2, 1)
+
+
+def test_overrun_rows_of_another_day_are_excluded_at_the_boot_boundary(
+    state: Path, cfg: sb.BoardConfig
+):
+    # 10-22 부팅 구간의 마지막 seq 와 10-23 부팅 바로 다음 seq — 경계 양쪽 한 행씩.
+    _append_overrun(state, "long-A05611", 113575, 600)
+    _append_overrun(state, "long-A05611", 113577, 800)
+    on_1022 = _session(_board(cfg, D1022), "long-20261022")["store"]["pass_overrun"]
+    on_1023 = _session(_board(cfg, D1023), "long-20261023")["store"]["pass_overrun"]
+    assert (on_1022["rows"], on_1022["worst"]["seq"]) == (1, 113575)
+    assert (on_1023["rows"], on_1023["worst"]["seq"]) == (1, 113577)
+    # 다른 잎(short)에는 번지지 않는다.
+    assert _session(_board(cfg, D1023), "short-20261023")["store"]["pass_overrun"] == {
+        "rows": 0,
+        "worst": None,
+    }
+
+
+def test_paper_overrun_is_scoped_to_its_session(state: Path, cfg: sb.BoardConfig):
+    # 10-22: report.json(baseline 479138, data_dir) · 10-23: 진행 중, bootproof 만(baseline 540128).
+    boot = {"x": 1}
+    _insert(
+        state / PAPER_LEAF / "evidence.sqlite3",
+        [
+            (
+                479100,
+                sb.PASS_OVERRUN_KIND,
+                _overrun_payload(999, 10),
+            ),  # 10-22 baseline 이전
+            (479140, sb.BOOT_KIND, boot),
+            (479150, sb.PASS_OVERRUN_KIND, _overrun_payload(620, 10)),
+            (479160, sb.PASS_OVERRUN_KIND, _overrun_payload(880, 10)),
+            (540130, sb.BOOT_KIND, boot),
+            (540200, sb.PASS_OVERRUN_KIND, _overrun_payload(530, 10)),
+            (600000, sb.BOOT_KIND, boot),  # 다음 날 부팅
+            (600100, sb.PASS_OVERRUN_KIND, _overrun_payload(990, 10)),
+        ],
+    )
+    p1022 = _board(cfg, D1022)["paper"]["pass_overrun"]
+    p1023 = _board(cfg, D1023)["paper"]["pass_overrun"]
+    assert (p1022["rows"], p1022["worst"]["pass_ms"]) == (2, 880)
+    assert (p1023["rows"], p1023["worst"]["pass_ms"]) == (1, 530)
+    board = _board(cfg, D1023)
+    assert f"paper: {sb.PASS_OVERRUN_KIND} 1행 — 최악 pass 530ms" in "\n".join(
+        _issues(board, sb.WARN)
+    )
+    assert f"    {sb.PASS_OVERRUN_KIND} 1행 · 최악 pass 530ms" in sb.render_text(board)
+
+
+def test_paper_without_a_leaf_is_unknown_not_zero(state: Path, cfg: sb.BoardConfig):
+    shutil.rmtree(state / PAPER_LEAF)
+    board = _board(cfg, D1023)
+    po = board["paper"]["pass_overrun"]
+    assert "error" in po  # 잎(paper-data/A05611)이 없다 — 0 행으로 말하지 않는다
+    assert f"    {sb.PASS_OVERRUN_KIND}: 읽지 못함" in sb.render_text(board)
+    assert any(
+        i.startswith(f"paper: {sb.PASS_OVERRUN_KIND} 를 읽지 못했다")
+        for i in _issues(board, sb.WARN)
+    )
+
+
+def test_paper_empty_leaf_is_zero(cfg: sb.BoardConfig):
+    assert _board(cfg, D1023)["paper"]["pass_overrun"] == {"rows": 0, "worst": None}
+
+
+def test_paper_without_a_boot_proof_is_not_given_the_next_sessions_rows(
+    state: Path, cfg: sb.BoardConfig
+):
+    # #951 리뷰 LOW-1 의 입력: 10-22 런타임이 자기 TIME_SERVICE_STARTUP 을 쓰지 못했고(boot proof
+    # MISSING), 10-23 세션이 같은 잎에서 부팅했다. 고치기 전에는 «기준 뒤 두 번째 부팅»(600000)
+    # 이 상한이 되어 10-23 의 행(540200)이 10-22 에 붙었다.
+    proof = state / "paper-sessions" / "2026-10-22-084508-LONG" / "bootproof.txt"
+    lines = proof.read_text(encoding="utf-8").splitlines()
+    lines[0] = "boot proof: MISSING · genesis=False · rev 0cc899617f5b · A05611"
+    proof.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _insert(
+        state / PAPER_LEAF / "evidence.sqlite3",
+        [
+            (540130, sb.BOOT_KIND, {"x": 1}),
+            (540200, sb.PASS_OVERRUN_KIND, _overrun_payload(530, 10)),
+            (600000, sb.BOOT_KIND, {"x": 1}),
+        ],
+    )
+    board = _board(cfg, D1022)
+    assert board["paper"]["pass_overrun"] is None
+    assert (
+        f"    {sb.PASS_OVERRUN_KIND}: 잎·기준 seq 를 몰라 보지 못함"
+        in sb.render_text(board)
+    )
+    assert _board(cfg, D1023)["paper"]["pass_overrun"]["rows"] == 1
+
+
+def test_tenant_overrun_without_a_boot_segment_is_unseen_not_zero(
+    state: Path, cfg: sb.BoardConfig
+):
+    # short 잎의 유일한 부팅 행(seq 0)을 없애면 이 세션의 부팅 구간을 정할 수 없다.
+    conn = sqlite3.connect(state / LEAVES["short-A05611"] / "evidence.sqlite3")
+    conn.execute("DROP TRIGGER entries_no_delete")
+    conn.execute("DELETE FROM entries WHERE kind = ?", (sb.BOOT_KIND,))
+    conn.commit()
+    conn.close()
+    _append_overrun(state, "short-A05611", 17000, 700)
+    board = _board(cfg, D1023)
+    assert _session(board, "short-20261023")["store"]["pass_overrun"] is None
+    assert (
+        f"    {sb.PASS_OVERRUN_KIND}: 부팅 구간을 정할 수 없어 보지 못함"
+        in sb.render_text(board)
+    )
+    history = {(h["day"], h["label"]): h["overrun"] for h in board["history"]}
+    assert history[("20261023", "short")] is None

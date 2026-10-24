@@ -145,6 +145,15 @@ from pathlib import Path
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.workload import RuntimeIdentity
 
+from tos_runtime.authority.standing_cli import (
+    COMMAND as _STANDING_COMMAND,
+)
+from tos_runtime.authority.standing_cli import (
+    StandingApprovalArgs,
+    add_standing_approval_subparser,
+    dispatch_write_standing_approval,
+    standing_approval_args,
+)
 from tos_runtime.compose._backup_dispatch import (
     ColdBackupArgs,
     add_cold_backup_subparser,
@@ -226,6 +235,7 @@ _SUBCOMMANDS = (
     "rearm",
     "ack-alert",
     "nontrade-eval",
+    _STANDING_COMMAND,
 )
 
 #: Duplicated from :mod:`tos_runtime.operations.backup_set`'s own private
@@ -505,6 +515,7 @@ def build_parser() -> argparse.ArgumentParser:
     policy_digests_parser.add_argument("--config-dir", required=True, type=Path)
 
     add_cold_backup_subparser(subparsers)
+    add_standing_approval_subparser(subparsers)
     _add_rearm_ack_nontrade_subparsers(subparsers)
 
     return parser
@@ -573,6 +584,7 @@ def parse_args(
     | RearmArgs
     | AckAlertArgs
     | NontradeEvalArgs
+    | StandingApprovalArgs
 ):
     """Parse ``argv`` (defaults to ``sys.argv[1:]``) into the args object for whichever
     subcommand was named (or ``run``, implicitly — module docstring).
@@ -617,6 +629,8 @@ def parse_args(
         )
     if command == "cold-backup":
         return cold_backup_args(namespace)
+    if command == _STANDING_COMMAND:
+        return standing_approval_args(namespace)
     if command == "restore-drill":
         return RestoreDrillArgs(
             manifest=namespace.manifest,
@@ -891,6 +905,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if isinstance(args, ColdBackupArgs):
         return dispatch_cold_backup(args)
+
+    if isinstance(args, StandingApprovalArgs):
+        return dispatch_write_standing_approval(args)
 
     if isinstance(args, RestoreDrillArgs):
         if args.environment_label in _LIVE_ENVIRONMENT_LABELS:

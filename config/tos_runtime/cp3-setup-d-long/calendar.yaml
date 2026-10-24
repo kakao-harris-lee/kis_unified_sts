@@ -74,7 +74,7 @@ sessions:
 #          - {phase: CONTINUOUS, start: "HH:MM", end: "HH:MM", crosses_midnight: false}
 #    (정규 창에 PRE_OPEN/AFTER_HOURS 가 있는 클래스는 그날 그 창들도 공지대로 함께 적는다 —
 #     예외 목록이 정규 목록을 통째로 대신한다.)
-#    추가 후 운영자 확인: docs/runbooks/tos-paper-boot.md §7.2-f
+#    추가 후 운영자 확인: docs/runbooks/tos-paper-boot.md §7.2-g
 session_overrides: {}
 futures_expiry:
   # months = 매월(mini 월물 · 운영자 2026-09-24 개정 — 상단 주석) · 둘째 목요일

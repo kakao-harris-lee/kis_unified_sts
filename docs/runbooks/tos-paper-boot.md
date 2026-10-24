@@ -202,7 +202,7 @@ tools/tos_cp3/runners/install_tenant_cron.sh --apply         # 백업(crontab.ba
 **한 호출이 하는 일.** 잠금 → 같은 날 세션 디렉터리가 있으면 거부 → durable set 부모
 (§7.2-b)가 없으면 거부(첫 genesis 는 운영자 몫) → 그 방향의 어제 워크트리 제거(`--force` 없이)
 → fetch → `origin/main` 분리 워크트리 → **그 트리의** tenant 달력으로 휴장·주말 판정(+ 달력에
-아직 없는 KRX 연말 `2026-12-31`, `CP3_DAILY_EXTRA_CLOSED`) → `run_tenant_session.sh`(정지 = 그날 종료 + 5분, 평일 15:50 · 개장 지연일은 §7.2-f).
+아직 없는 KRX 연말 `2026-12-31`, `CP3_DAILY_EXTRA_CLOSED`) → `run_tenant_session.sh`(정지 = 그날 종료 + 5분, 평일 15:50 · 개장 지연일은 §7.2-g).
 
 **텔레그램 (briefing 채널 · 자격증명은 상주 래퍼와 같은 `$MAIN/.env` 두 줄).** 본문은 rc ·
 방향 · 날짜 · 경로뿐이다 — `runner.out` 은 옮기지 않는다(좌표 규율).
@@ -240,7 +240,66 @@ for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
 세션 쓰인다). 11-13 저녁에는
 `cold-backup-cp3-{long,short}.log` 에 새 잎이 함께 올라갔는지 본다(§7.7 — 래퍼는 `A0####` 잎을 순회).
 
-#### 7.2-f 개장 지연일(날짜별 세션 예외) — 수능일 등 (#924)
+#### 7.2-f CP-3 주식 MOCK 세션 (M2) — 첫 세션 2026-10-26(월) · 손으로 한 번 · cron 없음
+
+005930 · 1주 · Setup D LONG · 09:00–15:30 · **모의 계좌만**. 수용(rescope §3 M2) = 체결 1건 이상 + 사슬 연결.
+✅ 2026-10-24 오프라인 드라이런이 찾은 막힘 다섯은 **모두 main 에 해소**됐다(main `957507b9` 로 리허설 — 부팅 수용 · 접속 0) —
+B1 세션 안 승인 불가 → 세션 한정 상시 승인 #955 · B2 렌더본 `instance_path` · B3 OCP `wire_codec` → #956 · B4 활성 기록 빈 승인 id → #959 ·
+B5 개장 때 권한 증인 소멸 → #957(패스마다 heartbeat + 주식 트리만 `containment_bound_ms: 90000`). 다시 보이면 아래 «볼 것» 질의가 잡는다.
+
+**1회 준비(운영자).** `ST=~/.local/state/tos MAIN=/home/deploy/project/kis_unified_sts` · 정본은 `tools/tos_cp3/runners/setup_stock_mock_once.sh`
+(시험 `tests/tools/test_setup_stock_mock_once.py` — 홑·겹 따옴표 둘 다 벗긴다 · 700/600 · 재실행은 덮어쓰기 거부). origin/main 판을 그대로 돌린다:
+```bash
+git -C $MAIN fetch -q origin; bash <(git -C $MAIN show origin/main:tools/tos_cp3/runners/setup_stock_mock_once.sh)          # 점검만 — 무엇을 만들지 보인다
+bash <(git -C $MAIN show origin/main:tools/tos_cp3/runners/setup_stock_mock_once.sh) --apply  # data 부모 · ops · custody(+approvals) · manifest · transport
+```
+- `kis-mock-order-paper` = 트리 `MOCK_STOCK_ORDER.principal` 의 `{environment_label}` 치환값(custody 는 치환하지 않는다 — `tos-kis-mock-transport.md` §5).
+- 스크립트가 쓰는 `$ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml`(0600) = `tos-kis-mock-transport.md` §4 값 + `mode: live` · `endpoint_rest_base: "https://openapivts.koreainvestment.com:29443"`
+  · `price_scale: 100` · `request_timeout_s: 10` · `min_send_interval_ms: 2000` · `token_reissue_min_interval_s: 60` · `allow_plaintext_for_tests: false`
+  · `ACNT_PRDT_CD` = **계좌 뒤 2자리**(다르면 코덱이 송신 거부). §4 표의 「`mode: live` 무조건 거부」는 옛 문장 — 지금은 compose 가 `codec_bound=True` 를 준다.
+- **상시 승인(그날, 운영자 · #955)** — 파일 `$ST/cp3-setup-d-stock-custody/approvals/standing-session.yaml`(0600). 쓰는 때는 아래 «볼 것» 의 `render ok` 줄 뒤 · 첫 진입 전(런타임이 이미 떠 있어도 된다 — 첫 사용 때 결속).
+  승인 없이는 신호가 와도 4단계에서 멎는다(송신 0). MOCK 트리가 아니면 rc 1 로 아무것도 쓰지 않는다 · 덮어쓰기는 `--replace` 뿐.
+  **재작성**(예: `max_uses` 를 올림)은 운영자 권한이고 **재기동 뒤에** 적용된다 — 슬롯이 거래일로 키잉돼 이미 쓴 횟수는 그대로 센다.
+  **청산(10-26)**: 이 승인은 1주 진입 BUY 하나만 허락하고 청산은 승인되지 않는다(#960: CLOSE 명령이 BUY 로 만들어진다). 세션 뒤 모의 계좌에
+  1주 롱이 남는다 — 평탄하게 하려면 모의투자 HTS 에서 손으로 판다. ⛔ 청산을 제안별 승인 파일로 **절대** 승인하지 않는다(두 번째 1주를 **산다**).
+- **genesis** = 빈 잎 `$ST/cp3-setup-d-stock-005930-data/005930` 에 대한 첫 `run`(러너가 잎을 만든다 · 되돌릴 수 없다 · 승인 행위는 없다). 다음 날부터는 같은 잎을 잇는다.
+
+**08:55 시작(창 08:52–09:05: 첫 행은 09:01:0x 에 오고 첫 행 대기 상한이 600 s).** LONG 08:38·SHORT 08:40 는 **선물** REAL 키, 이 세션은 **주식** REAL 키(생산자·band)와 모의 키(런타임) — 지문이 서로 달라 분당 1회 토큰 발급이 겹치지 않는다.
+```bash
+D=$(TZ=Asia/Seoul date +%Y%m%d) RUN=${RUN:-1}; WT=$ST/measure/wt-cp3-stock-r$RUN-$D   # 같은 날 재기동은 RUN=2 로 이 블록을 다시
+git -C $MAIN fetch -q origin && git -C $MAIN worktree add -q --detach $WT origin/main && export TOS_REPO=$WT TOS_PYTHON=$MAIN/.venv/bin/python \
+  TOS_STOCK_SESSION_ROOT=$ST/cp3-sessions/stock-r$RUN-$D TOS_STOCK_DATA_PARENT=$ST/cp3-setup-d-stock-005930-data TOS_STOCK_ENV_MOCK=$MAIN/.env.mock \
+  TOS_STOCK_CUSTODY_ROOT=$ST/cp3-setup-d-stock-custody TOS_STOCK_KIS_MOCK_TRANSPORT_CONFIG=$ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml TOS_STOCK_STOP_AT=15:40 \
+  && mkdir -m 700 $TOS_STOCK_SESSION_ROOT && cd $WT && set -a && . tools/tos_cp3/runners/stock-mock-session.env.example && set +a \
+  && { nohup bash tools/tos_cp3/runners/run_tenant_session.sh >$TOS_STOCK_SESSION_ROOT/runner.out 2>&1 & echo $! >$TOS_STOCK_SESSION_ROOT/runner.pid; }   # 한 고리가 실패하면 아무것도 뜨지 않는다
+```
+```bash
+cd $WT && PYTHONPATH=tos/runtime/src:tos/src $MAIN/.venv/bin/python -c "import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))" \
+  write-standing-approval --config-dir "$TOS_STOCK_SESSION_ROOT/render" --custody-root "$TOS_STOCK_CUSTODY_ROOT" --environment-label paper --trading-date $(TZ=Asia/Seoul date +%F)
+# ⚠ `python -m tos_runtime.compose.cli …` 는 아무것도 하지 않고 rc 0 으로 끝난다(cli.py 에 __main__ 없음) — 위 `-c` 꼴만 쓴다. 실제 출력(리허설 10-24):
+#   write-standing-approval: wrote …/approvals/standing-session.yaml (artifact_digest=…, trading_date=20261026, actions=OPEN-LONG-BUY,CLOSE-SHORT-SELL)
+#   write-standing-approval: exit row cannot match until #960 (CLOSE commands are built as BUY)
+```
+**볼 것.** `session.log`: `credential separation ok` → `transport=kis-mock` → `first real row seen`(≈09:01 — `quote_initial_cursor: "153000"`(#922 미실측)이 장중 봉을 준다는 첫 증거. 600 s 안에 없으면 러너가 ABORT 하고 그날은 실측 결과로 남긴다) → `band line ok`(없으면 `BAND ABSENT` = 송신 0) → `=== BOOT`. `sts tos status` 는 `cp3-sessions/stock-<날짜>` 를 읽는다.
+```bash
+L=$ST/cp3-setup-d-stock-005930-data/005930; sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,COUNT(*) FROM entries WHERE kind IN ('BROKER_FACTS_OBSERVED','APPROVAL_STANDING_BOUND','APPROVAL_STANDING_CONSUMED','APPROVAL_STANDING_NOT_COVERED','APPROVAL_STANDING_REFUSED','SEND_SEALED','TRANSPORT_SEND','TRANSPORT_DRY_RUN','AUTHORITY_WITNESS_LOST','EGRESS_RESULT_CONSUMED','FILL_OBSERVED','POSTTRADE_FINALITY_PROOF','ENGINE_PROJECTION_RELEASED','MARKETFEED_PASS_OVERRUN') OR kind LIKE 'FILL_OBSERVER_%' GROUP BY 1"
+sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payload.step'),COUNT(*) FROM entries WHERE kind='FLOW_HALTED' GROUP BY 1"   # 어디서 멎나 — INDEPENDENT_APPROVAL 이면 승인 없음
+sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payload.reason'),COUNT(*) FROM entries WHERE kind='APPROVAL_STANDING_NOT_COVERED' GROUP BY 1"   # 승인 범위 밖인 이유
+sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,json_extract(payload_json,'\$.payload.halt_reason'),COUNT(*) FROM entries WHERE kind IN ('EVENT_CONSUMED','COORDINATOR_MESH_HELD','SEND_REFUSED') GROUP BY 1,2"   # B4: LIVE_SCOPE_NOT_AUTHORIZED · mesh activation_atomic(FLOW_HALTED 없음) · B5: SEND_REFUSED
+```
+**정지 · 킬스위치.** 새 셸이면 먼저 `ST=~/.local/state/tos D=<YYYYMMDD> RUN=<n>; TOS_STOCK_SESSION_ROOT=$ST/cp3-sessions/stock-r$RUN-$D`. 정상: `TENANT_STOP_AT` 에 러너가 스스로 멎는다(rc 0/143). 손 정지 = `kill -TERM $(cat $TOS_STOCK_SESSION_ROOT/runner.pid)`(러너가 런타임 → 생산자 순으로 멈춘다).
+러너가 죽었는데 런타임이 남았으면 `pkill -TERM -f "stock-r$RUN-$D/render"`. `AUTHORITY_WITNESS_LOST` 는 그 프로세스에서 영구다 — 회복은 재기동(시작 블록을 `RUN=2` 로)뿐. ⛔ **이미 나간 모의 주문의 취소는 런타임에 없다(#948) — KIS 모의투자 HTS 에서 손으로.**
+
+**장 마감 뒤 수용.** 같은 attempt 하나에 아래가 모두 있으면 M2 수용 — 승인(`APPROVAL_STANDING_CONSUMED` 의 `rcl_command_id` = RCL `ConsumeApprovalDecision` `iap-consumption:standing-approval:<YYYYMMDD>:…`) · `CommitReservation` · VERIFY_ITEM 17 · `SEND_SEALED`/`TRANSPORT_SEND` · `ACK` · `FILL_OBSERVED` + `FULL_FILL|PARTIAL_FILL` · `POSTTRADE_FINALITY_PROOF`(`broker-fqp-proof:<attempt>`) · RCL `release-<attempt>` · `ENGINE_PROJECTION_RELEASED`. 질의는 종류·개수·id 접두만 찍는다(예약 id·payload 에는 계좌가 있다 — 옮겨 적지 않는다).
+```bash
+sqlite3 -readonly $L/evidence.sqlite3 "SELECT COALESCE(json_extract(payload_json,'\$.payload.attempt_id'),replace(json_extract(payload_json,'\$.payload.idempotency_key'),'broker-fqp-proof:','')) a,kind,COUNT(*),group_concat(DISTINCT json_extract(payload_json,'\$.payload.egress_result_kind')) FROM entries WHERE kind IN ('VERIFY_ITEM','SEND_SEALED','TRANSPORT_SEND','EGRESS_RESULT_CONSUMED','FILL_OBSERVED','POSTTRADE_FINALITY_PROOF','ENGINE_PROJECTION_RELEASED') GROUP BY a,kind ORDER BY a,MIN(seq)"
+sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payload.action'),json_extract(payload_json,'\$.payload.rcl_command_id') FROM entries WHERE kind='APPROVAL_STANDING_CONSUMED'"
+sqlite3 -readonly $L/rcl.sqlite3 "SELECT seq,kind,substr(command_id,1,64) FROM entries WHERE kind IN ('ConsumeApprovalDecision','CommitReservation','ReleaseReservation') ORDER BY seq"
+```
+- **신호가 없으면**(`SEND_SEALED` 0 · `FLOW_HALTED` 가 `INDEPENDENT_APPROVAL` 이전에서만 · `COORDINATOR_MESH_HELD` 0) 코드 실패가 아니다 — 수용은 다음 거래일로 넘어간다(새 세션 디렉터리 · 같은 잎).
+- **되돌림.** 세션을 시작하지 않으면 끝이다 — LONG·SHORT·상주는 이 트리와 경로·키·잎을 공유하지 않는다. 송신을 막으려면 `$ST/cp3-setup-d-stock-custody/kis_mock.app_*` 를 지운다 — 부팅은 되지만 첫 토큰 사용(브로커 사실 GET·송신)이 거부돼 송신 0. 잎은 append-only 증거라 지우지 않는다.
+
+#### 7.2-g 개장 지연일(날짜별 세션 예외) — 수능일 등 (#924)
 
 KRX 가 어떤 날의 개장·종료를 옮기면(수능일: 주식·지수선물 각각 지연, 시장마다 다르게) 그 날짜를
 **캘린더 한 곳**에 적는다 — `config/tos_runtime/{paper,cp3-setup-d-long,cp3-setup-d-short,cp3-setup-d-stock-005930}/calendar.yaml`
