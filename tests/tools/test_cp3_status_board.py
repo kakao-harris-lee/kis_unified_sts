@@ -898,6 +898,8 @@ STANDING_SRC = (
 )
 ZERO_AUTHORITY = {
     "witness_lost": 0,
+    "witness_lost_mid_session": 0,
+    "witness_lost_mid_session_seqs": [],
     "standing": {"bound": 0, "consumed": 0, "refused": 0, "not_covered": 0},
     "standing_consumed_by_action": {},
     "standing_refused_by_reason": {},
@@ -940,12 +942,12 @@ def test_authority_zero_rows_shows_zero_and_raises_nothing(cfg: sb.BoardConfig):
     assert board["paper"]["authority"] == ZERO_AUTHORITY
     assert not [i for i in _issues(board) if "AUTHORITY" in i or "APPROVAL" in i]
     assert (
-        f"    {sb.AUTHORITY_WITNESS_LOST_KIND} 0행 · standing 승인 BOUND 0 · CONSUMED 0"
+        f"    {sb.AUTHORITY_WITNESS_LOST_KIND} 0행 (장중 0) · standing 승인 BOUND 0 · CONSUMED 0"
         " · REFUSED 0 · NOT_COVERED 0"
     ) in sb.render_text(board)
 
 
-def test_authority_rows_are_counted_per_tree_and_raised_as_warn(
+def test_authority_rows_are_counted_per_tree_and_mid_session_loss_blocks(
     state: Path, cfg: sb.BoardConfig
 ):
     _append_rows(
@@ -970,28 +972,34 @@ def test_authority_rows_are_counted_per_tree_and_raised_as_warn(
     short = _session(board, "short-20261023")["store"]["authority"]
     assert long_ == {
         "witness_lost": 1,
+        "witness_lost_mid_session": 1,  # 120016 > 첫 틱 113595
+        "witness_lost_mid_session_seqs": [120016],
         "standing": {"bound": 1, "consumed": 3, "refused": 1, "not_covered": 1},
         "standing_consumed_by_action": {"ENTER": 2, "EXIT": 1},
         "standing_refused_by_reason": {"digest_changed_since_bound": 1},
         "standing_not_covered_by_reason": {"uses_exhausted:ENTER": 1},
     }
-    assert short == ZERO_AUTHORITY | {"witness_lost": 2}
+    assert short == ZERO_AUTHORITY | {
+        "witness_lost": 2,
+        "witness_lost_mid_session": 2,
+        "witness_lost_mid_session_seqs": [17010, 17011],
+    }
     warns = [i for i in _issues(board, sb.WARN) if "AUTHORITY" in i or "APPROVAL" in i]
     assert warns == [
-        f"long-20261023: {sb.AUTHORITY_WITNESS_LOST_KIND} 1행 — 이후 송신은 재부팅 전까지"
-        " 거절된다(fail-closed)",
         "long-20261023: APPROVAL_STANDING_REFUSED 1행 (digest_changed_since_bound 1)",
         "long-20261023: APPROVAL_STANDING_NOT_COVERED 1행 (uses_exhausted:ENTER 1)",
-        f"short-20261023: {sb.AUTHORITY_WITNESS_LOST_KIND} 2행 — 이후 송신은 재부팅 전까지"
-        " 거절된다(fail-closed)",
     ]
-    # 런타임은 이 행들로 멈추지 않는다 — 막힘이 아니다.
-    assert not [
-        i for i in _issues(board, sb.BLOCK) if "AUTHORITY" in i or "APPROVAL" in i
+    tail = (
+        "; 첫 틱 뒤·송신 봉인 뒤, 또는 첫 틱을 정할 수 없음)"
+        " — 이후 송신은 재부팅 전까지 거절된다(fail-closed)"
+    )
+    assert [i for i in _issues(board, sb.BLOCK) if "AUTHORITY" in i] == [
+        f"long-20261023: {sb.AUTHORITY_WITNESS_LOST_KIND} 장중 1행 (seq 120016{tail}",
+        f"short-20261023: {sb.AUTHORITY_WITNESS_LOST_KIND} 장중 2행 (seq 17010,17011{tail}",
     ]
     text = sb.render_text(board)
     assert (
-        f"    {sb.AUTHORITY_WITNESS_LOST_KIND} 1행 · standing 승인 BOUND 1"
+        f"    {sb.AUTHORITY_WITNESS_LOST_KIND} 1행 (장중 1) · standing 승인 BOUND 1"
         " · CONSUMED 3 (ENTER 2 · EXIT 1) · REFUSED 1 (digest_changed_since_bound 1)"
         " · NOT_COVERED 1 (uses_exhausted:ENTER 1)"
     ) in text
@@ -1064,3 +1072,159 @@ def test_paper_authority_without_a_boot_proof_is_unseen(
     board = _board(cfg, D1022)
     assert board["paper"]["authority"] is None
     assert "    권한 행: 잎·기준 seq 를 몰라 보지 못함" in sb.render_text(board)
+
+
+# --- 증인 상실: 장 전(설계상) vs 장중 — 위치로 가른다(#962 리뷰 MEDIUM) ----------
+# long 10-23: 부팅 seq 113576, 첫 틱 evidence seq 113595.
+
+
+def test_a_pre_open_loss_before_the_first_tick_does_not_block(
+    state: Path, cfg: sb.BoardConfig
+):
+    _append_rows(state, "long-A05611", [(113580, _lost())])
+    board = _board(cfg, D1023)
+    auth = _session(board, "long-20261023")["store"]["authority"]
+    assert (auth["witness_lost"], auth["witness_lost_mid_session"]) == (1, 0)
+    # 장 전 설계상 상실은 본문 수로만 보인다 — 막힘도 확인 줄도 없다.
+    assert not [i for i in _issues(board) if sb.AUTHORITY_WITNESS_LOST_KIND in i]
+    assert f"    {sb.AUTHORITY_WITNESS_LOST_KIND} 1행 (장중 0)" in sb.render_text(board)
+    history = {(h["day"], h["label"]): h for h in board["history"]}
+    assert (
+        history[("20261023", "long")]["witness_lost"],
+        history[("20261023", "long")]["witness_lost_mid_session"],
+    ) == (1, 0)
+
+
+def test_stock_mock_loss_at_1030_after_ticks_is_mid_session():
+    # stock-r1-20261026 모양: 09:01 봉의 첫 틱 seq 1000, 10:30 상실 seq 50000(틱 뒤), 송신 없음.
+    auth = sb.authority_summary(
+        [(50000, sb.AUTHORITY_WITNESS_LOST_KIND, {})],
+        first_tick_seq=1000,
+        first_send_seq=None,
+    )
+    assert (
+        auth["witness_lost_mid_session"],
+        auth["witness_lost_mid_session_seqs"],
+    ) == (
+        1,
+        [50000],
+    )
+    assert [lv for lv, _ in sb._authority_issues(auth)] == [sb.BLOCK]
+
+
+def test_a_loss_after_a_send_sealed_blocks_even_before_the_first_tick(
+    state: Path, cfg: sb.BoardConfig
+):
+    _append_rows(
+        state,
+        "long-A05611",
+        [(113578, (sb.SEND_SEALED_KIND, {"x": 1})), (113580, _lost())],
+    )
+    board = _board(cfg, D1023)
+    auth = _session(board, "long-20261023")["store"]["authority"]
+    assert auth["witness_lost_mid_session_seqs"] == [113580]
+    assert any(
+        i.startswith(f"long-20261023: {sb.AUTHORITY_WITNESS_LOST_KIND} 장중 1행")
+        for i in _issues(board, sb.BLOCK)
+    )
+
+
+def test_a_loss_without_tick_information_blocks(state: Path, cfg: sb.BoardConfig):
+    # paper 10-23: 부팅 뒤 상실, EVENT_HANDLING_STARTED 없음 → 첫 틱을 정할 수 없다 → 장중.
+    _insert(
+        state / PAPER_LEAF / "evidence.sqlite3",
+        [(540130, sb.BOOT_KIND, {"x": 1}), (540140, *_lost())],
+    )
+    board = _board(cfg, D1023)
+    assert board["paper"]["authority"]["witness_lost_mid_session_seqs"] == [540140]
+    assert any(
+        i.startswith(f"paper: {sb.AUTHORITY_WITNESS_LOST_KIND} 장중 1행")
+        for i in _issues(board, sb.BLOCK)
+    )
+    assert (
+        sb.authority_summary(
+            [(5, sb.AUTHORITY_WITNESS_LOST_KIND, {})],
+            first_tick_seq=None,
+            first_send_seq=None,
+        )["witness_lost_mid_session"]
+        == 1
+    )
+
+
+def test_paper_pre_open_loss_before_its_first_handled_tick_is_quiet(
+    state: Path, cfg: sb.BoardConfig
+):
+    _insert(
+        state / PAPER_LEAF / "evidence.sqlite3",
+        [
+            (540130, sb.BOOT_KIND, {"x": 1}),
+            (540140, *_lost()),
+            (540150, sb.HANDLING_STARTED_KIND, {"x": 1}),
+        ],
+    )
+    board = _board(cfg, D1023)
+    auth = board["paper"]["authority"]
+    assert (auth["witness_lost"], auth["witness_lost_mid_session"]) == (1, 0)
+    assert not [i for i in _issues(board) if sb.AUTHORITY_WITNESS_LOST_KIND in i]
+
+
+def test_send_and_handling_kinds_mirror_the_runtime_constants():
+    src = (
+        Path(__file__).resolve().parents[2]
+        / "tos/runtime/src/tos_runtime/riskstate/flow_observation.py"
+    ).read_text(encoding="utf-8")
+    assert f'_SEND_SEALED_KIND = "{sb.SEND_SEALED_KIND}"' in src
+    assert f'_HANDLING_STARTED_KIND = "{sb.HANDLING_STARTED_KIND}"' in src
+
+
+def test_history_label_column_fits_a_two_digit_stock_run():
+    row = {
+        "day": "20261026",
+        "label": "stock-r10",
+        "status": "ENDED",
+        "run_rc": 0,
+        "ticks": 1,
+        "stale": 0,
+        "other_withheld": 0,
+        "band": 0,
+        "overrun": 0,
+        "witness_lost": 0,
+        "witness_lost_mid_session": 0,
+        "b3_unresolved": None,
+        "store_error": None,
+        "blocks": 0,
+    }
+    short = row | {"label": "long"}
+    board = {
+        "date": "2026-10-26",
+        "state_dir": "/x",
+        "generated_kst": "t",
+        "issues": [],
+        "tenant_sessions": [],
+        "cron": {},
+        "paper": {"live_check": False, "session": None},
+        "history": [row, short],
+    }
+    lines = [
+        ln for ln in sb.render_text(board).splitlines() if ln.startswith("  20261026")
+    ]
+    # 라벨 뒤 상태 칸이 두 줄에서 같은 열에서 시작한다.
+    assert lines[0].index("ENDED") == lines[1].index("ENDED")
+
+
+def test_a_mid_session_loss_turns_the_exit_code_to_1(tmp_path: Path, state: Path):
+    # 픽스처 10-22 는 stale 비율로 이미 막힘이다 — 그 판정만 풀어 상실 하나의 효과를 본다.
+    config = tmp_path / "board.yaml"
+    config.write_text(
+        sb.DEFAULT_CONFIG_PATH.read_text(encoding="utf-8").replace(
+            "stale_refusal_ratio_max: 0.005", "stale_refusal_ratio_max: 0.5"
+        ),
+        encoding="utf-8",
+    )
+
+    def rc() -> int:
+        return sb.run(config_path=config, state_dir=str(state), date="2026-10-22")[1]
+
+    assert rc() == 0
+    _append_rows(state, "long-A05611", [(60000, _lost())])  # 10-22 첫 틱 51104 뒤
+    assert rc() == 1
