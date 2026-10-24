@@ -76,6 +76,7 @@ from tos.engine import (
 from tos_runtime.brokercap import is_broker_reaching
 from tos_runtime.calendar.config import load_calendar_config
 from tos_runtime.calendar.ports import WallClockReference
+from tos_runtime.compose._authority_heartbeat import with_authority_heartbeat
 from tos_runtime.compose._broker_facts_wiring import build_broker_facts
 from tos_runtime.compose._broker_posttrade_wiring import (
     attach_fill_observer,
@@ -625,9 +626,9 @@ def compose_paper_runtime(
         credential_sessions=composed.kis_credential_sessions,
         broker_scopes=boot.broker_scopes,
         runtime_identity=boot.identity,
-        # PR-3b follow-up — the session loop's one post-pass caller: it polls
-        # `composed.fill_observer` (stock MOCK boots only), read per call, not captured here.
-        after_pass=fill_observer_pass(composed),
+        # Post-pass: the B5 authority witness heartbeat, then PR-3b's fill observer poll
+        # (`composed.fill_observer`, stock MOCK boots only, read per call, not captured here).
+        after_pass=with_authority_heartbeat(composed, fill_observer_pass(composed)),
     )
     # TOS Phase 5 W4 (plan §2 decision 11) — operations facts + (optional) operator
     # projection, wired last: every durable fact this reads (evidence/RCL/inbox,

@@ -76,6 +76,8 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
     # PR-3a (운영자 결정 2026-10-23): this tree, and only this tree, is the MOCK order tree.
     "broker_scopes.yaml": frozenset({"active_scope", "scopes.2.profile_evidence_ok"}),
     "coordinator_preconditions.yaml": frozenset({"nonlive_broker_consuming.admitted"}),
+    # B5 (operator approved 2026-10-24): the witness bound covers the 60 s closed cadence.
+    "authority.yaml": frozenset({"containment_bound_ms"}),
     # B4 (operator approved 2026-10-24): the recorded activation approval + attestation.
     "safety_activation.yaml": frozenset(
         {
