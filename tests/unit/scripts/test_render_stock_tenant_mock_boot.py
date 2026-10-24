@@ -14,9 +14,12 @@ off-repo render reaches, so this file renders for real — ``render_paper_config
 The boot runs in a subprocess (this legacy-side file may not import ``tos``/``tos_runtime``).
 It follows the production compose path (``load_construction_config`` + ``compose_paper_runtime``
 with ``TransportKind.KIS_MOCK``, the tree's own policies, the runtime's default providers) with
-three test seams, the same ones ``tos/runtime/tests/compose/test_kis_mock_e2e_honesty.py`` uses:
-the MOCK_VTS document's ``rest_base`` and the sealed egress endpoint point at a ``127.0.0.1``
-fake KIS server, and the session clock is a fixed Monday 10:00 KST. ``kis_mock_transport.yaml``
+four test seams. Three are the ones ``tos/runtime/tests/compose/test_kis_mock_e2e_honesty.py``
+uses: the MOCK_VTS document's ``rest_base`` and the sealed egress endpoint point at a
+``127.0.0.1`` fake KIS server, and the session clock is a fixed Monday 10:00 KST. The fourth is
+``release.yaml::expected_dependency_set_digest``, a property of the deploy host's interpreter
+(``tools/tos_redigest.py``), set to this interpreter's measured value; the code digest is not
+touched. ``kis_mock_transport.yaml``
 is ``mode: dry_run``: no order POST is possible, and the tests assert none happened.
 
 Two further blockers sit behind B2/B3 and are NOT fixed here. Each has a test pinning the
@@ -102,6 +105,7 @@ from tos_runtime.compose import _transport_wiring
 from tos_runtime.compose._construction_config import load_construction_config
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.compose.root import compose_paper_runtime
+from tos_runtime.operations.dependency_admission import observe_dependency_set_digest
 from tos_runtime.transport.kis_mock.broker_facts import load_broker_facts_config
 
 args = json.loads(sys.argv[1])
@@ -138,6 +142,15 @@ raw = yaml.safe_load(egress.read_text(encoding="utf-8"))
 out["committed_egress_endpoint"] = raw["endpoint"]["value"]
 raw["endpoint"]["value"] = server.rest_base + order_path
 egress.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8")
+# The dependency-set pin is a property of the deploy host's interpreter, not of the commit
+# (tools/tos_redigest.py "Only expected_code_digest"): this interpreter's own value goes in.
+# The code-digest pin is left exactly as committed.
+release = render / "release.yaml"
+lines = release.read_text(encoding="utf-8").split("\n")
+hits = [i for i, line in enumerate(lines) if line.startswith("expected_dependency_set_digest:")]
+assert len(hits) == 1, hits
+lines[hits[0]] = f'expected_dependency_set_digest: "{observe_dependency_set_digest()}"'
+release.write_text("\n".join(lines), encoding="utf-8")
 transport = yaml.safe_load(Path(args["transport_template"]).read_text(encoding="utf-8"))
 transport["endpoint_rest_base"] = server.rest_base
 (render / "kis_mock_transport.yaml").write_text(yaml.safe_dump(transport), encoding="utf-8")
