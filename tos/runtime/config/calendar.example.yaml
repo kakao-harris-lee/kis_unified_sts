@@ -71,3 +71,15 @@ closed_phase: null
 # `futures_expiry: {}` (no expiry rules for any class) is an accepted,
 # deliberate value.
 futures_expiry: null
+
+# OPTIONAL (issue #924) — date-specific session exceptions, e.g. an exchange
+# notice that moves one day's open/close. "YYYY-MM-DD" -> override:
+#   - reason: non-empty string (cite the exchange notice)
+#   - sessions: instrument_class -> a NON-EMPTY window list that replaces that
+#     class's regular windows on that date only (classes not named keep theirs).
+#     Windows take phase/start/end/crosses_midnight like above, but no `days`
+#     (the date is the day) and crosses_midnight must be false; each phase must
+#     be one the class's regular windows already produce.
+#   - a date may not also be a holiday (a closed day belongs in `holidays`).
+# Absent or `{}` = no dated exceptions; `null` is refused as named-TBD.
+session_overrides: {}
