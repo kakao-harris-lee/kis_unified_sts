@@ -243,12 +243,14 @@ for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
 #### 7.2-f CP-3 주식 MOCK 세션 (M2) — 첫 세션 2026-10-26(월) · 손으로 한 번 · cron 없음
 
 005930 · 1주 · Setup D LONG · 09:00–15:30 · **모의 계좌만**. 수용(rescope §3 M2) = 체결 1건 이상 + 사슬 연결.
-⛔ 막힘 셋(2026-10-24 오프라인 드라이런에서 발견) — 고침이 main 에 없으면 결과가 이미 정해져 있다.
+⛔ 막힘 다섯(2026-10-24 오프라인 드라이런에서 발견) — 고침이 main 에 없으면 결과가 이미 정해져 있다. B2·B3 고침 = PR #956.
 B2 렌더본 `broker_scopes.yaml::instance_path`(`../../../docs/…`)가 렌더 디렉터리 기준이라 **부팅 거부** ·
 B3 트리 `order_construction_policy.yaml::_runtime.wire_codec: null` → kis-mock **부팅 거부** ·
 B1 승인 파일 `approvals/<proposal digest>.yaml` 은 제안마다 digest 가 새로 나와 세션 안에서 줄 수 없다 → **송신 0**.
-   운영자 결정 2026-10-24: **세션 한정 상시 승인**(트리·전략·005930·LONG·1주·거래일·MOCK scope 결속 · `max_uses` 를 RCL 로 소비 · REAL 불가) — `feature/tos-standing-session-approval`.
-⛔ **게이트**: 승인 PR 과 `fix/cp3-stock-mock-boot`(B2·B3 코드 고침) **둘 다** 개장 전에 main 에 머지돼 있어야 한다. 아니면 세션은 하루 미룬다.
+   운영자 결정 2026-10-24: **세션 한정 상시 승인**(트리·전략·005930·LONG·1주·거래일·MOCK scope 결속 · `max_uses` 를 RCL 로 소비 · REAL 불가) — PR #955.
+B4 `safety_activation.yaml` 의 `approval_ids: []`·`compatibility_attestation_refs: []` → 활성 DEFERRED · mesh 보류 → 매 틱 1단계 전 `LIVE_SCOPE_NOT_AUTHORIZED` → **송신 0** ·
+B5 `authority.yaml::containment_bound_ms: 1000` + 권한 증인은 부팅·송신 경계에서만 재확인 → 부팅 1 s 뒤 신호는 CURRENTNESS UNKNOWN `SEND_REFUSED` → **송신 0**.
+⛔ **게이트**: #955 · #956 · B4·B5 고침이 **모두** 개장 전에 main 에 머지돼 있어야 한다. 아니면 세션은 하루 미룬다.
 B2 **비상용 우회**(bootfix PR 의 B2 부분만 빠졌을 때만): 렌더가 `$ST/cp3-sessions/<dir>/render` 이면 `../../../` = `$ST` 라, 시작 블록 4줄째가 그 자리에 문서를 복사한다.
 
 **1회 준비(운영자).** `ST=~/.local/state/tos MAIN=/home/deploy/project/kis_unified_sts` · 계좌는 `.env.mock` 의 `KIS_STOCK_ACCOUNT_NO`(10자리 8-2).
@@ -283,7 +285,8 @@ cd $WT && PYTHONPATH=tos/runtime/src:tos/src $MAIN/.venv/bin/python -m tos_runti
 **볼 것.** `session.log`: `credential separation ok` → `transport=kis-mock` → `first real row seen`(≈09:01 — `quote_initial_cursor: "153000"`(#922 미실측)이 장중 봉을 준다는 첫 증거. 600 s 안에 없으면 러너가 ABORT 하고 그날은 실측 결과로 남긴다) → `band line ok`(없으면 `BAND ABSENT` = 송신 0) → `=== BOOT`. `sts tos status` 는 `cp3-sessions/stock-<날짜>` 를 읽는다.
 ```bash
 L=$ST/cp3-setup-d-stock-005930-data/005930; sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,COUNT(*) FROM entries WHERE kind IN ('BROKER_FACTS_OBSERVED','APPROVAL_STANDING_BOUND','APPROVAL_STANDING_CONSUMED','APPROVAL_STANDING_NOT_COVERED','APPROVAL_STANDING_REFUSED','SEND_SEALED','TRANSPORT_SEND','TRANSPORT_DRY_RUN','EGRESS_RESULT_CONSUMED','FILL_OBSERVED','POSTTRADE_FINALITY_PROOF','ENGINE_PROJECTION_RELEASED','MARKETFEED_PASS_OVERRUN') OR kind LIKE 'FILL_OBSERVER_%' GROUP BY 1"
-sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payload.step'),COUNT(*) FROM entries WHERE kind='FLOW_HALTED' GROUP BY 1"   # 어디서 멎나 — INDEPENDENT_APPROVAL 이면 B1
+sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payload.step'),COUNT(*) FROM entries WHERE kind='FLOW_HALTED' GROUP BY 1"   # 어디서 멎나 — INDEPENDENT_APPROVAL 이면 승인 없음
+sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,json_extract(payload_json,'\$.payload.halt_reason'),COUNT(*) FROM entries WHERE kind IN ('EVENT_CONSUMED','COORDINATOR_MESH_HELD') GROUP BY 1,2"   # B4 꼴: 1단계 전에 멎는다(FLOW_HALTED 없음)
 ```
 **정지 · 킬스위치.** 정상: `TENANT_STOP_AT` 에 러너가 스스로 멎는다(rc 0/143). 손 정지 = `kill -TERM $(cat $TOS_STOCK_SESSION_ROOT/runner.pid)`(러너가 런타임 → 생산자 순으로 멈춘다).
 러너가 죽었는데 런타임이 남았으면 `pkill -TERM -f "stock-$D/render"`. 이미 나간 모의 주문의 취소는 런타임에 없다(#948) — KIS 모의투자 HTS 에서 손으로.
@@ -294,7 +297,7 @@ sqlite3 -readonly $L/evidence.sqlite3 "SELECT COALESCE(json_extract(payload_json
 sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payload.action'),json_extract(payload_json,'\$.payload.rcl_command_id') FROM entries WHERE kind='APPROVAL_STANDING_CONSUMED'"
 sqlite3 -readonly $L/rcl.sqlite3 "SELECT seq,kind,substr(command_id,1,64) FROM entries WHERE kind IN ('ConsumeApprovalDecision','CommitReservation','ReleaseReservation') ORDER BY seq"
 ```
-- **신호가 없으면**(`SEND_SEALED` 0 · `FLOW_HALTED` 가 `INDEPENDENT_APPROVAL` 이전에서만) 코드 실패가 아니다 — 수용은 다음 거래일로 넘어간다(새 세션 디렉터리 · 같은 잎).
+- **신호가 없으면**(`SEND_SEALED` 0 · `FLOW_HALTED` 가 `INDEPENDENT_APPROVAL` 이전에서만 · `COORDINATOR_MESH_HELD` 0) 코드 실패가 아니다 — 수용은 다음 거래일로 넘어간다(새 세션 디렉터리 · 같은 잎).
 - **되돌림.** 세션을 시작하지 않으면 끝이다 — LONG·SHORT·상주는 이 트리와 경로·키·잎을 공유하지 않는다. 송신을 영구히 막으려면 `$C/kis_mock.app_*` 를 지운다(부팅이 거부된다). 잎은 append-only 증거라 지우지 않는다.
 
 ### 7.4 cron 두 줄 — ✅ **설치됐다 (운영자 2026-10-03 15:43 KST)**
