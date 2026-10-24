@@ -44,6 +44,13 @@ witness_request_timeout_s: 2.0
 # ⚠ It does not interrupt a request in flight — that is the timeout's job. Removing the wait
 # from the session-loop thread altogether is issue #950 (thread-safety of the shared KIS
 # credential session and the single-thread sqlite evidence store).
+# ⚠ What this value trades away (#949 r2 MEDIUM-2): a broker that WORKS but is slow enough that
+# the walk cannot finish inside the deadline — say three or more pages at ~0.8 s each — is cut
+# off on every poll and its fill is never observed, visible as repeated
+# FILL_OBSERVER_READ_FAILED rows and then one FILL_OBSERVER_OVERDUE after overdue_after_ms
+# (10 min). That is the intended fail-closed direction (a held reservation, never a guessed
+# fill), but it IS an operator matter: raise this value for a slow venue rather than wait for
+# the overdue row to explain itself.
 poll_deadline_ms: 1500
 # An ACKed order with no terminal row after this long records one FILL_OBSERVER_OVERDUE row
 # (record only — no result is guessed). 10 minutes: a 1-share limit order on 005930 that has not

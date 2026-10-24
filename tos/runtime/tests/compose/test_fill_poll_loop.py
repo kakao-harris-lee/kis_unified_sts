@@ -476,7 +476,7 @@ def test_the_observer_get_is_bounded_by_its_own_timeout_not_the_order_paths(
     _close(runtime)
 
 
-def test_a_pass_that_outruns_its_allowance_leaves_one_overrun_row(
+def test_a_pass_that_outruns_the_reserved_window_leaves_one_overrun_row(
     tmp_path: Path,
     config_dir: Path,
     data_dir: Path,
@@ -485,8 +485,9 @@ def test_a_pass_that_outruns_its_allowance_leaves_one_overrun_row(
     server,
 ) -> None:
     """#949 review HIGH (b), end to end through a real composed loop: the fake server holds the
-    order inquiry for longer than ``journal_pass_allowance_ms``, so the pass that polls it
-    overruns, and the durable store says so — with the hook's share split out from the tick's.
+    order inquiry for longer than the whole reserved window (``poll_interval_ms`` 20 +
+    ``journal_pass_allowance_ms`` 100), so the pass that polls it overruns, and the durable
+    store says so — with the hook's share split out from the tick's.
 
     Without this row the only trace of a slow hook is a ``STALE`` field, which looks exactly
     like a late producer (``scheduler.py``'s own post-pass-hook paragraph).
@@ -507,7 +508,9 @@ def test_a_pass_that_outruns_its_allowance_leaves_one_overrun_row(
     overruns = _rows(runtime, "MARKETFEED_PASS_OVERRUN")
     assert len(overruns) >= 1
     row = overruns[0]
-    assert row["budget_ms"] == _JOURNAL_PASS_ALLOWANCE_MS
+    # The threshold is the whole reserved window, interval + allowance (#949 r2 MEDIUM-3).
+    assert row["budget_ms"] == _FAST_POLL_INTERVAL_MS + _JOURNAL_PASS_ALLOWANCE_MS
+    assert row["pass_allowance_ms"] == _JOURNAL_PASS_ALLOWANCE_MS
     assert row["pass_ms"] > row["budget_ms"]
     # The hook's share, not the tick's, is what blew the budget — that is the whole point of
     # recording both halves.
@@ -516,7 +519,7 @@ def test_a_pass_that_outruns_its_allowance_leaves_one_overrun_row(
     _close(runtime)
 
 
-def test_a_pass_inside_its_allowance_leaves_no_overrun_row(
+def test_a_pass_inside_the_reserved_window_leaves_no_overrun_row(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
     """The row must not appear on a healthy session's every pass: a synthetic boot with no

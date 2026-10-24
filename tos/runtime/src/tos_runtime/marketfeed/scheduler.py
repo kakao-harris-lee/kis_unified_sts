@@ -56,13 +56,35 @@ each deliberate:
   3. **Every pass is measured** (:meth:`TickScheduler._record_pass_overrun`), so a ``STALE``
      field caused by this hook is distinguishable from a late producer.
 
-  ⚠ **Residual, stated rather than implied:** a request already in flight cannot be
-  interrupted, so one poll can still stretch its pass by up to the deadline plus one timeout
-  (~3.5 s), at most once per the observer's own 3 s cadence, and bars arriving inside that
-  window read ``STALE``. Removing the wait outright means moving the broker read off this
-  thread, which the shared KIS credential session (one token lifecycle per app key, C-2) and
-  the single-thread sqlite evidence store do not currently allow: measured, and tracked as
-  issue #950, which owns this residual.
+  ⚠ **Residual, stated rather than implied** (#949 r2 MEDIUM-1 corrected the arithmetic
+  below). Two terms, both on this thread, both recorded by the overrun row, both owned by
+  issue #950:
+
+  - **The observer's own poll**: a request already in flight cannot be interrupted, so a poll
+    can stretch its pass by up to ``poll_deadline_ms`` plus one ``witness_request_timeout_s``
+    (1.5 + 2 = ~3.5 s), at most once per the observer's own ``poll_interval_ms`` (3 s).
+  - **The release path, which the deadline does NOT bound**: a terminal fill goes
+    ``_sink`` -> :meth:`~tos_runtime.engine.driver.EngineDriver.enqueue_and_run` -> finality ->
+    the release consumer's reconciliation -> ``witness.observe``, which runs its own
+    continuation walks (balance, plus the orders of each date in scope) with no deadline —
+    worst case ``witness_request_timeout_s`` x ``max_pages`` x (1 + dates), i.e. tens of
+    seconds against a sick broker, ~700 ms against a healthy one. It happens on the pass where
+    a fill is applied (once per attempt) and again per ``finality_retry_interval_ms`` (60 s)
+    while a release is stuck. A deadline there would make a slow-but-working broker HOLD
+    capacity instead of releasing it, which is a release-semantics change this lane did not
+    take (#949 r2 MEDIUM-1 left it optional, #950 owns it).
+
+  Removing the wait outright means moving these reads off this thread, which the shared KIS
+  credential session (one token lifecycle per app key, C-2) and the single-thread sqlite
+  evidence store do not currently allow: measured, and tracked as issue #950.
+
+**Every journal-intake tree gets the compensation and the overrun row, not only the stock
+one** (#949 r2 LOW-1). ``journal_pass_allowance_ms`` is required for ``intake_kind: journal``,
+so paper and the CP-3 LONG/SHORT trees are measured and compensated too, from their next boot
+— their pass period becomes the configured ``poll_interval_ms`` instead of
+``poll_interval_ms + tick``. Those trees have no post-pass hook at all (no fill observer), so
+the change is a few milliseconds of period and strictly better for freshness; it is still a
+timing change in a running futures session and is called out in #949's own PR body.
 * **A raise propagates**, exactly like every other evidence failure in this module
   (:meth:`TickScheduler._record_field_refusals`'s own docstring). The hook's own non-fatal
   conditions stay its own business — the fill observer records a failed broker read as an
@@ -774,21 +796,33 @@ class TickScheduler:
     def _record_pass_overrun(
         self, started_ms: int | None, ticked_ms: int | None, done_ms: int | None
     ) -> None:
-        """Record a pass whose own work outran ``pass_budget_ms`` — and nothing otherwise.
+        """Record a pass that ran longer than the whole window the freshness guard reserves —
+        and nothing otherwise.
 
         ⛔ **Why this row exists** (#949 review HIGH, item (b)). A bar's age when the next pass
         reads it is the collector's delay plus the loop's own period, and the boot guard
         ``_marketfeed_wiring._load_config_within_freshness_budget`` budgets exactly
         ``poll_interval_ms + journal_pass_allowance_ms`` of the field policy's ``max_age_ms``
-        for that. Before this row, a pass could spend arbitrarily longer than its allowance —
-        the post-pass hook's broker read is the reason it now can — and the only visible
+        for that. Before this row, a pass could spend arbitrarily longer than that — the
+        post-pass hook's broker read is the reason it now can — and the only visible
         consequence was a ``STALE`` field, which looks exactly like a late producer. The
         2026-10-22 refusal cost a read-only dive through the durable store to answer "stale, or
         a slow pass?" (:meth:`_record_field_refusals`'s own measurement note). This row answers
-        it directly: both halves of the pass, and the budget they were measured against.
+        it directly: both halves of the pass, and the window they were measured against.
+
+        **The threshold is the whole reserved window, not the allowance alone** (#949 r2
+        MEDIUM-3). ``journal_pass_allowance_ms`` on its own was the right comparison for an
+        UNCOMPENSATED loop, where the period was ``interval + pass`` and every millisecond of
+        pass came straight off the next bar's freshness. With :meth:`_pass_sleep_seconds`
+        subtracting the pass from the sleep, the period stays at ``poll_interval_ms`` until the
+        pass exceeds it — so a 210 ms pass on a 400 ms interval costs the feed nothing and is
+        not worth a row. What the reserved window says is: ages up to
+        ``poll_interval_ms + journal_pass_allowance_ms`` were PAID FOR at boot. A pass longer
+        than that is the first point where a bar can age past ``max_age_ms`` even with
+        compensation, and that is exactly when this row is worth writing.
 
         **Diagnostics only, and only on an overrun.** Nothing reads this row to decide
-        anything, and a pass inside its budget writes nothing at all — this must not add a
+        anything, and a pass inside the window writes nothing at all — this must not add a
         write to every pass of a healthy session.
 
         **Written before the sleep, after the hook.** A pass that has already overrun is not
@@ -808,16 +842,20 @@ class TickScheduler:
         if budget is None or started_ms is None or ticked_ms is None or done_ms is None:
             return
         pass_ms = done_ms - started_ms
-        if pass_ms <= budget.allowance_ms:
+        # The reserved window, both halves of it — the SAME sum the boot guard checks against
+        # the freshness budget, never a second notion of "too long".
+        budget_ms = self._poll_interval_ms + budget.allowance_ms
+        if pass_ms <= budget_ms:
             return
         self._evidence_store.append(
             {
                 "instrument": self._instrument,
-                "budget_ms": budget.allowance_ms,
+                "budget_ms": budget_ms,
                 "pass_ms": pass_ms,
                 "tick_ms": ticked_ms - started_ms,
                 "after_pass_ms": done_ms - ticked_ms,
                 "poll_interval_ms": self._poll_interval_ms,
+                "pass_allowance_ms": budget.allowance_ms,
             },
             kind=_MARKETFEED_PASS_OVERRUN_KIND,
             record_class=_MARKETFEED_PASS_OVERRUN_KIND,

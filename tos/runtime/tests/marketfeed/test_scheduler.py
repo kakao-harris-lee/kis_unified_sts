@@ -517,15 +517,21 @@ def _overrun_rows(evidence_store: Any) -> list[dict[str, Any]]:
     ]
 
 
-def test_a_pass_that_outruns_its_budget_records_both_halves(tmp_path: Path) -> None:
-    """The row names the tick's share and the hook's share separately, against the budget they
+def test_a_pass_that_outruns_the_reserved_window_records_both_halves(
+    tmp_path: Path,
+) -> None:
+    """The row names the tick's share and the hook's share separately, against the window they
     were measured with — the question it exists to answer is "stale, or a slow pass, and which
     half?" (``_record_pass_overrun``'s own docstring).
 
+    The threshold is the WHOLE reserved window, ``poll_interval_ms + allowance_ms`` = 500
+    (#949 r2 MEDIUM-3), so this pass has to exceed that, not just the 100 ms allowance.
+
     Mutation: record only the total -> the ``tick_ms``/``after_pass_ms`` assertions go red; drop
-    the row -> all of them do.
+    the row -> all of them do; compare against ``allowance_ms`` alone -> ``budget_ms`` is 100
+    -> red.
     """
-    monotonic = _SteppingMonotonic([10, 200, 0])  # tick 10 ms, hook 200 ms
+    monotonic = _SteppingMonotonic([10, 600, 0])  # tick 10 ms, hook 600 ms
     evidence_store = MagicMock()
     scheduler = _build_scheduler(
         tmp_path,
@@ -543,12 +549,39 @@ def test_a_pass_that_outruns_its_budget_records_both_halves(tmp_path: Path) -> N
     (row,) = _overrun_rows(evidence_store)
     assert row == {
         "instrument": INSTRUMENT,
-        "budget_ms": 100,
-        "pass_ms": 210,
+        "budget_ms": 500,
+        "pass_ms": 610,
         "tick_ms": 10,
-        "after_pass_ms": 200,
+        "after_pass_ms": 600,
         "poll_interval_ms": 400,
+        "pass_allowance_ms": 100,
     }
+
+
+def test_a_pass_the_compensation_absorbs_is_not_an_overrun(tmp_path: Path) -> None:
+    """#949 r2 MEDIUM-3, the behaviour change: a 210 ms pass on a 400 ms interval is longer
+    than the 100 ms allowance but shorter than the reserved window, and with the sleep
+    compensated it costs the next bar nothing at all — so it is not worth a row.
+
+    Mutation: compare against ``allowance_ms`` alone (the pre-r2 threshold) -> one row -> red.
+    That mutation is what made this fire on harmless passes.
+    """
+    monotonic = _SteppingMonotonic([10, 200, 0])  # a 210 ms pass, fully absorbed
+    evidence_store = MagicMock()
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        after_pass=lambda: None,
+        pass_budget=PassBudget(monotonic=monotonic, allowance_ms=100),
+        evidence_store=evidence_store,
+    )
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.TICKED
+    )
+
+    scheduler.run_forever(sleep=lambda _s: None, stop=_stop_after(1))
+
+    assert _overrun_rows(evidence_store) == []
 
 
 def test_the_sleep_is_shortened_by_what_the_pass_already_spent(tmp_path: Path) -> None:

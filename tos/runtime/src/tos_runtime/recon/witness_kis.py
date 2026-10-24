@@ -458,10 +458,19 @@ class KisStockBrokerWitness:
             deadline_expired: Asked before every page (:meth:`_walk_continuation`) — the
                 caller's own bound on how long this read may take in total. A walk it stops is
                 ``WitnessUnavailable`` with no rows, never a partial list. ``None`` = unbounded
-                by anything but ``max_pages`` and the per-GET timeout. :meth:`observe` takes no
-                such bound: it is read inside an engine turn whose answer decides a release,
-                not from a loop that is waited on (#949 review HIGH; the thread-safety work
-                that would remove the wait entirely is issue #950).
+                by anything but ``max_pages`` and the per-GET timeout.
+
+                ⚠ :meth:`observe` takes no such bound, and that is a GAP, not a safe asymmetry
+                (#949 r2 MEDIUM-1 — an earlier version of this docstring claimed ``observe``
+                "is not read from a loop that is waited on", which is wrong): the release
+                consumer's reconciliation calls it, and that consumer is reached from the fill
+                observer's own ``result_sink``, which the session loop's post-pass hook drives.
+                So ``observe``'s walks — balance, plus the orders of each date in scope — do
+                run on the loop thread, bounded only by ``request_timeout_s`` x ``max_pages``.
+                It is deliberately left unbounded here because a deadline would make a
+                slow-but-working broker HOLD capacity rather than release it, which is a
+                release-semantics change; issue #950 owns both that and moving these reads off
+                the loop thread.
 
         Returns:
             ``(date, rows)`` — the KST date the inquiry covered (``INQR_STRT_DT ==

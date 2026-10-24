@@ -392,14 +392,21 @@ class KisMockFillObserver:
         No GET at all when no ACKed attempt is outstanding on the broker side.
 
         **The whole read phase is bounded by ``poll_deadline_ms``** (#949 review HIGH). The
-        deadline is taken once, here, and asked before every date (below) and before every page
-        (the witness's own walk): once it is past, nothing further is read and whatever was not
-        read is ``WitnessUnavailable`` — recorded once, fail-closed, retried at the next due
-        poll. It can never turn into a partial row list, because the only thing it produces is
-        an absence. What it cannot do is interrupt a request already in flight; that one is
-        bounded by ``witness_request_timeout_s``, so one poll costs at most the deadline plus
-        one timeout. (This caller is waited on: the session loop runs it between two intake
-        reads. Moving it off that thread entirely is issue #950.)
+        deadline is taken once, here, and handed to every read; the WITNESS is what asks it,
+        before each page of each date's walk — its page 0 included, which is what makes a date
+        whose turn comes too late cost nothing at all (#949 r2 LOW-2: this used to say the date
+        loop checks it too, and it does not — one predicate, one place it is evaluated).
+        Once it is past, nothing further is read and whatever was not read is
+        ``WitnessUnavailable`` — recorded once, fail-closed, retried at the next due poll. It
+        can never turn into a partial row list, because the only thing it produces is an
+        absence. What it cannot do is interrupt a request already in flight; that one is
+        bounded by ``witness_request_timeout_s``, so this read phase costs at most the deadline
+        plus one timeout.
+
+        ⚠ The deadline does NOT cover what :meth:`_emit`'s ``result_sink`` triggers downstream
+        (finality, the release consumer's reconciliation, and its own unbounded witness walks)
+        — ``scheduler.py``'s residual paragraph has that term and its numbers; issue #950 owns
+        it. This caller is waited on: the session loop runs it between two intake reads.
         """
         tracked = self._tracked_attempts()
         reprojected = self._reproject_unreleased(tracked)
