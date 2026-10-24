@@ -78,6 +78,15 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
     "coordinator_preconditions.yaml": frozenset({"nonlive_broker_consuming.admitted"}),
     # B5 (operator approved 2026-10-24): the witness bound covers the 60 s closed cadence.
     "authority.yaml": frozenset({"containment_bound_ms"}),
+    # B4 (operator approved 2026-10-24): the recorded activation approval + attestation.
+    "safety_activation.yaml": frozenset(
+        {
+            "activation.activation_id",
+            "activation.scope",
+            "activation.approval_ids",
+            "activation.compatibility_attestation_refs",
+        }
+    ),
     "egress_coordinates.yaml": frozenset({"endpoint.value", "route_identity.value"}),
     "construction.yaml": frozenset({"instrument_class"}),
     "marketfeed.yaml": frozenset({"instrument_class", "unit"}),
