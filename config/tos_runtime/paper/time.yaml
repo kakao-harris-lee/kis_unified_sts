@@ -61,7 +61,9 @@ tz_db_version: "2026c"
 # 바뀌었기 때문이다(`calendar.yaml` 의 `futures_expiry.months` 분기 → 매월 ·
 # 상세는 그 파일 상단 주석). 이 값 자체에 대한 판단이 아니라 위 강제 일치의
 # **귀결**이다 — 캘린더 버전이 오르면 이 값도 같은 커밋에서 같이 오른다.
-trading_calendar_version: "krx-2026.09.1"
+# 개정(2026-10-25): "krx-2026.09.1" → "krx-2026.10". calendar.yaml 휴장 목록에 2026-12-31(KRX 연말 휴장)
+# 추가 — 위 강제 일치의 귀결(상세는 calendar.yaml 「12-31 추가」 주석).
+trading_calendar_version: "krx-2026.10"
 
 # 전사: VERIFICATION-PROFILE-002.yaml 자신의 `profile_id`(L142) + `version`(L143).
 verification_profile_version: "VERIFICATION-PROFILE-002-v2.1"
