@@ -85,7 +85,7 @@ applied results are); the unconfirmed remainder stays visible as IN-FLIGHT. An u
 recorded BEFORE the latest consumed one is superseded only if that consumed result's cumulative
 ``filled_quantity`` already covers the unmatched fill — a later non-fill result does not. The
 caller likewise drops a replay — an unmatched result after the latest consumed one that repeats
-one of the attempt's applied results (same kind and broker execution, fill already covered),
+one of the attempt's applied results (same kind, fill, remaining and broker execution),
 e.g. the applied ``REJECT`` re-sent after finality release; a genuinely new result still
 reopens. This module sees only the resulting set.
 

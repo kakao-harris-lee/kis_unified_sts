@@ -93,15 +93,21 @@ crossing a ``CANCEL_ACK``, whose quantity ``tos.engine.core`` records only on
 ``DUPLICATE`` disposition is the exact already-applied result resent
 (``tos.engine.vocabulary.ResultDisposition``), not a new fact, so it never reopens; every other
 non-applied disposition can carry a real late fill and does — except a **replay**: an unmatched
-row whose ``(egress_result_kind, broker_execution_id)`` equals one of the attempt's own applied
-rows and whose ``filled_quantity`` the latest consumed cumulative fill already covers. After
+row whose ``(egress_result_kind, filled_quantity, remaining_quantity, broker_execution_id)``
+equals one of the attempt's own applied results (the kernel's ``DUPLICATE`` signature as far as
+the evidence stores it; ``resolution_generation`` is on neither kind) and whose fill the latest
+consumed cumulative fill already covers. The applied payload's magnitudes are rebuilt from its
+row: a fill kind's stored pair is the payload's, a non-fill payload has none. A fill missing
+either magnitude on either side is never a replay (fail closed). After
 finality release the engine holds no reservation, so the same applied result re-sent is recorded
 as ``ORPHAN_NO_RESERVATION`` (or ``MISMATCHED_ATTEMPT`` once a new attempt holds the scope) —
 ``ProvisionalReservationLedger.apply_egress_result`` checks the reservation before the
 ``DUPLICATE`` signature — and a released attempt can never be re-applied, so reopening it would
-DENY the scope forever. A larger fill, a kind no applied row carries (``FULL_FILL`` after
-``CANCEL_ACK``), or a different broker execution is a new fact and still reopens. No result
-digest is persisted on either evidence kind, so identity is these durable fields alone.
+DENY the scope forever. A different fill or remaining quantity (``PARTIAL_FILL`` 4/5 after an
+applied 4/6 — the broker reports a different open quantity), a kind no applied row carries
+(``FULL_FILL`` after ``CANCEL_ACK``), or a different broker execution is a new fact and still
+reopens. No result digest is persisted on either evidence kind, so identity is these durable
+fields alone.
 
 **Side stays a policy/config-carried token — never a runtime-authored literal (deviation from
 the plan §4.1 constructor signature, reported; long/short symmetry, CLAUDE.md "Futures must
@@ -144,7 +150,7 @@ import sqlite3
 from collections.abc import Mapping
 from decimal import Decimal
 
-from tos.engine import TERMINAL_RESULT_KINDS
+from tos.engine import FILL_RESULT_KINDS, TERMINAL_RESULT_KINDS
 from tos.position import (
     ConsumedResult,
     PositionObservation,
@@ -175,6 +181,13 @@ _SEND_SEALED_KIND = "SEND_SEALED"
 #: the durable payload (``model_dump(mode="json")``) — derived, never a second literal copy.
 _TERMINAL_RESULT_TOKENS: frozenset[str] = frozenset(
     kind.value for kind in TERMINAL_RESULT_KINDS
+)
+
+
+#: The kernel's fill-bearing kinds as bare tokens — the only kinds whose payload carries
+#: ``filled_quantity`` / ``remaining_quantity`` (``tos.engine.records.EgressResultPayload``).
+_FILL_RESULT_TOKENS: frozenset[str] = frozenset(
+    kind.value for kind in FILL_RESULT_KINDS
 )
 
 
@@ -223,14 +236,45 @@ def _to_decimal(value: object) -> Decimal | None:
     return None
 
 
-def _result_identity(payload: Mapping[str, object]) -> tuple[object, object]:
-    """The durable identity two result rows of one attempt share when they report the same
-    broker fact: ``(egress_result_kind, broker_execution_id)``. Both evidence kinds copy these two
-    fields verbatim from the incoming payload (``tos.engine.core`` ``_handle_egress_result``);
-    ``filled_quantity`` is compared separately because ``EGRESS_RESULT_CONSUMED`` stores the
-    reservation's cumulative fill, not the payload's (module docstring, "replay" note).
-    """
-    return (payload.get("egress_result_kind"), payload.get("broker_execution_id"))
+#: One result's replay signature: ``(egress_result_kind, filled_quantity, remaining_quantity,
+#: broker_execution_id)`` — the kernel's ``DUPLICATE`` signature minus the two axes the evidence
+#: cannot supply (``attempt_id`` is the grouping key; ``resolution_generation`` is stored on
+#: neither evidence kind).
+_ResultSignature = tuple[object, Decimal | None, Decimal | None, object]
+
+
+def _applied_signature(payload: Mapping[str, object]) -> _ResultSignature | None:
+    """The applied result's own payload signature, rebuilt from its ``EGRESS_RESULT_CONSUMED``
+    row. That row copies kind and ``broker_execution_id`` from the payload, but its magnitudes are
+    the reservation's after the result (``tos.engine.core`` ``_handle_egress_result``). For a fill
+    kind those equal the payload's (the ledger stores the fill's own pair); a non-fill payload
+    carries no magnitude at all (``EgressResultPayload`` validator), so its pair is
+    ``(None, None)`` whatever the row stores. ``None`` (never a replay target) for a fill row
+    missing either magnitude — the engine never writes one, so it is not trusted."""
+    kind = payload.get("egress_result_kind")
+    execution_id = payload.get("broker_execution_id")
+    if kind not in _FILL_RESULT_TOKENS:
+        return (kind, None, None, execution_id)
+    filled = _to_decimal(payload.get("filled_quantity"))
+    remaining = _to_decimal(payload.get("remaining_quantity"))
+    if filled is None or remaining is None:
+        return None
+    return (kind, filled, remaining, execution_id)
+
+
+def _unmatched_signature(payload: Mapping[str, object]) -> _ResultSignature | None:
+    """A ``RESULT_UNMATCHED`` row's signature — that row copies all four fields from the refused
+    payload. ``None`` (never a replay) when the shape is one the engine cannot produce: a fill
+    without both magnitudes, or a non-fill kind with any magnitude."""
+    kind = payload.get("egress_result_kind")
+    filled = _to_decimal(payload.get("filled_quantity"))
+    remaining = _to_decimal(payload.get("remaining_quantity"))
+    if kind in _FILL_RESULT_TOKENS:
+        if filled is None or remaining is None:
+            return None
+    elif filled is not None or remaining is not None:
+        return None
+    return (kind, filled, remaining, payload.get("broker_execution_id"))
 
 
 def _seal_in_scope(
@@ -344,7 +388,7 @@ class EvidencePositionReader:
         ]
         consumed_by_attempt: dict[str, ConsumedResult] = {}
         latest_consumed_seq: dict[str, int] = {}
-        applied_identities: dict[str, set[tuple[object, object]]] = {}
+        applied_signatures: dict[str, set[_ResultSignature]] = {}
         unmatched_attempts: set[str] = set()
         # ``consumed_payloads`` is in commit (``seq ASC``) order, so the last assignment per
         # attempt is its LATEST applied result — the one whose kind decides terminality and
@@ -354,9 +398,9 @@ class EvidencePositionReader:
             if not isinstance(attempt_id, str):
                 continue
             latest_consumed_seq[attempt_id] = seq
-            applied_identities.setdefault(attempt_id, set()).add(
-                _result_identity(payload)
-            )
+            signature = _applied_signature(payload)
+            if signature is not None:
+                applied_signatures.setdefault(attempt_id, set()).add(signature)
             raw_kind = payload.get("egress_result_kind")
             consumed_by_attempt[attempt_id] = ConsumedResult(
                 result_kind=raw_kind if isinstance(raw_kind, str) else None,
@@ -377,7 +421,10 @@ class EvidencePositionReader:
                 _to_decimal(payload.get("filled_quantity")) or Decimal(0)
             ) <= (latest.filled_quantity or Decimal(0))
             superseded = seq < latest_consumed_seq[attempt_id]
-            replayed = _result_identity(payload) in applied_identities[attempt_id]
+            unmatched_signature = _unmatched_signature(payload)
+            replayed = unmatched_signature is not None and (
+                unmatched_signature in applied_signatures.get(attempt_id, set())
+            )
             if not (fill_covered and (superseded or replayed)):
                 unmatched_attempts.add(attempt_id)
         sources: list[str] = []

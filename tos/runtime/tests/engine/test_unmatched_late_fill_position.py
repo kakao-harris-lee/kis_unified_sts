@@ -246,3 +246,88 @@ def test_late_fill_after_cancel_and_release_still_reopens(
     assert obs.confirmed_net == Decimal(0)
     assert toward == Decimal(10)
     assert against == Decimal(0)
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+def test_fill_with_different_remaining_after_release_stays_in_flight(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    monotonic_source: object,
+    side: str,
+) -> None:
+    """Codex round 3's input through the engine: PARTIAL 4/6, CANCEL_ACK, release, PARTIAL 4/5."""
+    driver, core, attempt_id = _open_sealed_attempt(
+        inbox, evidence_store, emergency_log, monotonic_source, side
+    )
+    partial = driver.enqueue_and_run(
+        _result(attempt_id, EgressResultKind.PARTIAL_FILL, filled="4", remaining="6")
+    )
+    cancel = driver.enqueue_and_run(_result(attempt_id, EgressResultKind.CANCEL_ACK))
+    _release(core, attempt_id)
+    differing = driver.enqueue_and_run(
+        _result(attempt_id, EgressResultKind.PARTIAL_FILL, filled="4", remaining="5")
+    )
+    replayed = driver.enqueue_and_run(
+        _result(attempt_id, EgressResultKind.PARTIAL_FILL, filled="4", remaining="6")
+    )
+    assert [
+        partial.result_disposition,
+        cancel.result_disposition,
+        differing.result_disposition,
+        replayed.result_disposition,
+    ] == [
+        ResultDisposition.APPLIED,
+        ResultDisposition.APPLIED,
+        ResultDisposition.ORPHAN_NO_RESERVATION,
+        ResultDisposition.ORPHAN_NO_RESERVATION,
+    ]
+
+    obs = _observe(evidence_store)
+    sign = 1 if side == "BUY" else -1
+    toward = obs.in_flight_buy if side == "BUY" else obs.in_flight_sell
+    assert obs.confirmed_net == sign * Decimal(4)
+    assert toward == Decimal(6)
+    assert (
+        conservative_current_usage(obs) + _COMMAND + in_flight_overlap_effect(obs)
+        > _LIMIT
+    )
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+def test_partial_fill_and_cancel_replayed_after_release_do_not_reopen(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    monotonic_source: object,
+    side: str,
+) -> None:
+    driver, core, attempt_id = _open_sealed_attempt(
+        inbox, evidence_store, emergency_log, monotonic_source, side
+    )
+    driver.enqueue_and_run(
+        _result(attempt_id, EgressResultKind.PARTIAL_FILL, filled="4", remaining="6")
+    )
+    driver.enqueue_and_run(_result(attempt_id, EgressResultKind.CANCEL_ACK))
+    _release(core, attempt_id)
+    replays = [
+        driver.enqueue_and_run(
+            _result(
+                attempt_id, EgressResultKind.PARTIAL_FILL, filled="4", remaining="6"
+            )
+        ),
+        driver.enqueue_and_run(_result(attempt_id, EgressResultKind.CANCEL_ACK)),
+    ]
+    assert [r.result_disposition for r in replays] == [
+        ResultDisposition.ORPHAN_NO_RESERVATION,
+        ResultDisposition.ORPHAN_NO_RESERVATION,
+    ]
+
+    obs = _observe(evidence_store)
+    sign = 1 if side == "BUY" else -1
+    assert obs.confirmed_net == sign * Decimal(4)
+    assert (obs.in_flight_buy, obs.in_flight_sell) == (Decimal(0), Decimal(0))
+    assert (
+        conservative_current_usage(obs) + _COMMAND + in_flight_overlap_effect(obs)
+        <= _LIMIT
+    )
