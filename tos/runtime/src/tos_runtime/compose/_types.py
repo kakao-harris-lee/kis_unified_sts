@@ -77,6 +77,7 @@ if TYPE_CHECKING:
     # annotations (module docstring's own `from __future__ import annotations`)
     # mean the string form below is all mypy needs.
     from tos_runtime.compose._venue_wiring import VenueServiceStage
+    from tos_runtime.posttrade.fill_observer import KisMockFillObserver
 
 __all__ = [
     "ComposedRuntime",
@@ -367,6 +368,18 @@ class ComposedRuntime:
     #: :func:`~tos_runtime.compose._marketfeed_wiring.build_tick_scheduler` hands the SAME
     #: registry to a ``kis_quote`` intake so the two share one token lifecycle.
     kis_credential_sessions: KisCredentialSessions | None = None
+    #: PR-3b — the post-ACK fill observer of a stock MOCK boot
+    #: (:mod:`tos_runtime.posttrade.fill_observer`); ``None`` on every other boot, and when the
+    #: recovery barrier held. The session loop polls it once per pass through
+    #: :attr:`marketfeed`'s ``after_pass`` hook
+    #: (:func:`~tos_runtime.compose._broker_posttrade_wiring.fill_observer_pass`, wired in
+    #: :func:`~tos_runtime.compose.root.compose_paper_runtime`); a caller that drives neither
+    #: :meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.run_forever` nor its own poll
+    #: observes no fills.
+    fill_observer: KisMockFillObserver | None = None
+    #: PR-3b — provenance of the broker witness release and recovery reconcile against:
+    #: ``"kis-mock-stock"`` on a stock MOCK boot, ``"synthetic-ledger"`` otherwise.
+    broker_witness_provenance: str = "synthetic-ledger"
 
     def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
         """Drive ``events`` through :attr:`driver` to completion, one at a time.

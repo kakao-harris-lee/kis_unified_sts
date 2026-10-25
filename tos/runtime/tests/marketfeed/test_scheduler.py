@@ -25,6 +25,7 @@ from tos_runtime.marketfeed.ports import (
 )
 from tos_runtime.marketfeed.scheduler import (
     MultiInstrumentRefused,
+    PassBudget,
     TickDecision,
     TickResult,
     TickScheduler,
@@ -237,6 +238,9 @@ def _build_scheduler(
     *,
     poll_interval_ms: int,
     before_decide: Callable[[], bool] | None = None,
+    after_pass: Callable[[], None] | None = None,
+    pass_budget: PassBudget | None = None,
+    evidence_store: Any = None,
     intake: Any = None,
     store: Any = None,
     time_service: Any = None,
@@ -277,9 +281,11 @@ def _build_scheduler(
         session_owner=session_owner if session_owner is not None else MagicMock(),
         driver=None,
         inbox=MagicMock(),
-        evidence_store=MagicMock(),
+        evidence_store=(evidence_store if evidence_store is not None else MagicMock()),
         poll_interval_ms=poll_interval_ms,
         before_decide=before_decide,
+        after_pass=after_pass,
+        pass_budget=pass_budget,
     )
 
 
@@ -356,6 +362,340 @@ def test_run_forever_calls_nothing_but_tick_once_and_sleep(tmp_path: Path) -> No
     assert tick_calls == 3
     assert hook_calls == 0  # the loop itself never calls it — tick_once does
     assert sleep_calls == [0.75, 0.75, 0.75]
+
+
+# ----------------------------------------------------------------------------
+# run_forever — the `after_pass` hook (PR-3b follow-up; module docstring's own
+# post-pass-hook paragraph). Compose wires the stock MOCK fill observer's `poll_if_due()`
+# into it; these tests pin the LOOP's side of that contract with a plain counting double.
+# ----------------------------------------------------------------------------
+
+
+def test_run_forever_runs_the_after_pass_hook_once_per_pass_after_the_tick(
+    tmp_path: Path,
+) -> None:
+    """Order within a pass: ``tick_once`` -> ``after_pass`` -> ``sleep``, once each.
+
+    Mutations, each separately red: drop the call -> no ``"after"`` at all; call it before
+    ``tick_once`` -> the first two entries swap (the decision path must not pay for post-trade
+    work); call it after ``sleep`` -> the last two swap.
+    """
+    order: list[str] = []
+    scheduler = _build_scheduler(
+        tmp_path, poll_interval_ms=750, after_pass=lambda: order.append("after")
+    )
+
+    def fake_tick_once() -> TickResult:
+        order.append("tick")
+        return TickResult(outcome=TickOutcome.TICKED)
+
+    scheduler.tick_once = fake_tick_once  # type: ignore[method-assign]
+    scheduler.run_forever(
+        sleep=lambda seconds: order.append(f"sleep:{seconds}"), stop=_stop_after(2)
+    )
+
+    assert order == ["tick", "after", "sleep:0.75"] * 2
+
+
+def test_run_forever_runs_the_after_pass_hook_on_a_pass_that_produced_no_tick(
+    tmp_path: Path,
+) -> None:
+    """A shut market is exactly when this must still run: ``tick_once`` returns
+    ``SKIPPED_SESSION_CLOSED`` before it reaches any decision work, and an order ACKed just
+    before the close still has a fill to observe and capacity to release (module docstring).
+
+    Mutation: gate the hook on ``result.outcome is TickOutcome.TICKED`` -> ``hook_calls == 0``
+    -> red.
+    """
+    hook_calls = 0
+
+    def after_pass() -> None:
+        nonlocal hook_calls
+        hook_calls += 1
+
+    scheduler = _build_scheduler(tmp_path, poll_interval_ms=400, after_pass=after_pass)
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.SKIPPED_SESSION_CLOSED
+    )
+
+    scheduler.run_forever(sleep=lambda _seconds: None, stop=_stop_after(3))
+
+    assert hook_calls == 3
+
+
+def test_a_raising_after_pass_hook_propagates_and_stops_the_loop(
+    tmp_path: Path,
+) -> None:
+    """The same answer this module already gives for an unwritable evidence store
+    (``_record_field_refusals``: "A failed append propagates"): the loop does not continue past
+    durable bookkeeping it could not do. The hook's own non-fatal conditions never reach here —
+    the fill observer records a failed broker read and returns normally.
+
+    Mutation: wrap the call in ``try/except Exception: pass`` -> no ``RuntimeError`` escapes and
+    the loop runs all three passes -> red on both assertions.
+    """
+    ticks = 0
+
+    def fake_tick_once() -> TickResult:
+        nonlocal ticks
+        ticks += 1
+        return TickResult(outcome=TickOutcome.TICKED)
+
+    def after_pass() -> None:
+        raise RuntimeError("evidence store is unwritable")
+
+    sleep_calls: list[float] = []
+    scheduler = _build_scheduler(tmp_path, poll_interval_ms=400, after_pass=after_pass)
+    scheduler.tick_once = fake_tick_once  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="unwritable"):
+        scheduler.run_forever(sleep=sleep_calls.append, stop=_stop_after(3))
+
+    assert ticks == 1  # the loop stopped on the first pass
+    assert sleep_calls == []  # and never reached that pass's own sleep
+
+
+def test_tick_once_itself_never_runs_the_after_pass_hook(tmp_path: Path) -> None:
+    """The hook belongs to the LOOP, not to a pass: a caller driving ``tick_once`` directly
+    (every test in this module, ``tests/compose/test_marketfeed_wiring.py``, a diagnostic) gets
+    exactly the tick it asked for and no post-trade broker read.
+
+    Mutation: move the call into ``tick_once`` -> ``hook_calls == 1`` -> red.
+    """
+    hook_calls = 0
+
+    def after_pass() -> None:
+        nonlocal hook_calls
+        hook_calls += 1
+
+    intake = MagicMock()
+    intake.poll.return_value = (_observation(),)
+    store = MagicMock()
+    store.latest_as_of.return_value = None
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        before_decide=lambda: False,
+        after_pass=after_pass,
+        intake=intake,
+        store=store,
+    )
+
+    assert scheduler.tick_once().outcome is TickOutcome.SKIPPED_TIME_NOT_EVALUATED
+    assert hook_calls == 0
+
+
+# ----------------------------------------------------------------------------
+# run_forever — the pass budget (#949 review HIGH item (b)): a pass whose own work outruns
+# `journal_pass_allowance_ms` leaves one MARKETFEED_PASS_OVERRUN row, and a pass inside it
+# leaves nothing. `tests/compose/test_fill_poll_loop.py` §4 drives the same row through a real
+# composed loop with a genuinely slow broker read; these pin the mechanism.
+# ----------------------------------------------------------------------------
+
+
+class _SteppingMonotonic:
+    """A monotonic source that advances by a scripted amount per reading — ``run_forever``
+    takes three per pass (before the tick, after the tick, after the hook)."""
+
+    def __init__(self, steps: list[int]) -> None:
+        self._steps = steps
+        self.value = 0
+        self.reads = 0
+
+    def now_ms(self) -> int:
+        reading = self.value
+        self.reads += 1
+        self.value += self._steps[min(self.reads - 1, len(self._steps) - 1)]
+        return reading
+
+
+def _overrun_rows(evidence_store: Any) -> list[dict[str, Any]]:
+    return [
+        call.args[0]
+        for call in evidence_store.append.call_args_list
+        if call.kwargs.get("kind") == "MARKETFEED_PASS_OVERRUN"
+    ]
+
+
+def test_a_pass_that_outruns_the_reserved_window_records_both_halves(
+    tmp_path: Path,
+) -> None:
+    """The row names the tick's share and the hook's share separately, against the window they
+    were measured with — the question it exists to answer is "stale, or a slow pass, and which
+    half?" (``_record_pass_overrun``'s own docstring).
+
+    The threshold is the WHOLE reserved window, ``poll_interval_ms + allowance_ms`` = 500
+    (#949 r2 MEDIUM-3), so this pass has to exceed that, not just the 100 ms allowance.
+
+    Mutation: record only the total -> the ``tick_ms``/``after_pass_ms`` assertions go red; drop
+    the row -> all of them do; compare against ``allowance_ms`` alone -> ``budget_ms`` is 100
+    -> red.
+    """
+    monotonic = _SteppingMonotonic([10, 600, 0])  # tick 10 ms, hook 600 ms
+    evidence_store = MagicMock()
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        after_pass=lambda: None,
+        pass_budget=PassBudget(monotonic=monotonic, allowance_ms=100),
+        evidence_store=evidence_store,
+    )
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.TICKED
+    )
+
+    scheduler.run_forever(sleep=lambda _s: None, stop=_stop_after(1))
+
+    (row,) = _overrun_rows(evidence_store)
+    assert row == {
+        "instrument": INSTRUMENT,
+        "budget_ms": 500,
+        "pass_ms": 610,
+        "tick_ms": 10,
+        "after_pass_ms": 600,
+        "poll_interval_ms": 400,
+        "pass_allowance_ms": 100,
+    }
+
+
+def test_a_pass_the_compensation_absorbs_is_not_an_overrun(tmp_path: Path) -> None:
+    """#949 r2 MEDIUM-3, the behaviour change: a 210 ms pass on a 400 ms interval is longer
+    than the 100 ms allowance but shorter than the reserved window, and with the sleep
+    compensated it costs the next bar nothing at all — so it is not worth a row.
+
+    Mutation: compare against ``allowance_ms`` alone (the pre-r2 threshold) -> one row -> red.
+    That mutation is what made this fire on harmless passes.
+    """
+    monotonic = _SteppingMonotonic([10, 200, 0])  # a 210 ms pass, fully absorbed
+    evidence_store = MagicMock()
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        after_pass=lambda: None,
+        pass_budget=PassBudget(monotonic=monotonic, allowance_ms=100),
+        evidence_store=evidence_store,
+    )
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.TICKED
+    )
+
+    scheduler.run_forever(sleep=lambda _s: None, stop=_stop_after(1))
+
+    assert _overrun_rows(evidence_store) == []
+
+
+def test_the_sleep_is_shortened_by_what_the_pass_already_spent(tmp_path: Path) -> None:
+    """#949 review HIGH, the fix itself: bar ages are measured against the tick-to-tick PERIOD,
+    so the loop sleeps ``poll_interval_ms`` minus the pass's own elapsed time. A 210 ms pass on
+    a 400 ms interval sleeps 190 ms, and the period stays 400 ms — the hook costs the feed
+    nothing.
+
+    Mutation: sleep the plain interval -> ``[0.4]`` -> red (and that is precisely the defect:
+    the period would be 610 ms against a config that asked for 400).
+    """
+    monotonic = _SteppingMonotonic([10, 200, 0])  # tick 10 ms, hook 200 ms
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        after_pass=lambda: None,
+        # Generous allowance: this test is about the sleep, not about the overrun row.
+        pass_budget=PassBudget(monotonic=monotonic, allowance_ms=1_000),
+    )
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.TICKED
+    )
+
+    sleeps: list[float] = []
+    scheduler.run_forever(sleep=sleeps.append, stop=_stop_after(1))
+
+    assert sleeps == [0.19]
+
+
+def test_a_pass_that_outran_the_whole_interval_sleeps_zero_not_negative(
+    tmp_path: Path,
+) -> None:
+    """Clamped, never carried forward: the next pass starts at once (the overrun is already
+    recorded), and no caller is ever handed a negative sleep.
+
+    Mutation: drop the ``max(0.0, ...)`` -> ``[-0.2]`` -> red, and ``time.sleep`` would raise
+    in production.
+    """
+    monotonic = _SteppingMonotonic([500, 100, 0])  # a 600 ms pass on a 400 ms interval
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        after_pass=lambda: None,
+        pass_budget=PassBudget(monotonic=monotonic, allowance_ms=1_000),
+    )
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.TICKED
+    )
+
+    sleeps: list[float] = []
+    scheduler.run_forever(sleep=sleeps.append, stop=_stop_after(1))
+
+    assert sleeps == [0.0]
+
+
+def test_without_a_pass_budget_the_sleep_is_the_plain_interval(tmp_path: Path) -> None:
+    """No clock, no compensation — the pre-#949 loop, unchanged (and what a ``kis_quote``
+    intake, which declares no allowance, still gets)."""
+    scheduler = _build_scheduler(
+        tmp_path, poll_interval_ms=750, after_pass=lambda: None
+    )
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.TICKED
+    )
+
+    sleeps: list[float] = []
+    scheduler.run_forever(sleep=sleeps.append, stop=_stop_after(2))
+
+    assert sleeps == [0.75, 0.75]
+
+
+def test_a_pass_inside_its_budget_records_nothing(tmp_path: Path) -> None:
+    """A healthy session must not pay an evidence append per pass.
+
+    Mutation: drop the ``pass_ms <= allowance_ms`` guard -> a row per pass -> red.
+    """
+    monotonic = _SteppingMonotonic([5, 5, 0])
+    evidence_store = MagicMock()
+    scheduler = _build_scheduler(
+        tmp_path,
+        poll_interval_ms=400,
+        pass_budget=PassBudget(monotonic=monotonic, allowance_ms=100),
+        evidence_store=evidence_store,
+    )
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.TICKED
+    )
+
+    scheduler.run_forever(sleep=lambda _s: None, stop=_stop_after(3))
+
+    assert _overrun_rows(evidence_store) == []
+
+
+def test_without_a_pass_budget_the_loop_reads_no_clock_and_records_nothing(
+    tmp_path: Path,
+) -> None:
+    """``pass_budget=None`` is the pre-#949 scheduler, unchanged: no measurement, no row — and
+    a ``kis_quote`` intake (which declares no allowance) is exactly that case.
+
+    Mutation: make the measurement unconditional -> an ``AttributeError`` on the absent budget
+    -> red.
+    """
+    evidence_store = MagicMock()
+    scheduler = _build_scheduler(
+        tmp_path, poll_interval_ms=400, evidence_store=evidence_store
+    )
+    scheduler.tick_once = lambda: TickResult(  # type: ignore[method-assign]
+        outcome=TickOutcome.TICKED
+    )
+
+    scheduler.run_forever(sleep=lambda _s: None, stop=_stop_after(2))
+
+    assert _overrun_rows(evidence_store) == []
+    evidence_store.append.assert_not_called()
 
 
 # ----------------------------------------------------------------------------

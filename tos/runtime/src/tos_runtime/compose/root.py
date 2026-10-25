@@ -76,7 +76,13 @@ from tos.engine import (
 from tos_runtime.brokercap import is_broker_reaching
 from tos_runtime.calendar.config import load_calendar_config
 from tos_runtime.calendar.ports import WallClockReference
+from tos_runtime.compose._authority_heartbeat import with_authority_heartbeat
 from tos_runtime.compose._broker_facts_wiring import build_broker_facts
+from tos_runtime.compose._broker_posttrade_wiring import (
+    attach_fill_observer,
+    build_broker_posttrade,
+    fill_observer_pass,
+)
 from tos_runtime.compose._finalize_wiring import _finalize
 from tos_runtime.compose._kis_credential_wiring import KisCredentialSessionsCell
 from tos_runtime.compose._marketfeed_wiring import build_tick_scheduler
@@ -94,6 +100,7 @@ from tos_runtime.compose._session_wiring import (
     build_nontrade_processor,
     build_session_facts_owner,
 )
+from tos_runtime.compose._standing_wiring import build_standing_approval
 from tos_runtime.compose._transport_wiring import TransportKind, evidence_recorder
 from tos_runtime.compose._types import (
     ComposedRuntime,
@@ -308,6 +315,14 @@ def compose_paper_runtime(
         account=construction.account,
         instrument=construction.instrument,
     )
+    # PR-3b: a stock MOCK boot reconciles fills against the KIS witness (release + recovery).
+    posttrade = build_broker_posttrade(
+        config_dir=config_dir,
+        broker_scopes=boot.broker_scopes,
+        transport_config=boot.transport_config,
+        credential_sessions_cell=credential_sessions_cell,
+        trading_date_now=trading_date_reader,
+    )
     venue_service, loaded_ocp = build_venue_service(
         config_dir=config_dir,
         scheme=_SCHEME,
@@ -402,6 +417,14 @@ def compose_paper_runtime(
         custody_root=custody_root,
         environment_label=environment_label,
         uid=uid,
+        standing=build_standing_approval(
+            boot,
+            construction_stages.construction_stage,
+            trading_date_reader=trading_date_reader,
+            custody_root=custody_root,
+            environment_label=environment_label,
+            uid=uid,
+        ),
     )
     # Late-bind the ACTION_FLOW / TRADING_APPROVAL dimension readers' cells now steps
     # 9/4's VerdictRecorders exist (Phase 5 W3-b, plan §2 decision 3).
@@ -574,6 +597,7 @@ def compose_paper_runtime(
         scheme=_SCHEME,
         monotonic_source=boot.infra.monotonic_source,
         post_trade_dimension_state=boot.risk.post_trade_dimension_state,
+        posttrade=posttrade,
     )
     composed = apply_recovery_barrier(
         composed,
@@ -581,6 +605,10 @@ def compose_paper_runtime(
         data_dir=data_dir,
         custody_root=custody_root,
         scheme=_SCHEME,
+        witness=posttrade.witness,
+    )
+    composed = attach_fill_observer(
+        composed, posttrade, monotonic=boot.infra.monotonic_source
     )
     # Late-bind the RECOVERY dimension reader's cell now the barrier has actually run
     # (Phase 5 W3-b, plan §2 decision 3) — strictly before this function ever hands
@@ -607,6 +635,9 @@ def compose_paper_runtime(
         credential_sessions=composed.kis_credential_sessions,
         broker_scopes=boot.broker_scopes,
         runtime_identity=boot.identity,
+        # Post-pass: the B5 authority witness heartbeat, then PR-3b's fill observer poll
+        # (`composed.fill_observer`, stock MOCK boots only, read per call, not captured here).
+        after_pass=with_authority_heartbeat(composed, fill_observer_pass(composed)),
     )
     # TOS Phase 5 W4 (plan §2 decision 11) — operations facts + (optional) operator
     # projection, wired last: every durable fact this reads (evidence/RCL/inbox,

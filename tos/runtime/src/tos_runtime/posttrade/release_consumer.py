@@ -38,6 +38,7 @@ from tos.posttrade import (
     finality_proof_non_transferable,
 )
 from tos.rcl import (
+    AppendRefusal,
     CapacityReservationTransition,
     CapacityState,
     ReservationScope,
@@ -46,18 +47,13 @@ from tos.time.domains import HealthState
 
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
-from tos_runtime.posttrade.finality import (
-    FULL_FILL_OBLIGATION_ID_PREFIX,
-    FULL_FILL_PROOF_ID_PREFIX,
-    NON_EXECUTION_OBLIGATION_ID_PREFIX,
-    NON_EXECUTION_PROOF_ID_PREFIX,
-    SyntheticFinalityProducer,
-)
+from tos_runtime.posttrade.finality import ReleaseFinalityProducer
 from tos_runtime.rcl.finality_witness import release_reservation
 from tos_runtime.rcl.log import ReservationTransitionRefusal, SqliteCommitLog
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.rcl.reservation_identity import scope_reservation_id
-from tos_runtime.recon.ports import WitnessScope
+from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
+from tos_runtime.recon.ports import WitnessScope, WitnessUnavailable
 from tos_runtime.recon.service import (
     ReconciliationClass,
     ReconciliationReport,
@@ -77,6 +73,7 @@ from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
     "CAPACITY_RELEASE_HELD_KIND",
+    "release_command_id",
     "CAPACITY_RELEASE_INTENT_KIND",
     "RELEASE_PROOF_OVERDUE_KIND",
     "FinalityConsumerPort",
@@ -123,6 +120,12 @@ _NON_EXECUTION_KINDS: frozenset[EgressResultKind] = frozenset(
         EgressResultKind.REJECT,
     }
 )
+
+
+def release_command_id(attempt_id: str) -> str:
+    """The RCL idempotency key of ``attempt_id``'s release transition — the ONE spelling, so the
+    fill observer (PR-3b) can ask the RCL whether that release actually committed."""
+    return f"release-{attempt_id}"
 
 
 class ReleaseHoldReason(StrEnum):
@@ -262,8 +265,11 @@ class FinalityReleaseConsumer:
             process). Also gates :meth:`_check_obligation_expiry` (module docstring's H2 fix):
             the health check runs ONLY while ``time_service.health_state is
             HealthState.TRUSTED``.
-        finality_producer: A :class:`~tos_runtime.posttrade.finality.SyntheticFinalityProducer`
-            used ONLY for :meth:`~tos_runtime.posttrade.finality.SyntheticFinalityProducer
+        finality_producer: The boot's producer — :class:`~tos_runtime.posttrade.finality
+            .SyntheticFinalityProducer`, or :class:`~tos_runtime.posttrade.broker_finality
+            .BrokerFinalityProducer` for a stock MOCK boot (PR-3b). Its four id prefixes are the
+            rows this consumer re-loads, so a broker proof is never looked up under a SYNTHETIC
+            key (or the reverse). Otherwise used ONLY for :meth:`~tos_runtime.posttrade.finality.SyntheticFinalityProducer
             .produce_non_execution` here (the driver's own instance already produced any
             ``FULL_FILL`` proof before this consumer runs) — a second, functionally-identical
             instance of a stateless, pure-function dataclass; never shared mutable state.
@@ -283,7 +289,7 @@ class FinalityReleaseConsumer:
     inbox: SqliteEventInbox
     recon_service: ReconciliationService
     time_service: FinalityConsumerTimeReader
-    finality_producer: SyntheticFinalityProducer
+    finality_producer: ReleaseFinalityProducer
     scheme: CanonicalizationScheme
     monotonic_source: MonotonicSource
     account: str
@@ -389,16 +395,17 @@ class FinalityReleaseConsumer:
         if witness is not True:
             return self._hold(payload, reservation_id, ReleaseHoldReason.NO_WITNESS)
         proof = self._reload_proof(
-            payload.attempt_id, id_prefix=FULL_FILL_PROOF_ID_PREFIX
+            payload.attempt_id, id_prefix=self.finality_producer.full_fill_proof_prefix
         )
         obligation = self._reload_obligation(
-            payload.attempt_id, id_prefix=FULL_FILL_OBLIGATION_ID_PREFIX
+            payload.attempt_id,
+            id_prefix=self.finality_producer.full_fill_obligation_prefix,
         )
         if proof is None or obligation is None:
             return self._hold(
                 payload, reservation_id, ReleaseHoldReason.PROOF_NOT_RELOADED
             )
-        report, corroborated = self._reconcile(payload.attempt_id)
+        report, corroborated = self._reconcile(payload)
         if report is None:
             return self._hold(
                 payload, reservation_id, ReleaseHoldReason.RECONCILIATION_UNAVAILABLE
@@ -424,7 +431,7 @@ class FinalityReleaseConsumer:
     def _consume_non_execution(
         self, payload: EgressResultPayload, *, reservation_id: str
     ) -> ReleaseOutcome:
-        report, corroborated = self._reconcile(payload.attempt_id)
+        report, corroborated = self._reconcile(payload)
         if report is None:
             return self._hold(
                 payload, reservation_id, ReleaseHoldReason.RECONCILIATION_UNAVAILABLE
@@ -456,10 +463,12 @@ class FinalityReleaseConsumer:
         # Re-load rather than trust `produced` directly (module docstring's "never an
         # in-memory proof object" discipline, applied uniformly to both release paths).
         proof = self._reload_proof(
-            payload.attempt_id, id_prefix=NON_EXECUTION_PROOF_ID_PREFIX
+            payload.attempt_id,
+            id_prefix=self.finality_producer.non_execution_proof_prefix,
         )
         obligation = self._reload_obligation(
-            payload.attempt_id, id_prefix=NON_EXECUTION_OBLIGATION_ID_PREFIX
+            payload.attempt_id,
+            id_prefix=self.finality_producer.non_execution_obligation_prefix,
         )
         if proof is None or obligation is None:
             return self._hold(
@@ -476,7 +485,9 @@ class FinalityReleaseConsumer:
 
     # -- gate 3 (reconciliation) --------------------------------------------------------
 
-    def _reconcile(self, attempt_id: str) -> tuple[ReconciliationReport | None, bool]:
+    def _reconcile(
+        self, payload: EgressResultPayload
+    ) -> tuple[ReconciliationReport | None, bool]:
         """Gate 3 (module docstring): a fresh :class:`~tos_runtime.recon.service
         .ReconciliationReport` plus whether it positively corroborates ``attempt_id``.
 
@@ -484,11 +495,18 @@ class FinalityReleaseConsumer:
             ``(report, corroborated)`` — ``report`` is ``None`` only when ``.reconcile()``
             itself raised (fail-closed, never propagated out of this consumer).
         """
+        attempt_id = payload.attempt_id
         instrument_key = InstrumentKey(account=self.account, instrument=self.instrument)
         scope = WitnessScope(
             account=self.account,
             instrument_keys=(instrument_key,),
             attempt_ids=(attempt_id,),
+            # PR-3b r2 claim 3: the report folds EVERY receipt in this scope (the service never
+            # narrows to one attempt), so every trading date those receipts carry is inquired —
+            # an earlier day's attempt is then matched under its own date instead of reading as
+            # a stale reservation that blocks today's release. VTTC0081R serves three months; an
+            # older date makes the read unavailable, a hold with that reason, never a skip.
+            order_dates=self._scope_receipt_dates(payload),
         )
         freshness = _build_freshness_marker(self.time_service)
         try:
@@ -503,6 +521,23 @@ class FinalityReleaseConsumer:
             for classification in report.classifications
         )
         return report, bool(report.permits_capacity_release and matched)
+
+    def _scope_receipt_dates(self, payload: EgressResultPayload) -> tuple[str, ...]:
+        """Every trading date the scope's recorded receipts carry, plus ``payload``'s own."""
+        scope = WitnessScope(
+            account=self.account,
+            instrument_keys=(
+                InstrumentKey(account=self.account, instrument=self.instrument),
+            ),
+        )
+        try:
+            receipts = SqliteEvidenceReceiptReader(self.evidence_store).receipts(scope)
+        except WitnessUnavailable:
+            receipts = ()
+        dates = {r.trading_date for r in receipts if r.trading_date is not None}
+        if payload.trading_date is not None:
+            dates.add(payload.trading_date)
+        return tuple(sorted(dates))
 
     # -- gate 4 (non-transferable/current, from independent inputs — H1 fix) + release --
 
@@ -604,8 +639,21 @@ class FinalityReleaseConsumer:
         current_state = self.projection.reservation_state(reservation_id)
         if current_state is None:
             return self._hold(payload, reservation_id, ReleaseHoldReason.NO_RESERVATION)
-        current_seq = self.projection.reservation_last_seq(reservation_id)
-        expected_seq = -1 if current_seq is None else current_seq
+        # PR-3b: the CAS compares against the LOG tip, not this reservation's own last seq (every
+        # other RCL writer reads it the same way — risk/ledger_stages.py). The two differ as soon
+        # as any other entry lands after the commit, which is every real run.
+        try:
+            view = self.rcl_log.read_linearizable(
+                writer_epoch=self.rcl_log.current_epoch()
+            )
+        except Exception as exc:  # noqa: BLE001 - stale epoch / unreadable log -> hold
+            return self._hold(
+                payload,
+                reservation_id,
+                ReleaseHoldReason.RCL_TRANSITION_REFUSED,
+                detail=f"RCL tip unreadable: {type(exc).__name__}",
+            )
+        expected_seq = -1 if view.last_seq is None else view.last_seq
         # ★ kernel round #3 §2 decision 5 (ⓖ): SyntheticFinalityProducer hardcodes
         # obligation_generation=0 for every proof it mints (module docstring's own note); the
         # honest floor for the kernel's own resolution_generation axis is therefore 0, never a
@@ -634,10 +682,10 @@ class FinalityReleaseConsumer:
             {"attempt_id": payload.attempt_id, "to_state": to_state.value}
         )
         try:
-            release_reservation(
+            receipt = release_reservation(
                 self.rcl_log,
                 transition,
-                command_id=f"release-{payload.attempt_id}",
+                command_id=release_command_id(payload.attempt_id),
                 command_digest=command_digest,
                 expected_seq=expected_seq,
                 proof=proof,
@@ -648,6 +696,15 @@ class FinalityReleaseConsumer:
                 reservation_id,
                 ReleaseHoldReason.RCL_TRANSITION_REFUSED,
                 detail=str(exc),
+            )
+        if isinstance(receipt, AppendRefusal):
+            # PR-3b: a CAS/duplicate/from-state refusal is RETURNED, not raised — before this the
+            # consumer reported released=True for a transition the log never committed.
+            return self._hold(
+                payload,
+                reservation_id,
+                ReleaseHoldReason.RCL_TRANSITION_REFUSED,
+                detail=f"{receipt.reason}: {receipt.detail}",
             )
         return ReleaseOutcome(
             released=True,

@@ -1,6 +1,13 @@
 """``SyntheticFinalityProducer`` — post-trade finality proof producer for the SYNTHETIC paper
 transport only (TOS Phase 3 Wave 2 Lane C-R; plan §2.2).
 
+**Not the producer for a broker fill (PR-3b).** A ``FULL_FILL`` the KIS 모의투자 fill observer read
+off the broker gets its proof from :class:`~tos_runtime.posttrade.broker_finality
+.BrokerFinalityProducer` instead — same ``ORDER_FQP`` construction (:func:`build_order_fqp_result`,
+shared), different ``obligation_type`` and id/idempotency prefixes, so no broker-sourced artifact
+is ever labelled ``SYNTHETIC``. Which one a boot uses is decided once in compose
+(:mod:`tos_runtime.compose._broker_posttrade_wiring`).
+
 **SYNTHETIC only, quantity-only (honest disclosure).** This runtime's ``EgressResultPayload``
 (``tos.engine.records``) carries an instrument key, an attempt id, a result ``kind``, and — for
 a fill — ``filled_quantity``/``remaining_quantity``. It carries **no price, no amount, and no
@@ -41,7 +48,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Protocol
+from typing import ClassVar, Protocol
 
 from tos.canonical import CanonicalizationScheme, derive_id
 from tos.engine.records import EgressResultPayload
@@ -68,8 +75,11 @@ __all__ = [
     "NON_EXECUTION_OBLIGATION_ID_PREFIX",
     "NON_EXECUTION_PROOF_ID_PREFIX",
     "FinalityProducerPort",
+    "FinalityResult",
+    "ReleaseFinalityProducer",
     "SyntheticFinalityResult",
     "SyntheticFinalityProducer",
+    "build_order_fqp_result",
 ]
 
 #: Idempotency-key / :func:`~tos.canonical.derive_id` namespace prefixes (TOS Phase 5 W2-R
@@ -130,11 +140,19 @@ _NON_EXECUTION_KINDS: frozenset[EgressResultKind] = frozenset(
 
 
 @dataclass(frozen=True)
-class SyntheticFinalityResult:
-    """The obligation record + finality proof this producer issued for one ``FULL_FILL``."""
+class FinalityResult:
+    """The obligation record + finality proof a producer issued for one result. The same shape
+    for the SYNTHETIC producer here and the broker-sourced one
+    (:mod:`tos_runtime.posttrade.broker_finality`) — what each one claims is in the artifact
+    itself (``obligation_type`` and the id/idempotency prefixes), never in this container.
+    """
 
     record: EconomicObligationRecord
     proof: PostTradeFinalityProof
+
+
+#: The pre-PR-3b name, kept so existing imports keep working.
+SyntheticFinalityResult = FinalityResult
 
 
 class FinalityProducerPort(Protocol):
@@ -144,8 +162,31 @@ class FinalityProducerPort(Protocol):
     :meth:`~SyntheticFinalityProducer.produce_non_execution` or the producer's own
     config/scheme state."""
 
-    def produce(self, payload: EgressResultPayload) -> SyntheticFinalityResult | None:
+    def produce(self, payload: EgressResultPayload) -> FinalityResult | None:
         """See :meth:`SyntheticFinalityProducer.produce`'s own docstring."""
+        ...
+
+
+class ReleaseFinalityProducer(FinalityProducerPort, Protocol):
+    """What :class:`~tos_runtime.posttrade.release_consumer.FinalityReleaseConsumer` needs off a
+    producer (PR-3b): the non-execution proof, the scope config gate 4 compares against, and the
+    four idempotency-key prefixes it re-loads that producer's own rows by. Satisfied by
+    :class:`SyntheticFinalityProducer` and by
+    :class:`~tos_runtime.posttrade.broker_finality.BrokerFinalityProducer` — the consumer reloads
+    exactly the family the producer it was wired with writes, never the other one's."""
+
+    @property
+    def config(self) -> FinalityConfig: ...
+
+    full_fill_obligation_prefix: ClassVar[str]
+    full_fill_proof_prefix: ClassVar[str]
+    non_execution_obligation_prefix: ClassVar[str]
+    non_execution_proof_prefix: ClassVar[str]
+
+    def produce_non_execution(
+        self, payload: EgressResultPayload
+    ) -> FinalityResult | None:
+        """See :meth:`SyntheticFinalityProducer.produce_non_execution`."""
         ...
 
 
@@ -180,7 +221,14 @@ class SyntheticFinalityProducer:
     config: FinalityConfig
     scheme: CanonicalizationScheme
 
-    def produce(self, payload: EgressResultPayload) -> SyntheticFinalityResult | None:
+    full_fill_obligation_prefix: ClassVar[str] = FULL_FILL_OBLIGATION_ID_PREFIX
+    full_fill_proof_prefix: ClassVar[str] = FULL_FILL_PROOF_ID_PREFIX
+    non_execution_obligation_prefix: ClassVar[str] = NON_EXECUTION_OBLIGATION_ID_PREFIX
+    non_execution_proof_prefix: ClassVar[str] = NON_EXECUTION_PROOF_ID_PREFIX
+    #: The ``EconomicObligationRecord.obligation_type`` every artifact of this producer carries.
+    obligation_type: ClassVar[str] = "SYNTHETIC_ORDER_FQP"
+
+    def produce(self, payload: EgressResultPayload) -> FinalityResult | None:
         """Build the obligation record + finality proof for one ``EGRESS_RESULT`` payload.
 
         Args:
@@ -206,16 +254,19 @@ class SyntheticFinalityProducer:
             # remaining executable quantity" — the ORDER_FQP claim itself does, so it is
             # checked directly against the payload, not inferred from the kind.
             return None
-        return self._build_synthetic_result(
+        return build_order_fqp_result(
             payload,
+            config=self.config,
+            scheme=self.scheme,
             quantity=filled_quantity,
-            obligation_id_prefix=FULL_FILL_OBLIGATION_ID_PREFIX,
-            proof_id_prefix=FULL_FILL_PROOF_ID_PREFIX,
+            obligation_id_prefix=self.full_fill_obligation_prefix,
+            proof_id_prefix=self.full_fill_proof_prefix,
+            obligation_type=self.obligation_type,
         )
 
     def produce_non_execution(
         self, payload: EgressResultPayload
-    ) -> SyntheticFinalityResult | None:
+    ) -> FinalityResult | None:
         """Build a **non-execution** obligation record + finality proof — zero filled, zero
         remaining — for a ``CANCEL_ACK``/``EXPIRED``/``REJECT`` result (TOS Phase 5 W2-R; plan
         §10 row ①).
@@ -245,104 +296,110 @@ class SyntheticFinalityProducer:
         """
         if payload.kind not in _NON_EXECUTION_KINDS:
             return None
-        return self._build_synthetic_result(
+        return build_order_fqp_result(
             payload,
+            config=self.config,
+            scheme=self.scheme,
             quantity=Decimal("0"),
-            obligation_id_prefix=NON_EXECUTION_OBLIGATION_ID_PREFIX,
-            proof_id_prefix=NON_EXECUTION_PROOF_ID_PREFIX,
+            obligation_id_prefix=self.non_execution_obligation_prefix,
+            proof_id_prefix=self.non_execution_proof_prefix,
+            obligation_type=self.obligation_type,
         )
 
-    def _build_synthetic_result(
-        self,
-        payload: EgressResultPayload,
-        *,
-        quantity: Decimal,
-        obligation_id_prefix: str,
-        proof_id_prefix: str,
-    ) -> SyntheticFinalityResult | None:
-        """Shared artifact construction for :meth:`produce` (``quantity=filled_quantity``,
-        the ``FULL_FILL_*`` prefixes) and :meth:`produce_non_execution` (``quantity=Decimal("0")``,
-        the ``NON_EXECUTION_*`` prefixes) — every gate/leg convention stays identical between the
-        two; only the asserted magnitude and the id/idempotency-key namespace differ (module
-        docstring's M4 fix — distinct prefixes so the two artifact families can never collide).
-        """
-        account = payload.instrument_key.account
-        leg_scope = ObligationLegScope(
-            leg=ObligationLegDirection.RECEIPT,
-            account=account,
-            currency=self.config.currency,
-            value_date=self.config.value_date,
-            source_revision=self.config.source_revision,
-            finality_class=FinalityDimensionKind.ORDER_FQP,
-        )
-        leg = ObligationLeg(
-            direction=ObligationLegDirection.RECEIPT,
-            magnitude=quantity,
-            scope=leg_scope,
-        )
-        leg_magnitudes = {ObligationLegDirection.RECEIPT: quantity}
 
-        if not obligation_leg_set_complete(
-            required_legs=_REQUIRED_LEGS,
-            present_legs=frozenset({ObligationLegDirection.RECEIPT}),
-            leg_magnitudes=leg_magnitudes,
-        ):
-            return None
+def build_order_fqp_result(
+    payload: EgressResultPayload,
+    *,
+    config: FinalityConfig,
+    scheme: CanonicalizationScheme,
+    quantity: Decimal,
+    obligation_id_prefix: str,
+    proof_id_prefix: str,
+    obligation_type: str,
+) -> FinalityResult | None:
+    """Shared ``ORDER_FQP`` artifact construction — every producer's :meth:`produce`
+    (``quantity=filled_quantity``) and ``produce_non_execution`` (``quantity=Decimal("0")``).
+    Every gate/leg convention is identical across callers; only the asserted magnitude, the
+    id/idempotency-key namespace (module docstring's M4 fix — distinct prefixes so artifact
+    families never collide) and the declared ``obligation_type`` differ.
+    """
+    account = payload.instrument_key.account
+    leg_scope = ObligationLegScope(
+        leg=ObligationLegDirection.RECEIPT,
+        account=account,
+        currency=config.currency,
+        value_date=config.value_date,
+        source_revision=config.source_revision,
+        finality_class=FinalityDimensionKind.ORDER_FQP,
+    )
+    leg = ObligationLeg(
+        direction=ObligationLegDirection.RECEIPT,
+        magnitude=quantity,
+        scope=leg_scope,
+    )
+    leg_magnitudes = {ObligationLegDirection.RECEIPT: quantity}
 
-        proof_present = {FinalityDimensionKind.ORDER_FQP: True}
-        if not finality_dimensions_orthogonal(
-            FinalityDimensionKind.ORDER_FQP, proof_present
-        ):
-            return None
+    if not obligation_leg_set_complete(
+        required_legs=_REQUIRED_LEGS,
+        present_legs=frozenset({ObligationLegDirection.RECEIPT}),
+        leg_magnitudes=leg_magnitudes,
+    ):
+        return None
 
-        obligation_id = derive_id(
-            obligation_id_prefix,
-            self.scheme.compute_digest(
-                {"attempt_id": payload.attempt_id, "instrument_key": account}
-            ),
-        )
-        proof_id = derive_id(
-            proof_id_prefix,
-            self.scheme.compute_digest({"obligation_id": obligation_id}),
-        )
+    proof_present = {FinalityDimensionKind.ORDER_FQP: True}
+    if not finality_dimensions_orthogonal(
+        FinalityDimensionKind.ORDER_FQP, proof_present
+    ):
+        return None
 
-        record = EconomicObligationRecord.issue(
-            scheme=self.scheme,
-            status=ArtifactStatus.ISSUED,
-            obligation_id=obligation_id,
-            obligation_type="SYNTHETIC_ORDER_FQP",
-            obligation_version="1",
-            obligation_generation=0,
-            idempotency_key=f"{obligation_id_prefix}:{payload.attempt_id}",
-            source_event_ids=(payload.attempt_id,),
-            account_scope=account,
-            instrument_identity=payload.instrument_key.instrument,
-            quantity=quantity,
-            legs=(leg,),
-            leg_magnitudes=leg_magnitudes,
-            lifecycle_state=PostTradeObligationLifecycleState.FINALITY_PROVEN,
-            finality_proof_refs=(proof_id,),
-        )
-        assert isinstance(record, EconomicObligationRecord)
+    obligation_id = derive_id(
+        obligation_id_prefix,
+        scheme.compute_digest(
+            {"attempt_id": payload.attempt_id, "instrument_key": account}
+        ),
+    )
+    proof_id = derive_id(
+        proof_id_prefix,
+        scheme.compute_digest({"obligation_id": obligation_id}),
+    )
 
-        proof = PostTradeFinalityProof.issue(
-            scheme=self.scheme,
-            status=ArtifactStatus.ISSUED,
-            proof_id=proof_id,
-            obligation_ref=record.obligation_id,
-            obligation_version=record.obligation_version,
-            leg_scope=leg_scope,
-            amount=quantity,
-            finality_class=FinalityDimensionKind.ORDER_FQP,
-            bound_generation=record.obligation_generation,
-            does_not_prove=_ORDER_FQP_DOES_NOT_PROVE,
-            proof_recipe_id=self.config.proof_recipe_id,
-            source_revision=self.config.source_revision,
-            idempotency_key=f"{proof_id_prefix}:{payload.attempt_id}",
-        )
-        assert isinstance(proof, PostTradeFinalityProof)
+    record = EconomicObligationRecord.issue(
+        scheme=scheme,
+        status=ArtifactStatus.ISSUED,
+        obligation_id=obligation_id,
+        obligation_type=obligation_type,
+        obligation_version="1",
+        obligation_generation=0,
+        idempotency_key=f"{obligation_id_prefix}:{payload.attempt_id}",
+        source_event_ids=(payload.attempt_id,),
+        account_scope=account,
+        instrument_identity=payload.instrument_key.instrument,
+        quantity=quantity,
+        legs=(leg,),
+        leg_magnitudes=leg_magnitudes,
+        lifecycle_state=PostTradeObligationLifecycleState.FINALITY_PROVEN,
+        finality_proof_refs=(proof_id,),
+    )
+    assert isinstance(record, EconomicObligationRecord)
 
-        if not finality_proof_class_specific(proof):
-            return None
+    proof = PostTradeFinalityProof.issue(
+        scheme=scheme,
+        status=ArtifactStatus.ISSUED,
+        proof_id=proof_id,
+        obligation_ref=record.obligation_id,
+        obligation_version=record.obligation_version,
+        leg_scope=leg_scope,
+        amount=quantity,
+        finality_class=FinalityDimensionKind.ORDER_FQP,
+        bound_generation=record.obligation_generation,
+        does_not_prove=_ORDER_FQP_DOES_NOT_PROVE,
+        proof_recipe_id=config.proof_recipe_id,
+        source_revision=config.source_revision,
+        idempotency_key=f"{proof_id_prefix}:{payload.attempt_id}",
+    )
+    assert isinstance(proof, PostTradeFinalityProof)
 
-        return SyntheticFinalityResult(record=record, proof=proof)
+    if not finality_proof_class_specific(proof):
+        return None
+
+    return FinalityResult(record=record, proof=proof)

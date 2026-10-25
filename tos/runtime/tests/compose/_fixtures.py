@@ -115,10 +115,20 @@ DEFAULT_WALL_CLOCK_UNIX_MS = 1_789_347_600_000
 #: one minute a day.
 #:
 #: :func:`pin_system_clock` shifts rather than freezes, so a long test walks forward from
-#: here and may cross midnight 30s in. That is deliberate and safe in BOTH directions:
-#: ``conftest.py``'s window now admits every instant of the day and every day of the week,
-#: so neither side of the boundary is a different verdict.
+#: here and may cross midnight 30s in. For the SESSION PHASE that is safe in both
+#: directions: ``conftest.py``'s window admits every instant of the day and every day of
+#: the week, so neither side of the boundary is a different verdict. A value that DOES
+#: change at midnight — the KST trading DATE — is not safe to hard-code against this
+#: instant (a boot slower than 30s lands on the next day), so a test asserting one derives
+#: the expected date from the runtime's own observed reading
+#: (``runtime.time_service.wall_clock_now()``), never from this constant.
 LAST_MINUTE_OF_DAY_UNIX_MS = 1_789_397_970_000
+
+#: The UNPATCHED reader, captured once at import. :func:`pin_system_clock` always shifts
+#: THIS, never whatever ``LocalSystemClockReader.read`` currently is, so a second call in
+#: the same test re-pins onto its own target instead of stacking a second offset on top of
+#: the first (issue #914: two calls with T used to read ``2T - now``).
+_ORIGINAL_LOCAL_SYSTEM_CLOCK_READ = LocalSystemClockReader.read
 
 
 def pin_system_clock(
@@ -143,11 +153,15 @@ def pin_system_clock(
     ``reachable``/``healthy``/``quality``/``common_mode_group`` still come from the real
     reader, so the time service's own health judgement is untouched.
 
+    Calling it again in the same test RE-pins onto the new target (the offset is always
+    taken against the unpatched reader, :data:`_ORIGINAL_LOCAL_SYSTEM_CLOCK_READ`); it does
+    not add a second shift.
+
     Returns:
         ``now_ms()`` — the shifted clock, for a caller that has to build its own
         ``as_of_ms`` on the same timeline as the runtime it is about to boot.
     """
-    real_read = LocalSystemClockReader.read
+    real_read = _ORIGINAL_LOCAL_SYSTEM_CLOCK_READ
     offset_ms = target_unix_ms - int(time.time() * 1000)
 
     def _shifted_read(self: LocalSystemClockReader) -> ReferenceObservation:
@@ -642,6 +656,8 @@ _STOCK_TREE_BROKER_FACTS = (
     Path(__file__).resolve().parents[4]
     / "config/tos_runtime/cp3-setup-d-stock-005930/broker_facts.yaml"
 )
+#: ...and its ``fill_observer.yaml`` (PR-3b), copied the same way for the same reason.
+_STOCK_TREE_FILL_OBSERVER = _STOCK_TREE_BROKER_FACTS.with_name("fill_observer.yaml")
 
 
 def write_kis_mock_transport_config(
@@ -743,6 +759,7 @@ def write_kis_mock_transport_config(
     # A mock-class kis-mock boot reads item 12's GET-only broker facts (PR-3a option (a)) —
     # the stock tree's own committed file, one source, never a second fixture copy.
     shutil.copyfile(_STOCK_TREE_BROKER_FACTS, config_dir / "broker_facts.yaml")
+    shutil.copyfile(_STOCK_TREE_FILL_OBSERVER, config_dir / "fill_observer.yaml")
     vcp_path = config_dir / "venue_constraint_policy.yaml"
     if vcp_path.is_file():
         # A kis-mock boot cross-checks the transport's `price_scale` against the tree's

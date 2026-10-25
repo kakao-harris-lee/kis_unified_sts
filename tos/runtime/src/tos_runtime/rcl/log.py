@@ -459,6 +459,27 @@ class SqliteCommitLog:
             ),
         )
 
+    def committed_command(self, command_id: str) -> tuple[int, str | None] | None:
+        """``(seq, command_digest)`` of the COMMITTED entry for ``command_id``, or ``None``.
+
+        The ``entries`` table only ever holds committed rows (an append that fails rolls back
+        with its transaction), so this is the authoritative "did it commit" answer — unlike the
+        ``RCL_*`` evidence row, which is written inside the transaction BEFORE ``COMMIT`` and
+        survives a rollback (PR-3b Codex r3: boot replay reads this, not the evidence).
+        """
+        row = self._conn.execute(
+            "SELECT seq, command_digest FROM entries WHERE command_id = ?",
+            (command_id,),
+        ).fetchone()
+        return None if row is None else (int(row[0]), row[1])
+
+    def command_committed(self, command_id: str) -> bool:
+        """Whether an entry with ``command_id`` is committed (PR-3b: the fill observer asks
+        whether an attempt's release transition actually landed, not whether one was intended).
+        """
+        row_exists, _digest = existing_command_row(self._conn, command_id)
+        return row_exists
+
     def reservation_rows(
         self,
     ) -> Iterator[tuple[str, CapacityState, int, ReservationScope]]:

@@ -289,24 +289,28 @@ def test_orders_are_parsed_with_attempt_id_always_none_for_orphan_detection(
             "rt_cd": "0",
             "output1": [
                 {
+                    "pdno": "005930",
                     "odno": "0000004470",
                     "tot_ccld_qty": "1",
                     "rmn_qty": "0",
                     "cncl_yn": "N",
                 },
                 {
+                    "pdno": "005930",
                     "odno": "0000004471",
                     "tot_ccld_qty": "0",
                     "rmn_qty": "5",
                     "cncl_yn": "N",
                 },
                 {
+                    "pdno": "005930",
                     "odno": "0000004472",
                     "tot_ccld_qty": "2",
                     "rmn_qty": "3",
                     "cncl_yn": "N",
                 },
                 {
+                    "pdno": "005930",
                     "odno": "0000004473",
                     "tot_ccld_qty": "0",
                     "rmn_qty": "0",
@@ -351,6 +355,7 @@ def test_each_order_carries_the_brokers_own_order_date(
             "rt_cd": "0",
             "output1": [
                 {
+                    "pdno": "005930",
                     "odno": odno,
                     "tot_ccld_qty": "1",
                     "rmn_qty": "0",
@@ -417,12 +422,26 @@ def test_futures_asset_is_refused_at_construction(server: FakeKisGetServer) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_non_10_digit_account_raises_witness_unavailable(
-    server: FakeKisGetServer,
+@pytest.mark.parametrize(
+    "account",
+    [
+        "not-an-account",
+        "123456789",
+        "1234-567801",
+        "12345678-0-1",
+        "１２３４５６７８０１",
+    ],
+)
+def test_a_non_8_2_account_raises_witness_unavailable(
+    server: FakeKisGetServer, account: str
 ) -> None:
+    """The witness splits the account with the order codec's own parser
+    (``transport/kis_mock/account.py``, #932) — a shape the order path refuses is refused here
+    too, so a fill read can never target a different account than the order did."""
     witness = _witness(server)
-    with pytest.raises(WitnessUnavailable, match="10-digit"):
-        witness.observe(WitnessScope(account="not-an-account"))
+    with pytest.raises(WitnessUnavailable, match="8-2"):
+        witness.observe(WitnessScope(account=account))
+    assert server.all_requests == []  # refused before any GET
 
 
 # ---------------------------------------------------------------------------
@@ -535,3 +554,98 @@ def test_module_reads_no_ambient_environment() -> None:
     assert "import os" not in source
     assert "os.environ" not in source.replace("``os.environ``", "")
     assert "os.getenv" not in source.replace("``os.getenv``", "")
+
+
+@pytest.mark.parametrize("pdno", [None, "000660"])
+def test_an_order_row_not_naming_the_queried_instrument_makes_the_read_unavailable(
+    server: FakeKisGetServer, pdno: str | None
+) -> None:
+    """PR-3b review HIGH 2: ODNO-only joining would let a row for another symbol (or naming
+    none) corroborate this instrument's fill. The witness keeps the conflict — the whole read is
+    unavailable — instead of filtering the row out."""
+    from tos.engine.records import InstrumentKey
+
+    row = {"odno": "0000004470", "tot_ccld_qty": "1", "rmn_qty": "0", "cncl_yn": "N"}
+    if pdno is not None:
+        row["pdno"] = pdno
+    server.queue_response(BALANCE_PATH, status=200, body={"rt_cd": "0", "output1": []})
+    server.queue_response(ORDER_PATH, status=200, body={"rt_cd": "0", "output1": [row]})
+    with pytest.raises(WitnessUnavailable, match="names instrument"):
+        _witness(server).observe(
+            WitnessScope(
+                account=ACCOUNT,
+                instrument_keys=(InstrumentKey(account=ACCOUNT, instrument="005930"),),
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
+# The caller's deadline (#949 review HIGH): it stops the WALK, and what was read so far is
+# never returned. The fill observer owns the clock — this class has none.
+# ---------------------------------------------------------------------------
+
+
+def test_a_callers_deadline_stops_the_walk_and_returns_no_partial_list(
+    server: FakeKisGetServer,
+) -> None:
+    """Page 0 arrives with rows and ``tr_cont=M`` (more follows); the deadline then expires, so
+    page 1 is never requested and the read is unavailable — exactly the answer our own
+    ``max_pages`` cap gives, for the same reason (``_walk_continuation``'s own contract).
+
+    Mutations: return ``_WalkOutcome(pages=tuple(pages), ...)`` on the deadline instead of
+    raising -> the row from page 0 comes back as if it were the whole list -> the
+    ``WitnessUnavailable`` assertion goes red; drop the check entirely -> page 1 IS requested
+    -> the request-count assertion goes red.
+    """
+    server.queue_response(
+        ORDER_PATH,
+        status=200,
+        body={
+            "rt_cd": "0",
+            "output1": [
+                {
+                    "pdno": "005930",
+                    "odno": "0000004470",
+                    "tot_ccld_qty": "1",
+                    "rmn_qty": "0",
+                    "cncl_yn": "N",
+                }
+            ],
+            "ctx_area_fk100": "cursor-0",
+            "ctx_area_nk100": "cursor-0",
+        },
+        headers={"tr_cont": "M"},
+    )
+    pages_seen = {"count": 0}
+
+    def deadline_expired() -> bool:
+        # Fresh for the first page, past for every page after it.
+        expired = pages_seen["count"] > 0
+        pages_seen["count"] += 1
+        return expired
+
+    with pytest.raises(WitnessUnavailable, match="deadline"):
+        _witness(server).order_rows(
+            WitnessScope(account=ACCOUNT),
+            inquiry_date="20261023",
+            deadline_expired=deadline_expired,
+        )
+    assert len(server.requests_for(ORDER_PATH)) == 1
+
+
+def test_a_deadline_already_past_sends_no_request_at_all(
+    server: FakeKisGetServer,
+) -> None:
+    """The predicate is asked BEFORE the first page too, so the observer's date loop needs no
+    deadline logic of its own: handing the predicate down is enough to make a read that starts
+    too late cost nothing.
+
+    Mutation: ask it only from the second page on -> one GET is sent -> red.
+    """
+    with pytest.raises(WitnessUnavailable, match="deadline"):
+        _witness(server).order_rows(
+            WitnessScope(account=ACCOUNT),
+            inquiry_date="20261023",
+            deadline_expired=lambda: True,
+        )
+    assert server.all_requests == []

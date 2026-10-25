@@ -72,6 +72,7 @@ from dataclasses import dataclass, field
 from tos.canonical import CanonicalizationScheme
 from tos.engine import EngineCore, EngineEvent, EventResult
 from tos.engine.records import StageRequest, StageVerdict, event_identity
+from tos.engine.state import ProvisionalReservationLedger
 from tos.engine.vocabulary import (
     INJECTED_STAGE_STEPS,
     CommitmentStep,
@@ -262,6 +263,12 @@ class EventCorrelatingCore:
     core: EngineCore
     recorded_stage: RecordedStage
     scheme: CanonicalizationScheme
+
+    @property
+    def ledger(self) -> ProvisionalReservationLedger:
+        """The wrapped core's projection — :func:`~tos_runtime.engine.replay.replay_engine`
+        re-applies the live engine's recorded releases to it (PR-3b r2 claim 2)."""
+        return self.core.ledger
 
     def handle(self, event: EngineEvent) -> EventResult:
         event_id = event_identity(event, scheme=self.scheme)

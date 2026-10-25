@@ -48,6 +48,7 @@ from tos_runtime.compose._engine_wiring import (
 )
 from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.evidence.emergency import record_halt
+from tos_runtime.recon.ports import BrokerWitness
 from tos_runtime.recovery import (
     RecoveryBarrier,
     RecoveryInputs,
@@ -101,6 +102,7 @@ def apply_recovery_barrier(
     data_dir: Path,
     custody_root: Path,
     scheme: CanonicalizationScheme,
+    witness: BrokerWitness | None = None,
 ) -> ComposedRuntime:
     """Assemble the recovery inputs, fold them via the kernel, and hold or admit ``runtime``.
 
@@ -116,6 +118,8 @@ def apply_recovery_barrier(
         custody_root: The SAME directory ``compose_paper_runtime`` was given — for the read-only
             custody-manifest identity read.
         scheme: The SAME canonicalization scheme this runtime composed with.
+        witness: The boot's broker witness for possibly-live reconciliation — ``None`` keeps the
+            synthetic ledger witness; a stock MOCK boot passes the KIS one (PR-3b).
 
     Returns:
         ``runtime`` itself: :attr:`~tos_runtime.compose._types.ComposedRuntime.recovery` is
@@ -138,6 +142,7 @@ def apply_recovery_barrier(
         time_service=runtime.time_service,
         account=instrument_key.account,
         instrument=instrument_key.instrument,
+        witness=witness,
     )
     verdict = RecoveryBarrier.verdict(inputs)
 

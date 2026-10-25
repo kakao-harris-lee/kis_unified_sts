@@ -208,3 +208,14 @@ slots:
     anchor: "source_revision: null"
     replacement: 'source_revision: "{value}"'
     value: "revision"
+  # B2 (2026-10-24 dry-run): the committed `../../../docs/…` is relative to the COMMITTED file,
+  # and the loader resolves it against the directory it reads — after a render, the off-repo
+  # output, where no `docs/` exists, so the kis-mock boot refused. The value is that committed
+  # path resolved against --source (render_paper_config.py `resolve_broker_profile_instance_path`):
+  # the same INSTANCE document in the source checkout, never a copy. Only this tree's boot reads
+  # the INSTANCE (kis-mock, `_transport_wiring.py`), so only this tree declares the slot.
+  - file: "broker_scopes.yaml"
+    key: "instance_path"
+    anchor: "instance_path: ../../../docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml"
+    replacement: 'instance_path: "{value}"'
+    value: "broker_profile_instance_path"

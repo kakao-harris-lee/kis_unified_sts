@@ -13,6 +13,7 @@ from tos_runtime.brokercap.derive import (
     Item6Item12Fields,
     derive_item6_item12,
     is_broker_reaching,
+    is_mock_order_class,
     load_active_instance_document,
 )
 from tos_runtime.brokercap.instance import (
@@ -57,6 +58,7 @@ __all__ = [
     "derive_item6_item12",
     "instance_version_current",
     "is_broker_reaching",
+    "is_mock_order_class",
     "load_active_instance_document",
     "load_broker_scopes",
     "load_instance_document",
