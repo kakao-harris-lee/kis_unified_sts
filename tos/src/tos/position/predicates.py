@@ -83,7 +83,11 @@ the consumed kind is terminal: its outstanding quantity is computed as for a non
 result. An unmatched result's own ``filled_quantity`` is never promoted to CONFIRMED (only
 applied results are); the unconfirmed remainder stays visible as IN-FLIGHT. An unmatched result
 recorded BEFORE the latest consumed one is superseded only if that consumed result's cumulative
-``filled_quantity`` already covers the unmatched fill — a later non-fill result does not.
+``filled_quantity`` already covers the unmatched fill — a later non-fill result does not. The
+caller likewise drops a replay — an unmatched result after the latest consumed one that repeats
+one of the attempt's applied results (same kind and broker execution, fill already covered),
+e.g. the applied ``REJECT`` re-sent after finality release; a genuinely new result still
+reopens. This module sees only the resulting set.
 
 Pure module: stdlib (``decimal``, ``collections.abc``) + ``tos.position.records`` only; no
 ``shared.*``, no sibling ``tos.*`` (mirrors every other kernel package's §0.3 discipline).

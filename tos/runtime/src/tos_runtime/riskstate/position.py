@@ -62,8 +62,8 @@ by a LATER ``EGRESS_RESULT_CONSUMED``                     ``send_seal.outbound_q
                                                            proves nothing was safely
                                                            resolved (plan §2.2 line 58).
 ``SEND_SEALED`` + ``RESULT_UNMATCHED`` with a higher      As the non-terminal CONSUMED row,
-``seq`` than the latest ``EGRESS_RESULT_CONSUMED``        whatever that result's kind: the
-                                                           consumed fill stays CONFIRMED, the
+``seq`` than the latest ``EGRESS_RESULT_CONSUMED``,       whatever that result's kind: the
+not a replay of an applied row (below)                    consumed fill stays CONFIRMED, the
                                                            unfilled remainder returns to
                                                            IN-FLIGHT.
 ``SEND_SEALED`` with NEITHER receipt kind present         IN-FLIGHT: the full sealed
@@ -92,7 +92,16 @@ crossing a ``CANCEL_ACK``, whose quantity ``tos.engine.core`` records only on
 ``RESULT_UNMATCHED``), so it reopens the attempt even when the consumed kind is terminal. A
 ``DUPLICATE`` disposition is the exact already-applied result resent
 (``tos.engine.vocabulary.ResultDisposition``), not a new fact, so it never reopens; every other
-non-applied disposition can carry a real late fill and does.
+non-applied disposition can carry a real late fill and does — except a **replay**: an unmatched
+row whose ``(egress_result_kind, broker_execution_id)`` equals one of the attempt's own applied
+rows and whose ``filled_quantity`` the latest consumed cumulative fill already covers. After
+finality release the engine holds no reservation, so the same applied result re-sent is recorded
+as ``ORPHAN_NO_RESERVATION`` (or ``MISMATCHED_ATTEMPT`` once a new attempt holds the scope) —
+``ProvisionalReservationLedger.apply_egress_result`` checks the reservation before the
+``DUPLICATE`` signature — and a released attempt can never be re-applied, so reopening it would
+DENY the scope forever. A larger fill, a kind no applied row carries (``FULL_FILL`` after
+``CANCEL_ACK``), or a different broker execution is a new fact and still reopens. No result
+digest is persisted on either evidence kind, so identity is these durable fields alone.
 
 **Side stays a policy/config-carried token — never a runtime-authored literal (deviation from
 the plan §4.1 constructor signature, reported; long/short symmetry, CLAUDE.md "Futures must
@@ -214,6 +223,16 @@ def _to_decimal(value: object) -> Decimal | None:
     return None
 
 
+def _result_identity(payload: Mapping[str, object]) -> tuple[object, object]:
+    """The durable identity two result rows of one attempt share when they report the same
+    broker fact: ``(egress_result_kind, broker_execution_id)``. Both evidence kinds copy these two
+    fields verbatim from the incoming payload (``tos.engine.core`` ``_handle_egress_result``);
+    ``filled_quantity`` is compared separately because ``EGRESS_RESULT_CONSUMED`` stores the
+    reservation's cumulative fill, not the payload's (module docstring, "replay" note).
+    """
+    return (payload.get("egress_result_kind"), payload.get("broker_execution_id"))
+
+
 def _seal_in_scope(
     seal: Mapping[str, object], *, account: str, instrument: str
 ) -> bool:
@@ -325,6 +344,7 @@ class EvidencePositionReader:
         ]
         consumed_by_attempt: dict[str, ConsumedResult] = {}
         latest_consumed_seq: dict[str, int] = {}
+        applied_identities: dict[str, set[tuple[object, object]]] = {}
         unmatched_attempts: set[str] = set()
         # ``consumed_payloads`` is in commit (``seq ASC``) order, so the last assignment per
         # attempt is its LATEST applied result — the one whose kind decides terminality and
@@ -334,6 +354,9 @@ class EvidencePositionReader:
             if not isinstance(attempt_id, str):
                 continue
             latest_consumed_seq[attempt_id] = seq
+            applied_identities.setdefault(attempt_id, set()).add(
+                _result_identity(payload)
+            )
             raw_kind = payload.get("egress_result_kind")
             consumed_by_attempt[attempt_id] = ConsumedResult(
                 result_kind=raw_kind if isinstance(raw_kind, str) else None,
@@ -347,12 +370,15 @@ class EvidencePositionReader:
             if not isinstance(attempt_id, str):
                 continue
             latest = consumed_by_attempt.get(attempt_id)
-            if (
-                latest is None
-                or seq > latest_consumed_seq[attempt_id]
-                or (_to_decimal(payload.get("filled_quantity")) or Decimal(0))
-                > (latest.filled_quantity or Decimal(0))
-            ):
+            if latest is None:
+                unmatched_attempts.add(attempt_id)
+                continue
+            fill_covered = (
+                _to_decimal(payload.get("filled_quantity")) or Decimal(0)
+            ) <= (latest.filled_quantity or Decimal(0))
+            superseded = seq < latest_consumed_seq[attempt_id]
+            replayed = _result_identity(payload) in applied_identities[attempt_id]
+            if not (fill_covered and (superseded or replayed)):
                 unmatched_attempts.add(attempt_id)
         sources: list[str] = []
         if consumed_payloads:
