@@ -254,8 +254,10 @@ BAND_LINE_EXTRA_WAIT_S=${CP3_BAND_LINE_EXTRA_WAIT_S:-20}
 
 # A typo ceiling on the session window, not a tuning knob: TENANT_STOP_AT is a
 # wall-clock time, and "2027" instead of "2026" is a session that never ends.
-# One trading day is the widest a one-off boot proof can honestly need.
-MAX_SESSION_S=28800
+# One trading day is the widest a one-off boot proof can honestly need — and a
+# day KRX shifts an hour late (#924, the exam day: 08:38 cron start -> 16:45
+# close + 5 min = 8h12m) is still one trading day, so the ceiling is 9 h, not 8.
+MAX_SESSION_S=32400
 
 # --- 3. instance values (no defaults) --------------------------------------
 
@@ -448,6 +450,23 @@ stock)
   ;;
 esac
 log "market=$_MARKET (tree and producer agree) · transport=$TRANSPORT"
+
+# --- 5c. today's open delay (#924) ----------------------------------------
+#
+# The first-row hang ceiling (step 8b) counts from the REGULAR open. On a day the calendar's
+# session_overrides moves the open later (#924), the producer cannot publish
+# before that later open, so the ceiling moves by exactly that delay — read from
+# the producer config's own calendar (tools/tos_cp3/session_day.py), never typed
+# here. A regular day adds 0. Read HERE, before the producer starts, so a
+# failed read refuses the session instead of killing a running one.
+OPEN_DELAY_S=$(PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$REPO" "$PY" -P -m tools.tos_cp3.session_day \
+  open-delay --producer-config "$TENANT_PRODUCER_CONFIG" --repo-root "$REPO" \
+  --date "$(TZ=Asia/Seoul date +%F)" 2>&1) ||
+  die "cannot read today's open delay from $TENANT_PRODUCER_CONFIG: $OPEN_DELAY_S"
+case "$OPEN_DELAY_S" in
+'' | *[!0-9]*) die "open delay '$OPEN_DELAY_S' is not a whole number of seconds" ;;
+esac
+[ "$OPEN_DELAY_S" -gt 0 ] && log "dated session override: open is ${OPEN_DELAY_S}s later than the regular open — first-row bound grows by that much"
 
 # --- 6. the contract month — computed ONCE, given to all three -------------
 #
@@ -766,7 +785,8 @@ PY
   while IFS= read -r line; do log "  $line"; done <"$WAIT_LOG"
 }
 
-first_row_wait "$FIRST_LINE_TIMEOUT_S" "first-row wait"
+# OPEN_DELAY_S is read in step 5c, before anything is launched (#963 review LOW-1).
+first_row_wait "$((FIRST_LINE_TIMEOUT_S + OPEN_DELAY_S))" "first-row wait"
 
 # --- 8c. the BAND process, then the BAND line (band plan v3) ---------------
 #

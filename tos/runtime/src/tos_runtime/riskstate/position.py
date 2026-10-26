@@ -55,12 +55,17 @@ whose kind is NOT terminal (``ACK`` / ``PARTIAL_FILL``    above, PLUS IN-FLIGHT:
                                                            ACK resolves nothing (lane A
                                                            re-review #7; bucket rationale in
                                                            :mod:`tos.position.predicates`).
-``SEND_SEALED`` + ``RESULT_UNMATCHED`` present (no        UNKNOWN: the FULL sealed
-``EGRESS_RESULT_CONSUMED`` for the same attempt)          ``send_seal.outbound_quantity``,
+``SEND_SEALED`` + ``RESULT_UNMATCHED`` not superseded     IN-FLIGHT: the FULL sealed
+by a LATER ``EGRESS_RESULT_CONSUMED``                     ``send_seal.outbound_quantity``,
                                                            signed by ``outbound_side`` — a
                                                            recorded-but-not-applied result
                                                            proves nothing was safely
                                                            resolved (plan §2.2 line 58).
+``SEND_SEALED`` + ``RESULT_UNMATCHED`` with a higher      As the non-terminal CONSUMED row,
+``seq`` than the latest ``EGRESS_RESULT_CONSUMED``,       whatever that result's kind: the
+not a replay of an applied row (below)                    consumed fill stays CONFIRMED, the
+                                                           unfilled remainder returns to
+                                                           IN-FLIGHT.
 ``SEND_SEALED`` with NEITHER receipt kind present         IN-FLIGHT: the full sealed
                                                            quantity, signed by
                                                            ``outbound_side`` — genuinely
@@ -68,12 +73,41 @@ whose kind is NOT terminal (``ACK`` / ``PARTIAL_FILL``    above, PLUS IN-FLIGHT:
 An ``outbound_side`` that matches NEITHER of the two       UNKNOWN in BOTH directions
 injected side tokens                                       (fail-closed — an unrecognized
                                                              side token proves no direction
-                                                             at all, never defaults to one).
+                                                             at all, never defaults to one);
+                                                             IN-FLIGHT quantities go to
+                                                             IN-FLIGHT in both directions.
 ======================================================  =================================
 
-If BOTH a ``RESULT_UNMATCHED`` and an ``EGRESS_RESULT_CONSUMED`` row exist for the same
-attempt (a re-injected result superseding an earlier unmatched one), the ``CONSUMED`` row
-governs — it is the durably APPLIED fact.
+**Why UNMATCHED is IN-FLIGHT.** UNKNOWN nets against an opposite confirmed position and
+IN-FLIGHT never does (rationale and the ARE decision-sum argument in
+:mod:`tos.position.predicates`), so moving an unmatched attempt to IN-FLIGHT can only raise the
+decision sum — it equals the state before the result was recorded.
+
+**Supersession is by evidence ``seq`` AND cumulative fill.** An unmatched row BEFORE the latest
+consumed row is dropped only when that row's cumulative ``filled_quantity`` (which ``CONSUMED``
+rows carry from the reservation) already covers the unmatched row's own fill — a later non-fill
+result (``EXPIRED`` after a refused fill) does not account for it. An unmatched row AFTER the
+latest consumed row is a result that was never applied (e.g. a fill
+crossing a ``CANCEL_ACK``, whose quantity ``tos.engine.core`` records only on
+``RESULT_UNMATCHED``), so it reopens the attempt even when the consumed kind is terminal. A
+``DUPLICATE`` disposition is the exact already-applied result resent
+(``tos.engine.vocabulary.ResultDisposition``), not a new fact, so it never reopens; every other
+non-applied disposition can carry a real late fill and does — except a **replay**: an unmatched
+row whose ``(egress_result_kind, filled_quantity, remaining_quantity, broker_execution_id)``
+equals one of the attempt's own applied results (the kernel's ``DUPLICATE`` signature as far as
+the evidence stores it; ``resolution_generation`` is on neither kind) and whose fill the latest
+consumed cumulative fill already covers. The applied payload's magnitudes are rebuilt from its
+row: a fill kind's stored pair is the payload's, a non-fill payload has none. A fill missing
+either magnitude on either side is never a replay (fail closed). After
+finality release the engine holds no reservation, so the same applied result re-sent is recorded
+as ``ORPHAN_NO_RESERVATION`` (or ``MISMATCHED_ATTEMPT`` once a new attempt holds the scope) —
+``ProvisionalReservationLedger.apply_egress_result`` checks the reservation before the
+``DUPLICATE`` signature — and a released attempt can never be re-applied, so reopening it would
+DENY the scope forever. A different fill or remaining quantity (``PARTIAL_FILL`` 4/5 after an
+applied 4/6 — the broker reports a different open quantity), a kind no applied row carries
+(``FULL_FILL`` after ``CANCEL_ACK``), or a different broker execution is a new fact and still
+reopens. No result digest is persisted on either evidence kind, so identity is these durable
+fields alone.
 
 **Side stays a policy/config-carried token — never a runtime-authored literal (deviation from
 the plan §4.1 constructor signature, reported; long/short symmetry, CLAUDE.md "Futures must
@@ -116,7 +150,7 @@ import sqlite3
 from collections.abc import Mapping
 from decimal import Decimal
 
-from tos.engine import TERMINAL_RESULT_KINDS
+from tos.engine import FILL_RESULT_KINDS, TERMINAL_RESULT_KINDS
 from tos.position import (
     ConsumedResult,
     PositionObservation,
@@ -150,29 +184,43 @@ _TERMINAL_RESULT_TOKENS: frozenset[str] = frozenset(
 )
 
 
-def _read_kind_payloads(
+#: The kernel's fill-bearing kinds as bare tokens — the only kinds whose payload carries
+#: ``filled_quantity`` / ``remaining_quantity`` (``tos.engine.records.EgressResultPayload``).
+_FILL_RESULT_TOKENS: frozenset[str] = frozenset(
+    kind.value for kind in FILL_RESULT_KINDS
+)
+
+
+def _read_kind_payloads_with_seq(
     store: SqliteEvidenceStore, kind: str
-) -> list[dict[str, object]]:
-    """Read every matching entry's scrubbed payload, in commit (``seq``) order — the exact
+) -> list[tuple[int, dict[str, object]]]:
+    """Read every matching entry's ``(seq, scrubbed payload)``, in commit (``seq``) order — the exact
     by-kind raw-SQL idiom :mod:`tos_runtime.recon.witness_synthetic` /
     :mod:`tos_runtime.recon.evidence_reader` / :mod:`tos_runtime.safety.ack` already use over
     this same store (module docstring)."""
     try:
         cursor = store.connection.execute(
-            "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC", (kind,)
+            "SELECT seq, payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
+            (kind,),
         )
         rows = cursor.fetchall()
     except sqlite3.Error as exc:
         raise WitnessUnavailable(
             f"EvidencePositionReader: evidence store query failed for kind={kind!r}: {exc}"
         ) from exc
-    payloads: list[dict[str, object]] = []
-    for (payload_json,) in rows:
+    payloads: list[tuple[int, dict[str, object]]] = []
+    for seq, payload_json in rows:
         decoded = json.loads(payload_json)
         payload = decoded.get("payload", decoded)
         if isinstance(payload, dict):
-            payloads.append(payload)
+            payloads.append((seq, payload))
     return payloads
+
+
+def _read_kind_payloads(
+    store: SqliteEvidenceStore, kind: str
+) -> list[dict[str, object]]:
+    return [payload for _, payload in _read_kind_payloads_with_seq(store, kind)]
 
 
 def _to_decimal(value: object) -> Decimal | None:
@@ -186,6 +234,47 @@ def _to_decimal(value: object) -> Decimal | None:
         except (ValueError, ArithmeticError):
             return None
     return None
+
+
+#: One result's replay signature: ``(egress_result_kind, filled_quantity, remaining_quantity,
+#: broker_execution_id)`` — the kernel's ``DUPLICATE`` signature minus the two axes the evidence
+#: cannot supply (``attempt_id`` is the grouping key; ``resolution_generation`` is stored on
+#: neither evidence kind).
+_ResultSignature = tuple[object, Decimal | None, Decimal | None, object]
+
+
+def _applied_signature(payload: Mapping[str, object]) -> _ResultSignature | None:
+    """The applied result's own payload signature, rebuilt from its ``EGRESS_RESULT_CONSUMED``
+    row. That row copies kind and ``broker_execution_id`` from the payload, but its magnitudes are
+    the reservation's after the result (``tos.engine.core`` ``_handle_egress_result``). For a fill
+    kind those equal the payload's (the ledger stores the fill's own pair); a non-fill payload
+    carries no magnitude at all (``EgressResultPayload`` validator), so its pair is
+    ``(None, None)`` whatever the row stores. ``None`` (never a replay target) for a fill row
+    missing either magnitude — the engine never writes one, so it is not trusted."""
+    kind = payload.get("egress_result_kind")
+    execution_id = payload.get("broker_execution_id")
+    if kind not in _FILL_RESULT_TOKENS:
+        return (kind, None, None, execution_id)
+    filled = _to_decimal(payload.get("filled_quantity"))
+    remaining = _to_decimal(payload.get("remaining_quantity"))
+    if filled is None or remaining is None:
+        return None
+    return (kind, filled, remaining, execution_id)
+
+
+def _unmatched_signature(payload: Mapping[str, object]) -> _ResultSignature | None:
+    """A ``RESULT_UNMATCHED`` row's signature — that row copies all four fields from the refused
+    payload. ``None`` (never a replay) when the shape is one the engine cannot produce: a fill
+    without both magnitudes, or a non-fill kind with any magnitude."""
+    kind = payload.get("egress_result_kind")
+    filled = _to_decimal(payload.get("filled_quantity"))
+    remaining = _to_decimal(payload.get("remaining_quantity"))
+    if kind in _FILL_RESULT_TOKENS:
+        if filled is None or remaining is None:
+            return None
+    elif filled is not None or remaining is not None:
+        return None
+    return (kind, filled, remaining, payload.get("broker_execution_id"))
 
 
 def _seal_in_scope(
@@ -284,33 +373,59 @@ class EvidencePositionReader:
         sources)`` — split out of :meth:`observe` purely for that method's own 100-line size
         budget; no behavioural difference from having this inline."""
         consumed_payloads = [
-            payload
-            for payload in _read_kind_payloads(self._store, "EGRESS_RESULT_CONSUMED")
+            (seq, payload)
+            for seq, payload in _read_kind_payloads_with_seq(
+                self._store, "EGRESS_RESULT_CONSUMED"
+            )
             if _in_scope(payload, account=self._account, instrument=self._instrument)
         ]
         unmatched_payloads = [
-            payload
-            for payload in _read_kind_payloads(self._store, "RESULT_UNMATCHED")
+            (seq, payload)
+            for seq, payload in _read_kind_payloads_with_seq(
+                self._store, "RESULT_UNMATCHED"
+            )
             if _in_scope(payload, account=self._account, instrument=self._instrument)
         ]
         consumed_by_attempt: dict[str, ConsumedResult] = {}
+        latest_consumed_seq: dict[str, int] = {}
+        applied_signatures: dict[str, set[_ResultSignature]] = {}
         unmatched_attempts: set[str] = set()
         # ``consumed_payloads`` is in commit (``seq ASC``) order, so the last assignment per
         # attempt is its LATEST applied result — the one whose kind decides terminality and
         # whose stored (cumulative) magnitudes govern (module docstring's table).
-        for payload in consumed_payloads:
+        for seq, payload in consumed_payloads:
             attempt_id = payload.get("attempt_id")
             if not isinstance(attempt_id, str):
                 continue
+            latest_consumed_seq[attempt_id] = seq
+            signature = _applied_signature(payload)
+            if signature is not None:
+                applied_signatures.setdefault(attempt_id, set()).add(signature)
             raw_kind = payload.get("egress_result_kind")
             consumed_by_attempt[attempt_id] = ConsumedResult(
                 result_kind=raw_kind if isinstance(raw_kind, str) else None,
                 filled_quantity=_to_decimal(payload.get("filled_quantity")),
                 remaining_quantity=_to_decimal(payload.get("remaining_quantity")),
             )
-        for payload in unmatched_payloads:
+        for seq, payload in unmatched_payloads:
+            if payload.get("result_disposition") == "DUPLICATE":
+                continue
             attempt_id = payload.get("attempt_id")
-            if isinstance(attempt_id, str) and attempt_id not in consumed_by_attempt:
+            if not isinstance(attempt_id, str):
+                continue
+            latest = consumed_by_attempt.get(attempt_id)
+            if latest is None:
+                unmatched_attempts.add(attempt_id)
+                continue
+            fill_covered = (
+                _to_decimal(payload.get("filled_quantity")) or Decimal(0)
+            ) <= (latest.filled_quantity or Decimal(0))
+            superseded = seq < latest_consumed_seq[attempt_id]
+            unmatched_signature = _unmatched_signature(payload)
+            replayed = unmatched_signature is not None and (
+                unmatched_signature in applied_signatures.get(attempt_id, set())
+            )
+            if not (fill_covered and (superseded or replayed)):
                 unmatched_attempts.add(attempt_id)
         sources: list[str] = []
         if consumed_payloads:

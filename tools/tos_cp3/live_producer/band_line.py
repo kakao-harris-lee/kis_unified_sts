@@ -27,12 +27,14 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import yaml
+
+from tools.tos_cp3.session_day import SessionDayError, load_producer_session
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -320,7 +322,8 @@ def session_open_ms(
 
     The open comes from the SAME settings the producer reads — its config's
     ``calendar_yaml`` / ``calendar_session_id`` / ``calendar_session_phase``,
-    and that calendar's own window — so the runner is a second READER of one
+    and that calendar's own window ON *day* (a ``session_overrides`` entry wins,
+    issue #924, via :mod:`tools.tos_cp3.session_day`) — so the runner is a second READER of one
     source of truth rather than a second source of it. ③ plan §3.5 is explicit
     that the runner must not grow its own copy of the session window; a literal
     ``08:45`` here would be exactly that.
@@ -336,36 +339,9 @@ def session_open_ms(
         BandLineError: the config or the calendar does not name exactly one
             window for that session id and phase.
     """
-    data = yaml.safe_load(producer_config.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise BandLineError(f"{producer_config}: not a YAML mapping")
     try:
-        calendar_value = str(data["calendar_yaml"])
-        session_id = str(data["calendar_session_id"])
-        phase = str(data["calendar_session_phase"])
-    except KeyError as exc:
-        raise BandLineError(
-            f"{producer_config} does not carry {exc.args[0]!r}, so the session "
-            "open cannot be read from the producer's own settings"
-        ) from exc
-
-    candidate = Path(calendar_value).expanduser()
-    calendar_path = candidate if candidate.is_absolute() else repo_root / candidate
-    calendar = yaml.safe_load(calendar_path.read_text(encoding="utf-8"))
-    if not isinstance(calendar, dict):
-        raise BandLineError(f"{calendar_path}: not a YAML mapping")
-    sessions = calendar.get("sessions")
-    entries = sessions.get(session_id) if isinstance(sessions, dict) else None
-    windows = [
-        entry
-        for entry in (entries or [])
-        if isinstance(entry, dict) and str(entry.get("phase")) == phase
-    ]
-    if len(windows) != 1:
-        raise BandLineError(
-            f"{calendar_path}: session {session_id!r} has {len(windows)} "
-            f"{phase!r} window(s); exactly one is required"
-        )
-    hour_text, _, minute_text = str(windows[0]["start"]).partition(":")
-    opened = datetime.combine(day, time(int(hour_text), int(minute_text)), tzinfo=KST)
+        window = load_producer_session(producer_config, repo_root=repo_root).window(day)
+    except SessionDayError as exc:
+        raise BandLineError(str(exc)) from exc
+    opened = datetime.combine(day, window.start, tzinfo=KST)
     return int(opened.timestamp() * 1000), trading_date_text(day)

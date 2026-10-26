@@ -424,7 +424,7 @@ class TestAggregateInputsFor:
         assert inputs is not None
         assert inputs.cells[0].conservative_current_usage == Decimal("3")
 
-    def test_unmatched_result_counts_full_sealed_quantity_as_unknown(
+    def test_unmatched_result_counts_full_sealed_quantity_as_in_flight_overlap(
         self,
         tmp_path: Path,
         evidence_store: SqliteEvidenceStore,
@@ -432,7 +432,7 @@ class TestAggregateInputsFor:
         rcl_log: SqliteCommitLog,
     ) -> None:
         """Plan §5 실증 (3): a ``RESULT_UNMATCHED`` attempt's full sealed quantity counts in
-        full toward conservative usage (the position-observation boundary GRANT→DENY case).
+        full as never-netted overlap (the position-observation boundary GRANT→DENY case).
         """
         _seed_send_sealed(evidence_store, attempt_id="a1", side="BUY", quantity="5")
         _seed_egress_result(
@@ -445,7 +445,8 @@ class TestAggregateInputsFor:
         request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
         inputs = service.aggregate_inputs_for(request)
         assert inputs is not None
-        assert inputs.cells[0].conservative_current_usage == Decimal("5")
+        assert inputs.cells[0].conservative_current_usage == Decimal("0")
+        assert inputs.cells[0].required_concurrent_overlap_effect == Decimal("5")
 
     def test_new_short_mirrors_new_long_usage_magnitude(
         self,

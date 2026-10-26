@@ -14,8 +14,15 @@ Firewall: legacy side (``tools/``). No ``tos`` / ``tos_runtime`` import.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import date
+
 from tools.broker_probes.common import resolve_credentials, secret_fingerprint
-from tools.tos_cp3.live_producer.config import LiveProducerConfig
+from tools.tos_cp3.live_producer.calendar import load_runtime_calendar
+from tools.tos_cp3.live_producer.config import (
+    QUOTE_CURSOR_SESSION_END,
+    LiveProducerConfig,
+)
 from tools.tos_cp3.live_producer.session_log import EventLog
 from tools.tos_cp3.quote_client import Quotes
 
@@ -31,9 +38,35 @@ def real_quotes(config: LiveProducerConfig, log: EventLog) -> Quotes:
     path names the key without carrying it.
     """
     creds = resolve_credentials(config.asset_class, is_real=True)
+    transport = {**config.transport, "initial_cursor": resolve_initial_cursor(config)}
     return Quotes(
         creds,
         log,
-        config.transport,
+        transport,
         token_cache=config.token_cache_dir / secret_fingerprint(creds.app_key),
     )
+
+
+def resolve_initial_cursor(config: LiveProducerConfig) -> str | Callable[[date], str]:
+    """The first page's ``FID_INPUT_HOUR_1``: the config's literal, or per day.
+
+    :data:`~tools.tos_cp3.live_producer.config.QUOTE_CURSOR_SESSION_END` becomes
+    "that day's session close as ``HHMM00``", read from the same calendar and
+    session the producer reads — so a seed day or target day carrying a dated
+    override (issue #924) is fetched back from ITS close, and a regular day
+    from the regular one (15:30 -> ``153000``, the value the config named
+    before the token existed).
+    """
+    if config.quote_initial_cursor != QUOTE_CURSOR_SESSION_END:
+        return config.quote_initial_cursor
+    calendar = load_runtime_calendar(
+        config.calendar_yaml, covered_years=config.calendar_covered_years
+    )
+
+    def close_of(day: date) -> str:
+        window = calendar.window(
+            config.calendar_session_id, config.calendar_session_phase, day
+        )
+        return window.end.strftime("%H%M00")
+
+    return close_of

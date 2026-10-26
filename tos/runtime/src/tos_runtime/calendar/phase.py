@@ -50,18 +50,21 @@ def _to_unix_ms(instant_local: datetime.datetime) -> int:
 
 def _active_window_at(
     instant_local: datetime.datetime,
-    windows: tuple[SessionWindow, ...],
-    holidays: frozenset[datetime.date],
+    instrument_class: str,
+    cfg: CalendarConfig,
 ) -> tuple[SessionWindow, datetime.datetime, datetime.datetime] | None:
     """Return ``(window, occurrence_start, occurrence_end)`` for the one
     window occurrence ``instant_local`` falls inside, or ``None`` if none
     does. Only occurrences whose START day is not a holiday are considered
     (module docstring on :class:`~tos_runtime.calendar.config.SessionWindow`:
-    day membership is judged by the start day)."""
+    day membership is judged by the start day). The windows of each start
+    day are that day's own (:meth:`CalendarConfig.windows_on`), so a dated
+    session override (issue #924) replaces the regular windows there."""
     tz = instant_local.tzinfo
+    holidays = cfg.holidays
     today = instant_local.date()
     yesterday = today - datetime.timedelta(days=1)
-    for window in windows:
+    for window in cfg.windows_on(today, instrument_class):
         if today.weekday() in window.days and today not in holidays:
             start_dt = datetime.datetime.combine(today, window.start, tzinfo=tz)
             end_date = (
@@ -70,6 +73,7 @@ def _active_window_at(
             end_dt = datetime.datetime.combine(end_date, window.end, tzinfo=tz)
             if start_dt <= instant_local < end_dt:
                 return window, start_dt, end_dt
+    for window in cfg.windows_on(yesterday, instrument_class):
         if (
             window.crosses_midnight
             and yesterday.weekday() in window.days
@@ -84,8 +88,8 @@ def _active_window_at(
 
 def _next_window_start(
     instant_local: datetime.datetime,
-    windows: tuple[SessionWindow, ...],
-    holidays: frozenset[datetime.date],
+    instrument_class: str,
+    cfg: CalendarConfig,
 ) -> datetime.datetime | None:
     """Return the earliest window-occurrence start strictly after
     ``instant_local``, searching forward up to
@@ -94,11 +98,11 @@ def _next_window_start(
     tz = instant_local.tzinfo
     for offset in range(_BOUNDARY_SEARCH_HORIZON_DAYS + 1):
         day = instant_local.date() + datetime.timedelta(days=offset)
-        if day in holidays:
+        if day in cfg.holidays:
             continue
         day_candidates = [
             datetime.datetime.combine(day, window.start, tzinfo=tz)
-            for window in windows
+            for window in cfg.windows_on(day, instrument_class)
             if day.weekday() in window.days
         ]
         day_candidates = [dt for dt in day_candidates if dt > instant_local]
@@ -123,9 +127,7 @@ def trading_date_at(
     if instrument_class not in cfg.sessions:
         return None
     tz = zoneinfo.ZoneInfo(cfg.tz_id)
-    active = _active_window_at(
-        _to_local(instant_unix_ms, tz), cfg.sessions[instrument_class], cfg.holidays
-    )
+    active = _active_window_at(_to_local(instant_unix_ms, tz), instrument_class, cfg)
     if active is None:
         return None
     window, start_dt, _end_dt = active
@@ -154,8 +156,7 @@ def session_phase_at(
         )
     tz = zoneinfo.ZoneInfo(cfg.tz_id)
     instant_local = _to_local(instant_unix_ms, tz)
-    windows = cfg.sessions[instrument_class]
-    active = _active_window_at(instant_local, windows, cfg.holidays)
+    active = _active_window_at(instant_local, instrument_class, cfg)
     if active is not None:
         window, _start_dt, end_dt = active
         return PhaseFact(
@@ -165,7 +166,7 @@ def session_phase_at(
             source=_SOURCE,
             calendar_version=cfg.calendar_version,
         )
-    next_start = _next_window_start(instant_local, windows, cfg.holidays)
+    next_start = _next_window_start(instant_local, instrument_class, cfg)
     boundary_unix_ms = _to_unix_ms(next_start) if next_start is not None else None
     return PhaseFact(
         phase=cfg.closed_phase,
@@ -316,7 +317,9 @@ def maturity_at(
     else:
         # ``today == expiry_date``: the roll above makes an expiry date in the
         # past unreachable, so this is the expiry day itself.
-        windows = cfg.sessions.get(instrument_class, ())
+        # That day's own windows: an expiry day that is also a dated override
+        # (issue #924) flips at the shifted close, not the regular one.
+        windows = cfg.windows_on(expiry_date, instrument_class)
         last_end = _last_regular_window_end(expiry_date, windows, tz)
         expired = False if last_end is None else instant_local >= last_end
     return MaturityFact(expiry_date=expiry_date, expired=expired, rule_present=True)

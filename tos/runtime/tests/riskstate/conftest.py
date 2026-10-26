@@ -117,6 +117,7 @@ def seed_egress_result(
     result_disposition: str | None = None,
     egress_result_kind: str | None = None,
     remaining_quantity: str | None = None,
+    broker_execution_id: str | None = None,
 ) -> None:
     """Append one ``EGRESS_RESULT_CONSUMED``/``RESULT_UNMATCHED`` row with the SAME field
     names ``tos.engine.records.EngineEvidenceRecord.model_dump(mode="json")`` produces for the
@@ -145,6 +146,8 @@ def seed_egress_result(
         remaining_quantity: The row's ``remaining_quantity`` — on ``EGRESS_RESULT_CONSUMED``
             the kernel writes the reservation's stored remainder after the latest
             fill-bearing result (``core.py`` ``EGRESS_RESULT_CONSUMED`` branch).
+        broker_execution_id: The row's ``broker_execution_id`` — both kinds copy it from the
+            incoming payload (``core.py``), so a replayed result carries the original's.
     """
     if egress_result_kind is None:
         egress_result_kind = "FULL_FILL" if filled_quantity is not None else "ACK"
@@ -155,6 +158,7 @@ def seed_egress_result(
         "filled_quantity": filled_quantity,
         "remaining_quantity": remaining_quantity,
         "result_disposition": result_disposition,
+        "broker_execution_id": broker_execution_id,
     }
     store.append(payload, kind=kind, record_class=kind)
 

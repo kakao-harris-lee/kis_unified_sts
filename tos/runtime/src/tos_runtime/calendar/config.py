@@ -33,7 +33,7 @@ import hashlib
 import json
 import zoneinfo
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +44,7 @@ __all__ = [
     "SessionWindow",
     "ExpiryRule",
     "CalendarConfig",
+    "SessionOverride",
     "load_calendar_config",
     "calendar_bind_digest",
 ]
@@ -110,6 +111,23 @@ class ExpiryRule:
 
 
 @dataclass(frozen=True)
+class SessionOverride:
+    """A date-specific replacement of one or more classes' session windows
+    (issue #924 — e.g. the KRX college-entrance-exam day, when the exchange
+    shifts the open and close by an hour, differently per market).
+
+    ``sessions`` maps an instrument class to the windows that REPLACE its
+    regular windows on ``day`` only; a class not named keeps its regular
+    windows. Every window's ``days`` is ``{day.weekday()}`` and none crosses
+    midnight (loader-enforced), so the phase functions can treat an override
+    exactly like a regular window on that date."""
+
+    day: datetime.date
+    reason: str
+    sessions: Mapping[str, tuple[SessionWindow, ...]]
+
+
+@dataclass(frozen=True)
 class CalendarConfig:
     """The fully loaded, validated KST trading calendar."""
 
@@ -119,6 +137,22 @@ class CalendarConfig:
     sessions: Mapping[str, tuple[SessionWindow, ...]]
     closed_phase: str
     futures_expiry: Mapping[str, ExpiryRule]
+    #: Date-specific session exceptions, keyed by date (:class:`SessionOverride`).
+    #: Empty for a calendar file without the optional ``session_overrides`` key.
+    session_overrides: Mapping[datetime.date, SessionOverride] = field(
+        default_factory=dict
+    )
+
+    def windows_on(
+        self, day: datetime.date, instrument_class: str
+    ) -> tuple[SessionWindow, ...]:
+        """The windows that apply to ``instrument_class`` on ``day``: the
+        override's when ``day`` carries one for that class, else the regular
+        ones (``()`` for an unknown class)."""
+        override = self.session_overrides.get(day)
+        if override is not None and instrument_class in override.sessions:
+            return override.sessions[instrument_class]
+        return self.sessions.get(instrument_class, ())
 
 
 def _require_mapping(raw: Any, path: Path) -> dict[str, Any]:
@@ -430,6 +464,157 @@ def _parse_holidays(raw: Any, path: Path) -> frozenset[datetime.date]:
     return frozenset(dates)
 
 
+def _repeated_override_dates(text: str) -> list[str]:
+    """Dates repeated as ``session_overrides`` keys, read from the YAML node tree.
+
+    The loaded mapping cannot show an IDENTICAL key twice (the loader keeps the last),
+    so this looks one level below it. The legacy-side reader runs the same check
+    (``tools.tos_cp3.session_day.repeated_override_dates``; the firewall keeps the
+    two apart) so both refuse the same file (review #963 MEDIUM)."""
+    root = yaml.compose(text, Loader=yaml.SafeLoader)
+    if not isinstance(root, yaml.MappingNode):
+        return []
+    for key_node, value_node in root.value:
+        if getattr(key_node, "value", None) == "session_overrides" and isinstance(
+            value_node, yaml.MappingNode
+        ):
+            seen: set[str] = set()
+            repeated: list[str] = []
+            for date_node, _ in value_node.value:
+                key = str(date_node.value).strip()
+                if key in seen:
+                    repeated.append(key)
+                seen.add(key)
+            return repeated
+    return []
+
+
+def _parse_override_windows(
+    raw_windows: list[Any],
+    cls_ctx: str,
+    path: Path,
+    *,
+    day: datetime.date,
+    regular_phases: set[str],
+) -> tuple[SessionWindow, ...]:
+    """One class's override windows on ``day`` (shape rules: :func:`_parse_session_overrides`)."""
+    windows = []
+    for i, raw_window in enumerate(raw_windows):
+        w_ctx = f"{cls_ctx}[{i}]"
+        if not isinstance(raw_window, dict):
+            raise CalendarConfigError(f"{path}: {w_ctx} must be a mapping")
+        if "days" in raw_window:
+            raise CalendarConfigError(
+                f"{path}: {w_ctx} carries 'days' — an override applies "
+                "to its own date only"
+            )
+        window = _parse_session_window(
+            {**raw_window, "days": [_DAY_NAMES[day.weekday()]]}, w_ctx, path
+        )
+        if window.crosses_midnight:
+            raise CalendarConfigError(
+                f"{path}: {w_ctx} crosses midnight — dated overrides "
+                "cover one calendar day only"
+            )
+        if window.phase not in regular_phases:
+            raise CalendarConfigError(
+                f"{path}: {w_ctx} phase {window.phase!r} is not one the "
+                f"class's regular windows produce ({sorted(regular_phases)})"
+            )
+        windows.append(window)
+    return tuple(windows)
+
+
+def _parse_session_overrides(
+    raw: Any,
+    path: Path,
+    *,
+    sessions: Mapping[str, tuple[SessionWindow, ...]],
+    holidays: frozenset[datetime.date],
+) -> Mapping[datetime.date, SessionOverride]:
+    """Parse the optional ``session_overrides`` mapping (issue #924).
+
+    Shape (one entry per date)::
+
+        session_overrides:
+          "YYYY-MM-DD":
+            reason: "<the exchange notice this is copied from>"
+            sessions:
+              <instrument class>:
+                - {phase: CONTINUOUS, start: "HH:MM", end: "HH:MM", crosses_midnight: false}
+
+    Refused, fail-closed: a non-mapping value (``null`` is still-TBD; ``{}`` is
+    the deliberate "no exceptions"); a bad date; a date that is also a holiday
+    (a closed day belongs in ``holidays`` and nowhere else); a missing
+    ``reason``; a class the regular ``sessions`` do not declare; an empty
+    window list; a ``days`` field (the date IS the day); a window that crosses
+    midnight; a phase token the class's regular windows never produce (the
+    venue wiring derives the admissible-token set from the regular windows,
+    so a new token here would be one nothing cross-checked); overlapping
+    windows.
+    """
+    if not isinstance(raw, dict):
+        raise CalendarConfigError(
+            f"{path}: 'session_overrides' must be a mapping of 'YYYY-MM-DD' -> "
+            "override — refusing (null is a named-TBD gap; {} is accepted as "
+            "a deliberate 'no dated exceptions' value)"
+        )
+    overrides: dict[datetime.date, SessionOverride] = {}
+    for raw_day, raw_override in raw.items():
+        ctx = f"session_overrides[{raw_day!r}]"
+        if isinstance(raw_day, datetime.date):
+            day = raw_day
+        else:
+            try:
+                day = datetime.date.fromisoformat(str(raw_day))
+            except ValueError as exc:
+                raise CalendarConfigError(
+                    f"{path}: {ctx} key is not a valid 'YYYY-MM-DD' date"
+                ) from exc
+        if day in overrides:
+            raise CalendarConfigError(
+                f"{path}: {ctx} repeats date {day} — one entry per date "
+                "(review #963: a quoted and an unquoted key both survive loading)"
+            )
+        if day in holidays:
+            raise CalendarConfigError(
+                f"{path}: {ctx} is also listed in 'holidays' — a closed day "
+                "has no session to override"
+            )
+        if not isinstance(raw_override, dict):
+            raise CalendarConfigError(f"{path}: {ctx} must be a mapping")
+        reason = _require_str_field(raw_override, "reason", path, ctx)
+        raw_sessions = raw_override.get("sessions")
+        if not isinstance(raw_sessions, dict) or not raw_sessions:
+            raise CalendarConfigError(
+                f"{path}: {ctx} 'sessions' must be a non-empty mapping of "
+                "instrument class -> windows"
+            )
+        by_class: dict[str, tuple[SessionWindow, ...]] = {}
+        for instrument_class, raw_windows in raw_sessions.items():
+            cls_ctx = f"{ctx}.sessions[{instrument_class!r}]"
+            if instrument_class not in sessions:
+                raise CalendarConfigError(
+                    f"{path}: {cls_ctx} names a class the regular 'sessions' "
+                    f"do not declare (has {sorted(sessions)})"
+                )
+            if not isinstance(raw_windows, list) or not raw_windows:
+                raise CalendarConfigError(
+                    f"{path}: {cls_ctx} must be a non-empty list — a day with "
+                    "no session belongs in 'holidays'"
+                )
+            by_class[instrument_class] = _parse_override_windows(
+                raw_windows,
+                cls_ctx,
+                path,
+                day=day,
+                regular_phases={w.phase for w in sessions[instrument_class]},
+            )
+        _check_overlaps(by_class, path)
+        overrides[day] = SessionOverride(day=day, reason=reason, sessions=by_class)
+    return overrides
+
+
 def _validate_tz_id(tz_id: str, path: Path) -> None:
     try:
         zoneinfo.ZoneInfo(tz_id)
@@ -488,6 +673,19 @@ def load_calendar_config(path: Path) -> CalendarConfig:
         )
     futures_expiry = _parse_futures_expiry(raw["futures_expiry"], path)
     _check_expiry_rules_have_regular_windows(sessions, futures_expiry, path)
+    # Optional (issue #924): calendars written before dated exceptions existed
+    # have no such key, and its absence means exactly "no dated exceptions".
+    repeated = _repeated_override_dates(text)
+    if repeated:
+        raise CalendarConfigError(
+            f"{path}: 'session_overrides' repeats date(s) {repeated} — one entry per date"
+        )
+    session_overrides = _parse_session_overrides(
+        raw.get("session_overrides", {}),
+        path,
+        sessions=sessions,
+        holidays=holidays,
+    )
 
     return CalendarConfig(
         calendar_version=calendar_version,
@@ -496,7 +694,18 @@ def load_calendar_config(path: Path) -> CalendarConfig:
         sessions=sessions,
         closed_phase=closed_phase,
         futures_expiry=futures_expiry,
+        session_overrides=session_overrides,
     )
+
+
+def _window_projection(window: SessionWindow) -> dict[str, Any]:
+    return {
+        "phase": window.phase,
+        "start": window.start.isoformat(),
+        "end": window.end.isoformat(),
+        "days": sorted(window.days),
+        "crosses_midnight": window.crosses_midnight,
+    }
 
 
 def calendar_bind_digest(cfg: CalendarConfig) -> str:
@@ -508,23 +717,18 @@ def calendar_bind_digest(cfg: CalendarConfig) -> str:
     separators=(",", ":"))`` of a canonical, JSON-safe projection of
     ``cfg``'s own fields (not the raw YAML text), so the digest is
     insensitive to incidental formatting/key-order in the source file and
-    sensitive to any actual content change."""
-    canonical = {
+    sensitive to any actual content change.
+
+    ``session_overrides`` joins the projection only when non-empty, so a
+    calendar without dated exceptions keeps the digest it had before the key
+    existed (issue #924) and a calendar that adds one changes it."""
+    canonical: dict[str, Any] = {
         "calendar_version": cfg.calendar_version,
         "tz_id": cfg.tz_id,
         "closed_phase": cfg.closed_phase,
         "holidays": sorted(d.isoformat() for d in cfg.holidays),
         "sessions": {
-            instrument_class: [
-                {
-                    "phase": window.phase,
-                    "start": window.start.isoformat(),
-                    "end": window.end.isoformat(),
-                    "days": sorted(window.days),
-                    "crosses_midnight": window.crosses_midnight,
-                }
-                for window in windows
-            ]
+            instrument_class: [_window_projection(window) for window in windows]
             for instrument_class, windows in sorted(cfg.sessions.items())
         },
         "futures_expiry": {
@@ -537,5 +741,16 @@ def calendar_bind_digest(cfg: CalendarConfig) -> str:
             for instrument_class, rule in sorted(cfg.futures_expiry.items())
         },
     }
+    if cfg.session_overrides:
+        canonical["session_overrides"] = {
+            day.isoformat(): {
+                "reason": override.reason,
+                "sessions": {
+                    instrument_class: [_window_projection(w) for w in windows]
+                    for instrument_class, windows in sorted(override.sessions.items())
+                },
+            }
+            for day, override in sorted(cfg.session_overrides.items())
+        }
     blob = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
