@@ -22,8 +22,8 @@
 #      the operator's call (runbook §7.2-d), never this script's.
 #   4. remove this direction's earlier worktrees (registered ones, never --force),
 #      fetch, add a fresh DETACHED worktree of origin/main.
-#   5. holiday/weekend check against the tenant calendar IN THAT TREE (+ the KRX
-#      year-end close, not yet in the calendar) — closed means SKIP: worktree
+#   5. holiday/weekend check against the tenant calendar IN THAT TREE (+ any
+#      CP3_DAILY_EXTRA_CLOSED dates) — closed means SKIP: worktree
 #      removed, exit 0, no alert.
 #   6. run_tenant_session.sh from that tree, every TENANT_* value set here.
 #   7. one telegram line at the end: rc 0/143 is a normal end, anything else is a
@@ -45,9 +45,8 @@
 #                           #924) plus CP3_DAILY_STOP_AFTER_CLOSE_MIN. A regular day
 #                           gives 15:45 + 5 = 15:50, the value this knob defaulted to.
 #   CP3_DAILY_STOP_AFTER_CLOSE_MIN  5
-#   CP3_DAILY_EXTRA_CLOSED  "2026-12-31"  space-separated extra closed dates
-#                           (calendar.yaml lists 12-31 only as an operator review
-#                           candidate; drop it here once the calendar carries it)
+#   CP3_DAILY_EXTRA_CLOSED  ""  space-separated extra closed dates (empty by
+#                           default — KRX closures belong in the tenant calendar)
 #   CP3_DAILY_NOTIFY        1   — 0 logs the body instead of sending it
 #   ⛔ CP3_DAILY_TODAY      test-only date override (YYYY-MM-DD). Never in a cron
 #                           line: the runner itself still runs on the real clock.
@@ -72,7 +71,7 @@ STATE=${CP3_DAILY_STATE:-$HOME/.local/state/tos}
 LOCK_DIR=${CP3_DAILY_LOCK_DIR:-/tmp}
 STOP_AT=${CP3_DAILY_STOP_AT:-}
 STOP_AFTER_CLOSE_MIN=${CP3_DAILY_STOP_AFTER_CLOSE_MIN:-5}
-EXTRA_CLOSED=${CP3_DAILY_EXTRA_CLOSED-2026-12-31}
+EXTRA_CLOSED=${CP3_DAILY_EXTRA_CLOSED-}
 PY=$MAIN/.venv/bin/python
 TREE=cp3-setup-d-$lc
 CAL_REL=config/tos_runtime/$TREE/calendar.yaml

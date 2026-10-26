@@ -47,7 +47,7 @@ _KST = zoneinfo.ZoneInfo("Asia/Seoul")
 #: This deploy file's ``calendar_version`` (must equal the ``config_dir``'s
 #: ``time.yaml`` ``trading_calendar_version`` or the owner refuses to boot
 #: with ``SessionCalendarMismatch`` -- plan §2 decision 3, mutation M4).
-_CALENDAR_VERSION = "krx-2026.09.1"
+_CALENDAR_VERSION = "krx-2026.10"
 
 
 def _kst_unix_ms(year: int, month: int, day: int, hour: int, minute: int) -> int:

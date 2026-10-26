@@ -201,8 +201,8 @@ tools/tos_cp3/runners/install_tenant_cron.sh --apply         # 백업(crontab.ba
 
 **한 호출이 하는 일.** 잠금 → 같은 날 세션 디렉터리가 있으면 거부 → durable set 부모
 (§7.2-b)가 없으면 거부(첫 genesis 는 운영자 몫) → 그 방향의 어제 워크트리 제거(`--force` 없이)
-→ fetch → `origin/main` 분리 워크트리 → **그 트리의** tenant 달력으로 휴장·주말 판정(+ 달력에
-아직 없는 KRX 연말 `2026-12-31`, `CP3_DAILY_EXTRA_CLOSED`) → `run_tenant_session.sh`(정지 = 그날 종료 + 5분, 평일 15:50 · 개장 지연일은 §7.2-g).
+→ fetch → `origin/main` 분리 워크트리 → **그 트리의** tenant 달력으로 휴장·주말 판정(+ `CP3_DAILY_EXTRA_CLOSED`
+— 기본 빈 값, KRX 연말 `2026-12-31` 은 달력에 있음) → `run_tenant_session.sh`(정지 = 그날 종료 + 5분, 평일 15:50 · 개장 지연일은 §7.2-g).
 
 **텔레그램 (briefing 채널 · 자격증명은 상주 래퍼와 같은 `$MAIN/.env` 두 줄).** 본문은 rc ·
 방향 · 날짜 · 경로뿐이다 — `runner.out` 은 옮기지 않는다(좌표 규율).
