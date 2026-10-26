@@ -38,7 +38,13 @@
 #   CP3_DAILY_MAIN          /home/deploy/project/kis_unified_sts
 #   CP3_DAILY_STATE         $HOME/.local/state/tos
 #   CP3_DAILY_LOCK_DIR      /tmp
-#   CP3_DAILY_STOP_AT       15:50
+#   CP3_DAILY_STOP_AT       (unset) — HH:MM to force a stop time. Unset, the stop is
+#                           DERIVED: this day's session close from the tree's calendar
+#                           (tools/tos_cp3/session_day.py, the producer config's
+#                           calendar/session — a dated session_overrides entry wins,
+#                           #924) plus CP3_DAILY_STOP_AFTER_CLOSE_MIN. A regular day
+#                           gives 15:45 + 5 = 15:50, the value this knob defaulted to.
+#   CP3_DAILY_STOP_AFTER_CLOSE_MIN  5
 #   CP3_DAILY_EXTRA_CLOSED  "2026-12-31"  space-separated extra closed dates
 #                           (calendar.yaml lists 12-31 only as an operator review
 #                           candidate; drop it here once the calendar carries it)
@@ -64,11 +70,13 @@ fi
 MAIN=${CP3_DAILY_MAIN:-/home/deploy/project/kis_unified_sts}
 STATE=${CP3_DAILY_STATE:-$HOME/.local/state/tos}
 LOCK_DIR=${CP3_DAILY_LOCK_DIR:-/tmp}
-STOP_AT=${CP3_DAILY_STOP_AT:-15:50}
+STOP_AT=${CP3_DAILY_STOP_AT:-}
+STOP_AFTER_CLOSE_MIN=${CP3_DAILY_STOP_AFTER_CLOSE_MIN:-5}
 EXTRA_CLOSED=${CP3_DAILY_EXTRA_CLOSED-2026-12-31}
 PY=$MAIN/.venv/bin/python
 TREE=cp3-setup-d-$lc
 CAL_REL=config/tos_runtime/$TREE/calendar.yaml
+PRODUCER_REL=config/tos_probes/cp3-live-producer.yaml
 DATA_PARENT=$STATE/cp3-setup-d-$lc-data
 
 TODAY=${CP3_DAILY_TODAY:-$(TZ=Asia/Seoul date +%F)}
@@ -141,6 +149,15 @@ sys.exit(10 if d.weekday() >= 5 or today in holidays or today in extra else 0)
 PY
 }
 
+# session_day CMD TREE_ROOT PRODUCER_CONFIG [CALENDAR] — one value on stdout from
+# tools/tos_cp3/session_day.py (stdlib + yaml), imported from TREE_ROOT. `-P` keeps
+# the cwd off sys.path so only TREE_ROOT can answer the import.
+session_day() {
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$2 "$PY" -P -m tools.tos_cp3.session_day "$1" \
+    --producer-config "$3" --repo-root "$2" --date "$TODAY" \
+    --after-close-min "$STOP_AFTER_CLOSE_MIN" ${4:+--calendar "$4"}
+}
+
 # ---------------------------------------------------------------- preflight --
 # Read-only: no lock, no fetch, no worktree, no telegram, writes nothing outside
 # a mktemp file. Reads the calendar from the LOCAL origin/main ref (fetch first)
@@ -160,6 +177,23 @@ if [ "$MODE" = preflight ]; then
   "$CALENDAR_STALE") log "PREFLIGHT calendar has no holiday in ${TODAY:0:4} — a run would refuse"; exit 2 ;;
   *) log "PREFLIGHT calendar check failed (rc=$mrc)"; exit 2 ;;
   esac
+  pcfg=$(mktemp) || exit 2
+  # The reader comes from origin/main too, like the two files it reads — never
+  # from $MAIN's working tree, whatever branch that is on (#963 review LOW-2).
+  rdr=$(mktemp -d) || exit 2
+  trap 'rm -f "$cal" "$pcfg"; rm -rf "$rdr"' EXIT
+  git -C "$MAIN" show "origin/main:$PRODUCER_REL" >"$pcfg" 2>/dev/null || {
+    log "PREFLIGHT $PRODUCER_REL missing at origin/main $ref"; exit 2; }
+  mkdir -p "$rdr/tools/tos_cp3"
+  git -C "$MAIN" show "origin/main:tools/tos_cp3/session_day.py" >"$rdr/tools/tos_cp3/session_day.py" 2>/dev/null || {
+    log "PREFLIGHT tools/tos_cp3/session_day.py missing at origin/main $ref"; exit 2; }
+  if [ "$open" = OPEN ]; then
+    win=$(session_day show "$rdr" "$pcfg" "$cal" 2>&1) || {
+      log "PREFLIGHT session window unreadable: $win"; exit 2; }
+    stop=${STOP_AT:-$(session_day stop-at "$rdr" "$pcfg" "$cal" 2>&1)} || {
+      log "PREFLIGHT stop time unreadable: $stop"; exit 2; }
+    log "PREFLIGHT session $win · stop_at=$stop$([ -n "$STOP_AT" ] && echo ' (CP3_DAILY_STOP_AT)')"
+  fi
   inst=$(PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$MAIN "$PY" -c 'import datetime, sys
 from shared.instruments.futures import get_front_month_code
 print(get_front_month_code(product="mini", target_date=datetime.date.fromisoformat(sys.argv[1])))' "$TODAY" 2>&1) || {
@@ -225,6 +259,16 @@ case $mrc in
   ;;
 esac
 
+if [ -z "$STOP_AT" ]; then
+  STOP_AT=$(session_day stop-at "$WT" "$WT/$PRODUCER_REL" 2>&1) || {
+    git -C "$MAIN" worktree remove "$WT" 2>/dev/null
+    fail 2 "stop time not derivable from $WT/$PRODUCER_REL's calendar for $TODAY: $STOP_AT"
+  }
+  log "stop_at $STOP_AT ($(session_day show "$WT" "$WT/$PRODUCER_REL" 2>&1) + ${STOP_AFTER_CLOSE_MIN}m)"
+else
+  log "stop_at $STOP_AT (CP3_DAILY_STOP_AT)"
+fi
+
 mkdir -p "$SESSION"
 TENANT_LOG=$SESSION/session.log \
 TENANT_PYTHON=$PY \
@@ -237,7 +281,7 @@ TENANT_STOP_AT=$STOP_AT \
 TENANT_ENV_FILE=$MAIN/.env.mock \
 TENANT_CUSTODY_ROOT=$STATE/paper-custody \
 TENANT_ENVIRONMENT_LABEL=paper \
-TENANT_PRODUCER_CONFIG=$WT/config/tos_probes/cp3-live-producer.yaml \
+TENANT_PRODUCER_CONFIG=$WT/$PRODUCER_REL \
 TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
   "$WT/tools/tos_cp3/runners/run_tenant_session.sh" >"$SESSION/runner.out" 2>&1
 rc=$?
