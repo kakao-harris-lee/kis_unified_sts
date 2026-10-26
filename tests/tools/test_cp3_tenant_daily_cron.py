@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RUNNERS = _REPO_ROOT / "tools" / "tos_cp3" / "runners"
@@ -304,8 +305,23 @@ def test_holiday_is_a_silent_skip(env: Env) -> None:
 def test_weekend_and_extra_closed_dates_skip(env: Env) -> None:
     _data_parents(env)
     assert "SKIP" in env.daily("SHORT", CP3_DAILY_TODAY="2026-10-24").stdout  # Saturday
-    r = env.daily("SHORT", CP3_DAILY_TODAY="2026-12-31")  # KRX year-end, default extra
+    # 2026-12-30 (Wed) is open in the fixture calendar — closed only via the knob.
+    r = env.daily(
+        "SHORT", CP3_DAILY_TODAY="2026-12-30", CP3_DAILY_EXTRA_CLOSED="2026-12-30"
+    )
     assert r.returncode == 0 and "SKIP" in r.stdout
+
+
+def test_real_tenant_calendars_carry_the_krx_year_end_close() -> None:
+    """The wrapper no longer defaults 2026-12-31 into the extra closed dates (#964):
+    the KRX year-end close (유가증권시장 업무규정 제5조) must come from each tree's own
+    calendar, or the cron would boot a session on a closed day."""
+    for tree in ("cp3-setup-d-long", "cp3-setup-d-short", "cp3-setup-d-stock-005930"):
+        path = _REPO_ROOT / "config" / "tos_runtime" / tree / "calendar.yaml"
+        holidays = {
+            str(h) for h in yaml.safe_load(path.read_text(encoding="utf-8"))["holidays"]
+        }
+        assert "2026-12-31" in holidays, tree
 
 
 def test_open_day_runs_the_runner_with_every_tenant_value(env: Env) -> None:
