@@ -337,9 +337,9 @@ class KisQuoteObservationIntake:
                 self._credential_session.ensure_token_string()
             )  # may raise TokenStale
             # The two anchor readings bracket the request as tightly as this module can:
-            # nothing but the HTTP call itself lies between them (parsing comes after).
-            requested_monotonic_ms = self._monotonic.now_ms()
-            response = self._fetch_quote(access_token)
+            # nothing but the HTTP call itself lies between them (parsing comes after; the
+            # pacer wait comes before — review-979 r2 LOW-A, see ``_fetch_quote``).
+            requested_monotonic_ms, response = self._fetch_quote(access_token)
         except KisPacingRefused as exc:
             self._evidence(
                 KIS_QUOTE_PACING_REFUSED_KIND,
@@ -366,7 +366,7 @@ class KisQuoteObservationIntake:
             ),
         )
 
-    def _fetch_quote(self, access_token: str) -> RawResponse:
+    def _fetch_quote(self, access_token: str) -> tuple[int, RawResponse]:
         """(mirrors ``KisMockTransport._send_order_with_credentials``'s own discipline) The app
         key/secret are loaded inside the NARROWEST possible ``with`` block — wrapped directly
         around the one network call that needs them, so the credential handles are zeroed the
@@ -375,8 +375,12 @@ class KisQuoteObservationIntake:
             f"FID_COND_MRKT_DIV_CODE={self._config.market_div_code}"
             f"&FID_INPUT_ISCD={self._config.instrument}"
         )
+        # Returns ``(requested_monotonic_ms, response)``. The anchor is read INSIDE the block:
+        # opening it waits for the app key's pacer slot (issue #970, up to the wait budget), and
+        # that queueing is not round trip — read before it, the M5 anchor bound would see it.
         with self._credential_session.app_credentials() as credentials:
-            return self._client.get_quote(
+            requested_monotonic_ms = self._monotonic.now_ms()
+            return requested_monotonic_ms, self._client.get_quote(
                 self._config.tr_id,
                 query,
                 access_token=access_token,

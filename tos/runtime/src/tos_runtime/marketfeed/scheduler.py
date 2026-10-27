@@ -70,8 +70,11 @@ each deliberate:
   ``release_snapshot_max_age_ms`` is never re-read here: that release holds and the worker
   re-reads (#969 review r1). And while the worker is issuing a KIS token, an order send or quote
   read on this thread waits on the token lock for at most the app key's request wait budget
-  (``kis_mock_transport.yaml::app_key_request_wait_budget_ms``, 4 s) and is then refused unsent
-  (review-979 r1 MEDIUM; before it waited out the worker's whole POST).
+  (``kis_mock_transport.yaml::app_key_request_wait_budget_ms``, 4 s) before it is refused
+  unsent (review-979 r1 MEDIUM; before it waited out the worker's whole POST). That is not the
+  whole wait: a request that gets the token then waits for its own pacer slot, bounded by the
+  same budget, so one order or quote read can sit up to ~8 s on this thread before it is sent
+  or refused (review-979 r2 LOW-B; the PR's loop-blocking bound).
 
 **Every journal-intake tree gets the compensation and the overrun row, not only the stock
 one** (#949 r2 LOW-1). ``journal_pass_allowance_ms`` is required for ``intake_kind: journal``,

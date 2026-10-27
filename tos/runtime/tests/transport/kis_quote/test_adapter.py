@@ -222,6 +222,34 @@ def test_a_refused_pacer_slot_is_nothing_new_with_one_evidence_row_and_no_get(
     assert row["instrument"] == INSTRUMENT
 
 
+def test_the_pacer_wait_stays_outside_the_request_anchor_span(
+    server: FakeKisServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """review-979 r2 LOW-A: the token POST takes the app key's slot, so the quote GET waits a
+    full interval (1500 ms) in the pacer. That wait is queueing, not transport: it must fall
+    BEFORE ``requested_monotonic_ms``, or the M5 anchor bound (800 ms) sees a 1.5 s round trip
+    and the observation goes stale. Mutation: read ``requested`` before ``app_credentials()``
+    -> span 1500 -> red."""
+    import tos_runtime.transport.kis_mock.pacer as pacer_module
+
+    _set_token(server)
+    _set_quote(server)
+    intake, monotonic, _ = _intake(
+        server,
+        app_key_min_request_interval_ms=1_500,
+        app_key_request_wait_budget_ms=3_000,
+    )
+    monkeypatch.setattr(
+        pacer_module, "sleep", lambda seconds: monotonic.advance(round(seconds * 1000))
+    )
+    before = monotonic.now_ms()
+
+    (pending,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
+
+    assert pending.requested_monotonic_ms == before + 1_500  # after the pacer wait
+    assert pending.received_monotonic_ms - pending.requested_monotonic_ms == 0
+
+
 def test_the_adapter_reads_no_wall_clock_anywhere(server: FakeKisServer) -> None:
     """The #810 fix, pinned STRUCTURALLY rather than by behaviour: no attribute named
     ``wall_clock_now``/``wall_clock_now_if_fresh`` is accessed anywhere in the adapter module.
