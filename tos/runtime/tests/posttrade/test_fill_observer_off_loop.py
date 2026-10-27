@@ -34,7 +34,11 @@ import pytest
 from tos.engine.records import EgressResultPayload
 from tos.engine.vocabulary import EgressResultKind, ResultDisposition
 from tos_runtime.evidence.store import SqliteEvidenceStore
-from tos_runtime.posttrade.fill_fetch import PrefetchedSnapshot, SnapshotUse
+from tos_runtime.posttrade.fill_fetch import (
+    PrefetchedSnapshot,
+    SnapshotRead,
+    SnapshotUse,
+)
 from tos_runtime.posttrade.fill_observer import (
     FILL_OBSERVED_KIND,
     FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND,
@@ -160,10 +164,13 @@ class _Snapshots:
 
     def prefetch(
         self, scope: WitnessScope, *, today: str, abort: Callable[[], bool]
-    ) -> WitnessSnapshot:
+    ) -> SnapshotRead:
         del scope, today, abort
         self.prefetch_threads.append(threading.get_ident())
-        return WitnessSnapshot(observed_at_generation=None, orders=())
+        return SnapshotRead(
+            outcome=WitnessSnapshot(observed_at_generation=None, orders=()),
+            first_request_ms=None,
+        )
 
     @contextmanager
     def serving(

@@ -21,7 +21,9 @@ moves. **That instant is bounded** (#969 review r1 HIGH): a snapshot older than
 ``release_snapshot_max_age_ms`` (from its read's start) is not served — an order that appeared at
 the broker since (an orphan, which must block the release) could be missing from it — so that
 release HOLDS, the observer records the snapshot's real read instants and age, and schedules a
-fresh worker read at once. Expiry never falls back to a live read on the loop. **Not moved**: a reconciliation whose scope the prefetch did not
+fresh worker read at once. **The read starts at its first broker request's pacer grant** (issue
+#970), not before: the app key's pacer can hold the first GET for up to an interval after this
+FETCH's order read, and that queueing is not broker-state age (:class:`SnapshotRead`). Expiry never falls back to a live read on the loop. **Not moved**: a reconciliation whose scope the prefetch did not
 anticipate (its key or trading date differs) falls back to the live read, exactly as before #950
 — bounded by ``witness_request_timeout_s`` per page, as #949 left it.
 
@@ -54,6 +56,7 @@ __all__ = [
     "OrderRowsReader",
     "PrefetchedSnapshot",
     "SnapshotPrefetcher",
+    "SnapshotRead",
     "SnapshotUse",
     "may_release",
     "odno_key",
@@ -89,6 +92,22 @@ class PrefetchedSnapshot:
 
 
 @dataclass(frozen=True)
+class SnapshotRead:
+    """What :meth:`SnapshotPrefetcher.prefetch` read, and when it started reading.
+
+    Attributes:
+        outcome: The snapshot, or the unavailability the read ended in.
+        first_request_ms: The monotonic grant instant of the read's FIRST broker request (the
+            app key pacer's slot, issue #970) — the earliest moment the snapshot's broker state
+            can date from. ``None`` when the read sent nothing; the snapshot is then aged from
+            before the call, as before #970.
+    """
+
+    outcome: WitnessSnapshot | WitnessUnavailable
+    first_request_ms: int | None
+
+
+@dataclass(frozen=True)
 class SnapshotUse:
     """One reconciliation the serving side answered from a prefetched snapshot (``served``) or
     refused because it was older than the limit (``expired``) — APPLY records each."""
@@ -104,7 +123,7 @@ class SnapshotPrefetcher(Protocol):
 
     def prefetch(
         self, scope: WitnessScope, *, today: str, abort: Callable[[], bool]
-    ) -> WitnessSnapshot | WitnessUnavailable:
+    ) -> SnapshotRead:
         """Read ``scope``'s snapshot under ``today`` (FETCH thread); never raises."""
         ...
 
@@ -237,12 +256,18 @@ def run_fetch(
         and plan.today is not None
         and not stop()
     ):
-        started = monotonic.now_ms()
-        outcome = snapshots.prefetch(plan.snapshot_scope, today=plan.today, abort=stop)
+        called_ms = monotonic.now_ms()
+        read = snapshots.prefetch(plan.snapshot_scope, today=plan.today, abort=stop)
+        # Issue #970: aged from the first request's pacer grant, never earlier than the call.
+        started = (
+            called_ms
+            if read.first_request_ms is None
+            else max(called_ms, read.first_request_ms)
+        )
         snapshot = PrefetchedSnapshot(
             key=snapshot_key(plan.snapshot_scope),
             today=plan.today,
-            outcome=outcome,
+            outcome=read.outcome,
             read_started_ms=started,
             read_finished_ms=monotonic.now_ms(),
         )

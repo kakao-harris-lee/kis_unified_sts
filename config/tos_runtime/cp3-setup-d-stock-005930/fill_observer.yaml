@@ -73,15 +73,20 @@ finality_retry_interval_ms: 60000
 # terminal broker result shows — slower than today's poll_interval_ms, never abandoned. 10 minutes.
 prior_day_poll_interval_ms: 600000
 # The oldest a prefetched release-reconciliation snapshot may be when the session loop applies
-# it, in ms from the instant its read STARTED (#969 review r1 HIGH). Since issue #950 the
+# it, in ms from the instant its read STARTED — its first GET's app-key pacer grant (issue #970)
+# (#969 review r1 HIGH). Since issue #950 the
 # observer's worker thread reads that snapshot ahead of time; the loop serves it to the release
 # reconciliation on a later pass. A snapshot proves only the broker as it was — an order that
 # appeared since (an unattributed order B, which must block the release as an orphan) can be
 # missing from it. Older than this, it is not served: the release HOLDS (never a live read on
 # the loop), one FILL_OBSERVER_RELEASE_SNAPSHOT row records its read instants and age, and a
-# fresh worker read is scheduled at once. 2000: a healthy snapshot read is the balance page plus
-# one order page (~0.2 s each, P-11 2026-08-05) and the loop applies it within one pass
-# (marketfeed.yaml poll_interval_ms 400 + journal_pass_allowance_ms 100), so ~1 s in the
-# ordinary case — 2 s is twice that. A broker slow enough to exceed it holds and re-reads: the
-# fail-closed direction, visible as "expired" rows.
-release_snapshot_max_age_ms: 2000
+# fresh worker read is scheduled at once. 6000 (issue #970): a healthy snapshot read is the
+# balance page plus one order page, and every request on the app key is now paced
+# kis_mock_transport.yaml::min_send_interval_ms (2000) apart, so the second GET starts one
+# interval after the first; each answers in ~0.2 s (P-11 2026-08-05) and the loop applies the
+# result within one pass (marketfeed.yaml poll_interval_ms 400 + journal_pass_allowance_ms 100)
+# — ~2.7 s in the ordinary case, so 6 s leaves one more interval of slack. A multi-page
+# snapshot or a broker slow enough to exceed it holds and re-reads: the fail-closed direction,
+# visible as "expired" rows. Compose refuses the boot below 2 x min_send_interval_ms — the
+# 2000 this replaced was exactly that "always expired" combination once #970 paced the GETs.
+release_snapshot_max_age_ms: 6000

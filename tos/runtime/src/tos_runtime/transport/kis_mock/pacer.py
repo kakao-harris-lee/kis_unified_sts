@@ -32,18 +32,56 @@ and each thread holds at most one slot request at a time, so a caller waits at m
 intervals. With ``wait_budget_ms`` at two intervals an order is never refused by a background
 GET, and a priority queue would only add a starvation rule for the GETs.
 
+**When did a read start?** :func:`first_grant_on_this_thread` lets a caller learn the grant
+instant of the first request its own thread made inside a block. The fill observer's release
+snapshot is aged from that instant — the earliest moment the broker state it holds could have
+been read — and not from before the pacer wait, which would age a healthy snapshot by a full
+interval it spent queued (issue #970; ``posttrade/fill_fetch.SnapshotRead``).
+
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos_runtime.time`` only.
 """
 
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from time import sleep
 
 from tos_runtime.time.sources import MonotonicSource
 
-__all__ = ["KisAppKeyPacer", "KisPacing", "KisPacingRefused"]
+__all__ = [
+    "KisAppKeyPacer",
+    "KisGrantTap",
+    "KisPacing",
+    "KisPacingRefused",
+    "first_grant_on_this_thread",
+]
+
+_taps = threading.local()
+
+
+class KisGrantTap:
+    """The first grant instant :meth:`KisAppKeyPacer.acquire` gave on this thread while the
+    tap was open, or ``None`` when no request was granted (nothing was sent)."""
+
+    def __init__(self) -> None:
+        self.first_ms: int | None = None
+
+
+@contextmanager
+def first_grant_on_this_thread() -> Iterator[KisGrantTap]:
+    """Record the first slot granted to THIS thread inside the block (module docstring).
+    Other threads' grants are not seen; a nested tap shadows the outer one for its duration.
+    """
+    tap = KisGrantTap()
+    previous = getattr(_taps, "tap", None)
+    _taps.tap = tap
+    try:
+        yield tap
+    finally:
+        _taps.tap = previous
 
 
 class KisPacingRefused(Exception):
@@ -118,6 +156,9 @@ class KisAppKeyPacer:
                 sleep(wait_ms / 1000.0)
             granted_ms = self._monotonic.now_ms()
             self._last_grant_ms = granted_ms
+            tap = getattr(_taps, "tap", None)
+            if tap is not None and tap.first_ms is None:
+                tap.first_ms = granted_ms
             return granted_ms
         finally:
             self._lock.release()

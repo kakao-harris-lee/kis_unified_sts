@@ -56,6 +56,7 @@ from tos_runtime.engine.finality_projection import project_recovered_finality
 from tos_runtime.posttrade.broker_finality import BrokerFinalityProducer
 from tos_runtime.posttrade.fill_fetch import (
     PrefetchedSnapshot,
+    SnapshotRead,
     SnapshotUse,
     snapshot_key,
 )
@@ -65,6 +66,7 @@ from tos_runtime.posttrade.fill_observer import (
     KisMockFillObserver,
     load_fill_observer_config,
 )
+from tos_runtime.posttrade.fill_observer_config import FillObserverConfigError
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
 from tos_runtime.posttrade.release_consumer import (
     FinalityConsumerPort,
@@ -78,6 +80,7 @@ from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.client import build_client
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
+from tos_runtime.transport.kis_mock.pacer import first_grant_on_this_thread
 
 __all__ = [
     "BrokerPosttrade",
@@ -166,13 +169,19 @@ class DeferredKisWitness:
 
     def prefetch(
         self, scope: WitnessScope, *, today: str, abort: Callable[[], bool]
-    ) -> WitnessSnapshot | WitnessUnavailable:
+    ) -> SnapshotRead:
         """FETCH thread: ``scope``'s snapshot under ``today``, or the unavailability it ended
-        in. Never raises (the witness's own two-outcome contract)."""
-        try:
-            return self._ready().observe(scope, today=today, deadline_expired=abort)
-        except WitnessUnavailable as exc:
-            return exc
+        in, with the pacer grant of its first broker request (issue #970 — the age origin).
+        Never raises (the witness's own two-outcome contract)."""
+        outcome: WitnessSnapshot | WitnessUnavailable
+        with first_grant_on_this_thread() as tap:
+            try:
+                outcome = self._ready().observe(
+                    scope, today=today, deadline_expired=abort
+                )
+            except WitnessUnavailable as exc:
+                outcome = exc
+        return SnapshotRead(outcome=outcome, first_request_ms=tap.first_ms)
 
     @contextmanager
     def serving(
@@ -223,6 +232,32 @@ class BrokerPosttrade:
     trading_date_now: Callable[[], str | None] = lambda: None
 
 
+def _refuse_snapshot_age_below_two_intervals(
+    max_age_ms: int, min_interval_ms: int, path: Path
+) -> None:
+    """Refuse a ``release_snapshot_max_age_ms`` shorter than two app-key intervals.
+
+    The release snapshot is two paced GETs (balance, then order inquiry), aged from the first
+    one's pacer grant, so it is at least one interval old when its read ends and older still
+    when APPLY serves it. Below two intervals nearly every snapshot is served expired: the
+    release HOLDS and the worker re-reads, forever, with no error anywhere.
+
+    Incident (R5, issue #970): #969 set ``release_snapshot_max_age_ms: 2000`` in the stock MOCK
+    tree, and #970 then paced every request on the app key at ``min_send_interval_ms: 2000`` —
+    together, a release that could never pass (found while writing #970, before any merge).
+
+    Raises:
+        FillObserverConfigError: ``max_age_ms < 2 * min_interval_ms``.
+    """
+    if max_age_ms < 2 * min_interval_ms:
+        raise FillObserverConfigError(
+            f"{path}: release_snapshot_max_age_ms {max_age_ms} is shorter than two app-key "
+            f"request intervals (2 x kis_mock_transport.yaml::min_send_interval_ms "
+            f"{min_interval_ms} = {2 * min_interval_ms}) — the two-GET release snapshot "
+            "would almost always be served expired and every release would hold"
+        )
+
+
 def build_broker_posttrade(
     *,
     config_dir: Path,
@@ -244,6 +279,11 @@ def build_broker_posttrade(
     assert transport_config is not None  # broker_posttrade_enabled
     path = config_dir / FILL_OBSERVER_CONFIG_NAME
     observer_config = load_fill_observer_config(path)
+    _refuse_snapshot_age_below_two_intervals(
+        observer_config.release_snapshot_max_age_ms,
+        transport_config.min_send_interval_ms,
+        path,
+    )
     mock_rest_base, real_rest_base = instance_rest_bases(broker_scopes)
     witness_config = kis_witness_config_from_mapping(
         {
