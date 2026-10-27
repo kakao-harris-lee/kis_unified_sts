@@ -928,8 +928,9 @@ def test_an_expired_release_snapshot_holds_instead_of_releasing(
     assert expired["age_ms"] > expired["max_age_ms"] == 300
     assert expired["read_started_monotonic_ms"] <= expired["read_finished_monotonic_ms"]
 
-    # The re-read is scheduled now, not after finality_retry_interval_ms (60 s): the next due
-    # poll plans a finality re-run with a fresh worker snapshot — which sees B and holds.
+    # The FIRST expiry of a run is re-read now, not after finality_retry_interval_ms (60 s;
+    # later expiries in a run wait it out, issue #971): the next due poll plans a finality
+    # re-run with a fresh worker snapshot — which sees B and holds.
     observer.poll_if_due()
     _wait_until_fetched(observer)
     report = observer.poll_if_due()

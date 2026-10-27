@@ -262,9 +262,10 @@ class KisMockFillObserver:
     _last_read_failed: bool = field(default=False, init=False)
     _runner: FetchRunner | None = field(default=None, init=False)
     _closed: bool = field(default=False, init=False)
-    #: An expired release snapshot was refused: the next plan re-runs finality at once, with a
-    #: fresh worker read, instead of after ``finality_retry_interval_ms``.
+    #: Issue #971 re-read backoff state (``_record_snapshot_uses``).
     _reread_now: bool = field(default=False, init=False)
+    _expired_run: int = field(default=0, init=False)
+    _expired_run_date: str | None = field(default=None, init=False)
 
     # -- entry points --------------------------------------------------------------------
 
@@ -442,10 +443,20 @@ class KisMockFillObserver:
         )
 
     def _record_snapshot_uses(self, uses: list[SnapshotUse]) -> None:
-        """One row per reconciliation the prefetched snapshot answered or was refused for, with
-        the read's real monotonic instants and its age; an expiry schedules a fresh read.
-        """
+        """One row per snapshot use (read instants, age, ``read_ok``, run so far). Only a run's
+        FIRST expiry re-reads at once, the rest wait ``finality_retry_interval_ms`` (#971); only
+        a SUCCESSFUL served read ends a run; a new trading date starts one."""
         for use in uses:
+            read_ok = not isinstance(use.snapshot.outcome, WitnessUnavailable)
+            if use.snapshot.today != self._expired_run_date:
+                self._expired_run, self._expired_run_date = 0, use.snapshot.today
+            expired = use.verdict == "expired"
+            if expired:
+                self._expired_run += 1
+                self._reread_now |= self._expired_run == 1
+            consecutive = self._expired_run
+            if not expired and read_ok:
+                self._expired_run = 0
             self._record(
                 FILL_OBSERVER_RELEASE_SNAPSHOT_KIND,
                 {
@@ -455,10 +466,10 @@ class KisMockFillObserver:
                     "age_ms": use.age_ms,
                     "max_age_ms": use.max_age_ms,
                     "trading_date": use.snapshot.today,
+                    "read_ok": read_ok,
+                    "consecutive_expired": consecutive,
                 },
             )
-            if use.verdict == "expired":
-                self._reread_now = True
 
     def _due(self, attempt: _Tracked) -> bool:
         """Today's ACKs are read every poll. An unresolved ACK from an EARLIER trading day is
