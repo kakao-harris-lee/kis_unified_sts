@@ -14,6 +14,7 @@ from typing import TypedDict, Unpack
 import pytest
 from tos.rcl import CapacityState
 from tos.recon import FieldConfidenceClass, FreshnessMarker, SafetyRelevantField
+from tos_runtime.rcl.projection import ScopeReservation
 from tos_runtime.recon import service as service_module
 from tos_runtime.recon.ports import (
     BrokerWitness,
@@ -44,16 +45,10 @@ class FakeRclReader:
     def all_reservations(self) -> dict[str, CapacityState]:
         return dict(self._states)
 
-    def instrument_state(self, _key) -> CapacityState | None:
-        return None
-
-    def instrument_last_seq(self, _key) -> int | None:
-        return None
+    def scope_reservations(self, _key) -> tuple[ScopeReservation, ...]:
+        return ()
 
     def reservation_committed_vector(self, _reservation_id: str):
-        return None
-
-    def instrument_committed_vector(self, _key):
         return None
 
 

@@ -36,6 +36,7 @@ from tos_runtime.posttrade.fill_observer import (
     FILL_OBSERVER_CONFIG_NAME,
     load_fill_observer_config,
 )
+from tos_runtime.posttrade.release_consumer import release_command_id
 
 from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
@@ -167,12 +168,30 @@ def _row(
     }
 
 
-def _script_broker(server, config_dir, date: str, rows: list[dict[str, str]]) -> str:
+def _script_broker(
+    server,
+    config_dir,
+    date: str,
+    rows: list[dict[str, str]],
+    *,
+    holdings: tuple[tuple[str, Decimal], ...] = (),
+) -> str:
+    """Script both witness GETs for ``date``: the order inquiry from ``rows``, the balance
+    inquiry from ``holdings`` (default: a flat account, the shape every test here had before
+    ``holdings`` existed — ``KisStockBrokerWitness`` omits zero-quantity rows, so an empty
+    ``output1`` IS flat)."""
     balance, orders = _witness_paths(config_dir, date)
     server.set_response(
         balance,
         status=200,
-        body={"rt_cd": "0", "output1": [], "output2": [{"dnca_tot_amt": "1000000"}]},
+        body={
+            "rt_cd": "0",
+            "output1": [
+                {"pdno": symbol, "hldg_qty": format(quantity, "f")}
+                for symbol, quantity in holdings
+            ],
+            "output2": [{"dnca_tot_amt": "1000000"}],
+        },
     )
     server.set_response(
         orders, status=200, body={"rt_cd": "0", "output1": rows, "output2": {}}
@@ -186,12 +205,20 @@ def _rcl_state(runtime) -> CapacityState:
     return state
 
 
-def _rcl_releases(runtime) -> int:
-    """Committed RCL release transitions — the durable fact, not the pre-mutation intent row."""
+def _rcl_releases(runtime, *, attempt_id: str | None = None) -> int:
+    """Committed RCL release transitions — the durable fact, not the pre-mutation intent row.
+
+    ``attempt_id`` narrows the count to the release THAT attempt's own fill drove, by the
+    command id the release consumer keys it on. A test whose fixture seeds an earlier,
+    already-discharged attempt (``test_kis_mock_fill_finality_r2``) needs that narrowing —
+    since #966 each attempt has its own reservation, so the log legitimately carries one
+    release command per completed attempt rather than one per scope.
+    """
     return sum(
         1
         for entry in runtime.rcl_log.replay()
         if entry.kind == CommandType.RELEASE_RESERVATION.value
+        and (attempt_id is None or entry.command_id == release_command_id(attempt_id))
     )
 
 

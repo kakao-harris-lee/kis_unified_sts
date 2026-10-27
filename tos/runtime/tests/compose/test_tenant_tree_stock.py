@@ -44,7 +44,12 @@ from .conftest import (
     _VENUE_POLICY_ENVIRONMENT,
     _VENUE_POLICY_INSTRUMENT,
 )
-from .test_compose_root import _action_flow_inputs, _aggregate_inputs, _reach_trusted
+from .test_compose_root import (
+    _action_flow_inputs_for,
+    _aggregate_inputs,
+    _LiveRuntimeFacts,
+    _reach_trusted,
+)
 from .test_deploy_config import _kst_unix_ms
 from .test_deploy_policies import _filled
 from .test_kis_mock_e2e_honesty import _sealed_mock_deployment
@@ -396,17 +401,20 @@ def _boot(config_dir, data_dir, custody_root, *, hour: int, minute: int):
     so the fixture's futures class would refuse the stock policy at boot.
     """
     fx.write_band_strategy_file(config_dir)
-    return compose_paper_runtime(
+    facts = _LiveRuntimeFacts()
+    runtime = compose_paper_runtime(
         config_dir,
         data_dir,
         custody_root,
         "non-live-test",
         construction=fx.construction_config(instrument_class="krx-stock"),
         aggregate_risk_inputs_provider=_aggregate_inputs,
-        action_flow_inputs_provider=_action_flow_inputs,
+        action_flow_inputs_provider=_action_flow_inputs_for(facts),
         transport_kind=TransportKind.KIS_MOCK,
         wall_clock=FixedWallClockReference(_kst_unix_ms(2026, 10, 19, hour, minute)),
     )
+    facts.runtime = runtime
+    return runtime
 
 
 @pytest.fixture()

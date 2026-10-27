@@ -160,7 +160,7 @@ def test_snapshot_conservative_current_usage_reflects_the_committed_rcl_vector(
     ``snapshot.conservative_current_usage`` — not the ``CapacityVector()`` fallback,
     which is reserved for "no reservation / no vector on record" only. Before this test,
     no test in this suite ever committed a non-``None`` vector, so
-    ``AggregateRiskService.snapshot``'s wiring to ``instrument_committed_vector`` (rather
+    ``AggregateRiskService.snapshot``'s wiring to the committed vector (rather
     than the unconditional empty-vector fallback it replaced) had no regression coverage:
     hardcoding ``conservative_current_usage=CapacityVector()`` in ``snapshot()`` left
     ``tos/runtime/tests/risk`` / ``compose`` / ``rcl`` / ``riskstate`` / ``safety`` all
@@ -284,3 +284,131 @@ def test_decide_appends_decision_evidence(
     assert decision_calls[0]["decision_digest"] == decision.canonical_digest
     # decision_id ⊥ digest — both recorded as separate fields, never conflated.
     assert decision_calls[0]["decision_id"] != decision_calls[0]["decision_digest"]
+
+
+# ============================================================================
+# #966 — a scope can hold more than one reservation, so usage is a SUM
+# ============================================================================
+
+
+def _commit_with_vector(
+    log: SqliteCommitLog,
+    *,
+    reservation_id: str,
+    writer_epoch: int,
+    instrument_key: InstrumentKey,
+    magnitude: str,
+    to_state: CapacityState,
+    expected_seq: int,
+    cause: TransitionCause = TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+    command_type: CommandType = CommandType.BIND_ATTEMPT,
+    finality_witness: bool | None = None,
+) -> int:
+    result = log.apply_reservation_transition(
+        CapacityReservationTransition(
+            reservation_id=reservation_id,
+            writer_epoch=writer_epoch,
+            from_state=CapacityState.COMMITTED_UNBOUND,
+            to_state=to_state,
+            scope=ReservationScope(
+                account=instrument_key.account, instrument=instrument_key.instrument
+            ),
+            committed_vector=CapacityVector(
+                components=(
+                    CapacityComponent(
+                        dimension_id="notional", magnitude=Decimal(magnitude)
+                    ),
+                )
+            ),
+        ),
+        cause,
+        command_type=command_type,
+        command_id=f"cmd-{reservation_id}",
+        command_digest=f"dig-{reservation_id}",
+        expected_seq=expected_seq,
+        finality_witness=finality_witness,
+    )
+    assert isinstance(result, AppendReceipt)
+    assert result.seq is not None
+    return result.seq
+
+
+def test_snapshot_sums_every_outstanding_reservation_of_the_scope(
+    ara_service: AggregateRiskService,
+    log: SqliteCommitLog,
+    instrument_key: InstrumentKey,
+    writer_epoch: int,
+) -> None:
+    """Two outstanding reservations -> the dimension-wise SUM of their committed vectors.
+
+    The concrete failing input for the pre-#966 first-row read: an entry at
+    ``POSITION_CONSUMED`` holding 250 plus the exit's own reservation holding 100 was
+    reported as 250 — one whole reservation of usage invisible to the limit check.
+    """
+    seq = _commit_with_vector(
+        log,
+        reservation_id="resv-entry",
+        writer_epoch=writer_epoch,
+        instrument_key=instrument_key,
+        magnitude="250",
+        to_state=CapacityState.POSITION_CONSUMED,
+        expected_seq=-1,
+        cause=TransitionCause.FINAL_QUANTITY_PROOF,
+        command_type=CommandType.RELEASE_RESERVATION,
+        finality_witness=True,
+    )
+    _commit_with_vector(
+        log,
+        reservation_id="resv-close",
+        writer_epoch=writer_epoch,
+        instrument_key=instrument_key,
+        magnitude="100",
+        to_state=CapacityState.ATTEMPT_BOUND,
+        expected_seq=seq,
+    )
+
+    snapshot = ara_service.snapshot(
+        instrument_key,
+        snapshot_generation=1,
+        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
+        all_fields_attributed=True,
+    )
+    assert snapshot.conservative_current_usage.magnitude("notional") == Decimal("350")
+
+
+def test_snapshot_excludes_released_reservations_from_usage(
+    ara_service: AggregateRiskService,
+    log: SqliteCommitLog,
+    instrument_key: InstrumentKey,
+    writer_epoch: int,
+) -> None:
+    """A ``RELEASED`` reservation consumes nothing — this is what reopens a closed scope."""
+    seq = _commit_with_vector(
+        log,
+        reservation_id="resv-done",
+        writer_epoch=writer_epoch,
+        instrument_key=instrument_key,
+        magnitude="250",
+        to_state=CapacityState.RELEASED,
+        expected_seq=-1,
+        cause=TransitionCause.FINAL_QUANTITY_PROOF,
+        command_type=CommandType.RELEASE_RESERVATION,
+        finality_witness=True,
+    )
+    _commit_with_vector(
+        log,
+        reservation_id="resv-open",
+        writer_epoch=writer_epoch,
+        instrument_key=instrument_key,
+        magnitude="100",
+        to_state=CapacityState.ATTEMPT_BOUND,
+        expected_seq=seq,
+    )
+
+    snapshot = ara_service.snapshot(
+        instrument_key,
+        snapshot_generation=1,
+        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
+        all_fields_attributed=True,
+    )
+    assert snapshot.conservative_current_usage.magnitude("notional") == Decimal("100")

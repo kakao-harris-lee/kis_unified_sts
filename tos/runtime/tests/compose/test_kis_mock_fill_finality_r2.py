@@ -22,11 +22,20 @@ from decimal import Decimal
 import pytest
 from tos.engine import EngineCore, NullEvidenceSink
 from tos.engine.vocabulary import EgressResultKind
+from tos.rcl import (
+    AppendReceipt,
+    CapacityReservationTransition,
+    CapacityState,
+    CommandType,
+    ReservationScope,
+    TransitionCause,
+)
 from tos_runtime.compose._preconditions import _ReplayPreconditions
 from tos_runtime.engine.replay import replay_engine
 from tos_runtime.engine.replay_stage import EventCorrelatingCore, RecordedStage
 from tos_runtime.engine.replay_transmit import RecordedTransmit, any_recorded_hand_off
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.rcl.reservation_identity import permit_reservation_id
 
 from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
@@ -267,9 +276,76 @@ def _prev_day(date: str) -> str:
     return (datetime.strptime(date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
 
 
+_EARLIER_PERMIT = "afg-permit-earlier-day"
+_EARLIER_EVENT = "evt-earlier-day"
+
+
+def _commit_earlier_day_reservation(runtime) -> str:
+    """Commit the earlier attempt's own reservation and the evidence join that names it.
+
+    The reservation goes straight to ``RELEASED`` under ``FINAL_QUANTITY_PROOF`` with a
+    positive witness — the state a completed, discharged attempt leaves behind — so it is NOT
+    outstanding and cannot affect today's attempt's own step-8 verdict or release path.
+    """
+    log = runtime.rcl_log
+    epoch = log.current_epoch()
+    view = log.read_linearizable(writer_epoch=epoch)
+    reservation_id = permit_reservation_id(fx.ACCOUNT, fx.INSTRUMENT, _EARLIER_PERMIT)
+    receipt = log.apply_reservation_transition(
+        CapacityReservationTransition(
+            reservation_id=reservation_id,
+            writer_epoch=epoch,
+            from_state=CapacityState.COMMITTED_UNBOUND,
+            to_state=CapacityState.RELEASED,
+            scope=ReservationScope(account=fx.ACCOUNT, instrument=fx.INSTRUMENT),
+        ),
+        TransitionCause.FINAL_QUANTITY_PROOF,
+        command_type=CommandType.RELEASE_RESERVATION,
+        command_id=f"release-{_EARLIER_ATTEMPT}",
+        command_digest="dig-earlier-day",
+        expected_seq=-1 if view.last_seq is None else view.last_seq,
+        finality_witness=True,
+    )
+    assert isinstance(receipt, AppendReceipt)
+    runtime.evidence_store.append(
+        {
+            "kind": "FLOW_STEP_ADMITTED",
+            "step": "ATOMIC_COMMIT",
+            "event_id": _EARLIER_EVENT,
+            "bound_identity": _EARLIER_PERMIT,
+        },
+        kind="FLOW_STEP_ADMITTED",
+        record_class="FLOW_STEP_ADMITTED",
+    )
+    runtime.evidence_store.append(
+        {
+            "kind": "ATTEMPT_REQUEST_CREATED",
+            "attempt_id": _EARLIER_ATTEMPT,
+            "event_id": _EARLIER_EVENT,
+        },
+        kind="ATTEMPT_REQUEST_CREATED",
+        record_class="ATTEMPT_REQUEST_CREATED",
+    )
+    return reservation_id
+
+
 def _record_earlier_day_attempt(runtime, date: str, qty: Decimal) -> None:
-    """An attempt completed on an earlier trading day in the same scope: its applied
-    ``FULL_FILL`` receipt and its fill proof (the two rows reconciliation reads)."""
+    """An attempt completed on an earlier trading day in the same scope.
+
+    Its applied ``FULL_FILL`` receipt and its fill proof (the two rows reconciliation reads),
+    plus — #966 — the three rows that make it a REAL completed attempt rather than evidence
+    with nothing behind it: the ``ATTEMPT_REQUEST_CREATED``/``FLOW_STEP_ADMITTED`` pair that
+    binds its attempt id to the permit its reservation is named after
+    (:mod:`tos_runtime.rcl.reservation_lookup`), and that reservation itself, terminal at
+    ``RELEASED``.
+
+    Before #966 every attempt in a scope shared ONE reservation id, so this fixture could omit
+    all three and still have reconciliation resolve the earlier attempt onto *today's*
+    reservation row — a different attempt's. With per-attempt ids that shortcut is gone, which
+    is the point: a completed attempt's own row is what proves it existed, and a real one
+    always has it (rows are never deleted, only advanced to ``RELEASED``).
+    """
+    _commit_earlier_day_reservation(runtime)
     runtime.evidence_store.append(
         {
             "instrument_key": {"account": fx.ACCOUNT, "instrument": fx.INSTRUMENT},
@@ -294,7 +370,7 @@ def _record_earlier_day_attempt(runtime, date: str, qty: Decimal) -> None:
 def test_an_earlier_day_receipt_does_not_block_todays_release(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
-    runtime, _attempt_id, today, qty = _acked(
+    runtime, attempt_id, today, qty = _acked(
         tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
     )
     earlier = _prev_day(today)
@@ -316,14 +392,14 @@ def test_an_earlier_day_receipt_does_not_block_todays_release(
 
     assert server.requests_for(earlier_orders)  # the earlier date was inquired
     assert _rows(runtime, "CAPACITY_RELEASE_HELD") == []
-    assert _rcl_releases(runtime) == 1
+    assert _rcl_releases(runtime, attempt_id=attempt_id) == 1
     _close(runtime)
 
 
 def test_an_earlier_day_the_broker_cannot_answer_for_is_an_explicit_hold(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
-    runtime, _attempt_id, today, qty = _acked(
+    runtime, attempt_id, today, qty = _acked(
         tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
     )
     earlier = _prev_day(today)
@@ -338,7 +414,7 @@ def test_an_earlier_day_the_broker_cannot_answer_for_is_an_explicit_hold(
     (held,) = _rows(runtime, "CAPACITY_RELEASE_HELD")
     assert held["reason"] == "NOT_CORROBORATED"
     assert "broker witness unavailable" in (held["detail"] or "")
-    assert _rcl_releases(runtime) == 0
+    assert _rcl_releases(runtime, attempt_id=attempt_id) == 0
     _close(runtime)
 
 

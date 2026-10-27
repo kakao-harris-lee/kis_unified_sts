@@ -35,7 +35,12 @@ from .conftest import call_wrapped_fixture, write_approval_file
 from .conftest import config_dir as _config_dir_fixture
 from .conftest import custody_root as _custody_root_fixture
 from .conftest import data_dir as _data_dir_fixture
-from .test_compose_root import _action_flow_inputs, _aggregate_inputs, _reach_trusted
+from .test_compose_root import (
+    _action_flow_inputs_for,
+    _aggregate_inputs,
+    _LiveRuntimeFacts,
+    _reach_trusted,
+)
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -59,6 +64,7 @@ def _fresh_compose_dirs(root: Path) -> tuple[Path, Path, Path]:
 def _compose_long(root: Path):
     config_dir, data_dir, custody_root = _fresh_compose_dirs(root)
     fx.write_band_strategy_file(config_dir)
+    facts = _LiveRuntimeFacts()
     runtime = compose_paper_runtime(
         config_dir,
         data_dir,
@@ -66,16 +72,18 @@ def _compose_long(root: Path):
         "non-live-test",
         construction=fx.construction_config(),
         aggregate_risk_inputs_provider=_aggregate_inputs,
-        action_flow_inputs_provider=_action_flow_inputs,
+        action_flow_inputs_provider=_action_flow_inputs_for(facts),
         transport_kind=TransportKind.SYNTHETIC,
         wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
     )
+    facts.runtime = runtime
     return runtime, custody_root
 
 
 def _compose_short(root: Path):
     config_dir, data_dir, custody_root = _fresh_compose_dirs(root)
     sfx.write_mirrored_strategy_file(config_dir)
+    facts = _LiveRuntimeFacts()
     runtime = compose_paper_runtime(
         config_dir,
         data_dir,
@@ -83,10 +91,11 @@ def _compose_short(root: Path):
         "non-live-test",
         construction=sfx.mirrored_construction_config(),
         aggregate_risk_inputs_provider=_aggregate_inputs,
-        action_flow_inputs_provider=_action_flow_inputs,
+        action_flow_inputs_provider=_action_flow_inputs_for(facts),
         transport_kind=TransportKind.SYNTHETIC,
         wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
     )
+    facts.runtime = runtime
     return runtime, custody_root
 
 

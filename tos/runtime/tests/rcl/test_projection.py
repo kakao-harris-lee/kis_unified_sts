@@ -19,7 +19,9 @@ from tos.workload import RuntimeIdentity
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.projection import (
     ReservationProjectionReader,
+    ScopeReservation,
     SqliteReservationProjectionReader,
+    outstanding_reservations,
 )
 
 #: A fixed scope for tests that exercise projection mechanics, not scope
@@ -72,7 +74,7 @@ def test_projection_reflects_committed_transition(
 # every transition in this module committed with the default
 # ``committed_vector=None``, so no test exercised the "commit a NON-empty
 # vector, read it back through the projection" path -- a mutation that made
-# both ``reservation_committed_vector`` and ``instrument_committed_vector``
+# ``reservation_committed_vector``
 # unconditionally return ``CapacityVector()`` passed the full runtime suite
 # (round #4 review finding ②). These pin that round trip so the same
 # mutation reds here.
@@ -110,7 +112,8 @@ def test_reservation_committed_vector_reads_back_the_committed_value(
     key = InstrumentKey(
         account=DEFAULT_SCOPE.account, instrument=DEFAULT_SCOPE.instrument
     )
-    assert reader.instrument_committed_vector(key) == _NON_EMPTY_VECTOR
+    ((row,),) = (reader.scope_reservations(key),)
+    assert reader.reservation_committed_vector(row.reservation_id) == _NON_EMPTY_VECTOR
 
 
 def test_committed_vector_reads_as_none_when_never_committed(
@@ -142,7 +145,8 @@ def test_committed_vector_reads_as_none_when_never_committed(
     key = InstrumentKey(
         account=DEFAULT_SCOPE.account, instrument=DEFAULT_SCOPE.instrument
     )
-    assert reader.instrument_committed_vector(key) is None
+    ((row,),) = (reader.scope_reservations(key),)
+    assert reader.reservation_committed_vector(row.reservation_id) is None
 
 
 def test_explicitly_empty_committed_vector_is_distinguishable_from_none(
@@ -191,11 +195,10 @@ def test_explicitly_empty_committed_vector_is_distinguishable_from_none(
 # ============================================================================
 
 
-def test_unknown_instrument_reads_as_none(log: SqliteCommitLog) -> None:
+def test_unknown_instrument_reads_as_no_rows(log: SqliteCommitLog) -> None:
     reader = SqliteReservationProjectionReader(log)
     key = InstrumentKey(account="acct-1", instrument="101S06")
-    assert reader.instrument_state(key) is None
-    assert reader.instrument_last_seq(key) is None
+    assert reader.scope_reservations(key) == ()
 
 
 def test_projection_reads_by_instrument_key_after_a_transition(
@@ -223,13 +226,17 @@ def test_projection_reads_by_instrument_key_after_a_transition(
     key = InstrumentKey(
         account=DEFAULT_SCOPE.account, instrument=DEFAULT_SCOPE.instrument
     )
-    assert reader.instrument_state(key) == CapacityState.ATTEMPT_BOUND
-    assert reader.instrument_last_seq(key) == result.seq
+    assert reader.scope_reservations(key) == (
+        ScopeReservation(
+            reservation_id="res-1",
+            state=CapacityState.ATTEMPT_BOUND,
+            last_seq=result.seq,
+        ),
+    )
 
     # A key for a different scope entirely reads back nothing.
     other_key = InstrumentKey(account="acct-2", instrument="201S03")
-    assert reader.instrument_state(other_key) is None
-    assert reader.instrument_last_seq(other_key) is None
+    assert reader.scope_reservations(other_key) == ()
 
 
 def test_two_reservations_with_different_scopes_do_not_collide(
@@ -278,11 +285,95 @@ def test_two_reservations_with_different_scopes_do_not_collide(
     reader = SqliteReservationProjectionReader(log)
     key_a = InstrumentKey(account=scope_a.account, instrument=scope_a.instrument)
     key_b = InstrumentKey(account=scope_b.account, instrument=scope_b.instrument)
-    assert reader.instrument_state(key_a) == CapacityState.ATTEMPT_BOUND
-    assert reader.instrument_state(key_b) == CapacityState.POTENTIALLY_LIVE
-    assert reader.instrument_last_seq(key_a) == first.seq
-    assert reader.instrument_last_seq(key_b) == second.seq
+    assert reader.scope_reservations(key_a) == (
+        ScopeReservation(
+            reservation_id="res-a",
+            state=CapacityState.ATTEMPT_BOUND,
+            last_seq=first.seq,
+        ),
+    )
+    assert reader.scope_reservations(key_b) == (
+        ScopeReservation(
+            reservation_id="res-b",
+            state=CapacityState.POTENTIALLY_LIVE,
+            last_seq=second.seq,
+        ),
+    )
     assert reader.all_reservations() == {
         "res-a": CapacityState.ATTEMPT_BOUND,
         "res-b": CapacityState.POTENTIALLY_LIVE,
     }
+
+
+# ============================================================================
+# #966 — a scope holds MORE THAN ONE reservation while an exit closes an entry.
+# The pre-#966 surface returned the scope's FIRST row only, so these two rows
+# were indistinguishable from one: the second was simply invisible.
+# ============================================================================
+
+
+def test_scope_reservations_reports_every_row_of_the_scope(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    epoch = log.acquire_epoch(identity)
+    entry = log.apply_reservation_transition(
+        CapacityReservationTransition(
+            reservation_id="resv-entry",
+            writer_epoch=epoch,
+            from_state=CapacityState.COMMITTED_UNBOUND,
+            to_state=CapacityState.POSITION_CONSUMED,
+            scope=DEFAULT_SCOPE,
+        ),
+        TransitionCause.FINAL_QUANTITY_PROOF,
+        command_type=CommandType.RELEASE_RESERVATION,
+        command_id="cmd-entry",
+        command_digest="dig-entry",
+        expected_seq=-1,
+        finality_witness=True,
+    )
+    assert isinstance(entry, AppendReceipt)
+    close = log.apply_reservation_transition(
+        CapacityReservationTransition(
+            reservation_id="resv-close",
+            writer_epoch=epoch,
+            from_state=CapacityState.COMMITTED_UNBOUND,
+            to_state=CapacityState.COMMITTED_UNBOUND,
+            scope=DEFAULT_SCOPE,
+        ),
+        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        command_type=CommandType.COMMIT_RESERVATION,
+        command_id="cmd-close",
+        command_digest="dig-close",
+        expected_seq=entry.seq,
+    )
+    assert isinstance(close, AppendReceipt)
+
+    reader = SqliteReservationProjectionReader(log)
+    key = InstrumentKey(
+        account=DEFAULT_SCOPE.account, instrument=DEFAULT_SCOPE.instrument
+    )
+    rows = reader.scope_reservations(key)
+    assert {(row.reservation_id, row.state) for row in rows} == {
+        ("resv-entry", CapacityState.POSITION_CONSUMED),
+        ("resv-close", CapacityState.COMMITTED_UNBOUND),
+    }
+    assert len(outstanding_reservations(rows)) == 2
+
+
+def test_outstanding_reservations_excludes_only_released(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    """``RELEASED`` is the one non-consuming state; ``POSITION_CONSUMED`` still consumes.
+
+    Pinned because the partition is NOT a conservatism-rank prefix — ``POSITION_CONSUMED``
+    ranks MORE conservative than ``POTENTIALLY_LIVE``, so a rank threshold would get this
+    exactly wrong (see ``ScopeReservation.outstanding``'s own docstring).
+    """
+    rows = tuple(
+        ScopeReservation(reservation_id=state.value, state=state, last_seq=0)
+        for state in CapacityState
+    )
+    kept = outstanding_reservations(rows)
+    assert CapacityState.RELEASED not in {row.state for row in kept}
+    assert CapacityState.POSITION_CONSUMED in {row.state for row in kept}
+    assert len(kept) == len(tuple(CapacityState)) - 1

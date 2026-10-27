@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ import pytest
 import yaml
 from tos.engine.vocabulary import CommitmentStep, StageAuthorityClass
 from tos_runtime.calendar.ports import FixedWallClockReference, WallClockReference
+from tos_runtime.compose._attempt_arm import attempt_position_effect
 from tos_runtime.compose._pending_dimensions import (
     load_pending_currentness_dimensions,
     stamp_pending_dimensions,
@@ -26,6 +28,7 @@ from tos_runtime.compose.root import (
     compose_paper_runtime,
 )
 from tos_runtime.rcl.log import CommitLogCorruption
+from tos_runtime.rcl.reservation_identity import permit_reservation_id
 from tos_runtime.risk.aggregate import AggregateRiskDecisionInputs
 from tos_runtime.risk.flow import ActionFlowDecisionInputs
 from tos_runtime.strategy.bindings import STRATEGY_BINDINGS_FILE_NAME
@@ -90,7 +93,51 @@ def _aggregate_inputs(request) -> AggregateRiskDecisionInputs | None:
     )
 
 
-def _action_flow_inputs(request) -> ActionFlowDecisionInputs | None:
+class _LiveRuntimeFacts:
+    """Late-bound handle to the two LIVE facts this suite's step-7 inputs provider needs.
+
+    Both only exist after ``compose_paper_runtime`` returns, yet the provider must be passed
+    IN to it — the same ordering production solves with a late-bound cell (see
+    ``tos_runtime.compose._wiring``'s own ``risk_state_cell``). ``_compose`` fills this in
+    immediately after composing.
+
+    #966: before this, the provider handed step 7 a FROZEN ``decision_generation=1`` while
+    compose derives ``generation_current = generation_fenced(decision_generation, rcl tip)``.
+    The tip advances past 1 with the first flow's own commits, so EVERY second flow in one
+    process — OPEN or CLOSE — came back ``UNKNOWN`` from step 7 and halted there. That is why
+    an entry and an exit could not be driven in one process even before step 8 was reached,
+    and why #965's e2e had to make the CLOSE the first commit. Production never had this
+    defect: ``tos_runtime.riskstate.service`` sets both generations from the live tip.
+    """
+
+    def __init__(self) -> None:
+        self.runtime: Any = None
+
+    def rcl_tip(self) -> int:
+        """The RCL log's own current tip — exactly what ``_rcl_tip_generation_provider`` reads."""
+        if self.runtime is None:
+            return 0
+        log = self.runtime.rcl_log
+        view = log.read_linearizable(writer_epoch=log.current_epoch())
+        return 0 if view.last_seq is None else view.last_seq
+
+    def position_effect(self) -> str | None:
+        """The position effect of the arm step 2 selected for the attempt under judgement."""
+        if self.runtime is None:
+            return None
+        return attempt_position_effect(self.runtime.construction_stage)
+
+
+def _action_flow_inputs_for(
+    facts: _LiveRuntimeFacts,
+) -> Callable[[Any], ActionFlowDecisionInputs | None]:
+    """Bind :func:`_action_flow_inputs` to ``facts`` (see :class:`_LiveRuntimeFacts`)."""
+    return lambda request: _action_flow_inputs(request, facts)
+
+
+def _action_flow_inputs(
+    request, facts: _LiveRuntimeFacts | None = None
+) -> ActionFlowDecisionInputs | None:
     from tos.afg import (
         ActionCause,
         ActionClassKind,
@@ -100,11 +147,21 @@ def _action_flow_inputs(request) -> ActionFlowDecisionInputs | None:
         ScopeIndependenceEvidence,
     )
 
+    facts = _LiveRuntimeFacts() if facts is None else facts
+    rcl_tip = facts.rcl_tip()
+    # #966: the action class follows the attempt's own arm, the way the deployed
+    # order_construction_policy.yaml's action_class_map does (CLOSE -> ORDINARY_REDUCE_OR_EXIT),
+    # instead of labelling every attempt NORMAL_NEW_RISK.
+    action_class = (
+        ActionClassKind.ORDINARY_REDUCE_OR_EXIT
+        if facts.position_effect() == "CLOSE"
+        else ActionClassKind.NORMAL_NEW_RISK
+    )
     scope = ActionFlowScopeKind.ACCOUNT
     snapshot = ActionFlowStateSnapshot(
-        snapshot_id="afg-snap-compose",
-        snapshot_generation=1,
-        consistency_cut_identity="afg-cut-compose",
+        snapshot_id=f"afg-snap-compose-{rcl_tip}",
+        snapshot_generation=rcl_tip,
+        consistency_cut_identity=f"afg-cut-compose-{rcl_tip}",
         covered_scopes=(scope,),
         scope_independence=(
             ScopeIndependenceEvidence(
@@ -173,8 +230,8 @@ def _action_flow_inputs(request) -> ActionFlowDecisionInputs | None:
         flow_commitment_exclusive=None,
         generation_current=False,
         applicable_action_flow_scopes=("ACCOUNT",),
-        decision_generation=1,
-        action_class=ActionClassKind.NORMAL_NEW_RISK,
+        decision_generation=rcl_tip,
+        action_class=action_class,
         cause_digest="cause-compose-1-digest",
     )
 
@@ -213,14 +270,15 @@ def _compose(
     ``wall_clock`` (or a ``config_dir`` with its own ``calendar.yaml``) — see
     ``tests/compose/test_session_wiring.py``."""
     fx.write_band_strategy_file(config_dir)
-    return compose_paper_runtime(
+    facts = _LiveRuntimeFacts()
+    runtime = compose_paper_runtime(
         config_dir,
         data_dir,
         custody_root,
         "non-live-test",
         construction=fx.construction_config(),
         aggregate_risk_inputs_provider=_aggregate_inputs,
-        action_flow_inputs_provider=_action_flow_inputs,
+        action_flow_inputs_provider=_action_flow_inputs_for(facts),
         monotonic_source=monotonic_source,
         transport_kind=transport_kind,
         wall_clock=(
@@ -229,6 +287,8 @@ def _compose(
             else FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS)
         ),
     )
+    facts.runtime = runtime
+    return runtime
 
 
 def _reach_trusted(runtime) -> None:
@@ -1908,10 +1968,12 @@ class TestCapacityObligationRecording:
 
         kinds = [m.kind for m in runtime.evidence_store.iter_entry_meta()]
         assert kinds.count("CAPACITY_OBLIGATION_PRESERVED") == 1
-        # No halt: the resolver mapped attempt_id -> the SAME
-        # f"resv-{account}-{instrument}" identity AtomicCommitStage just
-        # committed, and the projection genuinely reads it back as
-        # COMMITTED_UNBOUND (a live, capacity-consuming state).
+        # No halt: the resolver mapped attempt_id -> the SAME identity AtomicCommitStage just
+        # committed, and the projection genuinely reads it back as COMMITTED_UNBOUND (a live,
+        # capacity-consuming state). #966: that identity is now this attempt's own
+        # permit-named reservation, resolved through the durable evidence join
+        # (tos_runtime.rcl.reservation_lookup), not one id shared by the whole scope — so this
+        # assertion also pins that the join actually resolves for a live attempt.
         assert "CAPACITY_OBLIGATION_VIOLATION_ALERT" not in kinds
 
         row = next(
@@ -1923,7 +1985,10 @@ class TestCapacityObligationRecording:
         import json
 
         payload = json.loads(row[0])["payload"]
-        assert payload["reservation_id"] == "resv-88888888-01-ES"
+        assert payload["reservation_id"] == permit_reservation_id(
+            fx.ACCOUNT, fx.INSTRUMENT, flow.attempt.action_flow_permit_identity
+        )
+        assert payload["reservation_id"].startswith("resv-88888888-01-ES-afg-permit-")
         assert payload["reservation_state"] == "COMMITTED_UNBOUND"
         assert payload["verdict"] is True
 
@@ -2046,7 +2111,9 @@ class TestOrthostateAndFinalityProjectionWiring:
         import json
 
         from tos.rcl import CapacityState
-        from tos_runtime.rcl.reservation_identity import scope_reservation_id
+        from tos_runtime.rcl.reservation_identity import (
+            attempt_request_reservation_id,
+        )
 
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
@@ -2083,9 +2150,11 @@ class TestOrthostateAndFinalityProjectionWiring:
         # held -- a hold for a trivial upstream reason would otherwise pass this test
         # identically. Also pins the reservation id itself (finding M5's own measured mutation:
         # a total `_reservation_id` drift left the prior assertions passing unchanged).
+        # #966: the id is this ATTEMPT's own reservation, named by the permit its attempt
+        # request carries — not one shared by every attempt in the scope.
         instrument_key = runtime.context_resolver.instrument_key
-        assert held_payload["reservation_id"] == scope_reservation_id(
-            instrument_key.account, instrument_key.instrument
+        assert held_payload["reservation_id"] == attempt_request_reservation_id(
+            instrument_key, flow.attempt
         )
         assert held_payload["reason"] == "NOT_CORROBORATED"
         assert held_payload["detail"] == "WITNESS_NOT_INDEPENDENT"

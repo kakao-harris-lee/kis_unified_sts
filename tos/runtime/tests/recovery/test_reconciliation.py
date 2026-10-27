@@ -56,6 +56,7 @@ from tos.workload import RuntimeIdentity
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.projection import ScopeReservation
 from tos_runtime.recon.ports import (
     EgressReceiptObservation,
     WitnessOrder,
@@ -299,19 +300,13 @@ def test_a2_an_independent_witness_double_clears_the_same_attempt() -> None:
         def all_reservations(self) -> dict[str, CapacityState]:
             return {}
 
-        def instrument_state(self, _key: InstrumentKey) -> CapacityState | None:
-            return None
-
-        def instrument_last_seq(self, _key: InstrumentKey) -> int | None:
-            return None
+        def scope_reservations(
+            self, _key: InstrumentKey
+        ) -> tuple[ScopeReservation, ...]:
+            return ()
 
         def reservation_committed_vector(
             self, _reservation_id: str
-        ) -> CapacityVector | None:
-            return None
-
-        def instrument_committed_vector(
-            self, _key: InstrumentKey
         ) -> CapacityVector | None:
             return None
 

@@ -45,9 +45,10 @@ from .conftest import config_dir as _config_dir_fixture
 from .conftest import custody_root as _custody_root_fixture
 from .conftest import data_dir as _data_dir_fixture
 from .test_compose_root import (
-    _action_flow_inputs,
+    _action_flow_inputs_for,
     _aggregate_inputs,
     _compose,
+    _LiveRuntimeFacts,
     _reach_trusted,
 )
 from .test_transport_wiring import _activate_mock_stock_order
@@ -137,17 +138,20 @@ def _compose_with_construction(
     independently of the shared happy-path fixture every other e2e test in this file relies
     on."""
     fx.write_band_strategy_file(config_dir)
-    return compose_paper_runtime(
+    facts = _LiveRuntimeFacts()
+    runtime = compose_paper_runtime(
         config_dir,
         data_dir,
         custody_root,
         "non-live-test",
         construction=construction,
         aggregate_risk_inputs_provider=_aggregate_inputs,
-        action_flow_inputs_provider=_action_flow_inputs,
+        action_flow_inputs_provider=_action_flow_inputs_for(facts),
         transport_kind=TransportKind.SYNTHETIC,
         wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
     )
+    facts.runtime = runtime
+    return runtime
 
 
 def _kind_count(runtime, kind: str) -> int:
@@ -283,6 +287,7 @@ class TestVenueServiceE2E:
         )
         saturday_kst = 1_789_779_600_000  # 2026-09-19 10:00 KST
         fx.write_band_strategy_file(config_dir)
+        facts = _LiveRuntimeFacts()
         runtime = compose_paper_runtime(
             config_dir,
             data_dir,
@@ -290,10 +295,11 @@ class TestVenueServiceE2E:
             "non-live-test",
             construction=fx.construction_config(),
             aggregate_risk_inputs_provider=_aggregate_inputs,
-            action_flow_inputs_provider=_action_flow_inputs,
+            action_flow_inputs_provider=_action_flow_inputs_for(facts),
             transport_kind=TransportKind.SYNTHETIC,
             wall_clock=FixedWallClockReference(saturday_kst),
         )
+        facts.runtime = runtime
         _reach_trusted(runtime)
 
         results = runtime.run_once((fx.crossing_event(),))
@@ -451,16 +457,19 @@ class TestVenueBootRefusals:
         _rewrite_activation(config_dir, members)
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(PolicyNotActivated):
-            compose_paper_runtime(
+            facts = _LiveRuntimeFacts()
+            runtime = compose_paper_runtime(
                 config_dir,
                 data_dir,
                 custody_root,
                 "non-live-test",
                 construction=fx.construction_config(),
                 aggregate_risk_inputs_provider=_aggregate_inputs,
-                action_flow_inputs_provider=_action_flow_inputs,
+                action_flow_inputs_provider=_action_flow_inputs_for(facts),
                 transport_kind=TransportKind.SYNTHETIC,
             )
+            facts.runtime = runtime
+            return runtime
 
     def test_activation_resolved_false_refuses_to_boot(self, tmp_path: Path) -> None:
         config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
@@ -469,32 +478,38 @@ class TestVenueBootRefusals:
         _rewrite_activation(config_dir, members)
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(PolicyNotActivated):
-            compose_paper_runtime(
+            facts = _LiveRuntimeFacts()
+            runtime = compose_paper_runtime(
                 config_dir,
                 data_dir,
                 custody_root,
                 "non-live-test",
                 construction=fx.construction_config(),
                 aggregate_risk_inputs_provider=_aggregate_inputs,
-                action_flow_inputs_provider=_action_flow_inputs,
+                action_flow_inputs_provider=_action_flow_inputs_for(facts),
                 transport_kind=TransportKind.SYNTHETIC,
             )
+            facts.runtime = runtime
+            return runtime
 
     def test_activation_empty_members_refuses_to_boot(self, tmp_path: Path) -> None:
         config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
         _rewrite_activation(config_dir, [])
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(PolicyNotActivated):
-            compose_paper_runtime(
+            facts = _LiveRuntimeFacts()
+            runtime = compose_paper_runtime(
                 config_dir,
                 data_dir,
                 custody_root,
                 "non-live-test",
                 construction=fx.construction_config(),
                 aggregate_risk_inputs_provider=_aggregate_inputs,
-                action_flow_inputs_provider=_action_flow_inputs,
+                action_flow_inputs_provider=_action_flow_inputs_for(facts),
                 transport_kind=TransportKind.SYNTHETIC,
             )
+            facts.runtime = runtime
+            return runtime
 
     def test_admitting_phase_token_not_in_calendar_refuses_to_boot(
         self, tmp_path: Path
@@ -522,16 +537,19 @@ class TestVenueBootRefusals:
         _sync_venue_activation_digest(config_dir)
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(VenuePolicyScopeMismatch):
-            compose_paper_runtime(
+            facts = _LiveRuntimeFacts()
+            runtime = compose_paper_runtime(
                 config_dir,
                 data_dir,
                 custody_root,
                 "non-live-test",
                 construction=fx.construction_config(),
                 aggregate_risk_inputs_provider=_aggregate_inputs,
-                action_flow_inputs_provider=_action_flow_inputs,
+                action_flow_inputs_provider=_action_flow_inputs_for(facts),
                 transport_kind=TransportKind.SYNTHETIC,
             )
+            facts.runtime = runtime
+            return runtime
 
     def test_instrument_class_mismatch_refuses_to_boot(
         self, config_dir: Path, data_dir: Path, custody_root: Path
@@ -545,7 +563,8 @@ class TestVenueBootRefusals:
         assert."""
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(VenuePolicyScopeMismatch, match="instrument_class"):
-            compose_paper_runtime(
+            facts = _LiveRuntimeFacts()
+            runtime = compose_paper_runtime(
                 config_dir,
                 data_dir,
                 custody_root,
@@ -554,9 +573,11 @@ class TestVenueBootRefusals:
                     instrument_class="not-the-real-class"
                 ),
                 aggregate_risk_inputs_provider=_aggregate_inputs,
-                action_flow_inputs_provider=_action_flow_inputs,
+                action_flow_inputs_provider=_action_flow_inputs_for(facts),
                 transport_kind=TransportKind.SYNTHETIC,
             )
+            facts.runtime = runtime
+            return runtime
 
     def test_kis_mock_wire_codec_null_refuses_at_compose_level(
         self, tmp_path: Path
@@ -575,16 +596,19 @@ class TestVenueBootRefusals:
         fx.provision_kis_mock_custody(custody_root)
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(VenuePolicyScopeMismatch):
-            compose_paper_runtime(
+            facts = _LiveRuntimeFacts()
+            runtime = compose_paper_runtime(
                 config_dir,
                 data_dir,
                 custody_root,
                 "non-live-test",
                 construction=fx.construction_config(),
                 aggregate_risk_inputs_provider=_aggregate_inputs,
-                action_flow_inputs_provider=_action_flow_inputs,
+                action_flow_inputs_provider=_action_flow_inputs_for(facts),
                 transport_kind=TransportKind.KIS_MOCK,
             )
+            facts.runtime = runtime
+            return runtime
 
     def test_synthetic_wire_codec_non_null_refuses_at_compose_level(
         self, tmp_path: Path
@@ -607,16 +631,19 @@ class TestVenueBootRefusals:
         )
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(VenuePolicyScopeMismatch):
-            compose_paper_runtime(
+            facts = _LiveRuntimeFacts()
+            runtime = compose_paper_runtime(
                 config_dir,
                 data_dir,
                 custody_root,
                 "non-live-test",
                 construction=fx.construction_config(),
                 aggregate_risk_inputs_provider=_aggregate_inputs,
-                action_flow_inputs_provider=_action_flow_inputs,
+                action_flow_inputs_provider=_action_flow_inputs_for(facts),
                 transport_kind=TransportKind.SYNTHETIC,
             )
+            facts.runtime = runtime
+            return runtime
 
     def test_instrument_scope_mismatch_refuses_to_boot(self, tmp_path: Path) -> None:
         config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
@@ -640,16 +667,19 @@ class TestVenueBootRefusals:
         _sync_venue_activation_digest(config_dir)
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(VenuePolicyScopeMismatch):
-            compose_paper_runtime(
+            facts = _LiveRuntimeFacts()
+            runtime = compose_paper_runtime(
                 config_dir,
                 data_dir,
                 custody_root,
                 "non-live-test",
                 construction=fx.construction_config(),
                 aggregate_risk_inputs_provider=_aggregate_inputs,
-                action_flow_inputs_provider=_action_flow_inputs,
+                action_flow_inputs_provider=_action_flow_inputs_for(facts),
                 transport_kind=TransportKind.SYNTHETIC,
             )
+            facts.runtime = runtime
+            return runtime
 
 
 class TestWireCodecCrossCheck:
