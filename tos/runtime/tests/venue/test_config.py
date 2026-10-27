@@ -904,6 +904,13 @@ def test_load_order_construction_policy_construction_happy_path(tmp_path: Path) 
         (ActionClass.NEW_SHORT, "SHORT"): ActionClassShape(
             side="SELL", position_effect="OPEN"
         ),
+        # Both CLOSE arms, as the fixture (and every shipped OCP) declares them (#960).
+        (ActionClass.CLOSE, "LONG"): ActionClassShape(
+            side="SELL", position_effect="CLOSE"
+        ),
+        (ActionClass.CLOSE, "SHORT"): ActionClassShape(
+            side="BUY", position_effect="CLOSE"
+        ),
     }
     assert rules.effect_dimensions == (
         EffectDimensionSpec(
@@ -1152,16 +1159,18 @@ def test_load_order_construction_policy_construction_action_class_shape_close_lo
     """The WITHIN-class mirror (contract amendment 2026-09-16, the fix for lane A's original
     finding): ``ActionClass.CLOSE`` has one member for both a long-close and a short-close, so a
     document declaring ``(CLOSE, LONG)`` without its ``(CLOSE, SHORT)`` mirror must refuse too —
-    this mirror pair did not exist to violate before the amendment (mutation proof)."""
-    text = ocp_yaml().replace(
-        "    action_class_shape:\n"
-        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
-        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n',
-        "    action_class_shape:\n"
-        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
-        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n'
-        '      CLOSE:\n        LONG: {side: "SELL", position_effect: "CLOSE"}\n',
+    this mirror pair did not exist to violate before the amendment (mutation proof).
+
+    The mutation DELETES the fixture's own ``(CLOSE, SHORT)`` arm (#960 — the default now
+    declares both, as every shipped OCP does), leaving the one-sided document."""
+    text, count = re.subn(
+        r'^ +SHORT: \{side: "BUY", position_effect: "CLOSE"\}\n',
+        "",
+        ocp_yaml(),
+        count=1,
+        flags=re.MULTILINE,
     )
+    assert count == 1, "the fixture no longer declares a (CLOSE, SHORT) arm to delete"
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match=r"CLOSE, LONG.*CLOSE, SHORT"):
         load_order_construction_policy(path, scheme=SCHEME)
@@ -1170,17 +1179,9 @@ def test_load_order_construction_policy_construction_action_class_shape_close_lo
 def test_load_order_construction_policy_construction_action_class_shape_close_both_directions_accepted(
     tmp_path: Path,
 ) -> None:
-    text = ocp_yaml().replace(
-        "    action_class_shape:\n"
-        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
-        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n',
-        "    action_class_shape:\n"
-        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
-        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n'
-        '      CLOSE:\n        LONG: {side: "SELL", position_effect: "CLOSE"}\n'
-        '        SHORT: {side: "BUY", position_effect: "CLOSE"}\n',
-    )
-    path = write_fixture_ocp(tmp_path, text)
+    """Both CLOSE arms load, with the side each direction actually acts on — the fixture's own
+    default since #960 (no mutation needed), as every shipped OCP declares it."""
+    path = write_fixture_ocp(tmp_path)
     loaded = load_order_construction_policy(path, scheme=SCHEME)
     assert loaded.construction_rules.action_class_shape[
         (ActionClass.CLOSE, "LONG")

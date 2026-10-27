@@ -311,6 +311,7 @@ def _service(
     *,
     max_attempts: int | None = 4,
     action_class: ActionClass = ActionClass.NEW_LONG,
+    action_class_reader: Callable[[], ActionClass] | None = None,
     rcl_tip_reader: Callable[[], int | None] | None = None,
     hse_envelope_max: str = "1",
     effective_limit_value: str = "1",
@@ -364,6 +365,7 @@ def _service(
         evidence_store=evidence_store,
         environment_label="riskstate-wiring-test",
         action_class=action_class,
+        action_class_reader=action_class_reader,
         activated_member_digests=("are-activation-digest", "afg-activation-digest"),
     )
 
@@ -580,6 +582,48 @@ class TestActionFlowInputsFor:
     ) -> None:
         service = _service(
             tmp_path, evidence_store, inbox, rcl_log, action_class=ActionClass.AMEND
+        )
+        request = _stage_request(step=CommitmentStep.ACTION_FLOW_DECISION)
+        assert service.action_flow_inputs_for(request) is None
+
+    def test_a_close_attempt_is_judged_as_an_exit_not_as_the_boot_class(
+        self,
+        tmp_path: Path,
+        evidence_store: SqliteEvidenceStore,
+        inbox: SqliteEventInbox,
+        rcl_log: SqliteCommitLog,
+    ) -> None:
+        """#960 — the attempt's own action class decides step 7's kind: a CLOSE is an
+        ``ORDINARY_REDUCE_OR_EXIT``, not the boot ``NEW_LONG``'s ``NORMAL_NEW_RISK``."""
+        service = _service(
+            tmp_path,
+            evidence_store,
+            inbox,
+            rcl_log,
+            action_class=ActionClass.NEW_LONG,
+            action_class_reader=lambda: ActionClass.CLOSE,
+        )
+        request = _stage_request(step=CommitmentStep.ACTION_FLOW_DECISION)
+        inputs = service.action_flow_inputs_for(request)
+        assert inputs is not None
+        assert inputs.action_class is ActionClassKind.ORDINARY_REDUCE_OR_EXIT
+
+    def test_an_uncovered_attempt_class_yields_none_inputs(
+        self,
+        tmp_path: Path,
+        evidence_store: SqliteEvidenceStore,
+        inbox: SqliteEventInbox,
+        rcl_log: SqliteCommitLog,
+    ) -> None:
+        """#960 fail-closed: an attempt whose class the policy does not map is UNKNOWN, never
+        the mapped boot class's grant."""
+        service = _service(
+            tmp_path,
+            evidence_store,
+            inbox,
+            rcl_log,
+            action_class=ActionClass.NEW_LONG,
+            action_class_reader=lambda: ActionClass.AMEND,
         )
         request = _stage_request(step=CommitmentStep.ACTION_FLOW_DECISION)
         assert service.action_flow_inputs_for(request) is None

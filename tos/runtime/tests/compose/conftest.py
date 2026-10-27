@@ -290,6 +290,11 @@ def config_dir(tmp_path: Path) -> Path:
             # (test_symmetry.py) e2e suites (plan §2 decision 8 mirroring).
             admitting_phases=f'["{_VENUE_POLICY_ADMITTING_PHASE}"]',
             admitting_phases_short=f'["{_VENUE_POLICY_ADMITTING_PHASE}"]',
+            # CLOSE too, as every shipped tenant tree declares it (#960): an exit's action
+            # class is CLOSE from step 2 on, and an unenumerated action is INADMISSIBLE at
+            # step 3. Same token again — the one this calendar.yaml declares.
+            action_classes='["NEW_LONG", "NEW_SHORT", "CLOSE"]',
+            admitting_phases_close=f'["{_VENUE_POLICY_ADMITTING_PHASE}"]',
         ),
         encoding="utf-8",
     )

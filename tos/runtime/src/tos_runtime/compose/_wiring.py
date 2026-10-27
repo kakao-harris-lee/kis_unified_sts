@@ -56,6 +56,11 @@ from tos_runtime.brokercap import (
     refuse_principal_collision,
     transport_nature,
 )
+from tos_runtime.compose._attempt_arm import attempt_reader, attempt_side
+from tos_runtime.compose._attempt_shape import (
+    ProposalShapedConstructionStage,
+    build_attempt_arms,
+)
 from tos_runtime.compose._boot_integrity import (
     record_operator_attested_inputs,
     verify_rcl_log_or_halt,
@@ -540,8 +545,13 @@ def _build_construction_stages(
     inputs = build_construction_inputs(
         construction, venue_service=venue_service, loaded_ocp=loaded_ocp, scheme=_SCHEME
     )
-    construction_stage = OrderConstructionStage(
-        envelope=inputs.envelope,
+    construction_stage = ProposalShapedConstructionStage(  # #960: envelope per proposal
+        arms=build_attempt_arms(
+            loaded_ocp,
+            boot_action_class=construction.action_class,
+            venue_service=venue_service,
+        ),
+        loaded_ocp=loaded_ocp,
         price=construction.price,
         venue_constraint=venue_service.quantity_constraint,
         scheme=_SCHEME,
@@ -561,6 +571,7 @@ def _build_construction_stages(
         construction.action_class,
         construction.shape_price_field_key,
         construction_rules=loaded_ocp.construction_rules,
+        attempt_reader=attempt_reader(construction_stage),
     )
     economic_stage = EconomicEffectStage(construction_stage=construction_stage)
     proof_stage = ConformanceProofStage(
@@ -710,7 +721,6 @@ def _build_realized_stages(
     risk_service, flow_governor = risk.risk_service, risk.flow_governor
     projection = risk.projection
     construction_stage = construction_stages.construction_stage
-    proof_stage = construction_stages.proof_stage
     step4_recorder = _build_step4_recorder(
         intent_registry,
         construction_stage,
@@ -771,7 +781,7 @@ def _build_realized_stages(
     step13_recorder, step14_stage = _build_currentness_stages(
         rcl_log=rcl_log,
         writer_epoch=writer_epoch,
-        proof_stage=proof_stage,
+        construction_stages=construction_stages,
         flow_governor=flow_governor,
         step4_recorder=step4_recorder,
         construction=construction,
@@ -792,13 +802,15 @@ def _build_currentness_stages(
     *,
     rcl_log: SqliteCommitLog,
     writer_epoch: int,
-    proof_stage: ConformanceProofStage,
+    construction_stages: _ConstructionStages,
     flow_governor: RecordingActionFlowGovernor,
     step4_recorder: VerdictRecorder,
     construction: ConstructionConfig,
 ) -> tuple[VerdictRecorder, TransmissionCapabilityStage]:
     """Steps 13 (Attempt Bind Verification) + 14 (Transmission Capability) —
     split out of :func:`_build_realized_stages` purely for the size budget."""
+    proof_stage = construction_stages.proof_stage
+    construction_stage = construction_stages.construction_stage
     step13_stage = AttemptBindVerificationStage(
         # ⚠ structural re-derivation, never a self-comparison (구조 파생 >
         # 자기신고): each reader reads the LIVE artifact these steps already
@@ -830,7 +842,9 @@ def _build_currentness_stages(
             ),
             account_scope=request.instrument_key.account,
             instrument_scope=request.instrument_key.instrument,
-            side_action_scope=construction.outbound_side,
+            side_action_scope=attempt_side(
+                construction_stage, construction.outbound_side
+            ),
         ),
     )
     return VerdictRecorder(step13_stage), step14_stage

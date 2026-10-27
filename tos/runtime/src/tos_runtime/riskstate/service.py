@@ -211,6 +211,7 @@ class RiskStateService:
         environment_label: str,
         action_class: ActionClass,
         activated_member_digests: tuple[str, str],
+        action_class_reader: Callable[[], ActionClass] | None = None,
     ) -> None:
         """Compose the service over its injected readers and record the two boot-time
         ``*_POLICY_BOUND`` evidence rows (module docstring).
@@ -248,6 +249,9 @@ class RiskStateService:
             action_class: This composition's fixed, per-attempt :class:`~tos.venue.ActionClass`.
             activated_member_digests: ``(are_activation_digest, afg_activation_digest)`` —
                 recorded on the boot evidence rows (module docstring).
+            action_class_reader: THIS attempt's action class (step 2's selected arm, #960) —
+                a CLOSE is judged as a CLOSE at step 7, not as the boot ``action_class``.
+                Omitted, ``action_class`` applies to every attempt.
         """
         self._are_policy = are_policy
         self._afg_policy = afg_policy
@@ -267,6 +271,7 @@ class RiskStateService:
         self._evidence_store = evidence_store
         self._environment_label = environment_label
         self._action_class = action_class
+        self._action_class_reader = action_class_reader
         self._envelope_max = _envelope_max_vector(are_policy, hse_envelope)
         self._snapshot_seq = 0
         self._observation_seq = 0
@@ -509,7 +514,7 @@ class RiskStateService:
     ) -> ActionFlowDecisionInputs | None:
         """Build step 7's inputs for ``request`` (module docstring; plan §2.4). Returns
         ``None`` (UNKNOWN — never a fabricated grant) when the RCL tip is unreadable or this
-        composition's fixed :attr:`_action_class` is not among the policy's own
+        attempt's action class (#960) is not among the policy's own
         ``action_class_map``.
 
         Emits no evidence of its own — :meth:`aggregate_inputs_for` (step 6) always runs
@@ -523,7 +528,12 @@ class RiskStateService:
         rcl_tip = self._rcl_tip_reader()
         if rcl_tip is None:
             return None
-        action_class_kind = self._afg_policy.action_class_map.get(self._action_class)
+        action_class = (
+            self._action_class
+            if self._action_class_reader is None
+            else self._action_class_reader()
+        )
+        action_class_kind = self._afg_policy.action_class_map.get(action_class)
         if action_class_kind is None:
             return None
         flow_obs, committed_vectors = self._observe_flow(request)

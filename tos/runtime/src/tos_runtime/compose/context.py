@@ -117,6 +117,7 @@ from tos_runtime.brokercap import (
     derive_item6_item12,
 )
 from tos_runtime.brokercap.live_scope import live_scope_valid
+from tos_runtime.compose._attempt_arm import attempt_action_class, attempt_side
 from tos_runtime.compose._pending_dimensions import (
     PendingDimensionSpec,
     stamp_pending_dimensions,
@@ -407,6 +408,9 @@ class ComposeContextResolver:
     #: today (:mod:`tos_runtime.compose._wiring`); a later lane injects
     #: :class:`~tos_runtime.compose._request_digest.KisWireCodecDigest`.
     request_bytes_digest_source: RequestBytesDigestSource
+    #: The BOOT arm's side / action class — each attempt reads its own through
+    #: ``attempt_side``/``attempt_action_class`` (#960); these apply only when step 2 selected
+    #: no arm (a plain kernel stage, or a refused attempt that has nothing to send).
     outbound_side: str
     action_class: ActionClass
     #: TOS Phase 5 W5 plan §2 decision 5 — a zero-argument read off the SAME
@@ -463,7 +467,7 @@ class ComposeContextResolver:
             environment=coordinates.environment,
             action=coordinates.action,
             method=coordinates.method,
-            side=self.outbound_side,
+            side=attempt_side(self.construction_stage, self.outbound_side),
             route_identity=coordinates.route_identity,
             credential_generation=coordinates.credential_generation,
             broker_session_generation=coordinates.broker_session_generation,
@@ -631,7 +635,7 @@ class ComposeContextResolver:
             attempt_identity=attempt.attempt_id,
             account_scope=self.instrument_key.account,
             instrument_scope=self.instrument_key.instrument,
-            side_action_scope=self.outbound_side,
+            side_action_scope=attempt_side(self.construction_stage, self.outbound_side),
             ledger_epoch=view.epoch,
             bound_reservation_revision=view.last_seq,
         )
@@ -792,6 +796,11 @@ class ComposeContextResolver:
         context may classify a profile, so no binding table travels with the send)."""
         return {"capability_tuples": self.broker_scopes.active_scope.capability_tuples}
 
+    def _attempt_action_class(self) -> ActionClass:
+        """THIS attempt's action class: step 2's selected arm, or the boot class when step 2
+        selected none (#960 — see :attr:`action_class`)."""
+        return attempt_action_class(self.construction_stage, self.action_class)
+
     def _item6_item12_fields(self) -> Item6Item12Fields:
         """Items 6/12's derived fields (TOS Phase 4 plan §2 decision 4) —
         the ONE call site :meth:`_egress_gate_stand_in_fields` and
@@ -873,7 +882,7 @@ class ComposeContextResolver:
             venue_policy=self.venue_stage.policy,
             venue_decision=self.venue_stage.last_decision,
             observed_session_phase=self.observed_session_phase_reader(),
-            action_class=self.action_class,
+            action_class=self._attempt_action_class(),
             order_shape=self.venue_stage.resolved_shape,
             venue_shape_constraints=self.venue_stage.shape_constraints,
             commitment_epoch_current=item3.commitment_epoch_current,
@@ -898,7 +907,7 @@ class ComposeContextResolver:
             egress_currentness_result=item16.egress_currentness_result,
             authorized_coordinates=self.authorized_coordinates,
             capsule_egress_request_digest=request_bytes_digest,
-            outbound_side=self.outbound_side,
+            outbound_side=attempt_side(self.construction_stage, self.outbound_side),
             **self._deferred_mesh_fields(),
         )
         self.contexts += (context,)

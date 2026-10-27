@@ -68,7 +68,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from tos.canonical import CanonicalizationScheme
 from tos.egressgw import CandidateConstruction, VenueConstraintStage
@@ -134,6 +134,9 @@ from tos_runtime.venue import (
     require_member_activated,
 )
 from tos_runtime.venue.construction_rules import ConstructionRules
+
+if TYPE_CHECKING:
+    from tos_runtime.compose._attempt_arm import AttemptArm
 
 __all__ = [
     "BandReaderFactory",
@@ -855,25 +858,17 @@ class VenueServiceStage:
     stage — ``resolved_shape``/``shape_constraints``/``policy``/``last_snapshot``/
     ``last_decision`` — so those call sites change only what they read FROM, not how.
 
-    **(a′) wave — order-shape field sourcing.** ``shape`` is keyword-only and defaults to an
-    empty :class:`~tos.venue.OrderShapeFields` skeleton when omitted (``__init__`` below) — the
-    real compose call site (``compose/_wiring.py``) passes none at all, since every field gets
-    sourced downstream regardless; only a unit test that wants to pin a specific literal
-    surviving (or not) supplies one explicitly. :meth:`__call__` never folds that shape
-    unchanged: ``quantity`` is ALWAYS replaced with the derivation's own quantity
-    (:func:`_derived_shape_quantity`) and ``silently_rounded`` is ALWAYS the structural
-    ``False`` this runtime's own behaviour justifies (:func:`_observed_silently_rounded` — its
-    own docstring explains why this is not a grid re-derivation) — neither ever falls back
-    to the caller's literal, construction_rules or not. ``side``/``position_effect``/
-    ``order_type``/``tif`` are sourced from ``construction_rules`` (decisions 2/3) when one is
-    supplied. **Lane D wires this in production** (``compose/_wiring.py``'s
-    ``_build_construction_stages`` passes ``loaded_ocp.construction_rules`` — the SAME loaded
-    OCP generation step 2's envelope already came from), so all seven ``OrderShapeFields``
-    fields are policy/derivation-sourced on the real boot path; ``construction_rules`` stays an
-    optional constructor argument purely so a unit test may construct this stage directly
-    without a full compose boot (e.g. :func:`_derived_shape_quantity`'s own unit tests) — when
-    omitted there, those four fields fall back to the injected literal rather than a
-    fail-closed refusal.
+    **(a′) wave — order-shape field sourcing.** ``shape`` (keyword-only; an empty
+    :class:`~tos.venue.OrderShapeFields` when omitted — the real call site passes none) is never
+    folded unchanged: ``quantity`` is ALWAYS the derivation's own (:func:`_derived_shape_quantity`)
+    and ``silently_rounded`` ALWAYS the structural ``False`` (:func:`_observed_silently_rounded`).
+    ``side``/``position_effect``/``order_type``/``tif`` come from ``construction_rules`` when
+    supplied (production: ``_build_construction_stages`` passes the SAME loaded OCP step 2 used);
+    a unit test may omit it, and then those four keep the injected literal.
+
+    **#960 — per-attempt action class.** With ``attempt_reader`` (production), the action class
+    and ``side``/``position_effect`` are step 2's selected arm for THIS attempt, so a CLOSE is
+    judged and shaped as a CLOSE; ``None`` from the reader leaves the boot ``action_class``.
     """
 
     def __init__(
@@ -885,32 +880,30 @@ class VenueServiceStage:
         *,
         shape: OrderShapeFields | None = None,
         construction_rules: ConstructionRules | None = None,
+        attempt_reader: Callable[[], AttemptArm | None] | None = None,
     ) -> None:
         self._service = service
+        # Step 2's arm for THIS attempt (#960); `None` -> the boot action class applies.
+        self._attempt_reader = attempt_reader or (lambda: None)
         self._construction_stage = construction_stage
         self._action_class = action_class
-        # A caller with no literal shape to inject (the real compose path, since (a′) lane D —
-        # every field gets sourced below regardless) never needs to know OrderShapeFields
-        # exists just to build an empty one; this stage owns that default itself. `None` here
-        # is "no literal supplied", never "fold nothing" — a caller that genuinely wants the
-        # kernel's "no shape at all" behaviour has no route to it through this constructor
-        # (module docstring: no real or test call site has ever needed that degenerate case).
+        # `None` is "no literal supplied", never "fold nothing" (module docstring).
         self._shape = shape if shape is not None else OrderShapeFields()
         self._shape_price_field_key = shape_price_field_key
         self._construction_rules = construction_rules
-        #: The last, decision-bound kernel stage this call built — never read for judgement,
-        #: only for the read-surface properties below (mirrors the retired
-        #: ``VenuePhaseStage``'s own ``_last_stage`` discipline).
+        #: The last decision-bound kernel stage — read only by the properties below.
         self._last_stage: VenueConstraintStage | None = None
 
     def __call__(self, request: StageRequest) -> StageVerdict:
         snapshot = self._service.snapshot()
+        arm = self._attempt_reader()
+        action_class = self._action_class if arm is None else arm.action_class
         # Fold #1 (decision=None): purely to obtain the kernel's own resolved_shape (its
         # value-view price projection) — this module never re-derives that projection itself
         # (module docstring "Two folds, deliberately").
         stage0 = VenueConstraintStage(
             observed_session_phase=snapshot.observed_session_phase,
-            action_class=self._action_class,
+            action_class=action_class,
             snapshot=snapshot,
             policy=self._service.policy,
             shape=self._shape,
@@ -930,7 +923,7 @@ class VenueServiceStage:
         # source any field onto — stays ``None``, not a stand-in.
         shape_for_decision = self._sourced_shape(resolved, candidate_command)
         decision = self._service.decide(
-            action_class=self._action_class,
+            action_class=action_class,
             shape=shape_for_decision,
             candidate_command=candidate_command,
         )
@@ -942,7 +935,7 @@ class VenueServiceStage:
         # that was actually judged, not a stale literal.
         stage = VenueConstraintStage(
             observed_session_phase=snapshot.observed_session_phase,
-            action_class=self._action_class,
+            action_class=action_class,
             snapshot=snapshot,
             policy=self._service.policy,
             shape=shape_for_decision,
@@ -969,8 +962,13 @@ class VenueServiceStage:
             "silently_rounded": _observed_silently_rounded(),
         }
         if self._construction_rules is not None:
-            side, position_effect = _shape_side_and_position_effect(
-                self._construction_rules, self._action_class
+            arm = self._attempt_reader()
+            side, position_effect = (
+                _shape_side_and_position_effect(
+                    self._construction_rules, self._action_class
+                )
+                if arm is None
+                else (arm.side, arm.position_effect)
             )
             order_type, tif = _shape_order_type_and_tif(self._construction_rules)
             updates["side"] = side
