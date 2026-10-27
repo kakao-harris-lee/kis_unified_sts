@@ -101,7 +101,7 @@ jobs:
   # ===========================================================================
   test-shard:
     name: test (shard ${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-26.04 coreutils `timeout` exits 124 not 143 when SIGTERMed (bootproof stop path, see #967)
     # Hard backstop: a hung test (e.g. a blocking Redis read on an empty stream
     # under xdist) must not stall the job for the 6h default. With the per-test
     # --timeout below this should rarely be hit, but it guarantees fail-fast.
@@ -292,7 +292,7 @@ jobs:
   # Was the second half of the old `test` job's one step (204s of its 874s).
   # ===========================================================================
   test-serial:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-26.04 coreutils `timeout` exits 124 not 143 when SIGTERMed (bootproof stop path, see #967)
     timeout-minutes: 15
 
     services:
@@ -353,7 +353,7 @@ jobs:
   # across runners must not split the NAME that says the work passed.
   # ===========================================================================
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-26.04 coreutils `timeout` exits 124 not 143 when SIGTERMed (bootproof stop path, see #967)
     needs: [test-shard, test-serial]
     if: always()
     timeout-minutes: 5
@@ -373,7 +373,7 @@ jobs:
           echo "all test jobs succeeded"
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-26.04 coreutils `timeout` exits 124 not 143 when SIGTERMed (bootproof stop path, see #967)
 
     steps:
       - name: Checkout code
@@ -401,7 +401,7 @@ jobs:
         continue-on-error: true
 
   type-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-26.04 coreutils `timeout` exits 124 not 143 when SIGTERMed (bootproof stop path, see #967)
     continue-on-error: true
 
     steps:
@@ -428,7 +428,7 @@ jobs:
     # WS-A4/P3 vectorbt engine work) still resolves and imports alongside the
     # runtime deps. Heavy transitive deps (numba/plotly) stay out of the
     # gating `test` job on purpose.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-26.04 coreutils `timeout` exits 124 not 143 when SIGTERMed (bootproof stop path, see #967)
     continue-on-error: true
 
     steps:
@@ -457,7 +457,7 @@ jobs:
             tests/unit/backtest/test_harness_engine.py -q
 
   performance:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-26.04 coreutils `timeout` exits 124 not 143 when SIGTERMed (bootproof stop path, see #967)
     # Run on PRs to main and weekly schedule
     if: github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.base_ref == 'main')
     # Backstop so a hung round cannot burn the 6h default. Measured on run
