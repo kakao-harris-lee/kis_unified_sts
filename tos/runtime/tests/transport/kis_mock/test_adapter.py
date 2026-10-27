@@ -67,6 +67,7 @@ class _KisMockConfigKwargs(TypedDict):
     static_body_fields: Mapping[str, str]
     price_scale: int
     min_send_interval_ms: int
+    app_key_request_wait_budget_ms: int
     token_reissue_min_interval_s: int
     request_timeout_s: float
     allow_plaintext_for_tests: bool
@@ -86,6 +87,7 @@ class _KisMockConfigKwargsPartial(TypedDict, total=False):
     static_body_fields: Mapping[str, str]
     price_scale: int
     min_send_interval_ms: int
+    app_key_request_wait_budget_ms: int
     token_reissue_min_interval_s: int
     request_timeout_s: float
     allow_plaintext_for_tests: bool
@@ -105,6 +107,7 @@ def _config(
         "price_scale": 1,
         "static_body_fields": STATIC_BODY_FIELDS,
         "min_send_interval_ms": 1000,
+        "app_key_request_wait_budget_ms": 2000,
         "token_reissue_min_interval_s": 60,
         "request_timeout_s": 2.0,
         "allow_plaintext_for_tests": True,
@@ -642,21 +645,41 @@ def test_a_different_custody_bound_value_never_leaks_into_the_body(
 # ---------------------------------------------------------------------------
 
 
-def test_pacing_waits_before_the_second_send_and_t0_is_taken_after_the_wait(
-    server: FakeKisServer, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import tos_runtime.transport.kis_mock.adapter as adapter_module
+@pytest.fixture(autouse=True)
+def _no_real_pacer_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake clock does not advance on its own, so the app key pacer (issue #970) would
+    really sleep ``min_send_interval_ms`` between this suite's token POST and order POST. The
+    pacing tests below patch the sleep again to drive the clock."""
+    import tos_runtime.transport.kis_mock.pacer as pacer_module
+
+    monkeypatch.setattr(pacer_module, "sleep", lambda _seconds: None)
+
+
+def _clock_driving_sleep(
+    monkeypatch: pytest.MonkeyPatch, mono: FakeMonotonicSource
+) -> list[float]:
+    """Patch the pacer's sleep to record and to advance ``mono`` by the slept time."""
+    import tos_runtime.transport.kis_mock.pacer as pacer_module
 
     sleeps: list[float] = []
 
-    mono = FakeMonotonicSource(start_ms=0)
-
     def fake_sleep(seconds: float) -> None:
         sleeps.append(seconds)
-        # Simulate real elapsed time passing during the (patched-out) sleep.
         mono.advance(int(seconds * 1000))
 
-    monkeypatch.setattr(adapter_module.time, "sleep", fake_sleep)
+    monkeypatch.setattr(pacer_module, "sleep", fake_sleep)
+    return sleeps
+
+
+def test_pacing_waits_before_the_second_send_and_t0_is_taken_after_the_wait(
+    server: FakeKisServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Decision 6, now on the app key's pacer (issue #970). The first send's token POST takes a
+    slot too, so its order POST waits the full interval after it; the second send waits only
+    what is left of the interval since the first order POST, and t0 is read after the wait.
+    """
+    mono = FakeMonotonicSource(start_ms=0)
+    sleeps = _clock_driving_sleep(monkeypatch, mono)
 
     server.set_response(
         TOKEN_PATH, status=200, body={"access_token": "tok-1", "expires_in": 86400}
@@ -666,13 +689,14 @@ def test_pacing_waits_before_the_second_send_and_t0_is_taken_after_the_wait(
     )
 
     cfg = _config(server, min_send_interval_ms=1000)
-    transport, _, _, _ = _build_transport(server, config=cfg, monotonic=mono)
+    transport, evidence, _, _ = _build_transport(server, config=cfg, monotonic=mono)
 
     attempt1 = _attempt("pace-1")
     seal1 = build_seal(attempt_id=attempt1.attempt_id)
     transport._seal_lookup = make_seal_lookup({attempt1.attempt_id: seal1})
     _send(transport, attempt1)
-    assert sleeps == []  # first send never waits
+    # token POST at 0 -> the order POST waits the whole interval after it
+    assert sleeps == [pytest.approx(1.0, abs=0.01)]
 
     mono.advance(200)  # only 200ms have passed — well under the 1000ms floor
 
@@ -682,20 +706,19 @@ def test_pacing_waits_before_the_second_send_and_t0_is_taken_after_the_wait(
     before_second_send_wall = mono.now_ms()
     _send(transport, attempt2)
 
-    assert sleeps == [
+    assert sleeps[1:] == [
         pytest.approx(0.8, abs=0.01)
     ]  # waited ~800ms to reach the 1000ms floor
     assert mono.now_ms() >= before_second_send_wall + 800
+    # t0 is read after the wait: the fake server answers instantly, so latency is 0
+    sends = [f for kind, f in evidence.records if kind == "TRANSPORT_SEND"]
+    assert [f["latency_ms"] for f in sends] == [0, 0]
+    assert len(server.requests_for(ORDER_PATH)) == 2
 
 
 def test_no_pacing_wait_when_the_interval_has_already_elapsed(
     server: FakeKisServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import tos_runtime.transport.kis_mock.adapter as adapter_module
-
-    sleeps: list[float] = []
-    monkeypatch.setattr(adapter_module.time, "sleep", lambda s: sleeps.append(s))
-
     mono = FakeMonotonicSource(start_ms=0)
     server.set_response(
         TOKEN_PATH, status=200, body={"access_token": "tok-1", "expires_in": 86400}
@@ -713,6 +736,7 @@ def test_no_pacing_wait_when_the_interval_has_already_elapsed(
     _send(transport, attempt1)
 
     mono.advance(1500)  # more than the floor has already elapsed
+    sleeps = _clock_driving_sleep(monkeypatch, mono)
 
     attempt2 = _attempt("nopace-2")
     transport._seal_lookup = make_seal_lookup(
@@ -721,6 +745,43 @@ def test_no_pacing_wait_when_the_interval_has_already_elapsed(
     _send(transport, attempt2)
 
     assert sleeps == []
+
+
+def test_an_order_whose_slot_is_beyond_the_wait_budget_is_rejected_unsent(
+    server: FakeKisServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #970: waiting longer than ``app_key_request_wait_budget_ms`` fails closed the
+    throttle way — REJECT, ``reason=throttled``, ``sent: false`` — and the order never reaches
+    the broker (mutation: send anyway after the refusal, or let the refusal raise -> red).
+    """
+    mono = FakeMonotonicSource(start_ms=0)
+    sleeps = _clock_driving_sleep(monkeypatch, mono)
+    server.set_response(
+        TOKEN_PATH, status=200, body={"access_token": "tok-1", "expires_in": 86400}
+    )
+    server.set_response(
+        ORDER_PATH, status=200, body={"rt_cd": "0", "output": {"ODNO": "1"}}
+    )
+    # The token POST just took the key's slot; the order would have to wait 1000 ms > 500 ms.
+    cfg = _config(server, min_send_interval_ms=1000, app_key_request_wait_budget_ms=500)
+    transport, evidence, _, _ = _build_transport(server, config=cfg, monotonic=mono)
+    attempt = _attempt("over-budget")
+    transport._seal_lookup = make_seal_lookup(
+        {attempt.attempt_id: build_seal(attempt_id=attempt.attempt_id)}
+    )
+
+    result = _send(transport, attempt)
+
+    assert result.kind is EgressResultKind.REJECT
+    assert result.broker_execution_id is None
+    assert server.requests_for(ORDER_PATH) == []
+    assert len(server.requests_for(TOKEN_PATH)) == 1
+    assert sleeps == []
+    (send_row,) = [f for kind, f in evidence.records if kind == "TRANSPORT_SEND"]
+    assert send_row["reason"] == "throttled"
+    assert send_row["throttle_source"] == "app_key_pacer"
+    assert send_row["sent"] is False
+    assert send_row["status"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -906,9 +967,9 @@ def _package_files() -> list[Path]:
 def _retry_primitive_offenders_excluding_pacing(source: str, path: Path) -> list[str]:
     tree = ast.parse(source)
     pacing_lines: set[int] = set()
-    if path.name == "adapter.py":
+    if path.name == "pacer.py":
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == "_enforce_pacing":
+            if isinstance(node, ast.FunctionDef) and node.name == "acquire":
                 pacing_lines = set(
                     range(node.lineno, (node.end_lineno or node.lineno) + 1)
                 )
@@ -921,7 +982,7 @@ def _retry_primitive_offenders_excluding_pacing(source: str, path: Path) -> list
                 name = func.attr
             if name == "sleep" and node.lineno not in pacing_lines:
                 offenders.append(
-                    f"{path.name}:{node.lineno}: sleep() call outside _enforce_pacing"
+                    f"{path.name}:{node.lineno}: sleep() call outside the app key pacer"
                 )
         elif isinstance(node, ast.Name) and "retry" in node.id.lower():
             offenders.append(

@@ -179,7 +179,12 @@ class KisMockTransportConfig:
     #: :mod:`tos_runtime.transport.kis_mock.codec`. Required, no default: an unscaled send of a
     #: ×100 price is a 100× order price.
     price_scale: int
+    #: Least spacing, start to start, between two requests on this app key — every request,
+    #: not only order POSTs (issue #970: the key's one
+    #: :class:`~tos_runtime.transport.kis_mock.pacer.KisAppKeyPacer`). The name predates that.
     min_send_interval_ms: int
+    #: Longest one request may wait for its pacer slot before it is refused unsent (#970).
+    app_key_request_wait_budget_ms: int
     token_reissue_min_interval_s: int
     request_timeout_s: float
     allow_plaintext_for_tests: bool
@@ -494,6 +499,9 @@ def load_kis_mock_transport_config(
 
     price_scale = _require_positive_int(raw, "price_scale", path)
     min_send_interval_ms = _require_positive_int(raw, "min_send_interval_ms", path)
+    app_key_request_wait_budget_ms = _require_positive_int(
+        raw, "app_key_request_wait_budget_ms", path
+    )
     token_reissue_min_interval_s = _require_positive_int(
         raw, "token_reissue_min_interval_s", path
     )
@@ -510,6 +518,7 @@ def load_kis_mock_transport_config(
         static_body_fields=static_body_fields,
         price_scale=price_scale,
         min_send_interval_ms=min_send_interval_ms,
+        app_key_request_wait_budget_ms=app_key_request_wait_budget_ms,
         token_reissue_min_interval_s=token_reissue_min_interval_s,
         request_timeout_s=request_timeout_s,
         allow_plaintext_for_tests=allow_plaintext_for_tests,

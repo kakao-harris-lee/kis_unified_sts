@@ -84,6 +84,9 @@ def _config(server: FakeKisServer, **overrides: Any) -> KisQuoteTransportConfig:
         "token_reissue_min_interval_s": 60,
         "request_timeout_s": 2.0,
         "allow_plaintext_for_tests": True,
+        # Issue #970 pacing kept out of the way: the fake clock never advances on its own.
+        "app_key_min_request_interval_ms": 1,
+        "app_key_request_wait_budget_ms": 60_000,
     }
     base.update(overrides)
     return KisQuoteTransportConfig(**base)
@@ -544,6 +547,8 @@ def test_config_loader_is_the_actual_host_seal_not_the_adapter(tmp_path: Path) -
                 "field_mapping": {"stck_prpr": "last_price", "acml_vol": "volume"},
                 "source_id": "kis_quote_mock_stock",
                 "request_timeout_s": 2.0,
+                "app_key_min_request_interval_ms": 2000,
+                "app_key_request_wait_budget_ms": 4000,
             }
         ),
         encoding="utf-8",

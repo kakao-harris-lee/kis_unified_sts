@@ -35,7 +35,8 @@ assertion, passes unchanged against the refactored adapter (see the W2 report fo
 ``passed`` count before and after).
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``typing``,
-``collections.abc``) + ``tos_runtime.custody``/``tos_runtime.time`` only. No ``tos.*`` kernel
+``collections.abc``) + ``tos_runtime.custody``/``tos_runtime.time``/this package's ``pacer`` only.
+No ``tos.*`` kernel
 import (nothing here is kernel-typed), no third-party import, no ``os.environ``, no network (the
 one network call this module drives is made by the injected ``client``, never by this module
 itself).
@@ -49,6 +50,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.time.sources import MonotonicSource
+from tos_runtime.transport.kis_mock.pacer import KisAppKeyPacer
 
 __all__ = [
     "EvidenceRecorder",
@@ -126,6 +128,7 @@ class KisTokenLifecycle:
         token_path: str,
         token_reissue_min_interval_s: int,
         evidence_sink: EvidenceRecorder,
+        pacer: KisAppKeyPacer,
     ) -> None:
         """Wire this lifecycle's dependencies (all injected — no ambient state).
 
@@ -141,6 +144,8 @@ class KisTokenLifecycle:
                 (module docstring — a reissue-RATE limit, not a token lifetime).
             evidence_sink: Records this lifecycle's own evidence entries
                 (``TRANSPORT_TOKEN_STALE``).
+            pacer: The app key's request pacer (issue #970) — a token POST is a request on the
+                key like any other and takes a slot before it is sent.
         """
         self._client = client
         self._custody = custody
@@ -150,6 +155,7 @@ class KisTokenLifecycle:
         self._token_path = token_path
         self._token_reissue_min_interval_s = token_reissue_min_interval_s
         self._evidence = evidence_sink
+        self._pacer = pacer
 
         self._access_token: str | None = None
         self._token_issued_at_ms: int | None = None
@@ -169,6 +175,8 @@ class KisTokenLifecycle:
         Raises:
             TokenStale: The held token (or the absence of one) is stale and the reissue cooldown
                 has not elapsed since the last issuance attempt.
+            ~tos_runtime.transport.kis_mock.pacer.KisPacingRefused: A token POST was needed and
+                the app key's next slot is beyond the pacer's wait budget — nothing was sent.
         """
         with self._lock:
             return self._ensure_token_string_locked()
@@ -206,6 +214,10 @@ class KisTokenLifecycle:
                     "issuance attempt — refusing to reissue within this attempt (decision 4)"
                 )
 
+        # Issue #970: the slot comes BEFORE the attempt is recorded. A refused slot sends nothing,
+        # so it must not start the reissue cooldown (that would turn one busy moment into a
+        # minute of TokenStale).
+        self._pacer.acquire()
         self._last_token_issue_attempt_ms = now
         self._issue_token()
         assert self._access_token is not None

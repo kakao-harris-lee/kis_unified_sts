@@ -47,6 +47,7 @@ from tos_runtime.brokercap import BrokerScopesConfig
 from tos_runtime.compose._kis_credential_wiring import (
     KisCredentialSessionsCell,
     kis_mock_credential_session,
+    kis_transport_pacing,
 )
 from tos_runtime.compose._posttrade_source import broker_posttrade_enabled
 from tos_runtime.compose._transport_wiring import instance_rest_bases
@@ -272,6 +273,7 @@ def build_broker_posttrade(
                 token_endpoint_base=transport_config.endpoint_rest_base,
                 token_path=transport_config.token_path,
                 token_reissue_min_interval_s=transport_config.token_reissue_min_interval_s,
+                pacing=kis_transport_pacing(transport_config),
             ),
             date_source=_TrustedTradingDate(trading_date_now),
         )

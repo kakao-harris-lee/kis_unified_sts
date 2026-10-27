@@ -229,6 +229,7 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
         ("static_body_fields", "CNDT_PRIC"),
         ("price_scale",),
         ("min_send_interval_ms",),
+        ("app_key_request_wait_budget_ms",),
         ("token_reissue_min_interval_s",),
         ("request_timeout_s",),
         ("allow_plaintext_for_tests",),
@@ -245,6 +246,8 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
         ("field_mapping",),
         ("source_id",),
         ("request_timeout_s",),
+        ("app_key_min_request_interval_ms",),
+        ("app_key_request_wait_budget_ms",),
     ],
     "kis_witness": [
         ("endpoint_rest_base",),

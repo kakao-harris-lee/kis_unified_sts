@@ -649,3 +649,52 @@ def test_a_deadline_already_past_sends_no_request_at_all(
             deadline_expired=lambda: True,
         )
     assert server.all_requests == []
+
+
+def test_a_pacer_refused_slot_is_witness_unavailable_with_no_request(
+    server: FakeKisGetServer,
+) -> None:
+    """Issue #970: the witness reads through the app key's REAL credential session, so its GET
+    takes a slot from the key's one pacer. The token POST just took the key's slot, and the
+    GET's slot is beyond the wait budget: the read fails closed as ``WitnessUnavailable`` and
+    nothing reaches the broker — the HOLD path, never a late send.
+
+    Mutation: catch nothing (let the pacer refusal escape as itself) -> not WitnessUnavailable
+    -> red; skip the pacer in ``app_credentials`` -> one GET is sent -> red.
+    """
+    from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
+    from tos_runtime.transport.kis_mock.pacer import KisPacing
+
+    from ..transport.kis_mock._fakes import (
+        FakeMonotonicSource,
+        InMemoryCredentialCustody,
+        RecordingEvidenceSink,
+    )
+
+    class _TokenClient:
+        def issue_token(
+            self, app_key: bytes, app_secret: bytes, *, path: str  # noqa: ARG002
+        ) -> dict[str, object]:
+            return {"access_token": "tok-1", "expires_in": 86_400}
+
+    session = KisCredentialSessions(
+        custody=InMemoryCredentialCustody(
+            {"kis_mock.app_key": b"key", "kis_mock.app_secret": b"secret"}
+        ),
+        monotonic=FakeMonotonicSource(start_ms=5_000),
+        evidence_sink=RecordingEvidenceSink(),
+    ).session_for(
+        client=_TokenClient(),
+        app_key_scope="kis_mock.app_key",
+        app_secret_scope="kis_mock.app_secret",
+        token_endpoint_base=server.rest_base,
+        token_path="/oauth2/tokenP",
+        token_reissue_min_interval_s=60,
+        pacing=KisPacing(min_interval_ms=2_000, wait_budget_ms=1_000),
+    )
+
+    with pytest.raises(WitnessUnavailable):
+        _witness(server, credential_session=session).order_rows(
+            WitnessScope(account=ACCOUNT), inquiry_date="20261023"
+        )
+    assert server.all_requests == []

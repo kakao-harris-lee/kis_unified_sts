@@ -90,3 +90,22 @@ source_id: null
 # --- HTTP -------------------------------------------------------------------
 
 request_timeout_s: null
+
+# --- app key pacing (issue #970) -------------------------------------------
+# Every request on the kis_mock.* app key — this intake's quote GETs, the band
+# reader's GETs, the order transport's POSTs, the fill witness's GETs and every
+# token POST — takes a slot from ONE pacer owned by the key's credential
+# session. KIS throttles calls per second across endpoints (EGW00201; P-13
+# measured clean at 1.0 rps and throttled at 2.0 rps on MOCK_VTS, and a quote
+# GET followed at once by an order POST was throttled — KIS-BROKER-CAPABILITY-
+# PROFILE-draft.yaml rate_limits._kis). Both values MUST equal the order
+# transport's (kis_mock_transport.yaml: min_send_interval_ms and
+# app_key_request_wait_budget_ms) whenever both are loaded; the credential
+# registry refuses the boot otherwise.
+# app_key_min_request_interval_ms: least spacing between two requests on the
+#   key, start to start.
+# app_key_request_wait_budget_ms: longest one request may wait for its slot;
+#   past it the request is refused unsent (fail-closed, never sent late).
+
+app_key_min_request_interval_ms: null
+app_key_request_wait_budget_ms: null

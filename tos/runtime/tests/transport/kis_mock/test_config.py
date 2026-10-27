@@ -42,6 +42,7 @@ def _valid_raw() -> dict[str, Any]:
         "static_body_fields": dict(STATIC_BODY_FIELDS),
         "price_scale": 100,
         "min_send_interval_ms": 1100,
+        "app_key_request_wait_budget_ms": 2200,
         "token_reissue_min_interval_s": 60,
         "request_timeout_s": 5.0,
         "allow_plaintext_for_tests": False,
@@ -104,6 +105,7 @@ def test_not_a_mapping_refuses(tmp_path: Path) -> None:
         "static_body_fields",
         "price_scale",
         "min_send_interval_ms",
+        "app_key_request_wait_budget_ms",
         "token_reissue_min_interval_s",
         "request_timeout_s",
         "allow_plaintext_for_tests",
@@ -127,6 +129,7 @@ def test_a_null_named_tbd_field_refuses(tmp_path: Path, field: str) -> None:
         "tr_id_buy",
         "tr_id_sell",
         "min_send_interval_ms",
+        "app_key_request_wait_budget_ms",
         "token_reissue_min_interval_s",
         "request_timeout_s",
         "allow_plaintext_for_tests",
@@ -401,7 +404,12 @@ def test_static_body_fields_colliding_with_field_map_refuses(tmp_path: Path) -> 
 
 @pytest.mark.parametrize(
     "field",
-    ["min_send_interval_ms", "token_reissue_min_interval_s", "request_timeout_s"],
+    [
+        "min_send_interval_ms",
+        "app_key_request_wait_budget_ms",
+        "token_reissue_min_interval_s",
+        "request_timeout_s",
+    ],
 )
 def test_a_non_positive_numeric_field_refuses(tmp_path: Path, field: str) -> None:
     raw = _valid_raw()
@@ -446,6 +454,7 @@ def test_the_example_config_file_matches_this_loaders_shape() -> None:
     assert raw["tr_id_buy"] is None
     assert raw["tr_id_sell"] is None
     assert raw["min_send_interval_ms"] is None
+    assert raw["app_key_request_wait_budget_ms"] is None
     assert raw["token_reissue_min_interval_s"] is None
     assert raw["request_timeout_s"] is None
     assert isinstance(raw["field_map"], dict) and raw["field_map"]

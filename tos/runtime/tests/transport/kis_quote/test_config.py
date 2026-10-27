@@ -32,6 +32,8 @@ def _valid_raw() -> dict[str, Any]:
         "field_mapping": {"stck_prpr": "last_price", "acml_vol": "volume"},
         "source_id": "kis_quote_mock_stock",
         "request_timeout_s": 3.0,
+        "app_key_min_request_interval_ms": 2000,
+        "app_key_request_wait_budget_ms": 4000,
     }
 
 
@@ -115,6 +117,8 @@ def test_not_valid_yaml_refuses(tmp_path: Path) -> None:
         "field_mapping",
         "source_id",
         "request_timeout_s",
+        "app_key_min_request_interval_ms",
+        "app_key_request_wait_budget_ms",
     ],
 )
 def test_still_null_field_refuses(tmp_path: Path, field: str) -> None:
@@ -139,6 +143,8 @@ def test_still_null_field_refuses(tmp_path: Path, field: str) -> None:
         "field_mapping",
         "source_id",
         "request_timeout_s",
+        "app_key_min_request_interval_ms",
+        "app_key_request_wait_budget_ms",
     ],
 )
 def test_missing_field_refuses(tmp_path: Path, field: str) -> None:

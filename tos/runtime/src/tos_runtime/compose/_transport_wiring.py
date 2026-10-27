@@ -72,6 +72,7 @@ from tos_runtime.compose._kis_credential_wiring import (
     KIS_MOCK_APP_KEY_SCOPE,
     KIS_MOCK_APP_SECRET_SCOPE,
     kis_mock_credential_session,
+    kis_transport_pacing,
 )
 from tos_runtime.compose._nonlive_admission import _capability_tuples_mock_simulation
 from tos_runtime.custody.file_custody import FileCustody
@@ -528,6 +529,7 @@ def build_transport(
             token_endpoint_base=transport_config.endpoint_rest_base,
             token_path=transport_config.token_path,
             token_reissue_min_interval_s=transport_config.token_reissue_min_interval_s,
+            pacing=kis_transport_pacing(transport_config),
         ),
         monotonic=monotonic,
         seal_lookup=seal_lookup,

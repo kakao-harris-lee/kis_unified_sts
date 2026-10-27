@@ -18,12 +18,20 @@ root's registry: it hands every consumer of the same scope pair the SAME session
 second consumer whose token endpoint (host, path) or reissue cooldown disagrees with the first
 — sharing one token across two different endpoints would be a silent cross-wiring, not a share.
 
+**One request pacer per app key, here** (issue #970). KIS throttles calls per second, across
+endpoints (:mod:`tos_runtime.transport.kis_mock.pacer`'s module docstring). Every request on the
+key loads the key/secret from this session first — :meth:`KisCredentialSession.app_credentials`
+for an order POST or a GET, the lifecycle's own load for a token POST — so that load is where
+the session's :class:`~tos_runtime.transport.kis_mock.pacer.KisAppKeyPacer` grants the request
+its slot. A consumer cannot reach the key without passing it. The pacing terms are session
+terms like the token endpoint: a second consumer that asks for different ones is refused.
+
 **The witness sees a Protocol, not this class** (C-2 §4, firewall). The reconciliation witness
 may import only its ``tos_runtime.recon`` siblings, so it declares its own structural Protocol
 (``request_credentials()``) and this class satisfies it; only the compose root connects the two.
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos_runtime.custody``/
-``tos_runtime.time``/this package's ``token`` module only.
+``tos_runtime.time``/this package's ``token`` and ``pacer`` modules only.
 """
 
 from __future__ import annotations
@@ -34,6 +42,7 @@ from dataclasses import dataclass
 
 from tos_runtime.custody.ports import CredentialCustody, CredentialHandle
 from tos_runtime.time.sources import MonotonicSource
+from tos_runtime.transport.kis_mock.pacer import KisAppKeyPacer, KisPacing
 from tos_runtime.transport.kis_mock.token import (
     EvidenceRecorder,
     KisTokenLifecycle,
@@ -50,8 +59,9 @@ __all__ = [
 
 
 class KisCredentialSessionConflict(Exception):
-    """Two consumers of the same app key asked for different token endpoints or cooldowns
-    (module docstring — refused rather than silently sharing one token across both)."""
+    """Two consumers of the same app key asked for different token endpoints, cooldowns or
+    pacing terms (module docstring — refused rather than silently sharing one token or one
+    pacer under terms one of them did not configure)."""
 
 
 class KisAppCredentials:
@@ -95,6 +105,7 @@ class _SessionTerms:
     token_endpoint_base: str
     token_path: str
     token_reissue_min_interval_s: int
+    pacing: KisPacing
 
 
 class KisCredentialSession:
@@ -111,13 +122,17 @@ class KisCredentialSession:
         token_path: str,
         token_reissue_min_interval_s: int,
         evidence_sink: EvidenceRecorder,
+        pacing: KisPacing,
     ) -> None:
-        """Wire the session (every argument is forwarded to the one
+        """Wire the session (every argument but ``pacing`` is forwarded to the one
         :class:`~tos_runtime.transport.kis_mock.token.KisTokenLifecycle` this session owns;
-        ``custody``/the two scopes are also the source of :meth:`app_credentials`)."""
+        ``custody``/the two scopes are also the source of :meth:`app_credentials`; ``pacing``
+        configures the app key's one pacer, shared by :meth:`app_credentials` and the
+        lifecycle's token POST)."""
         self._custody = custody
         self._app_key_scope = app_key_scope
         self._app_secret_scope = app_secret_scope
+        self._pacer = KisAppKeyPacer(pacing=pacing, monotonic=monotonic)
         self._lifecycle = KisTokenLifecycle(
             client=client,
             custody=custody,
@@ -127,6 +142,7 @@ class KisCredentialSession:
             token_path=token_path,
             token_reissue_min_interval_s=token_reissue_min_interval_s,
             evidence_sink=evidence_sink,
+            pacer=self._pacer,
         )
 
     def ensure_token_string(self) -> str:
@@ -135,16 +151,25 @@ class KisCredentialSession:
         Raises:
             ~tos_runtime.transport.kis_mock.token.TokenStale: Stale and inside the reissue
                 cooldown.
+            ~tos_runtime.transport.kis_mock.pacer.KisPacingRefused: A token POST was needed
+                and its slot is beyond the wait budget — nothing sent.
         """
         return self._lifecycle.ensure_token_string()
 
     @contextmanager
     def app_credentials(self) -> Iterator[KisAppCredentials]:
-        """The app key/secret, loaded for the duration of the ``with`` block only.
+        """The app key/secret for ONE request, loaded for the duration of the ``with`` block
+        only. The request's pacer slot is granted on entry (module docstring), so the caller
+        sends inside the block at once — and a refused slot means the block never runs.
 
-        For a consumer that obtains the token earlier than the key/secret (the order transport
-        paces between the two) — :meth:`request_credentials` is the one-step form.
+        For a consumer that obtains the token earlier than the key/secret —
+        :meth:`request_credentials` is the one-step form.
+
+        Raises:
+            ~tos_runtime.transport.kis_mock.pacer.KisPacingRefused: The slot is beyond the wait
+                budget — nothing loaded, nothing to send.
         """
+        self._pacer.acquire()
         with (
             self._custody.load(self._app_key_scope) as key_handle,
             self._custody.load(self._app_secret_scope) as secret_handle,
@@ -160,6 +185,8 @@ class KisCredentialSession:
         Raises:
             ~tos_runtime.transport.kis_mock.token.TokenStale: Stale and inside the reissue
                 cooldown.
+            ~tos_runtime.transport.kis_mock.pacer.KisPacingRefused: The token POST's or the
+                request's slot is beyond the wait budget — nothing sent for this request.
         """
         access_token = self.ensure_token_string()
         with self.app_credentials() as app:
@@ -192,6 +219,7 @@ class KisCredentialSessions:
         token_endpoint_base: str,
         token_path: str,
         token_reissue_min_interval_s: int,
+        pacing: KisPacing,
     ) -> KisCredentialSession:
         """The session for this scope pair — created on first request, shared afterwards.
 
@@ -200,13 +228,14 @@ class KisCredentialSessions:
 
         Raises:
             KisCredentialSessionConflict: The scope pair already has a session whose token
-                endpoint or reissue cooldown differs from this request's.
+                endpoint, reissue cooldown or pacing terms differ from this request's.
         """
         key = (app_key_scope, app_secret_scope)
         terms = _SessionTerms(
             token_endpoint_base=token_endpoint_base,
             token_path=token_path,
             token_reissue_min_interval_s=token_reissue_min_interval_s,
+            pacing=pacing,
         )
         existing = self._sessions.get(key)
         if existing is not None:
@@ -215,7 +244,8 @@ class KisCredentialSessions:
                 raise KisCredentialSessionConflict(
                     f"KIS app key {app_key_scope!r} is already shared under {existing_terms}, "
                     f"but another consumer asked for {terms} — one app key has one token "
-                    "endpoint and one reissue cooldown; align the two transport configs"
+                    "endpoint, one reissue cooldown and one pacer; align the two transport "
+                    "configs"
                 )
             return session
         session = KisCredentialSession(
@@ -227,6 +257,7 @@ class KisCredentialSessions:
             token_path=token_path,
             token_reissue_min_interval_s=token_reissue_min_interval_s,
             evidence_sink=self._evidence_sink,
+            pacing=pacing,
         )
         self._sessions[key] = (terms, session)
         return session

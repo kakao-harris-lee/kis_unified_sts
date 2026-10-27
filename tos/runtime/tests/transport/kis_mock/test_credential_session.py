@@ -22,6 +22,7 @@ from tos_runtime.transport.kis_mock.credential_session import (
     KisCredentialSessionConflict,
     KisCredentialSessions,
 )
+from tos_runtime.transport.kis_mock.pacer import KisPacing
 from tos_runtime.transport.kis_mock.token import TokenStale
 
 from ._fakes import (
@@ -34,6 +35,9 @@ _KEY_SCOPE = "kis_mock.app_key"
 _SECRET_SCOPE = "kis_mock.app_secret"
 _BASE = "https://openapivts.koreainvestment.com:29443"
 _TOKEN_PATH = "/oauth2/tokenP"
+#: The pacer's spacing kept at 1 ms: these pins are about custody and the token lifecycle, and the
+#: fake clock never advances on its own (pacing has its own suite, ``test_pacer.py``).
+_PACING = KisPacing(min_interval_ms=1, wait_budget_ms=60_000)
 
 
 class _CountingTokenClient:
@@ -78,6 +82,7 @@ def _session_for(
         "token_endpoint_base": _BASE,
         "token_path": _TOKEN_PATH,
         "token_reissue_min_interval_s": 61,
+        "pacing": _PACING,
     }
     terms.update(overrides)
     return registry.session_for(client=client, **terms)
@@ -107,6 +112,8 @@ def test_two_consumers_of_one_app_key_issue_exactly_one_token() -> None:
         {"token_endpoint_base": "https://other.example:29443"},
         {"token_path": "/oauth2/other"},
         {"token_reissue_min_interval_s": 5},
+        {"pacing": KisPacing(min_interval_ms=2_000, wait_budget_ms=60_000)},
+        {"pacing": KisPacing(min_interval_ms=1, wait_budget_ms=4_000)},
     ],
 )
 def test_a_second_consumer_with_different_terms_is_refused(

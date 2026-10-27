@@ -123,7 +123,10 @@ from tos_runtime._named_tbd import reject_named_tbd
 from tos_runtime.brokercap.instance import REAL_ENVIRONMENT, load_instance_documents
 from tos_runtime.brokercap.scopes import BrokerScopesConfig
 from tos_runtime.calendar.owner import SessionFactsOwner
-from tos_runtime.compose._kis_credential_wiring import kis_mock_credential_session
+from tos_runtime.compose._kis_credential_wiring import (
+    kis_mock_credential_session,
+    kis_quote_pacing,
+)
 from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -666,6 +669,7 @@ def _build_intake(
             token_endpoint_base=quote_config.endpoint_rest_base,
             token_path=quote_config.token_path,
             token_reissue_min_interval_s=quote_config.token_reissue_min_interval_s,
+            pacing=kis_quote_pacing(quote_config),
         ),
         monotonic=monotonic,
         evidence_sink=_evidence_recorder(evidence_store, runtime_identity),

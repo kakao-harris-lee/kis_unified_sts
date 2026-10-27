@@ -94,6 +94,10 @@ def _write_kis_quote_transport_config(config_dir: Path, **overrides: Any) -> Pat
         "field_mapping": {"futs_prpr": "close"},
         "source_id": "kis_quote_wiring_test",
         "request_timeout_s": 2.0,
+        # Issue #970: equal to `_fixtures.write_kis_mock_transport_config`'s defaults (1100 and
+        # twice that) — one app key, one pacer, or the registry refuses the boot.
+        "app_key_min_request_interval_ms": 1100,
+        "app_key_request_wait_budget_ms": 2200,
     }
     raw.update(overrides)
     path = config_dir / "kis_quote.yaml"

@@ -106,6 +106,7 @@ from tos_runtime.marketfeed.ports import MonotonicAnchoredObservation, Observati
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.client import KisMockHttpClient, RawResponse
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
+from tos_runtime.transport.kis_mock.pacer import KisPacing
 from tos_runtime.transport.kis_mock.token import (
     EvidenceRecorder,
     TokenIssuingClient,
@@ -230,6 +231,10 @@ class KisQuoteObservationIntake:
                 token_path=config.token_path,
                 token_reissue_min_interval_s=config.token_reissue_min_interval_s,
                 evidence_sink=evidence_sink,
+                pacing=KisPacing(
+                    min_interval_ms=config.app_key_min_request_interval_ms,
+                    wait_budget_ms=config.app_key_request_wait_budget_ms,
+                ),
             )
         # C-2 decision (C) — the token lifecycle and every custody load of the app key live in
         # the session; this class never touches custody itself.
