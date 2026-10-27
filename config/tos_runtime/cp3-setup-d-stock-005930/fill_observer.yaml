@@ -78,4 +78,8 @@ prior_day_poll_interval_ms: 600000
 # (marketfeed.yaml poll_interval_ms 400 + journal_pass_allowance_ms 100), so ~1 s in the
 # ordinary case — 2 s is twice that. A broker slow enough to exceed it holds and re-reads: the
 # fail-closed direction, visible as "expired" rows.
+# Re-read backoff (issue #971): only the FIRST expiry of a run is re-read at once; while the
+# snapshots keep expiring, the next read waits finality_retry_interval_ms (60 s, the pre-#969
+# cadence of this hold) instead of every 2-3 s. A snapshot served fresh ends the run. Each row's
+# consecutive_expired field is its place in the run (served: the length of the run it ended).
 release_snapshot_max_age_ms: 2000
