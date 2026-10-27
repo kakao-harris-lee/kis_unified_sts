@@ -106,7 +106,7 @@ from tos_runtime.marketfeed.ports import MonotonicAnchoredObservation, Observati
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.client import KisMockHttpClient, RawResponse
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
-from tos_runtime.transport.kis_mock.pacer import KisPacing
+from tos_runtime.transport.kis_mock.pacer import KisPacing, KisPacingRefused
 from tos_runtime.transport.kis_mock.token import (
     EvidenceRecorder,
     TokenIssuingClient,
@@ -114,7 +114,11 @@ from tos_runtime.transport.kis_mock.token import (
 )
 from tos_runtime.transport.kis_quote.config import KisQuoteTransportConfig
 
+#: Evidence kind for a poll whose app-key pacer slot was refused (issue #970) — nothing sent.
+KIS_QUOTE_PACING_REFUSED_KIND = "KIS_QUOTE_PACING_REFUSED"
+
 __all__ = [
+    "KIS_QUOTE_PACING_REFUSED_KIND",
     "KisQuoteAdapterError",
     "KisQuoteMalformedResponse",
     "KisQuoteObservationIntake",
@@ -216,6 +220,7 @@ class KisQuoteObservationIntake:
         self._config = config
         self._client = client
         self._monotonic = monotonic
+        self._evidence = evidence_sink
         if credential_session is None:
             if custody is None:
                 raise KisQuoteAdapterError(
@@ -309,6 +314,8 @@ class KisQuoteObservationIntake:
         Raises:
             KisQuoteAdapterError: ``instrument`` does not equal ``config.instrument``.
             TokenStale: The held token has expired and the reissue cooldown has not elapsed.
+                (A refused pacer slot is NOT raised: it returns ``()`` and records
+                ``KIS_QUOTE_PACING_REFUSED``.)
             KisMockConnectionError: The connection failed or was reset.
             KisMockTimeoutError: The request timed out.
             KisQuoteRejected: The broker's response carried ``rt_cd != "0"``.
@@ -322,13 +329,23 @@ class KisQuoteObservationIntake:
             )
         self._commit_pending_if_consumed(after_as_of_ms)
 
-        access_token = (
-            self._credential_session.ensure_token_string()
-        )  # may raise TokenStale
-        # The two anchor readings bracket the request as tightly as this module can: nothing
-        # but the HTTP call itself lies between them (parsing happens after the second one).
-        requested_monotonic_ms = self._monotonic.now_ms()
-        response = self._fetch_quote(access_token)
+        # The app key pacer (issue #970) may refuse the token POST's or the GET's slot: nothing
+        # was sent, so this poll has nothing new — the same "no observation" every other KIS
+        # consumer folds a refused slot into (review-979 r1 LOW), with one evidence row.
+        try:
+            access_token = (
+                self._credential_session.ensure_token_string()
+            )  # may raise TokenStale
+            # The two anchor readings bracket the request as tightly as this module can:
+            # nothing but the HTTP call itself lies between them (parsing comes after).
+            requested_monotonic_ms = self._monotonic.now_ms()
+            response = self._fetch_quote(access_token)
+        except KisPacingRefused as exc:
+            self._evidence(
+                KIS_QUOTE_PACING_REFUSED_KIND,
+                {"instrument": instrument, "detail": str(exc)},
+            )
+            return ()
         received_monotonic_ms = self._monotonic.now_ms()
         output = self._parse_output(response)
         fields = self._map_fields(output)

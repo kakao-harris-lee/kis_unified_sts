@@ -26,6 +26,7 @@ from tos_runtime.marketfeed.time_projection import _DELAY_BOUND_FIELDS
 from tos_runtime.time.config import load_time_config
 from tos_runtime.time.service import TrustworthyTimeService
 from tos_runtime.transport.kis_quote.adapter import (
+    KIS_QUOTE_PACING_REFUSED_KIND,
     KisQuoteAdapterError,
     KisQuoteMalformedResponse,
     KisQuoteObservationIntake,
@@ -198,6 +199,27 @@ def test_first_poll_emits_one_pending_observation_bracketing_the_request(
     # value: the ORDER is what this asserts, not a duration (the delay tests below measure one).
     assert pending.requested_monotonic_ms == monotonic.now_ms()
     assert pending.received_monotonic_ms >= pending.requested_monotonic_ms
+
+
+def test_a_refused_pacer_slot_is_nothing_new_with_one_evidence_row_and_no_get(
+    server: FakeKisServer,
+) -> None:
+    """review-979 r1 LOW: like the band reader and the witness, a refused app-key slot (issue
+    #970) is "no observation", not an exception out of the scheduler's pass. The token POST
+    just took the key's slot; the quote GET would wait 1000 ms > 500 -> refused, unsent.
+    Mutation: let ``KisPacingRefused`` propagate -> red."""
+    _set_token(server)
+    _set_quote(server)
+    intake, _, evidence = _intake(
+        server,
+        app_key_min_request_interval_ms=1_000,
+        app_key_request_wait_budget_ms=500,
+    )
+
+    assert intake.poll(instrument=INSTRUMENT, after_as_of_ms=None) == ()
+    assert server.requests_for(QUOTE_ROUTE) == []
+    (row,) = evidence.of_kind(KIS_QUOTE_PACING_REFUSED_KIND)
+    assert row["instrument"] == INSTRUMENT
 
 
 def test_the_adapter_reads_no_wall_clock_anywhere(server: FakeKisServer) -> None:

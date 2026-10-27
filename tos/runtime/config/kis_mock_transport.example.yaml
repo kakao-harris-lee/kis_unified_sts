@@ -93,8 +93,10 @@ price_scale: null
 # the request is refused unsent (an order ends REJECT reason=throttled, a
 # witness read WitnessUnavailable). Two threads share the key (the session loop
 # and the fill observer's FETCH worker) and each waits for at most one slot at a
-# time, so 2 x min_send_interval_ms (4000 at the approved 2000) is the bound an
-# order never exceeds — set lower, a background GET can refuse an order.
+# time, so an order's wait is about 2 x min_send_interval_ms at worst (4000 at
+# the approved 2000), plus a few ms of sleep/clock jitter. At 4000 a background
+# GET can refuse an order only at that boundary (rare; fails closed, unsent);
+# set lower, it refuses orders routinely.
 min_send_interval_ms: null
 app_key_request_wait_budget_ms: null
 token_reissue_min_interval_s: null

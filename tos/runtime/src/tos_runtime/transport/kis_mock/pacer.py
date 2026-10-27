@@ -28,9 +28,14 @@ the band reader: "no observation"). Nothing is retried here.
 
 **No priority.** Order POSTs do not jump ahead of GETs. Two threads use one key (the loop
 thread: orders, quotes, band, broker facts; the fill observer's FETCH worker: witness reads),
-and each thread holds at most one slot request at a time, so a caller waits at most about two
-intervals. With ``wait_budget_ms`` at two intervals an order is never refused by a background
-GET, and a priority queue would only add a starvation rule for the GETs.
+and each thread holds at most one slot request at a time. A caller's slot is therefore at most
+one interval after the other thread's, which is itself at most one interval away: about two
+intervals from arrival — plus the other thread's sleep overshoot and whole-ms clock truncation,
+a few ms that the ``>`` budget check does not forgive. So with ``wait_budget_ms`` at two
+intervals an order is refused because of a background GET only at that boundary (the GET
+granted just before the order arrived, with the order then needing the full two intervals plus
+jitter); it is rare, not impossible, and it fails closed (unsent ``REJECT``). A priority queue
+would remove that edge only by adding a starvation rule for the GETs.
 
 **When did a read start?** :func:`first_grant_on_this_thread` lets a caller learn the grant
 instants of the requests its own thread made inside a block. The fill observer's release
