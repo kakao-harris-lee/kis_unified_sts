@@ -290,8 +290,22 @@ class _WalkOutcome:
     """The rows and (for the balance walk only) the ``output2`` block accumulated across
     a completed continuation walk."""
 
-    pages: tuple[list[dict[str, Any]], ...]
+    #: One entry per page: that page's ``output1`` list, or ``None`` when the page did not
+    #: carry a list at all — ``output1`` missing, ``null``, or a non-list such as a dict
+    #: (review-973 round 2 HIGH). The distinction matters because a malformed container used
+    #: to be flattened to ``[]``, making it indistinguishable from a page that genuinely
+    #: listed no rows: the balance read then saw an empty, "complete" holdings account and
+    #: called it flat. An empty LIST is well-formed — a flat KIS account really does answer
+    #: ``output1: []``. Both consumers iterate a ``None`` page as no rows, so the order walk
+    #: behaves exactly as before; only :meth:`KisStockBrokerWitness._read_balance` reads the
+    #: ``None`` itself, as evidence that its holdings picture is incomplete.
+    pages: tuple[list[dict[str, Any]] | None, ...]
     output2_first: dict[str, Any] | None
+
+    @property
+    def containers_wellformed(self) -> bool:
+        """Whether every page carried a genuine ``output1`` list."""
+        return all(rows is not None for rows in self.pages)
 
 
 def _refuse_instrument_conflict(row: KisOrderRow, *, queried: str) -> None:
@@ -609,7 +623,7 @@ class KisStockBrokerWitness:
         raises :class:`~tos_runtime.recon.ports.WitnessUnavailable` instead of returning what
         was read so far (module docstring's central reason this class exists).
         """
-        pages: list[list[dict[str, Any]]] = []
+        pages: list[list[dict[str, Any]] | None] = []
         output2_first: dict[str, Any] | None = None
         fk = nk = ""
         for index in range(self._config.max_pages):
@@ -646,7 +660,7 @@ class KisStockBrokerWitness:
                     f"(rt_cd={rt_cd!r}, msg_cd={body.get('msg_cd')!r})"
                 )
             rows = body.get("output1")
-            pages.append(rows if isinstance(rows, list) else [])
+            pages.append(rows if isinstance(rows, list) else None)
             if output2_first is None:
                 out2 = body.get("output2")
                 if isinstance(out2, list) and out2 and isinstance(out2[0], dict):
@@ -658,7 +672,7 @@ class KisStockBrokerWitness:
             more = tr_cont_out in _TR_CONT_MORE_CODES
 
             if not more:
-                return _WalkOutcome(pages=tuple(pages), output2_first=output2_first)
+                return _WalkOutcome(tuple(pages), output2_first)
 
             if not next_fk and not next_nk:
                 raise WitnessUnavailable(
@@ -697,13 +711,21 @@ class KisStockBrokerWitness:
         ``_balance_params`` for the stock target (module docstring).
 
         Returns ``(positions, cash, positions_complete)``. The third element is ``False`` as
-        soon as ANY holdings row could not be fully read — a non-dict row, a blank ``pdno``,
-        or an ``hldg_qty`` that does not parse — because such a row is silently dropped from
-        ``positions`` below and would otherwise be indistinguishable from flat (#966 review
-        round 1, Codex HIGH; see :attr:`~tos_runtime.recon.ports.WitnessSnapshot
-        .positions_complete`). Page-level truncation needs no flag: the continuation walk
-        raises :class:`~tos_runtime.recon.ports.WitnessUnavailable` rather than return a
-        partial page set (:meth:`_walk_continuation`).
+        soon as anything in this read could not be fully taken in:
+
+        * a holdings ROW that could not be read — a non-dict row, a blank ``pdno``, or an
+          ``hldg_qty`` that does not parse (#966 review round 1, Codex HIGH), since such a row
+          is silently dropped from ``positions`` below;
+        * a holdings PAGE whose ``output1`` was not a list at all — missing, ``null``, or a
+          dict (review-973 round 2 HIGH), since that page contributes zero rows.
+
+        Either way the result would otherwise be indistinguishable from a flat account (see
+        :attr:`~tos_runtime.recon.ports.WitnessSnapshot.positions_complete`). An empty list is
+        well-formed: a genuinely flat account answers ``output1: []``.
+
+        Page-level truncation needs no flag: the continuation walk raises
+        :class:`~tos_runtime.recon.ports.WitnessUnavailable` rather than return a partial page
+        set (:meth:`_walk_continuation`).
         """
 
         def build_params(fk: str, nk: str) -> dict[str, str]:
@@ -730,9 +752,11 @@ class KisStockBrokerWitness:
 
         instruments = {key.instrument for key in scope.instrument_keys}
         positions: list[tuple[str, Decimal]] = []
-        complete = True
+        # review-973 round 2 HIGH: a page whose `output1` was not a list contributed zero rows
+        # and would otherwise read as "this account holds nothing".
+        complete = outcome.containers_wellformed
         for rows in outcome.pages:
-            for row in rows:
+            for row in rows if rows is not None else ():
                 if not isinstance(row, dict):
                     complete = False
                     continue
@@ -815,7 +839,7 @@ class KisStockBrokerWitness:
                 deadline_expired=deadline_expired,
             )
             for rows in outcome.pages:
-                for row in rows:
+                for row in rows if rows is not None else ():
                     if not isinstance(row, dict):
                         continue
                     parsed = KisOrderRow.from_wire(row)

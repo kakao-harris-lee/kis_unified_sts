@@ -2245,10 +2245,17 @@ def test_a_cancel_after_a_partial_fill_does_not_release_the_held_quantity(
     (held,) = _held_rows(evidence_store)
     assert held["reason"] == ReleaseHoldReason.FILLED_QUANTITY_STILL_HELD.value
 
-    # ...and the step-8 consequence: the scope still holds an outstanding reservation, so a
-    # fresh OPEN is refused and the position remains exitable.
+    # ...and the step-8 consequence. An OPEN is refused, which is the point: no pyramiding
+    # over the 4 units still held. A CLOSE is refused TOO, and stating that honestly matters —
+    # the reservation is left at POTENTIALLY_LIVE, and step 8 admits a CLOSE only over exactly
+    # one POSITION_CONSUMED row. So those 4 units cannot be exited through this runtime until
+    # a cancel-after-fill advances the reservation to POSITION_CONSUMED, which is a separate
+    # transition this PR does not add (review-973 round 2 MEDIUM; tracked as its own issue).
+    # Holding is still strictly better than the bug this test pins: releasing reported ZERO
+    # outstanding capacity and admitted a fresh OPEN on top of a live position.
     rows = SqliteReservationProjectionReader(rcl_log).scope_reservations(_KEY)
     assert verdict_for_scope("OPEN", rows).outcome is StageOutcome.DENY
+    assert verdict_for_scope("CLOSE", rows).outcome is StageOutcome.DENY
 
 
 def test_a_cancel_with_nothing_filled_still_releases(

@@ -22,6 +22,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from tos.engine.records import EgressResultPayload, InstrumentKey
+from tos.engine.vocabulary import FILL_RESULT_KINDS
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.projection import (
@@ -57,6 +58,12 @@ def entry_release_command_id(close_attempt_id: str) -> str:
     a replay of the same close reproduces the same key and the transition stays idempotent.
     """
     return f"release-entry-{close_attempt_id}"
+
+
+#: The recorded ``egress_result_kind`` strings that assert a fill, from the kernel's own closed
+#: set — a receipt of one of these kinds with no magnitude on record is an unknown quantity,
+#: not a zero one (review-973 round 2 LOW).
+_FILL_KIND_VALUES: frozenset[str] = frozenset(kind.value for kind in FILL_RESULT_KINDS)
 
 
 class DischargeRefusal(StrEnum):
@@ -180,8 +187,15 @@ def any_quantity_filled(
     capacity while the filled part is still held — and under #966's step-8 table that admits a
     fresh OPEN over a live position and leaves no reservation for a CLOSE to discharge.
 
-    Fail-closed in both directions: an unreadable receipt path returns ``True`` (cannot tell,
-    so do not release), and a receipt whose filled magnitude is absent is not read as zero.
+    Fail-closed in three ways (review-973 round 2 LOW — the earlier wording claimed the third
+    and the code did not do it):
+
+    * an unreadable receipt path returns ``True`` — cannot tell, so do not release;
+    * a receipt with a filled magnitude above zero returns ``True``;
+    * a receipt whose recorded kind IS a fill (``FULL_FILL``/``PARTIAL_FILL``) but whose filled
+      magnitude is absent returns ``True`` — a fill with no magnitude on record is "unknown
+      quantity", never "zero". A receipt of any OTHER kind with no magnitude (an ``ACK``, a
+      plain ``CANCEL_ACK``) carries no fill claim at all and does not block.
     """
     scope = WitnessScope(
         account=account,
@@ -192,12 +206,16 @@ def any_quantity_filled(
         receipts = SqliteEvidenceReceiptReader(evidence_store).receipts(scope)
     except WitnessUnavailable:
         return True
-    return any(
-        receipt.attempt_id == attempt_id
-        and receipt.filled_quantity is not None
-        and Decimal(receipt.filled_quantity) > Decimal(0)
-        for receipt in receipts
-    )
+    for receipt in receipts:
+        if receipt.attempt_id != attempt_id:
+            continue
+        if receipt.filled_quantity is None:
+            if receipt.egress_result_kind in _FILL_KIND_VALUES:
+                return True
+            continue
+        if Decimal(receipt.filled_quantity) > Decimal(0):
+            return True
+    return False
 
 
 def entry_final_quantity(

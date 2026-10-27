@@ -168,6 +168,16 @@ def _row(
     }
 
 
+class _Unset:
+    """A distinguishable "no override given" sentinel for ``_script_broker``'s
+    ``holdings_container`` — the same pattern ``_fixtures.write_kis_mock_transport_config``
+    uses, and needed for the same reason: a plain ``None`` default cannot be told apart from a
+    test that wants a literal ``output1: null`` on the wire (review-973 round 2)."""
+
+
+_UNSET_CONTAINER = _Unset()
+
+
 def _script_broker(
     server,
     config_dir,
@@ -176,6 +186,7 @@ def _script_broker(
     *,
     holdings: tuple[tuple[str, Decimal], ...] = (),
     raw_holdings: list[dict[str, str]] | None = None,
+    holdings_container: Any = _UNSET_CONTAINER,
 ) -> str:
     """Script both witness GETs for ``date``: the order inquiry from ``rows``, the balance
     inquiry from ``holdings`` (default: a flat account with NO rows, the shape every test here
@@ -184,7 +195,11 @@ def _script_broker(
     ``raw_holdings`` writes the balance ``output1`` rows verbatim instead, so a test can send
     a quantity the production parser cannot read (``hldg_qty: ""``) and observe what
     ``KisStockBrokerWitness`` actually does with it — #966 review round 1 needs that exact
-    input, and building it from ``Decimal`` cannot express it."""
+    input, and building it from ``Decimal`` cannot express it.
+
+    ``holdings_container`` replaces the whole ``output1`` VALUE, including with a non-list
+    (``None``, a dict), which review-973 round 2 needs: a malformed container is not an empty
+    page."""
     balance, orders = _witness_paths(config_dir, date)
     server.set_response(
         balance,
@@ -192,12 +207,16 @@ def _script_broker(
         body={
             "rt_cd": "0",
             "output1": (
-                raw_holdings
-                if raw_holdings is not None
-                else [
-                    {"pdno": symbol, "hldg_qty": format(quantity, "f")}
-                    for symbol, quantity in holdings
-                ]
+                holdings_container
+                if not isinstance(holdings_container, _Unset)
+                else (
+                    raw_holdings
+                    if raw_holdings is not None
+                    else [
+                        {"pdno": symbol, "hldg_qty": format(quantity, "f")}
+                        for symbol, quantity in holdings
+                    ]
+                )
             ),
             "output2": [{"dnca_tot_amt": "1000000"}],
         },

@@ -41,6 +41,7 @@ from .conftest import write_approval_file
 from .test_kis_mock_e2e_honesty import _ENVIRONMENT_LABEL, _boot
 from .test_kis_mock_fill_finality_e2e import (
     _ORDER_PATH,
+    _UNSET_CONTAINER,
     _close,
     _deploy,
     _rcl_releases,
@@ -166,6 +167,7 @@ class _Broker:
         odno: str,
         flat: bool = True,
         raw_holdings: list[dict[str, str]] | None = None,
+        holdings_container: Any = _UNSET_CONTAINER,
     ) -> None:
         """Fully fill the latest ACKed order, then poll the observer once.
 
@@ -191,6 +193,7 @@ class _Broker:
             list(self._rows),
             holdings=() if flat else ((fx.INSTRUMENT, qty),),
             raw_holdings=raw_holdings,
+            holdings_container=holdings_container,
         )
         observer = runtime.fill_observer
         assert observer is not None
@@ -469,4 +472,76 @@ def test_a_zero_holding_quantity_is_proven_flat_and_releases_the_entry(
     assert _verdict(again, CommitmentStep.LEDGER_VERIFICATION).outcome is (
         StageOutcome.ADMIT
     )
+    _close(runtime)
+
+
+@pytest.mark.parametrize(
+    ("container", "label"),
+    [(None, "null"), ({}, "dict"), ({"rt_cd": "0"}, "non-empty dict")],
+    ids=["null", "empty-dict", "dict"],
+)
+def test_a_malformed_holdings_container_keeps_the_entry_and_denies_a_re_entry(
+    container, label, config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """review-973 round 2 (HIGH): a balance page whose ``output1`` is not a list is not flat.
+
+    HTTP 200, ``rt_cd: "0"``, no more pages — but ``output1`` missing/null/a dict. The walk
+    recorded that page as zero rows, so the balance read saw an empty, "complete" holdings
+    account and the discharge released the entry, re-opening the scope to a fresh OPEN. The
+    page's container is now tracked separately from its rows: an empty LIST is flat, a
+    non-list is unknown.
+    """
+    _deployed(config_dir, custody_root, server, monkeypatch)
+    _standing_cycle_artifact(config_dir, custody_root)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    broker = _Broker(server, config_dir)
+
+    _order_response(server, "0000000701")
+    runtime.run_once((_entry_tick(),))
+    broker.fill(runtime, odno="0000000701")
+    (entry_reservation_id,) = _reservations(runtime)
+
+    _order_response(server, "0000000702")
+    (exit_,) = runtime.run_once((_exit_tick(),))
+    assert exit_.flow.handed_off is True
+    broker.fill(runtime, odno="0000000702", holdings_container=container)
+
+    assert (
+        _reservations(runtime)[entry_reservation_id] is CapacityState.POSITION_CONSUMED
+    ), label
+    held = [r["reason"] for r in _rows(runtime, "CAPACITY_RELEASE_HELD")]
+    assert held == ["BROKER_POSITION_NOT_FLAT"]
+
+    _order_response(server, "0000000703")
+    (again,) = runtime.run_once((_entry_tick(seq=2),))
+    step8 = _verdict(again, CommitmentStep.LEDGER_VERIFICATION)
+    assert step8.outcome is StageOutcome.DENY, step8.reason
+    assert again.flow.handed_off is False
+    _close(runtime)
+
+
+def test_an_empty_holdings_list_is_proven_flat_and_releases_the_entry(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """The positive control: ``output1: []`` with no more pages IS a flat account.
+
+    An empty list is exactly how a flat KIS account answers, so this must stay a release —
+    the round-2 fix separates "the container was not a list" from "the list was empty".
+    """
+    _deployed(config_dir, custody_root, server, monkeypatch)
+    _standing_cycle_artifact(config_dir, custody_root)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    broker = _Broker(server, config_dir)
+
+    _order_response(server, "0000000801")
+    runtime.run_once((_entry_tick(),))
+    broker.fill(runtime, odno="0000000801")
+    (entry_reservation_id,) = _reservations(runtime)
+
+    _order_response(server, "0000000802")
+    runtime.run_once((_exit_tick(),))
+    broker.fill(runtime, odno="0000000802", holdings_container=[])
+
+    assert _reservations(runtime)[entry_reservation_id] is CapacityState.RELEASED
+    assert _rows(runtime, "CAPACITY_RELEASE_HELD") == []
     _close(runtime)
