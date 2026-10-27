@@ -17,7 +17,11 @@ deadline. FETCH reads that snapshot ahead of time — when a read row looks like
 (:func:`may_release`) or a finality re-run is due — and APPLY serves it to the reconciliation
 (:class:`SnapshotPrefetcher.serving`). The reconciliation itself is unchanged: same scope, same
 judgement, same fail-closed outcome for an unavailable read; only the instant the broker was read
-moves, by at most one loop pass. **Not moved**: a reconciliation whose scope the prefetch did not
+moves. **That instant is bounded** (#969 review r1 HIGH): a snapshot older than
+``release_snapshot_max_age_ms`` (from its read's start) is not served — an order that appeared at
+the broker since (an orphan, which must block the release) could be missing from it — so that
+release HOLDS, the observer records the snapshot's real read instants and age, and schedules a
+fresh worker read at once. Expiry never falls back to a live read on the loop. **Not moved**: a reconciliation whose scope the prefetch did not
 anticipate (its key or trading date differs) falls back to the live read, exactly as before #950
 — bounded by ``witness_request_timeout_s`` per page, as #949 left it.
 
@@ -50,6 +54,7 @@ __all__ = [
     "OrderRowsReader",
     "PrefetchedSnapshot",
     "SnapshotPrefetcher",
+    "SnapshotUse",
     "may_release",
     "odno_key",
     "run_fetch",
@@ -76,6 +81,22 @@ class PrefetchedSnapshot:
     key: SnapshotKey
     today: str
     outcome: WitnessSnapshot | WitnessUnavailable
+    #: Monotonic instants the read started and finished (#969 review r1 HIGH). The age the
+    #: serving side checks is measured from the START — the earliest broker state the snapshot
+    #: may reflect.
+    read_started_ms: int
+    read_finished_ms: int
+
+
+@dataclass(frozen=True)
+class SnapshotUse:
+    """One reconciliation the serving side answered from a prefetched snapshot (``served``) or
+    refused because it was older than the limit (``expired``) — APPLY records each."""
+
+    verdict: str
+    snapshot: PrefetchedSnapshot
+    age_ms: int
+    max_age_ms: int
 
 
 class SnapshotPrefetcher(Protocol):
@@ -83,15 +104,20 @@ class SnapshotPrefetcher(Protocol):
 
     def prefetch(
         self, scope: WitnessScope, *, today: str, abort: Callable[[], bool]
-    ) -> PrefetchedSnapshot:
+    ) -> WitnessSnapshot | WitnessUnavailable:
         """Read ``scope``'s snapshot under ``today`` (FETCH thread); never raises."""
         ...
 
     def serving(
-        self, prefetched: PrefetchedSnapshot | None
-    ) -> AbstractContextManager[None]:
+        self,
+        prefetched: PrefetchedSnapshot | None,
+        *,
+        max_age_ms: int,
+        now_ms: Callable[[], int],
+    ) -> AbstractContextManager[list[SnapshotUse]]:
         """While open, an ``observe`` on THIS thread whose scope matches is answered from
-        ``prefetched`` instead of the network (APPLY)."""
+        ``prefetched`` — or, past ``max_age_ms``, refused as unavailable (a HOLD, never a live
+        read). Yields the list each such answer is appended to (APPLY)."""
         ...
 
 
@@ -211,7 +237,15 @@ def run_fetch(
         and plan.today is not None
         and not stop()
     ):
-        snapshot = snapshots.prefetch(plan.snapshot_scope, today=plan.today, abort=stop)
+        started = monotonic.now_ms()
+        outcome = snapshots.prefetch(plan.snapshot_scope, today=plan.today, abort=stop)
+        snapshot = PrefetchedSnapshot(
+            key=snapshot_key(plan.snapshot_scope),
+            today=plan.today,
+            outcome=outcome,
+            read_started_ms=started,
+            read_finished_ms=monotonic.now_ms(),
+        )
     return FetchResult(plan=plan, reads=tuple(reads), snapshot=snapshot)
 
 

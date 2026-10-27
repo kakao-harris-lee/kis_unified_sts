@@ -19,14 +19,17 @@ from tos.brokercap import mock_order_without_position_or_cash
 from tos.engine.records import EgressResultPayload, InstrumentKey
 from tos.engine.vocabulary import EgressResultKind
 from tos_runtime.brokercap import load_broker_scopes
+from tos_runtime.compose._broker_posttrade_wiring import DeferredKisWitness
 from tos_runtime.posttrade.broker_finality import BrokerFinalityProducer
 from tos_runtime.posttrade.config import FinalityConfig
+from tos_runtime.posttrade.fill_fetch import PrefetchedSnapshot, snapshot_key
 from tos_runtime.posttrade.fill_observer import (
     FillObserverConfigError,
     load_fill_observer_config,
     odno_key,
 )
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
+from tos_runtime.recon.ports import WitnessScope, WitnessSnapshot, WitnessUnavailable
 from tos_runtime.recon.witness_kis_config import KisWitnessConfigError
 from tos_runtime.recon.witness_synthetic import SyntheticLedgerWitness
 from tos_runtime.recovery.reconciliation import _build_reconciliation_service
@@ -208,3 +211,61 @@ def test_reconciliation_service_takes_the_injected_witness(tmp_path) -> None:
         None, None, account="a", instrument="i", witness=sentinel  # type: ignore[arg-type]
     )
     assert service._witness is sentinel  # noqa: SLF001
+
+
+# -- #969 review r1 HIGH: the prefetched release snapshot has an age limit --------------------
+
+
+_ACCOUNT = "5000000001"
+
+
+class _CountingWitness:
+    """Stands in for the live ``KisStockBrokerWitness``: counts live reads."""
+
+    def __init__(self) -> None:
+        self.live_reads = 0
+
+    def observe(self, scope: Any, **_kwargs: Any) -> Any:
+        del scope
+        self.live_reads += 1
+        return WitnessSnapshot(observed_at_generation=None, orders=())
+
+
+def _prefetched(scope: WitnessScope, *, started_ms: int) -> PrefetchedSnapshot:
+    return PrefetchedSnapshot(
+        key=snapshot_key(scope),
+        today="20260914",
+        outcome=WitnessSnapshot(observed_at_generation=None, orders=()),
+        read_started_ms=started_ms,
+        read_finished_ms=started_ms + 5,
+    )
+
+
+def test_an_expired_prefetched_snapshot_is_refused_without_a_live_read() -> None:
+    """Past ``max_age_ms`` a matching snapshot is refused as unavailable (the release holds)
+    and the live witness is NOT asked — expiry must not put the broker back on the loop.
+    Inside the limit it is served, also without a live read."""
+    scope = WitnessScope(
+        account=_ACCOUNT,
+        instrument_keys=(InstrumentKey(account=_ACCOUNT, instrument="005930"),),
+        order_dates=("20260914",),
+    )
+    witness = DeferredKisWitness(lambda: "20260914")
+    live = _CountingWitness()
+    witness.inner = live  # type: ignore[assignment]
+    now = {"ms": 10_000}
+
+    with witness.serving(
+        _prefetched(scope, started_ms=7_000), max_age_ms=2_000, now_ms=lambda: now["ms"]
+    ) as uses:
+        with pytest.raises(WitnessUnavailable, match="expired"):
+            witness.observe(scope)
+    assert live.live_reads == 0
+    assert [(u.verdict, u.age_ms) for u in uses] == [("expired", 3_000)]
+
+    with witness.serving(
+        _prefetched(scope, started_ms=9_000), max_age_ms=2_000, now_ms=lambda: now["ms"]
+    ) as uses:
+        witness.observe(scope)
+    assert live.live_reads == 0
+    assert [(u.verdict, u.age_ms) for u in uses] == [("served", 1_000)]

@@ -66,7 +66,11 @@ each deliberate:
   prefetch did not anticipate (a receipt date appearing between plan and apply, or the trading
   date turning over in between) reads the broker live here, bounded by
   ``witness_request_timeout_s`` x ``max_pages`` per walk as before #950 — recorded by the
-  overrun row if it ever outruns the window.
+  overrun row if it ever outruns the window. A prefetched snapshot past
+  ``release_snapshot_max_age_ms`` is never re-read here: that release holds and the worker
+  re-reads (#969 review r1). And while the worker is issuing a KIS token, an order send or quote
+  read on this thread waits on the token lock for up to that POST's request timeout (10 s) —
+  the same worst case as before #950, when this thread made the POST itself.
 
 **Every journal-intake tree gets the compensation and the overrun row, not only the stock
 one** (#949 r2 LOW-1). ``journal_pass_allowance_ms`` is required for ``intake_kind: journal``,

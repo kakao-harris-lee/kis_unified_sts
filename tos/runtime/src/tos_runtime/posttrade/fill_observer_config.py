@@ -63,6 +63,12 @@ class FillObserverConfig:
             which run on the same witness. Since issue #950 the observer's reads run on its
             FETCH thread, not the loop's; this bound still caps how long one FETCH — and a
             shutdown waiting on one — can take.
+        release_snapshot_max_age_ms: The oldest a prefetched release-reconciliation snapshot
+            may be when the loop applies it, measured from the instant its read STARTED (#969
+            review r1 HIGH). Older, it is not served: that release HOLDS — never a live read
+            on the loop — and a fresh worker read is scheduled at once. A snapshot only proves
+            the broker as it was; past this age an order that appeared since (an orphan that
+            must block the release) could be missing from it.
     """
 
     witness_fields: dict[str, Any]
@@ -72,6 +78,7 @@ class FillObserverConfig:
     prior_day_poll_interval_ms: int
     poll_deadline_ms: int
     witness_request_timeout_s: float
+    release_snapshot_max_age_ms: int
 
 
 _WITNESS_KEYS = (
@@ -139,5 +146,8 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         poll_deadline_ms=_positive_int(raw, "poll_deadline_ms", path),
         witness_request_timeout_s=_positive_number(
             raw, "witness_request_timeout_s", path
+        ),
+        release_snapshot_max_age_ms=_positive_int(
+            raw, "release_snapshot_max_age_ms", path
         ),
     )

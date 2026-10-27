@@ -31,7 +31,7 @@ import pytest
 from tos.engine.records import EgressResultPayload
 from tos.engine.vocabulary import EgressResultKind, ResultDisposition
 from tos_runtime.evidence.store import SqliteEvidenceStore
-from tos_runtime.posttrade.fill_fetch import PrefetchedSnapshot, snapshot_key
+from tos_runtime.posttrade.fill_fetch import PrefetchedSnapshot, SnapshotUse
 from tos_runtime.posttrade.fill_observer import (
     FILL_OBSERVED_KIND,
     FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND,
@@ -66,6 +66,7 @@ def _config(**overrides: Any) -> FillObserverConfig:
         "prior_day_poll_interval_ms": 60_000,
         "poll_deadline_ms": 10_000,
         "witness_request_timeout_s": 2.0,
+        "release_snapshot_max_age_ms": 60_000,
     }
     values.update(overrides)
     return FillObserverConfig(**values)
@@ -155,20 +156,24 @@ class _Snapshots:
 
     def prefetch(
         self, scope: WitnessScope, *, today: str, abort: Callable[[], bool]
-    ) -> PrefetchedSnapshot:
-        del abort
+    ) -> WitnessSnapshot:
+        del scope, today, abort
         self.prefetch_threads.append(threading.get_ident())
-        snapshot = WitnessSnapshot(observed_at_generation=None, orders=())
-        return PrefetchedSnapshot(
-            key=snapshot_key(scope), today=today, outcome=snapshot
-        )
+        return WitnessSnapshot(observed_at_generation=None, orders=())
 
     @contextmanager
-    def serving(self, prefetched: PrefetchedSnapshot | None) -> Iterator[None]:
+    def serving(
+        self,
+        prefetched: PrefetchedSnapshot | None,
+        *,
+        max_age_ms: int,
+        now_ms: Callable[[], int],
+    ) -> Iterator[list[SnapshotUse]]:
+        del max_age_ms, now_ms
         self.serving_threads.append(threading.get_ident())
         self.active = prefetched
         try:
-            yield
+            yield []
         finally:
             self.active = None
 

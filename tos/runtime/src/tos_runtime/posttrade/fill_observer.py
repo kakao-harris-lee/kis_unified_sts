@@ -90,6 +90,7 @@ from tos_runtime.posttrade.fill_fetch import (
     FetchRunner,
     OrderRowsReader,
     SnapshotPrefetcher,
+    SnapshotUse,
     odno_key,
     run_fetch,
 )
@@ -113,6 +114,7 @@ __all__ = [
     "FILL_OBSERVER_FINALITY_STUCK_KIND",
     "FILL_OBSERVER_OVERDUE_KIND",
     "FILL_OBSERVER_READ_FAILED_KIND",
+    "FILL_OBSERVER_RELEASE_SNAPSHOT_KIND",
     "FILL_OBSERVER_UNATTRIBUTED_KIND",
     "FillObserverConfig",
     "FillObserverConfigError",
@@ -130,6 +132,9 @@ FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND = "FILL_OBSERVER_ENGINE_RESERVATION
 FILL_OBSERVER_ACK_UNTRACKABLE_KIND = "FILL_OBSERVER_ACK_UNTRACKABLE"
 FILL_OBSERVER_FINALITY_STUCK_KIND = "FILL_OBSERVER_FINALITY_STUCK"
 FILL_OBSERVER_CANCEL_UNSUPPORTED_KIND = "FILL_OBSERVER_CANCEL_UNSUPPORTED"
+#: One per reconciliation answered from (``served``) or refused by the age limit of
+#: (``expired``) a prefetched release snapshot — its real read instants and age (#969 r1 HIGH).
+FILL_OBSERVER_RELEASE_SNAPSHOT_KIND = "FILL_OBSERVER_RELEASE_SNAPSHOT"
 
 #: Classifier reasons that are a cancel (Codex r2 HIGH 1, operator-narrowed scope): an unfilled
 #: cancel, a cancel after a partial fill, and a separate row whose ``orgn_odno`` points at the
@@ -257,6 +262,9 @@ class KisMockFillObserver:
     _last_read_failed: bool = field(default=False, init=False)
     _runner: FetchRunner | None = field(default=None, init=False)
     _closed: bool = field(default=False, init=False)
+    #: An expired release snapshot was refused: the next plan re-runs finality at once, with a
+    #: fresh worker read, instead of after ``finality_retry_interval_ms``.
+    _reread_now: bool = field(default=False, init=False)
 
     # -- entry points --------------------------------------------------------------------
 
@@ -396,12 +404,17 @@ class KisMockFillObserver:
         held: list[tuple[str, EgressResultKind]] = []
         unattributed: list[str] = []
         read_failed = False
+        uses: list[SnapshotUse] = []
         serving = (
-            self.snapshots.serving(result.snapshot)
+            self.snapshots.serving(
+                result.snapshot,
+                max_age_ms=self.config.release_snapshot_max_age_ms,
+                now_ms=self.monotonic.now_ms,
+            )
             if self.snapshots is not None
-            else nullcontext()
+            else nullcontext(uses)
         )
-        with serving:
+        with serving as uses:
             reprojected = self._reproject_unreleased(tracked, result.plan.reproject_ids)
             planned = dict(result.plan.reads)
             for date, outcome in result.reads:
@@ -416,6 +429,7 @@ class KisMockFillObserver:
                     continue
                 unattributed.extend(self._flag_unattributed(outcome, tracked))
                 emitted.extend(self._emit(on_date, outcome, held))
+        self._record_snapshot_uses(uses)
         if result.reads and not read_failed:
             self._last_read_failed = False
         return FillPollReport(
@@ -426,6 +440,25 @@ class KisMockFillObserver:
             reprojected=reprojected,
             held=tuple(held),
         )
+
+    def _record_snapshot_uses(self, uses: list[SnapshotUse]) -> None:
+        """One row per reconciliation the prefetched snapshot answered or was refused for, with
+        the read's real monotonic instants and its age; an expiry schedules a fresh read.
+        """
+        for use in uses:
+            self._record(
+                FILL_OBSERVER_RELEASE_SNAPSHOT_KIND,
+                {
+                    "verdict": use.verdict,
+                    "read_started_monotonic_ms": use.snapshot.read_started_ms,
+                    "read_finished_monotonic_ms": use.snapshot.read_finished_ms,
+                    "age_ms": use.age_ms,
+                    "max_age_ms": use.max_age_ms,
+                    "trading_date": use.snapshot.today,
+                },
+            )
+            if use.verdict == "expired":
+                self._reread_now = True
 
     def _due(self, attempt: _Tracked) -> bool:
         """Today's ACKs are read every poll. An unresolved ACK from an EARLIER trading day is
@@ -562,12 +595,17 @@ class KisMockFillObserver:
         separate 'done's"). Their clock starts at planning, so a FETCH in flight is not
         re-planned for them."""
         now = self.monotonic.now_ms()
+        reread_now, self._reread_now = self._reread_now, False
         due = []
         for attempt in tracked.values():
             if not _reprojectable(attempt):
                 continue
             last = self._last_reproject_ms.get(attempt.attempt_id)
-            if last is not None and now - last < self.config.finality_retry_interval_ms:
+            if (
+                not reread_now
+                and last is not None
+                and now - last < self.config.finality_retry_interval_ms
+            ):
                 continue
             self._last_reproject_ms[attempt.attempt_id] = now
             due.append(attempt.attempt_id)

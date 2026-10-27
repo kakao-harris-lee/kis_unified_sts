@@ -828,3 +828,150 @@ def test_a_slow_broker_read_stretches_no_pass(
     assert _rows(runtime, "CAPACITY_RELEASE_HELD") == []
     assert _rcl_releases(runtime) == 1
     _close(runtime)
+
+
+# ===========================================================================
+# 5. #969 review round 1 HIGH (Codex) — a prefetched release snapshot has an age limit
+# ===========================================================================
+
+#: The order B the broker shows after the FETCH read: same account, same instrument, attributed
+#: to no ACK this runtime holds — the reconciliation's ORPHAN_BROKER_ORDER case.
+_ORPHAN_ODNO = "0000099999"
+
+
+def _retune_observer(config_dir: Path, **keys: int) -> None:
+    """Rewrite named keys of the deployed ``fill_observer.yaml`` (every other key kept)."""
+    path = config_dir / FILL_OBSERVER_CONFIG_NAME
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw.update(keys)
+    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+
+def _wait_until_fetched(observer: Any, limit_s: float = 10.0) -> None:
+    """Wait for the observer's in-flight FETCH to finish WITHOUT applying it (no poll call)."""
+    deadline = time.monotonic() + limit_s
+    while time.monotonic() < deadline:
+        runner = observer._runner  # noqa: SLF001 - the test holds APPLY back on purpose
+        if runner is not None and not runner.busy:
+            return
+        time.sleep(0.01)
+    raise AssertionError("the FETCH never finished")
+
+
+def _boot_filled(
+    tmp_path, config_dir, data_dir, custody_root, server, monkeypatch, **keys
+):
+    _deploy(config_dir, custody_root, server, monkeypatch)
+    _retune_observer(config_dir, **keys)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    assert _drive_crossing_tick(runtime, custody_root).flow is not None
+    date = _ack(runtime)["trading_date"]
+    assert date is not None
+    qty = _sealed_quantity(runtime)
+    filled_a = _row(date=date, ord_qty=qty, filled=qty, remaining=Decimal(0))
+    _script_broker(server, config_dir, date, [filled_a])
+    assert runtime.fill_observer is not None
+    return runtime, date, filled_a
+
+
+def test_an_expired_release_snapshot_holds_instead_of_releasing(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch,
+    server,
+) -> None:
+    """#969 review r1 HIGH (Codex's failing input): FETCH reads order A fully filled, APPLY is
+    delayed, and meanwhile an unattributed order B appears at the broker. The stale snapshot
+    (no B) would permit the release; the current broker (B = ORPHAN_BROKER_ORDER) would not.
+    Past ``release_snapshot_max_age_ms`` the snapshot is not served: the release HOLDS (no live
+    read on the loop), the hold and a snapshot row say why and how old, and a fresh worker read
+    is scheduled at once — which sees B and keeps holding.
+
+    Mutation: serve the snapshot regardless of age -> the release commits against the stale
+    picture -> red on ``_rcl_releases == 0``.
+    """
+    runtime, date, filled_a = _boot_filled(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        server,
+        monkeypatch,
+        poll_interval_ms=1,
+        release_snapshot_max_age_ms=300,
+    )
+    observer = runtime.fill_observer
+    assert observer is not None
+
+    assert observer.poll_if_due().polled is False  # plan + submit
+    _wait_until_fetched(observer)
+    time.sleep(0.5)  # APPLY held back past the snapshot's age limit
+    orphan_b = _row(
+        odno=_ORPHAN_ODNO,
+        date=date,
+        ord_qty=Decimal(1),
+        filled=Decimal(1),
+        remaining=Decimal(0),
+    )
+    _script_broker(server, config_dir, date, [filled_a, orphan_b])
+
+    report = observer.poll_if_due()  # APPLY of the old FETCH
+
+    assert [k for _a, k, _d in report.emitted] == [EgressResultKind.FULL_FILL]
+    assert _rcl_releases(runtime) == 0
+    (held,) = _rows(runtime, "CAPACITY_RELEASE_HELD")
+    assert "expired" in (held.get("detail") or "")
+    (expired,) = _rows(runtime, "FILL_OBSERVER_RELEASE_SNAPSHOT")
+    assert expired["verdict"] == "expired"
+    assert expired["age_ms"] > expired["max_age_ms"] == 300
+    assert expired["read_started_monotonic_ms"] <= expired["read_finished_monotonic_ms"]
+
+    # The re-read is scheduled now, not after finality_retry_interval_ms (60 s): the next due
+    # poll plans a finality re-run with a fresh worker snapshot — which sees B and holds.
+    observer.poll_if_due()
+    _wait_until_fetched(observer)
+    report = observer.poll_if_due()
+    assert [attempt for attempt, _r in report.reprojected] == [
+        _ack(runtime)["attempt_id"]
+    ]
+    assert _rcl_releases(runtime) == 0
+    verdicts = [r["verdict"] for r in _rows(runtime, "FILL_OBSERVER_RELEASE_SNAPSHOT")]
+    assert verdicts == ["expired", "served"]
+    _close(runtime)
+
+
+def test_a_fresh_release_snapshot_still_releases(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch,
+    server,
+) -> None:
+    """The other side of the age limit: a snapshot applied inside it releases, and its row
+    records the real read instants and an age within the limit."""
+    runtime, _date, _a = _boot_filled(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        server,
+        monkeypatch,
+        poll_interval_ms=1,
+        release_snapshot_max_age_ms=5_000,
+    )
+    observer = runtime.fill_observer
+    assert observer is not None
+
+    observer.poll_if_due()
+    _wait_until_fetched(observer)
+    report = observer.poll_if_due()
+
+    assert [k for _a, k, _d in report.emitted] == [EgressResultKind.FULL_FILL]
+    assert _rcl_releases(runtime) == 1
+    (served,) = _rows(runtime, "FILL_OBSERVER_RELEASE_SNAPSHOT")
+    assert served["verdict"] == "served"
+    assert 0 <= served["age_ms"] <= served["max_age_ms"] == 5_000
+    _close(runtime)

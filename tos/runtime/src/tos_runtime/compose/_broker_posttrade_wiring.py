@@ -53,7 +53,11 @@ from tos_runtime.compose._transport_wiring import instance_rest_bases
 from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.engine.finality_projection import project_recovered_finality
 from tos_runtime.posttrade.broker_finality import BrokerFinalityProducer
-from tos_runtime.posttrade.fill_fetch import PrefetchedSnapshot, snapshot_key
+from tos_runtime.posttrade.fill_fetch import (
+    PrefetchedSnapshot,
+    SnapshotUse,
+    snapshot_key,
+)
 from tos_runtime.posttrade.fill_observer import (
     FILL_OBSERVER_CONFIG_NAME,
     FillObserverConfig,
@@ -111,6 +115,11 @@ class DeferredKisWitness:
     keys and order dates (:func:`~tos_runtime.posttrade.fill_fetch.snapshot_key`) AND the
     trusted trading date is still the one the snapshot was read under; anything else, and every
     ``observe`` outside an APPLY or on another thread, reads the broker live as before.
+
+    **Age limit** (#969 review r1 HIGH). A matching snapshot older than the ``max_age_ms`` the
+    APPLY passes (from its read's start) is refused as
+    :class:`~tos_runtime.recon.ports.WitnessUnavailable` — the release HOLDS. It is never
+    answered by a live read here: that would put the broker back on the loop thread.
     """
 
     def __init__(
@@ -120,6 +129,9 @@ class DeferredKisWitness:
         self._trading_date_now = trading_date_now
         self._served: PrefetchedSnapshot | None = None
         self._served_thread: int | None = None
+        self._max_age_ms = 0
+        self._now_ms: Callable[[], int] = lambda: 0
+        self._uses: list[SnapshotUse] = []
 
     def _ready(self) -> KisStockBrokerWitness:
         if self.inner is None:
@@ -136,6 +148,16 @@ class DeferredKisWitness:
             and served.key == snapshot_key(scope)
             and served.today == self._trading_date_now()
         ):
+            age_ms = self._now_ms() - served.read_started_ms
+            if age_ms > self._max_age_ms:
+                self._uses.append(
+                    SnapshotUse("expired", served, age_ms, self._max_age_ms)
+                )
+                raise WitnessUnavailable(
+                    f"prefetched release snapshot expired: age {age_ms} ms > "
+                    f"{self._max_age_ms} ms — held, fresh worker read scheduled"
+                )
+            self._uses.append(SnapshotUse("served", served, age_ms, self._max_age_ms))
             if isinstance(served.outcome, WitnessUnavailable):
                 raise served.outcome
             return served.outcome
@@ -143,26 +165,32 @@ class DeferredKisWitness:
 
     def prefetch(
         self, scope: WitnessScope, *, today: str, abort: Callable[[], bool]
-    ) -> PrefetchedSnapshot:
+    ) -> WitnessSnapshot | WitnessUnavailable:
         """FETCH thread: ``scope``'s snapshot under ``today``, or the unavailability it ended
         in. Never raises (the witness's own two-outcome contract)."""
-        outcome: WitnessSnapshot | WitnessUnavailable
         try:
-            outcome = self._ready().observe(scope, today=today, deadline_expired=abort)
+            return self._ready().observe(scope, today=today, deadline_expired=abort)
         except WitnessUnavailable as exc:
-            outcome = exc
-        return PrefetchedSnapshot(key=snapshot_key(scope), today=today, outcome=outcome)
+            return exc
 
     @contextmanager
-    def serving(self, prefetched: PrefetchedSnapshot | None) -> Iterator[None]:
-        """APPLY: serve ``prefetched`` to matching :meth:`observe` calls on THIS thread for
-        the block's duration only — never afterwards, so a snapshot is never reused stale.
-        """
+    def serving(
+        self,
+        prefetched: PrefetchedSnapshot | None,
+        *,
+        max_age_ms: int,
+        now_ms: Callable[[], int],
+    ) -> Iterator[list[SnapshotUse]]:
+        """APPLY: serve ``prefetched`` (within ``max_age_ms``) to matching :meth:`observe`
+        calls on THIS thread for the block's duration only. Yields the list of answers given,
+        for the observer's evidence rows."""
+        uses: list[SnapshotUse] = []
         self._served, self._served_thread = prefetched, threading.get_ident()
+        self._max_age_ms, self._now_ms, self._uses = max_age_ms, now_ms, uses
         try:
-            yield
+            yield uses
         finally:
-            self._served, self._served_thread = None, None
+            self._served, self._served_thread, self._uses = None, None, []
 
     def order_rows(
         self,
