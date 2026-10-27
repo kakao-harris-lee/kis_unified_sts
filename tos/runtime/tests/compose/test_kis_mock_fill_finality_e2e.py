@@ -175,7 +175,14 @@ class _Unset:
     test that wants a literal ``output1: null`` on the wire (review-973 round 2)."""
 
 
+class _OmitKey:
+    """``holdings_container=_OMIT_OUTPUT1`` leaves the ``output1`` key OUT of the balance body
+    entirely — distinct from writing it as ``null``, and a case review-973 round 2 asks for in
+    its own right (``body.get`` answers ``None`` for both, so only the wire differs)."""
+
+
 _UNSET_CONTAINER = _Unset()
+_OMIT_OUTPUT1 = _OmitKey()
 
 
 def _script_broker(
@@ -201,26 +208,24 @@ def _script_broker(
     (``None``, a dict), which review-973 round 2 needs: a malformed container is not an empty
     page."""
     balance, orders = _witness_paths(config_dir, date)
-    server.set_response(
-        balance,
-        status=200,
-        body={
-            "rt_cd": "0",
-            "output1": (
-                holdings_container
-                if not isinstance(holdings_container, _Unset)
-                else (
-                    raw_holdings
-                    if raw_holdings is not None
-                    else [
-                        {"pdno": symbol, "hldg_qty": format(quantity, "f")}
-                        for symbol, quantity in holdings
-                    ]
-                )
-            ),
-            "output2": [{"dnca_tot_amt": "1000000"}],
-        },
-    )
+    balance_body: dict[str, Any] = {
+        "rt_cd": "0",
+        "output2": [{"dnca_tot_amt": "1000000"}],
+    }
+    if not isinstance(holdings_container, _OmitKey):
+        balance_body["output1"] = (
+            holdings_container
+            if not isinstance(holdings_container, _Unset)
+            else (
+                raw_holdings
+                if raw_holdings is not None
+                else [
+                    {"pdno": symbol, "hldg_qty": format(quantity, "f")}
+                    for symbol, quantity in holdings
+                ]
+            )
+        )
+    server.set_response(balance, status=200, body=balance_body)
     server.set_response(
         orders, status=200, body={"rt_cd": "0", "output1": rows, "output2": {}}
     )

@@ -40,6 +40,7 @@ from . import _fixtures as fx
 from .conftest import write_approval_file
 from .test_kis_mock_e2e_honesty import _ENVIRONMENT_LABEL, _boot
 from .test_kis_mock_fill_finality_e2e import (
+    _OMIT_OUTPUT1,
     _ORDER_PATH,
     _UNSET_CONTAINER,
     _close,
@@ -477,19 +478,29 @@ def test_a_zero_holding_quantity_is_proven_flat_and_releases_the_entry(
 
 @pytest.mark.parametrize(
     ("container", "label"),
-    [(None, "null"), ({}, "dict"), ({"rt_cd": "0"}, "non-empty dict")],
-    ids=["null", "empty-dict", "dict"],
+    [
+        (_OMIT_OUTPUT1, "output1 key absent"),
+        (None, "output1: null"),
+        ({}, "output1: {}"),
+        ({"rt_cd": "0"}, "output1: a non-empty dict"),
+    ],
+    ids=["missing", "null", "empty-dict", "dict"],
 )
 def test_a_malformed_holdings_container_keeps_the_entry_and_denies_a_re_entry(
     container, label, config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
     """review-973 round 2 (HIGH): a balance page whose ``output1`` is not a list is not flat.
 
-    HTTP 200, ``rt_cd: "0"``, no more pages — but ``output1`` missing/null/a dict. The walk
-    recorded that page as zero rows, so the balance read saw an empty, "complete" holdings
-    account and the discharge released the entry, re-opening the scope to a fresh OPEN. The
-    page's container is now tracked separately from its rows: an empty LIST is flat, a
-    non-list is unknown.
+    HTTP 200, ``rt_cd: "0"``, no more pages — but ``output1`` absent, ``null``, or a dict. The
+    walk recorded that page as zero rows, so the balance read saw an empty, "complete"
+    holdings account and the discharge released the entry, re-opening the scope to a fresh
+    OPEN. The page's container is now tracked separately from its rows: an empty LIST is flat,
+    anything that is not a list is unknown.
+
+    All four shapes review-973 round 2 names are covered: the key absent and the key present
+    as ``null`` are distinct on the wire even though ``body.get`` answers ``None`` for both;
+    ``{}`` and a non-empty dict are the non-list containers; and ``output1: []`` is the valid
+    empty control, in :func:`test_an_empty_holdings_list_is_proven_flat_and_releases_the_entry`.
     """
     _deployed(config_dir, custody_root, server, monkeypatch)
     _standing_cycle_artifact(config_dir, custody_root)
