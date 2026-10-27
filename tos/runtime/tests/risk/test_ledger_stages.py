@@ -52,9 +52,16 @@ def _request(
     )
 
 
-def _permit_scoped_id(request: StageRequest, permit) -> str | None:
-    """The production reservation-id derivation (#966) — the id step 10 re-derives too."""
-    return reservation_id_in_scope(request.instrument_key, permit.permit_id)
+def _permit_scoped_id(request: StageRequest, permit) -> str:
+    """The production reservation-id derivation (#966) — the id step 10 re-derives too.
+
+    Narrowed to ``str``: every permit this suite builds carries an identity, so a ``None`` here
+    would be a broken fixture rather than the production ``None`` step 9 maps to UNKNOWN (that
+    path has its own test).
+    """
+    reservation_id = reservation_id_in_scope(request.instrument_key, permit.permit_id)
+    assert reservation_id is not None
+    return reservation_id
 
 
 def _committed_permit(afg_governor: ActionFlowGovernor):

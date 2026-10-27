@@ -226,6 +226,7 @@ def test_projection_reads_by_instrument_key_after_a_transition(
     key = InstrumentKey(
         account=DEFAULT_SCOPE.account, instrument=DEFAULT_SCOPE.instrument
     )
+    assert result.seq is not None
     assert reader.scope_reservations(key) == (
         ScopeReservation(
             reservation_id="res-1",
@@ -285,6 +286,7 @@ def test_two_reservations_with_different_scopes_do_not_collide(
     reader = SqliteReservationProjectionReader(log)
     key_a = InstrumentKey(account=scope_a.account, instrument=scope_a.instrument)
     key_b = InstrumentKey(account=scope_b.account, instrument=scope_b.instrument)
+    assert first.seq is not None and second.seq is not None
     assert reader.scope_reservations(key_a) == (
         ScopeReservation(
             reservation_id="res-a",
@@ -344,7 +346,7 @@ def test_scope_reservations_reports_every_row_of_the_scope(
         command_type=CommandType.COMMIT_RESERVATION,
         command_id="cmd-close",
         command_digest="dig-close",
-        expected_seq=entry.seq,
+        expected_seq=-1 if entry.seq is None else entry.seq,
     )
     assert isinstance(close, AppendReceipt)
 

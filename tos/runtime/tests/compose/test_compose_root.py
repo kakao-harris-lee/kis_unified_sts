@@ -1527,9 +1527,12 @@ class TestPermitPathStaleGenerationProviderYieldsUnknown:
                 runtime.rcl_log,
                 writer_epoch=runtime.writer_epoch,
                 permit_provider=permit_provider,
-                reservation_id_provider=lambda request: (
-                    f"resv-{request.instrument_key.account}-"
-                    f"{request.instrument_key.instrument}"
+                # #966: the production derivation — the id is named by the permit this
+                # commit binds, not by the scope alone.
+                reservation_id_provider=lambda request, permit: permit_reservation_id(
+                    request.instrument_key.account,
+                    request.instrument_key.instrument,
+                    permit.permit_id or "",
                 ),
                 time_permits_new_risk=lambda: True,
             )
