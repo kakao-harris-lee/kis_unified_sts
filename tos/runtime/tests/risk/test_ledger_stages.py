@@ -14,7 +14,11 @@ from tos.engine.vocabulary import CommitmentStep, StageAuthorityClass, StageOutc
 from tos.rcl import CapacityState
 from tos.workload import RuntimeIdentity
 from tos_runtime.rcl.log import InjectedCrash, SqliteCommitLog
-from tos_runtime.rcl.projection import SqliteReservationProjectionReader
+from tos_runtime.rcl.projection import (
+    ScopeReservation,
+    SqliteReservationProjectionReader,
+)
+from tos_runtime.rcl.reservation_identity import reservation_id_in_scope
 from tos_runtime.risk.aggregate import AggregateRiskService
 from tos_runtime.risk.flow import ActionFlowGovernor
 from tos_runtime.risk.ledger_stages import (
@@ -24,6 +28,7 @@ from tos_runtime.risk.ledger_stages import (
     CommitmentUnavailabilityStage,
     LedgerVerificationStage,
     item15_fields,
+    verdict_for_scope,
 )
 
 from .conftest import (
@@ -45,6 +50,18 @@ def _request(
         proposal=Proposal(),
         prior_verdicts=prior_verdicts,
     )
+
+
+def _permit_scoped_id(request: StageRequest, permit) -> str:
+    """The production reservation-id derivation (#966) — the id step 10 re-derives too.
+
+    Narrowed to ``str``: every permit this suite builds carries an identity, so a ``None`` here
+    would be a broken fixture rather than the production ``None`` step 9 maps to UNKNOWN (that
+    path has its own test).
+    """
+    reservation_id = reservation_id_in_scope(request.instrument_key, permit.permit_id)
+    assert reservation_id is not None
+    return reservation_id
 
 
 def _committed_permit(afg_governor: ActionFlowGovernor):
@@ -187,7 +204,12 @@ def test_step8_admits_a_fresh_scope(
     writer_epoch: int,
     instrument_key: InstrumentKey,
 ) -> None:
-    stage = LedgerVerificationStage(log, projection_reader, writer_epoch=writer_epoch)
+    stage = LedgerVerificationStage(
+        log,
+        projection_reader,
+        writer_epoch=writer_epoch,
+        position_effect_reader=lambda: "OPEN",
+    )
     verdict = stage(_request(CommitmentStep.LEDGER_VERIFICATION, instrument_key))
     assert verdict.outcome is StageOutcome.ADMIT
     assert verdict.authority_class is StageAuthorityClass.AVAILABLE_PURE_PREDICATE
@@ -205,7 +227,7 @@ def test_step8_denies_an_already_occupied_scope(
         log,
         writer_epoch=writer_epoch,
         permit_provider=lambda _r: permit,
-        reservation_id_provider=lambda _r: "reservation-1",
+        reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
     )
     commit_verdict = commit_stage(
@@ -213,7 +235,12 @@ def test_step8_denies_an_already_occupied_scope(
     )
     assert commit_verdict.outcome is StageOutcome.ADMIT
 
-    stage = LedgerVerificationStage(log, projection_reader, writer_epoch=writer_epoch)
+    stage = LedgerVerificationStage(
+        log,
+        projection_reader,
+        writer_epoch=writer_epoch,
+        position_effect_reader=lambda: "OPEN",
+    )
     verdict = stage(_request(CommitmentStep.LEDGER_VERIFICATION, instrument_key))
     assert verdict.outcome is StageOutcome.DENY
     assert verdict.authority_class is StageAuthorityClass.AVAILABLE_PURE_PREDICATE
@@ -226,7 +253,12 @@ def test_step8_is_unknown_when_the_log_file_is_inaccessible(
     instrument_key: InstrumentKey,
 ) -> None:
     log.close()
-    stage = LedgerVerificationStage(log, projection_reader, writer_epoch=writer_epoch)
+    stage = LedgerVerificationStage(
+        log,
+        projection_reader,
+        writer_epoch=writer_epoch,
+        position_effect_reader=lambda: "OPEN",
+    )
     verdict = stage(_request(CommitmentStep.LEDGER_VERIFICATION, instrument_key))
     assert verdict.outcome is StageOutcome.UNKNOWN
 
@@ -243,7 +275,12 @@ def test_step8_is_unknown_on_a_stale_writer_epoch(
         stale_epoch = first.acquire_epoch(identity)
         second.acquire_epoch(identity)  # fences `first`'s epoch as stale
         reader = SqliteReservationProjectionReader(first)
-        stage = LedgerVerificationStage(first, reader, writer_epoch=stale_epoch)
+        stage = LedgerVerificationStage(
+            first,
+            reader,
+            writer_epoch=stale_epoch,
+            position_effect_reader=lambda: "OPEN",
+        )
         verdict = stage(_request(CommitmentStep.LEDGER_VERIFICATION, instrument_key))
         assert verdict.outcome is StageOutcome.UNKNOWN
     finally:
@@ -268,7 +305,7 @@ def test_step9_commits_reservation_and_permit_in_one_transaction(
         log,
         writer_epoch=writer_epoch,
         permit_provider=lambda _r: permit,
-        reservation_id_provider=lambda _r: "reservation-1",
+        reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
     )
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
@@ -276,9 +313,14 @@ def test_step9_commits_reservation_and_permit_in_one_transaction(
     assert verdict.authority_class is StageAuthorityClass.AVAILABLE_PURE_PREDICATE
     assert verdict.bound_digest == permit.canonical_digest
     assert verdict.bound_identity == permit.permit_id
-    assert (
-        projection_reader.instrument_state(instrument_key)
-        is CapacityState.COMMITTED_UNBOUND
+    assert projection_reader.scope_reservations(instrument_key) == (
+        ScopeReservation(
+            reservation_id=_permit_scoped_id(
+                _request(CommitmentStep.ATOMIC_COMMIT, instrument_key), permit
+            ),
+            state=CapacityState.COMMITTED_UNBOUND,
+            last_seq=0,
+        ),
     )
 
 
@@ -300,7 +342,7 @@ def test_step9_commits_via_exactly_one_commit_entry_call(
         counting_log,
         writer_epoch=writer_epoch,
         permit_provider=lambda _r: permit,
-        reservation_id_provider=lambda _r: "reservation-1",
+        reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
     )
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
@@ -329,7 +371,7 @@ def test_step9_single_entry_carries_both_the_reservation_and_the_permit_binding(
         log,
         writer_epoch=writer_epoch,
         permit_provider=lambda _r: permit,
-        reservation_id_provider=lambda _r: "reservation-1",
+        reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
     )
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
@@ -343,7 +385,11 @@ def test_step9_single_entry_carries_both_the_reservation_and_the_permit_binding(
         "r.reservation_id, r.state, r.scope_account, r.scope_instrument "
         "FROM entries e JOIN reservations r ON r.last_seq = e.seq "
         "WHERE r.reservation_id = ?",
-        ("reservation-1",),
+        (
+            _permit_scoped_id(
+                _request(CommitmentStep.ATOMIC_COMMIT, instrument_key), permit
+            ),
+        ),
     ).fetchone()
     assert row is not None
     (
@@ -358,7 +404,9 @@ def test_step9_single_entry_carries_both_the_reservation_and_the_permit_binding(
     assert command_id == permit.claim_nonce
     assert command_digest == permit.canonical_digest
     assert is_reservation_transition == 1
-    assert reservation_id == "reservation-1"
+    assert reservation_id == _permit_scoped_id(
+        _request(CommitmentStep.ATOMIC_COMMIT, instrument_key), permit
+    )
     assert state == CapacityState.COMMITTED_UNBOUND.value
     assert scope_account == instrument_key.account
     assert scope_instrument == instrument_key.instrument
@@ -371,7 +419,7 @@ def test_step9_is_unknown_when_no_permit_is_available(
         log,
         writer_epoch=writer_epoch,
         permit_provider=lambda _r: None,
-        reservation_id_provider=lambda _r: "reservation-1",
+        reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
     )
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
@@ -389,7 +437,7 @@ def test_step9_is_unknown_when_time_does_not_permit_new_risk(
         log,
         writer_epoch=writer_epoch,
         permit_provider=lambda _r: permit,
-        reservation_id_provider=lambda _r: "reservation-1",
+        reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: False,
     )
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
@@ -407,7 +455,7 @@ def test_step9_denies_a_permit_claimed_twice(
         log,
         writer_epoch=writer_epoch,
         permit_provider=lambda _r: permit,
-        reservation_id_provider=lambda _r: "reservation-1",
+        reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
     )
     first = stage_a(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
@@ -418,7 +466,9 @@ def test_step9_denies_a_permit_claimed_twice(
         log,
         writer_epoch=writer_epoch,
         permit_provider=lambda _r: permit,  # SAME permit, different scope
-        reservation_id_provider=lambda _r: "reservation-2",
+        reservation_id_provider=lambda request, permit: (
+            _permit_scoped_id(request, permit) + "-b"
+        ),
         time_permits_new_risk=lambda: True,
     )
     second = stage_b(_request(CommitmentStep.ATOMIC_COMMIT, other_key))
@@ -438,7 +488,7 @@ def test_step9_denies_a_permit_claimed_twice_even_after_a_simulated_restart(
         log,
         writer_epoch=writer_epoch,
         permit_provider=lambda _r: permit,
-        reservation_id_provider=lambda _r: "reservation-1",
+        reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
     )
     first = stage_a(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
@@ -452,7 +502,9 @@ def test_step9_denies_a_permit_claimed_twice_even_after_a_simulated_restart(
             reopened,
             writer_epoch=writer_epoch,
             permit_provider=lambda _r: permit,
-            reservation_id_provider=lambda _r: "reservation-2",
+            reservation_id_provider=lambda request, permit: (
+                _permit_scoped_id(request, permit) + "-b"
+            ),
             time_permits_new_risk=lambda: True,
         )
         second = stage_b(_request(CommitmentStep.ATOMIC_COMMIT, other_key))
@@ -473,7 +525,7 @@ def test_step9_is_unknown_when_the_log_file_is_inaccessible(
         log,
         writer_epoch=writer_epoch,
         permit_provider=lambda _r: permit,
-        reservation_id_provider=lambda _r: "reservation-1",
+        reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
     )
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
@@ -521,7 +573,7 @@ def test_step9_atomic_commit_leaves_neither_reservation_nor_permit_on_a_crash_be
         crashing_log,
         writer_epoch=epoch,
         permit_provider=lambda _r: permit,
-        reservation_id_provider=lambda _r: "reservation-1",
+        reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
     )
     with pytest.raises(InjectedCrash):
@@ -532,7 +584,7 @@ def test_step9_atomic_commit_leaves_neither_reservation_nor_permit_on_a_crash_be
     try:
         assert list(reopened.replay()) == []
         reader = SqliteReservationProjectionReader(reopened)
-        assert reader.instrument_state(instrument_key) is None
+        assert reader.scope_reservations(instrument_key) == ()
         assert dict(reader.all_reservations()) == {}
 
         # Nothing leaked: the SAME permit's nonce was never durably claimed by
@@ -542,7 +594,7 @@ def test_step9_atomic_commit_leaves_neither_reservation_nor_permit_on_a_crash_be
             reopened,
             writer_epoch=epoch,
             permit_provider=lambda _r: permit,
-            reservation_id_provider=lambda _r: "reservation-1",
+            reservation_id_provider=_permit_scoped_id,
             time_permits_new_risk=lambda: True,
         )
         retry_verdict = retry_stage(
@@ -570,7 +622,7 @@ def test_step10_confirms_a_durable_commit(
         log,
         writer_epoch=writer_epoch,
         permit_provider=lambda _r: permit,
-        reservation_id_provider=lambda _r: "reservation-1",
+        reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
     )
     commit_verdict = commit_stage(
@@ -610,7 +662,7 @@ def test_step10_is_unknown_when_the_projection_is_unreachable(
         log,
         writer_epoch=writer_epoch,
         permit_provider=lambda _r: permit,
-        reservation_id_provider=lambda _r: "reservation-1",
+        reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
     )
     commit_verdict = commit_stage(
@@ -680,14 +732,17 @@ def test_no_stage_here_ever_emits_non_authoritative_provisional(
         time_permits_new_risk=lambda: True,
     )
     ledger_stage = LedgerVerificationStage(
-        log, projection_reader, writer_epoch=writer_epoch
+        log,
+        projection_reader,
+        writer_epoch=writer_epoch,
+        position_effect_reader=lambda: "OPEN",
     )
     permit = _committed_permit(afg_governor)
     commit_stage = AtomicCommitStage(
         log,
         writer_epoch=writer_epoch,
         permit_provider=lambda _r: permit,
-        reservation_id_provider=lambda _r: "reservation-1",
+        reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
     )
     unavailability_stage = CommitmentUnavailabilityStage(projection_reader)
@@ -709,3 +764,115 @@ def test_no_stage_here_ever_emits_non_authoritative_provisional(
             verdict.authority_class
             is not StageAuthorityClass.NON_AUTHORITATIVE_PROVISIONAL
         )
+
+
+# ============================================================================
+# step 8 — the #966 admission table, row by row, each against a concrete input
+# ============================================================================
+
+
+def _rows(*states: CapacityState) -> tuple[ScopeReservation, ...]:
+    return tuple(
+        ScopeReservation(reservation_id=f"resv-{i}", state=state, last_seq=i)
+        for i, state in enumerate(states)
+    )
+
+
+def test_step8_open_denies_a_scope_that_already_holds_a_consumed_position() -> None:
+    """A SECOND entry over a filled one is still refused — #966 did not open pyramiding.
+
+    The concrete failing input this row exists for: scope holds ``POSITION_CONSUMED`` (an
+    entry filled), a new OPEN arrives. Admitting it would put two positions on one scope.
+    """
+    verdict = verdict_for_scope("OPEN", _rows(CapacityState.POSITION_CONSUMED))
+    assert verdict.outcome is StageOutcome.DENY
+    assert "no pyramiding" in (verdict.reason or "")
+
+
+def test_step8_open_admits_an_empty_scope() -> None:
+    verdict = verdict_for_scope("OPEN", ())
+    assert verdict.outcome is StageOutcome.ADMIT
+
+
+def test_step8_open_admits_again_once_every_reservation_is_released() -> None:
+    """The #966 re-entry case: a released row no longer blocks a fresh entry.
+
+    Before #966 step 8 denied on ANY row, RELEASED included, so a scope that had completed a
+    full entry→exit cycle could never trade again.
+    """
+    verdict = verdict_for_scope(
+        "OPEN", _rows(CapacityState.RELEASED, CapacityState.RELEASED)
+    )
+    assert verdict.outcome is StageOutcome.ADMIT
+
+
+def test_step8_close_admits_over_exactly_one_consumed_position() -> None:
+    verdict = verdict_for_scope("CLOSE", _rows(CapacityState.POSITION_CONSUMED))
+    assert verdict.outcome is StageOutcome.ADMIT
+
+
+def test_step8_close_denies_an_empty_scope() -> None:
+    """Nothing to close: a CLOSE over zero reservations would open a short position."""
+    verdict = verdict_for_scope("CLOSE", ())
+    assert verdict.outcome is StageOutcome.DENY
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        CapacityState.COMMITTED_UNBOUND,
+        CapacityState.ATTEMPT_BOUND,
+        CapacityState.POTENTIALLY_LIVE,
+        CapacityState.QUARANTINED_UNKNOWN,
+    ],
+)
+def test_step8_close_denies_a_reservation_that_is_not_consumed(
+    state: CapacityState,
+) -> None:
+    """Closing against an unresolved order is refused, and the reason names the state.
+
+    Concrete failing input: one reservation mid-flight (an entry order sent, no fill known).
+    A CLOSE admitted there would send a sell against a position that may never exist.
+    """
+    verdict = verdict_for_scope("CLOSE", _rows(state))
+    assert verdict.outcome is StageOutcome.DENY
+    assert state.value in (verdict.reason or "")
+
+
+def test_step8_close_denies_two_outstanding_reservations() -> None:
+    verdict = verdict_for_scope(
+        "CLOSE", _rows(CapacityState.POSITION_CONSUMED, CapacityState.POSITION_CONSUMED)
+    )
+    assert verdict.outcome is StageOutcome.DENY
+
+
+def test_step8_denies_when_no_arm_was_selected() -> None:
+    """No arm -> no position effect -> DENY, never a default of OPEN or CLOSE."""
+    verdict = verdict_for_scope(None, ())
+    assert verdict.outcome is StageOutcome.DENY
+    assert "no arm" in (verdict.reason or "")
+
+
+def test_step8_denies_an_unrecognized_position_effect() -> None:
+    verdict = verdict_for_scope("INCREASE", ())
+    assert verdict.outcome is StageOutcome.DENY
+
+
+def test_step8_reads_the_live_arm_not_a_captured_one(
+    log: SqliteCommitLog,
+    projection_reader: SqliteReservationProjectionReader,
+    writer_epoch: int,
+    instrument_key: InstrumentKey,
+) -> None:
+    """The reader is consulted per call, so the same stage judges each attempt's own effect."""
+    effects = iter(["OPEN", "CLOSE"])
+    stage = LedgerVerificationStage(
+        log,
+        projection_reader,
+        writer_epoch=writer_epoch,
+        position_effect_reader=lambda: next(effects),
+    )
+    first = stage(_request(CommitmentStep.LEDGER_VERIFICATION, instrument_key))
+    second = stage(_request(CommitmentStep.LEDGER_VERIFICATION, instrument_key))
+    assert first.outcome is StageOutcome.ADMIT  # OPEN over an empty scope
+    assert second.outcome is StageOutcome.DENY  # CLOSE over an empty scope

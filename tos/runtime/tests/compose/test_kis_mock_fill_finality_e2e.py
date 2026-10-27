@@ -36,6 +36,7 @@ from tos_runtime.posttrade.fill_observer import (
     FILL_OBSERVER_CONFIG_NAME,
     load_fill_observer_config,
 )
+from tos_runtime.posttrade.release_consumer import release_command_id
 
 from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
@@ -167,13 +168,64 @@ def _row(
     }
 
 
-def _script_broker(server, config_dir, date: str, rows: list[dict[str, str]]) -> str:
+class _Unset:
+    """A distinguishable "no override given" sentinel for ``_script_broker``'s
+    ``holdings_container`` — the same pattern ``_fixtures.write_kis_mock_transport_config``
+    uses, and needed for the same reason: a plain ``None`` default cannot be told apart from a
+    test that wants a literal ``output1: null`` on the wire (review-973 round 2)."""
+
+
+class _OmitKey:
+    """``holdings_container=_OMIT_OUTPUT1`` leaves the ``output1`` key OUT of the balance body
+    entirely — distinct from writing it as ``null``, and a case review-973 round 2 asks for in
+    its own right (``body.get`` answers ``None`` for both, so only the wire differs)."""
+
+
+_UNSET_CONTAINER = _Unset()
+_OMIT_OUTPUT1 = _OmitKey()
+
+
+def _script_broker(
+    server,
+    config_dir,
+    date: str,
+    rows: list[dict[str, str]],
+    *,
+    holdings: tuple[tuple[str, Decimal], ...] = (),
+    raw_holdings: list[dict[str, str]] | None = None,
+    holdings_container: Any = _UNSET_CONTAINER,
+) -> str:
+    """Script both witness GETs for ``date``: the order inquiry from ``rows``, the balance
+    inquiry from ``holdings`` (default: a flat account with NO rows, the shape every test here
+    had before ``holdings`` existed).
+
+    ``raw_holdings`` writes the balance ``output1`` rows verbatim instead, so a test can send
+    a quantity the production parser cannot read (``hldg_qty: ""``) and observe what
+    ``KisStockBrokerWitness`` actually does with it — #966 review round 1 needs that exact
+    input, and building it from ``Decimal`` cannot express it.
+
+    ``holdings_container`` replaces the whole ``output1`` VALUE, including with a non-list
+    (``None``, a dict), which review-973 round 2 needs: a malformed container is not an empty
+    page."""
     balance, orders = _witness_paths(config_dir, date)
-    server.set_response(
-        balance,
-        status=200,
-        body={"rt_cd": "0", "output1": [], "output2": [{"dnca_tot_amt": "1000000"}]},
-    )
+    balance_body: dict[str, Any] = {
+        "rt_cd": "0",
+        "output2": [{"dnca_tot_amt": "1000000"}],
+    }
+    if not isinstance(holdings_container, _OmitKey):
+        balance_body["output1"] = (
+            holdings_container
+            if not isinstance(holdings_container, _Unset)
+            else (
+                raw_holdings
+                if raw_holdings is not None
+                else [
+                    {"pdno": symbol, "hldg_qty": format(quantity, "f")}
+                    for symbol, quantity in holdings
+                ]
+            )
+        )
+    server.set_response(balance, status=200, body=balance_body)
     server.set_response(
         orders, status=200, body={"rt_cd": "0", "output1": rows, "output2": {}}
     )
@@ -186,12 +238,20 @@ def _rcl_state(runtime) -> CapacityState:
     return state
 
 
-def _rcl_releases(runtime) -> int:
-    """Committed RCL release transitions — the durable fact, not the pre-mutation intent row."""
+def _rcl_releases(runtime, *, attempt_id: str | None = None) -> int:
+    """Committed RCL release transitions — the durable fact, not the pre-mutation intent row.
+
+    ``attempt_id`` narrows the count to the release THAT attempt's own fill drove, by the
+    command id the release consumer keys it on. A test whose fixture seeds an earlier,
+    already-discharged attempt (``test_kis_mock_fill_finality_r2``) needs that narrowing —
+    since #966 each attempt has its own reservation, so the log legitimately carries one
+    release command per completed attempt rather than one per scope.
+    """
     return sum(
         1
         for entry in runtime.rcl_log.replay()
         if entry.kind == CommandType.RELEASE_RESERVATION.value
+        and (attempt_id is None or entry.command_id == release_command_id(attempt_id))
     )
 
 

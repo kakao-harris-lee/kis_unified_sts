@@ -14,7 +14,13 @@ from dataclasses import dataclass
 from tos.egressgw import OrderConstructionStage, ProposedConstructionEnvelope
 from tos.venue import ActionClass
 
-__all__ = ["AttemptArm", "attempt_action_class", "attempt_reader", "attempt_side"]
+__all__ = [
+    "AttemptArm",
+    "attempt_action_class",
+    "attempt_position_effect",
+    "attempt_reader",
+    "attempt_side",
+]
 
 
 @dataclass(frozen=True)
@@ -51,3 +57,14 @@ def attempt_action_class(
     """The current attempt's action class — same ``None`` rule as :func:`attempt_side`."""
     arm = getattr(stage, "attempt", None)
     return boot_action_class if arm is None else arm.action_class
+
+
+def attempt_position_effect(stage: OrderConstructionStage) -> str | None:
+    """The current attempt's position effect, or ``None`` when step 2 selected no arm.
+
+    Unlike :func:`attempt_side`/:func:`attempt_action_class` there is no boot fallback: step 8
+    (#966) admits against the ledger by this value, and the boot arm's effect is not a fact
+    about the attempt under judgement. ``None`` denies there — never a substituted default.
+    """
+    arm = getattr(stage, "attempt", None)
+    return None if arm is None else arm.position_effect

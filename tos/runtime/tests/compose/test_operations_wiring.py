@@ -25,7 +25,11 @@ from tos_runtime.operations.backup_set import (
 
 from . import _fixtures as fx
 from .conftest import write_approval_file
-from .test_compose_root import _action_flow_inputs, _aggregate_inputs
+from .test_compose_root import (
+    _action_flow_inputs_for,
+    _aggregate_inputs,
+    _LiveRuntimeFacts,
+)
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -64,14 +68,15 @@ def _compose(
     backup_root: Path | None = None,
 ):
     fx.write_band_strategy_file(config_dir)
-    return compose_paper_runtime(
+    facts = _LiveRuntimeFacts()
+    runtime = compose_paper_runtime(
         config_dir,
         data_dir,
         custody_root,
         "non-live-test",
         construction=fx.construction_config(),
         aggregate_risk_inputs_provider=_aggregate_inputs,
-        action_flow_inputs_provider=_action_flow_inputs,
+        action_flow_inputs_provider=_action_flow_inputs_for(facts),
         projection_path=projection_path,
         backup_root=backup_root,
         # TOS Phase 5 W5 plan §2 decision 2 — this module's own _compose (module
@@ -80,6 +85,8 @@ def _compose(
         # ADMISSIBLE / item 12 SATISFIED for _reach_admitted_send's real-send tests.
         wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
     )
+    facts.runtime = runtime
+    return runtime
 
 
 def _kind_count(evidence_store, kind: str) -> int:

@@ -33,9 +33,10 @@ from tos_runtime.compose.root import compose_paper_runtime
 from . import _fixtures as fx
 from .conftest import write_approval_file
 from .test_compose_root import (
-    _action_flow_inputs,
+    _action_flow_inputs_for,
     _aggregate_inputs,
     _compose,
+    _LiveRuntimeFacts,
     _reach_trusted,
 )
 
@@ -434,6 +435,7 @@ def test_production_default_wall_clock_boots_with_real_session_facts(
     statement about the HOST CLOCK, not about the wiring."""
     fx.pin_system_clock(monkeypatch, fx.LAST_MINUTE_OF_DAY_UNIX_MS)
     fx.write_band_strategy_file(config_dir)
+    facts = _LiveRuntimeFacts()
     runtime = compose_paper_runtime(
         config_dir,
         data_dir,
@@ -441,10 +443,11 @@ def test_production_default_wall_clock_boots_with_real_session_facts(
         "non-live-test",
         construction=fx.construction_config(),
         aggregate_risk_inputs_provider=_aggregate_inputs,
-        action_flow_inputs_provider=_action_flow_inputs,
+        action_flow_inputs_provider=_action_flow_inputs_for(facts),
         transport_kind=TransportKind.SYNTHETIC,
         # wall_clock intentionally omitted -- the production default.
     )
+    facts.runtime = runtime
     _reach_trusted(runtime)
 
     # A real reading reached the owner: step 3's phase read is not None (the
@@ -482,6 +485,7 @@ def test_production_default_dates_egress_results_through_a_fresh_trusted_referen
 
     fx.pin_system_clock(monkeypatch, fx.LAST_MINUTE_OF_DAY_UNIX_MS)
     fx.write_band_strategy_file(config_dir)
+    facts = _LiveRuntimeFacts()
     runtime = compose_paper_runtime(
         config_dir,
         data_dir,
@@ -489,9 +493,10 @@ def test_production_default_dates_egress_results_through_a_fresh_trusted_referen
         "non-live-test",
         construction=fx.construction_config(),
         aggregate_risk_inputs_provider=_aggregate_inputs,
-        action_flow_inputs_provider=_action_flow_inputs,
+        action_flow_inputs_provider=_action_flow_inputs_for(facts),
         transport_kind=TransportKind.SYNTHETIC,
     )
+    facts.runtime = runtime
     _reach_trusted(runtime)
     assert runtime.session_facts is not None
     reference = runtime.session_facts._trading_date_wall_clock

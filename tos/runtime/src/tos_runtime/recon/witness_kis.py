@@ -290,8 +290,22 @@ class _WalkOutcome:
     """The rows and (for the balance walk only) the ``output2`` block accumulated across
     a completed continuation walk."""
 
-    pages: tuple[list[dict[str, Any]], ...]
+    #: One entry per page: that page's ``output1`` list, or ``None`` when the page did not
+    #: carry a list at all — ``output1`` missing, ``null``, or a non-list such as a dict
+    #: (review-973 round 2 HIGH). The distinction matters because a malformed container used
+    #: to be flattened to ``[]``, making it indistinguishable from a page that genuinely
+    #: listed no rows: the balance read then saw an empty, "complete" holdings account and
+    #: called it flat. An empty LIST is well-formed — a flat KIS account really does answer
+    #: ``output1: []``. Both consumers iterate a ``None`` page as no rows, so the order walk
+    #: behaves exactly as before; only :meth:`KisStockBrokerWitness._read_balance` reads the
+    #: ``None`` itself, as evidence that its holdings picture is incomplete.
+    pages: tuple[list[dict[str, Any]] | None, ...]
     output2_first: dict[str, Any] | None
+
+    @property
+    def containers_wellformed(self) -> bool:
+        """Whether every page carried a genuine ``output1`` list."""
+        return all(rows is not None for rows in self.pages)
 
 
 def _refuse_instrument_conflict(row: KisOrderRow, *, queried: str) -> None:
@@ -418,7 +432,7 @@ class KisStockBrokerWitness:
         """
         try:
             cano, acnt_prdt_cd = self._split_account(scope.account)
-            positions, cash = self._read_balance(
+            positions, cash, positions_complete = self._read_balance(
                 cano, acnt_prdt_cd, scope, deadline_expired=deadline_expired
             )
             today = today or self._date_source.today()
@@ -449,6 +463,9 @@ class KisStockBrokerWitness:
             observed_at_generation=scope.as_of_generation,
             orders=tuple(self._order_from_row(row) for row in rows),
             positions=positions,
+            # #966 review round 1: only a holdings read with every row attributed proves
+            # flatness; a dropped row must not read as "no position".
+            positions_complete=positions_complete,
             cash=cash,
             provenance="kis-mock-stock",
             # Honest True: this class holds no evidence-store reference at all (module
@@ -606,7 +623,7 @@ class KisStockBrokerWitness:
         raises :class:`~tos_runtime.recon.ports.WitnessUnavailable` instead of returning what
         was read so far (module docstring's central reason this class exists).
         """
-        pages: list[list[dict[str, Any]]] = []
+        pages: list[list[dict[str, Any]] | None] = []
         output2_first: dict[str, Any] | None = None
         fk = nk = ""
         for index in range(self._config.max_pages):
@@ -643,7 +660,7 @@ class KisStockBrokerWitness:
                     f"(rt_cd={rt_cd!r}, msg_cd={body.get('msg_cd')!r})"
                 )
             rows = body.get("output1")
-            pages.append(rows if isinstance(rows, list) else [])
+            pages.append(rows if isinstance(rows, list) else None)
             if output2_first is None:
                 out2 = body.get("output2")
                 if isinstance(out2, list) and out2 and isinstance(out2[0], dict):
@@ -655,7 +672,7 @@ class KisStockBrokerWitness:
             more = tr_cont_out in _TR_CONT_MORE_CODES
 
             if not more:
-                return _WalkOutcome(pages=tuple(pages), output2_first=output2_first)
+                return _WalkOutcome(tuple(pages), output2_first)
 
             if not next_fk and not next_nk:
                 raise WitnessUnavailable(
@@ -689,9 +706,27 @@ class KisStockBrokerWitness:
         scope: WitnessScope,
         *,
         deadline_expired: Callable[[], bool] | None = None,
-    ) -> tuple[tuple[tuple[str, Decimal], ...], Decimal | None]:
+    ) -> tuple[tuple[tuple[str, Decimal], ...], Decimal | None, bool]:
         """주식 잔고조회 — mirrors ``tools/broker_probes/probes_balance.py``'s own
-        ``_balance_params`` for the stock target (module docstring)."""
+        ``_balance_params`` for the stock target (module docstring).
+
+        Returns ``(positions, cash, positions_complete)``. The third element is ``False`` as
+        soon as anything in this read could not be fully taken in:
+
+        * a holdings ROW that could not be read — a non-dict row, a blank ``pdno``, or an
+          ``hldg_qty`` that does not parse (#966 review round 1, Codex HIGH), since such a row
+          is silently dropped from ``positions`` below;
+        * a holdings PAGE whose ``output1`` was not a list at all — missing, ``null``, or a
+          dict (review-973 round 2 HIGH), since that page contributes zero rows.
+
+        Either way the result would otherwise be indistinguishable from a flat account (see
+        :attr:`~tos_runtime.recon.ports.WitnessSnapshot.positions_complete`). An empty list is
+        well-formed: a genuinely flat account answers ``output1: []``.
+
+        Page-level truncation needs no flag: the continuation walk raises
+        :class:`~tos_runtime.recon.ports.WitnessUnavailable` rather than return a partial page
+        set (:meth:`_walk_continuation`).
+        """
 
         def build_params(fk: str, nk: str) -> dict[str, str]:
             return {
@@ -717,16 +752,25 @@ class KisStockBrokerWitness:
 
         instruments = {key.instrument for key in scope.instrument_keys}
         positions: list[tuple[str, Decimal]] = []
+        # review-973 round 2 HIGH: a page whose `output1` was not a list contributed zero rows
+        # and would otherwise read as "this account holds nothing".
+        complete = outcome.containers_wellformed
         for rows in outcome.pages:
-            for row in rows:
+            for row in rows if rows is not None else ():
                 if not isinstance(row, dict):
+                    complete = False
                     continue
                 symbol = str(row.get("pdno") or "").strip()
                 qty = _decimal_or_none(row.get("hldg_qty"))
+                if not symbol or qty is None:
+                    # Unreadable: the row is dropped, so record that this holdings account
+                    # is NOT complete rather than let the drop read as "no position".
+                    complete = False
+                    continue
                 # Positive-quantity filter mirrors the runtime consumer's own convention
                 # (shared/kis/client.py:1002, reference only) — a flattened (qty<=0) row
-                # is not a held position.
-                if qty is None or qty <= 0:
+                # is not a held position, and IS a fully-read row.
+                if qty <= 0:
                     continue
                 if instruments and symbol not in instruments:
                     continue
@@ -737,7 +781,7 @@ class KisStockBrokerWitness:
             if outcome.output2_first is not None
             else None
         )
-        return tuple(positions), cash
+        return tuple(positions), cash, complete
 
     # -- orders --------------------------------------------------------------------------
 
@@ -795,7 +839,7 @@ class KisStockBrokerWitness:
                 deadline_expired=deadline_expired,
             )
             for rows in outcome.pages:
-                for row in rows:
+                for row in rows if rows is not None else ():
                     if not isinstance(row, dict):
                         continue
                     parsed = KisOrderRow.from_wire(row)

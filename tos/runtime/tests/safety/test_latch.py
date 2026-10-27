@@ -7,6 +7,7 @@ from __future__ import annotations
 from tos.egress import RestrictiveLatchState
 from tos.engine.records import InstrumentKey
 from tos.rcl import CapacityState
+from tos_runtime.rcl.projection import ScopeReservation
 from tos_runtime.safety.latch import (
     CapacityOwner,
     EgressOwnerFields,
@@ -115,12 +116,17 @@ def test_describe_reports_no_secrets_and_the_resolved_state() -> None:
 
 
 class _FakeProjectionReader:
-    def __init__(self, state: CapacityState | None) -> None:
-        self._state = state
+    def __init__(self, *states: CapacityState) -> None:
+        self._states = states
 
-    def instrument_state(self, key: InstrumentKey) -> CapacityState | None:
+    def scope_reservations(self, key: InstrumentKey) -> tuple[ScopeReservation, ...]:
         assert key == _SCOPE
-        return self._state
+        return tuple(
+            ScopeReservation(
+                reservation_id=f"resv-{index}", state=state, last_seq=index
+            )
+            for index, state in enumerate(self._states)
+        )
 
     def reservation_state(self, reservation_id: str) -> CapacityState | None:
         raise NotImplementedError
@@ -131,18 +137,12 @@ class _FakeProjectionReader:
     def all_reservations(self):  # pragma: no cover - unused by CapacityOwner
         raise NotImplementedError
 
-    def instrument_last_seq(self, key: InstrumentKey) -> int | None:
-        raise NotImplementedError
-
     def reservation_committed_vector(self, reservation_id: str):
-        raise NotImplementedError
-
-    def instrument_committed_vector(self, key: InstrumentKey):
         raise NotImplementedError
 
 
 def test_capacity_zero_when_no_reservation_is_projected() -> None:
-    owner = CapacityOwner(_FakeProjectionReader(None), _SCOPE)
+    owner = CapacityOwner(_FakeProjectionReader(), _SCOPE)
     assert owner.worst_credible_capacity() == 0
 
 
@@ -189,3 +189,27 @@ def test_egress_owner_fields_bundles_both_owners_fresh() -> None:
         "restrictive_latch_state": RestrictiveLatchState.CLEAR,
         "worst_credible_capacity": 0,
     }
+
+
+def test_capacity_counts_two_held_reservations_while_an_exit_closes_an_entry() -> None:
+    """#966: a scope holds two reservations at once while an exit closes a filled entry.
+
+    The pre-#966 owner returned ``1`` for this input (it read the scope's first row and
+    reported 0-or-1), understating exposure by one whole reservation.
+    """
+    owner = CapacityOwner(
+        _FakeProjectionReader(
+            CapacityState.POSITION_CONSUMED, CapacityState.COMMITTED_UNBOUND
+        ),
+        _SCOPE,
+    )
+    assert owner.worst_credible_capacity() == 2
+
+
+def test_capacity_counts_only_the_outstanding_rows() -> None:
+    """A released row contributes nothing even while another row is still held."""
+    owner = CapacityOwner(
+        _FakeProjectionReader(CapacityState.RELEASED, CapacityState.POSITION_CONSUMED),
+        _SCOPE,
+    )
+    assert owner.worst_credible_capacity() == 1

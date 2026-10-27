@@ -33,7 +33,8 @@ not a new commons dependency).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from tos.engine.records import InstrumentKey
@@ -41,7 +42,50 @@ from tos.rcl import CapacityState, CapacityVector
 
 from tos_runtime.rcl.log import SqliteCommitLog
 
-__all__ = ["ReservationProjectionReader", "SqliteReservationProjectionReader"]
+__all__ = [
+    "ReservationProjectionReader",
+    "ScopeReservation",
+    "SqliteReservationProjectionReader",
+    "outstanding_reservations",
+]
+
+
+@dataclass(frozen=True)
+class ScopeReservation:
+    """One reservation row of one ``(account, instrument)`` scope (#966).
+
+    What :meth:`ReservationProjectionReader.scope_reservations` reports per row. A named record
+    rather than a bare triple because three independent consumers now read these rows — step 8's
+    admission table, the ARE usage aggregate, and the item-16 capacity owner — and each reads a
+    different field.
+    """
+
+    reservation_id: str
+    state: CapacityState
+    last_seq: int
+
+    @property
+    def outstanding(self) -> bool:
+        """Whether this row still consumes capacity.
+
+        Every :class:`~tos.rcl.CapacityState` except the terminal ``RELEASED`` does — the same
+        partition :data:`tos_runtime.rcl.obligation.CAPACITY_CONSUMING_STATE_VALUES` already
+        draws off the enum, and NOT a conservatism-rank threshold (``POSITION_CONSUMED`` ranks
+        MORE conservative than ``POTENTIALLY_LIVE``, so "still consuming" is not a rank prefix —
+        see that constant's own comment for the commit that corrected this).
+        """
+        return self.state is not CapacityState.RELEASED
+
+
+def outstanding_reservations(
+    rows: Sequence[ScopeReservation],
+) -> tuple[ScopeReservation, ...]:
+    """The rows of ``rows`` that still consume capacity (:attr:`ScopeReservation.outstanding`).
+
+    The ONE place the "which rows count" question is answered, so step 8, the ARE aggregate and
+    the capacity owner cannot drift apart on it.
+    """
+    return tuple(row for row in rows if row.outstanding)
 
 
 @runtime_checkable
@@ -50,10 +94,10 @@ class ReservationProjectionReader(Protocol):
 
     Two independent key surfaces over the same underlying rows: the RCL
     log's own native ``reservation_id`` (``reservation_state`` /
-    ``reservation_last_seq`` / ``all_reservations``), and the engine's
-    :class:`~tos.engine.records.InstrumentKey` scope (``instrument_state`` /
-    ``instrument_last_seq`` — see the module docstring's "kernel port
-    binding note").
+    ``reservation_last_seq`` / ``all_reservations`` /
+    ``reservation_committed_vector``), and the engine's
+    :class:`~tos.engine.records.InstrumentKey` scope (``scope_reservations``
+    — see the module docstring's "kernel port binding note").
     """
 
     def reservation_state(self, reservation_id: str) -> CapacityState | None:
@@ -68,14 +112,17 @@ class ReservationProjectionReader(Protocol):
         """A snapshot of every held reservation's current state, keyed by ``reservation_id``."""
         ...
 
-    def instrument_state(self, key: InstrumentKey) -> CapacityState | None:
-        """The projected state of the reservation bound to ``key``'s (account,
-        instrument) scope, if any (slice #1 projects at most one per scope)."""
-        ...
+    def scope_reservations(self, key: InstrumentKey) -> tuple[ScopeReservation, ...]:
+        """EVERY reservation this log holds for ``key``'s (account, instrument) scope.
 
-    def instrument_last_seq(self, key: InstrumentKey) -> int | None:
-        """The ``seq`` of the last committed transition for the reservation bound to
-        ``key``'s scope, if any."""
+        Replaces the pre-#966 ``instrument_state``/``instrument_last_seq``/
+        ``instrument_committed_vector`` trio, which returned the scope's FIRST row only. That
+        was sound while a scope could hold at most one reservation; since #966 each attempt
+        commits its own (:mod:`tos_runtime.rcl.reservation_identity`), so a scope legitimately
+        holds two at once — a filled entry at ``POSITION_CONSUMED`` plus the exit closing it —
+        and a first-row read would silently under-report both the occupancy count and the
+        aggregate usage.
+        """
         ...
 
     def reservation_committed_vector(
@@ -83,11 +130,6 @@ class ReservationProjectionReader(Protocol):
     ) -> CapacityVector | None:
         """The committed :class:`~tos.rcl.CapacityVector` last written for
         ``reservation_id``, if any (kernel round #4 K-4)."""
-        ...
-
-    def instrument_committed_vector(self, key: InstrumentKey) -> CapacityVector | None:
-        """The committed :class:`~tos.rcl.CapacityVector` of the reservation bound to
-        ``key``'s (account, instrument) scope, if any (kernel round #4 K-4)."""
         ...
 
 
@@ -130,25 +172,16 @@ class SqliteReservationProjectionReader:
             for reservation_id, state, _last_seq, _scope in self._log.reservation_rows()
         }
 
-    def instrument_state(self, key: InstrumentKey) -> CapacityState | None:
-        for _reservation_id, state, _last_seq, scope in self._log.reservation_rows():
-            if scope.account == key.account and scope.instrument == key.instrument:
-                return state
-        return None
-
-    def instrument_last_seq(self, key: InstrumentKey) -> int | None:
-        for _reservation_id, _state, last_seq, scope in self._log.reservation_rows():
-            if scope.account == key.account and scope.instrument == key.instrument:
-                return last_seq
-        return None
+    def scope_reservations(self, key: InstrumentKey) -> tuple[ScopeReservation, ...]:
+        return tuple(
+            ScopeReservation(
+                reservation_id=reservation_id, state=state, last_seq=last_seq
+            )
+            for reservation_id, state, last_seq, scope in self._log.reservation_rows()
+            if scope.account == key.account and scope.instrument == key.instrument
+        )
 
     def reservation_committed_vector(
         self, reservation_id: str
     ) -> CapacityVector | None:
         return self._log.reservation_committed_vector(reservation_id)
-
-    def instrument_committed_vector(self, key: InstrumentKey) -> CapacityVector | None:
-        for reservation_id, _state, _last_seq, scope in self._log.reservation_rows():
-            if scope.account == key.account and scope.instrument == key.instrument:
-                return self._log.reservation_committed_vector(reservation_id)
-        return None

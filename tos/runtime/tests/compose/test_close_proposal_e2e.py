@@ -1,6 +1,7 @@
-"""Issue #960 e2e — a CLOSE proposal is sent as a SELL, through both approval boundaries.
+"""Issue #960 / #966 e2e — an entry and the exit that closes it, in ONE process.
 
-Against the fake KIS server (MOCK order class, no real broker). An exit tick
+Against the fake KIS server (MOCK order class, no real broker). An entry tick
+(``close < lower_band``) yields an ``OPEN``/``LONG`` proposal sent as a BUY; a later exit tick
 (``close > upper_band``) yields a ``CLOSE``/``SHORT`` proposal, and the command built for it
 carries ``SELL``/``CLOSE``:
 
@@ -9,14 +10,18 @@ carries ``SELL``/``CLOSE``:
 * through a per-proposal operator approval file, which sends the SELL and never a second BUY
   (before #960 that path bought another lot).
 
-Both drive the exit as the committed attempt of the process. An entry AND an exit in one loop
-is not reachable in this runtime today for reasons that have nothing to do with the command's
-side: step 8 (``LEDGER_VERIFICATION``) denies any second commit on a scope that already holds
-a reservation — "scope already holds a committed reservation at POSITION_CONSUMED — not a
-fresh scope eligible to originate COMMITTED_UNBOUND" (``tos_runtime.risk.ledger_stages``;
-measured with a second OPEN too, so it is not CLOSE-specific). The OPEN path is unchanged by
-#960 and pinned elsewhere: the entry e2e tests in this suite, and
-``test_attempt_shape.py::test_the_open_arm_envelope_is_the_one_boot_always_built``.
+**#966 removed the workaround these tests used to need.** Both used to drive the exit as the
+FIRST commit of the process, because an entry followed by an exit was unreachable for two
+reasons that had nothing to do with the command's side:
+
+1. step 8 (``LEDGER_VERIFICATION``) denied any second commit on a scope that already held a
+   reservation row — "scope already holds a committed reservation at POSITION_CONSUMED";
+2. the suite's own step-7 inputs provider froze ``decision_generation`` at 1, so once the first
+   flow's commits moved the RCL tip, EVERY second flow in the process halted at step 7 with
+   ``UNKNOWN`` (see ``_LiveRuntimeFacts`` in ``test_compose_root.py``).
+
+Both are fixed, so the full cycle now runs here: entry → fill → close → fill → broker flat →
+the entry's reservation RELEASED → a fresh entry ADMITs at step 8 again.
 """
 
 from __future__ import annotations
@@ -28,13 +33,16 @@ from typing import Any
 import pytest
 import yaml
 from tos.engine.vocabulary import CommitmentStep, StageOutcome
+from tos.rcl import CapacityState
 
 from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
 from .conftest import write_approval_file
 from .test_kis_mock_e2e_honesty import _ENVIRONMENT_LABEL, _boot
 from .test_kis_mock_fill_finality_e2e import (
+    _OMIT_OUTPUT1,
     _ORDER_PATH,
+    _UNSET_CONTAINER,
     _close,
     _deploy,
     _rcl_releases,
@@ -103,12 +111,11 @@ def _deployed(config_dir, custody_root, server, monkeypatch) -> None:
     _deploy(config_dir, custody_root, server, monkeypatch)
 
 
-def _standing_exit_artifact(config_dir, custody_root) -> None:
-    """The operator's standing artifact for this session: the entry action it always carried,
-    plus the exit action #960 makes reachable."""
+def _standing_cycle_artifact(config_dir, custody_root) -> None:
+    """The operator's standing artifact for this session: one entry, one exit, one re-entry."""
     document = _document(config_dir)
     document["actions"] = [
-        {"position_effect": "OPEN", "direction": "LONG", "side": "BUY", "max_uses": 1},
+        {"position_effect": "OPEN", "direction": "LONG", "side": "BUY", "max_uses": 2},
         {
             "position_effect": "CLOSE",
             "direction": "SHORT",
@@ -133,24 +140,65 @@ def _tr_ids(server) -> list[str]:
     return [r.headers["tr_id"] for r in server.requests_for(_ORDER_PATH)]
 
 
-def _fill(runtime, server, config_dir, *, odno: str) -> None:
-    """Script the broker so the latest ACKed order is fully filled, then poll once."""
-    *_, ack = [
-        r
-        for r in _rows(runtime, "EGRESS_RESULT_CONSUMED")
-        if r["egress_result_kind"] == "ACK"
-    ]
-    qty = Decimal(_sealed(runtime)[-1]["outbound_quantity"])
-    date = ack["trading_date"]
-    _script_broker(
-        server,
-        config_dir,
-        date,
-        [_row(odno=odno, date=date, ord_qty=qty, filled=qty, remaining=Decimal(0))],
-    )
-    observer = runtime.fill_observer
-    assert observer is not None
-    observer.poll_once()
+def _reservations(runtime) -> dict[str, CapacityState]:
+    return {
+        reservation_id: state
+        for reservation_id, state, _seq, _scope in runtime.rcl_log.reservation_rows()
+    }
+
+
+class _Broker:
+    """The fake broker's accumulated order book for one session.
+
+    Every order this process sent stays in the inquiry response, which is what a real broker
+    does — reconciliation folds EVERY receipt in scope, so dropping the entry's order once the
+    close is sent would make the entry read as a stale reservation and hold the close's own
+    release (measured; it is not a property of #966).
+    """
+
+    def __init__(self, server, config_dir) -> None:
+        self._server = server
+        self._config_dir = config_dir
+        self._rows: list[dict[str, str]] = []
+
+    def fill(
+        self,
+        runtime,
+        *,
+        odno: str,
+        flat: bool = True,
+        raw_holdings: list[dict[str, str]] | None = None,
+        holdings_container: Any = _UNSET_CONTAINER,
+    ) -> None:
+        """Fully fill the latest ACKed order, then poll the observer once.
+
+        ``flat`` drives the balance read the reconciliation witness makes: the account reports
+        no holding (flat) unless a test needs an outstanding position reported.
+        ``raw_holdings`` overrides that with verbatim balance rows, for the quantities the
+        production parser cannot read (#966 review round 1).
+        """
+        *_, ack = [
+            r
+            for r in _rows(runtime, "EGRESS_RESULT_CONSUMED")
+            if r["egress_result_kind"] == "ACK"
+        ]
+        qty = Decimal(_sealed(runtime)[-1]["outbound_quantity"])
+        date = ack["trading_date"]
+        self._rows.append(
+            _row(odno=odno, date=date, ord_qty=qty, filled=qty, remaining=Decimal(0))
+        )
+        _script_broker(
+            self._server,
+            self._config_dir,
+            date,
+            list(self._rows),
+            holdings=() if flat else ((fx.INSTRUMENT, qty),),
+            raw_holdings=raw_holdings,
+            holdings_container=holdings_container,
+        )
+        observer = runtime.fill_observer
+        assert observer is not None
+        observer.poll_once()
 
 
 def _order_response(server, odno: str) -> None:
@@ -159,6 +207,10 @@ def _order_response(server, odno: str) -> None:
         status=200,
         body={"rt_cd": "0", "msg_cd": "APBK0013", "output": {"ODNO": odno}},
     )
+
+
+def _entry_tick(seq: int = 0):
+    return fx.crossing_event(seq=seq)
 
 
 def _exit_tick(seq: int = 1):
@@ -174,37 +226,106 @@ def _assert_close_proposal(result) -> None:
 
 
 # ===========================================================================
-# 1. the standing exit boundary: CLOSE-SHORT-SELL matches, and a SELL is sent
+# 1. the whole cycle in one process, through the standing boundary
 # ===========================================================================
 
 
-def test_a_close_proposal_sells_through_the_standing_exit_boundary(
+def test_an_entry_then_its_close_then_a_re_entry_in_one_process(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
+    """#966's completion condition: entry → close → broker flat → re-entry admitted.
+
+    Every assertion below was unreachable before #966 — the second flow of the process
+    halted at step 7, and the one after that at step 8.
+    """
     _deployed(config_dir, custody_root, server, monkeypatch)
-    _standing_exit_artifact(config_dir, custody_root)
+    _standing_cycle_artifact(config_dir, custody_root)
     transport = yaml.safe_load((config_dir / "kis_mock_transport.yaml").read_text())
     runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
-    _order_response(server, "0000000102")
+    broker = _Broker(server, config_dir)
 
+    # --- the entry: a BUY that fills and leaves a consumed position -------------------
+    _order_response(server, "0000000201")
+    (entry,) = runtime.run_once((_entry_tick(),))
+    assert _verdict(entry, CommitmentStep.LEDGER_VERIFICATION).outcome is (
+        StageOutcome.ADMIT
+    )
+    assert entry.flow.handed_off is True
+    assert _tr_ids(server) == [transport["tr_id_buy"]]
+    broker.fill(runtime, odno="0000000201")
+
+    entry_reservations = _reservations(runtime)
+    assert list(entry_reservations.values()) == [CapacityState.POSITION_CONSUMED]
+    (entry_reservation_id,) = entry_reservations
+    assert _rcl_releases(runtime) == 1
+
+    # --- the exit: a SELL, admitted over that one consumed position -------------------
+    _order_response(server, "0000000202")
     (exit_,) = runtime.run_once((_exit_tick(),))
     _assert_close_proposal(exit_)
-    step4 = _verdict(exit_, CommitmentStep.INDEPENDENT_APPROVAL)
-    assert step4.outcome is StageOutcome.ADMIT, step4.reason
-    (consumed,) = _rows(runtime, "APPROVAL_STANDING_CONSUMED")
-    assert consumed["proposal_digest"] == exit_.pipeline.proposal.canonical_digest
-    assert len(_standing_uses(runtime)) == 1
+    step8 = _verdict(exit_, CommitmentStep.LEDGER_VERIFICATION)
+    assert step8.outcome is StageOutcome.ADMIT, step8.reason
+    assert "one consumed position" in (step8.reason or "")
     assert exit_.flow.handed_off is True
-
-    # the SELL itself: the MOCK sell TR id on the wire, SELL/CLOSE in the send seal
-    assert _tr_ids(server) == [transport["tr_id_sell"]]
-    seal = _sealed(runtime)[-1]
-    assert seal["outbound_side"] == "SELL"
-    assert runtime.construction_stage.attempt.side == "SELL"
+    assert _tr_ids(server)[-1] == transport["tr_id_sell"]
+    assert _sealed(runtime)[-1]["outbound_side"] == "SELL"
     assert runtime.construction_stage.attempt.position_effect == "CLOSE"
 
-    _fill(runtime, server, config_dir, odno="0000000102")
-    assert _rcl_releases(runtime) == 1
+    # the close holds its OWN reservation, distinct from the entry's
+    during_close = _reservations(runtime)
+    assert len(during_close) == 2
+    assert during_close[entry_reservation_id] is CapacityState.POSITION_CONSUMED
+
+    # --- the close fills, broker reports flat: BOTH reservations end RELEASED ---------
+    broker.fill(runtime, odno="0000000202")
+    after_close = _reservations(runtime)
+    assert set(after_close.values()) == {CapacityState.RELEASED}, after_close
+    assert after_close[entry_reservation_id] is CapacityState.RELEASED
+    assert _rows(runtime, "CAPACITY_RELEASE_HELD") == []
+    destinations = [r["destination"] for r in _rows(runtime, "CAPACITY_RELEASE_INTENT")]
+    assert destinations == ["POSITION_CONSUMED", "RELEASED", "RELEASED"]
+
+    # --- and the scope trades again --------------------------------------------------
+    _order_response(server, "0000000203")
+    (again,) = runtime.run_once((_entry_tick(seq=2),))
+    step8_again = _verdict(again, CommitmentStep.LEDGER_VERIFICATION)
+    assert step8_again.outcome is StageOutcome.ADMIT, step8_again.reason
+    assert again.flow.handed_off is True
+    assert _tr_ids(server)[-1] == transport["tr_id_buy"]
+    assert len(_standing_uses(runtime)) == 3
+    _close(runtime)
+
+
+def test_a_partial_close_leaves_the_entry_reservation_held(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """A close that fills but leaves the broker still holding does NOT release the entry.
+
+    Concrete failing input: the close's own fill is complete, but the balance read still
+    reports the instrument held. Capacity stays committed for a position that is still open
+    (ADR-002-012 :179), and the hold says why.
+    """
+    _deployed(config_dir, custody_root, server, monkeypatch)
+    _standing_cycle_artifact(config_dir, custody_root)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    broker = _Broker(server, config_dir)
+
+    _order_response(server, "0000000301")
+    runtime.run_once((_entry_tick(),))
+    broker.fill(runtime, odno="0000000301")
+    (entry_reservation_id,) = _reservations(runtime)
+
+    _order_response(server, "0000000302")
+    (exit_,) = runtime.run_once((_exit_tick(),))
+    assert exit_.flow.handed_off is True
+    broker.fill(runtime, odno="0000000302", flat=False)
+
+    after = _reservations(runtime)
+    assert after[entry_reservation_id] is CapacityState.POSITION_CONSUMED
+    held = [r["reason"] for r in _rows(runtime, "CAPACITY_RELEASE_HELD")]
+    assert held == ["BROKER_POSITION_NOT_FLAT"]
+    # The close's own reservation is still released — it opened no position either way.
+    assert CapacityState.RELEASED in set(after.values())
     _close(runtime)
 
 
@@ -216,39 +337,222 @@ def test_a_close_proposal_sells_through_the_standing_exit_boundary(
 def test_a_per_proposal_approval_of_a_close_sends_a_sell_never_a_buy(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
-    """No standing artifact at all: the operator approves this ONE proposal by file. Before
-    #960 the approved command was a BUY — the per-proposal path bought a second lot instead
-    of closing."""
+    """No standing artifact at all: the operator approves each proposal by file. Before
+    #960 the approved close command was a BUY — the per-proposal path bought a second lot
+    instead of closing."""
     _deployed(config_dir, custody_root, server, monkeypatch)
     transport = yaml.safe_load((config_dir / "kis_mock_transport.yaml").read_text())
     runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
-    _order_response(server, "0000000103")
+    broker = _Broker(server, config_dir)
 
-    # first pass: the proposal exists, step 4 has no approval to consume, nothing is sent
+    # the entry, approved by its own file, so the scope holds a consumed position
+    _order_response(server, "0000000401")
+    entry_event = _entry_tick()
+    (pending_entry,) = runtime.run_once((entry_event,))
+    _approve(runtime, custody_root, pending_entry)
+    (entry,) = runtime.run_once((entry_event,))
+    assert entry.flow.handed_off is True
+    broker.fill(runtime, odno="0000000401")
+
+    # first pass of the exit: the proposal exists, step 4 has no approval to consume
+    _order_response(server, "0000000402")
     event = _exit_tick()
     (pending,) = runtime.run_once((event,))
     _assert_close_proposal(pending)
     assert _verdict(pending, CommitmentStep.INDEPENDENT_APPROVAL).outcome is (
         StageOutcome.UNKNOWN
     )
-    assert _tr_ids(server) == []
+    assert _tr_ids(server) == [transport["tr_id_buy"]]
 
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
-        custody_root,
-        proposal_digest=pending.pipeline.proposal.canonical_digest,
-        environment_label=_ENVIRONMENT_LABEL,
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
-    )
-
+    _approve(runtime, custody_root, pending)
     (approved,) = runtime.run_once((event,))
     _assert_close_proposal(approved)
     assert _verdict(approved, CommitmentStep.INDEPENDENT_APPROVAL).outcome is (
         StageOutcome.ADMIT
     )
     assert approved.flow.handed_off is True
-    assert _tr_ids(server) == [transport["tr_id_sell"]]
-    assert transport["tr_id_buy"] not in _tr_ids(server)
+    assert _tr_ids(server)[-1] == transport["tr_id_sell"]
+    assert _tr_ids(server).count(transport["tr_id_buy"]) == 1
     assert _sealed(runtime)[-1]["outbound_side"] == "SELL"
+    _close(runtime)
+
+
+def _approve(runtime, custody_root, result) -> None:
+    """Write the operator approval file for ``result``'s own proposal + intent envelope."""
+    construction = runtime.construction_stage.construction
+    assert construction is not None and construction.intent is not None
+    write_approval_file(
+        custody_root,
+        proposal_digest=result.pipeline.proposal.canonical_digest,
+        environment_label=_ENVIRONMENT_LABEL,
+        approved_intent_envelope_digest=construction.intent.canonical_digest,
+    )
+
+
+# ===========================================================================
+# 3. #966 review round 1 (Codex HIGH) — an unreadable holdings row is not "flat"
+# ===========================================================================
+
+
+@pytest.mark.parametrize("bad_quantity", ["", "  ", "N/A"])
+def test_an_unreadable_holding_quantity_keeps_the_entry_and_denies_a_re_entry(
+    bad_quantity, config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """A balance row the PRODUCTION parser drops must not read as a flat account.
+
+    Driven end to end through ``KisStockBrokerWitness``'s own balance parse: the entry filled
+    10, the close filled 10 with zero remaining (so the quantity proof passes), and the broker
+    answers with a holdings row for this instrument whose ``hldg_qty`` does not parse. The
+    witness discards that row, which before the fix left ``positions=()`` — byte-identical to
+    flat — and released the entry reservation, re-opening the scope to a fresh OPEN. Now the
+    observation is incomplete, so the entry stays held and the next OPEN is DENIED.
+    """
+    _deployed(config_dir, custody_root, server, monkeypatch)
+    _standing_cycle_artifact(config_dir, custody_root)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    broker = _Broker(server, config_dir)
+
+    _order_response(server, "0000000501")
+    runtime.run_once((_entry_tick(),))
+    broker.fill(runtime, odno="0000000501")
+    (entry_reservation_id,) = _reservations(runtime)
+
+    _order_response(server, "0000000502")
+    (exit_,) = runtime.run_once((_exit_tick(),))
+    assert exit_.flow.handed_off is True
+    broker.fill(
+        runtime,
+        odno="0000000502",
+        raw_holdings=[{"pdno": fx.INSTRUMENT, "hldg_qty": bad_quantity}],
+    )
+
+    after = _reservations(runtime)
+    assert after[entry_reservation_id] is CapacityState.POSITION_CONSUMED
+    held = [r["reason"] for r in _rows(runtime, "CAPACITY_RELEASE_HELD")]
+    assert held == ["BROKER_POSITION_NOT_FLAT"]
+
+    # ...and the scope does NOT reopen: step 8 still sees one consumed position.
+    _order_response(server, "0000000503")
+    (again,) = runtime.run_once((_entry_tick(seq=2),))
+    step8 = _verdict(again, CommitmentStep.LEDGER_VERIFICATION)
+    assert step8.outcome is StageOutcome.DENY, step8.reason
+    assert "no pyramiding" in (step8.reason or "")
+    assert again.flow.handed_off is False
+    _close(runtime)
+
+
+def test_a_zero_holding_quantity_is_proven_flat_and_releases_the_entry(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """Positive control for the test above: ``hldg_qty: "0"`` PARSES, so the observation is
+    complete and the account is affirmatively flat — the entry is discharged and the scope
+    reopens."""
+    _deployed(config_dir, custody_root, server, monkeypatch)
+    _standing_cycle_artifact(config_dir, custody_root)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    broker = _Broker(server, config_dir)
+
+    _order_response(server, "0000000601")
+    runtime.run_once((_entry_tick(),))
+    broker.fill(runtime, odno="0000000601")
+    (entry_reservation_id,) = _reservations(runtime)
+
+    _order_response(server, "0000000602")
+    runtime.run_once((_exit_tick(),))
+    broker.fill(
+        runtime,
+        odno="0000000602",
+        raw_holdings=[{"pdno": fx.INSTRUMENT, "hldg_qty": "0"}],
+    )
+
+    assert _reservations(runtime)[entry_reservation_id] is CapacityState.RELEASED
+    assert _rows(runtime, "CAPACITY_RELEASE_HELD") == []
+
+    _order_response(server, "0000000603")
+    (again,) = runtime.run_once((_entry_tick(seq=2),))
+    assert _verdict(again, CommitmentStep.LEDGER_VERIFICATION).outcome is (
+        StageOutcome.ADMIT
+    )
+    _close(runtime)
+
+
+@pytest.mark.parametrize(
+    ("container", "label"),
+    [
+        (_OMIT_OUTPUT1, "output1 key absent"),
+        (None, "output1: null"),
+        ({}, "output1: {}"),
+        ({"rt_cd": "0"}, "output1: a non-empty dict"),
+    ],
+    ids=["missing", "null", "empty-dict", "dict"],
+)
+def test_a_malformed_holdings_container_keeps_the_entry_and_denies_a_re_entry(
+    container, label, config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """review-973 round 2 (HIGH): a balance page whose ``output1`` is not a list is not flat.
+
+    HTTP 200, ``rt_cd: "0"``, no more pages — but ``output1`` absent, ``null``, or a dict. The
+    walk recorded that page as zero rows, so the balance read saw an empty, "complete"
+    holdings account and the discharge released the entry, re-opening the scope to a fresh
+    OPEN. The page's container is now tracked separately from its rows: an empty LIST is flat,
+    anything that is not a list is unknown.
+
+    All four shapes review-973 round 2 names are covered: the key absent and the key present
+    as ``null`` are distinct on the wire even though ``body.get`` answers ``None`` for both;
+    ``{}`` and a non-empty dict are the non-list containers; and ``output1: []`` is the valid
+    empty control, in :func:`test_an_empty_holdings_list_is_proven_flat_and_releases_the_entry`.
+    """
+    _deployed(config_dir, custody_root, server, monkeypatch)
+    _standing_cycle_artifact(config_dir, custody_root)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    broker = _Broker(server, config_dir)
+
+    _order_response(server, "0000000701")
+    runtime.run_once((_entry_tick(),))
+    broker.fill(runtime, odno="0000000701")
+    (entry_reservation_id,) = _reservations(runtime)
+
+    _order_response(server, "0000000702")
+    (exit_,) = runtime.run_once((_exit_tick(),))
+    assert exit_.flow.handed_off is True
+    broker.fill(runtime, odno="0000000702", holdings_container=container)
+
+    assert (
+        _reservations(runtime)[entry_reservation_id] is CapacityState.POSITION_CONSUMED
+    ), label
+    held = [r["reason"] for r in _rows(runtime, "CAPACITY_RELEASE_HELD")]
+    assert held == ["BROKER_POSITION_NOT_FLAT"]
+
+    _order_response(server, "0000000703")
+    (again,) = runtime.run_once((_entry_tick(seq=2),))
+    step8 = _verdict(again, CommitmentStep.LEDGER_VERIFICATION)
+    assert step8.outcome is StageOutcome.DENY, step8.reason
+    assert again.flow.handed_off is False
+    _close(runtime)
+
+
+def test_an_empty_holdings_list_is_proven_flat_and_releases_the_entry(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """The positive control: ``output1: []`` with no more pages IS a flat account.
+
+    An empty list is exactly how a flat KIS account answers, so this must stay a release —
+    the round-2 fix separates "the container was not a list" from "the list was empty".
+    """
+    _deployed(config_dir, custody_root, server, monkeypatch)
+    _standing_cycle_artifact(config_dir, custody_root)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    broker = _Broker(server, config_dir)
+
+    _order_response(server, "0000000801")
+    runtime.run_once((_entry_tick(),))
+    broker.fill(runtime, odno="0000000801")
+    (entry_reservation_id,) = _reservations(runtime)
+
+    _order_response(server, "0000000802")
+    runtime.run_once((_exit_tick(),))
+    broker.fill(runtime, odno="0000000802", holdings_container=[])
+
+    assert _reservations(runtime)[entry_reservation_id] is CapacityState.RELEASED
+    assert _rows(runtime, "CAPACITY_RELEASE_HELD") == []
     _close(runtime)

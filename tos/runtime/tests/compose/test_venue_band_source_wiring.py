@@ -68,9 +68,10 @@ from .conftest import (
     _VENUE_POLICY_INSTRUMENT_CLASS,
 )
 from .test_compose_root import (
-    _action_flow_inputs,
+    _action_flow_inputs_for,
     _aggregate_inputs,
     _compose,
+    _LiveRuntimeFacts,
     _reach_trusted,
 )
 from .test_marketfeed_intake_kind_wiring import _write_kis_quote_transport_config
@@ -962,18 +963,21 @@ class TestTheBootReadOnTheProductionClockPath:
         journal.write_bytes(json.dumps(line).encode("utf-8") + b"\n")
         _declare_producer_journal_band_source(config_dir, band_journal_path=journal)
         fx.write_band_strategy_file(config_dir)
-        return compose_paper_runtime(
+        facts = _LiveRuntimeFacts()
+        runtime = compose_paper_runtime(
             config_dir,
             data_dir,
             custody_root,
             "non-live-test",
             construction=fx.construction_config(),
             aggregate_risk_inputs_provider=_aggregate_inputs,
-            action_flow_inputs_provider=_action_flow_inputs,
+            action_flow_inputs_provider=_action_flow_inputs_for(facts),
             transport_kind=TransportKind.SYNTHETIC,
             # wall_clock intentionally omitted — the production default, which is the whole
             # point of this class. `_compose` would override it.
         )
+        facts.runtime = runtime
+        return runtime
 
     def test_the_boot_read_reaches_the_production_fresh_trusted_reference(
         self,

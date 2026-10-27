@@ -33,7 +33,10 @@ from tos_runtime.rcl.obligation import (
     CAPACITY_CONSUMING_STATE_VALUES,
     CapacityObligationRecorder,
 )
-from tos_runtime.rcl.projection import SqliteReservationProjectionReader
+from tos_runtime.rcl.projection import (
+    ScopeReservation,
+    SqliteReservationProjectionReader,
+)
 
 _SCOPE = ReservationScope(account="acct-1", instrument="ES")
 _IDENTITY = RuntimeIdentity(cell_id="test-cell", process_nonce="test-nonce-1")
@@ -142,18 +145,12 @@ class _FixedStateProjection:
     def all_reservations(self) -> dict[str, CapacityState]:
         return {self._reservation_id: self._state}
 
-    def instrument_state(self, _key: InstrumentKey) -> CapacityState | None:
-        return None
-
-    def instrument_last_seq(self, _key: InstrumentKey) -> int | None:
-        return None
+    def scope_reservations(self, _key: InstrumentKey) -> tuple[ScopeReservation, ...]:
+        return ()
 
     def reservation_committed_vector(
         self, _reservation_id: str
     ) -> CapacityVector | None:
-        return None
-
-    def instrument_committed_vector(self, _key: InstrumentKey) -> CapacityVector | None:
         return None
 
 
@@ -427,18 +424,12 @@ class _MutableStateProjection:
     def all_reservations(self) -> dict[str, CapacityState]:
         return {self._reservation_id: self.state}
 
-    def instrument_state(self, _key: InstrumentKey) -> CapacityState | None:
-        return None
-
-    def instrument_last_seq(self, _key: InstrumentKey) -> int | None:
-        return None
+    def scope_reservations(self, _key: InstrumentKey) -> tuple[ScopeReservation, ...]:
+        return ()
 
     def reservation_committed_vector(
         self, _reservation_id: str
     ) -> CapacityVector | None:
-        return None
-
-    def instrument_committed_vector(self, _key: InstrumentKey) -> CapacityVector | None:
         return None
 
 
