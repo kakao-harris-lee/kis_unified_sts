@@ -510,13 +510,18 @@ class _AgingSnapshots:
         self.clock = clock
         self.read_ms = read_ms
         self.reads = 0
+        #: When set, every EVEN-numbered read (2nd, 4th, ...) fails fast instead.
+        self.alternate_fast_failure = False
         self._serving: tuple[PrefetchedSnapshot, int, list[SnapshotUse]] | None = None
 
     def prefetch(
         self, scope: WitnessScope, *, today: str, abort: Callable[[], bool]
-    ) -> WitnessSnapshot:
+    ) -> WitnessSnapshot | WitnessUnavailable:
         del scope, today, abort
         self.reads += 1
+        if self.alternate_fast_failure and self.reads % 2 == 0:
+            self.clock.ms += _FAST_SNAPSHOT_MS
+            return WitnessUnavailable("balance read failed fast")
         self.clock.ms += self.read_ms
         return WitnessSnapshot(observed_at_generation=None, orders=())
 
@@ -544,7 +549,10 @@ class _AgingSnapshots:
         age = self.clock.ms - prefetched.read_started_ms
         verdict = "expired" if age > max_age_ms else "served"
         uses.append(SnapshotUse(verdict, prefetched, age, max_age_ms))
-        return verdict == "served"
+        # A served FAILED read raises in compose's witness: the release holds as well.
+        return verdict == "served" and not isinstance(
+            prefetched.outcome, WitnessUnavailable
+        )
 
 
 @pytest.fixture
@@ -567,7 +575,10 @@ def filled_store(store: SqliteEvidenceStore) -> SqliteEvidenceStore:
 
 
 def _aging_observer(
-    store: SqliteEvidenceStore, clock: _ManualClock, snapshots: _AgingSnapshots
+    store: SqliteEvidenceStore,
+    clock: _ManualClock,
+    snapshots: _AgingSnapshots,
+    trading_date: list[str] | None = None,
 ) -> tuple[KisMockFillObserver, list[bool]]:
     """An observer whose finality re-run releases iff the reconciliation was served. The RCL
     never commits here, so the attempt stays re-projectable and the cadence is all we see.
@@ -589,7 +600,7 @@ def _aging_observer(
         reproject=_reproject,
         release_committed=lambda _a: False,
         engine_holds=lambda _a: True,
-        today=lambda: _DATE,
+        today=lambda: (trading_date or [_DATE])[-1],
         monotonic=clock,
         account=_ACCOUNT,
         instrument=_INSTRUMENT,
@@ -692,3 +703,57 @@ def test_a_fresh_snapshot_after_a_run_releases_and_resets_the_run(
     tail = _snapshot_rows(filled_store)[-2:]
     assert [r["verdict"] for r in tail] == ["expired", "expired"]
     assert [r["consecutive_expired"] for r in tail] == [1, 2]
+
+
+def test_a_fast_failed_read_does_not_end_the_run_or_re_arm_the_re_read(
+    filled_store: SqliteEvidenceStore,
+) -> None:
+    """#978 review LOW 1: a prefetch that FAILS fast is ``served`` by age, but it proves
+    nothing and the release still holds — so it must not end the run. Failing input: a broker
+    alternating slow successful reads with fast failed ones. Mutation: reset the run on every
+    ``served`` -> each slow read is a run's first expiry again -> ~2 reads per retry interval
+    (~20 in 10 minutes) -> red."""
+    clock = _ManualClock()
+    snapshots = _AgingSnapshots(clock, _SLOW_SNAPSHOT_MS)
+    snapshots.alternate_fast_failure = True
+    observer, outcomes = _aging_observer(filled_store, clock, snapshots)
+    duration_ms = 10 * 60_000
+
+    _run_passes(observer, clock, clock.ms + duration_ms)
+
+    assert 2 <= snapshots.reads <= 2 + duration_ms // _RETRY_MS, snapshots.reads
+    assert outcomes == [False] * snapshots.reads
+    rows = _snapshot_rows(filled_store)
+    failed = [r for r in rows if not r["read_ok"]]
+    assert failed and all(r["verdict"] == "served" for r in failed)
+    assert all(r["read_ok"] for r in rows if r["verdict"] == "expired")
+    # The run never ends: its count only grows across the failed reads.
+    runs = [r["consecutive_expired"] for r in rows]
+    assert runs == sorted(runs) and runs[-1] == len(rows) - len(failed)
+
+
+def test_a_new_trading_date_starts_a_new_run(
+    filled_store: SqliteEvidenceStore,
+) -> None:
+    """#978 review LOW 2: a run does not carry over a trading-date change — the first expiry
+    under the new date is ``consecutive_expired`` 1 and is re-read at once again. Mutation:
+    keep the count across dates -> 4 and a 60 s wait -> red."""
+    clock = _ManualClock()
+    snapshots = _AgingSnapshots(clock, _SLOW_SNAPSHOT_MS)
+    trading_date = [_DATE]
+    observer, outcomes = _aging_observer(filled_store, clock, snapshots, trading_date)
+    _run_until(observer, clock, lambda: len(outcomes) == 3)
+    assert [r["consecutive_expired"] for r in _snapshot_rows(filled_store)] == [1, 2, 3]
+
+    trading_date.append("20260915")
+    _run_until(observer, clock, lambda: len(outcomes) == 4)
+    expired_at = clock.ms
+    _run_until(observer, clock, lambda: len(outcomes) == 5)
+
+    assert clock.ms - expired_at < _RETRY_MS // 10
+    tail = _snapshot_rows(filled_store)[-2:]
+    assert [(r["trading_date"], r["consecutive_expired"]) for r in tail] == [
+        ("20260915", 1),
+        ("20260915", 2),
+    ]
+    assert outcomes == [False] * 5
