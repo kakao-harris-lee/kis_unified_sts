@@ -116,7 +116,7 @@ injected callable.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Protocol
 
 from tos.afg import ActionFlowPermit
@@ -141,7 +141,12 @@ from tos_runtime.rcl.log import (
     SqliteCommitLog,
     StaleEpochRead,
 )
-from tos_runtime.rcl.projection import ReservationProjectionReader
+from tos_runtime.rcl.projection import (
+    ReservationProjectionReader,
+    ScopeReservation,
+    outstanding_reservations,
+)
+from tos_runtime.rcl.reservation_identity import reservation_id_in_scope
 from tos_runtime.risk.aggregate import AggregateRiskDecisionInputs, AggregateRiskService
 from tos_runtime.risk.flow import (
     ActionFlowDecisionInputs,
@@ -157,6 +162,7 @@ __all__ = [
     "CommitmentUnavailabilityStage",
     "LedgerVerificationStage",
     "item15_fields",
+    "verdict_for_scope",
 ]
 
 #: Step 9's exact ``CommandType`` match (module docstring — no gap).
@@ -179,18 +185,44 @@ _CAS_UNKNOWN_REASONS: frozenset[AppendRefusalReason] = frozenset(
 AggregateInputsProvider = Callable[[StageRequest], AggregateRiskDecisionInputs | None]
 ActionFlowInputsProvider = Callable[[StageRequest], ActionFlowDecisionInputs | None]
 PermitProvider = Callable[[StageRequest], ActionFlowPermit | None]
-ReservationIdProvider = Callable[[StageRequest], str]
+#: #966: the reservation id is derived from the permit this commit binds, so the provider is
+#: handed that permit rather than being left to re-derive an identity from the scope alone (the
+#: pre-#966 shape, which gave every attempt in a scope the same reservation — see
+#: :mod:`tos_runtime.rcl.reservation_identity`).
+ReservationIdProvider = Callable[[StageRequest, ActionFlowPermit], str | None]
 GenerationProvider = Callable[[StageRequest], int]
+
+
+#: The two ``AttemptArm.position_effect`` tokens step 8 admits (#966) — the same spellings
+#: ``config/.../order_construction_policy.yaml``'s ``action_class_shape`` declares and
+#: ``tos_runtime.compose._attempt_shape`` selects by.
+_OPEN_EFFECT = "OPEN"
+_CLOSE_EFFECT = "CLOSE"
+
+
+def _verdict(step: CommitmentStep, outcome: StageOutcome, reason: str) -> StageVerdict:
+    """The shared verdict shape every stage below uses for a reason-only outcome."""
+    return StageVerdict(
+        step=step,
+        outcome=outcome,
+        authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
+        reason=reason,
+    )
 
 
 def _unknown(step: CommitmentStep, reason: str) -> StageVerdict:
     """The shared restrictive ``UNKNOWN`` verdict shape every stage below uses."""
-    return StageVerdict(
-        step=step,
-        outcome=StageOutcome.UNKNOWN,
-        authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
-        reason=reason,
-    )
+    return _verdict(step, StageOutcome.UNKNOWN, reason)
+
+
+def _deny(step: CommitmentStep, reason: str) -> StageVerdict:
+    """A proven denial (#966 step-8 admission table)."""
+    return _verdict(step, StageOutcome.DENY, reason)
+
+
+def _admit(step: CommitmentStep, reason: str) -> StageVerdict:
+    """A positive admission (#966 step-8 admission table)."""
+    return _verdict(step, StageOutcome.ADMIT, reason)
 
 
 def _time_gate(
@@ -344,7 +376,33 @@ def _outcome_for_result(result_value: str | None) -> StageOutcome:
 
 class LedgerVerificationStage:
     """Step 8 (``LEDGER_VERIFICATION``) — ``read_linearizable`` + the RCL
-    reservation projection (module docstring)."""
+    reservation projection (module docstring).
+
+    **#966 — admission depends on the attempt's position effect.** Before #966 this step denied
+    any scope holding a reservation row at all, in any state. That kept pyramiding out, but it
+    also meant a filled entry sealed its scope forever: the row stayed at ``POSITION_CONSUMED``
+    (forward-only, no re-arm), so no exit could ever be committed, and a ``RELEASED`` row
+    blocked a later re-entry too. The admission table now reads the scope's OUTSTANDING
+    (non-``RELEASED``) rows and the arm step 2 selected for this attempt:
+
+    ===========  =========================================  =======================
+    effect       outstanding reservations in scope          verdict
+    ===========  =========================================  =======================
+    ``OPEN``     0                                          ADMIT
+    ``OPEN``     >= 1                                       DENY (no pyramiding)
+    ``CLOSE``    exactly 1, state ``POSITION_CONSUMED``     ADMIT
+    ``CLOSE``    0, or >= 2, or 1 in any other state        DENY (states listed)
+    (no arm)     —                                          DENY
+    read failure —                                          UNKNOWN
+    ===========  =========================================  =======================
+
+    ``CLOSE`` admits over exactly one ``POSITION_CONSUMED`` row and nothing else: that is the
+    one shape in which a position is known to be held and no order of this scope is still in
+    flight. A row mid-flight (``COMMITTED_UNBOUND``/``ATTEMPT_BOUND``/``POTENTIALLY_LIVE``) or
+    ``QUARANTINED_UNKNOWN`` denies — closing against an unresolved order is how a scope ends up
+    short. The position effect is read from the live arm, never from the proposal: the arm is
+    what step 2 actually selected and what the command being committed was built from.
+    """
 
     def __init__(
         self,
@@ -352,10 +410,12 @@ class LedgerVerificationStage:
         reader: ReservationProjectionReader,
         *,
         writer_epoch: int,
+        position_effect_reader: Callable[[], str | None],
     ) -> None:
         self._log = log
         self._reader = reader
         self._writer_epoch = writer_epoch
+        self._position_effect_reader = position_effect_reader
 
     def __call__(self, request: StageRequest) -> StageVerdict:
         try:
@@ -370,33 +430,69 @@ class LedgerVerificationStage:
                 f"RCL log unreachable: {type(exc).__name__}: {exc}",
             )
         try:
-            existing_state = self._reader.instrument_state(request.instrument_key)
+            rows = self._reader.scope_reservations(request.instrument_key)
         except (sqlite3.Error, OSError) as exc:
             return _unknown(
                 CommitmentStep.LEDGER_VERIFICATION,
                 f"RCL projection unreachable: {type(exc).__name__}: {exc}",
             )
-        if existing_state is not None:
-            return StageVerdict(
-                step=CommitmentStep.LEDGER_VERIFICATION,
-                outcome=StageOutcome.DENY,
-                authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
-                reason=(
-                    f"scope already holds a committed reservation at "
-                    f"{existing_state} — not a fresh scope eligible to "
-                    "originate COMMITTED_UNBOUND "
-                    "(tos_runtime.rcl.gates.INITIAL_RESERVATION_STATES)"
-                ),
-            )
-        return StageVerdict(
-            step=CommitmentStep.LEDGER_VERIFICATION,
-            outcome=StageOutcome.ADMIT,
-            authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
-            reason=(
-                "RCL log reachable at the current writer epoch; scope has no "
-                "committed reservation"
-            ),
+        return verdict_for_scope(self._position_effect_reader(), rows)
+
+
+def verdict_for_scope(
+    position_effect: str | None, rows: Sequence[ScopeReservation]
+) -> StageVerdict:
+    """:class:`LedgerVerificationStage`'s own admission table, as a pure function.
+
+    Takes the scope's FULL row set and drops the ``RELEASED`` ones itself
+    (:func:`~tos_runtime.rcl.projection.outstanding_reservations`) — the exclusion is part of
+    the rule, not something a call site is trusted to have done, so no caller can reach a
+    verdict by handing in a pre-filtered set. Public (not a private method) so each row of the
+    table is directly testable against a concrete input, with no log and no stage.
+    """
+    outstanding = outstanding_reservations(rows)
+    held = ", ".join(f"{row.reservation_id}={row.state.value}" for row in outstanding)
+    if position_effect is None:
+        return _deny(
+            CommitmentStep.LEDGER_VERIFICATION,
+            "step 2 selected no arm for this attempt, so its position effect is "
+            "unknown — an unknown effect is never admitted against the ledger "
+            f"(outstanding: {held or 'none'})",
         )
+    if position_effect == _OPEN_EFFECT:
+        if outstanding:
+            return _deny(
+                CommitmentStep.LEDGER_VERIFICATION,
+                f"scope already holds {len(outstanding)} outstanding reservation(s) "
+                f"[{held}] — an OPEN attempt needs a scope with none (no pyramiding; "
+                "tos_runtime.rcl.gates.INITIAL_RESERVATION_STATES)",
+            )
+        return _admit(
+            CommitmentStep.LEDGER_VERIFICATION,
+            "RCL log reachable at the current writer epoch; scope holds no "
+            "outstanding reservation, so an OPEN attempt may originate one",
+        )
+    if position_effect == _CLOSE_EFFECT:
+        if len(outstanding) == 1 and (
+            outstanding[0].state is CapacityState.POSITION_CONSUMED
+        ):
+            return _admit(
+                CommitmentStep.LEDGER_VERIFICATION,
+                f"RCL log reachable at the current writer epoch; scope holds exactly "
+                f"one consumed position [{held}] for a CLOSE attempt to discharge",
+            )
+        return _deny(
+            CommitmentStep.LEDGER_VERIFICATION,
+            f"a CLOSE attempt admits only over exactly one POSITION_CONSUMED "
+            f"reservation; this scope holds {len(outstanding)} outstanding "
+            f"[{held or 'none'}]",
+        )
+    return _deny(
+        CommitmentStep.LEDGER_VERIFICATION,
+        f"unrecognized position effect {position_effect!r} — only "
+        f"{_OPEN_EFFECT}/{_CLOSE_EFFECT} are admitted against the ledger "
+        f"(outstanding: {held or 'none'})",
+    )
 
 
 class AtomicCommitLogPort(Protocol):
@@ -464,7 +560,16 @@ class AtomicCommitStage:
                 "reservation commit to it",
             )
         claim_nonce, permit_digest = binding
-        reservation_id = self._reservation_id_provider(request)
+        reservation_id = self._reservation_id_provider(request, permit)
+        if reservation_id is None:
+            # #966: the reservation is named by the permit's own identity, so a permit that
+            # carries none cannot name one. UNKNOWN, never a scope-level fallback id — that is
+            # exactly the shared identity this issue removed.
+            return _unknown(
+                CommitmentStep.ATOMIC_COMMIT,
+                "the bound permit carries no identity — this attempt's reservation cannot "
+                "be named",
+            )
         transition = CapacityReservationTransition(
             reservation_id=reservation_id,
             writer_epoch=self._writer_epoch,
@@ -556,8 +661,24 @@ class CommitmentUnavailabilityStage:
                 CommitmentStep.COMMITMENT_UNAVAILABILITY,
                 "no admitted step-9 commit to confirm",
             )
+        # #966: re-read THIS attempt's own reservation row, not "the scope's reservation".
+        # A scope may now hold two rows at once (a filled entry plus the exit closing it), so a
+        # scope-keyed read could confirm a different attempt's commit as if it were this one's.
+        # The id comes from step 9's own admitted verdict (its bound_identity IS the Action Flow
+        # Permit identity the commit was bound to) — the row is then re-read from the log
+        # independently, which is what this step verifies; it never trusts step 9's own claim
+        # that the row is durable.
+        reservation_id = reservation_id_in_scope(
+            request.instrument_key, commit_verdict.bound_identity
+        )
+        if reservation_id is None:
+            return _unknown(
+                CommitmentStep.COMMITMENT_UNAVAILABILITY,
+                "step 9's admitted verdict names no Action Flow Permit identity — the "
+                "reservation it committed cannot be identified for an independent re-read",
+            )
         try:
-            state = self._reader.instrument_state(request.instrument_key)
+            state = self._reader.reservation_state(reservation_id)
         except (sqlite3.Error, OSError) as exc:
             return _unknown(
                 CommitmentStep.COMMITMENT_UNAVAILABILITY,
@@ -568,8 +689,8 @@ class CommitmentUnavailabilityStage:
         ):
             return _unknown(
                 CommitmentStep.COMMITMENT_UNAVAILABILITY,
-                f"committed state not confirmed by independent re-read "
-                f"(observed={state})",
+                f"committed state of {reservation_id!r} not confirmed by independent "
+                f"re-read (observed={state})",
             )
         return StageVerdict(
             step=CommitmentStep.COMMITMENT_UNAVAILABILITY,
@@ -577,7 +698,10 @@ class CommitmentUnavailabilityStage:
             authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
             bound_digest=commit_verdict.bound_digest,
             bound_identity=commit_verdict.bound_identity,
-            reason=f"commit durability independently confirmed: state={state}",
+            reason=(
+                f"commit durability of {reservation_id!r} independently confirmed: "
+                f"state={state}"
+            ),
         )
 
 

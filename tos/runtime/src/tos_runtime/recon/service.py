@@ -172,6 +172,15 @@ class ReconciliationReport:
     attempt (and orphan order) in scope independently passes its own gate — a conjunction,
     never an average or a majority (mirrors ``tos.recon``'s own no-blended-release
     discipline at the report level).
+
+    ``observed_positions`` (#966) is the witness snapshot's own ``positions`` axis, carried
+    through verbatim — NOT a judgement this service makes. The release consumer needs it to
+    decide whether a close actually flattened the broker-side position before it discharges the
+    entry reservation (plan §2.4). It is ``()`` both for a genuinely flat account and for a
+    witness that tracks no positions at all (``SyntheticLedgerWitness`` always reports ``()``;
+    ``KisStockBrokerWitness`` omits zero-quantity holdings by construction), so a consumer must
+    treat it as corroboration of a quantity proof, never as the proof itself — see
+    :meth:`~tos_runtime.posttrade.release_consumer.FinalityReleaseConsumer._broker_position_flat`.
     """
 
     field_confidences: tuple[FieldConfidence, ...]
@@ -179,6 +188,7 @@ class ReconciliationReport:
     permits_capacity_release: bool
     permits_rearm: bool
     reason: str | None = None
+    observed_positions: tuple[tuple[str, Decimal], ...] = ()
 
 
 def _order_existence_observations(
@@ -692,6 +702,7 @@ class ReconciliationService:
             permits_capacity_release=bool(capacity_flags) and all(capacity_flags),
             permits_rearm=bool(rearm_flags) and all(rearm_flags),
             reason=reason,
+            observed_positions=snapshot.positions,
         )
 
     @staticmethod

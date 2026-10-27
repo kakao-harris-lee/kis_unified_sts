@@ -56,7 +56,11 @@ from tos_runtime.brokercap import (
     refuse_principal_collision,
     transport_nature,
 )
-from tos_runtime.compose._attempt_arm import attempt_reader, attempt_side
+from tos_runtime.compose._attempt_arm import (
+    attempt_position_effect,
+    attempt_reader,
+    attempt_side,
+)
 from tos_runtime.compose._attempt_shape import (
     ProposalShapedConstructionStage,
     build_attempt_arms,
@@ -116,7 +120,10 @@ from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.operations.dependency_admission import observe_runtime_artifact
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
-from tos_runtime.rcl.reservation_identity import scope_reservation_id
+from tos_runtime.rcl.reservation_identity import (
+    attempt_request_reservation_id,
+    reservation_id_in_scope,
+)
 from tos_runtime.release.admission import ReleaseAdmissionService
 from tos_runtime.release.config import load_release_config
 from tos_runtime.risk.aggregate import (
@@ -757,27 +764,15 @@ def _build_realized_stages(
         ),
         time_permits_new_risk=time_gate,
     )
-    step8_stage = LedgerVerificationStage(
-        rcl_log, projection, writer_epoch=writer_epoch
+    step8_stage, step9_recorder, step10_stage = _build_ledger_stages(
+        rcl_log=rcl_log,
+        projection=projection,
+        writer_epoch=writer_epoch,
+        flow_governor=flow_governor,
+        construction_stage=construction_stage,
+        generation_provider=generation_provider,
+        time_gate=time_gate,
     )
-    permit_provider = make_permit_provider(
-        flow_governor,
-        permit_generation_provider=generation_provider,
-        command_identity_provider=lambda request: request.proposal.canonical_digest
-        or "",
-    )
-    step9_recorder = VerdictRecorder(
-        AtomicCommitStage(
-            rcl_log,
-            writer_epoch=writer_epoch,
-            permit_provider=permit_provider,
-            reservation_id_provider=lambda request: scope_reservation_id(
-                request.instrument_key.account, request.instrument_key.instrument
-            ),
-            time_permits_new_risk=time_gate,
-        )
-    )
-    step10_stage = CommitmentUnavailabilityStage(projection)
     step13_recorder, step14_stage = _build_currentness_stages(
         rcl_log=rcl_log,
         writer_epoch=writer_epoch,
@@ -796,6 +791,53 @@ def _build_realized_stages(
         step13_recorder=step13_recorder,
         step14_stage=step14_stage,
     )
+
+
+def _build_ledger_stages(
+    *,
+    rcl_log: SqliteCommitLog,
+    projection: SqliteReservationProjectionReader,
+    writer_epoch: int,
+    flow_governor: RecordingActionFlowGovernor,
+    construction_stage: OrderConstructionStage,
+    generation_provider: Callable[[StageRequest], int],
+    time_gate: Callable[[], bool],
+) -> tuple[LedgerVerificationStage, VerdictRecorder, CommitmentUnavailabilityStage]:
+    """Steps 8 (Ledger Verification), 9 (Atomic Commit) and 10 (Commitment Unavailability) —
+    split out of :func:`_build_realized_stages` purely for the function size budget, the same
+    decomposition :func:`_build_currentness_stages` already is. No behavioural difference from
+    having these three inline there.
+
+    The three share the #966 reservation identity between them: step 9 mints the id from the
+    permit it binds, and steps 8/10 read the same scope/row back — see
+    :mod:`tos_runtime.rcl.reservation_identity`.
+    """
+    step8_stage = LedgerVerificationStage(
+        rcl_log,
+        projection,
+        writer_epoch=writer_epoch,
+        # #966: admission depends on whether this attempt opens or closes a position (the
+        # stage's own docstring table), read off the arm step 2 selected.
+        position_effect_reader=lambda: attempt_position_effect(construction_stage),
+    )
+    step9_recorder = VerdictRecorder(
+        AtomicCommitStage(
+            rcl_log,
+            writer_epoch=writer_epoch,
+            permit_provider=make_permit_provider(
+                flow_governor,
+                permit_generation_provider=generation_provider,
+                command_identity_provider=lambda request: (
+                    request.proposal.canonical_digest or ""
+                ),
+            ),
+            reservation_id_provider=lambda request, permit: reservation_id_in_scope(
+                request.instrument_key, permit.permit_id
+            ),
+            time_permits_new_risk=time_gate,
+        )
+    )
+    return step8_stage, step9_recorder, CommitmentUnavailabilityStage(projection)
 
 
 def _build_currentness_stages(
@@ -837,8 +879,11 @@ def _build_currentness_stages(
         rcl_log,
         writer_epoch=writer_epoch,
         context_reader=lambda request: TransmissionCapabilityContext(
-            reservation_identity=scope_reservation_id(
-                request.instrument_key.account, request.instrument_key.instrument
+            # #966: this attempt's own reservation, from the permit identity the step-12
+            # attempt request carries (the stage treats a None identity as an incomplete
+            # context -> UNKNOWN, so a not-yet-bound attempt never gets a fabricated id).
+            reservation_identity=attempt_request_reservation_id(
+                request.instrument_key, request.attempt
             ),
             account_scope=request.instrument_key.account,
             instrument_scope=request.instrument_key.instrument,

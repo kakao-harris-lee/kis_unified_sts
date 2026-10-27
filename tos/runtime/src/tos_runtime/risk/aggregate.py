@@ -16,11 +16,10 @@ routes inputs into a kernel judgement call, it never judges).
 ``CapacityReservationTransition.committed_vector`` on the ``reservations`` row
 (``tos_runtime/rcl/schema.py`` schema v2) and
 :class:`~tos_runtime.rcl.projection.ReservationProjectionReader` exposes it via
-``instrument_committed_vector``/``reservation_committed_vector``. :meth:`AggregateRiskService
-.snapshot`'s ``conservative_current_usage`` now derives from that accessor — the empty
-``CapacityVector()`` fallback stays only for a reservation with no committed vector on record
-(no reservation yet, or a pre-K-4 row a store never re-migrated past — never a fabricated
-magnitude). The per-cell magnitudes :func:`tos.are.adverse_increment` needs
+``reservation_committed_vector``. :meth:`AggregateRiskService.snapshot`'s
+``conservative_current_usage`` derives from that accessor, summed over the scope's OUTSTANDING
+reservations (#966 — see that method's own docstring); an empty vector means "no outstanding
+reservation carries a vector on record", never a fabricated magnitude. The per-cell magnitudes :func:`tos.are.adverse_increment` needs
 (:class:`~tos.are.ProjectedCell`) remain Phase-0 / broker-capability-profile valuation inputs
 this slice does not own either way (design #13 §4 non-scope) — they still arrive via the
 caller-injected :class:`AggregateRiskDecisionInputs`, never computed here.
@@ -79,10 +78,13 @@ from tos.canonical import (
     get_scheme,
 )
 from tos.engine.records import InstrumentKey
-from tos.rcl import CapacityVector
+from tos.rcl import CapacityVector, aggregate_usage
 
 from tos_runtime.evidence.ports import EvidenceAppendPort
-from tos_runtime.rcl.projection import ReservationProjectionReader
+from tos_runtime.rcl.projection import (
+    ReservationProjectionReader,
+    outstanding_reservations,
+)
 
 __all__ = [
     "AggregateRiskConfigError",
@@ -331,15 +333,42 @@ class AggregateRiskService:
         (a ``Stage``) maps it to ``UNKNOWN`` (fail-closed, never a denial by
         omission).
 
+        **#966 — usage is the scope's aggregate, not its first row's.** A scope may now hold
+        more than one reservation at once (each attempt commits its own —
+        :mod:`tos_runtime.rcl.reservation_identity`), so ``conservative_current_usage`` is the
+        dimension-wise sum of every OUTSTANDING (non-``RELEASED``) reservation's committed
+        vector, via the kernel's own :func:`tos.rcl.aggregate_usage` (which propagates an
+        UNKNOWN magnitude rather than dropping it). Reading one row would under-report usage as
+        soon as a second reservation existed. ``RELEASED`` rows are excluded because they
+        consume nothing — that is also what lets a scope admit a fresh entry after an exit
+        completed. ``last_seq`` is the newest committed seq across the scope's rows.
+
+        Measured 2026-10-28 (#966): no runtime site writes
+        ``CapacityReservationTransition.committed_vector`` today, so every row's vector is
+        ``None`` and this aggregate is empty in practice — the rule is right, and it becomes
+        observable when a producer starts recording vectors (tracked separately).
+
         Raises:
-            Exception: Whatever :meth:`ReservationProjectionReader.instrument_state`
-                / ``instrument_last_seq`` raise on an unreachable RCL log — not
+            Exception: Whatever :meth:`ReservationProjectionReader.scope_reservations` /
+                ``reservation_committed_vector`` raise on an unreachable RCL log — not
                 caught here (module docstring's fault-contract table: steps
                 8-10 map this to UNKNOWN, not a snapshot-level decision).
         """
-        last_seq = self._projection.instrument_last_seq(key)
-        state = self._projection.instrument_state(key)
-        committed_vector = self._projection.instrument_committed_vector(key)
+        rows = self._projection.scope_reservations(key)
+        outstanding = outstanding_reservations(rows)
+        last_seq = max((row.last_seq for row in rows), default=None)
+        committed_vector = aggregate_usage(
+            [
+                vector
+                for row in outstanding
+                if (
+                    vector := self._projection.reservation_committed_vector(
+                        row.reservation_id
+                    )
+                )
+                is not None
+            ]
+        )
         self._snapshot_seq += 1
         cut_digest = self._scheme.compute_digest(
             {
@@ -356,9 +385,7 @@ class AggregateRiskService:
             snapshot_generation=snapshot_generation,
             consistency_cut_identity=derive_id("are-cut", cut_digest),
             covered_scopes=tuple(sorted(required_scopes, key=lambda s: s.value)),
-            conservative_current_usage=(
-                committed_vector if committed_vector is not None else CapacityVector()
-            ),
+            conservative_current_usage=committed_vector,
             lineage_ref=lineage_ref,
         )
         assert isinstance(snapshot, AggregateRiskStateSnapshot)
@@ -370,7 +397,12 @@ class AggregateRiskService:
                     "account": key.account,
                     "instrument": key.instrument,
                 },
-                "reservation_state": None if state is None else state.value,
+                # #966: every outstanding row of the scope, not the first row's state —
+                # the honest record of what the aggregate above was summed over.
+                "outstanding_reservations": [
+                    {"reservation_id": row.reservation_id, "state": row.state.value}
+                    for row in outstanding
+                ],
                 "all_fields_attributed": all_fields_attributed,
             },
             kind=_EVIDENCE_KIND_SNAPSHOT,

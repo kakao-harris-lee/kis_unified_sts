@@ -119,7 +119,7 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
-from tos_runtime.rcl.reservation_identity import scope_reservation_id
+from tos_runtime.rcl.reservation_lookup import reservation_id_for_attempt
 from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
 from tos_runtime.recon.ports import BrokerWitness, WitnessScope
 from tos_runtime.recon.service import ReconciliationClass, ReconciliationService
@@ -262,22 +262,34 @@ def _build_reconciliation_service(
     witness: BrokerWitness | None = None,
 ) -> ReconciliationService:
     """Assemble a real :class:`~tos_runtime.recon.service.ReconciliationService`, including the
-    ``reservation_id_for_attempt`` bridge (module docstring's "second identity gap") — every
-    attempt id maps onto the SAME constant scope reservation id, because this compose root wires
-    exactly one ``InstrumentKey`` for its whole process lifetime.
+    ``reservation_id_for_attempt`` bridge (module docstring's "second identity gap").
+
+    **#966**: that bridge no longer maps every attempt onto one constant scope id. Each attempt
+    now commits its own reservation (:mod:`tos_runtime.rcl.reservation_identity`), so the bridge
+    resolves per attempt through the durable permit join
+    (:func:`tos_runtime.rcl.reservation_lookup.reservation_id_for_attempt`) — a scope-wide answer
+    would make reconciliation read a different attempt's reservation state and classify this one
+    on it. The join returns ``None`` for an attempt it cannot place, which the service's own
+    resolver contract already treats as "no mapping known" (it then looks the attempt id up
+    directly and finds nothing — fail-closed, never a wrong row).
 
     ``witness`` is the boot's broker witness: ``None`` keeps
     :class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness` (paper, LONG, SHORT); a
     stock MOCK boot passes the real :class:`~tos_runtime.recon.witness_kis.KisStockBrokerWitness`
     (PR-3b, :mod:`tos_runtime.compose._broker_posttrade_wiring`)."""
+    projection = SqliteReservationProjectionReader(rcl_log)
     return ReconciliationService(
-        rcl_reader=SqliteReservationProjectionReader(rcl_log),
+        rcl_reader=projection,
         evidence_reader=SqliteEvidenceReceiptReader(evidence_store),
         witness=(
             SyntheticLedgerWitness(evidence_store) if witness is None else witness
         ),
-        reservation_id_for_attempt=lambda _attempt_id: scope_reservation_id(
-            account, instrument
+        reservation_id_for_attempt=lambda attempt_id: reservation_id_for_attempt(
+            evidence_store,
+            projection,
+            account=account,
+            instrument=instrument,
+            attempt_id=attempt_id,
         ),
     )
 

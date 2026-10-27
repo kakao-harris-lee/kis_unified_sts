@@ -1,0 +1,208 @@
+"""Discharging the ENTRY reservation a close attempt closed (#966, plan §2.4).
+
+Extracted from :mod:`tos_runtime.posttrade.release_consumer` to keep that module under the
+repo's 1000-line module size budget (``tools/tos_size_budget.py``) — a pure decomposition, no
+behaviour change, the same discipline :mod:`tos_runtime.rcl.gates` was split out of
+``rcl/log.py`` under. Everything here is a pure read or a pure predicate; the one RCL mutation
+stays in the consumer, which owns every writable handle.
+
+Why this concern exists at all: before #966 a scope held ONE reservation for its whole life, so
+``POSITION_CONSUMED`` was terminal in practice and no operational path reached ``RELEASED``
+after a fill. Each attempt now holds its own reservation, so a close fill both releases its own
+(it opens no position) and — under the conjunctive gates below — discharges the entry's.
+
+Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos.engine.records``/
+``tos.rcl`` + ``tos_runtime.evidence.store``/``tos_runtime.rcl.*``/``tos_runtime.recon.*`` only.
+No ``shared.*``, no write call.
+"""
+
+from __future__ import annotations
+
+from decimal import Decimal
+from enum import StrEnum
+
+from tos.engine.records import EgressResultPayload, InstrumentKey
+
+from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.rcl.projection import (
+    ReservationProjectionReader,
+    ScopeReservation,
+    outstanding_reservations,
+)
+from tos_runtime.rcl.reservation_identity import permit_identity_of
+from tos_runtime.rcl.reservation_lookup import attempt_id_for_reservation
+from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
+from tos_runtime.recon.ports import WitnessScope, WitnessUnavailable
+from tos_runtime.recon.service import ReconciliationReport
+
+__all__ = [
+    "DischargeRefusal",
+    "broker_position_flat",
+    "entry_discharge_refusal",
+    "entry_final_quantity",
+    "entry_release_command_id",
+    "other_outstanding",
+    "recorded_final_quantity",
+]
+
+
+def entry_release_command_id(close_attempt_id: str) -> str:
+    """The RCL idempotency key for discharging the ENTRY reservation a close attempt closed.
+
+    A SECOND spelling is required: the close attempt commits two distinct release transitions —
+    its own reservation and the entry's — and the log's ``command_id`` is UNIQUE, so re-using
+    :func:`~tos_runtime.posttrade.release_consumer.release_command_id` would make the second a
+    ``DUPLICATE_COMMAND_ID`` refusal. Keyed on the close attempt (never a clock or counter), so
+    a replay of the same close reproduces the same key and the transition stays idempotent.
+    """
+    return f"release-entry-{close_attempt_id}"
+
+
+class DischargeRefusal(StrEnum):
+    """Why an entry reservation may not be discharged yet.
+
+    Mapped onto a :class:`~tos_runtime.posttrade.release_consumer.ReleaseHoldReason` by the
+    consumer, which owns the evidence vocabulary; kept separate so this module stays free of
+    the consumer's own imports (no cycle).
+    """
+
+    #: The close did not provably discharge the entry in full.
+    QUANTITY_UNPROVEN = "QUANTITY_UNPROVEN"
+    #: The witness still observes a non-zero holding of this instrument.
+    POSITION_NOT_FLAT = "POSITION_NOT_FLAT"
+
+
+def other_outstanding(
+    projection: ReservationProjectionReader,
+    *,
+    account: str,
+    instrument: str,
+    reservation_id: str,
+) -> tuple[ScopeReservation, ...]:
+    """The scope's outstanding (non-``RELEASED``) reservations OTHER than ``reservation_id``.
+
+    Empty for an ordinary entry fill; exactly one ``POSITION_CONSUMED`` row — the entry being
+    closed — for a close fill. Any other shape is one the consumer refuses to act on.
+    """
+    key = InstrumentKey(account=account, instrument=instrument)
+    return tuple(
+        row
+        for row in outstanding_reservations(projection.scope_reservations(key))
+        if row.reservation_id != reservation_id
+    )
+
+
+def broker_position_flat(report: ReconciliationReport, instrument: str) -> bool:
+    """Whether the witness observed no non-zero holding of ``instrument``.
+
+    Reads :attr:`~tos_runtime.recon.service.ReconciliationReport.observed_positions`, the
+    witness snapshot's own axis — the SAME observation gate 3 already judged on, never a second
+    ``observe`` call.
+
+    ⚠ Disclosed, not hidden: a witness that tracks no positions at all reports ``()``, which
+    this reads as flat. :class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness` is
+    such a witness (it has no broker ledger to read — see its own module docstring), so on a
+    synthetic-transport boot this condition carries no broker-side information and the binding
+    condition is the quantity proof alone. :class:`~tos_runtime.recon.witness_kis
+    .KisStockBrokerWitness` does read the real balance inquiry and omits zero-quantity
+    holdings, so an absent row there genuinely means flat.
+    """
+    return not any(
+        symbol == instrument and quantity != 0
+        for symbol, quantity in report.observed_positions
+    )
+
+
+def recorded_final_quantity(
+    evidence_store: SqliteEvidenceStore,
+    *,
+    account: str,
+    instrument: str,
+    attempt_id: str,
+) -> Decimal | None:
+    """``attempt_id``'s own durably recorded FINAL filled quantity, if it has one.
+
+    The receipt whose recorded result is a full fill — a filled magnitude with zero remaining.
+    ``None`` when the attempt has no such receipt (never filled, filled only partially, or the
+    receipt path is unreadable); absence is never read as zero.
+    """
+    scope = WitnessScope(
+        account=account,
+        instrument_keys=(InstrumentKey(account=account, instrument=instrument),),
+        attempt_ids=(attempt_id,),
+    )
+    try:
+        receipts = SqliteEvidenceReceiptReader(evidence_store).receipts(scope)
+    except WitnessUnavailable:
+        return None
+    for receipt in receipts:
+        if (
+            receipt.attempt_id == attempt_id
+            and receipt.filled_quantity is not None
+            and receipt.remaining_quantity is not None
+            and Decimal(receipt.remaining_quantity) == Decimal(0)
+            and Decimal(receipt.filled_quantity) > Decimal(0)
+        ):
+            return Decimal(receipt.filled_quantity)
+    return None
+
+
+def entry_final_quantity(
+    evidence_store: SqliteEvidenceStore,
+    *,
+    account: str,
+    instrument: str,
+    reservation_id: str,
+) -> tuple[str | None, Decimal | None]:
+    """The ``(attempt_id, final filled quantity)`` behind an entry reservation.
+
+    Recovered from the reservation's OWN id — the permit it is named after, then the durable
+    evidence join (:mod:`tos_runtime.rcl.reservation_lookup`) — never from whatever attempt is
+    live, which during a close is the close's. Either element is ``None`` when it cannot be
+    established: a pre-#966 scope-level row carries no attempt identity at all, and an attempt
+    with no full-fill receipt has no final quantity.
+    """
+    permit_identity = permit_identity_of(
+        reservation_id, account=account, instrument=instrument
+    )
+    if permit_identity is None:
+        return None, None
+    attempt_id = attempt_id_for_reservation(evidence_store, permit_identity)
+    if attempt_id is None:
+        return None, None
+    return attempt_id, recorded_final_quantity(
+        evidence_store, account=account, instrument=instrument, attempt_id=attempt_id
+    )
+
+
+def entry_discharge_refusal(
+    payload: EgressResultPayload,
+    *,
+    entry_quantity: Decimal | None,
+    report: ReconciliationReport,
+    instrument: str,
+) -> DischargeRefusal | None:
+    """The first gate that refuses this discharge, or ``None`` when both admit.
+
+    Conjunctive, in the plan's own order (§2.4):
+
+    1. the close's cumulative filled quantity equals the entry's recorded final filled quantity
+       AND its remaining quantity is zero — the position the entry reservation accounts for is
+       discharged in full, not in part. This is what makes
+       ``TransitionCause.FINAL_QUANTITY_PROOF`` an honest claim rather than a label;
+    2. the broker-side reading corroborates it (:func:`broker_position_flat`).
+
+    A partial close therefore refuses, and the entry's capacity stays committed for the part of
+    the position still open (ADR-002-012 :179 — committed consumption cannot be released).
+    """
+    if (
+        entry_quantity is None
+        or payload.filled_quantity is None
+        or payload.remaining_quantity is None
+        or Decimal(payload.remaining_quantity) != Decimal(0)
+        or Decimal(payload.filled_quantity) != entry_quantity
+    ):
+        return DischargeRefusal.QUANTITY_UNPROVEN
+    if not broker_position_flat(report, instrument):
+        return DischargeRefusal.POSITION_NOT_FLAT
+    return None

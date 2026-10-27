@@ -94,7 +94,7 @@ from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.config import FinalityConfig
 from tos_runtime.rcl.obligation import CapacityObligationRecorder
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
-from tos_runtime.rcl.reservation_identity import scope_reservation_id
+from tos_runtime.rcl.reservation_lookup import reservation_id_for_attempt
 from tos_runtime.recovery.composite_state_writer import (
     COMPOSITE_STATE_STORE_FILE_NAME,
     CompositeStateWriter,
@@ -530,19 +530,25 @@ def wire_engine_and_driver(
         mesh_snapshot_refresher: Forwarded to :func:`_build_preconditions` — see its own
             docstring.
     """
-    # Kernel round #1 §3 (lane B): the reservation id bound to any attempt in THIS compose root
-    # is always this same formula — the SAME one _build_realized_stages' AtomicCommitStage
-    # reservation_id_provider and _build_currentness_stages' TransmissionCapabilityStage
-    # context_reader already use — because this compose root wires exactly one InstrumentKey
-    # (context_resolver.instrument_key) for its whole process lifetime (see
-    # tos_runtime.rcl.obligation's own module docstring, "Reservation-id resolution").
+    # #966: a SEND_REFUSED names an attempt, and since #966 each attempt holds its own
+    # reservation (tos_runtime.rcl.reservation_identity), so the resolver can no longer answer
+    # with the scope's single id — that would read back a DIFFERENT attempt's current capacity
+    # state as if it were this refusal's. It resolves through the durable permit join instead
+    # (tos_runtime.rcl.reservation_lookup), which returns None for an attempt it cannot place;
+    # the recorder's own resolver contract already admits None (see its docstring) and fails
+    # closed on it. This compose root still wires exactly one InstrumentKey
+    # (context_resolver.instrument_key) for its whole process lifetime.
     instrument_key = context_resolver.instrument_key
     obligation_recorder = CapacityObligationRecorder(
         store=evidence_store,
         emergency_log=emergency_log,
         projection=projection,
-        reservation_id_resolver=lambda _attempt_id: scope_reservation_id(
-            instrument_key.account, instrument_key.instrument
+        reservation_id_resolver=lambda attempt_id: reservation_id_for_attempt(
+            evidence_store,
+            projection,
+            account=instrument_key.account,
+            instrument=instrument_key.instrument,
+            attempt_id=attempt_id,
         ),
     )
     # T2 lane C: the SendSeal capture/lookup seam between the gateway's own SEND_SEALED record

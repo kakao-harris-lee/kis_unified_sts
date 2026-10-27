@@ -37,7 +37,7 @@ values (module docstring "the two kernel-facing values") the compose wiring laye
 in place of the retired ``EgressAttestations`` fields.
 
 Firewall: stdlib + ``tos.egress`` (``RestrictiveLatchState``) + ``tos.engine.records``
-(``InstrumentKey``) + ``tos.rcl`` (``CapacityState``) + ``tos_runtime.rcl.projection``
+(``InstrumentKey``) + ``tos_runtime.rcl.projection``
 only — no ``shared.*``, no verdict authorship (Phase 5 plan §2 decision 1 (b)).
 """
 
@@ -49,9 +49,11 @@ from typing import Any, Protocol, runtime_checkable
 
 from tos.egress import RestrictiveLatchState
 from tos.engine.records import InstrumentKey
-from tos.rcl import CapacityState
 
-from tos_runtime.rcl.projection import ReservationProjectionReader
+from tos_runtime.rcl.projection import (
+    ReservationProjectionReader,
+    outstanding_reservations,
+)
 
 __all__ = [
     "CapacityOwner",
@@ -149,13 +151,16 @@ class RestrictiveLatchOwner:
 class CapacityOwner:
     """The item-16 ``worst_credible_capacity`` runtime owner (plan §2 decision 6).
 
-    Reads whether an outstanding (non-``RELEASED``) reservation is currently held
-    for one composed :class:`~tos.engine.records.InstrumentKey` scope via the RCL
-    reservation projection (:mod:`tos_runtime.rcl.projection`) — the projection's own
-    docstring: "slice #1 projects at most one [reservation] per scope", so the
-    honest worst-credible reading for a single scope is exactly 0 or 1, never a
-    fabricated larger magnitude. DESCRIPTIVE only (module docstring); never an
-    independent gate.
+    Counts the outstanding (non-``RELEASED``) reservations currently held for one composed
+    :class:`~tos.engine.records.InstrumentKey` scope via the RCL reservation projection
+    (:mod:`tos_runtime.rcl.projection`).
+
+    **#966**: that count is no longer capped at 1. Each attempt commits its own reservation
+    (:mod:`tos_runtime.rcl.reservation_identity`), so a scope legitimately holds two at once
+    while an exit closes a filled entry, and the honest worst-credible reading is the real
+    count — reporting 1 for two held reservations would understate exposure, which is the one
+    direction a conservative reading must never err in. DESCRIPTIVE only (module docstring);
+    never an independent gate.
     """
 
     def __init__(
@@ -168,15 +173,14 @@ class CapacityOwner:
         """The outstanding-reservation count for this owner's scope.
 
         Returns:
-            ``0`` when no reservation is projected for the scope, or the projected
-            reservation is already :attr:`~tos.rcl.CapacityState.RELEASED`
-            (terminal — no outstanding exposure); ``1`` when a non-``RELEASED``
-            reservation is currently held there.
+            How many of the scope's reservations are not yet
+            :attr:`~tos.rcl.CapacityState.RELEASED` — ``0`` when the scope holds none or all of
+            them are released (terminal, no outstanding exposure), otherwise the real count
+            (``1`` for an ordinary open position, ``2`` while an exit closes a filled entry).
         """
-        state = self._projection.instrument_state(self._scope)
-        if state is None or state is CapacityState.RELEASED:
-            return 0
-        return 1
+        return len(
+            outstanding_reservations(self._projection.scope_reservations(self._scope))
+        )
 
     def describe(self) -> Mapping[str, Any]:
         """Evidence-facing description — the scope coordinates + the resolved count."""

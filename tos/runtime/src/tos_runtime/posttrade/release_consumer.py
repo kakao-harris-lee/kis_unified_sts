@@ -6,11 +6,22 @@ then independently reloads the proof, economic obligation, reservation scope,
 and reconciliation result. Every release gate is conjunctive; a non-positive
 gate records ``CAPACITY_RELEASE_HELD`` and performs no RCL transition.
 
-``FULL_FILL`` targets ``POSITION_CONSUMED``. A confirmed non-execution result
-(``CANCEL_ACK``, ``EXPIRED``, or ``REJECT``) requires a fresh non-execution
-proof and targets ``RELEASED``. Positive intent is evidenced before the RCL
-mutation, and the returned :class:`ReleaseOutcome` lets the caller update its
-in-memory projection only after the durable transition commits.
+A confirmed non-execution result (``CANCEL_ACK``, ``EXPIRED``, or ``REJECT``)
+requires a fresh non-execution proof and targets ``RELEASED``. Positive intent
+is evidenced before the RCL mutation, and the returned :class:`ReleaseOutcome`
+lets the caller update its in-memory projection only after the durable
+transition commits.
+
+A ``FULL_FILL``'s destination depends on what the fill left behind (#966): an
+**entry** fill (no other outstanding reservation in its scope) targets
+``POSITION_CONSUMED``, while a **close** fill (exactly one other, at
+``POSITION_CONSUMED``) targets ``RELEASED`` for its own reservation and then
+discharges that entry's — :mod:`tos_runtime.posttrade.entry_discharge` holds
+the reads and gates. Any other shape holds (:attr:`ReleaseHoldReason
+.AMBIGUOUS_SCOPE_RESERVATIONS`). Which of the two a fill is comes off the
+ledger's own rows, never a re-reported attribute of the attempt: step 8's
+admission table is what makes the shapes distinguishable
+(``tos_runtime.risk.ledger_stages``).
 
 Obligation-expiry observations are record-only and deduplicated per
 reservation occupancy. Their wait clock is process-local monotonic time; it
@@ -21,6 +32,7 @@ or mutate the engine's reservation projection.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
@@ -47,11 +59,26 @@ from tos.time.domains import HealthState
 
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.entry_discharge import (
+    DischargeRefusal,
+    entry_discharge_refusal,
+    entry_final_quantity,
+    entry_release_command_id,
+    other_outstanding,
+)
 from tos_runtime.posttrade.finality import ReleaseFinalityProducer
 from tos_runtime.rcl.finality_witness import release_reservation
 from tos_runtime.rcl.log import ReservationTransitionRefusal, SqliteCommitLog
-from tos_runtime.rcl.projection import SqliteReservationProjectionReader
-from tos_runtime.rcl.reservation_identity import scope_reservation_id
+from tos_runtime.rcl.projection import (
+    ScopeReservation,
+    SqliteReservationProjectionReader,
+)
+from tos_runtime.rcl.reservation_identity import (
+    scope_reservation_id,
+)
+from tos_runtime.rcl.reservation_lookup import (
+    reservation_id_for_attempt,
+)
 from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
 from tos_runtime.recon.ports import WitnessScope, WitnessUnavailable
 from tos_runtime.recon.service import (
@@ -73,6 +100,7 @@ from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
     "CAPACITY_RELEASE_HELD_KIND",
+    "entry_release_command_id",
     "release_command_id",
     "CAPACITY_RELEASE_INTENT_KIND",
     "RELEASE_PROOF_OVERDUE_KIND",
@@ -151,6 +179,23 @@ class ReleaseHoldReason(StrEnum):
     #: Every prior gate passed but the RCL log itself refused the transition (e.g. a concurrent
     #: writer moved the tip — a genuine CAS race, not a gate this consumer can pre-empt).
     RCL_TRANSITION_REFUSED = "RCL_TRANSITION_REFUSED"
+    #: #966: the scope's OTHER outstanding reservations are not the one shape a close is
+    #: admitted over (exactly one, at ``POSITION_CONSUMED``) — two of them, or one mid-flight.
+    AMBIGUOUS_SCOPE_RESERVATIONS = "AMBIGUOUS_SCOPE_RESERVATIONS"
+    #: #966: the close did not provably discharge the entry in full (quantities disagree, a
+    #: remainder is left, or the entry's own final quantity is not on record).
+    ENTRY_QUANTITY_UNPROVEN = "ENTRY_QUANTITY_UNPROVEN"
+    #: #966: the witness still observes a non-zero holding of this instrument.
+    BROKER_POSITION_NOT_FLAT = "BROKER_POSITION_NOT_FLAT"
+
+
+#: :class:`~tos_runtime.posttrade.entry_discharge.DischargeRefusal` -> this module's own
+#: evidence vocabulary. The two live apart so ``entry_discharge`` never imports this module
+#: (which imports it) — the mapping is the one place they meet.
+_DISCHARGE_HOLD_REASONS: Mapping[DischargeRefusal, ReleaseHoldReason] = {
+    DischargeRefusal.QUANTITY_UNPROVEN: ReleaseHoldReason.ENTRY_QUANTITY_UNPROVEN,
+    DischargeRefusal.POSITION_NOT_FLAT: ReleaseHoldReason.BROKER_POSITION_NOT_FLAT,
+}
 
 
 class ReleaseOutcomeLike(Protocol):
@@ -318,7 +363,18 @@ class FinalityReleaseConsumer:
             caller's own signal for whether the kernel's in-memory projection may now be
             released too.
         """
-        reservation_id = self._reservation_id()
+        reservation_id = self._reservation_id(payload.attempt_id)
+        if reservation_id is None:
+            # #966: no reservation row can be attributed to this attempt — the durable permit
+            # join is empty/ambiguous and the ledger holds no pre-#966 scope row either. A
+            # release-eligible result is HELD (fail-closed, on record); a result with no release
+            # destination at all records nothing, exactly as below.
+            if (
+                payload.kind is EgressResultKind.FULL_FILL
+                or payload.kind in _NON_EXECUTION_KINDS
+            ):
+                return self._hold(payload, None, ReleaseHoldReason.NO_RESERVATION)
+            return ReleaseOutcome(released=False, attempt_id=payload.attempt_id)
         self._check_obligation_expiry(reservation_id=reservation_id)
 
         if payload.kind is EgressResultKind.FULL_FILL:
@@ -329,12 +385,23 @@ class FinalityReleaseConsumer:
         # docstring); nothing recorded, since no release was ever attempted.
         return ReleaseOutcome(released=False, attempt_id=payload.attempt_id)
 
-    def _reservation_id(self) -> str:
-        """The scope-level RCL reservation id (module docstring's M6 fix —
-        :func:`~tos_runtime.rcl.reservation_identity.scope_reservation_id`, the ONE shared
-        helper every production site in this compose root now imports instead of re-deriving).
+    def _reservation_id(self, attempt_id: str) -> str | None:
+        """THIS attempt's own RCL reservation id, or ``None`` when none can be attributed.
+
+        #966: a reservation is per attempt now (:mod:`tos_runtime.rcl.reservation_identity`),
+        so a scope-level answer would release a DIFFERENT attempt's reservation once a scope
+        holds two rows at once. :func:`~tos_runtime.rcl.reservation_lookup
+        .reservation_id_for_attempt` resolves it from durable evidence — never from the live
+        flow, which is another attempt's by the time a recovered result is re-projected — and
+        only ever returns an id the log holds a row for (a pre-#966 scope row included).
         """
-        return scope_reservation_id(self.account, self.instrument)
+        return reservation_id_for_attempt(
+            self.evidence_store,
+            self.projection,
+            account=self.account,
+            instrument=self.instrument,
+            attempt_id=attempt_id,
+        )
 
     # -- currentness (Phase 5 W3.2 POST_TRADE dimension reader) -----------------------
 
@@ -347,8 +414,14 @@ class FinalityReleaseConsumer:
 
         Scans this scope's own :data:`CAPACITY_RELEASE_INTENT_KIND` /
         :data:`CAPACITY_RELEASE_HELD_KIND` evidence rows (newest ``seq`` first, mirroring
-        :meth:`_active_generation`'s own scan style) for the first one matching this
-        consumer's own :meth:`_reservation_id`:
+        :meth:`_active_generation`'s own scan style) for the first one belonging to this
+        consumer's scope. #966: that is a scope-PREFIX match now, not one id — every
+        per-attempt reservation id of this scope starts with the scope id
+        (:func:`~tos_runtime.rcl.reservation_identity.permit_reservation_id`), and a pre-#966
+        ledger's row IS the scope id, so both forms are covered by the one test. A row this
+        consumer could not attribute to any reservation at all (``reservation_id`` null) is
+        skipped — it says nothing about a reservation's post-trade state. The dimension then
+        reads:
 
         - No matching row at all (no post-trade fact yet for this scope) ⇒ ``True`` — a
           scope that has never sent an attempt has no post-trade fact YET, which is the
@@ -370,14 +443,17 @@ class FinalityReleaseConsumer:
             ``True`` unless the most recent recorded outcome for this scope is a
             genuine reconciliation conflict.
         """
-        reservation_id = self._reservation_id()
+        scope_prefix = scope_reservation_id(self.account, self.instrument)
         rows = self.evidence_store.connection.execute(
             "SELECT kind, payload_json FROM entries WHERE kind IN (?, ?) ORDER BY seq DESC",
             (CAPACITY_RELEASE_INTENT_KIND, CAPACITY_RELEASE_HELD_KIND),
         ).fetchall()
         for kind, payload_json in rows:
             decoded = json.loads(payload_json)["payload"]
-            if decoded.get("reservation_id") != reservation_id:
+            row_reservation_id = decoded.get("reservation_id")
+            if not isinstance(row_reservation_id, str) or not (
+                row_reservation_id.startswith(scope_prefix)
+            ):
                 continue
             if kind == CAPACITY_RELEASE_INTENT_KIND:
                 return True
@@ -386,7 +462,7 @@ class FinalityReleaseConsumer:
             )
         return True
 
-    # -- FULL_FILL -> POSITION_CONSUMED -----------------------------------------------
+    # -- FULL_FILL -> POSITION_CONSUMED (entry) / RELEASED (close) ---------------------
 
     def _consume_full_fill(
         self, payload: EgressResultPayload, *, reservation_id: str
@@ -417,14 +493,48 @@ class FinalityReleaseConsumer:
                 ReleaseHoldReason.NOT_CORROBORATED,
                 detail=report.reason,
             )
-        return self._apply_gate4_and_release(
+        # #966: an entry's fill CONSUMES capacity (it leaves a position behind); a close's fill
+        # RELEASES it (it leaves none). Which of the two this attempt is, is derived from the
+        # ledger itself — the other outstanding reservations of its scope — not from a
+        # re-reported attribute of the attempt: step 8's admission table (see
+        # tos_runtime.risk.ledger_stages.LedgerVerificationStage) only ever admits an OPEN over
+        # ZERO outstanding reservations and a CLOSE over EXACTLY ONE at POSITION_CONSUMED, and
+        # no third commit can land on the scope in between, so the two shapes are
+        # distinguishable by construction and stay so across a restart (the rows are durable,
+        # the live arm is not).
+        others = other_outstanding(
+            self.projection,
+            account=self.account,
+            instrument=self.instrument,
+            reservation_id=reservation_id,
+        )
+        if not others:
+            return self._apply_gate4_and_release(
+                payload,
+                reservation_id=reservation_id,
+                proof=proof,
+                obligation=obligation,
+                report_reason=report.reason,
+                to_state=CapacityState.POSITION_CONSUMED,
+            )
+        if len(others) != 1 or others[0].state is not CapacityState.POSITION_CONSUMED:
+            return self._hold(
+                payload,
+                reservation_id,
+                ReleaseHoldReason.AMBIGUOUS_SCOPE_RESERVATIONS,
+                detail=", ".join(f"{r.reservation_id}={r.state.value}" for r in others),
+            )
+        outcome = self._apply_gate4_and_release(
             payload,
             reservation_id=reservation_id,
             proof=proof,
             obligation=obligation,
             report_reason=report.reason,
-            to_state=CapacityState.POSITION_CONSUMED,
+            to_state=CapacityState.RELEASED,
         )
+        if outcome.released:
+            self._discharge_entry(payload, others[0], proof=proof, report=report)
+        return outcome
 
     # -- CANCEL_ACK / EXPIRED / REJECT -> RELEASED ------------------------------------
 
@@ -481,6 +591,76 @@ class FinalityReleaseConsumer:
             obligation=obligation,
             report_reason=report.reason,
             to_state=CapacityState.RELEASED,
+        )
+
+    # -- #966: the scope's other reservations, and discharging the entry ----------------
+    # The reads and the pure gates live in tos_runtime.posttrade.entry_discharge (size-budget
+    # decomposition); what stays here is the one RCL mutation and the evidence it records.
+
+    def _discharge_entry(
+        self,
+        payload: EgressResultPayload,
+        entry: ScopeReservation,
+        *,
+        proof: PostTradeFinalityProof,
+        report: ReconciliationReport,
+    ) -> None:
+        """Take the closed entry's reservation ``POSITION_CONSUMED -> RELEASED`` (plan §2.4).
+
+        Runs only after this close attempt's OWN release has durably committed, and only when
+        :func:`~tos_runtime.posttrade.entry_discharge.entry_discharge_refusal` admits — see
+        that function for the two conjunctive conditions and why each is required.
+
+        The witness supplied to the RCL is the close's own finality proof: precisely the
+        artifact that proves the entry's position is gone. It is NOT re-used as a proof of the
+        entry's obligation — gate 4's non-transferability check binds that proof to the close
+        attempt's own obligation, and this transition claims nothing about the entry's.
+
+        The entry attempt is recovered from the entry reservation's own id (its permit, then
+        the durable evidence join) — never from the live in-flight attempt, which is the
+        close's. A pre-#966 scope-level entry row carries no attempt identity, so its quantity
+        cannot be proven and this holds: the honest outcome for an older ledger.
+
+        **Known limitation (not a new retry path).** Nothing retries a hold here — the fill
+        observer's loop stops once the close's own release command is committed. The entry then
+        stays ``POSITION_CONSUMED`` with a ``CAPACITY_RELEASE_HELD`` row naming why, which is
+        conservative: the scope still admits a further CLOSE but no new OPEN.
+        """
+        entry_attempt_id, entry_quantity = entry_final_quantity(
+            self.evidence_store,
+            account=self.account,
+            instrument=self.instrument,
+            reservation_id=entry.reservation_id,
+        )
+        refusal = entry_discharge_refusal(
+            payload,
+            entry_quantity=entry_quantity,
+            report=report,
+            instrument=self.instrument,
+        )
+        if refusal is not None:
+            self._hold(
+                payload,
+                entry.reservation_id,
+                _DISCHARGE_HOLD_REASONS[refusal],
+                detail=(
+                    f"entry attempt={entry_attempt_id} final_quantity={entry_quantity} "
+                    f"vs close filled={payload.filled_quantity} "
+                    f"remaining={payload.remaining_quantity}; "
+                    f"observed_positions={report.observed_positions}"
+                ),
+            )
+            return
+        self._release(
+            payload,
+            reservation_id=entry.reservation_id,
+            proof=proof,
+            report_reason=report.reason,
+            to_state=CapacityState.RELEASED,
+            resolution_generation=self._active_generation(
+                account=self.account, instrument=self.instrument
+            ),
+            command_id=entry_release_command_id(payload.attempt_id),
         )
 
     # -- gate 3 (reconciliation) --------------------------------------------------------
@@ -635,6 +815,7 @@ class FinalityReleaseConsumer:
         report_reason: str | None,
         to_state: CapacityState,
         resolution_generation: int | None,
+        command_id: str | None = None,
     ) -> ReleaseOutcome:
         current_state = self.projection.reservation_state(reservation_id)
         if current_state is None:
@@ -685,7 +866,11 @@ class FinalityReleaseConsumer:
             receipt = release_reservation(
                 self.rcl_log,
                 transition,
-                command_id=release_command_id(payload.attempt_id),
+                command_id=(
+                    release_command_id(payload.attempt_id)
+                    if command_id is None
+                    else command_id
+                ),
                 command_digest=command_digest,
                 expected_seq=expected_seq,
                 proof=proof,
@@ -719,7 +904,7 @@ class FinalityReleaseConsumer:
     def _hold(
         self,
         payload: EgressResultPayload,
-        reservation_id: str,
+        reservation_id: str | None,
         reason: ReleaseHoldReason,
         *,
         detail: str | None = None,
