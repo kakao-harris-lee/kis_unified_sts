@@ -84,7 +84,8 @@ static_body_fields:
   SLL_TYPE: ""
   CNDT_PRIC: ""
 price_scale: 100
-min_send_interval_ms: 2000
+min_send_interval_ms: 2000              # 앱 키의 모든 요청 간격 (#970 — 주문·토큰·조회 공용)
+app_key_request_wait_budget_ms: 4000    # 슬롯 대기 상한 = 2 × 간격 (루프·FETCH 두 스레드, #970)
 token_reissue_min_interval_s: 60   # 미실측 제안값 (N-15) — 런북 §4
 request_timeout_s: 10
 allow_plaintext_for_tests: false

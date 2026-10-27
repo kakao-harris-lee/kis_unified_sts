@@ -255,7 +255,7 @@ bash <(git -C $MAIN show origin/main:tools/tos_cp3/runners/setup_stock_mock_once
 ```
 - `kis-mock-order-paper` = 트리 `MOCK_STOCK_ORDER.principal` 의 `{environment_label}` 치환값(custody 는 치환하지 않는다 — `tos-kis-mock-transport.md` §5).
 - 스크립트가 쓰는 `$ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml`(0600) = `tos-kis-mock-transport.md` §4 값 + `mode: live` · `endpoint_rest_base: "https://openapivts.koreainvestment.com:29443"`
-  · `price_scale: 100` · `request_timeout_s: 10` · `min_send_interval_ms: 2000` · `token_reissue_min_interval_s: 60` · `allow_plaintext_for_tests: false`
+  · `price_scale: 100` · `request_timeout_s: 10` · `min_send_interval_ms: 2000` · `app_key_request_wait_budget_ms: 4000` · `token_reissue_min_interval_s: 60` · `allow_plaintext_for_tests: false`
   · `ACNT_PRDT_CD` = **계좌 뒤 2자리**(다르면 코덱이 송신 거부). §4 표의 「`mode: live` 무조건 거부」는 옛 문장 — 지금은 compose 가 `codec_bound=True` 를 준다.
 - **상시 승인(그날, 운영자 · #955)** — 파일 `$ST/cp3-setup-d-stock-custody/approvals/standing-session.yaml`(0600). 쓰는 때는 아래 «볼 것» 의 `render ok` 줄 뒤 · 첫 진입 전(런타임이 이미 떠 있어도 된다 — 첫 사용 때 결속).
   승인 없이는 신호가 와도 4단계에서 멎는다(송신 0). MOCK 트리가 아니면 rc 1 로 아무것도 쓰지 않는다 · 덮어쓰기는 `--replace` 뿐.

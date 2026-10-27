@@ -261,6 +261,7 @@ _TRANSPORT: dict[str, Any] = {
     },
     "price_scale": 100,
     "min_send_interval_ms": 2000,
+    "app_key_request_wait_budget_ms": 4000,
     "token_reissue_min_interval_s": 60,
     "request_timeout_s": 10,
     "allow_plaintext_for_tests": True,
