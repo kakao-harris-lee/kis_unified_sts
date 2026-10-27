@@ -44,6 +44,7 @@ from typing import Any
 from tos.egressgw import (
     CandidateConstruction,
     DerivationOutcome,
+    EffectDimensionSpec,
     OrderConstructionStage,
     QuantityDerivation,
     candidate_command_verdict,
@@ -84,6 +85,10 @@ def build_attempt_arms(
     rules = loaded_ocp.construction_rules
 
     def _arm(action_class: ActionClass) -> AttemptArm:
+        # ONE arm per class: the direction is this tree's own governed DIRECTION axis
+        # (`resolve_construction_direction`), so a long tree builds `CLOSE.LONG` (SELL) only and
+        # a short tree `CLOSE.SHORT` (BUY) only — a tree that traded both directions would need
+        # both CLOSE arms here, and today's trees are single-direction by construction.
         direction = resolve_construction_direction(rules, action_class=action_class)
         shape = rules.action_class_shape[(action_class, direction)]
         envelope = build_construction_envelope(
@@ -167,6 +172,7 @@ class ProposalShapedConstructionStage(OrderConstructionStage):
     the selected one and republishes its :attr:`construction`. :attr:`attempt` is the arm the
     CURRENT attempt selected (``None`` before step 2 ran or when it refused) — steps 3/7/14 and
     the send-boundary context read it so the whole attempt uses one action class and one side.
+    :attr:`effect_specs` follows the same arm, since step 5 derives its envelope from it.
     """
 
     def __init__(
@@ -183,6 +189,18 @@ class ProposalShapedConstructionStage(OrderConstructionStage):
         )
         self._loaded_ocp = loaded_ocp
         self.attempt: AttemptArm | None = None
+
+    @property
+    def effect_specs(self) -> tuple[EffectDimensionSpec, ...]:
+        """THIS attempt's arm's Economic Effect Envelope specs (#960 review LOW-1).
+
+        Step 5 (:class:`~tos.egressgw.EconomicEffectStage`) derives its envelope from this
+        property, so a CLOSE attempt must not report the BOOT arm's specs — the kernel's own
+        property reads the one envelope it was constructed with, which here is the boot arm's.
+        Falls back to that boot arm when step 2 selected none (nothing to send anyway).
+        """
+        arm = self.attempt
+        return super().effect_specs if arm is None else arm.envelope.effect_dimensions
 
     def __call__(self, request: StageRequest) -> StageVerdict:
         self.attempt = (

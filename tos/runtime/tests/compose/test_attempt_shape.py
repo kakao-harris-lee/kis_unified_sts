@@ -5,13 +5,18 @@ Against the SHIPPED order construction policies (the CP-3 LONG and SHORT tenant 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.egressgw import VenueQuantityConstraint
+from tos.egressgw import (
+    EconomicEffectStage,
+    EffectBasis,
+    EffectDimensionSpec,
+    VenueQuantityConstraint,
+)
 from tos.engine import CommitmentStep, StageOutcome
 from tos.venue import ActionClass
 from tos_runtime.compose._attempt_arm import (
@@ -184,10 +189,10 @@ def test_no_arm_is_a_refusal_never_the_boot_class(
 # ===========================================================================
 
 
-def _stage(ocp) -> ProposalShapedConstructionStage:
-    ocp, arms = _arms(ocp, ActionClass.NEW_LONG)
+def _stage(ocp, arms=None) -> ProposalShapedConstructionStage:
+    ocp, built = _arms(ocp, ActionClass.NEW_LONG)
     return ProposalShapedConstructionStage(
-        arms=arms,
+        arms=built if arms is None else arms,
         loaded_ocp=ocp,
         price=None,
         venue_constraint=_VENUE.quantity_constraint,
@@ -234,3 +239,65 @@ def test_the_stage_records_the_close_arm_for_downstream_reads(ocps) -> None:
     stage(_request(effect="OPEN", direction="LONG"))
     assert attempt_side(stage, "SELL") == "BUY"
     assert attempt_action_class(stage, ActionClass.CLOSE) is ActionClass.NEW_LONG
+
+
+# ===========================================================================
+# step 5 reads the SELECTED arm's effect specs, not the boot arm's (review-965 LOW-1)
+# ===========================================================================
+
+
+_CLOSE_EFFECT_SPEC = EffectDimensionSpec(
+    dimension_id="INSTRUMENT::CLOSE_ONLY_DIMENSION",
+    basis=EffectBasis.QUANTITY,
+    unit="CONTRACTS",
+    scale="1",
+)
+
+
+def _arms_with_distinct_close_specs(ocp):
+    """The shipped arms, with the CLOSE arm's envelope declaring its OWN effect dimension.
+
+    Today's OCP states ``effect_dimensions`` once for the whole document, so every arm's
+    envelope carries the same tuple and the defect LOW-1 names cannot be observed from the
+    shipped trees alone. Declaring a different dimension on the CLOSE arm is what makes "whose
+    specs did step 5 read" answerable at all.
+    """
+    ocp, arms = _arms(ocp, ActionClass.NEW_LONG)
+    arms = tuple(
+        (
+            arm
+            if arm.action_class is not ActionClass.CLOSE
+            else replace(
+                arm,
+                envelope=arm.envelope.model_copy(
+                    update={"effect_dimensions": (_CLOSE_EFFECT_SPEC,)}
+                ),
+            )
+        )
+        for arm in arms
+    )
+    return ocp, arms
+
+
+def test_step_5_derives_the_close_arms_effect_envelope_not_the_boot_arms(ocps) -> None:
+    ocp, arms = _arms_with_distinct_close_specs(ocps[_LONG_OCP])
+    boot_specs = arms[0].envelope.effect_dimensions
+    assert boot_specs != (
+        _CLOSE_EFFECT_SPEC,
+    ), "the two arms must differ to prove anything"
+    stage = _stage(ocp, arms)
+    economic_stage = EconomicEffectStage(construction_stage=stage)
+
+    stage(_request(effect="CLOSE", direction="SHORT"))
+    assert stage.effect_specs == (_CLOSE_EFFECT_SPEC,)
+    economic_stage(fx.stage_request(step=CommitmentStep.ECONOMIC_EFFECT_ENVELOPE))
+    assert economic_stage.envelope is not None
+    assert [c.dimension_id for c in economic_stage.envelope.components] == [
+        _CLOSE_EFFECT_SPEC.dimension_id
+    ]
+
+    # an OPEN attempt, and a refused one (no arm at all), both read the boot arm's specs
+    stage(_request(effect="OPEN", direction="LONG"))
+    assert stage.effect_specs == boot_specs
+    stage(_request(effect="CLOSE", direction="LONG"))
+    assert stage.attempt is None and stage.effect_specs == boot_specs
