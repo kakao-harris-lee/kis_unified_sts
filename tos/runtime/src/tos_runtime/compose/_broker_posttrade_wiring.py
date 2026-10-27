@@ -154,8 +154,16 @@ class DeferredKisWitness:
         ):
             age_ms = self._now_ms() - served.read_started_ms
             if age_ms > self._max_age_ms:
+                # Still a HOLD either way; the reason tells an operator a read that can never
+                # be served (its own window outran the limit) from one that aged until APPLY.
+                span_ms = served.read_finished_ms - served.read_started_ms
+                reason = (
+                    "read_span_exceeds_max_age"
+                    if span_ms > self._max_age_ms
+                    else "aged_before_apply"
+                )
                 self._uses.append(
-                    SnapshotUse("expired", served, age_ms, self._max_age_ms)
+                    SnapshotUse("expired", served, age_ms, self._max_age_ms, reason)
                 )
                 raise WitnessUnavailable(
                     f"prefetched release snapshot expired: age {age_ms} ms > "
@@ -171,17 +179,31 @@ class DeferredKisWitness:
         self, scope: WitnessScope, *, today: str, abort: Callable[[], bool]
     ) -> SnapshotRead:
         """FETCH thread: ``scope``'s snapshot under ``today``, or the unavailability it ended
-        in, with the pacer grant of its first broker request (issue #970 — the age origin).
-        Never raises (the witness's own two-outcome contract)."""
+        in, with the pacer grants of its first broker request and of its balance read's first
+        request — the age origin (issue #970, review-979 r1 HIGH). Never raises (the witness's
+        own two-outcome contract)."""
         outcome: WitnessSnapshot | WitnessUnavailable
+        balance_mark: list[int] = []
         with first_grant_on_this_thread() as tap:
             try:
                 outcome = self._ready().observe(
-                    scope, today=today, deadline_expired=abort
+                    scope,
+                    today=today,
+                    deadline_expired=abort,
+                    before_balance=lambda: balance_mark.append(len(tap.grants_ms)),
                 )
             except WitnessUnavailable as exc:
                 outcome = exc
-        return SnapshotRead(outcome=outcome, first_request_ms=tap.first_ms)
+        # The age origin is the balance read's first grant (review-979 r1 HIGH; the witness's
+        # read order note): grants before the mark are closed days' order walks.
+        age_origin = (
+            tap.grants_ms[balance_mark[0]]
+            if balance_mark and len(tap.grants_ms) > balance_mark[0]
+            else None
+        )
+        return SnapshotRead(
+            outcome=outcome, first_request_ms=tap.first_ms, age_origin_ms=age_origin
+        )
 
     @contextmanager
     def serving(
@@ -237,10 +259,14 @@ def _refuse_snapshot_age_below_two_intervals(
 ) -> None:
     """Refuse a ``release_snapshot_max_age_ms`` shorter than two app-key intervals.
 
-    The release snapshot is two paced GETs (balance, then order inquiry), aged from the first
-    one's pacer grant, so it is at least one interval old when its read ends and older still
-    when APPLY serves it. Below two intervals nearly every snapshot is served expired: the
-    release HOLDS and the worker re-reads, forever, with no error anywhere.
+    The release snapshot is aged from its balance read's first pacer grant, and from there at
+    least two paced GETs remain — the balance page and today's order walk (closed earlier days
+    are read before the window opens; ``KisStockBrokerWitness.observe``). So it is at least one
+    interval old when its read ends, and older still when APPLY serves it (one loop pass). Below
+    two intervals nearly every snapshot is served expired: the release HOLDS and the worker
+    re-reads, forever, with no error anywhere. Two intervals is a floor, not a fit — each extra
+    balance or today page adds one; past the configured limit the hold is recorded as
+    ``read_span_exceeds_max_age``.
 
     Incident (R5, issue #970): #969 set ``release_snapshot_max_age_ms: 2000`` in the stock MOCK
     tree, and #970 then paced every request on the app key at ``min_send_interval_ms: 2000`` —

@@ -23,10 +23,13 @@ the broker since (an orphan, which must block the release) could be missing from
 release HOLDS and the observer records the snapshot's real read instants and age. The first
 expiry in a run of consecutive expiries schedules a fresh worker read at once; later ones wait
 ``finality_retry_interval_ms`` like any other finality re-run (#971 / PR #978). Expiry never
-falls back to a live read on the loop. **The read starts at its first broker request's pacer
-grant** (issue #970), not before: the app key's pacer can hold the first GET for up to an
-interval after this FETCH's order read, and that queueing is not broker-state age
-(:class:`SnapshotRead`). **Not moved**: a reconciliation whose scope the prefetch did not
+falls back to a live read on the loop. **The age starts at the balance read's first pacer
+grant** (issue #970, review-979 r1 HIGH), not before: every request on the app key is paced, so
+queueing in the pacer is not broker-state age, and the witness reads the closed earlier days'
+order walks BEFORE the balance and today's walk last — the window covers everything that can
+still change (``KisStockBrokerWitness.observe``'s read-order note; :class:`SnapshotRead`). An
+expiry records whether the read's own window outran the limit (:class:`SnapshotUse`).
+**Not moved**: a reconciliation whose scope the prefetch did not
 anticipate (its key or trading date differs) falls back to the live read, exactly as before #950
 — bounded by ``witness_request_timeout_s`` per page, as #949 left it.
 
@@ -88,10 +91,14 @@ class PrefetchedSnapshot:
     today: str
     outcome: WitnessSnapshot | WitnessUnavailable
     #: Monotonic instants the read started and finished (#969 review r1 HIGH). The age the
-    #: serving side checks is measured from the START — the earliest broker state the snapshot
-    #: may reflect.
+    #: serving side checks is measured from the START — the balance read's first pacer grant
+    #: (:class:`SnapshotRead`), the earliest moment the state that can still change was read.
     read_started_ms: int
     read_finished_ms: int
+    #: The grant of the read's very first request — earlier than ``read_started_ms`` by the
+    #: closed days' order walks. Recorded, not aged from. ``None``: unknown (nothing sent, or
+    #: built by hand).
+    first_request_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -101,13 +108,17 @@ class SnapshotRead:
     Attributes:
         outcome: The snapshot, or the unavailability the read ended in.
         first_request_ms: The monotonic grant instant of the read's FIRST broker request (the
-            app key pacer's slot, issue #970) — the earliest moment the snapshot's broker state
-            can date from. ``None`` when the read sent nothing; the snapshot is then aged from
-            before the call, as before #970.
+            app key pacer's slot, issue #970). ``None`` when the read sent nothing.
+        age_origin_ms: The grant of the BALANCE read's first request — the age origin
+            (review-979 r1 HIGH). The witness reads closed earlier days first, then the balance,
+            then today; everything that can still change is read from here on
+            (``KisStockBrokerWitness.observe``'s read-order note). ``None``: falls back to
+            ``first_request_ms``, then to before the call.
     """
 
     outcome: WitnessSnapshot | WitnessUnavailable
     first_request_ms: int | None
+    age_origin_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -119,6 +130,10 @@ class SnapshotUse:
     snapshot: PrefetchedSnapshot
     age_ms: int
     max_age_ms: int
+    #: Why an ``expired`` one expired: ``read_span_exceeds_max_age`` (the read's own window,
+    #: balance grant to last request, is longer than the limit — it can never be served) or
+    #: ``aged_before_apply``. ``None`` when served.
+    reason: str | None = None
 
 
 class SnapshotPrefetcher(Protocol):
@@ -261,18 +276,21 @@ def run_fetch(
     ):
         called_ms = monotonic.now_ms()
         read = snapshots.prefetch(plan.snapshot_scope, today=plan.today, abort=stop)
-        # Issue #970: aged from the first request's pacer grant, never earlier than the call.
-        started = (
-            called_ms
-            if read.first_request_ms is None
-            else max(called_ms, read.first_request_ms)
+        # Issue #970 / review-979 r1 HIGH: aged from the balance read's pacer grant (else the
+        # first request's), never earlier than the call.
+        origin = (
+            read.age_origin_ms
+            if read.age_origin_ms is not None
+            else read.first_request_ms
         )
+        started = called_ms if origin is None else max(called_ms, origin)
         snapshot = PrefetchedSnapshot(
             key=snapshot_key(plan.snapshot_scope),
             today=plan.today,
             outcome=read.outcome,
             read_started_ms=started,
             read_finished_ms=monotonic.now_ms(),
+            first_request_ms=read.first_request_ms,
         )
     return FetchResult(plan=plan, reads=tuple(reads), snapshot=snapshot)
 

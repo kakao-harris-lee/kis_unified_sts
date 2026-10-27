@@ -463,6 +463,8 @@ class KisMockFillObserver:
                     "verdict": use.verdict,
                     "read_started_monotonic_ms": use.snapshot.read_started_ms,
                     "read_finished_monotonic_ms": use.snapshot.read_finished_ms,
+                    "first_request_monotonic_ms": use.snapshot.first_request_ms,
+                    "expiry_reason": use.reason,
                     "age_ms": use.age_ms,
                     "max_age_ms": use.max_age_ms,
                     "trading_date": use.snapshot.today,
