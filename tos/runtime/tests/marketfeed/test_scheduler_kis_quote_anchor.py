@@ -120,6 +120,8 @@ def _quote_config(server: FakeKisServer) -> KisQuoteTransportConfig:
         token_reissue_min_interval_s=60,
         request_timeout_s=2.0,
         allow_plaintext_for_tests=True,
+        app_key_min_request_interval_ms=1,
+        app_key_request_wait_budget_ms=60_000,
     )
 
 

@@ -40,7 +40,7 @@ KIS account number is NOT a custody credential in this design (review F2 — see
 ``account`` coordinate, read directly off the :class:`~tos.egressgw.SendSeal`, never loaded from
 custody at all. The app key/secret ARE custody-loaded, and every load happens inside the
 narrowest ``with`` block this class can manage — wrapped directly around the one network call
-that needs them (:meth:`_issue_token`/:meth:`_send_order_with_credentials`), so the
+that needs them (:meth:`_issue_token`/:meth:`_perform_live_send`), so the
 :class:`~tos_runtime.custody.ports.CredentialHandle`'s own bytearray is zeroed
 (:meth:`~tos_runtime.custody.ports.CredentialHandle.close`) as soon as that one call returns.
 **What this does NOT claim:** :meth:`~tos_runtime.custody.ports.CredentialHandle.value` returns
@@ -71,14 +71,23 @@ fake server) — but for any REAL deployment, that ``client`` must come from
 KisMockHttpClient` constructed some other way. ``build_client(config)`` is the only sanctioned
 production construction; an injected client is a test seam — T2 must not hand-roll one.
 
-Firewall: stdlib (``hashlib``, ``json``, ``time``) + ``tos.*`` (``tos.brokeradapter``,
+**Pacing (decision 6, moved by issue #970).** The spacing between two sends no longer lives here:
+it is the app key's one :class:`~tos_runtime.transport.kis_mock.pacer.KisAppKeyPacer`, owned by
+the credential session and taken by EVERY request on the key (token POST, order POST, the
+witness/broker-facts/quote/band GETs), with ``min_send_interval_ms`` as its spacing. The order
+POST's slot is granted when :meth:`KisCredentialSession.app_credentials` opens, and ``t0`` is
+read inside that block, so the wait still ends before ``t0`` (decision 6: "대기는 전송 직전
+종료, t0 오염 0"). A slot beyond ``app_key_request_wait_budget_ms`` is refused: this attempt
+then sends nothing and ends ``REJECT`` with ``reason=throttled`` — the same disposition KIS's own
+``EGW00201`` gets, and true here because nothing reached the broker. Never a resend.
+
+Firewall: stdlib (``hashlib``, ``json``) + ``tos.*`` (``tos.brokeradapter``,
 ``tos.egressgw``, ``tos.engine``, ``tos.ordering``) + ``tos_runtime.custody``/``tos_runtime.
 time`` + this package's own sibling modules only. No third-party import, no ``os.environ``.
 """
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol, runtime_checkable
 
@@ -103,6 +112,7 @@ from tos_runtime.transport.kis_mock.client import (
 from tos_runtime.transport.kis_mock.codec import KisOrderWireCodec
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
+from tos_runtime.transport.kis_mock.pacer import KisPacing, KisPacingRefused
 from tos_runtime.transport.kis_mock.token import TokenStale
 
 __all__ = [
@@ -197,7 +207,7 @@ class KisMockTransport:
                 ``custody``/``app_key_scope``/``app_secret_scope`` build this transport's own
                 :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSession`
                 and are required iff ``credential_session`` is ``None``.
-            monotonic: The injected monotonic clock (pacing + token bookkeeping — never
+            monotonic: The injected monotonic clock (``t0``/latency + token bookkeeping — never
                 ``time.time()``).
             seal_lookup: Resolves an attempt's :class:`~tos.egressgw.SendSeal`.
             evidence_sink: Records this adapter's own evidence entries.
@@ -236,11 +246,14 @@ class KisMockTransport:
                 token_path=config.token_path,
                 token_reissue_min_interval_s=config.token_reissue_min_interval_s,
                 evidence_sink=evidence_sink,
+                pacing=KisPacing(
+                    min_interval_ms=config.min_send_interval_ms,
+                    wait_budget_ms=config.app_key_request_wait_budget_ms,
+                ),
             )
         # C-2 decision (C) — the token lifecycle and every custody load of the app key live in
         # the session; this class never touches custody itself.
         self._credential_session = credential_session
-        self._last_send_started_at_ms: int | None = None
 
     # -- send_once — the kernel Transport seam ----------------------------------------------
 
@@ -350,16 +363,31 @@ class KisMockTransport:
     def _perform_live_send(
         self, attempt_id: str, seal: SendSeal, tr_id: str, body_bytes: bytes
     ) -> EgressResultPayload:
-        """decision 2/6 — exactly one POST, paced, with typed-fault mapping."""
-        access_token = self._ensure_token_string()
-        self._enforce_pacing()
-        t0 = self._monotonic.now_ms()
+        """decision 2/6 — exactly one POST, paced by the app key's pacer, with typed-fault
+        mapping (module docstring "Pacing")."""
         try:
-            response = self._send_order_with_credentials(
-                tr_id, body_bytes, access_token
-            )
+            # A token POST is paced too; its refused slot ends this attempt the same way. Any
+            # other token fault propagates unchanged (TokenStale, a client error).
+            access_token = self._ensure_token_string()
+        except KisPacingRefused as exc:
+            return self._pacing_refused(attempt_id, seal, exc)
+        try:
+            # (review F5) The app key/secret are loaded inside the NARROWEST possible ``with``
+            # block, wrapped directly around the one POST, so the handles are zeroed the
+            # instant it returns. Opening the block grants the pacer slot; t0 is read after it.
+            with self._credential_session.app_credentials() as credentials:
+                t0 = self._monotonic.now_ms()
+                response = self._client.post_order(
+                    tr_id,
+                    body_bytes,
+                    access_token=access_token,
+                    app_key=credentials.app_key(),
+                    app_secret=credentials.app_secret(),
+                    path=self._config.order_path,
+                )
+        except KisPacingRefused as exc:
+            return self._pacing_refused(attempt_id, seal, exc)
         except KisMockTimeoutError:
-            self._last_send_started_at_ms = t0
             return self._finish(
                 attempt_id=attempt_id,
                 seal=seal,
@@ -370,7 +398,6 @@ class KisMockTransport:
                 status=None,
             )
         except KisMockConnectionError:
-            self._last_send_started_at_ms = t0
             return self._finish(
                 attempt_id=attempt_id,
                 seal=seal,
@@ -380,7 +407,6 @@ class KisMockTransport:
                 extra={"reason": "connection_error"},
                 status=None,
             )
-        self._last_send_started_at_ms = t0
         kind, broker_execution_id, extra = self._map_response(response)
         return self._finish(
             attempt_id=attempt_id,
@@ -392,22 +418,26 @@ class KisMockTransport:
             status=response.status,
         )
 
-    def _send_order_with_credentials(
-        self, tr_id: str, body_bytes: bytes, access_token: str
-    ) -> RawResponse:
-        """(review F5) The app key/secret are loaded inside the NARROWEST possible ``with``
-        block — wrapped directly around the one network call that needs them, so the
-        credential handles are zeroed the instant this one POST returns (module docstring's
-        honest accounting of what that does and does not guarantee)."""
-        with self._credential_session.app_credentials() as credentials:
-            return self._client.post_order(
-                tr_id,
-                body_bytes,
-                access_token=access_token,
-                app_key=credentials.app_key(),
-                app_secret=credentials.app_secret(),
-                path=self._config.order_path,
-            )
+    def _pacing_refused(
+        self, attempt_id: str, seal: SendSeal, exc: KisPacingRefused
+    ) -> EgressResultPayload:
+        """The app key's pacer refused this attempt's slot: nothing was sent, so ``REJECT``
+        (``reason=throttled``, like ``EGW00201``; ``sent: false`` tells the two apart).
+        """
+        return self._finish(
+            attempt_id=attempt_id,
+            seal=seal,
+            kind=EgressResultKind.REJECT,
+            broker_execution_id=None,
+            t0=self._monotonic.now_ms(),
+            extra={
+                "reason": "throttled",
+                "throttle_source": "app_key_pacer",
+                "sent": False,
+                "detail": str(exc),
+            },
+            status=None,
+        )
 
     def _tr_id_for_side(self, side: str) -> str:
         if side == "BUY":
@@ -432,21 +462,6 @@ class KisMockTransport:
                 has not elapsed since the last issuance attempt.
         """
         return self._credential_session.ensure_token_string()
-
-    # -- pacing (decision 6) -----------------------------------------------------------------
-
-    def _enforce_pacing(self) -> None:
-        """Block, if needed, so two order transmissions are at least ``min_send_interval_ms``
-        apart on the injected monotonic clock — measured from the START of the previous send,
-        never from a wall clock. The wait ends BEFORE ``t0`` is taken by the caller, so a
-        transmission's own recorded start instant never absorbs the pacing delay (decision 6:
-        "대기는 전송 직전 종료, t0 오염 0")."""
-        if self._last_send_started_at_ms is None:
-            return
-        elapsed = self._monotonic.now_ms() - self._last_send_started_at_ms
-        remaining_ms = self._config.min_send_interval_ms - elapsed
-        if remaining_ms > 0:
-            time.sleep(remaining_ms / 1000.0)
 
     # -- response mapping (decision 2) -------------------------------------------------------
 

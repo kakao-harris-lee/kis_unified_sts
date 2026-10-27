@@ -461,8 +461,7 @@ class KisMockFillObserver:
                 FILL_OBSERVER_RELEASE_SNAPSHOT_KIND,
                 {
                     "verdict": use.verdict,
-                    "read_started_monotonic_ms": use.snapshot.read_started_ms,
-                    "read_finished_monotonic_ms": use.snapshot.read_finished_ms,
+                    **use.read_fields(),
                     "age_ms": use.age_ms,
                     "max_age_ms": use.max_age_ms,
                     "trading_date": use.snapshot.today,

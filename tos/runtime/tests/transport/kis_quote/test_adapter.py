@@ -26,6 +26,7 @@ from tos_runtime.marketfeed.time_projection import _DELAY_BOUND_FIELDS
 from tos_runtime.time.config import load_time_config
 from tos_runtime.time.service import TrustworthyTimeService
 from tos_runtime.transport.kis_quote.adapter import (
+    KIS_QUOTE_PACING_REFUSED_KIND,
     KisQuoteAdapterError,
     KisQuoteMalformedResponse,
     KisQuoteObservationIntake,
@@ -84,6 +85,9 @@ def _config(server: FakeKisServer, **overrides: Any) -> KisQuoteTransportConfig:
         "token_reissue_min_interval_s": 60,
         "request_timeout_s": 2.0,
         "allow_plaintext_for_tests": True,
+        # Issue #970 pacing kept out of the way: the fake clock never advances on its own.
+        "app_key_min_request_interval_ms": 1,
+        "app_key_request_wait_budget_ms": 60_000,
     }
     base.update(overrides)
     return KisQuoteTransportConfig(**base)
@@ -195,6 +199,55 @@ def test_first_poll_emits_one_pending_observation_bracketing_the_request(
     # value: the ORDER is what this asserts, not a duration (the delay tests below measure one).
     assert pending.requested_monotonic_ms == monotonic.now_ms()
     assert pending.received_monotonic_ms >= pending.requested_monotonic_ms
+
+
+def test_a_refused_pacer_slot_is_nothing_new_with_one_evidence_row_and_no_get(
+    server: FakeKisServer,
+) -> None:
+    """review-979 r1 LOW: like the band reader and the witness, a refused app-key slot (issue
+    #970) is "no observation", not an exception out of the scheduler's pass. The token POST
+    just took the key's slot; the quote GET would wait 1000 ms > 500 -> refused, unsent.
+    Mutation: let ``KisPacingRefused`` propagate -> red."""
+    _set_token(server)
+    _set_quote(server)
+    intake, _, evidence = _intake(
+        server,
+        app_key_min_request_interval_ms=1_000,
+        app_key_request_wait_budget_ms=500,
+    )
+
+    assert intake.poll(instrument=INSTRUMENT, after_as_of_ms=None) == ()
+    assert server.requests_for(QUOTE_ROUTE) == []
+    (row,) = evidence.of_kind(KIS_QUOTE_PACING_REFUSED_KIND)
+    assert row["instrument"] == INSTRUMENT
+
+
+def test_the_pacer_wait_stays_outside_the_request_anchor_span(
+    server: FakeKisServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """review-979 r2 LOW-A: the token POST takes the app key's slot, so the quote GET waits a
+    full interval (1500 ms) in the pacer. That wait is queueing, not transport: it must fall
+    BEFORE ``requested_monotonic_ms``, or the M5 anchor bound (800 ms) sees a 1.5 s round trip
+    and the observation goes stale. Mutation: read ``requested`` before ``app_credentials()``
+    -> span 1500 -> red."""
+    import tos_runtime.transport.kis_mock.pacer as pacer_module
+
+    _set_token(server)
+    _set_quote(server)
+    intake, monotonic, _ = _intake(
+        server,
+        app_key_min_request_interval_ms=1_500,
+        app_key_request_wait_budget_ms=3_000,
+    )
+    monkeypatch.setattr(
+        pacer_module, "sleep", lambda seconds: monotonic.advance(round(seconds * 1000))
+    )
+    before = monotonic.now_ms()
+
+    (pending,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
+
+    assert pending.requested_monotonic_ms == before + 1_500  # after the pacer wait
+    assert pending.received_monotonic_ms - pending.requested_monotonic_ms == 0
 
 
 def test_the_adapter_reads_no_wall_clock_anywhere(server: FakeKisServer) -> None:
@@ -544,6 +597,8 @@ def test_config_loader_is_the_actual_host_seal_not_the_adapter(tmp_path: Path) -
                 "field_mapping": {"stck_prpr": "last_price", "acml_vol": "volume"},
                 "source_id": "kis_quote_mock_stock",
                 "request_timeout_s": 2.0,
+                "app_key_min_request_interval_ms": 2000,
+                "app_key_request_wait_budget_ms": 4000,
             }
         ),
         encoding="utf-8",

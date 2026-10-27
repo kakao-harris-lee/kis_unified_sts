@@ -411,8 +411,21 @@ class KisStockBrokerWitness:
         *,
         today: str | None = None,
         deadline_expired: Callable[[], bool] | None = None,
+        before_balance: Callable[[], None] | None = None,
     ) -> WitnessSnapshot:
         """Observe this account's stock positions/cash and today's stock order fills.
+
+        **Read order: older dates, then the balance, then today** (review-979 r1 HIGH). The
+        fill observer ages a prefetched release snapshot from the balance read's first request
+        (``before_balance``), so the only reads before that window are the order walks of
+        EARLIER trading days. Two premises make that safe, and both must stay true: (1) an
+        earlier day is closed — a KRX day order dies with its day, so a closed day's rows no
+        longer change; (2) the window covers everything that can still move: the balance (a
+        release reading "position 0" reads it inside the window) and today's walk, read LAST,
+        where an unattributed new order (an orphan, which must block the release) appears.
+        Earlier, today was read right after the balance and older days after it; with every
+        request paced on the app key (#970), each older date pushed the snapshot past its age
+        limit.
 
         Args:
             scope: Account, instrument and extra order dates to observe.
@@ -423,6 +436,8 @@ class KisStockBrokerWitness:
                 :meth:`order_rows`'s. The fill observer's FETCH passes only its SHUTDOWN flag
                 here — never a time deadline, for the release-semantics reason
                 :meth:`order_rows`'s own note gives. ``None``: unbounded as before.
+            before_balance: Called once, right before the balance read's first request — the
+                caller's mark for where the age window opens (above). ``None``: no mark.
 
         Raises:
             WitnessUnavailable: ``scope.account`` is not a 10-digit KIS account number,
@@ -432,18 +447,28 @@ class KisStockBrokerWitness:
         """
         try:
             cano, acnt_prdt_cd = self._split_account(scope.account)
-            positions, cash, positions_complete = self._read_balance(
-                cano, acnt_prdt_cd, scope, deadline_expired=deadline_expired
-            )
             today = today or self._date_source.today()
-            # Today, plus any older date the caller names (PR-3b: an ACK from a previous trading
-            # day is still reconcilable — its order lives under its own 주문일자).
-            dates = (today, *sorted(set(scope.order_dates) - {today}))
+            # Any older date the caller names (PR-3b: an ACK from a previous trading day is still
+            # reconcilable — its order lives under its own 주문일자), BEFORE the balance; today
+            # after it, last (docstring: read order).
+            older_dates = sorted(set(scope.order_dates) - {today})
+            dates = (today, *older_dates)
             rows: tuple[KisOrderRow, ...] = ()
-            for date in dates:
+            for date in older_dates:
                 rows += self._read_order_rows(
                     cano, acnt_prdt_cd, scope, date, deadline_expired=deadline_expired
                 )
+            if before_balance is not None:
+                before_balance()
+            positions, cash, positions_complete = self._read_balance(
+                cano, acnt_prdt_cd, scope, deadline_expired=deadline_expired
+            )
+            rows = (
+                self._read_order_rows(
+                    cano, acnt_prdt_cd, scope, today, deadline_expired=deadline_expired
+                )
+                + rows
+            )
         except WitnessUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001 - the port's own two-outcome contract

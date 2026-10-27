@@ -91,6 +91,25 @@ _REAL_SLEEP_SECONDS = 0.03
 _JOURNAL_PASS_ALLOWANCE_MS = 100
 
 
+#: Issue #970: every request on the app key is paced ``min_send_interval_ms`` apart on the REAL
+#: clock here. These tests drive the loop and the FETCH thread in real time over a few short
+#: passes, so the fixture's 1100 ms would leave them a read or two; pacing has its own suites
+#: (``transport/kis_mock/test_pacer.py``, ``test_paced_release_snapshot.py``). 50 ms keeps
+#: the 2 x interval boot floor (100) under the 300 ms snapshot age limit one test uses.
+_LOOP_TEST_APP_KEY_INTERVAL_MS = 50
+
+
+@pytest.fixture(autouse=True)
+def _short_app_key_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = fx.write_kis_mock_transport_config
+
+    def _write(config_dir: Path, **kwargs: Any) -> Path:
+        kwargs.setdefault("min_send_interval_ms", _LOOP_TEST_APP_KEY_INTERVAL_MS)
+        return original(config_dir, **kwargs)
+
+    monkeypatch.setattr(fx, "write_kis_mock_transport_config", _write)
+
+
 @pytest.fixture()
 def server() -> Iterator[FakeKisServer]:
     srv = FakeKisServer()
@@ -975,4 +994,67 @@ def test_a_fresh_release_snapshot_still_releases(
     (served,) = _rows(runtime, "FILL_OBSERVER_RELEASE_SNAPSHOT")
     assert served["verdict"] == "served"
     assert 0 <= served["age_ms"] <= served["max_age_ms"] == 5_000
+    _close(runtime)
+
+
+def test_an_order_that_appears_right_after_the_balance_read_holds_the_release(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch,
+    server,
+) -> None:
+    """review-979 r1 HIGH (iii): the snapshot reads the balance and then today's orders, LAST,
+    inside its age window. An unattributed order B that reaches the broker the moment the
+    balance has been read is in that last walk, so the release reconciliation finds an orphan
+    and HOLDS — the #969 boundary survives the new read order.
+
+    Mutation: read today's orders before the balance -> B (injected on the balance GET) is
+    missed -> the release commits -> red on ``_rcl_releases == 0``.
+    """
+    runtime, date, filled_a = _boot_filled(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        server,
+        monkeypatch,
+        poll_interval_ms=1,
+        release_snapshot_max_age_ms=5_000,
+    )
+    observer = runtime.fill_observer
+    assert observer is not None
+    balance, orders = _witness_paths(config_dir, date)
+    orphan_b = _row(
+        odno=_ORPHAN_ODNO,
+        date=date,
+        ord_qty=Decimal(1),
+        filled=Decimal(1),
+        remaining=Decimal(0),
+    )
+
+    def _b_appears() -> None:
+        server.set_response(
+            orders,
+            status=200,
+            body={"rt_cd": "0", "output1": [filled_a, orphan_b], "output2": {}},
+        )
+
+    server.set_response(
+        balance,
+        status=200,
+        body={"rt_cd": "0", "output1": [], "output2": [{"dnca_tot_amt": "1000000"}]},
+        on_request=_b_appears,
+    )
+
+    observer.poll_if_due()
+    _wait_until_fetched(observer)
+    report = observer.poll_if_due()
+
+    assert [k for _a, k, _d in report.emitted] == [EgressResultKind.FULL_FILL]
+    assert _rcl_releases(runtime) == 0
+    assert _rows(runtime, "CAPACITY_RELEASE_HELD")
+    (served,) = _rows(runtime, "FILL_OBSERVER_RELEASE_SNAPSHOT")
+    assert served["verdict"] == "served"  # held on the orphan, not on age
     _close(runtime)

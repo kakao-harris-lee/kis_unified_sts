@@ -79,7 +79,26 @@ static_body_fields:
 # The integer scale the sealed order price is in — 100 when construction prices off
 # `close_x100`. ORD_UNPR = price / price_scale (whole KRW, else refused).
 price_scale: null
+# ── App key pacing (issue #970) ──────────────────────────────────────────────
+# min_send_interval_ms is the least spacing, start to start, between ANY two
+# requests on the kis_mock.* app key — order POST, token POST, and the fill
+# witness / broker-facts / quote / band GETs — through the key's one pacer
+# (tos_runtime.transport.kis_mock.pacer). The name predates #970, when it spaced
+# order POSTs only. Approved value 2000 (docs/runbooks/tos-kis-mock-transport.md
+# §4; P-13 measured MOCK_VTS clean at 1.0 rps and throttled at 2.0 rps with
+# EGW00201 — KIS-BROKER-CAPABILITY-PROFILE-draft.yaml rate_limits._kis — and a
+# quote GET followed at once by an order POST was throttled too, so the limit
+# spans endpoints).
+# app_key_request_wait_budget_ms bounds one request's wait for its slot; past it
+# the request is refused unsent (an order ends REJECT reason=throttled, a
+# witness read WitnessUnavailable). Two threads share the key (the session loop
+# and the fill observer's FETCH worker) and each waits for at most one slot at a
+# time, so an order's wait is about 2 x min_send_interval_ms at worst (4000 at
+# the approved 2000), plus a few ms of sleep/clock jitter. At 4000 a background
+# GET can refuse an order only at that boundary (rare; fails closed, unsent);
+# set lower, it refuses orders routinely.
 min_send_interval_ms: null
+app_key_request_wait_budget_ms: null
 token_reissue_min_interval_s: null
 request_timeout_s: null
 allow_plaintext_for_tests: false

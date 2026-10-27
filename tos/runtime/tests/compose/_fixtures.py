@@ -668,6 +668,7 @@ def write_kis_mock_transport_config(
     allow_plaintext_for_tests: bool = False,
     min_send_interval_ms: int = 1100,
     wire_codec: str | None | _Unset = _UNSET,
+    app_key_request_wait_budget_ms: int | None = None,
 ) -> Path:
     """Write a fully-valued ``kis_mock_transport.yaml`` (T2 lane C test fixture) — every
     named-TBD field of the shipped example filled with a concrete, schema-valid value.
@@ -728,6 +729,12 @@ def write_kis_mock_transport_config(
                 # 42원), so ORD_UNPR is 42 — test_kis_mock_e2e_honesty pins it.
                 "price_scale": 100,
                 "min_send_interval_ms": min_send_interval_ms,
+                # Issue #970: two threads share the key (loop + fill FETCH), so two intervals.
+                "app_key_request_wait_budget_ms": (
+                    2 * min_send_interval_ms
+                    if app_key_request_wait_budget_ms is None
+                    else app_key_request_wait_budget_ms
+                ),
                 "token_reissue_min_interval_s": 60,
                 "request_timeout_s": 5.0,
                 "allow_plaintext_for_tests": allow_plaintext_for_tests,

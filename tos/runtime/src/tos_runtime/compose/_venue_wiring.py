@@ -96,6 +96,7 @@ from tos_runtime.compose._envelope_wiring import (
 from tos_runtime.compose._kis_credential_wiring import (
     KisCredentialSessionsCell,
     kis_mock_credential_session,
+    kis_quote_pacing,
 )
 from tos_runtime.compose._marketfeed_wiring import (
     KIS_QUOTE_TRANSPORT_CONFIG_NAME,
@@ -462,6 +463,7 @@ def build_kis_band_reader_factory(
                     token_reissue_min_interval_s=(
                         transport_config.token_reissue_min_interval_s
                     ),
+                    pacing=kis_quote_pacing(transport_config),
                 ),
                 monotonic=monotonic,
                 evidence_sink=evidence_sink,

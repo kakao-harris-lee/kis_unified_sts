@@ -44,7 +44,11 @@ SAME call site is worse than having only one. ``token_reissue_min_interval_s`` i
 exception: it governs the TOKEN endpoint specifically, a different call site with its own
 independent KIS-side rate limit (N-15's own finding, cited in
 :mod:`tos_runtime.transport.kis_mock.token`'s module docstring), not a duplicate of the poll
-pacing.
+pacing. The two ``app_key_*`` pacing terms are a second exception of the same kind (issue #970):
+they do not pace the poll, they pace every request on the ``kis_mock.*`` app key this intake
+shares with the order transport, the witness and the band reader (KIS throttles per second
+across endpoints). They must equal the other consumers' terms — the credential registry refuses
+a mismatch at boot, so the two governors cannot disagree silently.
 
 **No ``mode`` field (deliberate, unlike the order transport).** A quote poll is a GET-only read
 with no dry-run/live distinction to make — there is no "would-be order" to hold back from the
@@ -127,6 +131,10 @@ class KisQuoteTransportConfig:
         request_timeout_s: The per-request socket timeout, in seconds.
         allow_plaintext_for_tests: Whether an ``http://`` scheme is admitted (test-only escape
             hatch, same discipline as the order transport's own field).
+        app_key_min_request_interval_ms: The app key pacer's spacing (module docstring) — must
+            equal ``kis_mock_transport.yaml::min_send_interval_ms`` when both are loaded.
+        app_key_request_wait_budget_ms: The app key pacer's wait budget — must equal
+            ``kis_mock_transport.yaml::app_key_request_wait_budget_ms`` when both are loaded.
     """
 
     endpoint_rest_base: str
@@ -140,6 +148,8 @@ class KisQuoteTransportConfig:
     token_reissue_min_interval_s: int
     request_timeout_s: float
     allow_plaintext_for_tests: bool
+    app_key_min_request_interval_ms: int
+    app_key_request_wait_budget_ms: int
 
 
 def _require_present(raw: Any, field: str, path: Path) -> Any:
@@ -394,6 +404,12 @@ def load_kis_quote_transport_config(
         raw, "token_reissue_min_interval_s", path
     )
     request_timeout_s = _require_positive_float(raw, "request_timeout_s", path)
+    app_key_min_request_interval_ms = _require_positive_int(
+        raw, "app_key_min_request_interval_ms", path
+    )
+    app_key_request_wait_budget_ms = _require_positive_int(
+        raw, "app_key_request_wait_budget_ms", path
+    )
 
     return KisQuoteTransportConfig(
         endpoint_rest_base=endpoint_rest_base,
@@ -407,4 +423,6 @@ def load_kis_quote_transport_config(
         token_reissue_min_interval_s=token_reissue_min_interval_s,
         request_timeout_s=request_timeout_s,
         allow_plaintext_for_tests=allow_plaintext_for_tests,
+        app_key_min_request_interval_ms=app_key_min_request_interval_ms,
+        app_key_request_wait_budget_ms=app_key_request_wait_budget_ms,
     )

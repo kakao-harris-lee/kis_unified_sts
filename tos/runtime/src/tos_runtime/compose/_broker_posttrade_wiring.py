@@ -47,6 +47,7 @@ from tos_runtime.brokercap import BrokerScopesConfig
 from tos_runtime.compose._kis_credential_wiring import (
     KisCredentialSessionsCell,
     kis_mock_credential_session,
+    kis_transport_pacing,
 )
 from tos_runtime.compose._posttrade_source import broker_posttrade_enabled
 from tos_runtime.compose._transport_wiring import instance_rest_bases
@@ -55,6 +56,7 @@ from tos_runtime.engine.finality_projection import project_recovered_finality
 from tos_runtime.posttrade.broker_finality import BrokerFinalityProducer
 from tos_runtime.posttrade.fill_fetch import (
     PrefetchedSnapshot,
+    SnapshotRead,
     SnapshotUse,
     snapshot_key,
 )
@@ -64,6 +66,7 @@ from tos_runtime.posttrade.fill_observer import (
     KisMockFillObserver,
     load_fill_observer_config,
 )
+from tos_runtime.posttrade.fill_observer_config import FillObserverConfigError
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
 from tos_runtime.posttrade.release_consumer import (
     FinalityConsumerPort,
@@ -77,6 +80,7 @@ from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.client import build_client
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
+from tos_runtime.transport.kis_mock.pacer import first_grant_on_this_thread
 
 __all__ = [
     "BrokerPosttrade",
@@ -150,8 +154,16 @@ class DeferredKisWitness:
         ):
             age_ms = self._now_ms() - served.read_started_ms
             if age_ms > self._max_age_ms:
+                # Still a HOLD either way; the reason tells an operator a read that can never
+                # be served (its own window outran the limit) from one that aged until APPLY.
+                span_ms = served.read_finished_ms - served.read_started_ms
+                reason = (
+                    "read_span_exceeds_max_age"
+                    if span_ms > self._max_age_ms
+                    else "aged_before_apply"
+                )
                 self._uses.append(
-                    SnapshotUse("expired", served, age_ms, self._max_age_ms)
+                    SnapshotUse("expired", served, age_ms, self._max_age_ms, reason)
                 )
                 raise WitnessUnavailable(
                     f"prefetched release snapshot expired: age {age_ms} ms > "
@@ -165,13 +177,33 @@ class DeferredKisWitness:
 
     def prefetch(
         self, scope: WitnessScope, *, today: str, abort: Callable[[], bool]
-    ) -> WitnessSnapshot | WitnessUnavailable:
+    ) -> SnapshotRead:
         """FETCH thread: ``scope``'s snapshot under ``today``, or the unavailability it ended
-        in. Never raises (the witness's own two-outcome contract)."""
-        try:
-            return self._ready().observe(scope, today=today, deadline_expired=abort)
-        except WitnessUnavailable as exc:
-            return exc
+        in, with the pacer grants of its first broker request and of its balance read's first
+        request — the age origin (issue #970, review-979 r1 HIGH). Never raises (the witness's
+        own two-outcome contract)."""
+        outcome: WitnessSnapshot | WitnessUnavailable
+        balance_mark: list[int] = []
+        with first_grant_on_this_thread() as tap:
+            try:
+                outcome = self._ready().observe(
+                    scope,
+                    today=today,
+                    deadline_expired=abort,
+                    before_balance=lambda: balance_mark.append(len(tap.grants_ms)),
+                )
+            except WitnessUnavailable as exc:
+                outcome = exc
+        # The age origin is the balance read's first grant (review-979 r1 HIGH; the witness's
+        # read order note): grants before the mark are closed days' order walks.
+        age_origin = (
+            tap.grants_ms[balance_mark[0]]
+            if balance_mark and len(tap.grants_ms) > balance_mark[0]
+            else None
+        )
+        return SnapshotRead(
+            outcome=outcome, first_request_ms=tap.first_ms, age_origin_ms=age_origin
+        )
 
     @contextmanager
     def serving(
@@ -222,6 +254,36 @@ class BrokerPosttrade:
     trading_date_now: Callable[[], str | None] = lambda: None
 
 
+def _refuse_snapshot_age_below_two_intervals(
+    max_age_ms: int, min_interval_ms: int, path: Path
+) -> None:
+    """Refuse a ``release_snapshot_max_age_ms`` shorter than two app-key intervals.
+
+    The release snapshot is aged from its balance read's first pacer grant, and from there at
+    least two paced GETs remain — the balance page and today's order walk (closed earlier days
+    are read before the window opens; ``KisStockBrokerWitness.observe``). So it is at least one
+    interval old when its read ends, and older still when APPLY serves it (one loop pass). Below
+    two intervals nearly every snapshot is served expired: the release HOLDS and the worker
+    re-reads, forever, with no error anywhere. Two intervals is a floor, not a fit — each extra
+    balance or today page adds one; past the configured limit the hold is recorded as
+    ``read_span_exceeds_max_age``.
+
+    Incident (R5, issue #970): #969 set ``release_snapshot_max_age_ms: 2000`` in the stock MOCK
+    tree, and #970 then paced every request on the app key at ``min_send_interval_ms: 2000`` —
+    together, a release that could never pass (found while writing #970, before any merge).
+
+    Raises:
+        FillObserverConfigError: ``max_age_ms < 2 * min_interval_ms``.
+    """
+    if max_age_ms < 2 * min_interval_ms:
+        raise FillObserverConfigError(
+            f"{path}: release_snapshot_max_age_ms {max_age_ms} is shorter than two app-key "
+            f"request intervals (2 x kis_mock_transport.yaml::min_send_interval_ms "
+            f"{min_interval_ms} = {2 * min_interval_ms}) — the two-GET release snapshot "
+            "would almost always be served expired and every release would hold"
+        )
+
+
 def build_broker_posttrade(
     *,
     config_dir: Path,
@@ -243,6 +305,11 @@ def build_broker_posttrade(
     assert transport_config is not None  # broker_posttrade_enabled
     path = config_dir / FILL_OBSERVER_CONFIG_NAME
     observer_config = load_fill_observer_config(path)
+    _refuse_snapshot_age_below_two_intervals(
+        observer_config.release_snapshot_max_age_ms,
+        transport_config.min_send_interval_ms,
+        path,
+    )
     mock_rest_base, real_rest_base = instance_rest_bases(broker_scopes)
     witness_config = kis_witness_config_from_mapping(
         {
@@ -272,6 +339,7 @@ def build_broker_posttrade(
                 token_endpoint_base=transport_config.endpoint_rest_base,
                 token_path=transport_config.token_path,
                 token_reissue_min_interval_s=transport_config.token_reissue_min_interval_s,
+                pacing=kis_transport_pacing(transport_config),
             ),
             date_source=_TrustedTradingDate(trading_date_now),
         )

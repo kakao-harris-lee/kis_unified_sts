@@ -24,6 +24,7 @@ from tos_runtime.brokercap import BrokerScopesConfig
 from tos_runtime.compose._kis_credential_wiring import (
     KisCredentialSessionsCell,
     kis_mock_credential_session,
+    kis_transport_pacing,
 )
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.broker_facts import (
@@ -112,6 +113,7 @@ def build_broker_facts(
                 token_endpoint_base=transport_config.endpoint_rest_base,
                 token_path=transport_config.token_path,
                 token_reissue_min_interval_s=transport_config.token_reissue_min_interval_s,
+                pacing=kis_transport_pacing(transport_config),
             ),
             monotonic=monotonic,
             evidence_sink=evidence_sink,

@@ -17,11 +17,14 @@ from collections.abc import Callable
 
 from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.time.sources import MonotonicSource
+from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 from tos_runtime.transport.kis_mock.credential_session import (
     KisCredentialSession,
     KisCredentialSessions,
 )
+from tos_runtime.transport.kis_mock.pacer import KisPacing
 from tos_runtime.transport.kis_mock.token import EvidenceRecorder, TokenIssuingClient
+from tos_runtime.transport.kis_quote.config import KisQuoteTransportConfig
 
 __all__ = [
     "KIS_MOCK_APP_KEY_SCOPE",
@@ -30,6 +33,8 @@ __all__ = [
     "KisCredentialSessionsCellMisuse",
     "build_kis_credential_sessions",
     "kis_mock_credential_session",
+    "kis_quote_pacing",
+    "kis_transport_pacing",
 ]
 
 
@@ -117,6 +122,25 @@ KIS_MOCK_APP_KEY_SCOPE = "kis_mock.app_key"
 KIS_MOCK_APP_SECRET_SCOPE = "kis_mock.app_secret"
 
 
+def kis_transport_pacing(config: KisMockTransportConfig) -> KisPacing:
+    """The ``kis_mock.*`` app key's pacing terms from ``kis_mock_transport.yaml`` (issue #970):
+    ``min_send_interval_ms`` — the operator-approved order spacing — now spaces every request
+    on the key, and ``app_key_request_wait_budget_ms`` bounds each wait."""
+    return KisPacing(
+        min_interval_ms=config.min_send_interval_ms,
+        wait_budget_ms=config.app_key_request_wait_budget_ms,
+    )
+
+
+def kis_quote_pacing(config: KisQuoteTransportConfig) -> KisPacing:
+    """The same terms from ``kis_quote.yaml`` (the quote intake and the band reader). The
+    registry refuses them at boot unless they equal the transport's."""
+    return KisPacing(
+        min_interval_ms=config.app_key_min_request_interval_ms,
+        wait_budget_ms=config.app_key_request_wait_budget_ms,
+    )
+
+
 def build_kis_credential_sessions(
     *,
     custody: CredentialCustody,
@@ -136,13 +160,14 @@ def kis_mock_credential_session(
     token_endpoint_base: str,
     token_path: str,
     token_reissue_min_interval_s: int,
+    pacing: KisPacing,
 ) -> KisCredentialSession:
     """The ``kis_mock.*`` app key's session from ``credential_sessions``.
 
     Raises:
         ~tos_runtime.transport.kis_mock.credential_session.KisCredentialSessionConflict: The
-            other consumer already holds this app key under a different token endpoint or
-            reissue cooldown.
+            other consumer already holds this app key under a different token endpoint,
+            reissue cooldown or pacing terms.
     """
     return credential_sessions.session_for(
         client=client,
@@ -151,4 +176,5 @@ def kis_mock_credential_session(
         token_endpoint_base=token_endpoint_base,
         token_path=token_path,
         token_reissue_min_interval_s=token_reissue_min_interval_s,
+        pacing=pacing,
     )

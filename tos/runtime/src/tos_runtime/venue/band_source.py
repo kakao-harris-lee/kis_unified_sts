@@ -89,6 +89,7 @@ from tos_runtime.transport.kis_mock.client import (
     RawResponse,
 )
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
+from tos_runtime.transport.kis_mock.pacer import KisPacingRefused
 from tos_runtime.transport.kis_mock.token import (
     EvidenceRecorder,
     TokenResponseError,
@@ -530,6 +531,11 @@ class KisBandSourceReader:
         except CustodyError as exc:
             self._refuse("token_custody_error", detail=str(exc))
             return None
+        # Issue #970: the app key's pacer refused the token POST's slot (wait budget) — nothing
+        # was sent; band None like every other failure here.
+        except KisPacingRefused as exc:
+            self._refuse("token_pacing_refused", detail=str(exc))
+            return None
         continuity_id = self._continuity_for(access_token)
         try:
             response = self._fetch(access_token)
@@ -547,6 +553,10 @@ class KisBandSourceReader:
         # `kis_mock.app_key` nor `kis_mock.app_secret`).
         except CustodyError as exc:
             self._refuse("custody_error", detail=str(exc))
+            return None
+        # Issue #970: the GET's pacer slot was refused before `_fetch` loaded anything.
+        except KisPacingRefused as exc:
+            self._refuse("pacing_refused", detail=str(exc))
             return None
         output = self._parse_output(response)
         if output is None:
