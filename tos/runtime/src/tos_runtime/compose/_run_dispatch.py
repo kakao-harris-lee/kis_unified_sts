@@ -21,6 +21,7 @@ import sys
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from tos_runtime.compose._broker_posttrade_wiring import close_fill_observer
 from tos_runtime.compose._construction_config import (
     CONSTRUCTION_CONFIG_NAME,
     ConstructionConfigError,
@@ -134,5 +135,8 @@ def dispatch_run(args: Args) -> int:
         composed.marketfeed.run_forever(stop=stop)
     finally:
         restore()
+        # Issue #950: the fill observer's FETCH worker stops with the loop — joined, and a
+        # read still in flight is never applied.
+        close_fill_observer(composed)
     print("run: stopped (signal received).")
     return 0

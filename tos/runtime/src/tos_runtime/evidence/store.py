@@ -125,6 +125,7 @@ from tos.evidence import (
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.evidence import outbox as _outbox
+from tos_runtime.evidence.thread_connections import ThreadConnections
 from tos_runtime.operations.key_rotation import (
     KeyContinuityCheck,
     KeyContinuityRefused,
@@ -545,11 +546,14 @@ class SqliteEvidenceStore:
                 continuity, self._conn, key_provider
             )
             self._scheme = Sha256HmacChainScheme(key=key, key_generation=key_generation)
+        # Issue #950: this thread keeps `self._conn`; any other thread gets its own connection.
+        self._conns = ThreadConnections(path, lambda: self._conn)
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """The live sqlite3 connection — :mod:`tos_runtime.evidence.backup` reuses it."""
-        return self._conn
+        """The calling thread's sqlite3 connection (:mod:`~tos_runtime.evidence
+        .thread_connections`) — :mod:`tos_runtime.evidence.backup` reuses it."""
+        return self._conns.current()
 
     @property
     def key_generation(self) -> int:
@@ -557,8 +561,8 @@ class SqliteEvidenceStore:
         return self._scheme.key_generation
 
     def close(self) -> None:
-        """Close the underlying sqlite3 connection."""
-        self._conn.close()
+        """Close every thread's sqlite3 connection."""
+        self._conns.close()
 
     def _read_tail(self) -> tuple[int, str]:
         """Return ``(next_seq, last_chain_digest)``, read fresh from disk every call.
@@ -568,9 +572,11 @@ class SqliteEvidenceStore:
         identical behaviour — the durable table is the only source of
         truth for "what has already been committed".
         """
-        row = self._conn.execute(
-            "SELECT seq, chain_digest FROM entries ORDER BY seq DESC LIMIT 1"
-        ).fetchone()
+        row = (
+            self._conns.current()
+            .execute("SELECT seq, chain_digest FROM entries ORDER BY seq DESC LIMIT 1")
+            .fetchone()
+        )
         if row is None:
             return 0, _CHAIN_GENESIS
         last_seq, last_chain_digest = row
@@ -701,70 +707,72 @@ class SqliteEvidenceStore:
             runtime_identity=runtime_identity,
         )
         appended_at_ns = self._monotonic_ns()
-        self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            next_seq, last_chain_digest = self._read_tail()
-            chain_digest = scheme.verify_append(last_chain_digest, (entry_digest,))
-            runtime_identity_json = (
-                json.dumps(runtime_identity.model_dump(mode="json"), sort_keys=True)
-                if runtime_identity is not None
-                else None
-            )
-            payload_json = json.dumps(
-                {"payload": scrubbed_payload, "masked_keys": list(masked_keys)},
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            cur = self._conn.execute(
-                "INSERT INTO entries (seq, segment_id, kind, record_class, "
-                "runtime_identity_json, payload_json, entry_digest, chain_digest, "
-                "key_generation, appended_at_monotonic_ns) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    next_seq,
-                    segment_id,
-                    kind,
-                    record_class,
-                    runtime_identity_json,
-                    payload_json,
-                    entry_digest,
-                    chain_digest,
-                    scheme.key_generation,
-                    appended_at_ns,
-                ),
-            )
-            for target in outbox_targets:
-                _outbox.enqueue(cur, entry_seq=next_seq, target=target)
-            if self._crash_hook is not None:
-                self._crash_hook("before_commit")
-            self._conn.execute("COMMIT")
-        except BaseException as commit_error:
-            # LOW-6 (2026-09-08 independent review): if ROLLBACK itself
-            # raises, catching it here (rather than letting it propagate
-            # unguarded) stops it from REPLACING commit_error as the
-            # exception the caller sees. The rollback failure is recorded as
-            # a note on the ORIGINAL error instead, and the bare `raise`
-            # below re-raises `commit_error` — never the rollback failure —
-            # so the root cause always survives, and no receipt is ever
-            # constructed on this path either way.
+        with self._conns.write_lock:  # issue #950: one writer at a time in-process
+            conn = self._conns.current()
+            conn.execute("BEGIN IMMEDIATE")
             try:
-                self._conn.execute("ROLLBACK")
-            except Exception as rollback_error:
-                commit_error.add_note(
-                    f"ROLLBACK also failed after this error: {rollback_error!r} — "
-                    "the original commit-path error above is what propagates; "
-                    "this store's on-disk state is not authoritative until "
-                    "reopened and independently verified"
+                next_seq, last_chain_digest = self._read_tail()
+                chain_digest = scheme.verify_append(last_chain_digest, (entry_digest,))
+                runtime_identity_json = (
+                    json.dumps(runtime_identity.model_dump(mode="json"), sort_keys=True)
+                    if runtime_identity is not None
+                    else None
                 )
-            raise
-        if self._crash_hook is not None:
-            self._crash_hook("after_commit_before_receipt")
-        return EvidenceAppendReceipt(
-            segment_id=segment_id,
-            seq=next_seq,
-            chain_digest=chain_digest,
-            key_generation=scheme.key_generation,
-        )
+                payload_json = json.dumps(
+                    {"payload": scrubbed_payload, "masked_keys": list(masked_keys)},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                cur = conn.execute(
+                    "INSERT INTO entries (seq, segment_id, kind, record_class, "
+                    "runtime_identity_json, payload_json, entry_digest, chain_digest, "
+                    "key_generation, appended_at_monotonic_ns) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        next_seq,
+                        segment_id,
+                        kind,
+                        record_class,
+                        runtime_identity_json,
+                        payload_json,
+                        entry_digest,
+                        chain_digest,
+                        scheme.key_generation,
+                        appended_at_ns,
+                    ),
+                )
+                for target in outbox_targets:
+                    _outbox.enqueue(cur, entry_seq=next_seq, target=target)
+                if self._crash_hook is not None:
+                    self._crash_hook("before_commit")
+                conn.execute("COMMIT")
+            except BaseException as commit_error:
+                # LOW-6 (2026-09-08 independent review): if ROLLBACK itself
+                # raises, catching it here (rather than letting it propagate
+                # unguarded) stops it from REPLACING commit_error as the
+                # exception the caller sees. The rollback failure is recorded as
+                # a note on the ORIGINAL error instead, and the bare `raise`
+                # below re-raises `commit_error` — never the rollback failure —
+                # so the root cause always survives, and no receipt is ever
+                # constructed on this path either way.
+                try:
+                    conn.execute("ROLLBACK")
+                except Exception as rollback_error:
+                    commit_error.add_note(
+                        f"ROLLBACK also failed after this error: {rollback_error!r} — "
+                        "the original commit-path error above is what propagates; "
+                        "this store's on-disk state is not authoritative until "
+                        "reopened and independently verified"
+                    )
+                raise
+            if self._crash_hook is not None:
+                self._crash_hook("after_commit_before_receipt")
+            return EvidenceAppendReceipt(
+                segment_id=segment_id,
+                seq=next_seq,
+                chain_digest=chain_digest,
+                key_generation=scheme.key_generation,
+            )
 
     def rotate(self, new_generation: int, new_key: bytes) -> EvidenceAppendReceipt:
         """Rotate the signing key: append a rotation-commit entry under the new key.
@@ -820,7 +828,7 @@ class SqliteEvidenceStore:
 
     def replay(self) -> Iterator[ChainedEntry]:
         """Yield every committed entry, in commit order, for :func:`verify_chain`."""
-        cur = self._conn.execute(
+        cur = self._conns.current().execute(
             "SELECT entry_digest, key_generation, chain_digest FROM entries ORDER BY seq ASC"
         )
         for entry_digest, key_generation, chain_digest in cur:
@@ -878,10 +886,14 @@ class SqliteEvidenceStore:
         ``last_chain_digest`` is the genesis value in that case. Used by
         :mod:`tos_runtime.evidence.backup` to build a :class:`BackupManifest`.
         """
-        row = self._conn.execute(
-            "SELECT seq, chain_digest, key_generation FROM entries "
-            "ORDER BY seq DESC LIMIT 1"
-        ).fetchone()
+        row = (
+            self._conns.current()
+            .execute(
+                "SELECT seq, chain_digest, key_generation FROM entries "
+                "ORDER BY seq DESC LIMIT 1"
+            )
+            .fetchone()
+        )
         if row is None:
             return None, _CHAIN_GENESIS, None
         last_seq, last_chain_digest, last_key_generation = row
@@ -912,11 +924,15 @@ class SqliteEvidenceStore:
         if not kinds:
             return self.last_committed()
         placeholders = ", ".join("?" for _ in kinds)
-        row = self._conn.execute(
-            f"SELECT seq, chain_digest, key_generation FROM entries "
-            f"WHERE kind NOT IN ({placeholders}) ORDER BY seq DESC LIMIT 1",
-            tuple(sorted(kinds)),
-        ).fetchone()
+        row = (
+            self._conns.current()
+            .execute(
+                f"SELECT seq, chain_digest, key_generation FROM entries "
+                f"WHERE kind NOT IN ({placeholders}) ORDER BY seq DESC LIMIT 1",
+                tuple(sorted(kinds)),
+            )
+            .fetchone()
+        )
         if row is None:
             return None, _CHAIN_GENESIS, None
         last_seq, last_chain_digest, last_key_generation = row
@@ -930,7 +946,7 @@ class SqliteEvidenceStore:
         because there is no ``kind`` to narrow by. A caller that wants ONE row by ``seq``
         must use :meth:`entry` instead, not filter this walk.
         """
-        cur = self._conn.execute(
+        cur = self._conns.current().execute(
             f"SELECT {_ENTRY_META_COLUMNS_SQL} FROM entries ORDER BY seq ASC"
         )
         for row in cur:
@@ -964,8 +980,12 @@ class SqliteEvidenceStore:
         there. :meth:`iter_entry_meta` keeps its own whole-table contract unchanged for
         :mod:`tos_runtime.evidence.retention` and its other callers.
         """
-        row = self._conn.execute(
-            f"SELECT {_ENTRY_COLUMNS_SQL} FROM entries WHERE seq = ?",
-            (seq,),
-        ).fetchone()
+        row = (
+            self._conns.current()
+            .execute(
+                f"SELECT {_ENTRY_COLUMNS_SQL} FROM entries WHERE seq = ?",
+                (seq,),
+            )
+            .fetchone()
+        )
         return None if row is None else _Entry(_EntryRow(*row[:-1]), row[-1])

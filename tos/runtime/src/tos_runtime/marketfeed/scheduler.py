@@ -56,27 +56,21 @@ each deliberate:
   3. **Every pass is measured** (:meth:`TickScheduler._record_pass_overrun`), so a ``STALE``
      field caused by this hook is distinguishable from a late producer.
 
-  ⚠ **Residual, stated rather than implied** (#949 r2 MEDIUM-1 corrected the arithmetic
-  below). Two terms, both on this thread, both recorded by the overrun row, both owned by
-  issue #950:
-
-  - **The observer's own poll**: a request already in flight cannot be interrupted, so a poll
-    can stretch its pass by up to ``poll_deadline_ms`` plus one ``witness_request_timeout_s``
-    (1.5 + 2 = ~3.5 s), at most once per the observer's own ``poll_interval_ms`` (3 s).
-  - **The release path, which the deadline does NOT bound**: a terminal fill goes
-    ``_sink`` -> :meth:`~tos_runtime.engine.driver.EngineDriver.enqueue_and_run` -> finality ->
-    the release consumer's reconciliation -> ``witness.observe``, which runs its own
-    continuation walks (balance, plus the orders of each date in scope) with no deadline —
-    worst case ``witness_request_timeout_s`` x ``max_pages`` x (1 + dates), i.e. tens of
-    seconds against a sick broker, ~700 ms against a healthy one. It happens on the pass where
-    a fill is applied (once per attempt) and again per ``finality_retry_interval_ms`` (60 s)
-    while a release is stuck. A deadline there would make a slow-but-working broker HOLD
-    capacity instead of releasing it, which is a release-semantics change this lane did not
-    take (#949 r2 MEDIUM-1 left it optional, #950 owns it).
-
-  Removing the wait outright means moving these reads off this thread, which the shared KIS
-  credential session (one token lifecycle per app key, C-2) and the single-thread sqlite
-  evidence store do not currently allow: measured, and tracked as issue #950.
+  **The broker reads are no longer on this thread** (issue #950). The fill observer's
+  ``poll_if_due`` hands its reads — the order inquiry AND the release reconciliation's
+  balance/order snapshot, the #949 r2 MEDIUM-1 term — to one worker thread
+  (:mod:`tos_runtime.posttrade.fill_fetch`) and applies the result on this thread on a later
+  pass, so a slow or sick broker stretches no pass. What stays on this thread is the APPLY
+  work (evidence rows, the engine feed, finality, the release's RCL/evidence writes) — local
+  sqlite, no network. ⚠ One bounded remainder: a release reconciliation whose scope the
+  prefetch did not anticipate (a receipt date appearing between plan and apply, or the trading
+  date turning over in between) reads the broker live here, bounded by
+  ``witness_request_timeout_s`` x ``max_pages`` per walk as before #950 — recorded by the
+  overrun row if it ever outruns the window. A prefetched snapshot past
+  ``release_snapshot_max_age_ms`` is never re-read here: that release holds and the worker
+  re-reads (#969 review r1). And while the worker is issuing a KIS token, an order send or quote
+  read on this thread waits on the token lock for up to that POST's request timeout (10 s) —
+  the same worst case as before #950, when this thread made the POST itself.
 
 **Every journal-intake tree gets the compensation and the overrun row, not only the stock
 one** (#949 r2 LOW-1). ``journal_pass_allowance_ms`` is required for ``intake_kind: journal``,

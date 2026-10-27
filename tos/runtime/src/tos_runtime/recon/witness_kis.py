@@ -391,8 +391,24 @@ class KisStockBrokerWitness:
 
     # -- BrokerWitness port -------------------------------------------------------------
 
-    def observe(self, scope: WitnessScope) -> WitnessSnapshot:
+    def observe(
+        self,
+        scope: WitnessScope,
+        *,
+        today: str | None = None,
+        deadline_expired: Callable[[], bool] | None = None,
+    ) -> WitnessSnapshot:
         """Observe this account's stock positions/cash and today's stock order fills.
+
+        Args:
+            scope: Account, instrument and extra order dates to observe.
+            today: The trading date to read as "today"; ``None`` asks the date source. The
+                fill observer's FETCH thread passes the date its plan was built under (issue
+                #950), so the date source is only ever read on the loop thread.
+            deadline_expired: Asked before every page of every walk, like
+                :meth:`order_rows`'s. The fill observer's FETCH passes only its SHUTDOWN flag
+                here — never a time deadline, for the release-semantics reason
+                :meth:`order_rows`'s own note gives. ``None``: unbounded as before.
 
         Raises:
             WitnessUnavailable: ``scope.account`` is not a 10-digit KIS account number,
@@ -402,14 +418,18 @@ class KisStockBrokerWitness:
         """
         try:
             cano, acnt_prdt_cd = self._split_account(scope.account)
-            positions, cash = self._read_balance(cano, acnt_prdt_cd, scope)
-            today = self._date_source.today()
+            positions, cash = self._read_balance(
+                cano, acnt_prdt_cd, scope, deadline_expired=deadline_expired
+            )
+            today = today or self._date_source.today()
             # Today, plus any older date the caller names (PR-3b: an ACK from a previous trading
             # day is still reconcilable — its order lives under its own 주문일자).
             dates = (today, *sorted(set(scope.order_dates) - {today}))
             rows: tuple[KisOrderRow, ...] = ()
             for date in dates:
-                rows += self._read_order_rows(cano, acnt_prdt_cd, scope, date)
+                rows += self._read_order_rows(
+                    cano, acnt_prdt_cd, scope, date, deadline_expired=deadline_expired
+                )
         except WitnessUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001 - the port's own two-outcome contract
@@ -460,17 +480,13 @@ class KisStockBrokerWitness:
                 ``WitnessUnavailable`` with no rows, never a partial list. ``None`` = unbounded
                 by anything but ``max_pages`` and the per-GET timeout.
 
-                ⚠ :meth:`observe` takes no such bound, and that is a GAP, not a safe asymmetry
-                (#949 r2 MEDIUM-1 — an earlier version of this docstring claimed ``observe``
-                "is not read from a loop that is waited on", which is wrong): the release
-                consumer's reconciliation calls it, and that consumer is reached from the fill
-                observer's own ``result_sink``, which the session loop's post-pass hook drives.
-                So ``observe``'s walks — balance, plus the orders of each date in scope — do
-                run on the loop thread, bounded only by ``request_timeout_s`` x ``max_pages``.
-                It is deliberately left unbounded here because a deadline would make a
-                slow-but-working broker HOLD capacity rather than release it, which is a
-                release-semantics change; issue #950 owns both that and moving these reads off
-                the loop thread.
+                :meth:`observe` gets no TIME deadline on the release path: a deadline there
+                would make a slow-but-working broker HOLD capacity rather than release it, a
+                release-semantics change. Issue #950 moved that read off the loop thread
+                instead: the fill observer's FETCH prefetches the release reconciliation's
+                snapshot (:mod:`tos_runtime.posttrade.fill_fetch`) and the loop serves it. A
+                reconciliation the prefetch did not anticipate still reads live, bounded by
+                ``request_timeout_s`` x ``max_pages`` as before.
 
         Returns:
             ``(date, rows)`` — the KST date the inquiry covered (``INQR_STRT_DT ==
@@ -667,7 +683,12 @@ class KisStockBrokerWitness:
     # -- balance -------------------------------------------------------------------------
 
     def _read_balance(
-        self, cano: str, acnt_prdt_cd: str, scope: WitnessScope
+        self,
+        cano: str,
+        acnt_prdt_cd: str,
+        scope: WitnessScope,
+        *,
+        deadline_expired: Callable[[], bool] | None = None,
     ) -> tuple[tuple[tuple[str, Decimal], ...], Decimal | None]:
         """주식 잔고조회 — mirrors ``tools/broker_probes/probes_balance.py``'s own
         ``_balance_params`` for the stock target (module docstring)."""
@@ -691,6 +712,7 @@ class KisStockBrokerWitness:
             path=self._config.balance_path,
             tr_id=self._config.balance_tr_id,
             build_params=build_params,
+            deadline_expired=deadline_expired,
         )
 
         instruments = {key.instrument for key in scope.instrument_keys}

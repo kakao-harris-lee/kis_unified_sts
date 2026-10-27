@@ -43,6 +43,7 @@ itself).
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping
 from typing import Any, Protocol, runtime_checkable
 
@@ -154,14 +155,25 @@ class KisTokenLifecycle:
         self._token_issued_at_ms: int | None = None
         self._token_expires_in_s: int | None = None
         self._last_token_issue_attempt_ms: int | None = None
+        #: Issue #950: the credential session is shared across threads (the loop's order send
+        #: and quote reads, the fill observer's FETCH thread). One lock covers the whole
+        #: check-then-issue, POST included: a second asker waits for the in-flight issue and
+        #: gets its token instead of POSTing again (KIS refuses a second issue per app key
+        #: inside a minute), and the cooldown/stale bookkeeping is never read half-written.
+        self._lock = threading.Lock()
 
     def ensure_token_string(self) -> str:
-        """Return the bearer access token string for the call about to happen.
+        """Return the bearer access token string for the call about to happen. Thread-safe:
+        concurrent callers share one issuance (see ``_lock``).
 
         Raises:
             TokenStale: The held token (or the absence of one) is stale and the reissue cooldown
                 has not elapsed since the last issuance attempt.
         """
+        with self._lock:
+            return self._ensure_token_string_locked()
+
+    def _ensure_token_string_locked(self) -> str:
         now = self._monotonic.now_ms()
         needs_fresh = self._access_token is None or (
             self._token_issued_at_ms is not None
