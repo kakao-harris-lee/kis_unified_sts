@@ -480,11 +480,13 @@ def test_close_stops_the_worker_and_drops_the_in_flight_fetch(
 # §6 issue #971 — the immediate re-read after an expiry is once per run
 # ===========================================================================
 
-#: The tenant's values (``fill_observer.yaml``): 2 s age limit, 60 s finality re-run cadence.
+#: The fixture's age limit and finality re-run cadence; the read times below derive from them.
 _MAX_AGE_MS = 2_000
 _RETRY_MS = 60_000
-#: A broker whose balance + order snapshot read takes longer than the age limit, every time.
-_SLOW_SNAPSHOT_MS = 2_500
+#: A broker whose balance + order snapshot read outlasts the age limit, every time.
+_SLOW_SNAPSHOT_MS = _MAX_AGE_MS + 500
+#: A recovered broker: a read well inside the age limit.
+_FAST_SNAPSHOT_MS = _MAX_AGE_MS // 20
 #: One session-loop pass (``marketfeed.yaml`` poll_interval_ms 400 + allowance 100).
 _PASS_MS = 500
 
@@ -627,7 +629,7 @@ def _snapshot_rows(store: SqliteEvidenceStore) -> list[dict[str, Any]]:
 def test_a_broker_slower_than_the_age_limit_is_re_read_once_then_at_the_retry_cadence(
     filled_store: SqliteEvidenceStore,
 ) -> None:
-    """Issue #971's failing input: every snapshot read takes 2.5 s against a 2 s limit, so
+    """Issue #971's failing input: every snapshot read outlasts the age limit, so
     every snapshot expires and every release HOLDS. Over 10 simulated minutes the observer
     re-reads at once after the FIRST expiry only, then once per ``finality_retry_interval_ms``
     — not every 2-3 s. Mutation: set ``_reread_now`` on every expiry (the #969 behaviour) ->
@@ -672,7 +674,7 @@ def test_a_fresh_snapshot_after_a_run_releases_and_resets_the_run(
     assert outcomes == [False, False, False]
 
     # The broker recovers: the next due re-run is served and releases.
-    snapshots.read_ms = 100
+    snapshots.read_ms = _FAST_SNAPSHOT_MS
     _run_until(observer, clock, lambda: len(outcomes) == 4)
     assert outcomes[3] is True
     served = _snapshot_rows(filled_store)[-1]
