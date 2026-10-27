@@ -189,6 +189,11 @@ class ReconciliationReport:
     permits_rearm: bool
     reason: str | None = None
     observed_positions: tuple[tuple[str, Decimal], ...] = ()
+    #: The witness snapshot's own :attr:`~tos_runtime.recon.ports.WitnessSnapshot
+    #: .positions_complete`, carried through verbatim. ``False`` (the fail-closed default,
+    #: and what the witness-unavailable path reports) means :attr:`observed_positions` does
+    #: not prove anything about what is held.
+    observed_positions_complete: bool = False
 
 
 def _order_existence_observations(
@@ -703,6 +708,7 @@ class ReconciliationService:
             permits_rearm=bool(rearm_flags) and all(rearm_flags),
             reason=reason,
             observed_positions=snapshot.positions,
+            observed_positions_complete=snapshot.positions_complete,
         )
 
     @staticmethod

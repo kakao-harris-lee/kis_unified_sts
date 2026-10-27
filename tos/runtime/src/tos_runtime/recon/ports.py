@@ -126,6 +126,19 @@ class WitnessSnapshot:
     observed_at_generation: int | None
     orders: tuple[WitnessOrder, ...]
     positions: tuple[tuple[str, Decimal], ...] = ()
+    #: Whether :attr:`positions` is a COMPLETE, fully-readable account of this scope's
+    #: holdings — ``True`` only when the witness read every holdings row it was given and
+    #: could attribute each one (#966 review round 1, Codex HIGH).
+    #:
+    #: Defaults to ``False`` (fail-closed) because an empty :attr:`positions` is otherwise
+    #: ambiguous in three ways a consumer cannot tell apart: a genuinely flat account, a
+    #: witness that tracks no positions at all, and a witness that DROPPED rows it could not
+    #: parse. The measured instance: ``KisStockBrokerWitness`` discards a holdings row whose
+    #: ``hldg_qty`` is missing or non-numeric, so ``{"pdno": "005930", "hldg_qty": ""}`` —
+    #: an account that may well be holding — yields ``positions=()``, identical to flat. A
+    #: consumer that releases capacity on "no position" must therefore require this flag,
+    #: never infer flatness from emptiness.
+    positions_complete: bool = False
     cash: Decimal | None = None
     provenance: str = ""
     independent_of_evidence_store: bool = False

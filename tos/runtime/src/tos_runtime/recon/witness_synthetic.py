@@ -210,6 +210,10 @@ class SyntheticLedgerWitness:
             observed_at_generation=scope.as_of_generation,
             orders=orders,
             positions=(),
+            # #966 review round 1: this witness has no broker ledger to read (module
+            # docstring), so its empty `positions` is "unknown", NOT "flat" —
+            # positions_complete stays at its fail-closed default of False, and a consumer
+            # that needs proof of flatness (the entry discharge) holds on a synthetic boot.
             cash=None,
             provenance=self._provenance,
             # Independent-review finding F2 (2026-09-10): this is the mechanical form of the

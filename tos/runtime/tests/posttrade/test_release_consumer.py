@@ -1736,17 +1736,20 @@ def _record_receipt(
 class _CycleWitness:
     """An independent witness reporting BOTH the entry's and the close's orders as filled.
 
-    ``positions`` is the axis #966's entry discharge reads: empty means the broker reports no
-    holding of this instrument (flat).
+    ``positions`` plus ``positions_complete`` are the axes #966's entry discharge reads: a
+    COMPLETE observation with no row for the instrument is flat; an incomplete one proves
+    nothing (#966 review round 1).
     """
 
     def __init__(
         self,
         *,
         positions: tuple[tuple[str, Decimal], ...] = (),
+        positions_complete: bool = True,
         close_quantity: Decimal = _ENTRY_QTY,
     ) -> None:
         self._positions = positions
+        self._positions_complete = positions_complete
         self._close_quantity = close_quantity
 
     def observe(self, _scope: WitnessScope) -> WitnessSnapshot:
@@ -1769,6 +1772,7 @@ class _CycleWitness:
                 ),
             ),
             positions=self._positions,
+            positions_complete=self._positions_complete,
             provenance="independent-broker-double",
             independent_of_evidence_store=True,
         )
@@ -2098,3 +2102,58 @@ def _intent_rows(evidence_store: SqliteEvidenceStore) -> list[dict]:
         (CAPACITY_RELEASE_INTENT_KIND,),
     ).fetchall()
     return [json.loads(payload_json)["payload"] for (payload_json,) in rows]
+
+
+def test_an_incomplete_holdings_observation_holds_the_entry(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    monotonic_source: FakeMonotonicSource,
+) -> None:
+    """#966 review round 1 (Codex HIGH): empty positions are NOT proof of flatness.
+
+    Concrete failing input: entry filled 10, close filled 10 with zero remaining — the
+    quantity proof passes — and a holdings answer the witness could not fully read, so it
+    reports ``positions=()`` with ``positions_complete=False``. Before the fix that empty
+    tuple read as flat and the entry reservation was RELEASED, re-opening the scope to a
+    fresh OPEN on the strength of a row nobody could parse.
+    """
+    payload = _arrange_close(rcl_log, evidence_store, inbox)
+    consumer = _cycle_consumer(
+        rcl_log=rcl_log,
+        evidence_store=evidence_store,
+        inbox=inbox,
+        witness=_CycleWitness(positions=(), positions_complete=False),
+        monotonic_source=monotonic_source,
+    )
+
+    consumer.consume(payload)
+
+    states = _states(rcl_log)
+    assert states[_close_reservation_id()] is CapacityState.RELEASED
+    assert states[_entry_reservation_id()] is CapacityState.POSITION_CONSUMED
+    (held,) = _held_rows(evidence_store)
+    assert held["reason"] == ReleaseHoldReason.BROKER_POSITION_NOT_FLAT.value
+    assert held["reservation_id"] == _entry_reservation_id()
+
+
+def test_a_complete_empty_holdings_observation_releases_the_entry(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    monotonic_source: FakeMonotonicSource,
+) -> None:
+    """The positive control for the test above: the SAME empty tuple, declared complete."""
+    payload = _arrange_close(rcl_log, evidence_store, inbox)
+    consumer = _cycle_consumer(
+        rcl_log=rcl_log,
+        evidence_store=evidence_store,
+        inbox=inbox,
+        witness=_CycleWitness(positions=(), positions_complete=True),
+        monotonic_source=monotonic_source,
+    )
+
+    consumer.consume(payload)
+
+    assert _states(rcl_log)[_entry_reservation_id()] is CapacityState.RELEASED
+    assert _held_rows(evidence_store) == []

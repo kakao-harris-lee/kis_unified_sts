@@ -175,21 +175,30 @@ def _script_broker(
     rows: list[dict[str, str]],
     *,
     holdings: tuple[tuple[str, Decimal], ...] = (),
+    raw_holdings: list[dict[str, str]] | None = None,
 ) -> str:
     """Script both witness GETs for ``date``: the order inquiry from ``rows``, the balance
-    inquiry from ``holdings`` (default: a flat account, the shape every test here had before
-    ``holdings`` existed — ``KisStockBrokerWitness`` omits zero-quantity rows, so an empty
-    ``output1`` IS flat)."""
+    inquiry from ``holdings`` (default: a flat account with NO rows, the shape every test here
+    had before ``holdings`` existed).
+
+    ``raw_holdings`` writes the balance ``output1`` rows verbatim instead, so a test can send
+    a quantity the production parser cannot read (``hldg_qty: ""``) and observe what
+    ``KisStockBrokerWitness`` actually does with it — #966 review round 1 needs that exact
+    input, and building it from ``Decimal`` cannot express it."""
     balance, orders = _witness_paths(config_dir, date)
     server.set_response(
         balance,
         status=200,
         body={
             "rt_cd": "0",
-            "output1": [
-                {"pdno": symbol, "hldg_qty": format(quantity, "f")}
-                for symbol, quantity in holdings
-            ],
+            "output1": (
+                raw_holdings
+                if raw_holdings is not None
+                else [
+                    {"pdno": symbol, "hldg_qty": format(quantity, "f")}
+                    for symbol, quantity in holdings
+                ]
+            ),
             "output2": [{"dnca_tot_amt": "1000000"}],
         },
     )

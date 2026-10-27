@@ -93,20 +93,37 @@ def other_outstanding(
 
 
 def broker_position_flat(report: ReconciliationReport, instrument: str) -> bool:
-    """Whether the witness observed no non-zero holding of ``instrument``.
+    """Whether the broker is AFFIRMATIVELY PROVEN to hold none of ``instrument``.
 
-    Reads :attr:`~tos_runtime.recon.service.ReconciliationReport.observed_positions`, the
-    witness snapshot's own axis — the SAME observation gate 3 already judged on, never a second
-    ``observe`` call.
+    Two conditions, both required:
 
-    ⚠ Disclosed, not hidden: a witness that tracks no positions at all reports ``()``, which
-    this reads as flat. :class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness` is
-    such a witness (it has no broker ledger to read — see its own module docstring), so on a
-    synthetic-transport boot this condition carries no broker-side information and the binding
-    condition is the quantity proof alone. :class:`~tos_runtime.recon.witness_kis
-    .KisStockBrokerWitness` does read the real balance inquiry and omits zero-quantity
-    holdings, so an absent row there genuinely means flat.
+    1. the holdings observation is complete — every row the witness was given was readable and
+       attributable (:attr:`~tos_runtime.recon.service.ReconciliationReport
+       .observed_positions_complete`);
+    2. that complete observation carries no non-zero holding of ``instrument``.
+
+    Reads the SAME observation gate 3 already judged on, never a second ``observe`` call.
+
+    **Why (1) is not optional** (#966 review round 1, Codex HIGH — measured): emptiness is not
+    flatness. :class:`~tos_runtime.recon.witness_kis.KisStockBrokerWitness` DROPS a holdings row
+    whose ``pdno`` is blank or whose ``hldg_qty`` does not parse, so a balance answer of
+    ``{"pdno": "005930", "hldg_qty": ""}`` — an account that may well still be holding the
+    position this close was supposed to flatten — produced ``observed_positions=()``, byte-
+    identical to a genuinely flat account. Reading that as flat released the entry reservation
+    and re-opened the scope to a fresh OPEN on the strength of a row the witness could not
+    read. A dropped row now makes the observation incomplete, which holds.
+
+    Consequence, stated rather than hidden:
+    :class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness` has no broker ledger
+    to read at all, so it never reports a complete holdings observation and this never returns
+    ``True`` on a synthetic-transport boot. The entry reservation then stays
+    ``POSITION_CONSUMED`` after a close, with a ``CAPACITY_RELEASE_HELD`` row naming why — that
+    scope still admits a further CLOSE but no new OPEN. That is the honest reading: the plan's
+    condition is broker-confirmed flatness, and a witness derived from this process's own
+    evidence store confirms nothing about the broker.
     """
+    if not report.observed_positions_complete:
+        return False
     return not any(
         symbol == instrument and quantity != 0
         for symbol, quantity in report.observed_positions

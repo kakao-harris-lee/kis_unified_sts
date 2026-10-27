@@ -159,11 +159,20 @@ class _Broker:
         self._config_dir = config_dir
         self._rows: list[dict[str, str]] = []
 
-    def fill(self, runtime, *, odno: str, flat: bool = True) -> None:
+    def fill(
+        self,
+        runtime,
+        *,
+        odno: str,
+        flat: bool = True,
+        raw_holdings: list[dict[str, str]] | None = None,
+    ) -> None:
         """Fully fill the latest ACKed order, then poll the observer once.
 
         ``flat`` drives the balance read the reconciliation witness makes: the account reports
         no holding (flat) unless a test needs an outstanding position reported.
+        ``raw_holdings`` overrides that with verbatim balance rows, for the quantities the
+        production parser cannot read (#966 review round 1).
         """
         *_, ack = [
             r
@@ -181,6 +190,7 @@ class _Broker:
             date,
             list(self._rows),
             holdings=() if flat else ((fx.INSTRUMENT, qty),),
+            raw_holdings=raw_holdings,
         )
         observer = runtime.fill_observer
         assert observer is not None
@@ -373,3 +383,90 @@ def _approve(runtime, custody_root, result) -> None:
         environment_label=_ENVIRONMENT_LABEL,
         approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
+
+
+# ===========================================================================
+# 3. #966 review round 1 (Codex HIGH) — an unreadable holdings row is not "flat"
+# ===========================================================================
+
+
+@pytest.mark.parametrize("bad_quantity", ["", "  ", "N/A"])
+def test_an_unreadable_holding_quantity_keeps_the_entry_and_denies_a_re_entry(
+    bad_quantity, config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """A balance row the PRODUCTION parser drops must not read as a flat account.
+
+    Driven end to end through ``KisStockBrokerWitness``'s own balance parse: the entry filled
+    10, the close filled 10 with zero remaining (so the quantity proof passes), and the broker
+    answers with a holdings row for this instrument whose ``hldg_qty`` does not parse. The
+    witness discards that row, which before the fix left ``positions=()`` — byte-identical to
+    flat — and released the entry reservation, re-opening the scope to a fresh OPEN. Now the
+    observation is incomplete, so the entry stays held and the next OPEN is DENIED.
+    """
+    _deployed(config_dir, custody_root, server, monkeypatch)
+    _standing_cycle_artifact(config_dir, custody_root)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    broker = _Broker(server, config_dir)
+
+    _order_response(server, "0000000501")
+    runtime.run_once((_entry_tick(),))
+    broker.fill(runtime, odno="0000000501")
+    (entry_reservation_id,) = _reservations(runtime)
+
+    _order_response(server, "0000000502")
+    (exit_,) = runtime.run_once((_exit_tick(),))
+    assert exit_.flow.handed_off is True
+    broker.fill(
+        runtime,
+        odno="0000000502",
+        raw_holdings=[{"pdno": fx.INSTRUMENT, "hldg_qty": bad_quantity}],
+    )
+
+    after = _reservations(runtime)
+    assert after[entry_reservation_id] is CapacityState.POSITION_CONSUMED
+    held = [r["reason"] for r in _rows(runtime, "CAPACITY_RELEASE_HELD")]
+    assert held == ["BROKER_POSITION_NOT_FLAT"]
+
+    # ...and the scope does NOT reopen: step 8 still sees one consumed position.
+    _order_response(server, "0000000503")
+    (again,) = runtime.run_once((_entry_tick(seq=2),))
+    step8 = _verdict(again, CommitmentStep.LEDGER_VERIFICATION)
+    assert step8.outcome is StageOutcome.DENY, step8.reason
+    assert "no pyramiding" in (step8.reason or "")
+    assert again.flow.handed_off is False
+    _close(runtime)
+
+
+def test_a_zero_holding_quantity_is_proven_flat_and_releases_the_entry(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """Positive control for the test above: ``hldg_qty: "0"`` PARSES, so the observation is
+    complete and the account is affirmatively flat — the entry is discharged and the scope
+    reopens."""
+    _deployed(config_dir, custody_root, server, monkeypatch)
+    _standing_cycle_artifact(config_dir, custody_root)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    broker = _Broker(server, config_dir)
+
+    _order_response(server, "0000000601")
+    runtime.run_once((_entry_tick(),))
+    broker.fill(runtime, odno="0000000601")
+    (entry_reservation_id,) = _reservations(runtime)
+
+    _order_response(server, "0000000602")
+    runtime.run_once((_exit_tick(),))
+    broker.fill(
+        runtime,
+        odno="0000000602",
+        raw_holdings=[{"pdno": fx.INSTRUMENT, "hldg_qty": "0"}],
+    )
+
+    assert _reservations(runtime)[entry_reservation_id] is CapacityState.RELEASED
+    assert _rows(runtime, "CAPACITY_RELEASE_HELD") == []
+
+    _order_response(server, "0000000603")
+    (again,) = runtime.run_once((_entry_tick(seq=2),))
+    assert _verdict(again, CommitmentStep.LEDGER_VERIFICATION).outcome is (
+        StageOutcome.ADMIT
+    )
+    _close(runtime)
