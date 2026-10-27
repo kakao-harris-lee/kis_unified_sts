@@ -50,7 +50,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.time.sources import MonotonicSource
-from tos_runtime.transport.kis_mock.pacer import KisAppKeyPacer
+from tos_runtime.transport.kis_mock.pacer import KisAppKeyPacer, KisPacingRefused
 
 __all__ = [
     "EvidenceRecorder",
@@ -176,10 +176,25 @@ class KisTokenLifecycle:
             TokenStale: The held token (or the absence of one) is stale and the reissue cooldown
                 has not elapsed since the last issuance attempt.
             ~tos_runtime.transport.kis_mock.pacer.KisPacingRefused: A token POST was needed and
-                the app key's next slot is beyond the pacer's wait budget — nothing was sent.
+                the app key's next slot is beyond the pacer's wait budget — nothing was sent; or
+                another thread held this lock (its own issue in flight) for the whole wait budget
+                (review-979 r1 MEDIUM) — this caller sends nothing.
         """
-        with self._lock:
+        # Bounded by the pacer's own wait budget, the one configured bound on how long a request
+        # may wait before it is sent (kis_mock_transport.yaml::app_key_request_wait_budget_ms).
+        # Unbounded, a loop-thread order would sit here behind the FETCH worker's whole token
+        # issue — its pacer wait plus the POST's request timeout — before its own budget began.
+        # Lock order is one-way (this lock, then the pacer's), so no deadlock either way.
+        budget_ms = self._pacer.pacing.wait_budget_ms
+        if not self._lock.acquire(timeout=budget_ms / 1000.0):
+            raise KisPacingRefused(
+                f"KisTokenLifecycle: another request's token issue held the app key's token for "
+                f"the whole {budget_ms} ms wait budget — not sent"
+            )
+        try:
             return self._ensure_token_string_locked()
+        finally:
+            self._lock.release()
 
     def _ensure_token_string_locked(self) -> str:
         now = self._monotonic.now_ms()

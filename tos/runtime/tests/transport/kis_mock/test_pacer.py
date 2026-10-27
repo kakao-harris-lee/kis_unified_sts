@@ -9,6 +9,7 @@ module), so every wait is exact and every grant instant is deterministic, even f
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -322,3 +323,41 @@ def test_a_refused_token_slot_does_not_start_the_reissue_cooldown(
         assert session.ensure_token_string() == "token-1"
     except TokenStale:  # pragma: no cover - the mutation's failure mode
         pytest.fail("a refused (unsent) token POST started the reissue cooldown")
+
+
+def test_a_token_issue_in_flight_elsewhere_refuses_after_the_wait_budget() -> None:
+    """review-979 r1 MEDIUM: while the FETCH worker's token issue holds the lifecycle lock (its
+    pacer wait plus the POST), a loop-thread caller waits at most the pacer's wait budget for it
+    and is then refused unsent — not blocked for the worker's whole POST before its own budget
+    even starts. Mutation: an unbounded ``with self._lock`` -> the second caller blocks until
+    the release below -> red on the elapsed bound."""
+    clock = _SleepClock()
+    entered, release = threading.Event(), threading.Event()
+
+    class _SlowTokenClient:
+        def issue_token(
+            self, app_key: bytes, app_secret: bytes, *, path: str  # noqa: ARG002
+        ) -> dict[str, Any]:
+            entered.set()
+            release.wait(10.0)
+            return {"access_token": "tok-slow", "expires_in": 86_400}
+
+    session = _session(
+        clock, min_interval_ms=1, wait_budget_ms=200, client=_SlowTokenClient()  # type: ignore[arg-type]
+    )
+    worker = threading.Thread(target=session.ensure_token_string)
+    worker.start()
+    assert entered.wait(5.0)
+    try:
+        started = time.monotonic()
+        with pytest.raises(KisPacingRefused, match="token"):
+            session.ensure_token_string()
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+        worker.join(5.0)
+
+    assert 0.15 <= elapsed < 2.0
+    assert (
+        session.ensure_token_string() == "tok-slow"
+    )  # the worker's issue still landed

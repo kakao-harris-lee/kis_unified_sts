@@ -784,6 +784,38 @@ def test_an_order_whose_slot_is_beyond_the_wait_budget_is_rejected_unsent(
     assert send_row["status"] is None
 
 
+def test_an_order_behind_another_threads_token_issue_is_rejected_unsent(
+    server: FakeKisServer,
+) -> None:
+    """review-979 r1 MEDIUM, at the order: another thread holds the token lock (its issue in
+    flight) past ``app_key_request_wait_budget_ms`` -> this attempt ends REJECT throttled,
+    ``sent: false``, with no order POST and no token POST of its own."""
+    server.set_response(
+        TOKEN_PATH, status=200, body={"access_token": "tok-1", "expires_in": 86400}
+    )
+    server.set_response(
+        ORDER_PATH, status=200, body={"rt_cd": "0", "output": {"ODNO": "1"}}
+    )
+    cfg = _config(server, app_key_request_wait_budget_ms=150)
+    transport, evidence, _, _ = _build_transport(server, config=cfg)
+    attempt = _attempt("behind-token")
+    transport._seal_lookup = make_seal_lookup(
+        {attempt.attempt_id: build_seal(attempt_id=attempt.attempt_id)}
+    )
+    held = transport._credential_session._lifecycle._lock
+    assert held.acquire(timeout=1.0)  # another thread's issue, in flight
+    try:
+        result = _send(transport, attempt)
+    finally:
+        held.release()
+
+    assert result.kind is EgressResultKind.REJECT
+    assert server.requests_for(ORDER_PATH) == []
+    assert server.requests_for(TOKEN_PATH) == []
+    (row,) = [f for kind, f in evidence.records if kind == "TRANSPORT_SEND"]
+    assert (row["reason"], row["sent"]) == ("throttled", False)
+
+
 # ---------------------------------------------------------------------------
 # token lifecycle (decision 4)
 # ---------------------------------------------------------------------------
