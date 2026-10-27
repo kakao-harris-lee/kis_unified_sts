@@ -205,6 +205,9 @@ class _FakeTickScheduler:
 class _FakeComposed:
     def __init__(self, marketfeed: object) -> None:
         self.marketfeed = marketfeed
+        # `_run_dispatch` stops the fill observer's FETCH worker after the loop (issue #950);
+        # a non-stock boot has none.
+        self.fill_observer = None
 
 
 def _make_args(tmp_path: Path) -> cli.Args:
