@@ -269,6 +269,7 @@ def build_risk_state_service(
     construction_stage_reader: Callable[[], CandidateConstruction | None],
     effect_envelope_reader: Callable[[], EconomicEffectEnvelope | None],
     venue_allowed_sides: frozenset[str],
+    action_class_reader: Callable[[], ActionClass] | None = None,
 ) -> RiskStateService:
     """Load, activate, cross-check, and construct the production
     :class:`~tos_runtime.riskstate.service.RiskStateService` (module docstring).
@@ -321,6 +322,7 @@ def build_risk_state_service(
         evidence_store=evidence_store,
         environment_label=environment_label,
         action_class=construction.action_class,
+        action_class_reader=action_class_reader,
         activated_member_digests=(are_digest, afg_digest),
     )
 

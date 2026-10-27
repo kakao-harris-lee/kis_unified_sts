@@ -142,6 +142,7 @@ def venue_policy_yaml(
     max_quantity: str = "null",
     admitting_phases: str = '["REGULAR"]',
     admitting_phases_short: str | None = None,
+    admitting_phases_close: str | None = None,
     runtime_extra: str = "",
 ) -> str:
     """The standard fixture ``venue_constraint_policy.yaml`` INSTANCE
@@ -157,6 +158,13 @@ def venue_policy_yaml(
     environment/instrument-class fixture constants differ from this module's own defaults, and
     the loader's scope cross-check requires an exact match).
 
+    ``admitting_phases_close`` adds a third, ``CLOSE`` admitting-phase rule (#960 — every
+    shipped tenant tree declares one, e.g.
+    ``config/tos_runtime/cp3-setup-d-long/venue_constraint_policy.yaml``; an unenumerated
+    action is INADMISSIBLE at step 3). It defaults to ``None``, which omits the rule and
+    leaves every pre-existing caller's document byte-identical; a caller that passes it must
+    also name ``CLOSE`` in ``action_classes`` (the loader cross-checks rules against scope).
+
     ``runtime_extra`` is appended verbatim INSIDE the ``_runtime`` block (CP-3 band 원천
     웨이브, 2026-10-09) — the band-source suites use it to add ``price_scale``/``band_source``.
     It defaults to ``""``, so every pre-existing caller gets the SAME document it got before,
@@ -166,6 +174,14 @@ def venue_policy_yaml(
     """
     short_phases = (
         admitting_phases if admitting_phases_short is None else admitting_phases_short
+    )
+    close_rule = (
+        ""
+        if admitting_phases_close is None
+        else (
+            f'\n            - action: "CLOSE"'
+            f"\n              admitting_phases: {admitting_phases_close}"
+        )
     )
     head = textwrap.dedent(f"""\
         artifact_type: VENUE_CONSTRAINT_POLICY
@@ -194,7 +210,7 @@ def venue_policy_yaml(
             - action: "NEW_LONG"
               admitting_phases: {admitting_phases}
             - action: "NEW_SHORT"
-              admitting_phases: {short_phases}
+              admitting_phases: {short_phases}{close_rule}
           required_constraint_classes: []
           shape_constraints:
             price_min: {price_min}
@@ -417,6 +433,11 @@ def ocp_yaml(
                       LONG: {side: "BUY", position_effect: "OPEN"}
                     NEW_SHORT:
                       SHORT: {side: "SELL", position_effect: "OPEN"}
+                    # Both CLOSE arms, as every shipped OCP declares them (#960: a CLOSE
+                    # proposal is constructed from these, never from the boot NEW_LONG arm).
+                    CLOSE:
+                      LONG: {side: "SELL", position_effect: "CLOSE"}
+                      SHORT: {side: "BUY", position_effect: "CLOSE"}
                   effect_dimensions:
                     # dimension_id MEASURED off aggregate_risk_policy.yaml's own
                     # _runtime.dimension_ids (the composed-id spelling RCL actually looks up

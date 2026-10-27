@@ -76,6 +76,7 @@ from tos.engine import (
 from tos_runtime.brokercap import is_broker_reaching
 from tos_runtime.calendar.config import load_calendar_config
 from tos_runtime.calendar.ports import WallClockReference
+from tos_runtime.compose._attempt_arm import attempt_action_class
 from tos_runtime.compose._authority_heartbeat import with_authority_heartbeat
 from tos_runtime.compose._broker_facts_wiring import build_broker_facts
 from tos_runtime.compose._broker_posttrade_wiring import (
@@ -552,6 +553,9 @@ def compose_paper_runtime(
             ),
             effect_envelope_reader=lambda: construction_stages.economic_stage.envelope,
             venue_allowed_sides=venue_service.shape_constraints.allowed_sides,
+            action_class_reader=lambda: attempt_action_class(  # #960: per attempt
+                construction_stages.construction_stage, construction.action_class
+            ),
         )
     composed.risk_state = risk_state_cell["service"]
     # TOS Phase 5 W5 — late-bind the session-facts owner's own tick-generation cell now
