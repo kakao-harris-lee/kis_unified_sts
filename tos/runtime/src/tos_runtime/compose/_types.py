@@ -431,6 +431,9 @@ class ComposedRuntime:
             :attr:`inbox`, :attr:`rcl_log`, and :attr:`evidence_store` as part of the
             procedure — this runtime is not usable for further calls afterward.
         """
+        if self.fill_observer is not None:
+            # Issue #950: stop the FETCH worker before the stores it reports into close.
+            self.fill_observer.close()
         return ControlledShutdown(
             inbox=self.inbox,
             rcl_log=self.rcl_log,

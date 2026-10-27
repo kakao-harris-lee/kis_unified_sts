@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -193,7 +193,12 @@ def _retune_observer_poll_interval(
 
 
 def _script_slow_order_inquiry(
-    server: FakeKisServer, config_dir: Path, date: str, *, delay_s: float
+    server: FakeKisServer,
+    config_dir: Path,
+    date: str,
+    *,
+    delay_s: float,
+    rows: list[dict[str, Any]] | None = None,
 ) -> str:
     """``_script_broker`` with a REAL delay on the order inquiry — the fake server's own
     ``delay_s`` route option, so the slowness is a genuine wall-clock wait on the GET the hook
@@ -207,7 +212,7 @@ def _script_slow_order_inquiry(
     server.set_response(
         orders,
         status=200,
-        body={"rt_cd": "0", "output1": [], "output2": {}},
+        body={"rt_cd": "0", "output1": rows or [], "output2": {}},
         delay_s=delay_s,
     )
     return orders
@@ -228,6 +233,50 @@ def _stop_after(n: int):
         return False
 
     return stop
+
+
+def _stop_when(done: Callable[[], bool], *, max_passes: int = 300):
+    """Admit passes until ``done()`` or ``max_passes``. Issue #950: the observer's broker read
+    finishes on its own worker, so "the fill landed" is a number of passes the loop cannot know
+    in advance — the test waits for the durable fact, bounded, instead of guessing a count.
+    """
+    passes = {"count": 0}
+
+    def stop() -> bool:
+        if passes["count"] >= max_passes or done():
+            return True
+        passes["count"] += 1
+        return False
+
+    return stop
+
+
+class _SlowHook:
+    """Stands in for ``runtime.fill_observer`` with a hook that takes ``seconds`` on the loop
+    thread. Issue #950 moved the observer's own broker reads off the loop, so a slow broker no
+    longer produces a slow pass; the scheduler's overrun row and sleep compensation (#949) still
+    guard any hook that is slow, and these stand-ins are how their tests still get one.
+    """
+
+    def __init__(self, seconds: float, *, slow_passes: int | None = None) -> None:
+        self.seconds = seconds
+        self.slow_passes = slow_passes
+
+    def poll_if_due(self) -> None:
+        if self.slow_passes is None or self.slow_passes > 0:
+            time.sleep(self.seconds)
+        if self.slow_passes is not None:
+            self.slow_passes -= 1
+
+    def close(self) -> None:
+        return None
+
+
+def _install_slow_hook(runtime: ComposedRuntime, hook: _SlowHook) -> None:
+    real = runtime.fill_observer
+    if real is not None:
+        real.close()
+    runtime.fill_observer = cast(Any, hook)
 
 
 def _fake_runtime(observer: Any) -> ComposedRuntime:
@@ -333,7 +382,9 @@ def test_the_session_loop_observes_the_fill_and_releases_once(
         [_row(date=date, ord_qty=qty, filled=qty, remaining=Decimal(0))],
     )
 
-    runtime.marketfeed.run_forever(sleep=_real_short_sleep, stop=_stop_after(2))
+    runtime.marketfeed.run_forever(
+        sleep=_real_short_sleep, stop=_stop_when(lambda: _rcl_releases(runtime) >= 1)
+    )
 
     # The loop really ticked (the durable store advanced), and ordered nothing more.
     assert runtime.marketfeed._store.latest_as_of(instrument=fx.INSTRUMENT) == as_of_ms
@@ -484,10 +535,13 @@ def test_a_pass_that_outruns_the_reserved_window_leaves_one_overrun_row(
     monkeypatch,
     server,
 ) -> None:
-    """#949 review HIGH (b), end to end through a real composed loop: the fake server holds the
-    order inquiry for longer than the whole reserved window (``poll_interval_ms`` 20 +
-    ``journal_pass_allowance_ms`` 100), so the pass that polls it overruns, and the durable
-    store says so — with the hook's share split out from the tick's.
+    """#949 review HIGH (b), end to end through a real composed loop: a post-pass hook that takes
+    longer than the whole reserved window (``poll_interval_ms`` 20 + ``journal_pass_allowance_ms``
+    100) overruns its pass, and the durable store says so — with the hook's share split out from
+    the tick's. Issue #950: the fill observer's broker read no longer runs in the hook (see
+    :func:`test_a_slow_broker_read_stretches_no_pass`), so the slow hook here is a stand-in
+    (:class:`_SlowHook`); what this pins is the scheduler's measurement, which still guards
+    every hook.
 
     Without this row the only trace of a slow hook is a ``STALE`` field, which looks exactly
     like a late producer (``scheduler.py``'s own post-pass-hook paragraph).
@@ -500,8 +554,8 @@ def test_a_pass_that_outruns_the_reserved_window_leaves_one_overrun_row(
     assert _drive_crossing_tick(runtime, custody_root).flow is not None
     date = _ack(runtime)["trading_date"]
     assert date is not None and runtime.marketfeed is not None
-    # A broker read slower than the allowance this suite's marketfeed config declares.
-    _script_slow_order_inquiry(server, config_dir, date, delay_s=0.3)
+    # A hook slower than the allowance this suite's marketfeed config declares.
+    _install_slow_hook(runtime, _SlowHook(0.3))
 
     runtime.marketfeed.run_forever(sleep=_real_short_sleep, stop=_stop_after(2))
 
@@ -688,14 +742,14 @@ def test_the_loop_period_does_not_grow_by_the_hooks_broker_read(
     monkeypatch,
     server,
 ) -> None:
-    """#949 review HIGH, the fix: a 300 ms broker read inside the hook must not push the next
-    intake read 300 ms later — that is what ages a bar into ``STALE``. The loop sleeps the
-    interval MINUS the pass, so the PERIOD stays the configured 500 ms: the pass that polled
-    asks for a visibly shorter sleep, and no pass ever asks for more than the interval.
+    """#949 review HIGH, the fix: 300 ms spent inside the hook must not push the next intake
+    read 300 ms later — that is what ages a bar into ``STALE``. The loop sleeps the interval
+    MINUS the pass, so the PERIOD stays the configured 500 ms: the slow pass asks for a visibly
+    shorter sleep, and no pass ever asks for more than the interval.
 
     A deliberately visible interval (500 ms, not this file's 20 ms default) so the compensated
-    sleep and the uncompensated one cannot be confused. The observer's own 3 s cadence means
-    only the first pass polls; the rest are the baseline.
+    sleep and the uncompensated one cannot be confused. Issue #950: the observer's broker read
+    left the hook, so the slow hook is a stand-in that is slow on its first pass only.
 
     Mutation: sleep the plain interval -> every entry is 0.5 and the ``shortened`` list is empty
     -> red (and the real loop would then run a 800 ms period against a 500 ms config).
@@ -706,7 +760,7 @@ def test_the_loop_period_does_not_grow_by_the_hooks_broker_read(
     assert _drive_crossing_tick(runtime, custody_root).flow is not None
     date = _ack(runtime)["trading_date"]
     assert date is not None and runtime.marketfeed is not None
-    _script_slow_order_inquiry(server, config_dir, date, delay_s=0.3)
+    _install_slow_hook(runtime, _SlowHook(0.3, slow_passes=1))
 
     sleeps: list[float] = []
 
@@ -726,4 +780,198 @@ def test_the_loop_period_does_not_grow_by_the_hooks_broker_read(
     baseline = [seconds for seconds in sleeps if seconds >= 0.4]
     assert len(shortened) == 1, sleeps
     assert len(baseline) == 2, sleeps
+    _close(runtime)
+
+
+def test_a_slow_broker_read_stretches_no_pass(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch,
+    server,
+) -> None:
+    """Issue #950 acceptance, through the real loop and the real composed observer: the broker
+    holds every order inquiry for 1.5 s — the fill read AND the release reconciliation's read —
+    and yet no pass outruns its window (no ``MARKETFEED_PASS_OVERRUN`` row against a 1 s
+    allowance), while the fill is still observed, proven and released exactly once.
+
+    The reconciliation's read is the #949 r2 MEDIUM-1 term: if the prefetch missed and the
+    release path read the broker on the loop thread, that pass would take >= 1.5 s and leave a
+    row. Mutation: run the FETCH inline in ``poll_if_due`` (or drop ``snapshots=`` in compose)
+    -> overrun rows -> red.
+    """
+    _wire_tick_source(config_dir, tmp_path, allowance_ms=1_000)
+    runtime, date, qty = _acked(
+        tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
+    )
+    assert runtime.marketfeed is not None and runtime.fill_observer is not None
+    orders_path = _script_slow_order_inquiry(
+        server,
+        config_dir,
+        date,
+        delay_s=1.5,
+        rows=[_row(date=date, ord_qty=qty, filled=qty, remaining=Decimal(0))],
+    )
+
+    runtime.marketfeed.run_forever(
+        sleep=_real_short_sleep,
+        stop=_stop_when(lambda: _rcl_releases(runtime) >= 1, max_passes=600),
+    )
+
+    assert _rows(runtime, "MARKETFEED_PASS_OVERRUN") == []
+    # Both slow reads happened — the fill read and the reconciliation's — just not on the loop.
+    assert len(server.requests_for(orders_path)) >= 2
+    assert [
+        r["egress_result_kind"] for r in _rows(runtime, "EGRESS_RESULT_CONSUMED")
+    ] == ["ACK", "FULL_FILL"]
+    assert _rows(runtime, "CAPACITY_RELEASE_HELD") == []
+    assert _rcl_releases(runtime) == 1
+    _close(runtime)
+
+
+# ===========================================================================
+# 5. #969 review round 1 HIGH (Codex) — a prefetched release snapshot has an age limit
+# ===========================================================================
+
+#: The order B the broker shows after the FETCH read: same account, same instrument, attributed
+#: to no ACK this runtime holds — the reconciliation's ORPHAN_BROKER_ORDER case.
+_ORPHAN_ODNO = "0000099999"
+
+
+def _retune_observer(config_dir: Path, **keys: int) -> None:
+    """Rewrite named keys of the deployed ``fill_observer.yaml`` (every other key kept)."""
+    path = config_dir / FILL_OBSERVER_CONFIG_NAME
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw.update(keys)
+    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+
+def _wait_until_fetched(observer: Any, limit_s: float = 10.0) -> None:
+    """Wait for the observer's in-flight FETCH to finish WITHOUT applying it (no poll call)."""
+    deadline = time.monotonic() + limit_s
+    while time.monotonic() < deadline:
+        runner = observer._runner  # noqa: SLF001 - the test holds APPLY back on purpose
+        if runner is not None and not runner.busy:
+            return
+        time.sleep(0.01)
+    raise AssertionError("the FETCH never finished")
+
+
+def _boot_filled(
+    tmp_path, config_dir, data_dir, custody_root, server, monkeypatch, **keys
+):
+    _deploy(config_dir, custody_root, server, monkeypatch)
+    _retune_observer(config_dir, **keys)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    assert _drive_crossing_tick(runtime, custody_root).flow is not None
+    date = _ack(runtime)["trading_date"]
+    assert date is not None
+    qty = _sealed_quantity(runtime)
+    filled_a = _row(date=date, ord_qty=qty, filled=qty, remaining=Decimal(0))
+    _script_broker(server, config_dir, date, [filled_a])
+    assert runtime.fill_observer is not None
+    return runtime, date, filled_a
+
+
+def test_an_expired_release_snapshot_holds_instead_of_releasing(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch,
+    server,
+) -> None:
+    """#969 review r1 HIGH (Codex's failing input): FETCH reads order A fully filled, APPLY is
+    delayed, and meanwhile an unattributed order B appears at the broker. The stale snapshot
+    (no B) would permit the release; the current broker (B = ORPHAN_BROKER_ORDER) would not.
+    Past ``release_snapshot_max_age_ms`` the snapshot is not served: the release HOLDS (no live
+    read on the loop), the hold and a snapshot row say why and how old, and a fresh worker read
+    is scheduled at once — which sees B and keeps holding.
+
+    Mutation: serve the snapshot regardless of age -> the release commits against the stale
+    picture -> red on ``_rcl_releases == 0``.
+    """
+    runtime, date, filled_a = _boot_filled(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        server,
+        monkeypatch,
+        poll_interval_ms=1,
+        release_snapshot_max_age_ms=300,
+    )
+    observer = runtime.fill_observer
+    assert observer is not None
+
+    assert observer.poll_if_due().polled is False  # plan + submit
+    _wait_until_fetched(observer)
+    time.sleep(0.5)  # APPLY held back past the snapshot's age limit
+    orphan_b = _row(
+        odno=_ORPHAN_ODNO,
+        date=date,
+        ord_qty=Decimal(1),
+        filled=Decimal(1),
+        remaining=Decimal(0),
+    )
+    _script_broker(server, config_dir, date, [filled_a, orphan_b])
+
+    report = observer.poll_if_due()  # APPLY of the old FETCH
+
+    assert [k for _a, k, _d in report.emitted] == [EgressResultKind.FULL_FILL]
+    assert _rcl_releases(runtime) == 0
+    (held,) = _rows(runtime, "CAPACITY_RELEASE_HELD")
+    assert "expired" in (held.get("detail") or "")
+    (expired,) = _rows(runtime, "FILL_OBSERVER_RELEASE_SNAPSHOT")
+    assert expired["verdict"] == "expired"
+    assert expired["age_ms"] > expired["max_age_ms"] == 300
+    assert expired["read_started_monotonic_ms"] <= expired["read_finished_monotonic_ms"]
+
+    # The re-read is scheduled now, not after finality_retry_interval_ms (60 s): the next due
+    # poll plans a finality re-run with a fresh worker snapshot — which sees B and holds.
+    observer.poll_if_due()
+    _wait_until_fetched(observer)
+    report = observer.poll_if_due()
+    assert [attempt for attempt, _r in report.reprojected] == [
+        _ack(runtime)["attempt_id"]
+    ]
+    assert _rcl_releases(runtime) == 0
+    verdicts = [r["verdict"] for r in _rows(runtime, "FILL_OBSERVER_RELEASE_SNAPSHOT")]
+    assert verdicts == ["expired", "served"]
+    _close(runtime)
+
+
+def test_a_fresh_release_snapshot_still_releases(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch,
+    server,
+) -> None:
+    """The other side of the age limit: a snapshot applied inside it releases, and its row
+    records the real read instants and an age within the limit."""
+    runtime, _date, _a = _boot_filled(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        server,
+        monkeypatch,
+        poll_interval_ms=1,
+        release_snapshot_max_age_ms=5_000,
+    )
+    observer = runtime.fill_observer
+    assert observer is not None
+
+    observer.poll_if_due()
+    _wait_until_fetched(observer)
+    report = observer.poll_if_due()
+
+    assert [k for _a, k, _d in report.emitted] == [EgressResultKind.FULL_FILL]
+    assert _rcl_releases(runtime) == 1
+    (served,) = _rows(runtime, "FILL_OBSERVER_RELEASE_SNAPSHOT")
+    assert served["verdict"] == "served"
+    assert 0 <= served["age_ms"] <= served["max_age_ms"] == 5_000
     _close(runtime)

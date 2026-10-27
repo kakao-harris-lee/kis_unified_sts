@@ -196,6 +196,9 @@ def _rcl_releases(runtime) -> int:
 
 
 def _close(runtime) -> None:
+    # Issue #950: stop the observer's FETCH worker before the stores it reports into.
+    if runtime.fill_observer is not None:
+        runtime.fill_observer.close()
     runtime.rcl_log.close()
     runtime.evidence_store.close()
 

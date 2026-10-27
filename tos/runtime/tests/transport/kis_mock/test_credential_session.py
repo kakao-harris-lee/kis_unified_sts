@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import ast
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -209,3 +210,97 @@ def test_a_stale_token_refuses_before_any_key_is_loaded() -> None:
     with pytest.raises(TokenStale), session.request_credentials():
         pass
     assert len(custody.load_calls) == loads_after_first
+
+
+# -- issue #950: the session is shared across threads ----------------------------------------
+
+
+class _SlowTokenClient:
+    """A token POST that holds the issuing thread until released — so a second thread asks
+    while the first is mid-issue, the exact race a FETCH thread and the loop thread make.
+    """
+
+    def __init__(self) -> None:
+        self.issued = 0
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def issue_token(
+        self, app_key: bytes, app_secret: bytes, *, path: str
+    ) -> dict[str, Any]:
+        del app_key, app_secret, path
+        self.issued += 1
+        self.entered.set()
+        assert self.release.wait(5.0), "the test never released the token POST"
+        return {"access_token": f"token-{self.issued}", "expires_in": 86_400}
+
+
+def test_concurrent_token_refresh_from_two_threads_issues_exactly_one_post() -> None:
+    """Issue #950 acceptance: two threads ask for the token at once (fill observer FETCH thread
+    and the loop's order send) -> exactly one POST, both get the same token, and the state is
+    consistent afterwards. Mutation: drop the lifecycle's lock -> the second thread sees no
+    token and POSTs again (KIS answers a second issue inside a minute with 403) -> red.
+    """
+    client = _SlowTokenClient()
+    session = _session_for(_registry(), client)  # type: ignore[arg-type]
+    tokens: list[str] = []
+    errors: list[BaseException] = []
+
+    def _ask() -> None:
+        try:
+            tokens.append(session.ensure_token_string())
+        except BaseException as exc:  # noqa: BLE001 - surfaced by the assert below
+            errors.append(exc)
+
+    first = threading.Thread(target=_ask)
+    first.start()
+    assert client.entered.wait(5.0)
+    second = threading.Thread(target=_ask)
+    second.start()
+    second.join(0.2)
+    assert second.is_alive(), "the second asker must wait for the in-flight issue"
+    client.release.set()
+    first.join(5.0)
+    second.join(5.0)
+
+    assert errors == []
+    assert client.issued == 1
+    assert tokens == ["token-1", "token-1"]
+    assert session.ensure_token_string() == "token-1"
+
+
+def test_concurrent_stale_refusals_record_whole_rows() -> None:
+    """Two threads refused inside the cooldown each record one complete
+    ``TRANSPORT_TOKEN_STALE`` row — no lost or half-built record."""
+    custody = _custody()
+    monotonic = FakeMonotonicSource(start_ms=1_000)
+    sink = RecordingEvidenceSink()
+    registry = KisCredentialSessions(
+        custody=custody, monotonic=monotonic, evidence_sink=sink
+    )
+    session = _session_for(registry, _CountingTokenClient(expires_in=1))
+    session.ensure_token_string()
+    monotonic.advance(2_000)
+    start = threading.Barrier(2)
+    stale: list[int] = []
+
+    def _ask() -> None:
+        start.wait()
+        try:
+            session.ensure_token_string()
+        except TokenStale:
+            stale.append(1)
+
+    threads = [threading.Thread(target=_ask) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(5.0)
+
+    assert len(stale) == 2
+    rows = sink.of_kind("TRANSPORT_TOKEN_STALE")
+    assert len(rows) == 2
+    assert all(
+        set(r) == {"reissue_cooldown_s", "elapsed_ms", "cooldown_remaining_ms"}
+        for r in rows
+    )
