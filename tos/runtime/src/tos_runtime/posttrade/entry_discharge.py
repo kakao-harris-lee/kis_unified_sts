@@ -37,6 +37,7 @@ from tos_runtime.recon.service import ReconciliationReport
 
 __all__ = [
     "DischargeRefusal",
+    "any_quantity_filled",
     "broker_position_flat",
     "entry_discharge_refusal",
     "entry_final_quantity",
@@ -162,6 +163,41 @@ def recorded_final_quantity(
         ):
             return Decimal(receipt.filled_quantity)
     return None
+
+
+def any_quantity_filled(
+    evidence_store: SqliteEvidenceStore,
+    *,
+    account: str,
+    instrument: str,
+    attempt_id: str,
+) -> bool:
+    """Whether ``attempt_id`` has ANY recorded receipt showing a filled quantity above zero.
+
+    The gate a non-execution result (``CANCEL_ACK``/``EXPIRED``/``REJECT``) needs before it may
+    release (review-973 M3): a cancel of the REMAINDER of a partially-filled order ends the
+    order, not the position. Releasing the reservation there would report zero outstanding
+    capacity while the filled part is still held — and under #966's step-8 table that admits a
+    fresh OPEN over a live position and leaves no reservation for a CLOSE to discharge.
+
+    Fail-closed in both directions: an unreadable receipt path returns ``True`` (cannot tell,
+    so do not release), and a receipt whose filled magnitude is absent is not read as zero.
+    """
+    scope = WitnessScope(
+        account=account,
+        instrument_keys=(InstrumentKey(account=account, instrument=instrument),),
+        attempt_ids=(attempt_id,),
+    )
+    try:
+        receipts = SqliteEvidenceReceiptReader(evidence_store).receipts(scope)
+    except WitnessUnavailable:
+        return True
+    return any(
+        receipt.attempt_id == attempt_id
+        and receipt.filled_quantity is not None
+        and Decimal(receipt.filled_quantity) > Decimal(0)
+        for receipt in receipts
+    )
 
 
 def entry_final_quantity(

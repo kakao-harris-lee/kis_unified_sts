@@ -61,20 +61,19 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.entry_discharge import (
     DischargeRefusal,
+    any_quantity_filled,
     entry_discharge_refusal,
     entry_final_quantity,
     entry_release_command_id,
     other_outstanding,
 )
 from tos_runtime.posttrade.finality import ReleaseFinalityProducer
+from tos_runtime.posttrade.release_currentness import latest_release_is_conflict_free
 from tos_runtime.rcl.finality_witness import release_reservation
 from tos_runtime.rcl.log import ReservationTransitionRefusal, SqliteCommitLog
 from tos_runtime.rcl.projection import (
     ScopeReservation,
     SqliteReservationProjectionReader,
-)
-from tos_runtime.rcl.reservation_identity import (
-    scope_reservation_id,
 )
 from tos_runtime.rcl.reservation_lookup import (
     reservation_id_for_attempt,
@@ -187,6 +186,9 @@ class ReleaseHoldReason(StrEnum):
     ENTRY_QUANTITY_UNPROVEN = "ENTRY_QUANTITY_UNPROVEN"
     #: #966: the witness still observes a non-zero holding of this instrument.
     BROKER_POSITION_NOT_FLAT = "BROKER_POSITION_NOT_FLAT"
+    #: review-973 M3: a non-execution result (cancel/expire/reject) ended the ORDER, but this
+    #: attempt had already filled part of it — releasing would discard capacity still held.
+    FILLED_QUANTITY_STILL_HELD = "FILLED_QUANTITY_STILL_HELD"
 
 
 #: :class:`~tos_runtime.posttrade.entry_discharge.DischargeRefusal` -> this module's own
@@ -406,61 +408,17 @@ class FinalityReleaseConsumer:
     # -- currentness (Phase 5 W3.2 POST_TRADE dimension reader) -----------------------
 
     def latest_release_is_conflict_free(self) -> bool:
-        """Whether this consumer's own scope's MOST RECENT recorded post-trade release
-        evidence is free of a reconciliation conflict — the read
-        :mod:`tos_runtime.compose._currentness_wiring`'s POST_TRADE dimension reader
-        (:func:`~tos_runtime.compose._currentness_wiring._post_trade_dimension_reader_for`)
-        uses, never a second judgement authored there.
+        """Whether this scope's MOST RECENT recorded post-trade release evidence is free of a
+        reconciliation conflict — the read :mod:`tos_runtime.compose._currentness_wiring`'s
+        POST_TRADE dimension reader uses, never a second judgement authored there.
 
-        Scans this scope's own :data:`CAPACITY_RELEASE_INTENT_KIND` /
-        :data:`CAPACITY_RELEASE_HELD_KIND` evidence rows (newest ``seq`` first, mirroring
-        :meth:`_active_generation`'s own scan style) for the first one belonging to this
-        consumer's scope. #966: that is a scope-PREFIX match now, not one id — every
-        per-attempt reservation id of this scope starts with the scope id
-        (:func:`~tos_runtime.rcl.reservation_identity.permit_reservation_id`), and a pre-#966
-        ledger's row IS the scope id, so both forms are covered by the one test. A row this
-        consumer could not attribute to any reservation at all (``reservation_id`` null) is
-        skipped — it says nothing about a reservation's post-trade state. The dimension then
-        reads:
-
-        - No matching row at all (no post-trade fact yet for this scope) ⇒ ``True`` — a
-          scope that has never sent an attempt has no post-trade fact YET, which is the
-          normal state before any send, never treated as a conflict.
-        - The latest matching row is a :data:`CAPACITY_RELEASE_INTENT_KIND` (a release
-          actually proceeded) ⇒ ``True``.
-        - The latest matching row is a :data:`CAPACITY_RELEASE_HELD_KIND` whose recorded
-          ``reason`` is :attr:`ReleaseHoldReason.NOT_CORROBORATED` ⇒ ``False`` — the ONE
-          hold reason that structurally means gate 3's reconciliation found a genuine
-          conflict (an orphan broker order, or a non-``MATCHED`` classification) between
-          what this scope expected and what actually happened downstream.
-        - Any OTHER :data:`CAPACITY_RELEASE_HELD_KIND` reason (no witness yet, proof not
-          yet reloaded, reconciliation itself unavailable, the RCL transition itself
-          refused, ...) ⇒ ``True`` — a normal, transient "not yet complete" gate, never a
-          conflict; folding every hold into ``False`` would permanently block new risk on
-          ordinary pipeline timing, which this dimension does not do.
-
-        Returns:
-            ``True`` unless the most recent recorded outcome for this scope is a
-            genuine reconciliation conflict.
+        Delegates to :func:`~tos_runtime.posttrade.release_currentness
+        .latest_release_is_conflict_free`, which holds the scan and the one hold reason that
+        structurally means "conflict" (size-budget decomposition; no behaviour change).
         """
-        scope_prefix = scope_reservation_id(self.account, self.instrument)
-        rows = self.evidence_store.connection.execute(
-            "SELECT kind, payload_json FROM entries WHERE kind IN (?, ?) ORDER BY seq DESC",
-            (CAPACITY_RELEASE_INTENT_KIND, CAPACITY_RELEASE_HELD_KIND),
-        ).fetchall()
-        for kind, payload_json in rows:
-            decoded = json.loads(payload_json)["payload"]
-            row_reservation_id = decoded.get("reservation_id")
-            if not isinstance(row_reservation_id, str) or not (
-                row_reservation_id.startswith(scope_prefix)
-            ):
-                continue
-            if kind == CAPACITY_RELEASE_INTENT_KIND:
-                return True
-            return bool(
-                decoded.get("reason") != ReleaseHoldReason.NOT_CORROBORATED.value
-            )
-        return True
+        return latest_release_is_conflict_free(
+            self.evidence_store, account=self.account, instrument=self.instrument
+        )
 
     # -- FULL_FILL -> POSITION_CONSUMED (entry) / RELEASED (close) ---------------------
 
@@ -541,6 +499,21 @@ class FinalityReleaseConsumer:
     def _consume_non_execution(
         self, payload: EgressResultPayload, *, reservation_id: str
     ) -> ReleaseOutcome:
+        # review-973 M3: a cancel/expire/reject of the REMAINDER of a partially-filled order
+        # ends the order, not the position. ``RELEASED`` here would report zero outstanding
+        # capacity while the filled part is still held — which #966's step-8 table then reads
+        # as "fresh scope", admitting an OPEN over a live position and leaving no reservation
+        # for a CLOSE to discharge. Checked BEFORE reconciliation: a corroborated cancel is
+        # exactly the input that used to release.
+        if any_quantity_filled(
+            self.evidence_store,
+            account=self.account,
+            instrument=self.instrument,
+            attempt_id=payload.attempt_id,
+        ):
+            return self._hold(
+                payload, reservation_id, ReleaseHoldReason.FILLED_QUANTITY_STILL_HELD
+            )
         report, corroborated = self._reconcile(payload)
         if report is None:
             return self._hold(

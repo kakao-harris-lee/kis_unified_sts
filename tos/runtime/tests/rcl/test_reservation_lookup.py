@@ -219,16 +219,44 @@ def test_resolution_returns_the_per_attempt_row_when_it_exists(
     assert _resolve(rcl_log, evidence_store, _ATTEMPT) == expected
 
 
-def test_a_pre_966_ledger_still_resolves_to_its_scope_level_row(
+def test_a_pre_966_ledger_resolves_to_its_scope_level_row(
     rcl_log: SqliteCommitLog, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """A ledger written before #966 has no join rows and one ``resv-{acct}-{instr}`` row.
+    """A ledger written before #966 holds one ``resv-{acct}-{instr}`` row for the scope.
 
-    It must keep resolving to exactly that row — no migration, no rewrite (plan §2.1).
+    Its flow evidence resolves normally — the two joined rows predate #966 — but no per-permit
+    reservation was ever committed, so the scope row is the answer. No migration, no rewrite
+    (plan §2.1).
     """
+    _record_commit(evidence_store, event_id=_EVENT, permit_identity=_PERMIT)
+    _record_attempt(evidence_store, event_id=_EVENT, attempt_id=_ATTEMPT)
     legacy = scope_reservation_id(_ACCOUNT, _INSTRUMENT)
     _commit_reservation(rcl_log, legacy)
-    assert _resolve(rcl_log, evidence_store, "attempt-from-an-old-ledger") == legacy
+    assert _resolve(rcl_log, evidence_store, _ATTEMPT) == legacy
+
+
+def test_a_failed_join_never_falls_through_to_the_scope_row(
+    rcl_log: SqliteCommitLog, evidence_store: SqliteEvidenceStore
+) -> None:
+    """review-973 L1: no flow evidence for this attempt -> ``None``, even with a scope row.
+
+    Concrete failing input: the scope holds a reservation committed by a DIFFERENT attempt and
+    this attempt has no join rows at all. Falling through handed the caller that other
+    attempt's reservation, which the release consumer would then transition.
+    """
+    _commit_reservation(rcl_log, scope_reservation_id(_ACCOUNT, _INSTRUMENT))
+    assert _resolve(rcl_log, evidence_store, "attempt-with-no-flow-evidence") is None
+
+
+def test_an_ambiguous_join_never_falls_through_to_the_scope_row(
+    rcl_log: SqliteCommitLog, evidence_store: SqliteEvidenceStore
+) -> None:
+    """The other half of L1: an unresolvable (two-permit) flow is not a scope-row lookup."""
+    _record_commit(evidence_store, event_id=_EVENT, permit_identity="afg-permit-x")
+    _record_commit(evidence_store, event_id=_EVENT, permit_identity="afg-permit-y")
+    _record_attempt(evidence_store, event_id=_EVENT, attempt_id=_ATTEMPT)
+    _commit_reservation(rcl_log, scope_reservation_id(_ACCOUNT, _INSTRUMENT))
+    assert _resolve(rcl_log, evidence_store, _ATTEMPT) is None
 
 
 def test_the_per_attempt_row_wins_over_a_legacy_row(

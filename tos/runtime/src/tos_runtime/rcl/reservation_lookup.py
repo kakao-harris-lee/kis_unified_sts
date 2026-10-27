@@ -28,9 +28,10 @@ two distinct permit identities). A ``None`` makes the caller hold; a fabricated 
 re-read against the log as if it were this attempt's reservation.
 
 **Pre-#966 ledgers.** :func:`reservation_id_for_attempt` only ever returns an id the log
-actually holds a row for, and falls back to the scope-level
-:func:`~tos_runtime.rcl.reservation_identity.scope_reservation_id` row when one exists, so a
-ledger committed before #966 resolves to exactly the row it has always had.
+actually holds a row for. When the join resolves but no per-permit row exists, it falls back to
+the scope-level :func:`~tos_runtime.rcl.reservation_identity.scope_reservation_id` row, so a
+ledger committed before #966 resolves to exactly the row it has always had. That fallback is
+reachable ONLY through a resolved join (review-973 L1) — a failed join never reaches it.
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos_runtime.evidence
 .store`` + ``tos_runtime.rcl.projection``/``.reservation_identity`` only. No ``shared.*``, no
@@ -186,10 +187,15 @@ def reservation_id_for_attempt(
 
     Resolution order (module docstring):
 
-    1. the per-attempt id from the permit join, when the log holds a reservation under it;
-    2. otherwise the pre-#966 scope-level row, when the log holds one (an old ledger replaying
-       on today's code);
-    3. otherwise ``None`` — the caller holds.
+    1. the join must resolve. An empty or ambiguous join is ``None`` outright — UNKNOWN/HOLD
+       (review-973 L1). It must NOT fall through to the scope row: an attempt this process
+       cannot place is exactly the one whose reservation it must not touch, and the scope row
+       belongs to whatever other attempt committed it;
+    2. the per-attempt id from that permit, when the log holds a reservation under it;
+    3. otherwise the pre-#966 scope-level row, when the log holds one — a ledger committed
+       before #966 replaying on today's code: its flow evidence resolves normally, but the
+       reservation it committed is named by the old scope formula;
+    4. otherwise ``None`` — the caller holds.
 
     The row-existence condition is what keeps this honest in both directions: a resolved id is
     always one the RCL itself has a record for, never a name this function merely spelled.
@@ -210,10 +216,11 @@ def reservation_id_for_attempt(
             "could not tell".
     """
     permit_identity = permit_identity_for_attempt(store, attempt_id)
-    if permit_identity is not None:
-        candidate = permit_reservation_id(account, instrument, permit_identity)
-        if projection.reservation_state(candidate) is not None:
-            return candidate
+    if permit_identity is None:
+        return None
+    candidate = permit_reservation_id(account, instrument, permit_identity)
+    if projection.reservation_state(candidate) is not None:
+        return candidate
     legacy = scope_reservation_id(account, instrument)
     if projection.reservation_state(legacy) is not None:
         return legacy

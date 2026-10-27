@@ -44,7 +44,7 @@ from types import SimpleNamespace
 import pytest
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.engine.records import EgressResultPayload, InstrumentKey
-from tos.engine.vocabulary import EgressResultKind
+from tos.engine.vocabulary import EgressResultKind, StageOutcome
 from tos.rcl import (
     AppendRefusal,
     CapacityReservationTransition,
@@ -86,6 +86,7 @@ from tos_runtime.recon.ports import (
     WitnessSnapshot,
 )
 from tos_runtime.recon.service import ReconciliationClass, ReconciliationService
+from tos_runtime.risk.ledger_stages import verdict_for_scope
 
 from ..engine.conftest import FakeMonotonicSource, FixedKeyProvider  # noqa: F401
 
@@ -94,7 +95,13 @@ _ACCOUNT = "acct-relc"
 _INSTRUMENT = "101S06"
 _KEY = InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT)
 _ATTEMPT_ID = "attempt-relc-1"
+#: This module's reservations are committed under the PRE-#966 scope formula, and the autouse
+#: ``_attempt_permit_join`` fixture records this attempt's flow evidence, so every test here
+#: resolves through :func:`~tos_runtime.rcl.reservation_lookup.reservation_id_for_attempt`'s
+#: step 3: the join resolves, no per-permit row exists, the scope row does. That is exactly a
+#: ledger committed before #966 replaying on today's code — the suite is its regression proof.
 _RESERVATION_ID = scope_reservation_id(_ACCOUNT, _INSTRUMENT)
+_MAIN_PERMIT = "afg-permit-relc-main"
 
 
 class _TrustedTimeService:
@@ -176,6 +183,18 @@ _MONOTONIC_BASE_MS = 1_700_000_000_000
 @pytest.fixture
 def monotonic_source() -> FakeMonotonicSource:
     return FakeMonotonicSource(start=_MONOTONIC_BASE_MS)
+
+
+@pytest.fixture(autouse=True)
+def _attempt_permit_join(evidence_store: SqliteEvidenceStore) -> None:
+    """This attempt's durable ``event_id`` join, which every real flow writes.
+
+    Required since review-973 L1: a join that does not resolve now yields ``None`` instead of
+    falling through to the scope row, so an attempt with no flow evidence at all holds. A real
+    attempt always has these two rows — they predate #966 — and recording them here keeps this
+    suite exercising the pre-#966 LEDGER (a scope-named reservation) rather than a pre-#966
+    EVIDENCE STORE, which is the case the fallback is actually for."""
+    _record_join(evidence_store, attempt_id=_ATTEMPT_ID, permit_identity=_MAIN_PERMIT)
 
 
 def _open_reservation(
@@ -2157,3 +2176,177 @@ def test_a_complete_empty_holdings_observation_releases_the_entry(
 
     assert _states(rcl_log)[_entry_reservation_id()] is CapacityState.RELEASED
     assert _held_rows(evidence_store) == []
+
+
+# ===========================================================================
+# review-973 M3 — a non-execution result must not release a quantity still held
+# ===========================================================================
+
+
+def _non_execution_consumer(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    monotonic_source: FakeMonotonicSource,
+) -> FinalityReleaseConsumer:
+    """The consumer with gate 3 STUBBED to permit — the same isolation
+    ``test_cancel_ack_releases_when_reconciliation_permits_it`` uses, so what these tests
+    exercise is the consumer's own non-execution wiring and nothing about reconciliation.
+    """
+    return FinalityReleaseConsumer(
+        rcl_log=rcl_log,
+        projection=SqliteReservationProjectionReader(rcl_log),
+        evidence_store=evidence_store,
+        inbox=inbox,
+        recon_service=_StubPermittingReconciliationService(),  # type: ignore[arg-type]
+        time_service=_TrustedTimeService(),
+        finality_producer=_producer(),
+        scheme=SCHEME,
+        monotonic_source=monotonic_source,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        release_proof_wait_ms=60_000,
+    )
+
+
+def test_a_cancel_after_a_partial_fill_does_not_release_the_held_quantity(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    monotonic_source: FakeMonotonicSource,
+) -> None:
+    """review-973 M3: the entry partially filled 4 of 6, then the remainder was cancelled.
+
+    The non-execution path targeted ``RELEASED`` on any corroborated cancel, so the
+    reservation went terminal while 4 units were still held. Under #966's step-8 table that
+    leaves ZERO outstanding reservations on the scope, which ADMITS a fresh OPEN — pyramiding
+    over a live position — and makes the CLOSE that would exit those 4 units unreachable.
+    Before #966 a ``RELEASED`` row still blocked every commit on the scope, which is why this
+    was latent rather than visible.
+    """
+    _open_reservation(rcl_log)
+    _record_receipt(
+        evidence_store,
+        attempt_id=_ATTEMPT_ID,
+        filled=Decimal("4"),
+        remaining=Decimal("2"),
+        broker_execution_id="exec-relc-partial",
+    )
+    payload = EgressResultPayload(
+        instrument_key=_KEY, attempt_id=_ATTEMPT_ID, kind=EgressResultKind.CANCEL_ACK
+    )
+
+    outcome = _non_execution_consumer(
+        rcl_log, evidence_store, inbox, monotonic_source
+    ).consume(payload)
+
+    assert outcome.released is False
+    assert _reservation_state(rcl_log) is not CapacityState.RELEASED
+    (held,) = _held_rows(evidence_store)
+    assert held["reason"] == ReleaseHoldReason.FILLED_QUANTITY_STILL_HELD.value
+
+    # ...and the step-8 consequence: the scope still holds an outstanding reservation, so a
+    # fresh OPEN is refused and the position remains exitable.
+    rows = SqliteReservationProjectionReader(rcl_log).scope_reservations(_KEY)
+    assert verdict_for_scope("OPEN", rows).outcome is StageOutcome.DENY
+
+
+def test_a_cancel_with_nothing_filled_still_releases(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    monotonic_source: FakeMonotonicSource,
+) -> None:
+    """The positive control for M3: a receipt recording a zero fill releases as before."""
+    _open_reservation(rcl_log)
+    _record_receipt(
+        evidence_store,
+        attempt_id=_ATTEMPT_ID,
+        filled=Decimal("0"),
+        remaining=Decimal("6"),
+        broker_execution_id="exec-relc-nofill",
+    )
+    payload = EgressResultPayload(
+        instrument_key=_KEY, attempt_id=_ATTEMPT_ID, kind=EgressResultKind.CANCEL_ACK
+    )
+
+    outcome = _non_execution_consumer(
+        rcl_log, evidence_store, inbox, monotonic_source
+    ).consume(payload)
+
+    assert outcome.released is True
+    assert _reservation_state(rcl_log) is CapacityState.RELEASED
+    assert _held_rows(evidence_store) == []
+
+
+def test_an_attempt_with_no_flow_evidence_resolves_to_no_reservation(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    monotonic_source: FakeMonotonicSource,
+) -> None:
+    """review-973 L1: a failed join must not fall through to the scope row.
+
+    Concrete failing input: a result for an attempt this process has no flow evidence for,
+    while the scope holds a reservation committed by a DIFFERENT attempt. The old order tried
+    the per-permit id, then took the scope row regardless — releasing another attempt's
+    reservation on the strength of this one's fill.
+    """
+    _open_reservation(rcl_log)
+    payload = EgressResultPayload(
+        instrument_key=_KEY,
+        attempt_id="attempt-with-no-evidence",
+        kind=EgressResultKind.CANCEL_ACK,
+    )
+
+    outcome = _non_execution_consumer(
+        rcl_log, evidence_store, inbox, monotonic_source
+    ).consume(payload)
+
+    assert outcome.released is False
+    assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
+    (held,) = _held_rows(evidence_store)
+    assert held["reason"] == ReleaseHoldReason.NO_RESERVATION.value
+    assert held["reservation_id"] is None
+
+
+def test_post_trade_currentness_ignores_a_sibling_scope(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    monotonic_source: FakeMonotonicSource,
+) -> None:
+    """review-973 L3: ``resv-A-I`` must not match ``resv-A-I2-<permit>``.
+
+    Concrete failing input: this scope is ``(acct-relc, 101S06)`` and a conflicted release is
+    recorded for ``101S062`` — an instrument whose id merely starts with the same characters.
+    A bare ``startswith`` read that as this scope's own latest post-trade fact and reported a
+    conflict, blocking new risk here on another instrument's reconciliation.
+    """
+    sibling = permit_reservation_id(_ACCOUNT, f"{_INSTRUMENT}2", "afg-permit-sibling")
+    evidence_store.append(
+        {
+            "attempt_id": "attempt-sibling",
+            "reservation_id": sibling,
+            "reason": ReleaseHoldReason.NOT_CORROBORATED.value,
+            "detail": None,
+        },
+        kind=CAPACITY_RELEASE_HELD_KIND,
+        record_class=CAPACITY_RELEASE_HELD_KIND,
+    )
+    consumer = _non_execution_consumer(rcl_log, evidence_store, inbox, monotonic_source)
+
+    assert consumer.latest_release_is_conflict_free() is True
+
+    # ...while the SAME conflict recorded against this scope's own reservation does register.
+    evidence_store.append(
+        {
+            "attempt_id": _ATTEMPT_ID,
+            "reservation_id": _RESERVATION_ID,
+            "reason": ReleaseHoldReason.NOT_CORROBORATED.value,
+            "detail": None,
+        },
+        kind=CAPACITY_RELEASE_HELD_KIND,
+        record_class=CAPACITY_RELEASE_HELD_KIND,
+    )
+    assert consumer.latest_release_is_conflict_free() is False
