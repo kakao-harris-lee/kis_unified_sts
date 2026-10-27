@@ -91,6 +91,25 @@ _REAL_SLEEP_SECONDS = 0.03
 _JOURNAL_PASS_ALLOWANCE_MS = 100
 
 
+#: Issue #970: every request on the app key is paced ``min_send_interval_ms`` apart on the REAL
+#: clock here. These tests drive the loop and the FETCH thread in real time over a few short
+#: passes, so the fixture's 1100 ms would leave them a read or two; pacing has its own suites
+#: (``transport/kis_mock/test_pacer.py``, ``test_paced_release_snapshot.py``). 50 ms keeps
+#: the 2 x interval boot floor (100) under the 300 ms snapshot age limit one test uses.
+_LOOP_TEST_APP_KEY_INTERVAL_MS = 50
+
+
+@pytest.fixture(autouse=True)
+def _short_app_key_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = fx.write_kis_mock_transport_config
+
+    def _write(config_dir: Path, **kwargs: Any) -> Path:
+        kwargs.setdefault("min_send_interval_ms", _LOOP_TEST_APP_KEY_INTERVAL_MS)
+        return original(config_dir, **kwargs)
+
+    monkeypatch.setattr(fx, "write_kis_mock_transport_config", _write)
+
+
 @pytest.fixture()
 def server() -> Iterator[FakeKisServer]:
     srv = FakeKisServer()
