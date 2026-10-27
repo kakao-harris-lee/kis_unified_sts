@@ -61,6 +61,12 @@ overdue_after_ms: 600000
 # result at most this often, until the RCL holds the release. 60 s: each re-run is one witness
 # read (two GETs) plus evidence rows, and a hold that persists is usually an operator matter
 # (e.g. an unattributed order in the same symbol).
+# It is also the re-read backoff for expired release snapshots (issue #971; see
+# release_snapshot_max_age_ms below): only the FIRST expiry of a run is re-read at once; while
+# snapshots keep expiring, the next read waits this interval instead of coming every pass. Only
+# a fresh read that SUCCEEDED ends the run (a fast failed read still holds); a new trading date
+# starts one. Each FILL_OBSERVER_RELEASE_SNAPSHOT row carries read_ok and consecutive_expired
+# (the run so far).
 finality_retry_interval_ms: 60000
 # An unresolved ACK from an EARLIER trading day (the runtime was down across the KST date
 # boundary, or the read failed at the time) is re-read under its own date at this cadence until a
