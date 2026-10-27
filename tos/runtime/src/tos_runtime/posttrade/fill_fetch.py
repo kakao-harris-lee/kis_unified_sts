@@ -20,10 +20,13 @@ judgement, same fail-closed outcome for an unavailable read; only the instant th
 moves. **That instant is bounded** (#969 review r1 HIGH): a snapshot older than
 ``release_snapshot_max_age_ms`` (from its read's start) is not served — an order that appeared at
 the broker since (an orphan, which must block the release) could be missing from it — so that
-release HOLDS, the observer records the snapshot's real read instants and age, and schedules a
-fresh worker read at once. **The read starts at its first broker request's pacer grant** (issue
-#970), not before: the app key's pacer can hold the first GET for up to an interval after this
-FETCH's order read, and that queueing is not broker-state age (:class:`SnapshotRead`). Expiry never falls back to a live read on the loop. **Not moved**: a reconciliation whose scope the prefetch did not
+release HOLDS and the observer records the snapshot's real read instants and age. The first
+expiry in a run of consecutive expiries schedules a fresh worker read at once; later ones wait
+``finality_retry_interval_ms`` like any other finality re-run (#971 / PR #978). Expiry never
+falls back to a live read on the loop. **The read starts at its first broker request's pacer
+grant** (issue #970), not before: the app key's pacer can hold the first GET for up to an
+interval after this FETCH's order read, and that queueing is not broker-state age
+(:class:`SnapshotRead`). **Not moved**: a reconciliation whose scope the prefetch did not
 anticipate (its key or trading date differs) falls back to the live read, exactly as before #950
 — bounded by ``witness_request_timeout_s`` per page, as #949 left it.
 
