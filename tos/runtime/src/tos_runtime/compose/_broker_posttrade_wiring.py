@@ -34,7 +34,9 @@ Boot refusal: a stock MOCK boot without a valid ``fill_observer.yaml``.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,6 +53,7 @@ from tos_runtime.compose._transport_wiring import instance_rest_bases
 from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.engine.finality_projection import project_recovered_finality
 from tos_runtime.posttrade.broker_finality import BrokerFinalityProducer
+from tos_runtime.posttrade.fill_fetch import PrefetchedSnapshot, snapshot_key
 from tos_runtime.posttrade.fill_observer import (
     FILL_OBSERVER_CONFIG_NAME,
     FillObserverConfig,
@@ -76,6 +79,7 @@ __all__ = [
     "DeferredKisWitness",
     "attach_fill_observer",
     "build_broker_posttrade",
+    "close_fill_observer",
     "fill_observer_pass",
 ]
 
@@ -99,10 +103,23 @@ class _TrustedTradingDate:
 
 class DeferredKisWitness:
     """The stock KIS witness, built once the credential registry is dispatched; until then every
-    read is :class:`~tos_runtime.recon.ports.WitnessUnavailable` (module docstring)."""
+    read is :class:`~tos_runtime.recon.ports.WitnessUnavailable` (module docstring).
 
-    def __init__(self) -> None:
+    **Prefetch (issue #950).** :meth:`prefetch` reads a release-reconciliation snapshot on the
+    fill observer's FETCH thread; :meth:`serving` answers a matching :meth:`observe` from it on
+    the loop thread while the observer APPLIES that FETCH. Matching = same account, instrument
+    keys and order dates (:func:`~tos_runtime.posttrade.fill_fetch.snapshot_key`) AND the
+    trusted trading date is still the one the snapshot was read under; anything else, and every
+    ``observe`` outside an APPLY or on another thread, reads the broker live as before.
+    """
+
+    def __init__(
+        self, trading_date_now: Callable[[], str | None] = lambda: None
+    ) -> None:
         self.inner: KisStockBrokerWitness | None = None
+        self._trading_date_now = trading_date_now
+        self._served: PrefetchedSnapshot | None = None
+        self._served_thread: int | None = None
 
     def _ready(self) -> KisStockBrokerWitness:
         if self.inner is None:
@@ -112,7 +129,40 @@ class DeferredKisWitness:
         return self.inner
 
     def observe(self, scope: WitnessScope) -> WitnessSnapshot:
+        served = self._served
+        if (
+            served is not None
+            and self._served_thread == threading.get_ident()
+            and served.key == snapshot_key(scope)
+            and served.today == self._trading_date_now()
+        ):
+            if isinstance(served.outcome, WitnessUnavailable):
+                raise served.outcome
+            return served.outcome
         return self._ready().observe(scope)
+
+    def prefetch(
+        self, scope: WitnessScope, *, today: str, abort: Callable[[], bool]
+    ) -> PrefetchedSnapshot:
+        """FETCH thread: ``scope``'s snapshot under ``today``, or the unavailability it ended
+        in. Never raises (the witness's own two-outcome contract)."""
+        outcome: WitnessSnapshot | WitnessUnavailable
+        try:
+            outcome = self._ready().observe(scope, today=today, deadline_expired=abort)
+        except WitnessUnavailable as exc:
+            outcome = exc
+        return PrefetchedSnapshot(key=snapshot_key(scope), today=today, outcome=outcome)
+
+    @contextmanager
+    def serving(self, prefetched: PrefetchedSnapshot | None) -> Iterator[None]:
+        """APPLY: serve ``prefetched`` to matching :meth:`observe` calls on THIS thread for
+        the block's duration only — never afterwards, so a snapshot is never reused stale.
+        """
+        self._served, self._served_thread = prefetched, threading.get_ident()
+        try:
+            yield
+        finally:
+            self._served, self._served_thread = None, None
 
     def order_rows(
         self,
@@ -181,7 +231,7 @@ def build_broker_posttrade(
         instance_mock_rest_base=mock_rest_base,
         instance_real_rest_base=real_rest_base,
     )
-    witness = DeferredKisWitness()
+    witness = DeferredKisWitness(trading_date_now)
     token_client = build_client(transport_config)
 
     def _build(sessions: KisCredentialSessions) -> None:
@@ -273,8 +323,20 @@ def attach_fill_observer(
         monotonic=monotonic,
         account=instrument_key.account,
         instrument=instrument_key.instrument,
+        # Issue #950: the release reconciliation's broker read is prefetched by the observer's
+        # FETCH thread and served here on the loop thread.
+        snapshots=posttrade.witness,
     )
     return runtime
+
+
+def close_fill_observer(runtime: ComposedRuntime) -> None:
+    """Stop this boot's fill observer FETCH worker, if it has one (issue #950): the session is
+    ending, so a read still in flight is stopped at its next page, joined, and never applied.
+    Idempotent; a boot without an observer has nothing to stop."""
+    observer = runtime.fill_observer
+    if observer is not None:
+        observer.close()
 
 
 def fill_observer_pass(runtime: ComposedRuntime) -> Callable[[], None]:

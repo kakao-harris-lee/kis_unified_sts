@@ -62,24 +62,44 @@ GET only, mock host only: the reads go through
 sealed at load (mock ``V``-prefixed TR, the order transport's own mock host). This module never
 sends anything to a broker.
 
-Firewall: stdlib + ``pyyaml`` + ``tos.engine`` + ``tos_runtime.*`` only.
+**FETCH / APPLY (issue #950).** :meth:`KisMockFillObserver.poll_if_due` — the session loop's
+call — never waits on the broker: the reads run on one worker thread
+(:mod:`tos_runtime.posttrade.fill_fetch`, which also prefetches the release reconciliation's
+broker snapshot) and everything else above runs on the loop thread when the result comes back.
+:meth:`KisMockFillObserver.poll_once` runs the same steps back to back on the calling thread.
+
+Firewall: stdlib + ``tos.engine`` + ``tos_runtime.*`` only.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
-import yaml
 from tos.engine.records import EgressResultPayload, InstrumentKey
 from tos.engine.vocabulary import EgressResultKind, ResultDisposition
 
-from tos_runtime._named_tbd import reject_named_tbd
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.fill_fetch import (
+    FetchPlan,
+    FetchResult,
+    FetchRunner,
+    OrderRowsReader,
+    SnapshotPrefetcher,
+    odno_key,
+    run_fetch,
+)
+from tos_runtime.posttrade.fill_observer_config import (
+    FILL_OBSERVER_CONFIG_NAME,
+    FillObserverConfig,
+    FillObserverConfigError,
+    load_fill_observer_config,
+)
+from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
 from tos_runtime.recon.ports import WitnessScope, WitnessUnavailable
 from tos_runtime.recon.witness_kis import KisOrderRow
 from tos_runtime.time.sources import MonotonicSource
@@ -101,8 +121,6 @@ __all__ = [
     "load_fill_observer_config",
     "odno_key",
 ]
-
-FILL_OBSERVER_CONFIG_NAME = "fill_observer.yaml"
 
 FILL_OBSERVED_KIND = "FILL_OBSERVED"
 FILL_OBSERVER_UNATTRIBUTED_KIND = "FILL_OBSERVER_UNATTRIBUTED_ORDER"
@@ -146,146 +164,6 @@ _TERMINAL_KINDS = frozenset(
         EgressResultKind.REJECT,
     }
 )
-
-
-class FillObserverConfigError(Exception):
-    """``fill_observer.yaml`` is missing, malformed, or has a non-positive bound."""
-
-
-@dataclass(frozen=True)
-class FillObserverConfig:
-    """The observer's cadence and bounds plus the witness fields it seals (module docstring).
-
-    Attributes:
-        witness_fields: The GET-only witness fields (TR ids, paths, ``max_pages``) — validated
-            by :func:`~tos_runtime.recon.witness_kis_config.kis_witness_config_from_mapping`
-            together with the order transport's own sealed host.
-        poll_interval_ms: Minimum spacing between two order-inquiry polls
-            (:meth:`KisMockFillObserver.poll_if_due`), on the injected monotonic clock.
-        overdue_after_ms: How long an ACKed attempt may show no terminal row before one
-            ``FILL_OBSERVER_OVERDUE`` row is recorded (record only — nothing is guessed).
-        finality_retry_interval_ms: Minimum spacing between two finality re-runs for one
-            attempt whose terminal result is recorded but whose release has not committed.
-        prior_day_poll_interval_ms: Minimum spacing between two reads of an unresolved ACK from
-            an EARLIER trading day (Codex r2 MEDIUM): it is re-read under its own date until a
-            terminal broker result shows — slower than today's cadence, never abandoned.
-        poll_deadline_ms: The whole poll's bound, across every date and page it reads (#949
-            review HIGH). Once it is past, the observer starts no further read and the witness
-            fetches no further page: the read in question is ``WitnessUnavailable`` — recorded,
-            fail-closed, retried at the next due poll — never a partial row list. Worst case
-            for one poll is therefore this deadline plus the one request already in flight
-            (bounded by ``witness_request_timeout_s``), instead of that timeout times every
-            page times every date.
-        witness_request_timeout_s: Per-GET timeout for the witness this config seals — the
-            observer's own bound, deliberately NOT the order path's
-            ``kis_mock_transport.yaml::request_timeout_s`` (10 s). #949 review HIGH: the
-            observer's read happens inside the session loop's tick-to-tick window, so its worst
-            case has to be a number this file states, not one inherited from a path whose
-            latency nobody is waiting on. It bounds every GET this witness makes — the
-            observer's order inquiry AND the release/recovery reconciliation's balance read,
-            which run on the same witness.
-    """
-
-    witness_fields: dict[str, Any]
-    poll_interval_ms: int
-    overdue_after_ms: int
-    finality_retry_interval_ms: int
-    prior_day_poll_interval_ms: int
-    poll_deadline_ms: int
-    witness_request_timeout_s: float
-
-
-_WITNESS_KEYS = (
-    "balance_path",
-    "balance_tr_id",
-    "order_inquiry_path",
-    "order_inquiry_tr_id",
-    "max_pages",
-)
-
-
-def _positive_number(raw: dict[str, Any], key: str, path: Path) -> float:
-    """A positive int or float (a timeout in seconds is not naturally an int)."""
-    value = raw.get(key)
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-        raise FillObserverConfigError(
-            f"{path}: {key!r} must be a positive number, got {value!r}"
-        )
-    return float(value)
-
-
-def _positive_int(raw: dict[str, Any], key: str, path: Path) -> int:
-    value = raw.get(key)
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise FillObserverConfigError(
-            f"{path}: {key!r} must be a positive int, got {value!r}"
-        )
-    return value
-
-
-def load_fill_observer_config(path: Path) -> FillObserverConfig:
-    """Load ``fill_observer.yaml``, fail-closed.
-
-    Raises:
-        FillObserverConfigError: The file is absent, not a mapping, misses a key, or carries a
-            non-positive bound.
-    """
-    if not path.is_file():
-        raise FillObserverConfigError(f"fill observer config not found: {path}")
-    try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise FillObserverConfigError(f"{path}: unreadable ({exc})") from exc
-    if not isinstance(raw, dict):
-        raise FillObserverConfigError(f"{path}: must be a top-level mapping")
-    missing = [key for key in _WITNESS_KEYS if key not in raw]
-    if missing:
-        raise FillObserverConfigError(f"{path}: missing {missing}")
-    for key in _WITNESS_KEYS:
-        # The witness config loader re-checks every one of these; refusing the placeholder here
-        # names THIS file in the error rather than the witness's.
-        reject_named_tbd(
-            raw[key], field=key, context=str(path), error_cls=FillObserverConfigError
-        )
-    return FillObserverConfig(
-        witness_fields={key: raw[key] for key in _WITNESS_KEYS},
-        poll_interval_ms=_positive_int(raw, "poll_interval_ms", path),
-        overdue_after_ms=_positive_int(raw, "overdue_after_ms", path),
-        finality_retry_interval_ms=_positive_int(
-            raw, "finality_retry_interval_ms", path
-        ),
-        prior_day_poll_interval_ms=_positive_int(
-            raw, "prior_day_poll_interval_ms", path
-        ),
-        poll_deadline_ms=_positive_int(raw, "poll_deadline_ms", path),
-        witness_request_timeout_s=_positive_number(
-            raw, "witness_request_timeout_s", path
-        ),
-    )
-
-
-def odno_key(raw: str | None) -> str | None:
-    """Canonical comparison key for a KIS ODNO: whitespace and leading zeros dropped (a single
-    ``"0"`` kept); ``None`` for an absent, all-zero, or non-ASCII-digit value — a value that is
-    not an order number never matches one (``tools/broker_probes/probes_order.py::odno_key``
-    measured why both sides must be canonicalized)."""
-    text = (raw or "").strip()
-    if not text or not (text.isascii() and text.isdigit()):
-        return None
-    key = text.lstrip("0")
-    return key or None
-
-
-class OrderRowsReader(Protocol):
-    """:meth:`~tos_runtime.recon.witness_kis.KisStockBrokerWitness.order_rows`."""
-
-    def order_rows(
-        self,
-        scope: WitnessScope,
-        *,
-        inquiry_date: str | None = None,
-        deadline_expired: Callable[[], bool] | None = None,
-    ) -> tuple[str, tuple[KisOrderRow, ...]]: ...
 
 
 #: Feeds one result into the engine and returns its disposition (compose supplies it).
@@ -367,6 +245,9 @@ class KisMockFillObserver:
     monotonic: MonotonicSource
     account: str
     instrument: str
+    #: The release reconciliation's snapshot prefetch (``fill_fetch`` module docstring);
+    #: ``None`` = no prefetch, the release path reads the broker live.
+    snapshots: SnapshotPrefetcher | None = None
     _last_poll_ms: int | None = field(default=None, init=False)
     _last_reproject_ms: dict[str, int] = field(default_factory=dict, init=False)
     _untrackable_recorded: set[str] = field(default_factory=set, init=False)
@@ -374,63 +255,171 @@ class KisMockFillObserver:
     _first_pending_ms: dict[str, int] = field(default_factory=dict, init=False)
     _overdue_recorded: set[str] = field(default_factory=set, init=False)
     _last_read_failed: bool = field(default=False, init=False)
+    _runner: FetchRunner | None = field(default=None, init=False)
+    _closed: bool = field(default=False, init=False)
 
     # -- entry points --------------------------------------------------------------------
 
     def poll_if_due(self) -> FillPollReport:
-        """:meth:`poll_once` when ``poll_interval_ms`` has passed since the last poll."""
+        """The session loop's call (issue #950): never waits on the broker.
+
+        Per pass, in order: a FETCH that has finished is APPLIED here, on this (the loop's)
+        thread, and its report returned; a FETCH still in flight means nothing more this pass;
+        otherwise, once ``poll_interval_ms`` has passed since the last poll, the next
+        :class:`~tos_runtime.posttrade.fill_fetch.FetchPlan` is built from durable evidence and
+        handed to the FETCH worker. Only the broker reads leave this thread — every evidence
+        row, every engine call, finality and release stay on it. After :meth:`close` this does
+        nothing at all.
+        """
+        if self._closed:
+            return FillPollReport(polled=False)
+        if self._runner is None:
+            self._runner = FetchRunner(self._fetch)
+        done = self._runner.take_done()
+        if done is not None:
+            return self._apply(done)
+        if self._runner.busy:
+            return FillPollReport(polled=False)
         now = self.monotonic.now_ms()
         if (
             self._last_poll_ms is not None
             and now - self._last_poll_ms < self.config.poll_interval_ms
         ):
             return FillPollReport(polled=False)
-        return self.poll_once()
+        plan = self._plan()
+        if plan is not None:
+            self._runner.submit(plan)
+        return FillPollReport(polled=False)
 
     def poll_once(self) -> FillPollReport:
-        """One pass: re-run unfinished finality, then read the broker for attempts still open.
-        No GET at all when no ACKed attempt is outstanding on the broker side.
+        """One whole pass on the CALLING thread: plan, FETCH, APPLY — the same three steps
+        :meth:`poll_if_due` spreads over two threads, run back to back. No GET at all when no
+        ACKed attempt is outstanding on the broker side and no finality re-run is due.
 
-        **The whole read phase is bounded by ``poll_deadline_ms``** (#949 review HIGH). The
-        deadline is taken once, here, and handed to every read; the WITNESS is what asks it,
-        before each page of each date's walk — its page 0 included, which is what makes a date
-        whose turn comes too late cost nothing at all (#949 r2 LOW-2: this used to say the date
-        loop checks it too, and it does not — one predicate, one place it is evaluated).
-        Once it is past, nothing further is read and whatever was not read is
-        ``WitnessUnavailable`` — recorded once, fail-closed, retried at the next due poll. It
-        can never turn into a partial row list, because the only thing it produces is an
-        absence. What it cannot do is interrupt a request already in flight; that one is
-        bounded by ``witness_request_timeout_s``, so this read phase costs at most the deadline
-        plus one timeout.
+        **The read phase is bounded by ``poll_deadline_ms``** (#949 review HIGH). The deadline
+        is fixed when the plan is built and handed to every order read; the WITNESS asks it
+        before each page of each date's walk — page 0 included, so a date whose turn comes too
+        late costs nothing. Once it is past, nothing further is read and whatever was not read
+        is ``WitnessUnavailable`` — recorded once, fail-closed, retried at the next due poll. It
+        can never turn into a partial row list. A request already in flight is bounded by
+        ``witness_request_timeout_s``.
+        """
+        plan = self._plan()
+        if plan is None:
+            return FillPollReport(polled=False)
+        return self._apply(self._fetch(plan, lambda: False))
 
-        ⚠ The deadline does NOT cover what :meth:`_emit`'s ``result_sink`` triggers downstream
-        (finality, the release consumer's reconciliation, and its own unbounded witness walks)
-        — ``scheduler.py``'s residual paragraph has that term and its numbers; issue #950 owns
-        it. This caller is waited on: the session loop runs it between two intake reads.
+    def close(self) -> None:
+        """Stop the FETCH worker with the session (issue #950): the in-flight read stops at its
+        next page, the worker is joined, and its result is dropped — never applied. Idempotent;
+        :meth:`poll_if_due` is a no-op afterwards."""
+        self._closed = True
+        if self._runner is not None:
+            self._runner.close()
+
+    # -- plan (loop thread) / FETCH (worker) / APPLY (loop thread) ------------------------
+
+    def _plan(self) -> FetchPlan | None:
+        """What the next FETCH reads, from durable evidence: the dates of attempts still open on
+        the broker side, plus the finality re-runs that are due. ``None`` when there is neither.
         """
         tracked = self._tracked_attempts()
-        reprojected = self._reproject_unreleased(tracked)
+        reproject_ids = self._due_reprojects(tracked)
         pending = [t for t in tracked.values() if not t.terminal and self._due(t)]
-        if not pending:
-            return FillPollReport(polled=False, reprojected=reprojected)
-        self._last_poll_ms = self.monotonic.now_ms()
-        deadline_expired = self._deadline(self._last_poll_ms)
+        if not pending and not reproject_ids:
+            return None
+        now = self.monotonic.now_ms()
+        if pending:
+            self._last_poll_ms = now
+        instrument_key = InstrumentKey(account=self.account, instrument=self.instrument)
+        reads = tuple(
+            (
+                date,
+                WitnessScope(
+                    account=self.account,
+                    instrument_keys=(instrument_key,),
+                    attempt_ids=tuple(
+                        t.attempt_id for t in pending if t.trading_date == date
+                    ),
+                    order_dates=(date,),
+                ),
+            )
+            for date in sorted({t.trading_date for t in pending})
+        )
+        today = self.today()
+        return FetchPlan(
+            reads=reads,
+            targets=frozenset((odno_key(t.odno), t.trading_date) for t in pending),
+            instrument=self.instrument,
+            deadline_ms=now + self.config.poll_deadline_ms,
+            snapshot_scope=None if today is None else self._release_scope(),
+            today=today,
+            reproject_ids=reproject_ids,
+        )
+
+    def _release_scope(self) -> WitnessScope:
+        """The scope the release consumer's reconciliation will ask the witness for
+        (``release_consumer._reconcile``: this account/instrument, every recorded receipt's
+        trading date) — what the snapshot is prefetched under. A scope that turns out different
+        is not served; the live read answers it (``fill_fetch`` module docstring)."""
+        instrument_key = InstrumentKey(account=self.account, instrument=self.instrument)
+        try:
+            receipts = SqliteEvidenceReceiptReader(self.evidence_store).receipts(
+                WitnessScope(account=self.account, instrument_keys=(instrument_key,))
+            )
+        except WitnessUnavailable:
+            receipts = ()
+        dates = {r.trading_date for r in receipts if r.trading_date is not None}
+        return WitnessScope(
+            account=self.account,
+            instrument_keys=(instrument_key,),
+            order_dates=tuple(sorted(dates)),
+        )
+
+    def _fetch(self, plan: FetchPlan, stop: Callable[[], bool]) -> FetchResult:
+        """FETCH: :func:`~tos_runtime.posttrade.fill_fetch.run_fetch` over this observer's
+        witness — network only, no observer state touched."""
+        return run_fetch(
+            plan,
+            orders=self.orders,
+            snapshots=self.snapshots,
+            monotonic=self.monotonic,
+            stop=stop,
+        )
+
+    def _apply(self, result: FetchResult) -> FillPollReport:
+        """APPLY one FETCH's result, on the calling (loop) thread. The durable picture is
+        re-derived first, so an attempt that turned terminal since the plan is left alone. The
+        prefetched snapshot is served to every reconciliation this APPLY triggers."""
+        tracked = self._tracked_attempts()
         emitted: list[tuple[str, EgressResultKind, ResultDisposition | None]] = []
         held: list[tuple[str, EgressResultKind]] = []
         unattributed: list[str] = []
         read_failed = False
-        for date in sorted({t.trading_date for t in pending}):
-            on_date = [t for t in pending if t.trading_date == date]
-            rows = self._read(date, on_date, deadline_expired=deadline_expired)
-            if rows is None:
-                read_failed = True
-                continue
-            unattributed.extend(self._flag_unattributed(rows, tracked))
-            emitted.extend(self._emit(on_date, rows, held))
-        if not read_failed:
+        serving = (
+            self.snapshots.serving(result.snapshot)
+            if self.snapshots is not None
+            else nullcontext()
+        )
+        with serving:
+            reprojected = self._reproject_unreleased(tracked, result.plan.reproject_ids)
+            planned = dict(result.plan.reads)
+            for date, outcome in result.reads:
+                on_date = [
+                    tracked[a]
+                    for a in planned[date].attempt_ids
+                    if a in tracked and not tracked[a].terminal
+                ]
+                if isinstance(outcome, WitnessUnavailable):
+                    self._read_failed(date, on_date, outcome)
+                    read_failed = True
+                    continue
+                unattributed.extend(self._flag_unattributed(outcome, tracked))
+                emitted.extend(self._emit(on_date, outcome, held))
+        if result.reads and not read_failed:
             self._last_read_failed = False
         return FillPollReport(
-            polled=True,
+            polled=bool(result.reads),
             emitted=tuple(emitted),
             unattributed=tuple(unattributed),
             read_failed=read_failed,
@@ -453,52 +442,19 @@ class KisMockFillObserver:
         self._last_prior_day_read_ms[attempt.attempt_id] = now
         return True
 
-    def _deadline(self, started_ms: int) -> Callable[[], bool]:
-        """ "Is this poll's ``poll_deadline_ms`` past?" — one predicate, shared by the date loop
-        and (through the witness) by every page of every walk, so the whole poll answers to one
-        deadline rather than one per read."""
-        expires_at_ms = started_ms + self.config.poll_deadline_ms
-        return lambda: self.monotonic.now_ms() >= expires_at_ms
-
-    def _read(
-        self,
-        date: str,
-        attempts: list[_Tracked],
-        *,
-        deadline_expired: Callable[[], bool] | None = None,
-    ) -> tuple[KisOrderRow, ...] | None:
-        """One date's rows, or ``None`` after recording the failure (and still running the
-        overdue check — a read that keeps failing must surface, never go quiet).
-
-        A ``deadline_expired`` that already answers ``True`` makes this an unavailable read
-        with no request sent at all: the predicate is handed to the witness, whose walk asks it
-        before its first page too (:meth:`~tos_runtime.recon.witness_kis
-        .KisStockBrokerWitness._walk_continuation`), so the deadline needs no second
-        implementation here.
-        """
-        scope = WitnessScope(
-            account=self.account,
-            instrument_keys=(
-                InstrumentKey(account=self.account, instrument=self.instrument),
-            ),
-            attempt_ids=tuple(t.attempt_id for t in attempts),
-            order_dates=(date,),
-        )
-        try:
-            _date, rows = self.orders.order_rows(
-                scope, inquiry_date=date, deadline_expired=deadline_expired
+    def _read_failed(
+        self, date: str, attempts: list[_Tracked], exc: WitnessUnavailable
+    ) -> None:
+        """Record a failed read once per failure streak — and still run the overdue check: a
+        read that keeps failing must surface, never go quiet."""
+        if not self._last_read_failed:
+            self._record(
+                FILL_OBSERVER_READ_FAILED_KIND,
+                {"inquiry_date": date, "reason": str(exc)[:200]},
             )
-        except WitnessUnavailable as exc:
-            if not self._last_read_failed:
-                self._record(
-                    FILL_OBSERVER_READ_FAILED_KIND,
-                    {"inquiry_date": date, "reason": str(exc)[:200]},
-                )
-            self._last_read_failed = True
-            for attempt in attempts:
-                self._check_overdue(attempt)
-            return None
-        return rows
+        self._last_read_failed = True
+        for attempt in attempts:
+            self._check_overdue(attempt)
 
     def _emit(
         self,
@@ -600,25 +556,32 @@ class KisMockFillObserver:
         )
         attempt.absent_signatures.add(signature)
 
-    def _reproject_unreleased(
-        self, tracked: dict[str, _Tracked]
-    ) -> tuple[tuple[str, bool | None], ...]:
-        """Re-run finality for every attempt whose terminal result is recorded but whose release
-        the RCL does not hold yet (module docstring "Two separate 'done's")."""
+    def _due_reprojects(self, tracked: dict[str, _Tracked]) -> tuple[str, ...]:
+        """Attempts whose terminal result is recorded but whose release the RCL does not hold
+        yet, and whose ``finality_retry_interval_ms`` has passed (module docstring "Two
+        separate 'done's"). Their clock starts at planning, so a FETCH in flight is not
+        re-planned for them."""
         now = self.monotonic.now_ms()
-        done = []
+        due = []
         for attempt in tracked.values():
-            if (
-                not attempt.terminal
-                or attempt.released
-                or attempt.held_terminal
-                or attempt.stuck
-            ):
+            if not _reprojectable(attempt):
                 continue
             last = self._last_reproject_ms.get(attempt.attempt_id)
             if last is not None and now - last < self.config.finality_retry_interval_ms:
                 continue
             self._last_reproject_ms[attempt.attempt_id] = now
+            due.append(attempt.attempt_id)
+        return tuple(due)
+
+    def _reproject_unreleased(
+        self, tracked: dict[str, _Tracked], attempt_ids: tuple[str, ...]
+    ) -> tuple[tuple[str, bool | None], ...]:
+        """APPLY: re-run finality for the planned attempts that still need it."""
+        done = []
+        for attempt_id in attempt_ids:
+            attempt = tracked.get(attempt_id)
+            if attempt is None or not _reprojectable(attempt):
+                continue
             payload = self._payload(
                 attempt, attempt.last_kind, attempt.last_filled, attempt.last_remaining
             )
@@ -948,6 +911,16 @@ class KisMockFillObserver:
 
     def _record(self, kind: str, fields: dict[str, Any]) -> None:
         self.evidence_store.append(fields, kind=kind, record_class=kind)
+
+
+def _reprojectable(attempt: _Tracked) -> bool:
+    """Terminal by an engine receipt, not released, not held, not stuck."""
+    return (
+        attempt.terminal
+        and not attempt.released
+        and not attempt.held_terminal
+        and not attempt.stuck
+    )
 
 
 def _fill_state(
