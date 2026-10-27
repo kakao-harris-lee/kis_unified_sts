@@ -1,6 +1,6 @@
 # TOS — 청산 attempt 의 RCL 예약 수명주기 (#966)
 
-- 날짜: 2026-10-27 · 저자: 세션 모델 단독 · 이슈: #966 (선행 #960 / PR #965)
+- 날짜: 2026-10-27 (개정 10-28: §2.1 ID 출처, §2.5, §2.6 — 구현 전 측정으로) · 저자: 세션 모델 단독 · 이슈: #966 (선행 #960 / PR #965)
 - 리뷰 등급: **A** — 리스크 한도·원장(RCL) 경로. Claude 측 독립 리뷰 1회 + Codex(운영자 승인 2026-10-27, 범위 = #966 diff 만).
 - 완료 조건 (TOS_PAPER_READY 의 해당 문장): 한 프로세스에서 **진입 → 청산 → 브로커 포지션 0**, 실주문 0(paper/mock).
 
@@ -21,16 +21,19 @@
 
 ## 2. 설계
 
-### 2.1 예약 ID 를 attempt 단위로 (F1, F2)
+### 2.1 예약 ID 를 attempt 단위로 (F1, F2) — 개정 2026-10-28
 
-- `attempt_reservation_id(account, instrument, attempt_id) -> f"resv-{account}-{instrument}-{attempt_id}"` 를 `reservation_identity.py` 에 추가. `attempt_id` 는 이미 결정적(sequencer 의 "no uuid4, no timestamp nonce")이라 재시작 뒤 replay 로 같은 값이 나온다.
-- F2 의 6곳은 scope 대신 **attempt** 로 ID 를 얻는다. 대부분은 이미 `attempt_id` 를 손에 쥐고 있다(`reservation_id_resolver=lambda _attempt_id: ...` 는 인자를 버리고 있을 뿐). release consumer 는 finality evidence 의 attempt 에서 읽는다.
-- 기존 `scope_reservation_id` 는 남긴다 — **기존 원장 행**(이미 커밋된 `resv-{acct}-{instr}` 행) 판독용. 새 커밋은 만들지 않는다. 마이그레이션 없음: 기존 행은 그대로 replay 된다.
+- **개정 사유(측정):** `attempt_id` 는 step 12 에서야 만들어진다 — step 9 의 permit identity 와 step 11 의 conformance digest 로부터(`tos/engine/sequencer.py` step 12; `StageRequest.attempt` 는 "step 13 onward", `tos/engine/records.py`). 그래서 첫 판의 `attempt_reservation_id(…, attempt_id)` 는 step 9 커밋 시점에 정의되지 않는다.
+- **예약 ID = step 9 의 Action Flow Permit identity 로 만든다:** `permit_reservation_id(account, instrument, permit_identity) -> f"resv-{account}-{instrument}-{permit_identity}"`. step 9 는 permit 을 이미 쥐고 있고, step 10 은 step-9 verdict 의 `bound_identity`, step 13/14·`compose/context.py` 는 `AttemptRequest.action_flow_permit_identity` 에서 같은 값을 얻는다 — 새 배선 없음.
+- **체결 이후 3곳**(release consumer, recovery reconciliation, engine `reservation_id_resolver`)은 `attempt_id` 만 쥔다. `attempt_id → permit_identity` 는 **이미 durable 한 증거 조인**으로 푼다: 같은 `event_id` 의 `FLOW_STEP_ADMITTED`(step `ATOMIC_COMMIT`, `bound_identity` = permit identity) 와 `ATTEMPT_REQUEST_CREATED`(`attempt_id`) — 이 조인이 바로 이 용도라고 `records.py` 필드 docstring 이 적고 있다. 판독 함수 하나, 새 쓰기 없음, 커널 변경 없음. 조인이 비면(증거 없음) 그 attempt 는 UNKNOWN/HOLD — 추측 ID 를 만들지 않는다.
+- step 7 의 `economic_ref`(riskstate)는 permit 이전이라 scope 값으로 남긴다. 단 그것이 예약 행 ID 와 **비교·조인되는 곳이 없음**을 구현 1단계에서 확인하고, 있으면 멈추고 보고.
+- 기존 `scope_reservation_id` 는 남긴다 — **기존 원장 행**(`resv-{acct}-{instr}`) 판독용. 새 커밋은 만들지 않는다. 마이그레이션 없음.
+- 버린 안: 새 `RESERVATION_ATTEMPT_BOUND` 증거 행(같은 사실을 두 번 쓴다), 커널에서 step 12 를 9 앞으로(범위 밖).
 
 ### 2.2 scope 판독은 "행 하나" 가 아니라 "행 집합" (F4, F5)
 
 - projection 에 `scope_reservations(key) -> tuple[(reservation_id, state, last_seq), ...]` 추가. `instrument_state` 는 제거하지 않고 호출부를 옮긴 뒤 삭제(같은 PR).
-- ARE 스냅샷: 사용량 = scope 의 **미해제(≠RELEASED) 예약 벡터 합**. 지금은 첫 행 하나라 2개 이상일 때 과소집계 — 이 변경 없이는 2.3 을 열면 안 된다.
+- ARE 스냅샷: 사용량 = scope 의 **미해제(≠RELEASED) 예약 벡터 합**. 측정(10-28): runtime 은 `CapacityReservationTransition.committed_vector` 를 어디서도 쓰지 않아 오늘은 항상 빈 벡터다 — 합산은 맞는 규칙이지만 관측 가능한 변화는 없고 2.3 의 선행조건이 아니다. 같은 PR 에서 합산으로 바꾸되 벡터 기록 자체는 범위 밖(별도 이슈).
 - step 10: scope 첫 행이 아니라 **이번 attempt 의 예약 ID** 행을 재확인.
 - 안전 latch: 미해제 예약 **개수**(0/1 → 0..n). 반환형 int 는 그대로.
 
@@ -53,10 +56,17 @@
 - 진입 예약: 청산 체결 + **recon 이 브로커 잔고 0 을 확인**(기존 `ReconciliationService` 결과)했을 때만 `POSITION_CONSUMED → RELEASED` (cause·witness 는 아래 측정 결과). 부분 청산이면 진입 예약은 그대로(보수적). witness 없으면 `CAPACITY_RELEASE_HELD` 기록 후 전이 없음 — 기존 consumer 규율 그대로.
 - 커널(`tos/src/tos/rcl`) 변경 없음 — **측정 완료(2026-10-27)**: `transition_allowed` 는 `RELEASED` 로의 전이를 cause `FINAL_QUANTITY_PROOF` 일 때만 허용하고(`tos/rcl/predicates.py` `transition_allowed`), 출발 상태는 묻지 않는다; 커밋 로그는 추가로 finality witness `is True` 를 요구한다. 따라서 진입 예약 해제는 cause = `FINAL_QUANTITY_PROOF`(청산 attempt 의 최종 누적 체결 = 진입 수량, 잔량 0) + witness = 청산 finality proof 와 recon 잔고 0 이 **둘 다** 양성일 때. `RECONCILIATION_PROOF` 단독으로는 RELEASED 에 못 간다 — recon 은 witness 의 한 조건일 뿐 cause 가 아니다.
 
-### 2.5 청산 attempt 의 리스크 벡터
+### 2.5 청산 attempt 의 리스크 판정 — 개정 2026-10-28
 
-- step 6(ARE)·7(AFG) 은 #965 이후 CLOSE 를 `ORDINARY_REDUCE_OR_EXIT` 로 판정한다. 청산 예약의 committed vector 는 step 5 의 effect envelope 그대로 쓴다(새 계산 없음).
-- 측정 항목: 실제 트리(`cp3-setup-d-long`)에서 CLOSE 의 envelope 가 진입과 같은 크기를 잡는지. 같은 크기를 잡아도 2.3 에서 청산은 진입 예약 1개 위에서만 열리므로 한도 초과로 청산이 막히는지 e2e 로 확인 — 막히면 그 수치를 보고하고 envelope 정책(YAML)을 별도 결정으로 올린다(코드에 예외 분기 넣지 않음).
+- 측정(cp3-setup-d-long): ARE `INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL` 한도 1 CONTRACT, AFG `afg.ORDER` 한도 1, `CLOSE → ORDINARY_REDUCE_OR_EXIT`, OCP 수량 1. compose 하네스에서 step 6 은 진입 위의 CLOSE 를 GRANT 했다(하네스 한도 기준 — 실제 트리 한도로는 미측정: 트리의 account/instrument 가 `TBD` 라 커밋 상태로는 부팅 불가).
+- CLOSE 를 `ORDINARY_REDUCE_OR_EXIT` 로 판정하는 것은 **production riskstate 경로**뿐이다. compose e2e 하네스는 AFG 입력에 `NORMAL_NEW_RISK` 를 고정해 넣는다(`tests/compose/test_compose_root.py`). e2e 에서 action class 를 단언하려면 하네스 입력을 attempt 의 arm 에서 읽게 바꾼다(테스트 측).
+- 한도 때문에 청산이 막히면 그 수치를 보고하고 YAML 정책 결정으로 올린다(코드 예외 분기 없음).
+
+### 2.6 테스트 하네스 (신규 — 이것 없이는 한 프로세스 e2e 가 불가)
+
+- 측정: 하네스의 ARE/AFG 입력이 `decision_generation=1` 을 고정해, 첫 흐름의 커밋으로 RCL tip 이 1 을 넘으면 **두 번째 흐름은 OPEN·CLOSE 모두 step 7 UNKNOWN** 으로 멈춘다(`compose/_risk_attestations.py` `generation_fenced`). production 은 두 세대 모두 live tip 이라 무관(`riskstate/service.py`).
+- 하네스가 세대를 RCL tip 에서 읽게 고친다(테스트 코드만). #965 e2e 의 "CLOSE 를 첫 커밋으로" 우회는 step 8 과 이것 두 가지를 피하고 있었다.
+- 참고(측정): 커널의 at-most-one 게이트는 진입 체결 뒤 이미 다시 열린다(`engine/finality_projection.py` 가 `ledger.release` 호출, RELEASED 는 outstanding 에서 빠짐) — 남은 차단은 runtime step 8 과 scope 단위 예약 ID 뿐이다.
 
 ## 3. 버린 대안
 
@@ -78,6 +88,8 @@
    - e2e (`test_close_proposal_e2e.py` 확장): **한 프로세스** 진입 → 체결 → 청산 → 체결 → recon 0 → 진입 예약 RELEASED → 다시 진입 ADMIT. #965 의 "CLOSE 를 첫 commit 으로 몰기" 우회를 걷어낸다.
    - step 8 표의 각 행 단위 테스트(OPEN 2번째 DENY 포함).
    - ARE 합산: 미해제 2개 → 벡터 합, RELEASED 제외.
+   - permit→예약 ID: step 9/10/13 이 같은 ID; 증거 조인으로 attempt→permit 복원; 조인이 비면 HOLD(추측 ID 없음).
+   - 하네스: 두 번째 흐름이 step 7 을 통과(세대 = tip).
    - 재시작: 기존 `resv-{acct}-{instr}` 행이 있는 원장을 replay → 같은 판정.
    - 부분 청산 → 진입 예약 유지.
 7. `expected_code_digest` 재도출(트리 4개) 마지막.
