@@ -135,6 +135,16 @@ class SnapshotUse:
     #: ``aged_before_apply``. ``None`` when served.
     reason: str | None = None
 
+    def read_fields(self) -> dict[str, object]:
+        """The read's evidence fields: its monotonic instants (age origin = ``read_started``,
+        the first request of all, the end) and the expiry reason."""
+        return {
+            "read_started_monotonic_ms": self.snapshot.read_started_ms,
+            "read_finished_monotonic_ms": self.snapshot.read_finished_ms,
+            "first_request_monotonic_ms": self.snapshot.first_request_ms,
+            "expiry_reason": self.reason,
+        }
+
 
 class SnapshotPrefetcher(Protocol):
     """The witness side of the prefetch (compose's ``DeferredKisWitness``)."""

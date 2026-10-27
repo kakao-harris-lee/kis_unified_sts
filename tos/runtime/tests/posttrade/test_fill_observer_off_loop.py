@@ -523,14 +523,22 @@ class _AgingSnapshots:
 
     def prefetch(
         self, scope: WitnessScope, *, today: str, abort: Callable[[], bool]
-    ) -> WitnessSnapshot | WitnessUnavailable:
+    ) -> SnapshotRead:
+        # first_request_ms=None: aged from the prefetch call, as this fake's clock model
+        # (the whole read is ``read_ms`` of age) assumes.
         del scope, today, abort
         self.reads += 1
         if self.alternate_fast_failure and self.reads % 2 == 0:
             self.clock.ms += _FAST_SNAPSHOT_MS
-            return WitnessUnavailable("balance read failed fast")
+            return SnapshotRead(
+                outcome=WitnessUnavailable("balance read failed fast"),
+                first_request_ms=None,
+            )
         self.clock.ms += self.read_ms
-        return WitnessSnapshot(observed_at_generation=None, orders=())
+        return SnapshotRead(
+            outcome=WitnessSnapshot(observed_at_generation=None, orders=()),
+            first_request_ms=None,
+        )
 
     @contextmanager
     def serving(
