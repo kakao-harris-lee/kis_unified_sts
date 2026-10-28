@@ -571,11 +571,13 @@ def test_a_diverged_boot_replay_hands_back_no_runtime(
 
     composed: list[object] = []
     real = _finalize_wiring.ComposedRuntime
-    monkeypatch.setattr(
-        _finalize_wiring,
-        "ComposedRuntime",
-        lambda *a, **k: composed.append(real(*a, **k)) or composed[-1],
-    )
+
+    def _spy(*a: object, **k: object) -> object:
+        built = real(*a, **k)
+        composed.append(built)
+        return built
+
+    monkeypatch.setattr(_finalize_wiring, "ComposedRuntime", _spy)
     with pytest.raises(EngineReplayDiverged):
         _boot(tmp_path, config_dir, data_dir, custody_root)
     assert composed == []  # the half-rebuilt ledger never reached a runtime
