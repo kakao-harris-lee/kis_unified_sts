@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -572,7 +573,7 @@ def test_a_diverged_boot_replay_hands_back_no_runtime(
     composed: list[object] = []
     real = _finalize_wiring.ComposedRuntime
 
-    def _spy(*a: object, **k: object) -> object:
+    def _spy(*a: Any, **k: Any) -> object:
         built = real(*a, **k)
         composed.append(built)
         return built
