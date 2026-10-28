@@ -580,6 +580,141 @@ def test_an_order_row_not_naming_the_queried_instrument_makes_the_read_unavailab
 
 
 # ---------------------------------------------------------------------------
+# Issue #981 — an order row the witness cannot read is never dropped (the #973 fail-open
+# class on the orders axis: a dropped row could be an orphan order, and an orphan is what
+# must BLOCK a capacity release).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"rt_cd": "0"},
+        {"rt_cd": "0", "output1": None},
+        {"rt_cd": "0", "output1": {}},
+        {"rt_cd": "0", "output1": {"odno": "0000009999", "pdno": "005930"}},
+    ],
+    ids=["missing", "null", "empty-dict", "dict"],
+)
+def test_a_malformed_order_container_makes_the_whole_read_unavailable(
+    server: FakeKisGetServer, body: dict[str, object]
+) -> None:
+    """HTTP 200, ``rt_cd: "0"``, no more pages — but ``output1`` is absent, ``null``, or a
+    dict. The walk recorded that page as zero rows and the order read returned "no orders",
+    indistinguishable from a page that genuinely listed none; a row the page hid (the dict
+    case literally carries one) therefore stopped existing, and an orphan order that must
+    block a release stopped blocking it. All four shapes review-973 round 2 named for the
+    BALANCE container are covered here for the ORDER one; ``output1: []`` is the valid empty
+    control in :func:`test_an_empty_order_list_is_a_well_formed_read_with_no_rows`.
+
+    Mutation: iterate a ``None`` page as no rows again (the pre-#981 ``for row in rows if
+    rows is not None else ()``) -> no raise -> red.
+    """
+    server.queue_response(ORDER_PATH, status=200, body=body)
+    with pytest.raises(WitnessUnavailable, match="carried no output1 list"):
+        _witness(server).order_rows(
+            WitnessScope(account=ACCOUNT), inquiry_date="20261023"
+        )
+
+
+def test_an_empty_order_list_is_a_well_formed_read_with_no_rows(
+    server: FakeKisGetServer,
+) -> None:
+    """The positive control for the two tests around it: an empty LIST is a complete read of
+    an empty order book — it must stay a successful, empty answer, never a refusal."""
+    server.queue_response(ORDER_PATH, status=200, body={"rt_cd": "0", "output1": []})
+    date, rows = _witness(server).order_rows(
+        WitnessScope(account=ACCOUNT), inquiry_date="20261023"
+    )
+    assert (date, rows) == ("20261023", ())
+
+
+@pytest.mark.parametrize(
+    "bad_row",
+    [None, "0000009999", 7, ["0000009999"]],
+    ids=["null", "str", "int", "list"],
+)
+def test_an_unreadable_order_row_makes_the_whole_read_unavailable(
+    server: FakeKisGetServer, bad_row: object
+) -> None:
+    """One readable row beside one that is not an object at all. The unreadable row used to be
+    skipped, leaving a read that looked complete and carried only what happened to parse —
+    while the row it dropped could be the unattributed broker order the release must hold for.
+    The whole read is unavailable instead, the same answer a row naming the wrong instrument
+    already gets.
+
+    Mutation: ``continue`` on the non-dict row instead of raising -> the good row comes back
+    as the whole list -> red.
+    """
+    good = {
+        "pdno": "005930",
+        "odno": "0000004470",
+        "ord_dt": "20261023",
+        "tot_ccld_qty": "1",
+        "rmn_qty": "0",
+        "cncl_yn": "N",
+    }
+    server.queue_response(
+        ORDER_PATH, status=200, body={"rt_cd": "0", "output1": [good, bad_row]}
+    )
+    with pytest.raises(WitnessUnavailable, match="not an object"):
+        _witness(server).order_rows(
+            WitnessScope(account=ACCOUNT), inquiry_date="20261023"
+        )
+
+
+@pytest.mark.parametrize(
+    "pdno",
+    [5930, ["005930"], {"code": "005930"}, True],
+    ids=["number", "array", "object", "bool"],
+)
+def test_a_holdings_row_whose_pdno_is_not_a_string_is_not_a_complete_observation(
+    server: FakeKisGetServer, pdno: object
+) -> None:
+    """Issue #981, the holdings axis: only a STRING ``pdno`` names a symbol.
+
+    ``str(row.get("pdno") or "")`` fabricated a plausible-looking one out of anything (a
+    broker that renders the code as a JSON number answers ``pdno: 5930`` for ``005930``), so
+    the row read as some OTHER instrument — dropped by the scope filter, or kept under a
+    symbol the flatness check never compares against. Either way ``positions`` held no row for
+    the instrument being closed while the observation still claimed to be COMPLETE, which
+    :func:`~tos_runtime.posttrade.entry_discharge.broker_position_flat` reads as proven flat.
+    An unreadable ``pdno`` now makes the observation incomplete, exactly as an unreadable
+    ``hldg_qty`` already did (#966 review round 1).
+
+    Mutation: coerce with ``str(...)`` again -> ``positions_complete`` is ``True`` -> red.
+    """
+    server.queue_response(
+        BALANCE_PATH,
+        status=200,
+        body={"rt_cd": "0", "output1": [{"pdno": pdno, "hldg_qty": "10"}]},
+        headers={"tr_cont": "D"},
+    )
+    server.queue_response(ORDER_PATH, status=200, body=_empty_order_response())
+    snapshot = _witness(server).observe(WitnessScope(account=ACCOUNT))
+    assert snapshot.positions == ()
+    assert snapshot.positions_complete is False
+
+
+def test_a_string_pdno_row_is_a_complete_observation(
+    server: FakeKisGetServer,
+) -> None:
+    """The positive control for the test above: the measured wire shape (all strings) is read,
+    attributed, and reported as a COMPLETE holdings observation — the #981 type check must not
+    turn an ordinary balance answer into an incomplete one."""
+    server.queue_response(
+        BALANCE_PATH,
+        status=200,
+        body={"rt_cd": "0", "output1": [{"pdno": "005930", "hldg_qty": "10"}]},
+        headers={"tr_cont": "D"},
+    )
+    server.queue_response(ORDER_PATH, status=200, body=_empty_order_response())
+    snapshot = _witness(server).observe(WitnessScope(account=ACCOUNT))
+    assert snapshot.positions == (("005930", Decimal("10")),)
+    assert snapshot.positions_complete is True
+
+
+# ---------------------------------------------------------------------------
 # The caller's deadline (#949 review HIGH): it stops the WALK, and what was read so far is
 # never returned. The fill observer owns the clock — this class has none.
 # ---------------------------------------------------------------------------

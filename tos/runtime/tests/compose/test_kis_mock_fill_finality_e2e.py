@@ -189,20 +189,24 @@ def _script_broker(
     server,
     config_dir,
     date: str,
-    rows: list[dict[str, str]],
+    rows: list[Any],
     *,
     holdings: tuple[tuple[str, Decimal], ...] = (),
-    raw_holdings: list[dict[str, str]] | None = None,
+    raw_holdings: list[dict[str, Any]] | None = None,
     holdings_container: Any = _UNSET_CONTAINER,
 ) -> str:
     """Script both witness GETs for ``date``: the order inquiry from ``rows``, the balance
     inquiry from ``holdings`` (default: a flat account with NO rows, the shape every test here
     had before ``holdings`` existed).
 
+    ``rows`` is written to the order ``output1`` verbatim, so a test can put an element there
+    that is not an order row at all (issue #981's unreadable row).
+
     ``raw_holdings`` writes the balance ``output1`` rows verbatim instead, so a test can send
-    a quantity the production parser cannot read (``hldg_qty: ""``) and observe what
-    ``KisStockBrokerWitness`` actually does with it — #966 review round 1 needs that exact
-    input, and building it from ``Decimal`` cannot express it.
+    a quantity the production parser cannot read (``hldg_qty: ""``) or a ``pdno`` that is not a
+    string (issue #981) and observe what ``KisStockBrokerWitness`` actually does with it —
+    #966 review round 1 needs that exact input, and building it from ``Decimal`` cannot
+    express it.
 
     ``holdings_container`` replaces the whole ``output1`` VALUE, including with a non-list
     (``None``, a dict), which review-973 round 2 needs: a malformed container is not an empty

@@ -359,3 +359,135 @@ def test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combinatio
     assert (by_attempt["a1"].classification is ReconciliationClass.MATCHED) is joined
     assert report.permits_rearm is joined
     assert report.permits_capacity_release is False
+
+
+# ---------------------------------------------------------------------------
+# (c) issue #981 — the orphan a malformed order page used to hide. An orphan broker order is
+#     the one witness observation that unconditionally blocks a release
+#     (``reconcile``'s own ``capacity_flags.append(False)`` for every orphan), so a page the
+#     walk read as "zero rows" was a fail-open: the attempt on the READABLE page stayed
+#     MATCHED and the release went ahead without the order it never saw.
+# ---------------------------------------------------------------------------
+
+_ORPHAN_ODNO = "0000009999"
+
+
+def _orphan_row() -> dict[str, str]:
+    """A broker order this runtime holds no receipt for — today, this instrument."""
+    return {
+        "pdno": "005930",
+        "odno": _ORPHAN_ODNO,
+        "ord_dt": TODAY,
+        "tot_ccld_qty": "0",
+        "rmn_qty": "7",
+        "cncl_yn": "N",
+    }
+
+
+def _reconcile_two_page_order_walk(
+    store, fresh, kis_server: FakeKisGetServer, second_page: dict[str, object]
+):
+    """Attempt ``a1``'s receipt and its order row on page 0 (``tr_cont='M'``, a cursor), then
+    ``second_page`` as page 1 — the measured two-page continuation shape."""
+    _append_egress_result(store, trading_date=TODAY)
+    kis_server.queue_response(
+        BALANCE_PATH, status=200, body={"rt_cd": "0", "output1": []}
+    )
+    kis_server.queue_response(
+        ORDER_PATH,
+        status=200,
+        body={
+            "rt_cd": "0",
+            "output1": [
+                {
+                    "pdno": "005930",
+                    "odno": "0000004470",
+                    "ord_dt": TODAY,
+                    "tot_ccld_qty": "1",
+                    "rmn_qty": "0",
+                    "cncl_yn": "N",
+                }
+            ],
+            "ctx_area_fk100": "cursor-fk-1",
+            "ctx_area_nk100": "cursor-nk-1",
+        },
+        headers={"tr_cont": "M"},
+    )
+    kis_server.queue_response(
+        ORDER_PATH, status=200, body=second_page, headers={"tr_cont": "D"}
+    )
+    service = ReconciliationService(
+        _MinimalRclReader({"a1": CapacityState.POSITION_CONSUMED}),
+        SqliteEvidenceReceiptReader(store),
+        _kis_witness(kis_server),
+    )
+    return service.reconcile(
+        WitnessScope(account=ACCOUNT, attempt_ids=("a1",)), freshness=fresh
+    )
+
+
+@pytest.mark.parametrize(
+    "second_page",
+    [
+        {"rt_cd": "0"},
+        {"rt_cd": "0", "output1": None},
+        {"rt_cd": "0", "output1": {}},
+        {"rt_cd": "0", "output1": _orphan_row()},
+    ],
+    ids=["missing", "null", "empty-dict", "dict-carrying-the-orphan"],
+)
+def test_an_order_page_that_is_not_a_list_makes_the_whole_reconciliation_unavailable(
+    store, fresh, kis_server: FakeKisGetServer, second_page: dict[str, object]
+) -> None:
+    """Page 0 is the attempt's own fill; page 1 is not a list (the last case literally carries
+    the orphan as a dict). Before #981 the walk read page 1 as zero rows, so ``a1`` was
+    MATCHED off page 0 and the report said nothing about the order page 1 held — the broker
+    showed something this runtime could not read and the release proceeded anyway. Now the
+    witness is unavailable, which ``reconcile`` turns into both permits ``False`` with no
+    classification at all.
+
+    Mutation: restore the pre-#981 ``for row in rows if rows is not None else ()`` in
+    ``_read_order_rows`` -> the ``dict-carrying-the-orphan`` case reports ``a1`` MATCHED with
+    ``permits_rearm is True`` and no orphan -> red.
+    """
+    report = _reconcile_two_page_order_walk(store, fresh, kis_server, second_page)
+    assert report.classifications == ()
+    assert (report.reason or "").startswith("broker witness unavailable")
+    assert report.permits_rearm is False
+    assert report.permits_capacity_release is False
+
+
+def test_an_orphan_on_a_well_formed_second_order_page_blocks_the_release(
+    store, fresh, kis_server: FakeKisGetServer
+) -> None:
+    """What the hidden orphan would have done, had the page been readable: ``a1`` joins and is
+    MATCHED, the unattributed order is reported as an orphan, and both permits are ``False``.
+    This is why the refusal above is the conservative answer and not merely a stricter one.
+    """
+    report = _reconcile_two_page_order_walk(
+        store, fresh, kis_server, {"rt_cd": "0", "output1": [_orphan_row()]}
+    )
+    by_attempt = {c.attempt_id: c for c in report.classifications}
+    assert by_attempt["a1"].classification is ReconciliationClass.MATCHED
+    orphans = [c for c in report.classifications if c.attempt_id is None]
+    assert [o.broker_execution_id for o in orphans] == [_ORPHAN_ODNO]
+    assert report.permits_rearm is False
+    assert report.permits_capacity_release is False
+
+
+def test_an_empty_second_order_page_still_matches_the_attempt(
+    store, fresh, kis_server: FakeKisGetServer
+) -> None:
+    """The positive control: a two-page order walk whose second page is an empty LIST is a
+    complete read of one order. ``a1`` is MATCHED and re-arm is permitted exactly as in the
+    single-page case — the #981 refusal must not fire on a well-formed continuation."""
+    report = _reconcile_two_page_order_walk(
+        store, fresh, kis_server, {"rt_cd": "0", "output1": []}
+    )
+    [record] = report.classifications
+    assert (record.attempt_id, record.classification) == (
+        "a1",
+        ReconciliationClass.MATCHED,
+    )
+    assert report.permits_rearm is True
+    assert report.permits_capacity_release is False
