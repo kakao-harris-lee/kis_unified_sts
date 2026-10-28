@@ -563,7 +563,17 @@ PRODUCER_PID=""
 WAIT_PID=""
 BAND_PID=""
 
+# The stop MARKER (#967): set only when this script's own stop path is about to
+# signal a live `run` group. Step 12 reads it to tell "ended by our SIGTERM"
+# from "ended by itself / by somebody else" — the exit code alone cannot,
+# because coreutils >= 9.10 `timeout` propagates the TERM it receives and
+# reports 124, the same code as its own alarm firing.
+RUN_STOP_SENT=0
+
 stop_run() {
+  if [ -n "$RUN_PID" ] && supervised_group_alive "$RUN_PID"; then
+    RUN_STOP_SENT=1
+  fi
   stop_supervised "$RUN_PID" "$SIGKILL_AFTER_S" run
 }
 
@@ -1256,6 +1266,17 @@ else
 fi
 wait "$RUN_PID" 2>/dev/null
 run_rc=$?
+# #967: what `timeout` reports for the SIGTERM our stop path sent depends on
+# the coreutils version — 9.4 (ubuntu-24.04) passes the child's 143 through,
+# 9.10 (ubuntu-26.04) reports 124. With the marker set, 124 is that same
+# ordinary stop and is recorded as 143, the code every reader of this exit
+# (step 13's verdict, cp3_tenant_daily.sh) already treats as the normal end.
+# WITHOUT the marker a 124 is `timeout`'s own alarm — a runtime that outlived
+# its ceiling — and stays 124, a failure.
+if [ "$RUN_STOP_SENT" = 1 ] && [ "$run_rc" -eq 124 ]; then
+  log "run: timeout reported rc=124 for the SIGTERM this runner's stop path sent — recorded as 143 (ordinary stop)"
+  run_rc=143
+fi
 log "=== END run rc=$run_rc"
 
 # The producer outlives the runtime by exactly this much: it is stopped here,
@@ -1409,7 +1430,8 @@ printf '%s\n' "$COUNTS" | while IFS= read -r line; do log "  $line"; done
 #
 # "The way it was asked to" is 0 OR 143: a session that reaches TENANT_STOP_AT
 # is stopped by SIGTERM from this script's own stop path, so 143 is the
-# ORDINARY end of a full session, not a failure. Those two are the codes a
+# ORDINARY end of a full session, not a failure (a `timeout` 124 for that same
+# stop was already folded into 143 in step 12, and only with RUN_STOP_SENT set). Those two are the codes a
 # producer's silence has something to add to. Any OTHER code is a runtime
 # failure and keeps its own: it is the earlier and larger fact, and replacing
 # it with 5 would report a boot that died as a feed that stopped.

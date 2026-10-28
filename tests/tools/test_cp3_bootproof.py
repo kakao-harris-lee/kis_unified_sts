@@ -1170,6 +1170,9 @@ _RUN_PIDFILE_ENV = "STUB_RUN_PIDFILE"
 _RUN_ENVFILE_ENV = "STUB_RUN_ENVFILE"
 #: Where the stub ``run`` writes its own argv (PR-3c: ``--transport`` follows the market).
 _RUN_ARGVFILE_ENV = "STUB_RUN_ARGVFILE"
+#: When set, the stub `run` exits ON ITS OWN with this code a moment after it
+#: starts — how a test reaches step 12 with a `run` this runner never stopped.
+_RUN_EXIT_ENV = "STUB_RUN_EXIT_CODE"
 #: Read by the stub renderer to decide the rendered tree's `environment`.
 _TREE_ENV = "STUB_TREE_ENVIRONMENT"
 #: Written by the stub producer so a test can find it and prove it was stopped.
@@ -1505,6 +1508,10 @@ def _runner_repo(
             "    if argvfile:\n"
             "        Path(argvfile).write_text(json.dumps(list(argv)))\n"
             f"    Path(os.environ[{_RUN_PIDFILE_ENV!r}]).write_text(str(os.getpid()))\n"
+            f"    exit_code = os.environ.get({_RUN_EXIT_ENV!r})\n"
+            "    if exit_code:\n"
+            "        time.sleep(1.0)\n"
+            "        os._exit(int(exit_code))\n"
             "    while True:\n"
             "        time.sleep(0.2)\n",
             encoding="utf-8",
@@ -1640,6 +1647,90 @@ def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
         else:
             env[name] = value
     return env
+
+
+#: A stand-in for coreutils >= 9.10 `timeout` (#967): it forwards a TERM it
+#: receives to the command and then reports 124 — what ubuntu-26.04's
+#: coreutils 9.10 does — where the host's 9.4 passes the command's 143 through.
+#: Everything else follows GNU timeout: it makes itself a process-group leader
+#: (the runner's stop path signals the GROUP), reports 124 when its own alarm
+#: fires, 137 when `--kill-after` had to SIGKILL, and the command's code
+#: otherwise.
+_PROPAGATING_TIMEOUT = """\
+import os, signal, subprocess, sys
+args = sys.argv[1:]
+kill_after = None
+while args[0].startswith("--"):
+    flag = args.pop(0)
+    if flag.startswith("--kill-after="):
+        kill_after = float(flag.split("=", 1)[1].rstrip("s"))
+duration = float(args.pop(0).rstrip("s"))
+try:
+    os.setpgid(0, 0)
+except PermissionError:
+    pass  # already a session leader (`setsid timeout ...`)
+child = subprocess.Popen(args)
+received = []
+def forward(signo, _frame):
+    received.append(signo)
+    try:
+        child.send_signal(signo)
+    except ProcessLookupError:
+        pass
+signal.signal(signal.SIGTERM, forward)
+try:
+    rc = child.wait(timeout=duration)
+except subprocess.TimeoutExpired:
+    child.terminate()
+    try:
+        child.wait(timeout=kill_after)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait()
+        sys.exit(137)
+    sys.exit(124)
+if received:
+    sys.exit(124)
+sys.exit(rc if rc >= 0 else 128 - rc)
+"""
+
+
+def _propagating_timeout_path(tmp_path: Path) -> str:
+    """A ``PATH`` whose first ``timeout`` is :data:`_PROPAGATING_TIMEOUT`."""
+    bin_dir = tmp_path / "coreutils-9.10-bin"
+    bin_dir.mkdir(exist_ok=True)
+    stub = bin_dir / "timeout"
+    stub.write_text(f"#!{sys.executable}\n" + _PROPAGATING_TIMEOUT, encoding="utf-8")
+    stub.chmod(0o755)
+    return f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+
+
+@pytest.fixture(params=["host-timeout", "timeout-reports-124"])
+def timeout_flavour(request: pytest.FixtureRequest, tmp_path: Path) -> dict[str, str]:
+    """#967: run a stop-path test under BOTH `timeout` behaviours.
+
+    ``host-timeout`` is whatever coreutils the host has (9.4 → 143 on
+    ubuntu-24.04, 9.10 → 124 on ubuntu-26.04); ``timeout-reports-124`` forces
+    the 9.10 behaviour on any host, so both shapes are exercised everywhere.
+    """
+    if request.param == "host-timeout":
+        return {}
+    return {"PATH": _propagating_timeout_path(tmp_path)}
+
+
+def test_the_propagating_timeout_stub_reports_124_for_a_forwarded_term(
+    tmp_path: Path,
+) -> None:
+    """The stub is only evidence if it reproduces the 9.10 shape: a TERM to
+    ``timeout`` ends the command and comes back as 124, not 143."""
+    path = _propagating_timeout_path(tmp_path)
+    proc = subprocess.Popen(
+        ["timeout", "--kill-after=5s", "60s", "sleep", "60"],
+        env={**os.environ, "PATH": path},
+    )
+    time.sleep(1.0)
+    proc.send_signal(signal.SIGTERM)
+    assert proc.wait(timeout=20) == 124
 
 
 def _producer_outlived_the_runner(tmp_path: Path) -> bool:
@@ -2882,7 +2973,7 @@ def _stock_overrides(tmp_path: Path, **extra: str) -> dict[str, str]:
 
 
 def test_a_stock_session_boots_kis_mock_with_the_transport_config_installed(
-    tmp_path: Path,
+    tmp_path: Path, timeout_flavour: dict[str, str]
 ) -> None:
     """The stock tree is the MOCK order tree (PR-3a): ``run`` gets ``--transport kis-mock``,
     the deploy-time transport document lands in the render output 0600, and the producer and
@@ -2898,6 +2989,7 @@ def test_a_stock_session_boots_kis_mock_with_the_transport_config_installed(
             **{
                 _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
                 _RUN_ARGVFILE_ENV: str(argvfile),
+                **timeout_flavour,
             },
         ),
     )
@@ -2913,7 +3005,9 @@ def test_a_stock_session_boots_kis_mock_with_the_transport_config_installed(
     assert "market=stock (tree and producer agree) · transport=kis-mock" in output
 
 
-def test_a_futures_session_still_boots_synthetic(tmp_path: Path) -> None:
+def test_a_futures_session_still_boots_synthetic(
+    tmp_path: Path, timeout_flavour: dict[str, str]
+) -> None:
     repo = _runner_repo(tmp_path, bootable=True)
     argvfile = tmp_path / "run-argv.json"
     result = _run_runner(
@@ -2923,6 +3017,7 @@ def test_a_futures_session_still_boots_synthetic(tmp_path: Path) -> None:
         **{
             _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
             _RUN_ARGVFILE_ENV: str(argvfile),
+            **timeout_flavour,
         },
     )
     assert result.returncode in (0, 143), result.stdout + result.stderr
@@ -3144,7 +3239,7 @@ def test_the_boot_order_is_producer_then_first_row_then_guard_then_boot(
     ],
 )
 def test_a_producer_that_stops_mid_session_is_reported_as_an_abort(
-    tmp_path: Path, exit_code: str, expected_rc: str
+    tmp_path: Path, exit_code: str, expected_rc: str, timeout_flavour: dict[str, str]
 ) -> None:
     """**Plan §3.5's last sentence: 「멈춘 생산자는 러너가 ABORT 로 보고한다」.**
 
@@ -3173,6 +3268,7 @@ def test_a_producer_that_stops_mid_session_is_reported_as_an_abort(
         **{
             _PRODUCER_EXIT_ENV: exit_code,
             _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            **timeout_flavour,
         },
     )
     output = result.stdout + result.stderr
@@ -3453,7 +3549,9 @@ def test_the_runner_runs_no_mode_repair_sweep_after_the_stop(tmp_path: Path) -> 
     assert "is READ, never written" in text
 
 
-def test_session_paths_with_spaces_still_work(tmp_path: Path) -> None:
+def test_session_paths_with_spaces_still_work(
+    tmp_path: Path, timeout_flavour: dict[str, str]
+) -> None:
     """**Item B's last requirement: quoting survives the hardening.**
 
     The step-6b guard takes the four session paths as arguments, and an
@@ -3473,7 +3571,7 @@ def test_session_paths_with_spaces_still_work(tmp_path: Path) -> None:
         TENANT_DATA_PARENT=str(scratch / "a data dir"),
         TENANT_PRODUCER_SESSION_DIR=str(tmp_path / "a producer session"),
         TENANT_RENDER_OUT=str(tmp_path / "a render out"),
-        **{_RUN_PIDFILE_ENV: str(tmp_path / "run.pid")},
+        **{_RUN_PIDFILE_ENV: str(tmp_path / "run.pid"), **timeout_flavour},
     )
     output = result.stdout + result.stderr
     assert "session paths are literal" in output, output[-2000:]
@@ -3490,7 +3588,7 @@ def test_session_paths_with_spaces_still_work(tmp_path: Path) -> None:
 
 
 def test_a_producer_that_ends_with_the_session_is_not_an_abort(
-    tmp_path: Path,
+    tmp_path: Path, timeout_flavour: dict[str, str]
 ) -> None:
     """**The 2026-10-15 false ABORT: every full-day session exited 5.**
 
@@ -3514,10 +3612,15 @@ def test_a_producer_that_ends_with_the_session_is_not_an_abort(
         **{
             _PRODUCER_EXIT_ENV: "0",
             _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            **timeout_flavour,
         },
     )
     output = result.stdout + result.stderr
     assert "=== BOOT" in output
+    assert "=== END run rc=143" in output, output[-2000:]
+    if timeout_flavour:
+        # the forced 9.10 shape: 124 came back and was read through the marker
+        assert "timeout reported rc=124 for the SIGTERM this runner" in output
     assert "=== END producer rc=0" in output
     # it WAS gone before the stop — the old condition's whole test — and that
     # is now recorded without being a verdict
@@ -3525,6 +3628,34 @@ def test_a_producer_that_ends_with_the_session_is_not_an_abort(
     assert "ended-the-session=1" in output
     assert "ABORT" not in output, output[-2000:]
     assert result.returncode == 143, output[-2000:]  # the runtime's own code
+
+
+def test_a_timeout_124_the_runner_did_not_cause_stays_a_failure(
+    tmp_path: Path,
+) -> None:
+    """#967's other half: 124 is only an ordinary stop WITH the stop marker.
+
+    Here ``run`` ends by itself with 124 — the code ``timeout``'s own alarm
+    produces when a runtime outlives its ceiling — long before
+    ``TENANT_STOP_AT``, so this runner's stop path never signalled it. That
+    must not be folded into 143: it is a failure and keeps its own code.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+30 seconds",
+        **{
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            _RUN_EXIT_ENV: "124",
+        },
+    )
+    output = result.stdout + result.stderr
+    assert "=== BOOT" in output, output[-2000:]
+    assert "run exited on its own before the stop time" in output
+    assert "=== END run rc=124" in output, output[-2000:]
+    assert "recorded as 143" not in output
+    assert result.returncode == 124, output[-2000:]
 
 
 # ---------------------------------------------------------------------------
