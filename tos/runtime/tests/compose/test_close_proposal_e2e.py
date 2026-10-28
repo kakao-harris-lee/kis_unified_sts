@@ -180,15 +180,18 @@ class _Broker:
         *,
         odno: str,
         flat: bool = True,
-        raw_holdings: list[dict[str, str]] | None = None,
+        raw_holdings: list[dict[str, Any]] | None = None,
         holdings_container: Any = _UNSET_CONTAINER,
+        extra_order_rows: list[Any] | None = None,
     ) -> None:
         """Fully fill the latest ACKed order, then poll the observer once.
 
         ``flat`` drives the balance read the reconciliation witness makes: the account reports
         no holding (flat) unless a test needs an outstanding position reported.
         ``raw_holdings`` overrides that with verbatim balance rows, for the quantities the
-        production parser cannot read (#966 review round 1).
+        production parser cannot read (#966 review round 1) and the ``pdno`` shapes it cannot
+        attribute (issue #981). ``extra_order_rows`` appends elements to the order inquiry's
+        own ``output1`` verbatim, including ones that are not order rows at all (issue #981).
         """
         *_, ack = [
             r
@@ -204,7 +207,7 @@ class _Broker:
             self._server,
             self._config_dir,
             date,
-            list(self._rows),
+            [*self._rows, *(extra_order_rows or ())],
             holdings=() if flat else ((fx.INSTRUMENT, qty),),
             raw_holdings=raw_holdings,
             holdings_container=holdings_container,
@@ -554,6 +557,103 @@ def test_a_malformed_holdings_container_keeps_the_entry_and_denies_a_re_entry(
     step8 = _verdict(again, CommitmentStep.LEDGER_VERIFICATION)
     assert step8.outcome is StageOutcome.DENY, step8.reason
     assert again.flow.handed_off is False
+    _close(runtime)
+
+
+def test_a_holdings_pdno_that_is_not_a_string_keeps_the_entry_and_denies_a_re_entry(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """Issue #981: a holdings row whose ``pdno`` is not a string names no symbol.
+
+    The same class as the two tests above, on the row's INSTRUMENT instead of its quantity.
+    ``str(row.get("pdno") or "")`` coerced anything into a symbol — a broker that renders the
+    code as a JSON number answers ``pdno: 5930`` — so a row this witness cannot attribute read
+    as some OTHER instrument's: dropped by the scope filter, and the account reported flat in
+    the instrument being closed WITH a complete observation. The entry's reservation was
+    discharged on the strength of a row the witness could not read, which is exactly what
+    ``positions_complete`` exists to prevent. Now the row makes the observation incomplete.
+
+    Mutation: coerce with ``str(...)`` again -> the entry is RELEASED and the re-entry ADMITs
+    -> red.
+    """
+    _deployed(config_dir, custody_root, server, monkeypatch)
+    _standing_cycle_artifact(config_dir, custody_root)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    broker = _Broker(server, config_dir)
+
+    _order_response(server, "0000000901")
+    runtime.run_once((_entry_tick(),))
+    broker.fill(runtime, odno="0000000901")
+    (entry_reservation_id,) = _reservations(runtime)
+
+    _order_response(server, "0000000902")
+    (exit_,) = runtime.run_once((_exit_tick(),))
+    assert exit_.flow.handed_off is True
+    broker.fill(
+        runtime, odno="0000000902", raw_holdings=[{"pdno": 5930, "hldg_qty": "10"}]
+    )
+
+    assert (
+        _reservations(runtime)[entry_reservation_id] is CapacityState.POSITION_CONSUMED
+    )
+    held = [r["reason"] for r in _rows(runtime, "CAPACITY_RELEASE_HELD")]
+    assert held == ["BROKER_POSITION_NOT_FLAT"]
+
+    _order_response(server, "0000000903")
+    (again,) = runtime.run_once((_entry_tick(seq=2),))
+    step8 = _verdict(again, CommitmentStep.LEDGER_VERIFICATION)
+    assert step8.outcome is StageOutcome.DENY, step8.reason
+    assert again.flow.handed_off is False
+    _close(runtime)
+
+
+def test_an_unreadable_order_row_holds_the_close_instead_of_dropping_it(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """Issue #981, the orders axis: the order inquiry answers with the close's own fill row AND
+    an element that is not an order row at all (``output1: [..., null]``; the other non-row
+    shapes are covered one layer down, in ``tests/recon/test_witness_kis.py``).
+
+    The witness used to skip it and hand back the rows that happened to parse, so this read
+    looked complete: the close's ``FULL_FILL`` was fed to the engine and the release ran on an
+    order picture missing whatever the broker had actually put there — an unattributed order
+    (an orphan) is precisely what must BLOCK a release
+    (``ReconciliationService.reconcile``). Now the whole read is unavailable: the fill observer
+    records ``FILL_OBSERVER_READ_FAILED``, no result is fed, nothing is released, and the next
+    poll reads again. Conservative and visible, never silent.
+
+    Mutation: ``continue`` on the non-dict row again -> the close's fill is emitted, the entry
+    is RELEASED and no read failure is recorded -> red.
+    """
+    _deployed(config_dir, custody_root, server, monkeypatch)
+    _standing_cycle_artifact(config_dir, custody_root)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    broker = _Broker(server, config_dir)
+
+    _order_response(server, "0000001001")
+    runtime.run_once((_entry_tick(),))
+    broker.fill(runtime, odno="0000001001")
+    (entry_reservation_id,) = _reservations(runtime)
+
+    _order_response(server, "0000001002")
+    (exit_,) = runtime.run_once((_exit_tick(),))
+    assert exit_.flow.handed_off is True
+    broker.fill(runtime, odno="0000001002", extra_order_rows=[None])
+
+    assert [
+        r["inquiry_date"] for r in _rows(runtime, "FILL_OBSERVER_READ_FAILED")
+    ] != []
+    # The close's fill never became an observation, so no release was even attempted: the only
+    # rows of either kind are the ENTRY's, from the poll before this one.
+    assert [r["broker_execution_id"] for r in _rows(runtime, "FILL_OBSERVED")] == [
+        "0000001001"
+    ]
+    assert [r["destination"] for r in _rows(runtime, "CAPACITY_RELEASE_INTENT")] == [
+        CapacityState.POSITION_CONSUMED.value
+    ]
+    assert (
+        _reservations(runtime)[entry_reservation_id] is CapacityState.POSITION_CONSUMED
+    )
     _close(runtime)
 
 

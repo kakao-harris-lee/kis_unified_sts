@@ -296,9 +296,10 @@ class _WalkOutcome:
     #: to be flattened to ``[]``, making it indistinguishable from a page that genuinely
     #: listed no rows: the balance read then saw an empty, "complete" holdings account and
     #: called it flat. An empty LIST is well-formed — a flat KIS account really does answer
-    #: ``output1: []``. Both consumers iterate a ``None`` page as no rows, so the order walk
-    #: behaves exactly as before; only :meth:`KisStockBrokerWitness._read_balance` reads the
-    #: ``None`` itself, as evidence that its holdings picture is incomplete.
+    #: ``output1: []``. Neither consumer may read a ``None`` page as "no rows":
+    #: :meth:`KisStockBrokerWitness._read_balance` records it as an incomplete holdings
+    #: picture, and the order walk refuses the whole read
+    #: (:func:`_order_rows_or_refuse` — issue #981, the same class on the orders axis).
     pages: tuple[list[dict[str, Any]] | None, ...]
     output2_first: dict[str, Any] | None
 
@@ -324,6 +325,51 @@ def _refuse_instrument_conflict(row: KisOrderRow, *, queried: str) -> None:
             f"queried {queried or '(any)'!r} — a row that does not name the queried instrument "
             "cannot corroborate anything"
         )
+
+
+def _order_rows_or_refuse(
+    outcome: _WalkOutcome, *, queried: str
+) -> tuple[dict[str, Any], ...]:
+    """Every row of a completed order walk, or refuse the whole read (issue #981).
+
+    Two shapes the order walk used to drop silently, both of which make a row the broker
+    showed disappear from :attr:`~tos_runtime.recon.ports.WitnessSnapshot.orders`:
+
+    * a PAGE whose ``output1`` was not a list at all — missing, ``null``, or a dict
+      (:attr:`_WalkOutcome.pages`), which contributed zero rows;
+    * a ROW that is not a dict, which was skipped by itself.
+
+    On the holdings axis the equivalent drops only make the observation incomplete
+    (:meth:`KisStockBrokerWitness._read_balance`), because a balance read is still useful for
+    the rows it could attribute. The orders axis has no such partial value: an order this
+    witness cannot read might BE an unattributed broker order, and an orphan is exactly what
+    must BLOCK a capacity release (``service.py``'s ``_join_orders_by_execution_id`` ->
+    ``capacity_flags.append(False)``). Dropping it left the release resting on the rows that
+    happened to parse — the #973 fail-open class, one axis over. So the whole read is
+    unavailable, the same answer :func:`_refuse_instrument_conflict` already gives for a row
+    that names the wrong instrument, and for the same stated reason.
+
+    Raises:
+        WitnessUnavailable: A page carried no ``output1`` list, or a row is not a dict.
+    """
+    if not outcome.containers_wellformed:
+        raise WitnessUnavailable(
+            f"KisStockBrokerWitness: an order page for {queried or '(any)'!r} carried no "
+            "output1 list (absent, null, or not a list) — a page that contributes no rows "
+            "cannot be told from one that listed none, and a row it hid could be an orphan "
+            "order; refusing to return a read missing it"
+        )
+    rows: list[dict[str, Any]] = []
+    for page in outcome.pages:
+        for row in page or ():
+            if not isinstance(row, dict):
+                raise WitnessUnavailable(
+                    f"KisStockBrokerWitness: an order row for {queried or '(any)'!r} is "
+                    f"{type(row).__name__}, not an object — a row this witness cannot read "
+                    "could be an orphan order; refusing to drop it from the read"
+                )
+            rows.append(row)
+    return tuple(rows)
 
 
 @dataclass(frozen=True)
@@ -738,9 +784,10 @@ class KisStockBrokerWitness:
         Returns ``(positions, cash, positions_complete)``. The third element is ``False`` as
         soon as anything in this read could not be fully taken in:
 
-        * a holdings ROW that could not be read — a non-dict row, a blank ``pdno``, or an
-          ``hldg_qty`` that does not parse (#966 review round 1, Codex HIGH), since such a row
-          is silently dropped from ``positions`` below;
+        * a holdings ROW that could not be read — a non-dict row, a ``pdno`` that is blank or
+          not a string at all (issue #981), or an ``hldg_qty`` that does not parse (#966
+          review round 1, Codex HIGH), since such a row is silently dropped from ``positions``
+          below;
         * a holdings PAGE whose ``output1`` was not a list at all — missing, ``null``, or a
           dict (review-973 round 2 HIGH), since that page contributes zero rows.
 
@@ -785,7 +832,15 @@ class KisStockBrokerWitness:
                 if not isinstance(row, dict):
                     complete = False
                     continue
-                symbol = str(row.get("pdno") or "").strip()
+                # Issue #981: only a STRING pdno names a symbol. `str(...)` on anything else
+                # fabricates a plausible-looking one (a broker that renders the code as a
+                # JSON number answers `pdno: 5930` for 005930 — the leading zeros are gone),
+                # and the row then reads as some OTHER instrument: filtered out below, or
+                # kept under a symbol the flatness check never compares against. Either way
+                # `positions` ends up with no row for the instrument being closed while the
+                # observation still claims to be complete — flat, on a row we could not read.
+                raw_symbol = row.get("pdno")
+                symbol = raw_symbol.strip() if isinstance(raw_symbol, str) else ""
                 qty = _decimal_or_none(row.get("hldg_qty"))
                 if not symbol or qty is None:
                     # Unreadable: the row is dropped, so record that this holdings account
@@ -863,13 +918,10 @@ class KisStockBrokerWitness:
                 build_params=build_params,
                 deadline_expired=deadline_expired,
             )
-            for rows in outcome.pages:
-                for row in rows if rows is not None else ():
-                    if not isinstance(row, dict):
-                        continue
-                    parsed = KisOrderRow.from_wire(row)
-                    _refuse_instrument_conflict(parsed, queried=symbol)
-                    orders.append(parsed)
+            for row in _order_rows_or_refuse(outcome, queried=symbol):
+                parsed = KisOrderRow.from_wire(row)
+                _refuse_instrument_conflict(parsed, queried=symbol)
+                orders.append(parsed)
         return tuple(orders)
 
     @staticmethod
