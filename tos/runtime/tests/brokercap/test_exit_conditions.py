@@ -9,6 +9,7 @@ through one crossing event — never a mock of the gateway's own verify list.
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
 from typing import Any
 
@@ -83,7 +84,9 @@ def _instance_path(config: BrokerScopesConfig) -> Path:
 def _load_example(tmp_path: Path, **overrides: str | bool) -> BrokerScopesConfig:
     raw = yaml.safe_load(_EXAMPLE_PATH.read_text(encoding="utf-8"))
     raw["active_scope"] = overrides.pop("active_scope", "SYNTHETIC_FUTURES_ORDER")
-    raw["instance_path"] = str(_DRAFT_PATH)
+    raw["instance_path"] = os.path.relpath(
+        _DRAFT_PATH, tmp_path
+    )  # relative, as committed trees (#958)
     if overrides.pop("mock_evidence_ok", False):
         for scope in raw["scopes"]:
             if scope["name"] == "MOCK_STOCK_ORDER":
@@ -374,7 +377,9 @@ def _ec5_config_dir(config_dir: Path) -> Path:
     fixture wrote it."""
     raw = yaml.safe_load(_EXAMPLE_PATH.read_text(encoding="utf-8"))
     raw["active_scope"] = "MOCK_STOCK_ORDER"
-    raw["instance_path"] = str(_DRAFT_PATH)
+    raw["instance_path"] = os.path.relpath(
+        _DRAFT_PATH, config_dir
+    )  # relative, as committed trees (#958)
     for scope in raw["scopes"]:
         if scope["name"] == "MOCK_STOCK_ORDER":
             scope["profile_evidence_ok"] = True

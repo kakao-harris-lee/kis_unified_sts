@@ -1665,6 +1665,10 @@ def render(
             direction or journal argument that contradicts the manifest's mode, an output path
             inside the repo, an anchor that did not match exactly once, a refused
             ``print-policy-digests``, or an activation read-back that does not see every member.
+            For a tree with an instance-path slot (the stock tree), also a broker profile file
+            that is not its committed ``HEAD`` blob (:func:`broker_profile_pin`) — so such a
+            tree renders ONLY from a git checkout, and an uncommitted profile edit there stops
+            the render (#958).
     """
     if direction not in _DIRECTION_TOKENS:
         raise RenderError(

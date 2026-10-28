@@ -6,6 +6,7 @@ under a repo-relative path (D1.4 read-only exception), never a mock.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -34,7 +35,9 @@ def _load_config(
 ) -> BrokerScopesConfig:
     raw = yaml.safe_load(_EXAMPLE_PATH.read_text(encoding="utf-8"))
     raw["active_scope"] = active_scope
-    raw["instance_path"] = str(_DRAFT_PATH)
+    raw["instance_path"] = os.path.relpath(
+        _DRAFT_PATH, tmp_path
+    )  # relative, as committed trees (#958)
     if mock_evidence_ok:
         for scope in raw["scopes"]:
             if scope["name"] == "MOCK_STOCK_ORDER":
@@ -115,7 +118,9 @@ def test_synthetic_scope_asset_binding_override_is_load_bearing_mutation_m5(
     ignores in favor of the (matching-by-coincidence) global table."""
     raw = yaml.safe_load(_EXAMPLE_PATH.read_text(encoding="utf-8"))
     raw["active_scope"] = "SYNTHETIC_FUTURES_ORDER"
-    raw["instance_path"] = str(_DRAFT_PATH)
+    raw["instance_path"] = os.path.relpath(
+        _DRAFT_PATH, tmp_path
+    )  # relative, as committed trees (#958)
     for scope_raw in raw["scopes"]:
         if scope_raw["name"] == "SYNTHETIC_FUTURES_ORDER":
             scope_raw["asset_binding"]["FUTURES"] = "MISMATCHED_INSTRUMENT_CLASS"

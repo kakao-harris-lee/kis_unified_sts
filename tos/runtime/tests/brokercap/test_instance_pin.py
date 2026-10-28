@@ -21,6 +21,7 @@ import yaml
 from tos_runtime.brokercap import load_active_instance_document, load_broker_scopes
 from tos_runtime.brokercap.instance import BrokerInstanceConfigError
 from tos_runtime.brokercap.instance_pin import PIN_KEY, RENDERED_MANIFEST_NAME
+from tos_runtime.compose._boot_integrity import _broker_scopes_coordinates
 from tos_runtime.compose._transport_wiring import instance_rest_bases
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -31,16 +32,25 @@ _PROFILE = _REPO_ROOT / "docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draf
 
 
 def _render(
-    tmp_path: Path, *, pin: object = "auto", with_manifest: bool = True
+    tmp_path: Path,
+    *,
+    pin: object = "auto",
+    with_manifest: bool = True,
+    relative: bool = False,
 ) -> tuple[Path, Path]:
-    """A rendered tree over a private copy of the profile. Returns ``(scopes, profile)``."""
+    """A rendered tree over a private copy of the profile. Returns ``(scopes, profile)``.
+
+    ``relative=True`` writes ``instance_path`` relative to the tree, the way every committed
+    tree does (``../../../docs/…``) — the shape of an UNRENDERED tree."""
     profile = tmp_path / "source" / "docs" / _PROFILE.name
     profile.parent.mkdir(parents=True)
     profile.write_bytes(_PROFILE.read_bytes())
     tree = tmp_path / "render"
     tree.mkdir()
     raw = yaml.safe_load(_STOCK_SCOPES.read_text(encoding="utf-8"))
-    raw["instance_path"] = str(profile)
+    raw["instance_path"] = (
+        f"../source/docs/{profile.name}" if relative else str(profile)
+    )
     scopes = tree / "broker_scopes.yaml"
     scopes.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     if with_manifest:
@@ -136,10 +146,39 @@ def test_a_malformed_pin_is_refused(tmp_path: Path, pin: object, message: str) -
         _load(scopes)
 
 
+def test_a_rendered_tree_that_lost_its_manifest_is_refused(tmp_path: Path) -> None:
+    """#988 review MEDIUM: render → ``RENDERED.json`` deleted → MOCK_VTS ``rest_base`` edited in
+    the source → boot. Without the manifest there is no pin, and an ABSOLUTE ``instance_path`` is
+    a render's reach into a source checkout — so it is refused, not booted unpinned."""
+    scopes, profile = _render(tmp_path)
+    (scopes.parent / RENDERED_MANIFEST_NAME).unlink()
+    text = profile.read_text(encoding="utf-8")
+    profile.write_text(text.replace("openapivts", "openapivtz", 1), encoding="utf-8")
+    with pytest.raises(BrokerInstanceConfigError, match="no RENDERED.json"):
+        _load(scopes)
+
+
 def test_an_unrendered_tree_is_unpinned_and_unchanged(tmp_path: Path) -> None:
-    """No ``RENDERED.json``: the committed trees and the hermetic fixtures. Nothing to pin."""
-    scopes, profile = _render(tmp_path, with_manifest=False)
+    """No ``RENDERED.json`` and a RELATIVE ``instance_path``: the committed trees. Nothing to
+    pin, behaviour unchanged."""
+    scopes, profile = _render(tmp_path, with_manifest=False, relative=True)
     config = _load(scopes)
     assert config.instance_sha256 is None
     profile.write_text(profile.read_text("utf-8") + "\n# edited\n", encoding="utf-8")
     assert load_active_instance_document(config) is not None
+
+
+def test_the_attested_inputs_row_records_the_pin_not_a_second_read(
+    tmp_path: Path,
+) -> None:
+    """#988 review LOW: the boot's attested-inputs evidence row for the INSTANCE file must carry
+    the digest the boot actually verified. Re-hashing the file there is a second read outside the
+    pin — an edit landing after the pinned load would be recorded as if it had been booted.
+    """
+    scopes, profile = _render(tmp_path)
+    config = _load(scopes)
+    document = load_active_instance_document(config)
+    profile.write_text(profile.read_text("utf-8") + "\n# edited\n", encoding="utf-8")
+    rows = _broker_scopes_coordinates(scopes.parent, config, document)
+    (instance_row,) = [r for r in rows if r["source_file"] == profile.name]
+    assert instance_row["source_file_digest"] == config.instance_sha256

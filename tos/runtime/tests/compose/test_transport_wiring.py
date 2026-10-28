@@ -70,7 +70,9 @@ def _load_scopes(
 ) -> BrokerScopesConfig:
     raw = yaml.safe_load(_BROKER_SCOPES_EXAMPLE_PATH.read_text(encoding="utf-8"))
     raw["active_scope"] = active_scope
-    raw["instance_path"] = str(_DRAFT_PATH)
+    raw["instance_path"] = os.path.relpath(
+        _DRAFT_PATH, tmp_path
+    )  # relative, as committed trees (#958)
     if mock_evidence_ok:
         for scope in raw["scopes"]:
             if scope["name"] == "MOCK_STOCK_ORDER":
@@ -86,7 +88,9 @@ def _activate_mock_stock_order(config_dir: Path) -> None:
     mirrors ``test_exit_conditions.py``'s own ``_ec5_config_dir``."""
     raw = yaml.safe_load(_BROKER_SCOPES_EXAMPLE_PATH.read_text(encoding="utf-8"))
     raw["active_scope"] = "MOCK_STOCK_ORDER"
-    raw["instance_path"] = str(_DRAFT_PATH)
+    raw["instance_path"] = os.path.relpath(
+        _DRAFT_PATH, config_dir
+    )  # relative, as committed trees (#958)
     for scope in raw["scopes"]:
         if scope["name"] == "MOCK_STOCK_ORDER":
             scope["profile_evidence_ok"] = True
@@ -289,7 +293,9 @@ def test_full_sweep_every_scope_x_both_kinds(tmp_path: Path) -> None:
     (MOCK_STOCK_ORDER with profile_evidence_ok, kis-mock) ever admit; every REAL_* scope refuses
     kis-mock, naming the broker-reaching/MOCK-shape reason."""
     raw = yaml.safe_load(_BROKER_SCOPES_EXAMPLE_PATH.read_text(encoding="utf-8"))
-    raw["instance_path"] = str(_DRAFT_PATH)
+    raw["instance_path"] = os.path.relpath(
+        _DRAFT_PATH, tmp_path
+    )  # relative, as committed trees (#958)
     for scope in raw["scopes"]:
         if scope["name"] == "MOCK_STOCK_ORDER":
             scope["profile_evidence_ok"] = True

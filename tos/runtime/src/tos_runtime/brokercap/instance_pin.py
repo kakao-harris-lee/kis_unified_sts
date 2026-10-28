@@ -13,9 +13,13 @@ checks it (:func:`tos_runtime.brokercap.instance._read_instance_text`).
 
 Which trees are pinned:
 
-* no ``RENDERED.json`` beside ``broker_scopes.yaml`` — an unrendered tree (the committed trees,
-  the hermetic test fixtures). Its ``instance_path`` is the committed relative path into this
-  same repo; nothing to pin, behaviour unchanged.
+* no ``RENDERED.json`` beside ``broker_scopes.yaml`` and a RELATIVE ``instance_path`` — an
+  unrendered tree (every committed tree says ``../../../docs/…``). Nothing to pin, behaviour
+  unchanged.
+* no ``RENDERED.json`` and an ABSOLUTE ``instance_path`` — refused (#988 review MEDIUM). Only a
+  render writes an absolute path there, so this is a render that lost its manifest: booting it
+  unpinned would be the very source-checkout reach the pin closes (render → delete
+  ``RENDERED.json`` → edit MOCK_VTS ``rest_base`` in the source → boot).
 * ``RENDERED.json`` present — a render. The pin, when recorded, must name the very path the
   rendered ``broker_scopes.yaml`` carries. A render whose ``instance_path`` is ABSOLUTE but which
   recorded NO pin is refused: that is exactly the source-checkout reach the pin exists for (a
@@ -57,11 +61,21 @@ def render_pin(scopes_path: Path, raw_instance_path: object) -> str | None:
 
     Raises:
         BrokerInstanceConfigError: ``RENDERED.json`` is unreadable or malformed, its pin is
-            malformed or names another path, or it carries no pin for an absolute
-            ``instance_path`` (module docstring).
+            malformed or names another path, or an absolute ``instance_path`` has no
+            ``RENDERED.json`` or no pin in it (module docstring).
     """
     manifest_path = scopes_path.parent / RENDERED_MANIFEST_NAME
+    absolute = (
+        isinstance(raw_instance_path, str) and Path(raw_instance_path).is_absolute()
+    )
     if not manifest_path.is_file():
+        if absolute:
+            raise BrokerInstanceConfigError(
+                f"{scopes_path}: instance_path {raw_instance_path!r} is absolute but there is "
+                f"no {RENDERED_MANIFEST_NAME} beside it — an absolute path is a render's, and "
+                "a render without its manifest carries no pin; refusing to boot (write a "
+                "relative instance_path for an unrendered tree)"
+            )
         return None
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -71,7 +85,7 @@ def render_pin(scopes_path: Path, raw_instance_path: object) -> str | None:
         ) from exc
     pin = manifest.get(PIN_KEY) if isinstance(manifest, dict) else None
     if pin is None:
-        if isinstance(raw_instance_path, str) and Path(raw_instance_path).is_absolute():
+        if absolute:
             raise BrokerInstanceConfigError(
                 f"{manifest_path}: no {PIN_KEY!r} pin, but {scopes_path.name} names the "
                 f"absolute instance_path {raw_instance_path!r} — a render must bind the "
