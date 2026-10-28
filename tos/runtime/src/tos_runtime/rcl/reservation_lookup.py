@@ -33,6 +33,17 @@ the scope-level :func:`~tos_runtime.rcl.reservation_identity.scope_reservation_i
 ledger committed before #966 resolves to exactly the row it has always had. That fallback is
 reachable ONLY through a resolved join (review-973 L1) — a failed join never reaches it.
 
+**Each evidence row is decoded once per store, not once per lookup (#976).** The recon
+resolver asks once per attempt in scope, and the join used to decode every
+``FLOW_STEP_ADMITTED``/``ATTEMPT_REQUEST_CREATED`` row on every call — O(rows x attempts) per
+fill. :class:`_JoinIndex` keeps the join's maps per store and reads only rows with a larger
+``seq`` than the last one it absorbed. That is exact because the store is append-only (its
+``entries_no_update``/``entries_no_delete`` triggers) and writes are serialized, so a committed
+row never appears below an already-read ``seq``; a ``MAX(seq)`` that went backwards (the file
+was replaced under the same store object) drops the index and rebuilds it. A lookup made while
+the caller's connection is inside an open transaction bypasses the cache entirely — rows it
+can see there may still roll back — and answers from a one-off index, as the old full scan did.
+
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos_runtime.evidence
 .store`` + ``tos_runtime.rcl.projection``/``.reservation_identity`` only. No ``shared.*``, no
 write call of any kind (read-only throughout — the negative-grep discipline
@@ -42,6 +53,9 @@ write call of any kind (read-only throughout — the negative-grep discipline
 from __future__ import annotations
 
 import json
+import threading
+import weakref
+from dataclasses import dataclass, field
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.projection import ReservationProjectionReader
@@ -66,24 +80,6 @@ _ATTEMPT_REQUEST_CREATED = "ATTEMPT_REQUEST_CREATED"
 _ATOMIC_COMMIT = "ATOMIC_COMMIT"
 
 
-def _payloads(store: SqliteEvidenceStore, kind: str) -> list[dict[str, object]]:
-    """Every row of ``kind``, oldest first, unwrapped to its own payload mapping.
-
-    Reads the store's own public ``connection`` property — the same read-only seam
-    :mod:`tos_runtime.recon.witness_synthetic` and :mod:`tos_runtime.evidence.backup` already
-    use, since the store exposes no "entries by kind, with payload" accessor of its own.
-    """
-    rows = store.connection.execute(
-        "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC", (kind,)
-    ).fetchall()
-    payloads: list[dict[str, object]] = []
-    for (payload_json,) in rows:
-        decoded = json.loads(payload_json).get("payload")
-        if isinstance(decoded, dict):
-            payloads.append(decoded)
-    return payloads
-
-
 def _single(values: set[str]) -> str | None:
     """The one member of ``values``, or ``None`` for none and ``None`` for several.
 
@@ -93,27 +89,82 @@ def _single(values: set[str]) -> str | None:
     return next(iter(values)) if len(values) == 1 else None
 
 
-def _event_ids_of_attempt(store: SqliteEvidenceStore, attempt_id: str) -> set[str]:
-    """The ``event_id``s whose flow created ``attempt_id`` (normally exactly one)."""
-    return {
-        str(payload["event_id"])
-        for payload in _payloads(store, _ATTEMPT_REQUEST_CREATED)
-        if payload.get("attempt_id") == attempt_id
-        and isinstance(payload.get("event_id"), str)
-    }
+#: The payload decoder — a module seam so a test can count how many rows a lookup decodes.
+_decode = json.loads
 
 
-def _committed_permits(store: SqliteEvidenceStore) -> list[tuple[str, str]]:
-    """Every ``(event_id, permit_identity)`` a step-9 commit was admitted under."""
-    pairs: list[tuple[str, str]] = []
-    for payload in _payloads(store, _FLOW_STEP_ADMITTED):
-        if payload.get("step") != _ATOMIC_COMMIT:
-            continue
-        event_id = payload.get("event_id")
-        permit_identity = payload.get("bound_identity")
-        if isinstance(event_id, str) and isinstance(permit_identity, str):
-            pairs.append((event_id, permit_identity))
-    return pairs
+@dataclass
+class _JoinIndex:
+    """The join's two halves, folded from every row with ``seq <= last_seq`` (module docstring).
+
+    Each map holds exactly what the pre-#976 per-call scan derived, so lookups over it return
+    the same answers: ``ATTEMPT_REQUEST_CREATED`` rows contribute ``attempt_id <-> event_id``
+    pairs, step-9 ``FLOW_STEP_ADMITTED`` rows ``event_id <-> permit identity`` pairs, and a
+    row whose id fields are not strings contributes nothing to the map that needs them.
+    """
+
+    last_seq: int = -1
+    events_by_attempt: dict[str, set[str]] = field(default_factory=dict)
+    attempts_by_event: dict[str, set[str]] = field(default_factory=dict)
+    permits_by_event: dict[str, set[str]] = field(default_factory=dict)
+    events_by_permit: dict[str, set[str]] = field(default_factory=dict)
+
+    def absorb(self, store: SqliteEvidenceStore) -> None:
+        """Fold in every row of the two kinds committed after ``last_seq``. All new rows are
+        decoded before any map changes, so a decode error leaves the index as it was."""
+        rows = store.connection.execute(
+            "SELECT seq, kind, payload_json FROM entries "
+            "WHERE kind IN (?, ?) AND seq > ? ORDER BY seq ASC",
+            (_ATTEMPT_REQUEST_CREATED, _FLOW_STEP_ADMITTED, self.last_seq),
+        ).fetchall()
+        decoded = [
+            (seq, kind, _decode(payload_json).get("payload"))
+            for seq, kind, payload_json in rows
+        ]
+        for seq, kind, payload in decoded:
+            self.last_seq = max(self.last_seq, int(seq))
+            if not isinstance(payload, dict):
+                continue
+            event_id = payload.get("event_id")
+            if not isinstance(event_id, str):
+                continue
+            if kind == _ATTEMPT_REQUEST_CREATED:
+                attempt_id = payload.get("attempt_id")
+                if isinstance(attempt_id, str):
+                    self.events_by_attempt.setdefault(attempt_id, set()).add(event_id)
+                    self.attempts_by_event.setdefault(event_id, set()).add(attempt_id)
+            elif payload.get("step") == _ATOMIC_COMMIT:
+                permit_identity = payload.get("bound_identity")
+                if isinstance(permit_identity, str):
+                    self.permits_by_event.setdefault(event_id, set()).add(
+                        permit_identity
+                    )
+                    self.events_by_permit.setdefault(permit_identity, set()).add(
+                        event_id
+                    )
+
+
+#: One index per live store object (dropped with the store); the lock serializes refresh and
+#: read across the store's per-thread connections (#950).
+_INDEXES: weakref.WeakKeyDictionary[SqliteEvidenceStore, _JoinIndex] = (
+    weakref.WeakKeyDictionary()
+)
+_INDEX_LOCK = threading.Lock()
+
+
+def _with_index(store: SqliteEvidenceStore) -> _JoinIndex:
+    """The store's index, brought up to the committed tip (module docstring). Callers read it
+    under :data:`_INDEX_LOCK`."""
+    if store.connection.in_transaction:
+        uncached = _JoinIndex()
+        uncached.absorb(store)
+        return uncached
+    index = _INDEXES.get(store)
+    (tip,) = store.connection.execute("SELECT MAX(seq) FROM entries").fetchone()
+    if index is None or (tip if tip is not None else -1) < index.last_seq:
+        index = _INDEXES[store] = _JoinIndex()
+    index.absorb(store)
+    return index
 
 
 def permit_identity_for_attempt(
@@ -129,16 +180,18 @@ def permit_identity_for_attempt(
         The permit identity, or ``None`` when the join is empty or ambiguous (module
         docstring's fail-closed rule).
     """
-    event_ids = _event_ids_of_attempt(store, attempt_id)
-    if not event_ids:
-        return None
-    return _single(
-        {
-            permit_identity
-            for event_id, permit_identity in _committed_permits(store)
-            if event_id in event_ids
-        }
-    )
+    with _INDEX_LOCK:
+        index = _with_index(store)
+        event_ids = index.events_by_attempt.get(attempt_id, set())
+        if not event_ids:
+            return None
+        return _single(
+            {
+                permit_identity
+                for event_id in event_ids
+                for permit_identity in index.permits_by_event.get(event_id, ())
+            }
+        )
 
 
 def attempt_id_for_reservation(
@@ -158,21 +211,18 @@ def attempt_id_for_reservation(
     Returns:
         The attempt id, or ``None`` when the join is empty or ambiguous.
     """
-    event_ids = {
-        event_id
-        for event_id, committed in _committed_permits(store)
-        if committed == permit_identity
-    }
-    if not event_ids:
-        return None
-    return _single(
-        {
-            str(payload["attempt_id"])
-            for payload in _payloads(store, _ATTEMPT_REQUEST_CREATED)
-            if payload.get("event_id") in event_ids
-            and isinstance(payload.get("attempt_id"), str)
-        }
-    )
+    with _INDEX_LOCK:
+        index = _with_index(store)
+        event_ids = index.events_by_permit.get(permit_identity, set())
+        if not event_ids:
+            return None
+        return _single(
+            {
+                attempt_id
+                for event_id in event_ids
+                for attempt_id in index.attempts_by_event.get(event_id, ())
+            }
+        )
 
 
 def reservation_id_for_attempt(
