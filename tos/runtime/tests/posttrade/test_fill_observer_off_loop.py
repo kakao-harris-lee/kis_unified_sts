@@ -431,6 +431,47 @@ def test_engine_reservation_absent_still_holds_through_the_async_path(
     assert _kinds(store).count(FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND) == 1
 
 
+def test_an_earlier_boots_terminal_absent_hold_resumes_once_the_engine_holds(
+    store: SqliteEvidenceStore,
+) -> None:
+    """#944: a terminal ABSENT hold from a boot whose engine held nothing stops the polling only
+    while the engine still lacks the reservation. Once the rebuilt projection holds the attempt,
+    the fill is read again and fed exactly once; a boot that still lacks it stays held.
+    """
+    broker = _SlowBroker((_filled_row(),))
+    broker.release.set()
+    before = _observer(store, broker, _Engine(), engine_holds=False)
+    try:
+        assert before.poll_once().held == ((_ATTEMPT, EgressResultKind.FULL_FILL),)
+        assert before.poll_once().polled is False  # terminal hold: polling stopped
+    finally:
+        before.close()
+
+    still_absent = _observer(store, broker, _Engine(), engine_holds=False)
+    try:
+        assert (
+            still_absent.poll_once().polled is False
+        )  # still held, nothing re-recorded
+    finally:
+        still_absent.close()
+    assert _kinds(store).count(FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND) == 1
+
+    engine = _Engine()
+    after = _observer(store, broker, engine, engine_holds=True)
+    try:
+        report = after.poll_once()
+        assert [(k, d) for _a, k, d in report.emitted] == [
+            (EgressResultKind.FULL_FILL, ResultDisposition.APPLIED)
+        ]
+        assert report.held == ()
+    finally:
+        after.close()
+    assert [kind for kind, _thread, _served in engine.calls] == [
+        EgressResultKind.FULL_FILL
+    ]
+    assert _kinds(store).count(FILL_OBSERVED_KIND) == 1
+
+
 def test_a_read_cut_by_the_deadline_is_recorded_at_apply(
     store: SqliteEvidenceStore,
 ) -> None:

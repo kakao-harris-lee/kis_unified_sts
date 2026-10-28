@@ -10,9 +10,9 @@ attempt. Also pinned:
 * an execution for an ODNO this runtime never ACKed is flagged and never attributed — and, being an
   orphan broker order, it blocks release;
 * odd broker rows become ``UNKNOWN``, never a fill;
-* a kill/restart between ACK and fill: the rebooted runtime's observer feeds the fill, the engine
-  (whose in-memory projection is not rebuilt) refuses it as an orphan, and the recovered-finality
-  path releases the durable RCL reservation exactly once, reconciled against the KIS witness.
+* a kill/restart between ACK and fill: the boot replay rebuilds the engine's reservation
+  projection (#944), so the rebooted runtime's observer feeds the fill and it is applied and
+  releases the durable RCL reservation exactly once, reconciled against the KIS witness.
 
 Hermetic: the fake server binds ``127.0.0.1``; the only production patch is PR-3a's INSTANCE
 ``rest_base`` → fake server (infrastructure, not a verify item).
@@ -472,25 +472,26 @@ def test_odd_rows_become_unknown_never_a_fill(
 # ===========================================================================
 
 
-def test_restart_between_ack_and_fill_holds_and_keeps_every_later_boot_sound(
+def test_restart_between_ack_and_fill_releases_once_and_keeps_every_later_boot_sound(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
-    """The engine does not rebuild its reservation projection on boot (driver.py, "J3"). A fill
-    fed to it after a restart would be refused as an orphan by the live engine and re-derived as
-    applied by the NEXT boot's replay — which then refuses to boot. So the observer feeds
-    nothing: it records what the broker showed, the reservation stays held, and every later
-    boot is sound. Capacity is never released twice because it is not released at all.
+    """The boot replay rebuilds the engine's reservation projection (#944), so a fill that lands
+    while the runtime is down is fed to the rebooted engine, applied, and released exactly once.
+    Before #944 the restarted engine held no pre-restart attempt: the observer could only record
+    what the broker showed (``FILL_OBSERVER_ENGINE_RESERVATION_ABSENT``) and the capacity stayed
+    reserved forever. Every later boot re-derives the same APPLIED fill and the same single
+    release, so no later boot's replay diverges.
     """
     runtime, date, qty = _acked(
         tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
     )
     attempt_id = _ack(runtime)["attempt_id"]
-    rcl_before = _rcl_state(runtime)
     _close(runtime)  # the process dies after the ACK was consumed; the fill comes later
 
     runtime2 = _boot(tmp_path, config_dir, data_dir, custody_root)
     assert runtime2.recovery is not None and runtime2.recovery.ready is True
-    assert runtime2.core.ledger.outstanding(fx.instrument_key()) is None  # not rebuilt
+    held = runtime2.core.ledger.outstanding(fx.instrument_key())
+    assert held is not None and held.attempt_id == attempt_id  # rebuilt at boot
     observer = runtime2.fill_observer
     assert observer is not None
     _script_broker(
@@ -501,33 +502,30 @@ def test_restart_between_ack_and_fill_holds_and_keeps_every_later_boot_sound(
     )
 
     report = observer.poll_once()
-    assert report.emitted == ()
-    assert report.held == ((attempt_id, EgressResultKind.FULL_FILL),)
-    (absent,) = _rows(runtime2, "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT")
-    assert (absent["attempt_id"], absent["kind"], absent["broker_execution_id"]) == (
-        attempt_id,
-        "FULL_FILL",
-        _ODNO,
-    )
-    # Nothing reached the engine, nothing was proven or released.
+    assert [(a, k, d) for a, k, d in report.emitted] == [
+        (attempt_id, EgressResultKind.FULL_FILL, ResultDisposition.APPLIED)
+    ]
+    assert report.held == ()
+    assert _rows(runtime2, "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT") == []
+    # The fill reached the engine, was proven against the broker, and released once.
     assert [r["egress_result_kind"] for r in _rows(runtime2, "RESULT_UNMATCHED")] == []
-    assert _rows(runtime2, "POSTTRADE_FINALITY_PROOF") == []
-    assert _rcl_releases(runtime2) == 0
-    assert _rcl_state(runtime2) is rcl_before
+    (proof,) = _rows(runtime2, "POSTTRADE_FINALITY_PROOF")
+    assert proof["idempotency_key"] == f"broker-fqp-proof:{attempt_id}"
+    assert _rcl_releases(runtime2) == 1
+    assert _rcl_state(runtime2) is CapacityState.POSITION_CONSUMED
 
-    # A terminal observation stops the polling; no second record.
-    before = len(server.all_requests)
-    assert observer.poll_once().polled is False
-    assert len(server.all_requests) == before
-    assert len(_rows(runtime2, "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT")) == 1
+    # The same execution observed again is not reported again.
+    assert observer.poll_once().emitted == ()
     _close(runtime2)
 
-    # The next boot's replay is sound, and the hold is still a hold.
+    # The next boot re-derives the same APPLIED fill and the same one release.
     runtime3 = _boot(tmp_path, config_dir, data_dir, custody_root)
     assert runtime3.recovery is not None and runtime3.recovery.ready is True
+    assert runtime3.core.ledger.outstanding(fx.instrument_key()) is None
     assert runtime3.fill_observer is not None
-    assert runtime3.fill_observer.poll_once().polled is False
-    assert _rcl_releases(runtime3) == 0
+    report3 = runtime3.fill_observer.poll_once()
+    assert report3.emitted == () and report3.reprojected == ()
+    assert _rcl_releases(runtime3) == 1
     assert len(server.requests_for(_ORDER_PATH)) == 1  # nothing re-sent across restarts
     _close(runtime3)
 

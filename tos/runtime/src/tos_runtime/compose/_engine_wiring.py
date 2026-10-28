@@ -52,7 +52,9 @@ from tos.engine import (
     CommitmentStep,
     EngineConfiguration,
     EngineCore,
+    InstrumentKey,
     NullEvidenceSink,
+    ProvisionalReservationLedger,
     Stage,
     StrategyRegistry,
 )
@@ -61,7 +63,10 @@ from tos.workload import RuntimeIdentity
 from tos_runtime.authority.epoch import SafetyAuthorityEpochService
 from tos_runtime.brokercap.instance import InstanceDocument
 from tos_runtime.brokercap.scopes import BrokerScope
-from tos_runtime.compose._boot_integrity import verify_engine_replay_or_halt
+from tos_runtime.compose._boot_integrity import (
+    EngineReplayDiverged,
+    verify_engine_replay_or_halt,
+)
 from tos_runtime.compose._posttrade_source import (
     broker_posttrade_enabled,
     finality_producer_for,
@@ -85,7 +90,7 @@ from tos_runtime.engine.replay import ReplayVerdict
 from tos_runtime.engine.replay_releases import RclCommitted
 from tos_runtime.engine.replay_stage import EventCorrelatingCore, RecordedStage
 from tos_runtime.engine.replay_transmit import RecordedTransmit, any_recorded_hand_off
-from tos_runtime.evidence.emergency import EmergencyAppendLog
+from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.sinks import (
     EngineEvidenceSinkAdapter,
     GatewayEvidenceSinkAdapter,
@@ -129,6 +134,10 @@ INBOX_FILE_NAME = "inbox.sqlite3"
 #: function's own inline comment for why this did not already exist. Read by
 #: :mod:`tos_runtime.recovery.inputs` for the recovery barrier's obligation 1.
 REPLAY_VERDICT_IDENTICAL_KIND = "REPLAY_VERDICT_IDENTICAL"
+
+#: #944: the dual-path halt recorded when the live core's ledger already holds a reservation
+#: before the boot replay rebuilds it — the replay would add to a projection it did not derive.
+ENGINE_LEDGER_NOT_PRISTINE_KIND = "ENGINE_LEDGER_NOT_PRISTINE"
 
 
 class EngineDriverConfigError(Exception):
@@ -289,6 +298,43 @@ def build_engine_driver(
     return inbox, driver
 
 
+def _require_pristine_ledger(
+    live_core: EngineCore,
+    instrument_key: InstrumentKey,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> ProvisionalReservationLedger:
+    """The live core's ledger, for the boot replay to rebuild in place (#944).
+
+    The replay core is built over this same instance, not a copy, so after a clean replay the live
+    engine holds exactly the projection the next boot's replay re-derives: one object, the same
+    kernel code, the same events. Before #944 a restarted engine held nothing, so a result for a
+    pre-restart attempt was an orphan live and ``APPLIED`` on the next replay — and that boot was
+    refused. Both preconditions fail closed: the live core must not hold a reservation yet
+    (otherwise a dual-path ``ENGINE_LEDGER_NOT_PRISTINE`` halt and :class:`EngineReplayDiverged`),
+    and a diverged replay raises before the half-built projection reaches any runtime.
+    """
+    ledger = live_core.ledger
+    if ledger.outstanding_count(instrument_key) == 0:
+        return ledger
+    record_halt(
+        evidence_store,
+        emergency_log,
+        payload={
+            "account": instrument_key.account,
+            "instrument": instrument_key.instrument,
+            "detail": "the live engine already holds a reservation before the boot replay "
+            "rebuilt it — refusing to add a replay onto a projection it did not derive",
+        },
+        kind=ENGINE_LEDGER_NOT_PRISTINE_KIND,
+        record_class=ENGINE_LEDGER_NOT_PRISTINE_KIND,
+    )
+    raise EngineReplayDiverged(
+        "boot replay refused: the live engine's reservation projection is not empty "
+        f"before the rebuild ({instrument_key.account}/{instrument_key.instrument})"
+    )
+
+
 def verify_replay_or_halt(
     *,
     inbox: SqliteEventInbox,
@@ -299,9 +345,12 @@ def verify_replay_or_halt(
     configuration: EngineConfiguration,
     scheme: CanonicalizationScheme,
     window_events: int,
+    live_core: EngineCore,
+    instrument_key: InstrumentKey,
     rcl_committed: RclCommitted | None = None,
 ) -> ReplayVerdict:
-    """Build the side-effect-free replay core factory and run the boot-time replay check.
+    """Build the side-effect-free replay core factory and run the boot-time replay check, which
+    also rebuilds the live core's reservation projection (#944, :func:`_require_pristine_ledger`).
 
     Split out of ``_wiring.py``'s ``_finalize`` purely for the size budget (its own function-size
     limit) — the replay core factory closes over ``registry``/``configuration`` the SAME way
@@ -318,6 +367,9 @@ def verify_replay_or_halt(
     divergence source). Never the real ``stages``/``transmit``, which would re-run every real
     stage's own bound evidence sink, ledger mutation, and transport call on every boot.
     """
+    ledger = _require_pristine_ledger(
+        live_core, instrument_key, evidence_store, emergency_log
+    )
 
     def _replay_core_factory() -> EventCorrelatingCore:
         recorded_stage = RecordedStage(evidence_store)
@@ -325,6 +377,8 @@ def verify_replay_or_halt(
             registry=registry,
             stages=dict.fromkeys(stages, recorded_stage),
             configuration=configuration,
+            # #944: the live core's own ledger — the replay rebuilds it (docstring above).
+            ledger=ledger,
             # TOS Phase 3 Wave 2 Lane B-R: the replay core gets its OWN
             # side-effect-free preconditions stand-in — never the real
             # RuntimeCoordinatorPreconditions, which would re-evaluate TODAY's
