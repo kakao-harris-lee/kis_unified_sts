@@ -49,29 +49,24 @@ configured gateway ``active_principal`` colliding with ANY scope's own
 principal (not just the one literal) is refused fail-closed at boot.
 
 **EC-1 — no rewriting.** :func:`resolve_scope` admits a requested
-:class:`~tos.brokercap.routing.CapabilityTuple` **only** when some
-configured scope carries a tuple that is EXACTLY EQUAL to it (pydantic
-model equality) — it never mutates ``requested``, never re-tries a
-different ``environment``, and never falls through to a different scope. A
-requested tuple absent from every scope is ``UNSUPPORTED_DENY`` with
-``scope=None`` — never silently admitted through a wider (e.g.
-``BROKER_PRODUCTION``) environment.
+:class:`~tos.brokercap.routing.CapabilityTuple` **only** when some configured scope carries a tuple
+that is EXACTLY EQUAL to it (pydantic model equality) — it never mutates ``requested``, never
+re-tries a different ``environment``, and never falls through to a different scope. A requested
+tuple absent from every scope is ``UNSUPPORTED_DENY`` with ``scope=None`` — never silently admitted
+through a wider (e.g. ``BROKER_PRODUCTION``) environment.
 
-Named-TBD discipline (mirrors ``tos_runtime.compose._egress_coordinates``
-exactly): every scope's structural fields (``name``, ``principal_class``,
-``principal``, ``endpoint_class``, ``allowed_methods``,
-``capability_tuples``) and the top-level ``active_scope``/
-``environment_binding``/``asset_binding`` fields refuse to load when still
-``null`` — fail-closed, never a silent default. ``profile_evidence_ok`` is
-the ONE deliberate exception: ``null`` there is a legitimate, permanent
-value (evidence not established), passed straight through to
-:func:`~tos.brokercap.routing.routing_admissibility`, which already treats
-``None``/``False`` identically.
+Named-TBD discipline (mirrors ``tos_runtime.compose._egress_coordinates`` exactly): every scope's
+structural fields (``name``, ``principal_class``, ``principal``, ``endpoint_class``,
+``allowed_methods``, ``capability_tuples``) and the top-level ``active_scope``/
+``environment_binding``/``asset_binding`` fields refuse to load when still ``null`` — fail-closed,
+never a silent default. ``profile_evidence_ok`` is the ONE deliberate exception: ``null`` there is
+a legitimate, permanent value (evidence not established), passed straight through to
+:func:`~tos.brokercap.routing.routing_admissibility`, which already treats ``None``/``False``
+identically.
 
-This module reads no ambient process environment anywhere (pinned by a
-negative-grep test) and constructs no kernel model via an unvalidated
-pydantic construction shortcut (also pinned) — every kernel value here goes
-through validated construction, so a config-side attempt to bypass a kernel
+This module reads no ambient process environment anywhere (pinned by a negative-grep test) and
+constructs no kernel model via an unvalidated pydantic construction shortcut (also pinned) — every
+kernel value here goes through validated construction, so a config-side attempt to bypass a kernel
 invariant fails at load, not silently.
 """
 
@@ -108,6 +103,7 @@ from tos.egress import CredentialRouteInventoryEntry
 from tos.egressgw import TransportNature
 
 from tos_runtime._named_tbd import reject_named_tbd
+from tos_runtime.brokercap.instance_pin import render_pin
 
 __all__ = [
     "BrokerScope",
@@ -260,6 +256,8 @@ class BrokerScopesConfig:
     #: a relative path in YAML. ``None`` only when no scope declares an
     #: ``instance`` block (nothing would ever read this path).
     instance_path: Path | None = None
+    #: The render's sha256 pin on it (#958, :mod:`tos_runtime.brokercap.instance_pin`).
+    instance_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -859,6 +857,7 @@ def load_broker_scopes(path: Path, *, environment_label: str) -> BrokerScopesCon
         environment_binding=environment_binding,
         asset_binding=asset_binding,
         instance_path=instance_path,
+        instance_sha256=render_pin(path, raw.get("instance_path")),
     )
 
 

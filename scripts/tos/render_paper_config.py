@@ -69,6 +69,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -1092,6 +1093,50 @@ def resolve_broker_profile_instance_path(source: Path) -> Path:
     return resolved
 
 
+#: ``RENDERED.json``'s key for the instance pin. The runtime reads the same literal
+#: (``tos_runtime.brokercap.instance_pin.PIN_KEY``) — it may not import this script.
+BROKER_PROFILE_PIN_KEY = "broker_profile_instance"
+
+
+def broker_profile_pin(instance_path: Path) -> dict[str, str]:
+    """``{"path", "sha256"}`` of the instance file a render binds, for ``RENDERED.json`` (#958).
+
+    The rendered ``instance_path`` points back into the SOURCE checkout, which nothing stops
+    from changing. Two refusals close that:
+
+    * here, the file's bytes must be its committed ``HEAD`` blob — an uncommitted edit (the
+      issue's failing input: MOCK_VTS ``rest_base`` changed in the worktree) is refused, not
+      rendered. The blob id is computed from the SAME bytes that are hashed, so the check and
+      the recorded sha256 cannot describe two different reads;
+    * at boot, the runtime refuses a file whose sha256 differs from this pin
+      (``tos_runtime.brokercap.instance_pin``) — the 08:45 render / 08:55 boot window.
+    """
+    data = instance_path.read_bytes()
+
+    def git(*argv: str, stdin: bytes | None = None) -> str | None:
+        completed = subprocess.run(
+            ["git", "-C", str(instance_path.parent), *argv],
+            input=stdin,
+            capture_output=True,
+            check=False,
+        )
+        out = completed.stdout.decode("utf-8", "replace").strip()
+        return out if completed.returncode == 0 and out else None
+
+    committed = git("rev-parse", "--verify", "--quiet", f"HEAD:./{instance_path.name}")
+    if committed is None:
+        raise RenderError(
+            f"broker profile instance file {instance_path} is not committed at HEAD of its "
+            "checkout — a render binds only a committed profile"
+        )
+    if git("hash-object", "--stdin", stdin=data) != committed:
+        raise RenderError(
+            f"broker profile instance file {instance_path} differs from its committed HEAD "
+            "blob (uncommitted edit) — refusing to render a host fact nobody committed"
+        )
+    return {"path": str(instance_path), "sha256": hashlib.sha256(data).hexdigest()}
+
+
 def _repo_root_of(path: Path) -> Path | None:
     completed = subprocess.run(
         ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
@@ -1620,6 +1665,10 @@ def render(
             direction or journal argument that contradicts the manifest's mode, an output path
             inside the repo, an anchor that did not match exactly once, a refused
             ``print-policy-digests``, or an activation read-back that does not see every member.
+            For a tree with an instance-path slot (the stock tree), also a broker profile file
+            that is not its committed ``HEAD`` blob (:func:`broker_profile_pin`) — so such a
+            tree renders ONLY from a git checkout, and an uncommitted profile edit there stops
+            the render (#958).
     """
     if direction not in _DIRECTION_TOKENS:
         raise RenderError(
@@ -1695,6 +1744,7 @@ def render(
         if any(slot.value == _INSTANCE_PATH_VALUE_SOURCE for slot in manifest.slots)
         else None
     )
+    instance_pin = None if instance_path is None else broker_profile_pin(instance_path)
     out = out.expanduser()
     out = (out if out.is_absolute() else Path.cwd() / out).resolve()
     _refuse_output_inside_repo(out, source)
@@ -1823,6 +1873,13 @@ def render(
                 # The five keys the host driver reads are untouched
                 # (`~/.config/kis-probes/tos_paper_session.py:331-333,366-370`).
                 "tree_id": manifest.tree_id,
+                # ADDED #958: the instance file this render bound; the runtime refuses to boot
+                # on any other bytes. Absent for a tree that renders no instance path.
+                **(
+                    {}
+                    if instance_pin is None
+                    else {BROKER_PROFILE_PIN_KEY: instance_pin}
+                ),
                 "note": (
                     "boot-proof fixture render — 거래 전략 아님. The account number itself is "
                     "never recorded here, only its fingerprint."

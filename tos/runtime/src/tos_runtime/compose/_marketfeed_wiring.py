@@ -572,7 +572,9 @@ def resolve_kis_instance_rest_bases(
             f"({scope.name!r}.instance) and broker_scopes.instance_path — the host seal cannot "
             "be proven without both; refusing to boot"
         )
-    documents = load_instance_documents(broker_scopes.instance_path)
+    documents = load_instance_documents(
+        broker_scopes.instance_path, expected_sha256=broker_scopes.instance_sha256
+    )
     mock_document = next(
         (d for d in documents if d.environment == scope.instance.environment), None
     )

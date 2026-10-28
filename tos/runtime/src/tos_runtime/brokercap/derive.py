@@ -140,7 +140,9 @@ def load_active_instance_document(
         return None
     assert config.instance_path is not None  # loader-enforced (scopes.py)
     return load_instance_document(
-        config.instance_path, environment=scope.instance.environment
+        config.instance_path,
+        environment=scope.instance.environment,
+        expected_sha256=config.instance_sha256,
     )
 
 

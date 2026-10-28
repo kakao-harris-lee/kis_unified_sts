@@ -52,6 +52,7 @@ Pure-ish module: ``pyyaml`` (an existing kernel/runtime dependency) + stdlib
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -712,7 +713,52 @@ def _bind_environment_class(
     )
 
 
-def load_instance_documents(path: Path) -> tuple[InstanceDocument, ...]:
+def _read_instance_text(path: Path, expected_sha256: str | None) -> str:
+    """The instance file's text — and, when ``expected_sha256`` is given (the render pin,
+    :mod:`tos_runtime.brokercap.instance_pin`), proof that it is the file the render bound (#958).
+
+    Pinned, the bytes are read ONCE and that same buffer is both hashed and parsed, so nothing
+    can change between the check and the use. A symlink anywhere on the path is refused before
+    the read: the render recorded a fully resolved path, so a link appearing later means the
+    path no longer names the file the render vouched for, whatever its bytes happen to be.
+    """
+    if not path.is_file():
+        raise BrokerInstanceConfigError(
+            f"broker profile instance file not found: {path}"
+        )
+    # The pinned path is the render's own `.resolve()` result, so any difference here is a
+    # symlink (or a `..`) that was not on it when the render ran.
+    if expected_sha256 is not None and path.resolve() != path.absolute():
+        raise BrokerInstanceConfigError(
+            f"broker profile instance path {path} goes through a symlink "
+            f"(resolves to {path.resolve()}) — the render pinned the resolved file; "
+            "refusing to boot"
+        )
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise BrokerInstanceConfigError(
+            f"broker profile instance file could not be read: {path}"
+        ) from exc
+    if expected_sha256 is not None:
+        actual = hashlib.sha256(data).hexdigest()
+        if actual != expected_sha256:
+            raise BrokerInstanceConfigError(
+                f"broker profile instance file {path} changed since the render: sha256 "
+                f"{actual} != rendered {expected_sha256} — refusing to boot on a profile "
+                "the render did not bind"
+            )
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise BrokerInstanceConfigError(
+            f"broker profile instance file is not UTF-8: {path}"
+        ) from exc
+
+
+def load_instance_documents(
+    path: Path, *, expected_sha256: str | None = None
+) -> tuple[InstanceDocument, ...]:
     """Load every YAML document in the Broker Capability Profile INSTANCE file at ``path``.
 
     Reads ``path`` for content only (never writes to it — the file is a
@@ -726,6 +772,8 @@ def load_instance_documents(path: Path) -> tuple[InstanceDocument, ...]:
     Args:
         path: The instance YAML file (e.g.
             ``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml``).
+        expected_sha256: The render pin (``BrokerScopesConfig.instance_sha256``), or ``None``
+            for an unrendered tree (:func:`_read_instance_text`).
 
     Returns:
         One :class:`InstanceDocument` per YAML document, in file order.
@@ -736,16 +784,7 @@ def load_instance_documents(path: Path) -> tuple[InstanceDocument, ...]:
             required ``_model_view`` block or carries a non-enum vocabulary
             value.
     """
-    if not path.is_file():
-        raise BrokerInstanceConfigError(
-            f"broker profile instance file not found: {path}"
-        )
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise BrokerInstanceConfigError(
-            f"broker profile instance file could not be read: {path}"
-        ) from exc
+    text = _read_instance_text(path, expected_sha256)
     try:
         raw_docs = list(yaml.safe_load_all(text))
     except yaml.YAMLError as exc:
@@ -767,7 +806,9 @@ def load_instance_documents(path: Path) -> tuple[InstanceDocument, ...]:
     return tuple(documents)
 
 
-def load_instance_document(path: Path, *, environment: str) -> InstanceDocument:
+def load_instance_document(
+    path: Path, *, environment: str, expected_sha256: str | None = None
+) -> InstanceDocument:
     """Load and build ONLY the single document in ``path`` whose own
     ``profile_identity.environment`` scalar equals ``environment`` (plan §2
     decision 4, item 6/12 realization).
@@ -785,6 +826,7 @@ def load_instance_document(path: Path, *, environment: str) -> InstanceDocument:
         path: The instance YAML file (e.g.
             ``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml``).
         environment: The exact ``profile_identity.environment`` value to select.
+        expected_sha256: The render pin, as for :func:`load_instance_documents`.
 
     Returns:
         The single matching document, fully built (module docstring discipline).
@@ -794,16 +836,7 @@ def load_instance_document(path: Path, *, environment: str) -> InstanceDocument:
             YAML, zero or more than one raw document names ``environment``,
             or the ONE matching document fails the ``_model_view`` discipline.
     """
-    if not path.is_file():
-        raise BrokerInstanceConfigError(
-            f"broker profile instance file not found: {path}"
-        )
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise BrokerInstanceConfigError(
-            f"broker profile instance file could not be read: {path}"
-        ) from exc
+    text = _read_instance_text(path, expected_sha256)
     try:
         raw_docs = list(yaml.safe_load_all(text))
     except yaml.YAMLError as exc:

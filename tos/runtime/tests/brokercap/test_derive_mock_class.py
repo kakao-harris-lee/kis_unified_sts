@@ -10,6 +10,7 @@ the draft does not have, whatever the mock source says.
 from __future__ import annotations
 
 import dataclasses
+import os
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,9 @@ _EXAMPLE = Path(__file__).resolve().parents[2] / "config/broker_scopes.example.y
 def _mock_scopes(tmp_path: Path) -> BrokerScopesConfig:
     raw = yaml.safe_load(_EXAMPLE.read_text(encoding="utf-8"))
     raw["active_scope"] = "MOCK_STOCK_ORDER"
-    raw["instance_path"] = str(_DRAFT)
+    raw["instance_path"] = os.path.relpath(
+        _DRAFT, tmp_path
+    )  # relative, as committed trees (#958)
     for scope in raw["scopes"]:
         if scope["name"] == "MOCK_STOCK_ORDER":
             scope["profile_evidence_ok"] = True

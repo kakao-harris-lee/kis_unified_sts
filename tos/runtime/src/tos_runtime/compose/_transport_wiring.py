@@ -217,7 +217,9 @@ def instance_rest_bases(broker_scopes: BrokerScopesConfig) -> tuple[str, str]:
             f"({scope.name!r}.instance) and broker_scopes.instance_path — the host seal "
             "cannot be proven without both; refusing to boot"
         )
-    documents = load_instance_documents(broker_scopes.instance_path)
+    documents = load_instance_documents(
+        broker_scopes.instance_path, expected_sha256=broker_scopes.instance_sha256
+    )
     mock_document = _document_for_environment(documents, scope.instance.environment)
     real_document = _document_for_environment(documents, _REAL_ENVIRONMENT)
     if mock_document is None or mock_document.rest_base is None:
