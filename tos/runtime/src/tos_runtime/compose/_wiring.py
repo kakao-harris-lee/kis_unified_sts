@@ -770,6 +770,7 @@ def _build_realized_stages(
         writer_epoch=writer_epoch,
         flow_governor=flow_governor,
         construction_stage=construction_stage,
+        economic_stage=construction_stages.economic_stage,
         generation_provider=generation_provider,
         time_gate=time_gate,
     )
@@ -800,6 +801,7 @@ def _build_ledger_stages(
     writer_epoch: int,
     flow_governor: RecordingActionFlowGovernor,
     construction_stage: OrderConstructionStage,
+    economic_stage: EconomicEffectStage,
     generation_provider: Callable[[StageRequest], int],
     time_gate: Callable[[], bool],
 ) -> tuple[LedgerVerificationStage, VerdictRecorder, CommitmentUnavailabilityStage]:
@@ -835,6 +837,7 @@ def _build_ledger_stages(
                 request.instrument_key, permit.permit_id
             ),
             time_permits_new_risk=time_gate,
+            effect_envelope_reader=lambda: economic_stage.envelope,
         )
     )
     return step8_stage, step9_recorder, CommitmentUnavailabilityStage(projection)
