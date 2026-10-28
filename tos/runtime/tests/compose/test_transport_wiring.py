@@ -212,7 +212,7 @@ def test_load_transport_config_kis_mock_refuses_when_mock_document_rest_base_is_
     )
     monkeypatch.setattr(
         "tos_runtime.compose._transport_wiring.load_instance_documents",
-        lambda _path: doctored,
+        lambda _path, **_kwargs: doctored,
     )
     with pytest.raises(TransportWiringError, match="rest_base"):
         load_transport_config(TransportKind.KIS_MOCK, tmp_path, mock_stock_order_scopes)
@@ -232,7 +232,7 @@ def test_load_transport_config_kis_mock_refuses_when_real_document_rest_base_is_
     )
     monkeypatch.setattr(
         "tos_runtime.compose._transport_wiring.load_instance_documents",
-        lambda _path: doctored,
+        lambda _path, **_kwargs: doctored,
     )
     with pytest.raises(TransportWiringError, match="rest_base"):
         load_transport_config(TransportKind.KIS_MOCK, tmp_path, mock_stock_order_scopes)
