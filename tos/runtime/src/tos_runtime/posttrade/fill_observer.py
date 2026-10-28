@@ -20,15 +20,12 @@ refused the release — the observer re-runs finality from the recorded result e
 ``finality_retry_interval_ms`` (``reproject``), never re-feeding the fill to the engine, until the
 release commits.
 
-**Only an engine that holds the reservation is fed (found while fixing review HIGH 1).** The
-engine's in-memory reservation projection is not rebuilt on boot (``engine/driver.py``: "no ledger
-rebuild; Phase 5 / J3"). A result fed after a restart for a pre-restart attempt is refused as an
-orphan by the live engine, but the NEXT boot's replay — which does rebuild the reservation from
-the inbox — re-derives it as applied and refuses the boot (``EngineReplayDiverged``). So when the
-engine does not hold this attempt's reservation, nothing is enqueued: one
-``FILL_OBSERVER_ENGINE_RESERVATION_ABSENT`` row records what the broker showed, the reservation
-stays held (fail closed — no release, so no double release), and a terminal observation stops
-the polling. Releasing it is the ledger-rebuild work (issue #944), not this module's.
+**Only an engine that holds the reservation is fed.** The boot replay rebuilds the engine's
+projection (#944), so a pre-restart ACK's fill is fed and released once. One the projection still
+lacks (truncated replay window; send interrupted before its receipt) would be an orphan live and
+``APPLIED`` on the next replay (``EngineReplayDiverged``): it is not enqueued, one
+``FILL_OBSERVER_ENGINE_RESERVATION_ABSENT`` row records what the broker showed, the capacity stays
+held, and polling stops until a boot's projection holds it (``_apply_absent_rows``).
 
 **Each ACK is read under its own trading date (review MEDIUM).** VTTC0081R takes the date, so an
 ACK from an earlier day — the runtime was down across the KST date boundary — is still read, and
@@ -746,6 +743,9 @@ class KisMockFillObserver:
         return False
 
     def _apply_absent_rows(self, tracked: dict[str, _Tracked]) -> None:
+        """An ``ENGINE_RESERVATION_ABSENT`` row holds only while the engine lacks the attempt
+        (#944): once a rebuilt projection holds it, the fill is read again, fed, released once.
+        """
         rows = self.evidence_store.connection.execute(
             "SELECT payload_json FROM entries WHERE kind = ?",
             (FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND,),
@@ -753,7 +753,7 @@ class KisMockFillObserver:
         for (payload_json,) in rows:
             row = json.loads(payload_json).get("payload", {})
             attempt = tracked.get(str(row.get("attempt_id")))
-            if attempt is None:
+            if attempt is None or self.engine_holds(attempt.attempt_id):
                 continue
             attempt.absent_signatures.add(
                 (

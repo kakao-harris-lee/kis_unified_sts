@@ -11,11 +11,17 @@
 * **MEDIUM — an ACK from the previous trading day is still read.** The fill happens while the
   runtime is down across the KST date boundary; the rebooted observer reads the order under its
   own date, records a failed read and an overdue row instead of skipping, and records the fill
-  under that date (held: the engine holds no pre-restart reservation until the ledger rebuild).
+  under that date. Since #944 the boot replay rebuilds the engine's reservation projection, so
+  that fill is fed and released once.
+* **#944 — a fill that happened while the runtime was down.** Boot, ACK, restart, the broker shows
+  the fill: the rebuilt projection holds the pre-restart attempt, the fill is applied and released
+  exactly once, and the boot after that replays cleanly (no ``EngineReplayDiverged``).
 """
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -27,6 +33,8 @@ import yaml
 from tos.engine.vocabulary import EgressResultKind, ResultDisposition
 from tos.rcl import CapacityState
 from tos_runtime.calendar.ports import FixedWallClockReference
+from tos_runtime.compose import _finalize_wiring
+from tos_runtime.compose._boot_integrity import EngineReplayDiverged
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.recon.ports import WitnessScope, WitnessUnavailable
 from tos_runtime.recon.witness_kis import KisOrderRow
@@ -338,8 +346,8 @@ def test_an_ack_from_the_previous_day_is_read_under_its_own_date(
     (failed,) = _rows(runtime2, "FILL_OBSERVER_READ_FAILED")
     assert failed["inquiry_date"] == ack_date
 
-    # Readable now: read under its own date. The engine holds no pre-restart reservation
-    # (issue #944), so the fill is recorded — under that date — and held, never fed or dropped.
+    # Readable now: read under its own date. The boot replay rebuilt the engine's projection
+    # (#944), so the pre-restart attempt is held there: the fill is fed and released once.
     server.set_response(
         ack_orders,
         status=200,
@@ -352,13 +360,72 @@ def test_an_ack_from_the_previous_day_is_read_under_its_own_date(
         },
     )
     report = observer.poll_once()
-    assert report.emitted == ()
-    assert report.held == ((attempt_id, EgressResultKind.FULL_FILL),)
-    (absent,) = _rows(runtime2, "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT")
-    assert (absent["attempt_id"], absent["trading_date"]) == (attempt_id, ack_date)
-    assert _rcl_releases(runtime2) == 0
-    assert observer.poll_once().polled is False  # terminal observation: no more polling
+    assert [(a, k, d) for a, k, d in report.emitted] == [
+        (attempt_id, EgressResultKind.FULL_FILL, ResultDisposition.APPLIED)
+    ]
+    (observed,) = _rows(runtime2, "FILL_OBSERVED")
+    assert (observed["attempt_id"], observed["trading_date"]) == (attempt_id, ack_date)
+    assert _rows(runtime2, "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT") == []
+    assert _rcl_releases(runtime2) == 1
+    assert (
+        observer.poll_once().polled is False
+    )  # terminal and released: no more polling
     _close(runtime2)
+
+
+# ===========================================================================
+# #944 — the engine's reservation projection is rebuilt at boot
+# ===========================================================================
+
+
+def test_a_fill_while_down_is_applied_and_released_once_across_three_boots(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """#944: before the fix the restarted engine held no pre-restart reservation, so the
+    observer held the fill (``FILL_OBSERVER_ENGINE_RESERVATION_ABSENT``) and the capacity stayed
+    reserved forever. Now: applied, released once, and the third boot replays cleanly.
+    """
+    runtime, attempt_id, date, qty = _acked(
+        tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
+    )
+    _close(runtime)  # the order fills while the runtime is down
+
+    runtime2 = _boot(tmp_path, config_dir, data_dir, custody_root)
+    held = runtime2.core.ledger.outstanding(runtime2.context_resolver.instrument_key)
+    assert held is not None and held.attempt_id == attempt_id  # rebuilt at boot
+    _script_broker(
+        server,
+        config_dir,
+        date,
+        [_row(date=date, ord_qty=qty, filled=qty, remaining=Decimal(0))],
+    )
+    observer = runtime2.fill_observer
+    assert observer is not None
+    report = observer.poll_once()
+    assert [(a, k, d) for a, k, d in report.emitted] == [
+        (attempt_id, EgressResultKind.FULL_FILL, ResultDisposition.APPLIED)
+    ]
+    assert report.held == ()
+    assert _rows(runtime2, "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT") == []
+    assert _rows(runtime2, "RESULT_UNMATCHED") == []
+    assert _rcl_releases(runtime2) == 1
+    assert _rcl_state(runtime2) is CapacityState.POSITION_CONSUMED
+    assert observer.poll_once().emitted == ()
+    _close(runtime2)
+
+    # The next boot re-derives the same APPLIED fill and the same release: no divergence.
+    runtime3 = _boot(tmp_path, config_dir, data_dir, custody_root)
+    assert runtime3.recovery is not None and runtime3.recovery.ready is True
+    assert (
+        runtime3.core.ledger.outstanding(runtime3.context_resolver.instrument_key)
+        is None
+    )
+    observer3 = runtime3.fill_observer
+    assert observer3 is not None
+    report3 = observer3.poll_once()
+    assert report3.emitted == () and report3.reprojected == ()
+    assert _rcl_releases(runtime3) == 1
+    _close(runtime3)
 
 
 def test_a_prior_day_ack_is_read_at_the_slower_cadence_not_abandoned(
@@ -465,3 +532,80 @@ def test_an_ack_whose_odno_has_no_usable_digits_is_never_tracked(
     (untrackable,) = _rows(runtime, "FILL_OBSERVER_ACK_UNTRACKABLE")
     assert untrackable["broker_execution_id"] == "0000000000"
     _close(runtime)
+
+
+def _evidence_kinds(data_dir: Path, kind: str) -> list[dict]:
+    """Rows of ``kind`` straight from the evidence file — the boot refused, so no runtime exists
+    to read them through."""
+    conn = sqlite3.connect(f"file:{data_dir / 'evidence.sqlite3'}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq", (kind,)
+        ).fetchall()
+    finally:
+        conn.close()
+    return [json.loads(r[0])["payload"] for r in rows]
+
+
+def test_a_diverged_boot_replay_hands_back_no_runtime(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """#944: the replay rebuilds the live core's ledger in place, so a replay that diverges
+    part-way leaves it half-built. That ledger must never be used: the boot raises and no
+    runtime (no live core, no driver, no observer) is handed back."""
+    runtime, attempt_id, _date, _qty = _acked(
+        tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
+    )
+    # A release row no durable chain corroborates — the replay refuses it (PR-3b r2).
+    runtime.evidence_store.append(
+        {
+            "attempt_id": attempt_id,
+            "proof_digest": "nonexistent-proof",
+            "evidence_seq": 1,
+            "resolution_generation": 0,
+        },
+        kind="ENGINE_PROJECTION_RELEASED",
+        record_class="ENGINE_PROJECTION_RELEASED",
+    )
+    _close(runtime)
+
+    composed: list[object] = []
+    real = _finalize_wiring.ComposedRuntime
+    monkeypatch.setattr(
+        _finalize_wiring,
+        "ComposedRuntime",
+        lambda *a, **k: composed.append(real(*a, **k)) or composed[-1],
+    )
+    with pytest.raises(EngineReplayDiverged):
+        _boot(tmp_path, config_dir, data_dir, custody_root)
+    assert composed == []  # the half-rebuilt ledger never reached a runtime
+    assert [
+        r["attempt_id"]
+        for r in _evidence_kinds(data_dir, "REPLAY_DIVERGED")
+        if r.get("replay_result_state") == "ENGINE_RELEASE_NOT_REPRODUCED"
+    ] == [attempt_id]
+
+
+def test_a_replay_onto_a_ledger_that_already_holds_a_reservation_refuses_the_boot(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """#944 precondition: the replay may only rebuild a projection the live core has not touched.
+    Input: the boot replay runs a second time over the already-rebuilt ledger (it would derive the
+    same reservation on top of itself). Result: a durable ``ENGINE_LEDGER_NOT_PRISTINE`` halt and
+    a refused boot — never a silently doubled projection."""
+    runtime, _attempt, _date, _qty = _acked(
+        tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
+    )
+    _close(runtime)
+
+    real = _finalize_wiring.verify_replay_or_halt
+
+    def _twice(**kwargs):
+        real(**kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(_finalize_wiring, "verify_replay_or_halt", _twice)
+    with pytest.raises(EngineReplayDiverged, match="not empty before the rebuild"):
+        _boot(tmp_path, config_dir, data_dir, custody_root)
+    (halt,) = _evidence_kinds(data_dir, "ENGINE_LEDGER_NOT_PRISTINE")
+    assert halt["instrument"] == fx.instrument_key().instrument

@@ -29,7 +29,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.engine import EngineConfiguration, StrategyRegistry
+from tos.engine import EngineConfiguration, InstrumentKey, StrategyRegistry
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.brokercap import BrokerScopesConfig, InstanceDocument
@@ -37,6 +37,7 @@ from tos_runtime.compose._currentness_wiring import _RiskAndCurrentness
 from tos_runtime.compose._engine_config import load_engine_config
 from tos_runtime.compose._engine_wiring import (
     ENGINE_DRIVER_CONFIG_NAME,
+    WiredEngine,
     load_engine_driver_config,
     verify_replay_or_halt,
     wire_engine_and_driver,
@@ -58,7 +59,6 @@ from tos_runtime.compose._wiring import (
     _RealizedStages,
 )
 from tos_runtime.compose.context import ComposeContextResolver
-from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.replay import ReplayVerdict
 from tos_runtime.posttrade.config import load_finality_config
 from tos_runtime.rcl.log import SqliteCommitLog
@@ -95,11 +95,11 @@ def _verify_boot_replay(
     *,
     config_dir: Path,
     infra: _Infra,
-    wired_inbox: SqliteEventInbox,
-    wired_resolved_registry: StrategyRegistry,
+    wired: WiredEngine,
     stages: dict,
     engine_configuration: EngineConfiguration,
     rcl_log: SqliteCommitLog,
+    instrument_key: InstrumentKey,
 ) -> ReplayVerdict:
     """Independent boot-time re-derivation over whatever this inbox has already durably admitted
     (design plan §1.1 "부팅 시 verify_rcl_log_or_halt 뒤에 실행"). Split out of :func:`_finalize`
@@ -117,10 +117,10 @@ def _verify_boot_replay(
         config_dir / ENGINE_DRIVER_CONFIG_NAME
     )
     return verify_replay_or_halt(
-        inbox=wired_inbox,
+        inbox=wired.inbox,
         evidence_store=infra.evidence_store,
         emergency_log=infra.emergency_log,
-        registry=wired_resolved_registry,
+        registry=wired.resolved_registry,
         stages=stages,
         configuration=engine_configuration,
         scheme=_SCHEME,
@@ -128,6 +128,9 @@ def _verify_boot_replay(
         # PR-3b Codex r3: recorded engine-projection releases are checked against the RCL's
         # own committed state, never against pre-COMMIT evidence alone.
         rcl_committed=rcl_log.committed_command,
+        # #944: the replay rebuilds the live core's reservation projection in place.
+        live_core=wired.core,
+        instrument_key=instrument_key,
     )
 
 
@@ -227,11 +230,11 @@ def _finalize(
     _verify_boot_replay(
         config_dir=config_dir,
         infra=infra,
-        wired_inbox=wired.inbox,
-        wired_resolved_registry=wired.resolved_registry,
+        wired=wired,
         stages=stages,
         engine_configuration=engine_configuration,
         rcl_log=rcl.rcl_log,
+        instrument_key=context_resolver.instrument_key,
     )
 
     return ComposedRuntime(

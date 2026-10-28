@@ -390,17 +390,16 @@ def attach_fill_observer(
 
     def _sink(payload: EgressResultPayload) -> ResultDisposition | None:
         # Only reached when the engine holds the attempt (the observer checks first): an
-        # orphan fed after a restart would make the NEXT boot's replay diverge
-        # (fill_observer module docstring).
+        # orphan would make the NEXT boot's replay diverge (fill_observer module docstring).
         result = driver.enqueue_and_run(
             EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
         )
         return result.result_disposition
 
     def _engine_holds(attempt_id: str) -> bool:
-        # The engine does not rebuild its reservation projection on boot (issue #944, "J3"):
-        # after a restart it holds no pre-restart attempt, and feeding it one would make the next
-        # boot's replay diverge — so the observer holds instead of feeding (fill_observer).
+        # The boot replay rebuilds this projection (#944), so a pre-restart attempt is held
+        # here after a restart. One it still lacks is held by the observer, never fed: feeding
+        # it would make the next boot's replay diverge (fill_observer module docstring).
         held = runtime.core.ledger.outstanding(runtime.context_resolver.instrument_key)
         return held is not None and held.attempt_id == attempt_id
 

@@ -35,7 +35,7 @@ Four responsibilities, each load-bearing:
    NO_SEND_EVIDENCE`` or, when the flow's own evidence proves it reached the send boundary first,
    ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND`` — split by re-review finding N1, 2026-09-09)
    instead, never calling ``core.handle`` again — see ``_handle_interrupted_event`` for the split
-   and for the residual this does NOT solve (no ledger rebuild; Phase 5 / J3).
+   and for the residual this does NOT solve (that attempt is not in the rebuilt ledger).
 3. **Egress-result re-injection.** After a ``DECISION_TICK`` is handled, the driver drains any NEW
    results the wired :class:`~tos.egressgw.BrokerEgressGateway` retained (``gateway.results``) and
    ENQUEUES each as a stamped ``EGRESS_RESULT`` event — it never calls ``core.handle`` on a
@@ -506,13 +506,13 @@ class EngineDriver:
           ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND`` HALT is durably recorded naming the
           possibly-live attempt for operator attention.
 
-        ⚠ **Residual, disclosed (design #31 §2.1(iii) J3 crash-recovery — provisional, §9
-        deferred).** This method does NOT rebuild the in-memory reservation ledger's state for
-        the possibly-live attempt — the ledger a freshly-restarted process holds is empty
-        regardless of this marking, exactly the same residual :mod:`tos_runtime.engine.replay`'s
-        own module docstring already discloses for the send boundary. A conservative ledger
-        rebuild from durable evidence (so a possibly-live attempt keeps occupying its scope's
-        at-most-one exposure slot across a restart) is Phase 5 / J3 work, not this wave's.
+        ⚠ **Residual, disclosed (design #31 §2.1(iii) J3 crash-recovery).** Since #944 the boot
+        replay rebuilds the live ledger from every CONSUMED inbox event
+        (``compose/_engine_wiring.verify_replay_or_halt``) — but an interrupted event has no
+        ``EVENT_CONSUMED`` receipt, so the replay skips it and the possibly-live attempt is NOT
+        in the rebuilt ledger. The RCL still holds its capacity (the authority, fail closed), and
+        the fill observer holds any result for it rather than feeding an orphan
+        (``FILL_OBSERVER_ENGINE_RESERVATION_ABSENT``).
         """
         if self._send_evidence_exists_after(marker_seq):
             record_halt(
