@@ -45,7 +45,11 @@ def _rendered_copy(tree: str, tmp_path: Path) -> Path:
             text = text.replace('instrument: "TBD"', f'instrument: "{_INSTRUMENT}"')
         if path.name == "broker_scopes.yaml":
             raw = yaml.safe_load(text)
-            instance = (_TREES / tree / raw["instance_path"]).resolve()
+            # Relative to the copy's own directory: an ABSOLUTE instance_path with no
+            # RENDERED.json beside it is refused as a render that lost its pin (#958).
+            instance = os.path.relpath(
+                (_TREES / tree / raw["instance_path"]).resolve(), path.parent
+            )
             text = text.replace(
                 f"instance_path: {raw['instance_path']}", f"instance_path: {instance}"
             )

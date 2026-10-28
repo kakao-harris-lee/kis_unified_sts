@@ -398,8 +398,9 @@ def _patch_instance_documents_to_host(
     REAL compose root's own host-seal check (config.py's decision-5 exact-match refusal) without
     weakening that check itself."""
 
-    def _patched(path: Path) -> tuple[Any, ...]:
-        documents = load_instance_documents(path)
+    def _patched(path: Path, **kwargs: Any) -> tuple[Any, ...]:
+        # ``**kwargs`` carries the render pin (``expected_sha256``, #958) through unchanged.
+        documents = load_instance_documents(path, **kwargs)
         return tuple(
             (
                 dataclasses.replace(document, rest_base=mock_rest_base)

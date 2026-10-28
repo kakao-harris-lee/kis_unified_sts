@@ -42,6 +42,7 @@ staged in the copy.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -120,8 +121,9 @@ out = {}
 
 # B2 — the RENDERED tree's own instance_path, loaded for real, before any patch.
 scopes = load_broker_scopes(render / "broker_scopes.yaml", environment_label="paper")
-docs = load_instance_documents(scopes.instance_path)
+docs = load_instance_documents(scopes.instance_path, expected_sha256=scopes.instance_sha256)
 out["instance_path"] = str(scopes.instance_path)
+out["instance_sha256"] = scopes.instance_sha256
 out["rest_bases"] = {d.environment: d.rest_base for d in docs}
 
 spec = importlib.util.spec_from_file_location("fake_kis_server", args["fake_server"])
@@ -135,9 +137,9 @@ server.set_response(order_path, status=200, body={"rt_cd": "0", "msg1": "ok", "o
 server.require_account(account[:8], account[-2:])
 
 real_loader = load_instance_documents
-_transport_wiring.load_instance_documents = lambda path: tuple(
+_transport_wiring.load_instance_documents = lambda path, **kw: tuple(
     dataclasses.replace(d, rest_base=server.rest_base) if d.environment == "MOCK_VTS" else d
-    for d in real_loader(path)
+    for d in real_loader(path, **kw)
 )
 egress = render / "egress_coordinates.yaml"
 raw = yaml.safe_load(egress.read_text(encoding="utf-8"))
@@ -478,6 +480,68 @@ def test_a_source_whose_instance_document_is_missing_refuses_the_render(
     assert not out.exists()
 
 
+def test_the_render_pins_the_instance_document_it_binds(rendered: Path) -> None:
+    """#958: ``RENDERED.json`` records the path and sha256 of the profile the render bound;
+    the runtime refuses to boot on any other bytes (``tos_runtime.brokercap.instance_pin``).
+    """
+    manifest = json.loads((rendered / rpc.RENDERED_NAME).read_text("utf-8"))
+    assert manifest[rpc.BROKER_PROFILE_PIN_KEY] == {
+        "path": str(_INSTANCE.resolve()),
+        "sha256": hashlib.sha256(_INSTANCE.read_bytes()).hexdigest(),
+    }
+
+
+def _git_profile(tmp_path: Path) -> Path:
+    repo = tmp_path / "checkout"
+    (repo / "docs").mkdir(parents=True)
+    profile = repo / "docs" / _INSTANCE.name
+    profile.write_bytes(_INSTANCE.read_bytes())
+    for argv in (
+        ["init", "-q"],
+        ["-c", "user.email=t@example.invalid", "-c", "user.name=t", "add", "-A"],
+        [
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "user.name=t",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "p",
+        ],
+    ):
+        subprocess.run(["git", "-C", str(repo), *argv], check=True, capture_output=True)
+    return profile
+
+
+def test_a_committed_profile_is_pinned_by_its_own_bytes(tmp_path: Path) -> None:
+    profile = _git_profile(tmp_path)
+    assert rpc.broker_profile_pin(profile) == {
+        "path": str(profile),
+        "sha256": hashlib.sha256(profile.read_bytes()).hexdigest(),
+    }
+
+
+def test_an_uncommitted_edit_to_the_profile_refuses_the_render(tmp_path: Path) -> None:
+    """The issue's failing input, at render time: MOCK_VTS ``rest_base`` edited in the source
+    checkout and not committed. Refused, not rendered — a hash alone would bind the edit.
+    """
+    profile = _git_profile(tmp_path)
+    text = profile.read_text("utf-8")
+    profile.write_text(text.replace("openapivts", "openapivtz", 1), encoding="utf-8")
+    with pytest.raises(rpc.RenderError, match="differs from its committed HEAD blob"):
+        rpc.broker_profile_pin(profile)
+
+
+def test_an_untracked_profile_refuses_the_render(tmp_path: Path) -> None:
+    profile = _git_profile(tmp_path)
+    stray = profile.with_name("untracked-profile.yaml")
+    stray.write_bytes(profile.read_bytes())
+    with pytest.raises(rpc.RenderError, match="not committed at HEAD"):
+        rpc.broker_profile_pin(stray)
+
+
 # ---------------------------------------------------------------------------
 # The boot chain (B2 + B3 + B4 + B5 fixed)
 # ---------------------------------------------------------------------------
@@ -495,6 +559,8 @@ def test_the_committed_render_boots_kis_mock_and_stops_exactly_at_step_4(
     out = _boot(rendered, tmp_path)
     assert out["booted"] is True
     assert Path(out["instance_path"]) == _INSTANCE.resolve()
+    # #958: the boot read the profile through the render's pin, not around it
+    assert out["instance_sha256"] == hashlib.sha256(_INSTANCE.read_bytes()).hexdigest()
     assert "openapivts" in out["rest_bases"]["MOCK_VTS"]
     assert out["rest_bases"]["REAL_PROD"] != out["rest_bases"]["MOCK_VTS"]
     assert out["committed_egress_endpoint"].startswith(out["rest_bases"]["MOCK_VTS"])

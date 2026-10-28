@@ -191,9 +191,10 @@ def _broker_scopes_coordinates(
                     f"{instance_document.artifact_id}"
                 ),
                 "source_file": broker_scopes.instance_path.name,
-                "source_file_digest": hashlib.sha256(
-                    broker_scopes.instance_path.read_bytes()
-                ).hexdigest(),
+                # A pinned tree records the digest the boot verified (#958), never a second
+                # read outside the pin; an unpinned one has only the file to hash.
+                "source_file_digest": broker_scopes.instance_sha256
+                or hashlib.sha256(broker_scopes.instance_path.read_bytes()).hexdigest(),
             }
         )
     return rows
