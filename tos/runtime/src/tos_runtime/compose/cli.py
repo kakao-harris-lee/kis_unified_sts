@@ -961,3 +961,9 @@ def main(argv: list[str] | None = None) -> int:
     observation = observe_runtime_artifact()
     sys.stdout.write(print_digests_text(observation))
     return 0
+
+
+# `python -m tos_runtime.compose.cli …` (#961): without this guard the module only defined `main`
+# and exited 0 having done nothing — a `write-standing-approval` that "succeeded" and wrote no file.
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

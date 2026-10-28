@@ -19,7 +19,8 @@ routes inputs into a kernel judgement call, it never judges).
 ``reservation_committed_vector``. :meth:`AggregateRiskService.snapshot`'s
 ``conservative_current_usage`` derives from that accessor, summed over the scope's OUTSTANDING
 reservations (#966 — see that method's own docstring); an empty vector means "no outstanding
-reservation carries a vector on record", never a fabricated magnitude. The per-cell magnitudes :func:`tos.are.adverse_increment` needs
+reservation", never a fabricated magnitude, and an outstanding reservation with no vector on
+record makes the usage UNKNOWN and the decision ``UNKNOWN`` (#972). The per-cell magnitudes :func:`tos.are.adverse_increment` needs
 (:class:`~tos.are.ProjectedCell`) remain Phase-0 / broker-capability-profile valuation inputs
 this slice does not own either way (design #13 §4 non-scope) — they still arrive via the
 caller-injected :class:`AggregateRiskDecisionInputs`, never computed here.
@@ -41,7 +42,8 @@ identically; see ``ledger_stages._time_gate``).
 
 Firewall: stdlib + ``pydantic`` (transitively) + ``pyyaml`` + ``tos.are`` /
 ``tos.canonical`` / ``tos.engine.records`` (``InstrumentKey`` only) / ``tos.rcl``
-(``CapacityVector`` only) + ``tos_runtime.evidence`` (``EvidenceAppendPort`` seam)
+(``CapacityVector`` / ``CapacityComponent`` / ``aggregate_usage`` only) +
+``tos_runtime.evidence`` (``EvidenceAppendPort`` seam)
 + ``tos_runtime.rcl`` (``ReservationProjectionReader`` seam) only (R1 allowlist).
 No ``tos_runtime.authority`` / ``tos_runtime.currentness`` / ``tos_runtime.release``
 import (slice plan §5 cross-lane isolation) — a future composition root
@@ -78,11 +80,12 @@ from tos.canonical import (
     get_scheme,
 )
 from tos.engine.records import InstrumentKey
-from tos.rcl import CapacityVector, aggregate_usage
+from tos.rcl import CapacityComponent, CapacityVector, aggregate_usage
 
 from tos_runtime.evidence.ports import EvidenceAppendPort
 from tos_runtime.rcl.projection import (
     ReservationProjectionReader,
+    ScopeReservation,
     outstanding_reservations,
 )
 
@@ -343,10 +346,15 @@ class AggregateRiskService:
         consume nothing — that is also what lets a scope admit a fresh entry after an exit
         completed. ``last_seq`` is the newest committed seq across the scope's rows.
 
-        Measured 2026-10-28 (#966): no runtime site writes
-        ``CapacityReservationTransition.committed_vector`` today, so every row's vector is
-        ``None`` and this aggregate is empty in practice — the rule is right, and it becomes
-        observable when a producer starts recording vectors (tracked separately).
+        **#972 — a missing vector is UNKNOWN usage, never 0.** Step 9 now records each
+        reservation's step-5 envelope as its committed vector, and later lifecycle transitions
+        keep it (:func:`tos_runtime.rcl.gates.upsert_reservation_projection`). An OUTSTANDING
+        row with no vector on record (one committed before #972, replayed from an existing
+        log) has unknown usage: every dimension the aggregate declares is set UNKNOWN, the row
+        id is evidenced under ``unrecorded_vector_reservations``, and the snapshot is recorded
+        as not fully attributed — so :meth:`decide` reaches ``UNKNOWN`` through
+        :func:`tos.are.snapshot_scope_complete` (fail-closed), not a smaller sum. A ``RELEASED``
+        row's vector is irrelevant and never consulted.
 
         Raises:
             Exception: Whatever :meth:`ReservationProjectionReader.scope_reservations` /
@@ -354,21 +362,55 @@ class AggregateRiskService:
                 caught here (module docstring's fault-contract table: steps
                 8-10 map this to UNKNOWN, not a snapshot-level decision).
         """
+        return self._issue_snapshot(
+            key,
+            snapshot_generation=snapshot_generation,
+            required_scopes=required_scopes,
+            all_fields_attributed=all_fields_attributed,
+            lineage_ref=lineage_ref,
+        )[0]
+
+    def _scope_usage(
+        self, outstanding: tuple[ScopeReservation, ...]
+    ) -> tuple[CapacityVector, tuple[str, ...]]:
+        """The dimension-wise usage of ``outstanding`` and the ids of the rows that carry no
+        committed vector (:meth:`snapshot` docstring, #972). With any such row, every declared
+        dimension of the sum is UNKNOWN — its usage is not known to be 0."""
+        recorded: list[CapacityVector] = []
+        unrecorded: list[str] = []
+        for row in outstanding:
+            vector = self._projection.reservation_committed_vector(row.reservation_id)
+            if vector is None:
+                unrecorded.append(row.reservation_id)
+            else:
+                recorded.append(vector)
+        usage = aggregate_usage(recorded)
+        if unrecorded:
+            usage = CapacityVector(
+                components=tuple(
+                    CapacityComponent(dimension_id=dimension, magnitude=None)
+                    for dimension in usage.dimension_ids()
+                )
+            )
+        return usage, tuple(unrecorded)
+
+    def _issue_snapshot(
+        self,
+        key: InstrumentKey,
+        *,
+        snapshot_generation: int,
+        required_scopes: frozenset[RiskScopeKind],
+        all_fields_attributed: bool | None,
+        lineage_ref: str | None,
+    ) -> tuple[AggregateRiskStateSnapshot, bool | None]:
+        """:meth:`snapshot`'s body; also returns the attribution :meth:`decide` must judge
+        completeness with — ``False`` when an outstanding row's usage is unknown (#972).
+        """
         rows = self._projection.scope_reservations(key)
         outstanding = outstanding_reservations(rows)
         last_seq = max((row.last_seq for row in rows), default=None)
-        committed_vector = aggregate_usage(
-            [
-                vector
-                for row in outstanding
-                if (
-                    vector := self._projection.reservation_committed_vector(
-                        row.reservation_id
-                    )
-                )
-                is not None
-            ]
-        )
+        committed_vector, unrecorded = self._scope_usage(outstanding)
+        attributed = False if unrecorded else all_fields_attributed
         self._snapshot_seq += 1
         cut_digest = self._scheme.compute_digest(
             {
@@ -403,12 +445,14 @@ class AggregateRiskService:
                     {"reservation_id": row.reservation_id, "state": row.state.value}
                     for row in outstanding
                 ],
-                "all_fields_attributed": all_fields_attributed,
+                # #972: outstanding rows whose usage is UNKNOWN (no committed vector).
+                "unrecorded_vector_reservations": list(unrecorded),
+                "all_fields_attributed": attributed,
             },
             kind=_EVIDENCE_KIND_SNAPSHOT,
             record_class=_EVIDENCE_KIND_SNAPSHOT,
         )
-        return snapshot
+        return snapshot, attributed
 
     def decide(
         self,
@@ -426,7 +470,7 @@ class AggregateRiskService:
             Exception: Propagated from :meth:`snapshot` on an unreachable RCL
                 projection (never swallowed into a false decision).
         """
-        snapshot = self.snapshot(
+        snapshot, attributed = self._issue_snapshot(
             key,
             snapshot_generation=snapshot_generation,
             required_scopes=inputs.required_scopes,
@@ -436,7 +480,7 @@ class AggregateRiskService:
         snapshot_complete = snapshot_scope_complete(
             snapshot,
             inputs.required_scopes,
-            all_fields_attributed=inputs.all_fields_attributed,
+            all_fields_attributed=attributed,
         )
         projection = adverse_increment(
             list(inputs.cells),

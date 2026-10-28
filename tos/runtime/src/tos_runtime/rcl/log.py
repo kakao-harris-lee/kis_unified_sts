@@ -392,8 +392,11 @@ class SqliteCommitLog:
             transition: The proposed transition (``reservation_id``,
                 ``from_state``, ``to_state``, ``writer_epoch``, ``scope`` —
                 all required, checked here; ``committed_vector`` — kernel
-                round #4 K-4 — is OPTIONAL and persisted as-is, ``None``
-                included, never defaulted).
+                round #4 K-4 — is OPTIONAL; a vector, an empty one included,
+                is persisted as-is, while ``None`` keeps the reservation's
+                previously committed vector (#972 carry-forward,
+                :func:`~tos_runtime.rcl.gates.upsert_reservation_projection`)
+                and is never defaulted to a zero vector).
             cause: The :class:`~tos.rcl.TransitionCause` driving it.
             command_type: The ``CommandType`` recorded as the entry's
                 ``kind`` (caller-supplied — this module does not infer a

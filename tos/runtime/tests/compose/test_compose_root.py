@@ -1476,6 +1476,7 @@ class TestPermitPathStaleGenerationProviderYieldsUnknown:
         from tos.afg import ActionFlowResult
         from tos.engine.records import InstrumentKey, StageRequest
         from tos.engine.vocabulary import CommitmentStep
+        from tos.rcl import CapacityComponent, CapacityVector
         from tos_runtime.compose._wiring import _rcl_tip_generation_provider
         from tos_runtime.compose.context import make_permit_provider
         from tos_runtime.rcl.log import SqliteCommitLog
@@ -1535,6 +1536,14 @@ class TestPermitPathStaleGenerationProviderYieldsUnknown:
                     permit.permit_id or "",
                 ),
                 time_permits_new_risk=lambda: True,
+                # #972: a real envelope, so the UNKNOWN below is the stale epoch's alone.
+                effect_envelope_reader=lambda: CapacityVector(
+                    components=(
+                        CapacityComponent(
+                            dimension_id="notional", magnitude=Decimal(1)
+                        ),
+                    )
+                ),
             )
             request = StageRequest(
                 step=CommitmentStep.ATOMIC_COMMIT,

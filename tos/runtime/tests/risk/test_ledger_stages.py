@@ -11,7 +11,7 @@ from tos.afg import ActionAmplificationEnvelope
 from tos.dsl import Proposal
 from tos.engine.records import InstrumentKey, StageRequest
 from tos.engine.vocabulary import CommitmentStep, StageAuthorityClass, StageOutcome
-from tos.rcl import CapacityState
+from tos.rcl import CapacityComponent, CapacityState, CapacityVector
 from tos.workload import RuntimeIdentity
 from tos_runtime.rcl.log import InjectedCrash, SqliteCommitLog
 from tos_runtime.rcl.projection import (
@@ -62,6 +62,16 @@ def _permit_scoped_id(request: StageRequest, permit) -> str:
     reservation_id = reservation_id_in_scope(request.instrument_key, permit.permit_id)
     assert reservation_id is not None
     return reservation_id
+
+
+#: The step-5 Economic Effect Envelope every step-9 stage in this suite records (#972).
+_STEP5_ENVELOPE = CapacityVector(
+    components=(CapacityComponent(dimension_id="notional", magnitude=Decimal("250")),)
+)
+
+
+def _step5_envelope() -> CapacityVector:
+    return _STEP5_ENVELOPE
 
 
 def _committed_permit(afg_governor: ActionFlowGovernor):
@@ -229,6 +239,7 @@ def test_step8_denies_an_already_occupied_scope(
         permit_provider=lambda _r: permit,
         reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
     )
     commit_verdict = commit_stage(
         _request(CommitmentStep.ATOMIC_COMMIT, instrument_key)
@@ -307,6 +318,7 @@ def test_step9_commits_reservation_and_permit_in_one_transaction(
         permit_provider=lambda _r: permit,
         reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
     )
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert verdict.outcome is StageOutcome.ADMIT
@@ -322,6 +334,62 @@ def test_step9_commits_reservation_and_permit_in_one_transaction(
             last_seq=0,
         ),
     )
+
+
+def test_step9_records_the_step5_envelope_as_the_committed_vector(
+    log: SqliteCommitLog,
+    writer_epoch: int,
+    instrument_key: InstrumentKey,
+    afg_governor: ActionFlowGovernor,
+    projection_reader: SqliteReservationProjectionReader,
+) -> None:
+    """#972: before this, step 9 committed every reservation with ``committed_vector=None``,
+    so the ARE snapshot summed nothing and saw an open position as zero usage."""
+    permit = _committed_permit(afg_governor)
+    stage = AtomicCommitStage(
+        log,
+        writer_epoch=writer_epoch,
+        permit_provider=lambda _r: permit,
+        reservation_id_provider=_permit_scoped_id,
+        time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
+    )
+    request = _request(CommitmentStep.ATOMIC_COMMIT, instrument_key)
+    verdict = stage(request)
+    assert verdict.outcome is StageOutcome.ADMIT
+    reservation_id = _permit_scoped_id(request, permit)
+    assert projection_reader.reservation_committed_vector(reservation_id) == (
+        _STEP5_ENVELOPE
+    )
+    log.verify_replay()
+
+
+@pytest.mark.parametrize(
+    "step5_envelope", [None, CapacityVector()], ids=["no-envelope", "empty-envelope"]
+)
+def test_step9_is_unknown_and_commits_nothing_without_a_step5_envelope(
+    log: SqliteCommitLog,
+    writer_epoch: int,
+    instrument_key: InstrumentKey,
+    afg_governor: ActionFlowGovernor,
+    step5_envelope: CapacityVector | None,
+) -> None:
+    """A reservation with no vector would count as UNKNOWN usage for as long as it is
+    outstanding, so step 9 refuses to create one rather than commit it blind."""
+    permit = _committed_permit(afg_governor)
+    stage = AtomicCommitStage(
+        log,
+        writer_epoch=writer_epoch,
+        permit_provider=lambda _r: permit,
+        reservation_id_provider=_permit_scoped_id,
+        time_permits_new_risk=lambda: True,
+        effect_envelope_reader=lambda: step5_envelope,
+    )
+    verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
+    assert verdict.outcome is StageOutcome.UNKNOWN
+    assert "envelope" in (verdict.reason or "")
+    (entry_count,) = log._conn.execute("SELECT COUNT(*) FROM entries").fetchone()
+    assert entry_count == 0
 
 
 def test_step9_commits_via_exactly_one_commit_entry_call(
@@ -344,6 +412,7 @@ def test_step9_commits_via_exactly_one_commit_entry_call(
         permit_provider=lambda _r: permit,
         reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
     )
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert verdict.outcome is StageOutcome.ADMIT
@@ -373,6 +442,7 @@ def test_step9_single_entry_carries_both_the_reservation_and_the_permit_binding(
         permit_provider=lambda _r: permit,
         reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
     )
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert verdict.outcome is StageOutcome.ADMIT
@@ -421,6 +491,7 @@ def test_step9_is_unknown_when_no_permit_is_available(
         permit_provider=lambda _r: None,
         reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
     )
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert verdict.outcome is StageOutcome.UNKNOWN
@@ -439,6 +510,7 @@ def test_step9_is_unknown_when_time_does_not_permit_new_risk(
         permit_provider=lambda _r: permit,
         reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: False,
+        effect_envelope_reader=_step5_envelope,
     )
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert verdict.outcome is StageOutcome.UNKNOWN
@@ -457,6 +529,7 @@ def test_step9_denies_a_permit_claimed_twice(
         permit_provider=lambda _r: permit,
         reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
     )
     first = stage_a(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert first.outcome is StageOutcome.ADMIT
@@ -470,6 +543,7 @@ def test_step9_denies_a_permit_claimed_twice(
             _permit_scoped_id(request, permit) + "-b"
         ),
         time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
     )
     second = stage_b(_request(CommitmentStep.ATOMIC_COMMIT, other_key))
     assert second.outcome is StageOutcome.DENY
@@ -490,6 +564,7 @@ def test_step9_denies_a_permit_claimed_twice_even_after_a_simulated_restart(
         permit_provider=lambda _r: permit,
         reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
     )
     first = stage_a(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert first.outcome is StageOutcome.ADMIT
@@ -506,6 +581,7 @@ def test_step9_denies_a_permit_claimed_twice_even_after_a_simulated_restart(
                 _permit_scoped_id(request, permit) + "-b"
             ),
             time_permits_new_risk=lambda: True,
+            effect_envelope_reader=_step5_envelope,
         )
         second = stage_b(_request(CommitmentStep.ATOMIC_COMMIT, other_key))
         assert second.outcome is StageOutcome.DENY
@@ -527,6 +603,7 @@ def test_step9_is_unknown_when_the_log_file_is_inaccessible(
         permit_provider=lambda _r: permit,
         reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
     )
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert verdict.outcome is StageOutcome.UNKNOWN
@@ -575,6 +652,7 @@ def test_step9_atomic_commit_leaves_neither_reservation_nor_permit_on_a_crash_be
         permit_provider=lambda _r: permit,
         reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
     )
     with pytest.raises(InjectedCrash):
         stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
@@ -596,6 +674,7 @@ def test_step9_atomic_commit_leaves_neither_reservation_nor_permit_on_a_crash_be
             permit_provider=lambda _r: permit,
             reservation_id_provider=_permit_scoped_id,
             time_permits_new_risk=lambda: True,
+            effect_envelope_reader=_step5_envelope,
         )
         retry_verdict = retry_stage(
             _request(CommitmentStep.ATOMIC_COMMIT, instrument_key)
@@ -624,6 +703,7 @@ def test_step10_confirms_a_durable_commit(
         permit_provider=lambda _r: permit,
         reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
     )
     commit_verdict = commit_stage(
         _request(CommitmentStep.ATOMIC_COMMIT, instrument_key)
@@ -664,6 +744,7 @@ def test_step10_is_unknown_when_the_projection_is_unreachable(
         permit_provider=lambda _r: permit,
         reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
     )
     commit_verdict = commit_stage(
         _request(CommitmentStep.ATOMIC_COMMIT, instrument_key)
@@ -744,6 +825,7 @@ def test_no_stage_here_ever_emits_non_authoritative_provisional(
         permit_provider=lambda _r: permit,
         reservation_id_provider=_permit_scoped_id,
         time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
     )
     unavailability_stage = CommitmentUnavailabilityStage(projection_reader)
 

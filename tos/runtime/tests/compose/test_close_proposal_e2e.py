@@ -32,8 +32,9 @@ from typing import Any
 
 import pytest
 import yaml
+from tos.egressgw import derive_economic_effect_envelope
 from tos.engine.vocabulary import CommitmentStep, StageOutcome
-from tos.rcl import CapacityState
+from tos.rcl import CapacityState, CapacityVector
 
 from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
@@ -147,6 +148,18 @@ def _reservations(runtime) -> dict[str, CapacityState]:
     }
 
 
+def _step5_envelope(runtime) -> CapacityVector:
+    """The step-5 envelope of the attempt the runtime just ran — the same derivation
+    ``EconomicEffectStage`` makes, recomputed from the step-2 construction it read."""
+    stage = runtime.construction_stage
+    assert stage.construction is not None
+    envelope = derive_economic_effect_envelope(
+        stage.construction.derivation, stage.effect_specs
+    )
+    assert envelope.components, "a non-empty envelope is what step 5 admits"
+    return envelope
+
+
 class _Broker:
     """The fake broker's accumulated order book for one session.
 
@@ -255,17 +268,26 @@ def test_an_entry_then_its_close_then_a_re_entry_in_one_process(
     )
     assert entry.flow.handed_off is True
     assert _tr_ids(server) == [transport["tr_id_buy"]]
+    entry_envelope = _step5_envelope(runtime)
     broker.fill(runtime, odno="0000000201")
 
     entry_reservations = _reservations(runtime)
     assert list(entry_reservations.values()) == [CapacityState.POSITION_CONSUMED]
     (entry_reservation_id,) = entry_reservations
+    # #972: step 9 recorded the step-5 envelope, and the fill's own transition (which
+    # carries no vector) kept it — the open position counts as usage, not as 0.
+    assert runtime.rcl_log.reservation_committed_vector(entry_reservation_id) == (
+        entry_envelope
+    )
     assert _rcl_releases(runtime) == 1
 
     # --- the exit: a SELL, admitted over that one consumed position -------------------
     _order_response(server, "0000000202")
     (exit_,) = runtime.run_once((_exit_tick(),))
     _assert_close_proposal(exit_)
+    # #972: the entry's recorded usage does not make the close UNKNOWN at step 6.
+    step6 = _verdict(exit_, CommitmentStep.AGGREGATE_RISK_DECISION)
+    assert step6.outcome is StageOutcome.ADMIT, step6.reason
     step8 = _verdict(exit_, CommitmentStep.LEDGER_VERIFICATION)
     assert step8.outcome is StageOutcome.ADMIT, step8.reason
     assert "one consumed position" in (step8.reason or "")
@@ -278,6 +300,10 @@ def test_an_entry_then_its_close_then_a_re_entry_in_one_process(
     during_close = _reservations(runtime)
     assert len(during_close) == 2
     assert during_close[entry_reservation_id] is CapacityState.POSITION_CONSUMED
+    (close_reservation_id,) = set(during_close) - {entry_reservation_id}
+    assert runtime.rcl_log.reservation_committed_vector(close_reservation_id) == (
+        _step5_envelope(runtime)
+    )
 
     # --- the close fills, broker reports flat: BOTH reservations end RELEASED ---------
     broker.fill(runtime, odno="0000000202")

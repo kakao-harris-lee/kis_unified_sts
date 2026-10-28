@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from tos.rcl import (
@@ -27,6 +28,8 @@ from tos.rcl.vector import CapacityComponent
 from tos.workload import RuntimeIdentity
 from tos_runtime.rcl.gates import UNRECORDED_VECTOR, fold_reservations_from_entries
 from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
+
+from .conftest import FakeEvidenceAppendPort
 
 _SCOPE = ReservationScope(account="acct-1", instrument="101S06")
 _ONE_CONTRACT = CapacityVector(
@@ -204,3 +207,67 @@ def test_coverage_resumes_with_the_next_transition(
     _set_column(log, CapacityVector().model_dump_json())
     with pytest.raises(CommitLogCorruption):
         log.verify_replay()
+
+
+# ============================================================================
+# #972 — a lifecycle transition with no vector keeps the committed one
+# ============================================================================
+
+
+def _advance_without_vector(log: SqliteCommitLog, identity: RuntimeIdentity) -> None:
+    result = log.apply_reservation_transition(
+        CapacityReservationTransition(
+            reservation_id="res-1",
+            writer_epoch=log.acquire_epoch(identity),
+            from_state=CapacityState.ATTEMPT_BOUND,
+            to_state=CapacityState.POTENTIALLY_LIVE,
+            scope=_SCOPE,
+        ),
+        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        command_type=CommandType.MARK_SEND_STARTED,
+        command_id="cmd-2",
+        command_digest="dig-2",
+        expected_seq=0,
+    )
+    assert isinstance(result, AppendReceipt)
+
+
+def test_a_later_transition_without_a_vector_keeps_the_committed_one(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    """Step 9 records the vector; the release consumer's later transitions carry none. Both
+    the column and the replay fold keep the committed vector, so replay stays clean."""
+    _commit(log, identity, _ONE_CONTRACT)
+    _advance_without_vector(log, identity)
+    assert log.reservation_committed_vector("res-1") == _ONE_CONTRACT
+    assert fold_reservations_from_entries(log._conn)["res-1"]["committed_vector"] == (
+        _ONE_CONTRACT.model_dump_json()
+    )
+    log.verify_replay()
+
+
+def test_a_carried_forward_vector_is_still_tamper_checked(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    _commit(log, identity, _ONE_CONTRACT)
+    _advance_without_vector(log, identity)
+    _set_column(log, None)
+    with pytest.raises(CommitLogCorruption):
+        log.verify_replay()
+
+
+def test_a_reopened_log_replays_the_carried_forward_vector(
+    log: SqliteCommitLog,
+    identity: RuntimeIdentity,
+    log_path: Path,
+    evidence_port: FakeEvidenceAppendPort,
+) -> None:
+    """Boot over an existing file: a fresh handle verifies replay and reads the same vector."""
+    _commit(log, identity, _ONE_CONTRACT)
+    _advance_without_vector(log, identity)
+    reopened = SqliteCommitLog(log_path, evidence_port=evidence_port)
+    try:
+        reopened.verify_replay()
+        assert reopened.reservation_committed_vector("res-1") == _ONE_CONTRACT
+    finally:
+        reopened.close()
