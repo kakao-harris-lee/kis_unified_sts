@@ -128,6 +128,7 @@ from tos.rcl import (
     AppendRefusalReason,
     CapacityReservationTransition,
     CapacityState,
+    CapacityVector,
     CommandType,
     LogView,
     ReservationScope,
@@ -191,6 +192,9 @@ PermitProvider = Callable[[StageRequest], ActionFlowPermit | None]
 #: :mod:`tos_runtime.rcl.reservation_identity`).
 ReservationIdProvider = Callable[[StageRequest, ActionFlowPermit], str | None]
 GenerationProvider = Callable[[StageRequest], int]
+#: #972: the current attempt's step-5 Economic Effect Envelope (``tos.ioc.EconomicEffectEnvelope``
+#: is :class:`~tos.rcl.CapacityVector` itself), or ``None`` when step 5 derived none.
+EffectEnvelopeReader = Callable[[], CapacityVector | None]
 
 
 #: The two ``AttemptArm.position_effect`` tokens step 8 admits (#966) — the same spellings
@@ -535,12 +539,47 @@ class AtomicCommitStage:
         permit_provider: PermitProvider,
         reservation_id_provider: ReservationIdProvider,
         time_permits_new_risk: Callable[[], bool],
+        effect_envelope_reader: EffectEnvelopeReader,
     ) -> None:
         self._log = log
         self._writer_epoch = writer_epoch
         self._permit_provider = permit_provider
         self._reservation_id_provider = reservation_id_provider
         self._time_permits_new_risk = time_permits_new_risk
+        self._effect_envelope_reader = effect_envelope_reader
+
+    def _transition(
+        self, request: StageRequest, reservation_id: str
+    ) -> CapacityReservationTransition | StageVerdict:
+        """The ``COMMITTED_UNBOUND`` transition this commit writes, carrying step 5's envelope
+        as its ``committed_vector`` (#972) — or the UNKNOWN verdict when there is none.
+
+        Before #972 every reservation was committed with no vector, so the ARE snapshot summed
+        nothing and read an open position as zero usage. A reservation committed without one
+        now counts as UNKNOWN usage for as long as it is outstanding
+        (:meth:`~tos_runtime.risk.aggregate.AggregateRiskService.snapshot`), so step 9 refuses
+        to create it instead. ``None`` and an empty vector are both refused: step 5 itself
+        admits neither (``tos.egressgw.economic_effect_envelope_verdict``), so either one here
+        means the envelope is not this attempt's.
+        """
+        envelope = self._effect_envelope_reader()
+        if envelope is None or not envelope.components:
+            return _unknown(
+                CommitmentStep.ATOMIC_COMMIT,
+                "no step-5 economic effect envelope to record as this reservation's "
+                "committed vector — committing without one would hide its usage from ARE",
+            )
+        return CapacityReservationTransition(
+            reservation_id=reservation_id,
+            writer_epoch=self._writer_epoch,
+            from_state=CapacityState.COMMITTED_UNBOUND,
+            to_state=CapacityState.COMMITTED_UNBOUND,
+            scope=ReservationScope(
+                account=request.instrument_key.account,
+                instrument=request.instrument_key.instrument,
+            ),
+            committed_vector=envelope,
+        )
 
     def __call__(self, request: StageRequest) -> StageVerdict:
         gate = _time_gate(self._time_permits_new_risk, CommitmentStep.ATOMIC_COMMIT)
@@ -570,16 +609,9 @@ class AtomicCommitStage:
                 "the bound permit carries no identity — this attempt's reservation cannot "
                 "be named",
             )
-        transition = CapacityReservationTransition(
-            reservation_id=reservation_id,
-            writer_epoch=self._writer_epoch,
-            from_state=CapacityState.COMMITTED_UNBOUND,
-            to_state=CapacityState.COMMITTED_UNBOUND,
-            scope=ReservationScope(
-                account=request.instrument_key.account,
-                instrument=request.instrument_key.instrument,
-            ),
-        )
+        transition = self._transition(request, reservation_id)
+        if isinstance(transition, StageVerdict):
+            return transition
         try:
             view = self._log.read_linearizable(writer_epoch=self._writer_epoch)
         except StaleEpochRead as exc:

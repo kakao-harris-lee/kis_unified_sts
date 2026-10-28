@@ -285,8 +285,11 @@ def fold_reservations_from_entries(
     :data:`UNRECORDED_VECTOR` and :func:`align_unrecorded_vectors` excludes that reservation's
     vector from the comparison: there is no append-only source to check it against — exactly
     the pre-B-1 coverage, never a false corruption on a legitimate existing log. Coverage
-    resumes with the reservation's next transition. "No vector" (``None``) and "explicitly empty
-    vector" (``{"components": []}``) stay distinct on both sides (:func:`_normalized_vector`).
+    resumes with the reservation's next transition that carries a vector: since #972 a
+    transition with ``null`` keeps the previously folded value (the column's ``COALESCE``
+    carry-forward, :func:`upsert_reservation_projection`), so it cannot resume it. "No
+    vector" (``None``) and "explicitly empty vector" (``{"components": []}``) stay distinct on
+    both sides (:func:`_normalized_vector`).
 
     Args:
         conn: The live sqlite3 connection.
@@ -314,17 +317,20 @@ def fold_reservations_from_entries(
             and scope_instrument is not None
         ):
             raw_vector = payload.get("committed_vector")
+            if "committed_vector" not in payload:
+                vector: str | None = UNRECORDED_VECTOR
+            elif raw_vector is None:
+                # #972: a transition with no vector keeps the reservation's committed one —
+                # the same carry-forward upsert_reservation_projection applies to the column.
+                prior = folded.get(reservation_id)
+                vector = None if prior is None else prior["committed_vector"]
+            else:
+                vector = _normalized_vector(json.dumps(raw_vector))
             folded[reservation_id] = {
                 "state": to_state,
                 "scope_account": scope_account,
                 "scope_instrument": scope_instrument,
-                "committed_vector": (
-                    UNRECORDED_VECTOR
-                    if "committed_vector" not in payload
-                    else _normalized_vector(
-                        None if raw_vector is None else json.dumps(raw_vector)
-                    )
-                ),
+                "committed_vector": vector,
             }
     return folded
 
@@ -575,6 +581,13 @@ def upsert_reservation_projection(
     1000-line size budget (kernel round #4 K-4 decomposition) — no behavior change; MUST be
     called from inside the same ``BEGIN IMMEDIATE`` transaction as the caller's own ``entries``
     insert (module docstring).
+
+    **#972 — the committed vector carries forward.** Step 9 records the reservation's vector
+    once; the lifecycle transitions after it (bind, send, fill, release) carry none. A
+    transition whose ``committed_vector`` is ``None`` therefore leaves the stored vector as it
+    was (``COALESCE``) instead of erasing it — otherwise an entry fill would turn an open
+    position's usage into UNKNOWN. A non-``None`` vector, an explicitly empty one included,
+    still replaces it. :func:`fold_reservations_from_entries` replays the same rule.
     """
     if reservation_update is None:
         return
@@ -592,7 +605,8 @@ def upsert_reservation_projection(
         "state=excluded.state, last_seq=excluded.last_seq, "
         "scope_account=excluded.scope_account, "
         "scope_instrument=excluded.scope_instrument, "
-        "committed_vector_json=excluded.committed_vector_json",
+        "committed_vector_json=COALESCE(excluded.committed_vector_json, "
+        "reservations.committed_vector_json)",
         (
             reservation_id,
             to_state.value,
