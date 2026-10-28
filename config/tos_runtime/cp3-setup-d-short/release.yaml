@@ -852,7 +852,7 @@
 #     release.yaml」이다. 배포 환경을 바꾸면 그 환경에서 다시 찍는다.
 # =============================================================================
 
-expected_code_digest: "dbe553da5929f422675dab3b5f7df923577acf765632bc563ebd1fe26614f6aa"
+expected_code_digest: "f4e578a288c759d119df6c7846daa8a41322d015f5c37160a7ce7d20bf6dbc7b"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 # ⚠ [O] 제안표 §4.1 — 이 값이 없으면 **어떤 서비스도 구성되지 않는다**(design #40 §5).
