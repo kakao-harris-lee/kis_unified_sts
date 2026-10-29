@@ -1590,7 +1590,8 @@ def day_clean(session: TenantSession | None, scfg: StreakConfig) -> str:
 
     §2-1 의 조건 전부가 참이어야 한다: 세션이 ``clean_run_rcs`` 안의 rc 로 끝났고 ·
     B3 실행 기록의 verdict 가 ``ok`` 이고 · summary 모양이
-    v:data:`B3_DECLARED_BUCKET_SCHEMA_VERSION` 이상이고 · ``unresolved`` 0 ·
+    v:data:`B3_DECLARED_BUCKET_SCHEMA_VERSION` 이상이고 · 대조한 봉이 0 이 아니고 ·
+    ``unresolved`` 0 ·
     (설명 안 되는) ``divergent`` 0.
 
     빠진 것 · 읽히지 않는 것 · 옛 모양 · 실패는 전부 깨끗하지 않다. 건너뛰는 분기는
@@ -1625,6 +1626,11 @@ def day_clean(session: TenantSession | None, scfg: StreakConfig) -> str:
             f"B3 summary 모양이 v{B3_DECLARED_BUCKET_SCHEMA_VERSION} 미만 —"
             " divergent 가 선언된 차이를 섞어 세므로 §2-1 을 재지 못한다"
         )
+    if b3["compared_bars"] <= 0:
+        # 0 봉 대조의 `unresolved 0` · `divergent 0` 은 「차이가 없다」가 아니라
+        # 「아무것도 재지 않았다」다(review-1003). 두 수의 좋은 값이 0 이라서 이 하루는
+        # 조건을 모두 통과한 것처럼 보이고, 그러면 10 일 중 하루로 센다.
+        return "B3 대조한 봉이 0 — 재지 못한 것이 0 으로 읽힌다"
     if b3["unresolved"]:
         return f"B3 unresolved={b3['unresolved']}"
     if b3["divergent"]:

@@ -37,6 +37,7 @@ history_days: 10
 #
 # 깨끗한 하루의 조건은 **전부** 참이어야 한다: 세션이 `clean_run_rcs` 안의 rc 로 끝났고 ·
 # B3 실행 기록(`b3/status.json`)의 verdict 가 `ok` 이고 · summary 모양이 v3 이상이고 ·
+# `compared_bars > 0` 이고(0 봉 대조의 0 은 「차이 없음」이 아니라 「재지 않음」이다) ·
 # `unresolved = 0` 이고 · `divergent`(= 설명 안 되는 divergence) `= 0`. 빠진 것 ·
 # 읽히지 않는 것 · 옛 모양 · 실패는 전부 «깨끗하지 않음» 이고 그 사유가 상태판에 나온다.
 # 건너뛰지 않는다.

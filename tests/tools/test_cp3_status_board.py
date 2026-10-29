@@ -1897,3 +1897,49 @@ def test_the_streak_does_not_change_the_board_verdict(streak_cfg: sb.BoardConfig
     assert not any(i["where"].startswith("streak/") for i in board["issues"]), board[
         "issues"
     ]
+
+
+def test_a_comparison_of_zero_bars_breaks_the_streak(
+    streak_state: Path, streak_cfg: sb.BoardConfig
+):
+    """review-1003 제안: 아무 봉도 대조하지 않은 하루는 깨끗하지 않다.
+
+    구체 입력: 10-08 의 summary 가 `compared_bars 0` · `unresolved 0` ·
+    `divergent 0`. 두 0 은 「설명 안 되는 차이가 없다」가 아니라 「아무것도 재지
+    않았다」이고, 그것을 통과시키면 §2-1 의 10 일 중 하루로 센다.
+    """
+    path = streak_state / "cp3-sessions/long-20261008/b3/report/summary.json"
+    data = json.loads(path.read_text())
+    data["live_comparison"].update(compared_bars=0, identical=0, divergent=0)
+    path.write_text(json.dumps(data))
+    long = _streak(_board(streak_cfg, D1012), "long")
+    assert (long["days"], long["broke_on"]) == (1, "2026-10-08")
+    assert long["broke_reason"] == "B3 대조한 봉이 0 — 재지 못한 것이 0 으로 읽힌다"
+
+
+def test_a_datetime_holiday_in_the_tenant_calendar_is_not_counted_as_a_trading_day(
+    streak_state: Path, tmp_path: Path
+):
+    """review-1003 MEDIUM, 상태판 쪽. 거래일을 모르면 세지 않고 «확인» 을 올린다."""
+    calendar = tmp_path / "calendar.yaml"
+    calendar.write_text(
+        (sb.REPO_ROOT / "config/tos_runtime/cp3-setup-d-long/calendar.yaml")
+        .read_text(encoding="utf-8")
+        .replace('  - "2026-10-09"', "  - 2026-10-09 00:00:00"),
+        encoding="utf-8",
+    )
+    config = tmp_path / "board.yaml"
+    config.write_text(
+        sb.DEFAULT_CONFIG_PATH.read_text(encoding="utf-8").replace(
+            "config/tos_runtime/cp3-setup-d-long/calendar.yaml", str(calendar)
+        ),
+        encoding="utf-8",
+    )
+    cfg = replace(sb.load_config(config), state_dir=streak_state)
+    board = _board(cfg, D1012)
+    long = _streak(board, "long")
+    assert (long["days"], long["broke_on"]) == (0, None)
+    assert "2026-10-09 00:00:00" in long["error"]
+    assert any(
+        "streak/long: 연속 거래일을 셀 수 없다" in i for i in _issues(board, sb.WARN)
+    )

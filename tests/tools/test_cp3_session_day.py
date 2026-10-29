@@ -252,3 +252,37 @@ def test_tools_refuses_what_the_runtime_refuses(
         )
     with pytest.raises(LiveProducerRefused, match=match):
         load_runtime_calendar(calendar, covered_years=[2026])
+
+
+# --- holidays (review-1003 MEDIUM) -------------------------------------------------
+
+
+def test_a_datetime_holiday_entry_is_refused_by_both_readers(tmp_path: Path) -> None:
+    """review-1003 MEDIUM, the exact input: an unquoted ``2026-01-01 00:00:00``.
+
+    YAML loads that as a ``datetime``, which **is** a ``date`` subclass — so an
+    ``isinstance(entry, date)`` pass keeps it, and ``date(2026, 1, 1) not in
+    holidays`` is then True because a ``date`` never equals a ``datetime``. The
+    declared closed day silently becomes a trading day in BOTH readers: the
+    producer would walk a seed day the exchange was shut on, and the streak would
+    expect a session that cannot exist. It is refused instead, naming the entry.
+    """
+    calendar = _raw_calendar(tmp_path, "session_overrides: {}\n")
+    text = calendar.read_text(encoding="utf-8").replace(
+        '  - "2026-01-01"', "  - 2026-01-01 00:00:00"
+    )
+    calendar.write_text(text, encoding="utf-8")
+    loaded = yaml.safe_load(text)["holidays"][0]
+    assert isinstance(loaded, datetime)  # the input this test is about
+
+    with pytest.raises(session_day.SessionDayError, match="2026-01-01 00:00:00"):
+        session_day.holidays_of({"holidays": [loaded]})
+    with pytest.raises(LiveProducerRefused, match="2026-01-01 00:00:00"):
+        load_runtime_calendar(calendar, covered_years=[2026])
+
+
+def test_a_plain_date_holiday_entry_is_still_accepted() -> None:
+    # YAML's own unquoted date form (`- 2026-01-01`) loads as a `date` and stays.
+    holidays = session_day.holidays_of({"holidays": [date(2026, 1, 1), "2026-03-01"]})
+    assert holidays == frozenset({date(2026, 1, 1), date(2026, 3, 1)})
+    assert session_day.is_trading_day(date(2026, 1, 1), holidays) is False

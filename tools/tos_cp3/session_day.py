@@ -63,13 +63,32 @@ def holidays_of(calendar: Mapping[str, Any]) -> frozenset[date]:
     raw = calendar.get("holidays")
     if not isinstance(raw, list) or not raw:
         raise SessionDayError("'holidays' must be a non-empty list")
-    try:
-        return frozenset(
-            entry if isinstance(entry, date) else date.fromisoformat(str(entry))
-            for entry in raw
-        )
-    except (TypeError, ValueError) as exc:
-        raise SessionDayError(f"'holidays' carries a non-date entry: {exc}") from exc
+    out: set[date] = set()
+    for entry in raw:
+        # ⚠ A ``datetime`` IS a ``date`` subclass, and an unquoted
+        # ``2026-01-01 00:00:00`` loads as one. Kept, it would sit in the set
+        # while ``date(2026, 1, 1) not in holidays`` stays True — a ``date``
+        # never equals a ``datetime`` — so the declared closed day would read as
+        # a TRADING day in every reader here (review-1003 MEDIUM). Fail-open in
+        # a holiday set is the one direction this file must not have, so the
+        # entry is named and refused rather than normalised: a calendar that
+        # means a date should say a date.
+        if isinstance(entry, datetime):
+            raise SessionDayError(
+                f"'holidays' carries the datetime {entry} — write it as a plain "
+                "date (YYYY-MM-DD). A datetime entry never compares equal to "
+                "the date asked about, so the closed day would read as open"
+            )
+        if isinstance(entry, date):
+            out.add(entry)
+            continue
+        try:
+            out.add(date.fromisoformat(str(entry)))
+        except (TypeError, ValueError) as exc:
+            raise SessionDayError(
+                f"'holidays' carries a non-date entry {entry!r}: {exc}"
+            ) from exc
+    return frozenset(out)
 
 
 def is_trading_day(day: date, holidays: Collection[date]) -> bool:
