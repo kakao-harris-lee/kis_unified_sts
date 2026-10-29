@@ -596,7 +596,9 @@ class KisStockBrokerWitness:
             )
         except WitnessUnavailable:
             raise
-        except Exception as exc:  # noqa: BLE001 - same two-outcome contract as observe()
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - same two-outcome contract as observe()
             raise WitnessUnavailable(
                 f"KisStockBrokerWitness.order_rows: could not complete — {type(exc).__name__}"
             ) from exc

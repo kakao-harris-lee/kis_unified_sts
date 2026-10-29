@@ -842,8 +842,8 @@ def test_a_pacer_refused_slot_is_witness_unavailable_with_no_request(
     class _TokenClient:
         def issue_token(
             self,
-            app_key: bytes,
-            app_secret: bytes,
+            _app_key: bytes,
+            _app_secret: bytes,
             *,
             path: str,  # noqa: ARG002
         ) -> dict[str, object]:

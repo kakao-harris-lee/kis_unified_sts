@@ -1448,9 +1448,9 @@ class TestComposeE2E:
         assert construction is not None and construction.intent is not None
         assert construction.intent.canonical_digest is not None  # ISSUED, same as above
         derived_quantity = construction.derivation.quantity
-        assert derived_quantity is not None, (
-            "no derived quantity to compute a prior fill from"
-        )
+        assert (
+            derived_quantity is not None
+        ), "no derived quantity to compute a prior fill from"
         assert derived_quantity > 0, (
             f"derived_quantity {derived_quantity} is not a sane, non-degenerate positive "
             "value — a zero or negative derivation would make the arithmetic below trivially "
@@ -1578,9 +1578,9 @@ class TestComposeE2E:
 
         event = fx.crossing_event()
         verdict_by_step = _drive_two_calls(runtime, custody_root, event)
-        assert seeded["done"], (
-            "InboxFlowReader.observe was never invoked — nothing seeded"
-        )
+        assert seeded[
+            "done"
+        ], "InboxFlowReader.observe was never invoked — nothing seeded"
         are_verdict = verdict_by_step["AGGREGATE_RISK_DECISION"]
         assert are_verdict.outcome.value == "ADMIT", are_verdict.reason
 
@@ -1670,9 +1670,9 @@ class TestComposeE2E:
 
         event = fx.crossing_event()
         verdict_by_step = _drive_two_calls(runtime, custody_root, event)
-        assert seeded["done"], (
-            "InboxFlowReader.observe was never invoked — nothing seeded"
-        )
+        assert seeded[
+            "done"
+        ], "InboxFlowReader.observe was never invoked — nothing seeded"
         are_verdict = verdict_by_step["AGGREGATE_RISK_DECISION"]
         assert are_verdict.outcome.value == "ADMIT", are_verdict.reason
 
