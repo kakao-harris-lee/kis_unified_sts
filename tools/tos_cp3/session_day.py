@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -50,6 +50,46 @@ class DayWindow:
     end: time
     #: True when a ``session_overrides`` entry supplied this window.
     overridden: bool
+
+
+def holidays_of(calendar: Mapping[str, Any]) -> frozenset[date]:
+    """The dates *calendar* declares closed.
+
+    One reader for the ``holidays`` key: the producer's
+    :func:`tools.tos_cp3.live_producer.calendar.load_runtime_calendar` and the
+    status board's streak both come here, so "this day is closed" has a single
+    definition on the legacy side.
+    """
+    raw = calendar.get("holidays")
+    if not isinstance(raw, list) or not raw:
+        raise SessionDayError("'holidays' must be a non-empty list")
+    try:
+        return frozenset(
+            entry if isinstance(entry, date) else date.fromisoformat(str(entry))
+            for entry in raw
+        )
+    except (TypeError, ValueError) as exc:
+        raise SessionDayError(f"'holidays' carries a non-date entry: {exc}") from exc
+
+
+def is_trading_day(day: date, holidays: Collection[date]) -> bool:
+    """KRX trades on *day*: a weekday the calendar does not declare closed."""
+    return day.weekday() < 5 and day not in holidays
+
+
+def assert_covers(day: date, *, covered_years: Collection[int], where: object) -> None:
+    """Refuse a date outside the years a reader DECLARES its calendar covers.
+
+    The holiday set is never asked whether it covers a year — one stray
+    forward-dated entry would answer yes and every weekday of that year would
+    read as a trading day (plan §3.2 L2). *where* names the file in the message.
+    """
+    if day.year not in covered_years:
+        raise SessionDayError(
+            f"{where} covers {sorted(covered_years)}; {day} is outside it. A "
+            "holiday set that does not cover the date would silently call a "
+            "closed day a trading day (plan §3.2 L2)"
+        )
 
 
 def parse_hhmm(value: Any, *, where: str) -> time:

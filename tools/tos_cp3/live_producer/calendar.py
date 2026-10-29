@@ -34,7 +34,14 @@ from pathlib import Path
 import yaml
 
 from tools.tos_cp3.live_producer.config import LiveProducerRefused
-from tools.tos_cp3.session_day import SessionDayError, validate_overrides, windows_on
+from tools.tos_cp3.session_day import (
+    SessionDayError,
+    assert_covers,
+    holidays_of,
+    is_trading_day,
+    validate_overrides,
+    windows_on,
+)
 
 
 @dataclass(frozen=True)
@@ -98,15 +105,13 @@ class RuntimeCalendar:
 
     def is_trading_day(self, day: date) -> bool:
         self.assert_covers(day)
-        return day.weekday() < 5 and day not in self.holidays
+        return is_trading_day(day, self.holidays)
 
     def assert_covers(self, day: date) -> None:
-        if day.year not in self.covered_years:
-            raise LiveProducerRefused(
-                f"{self.path} covers {sorted(self.covered_years)}; {day} is "
-                "outside it. A holiday set that does not cover the date would "
-                "silently call a closed day a trading day (plan §3.2 L2)"
-            )
+        try:
+            assert_covers(day, covered_years=self.covered_years, where=self.path)
+        except SessionDayError as exc:
+            raise LiveProducerRefused(str(exc)) from exc
 
     def window(
         self, session_id: str, phase: str, day: date | None = None
@@ -192,10 +197,10 @@ def load_runtime_calendar(
     if not isinstance(data, dict):
         raise LiveProducerRefused(f"{path}: not a YAML mapping")
 
-    raw_holidays = data.get("holidays")
-    if not isinstance(raw_holidays, list) or not raw_holidays:
-        raise LiveProducerRefused(f"{path}: 'holidays' must be a non-empty list")
-    holidays = frozenset(date.fromisoformat(str(entry)) for entry in raw_holidays)
+    try:
+        holidays = holidays_of(data)
+    except SessionDayError as exc:
+        raise LiveProducerRefused(f"{path}: {exc}") from exc
 
     raw_sessions = data.get("sessions")
     if not isinstance(raw_sessions, dict) or not raw_sessions:
