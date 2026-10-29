@@ -468,13 +468,24 @@ def test_red_a_missing_legacy_strategy_yaml_is_named(tmp_path: Path) -> None:
 
 
 class _FakeSteps:
-    """A step runner that records calls and returns scripted codes."""
+    """A step runner that records calls and returns scripted codes.
+
+    It writes the two documents the real steps write that :func:`psb.run` then
+    reads back — ``live/lineage.json`` and ``report/summary.json`` — because
+    the day they were scoped to is part of the verdict (M1).
+    """
 
     def __init__(
-        self, *, codes: dict[str, int] | None = None, writes_summary: bool = True
+        self,
+        *,
+        codes: dict[str, int] | None = None,
+        writes_summary: bool = True,
+        scoped_day: str = _SESSION_DAY.replace("-", ""),
     ) -> None:
         self.codes = codes or {}
         self.writes_summary = writes_summary
+        #: The compact KST day the fake documents claim they were scoped to.
+        self.scoped_day = scoped_day
         self.calls: list[str] = []
         self.records_seen: list[dict[str, Any]] = []
         self.summary_path: Path | None = None
@@ -483,19 +494,35 @@ class _FakeSteps:
         self, step: psb.Step, *, log_dir: Path, cwd: Path, timeout_s: float
     ) -> tuple[int, float, Path]:
         self.calls.append(step.name)
+        b3 = log_dir.parent
         log_dir.mkdir(parents=True, exist_ok=True)
         log = log_dir / f"{step.name}.log"
         log.write_text(f"fake {step.name}\n", encoding="utf-8")
-        record = (log_dir.parent / "status.json").read_text(encoding="utf-8")
+        record = (b3 / "status.json").read_text(encoding="utf-8")
         self.records_seen.append(json.loads(record))
+        if step.name == "live-decisions":
+            _write_json(
+                b3 / "live" / "lineage.json",
+                {"session_scope": {"session_day": self.scoped_day}},
+            )
         if step.name == "b3-report" and self.writes_summary:
-            assert self.summary_path is not None
-            self.summary_path.parent.mkdir(parents=True, exist_ok=True)
-            self.summary_path.write_text(
-                json.dumps({"summary_schema_version": 2, "unresolved": {"count": 0}}),
-                encoding="utf-8",
+            self.summary_path = b3 / "report" / "summary.json"
+            _write_json(
+                self.summary_path,
+                {
+                    "summary_schema_version": 2,
+                    "unresolved": {"count": 0},
+                    "session_scope": {
+                        "consumed_id_filter": {"session_day": self.scoped_day}
+                    },
+                },
             )
         return self.codes.get(step.name, 0), 0.5, log
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 def test_a_run_that_completes_records_ok_and_points_at_the_summary(
@@ -503,7 +530,6 @@ def test_a_run_that_completes_records_ok_and_points_at_the_summary(
 ) -> None:
     tree = _tree(tmp_path)
     steps = _FakeSteps()
-    steps.summary_path = _plan(tree).summary_path
     assert _run(tree, steps) == 0
     record = _record(tree)
     assert record["verdict"] == "ok"
@@ -522,7 +548,6 @@ def test_the_record_exists_before_the_first_step_and_says_running(
     the status board reads that as "did not finish", never as unresolved 0."""
     tree = _tree(tmp_path)
     steps = _FakeSteps()
-    steps.summary_path = _plan(tree).summary_path
     _run(tree, steps)
     first = steps.records_seen[0]
     assert first["verdict"] == "running"
@@ -547,6 +572,104 @@ def test_red_a_step_that_refuses_is_recorded_and_no_summary_is_invented(
     assert steps.calls == ["consumed-ids", "live-decisions", "b1a-fields"]
     assert not _plan(tree).summary_path.exists()
     assert record["steps"][-1]["rc"] == 2
+
+
+def test_red_inputs_scoped_to_another_day_are_not_reported_as_this_sessions(
+    tmp_path: Path,
+) -> None:
+    """**review-1000 M1: "did not run today" must not read as today's ok.**
+
+    The failing input: the boot snapshot's ``pre_boot_raw_event_ids`` is EMPTY
+    and the runtime consumed ZERO bars today (the producer had not published
+    08:45 by boot and the runtime then died or stalled). ``derive_session_day``
+    has nothing from the boot snapshot, so it falls back to the newest consumed
+    day — **yesterday** — and both session-derived inputs are then yesterday's
+    bars. Nothing downstream notices: the offline window starts at the stitch
+    manifest's first day, so yesterday is inside the frame as a seed day and
+    ``diff_decisions`` raises nothing. Before this check the result was
+    ``verdict: ok`` with ``session_day`` today and YESTERDAY's ``unresolved 0``
+    beside it.
+
+    Both documents are checked, not one: they are scoped by the same function,
+    so a disagreement between them and the session day can only come from that
+    fallback — and reading just one of them would leave the other free to drift.
+    """
+    tree = _tree(tmp_path)
+    yesterday = "20261026"
+    steps = _FakeSteps(scoped_day=yesterday)
+
+    assert _run(tree, steps) == 2
+    record = _record(tree)
+    assert record["verdict"] == "failed"
+    assert record["stage"] == "scope"
+    assert yesterday in record["reason"] and _SESSION_DAY.replace("-", "") in (
+        record["reason"]
+    )
+    # the summary is on disk and says unresolved 0 — and is NOT reported as ok
+    assert _plan(tree).summary_path.is_file()
+    assert record["summary_json"] is None
+
+
+@pytest.mark.parametrize(
+    ("live_day", "summary_day"),
+    [(None, "20261027"), ("20261027", None)],
+)
+def test_red_a_document_that_does_not_say_its_day_is_a_disagreement(
+    tmp_path: Path, live_day: str | None, summary_day: str | None
+) -> None:
+    """Fail-closed on silence too: a document whose scope key is missing proves
+    nothing about which day it covers, and ``None`` is what both documents
+    carry when neither the store nor the boot snapshot names a day at all."""
+    tree = _tree(tmp_path)
+    plan = _plan(tree)
+
+    def runner(
+        step: psb.Step, *, log_dir: Path, cwd: Path, timeout_s: float
+    ) -> tuple[int, float, Path]:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log = log_dir / f"{step.name}.log"
+        log.write_text("x", encoding="utf-8")
+        if step.name == "live-decisions":
+            _write_json(
+                plan.b3_dir / "live" / "lineage.json",
+                {"session_scope": {"session_day": live_day}},
+            )
+        if step.name == "b3-report":
+            _write_json(
+                plan.summary_path,
+                {"session_scope": {"consumed_id_filter": {"session_day": summary_day}}},
+            )
+        return 0, 0.0, log
+
+    assert _run(tree, runner) == 2
+    record = _record(tree)
+    assert record["verdict"] == "failed"
+    assert record["stage"] == "scope"
+    assert "None" in record["reason"], record["reason"]
+
+
+def test_red_an_unreadable_scope_document_is_a_disagreement(tmp_path: Path) -> None:
+    """Same rule for a document that cannot be parsed — the check exists to
+    PROVE the numbers are about today, and an unreadable file proves nothing."""
+    tree = _tree(tmp_path)
+    plan = _plan(tree)
+
+    def runner(
+        step: psb.Step, *, log_dir: Path, cwd: Path, timeout_s: float
+    ) -> tuple[int, float, Path]:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log = log_dir / f"{step.name}.log"
+        log.write_text("x", encoding="utf-8")
+        if step.name == "b3-report":
+            (plan.b3_dir / "live").mkdir(parents=True, exist_ok=True)
+            (plan.b3_dir / "live" / "lineage.json").write_text(
+                "{not json", encoding="utf-8"
+            )
+            _write_json(plan.summary_path, {"summary_schema_version": 2})
+        return 0, 0.0, log
+
+    assert _run(tree, runner) == 2
+    assert _record(tree)["stage"] == "scope"
 
 
 def test_red_all_steps_pass_but_no_summary_is_still_a_failure(
@@ -625,20 +748,14 @@ def test_each_step_gets_only_the_time_the_budget_has_left(tmp_path: Path) -> Non
     """A step is handed the remaining budget, not the whole of it — otherwise
     six steps could take six budgets."""
     tree = _tree(tmp_path)
+    steps = _FakeSteps()
     seen: list[float] = []
 
     def runner(
         step: psb.Step, *, log_dir: Path, cwd: Path, timeout_s: float
     ) -> tuple[int, float, Path]:
         seen.append(timeout_s)
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log = log_dir / f"{step.name}.log"
-        log.write_text("x", encoding="utf-8")
-        if step.name == "b3-report":
-            path = _plan(tree).summary_path
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("{}", encoding="utf-8")
-        return 0, 0.0, log
+        return steps(step, log_dir=log_dir, cwd=cwd, timeout_s=timeout_s)
 
     assert _run(tree, runner) == 0
     assert seen == sorted(seen, reverse=True), seen
@@ -653,7 +770,6 @@ def test_the_record_is_replaced_whole_and_leaves_no_partial_file(
     would have to guess whether B3 ran."""
     tree = _tree(tmp_path)
     steps = _FakeSteps()
-    steps.summary_path = _plan(tree).summary_path
     _run(tree, steps)
     subdir = tree.session / _config().subdir
     assert list(subdir.glob("status.json*")) == [subdir / "status.json"]

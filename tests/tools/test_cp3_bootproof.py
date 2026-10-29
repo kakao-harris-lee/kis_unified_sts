@@ -3550,7 +3550,17 @@ def test_the_b3_step_records_its_own_failure_and_leaves_the_rc_alone(
         repo,
         tmp_path,
         TENANT_STOP_AT="+15 seconds",
-        **{_RUN_PIDFILE_ENV: str(tmp_path / "run.pid"), **timeout_flavour},
+        # This fixture's producer dir is `producer-session`, not the cron
+        # layout's `<session>/producer`, which step 14 deliberately refuses to
+        # derive a session directory from (review-1000 L1 — and
+        # `test_the_b3_step_is_skipped_when_the_session_dir_cannot_be_derived`
+        # is that refusal's own proof). The escape hatch names it here so this
+        # test can be about the rc and the record instead.
+        **{
+            "CP3_B3_SESSION_DIR": str(tmp_path),
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            **timeout_flavour,
+        },
     )
     output = result.stdout + result.stderr
     assert "=== BOOT" in output
@@ -3569,6 +3579,34 @@ def test_the_b3_step_records_its_own_failure_and_leaves_the_rc_alone(
     assert "ABORT" not in output, output[-2000:]
     assert result.returncode == 143, output[-2000:]
     assert not result.producer_outlived_the_runner
+
+
+def test_the_b3_step_is_skipped_when_the_session_dir_cannot_be_derived(
+    tmp_path: Path,
+) -> None:
+    """**review-1000 L1.** Step 14 derives the session directory as the producer
+    dir's parent, which is only true of the cron layout
+    (``<session>/producer``). This fixture's is ``producer-session`` — a real
+    instance of the other shape — and ``dirname`` would put ``b3/`` in whatever
+    that parent happens to be, i.e. evidence somewhere the operator did not
+    choose. So the step skips and says so, and the session still ends on the
+    runtime's own code.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{_RUN_PIDFILE_ENV: str(tmp_path / "run.pid")},
+    )
+    output = result.stdout + result.stderr
+    assert "=== B3 SKIPPED" in output, output[-3000:]
+    assert "is not a '<session>/producer'" in output
+    assert "CP3_B3_SESSION_DIR" in output
+    # nothing was written, and nothing was claimed
+    assert not (tmp_path / "b3").exists()
+    assert "=== END B3" not in output
+    assert result.returncode == 143, output[-2000:]
 
 
 def test_the_runner_runs_no_mode_repair_sweep_after_the_stop(tmp_path: Path) -> None:

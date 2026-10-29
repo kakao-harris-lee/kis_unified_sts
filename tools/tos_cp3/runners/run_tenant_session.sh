@@ -1529,35 +1529,50 @@ printf '%s\n' "$COUNTS" | while IFS= read -r line; do log "  $line"; done
 # tool writes BEFORE its first step and replaces atomically at the end — so a
 # missing input, a refusing step, the budget, or a SIGKILL all leave something
 # that says so, and never a summary claiming unresolved=0.
-# Where the record goes: the session directory, which is this instance's
+# Where the record goes: the session directory, which in the CRON layout is the
 # producer dir one level up. Derived rather than asked for, because every
 # TENANT_* value is an instance value with no default and adding a required one
 # would mean reinstalling the host cron wrapper that sets them
-# (~/.config/kis-probes, sha256-pinned); CP3_B3_SESSION_DIR is the handle for a
-# session whose layout is not the cron one.
-B3_SESSION_DIR=${CP3_B3_SESSION_DIR:-$(dirname "$TENANT_PRODUCER_SESSION_DIR")}
-
-# The outer ceiling is a stop for a WEDGED interpreter, not the budget: the
-# budget is config/tos_cp3_b3.yaml::total_timeout_s, which the tool applies to
-# each step as the time it has left. It matters because an unbounded step would
-# hold the cron wrapper's flock past midnight and refuse TOMORROW's session
-# ("lock busy") — a bigger loss than a missing comparison.
-# `test_the_b3_budget_stays_under_the_runners_ceiling` pins the ordering.
-log "=== B3 session-dir=$B3_SESSION_DIR instrument=$INSTRUMENT market=$_MARKET ceiling ${B3_CEILING_S}s"
-timeout --kill-after=5s "${B3_CEILING_S}s" \
-  "$PY" "$REPO/tools/tos_cp3/post_session_b3.py" \
-  --session-dir "$B3_SESSION_DIR" \
-  --data-leaf "$DATA_LEAF" \
-  --producer-session-dir "$TENANT_PRODUCER_SESSION_DIR" \
-  --render-out "$TENANT_RENDER_OUT" \
-  --instrument "$INSTRUMENT" \
-  --session-day "$(TZ=Asia/Seoul date +%F)" \
-  --market "$_MARKET" \
-  --python "$PY" >>"$TENANT_LOG" 2>&1
-b3_rc=$?
-# The record's own path is printed by the tool (it knows the configured
-# subdir); this line is the rc, and the rc stops here.
-log "=== END B3 rc=$b3_rc (its record is under $B3_SESSION_DIR · this rc does NOT change the session's)"
+# (~/.config/kis-probes, sha256-pinned).
+#
+# ⚠ The derivation holds only for that layout, so it is checked (review-1000
+# L1). A producer dir whose basename is not `producer` belongs to some other
+# session shape — a one-off boot proof — and `dirname` would then drop `b3/`
+# into whatever its parent happens to be, which is evidence landing somewhere
+# the operator did not choose. That is the same rule step 6b applies to the
+# four session paths; here it SKIPS rather than refuses, because nothing about
+# B3 may end a session. CP3_B3_SESSION_DIR runs it anyway.
+B3_SESSION_DIR=${CP3_B3_SESSION_DIR:-}
+if [ -z "$B3_SESSION_DIR" ]; then
+  case "${TENANT_PRODUCER_SESSION_DIR%/}" in
+  */producer) B3_SESSION_DIR=$(dirname "${TENANT_PRODUCER_SESSION_DIR%/}") ;;
+  esac
+fi
+if [ -z "$B3_SESSION_DIR" ]; then
+  log "=== B3 SKIPPED — TENANT_PRODUCER_SESSION_DIR '$TENANT_PRODUCER_SESSION_DIR' is not a '<session>/producer', so the session directory cannot be derived; set CP3_B3_SESSION_DIR to run the reconciliation anyway"
+else
+  # The outer ceiling is a stop for a WEDGED interpreter, not the budget: the
+  # budget is config/tos_cp3_b3.yaml::total_timeout_s, which the tool applies to
+  # each step as the time it has left. It matters because an unbounded step
+  # would hold the cron wrapper's flock past midnight and refuse TOMORROW's
+  # session ("lock busy") — a bigger loss than a missing comparison.
+  # `test_the_b3_budget_stays_under_the_runners_ceiling` pins the ordering.
+  log "=== B3 session-dir=$B3_SESSION_DIR instrument=$INSTRUMENT market=$_MARKET ceiling ${B3_CEILING_S}s"
+  timeout --kill-after=5s "${B3_CEILING_S}s" \
+    "$PY" "$REPO/tools/tos_cp3/post_session_b3.py" \
+    --session-dir "$B3_SESSION_DIR" \
+    --data-leaf "$DATA_LEAF" \
+    --producer-session-dir "$TENANT_PRODUCER_SESSION_DIR" \
+    --render-out "$TENANT_RENDER_OUT" \
+    --instrument "$INSTRUMENT" \
+    --session-day "$(TZ=Asia/Seoul date +%F)" \
+    --market "$_MARKET" \
+    --python "$PY" >>"$TENANT_LOG" 2>&1
+  b3_rc=$?
+  # The record's own path is printed by the tool (it knows the configured
+  # subdir); this line is the rc, and the rc stops here.
+  log "=== END B3 rc=$b3_rc (its record is under $B3_SESSION_DIR · this rc does NOT change the session's)"
+fi
 
 # Exit code 5: the runtime finished the way it was asked to, and the producer
 # HALTED IN the session (step 12b) rather than ending with it.

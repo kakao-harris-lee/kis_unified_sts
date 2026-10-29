@@ -457,6 +457,79 @@ def _now() -> str:
     return datetime.datetime.now(tz=KST).isoformat(timespec="seconds")
 
 
+def _scoped_day(path: Path, *keys: str) -> tuple[str | None, str | None]:
+    """Read one nested string out of a JSON document.
+
+    Returns:
+        ``(value, None)`` or ``(None, why it could not be read)``. Unreadable is
+        kept apart from absent because the caller reports both and they are
+        different facts about the run.
+    """
+    try:
+        document: Any = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, f"{path} is not there"
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"{path} cannot be read: {exc}"
+    for key in keys:
+        if not isinstance(document, dict):
+            return None, f"{path}: {'.'.join(keys)} is not where it should be"
+        document = document.get(key)
+    if document is None:
+        return None, f"{path}: {'.'.join(keys)} is None"
+    if not isinstance(document, str):
+        return None, f"{path}: {'.'.join(keys)} is {document!r}, not a day"
+    return document, None
+
+
+def scope_disagreements(
+    *, live_lineage: Path, summary: Path, session_day: str
+) -> list[str]:
+    """Every way the day the inputs were scoped to is not this session's day.
+
+    ⛔ **review-1000 M1 — the one way this tool could report "did not run
+    today" as today's ``unresolved 0``.** The failing input: the boot snapshot's
+    ``pre_boot_raw_event_ids`` is empty AND the runtime consumed zero bars
+    today. ``derive_session_day`` then falls back to the newest consumed day,
+    which is yesterday, so both session-derived inputs are yesterday's bars —
+    and nothing downstream notices, because the offline window starts at the
+    stitch manifest's first day and yesterday sits inside the frame as a seed
+    day. The run ends with six zero exit codes and a real summary that is about
+    the wrong day.
+
+    So the day is checked where it is RECORDED, in the two documents
+    themselves, rather than trusted because the runner passed it on the command
+    line. Both are read: they are scoped by one function
+    (``session_inputs.derive_session_day``), so reading one would leave the
+    other free to drift.
+
+    Fail-closed: a document that is missing, unparseable, or silent about its
+    day counts as a disagreement. The check exists to PROVE the numbers are
+    about today, and none of those three prove anything.
+
+    Returns:
+        Human-readable disagreements; empty means both documents say today.
+    """
+    want = session_day.replace("-", "")
+    problems: list[str] = []
+    for label, path, keys in (
+        ("live.jsonl", live_lineage, ("session_scope", "session_day")),
+        (
+            "summary.json",
+            summary,
+            ("session_scope", "consumed_id_filter", "session_day"),
+        ),
+    ):
+        found, why = _scoped_day(path, *keys)
+        if why is not None:
+            problems.append(f"{label}: {why}")
+        elif found != want:
+            problems.append(
+                f"{label} was scoped to KST day {found}, not this session's {want}"
+            )
+    return problems
+
+
 @dataclass
 class StatusWriter:
     """``b3/status.json``, replaced atomically on every write.
@@ -645,6 +718,24 @@ def run(
             reason=(
                 f"every step exited 0 but {plan.summary_path} is not there —"
                 " nothing measures §2-1 without it"
+            ),
+            ended_at=_now(),
+        )
+        return 2
+
+    # M1: the summary exists and the steps all agreed — but about WHICH day?
+    disagreements = scope_disagreements(
+        live_lineage=plan.b3_dir / "live" / "lineage.json",
+        summary=plan.summary_path,
+        session_day=session_day,
+    )
+    if disagreements:
+        status.write(
+            verdict="failed",
+            stage="scope",
+            reason=(
+                "the comparison ran but not on this session's bars — "
+                + "; ".join(disagreements)
             ),
             ended_at=_now(),
         )
