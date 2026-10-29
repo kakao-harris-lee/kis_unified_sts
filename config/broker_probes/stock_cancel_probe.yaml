@@ -1,0 +1,89 @@
+# P-SC — 주식 MOCK 취소 행 모양 + 늦은 체결 관측 프로브의 안전·인스턴스 값.
+#
+# 왜 YAML 인가: 이 값들은 전부 «주문을 몇 개까지, 몇 주까지, 얼마나 띄워서, 어느
+# 시간대에 보낼 수 있는가» 즉 한도다. CLAUDE.md 비협상 규칙("thresholds, symbols,
+# risk values, ports, Redis DBs, schedules, and feature gates belong in YAML/env/
+# config files, not hardcoded branches") 대상이고, 운영자가 코드를 읽지 않고
+# 승인·수정할 수 있어야 한다. 프로브가 `config/execution.yaml` 에서 선물 틱을
+# 읽는 것과 같은 경로다(tools/broker_probes/probes_order.py::_EXECUTION_CONFIG).
+#
+# 기본값은 **없다**. 키가 하나라도 빠지면 프로브는 거부한다
+# (tools/broker_probes/probes_stock_cancel.py::load_config) — 러너 템플릿이
+# 인스턴스 기본값을 싣지 않는 것과 같은 규율이다
+# (tools/broker_probes/runners/README.md).
+#
+# 측정 대상: #948 순서 1 — 취소가 원주문 행의 `cncl_yn` 으로 오는지, `orgn_odno`
+# 가 원주문을 가리키는 별도 행으로 오는지, 둘 다인지. 그리고 취소 ack 뒤에
+# 체결이 더 붙을 수 있는지(늦은 체결 ↔ 취소 경합, #980).
+
+schema_version: 1
+
+session:
+  # 휴장일 정본. 이 프로브는 holidays 만 읽는다 — 세션 창은 아래 window 다
+  # (캘린더의 krx-stock CONTINUOUS 는 09:00-15:30 이고, 15:20 이후 종가
+  # 단일가 구간에서는 취소 행 모양이 정규장과 다를 수 있어 창을 좁혔다).
+  calendar_path: "config/tos_runtime/paper/calendar.yaml"
+  # 위 휴장 목록이 **덮는다고 선언하는** 연도. 이 밖의 날짜는 거부한다 —
+  # 덮지 않는 연도의 평일은 전부 거래일로 읽히기 때문
+  # (tools/tos_cp3/session_day.py::assert_covers).
+  covered_years: [2026]
+  window:
+    start: "09:00"   # KRX 정규장 개장
+    end: "15:20"     # 종가 단일가 시작 전. 이후 구간은 측정 대상 아님
+
+limits:
+  # 호출 간 최소 간격(초). P-13 실측 clean rate 는 1.0 rps 지만, 이 프로브는
+  # 같은 앱키로 주문 POST 와 조회 GET 을 섞어 보내므로 한 단계 더 띄운다.
+  pace_s: 2.0
+  # pace_s 가 이 값보다 작으면 거부한다. 두 값을 같은 파일에 두는 이유:
+  # 하한을 코드에 적으면 설정값과 하한이 두 곳에 흩어진 「두 번째 하드코딩
+  # 경계」가 된다(CLAUDE.md Redis TTL 규칙과 같은 취지).
+  pace_s_floor: 2.0
+  # 주문성 POST(신규·취소·되팔기) 총 호출 상한. 초과 시도는 SafetyViolation.
+  # 예산: A 2(신규+취소) + B 3(신규+취소+되팔기) + 정리 취소 3 + 여유 2.
+  max_order_calls: 10
+  # 한 주문의 최대 수량. trials.*.quantity 가 이보다 크면 거부한다.
+  max_quantity: 2
+  cleanup:
+    # 살아 있는 행에 대한 취소 재시도 횟수. 초당 거래건수 초과 거부는 체결
+    # 엔진에 닿지도 않은 거부이므로 다시 보내는 것이 맞다
+    # (probes_order.py::_CLEANUP_ATTEMPTS 와 같은 근거).
+    cancel_attempts: 3
+    retry_s: 2.0
+
+observation:
+  # 취소 ack 뒤 이 길이만큼 조회를 반복한다. 늦은 체결이 이 창 안에 나타나는지가
+  # 관측 대상이고, 나타나지 않았다는 것은 「없다」가 아니라 「이 창에서는 보지
+  # 못했다」로 기록한다.
+  cancel_window_s: 60.0
+  # t+0 직후 첫 조회는 창과 무관하게 한 번 더 찍고, 그 뒤 이 간격으로 반복한다.
+  # 실제 간격은 max(poll_interval_s, limits.pace_s) — 페이서가 하한이다.
+  poll_interval_s: 5.0
+
+flat_check:
+  # 시작 시 「계좌가 비어 있다」를 확인할 때 걸어갈 잔고 페이지 수 상한.
+  # 한 페이지만 읽으면 2페이지의 보유가 「미보유」로 읽힌다(P-BAL 실측,
+  # probes_ca.py::_MAX_BALANCE_PAGES 와 같은 근거).
+  balance_max_pages: 5
+  # 주식일별주문체결조회는 모의에서 한 번에 최대 15행이다. 돌아온 행 수가 이
+  # 값에 닿으면 페이지가 잘렸을 수 있으므로 「미결 주문 없음」을 주장하지 않고
+  # 거부한다(fail-closed).
+  ccld_page_row_cap: 15
+
+trials:
+  a:
+    # 쉬는 주문 1주. 체결되면 측정이 아니라 사고이므로 수량은 최소값이다.
+    quantity: 1
+    # 시세에서 이만큼 아래에 지정가를 둔다. 하루 하한가(가격제한폭 ±30%) 안이면서
+    # 체결될 수 없을 만큼 먼 값. 실제 가격은 런타임 GET 시세와 브로커가 보고한
+    # 호가단위(aspr_unit)로 도출한다 — 리터럴 가격은 어디에도 없다.
+    price_offset_pct: 25.0
+  b:
+    # 부분체결 시도. 모의가 전량 체결하거나 전혀 체결하지 않으면 그 결과를 그대로
+    # 기록한다 — 「모의에서 부분체결은 만들 수 없다」도 유효한 측정이다.
+    enabled: true
+    quantity: 2
+    # 터치를 넘어가는 지정가(매수는 위로). P-11 실측: 모의에서 marketable limit 은
+    # 체결되지 않았고 시장가는 즉시 전량 체결됐다 — 그래서 여기서 기대하는 1순위
+    # 결과는 NO_FILL 이고, 그것도 기록 대상이다.
+    price_offset_pct: 5.0

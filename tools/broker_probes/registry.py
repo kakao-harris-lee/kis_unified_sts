@@ -1,13 +1,13 @@
 """Machine-readable probe register — the single source for the runbook table.
 
-Sources of the probe set (12 + 4 = 16 ratified, plus 7 follow-ups):
+Sources of the probe set (12 + 4 = 16 ratified, plus 8 follow-ups):
 
 * **12 canonical** — ``docs/plans/2026-07-29-tos-broker-capability-profile-kis-draft.md``
   §5 "측정 프로시저 제안" table (:225-238): P-1, P-2, P-5, P-5b, P-8, P-11,
   P-13, P-14, P-15, P-16, P-EXT, P-FQP.
 * **4 census additions** — ``docs/plans/2026-07-29-tos-phase0-p02-execution-plan.md``
   §1 T2 (:34-38): N-15, N-16, N-17, N-18.
-* **7 follow-ups**, all deliberately **outside** the ratified 16 — each one's
+* **8 follow-ups**, all deliberately **outside** the ratified 16 — each one's
   ``source`` starts with neither "draft" nor "plan", so the canonical/census
   counts in :func:`coverage_report` stay exactly as ratified:
 
@@ -25,6 +25,11 @@ Sources of the probe set (12 + 4 = 16 ratified, plus 7 follow-ups):
     v2 (PR #879 head ``de3c7e98``) §4, the corroboration leg of CP-3 decision 9.
     GET-only on 모의투자; the 호가수량한도 it is about comes from the KRX
     rulebook, not from the probe.
+  * P-SC — issue #948 step 1. The stock cancel row shape on 모의투자, which
+    nothing has measured and which #948 steps 2-3 and #980 both need. Places
+    모의 stock orders (``emits_orders=True``) and is the only order-emitting
+    probe here whose limits all come from a YAML file
+    (``config/broker_probes/stock_cancel_probe.yaml``).
 
 ``bounds_keys`` cite ``tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml``
 key names verified by direct read (line numbers in :data:`BOUND_KEYS`).
@@ -1015,6 +1020,63 @@ PROBES: dict[str, ProbeSpec] = {
             "stdlib 전용 _tick_math 에서 온다. 실전 자격증명·실주문 없음",
         ),
         entrypoint="tools.broker_probes.probes_venue_limits:probe_pvl",
+    ),
+    "P-SC": _S(
+        probe_id="P-SC",
+        title=(
+            "주식 취소 행 모양 + 취소 후 늦은 체결 관측 (MOCK 주식 전용 · 실주문 0)"
+        ),
+        source=(
+            "issue #948 순서 1 (주식 MOCK 취소 → non-execution 증명 → 해제) · "
+            "차단 사유 = #939 Codex r2 HIGH 1 + 브로커 프로파일 "
+            "capabilities.replace_semantics._kis.replace_probe_2026_07_31"
+            ".orgn_odno_wire_form.reading 「확인하지 않았다 — 추정 금지」. "
+            "소비자 2건: #948 순서 2·3, #980(진입 부분체결 뒤 취소된 잔량)"
+        ),
+        kind="ORDER",
+        environment=ENV_MOCK,
+        dimension="CANCELLATION",
+        bounds_keys=("B_final_quantity_proof", "B_late_fill_observation"),
+        instance_fields=(
+            "capabilities.replace_semantics._kis.replace_probe_2026_07_31"
+            ".orgn_odno_wire_form",
+            "final_quantity_proof.late_event_window_ms",
+        ),
+        statistic=(
+            "categorical per trial, no numeric bound. cancel_shape ∈ "
+            "{ORIGINAL_ROW_FLAGGED, SEPARATE_ROW_WITH_ORGN_ODNO, BOTH, "
+            "NEITHER_OBSERVED, UNDETERMINED} — the last two are distinct and the "
+            "difference is the point: #948 must not be built on «we did not see "
+            "it» read as «it does not happen». late_fill_after_cancel_ack is an "
+            "OBSERVATION of one 60 s window, never a bound candidate: zero "
+            "observed late fills is NOT 0 ms, it is 미확립 (VP-002:756, same rule "
+            "P-FQP carries)"
+        ),
+        risk="HIGH",
+        duration="~5 min (주문 2 + 취소 2 + 되팔기 ≤1 + GET 폴링 60 s×2, 2 s 페이싱)",
+        emits_orders=True,
+        requires_confirm=True,
+        prerequisites=(
+            "--asset stock --symbol 005930 — 선물 거부(취소 TR·조회면 모두 국내주식)",
+            "모의투자 **주식** 자격증명. KIS_STOCK_MARKET 이 mock 이 아니거나 "
+            "KIS_REAL_TRADING 이 참이면 첫 소켓 전에 거부 — paper 스택은 실제로 "
+            "KIS_STOCK_MARKET=real 로 돌므로(memory stock-needs-real-kis-key) "
+            "paper .env 를 소싱한 실수가 실주문 자격증명으로 이어진다",
+            "계좌가 비어 있어야 한다 — 대상 종목 보유 0 + 미결 주문 0 을 GET 으로 "
+            "**증명**해야 시작한다. 읽기가 답하지 못하면(페이지 캡·거부·스로틀) "
+            "그것도 거부다",
+            "거래일 09:00-15:20 KST (config/broker_probes/stock_cancel_probe.yaml "
+            "session.window · 휴장일은 config/tos_runtime/paper/calendar.yaml). "
+            "15:20 이후 종가 단일가 구간은 측정 대상이 아니다",
+            "모든 한도(페이싱·주문 호출 예산·수량 상한·창·관측 길이)는 "
+            "config/broker_probes/stock_cancel_probe.yaml 에서 오고 코드 기본값이 "
+            "**없다** — 키가 빠지면 거부",
+            "분리 워크트리에서 실행 (origin/main detached) — 공유 체크아웃은 병렬 "
+            "레인이 브랜치를 바꿔 repo_commit 이 비-main 으로 찍힌다(#793 HIGH)",
+            "정리는 모든 종료 경로에서 돌고(finally) 자기 결과를 기록한다 — "
+            "남은 주문 취소 → 체결분 시장가 되팔기 → 잔고 GET 으로 flat 확인",
+        ),
+        entrypoint="tools.broker_probes.probes_stock_cancel:probe_psc",
     ),
 }
 

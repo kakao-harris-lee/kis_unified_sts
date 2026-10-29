@@ -390,3 +390,110 @@ measured and agreed, and the runner is the only place that knows the count.
 - Exit status: 0 when the series completed, non-zero when it stopped.
 - Cron: set `CRON_TZ=Asia/Seoul`, and give the entry an absolute path plus the
   `P8_*` exports, `P8_PYTHON` included (a cron shell inherits almost nothing).
+
+## `run_p_sc.sh` — P-SC stock cancel row shape (#948 step 1)
+
+Same checkout, interpreter, credential and `POLICY_VERSION` guards as the two
+templates above (the shared ones in `_common.sh`). Two things are its own.
+
+**It runs the probe once, not a series.** P-SC's two trials are internal and
+the probe sequences them: trial B spends a fill on top of trial A, and whether
+to continue is a reading of trial A's own stop — not something a shell loop
+should re-derive.
+
+**It carries no limit.** Pacing, the order-call budget, the quantity cap, the
+session window and the observation length all live in
+`config/broker_probes/stock_cancel_probe.yaml`. `PSC_CONFIG` points at a
+different FILE; there is no `PSC_PACE_S`, no `PSC_QUANTITY`, and a test pins
+that there never is — a runner variable for one of those values would be a
+second source for it, which is the defect this file's header is about.
+
+```bash
+# 1. a throwaway detached worktree on merged code
+git -C /home/deploy/project/kis_unified_sts fetch -q origin
+git -C /home/deploy/project/kis_unified_sts worktree add --detach \
+    /home/deploy/.local/state/kis/wt-p-sc origin/main
+
+# 2. the interpreter — the MAIN checkout's venv (a fresh worktree has no .venv,
+#    and installing one into it is not allowed). The runner exports PYTHONPATH
+#    itself and then PROVES the tools.broker_probes it loads is the worktree's.
+export PSC_PYTHON=/home/deploy/project/kis_unified_sts/.venv/bin/python
+
+# 3. the instance
+export PSC_LOG=~/.config/kis-probes/p-sc-20261102.log
+export PSC_CREDENTIAL_FILE=.env.mock   # relative -> this worktree, copied in if absent
+                                       # absolute -> used as given, never copied
+export PSC_SYMBOL=005930
+export PSC_TRIAL=both                  # both | a (resting cancel) | b (partial attempt)
+export PSC_EXPECT_KEY_FP=<sha256(STOCK app key)[:12]>
+export PSC_EXPECT_ACCOUNT_FP=<account_fingerprint(STOCK account no)>
+export PSC_TOKEN_CACHE=~/.config/kis-probes/p-sc-20261102-token-cache
+export PSC_EVIDENCE_DIR=/path/to/evidence/<campaign>
+export PSC_NOTE="P-SC trial 1: ..."
+
+# optional
+export PSC_CONFIG=config/broker_probes/stock_cancel_probe.yaml  # a different FILE, not a value
+export PSC_ALLOW_SHARED_CHECKOUT=1     # skip the checkout guards, logged (#793)
+export PSC_CRON_MARK=run-p-sc-20261102 # remove this one crontab line when done
+
+# 4. run it from the worktree's own copy
+/home/deploy/.local/state/kis/wt-p-sc/tools/broker_probes/runners/run_p_sc.sh
+```
+
+**STOCK keys, not futures.** And note that this repo's PAPER stack exports
+`KIS_STOCK_MARKET=real`, because stock quotes need the real key — so sourcing
+the paper `.env` here instead of `.env.mock` would hand the probe a REAL app
+key while every host assertion still passed. The probe refuses that itself
+before its first socket (`assert_mock_only_env`); the fingerprint check is the
+second, independent answer to the same question, and the one that catches a key
+paired with the wrong account (the 2026-09-23 `INVALID_CHECK_ACNO` outage).
+
+### The three anchored lines
+
+The probe prints exactly one of each, on every path it can leave by, and the
+runner reads only those:
+
+```
+PSC_STOP=<none | dry_run | rejected | rate_limited | order_state_unknown | query_unanswered>
+PSC_CANCEL_SHAPE=<ORIGINAL_ROW_FLAGGED | SEPARATE_ROW_WITH_ORGN_ODNO | BOTH
+                | NEITHER_OBSERVED | UNDETERMINED>
+PSC_FLAT_AT_END=<yes | no | unknown>
+```
+
+| token | what it means for the slot |
+| --- | --- |
+| `PSC_STOP=none` + a shape of `ORIGINAL_ROW_FLAGGED` / `SEPARATE_ROW_WITH_ORGN_ODNO` / `BOTH` | measured — this is the answer #948 step 2 needs |
+| `PSC_STOP=none` + `NEITHER_OBSERVED` | **also measured**, and consequential: the surface answered and marked the cancel in neither place. Read the artifact before designing a non-execution proof around either |
+| `PSC_STOP=none` + `UNDETERMINED` | nothing was established. **Not** "the cancel does not show up" |
+| `rejected` / `rate_limited` | the broker refused a submit, or our call rate did. No retry |
+| `order_state_unknown` | an order POST was lost in transport. It is NOT resent (duplicate-order hazard) — read `measurements.cleanup` and check the account by hand |
+| `PSC_FLAT_AT_END` ≠ `yes` | settle the account by hand BEFORE scheduling P-SC again, whatever the shape verdict was |
+
+A non-zero exit is believed before any token: the probe can print a clean
+verdict and still die writing the artifact (`run.py` rc 5), and a
+`SafetyViolation` (rc 3) leaves no artifact at all. Same rule `run_p8.sh`
+applies to `P8_STOP=` and `run_p_ca.sh` to `HELD=`.
+
+### Reading the artifact
+
+The full order — which measurement to read first, and which pairs of values
+must not be collapsed — is **runbook §5.10 "아티팩트 읽는 법"**
+(`docs/runbooks/kis-capability-probes.md`). The short version: check
+`measurements.mock_only_env_gate.verdict` and `measurements.flat_start.verdict`
+before trusting anything else, read `measurements.trial_a.cancel_shape.shape`
+for the finding, and read `measurements.cleanup.status` for the account.
+
+### Notes
+
+- **Mock-only is enforced in code, not here.** Every call goes through
+  `assert_mock_host()`, every `/trading/` call through
+  `assert_mock_trading_tr()`, and the probe refuses a REAL-named environment
+  before the first socket. A bash guard would only be a second, weaker copy.
+- The account must be **flat at start** and the probe must be able to PROVE it:
+  a capped balance walk, a refusal, a throttle or a full page are each
+  refusals, not passes.
+- The script **never deletes itself**. `PSC_CRON_MARK` removes only the one
+  matching `crontab -l` line, and only after the probe has actually run.
+- Exit status: 0 when the slot completed, non-zero when it stopped.
+- Cron: set `CRON_TZ=Asia/Seoul`, and give the entry an absolute path plus the
+  `PSC_*` exports, `PSC_PYTHON` included (a cron shell inherits almost nothing).
