@@ -1479,8 +1479,13 @@ v4 재리뷰 L2). 요약하면: **저널과 생산자 세션 dir 은 세션마�
   --out "$SESSION/b3/consumed-ids.json"
 
 # ② 실시간 결정 레코드(B1b 트레이스와 같은 모양)
+#    ⛔ --boot-snapshot 은 2026-10-29 부터 필수다. ① 과 같은 이유 — 지정 잎은 세션을
+#    누적하므로, 이 파일이 잎 전체를 담으면 ⑥ 이 거부한다(「live decision(s) name bars
+#    that are not compared」). 실측: 10-28 세션 1,939 건.
 "$MAIN/.venv/bin/python" "$WT/tools/tos_cp3/session_inputs.py" live-decisions \
-  --data-dir "$SESSION/data/$INSTRUMENT" --out "$SESSION/b3/live"
+  --data-dir "$SESSION/data/$INSTRUMENT" \
+  --boot-snapshot "$SESSION/producer/boot-journal-snapshot.json" \
+  --out "$SESSION/b3/live"
 
 # ③ B1a 를 **생산자가 쓴 동결 프레임**에 돌리고(§3.6: 레거시 Parquet 이 아니다),
 #    B2·B1b 를 잇고, B3 를 그 둘을 더해 돌린다.

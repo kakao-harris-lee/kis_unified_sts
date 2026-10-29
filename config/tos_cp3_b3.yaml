@@ -29,7 +29,11 @@ subdir: "b3"
 legacy_strategy_yaml: "config/strategies/futures/setup_d_vwap_reversion.yaml"
 
 # 여섯 단계 전체의 벽시계 예산(초). 각 서브프로세스는 «남은 시간» 을 타임아웃으로
-# 받으므로 전체가 이 값을 넘지 못한다. 고른 값이 아니라 실측에서 왔다 —
-# TOTAL_TIMEOUT_MEASUREMENT 참조. 러너의 바깥 ceiling(CP3_B3_CEILING_S 기본값)보다
-# 작아야 하고, tests/tools/test_cp3_post_session_b3.py 가 그 관계를 고정한다.
+# 받으므로 전체가 이 값을 넘지 못한다. 실측 2026-10-29(long-20261028 세션 · 5 거래일
+# 프레임 · evidence 763 MB): 여섯 단계 합 25.9 s, 최대 단계 8.4 s — 자세한 값은
+# post_session_b3.TOTAL_TIMEOUT_MEASUREMENT. 실측의 18 배인 이유는 성능 목표가 아니기
+# 때문이다: 프레임은 5 일로 머무르지만 durable 잎은 세션마다 자라고, 이 예산은 «끼인
+# 단계가 다음 날 세션의 flock 을 물고 있지 못하게» 하는 상한이다. 러너의 바깥
+# ceiling(CP3_B3_CEILING_S 기본값)보다 작아야 하고,
+# tests/tools/test_cp3_post_session_b3.py 가 그 관계를 고정한다.
 total_timeout_s: 480

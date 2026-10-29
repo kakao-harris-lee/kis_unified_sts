@@ -795,6 +795,28 @@ def test_red_a_boot_snapshot_without_the_pre_boot_list_is_refused(
 # ===========================================================================
 
 
+def _unscoped(records: list[dict[str, Any]], ticks: Any) -> si.LiveScope:
+    """A scope that filters nothing — for the tests whose subject is the COUNTS.
+
+    The scoping itself has its own tests below
+    (:func:`test_live_decisions_are_scoped_to_the_one_session_day`); these pass
+    the records straight through so ``ticks_without_a_decision`` is read off
+    the join and not off a filter.
+    """
+    return si.LiveScope(
+        session_day=None,
+        days_present=(),
+        records_all_days=len(records),
+        ticks_all_days=len(ticks),
+        ticks_with_no_resolvable_day=0,
+    )
+
+
+def _event_id_on(day: str, minute: str) -> str:
+    """A join key on another KST day — what an accumulating leaf holds."""
+    return f"{INSTRUMENT}:1m:{day}T{minute}00+0900"
+
+
 def _emitted(hinge: dict[str, Any], bar: Bar, **edits: Any) -> str:
     """The committed emitted-outcome entry, re-keyed to *bar*."""
     record = _real_record(hinge, "DECISION_OUTCOME_EMITTED")
@@ -982,6 +1004,7 @@ def test_red_an_unkeyed_decision_goes_to_the_window_that_holds_it_not_the_next_b
         records=records,
         payload=si.render_jsonl(records),
         ticks=len(si.read_decision_ticks(data_dir)),
+        scope=_unscoped(records, si.read_decision_ticks(data_dir)),
     )
     assert lineage["counts"]["ticks_without_a_decision"] == 1
 
@@ -1234,6 +1257,7 @@ def test_a_tick_without_a_decision_is_reported_not_refused(
         records=records,
         payload=si.render_jsonl(records),
         ticks=len(si.read_decision_ticks(data_dir)),
+        scope=_unscoped(records, si.read_decision_ticks(data_dir)),
     )
     assert lineage["counts"]["admitted_decision_ticks"] == 3
     assert lineage["counts"]["ticks_without_a_decision"] == 1
@@ -1474,7 +1498,15 @@ def test_cli_writes_both_inputs(tmp_path: Path, hinge: dict[str, Any]) -> None:
     )
     assert (
         si.main(
-            ["live-decisions", "--data-dir", str(data_dir), "--out", str(out / "live")]
+            [
+                "live-decisions",
+                "--data-dir",
+                str(data_dir),
+                "--boot-snapshot",
+                str(_boot_snapshot(tmp_path, [])),
+                "--out",
+                str(out / "live"),
+            ]
         )
         == 0
     )
@@ -2010,6 +2042,142 @@ def test_m5_counts_only_this_session_day_not_the_whole_accumulated_leaf(
     assert states["counts"]["consumed_ids"] == 3
     assert states["counts"]["consumed_ids_all_days"] == 4
     assert states["counts"]["post_boot_consumed_ids"] == 3
+
+
+def test_live_decisions_are_scoped_to_the_one_session_day(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """⛔ **The 2026-10-22 scope fix covered only the consumed-ids document, and
+    that is why no session has ever produced a B3 summary.**
+
+    Measured 2026-10-29 on the 10-28 LONG session's own stores (its leaf read
+    from the cold-backup generation taken after the session stopped): five of
+    B3's six steps exited 0 and ``diff_decisions.py`` refused with
+
+        1939 live decision(s) name bars that are not compared, first
+        ['A05611:1m:20261015T100100+0900', …]
+
+    — ``live.jsonl`` carried every decision the leaf had accumulated since the
+    10-15 genesis (2,348 records over six days) while the offline three cover
+    one session's frozen frame. Scoped, the same run writes a summary:
+    409 bars, ``unresolved`` 0.
+
+    Here, in miniature: two bars of the session day and one from an earlier
+    session the leaf still holds.
+    """
+    bars = _bars(hinge, 3)
+    older = replace(bars[0], raw_event_id=_event_id_on("20261015", "1001"))
+    leaf = [older, *bars[1:]]
+    data_dir = _session(
+        tmp_path,
+        hinge,
+        leaf,
+        entries=[
+            (_seq(index, 2), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bar))
+            for index, bar in enumerate(leaf)
+        ],
+    )
+
+    everything = si.live_decision_records(data_dir)
+    assert len(everything) == 3, "the store-wide read is still store-wide"
+
+    records, ticks, scope = si.scope_live_decisions(
+        everything,
+        ticks=si.read_decision_ticks(data_dir),
+        snapshots=si.read_snapshots(data_dir),
+        pre_boot=frozenset(),
+    )
+    assert scope.session_day == "20261019"
+    assert scope.days_present == ("20261015", "20261019")
+    assert [record["raw_event_id"] for record in records] == [
+        bars[1].raw_event_id,
+        bars[2].raw_event_id,
+    ]
+    # the tick count moves with the records, or `ticks_without_a_decision`
+    # would count an earlier session's ticks against this one
+    assert (ticks, scope.ticks_all_days) == (2, 3)
+    assert scope.records_all_days == 3
+    # one session, so bar_index is the n-th decision OF IT
+    assert [record["bar_index"] for record in records] == [0, 1]
+
+    lineage = si.build_live_lineage(
+        data_dir=data_dir,
+        records=records,
+        payload=si.render_jsonl(records),
+        ticks=ticks,
+        scope=scope,
+    )
+    assert lineage["session_scope"] == {
+        "session_day": "20261019",
+        "days_present": ["20261015", "20261019"],
+        "live_jsonl_lines_all_days": 3,
+        "admitted_decision_ticks_all_days": 3,
+        "admitted_decision_ticks_with_no_resolvable_day": 0,
+    }
+    assert lineage["counts"]["ticks_without_a_decision"] == 0
+
+
+def test_the_live_scope_comes_from_the_boot_snapshot_like_the_other_document(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """One source of truth for both session-derived inputs.
+
+    The failing input the newest-day fallback alone cannot handle is already
+    recorded on :func:`session_inputs.derive_session_day`: a session that dies
+    before consuming anything reads the PREVIOUS session's numbers as its own.
+    Here that disagreement must refuse rather than scope ``live.jsonl`` to a
+    day the boot snapshot does not name.
+    """
+    bars = _bars(hinge, 2)
+    data_dir = _session(
+        tmp_path,
+        hinge,
+        bars,
+        entries=[
+            (_seq(index, 2), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bar))
+            for index, bar in enumerate(bars)
+        ],
+    )
+    with pytest.raises(si.SessionInputsError, match="not from the same session"):
+        si.scope_live_decisions(
+            si.live_decision_records(data_dir),
+            ticks=si.read_decision_ticks(data_dir),
+            snapshots=si.read_snapshots(data_dir),
+            pre_boot=frozenset({_event_id_on("20261020", "0845")}),
+        )
+
+
+def test_red_a_live_record_with_no_readable_day_is_refused_not_dropped() -> None:
+    """A record that cannot be placed in a day would VANISH from a filtered
+    file with nothing saying so — the same rule
+    :func:`session_inputs.scope_to_session_day` applies to the other document."""
+    with pytest.raises(si.SessionInputsError, match="no readable"):
+        si.scope_live_decisions(
+            [{"raw_event_id": "A05611-no-stamp"}],
+            ticks=(),
+            snapshots=(),
+            pre_boot=frozenset(),
+        )
+
+
+def test_the_live_cli_requires_the_boot_snapshot(
+    tmp_path: Path, hinge: dict[str, Any], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Required, not optional: an omitted flag would silently write the
+    store-wide file whose refusal downstream this scope exists to prevent."""
+    data_dir = _session(tmp_path, hinge, _bars(hinge, 2))
+    with pytest.raises(SystemExit) as excinfo:
+        si.main(
+            [
+                "live-decisions",
+                "--data-dir",
+                str(data_dir),
+                "--out",
+                str(tmp_path / "x"),
+            ]
+        )
+    assert excinfo.value.code == 2
+    assert "--boot-snapshot" in capsys.readouterr().err
 
 
 def test_the_m5_criterion_records_the_budget_and_the_non_stale_rule(

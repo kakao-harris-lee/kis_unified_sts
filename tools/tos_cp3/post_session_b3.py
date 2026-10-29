@@ -82,11 +82,28 @@ KST = ZoneInfo("Asia/Seoul")
 #: session's own ``b3/status.json`` (``steps[*].seconds``), so re-measuring is
 #: reading that file again rather than trusting this block.
 TOTAL_TIMEOUT_MEASUREMENT: dict[str, Any] = {
-    "measured_at": None,
-    "session": None,
-    "frame_days": None,
-    "steps_seconds": {},
-    "total_seconds": None,
+    "measured_at": "2026-10-29",
+    # The 10-28 LONG session's own artifacts, with its durable leaf read from
+    # the cold-backup generation taken after that session stopped (gen9,
+    # 2026-10-28 18:20) — the leaf as B3 would have seen it in the session.
+    "session": "long-20261028",
+    "frame_days": 5,
+    "evidence_sqlite3_bytes": 763744256,
+    "steps_seconds": {
+        "consumed-ids": 0.82,
+        "live-decisions": 2.07,
+        "b1a-fields": 6.80,
+        "b2-legacy": 7.40,
+        "b1b-tos": 8.41,
+        "b3-report": 0.37,
+    },
+    "total_seconds": 25.9,
+    # Why the budget is ~18x the measurement rather than a tight bound: the
+    # frozen frame stays ~5 days (the producer seeds that many) but the durable
+    # leaf GROWS every session, and `live-decisions` and `consumed-ids` scan it.
+    # The budget is not a performance target — it exists so a wedged step
+    # cannot hold the cron wrapper's flock into the next day.
+    "budget_seconds": 480,
 }
 
 
@@ -338,6 +355,11 @@ def plan_steps(
                 "live-decisions",
                 "--data-dir",
                 str(data_leaf),
+                # Same reason as step 1's: the durable leaf accumulates
+                # sessions, and a store-wide live.jsonl makes step 6 refuse
+                # (session_inputs.LiveScope has the measurement).
+                "--boot-snapshot",
+                str(boot_snapshot),
                 "--out",
                 str(b3 / "live"),
             ),

@@ -141,6 +141,20 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
   (예산 초과 · SIGKILL). `failed` 는 사유와 멈춘 단계(`stage`)를 싣고, `skipped` 는
   설정이나 시장 때문에 돌리지 않은 것이다. 단계 로그는 `<session>/b3/logs/`.
 
+**실측 2026-10-29 (long-20261028 세션 · 잎은 그 세션 뒤의 콜드 백업 gen9).** 여섯 단계
+25.9 s, `summary.json` 409 봉 · **unresolved 0** · `live_comparison.divergent`
+**26/409**(identical 383). 26 건은 전부 「오프라인 FLAT + capacity_denied」 대 「실시간
+PROPOSAL」이고, B1b 의 선언된 차이 B1b-D1(백테스트 예약 투영의 release 경로 부재,
+`tos/runtime/cp3/runner.py` 의 `--max-unresolved-send-per-scope` 설명)에 해당한다 —
+§2-1 의 「설명 안 되는 divergence 0」을 닫으려면 그 귀속을 따로 처분해야 한다. 상태판은
+그 수를 막힘이 아니라 **확인**으로 올린다.
+
+⚠ 그 실측이 처음에는 거부로 끝났고, 그것이 **왜 여태 summary 가 없었는지**다:
+`live-decisions` 가 누적 잎 전체(6 일 2,348 건)를 담아 B3 가
+「live decision(s) name bars that are not compared」로 거부했다. 2026-10-22 의 세션 날짜
+범위 고정이 consumed-ids 문서에만 적용돼 있었다 — 이제 두 문서가 같은 boot 스냅샷으로
+같은 날에 묶인다(`session_inputs.LiveScope`).
+
 `sts tos status` 는 이 둘을 그 순서로 읽는다 — 돌지 않은 세션은 수를 보여 주지 않고
 사유를 보여 준다. ⛔ **B3 의 rc 는 세션의 종료 코드를 바꾸지 않는다**(아래 「종료 코드」가
 그대로다): 세션의 판정은 런타임과 생산자에 대한 것이고, 돌지 못한 대조는 그 둘에 대해

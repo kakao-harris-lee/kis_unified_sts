@@ -319,6 +319,19 @@ def test_consumed_ids_is_given_the_boot_snapshot(tmp_path: Path) -> None:
     )
 
 
+def test_live_decisions_is_given_the_boot_snapshot_too(tmp_path: Path) -> None:
+    """**The measured blocker.** Without it ``live.jsonl`` spans the whole
+    accumulating leaf and step 6 refuses: on the 10-28 LONG session's own
+    stores, 1,939 of 2,348 live records named bars outside that session's
+    frozen frame (``session_inputs.LiveScope`` carries the measurement). Scoped,
+    the same run writes a summary — 409 bars, unresolved 0."""
+    step = next(s for s in _plan(_tree(tmp_path)).steps if s.name == "live-decisions")
+    assert "--boot-snapshot" in step.argv
+    assert step.argv[step.argv.index("--boot-snapshot") + 1].endswith(
+        "boot-journal-snapshot.json"
+    )
+
+
 def test_b1a_and_b2_read_the_producers_frozen_frame_with_the_same_manifest(
     tmp_path: Path,
 ) -> None:
