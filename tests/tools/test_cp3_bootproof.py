@@ -1173,6 +1173,10 @@ _RUN_ARGVFILE_ENV = "STUB_RUN_ARGVFILE"
 #: When set, the stub `run` exits ON ITS OWN with this code a moment after it
 #: starts — how a test reaches step 12 with a `run` this runner never stopped.
 _RUN_EXIT_ENV = "STUB_RUN_EXIT_CODE"
+#: When set, the stub `run` installs a SIGTERM handler that ends the process
+#: with this code — a runtime whose SHUTDOWN fails (#987). It is the stop the
+#: runner asked for, and a code that is not the 143 an unhandled SIGTERM gives.
+_RUN_STOP_EXIT_ENV = "STUB_RUN_STOP_EXIT_CODE"
 #: Read by the stub renderer to decide the rendered tree's `environment`.
 _TREE_ENV = "STUB_TREE_ENVIRONMENT"
 #: Written by the stub producer so a test can find it and prove it was stopped.
@@ -1498,9 +1502,18 @@ def _runner_repo(
         )
         (cli_dir / "__init__.py").write_text("", encoding="utf-8")
         (cli_dir / "cli.py").write_text(
-            "import json, os, time\n"
+            "import json, os, signal, time\n"
             "from pathlib import Path\n"
             "def main(argv):\n"
+            # A runtime whose teardown FAILS (#987): the stop SIGTERM arrives,
+            # the shutdown path runs, and the process ends with a code that is
+            # neither 0 nor the 143 an unhandled SIGTERM would give.
+            f"    stop_code = os.environ.get({_RUN_STOP_EXIT_ENV!r})\n"
+            "    if stop_code:\n"
+            "        signal.signal(\n"
+            "            signal.SIGTERM,\n"
+            "            lambda _signo, _frame: os._exit(int(stop_code)),\n"
+            "        )\n"
             f"    envfile = os.environ.get({_RUN_ENVFILE_ENV!r})\n"
             "    if envfile:\n"
             "        Path(envfile).write_text(json.dumps(dict(os.environ)))\n"
@@ -3326,6 +3339,7 @@ def test_nothing_the_session_creates_is_readable_by_another_user(
     directories = [producer_session, data_leaf, tmp_path / "render-out"]
     files = [
         tmp_path / "session.log",  # the operator's own log
+        tmp_path / "session.log.run-rc",  # step 11b's exit-status record (#987)
         tmp_path / "journal.jsonl",  # the fifteen fields
         producer_session / "boot-journal-snapshot.json",
         producer_session / "first-row-wait.log",
@@ -3654,8 +3668,58 @@ def test_a_timeout_124_the_runner_did_not_cause_stays_a_failure(
     assert "=== BOOT" in output, output[-2000:]
     assert "run exited on its own before the stop time" in output
     assert "=== END run rc=124" in output, output[-2000:]
-    assert "recorded as 143" not in output
+    assert "the runtime itself ended" not in output
     assert result.returncode == 124, output[-2000:]
+
+
+def test_a_runtime_that_fails_while_stopping_is_not_recorded_as_a_normal_stop(
+    tmp_path: Path, timeout_flavour: dict[str, str]
+) -> None:
+    """**#987's failing input, and it fails identically on both `timeout`s.**
+
+    The runner's stop path SIGTERMs the runtime at ``TENANT_STOP_AT`` and the
+    runtime's shutdown then ends rc 1 — a durable set that did not close, a
+    traceback on the way out. On coreutils 9.4 that surfaces as rc 1. On 9.10
+    ``timeout`` answers 124 for the TERM it was asked to forward, and #986 read
+    a 124-with-the-stop-marker as the ordinary stop: the unclean session day
+    was recorded as rc 143, the code ``cp3_tenant_daily.sh`` notifies as 「정상」.
+
+    What closes it is that ``timeout`` is no longer asked. Step 11b's recorder
+    writes the code the RUNTIME ended with, tagged with this boot's token, and
+    step 12 reads that back — so the two flavours below have to agree, which is
+    the whole point of running this under both.
+
+    The same input also proves the recorder's ``trap ":"`` is a CATCH and not an
+    ignore: an ignored SIGTERM would be inherited by the runtime, whose handler
+    would then never run, and this session would end at the 180 s subprocess
+    bound instead of rc 1.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+10 seconds",
+        **{
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            _RUN_STOP_EXIT_ENV: "1",
+            **timeout_flavour,
+        },
+    )
+    output = result.stdout + result.stderr
+    assert "=== BOOT" in output, output[-2000:]
+    # the runtime WAS stopped by this runner — it did not leave on its own
+    assert "=== STOP SIGTERM -> run" in output, output[-2000:]
+    assert "=== END run rc=1" in output, output[-2000:]
+    assert "=== END run rc=143" not in output, output[-2000:]
+    assert result.returncode == 1, output[-2000:]
+    # ...and the code came from the record, which carries this boot's token
+    record = (tmp_path / "session.log.run-rc").read_text("utf-8")
+    assert re.fullmatch(r"\d+/\d+ 1\n", record), record
+    if timeout_flavour:
+        # the forced 9.10 shape: `timeout` said 124 and was overruled by it
+        assert "timeout reported rc=124 for the SIGTERM this runner" in output
+        assert "but the runtime itself ended rc=1" in output
+    _producer_outlived_the_runner(tmp_path)
 
 
 # ---------------------------------------------------------------------------

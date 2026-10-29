@@ -1231,9 +1231,56 @@ first_row_wait 1 "boot-moment snapshot"
 # again, for a child that ignores TERM.
 CHILD_CEILING_S=$((RUN_S + SIGKILL_AFTER_S))
 CLI="import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))"
+
+# --- 11b. the runtime records its OWN exit status (#987) -------------------
+#
+# `timeout` is the only process that reaps the runtime, and what it REPORTS for
+# the SIGTERM this runner's stop path sent depends on its coreutils version:
+# 9.4 (ubuntu-24.04, this host) passes the child's code through, 9.10
+# (ubuntu-26.04) answers 124 for any TERM it was asked to forward. #986 read
+# that 124 through the stop marker and recorded it as 143 — right for a runtime
+# that stopped cleanly, WRONG for one whose shutdown then failed. On 9.10 an
+# rc-1 teardown and a clean stop were the same session day (#987's failing
+# input: stop SIGTERM → the runtime ends rc 1 while closing its durable set →
+# `timeout` 124 → marker set → recorded 143, a normal stop), while the same
+# input on 9.4 shows up as the rc 1 it is.
+#
+# So the runtime's status stops being something `timeout` is asked about. One
+# `bash` between the supervisor and the runtime records the code the runtime
+# itself ended with, and step 12 reads that back: no version of `timeout` takes
+# part in the answer. Everything `timeout` is here for is unchanged — it is
+# still the supervising process with its own alarm, still the group leader the
+# stop path signals, and the recorder adds no deadline of its own.
+#
+# ⚠ `trap ":"` is a CATCH, not an ignore, and the difference is the whole
+# mechanism. A caught signal is reset to the DEFAULT disposition in children,
+# so the runtime still dies of the stop TERM exactly as it did before; an
+# ignore (`trap ""`) is INHERITED and would make the runtime deaf to the very
+# stop this runner depends on. bash defers a trap until the foreground command
+# it is waiting on has finished, so the recorder is still there to see the
+# runtime's own code, and `$?` survives the deferred trap.
+#
+# The record carries a TOKEN for this boot and step 12 accepts no other. This
+# template deletes nothing (`test_runner_template_never_removes_itself`), so a
+# record left by an earlier run against the same TENANT_LOG has to be
+# unreadable rather than plausible: reporting an earlier session's exit code as
+# this one's would be the same class of defect as #987 itself — evidence that
+# is wrong rather than missing.
+RUN_RC_FILE=$TENANT_LOG.run-rc
+RUN_RC_TOKEN="$$/$(TZ=Asia/Seoul date +%s)"
+RECORD_CHILD_RC='trap ":" TERM INT HUP
+token=$1
+rc_file=$2
+shift 2
+"$@"
+rc=$?
+printf "%s %s\n" "$token" "$rc" >"$rc_file"
+exit "$rc"'
+
 log "=== BOOT label=$TENANT_ENVIRONMENT_LABEL custody=$TENANT_CUSTODY_ROOT stop in ${RUN_S}s ($TENANT_STOP_AT) · child ceiling ${CHILD_CEILING_S}s"
 PYTHONPATH="$REPO/tos/src:$REPO/tos/runtime/src" \
   timeout --kill-after="${SIGKILL_AFTER_S}s" "${CHILD_CEILING_S}s" \
+  "$BASH" -c "$RECORD_CHILD_RC" cp3-run-rc "$RUN_RC_TOKEN" "$RUN_RC_FILE" \
   "$PY" -c "$CLI" run \
   --config-dir "$TENANT_RENDER_OUT" \
   --data-dir "$DATA_LEAF" \
@@ -1241,7 +1288,7 @@ PYTHONPATH="$REPO/tos/src:$REPO/tos/runtime/src" \
   --transport "$TRANSPORT" \
   --environment-label "$TENANT_ENVIRONMENT_LABEL" >>"$TENANT_LOG" 2>&1 &
 RUN_PID=$!
-log "run pid=$RUN_PID (supervised by timeout, ceiling ${CHILD_CEILING_S}s)"
+log "run pid=$RUN_PID (supervised by timeout, ceiling ${CHILD_CEILING_S}s; own exit status -> $RUN_RC_FILE token $RUN_RC_TOKEN)"
 
 # --- 12. stop --------------------------------------------------------------
 
@@ -1266,16 +1313,43 @@ else
 fi
 wait "$RUN_PID" 2>/dev/null
 run_rc=$?
-# #967: what `timeout` reports for the SIGTERM our stop path sent depends on
-# the coreutils version — 9.4 (ubuntu-24.04) passes the child's 143 through,
-# 9.10 (ubuntu-26.04) reports 124. With the marker set, 124 is that same
-# ordinary stop and is recorded as 143, the code every reader of this exit
-# (step 13's verdict, cp3_tenant_daily.sh) already treats as the normal end.
-# WITHOUT the marker a 124 is `timeout`'s own alarm — a runtime that outlived
-# its ceiling — and stays 124, a failure.
-if [ "$RUN_STOP_SENT" = 1 ] && [ "$run_rc" -eq 124 ]; then
-  log "run: timeout reported rc=124 for the SIGTERM this runner's stop path sent — recorded as 143 (ordinary stop)"
-  run_rc=143
+# #987: `timeout` is not asked what the runtime's status was — step 11b's
+# recorder wrote it and this reads it back, so the code recorded here is the
+# same on 9.4 and on 9.10. #967's shapes, now all one rule:
+#
+#   stop marker + a record for THIS boot -> the runtime's own code, whatever
+#     `timeout` said. 143 (the TERM, the ordinary end of a full session), 0, or
+#     a FAILURE while stopping — which on 9.10 was indistinguishable from 143
+#     before this and is the whole of #987.
+#   stop marker, NO record -> the runtime never got to write one, i.e. it was
+#     SIGKILLed (the `--kill-after` grace ran out, or `stop_supervised`
+#     escalated). That is not an ordinary stop and is not recorded as one:
+#     whatever `timeout` reported stands.
+#   NO stop marker -> nothing is read. A 124 here is `timeout`'s own alarm, a
+#     runtime that outlived its ceiling, and the record would hold the 143 that
+#     alarm's TERM caused — reading it would turn that failure into a clean
+#     stop.
+RUN_CHILD_RC=""
+if [ "$RUN_STOP_SENT" = 1 ] && [ -f "$RUN_RC_FILE" ]; then
+  RUN_RC_RECORD=""
+  read -r RUN_RC_RECORD <"$RUN_RC_FILE" 2>/dev/null
+  case $RUN_RC_RECORD in
+  "$RUN_RC_TOKEN "*) RUN_RC_DIGITS=${RUN_RC_RECORD#"$RUN_RC_TOKEN "} ;;
+  *) RUN_RC_DIGITS="" ;;
+  esac
+  case $RUN_RC_DIGITS in
+  '' | *[!0-9]*)
+    log "WARN: $RUN_RC_FILE holds no exit status for this boot (token $RUN_RC_TOKEN, first line '$RUN_RC_RECORD') — falling back to what timeout reported"
+    ;;
+  *) RUN_CHILD_RC=$RUN_RC_DIGITS ;;
+  esac
+fi
+if [ -n "$RUN_CHILD_RC" ]; then
+  [ "$RUN_CHILD_RC" = "$run_rc" ] ||
+    log "run: timeout reported rc=$run_rc for the SIGTERM this runner's stop path sent, but the runtime itself ended rc=$RUN_CHILD_RC ($RUN_RC_FILE) — recording the runtime's own"
+  run_rc=$RUN_CHILD_RC
+elif [ "$RUN_STOP_SENT" = 1 ] && [ "$run_rc" -eq 124 ]; then
+  log "WARN: timeout reported rc=124 for the SIGTERM this runner's stop path sent and the runtime recorded no exit status of its own — it was killed before it could, so this session is NOT recorded as an ordinary stop"
 fi
 log "=== END run rc=$run_rc"
 
@@ -1430,8 +1504,9 @@ printf '%s\n' "$COUNTS" | while IFS= read -r line; do log "  $line"; done
 #
 # "The way it was asked to" is 0 OR 143: a session that reaches TENANT_STOP_AT
 # is stopped by SIGTERM from this script's own stop path, so 143 is the
-# ORDINARY end of a full session, not a failure (a `timeout` 124 for that same
-# stop was already folded into 143 in step 12, and only with RUN_STOP_SENT set). Those two are the codes a
+# ORDINARY end of a full session, not a failure (step 12 already resolved
+# `run_rc` to the code the RUNTIME ended with, whatever version of `timeout`
+# supervised it, and only with RUN_STOP_SENT set). Those two are the codes a
 # producer's silence has something to add to. Any OTHER code is a runtime
 # failure and keeps its own: it is the earlier and larger fact, and replacing
 # it with 5 would report a boot that died as a feed that stopped.
