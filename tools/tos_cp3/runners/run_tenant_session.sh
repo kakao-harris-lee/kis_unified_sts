@@ -252,6 +252,16 @@ BAND_PROCESS_KILL_AFTER_S=5
 # sends nothing) and NOT a reason to abort.
 BAND_LINE_EXTRA_WAIT_S=${CP3_BAND_LINE_EXTRA_WAIT_S:-20}
 
+# The outer stop on step 14's B3 reconciliation. NOT its budget — that is
+# config/tos_cp3_b3.yaml::total_timeout_s, which the tool hands to each step as
+# the time it has left. This is the stop for the case that budget cannot cover:
+# the tool's own interpreter wedging before it ever starts a step. It has to
+# exist because this runs while the cron wrapper still holds its flock, and a
+# step with no ceiling at all would refuse TOMORROW's session ("lock busy").
+# Ten minutes, read together with the config value by
+# `test_the_b3_budget_stays_under_the_runners_ceiling`.
+B3_CEILING_S=${CP3_B3_CEILING_S:-600}
+
 # A typo ceiling on the session window, not a tuning knob: TENANT_STOP_AT is a
 # wall-clock time, and "2027" instead of "2026" is a session that never ends.
 # One trading day is the widest a one-off boot proof can honestly need — and a
@@ -1498,6 +1508,56 @@ PY
 ) || true
 log "post-stop durable set $DATA_LEAF:"
 printf '%s\n' "$COUNTS" | while IFS= read -r line; do log "  $line"; done
+
+# --- 14. the §3.6 B3 reconciliation ---------------------------------------
+#
+# Roadmap §2-1 ("장후 B3 대조에서 unresolved = 0") is measured off
+# `<session>/b3/report/summary.json`, and until this step existed no session
+# had ever written one: B3 was six commands an operator ran by hand (runbook
+# history §7.2-d), so `sts tos status` printed "B3 대조: 결과 없음" every day.
+#
+# HERE, and not in a later job, for one reason: B1b can only load the strategy
+# this session RENDERED ($TENANT_RENDER_OUT). Both committed copies refuse this
+# journal — the harness copy pins backtest coordinates, the tenant copy leaves
+# them "TBD" — so the comparison has to run while the session directory is
+# still around.
+#
+# ⛔ **It cannot change this session's verdict.** The rc is logged and
+# discarded: the session's exit code is about the runtime and the producer
+# (step 12b), and a reconciliation that could not run says nothing about
+# either. The record of what happened is `<session>/b3/status.json`, which the
+# tool writes BEFORE its first step and replaces atomically at the end — so a
+# missing input, a refusing step, the budget, or a SIGKILL all leave something
+# that says so, and never a summary claiming unresolved=0.
+# Where the record goes: the session directory, which is this instance's
+# producer dir one level up. Derived rather than asked for, because every
+# TENANT_* value is an instance value with no default and adding a required one
+# would mean reinstalling the host cron wrapper that sets them
+# (~/.config/kis-probes, sha256-pinned); CP3_B3_SESSION_DIR is the handle for a
+# session whose layout is not the cron one.
+B3_SESSION_DIR=${CP3_B3_SESSION_DIR:-$(dirname "$TENANT_PRODUCER_SESSION_DIR")}
+
+# The outer ceiling is a stop for a WEDGED interpreter, not the budget: the
+# budget is config/tos_cp3_b3.yaml::total_timeout_s, which the tool applies to
+# each step as the time it has left. It matters because an unbounded step would
+# hold the cron wrapper's flock past midnight and refuse TOMORROW's session
+# ("lock busy") — a bigger loss than a missing comparison.
+# `test_the_b3_budget_stays_under_the_runners_ceiling` pins the ordering.
+log "=== B3 session-dir=$B3_SESSION_DIR instrument=$INSTRUMENT market=$_MARKET ceiling ${B3_CEILING_S}s"
+timeout --kill-after=5s "${B3_CEILING_S}s" \
+  "$PY" "$REPO/tools/tos_cp3/post_session_b3.py" \
+  --session-dir "$B3_SESSION_DIR" \
+  --data-leaf "$DATA_LEAF" \
+  --producer-session-dir "$TENANT_PRODUCER_SESSION_DIR" \
+  --render-out "$TENANT_RENDER_OUT" \
+  --instrument "$INSTRUMENT" \
+  --session-day "$(TZ=Asia/Seoul date +%F)" \
+  --market "$_MARKET" \
+  --python "$PY" >>"$TENANT_LOG" 2>&1
+b3_rc=$?
+# The record's own path is printed by the tool (it knows the configured
+# subdir); this line is the rc, and the rc stops here.
+log "=== END B3 rc=$b3_rc (its record is under $B3_SESSION_DIR · this rc does NOT change the session's)"
 
 # Exit code 5: the runtime finished the way it was asked to, and the producer
 # HALTED IN the session (step 12b) rather than ending with it.

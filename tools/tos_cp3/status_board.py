@@ -10,7 +10,9 @@
 * 그 세션 날짜로 한정한 틱 수, 결정 종류, 보류(DECISION_WITHHELD 등) 사유와 흐름 정지 사유
   분포, M5 첫 수(값을 쥐고도 UNKNOWN 으로 거절된 post-boot 봉), ``MARKETFEED_FIELD_REFUSED``
   행, ``VENUE_BAND_OBSERVED`` 행, ``MARKETFEED_PASS_OVERRUN`` 행 수와 가장 긴 pass(#949).
-* B3 대조 요약(``<session>/b3/report/summary.json`` 이 있으면) — unresolved · divergent.
+* B3 대조 — 먼저 **돌았는가**(``<session>/b3/status.json``, 세션 러너 step 14 가 자동으로
+  남긴다), 그 다음 **무엇을 봤는가**(``<session>/b3/report/summary.json``) — unresolved ·
+  divergent. 돌지 않은 세션은 그 사유가 나오고, 수는 나오지 않는다.
 * 생산자 지연(journal ``as_of_ms`` − 분 마감) p50/p90 과 생산자 카운터.
 * 상주 paper 세션(``paper-sessions`` · ``paper-ops`` pid) 상태와 그 세션의
   ``MARKETFEED_PASS_OVERRUN`` · 권한 행.
@@ -107,6 +109,15 @@ AUTHORITY_KINDS: tuple[str, ...] = (
 BOOT_KIND = "TIME_SERVICE_STARTUP"
 #: diff_decisions.py 가 쓰는 summary 모양 — 다른 값이면 키를 믿지 않고 막힘으로 보고한다.
 B3_SUMMARY_SCHEMA_VERSIONS = frozenset({2})
+#: 세션 디렉터리 아래 B3 산출물 디렉터리. ``config/tos_cp3_b3.yaml::subdir`` 와 같아야 하고
+#: ``tests/tools/test_cp3_post_session_b3.py`` 가 그 일치를 고정한다 — 두 값이 어긋나면
+#: 상태판은 돌아간 대조를 «결과 없음» 으로 읽는다.
+B3_SUBDIR = "b3"
+#: post_session_b3.py 가 쓰는 실행 기록 모양(``<session>/b3/status.json``).
+B3_STATUS_SCHEMA_VERSIONS = frozenset({1})
+#: 그 기록의 verdict — 「돌았다」 하나뿐이고 나머지는 전부 「재지 못했다」다.
+B3_VERDICT_OK = "ok"
+B3_VERDICT_SKIPPED = "skipped"
 
 _SESSION_DIR_RE = re.compile(r"^(?P<label>[a-z0-9][a-z0-9-]*?)-(?P<day>\d{8})$")
 _PAPER_DIR_RE = re.compile(
@@ -782,9 +793,71 @@ def session_seq_range(
 # ---------------------------------------------------------------------------
 
 
+def b3_run_facts(session_dir: Path) -> dict[str, Any] | None:
+    """B3 **실행 기록**(``b3/status.json``) 요약. 파일이 없으면 ``None``.
+
+    summary 와 역할이 다르다. summary 는 「대조가 무엇을 봤나」이고 이 파일은 「대조가
+    돌았나」다. 자동 단계(``tools/tos_cp3/post_session_b3.py``)는 첫 단계 **전에**
+    ``verdict: running`` 으로 이 파일을 쓰고 끝에 원자적으로 교체하므로,
+    ``running`` 이 남아 있는 것은 **끝내지 못했다**는 뜻이다(예산 초과·SIGKILL).
+
+    Returns:
+        ``{"verdict", "reason", "stage", "ok"}`` — 모양이 다르면 ``{"error": …}``.
+        ``ok`` 는 verdict 가 ``"ok"`` 일 때만 참이고, 그때만 summary 의 수를 믿는다.
+    """
+    path = session_dir / B3_SUBDIR / "status.json"
+    if not path.exists():
+        return None
+    record = _read_json(path)
+    if not isinstance(record, dict):
+        return {"error": f"{path.name} 이 JSON 객체가 아니다"}
+    version = record.get("status_schema_version")
+    if version not in B3_STATUS_SCHEMA_VERSIONS:
+        return {
+            "error": f"status_schema_version={version!r} — 이 상태판은"
+            f" {sorted(B3_STATUS_SCHEMA_VERSIONS)} 모양만 읽는다"
+        }
+    verdict = record.get("verdict")
+    if not isinstance(verdict, str) or not verdict:
+        return {"error": f"verdict 가 문자열이 아니다: {verdict!r}"}
+    stage = record.get("stage")
+    reason = record.get("reason")
+    return {
+        "verdict": verdict,
+        "stage": stage if isinstance(stage, str) else None,
+        "reason": reason if isinstance(reason, str) else "",
+        "ok": verdict == B3_VERDICT_OK,
+        "overdue": _b3_run_overdue(record),
+    }
+
+
+def _b3_run_overdue(record: dict[str, Any]) -> bool:
+    """``verdict: running`` 이 **지났는가** — 자기 예산을 넘겼는가.
+
+    B3 는 정지 뒤 1-2 분을 돈다. 그 사이에 상태판을 보면 ``running`` 이 정상이므로
+    그것만으로 막힘을 올리면 하루 한 번 거짓 경보가 난다. 그래서 기록이 **자기**
+    예산(``total_timeout_s``, 그 파일이 싣는다)과 시작 시각을 들고 있고, 그 합을
+    넘겼으면 더는 돌고 있을 수 없다.
+
+    시각이나 예산을 읽을 수 없으면 **지난 것으로 본다** — 읽을 수 없는 기록으로
+    「아직 돌고 있다」를 주장할 수는 없다.
+    """
+    started, budget = record.get("started_at"), record.get("total_timeout_s")
+    if not isinstance(started, str) or not isinstance(budget, int):
+        return True
+    try:
+        began = _dt.datetime.fromisoformat(started)
+    except ValueError:
+        return True
+    if began.tzinfo is None:
+        return True
+    # 60 s: 바깥 ceiling 이 SIGKILL 을 보내고 러너가 그 줄을 적는 데 드는 여유.
+    return _dt.datetime.now(KST) - began > _dt.timedelta(seconds=budget + 60)
+
+
 def b3_facts(session_dir: Path) -> dict[str, Any] | None:
     """B3 summary 요약. 파일이 없으면 ``None``, 모양이 다르면 ``{"error": …}``."""
-    path = session_dir / "b3" / "report" / "summary.json"
+    path = session_dir / B3_SUBDIR / "report" / "summary.json"
     if not path.exists():
         return None
     summary = _read_json(path)
@@ -838,6 +911,7 @@ class TenantSession:
     producer: dict[str, Any]
     store: dict[str, Any] | None
     b3: dict[str, Any] | None
+    b3_run: dict[str, Any] | None
     boot_snapshot_error: str | None = None
     issues: list[tuple[str, str]] = field(default_factory=list)
 
@@ -908,6 +982,7 @@ def read_tenant_session(
         producer=producer_facts(path, cfg.latency_percentiles),
         store=store,
         b3=b3_facts(path),
+        b3_run=b3_run_facts(path),
         boot_snapshot_error=boot_snapshot_error,
     )
     session.issues = tenant_issues(session, cfg)
@@ -1131,7 +1206,28 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
                         f" ≠ release.yaml {s.expected_code_digest[:12]}",
                     )
                 )
-    if s.b3 is not None:
+    # 실행 기록이 먼저다. 「돌지 않았다」를 모르는 채 summary 의 수를 읽으면, 앞선 날의
+    # 남은 summary 가 오늘의 결과로 보인다 — 그래서 verdict 가 ok 가 아니면 수를 읽지
+    # 않고 그 사실을 올린다.
+    if s.b3_run is not None and "error" in s.b3_run:
+        issues.append((BLOCK, f"B3 실행 기록을 읽을 수 없다 — {s.b3_run['error']}"))
+    elif s.b3_run is not None and not s.b3_run["ok"]:
+        verdict = s.b3_run["verdict"]
+        where = f" ({s.b3_run['stage']})" if s.b3_run["stage"] else ""
+        if verdict == B3_VERDICT_SKIPPED:
+            # 설정·시장으로 «돌리지 않기로 한» 것. §2-1 을 재지 못한 것은 맞으므로
+            # 숨기지 않고, 결함이 아니므로 막힘도 아니다.
+            issues.append((WARN, f"B3 대조 건너뜀 — {s.b3_run['reason']}"))
+        elif verdict == "running" and not s.b3_run["overdue"]:
+            issues.append((WARN, f"B3 대조 진행 중{where}"))
+        else:
+            issues.append(
+                (
+                    BLOCK,
+                    f"B3 대조가 §2-1 을 재지 못했다 — {verdict}{where}: {s.b3_run['reason']}",
+                )
+            )
+    elif s.b3 is not None:
         if "error" in s.b3:
             issues.append((BLOCK, f"B3 summary 를 읽을 수 없다 — {s.b3['error']}"))
         else:
@@ -1449,6 +1545,7 @@ def _session_json(s: TenantSession) -> dict[str, Any]:
         "producer": s.producer,
         "store": s.store,
         "b3": s.b3,
+        "b3_run": s.b3_run,
         "issues": [{"level": lv, "text": t} for lv, t in s.issues],
     }
 
@@ -1588,9 +1685,16 @@ def render_text(board: Mapping[str, Any]) -> str:
             f"    생산자: journal {p['journal_rows']}줄 · 지연(as_of−분마감) {lat_txt or '—'} · 최대 {lat['max']}ms · band 줄 {band}"
         )
         add(f"    생산자 카운터: {counters}")
-        b3 = s["b3"]
-        if b3 is None:
-            add("    B3 대조: 결과 없음(세션 디렉터리 b3/report/summary.json)")
+        b3, b3_run = s["b3"], s["b3_run"]
+        if b3_run is not None and "error" in b3_run:
+            add(f"    B3 대조: 실행 기록을 읽을 수 없음 — {b3_run['error']}")
+        elif b3_run is not None and not b3_run["ok"]:
+            where = f" ({b3_run['stage']})" if b3_run["stage"] else ""
+            add(f"    B3 대조: {b3_run['verdict']}{where} — {b3_run['reason']}")
+        elif b3 is None:
+            add(
+                f"    B3 대조: 결과 없음(세션 디렉터리 {B3_SUBDIR}/report/summary.json)"
+            )
         elif "error" in b3:
             add(f"    B3 대조: summary 를 읽을 수 없음 — {b3['error']}")
         else:

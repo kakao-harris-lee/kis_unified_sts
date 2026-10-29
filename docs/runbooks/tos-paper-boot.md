@@ -129,7 +129,22 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
   정상 정지(143)로 보이지 않는다. 그 파일이 **없는데** `timeout` 이 124 를 답했다면 런타임이
   적기 전에 SIGKILL 된 것이므로 정상 정지로 기록하지 않고 124 를 남긴다(WARN 한 줄).
 
-**세션 뒤 — §3.6 대조** 명령 여섯 줄과 수용 기준(M5 · M6 · B3)은 이력 §7.2-d 에 있다.
+**세션 뒤 — §3.6 대조는 러너가 자동으로 돌린다**(step 14, 2026-10-29). 손으로 돌릴
+여섯 줄과 수용 기준(M5 · M6 · B3)은 이력 §7.2-d 에 그대로 있고, 자동 단계는 그 여섯
+줄을 **서브프로세스로 그대로** 돌린다(`tools/tos_cp3/post_session_b3.py` ·
+설정 `config/tos_cp3_b3.yaml`). 읽을 것 둘:
+
+- `<session>/b3/report/summary.json` — **무엇을 봤나**. `unresolved.count` 가 §2-1 의
+  판정 수다. 이 파일을 쓰는 것은 `diff_decisions.py` 하나뿐이다.
+- `<session>/b3/status.json` — **돌았나**. 첫 단계 **전에** `verdict: running` 으로
+  쓰이고 끝에 원자적으로 교체되므로, `running` 이 남아 있으면 **끝내지 못한 것**이다
+  (예산 초과 · SIGKILL). `failed` 는 사유와 멈춘 단계(`stage`)를 싣고, `skipped` 는
+  설정이나 시장 때문에 돌리지 않은 것이다. 단계 로그는 `<session>/b3/logs/`.
+
+`sts tos status` 는 이 둘을 그 순서로 읽는다 — 돌지 않은 세션은 수를 보여 주지 않고
+사유를 보여 준다. ⛔ **B3 의 rc 는 세션의 종료 코드를 바꾸지 않는다**(아래 「종료 코드」가
+그대로다): 세션의 판정은 런타임과 생산자에 대한 것이고, 돌지 못한 대조는 그 둘에 대해
+아무 말도 하지 않는다. 러너 로그의 `=== END B3 rc=…` 줄이 그 rc 를 적는다.
 
 **세션 뒤 — 실전 주문 TR 0 건.** 요청 로그 **둘 다**(`producer-log.jsonl` ·
 `band-log.jsonl`)의 TR id 집합이 조회 TR 둘(`FHKIF03020200` · `FHMIF10000000`)의
