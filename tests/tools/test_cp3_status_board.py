@@ -672,6 +672,141 @@ def test_n4_b3_live_divergence_is_raised_as_a_warning(cfg: sb.BoardConfig):
     )
 
 
+def _b3_status(state: Path, session: str, **fields) -> None:
+    """``<session>/b3/status.json`` — what the automated step leaves behind
+    (``tools/tos_cp3/post_session_b3.py``)."""
+    record = {
+        "status_schema_version": 1,
+        "verdict": "ok",
+        "reason": "",
+        "stage": None,
+        "started_at": dt.datetime.now(sb.KST).isoformat(timespec="seconds"),
+        "total_timeout_s": 480,
+    }
+    record.update(fields)
+    path = state / "cp3-sessions" / session / "b3" / "status.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+
+def test_b3_that_could_not_run_blocks_and_the_summary_is_not_read(
+    state: Path, cfg: sb.BoardConfig
+):
+    """**The fail-closed direction, on the board.** ``unresolved`` has a good
+    value (0), so a stale summary next to a failed run must not be reported as
+    this session's result: the run record is read first and the numbers are
+    not read at all."""
+    _b3_status(
+        state,
+        "long-20261015",
+        verdict="failed",
+        stage="b1a-fields",
+        reason="b1a-fields exited 2 — see /x/b1a-fields.log",
+    )
+    board = _board(cfg, D1015)
+    blocks = _issues(board, sb.BLOCK)
+    assert (
+        "long-20261015: B3 대조가 §2-1 을 재지 못했다 — failed (b1a-fields):"
+        " b1a-fields exited 2 — see /x/b1a-fields.log" in blocks
+    )
+    # the fixture's own summary says unresolved 0 and divergent 26; neither is
+    # reported, because this session did not produce them
+    assert not any("B3 unresolved" in b for b in blocks)
+    assert not any("B3 live divergent" in w for w in _issues(board, sb.WARN))
+    assert "B3 대조: failed (b1a-fields)" in sb.render_text(board)
+
+
+def test_b3_skipped_is_a_warning_not_a_block(state: Path, cfg: sb.BoardConfig):
+    """A skip is a decision (the config, or a market B3 does not cover), not a
+    defect — but §2-1 still was not measured, so it is not silent either."""
+    _b3_status(
+        state,
+        "long-20261015",
+        verdict="skipped",
+        reason="market 'stock' is not in config markets ['futures']",
+    )
+    board = _board(cfg, D1015)
+    assert (
+        "long-20261015: B3 대조 건너뜀 — market 'stock' is not in config"
+        " markets ['futures']" in _issues(board, sb.WARN)
+    )
+    assert not any("B3" in b for b in _issues(board, sb.BLOCK))
+
+
+def test_b3_still_running_inside_its_budget_is_only_a_warning(
+    state: Path, cfg: sb.BoardConfig
+):
+    """B3 runs for a minute or two after the stop. Blocking on ``running``
+    alone would raise a false alarm once a day, so the record's own
+    ``total_timeout_s`` decides."""
+    _b3_status(state, "long-20261015", verdict="running", stage=None)
+    board = _board(cfg, D1015)
+    assert "long-20261015: B3 대조 진행 중" in _issues(board, sb.WARN)
+    assert not any("B3" in b for b in _issues(board, sb.BLOCK))
+
+
+@pytest.mark.parametrize(
+    "started",
+    [
+        "overdue",
+        "unreadable",
+        "naive",
+    ],
+)
+def test_b3_running_past_its_budget_blocks(
+    state: Path, cfg: sb.BoardConfig, started: str
+):
+    """``running`` that outlived its own budget is the SIGKILL case — the outer
+    ``timeout`` cut the tool off and nothing replaced the record. A start time
+    that cannot be read is treated the same way: an unreadable record cannot be
+    used to claim the run is still going."""
+    stamps = {
+        "overdue": (dt.datetime.now(sb.KST) - dt.timedelta(seconds=10_000)).isoformat(
+            timespec="seconds"
+        ),
+        "unreadable": "어제",
+        "naive": "2026-10-15T15:50:00",
+    }
+    _b3_status(state, "long-20261015", verdict="running", started_at=stamps[started])
+    blocks = _issues(_board(cfg, D1015), sb.BLOCK)
+    assert any("B3 대조가 §2-1 을 재지 못했다 — running" in b for b in blocks), blocks
+
+
+def test_b3_ok_reads_the_summary_as_before(state: Path, cfg: sb.BoardConfig):
+    """The record gates the numbers; it does not replace them."""
+    _b3_status(state, "long-20261015", verdict="ok")
+    board = _board(cfg, D1015)
+    assert _session(board, "long-20261015")["b3"]["divergent"] == 26
+    assert any("B3 live divergent 26/303" in w for w in _issues(board, sb.WARN))
+
+
+@pytest.mark.parametrize(
+    ("fields", "needle"),
+    [
+        ({"status_schema_version": 2}, "status_schema_version=2"),
+        ({"verdict": None}, "verdict 가 문자열이 아니다"),
+    ],
+)
+def test_a_b3_record_of_another_shape_blocks_without_crashing(
+    state: Path, cfg: sb.BoardConfig, fields: dict, needle: str
+):
+    _b3_status(state, "long-20261015", **fields)
+    board = _board(cfg, D1015)
+    assert any(
+        "B3 실행 기록을 읽을 수 없다" in b and needle in b
+        for b in _issues(board, sb.BLOCK)
+    )
+    assert "B3 대조: 실행 기록을 읽을 수 없음" in sb.render_text(board)
+
+
+def test_a_session_with_no_b3_record_keeps_the_old_reading(cfg: sb.BoardConfig):
+    """Sessions from before step 14 existed have no record. They must still be
+    read off the summary alone, or every historical session turns red."""
+    board = _board(cfg, D1015)
+    assert _session(board, "long-20261015")["b3_run"] is None
+    assert _session(board, "long-20261015")["b3"]["unresolved"] == 0
+
+
 def test_n5_history_days_one_is_only_the_day(cfg: sb.BoardConfig):
     board = _board(replace(cfg, history_days=1), D1023)
     assert [(h["day"], h["label"]) for h in board["history"]] == [

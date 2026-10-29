@@ -1856,8 +1856,131 @@ def _attribute(
     ]
 
 
+@dataclass(frozen=True)
+class LiveScope:
+    """``live.jsonl``'s slice of an accumulating leaf (:func:`scope_live_decisions`).
+
+    The companion of :class:`SessionScope`, for the other session-derived input.
+    ⛔ **The 2026-10-22 scope fix covered only the consumed-ids document, and
+    that is why no session has ever produced a B3 summary.** Measured
+    2026-10-29 on the 10-28 LONG session's own stores (via its cold-backup
+    generation, taken after that session stopped): the five offline steps all
+    exited 0 and ``diff_decisions.py`` then refused —
+
+        1939 live decision(s) name bars that are not compared, first
+        ['A05611:1m:20261015T100100+0900', …]. The live session and the
+        offline artifacts are not about the same bars
+
+    — because ``live.jsonl`` carried every decision the leaf had accumulated
+    since the 10-15 genesis, while the offline three cover only the producer's
+    frozen frame. That refusal is correct and it cannot be waived: ``compare_live``
+    exists to catch two sides that are not about one session. The scope belongs
+    here, in the document, exactly as :func:`scope_to_session_day`'s docstring
+    says for the other one.
+
+    ⚠ Scoped by DAY and not by the consumed-id set, although the set is to hand
+    (step 1's artifact): filtering by it would make ``compare_live``'s "not
+    compared" check vacuous by construction, and that check is the only thing
+    that notices a live decision the offline frame does not cover.
+    """
+
+    #: The KST ``YYYYMMDD`` every record is about, or ``None`` when neither the
+    #: store nor the boot snapshot names a day (then nothing is scoped).
+    session_day: str | None
+    #: Every day the STORE holds, so the accumulation stays visible.
+    days_present: tuple[str, ...]
+    #: Live records before scoping.
+    records_all_days: int
+    #: Admitted DECISION_TICKs before scoping.
+    ticks_all_days: int
+    #: Ticks whose snapshot no longer names a readable day. Reported, not
+    #: refused: an unhandled tick is already allowed to have no decision, and a
+    #: count beside the scoped one is enough to see it.
+    ticks_with_no_resolvable_day: int
+
+
+def scope_live_decisions(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    ticks: Sequence[DecisionTick],
+    snapshots: Sequence[Snapshot],
+    pre_boot: frozenset[str],
+) -> tuple[list[dict[str, Any]], int, LiveScope]:
+    """Cut live records and the tick count down to the one session day.
+
+    Pure — it takes what the three readers already returned. The day comes from
+    :func:`derive_session_day`, the same source of truth the consumed-ids
+    document uses, so the two session-derived inputs cannot be scoped to two
+    different sessions.
+
+    ``bar_index`` is re-numbered over the scoped records: the document is about
+    one session, so "the n-th decision" is the n-th of that session. Nothing is
+    attributed by it (the attribution is keyed) and ``diff_decisions.py`` does
+    not read it.
+
+    Returns:
+        ``(scoped records, scoped admitted tick count, the scope)``.
+
+    Raises:
+        SessionInputsError: A record's ``raw_event_id`` carries no readable day
+            (it would vanish from the output with nothing saying so), or
+            :func:`derive_session_day` refuses.
+    """
+    unparseable = sorted(
+        str(record["raw_event_id"])
+        for record in records
+        if session_day_of(str(record["raw_event_id"])) is None
+    )
+    if unparseable:
+        raise SessionInputsError(
+            f"{len(unparseable)} live decision(s) name a raw_event_id with no readable "
+            f"'{_RAW_EVENT_ID_SEPARATOR}<stamp>' day and so cannot be scoped to a "
+            f"session: {unparseable[:5]}{' …' if len(unparseable) > 5 else ''}. Refusing "
+            "to write a file that would silently omit them."
+        )
+    session_day = derive_session_day(snapshots, pre_boot)
+    day_of_snapshot = {
+        snapshot.snapshot_id: session_day_of(snapshot.raw_event_id)
+        for snapshot in snapshots
+    }
+    days_present = tuple(
+        sorted({day for day in day_of_snapshot.values() if day is not None})
+    )
+    scoped = [
+        dict(record)
+        for record in records
+        if session_day is None
+        or session_day_of(str(record["raw_event_id"])) == session_day
+    ]
+    for index, record in enumerate(scoped):
+        record["bar_index"] = index
+    scoped_ticks = [
+        tick
+        for tick in ticks
+        if session_day is None or day_of_snapshot.get(tick.snapshot_id) == session_day
+    ]
+    return (
+        scoped,
+        len(scoped_ticks),
+        LiveScope(
+            session_day=session_day,
+            days_present=days_present,
+            records_all_days=len(records),
+            ticks_all_days=len(ticks),
+            ticks_with_no_resolvable_day=sum(
+                1 for tick in ticks if day_of_snapshot.get(tick.snapshot_id) is None
+            ),
+        ),
+    )
+
+
 def live_decision_records(data_dir: Path) -> list[dict[str, Any]]:
     """One record per live decision, in B1b's trace shape.
+
+    ⚠ **Store-wide.** A tenant session writes into a durable leaf that is never
+    cleared, so this reads every session the leaf holds. The caller scopes the
+    result to one session day with :func:`scope_live_decisions`; the CLI always
+    does, and that is why ``live-decisions`` requires ``--boot-snapshot``.
 
     The keys B3 reads from a trace line — ``raw_event_id``, ``as_of_ms``,
     ``outcome_kind``, ``rule_id``, ``capacity_denied`` — are all present, and
@@ -1919,8 +2042,13 @@ def build_live_lineage(
     records: Sequence[Mapping[str, Any]],
     payload: bytes,
     ticks: int,
+    scope: LiveScope,
 ) -> dict[str, Any]:
-    """The sidecar B3 reads beside ``live.jsonl``."""
+    """The sidecar B3 reads beside ``live.jsonl``.
+
+    ``scope`` is required, not defaulted: a sidecar that does not say which
+    session its counts are about is the defect :class:`LiveScope` documents.
+    """
     kinds: dict[str, int] = {}
     attribution: dict[str, int] = {}
     for record in records:
@@ -1988,6 +2116,18 @@ def build_live_lineage(
         "output": {
             "live_jsonl_sha256": hashlib.sha256(payload).hexdigest(),
             "live_jsonl_lines": len(records),
+        },
+        # ⛔ SCOPE (:class:`LiveScope`): the durable leaf accumulates sessions, so
+        # every count below is about ONE session day and the leaf-wide totals ride
+        # beside them under `*_all_days`.
+        "session_scope": {
+            "session_day": scope.session_day,
+            "days_present": list(scope.days_present),
+            "live_jsonl_lines_all_days": scope.records_all_days,
+            "admitted_decision_ticks_all_days": scope.ticks_all_days,
+            "admitted_decision_ticks_with_no_resolvable_day": (
+                scope.ticks_with_no_resolvable_day
+            ),
         },
         "counts": {
             "outcome_kinds": dict(sorted(kinds.items())),
@@ -2059,6 +2199,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     live.add_argument("--data-dir", type=Path, required=True)
     live.add_argument(
+        "--boot-snapshot",
+        type=Path,
+        required=True,
+        help=(
+            "the runner's boot-journal-snapshot.json. REQUIRED for the same "
+            "reason consumed-ids requires it: the durable leaf accumulates "
+            "sessions, and a store-wide live.jsonl makes B3 refuse ('live "
+            "decision(s) name bars that are not compared') because the offline "
+            "three cover one session's frozen frame. See LiveScope"
+        ),
+    )
+    live.add_argument(
         "--out",
         type=Path,
         required=True,
@@ -2088,18 +2240,25 @@ def main(argv: list[str] | None = None) -> int:
                 f"{document['counts']['unpaired']} unpaired -> {args.out}"
             )
             return 0
-        records = live_decision_records(args.data_dir)
+        records, ticks, scope = scope_live_decisions(
+            live_decision_records(args.data_dir),
+            ticks=read_decision_ticks(args.data_dir),
+            snapshots=read_snapshots(args.data_dir),
+            pre_boot=read_boot_snapshot(args.boot_snapshot),
+        )
         payload = render_jsonl(records)
         lineage = build_live_lineage(
             data_dir=args.data_dir,
             records=records,
             payload=payload,
-            ticks=len(read_decision_ticks(args.data_dir)),
+            ticks=ticks,
+            scope=scope,
         )
         _write(args.out / "live.jsonl", payload)
         _write(args.out / "lineage.json", render_json(lineage))
         print(
-            f"live-decisions: {len(records)} record(s) "
+            f"live-decisions: {len(records)} record(s) of {scope.records_all_days} "
+            f"in the leaf, session day {scope.session_day} "
             f"({lineage['counts']['attributed_by']}) -> {args.out}"
         )
         return 0

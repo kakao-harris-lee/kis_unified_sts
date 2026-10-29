@@ -1395,6 +1395,17 @@ def _runner_repo(
         _REPO_ROOT / "tools/tos_cp3/session_day.py",
         repo / "tools/tos_cp3/session_day.py",
     )
+    # Step 14's post-session B3 reconciliation, with the config it reads. The
+    # SHIPPED pair, like the guard and the band predicate above: the property
+    # the runner owes this step is that its outcome cannot move the session's
+    # exit code, and that is only proved by the real tool refusing for a real
+    # reason (:func:`test_the_b3_step_records_its_own_failure_and_leaves_the_rc_alone`).
+    shutil.copy2(
+        _REPO_ROOT / "tools/tos_cp3/post_session_b3.py",
+        repo / "tools/tos_cp3/post_session_b3.py",
+    )
+    (repo / "config").mkdir(exist_ok=True)
+    shutil.copy2(_REPO_ROOT / "config/tos_cp3_b3.yaml", repo / "config/tos_cp3_b3.yaml")
 
     # The stub BAND PROBE (band plan v3). It stands in for
     # tools/tos_cp3/live_producer/band_probe.py: one invocation, one verdict
@@ -3510,6 +3521,92 @@ def test_red_a_pre_existing_data_parent_that_is_not_700_is_refused(
         assert "render refused" in output, output[-2000:]
         assert (parent / _FRONT_MONTH).is_dir()
     assert not result.producer_outlived_the_runner
+
+
+def test_the_b3_step_records_its_own_failure_and_leaves_the_rc_alone(
+    tmp_path: Path, timeout_flavour: dict[str, str]
+) -> None:
+    """**Step 14: the post-session B3 reconciliation cannot fail the session.**
+
+    Roadmap §2-1 is measured off ``<session>/b3/report/summary.json``, and
+    until this step existed no session had ever written one — B3 was six
+    commands run by hand, so the status board printed "B3 대조: 결과 없음"
+    every day.
+
+    Two properties, and this session has both at once because the stub producer
+    leaves none of the artifacts the comparison reads (no ``producer-log.jsonl``,
+    no frozen frame, no stores):
+
+    1. the step RAN and left a record saying WHY it could not compare — the
+       fail-closed direction, because ``unresolved`` has a good value (``0``)
+       and "did not run" must never be able to read as that;
+    2. the session's exit code is still the runtime's own 143. The session's
+       verdict is about the runtime and the producer (step 12b); the cron
+       wrapper alerts on anything else, so a failed comparison that changed it
+       would page an operator every day a tool is out of shape.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        # This fixture's producer dir is `producer-session`, not the cron
+        # layout's `<session>/producer`, which step 14 deliberately refuses to
+        # derive a session directory from (review-1000 L1 — and
+        # `test_the_b3_step_is_skipped_when_the_session_dir_cannot_be_derived`
+        # is that refusal's own proof). The escape hatch names it here so this
+        # test can be about the rc and the record instead.
+        **{
+            "CP3_B3_SESSION_DIR": str(tmp_path),
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            **timeout_flavour,
+        },
+    )
+    output = result.stdout + result.stderr
+    assert "=== BOOT" in output
+    assert "=== END run rc=143" in output, output[-2000:]
+    # 1. it ran, after the stop, and recorded a reason
+    assert "=== B3 session-dir=" in output, output[-3000:]
+    assert "=== END B3 rc=2" in output, output[-3000:]
+    record = json.loads((tmp_path / "b3" / "status.json").read_text(encoding="utf-8"))
+    assert record["verdict"] == "failed"
+    assert record["stage"] == "inputs"
+    assert "producer-log.jsonl" in record["reason"], record
+    assert "stitch.json" in record["reason"], record
+    # ...and it invented no summary to go with it
+    assert not (tmp_path / "b3" / "report" / "summary.json").exists()
+    # 2. the session's own verdict is untouched
+    assert "ABORT" not in output, output[-2000:]
+    assert result.returncode == 143, output[-2000:]
+    assert not result.producer_outlived_the_runner
+
+
+def test_the_b3_step_is_skipped_when_the_session_dir_cannot_be_derived(
+    tmp_path: Path,
+) -> None:
+    """**review-1000 L1.** Step 14 derives the session directory as the producer
+    dir's parent, which is only true of the cron layout
+    (``<session>/producer``). This fixture's is ``producer-session`` — a real
+    instance of the other shape — and ``dirname`` would put ``b3/`` in whatever
+    that parent happens to be, i.e. evidence somewhere the operator did not
+    choose. So the step skips and says so, and the session still ends on the
+    runtime's own code.
+    """
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{_RUN_PIDFILE_ENV: str(tmp_path / "run.pid")},
+    )
+    output = result.stdout + result.stderr
+    assert "=== B3 SKIPPED" in output, output[-3000:]
+    assert "is not a '<session>/producer'" in output
+    assert "CP3_B3_SESSION_DIR" in output
+    # nothing was written, and nothing was claimed
+    assert not (tmp_path / "b3").exists()
+    assert "=== END B3" not in output
+    assert result.returncode == 143, output[-2000:]
 
 
 def test_the_runner_runs_no_mode_repair_sweep_after_the_stop(tmp_path: Path) -> None:
