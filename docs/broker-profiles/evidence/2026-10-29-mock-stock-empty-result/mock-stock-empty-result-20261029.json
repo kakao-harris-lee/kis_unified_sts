@@ -1,0 +1,271 @@
+{
+  "issue": 990,
+  "measured_at_kst": "20261029",
+  "environment": "MOCK_VTS",
+  "rest_base": "https://openapivts.koreainvestment.com:29443",
+  "account_masked": "5020******",
+  "dates": {
+    "weekend": "20261025",
+    "weekday": "20261028",
+    "today": "20261029"
+  },
+  "raw_reads": [
+    {
+      "label": "A1-order-weekend",
+      "tr_id": "VTTC0081R",
+      "path": "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+      "request_params": {
+        "INQR_STRT_DT": "20261025",
+        "INQR_END_DT": "20261025",
+        "SLL_BUY_DVSN_CD": "00",
+        "PDNO": "",
+        "CCLD_DVSN": "00",
+        "INQR_DVSN": "00",
+        "INQR_DVSN_3": "00",
+        "ORD_GNO_BRNO": "",
+        "ODNO": "",
+        "INQR_DVSN_1": "",
+        "CTX_AREA_FK100": "",
+        "CTX_AREA_NK100": "",
+        "EXCG_ID_DVSN_CD": "KRX"
+      },
+      "http_status": 200,
+      "tr_cont_response_header": "E",
+      "summary": {
+        "rt_cd": "0",
+        "msg_cd": "70070000",
+        "msg1": "모의투자 조회할 내역(자료)이 없습니다.",
+        "ctx_area_fk100": "'                                                                                                    '",
+        "ctx_area_nk100": "'                                                                                                    '",
+        "output1_type": "list",
+        "output1_len": 0,
+        "output2_type": "dict",
+        "output2_len": 5,
+        "top_level_keys": [
+          "ctx_area_fk100",
+          "ctx_area_nk100",
+          "msg1",
+          "msg_cd",
+          "output1",
+          "output2",
+          "rt_cd"
+        ]
+      },
+      "raw_body": {
+        "ctx_area_fk100": "                                                                                                    ",
+        "ctx_area_nk100": "                                                                                                    ",
+        "output1": [],
+        "output2": {
+          "tot_ord_qty": "0",
+          "tot_ccld_qty": "0",
+          "tot_ccld_amt": "0",
+          "prsm_tlex_smtl": "0",
+          "pchs_avg_pric": "0.0000"
+        },
+        "rt_cd": "0",
+        "msg_cd": "70070000",
+        "msg1": "모의투자 조회할 내역(자료)이 없습니다.                                          "
+      }
+    },
+    {
+      "label": "A2-order-weekday",
+      "tr_id": "VTTC0081R",
+      "path": "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+      "request_params": {
+        "INQR_STRT_DT": "20261028",
+        "INQR_END_DT": "20261028",
+        "SLL_BUY_DVSN_CD": "00",
+        "PDNO": "",
+        "CCLD_DVSN": "00",
+        "INQR_DVSN": "00",
+        "INQR_DVSN_3": "00",
+        "ORD_GNO_BRNO": "",
+        "ODNO": "",
+        "INQR_DVSN_1": "",
+        "CTX_AREA_FK100": "",
+        "CTX_AREA_NK100": "",
+        "EXCG_ID_DVSN_CD": "KRX"
+      },
+      "http_status": 200,
+      "tr_cont_response_header": "E",
+      "summary": {
+        "rt_cd": "0",
+        "msg_cd": "70070000",
+        "msg1": "모의투자 조회할 내역(자료)이 없습니다.",
+        "ctx_area_fk100": "'                                                                                                    '",
+        "ctx_area_nk100": "'                                                                                                    '",
+        "output1_type": "list",
+        "output1_len": 0,
+        "output2_type": "dict",
+        "output2_len": 5,
+        "top_level_keys": [
+          "ctx_area_fk100",
+          "ctx_area_nk100",
+          "msg1",
+          "msg_cd",
+          "output1",
+          "output2",
+          "rt_cd"
+        ]
+      },
+      "raw_body": {
+        "ctx_area_fk100": "                                                                                                    ",
+        "ctx_area_nk100": "                                                                                                    ",
+        "output1": [],
+        "output2": {
+          "tot_ord_qty": "0",
+          "tot_ccld_qty": "0",
+          "tot_ccld_amt": "0",
+          "prsm_tlex_smtl": "0",
+          "pchs_avg_pric": "0.0000"
+        },
+        "rt_cd": "0",
+        "msg_cd": "70070000",
+        "msg1": "모의투자 조회할 내역(자료)이 없습니다.                                          "
+      }
+    },
+    {
+      "label": "B-order-today",
+      "tr_id": "VTTC0081R",
+      "path": "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+      "request_params": {
+        "INQR_STRT_DT": "20261029",
+        "INQR_END_DT": "20261029",
+        "SLL_BUY_DVSN_CD": "00",
+        "PDNO": "",
+        "CCLD_DVSN": "00",
+        "INQR_DVSN": "00",
+        "INQR_DVSN_3": "00",
+        "ORD_GNO_BRNO": "",
+        "ODNO": "",
+        "INQR_DVSN_1": "",
+        "CTX_AREA_FK100": "",
+        "CTX_AREA_NK100": "",
+        "EXCG_ID_DVSN_CD": "KRX"
+      },
+      "http_status": 200,
+      "tr_cont_response_header": "E",
+      "summary": {
+        "rt_cd": "0",
+        "msg_cd": "70070000",
+        "msg1": "모의투자 조회할 내역(자료)이 없습니다.",
+        "ctx_area_fk100": "'                                                                                                    '",
+        "ctx_area_nk100": "'                                                                                                    '",
+        "output1_type": "list",
+        "output1_len": 0,
+        "output2_type": "dict",
+        "output2_len": 5,
+        "top_level_keys": [
+          "ctx_area_fk100",
+          "ctx_area_nk100",
+          "msg1",
+          "msg_cd",
+          "output1",
+          "output2",
+          "rt_cd"
+        ]
+      },
+      "raw_body": {
+        "ctx_area_fk100": "                                                                                                    ",
+        "ctx_area_nk100": "                                                                                                    ",
+        "output1": [],
+        "output2": {
+          "tot_ord_qty": "0",
+          "tot_ccld_qty": "0",
+          "tot_ccld_amt": "0",
+          "prsm_tlex_smtl": "0",
+          "pchs_avg_pric": "0.0000"
+        },
+        "rt_cd": "0",
+        "msg_cd": "70070000",
+        "msg1": "모의투자 조회할 내역(자료)이 없습니다.                                          "
+      }
+    },
+    {
+      "label": "C-balance",
+      "tr_id": "VTTC8434R",
+      "path": "/uapi/domestic-stock/v1/trading/inquire-balance",
+      "request_params": {
+        "AFHR_FLPR_YN": "N",
+        "OFL_YN": "",
+        "INQR_DVSN": "02",
+        "UNPR_DVSN": "01",
+        "FUND_STTL_ICLD_YN": "N",
+        "FNCG_AMT_AUTO_RDPT_YN": "N",
+        "PRCS_DVSN": "01",
+        "CTX_AREA_FK100": "",
+        "CTX_AREA_NK100": ""
+      },
+      "http_status": 200,
+      "tr_cont_response_header": "E",
+      "summary": {
+        "rt_cd": "0",
+        "msg_cd": "20310000",
+        "msg1": "모의투자 조회가 완료되었습니다.",
+        "ctx_area_fk100": "'                                                                                                    '",
+        "ctx_area_nk100": "'                                                                                                    '",
+        "output1_type": "list",
+        "output1_len": 0,
+        "output2_type": "list",
+        "output2_len": 1,
+        "top_level_keys": [
+          "ctx_area_fk100",
+          "ctx_area_nk100",
+          "msg1",
+          "msg_cd",
+          "output1",
+          "output2",
+          "rt_cd"
+        ]
+      },
+      "raw_body": {
+        "ctx_area_fk100": "                                                                                                    ",
+        "ctx_area_nk100": "                                                                                                    ",
+        "output1": [],
+        "output2": [
+          {
+            "dnca_tot_amt": "10000000",
+            "nxdy_excc_amt": "10000000",
+            "prvs_rcdl_excc_amt": "10000000",
+            "cma_evlu_amt": "0",
+            "bfdy_buy_amt": "0",
+            "thdt_buy_amt": "0",
+            "nxdy_auto_rdpt_amt": "0",
+            "bfdy_sll_amt": "0",
+            "thdt_sll_amt": "0",
+            "d2_auto_rdpt_amt": "0",
+            "bfdy_tlex_amt": "0",
+            "thdt_tlex_amt": "0",
+            "tot_loan_amt": "0",
+            "scts_evlu_amt": "0",
+            "tot_evlu_amt": "10000000",
+            "nass_amt": "10000000",
+            "fncg_gld_auto_rdpt_yn": "",
+            "pchs_amt_smtl_amt": "0",
+            "evlu_amt_smtl_amt": "0",
+            "evlu_pfls_smtl_amt": "0",
+            "tot_stln_slng_chgs": "0",
+            "bfdy_tot_asst_evlu_amt": "10000000",
+            "asst_icdc_amt": "0",
+            "asst_icdc_erng_rt": "0.00000000"
+          }
+        ],
+        "rt_cd": "0",
+        "msg_cd": "20310000",
+        "msg1": "모의투자 조회가 완료되었습니다.                                                 "
+      }
+    }
+  ],
+  "witness_verdicts": [
+    {
+      "label": "D-witness.order_rows(weekend)",
+      "outcome": "OK",
+      "value": "('20261025', ())"
+    },
+    {
+      "label": "F-witness.observe(today)",
+      "outcome": "OK",
+      "value": "WitnessSnapshot(observed_at_generation=None, orders=(), positions=(), positions_complete=True, cash=Decimal('10000000'), provenance='kis-mock-stock', independent_of_evidence_store=True, order_inquiry_date='20261029')"
+    }
+  ]
+}
