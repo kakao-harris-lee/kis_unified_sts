@@ -47,6 +47,12 @@ independent rules close it, and each one has its own test below —
 4. the read credential can never be the order credential
    (:func:`test_the_read_principal_can_never_be_the_order_principal`).
 
+Clauses 1 and 2 sweep every committed scope table, and
+:func:`test_the_sweep_sees_every_deployed_tree` is what keeps that sweep honest: the
+shipped example is a constant in :data:`_SCOPE_TABLES` while the deployed trees come
+from a glob, so a glob that matched nothing would leave both clauses green on the
+example alone (review-998 r1 MEDIUM).
+
 Hermetic (``tos/runtime/tests/conftest.py`` D1.4): the committed config files and the
 broker-profile INSTANCE document are only ever READ; every write goes to ``tmp_path``.
 """
@@ -81,12 +87,29 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 
-#: Every committed scope table: the shipped example plus the deployed trees (resident +
-#: the CP-3 tenants). A GLOB, not a list — a tree added later joins this sweep the day it
-#: lands, which is the hole a hand-written list leaves.
+#: The deployed config trees' root. Its SUBDIRECTORIES are the independent source for
+#: "how many deployed scope tables there should be" — see
+#: :func:`test_the_sweep_sees_every_deployed_tree`.
+_DEPLOY_ROOT = _REPO_ROOT / "config" / "tos_runtime"
+
+#: The deployed scope tables (resident + the CP-3 tenants). A GLOB, not a list — a tree
+#: added later joins this sweep the day it lands, which is the hole a hand-written list
+#: leaves.
+_DEPLOYED_SCOPE_TABLES: tuple[Path, ...] = tuple(
+    sorted(_DEPLOY_ROOT.glob("*/broker_scopes.yaml"))
+)
+
+#: Every committed scope table: the shipped example plus the deployed ones.
+#:
+#: ⚠ The example is a CONSTANT and the rest is a glob, so a glob that matched nothing
+#: would leave this tuple non-empty and every parametrized clause below would still be
+#: GREEN — on the example alone, with the deployed trees silently out of the sweep
+#: (review-998 r1 MEDIUM). :func:`test_the_sweep_sees_every_deployed_tree` is what makes
+#: that state red; it is deliberately NOT a bare "the glob is non-empty" assertion, which
+#: a single surviving table would satisfy.
 _SCOPE_TABLES: tuple[Path, ...] = (
     _BROKER_SCOPES_EXAMPLE_PATH,
-    *sorted((_REPO_ROOT / "config" / "tos_runtime").glob("*/broker_scopes.yaml")),
+    *_DEPLOYED_SCOPE_TABLES,
 )
 
 #: The operation classes a read scope's own capability tuples may carry. The complement
@@ -100,6 +123,15 @@ _READ_OPERATIONS = frozenset(
         OperationClass.CAPABILITY_PROBE,
     }
 )
+
+#: What each transport kind's refusal SAYS, so clause 2 pins the REASON and not merely
+#: the exception type (review-998 r1 LOW). A kind whose message stopped naming its own
+#: condition — or a refusal that moved to a different clause — is worth looking at rather
+#: than silently still green.
+_REFUSAL_BY_KIND: Mapping[TransportKind, str] = {
+    TransportKind.KIS_MOCK: "MOCK-shaped under BROKER_SIMULATION",
+    TransportKind.SYNTHETIC: "non-broker-reaching (reaches_broker is False)",
+}
 
 #: The two admissible order tuples in this system, both held by ``MOCK_STOCK_ORDER``
 #: (``broker_scopes.example.yaml``). Named here because clause 3's first input is
@@ -161,6 +193,40 @@ def _read_scope_names(path: Path) -> tuple[str, ...]:
         str(scope["name"])
         for scope in _raw(path)["scopes"]
         if scope.get("principal_class") == PrincipalClass.READ.value
+    )
+
+
+# ===========================================================================
+# The sweep's own coverage (review-998 r1 MEDIUM)
+# ===========================================================================
+
+
+def test_the_sweep_sees_every_deployed_tree() -> None:
+    """**Every deployed tree contributes exactly one scope table to the clauses below.**
+
+    The expected set comes from the DIRECTORY LISTING, not from the glob that builds the
+    sweep: comparing the glob against itself would be a tautology, and the state this
+    exists to catch is the glob matching FEWER files than there are trees.
+
+    Two concrete inputs it turns red, both of which leave :data:`_SCOPE_TABLES`
+    non-empty — the example is a constant — so every clause below would otherwise stay
+    green on the example alone while saying nothing about what production boots:
+
+    * the glob matches nothing at all (``config/tos_runtime/`` moved, the file renamed);
+    * one tree loses its own ``broker_scopes.yaml`` while the others keep theirs.
+
+    A directory that is deliberately not a deployment tree would also turn this red,
+    which is the intended direction: it is then a one-line decision here rather than a
+    silent gap, the same discipline ``test_tenant_tree_copies.py``'s own exhaustiveness
+    test applies to the files inside each tree.
+    """
+    trees = sorted(path.name for path in _DEPLOY_ROOT.iterdir() if path.is_dir())
+    assert trees, f"{_DEPLOY_ROOT} holds no deployed tree — has it moved?"
+    swept = sorted(path.parent.name for path in _DEPLOYED_SCOPE_TABLES)
+    assert swept == trees, (
+        f"the sweep covers {swept} but {_DEPLOY_ROOT} holds {trees} — "
+        f"{sorted(set(trees) - set(swept))} contribute no broker_scopes.yaml, so the "
+        "clauses below say nothing about them"
     )
 
 
@@ -234,12 +300,21 @@ def test_a_read_scope_can_never_be_the_active_scope_of_either_transport(
     So there is no (read scope, transport kind) pair that composes an order sender at
     all — which is the "can never reach" half of §2-4, stated over every committed
     table rather than over one hand-picked scope name.
+
+    The refusal's own REASON is pinned per kind (:data:`_REFUSAL_BY_KIND`), not just the
+    exception type: both kinds raise the same ``TransportWiringError``, so without that
+    a refusal arriving for an unrelated reason — a malformed copy, a renamed scope —
+    would read as this invariant holding.
     """
+    expected = _REFUSAL_BY_KIND.get(kind)
+    assert expected is not None, f"no refusal reason pinned for transport kind {kind}"
     for name in _read_scope_names(table):
         config = _load(table, tmp_path, active_scope=name)
         with pytest.raises(TransportWiringError) as refusal:
             refuse_transport_scope_mismatch(kind, config)
-        assert name in str(refusal.value)
+        message = str(refusal.value)
+        assert name in message, message
+        assert expected in message, message
 
 
 # ===========================================================================
