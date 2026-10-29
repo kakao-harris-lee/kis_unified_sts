@@ -4296,6 +4296,67 @@ capabilities:
           `why_status_stays_unknown` 에 적은 기각 사유 3건도 그대로다.
           `status: UNKNOWN` · `assurance_level: EV-L0` 유지. (런북 §6.4-3:
           측정 1건은 LEVEL_2 를 보장하지 않는다.)
+      mock_stock_empty_result_envelope_2026_10_29:  # issue #990 · GET 전용 측정 기록
+        environment: MOCK_VTS
+        measured_at_kst: "2026-10-29"
+        evidence_dir: "docs/broker-profiles/evidence/2026-10-29-mock-stock-empty-result/"
+        why: >-
+          위 `established_this_session` 의 «KIOK0560 의 rt_cd 비대칭» 은 주식 쪽을
+          `rt_cd: '0'` 으로 적었지만, 그 근거 런은 전부 **실전 선물** 잔고
+          TR(`CTFO6118R` 주간 `P-BAL-20260731T114344Z` · `CTFN6118R` 야간
+          `N-16-20260729T132749Z`)이었다. issue #990 은 그 기록을 모의 주식 표면으로
+          일반화해 「빈 계좌면 `rt_cd != '0'` 거부로 witness 가 영구 불가가 되고 모든
+          해제가 HOLD 된다」를 우려했다. 이 블록은 witness 가 실제로 읽는 모의 주식 두
+          표면의 빈-결과 봉투를 직접 측정한 것이다.
+        surfaces:
+          - tr_id: VTTC0081R                  # 주식일별주문체결조회
+            path: "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+            asked: "INQR_STRT_DT == INQR_END_DT · 주문 0건인 3개 날짜(20261025 일 · 20261028 수 · 20261029 당일)"
+            observed:
+              http_status: 200
+              rt_cd: "0"
+              msg_cd: "70070000"
+              msg1: "모의투자 조회할 내역(자료)이 없습니다."
+              output1: "[] — 빈 **리스트**(0행)"
+              output2: "dict 5키, 합계 전부 0 (리스트가 아니다)"
+              tr_cont_response: "E"
+              continuation_keys: "fk100·nk100 모두 공백 100자"
+          - tr_id: VTTC8434R                  # 주식 잔고조회
+            path: "/uapi/domestic-stock/v1/trading/inquire-balance"
+            asked: "보유 0종목 계좌"
+            observed:
+              http_status: 200
+              rt_cd: "0"
+              msg_cd: "20310000"
+              msg1: "모의투자 조회가 완료되었습니다."
+              output1: "[] — 빈 **리스트**(0행)"
+              output2: "list 1행 · 24키 (dnca_tot_amt: \"10000000\")"
+              tr_cont_response: "E"
+              continuation_keys: "fk100·nk100 모두 공백 100자"
+        established:
+          - "**모의 주식은 빈 조회 결과를 거부로 적지 않는다** — 두 표면 모두 `rt_cd: '0'` + 빈 리스트 `output1`. 즉 위 비대칭 항의 주식 쪽이 모의 표면 실측으로 뒷받침됐다"
+          - "**빈-결과 msg_cd 는 `KIOK0560` 이 아니다** — 체결조회 `70070000` · 잔고 `20310000`(둘 다 이 저장소 첫 기록). 두 코드 모두 `rt_cd: '0'` 과 짝지으며 msg1 도 거부 문구가 아니다"
+          - "**빈 계좌의 종료 신호 `tr_cont: 'E'`** — wave-4 가 실전·모의 주식 잔고에서 본 `'D'` 와 또 다른 값이다. `{M,F}` 만 more 로 읽는 구현에는 둘 다 종료로 같다"
+        consumer_consequence: >-
+          `tos_runtime.recon.witness_kis.KisStockBrokerWitness` 는 주식 전용이고
+          (`refuse_futures_asset`) `rt_cd != '0'` 만 거부로 읽으므로 주문 0건·보유
+          0종목 모의 계좌에서 정상 응답한다 — 같은 세션 실측: `order_rows` 는
+          `('20261025', ())`, `observe` 는 `positions_complete: true` ·
+          `cash: 10000000` 스냅샷. **issue #990 은 재현되지 않아 닫혔다.** 선물
+          witness 가 생기면 `rt_cd: '7'` + `KIOK0560` 은 그쪽에서 다뤄야 한다 —
+          주식 표면에 그 분기를 더하면 실측 없는 미검증 경로가 된다.
+        not_established:
+          - "페이지 크기·절단 — 0행은 어떤 페이지 크기와도 정합한다. 실증도 반증도 아니다"
+          - "행 스키마 — 0행이므로 모의 주식 체결조회 행 스키마는 미확립 유지(`P-11-*` 담당)"
+          - "`70070000` 의 일반성 — 빈 결과 1형상만 봤다. 범위 밖 날짜·잘못된 파라미터가 같은 코드로 오는지는 미측정"
+        citation_eligibility: >-
+          ⚠ **`evidence_refs[]` 에 쓰지 않는다.** 프로브 하네스 아티팩트가 아니므로
+          런북 §6.2 체크리스트(`mode` · `provenance_class: MEASURED` · `repo_commit`)를
+          통과할 수 없다. 측정 기록(루트 `CLAUDE.md` R7)으로만 보존하며
+          `status` · `assurance_level` 은 무변경이다. 값마다 아티팩트 필드 경로를 붙인
+          표는 위 `evidence_dir` 의 README 에 있다(`CITATION-RULE.md` 형식, 검사기
+          `tools/tos_evidence_citation_check.py` 가 전건 검증).
+        safety: "GET 전용 · 주문 0건 · 실전 계좌 미접촉. 조회 GET 7회(≥2.5s 간격) + 토큰 발급 1회."
       real_futures_account_is_empty_by_design_2026_08_04:  # T4-β3 · 운영자 확정
         decision_source: "캠페인 README §2026-08-04 운영자 결정 2 (커밋 `fa145b5a`)"
         what_was_open: >-
