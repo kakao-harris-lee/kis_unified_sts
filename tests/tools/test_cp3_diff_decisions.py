@@ -3604,6 +3604,62 @@ def test_only_the_boot_journals_own_pre_boot_ids_leave_the_live_comparison(
         "compared_bars"
     ] == len(bars)
     assert len(_records(result)) == len(bars)
+    assert live["pre_boot_bars_not_held_out"] == []
+
+
+def test_red_a_pre_boot_bar_the_live_runtime_acted_on_stays_in_the_comparison(
+    tmp_path: Path,
+) -> None:
+    """**Guard — review-1001 MEDIUM.** Being named by the boot journal is HALF
+    the condition; the live record has to show the withhold too.
+
+    Concrete failing input, which the id alone would excuse: pre-boot bar X
+    whose live record is a ``PROPOSAL`` that was NOT denied, against an offline
+    ``NO_ACTION``. The live runtime ACTED on a bar it could only have withheld
+    on — the most serious finding this comparison can make — and holding it out
+    on the id alone reports it as ``excluded 1 / divergent 0``, which the status
+    board then passes.
+
+    So the bar stays compared and divergent, and its id is listed in
+    ``pre_boot_bars_not_held_out`` rather than only dropping out of a count.
+    """
+    bars = list(COVERAGE_BARS)
+    at_boot = bars[0]
+    assert at_boot.tos_outcome_kind == "NO_ACTION"
+    trio = write_trio(tmp_path / "in", bars)
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=_consumed_ids_doc(
+            tmp_path / "session" / "consumed-ids.json", bars, pre_boot=[at_boot]
+        ),
+        live_jsonl=_live_jsonl(
+            tmp_path / "session" / "live.jsonl",
+            _live_from(
+                bars,
+                **{
+                    at_boot.raw_event_id: {
+                        "outcome_kind": dd.LIVE_PROPOSAL_KIND,
+                        "capacity_denied": False,
+                    }
+                },
+            ),
+        ),
+    )
+    live = result.summary["live_comparison"]
+    assert live["excluded_bar_counts"] == {}
+    assert live["excluded_bars"] == []
+    assert live["compared_bars"] == len(bars)
+    assert live["divergent"] == 1
+    assert live["divergences"][0]["raw_event_id"] == at_boot.raw_event_id
+    assert live["divergences"][0]["live"]["outcome_kind"] == dd.LIVE_PROPOSAL_KIND
+    assert live["divergences"][0]["offline"]["outcome_kind"] == "NO_ACTION"
+    assert live["pre_boot_bars_not_held_out"] == [at_boot.raw_event_id]
+    # And the two conditions are stated where the number is read.
+    assert dd.LIVE_NO_OUTCOME_KIND in live["excluded_note"]
+    assert "pre_boot_bars_not_held_out" in live["excluded_note"]
 
 
 def test_a_consumed_ids_document_with_no_pre_boot_list_holds_nothing_out(
@@ -3715,3 +3771,10 @@ def test_every_bar_in_scope_lands_in_exactly_one_reported_live_bucket(
     assert row["excluded"] == 1
     assert row["declared"] == 1
     assert row["divergent"] == 1
+    # And the sum is not only REPORTED: `identical` is its own counter and the
+    # tool refuses a run whose four buckets do not add up (review-1001 LOW).
+    # No input can provoke that — every bar takes exactly one branch — so the
+    # refusal is pinned at its source rather than faked with a contrived one.
+    source = Path(dd.__file__).read_text(encoding="utf-8")
+    assert "must land in exactly one bucket" in source
+    assert "identical += 1" in source

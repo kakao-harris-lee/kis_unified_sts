@@ -167,11 +167,19 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
   (`declared_differences`)에 그렇게 선언한다. **한 방향만**이다 — 실시간이 거부하고
   오프라인이 아닌 경우는 이 차이가 아니고 divergent 로 남는다. 결정 종류까지 어긋나면
   역시 divergent 다. lineage 가 그 id 를 선언하지 않으면 아무것도 재분류하지 않는다.
+  - ⚠ **선언된 한계**: 실시간의 **진짜 capacity 누수**(자기 예약을 들고 있는데 두 번째
+    노출을 허용)는 B3 에서 이 차이와 **구분되지 않는다** — `live.jsonl` 에 노출 상태가
+    없어 「release 돼서 거부 안 됨」과 「거부돼야 했는데 안 됨」을 가를 수 없다. B3 의
+    oracle 은 kickoff §3 B4(「체결 비교 포기」)대로 결정/의도 수준이고, 누수는 엔진 자신의
+    at-most-one-exposure 불변식이 잡는다.
 - **08:45 봉** — 부팅 시점에 이미 생산자 journal 에 있던 줄이라 설계상 boot 에서 stale
   이고 엔진은 보류밖에 할 수 없다(`DECISION_WITHHELD` / `TIME_NOT_ADMITTED`). 러너의
   `boot-journal-snapshot.json::pre_boot_raw_event_ids` 가 **id 로** 지목하는 봉만
   빼고, 그 id 는 `consumed-ids.json` 이 실어 온다. 시각이나 순서로 빼지 않는다 —
   **post-boot 의 `TIME_NOT_ADMITTED` 는 M5 ① stale 신호이고 그대로 센다**.
+  - **조건은 둘**: id 가 지목되고 **그 봉의 실시간 레코드가 보류 모양**
+    (`outcome_kind: NO_OUTCOME`)이어야 한다. 지목된 봉인데 실시간이 실제로 결정을 냈으면
+    그대로 대조하고 `live_comparison.pre_boot_bars_not_held_out` 에 id 를 남긴다.
 
 오프라인 분류(`bars` · `buckets` · `unresolved`)는 빼 둔 봉까지 409 봉 그대로다. 빠진
 것은 그 한 봉의 **실시간 대조**뿐이다.

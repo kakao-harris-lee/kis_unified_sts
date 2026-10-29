@@ -1636,12 +1636,21 @@ B1b 하네스의 커밋 사본(`tos/runtime/cp3/strategies/setup_d_long.strategy
     `tos.backtest` 의 예약 투영에 release 경로가 없어 첫 발사 뒤 전부 거부되는 차이를
     B1b 가 자기 lineage 에 선언한 것이다. **한 방향만** — 실시간이 거부하고 오프라인이
     아니면 divergent 다. lineage 가 그 id 를 선언하지 않으면 재분류는 없다.
+    ⚠ **선언된 한계**: 실시간의 진짜 capacity 누수(예약을 들고 있는데 두 번째 노출 허용)는
+    B3 에서 이 차이와 구분되지 않는다 — `live.jsonl` 에 노출 상태가 없다. kickoff §3 B4
+    (「체결 비교 포기」)대로 B3 의 oracle 은 결정/의도 수준이고, 누수는 엔진의
+    at-most-one-exposure 불변식이 잡는다.
   - `live_comparison.excluded_bar_counts` 는 **대조에서 빼 둔** 봉이다. 지금은
     `pre_boot_at_boot` 하나로, 러너의 `boot-journal-snapshot.json::pre_boot_raw_event_ids`
     가 **id 로** 지목하는 봉(08:45)이다 — 부팅 때 이미 journal 에 있어 설계상 stale 이고
     엔진은 보류밖에 못 한다. ⚠ 시각·순서가 아니라 **id 로** 빼므로 **post-boot 의
     `TIME_NOT_ADMITTED` 는 그대로 divergent 로 센다**(그것이 M5 ① 이다). 그 봉은
     오프라인 분류에는 그대로 남는다.
+    ⚠ **조건은 둘이다**: id 가 지목되고 **그 봉의 실시간 레코드가 보류 모양**
+    (`outcome_kind: NO_OUTCOME`)이어야 빠진다. 지목된 봉인데 실시간이 실제로 결정을
+    냈으면(예: `PROPOSAL`) 그대로 대조하고 `live_comparison.pre_boot_bars_not_held_out`
+    에 id 를 싣는다 — 보류해야 할 봉에서 런타임이 행동한 것은 이 대조가 낼 수 있는 가장
+    무거운 소견이고, id 하나로 사면되면 그것이 `divergent 0` 으로 읽힌다.
   - 다섯 수 — `identical` · `kind_only_matches` · 선언 합 · `divergent` ·
     `excluded_from_comparison` — 의 합이 `bars_in_scope` 다. 어느 버킷도 조용히
     흡수하지 못한다.

@@ -2074,7 +2074,14 @@ DECLARED_CAPACITY_DENIAL_RULE = (
     "ONE-DIRECTIONAL: a LIVE denial the offline replay did not have is NOT "
     "this difference and stays divergent. The outcome kinds must agree too "
     "(exactly, or as a kind-only match) — a kind disagreement is a separate "
-    "finding and this bucket does not absorb it"
+    "finding and this bucket does not absorb it. ⚠ DECLARED LIMIT: a real "
+    "live capacity leak — the live runtime permitting a second exposure while "
+    "its own reservation is held — is INDISTINGUISHABLE from this difference "
+    "here, because live.jsonl carries no exposure state to tell 'released, so "
+    "not denied' from 'should have been denied and was not'. B3's oracle is "
+    "decision/intent level by kickoff §3 B4 ('체결 비교 포기'); a leak is "
+    "caught by the engine's own at-most-one-exposure invariant, not by this "
+    "comparison"
 )
 
 #: The name the live comparison holds the boot journal's own bars out under.
@@ -2087,7 +2094,30 @@ DECLARED_CAPACITY_DENIAL_RULE = (
 #: first bar" and never by time. A POST-boot withhold is the M5 ① stale signal
 #: (``memory/m5-time-not-admitted-is-stale-not-missing.md``) and must stay
 #: counted; excusing bars by position or by clock would hide exactly that.
+#:
+#: ⚠ And being named by the snapshot is only HALF the condition (review-1001
+#: MEDIUM). The failing input the id alone would excuse: pre-boot bar X whose
+#: live record is a PROPOSAL that was not denied, against an offline
+#: ``NO_ACTION`` — a live runtime that ACTED on a bar it should have withheld
+#: on, which is the most serious finding this comparison can make, reported as
+#: ``excluded 1 / divergent 0``. So the live record must carry the withhold
+#: shape too: see :data:`LIVE_NO_OUTCOME_KIND`.
 LIVE_EXCLUDED_PRE_BOOT = "pre_boot_at_boot"
+
+#: The live token for a tick that ended with NO emitted outcome — what
+#: ``DECISION_WITHHELD``, ``DECISION_DEGRADED`` and the Coordinator's refusal
+#: all produce (``tools/tos_cp3/session_inputs.py``'s ``NO_OUTCOME_KIND``,
+#: restated here because this module imports nothing — its claim is about
+#: files). Against any offline kind it is a divergence; its ONE other use is
+#: the second half of :data:`LIVE_EXCLUDED_PRE_BOOT`'s condition, where "the
+#: engine emitted nothing" is exactly the by-design shape for a bar that was
+#: already stale when the clock was established.
+#:
+#: Keyed on ``outcome_kind`` and not on ``evidence_kind`` /
+#: ``pipeline_halt_reason``: those two are in ``live.jsonl`` but are not
+#: :data:`LIVE_COMPARED_FIELDS`, so no record is guaranteed to carry them and
+#: branching on them would make the gate depend on a field that may be absent.
+LIVE_NO_OUTCOME_KIND = "NO_OUTCOME"
 
 
 @dataclass(frozen=True)
@@ -2107,10 +2137,15 @@ class ConsumedIdFilter:
 
 @dataclass(frozen=True)
 class LiveExclusion:
-    """Compared bars held out of the LIVE comparison, under one reason's name.
+    """Bars the live comparison MAY be silent about, under one reason's name.
 
-    The offline classification still covers them: only the live comparison is
-    silent, and only about the ids named here.
+    ``raw_event_ids`` are CANDIDATES, not a verdict: :func:`compare_live` holds
+    one out only if its live record also carries the withhold shape
+    (:data:`LIVE_NO_OUTCOME_KIND`). Being named here is a fact about the boot
+    journal; being excused needs a fact about the live decision too.
+
+    The offline classification covers every one of them either way: only the
+    live comparison can be silent, and only about the ids it actually excludes.
     """
 
     reason: str
@@ -2377,11 +2412,11 @@ def compare_live(
     never refused: "the live runtime decided differently from the offline
     replay" is the finding this input exists to surface.
 
-    A bar lands in exactly one of five reported places, and the five add up to
-    ``bars_in_scope``:
+    A bar lands in exactly one of five reported places, the five add up to
+    ``bars_in_scope``, and the run REFUSES if they do not:
 
-    * **excluded** — its id is in ``excluded`` (the boot journal's own bars);
-      the live side cannot speak about it, so neither does this comparison;
+    * **excluded** — its id is in ``excluded`` AND its live record carries the
+      withhold shape, so the live side has no decision to compare;
     * **identical** — both compared fields agree;
     * **kind_only_matches** — a live :data:`LIVE_PROPOSAL_KIND` against an
       offline ACTION or FLAT, with the denial agreeing;
@@ -2392,22 +2427,39 @@ def compare_live(
     Args:
         declared: ``{id: item}`` from :func:`live_declared_differences`. Absent
             or empty reclassifies nothing — every such bar stays divergent.
-        excluded: Ids held out, from :func:`apply_consumed_filter`. Both sides
-            drop them BEFORE the pairing refusals below, so a held-out bar with
-            no live record is not a refusal either; that is the point of naming
-            the ids rather than inferring them.
+        excluded: CANDIDATE ids from :func:`apply_consumed_filter`. One is held
+            out only if its live record's ``outcome_kind`` is
+            :data:`LIVE_NO_OUTCOME_KIND` — the boot journal says a bar COULD
+            only have been withheld on, and the live record has to say it
+            actually was. A candidate whose live record shows a real decision
+            stays in the comparison and is counted like any other bar;
+            ``pre_boot_bars_not_held_out`` names it. A candidate with no live
+            record at all is not excused either: it falls through to the
+            missing-decision refusal below, because "no record" is a missing
+            input rather than a recorded withhold.
 
     Raises:
         DiffDecisionsError: A compared bar has no live record, or a live
             record names a bar that is not compared. Either way the two sides
             are not about the same session, and comparing the overlap would
             quietly answer a smaller question — the shape ``--consumed-ids``
-            exists to make exact.
+            exists to make exact. Also raised if the five counts above do not
+            add up to ``bars_in_scope``.
     """
     declared = declared or {}
-    held_out = (excluded or LiveExclusion.nothing()).raw_event_ids
+    candidates = (excluded or LiveExclusion.nothing()).raw_event_ids
     exclusion_reason = (excluded or LiveExclusion.nothing()).reason
     in_scope = len(bars)
+    # The second half of the condition, decided HERE because this is the only
+    # place that holds both the candidate ids and the live records.
+    live_by_id = {record["raw_event_id"]: record for record in live}
+    held_out = frozenset(
+        raw_event_id
+        for raw_event_id in candidates
+        if raw_event_id in live_by_id
+        and live_by_id[raw_event_id].get("outcome_kind") == LIVE_NO_OUTCOME_KIND
+    )
+    not_held_out = sorted(candidates - held_out)
     excluded_bars = [
         {"raw_event_id": bar.raw_event_id, "reason": exclusion_reason}
         for bar in bars
@@ -2436,6 +2488,7 @@ def compare_live(
     divergences: list[dict[str, Any]] = []
     kind_only: list[dict[str, Any]] = []
     declared_bars: list[dict[str, Any]] = []
+    identical = 0
     for bar in bars:
         record = by_id[bar.raw_event_id]
         offline = {
@@ -2461,6 +2514,8 @@ def compare_live(
                         "offline_outcome_kind": offline["outcome_kind"],
                     }
                 )
+            else:
+                identical += 1
             continue
         if (
             kinds_agree
@@ -2488,13 +2543,27 @@ def compare_live(
             }
         )
     declared_counts = Counter(entry["id"] for entry in declared_bars)
+    # ⛔ Counted, then checked (review-1001 LOW). `identical` used to be the
+    # LEFTOVER — `compared - divergent - kind_only` — and the real incident is
+    # this very change: adding the fourth bucket meant editing that subtraction
+    # by hand, and an edit that forgot the new term would have moved every
+    # declared bar into `identical` and reported "the live runtime decided the
+    # same thing" about bars it did not. A leftover cannot fail; four counters
+    # and a sum can.
+    buckets = len(divergences) + len(kind_only) + len(declared_bars) + identical
+    if buckets != len(bars):
+        raise DiffDecisionsError(
+            f"the live comparison classified {buckets} bar(s) but compared "
+            f"{len(bars)}: identical {identical} + kind_only {len(kind_only)} + "
+            f"declared {len(declared_bars)} + divergent {len(divergences)}. A "
+            "bar must land in exactly one bucket, so this is a defect in the "
+            "classification above, not an input this report can describe"
+        )
     block = {
         "bars_in_scope": in_scope,
         "excluded_from_comparison": len(excluded_bars),
         "compared_bars": len(bars),
-        "identical": (
-            len(bars) - len(divergences) - len(kind_only) - len(declared_bars)
-        ),
+        "identical": identical,
         "kind_only_matches": len(kind_only),
         "declared_difference_counts": dict(sorted(declared_counts.items())),
         "divergent": len(divergences),
@@ -2519,6 +2588,12 @@ def compare_live(
         "excluded_bar_counts": (
             {exclusion_reason: len(excluded_bars)} if excluded_bars else {}
         ),
+        # Candidates the boot journal named and this comparison kept anyway,
+        # because their live record is not the withhold shape. Listed rather
+        # than only counted: each one is a bar the live runtime decided on when
+        # the journal says it could only have withheld, and the id is what a
+        # reader needs to go look at it.
+        "pre_boot_bars_not_held_out": not_held_out,
         "compared_fields": list(LIVE_COMPARED_FIELDS),
         "kind_only_note": (
             f"a live {LIVE_PROPOSAL_KIND} against an offline "
@@ -2546,8 +2621,12 @@ def compare_live(
             "(DECISION_WITHHELD / TIME_NOT_ADMITTED) — so there is no live "
             "decision to compare one against. Held out BY ID, never by "
             "position and never by clock: a POST-boot withhold is the M5 ① "
-            "stale signal and stays counted. The offline side still "
-            "classifies these bars; only this comparison is silent about them"
+            "stale signal and stays counted. TWO conditions, not one: the id "
+            f"must be named AND the live record's outcome_kind must be "
+            f"{LIVE_NO_OUTCOME_KIND} — a named bar whose live record shows a "
+            "real decision is compared like any other and listed in "
+            "pre_boot_bars_not_held_out. The offline side still classifies "
+            "every one of these bars; only this comparison can be silent"
         ),
         "not_compared": (
             "rule_id (B1b resolves it from the emitted outcome's rationale, "
