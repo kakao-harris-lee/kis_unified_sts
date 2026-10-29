@@ -375,6 +375,7 @@ def build_core(
     configuration: EngineConfiguration | None = None,
     preconditions: Any = None,
     transport_nature: Any = None,
+    ledger: Any = None,
 ) -> tuple[EngineCore, RecordingEvidenceSink]:
     """Wire a core with the suite's defaults and return it with its recording sink."""
     recording_sink = sink or RecordingEvidenceSink()
@@ -388,5 +389,6 @@ def build_core(
         transmit=transmit if transmit is not None else RecordingTransmit(),
         transport_nature=transport_nature,
         sink=recording_sink,
+        ledger=ledger,
     )
     return core, recording_sink

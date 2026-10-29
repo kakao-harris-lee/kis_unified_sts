@@ -387,8 +387,12 @@ class EngineCore:
         self._stages = dict(stages)
         self._configuration = configuration
         self._preconditions = preconditions
-        self._ledger = ledger or ProvisionalReservationLedger(
-            max_unresolved_send_per_scope=configuration.max_unresolved_send_per_scope
+        self._ledger = (
+            ledger
+            if ledger is not None
+            else ProvisionalReservationLedger(
+                max_unresolved_send_per_scope=configuration.max_unresolved_send_per_scope
+            )
         )
         self._transmit = transmit
         self._transport_nature = transport_nature

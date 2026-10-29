@@ -301,8 +301,21 @@ def test_an_entry_then_its_close_then_a_re_entry_in_one_process(
     assert len(during_close) == 2
     assert during_close[entry_reservation_id] is CapacityState.POSITION_CONSUMED
     (close_reservation_id,) = set(during_close) - {entry_reservation_id}
+    close_envelope = _step5_envelope(runtime)
+    expected_close_vector = CapacityVector(
+        components=tuple(
+            component.model_copy(
+                update={
+                    "magnitude": (
+                        None if component.magnitude is None else -component.magnitude
+                    )
+                }
+            )
+            for component in close_envelope.components
+        )
+    )
     assert runtime.rcl_log.reservation_committed_vector(close_reservation_id) == (
-        _step5_envelope(runtime)
+        expected_close_vector
     )
 
     # --- the close fills, broker reports flat: BOTH reservations end RELEASED ---------

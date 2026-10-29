@@ -1149,6 +1149,7 @@ class EconomicEffectStage:
 
     def __call__(self, request: StageRequest) -> StageVerdict:
         """Derive the envelope from the step-2 derivation and wrap it."""
+        self.envelope = None
         construction = self._construction_stage.construction
         if construction is None:
             return StageVerdict(

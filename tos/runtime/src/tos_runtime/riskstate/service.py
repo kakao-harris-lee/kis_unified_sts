@@ -431,6 +431,16 @@ class RiskStateService:
         max_credible_command_effect = (
             None if construction is None else construction.derivation.quantity
         )
+        action_class = (
+            self._action_class
+            if self._action_class_reader is None
+            else self._action_class_reader()
+        )
+        if (
+            max_credible_command_effect is not None
+            and action_class is ActionClass.CLOSE
+        ):
+            max_credible_command_effect = -max_credible_command_effect
         effect_envelope = self._effect_envelope_reader()
         effect_digest = (
             None

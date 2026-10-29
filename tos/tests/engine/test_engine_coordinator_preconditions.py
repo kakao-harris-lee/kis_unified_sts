@@ -23,6 +23,7 @@ from __future__ import annotations
 from tos.engine import (
     EvidenceKind,
     HaltReason,
+    ProvisionalReservationLedger,
 )
 
 from ._engine_fixtures import (
@@ -170,3 +171,15 @@ def test_mutation_removing_the_gate_would_hand_off_on_a_refused_authority() -> N
         "the Coordinator precondition gate must stop the flow before step 12's attempt "
         "request — nothing may reach the send boundary while authority is refused"
     )
+
+
+def test_an_injected_falsy_empty_ledger_is_not_replaced() -> None:
+    class EmptyLedger(ProvisionalReservationLedger):
+        def __len__(self) -> int:
+            return 0
+
+    ledger = EmptyLedger(max_unresolved_send_per_scope=1)
+    core, _ = build_core(ledger=ledger)
+
+    assert not ledger
+    assert core.ledger is ledger

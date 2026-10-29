@@ -714,6 +714,39 @@ def test_a_string_pdno_row_is_a_complete_observation(
     assert snapshot.positions_complete is True
 
 
+@pytest.mark.parametrize("field", ["odno", "orgn_odno", "pdno"])
+@pytest.mark.parametrize(
+    "value",
+    [5930, ["005930"], {"code": "005930"}, True],
+    ids=["number", "array", "object", "bool"],
+)
+def test_an_order_identifier_that_is_not_a_string_is_unreadable(
+    field: str, value: object
+) -> None:
+    row = {
+        "odno": "0000004470",
+        "orgn_odno": "0000000000",
+        "pdno": "005930",
+        field: value,
+    }
+
+    parsed = witness_kis.KisOrderRow.from_wire(row)
+
+    assert getattr(parsed, field) is None
+
+
+def test_order_identifiers_keep_their_measured_string_form() -> None:
+    parsed = witness_kis.KisOrderRow.from_wire(
+        {"odno": " 0000004470 ", "orgn_odno": "0000000000", "pdno": " 005930 "}
+    )
+
+    assert (parsed.odno, parsed.orgn_odno, parsed.pdno) == (
+        "0000004470",
+        "0000000000",
+        "005930",
+    )
+
+
 # ---------------------------------------------------------------------------
 # The caller's deadline (#949 review HIGH): it stops the WALK, and what was read so far is
 # never returned. The fill observer owns the clock — this class has none.
@@ -808,7 +841,11 @@ def test_a_pacer_refused_slot_is_witness_unavailable_with_no_request(
 
     class _TokenClient:
         def issue_token(
-            self, app_key: bytes, app_secret: bytes, *, path: str  # noqa: ARG002
+            self,
+            _app_key: bytes,
+            _app_secret: bytes,
+            *,
+            path: str,  # noqa: ARG002
         ) -> dict[str, object]:
             return {"access_token": "tok-1", "expires_in": 86_400}
 

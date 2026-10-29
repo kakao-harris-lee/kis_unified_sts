@@ -838,6 +838,7 @@ def _build_ledger_stages(
             ),
             time_permits_new_risk=time_gate,
             effect_envelope_reader=lambda: economic_stage.envelope,
+            position_effect_reader=lambda: attempt_position_effect(construction_stage),
         )
     )
     return step8_stage, step9_recorder, CommitmentUnavailabilityStage(projection)

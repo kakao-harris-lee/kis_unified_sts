@@ -396,8 +396,10 @@ class KisOrderRow:
     @classmethod
     def from_wire(cls, row: Mapping[str, Any]) -> KisOrderRow:
         def _text(name: str) -> str | None:
-            value = str(row.get(name) or "").strip()
-            return value or None
+            value = row.get(name)
+            if not isinstance(value, str):
+                return None
+            return value.strip() or None
 
         ord_dt = str(row.get("ord_dt") or "").strip()
         return cls(

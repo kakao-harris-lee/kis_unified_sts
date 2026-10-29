@@ -87,6 +87,7 @@ from tos.afg import ActionClassKind
 from tos.are import AdverseScenarioKind, AdverseScenarioSet
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.dsl.proposal import Proposal
+from tos.egressgw.records import CandidateConstruction, QuantityDerivation
 from tos.engine.records import (
     EgressResultPayload,
     EngineEvent,
@@ -317,6 +318,7 @@ def _service(
     effective_limit_value: str = "1",
     current_seq_reader: Callable[[], int | None] | None = None,
     monotonic_reader: Callable[[], int | None] | None = None,
+    construction: CandidateConstruction | None = None,
 ) -> RiskStateService:
     are_path = tmp_path / "aggregate_risk_policy.yaml"
     are_path.write_text(
@@ -352,7 +354,7 @@ def _service(
         position_reader=position_reader,
         flow_reader=flow_reader,
         rcl_log=rcl_log,
-        construction_stage_reader=lambda: None,
+        construction_stage_reader=lambda: construction,
         effect_envelope_reader=lambda: None,
         rcl_tip_reader=(rcl_tip_reader if rcl_tip_reader is not None else (lambda: 1)),
         monotonic_reader=(
@@ -491,6 +493,32 @@ class TestAggregateInputsFor:
         assert inputs is not None
         assert inputs.cells[0].conservative_current_usage == Decimal("0")
         assert inputs.cells[0].required_concurrent_overlap_effect == Decimal("2")
+
+    def test_a_close_command_effect_reduces_projected_exposure(
+        self,
+        tmp_path: Path,
+        evidence_store: SqliteEvidenceStore,
+        inbox: SqliteEventInbox,
+        rcl_log: SqliteCommitLog,
+    ) -> None:
+        construction = CandidateConstruction.model_construct(
+            derivation=QuantityDerivation.model_construct(quantity=Decimal("60"))
+        )
+        service = _service(
+            tmp_path,
+            evidence_store,
+            inbox,
+            rcl_log,
+            action_class_reader=lambda: ActionClass.CLOSE,
+            construction=construction,
+        )
+
+        inputs = service.aggregate_inputs_for(
+            _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
+        )
+
+        assert inputs is not None
+        assert inputs.cells[0].max_credible_command_effect == Decimal("-60")
 
     def test_records_risk_state_observed_evidence(
         self,
