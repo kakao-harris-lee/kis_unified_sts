@@ -411,6 +411,17 @@ def _held_rows(evidence_store: SqliteEvidenceStore) -> list[dict]:
     return [json.loads(payload_json)["payload"] for (payload_json,) in rows]
 
 
+def _held_rows_after_entry_pending_link(
+    evidence_store: SqliteEvidenceStore,
+) -> list[dict]:
+    rows = _held_rows(evidence_store)
+    pending = [row for row in rows if row["reason"] == "ENTRY_DISCHARGE_PENDING"]
+    assert len(pending) == 1
+    assert pending[0]["attempt_id"] == _CLOSE_ATTEMPT
+    assert pending[0]["reservation_id"] == _entry_reservation_id()
+    return [row for row in rows if row["reason"] != "ENTRY_DISCHARGE_PENDING"]
+
+
 def _reservation_state(rcl_log: SqliteCommitLog) -> CapacityState | None:
     for reservation_id, state, _seq, _scope in rcl_log.reservation_rows():
         if reservation_id == _RESERVATION_ID:
@@ -1955,7 +1966,7 @@ def test_a_close_fill_releases_its_own_reservation_and_discharges_the_entry(
     states = _states(rcl_log)
     assert states[_close_reservation_id()] is CapacityState.RELEASED
     assert states[_entry_reservation_id()] is CapacityState.RELEASED
-    assert _held_rows(evidence_store) == []
+    assert _held_rows_after_entry_pending_link(evidence_store) == []
     destinations = [row["destination"] for row in _intent_rows(evidence_store)]
     assert destinations == ["RELEASED", "RELEASED"]
 
@@ -2016,7 +2027,7 @@ def test_a_broker_still_reporting_the_position_holds_the_entry(
     states = _states(rcl_log)
     assert states[_close_reservation_id()] is CapacityState.RELEASED
     assert states[_entry_reservation_id()] is CapacityState.POSITION_CONSUMED
-    (held,) = _held_rows(evidence_store)
+    (held,) = _held_rows_after_entry_pending_link(evidence_store)
     assert held["reason"] == ReleaseHoldReason.BROKER_POSITION_NOT_FLAT.value
     assert held["reservation_id"] == _entry_reservation_id()
 
@@ -2053,7 +2064,7 @@ def test_a_partial_close_holds_the_entry(
 
     states = _states(rcl_log)
     assert states[_entry_reservation_id()] is CapacityState.POSITION_CONSUMED
-    (held,) = _held_rows(evidence_store)
+    (held,) = _held_rows_after_entry_pending_link(evidence_store)
     assert held["reason"] == ReleaseHoldReason.ENTRY_QUANTITY_UNPROVEN.value
 
 
@@ -2151,7 +2162,7 @@ def test_an_incomplete_holdings_observation_holds_the_entry(
     states = _states(rcl_log)
     assert states[_close_reservation_id()] is CapacityState.RELEASED
     assert states[_entry_reservation_id()] is CapacityState.POSITION_CONSUMED
-    (held,) = _held_rows(evidence_store)
+    (held,) = _held_rows_after_entry_pending_link(evidence_store)
     assert held["reason"] == ReleaseHoldReason.BROKER_POSITION_NOT_FLAT.value
     assert held["reservation_id"] == _entry_reservation_id()
 
@@ -2175,7 +2186,7 @@ def test_a_complete_empty_holdings_observation_releases_the_entry(
     consumer.consume(payload)
 
     assert _states(rcl_log)[_entry_reservation_id()] is CapacityState.RELEASED
-    assert _held_rows(evidence_store) == []
+    assert _held_rows_after_entry_pending_link(evidence_store) == []
 
 
 # ===========================================================================

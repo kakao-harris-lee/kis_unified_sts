@@ -22,6 +22,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
@@ -76,6 +77,9 @@ __all__ = [
     "InjectedCrash",
     "ReservationRefusalReason",
     "ReservationTransitionRefusal",
+    "ReservationTransitionHistory",
+    "ReservationTransitionHistoryCorruption",
+    "ReservationTransitionRecord",
     "SqliteCommitLog",
     "StaleEpochRead",
 ]
@@ -121,6 +125,135 @@ class StaleEpochRead(RuntimeError):
     def __init__(self, reason: AppendRefusalReason) -> None:
         super().__init__(f"read_linearizable refused: {reason}")
         self.reason = reason
+
+
+class ReservationTransitionHistoryCorruption(RuntimeError):
+    """Raised when a discriminated RCL transition cannot be read as a closed record."""
+
+
+@dataclass(frozen=True)
+class ReservationTransitionRecord:
+    """One strictly decoded, committed reservation transition from the RCL log."""
+
+    seq: int
+    command_id: str
+    kind: CommandType
+    reservation_id: str
+    from_state: CapacityState
+    to_state: CapacityState
+    scope: ReservationScope
+    cause: TransitionCause
+    finality_witness: bool | None
+
+
+@dataclass(frozen=True)
+class ReservationTransitionHistory:
+    """A complete transition-history snapshot taken under one current writer epoch."""
+
+    writer_epoch: WriterEpoch
+    last_seq: int | None
+    transitions: tuple[ReservationTransitionRecord, ...]
+
+
+def _no_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Reject duplicate object keys instead of silently accepting the last value."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _reservation_transition_record_from_row(
+    row: tuple[object, ...],
+) -> ReservationTransitionRecord:
+    """Decode the closed, append-only payload shape of a discriminated transition row."""
+    seq, raw_command_id, raw_kind, payload_json = row
+    if isinstance(seq, bool) or not isinstance(seq, int) or seq < 0:
+        raise ReservationTransitionHistoryCorruption(
+            "reservation transition has an invalid committed sequence"
+        )
+    if not isinstance(raw_command_id, str) or not raw_command_id:
+        raise ReservationTransitionHistoryCorruption(
+            f"reservation transition seq={seq} has no command id"
+        )
+    if not isinstance(raw_kind, str) or not isinstance(payload_json, str):
+        raise ReservationTransitionHistoryCorruption(
+            f"reservation transition seq={seq} has an invalid stored row shape"
+        )
+    try:
+        kind = CommandType(raw_kind)
+        payload = json.loads(payload_json, object_pairs_hook=_no_duplicate_json_keys)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ReservationTransitionHistoryCorruption(
+            f"reservation transition seq={seq} has invalid command or JSON"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ReservationTransitionHistoryCorruption(
+            f"reservation transition seq={seq} payload is not an object"
+        )
+    required = {
+        "reservation_id",
+        "from_state",
+        "to_state",
+        "cause",
+        "finality_witness",
+        "scope",
+    }
+    allowed = required | {"committed_vector"}
+    if not required <= payload.keys() or not payload.keys() <= allowed:
+        raise ReservationTransitionHistoryCorruption(
+            f"reservation transition seq={seq} has an incomplete or unknown payload shape"
+        )
+    reservation_id = payload["reservation_id"]
+    scope_value = payload["scope"]
+    witness = payload["finality_witness"]
+    if not isinstance(reservation_id, str) or not reservation_id:
+        raise ReservationTransitionHistoryCorruption(
+            f"reservation transition seq={seq} has no reservation id"
+        )
+    if (
+        not isinstance(scope_value, dict)
+        or scope_value.keys() != {"account", "instrument"}
+        or not isinstance(scope_value.get("account"), str)
+        or not scope_value["account"]
+        or not isinstance(scope_value.get("instrument"), str)
+        or not scope_value["instrument"]
+    ):
+        raise ReservationTransitionHistoryCorruption(
+            f"reservation transition seq={seq} has an invalid scope"
+        )
+    if witness is not None and not isinstance(witness, bool):
+        raise ReservationTransitionHistoryCorruption(
+            f"reservation transition seq={seq} has an invalid finality witness"
+        )
+    if "committed_vector" in payload and payload["committed_vector"] is not None:
+        try:
+            CapacityVector.model_validate(payload["committed_vector"])
+        except (TypeError, ValueError) as exc:
+            raise ReservationTransitionHistoryCorruption(
+                f"reservation transition seq={seq} has an invalid committed vector"
+            ) from exc
+    try:
+        return ReservationTransitionRecord(
+            seq=seq,
+            command_id=raw_command_id,
+            kind=kind,
+            reservation_id=reservation_id,
+            from_state=CapacityState(payload["from_state"]),
+            to_state=CapacityState(payload["to_state"]),
+            scope=ReservationScope(
+                account=scope_value["account"],
+                instrument=scope_value["instrument"],
+            ),
+            cause=TransitionCause(payload["cause"]),
+            finality_witness=witness,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ReservationTransitionHistoryCorruption(
+            f"reservation transition seq={seq} has invalid lifecycle fields"
+        ) from exc
 
 
 class SqliteCommitLog:
@@ -357,6 +490,94 @@ class SqliteCommitLog:
         entries = tuple(row_to_commit_entry(row) for row in rows)
         return LogView(
             epoch=current, last_seq=(None if tip < 0 else tip), entries=entries
+        )
+
+    def read_approval_only_gap(
+        self, *, writer_epoch: WriterEpoch, proof_last_seq: int | None
+    ) -> LogView | None:
+        if type(writer_epoch) is not int or writer_epoch <= 0:
+            return None
+        if not (
+            proof_last_seq is None
+            or type(proof_last_seq) is int
+            and proof_last_seq >= 0
+        ):
+            return None
+        start = -1 if proof_last_seq is None else proof_last_seq
+        try:
+            self._conn.execute("BEGIN")
+            current = self.current_epoch()
+            tip = self._current_seq_tip()
+            if current != writer_epoch or start > tip:
+                raise ValueError
+            rows = self._conn.execute(
+                "SELECT seq, writer_epoch, command_id, command_digest, kind, "
+                "payload_digest, payload_json, is_reservation_transition "
+                "FROM entries WHERE seq > ? ORDER BY seq ASC",
+                (start,),
+            ).fetchall()
+            if len(rows) != tip - start:
+                raise ValueError
+            for expected, row in enumerate(rows, start + 1):
+                payload = json.loads(row[6], object_pairs_hook=_no_duplicate_json_keys)
+                malformed = (
+                    type(row[0]) is not int or row[0] != expected,
+                    type(row[1]) is not int or row[1] != current,
+                    not isinstance(row[2], str) or not row[2],
+                    row[3] is not None and not isinstance(row[3], str),
+                    row[4] != CommandType.CONSUME_APPROVAL_DECISION.value,
+                    row[5] is not None and not isinstance(row[5], str),
+                    not isinstance(row[6], str) or not isinstance(payload, dict),
+                    type(row[7]) is not int or row[7] != 0,
+                )
+                if any(malformed):
+                    raise ValueError
+            self._conn.execute("COMMIT")
+        except (sqlite3.Error, TypeError, ValueError):
+            self._safe_rollback()
+            return None
+        return LogView(epoch=current, last_seq=None if tip < 0 else tip, entries=())
+
+    def reservation_transition_history(
+        self, *, writer_epoch: WriterEpoch
+    ) -> ReservationTransitionHistory:
+        """Read every committed, discriminated reservation transition in one snapshot.
+
+        Unlike :meth:`reservation_rows`, this preserves the append sequence and transition
+        payload needed to reconstruct reservation identity, scope, and state at a historical
+        boundary. The returned records are decoded only from rows whose internal discriminator
+        is set; a plain append whose payload happens to resemble a transition is never admitted
+        into the history.
+
+        The snapshot is fenced by ``writer_epoch`` and verifies the held projection against a
+        replay inside that same read transaction. Any stale epoch, replay mismatch, unreadable
+        row, or malformed transition fails by raising; consumers must hold rather than consume a
+        partial history.
+        """
+        self._conn.execute("BEGIN")
+        try:
+            current = self.current_epoch()
+            stale_reason = stale_writer_epoch(current, writer_epoch)
+            if stale_reason is not None:
+                raise StaleEpochRead(stale_reason)
+            self.verify_replay()
+            (tip_value,) = self._conn.execute("SELECT MAX(seq) FROM entries").fetchone()
+            tip = -1 if tip_value is None else int(tip_value)
+            rows = self._conn.execute(
+                "SELECT seq, command_id, kind, payload_json "
+                "FROM entries WHERE is_reservation_transition = 1 AND seq <= ? "
+                "ORDER BY seq ASC",
+                (tip,),
+            ).fetchall()
+            self._conn.execute("COMMIT")
+        except BaseException:
+            self._safe_rollback()
+            raise
+        records = tuple(_reservation_transition_record_from_row(row) for row in rows)
+        return ReservationTransitionHistory(
+            writer_epoch=current,
+            last_seq=None if tip < 0 else tip,
+            transitions=records,
         )
 
     def replay(self) -> Iterator[CommitEntry]:

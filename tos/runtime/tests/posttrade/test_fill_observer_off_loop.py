@@ -38,6 +38,7 @@ from tos_runtime.posttrade.fill_fetch import (
     PrefetchedSnapshot,
     SnapshotRead,
     SnapshotUse,
+    snapshot_key,
 )
 from tos_runtime.posttrade.fill_observer import (
     FILL_OBSERVED_KIND,
@@ -182,6 +183,25 @@ class _Snapshots:
     ) -> Iterator[list[SnapshotUse]]:
         del max_age_ms, now_ms
         self.serving_threads.append(threading.get_ident())
+        self.active = prefetched
+        try:
+            yield []
+        finally:
+            self.active = None
+
+    @contextmanager
+    def serving_required(
+        self,
+        prefetched: PrefetchedSnapshot,
+        *,
+        expected_scope: WitnessScope,
+        expected_today: str,
+        max_age_ms: int,
+        now_ms: Callable[[], int],
+    ) -> Iterator[list[SnapshotUse]]:
+        del max_age_ms, now_ms
+        assert prefetched.key == snapshot_key(expected_scope)
+        assert prefetched.today == expected_today
         self.active = prefetched
         try:
             yield []
@@ -596,6 +616,21 @@ class _AgingSnapshots:
             yield uses
         finally:
             self._serving = None
+
+    @contextmanager
+    def serving_required(
+        self,
+        prefetched: PrefetchedSnapshot,
+        *,
+        expected_scope: WitnessScope,
+        expected_today: str,
+        max_age_ms: int,
+        now_ms: Callable[[], int],
+    ) -> Iterator[list[SnapshotUse]]:
+        assert prefetched.key == snapshot_key(expected_scope)
+        assert prefetched.today == expected_today
+        with self.serving(prefetched, max_age_ms=max_age_ms, now_ms=now_ms) as uses:
+            yield uses
 
     def observe(self) -> bool:
         """The release reconciliation's read: ``True`` iff the snapshot was served (the

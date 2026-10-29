@@ -85,12 +85,16 @@ from tos_runtime.compose._broker_posttrade_wiring import (
     fill_observer_pass,
 )
 from tos_runtime.compose._finalize_wiring import _finalize
+from tos_runtime.compose._held_position_wiring import HeldPositionBridge
 from tos_runtime.compose._kis_credential_wiring import KisCredentialSessionsCell
 from tos_runtime.compose._marketfeed_wiring import build_tick_scheduler
 from tos_runtime.compose._operations_wiring import apply_operations_wiring
 from tos_runtime.compose._recovery_wiring import apply_recovery_barrier
 from tos_runtime.compose._release_wiring import apply_release_wiring
 from tos_runtime.compose._request_digest import KisWireCodecDigest
+from tos_runtime.compose._riskstate_provider_wiring import (
+    build_risk_state_providers,
+)
 from tos_runtime.compose._riskstate_wiring import build_risk_state_service
 from tos_runtime.compose._session_wiring import (
     CALENDAR_CONFIG_NAME,
@@ -126,11 +130,6 @@ from tos_runtime.risk.aggregate import (
     AggregateRiskDecisionInputs,
 )
 from tos_runtime.risk.flow import ActionFlowDecisionInputs
-from tos_runtime.riskstate.policies import (
-    ACTION_FLOW_POLICY_CONFIG_NAME,
-    AGGREGATE_RISK_POLICY_CONFIG_NAME,
-)
-from tos_runtime.riskstate.service import RiskStateService
 from tos_runtime.time.sources import (
     MonotonicSource,
 )
@@ -324,6 +323,17 @@ def compose_paper_runtime(
         credential_sessions_cell=credential_sessions_cell,
         trading_date_now=trading_date_reader,
     )
+    if (
+        posttrade.enabled
+        and posttrade.observer_config is not None
+        and posttrade.observer_config.held_position_max_age_ms is not None
+    ):
+        posttrade.held_position_bridge = HeldPositionBridge(
+            log=boot.rcl.rcl_log,
+            now=boot.infra.monotonic_source.now_ms,
+            today=trading_date_reader,
+            max_age_ms=posttrade.observer_config.held_position_max_age_ms,
+        )
     venue_service, loaded_ocp = build_venue_service(
         config_dir=config_dir,
         scheme=_SCHEME,
@@ -368,44 +378,15 @@ def compose_paper_runtime(
     boot.risk.construction_dimension_state.construction_stage = (
         construction_stages.construction_stage
     )
-    # TOS risk state service wave (plan §2.4/§3): decide NOW (file existence only, no I/O on
-    # the not-yet-existing durable inbox) whether the production RiskStateService will supply
-    # any provider the caller left `None` — a caller-supplied `None` with the two governed
-    # policy files ALSO absent is a production-boot refusal (`RiskStateConfigError`), never a
-    # silent "every attempt is UNKNOWN forever" runtime. The service ITSELF is constructed
-    # later, right where `venue_service` is attached below, because `InboxFlowReader` needs
-    # the REAL durable inbox `_finalize` has not built yet at this point in the function (the
-    # SAME "constructed before its dependency exists" ordering already documented for
-    # `_ActionFlowDimensionState`/`_RecoveryDimensionState` above) — `_risk_state_cell` is the
-    # late-bound slot both thunks below close over; `composed.risk_state` is filled from the
-    # SAME cell once the real service exists, so a caller never observes a torn state.
-    risk_state_files_exist = (
-        config_dir / AGGREGATE_RISK_POLICY_CONFIG_NAME
-    ).is_file() and (config_dir / ACTION_FLOW_POLICY_CONFIG_NAME).is_file()
-    if not risk_state_files_exist and (
-        aggregate_risk_inputs_provider is None or action_flow_inputs_provider is None
-    ):
-        raise RiskStateConfigError(
-            f"{config_dir}: aggregate_risk_policy.yaml/action_flow_policy.yaml are not both "
-            "present, and at least one of aggregate_risk_inputs_provider/"
-            "action_flow_inputs_provider was left None — refusing to boot with a permanently "
-            "UNKNOWN step 6/7 (TOS risk state service wave plan §3)"
-        )
-    risk_state_cell: dict[str, RiskStateService | None] = {"service": None}
-
-    def _aggregate_provider(
-        request: StageRequest,
-    ) -> AggregateRiskDecisionInputs | None:
-        if aggregate_risk_inputs_provider is not None:
-            return aggregate_risk_inputs_provider(request)
-        service = risk_state_cell["service"]
-        return None if service is None else service.aggregate_inputs_for(request)
-
-    def _action_flow_provider(request: StageRequest) -> ActionFlowDecisionInputs | None:
-        if action_flow_inputs_provider is not None:
-            return action_flow_inputs_provider(request)
-        service = risk_state_cell["service"]
-        return None if service is None else service.action_flow_inputs_for(request)
+    # The real service is created later, once `_finalize` has built the durable inbox
+    # required by `InboxFlowReader`. These providers share one late-bound cell until then.
+    risk_providers = build_risk_state_providers(
+        config_dir=config_dir,
+        aggregate_risk_inputs_provider=aggregate_risk_inputs_provider,
+        action_flow_inputs_provider=action_flow_inputs_provider,
+    )
+    risk_state_files_exist = risk_providers.files_exist
+    risk_state_cell = risk_providers.cell
 
     realized = _build_realized_stages(
         infra=boot.infra,
@@ -413,8 +394,9 @@ def compose_paper_runtime(
         risk=boot.risk,
         construction_stages=construction_stages,
         construction=construction,
-        aggregate_risk_inputs_provider=_aggregate_provider,
-        action_flow_inputs_provider=_action_flow_provider,
+        aggregate_risk_inputs_provider=risk_providers.aggregate_inputs,
+        action_flow_inputs_provider=risk_providers.action_flow_inputs,
+        close_proof_fence_reader=risk_providers.close_fence,
         custody_root=custody_root,
         environment_label=environment_label,
         uid=uid,
@@ -555,6 +537,21 @@ def compose_paper_runtime(
             venue_allowed_sides=venue_service.shape_constraints.allowed_sides,
             action_class_reader=lambda: attempt_action_class(  # #960: per attempt
                 construction_stages.construction_stage, construction.action_class
+            ),
+            attempt_arm_direction_reader=lambda: getattr(
+                getattr(construction_stages.construction_stage, "attempt", None),
+                "direction",
+                None,
+            ),
+            held_position_proof_reader=(
+                None
+                if posttrade.held_position_bridge is None
+                else posttrade.held_position_bridge.consume
+            ),
+            held_position_currentness_reader=(
+                None
+                if posttrade.held_position_bridge is None
+                else posttrade.held_position_bridge.cell.validate_consumed
             ),
         )
     composed.risk_state = risk_state_cell["service"]
