@@ -894,7 +894,9 @@ def test_admitted_shape_price_from_view_projects_an_exact_integer() -> None:
 
 @settings(max_examples=50, deadline=None)
 @given(value=st.booleans() | st.floats(allow_nan=False, allow_infinity=False))
-def test_admitted_shape_price_from_view_refuses_a_bool_or_float(value: object) -> None:
+def test_admitted_shape_price_from_view_refuses_a_bool_or_float(
+    value: bool | float,
+) -> None:
     """(design #36 §4; #32 §2.5) ``True`` is not the shape price ``1``, and no float projects.
 
     The polarity that matters is ``True``: ``bool`` is an ``int`` subclass, so an ``isinstance``
@@ -904,7 +906,7 @@ def test_admitted_shape_price_from_view_refuses_a_bool_or_float(value: object) -
     """
     projected = admitted_shape_price_from_view(
         _single_value_view(value),
-        field_key="close",  # type: ignore[arg-type]
+        field_key="close",
     )
 
     assert projected is None
