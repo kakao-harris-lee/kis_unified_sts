@@ -599,6 +599,29 @@ def test_unpaired_bars_carry_the_producers_own_reason(
         "skipped_behind": 1,
     }
     assert document["counts"]["pre_boot_lines_at_boot"] == 1
+    # The ids themselves, not just how many: B3 holds exactly these bars out of
+    # its LIVE comparison (`diff_decisions.apply_consumed_filter`), and a count
+    # cannot name a bar. This document is the only place B3 reads them from —
+    # it takes no --boot-snapshot of its own.
+    assert document["pre_boot_raw_event_ids"] == [_event_id("0858")]
+
+
+def test_the_document_carries_an_empty_pre_boot_list_when_the_journal_was_empty(
+    tmp_path: Path, hinge: dict[str, Any]
+) -> None:
+    """``[]`` is a measurement; a MISSING key would be "did not say".
+
+    B3 holds the listed ids out of its live comparison and treats an absent key
+    as "no information, hold nothing out". So an empty boot journal has to come
+    through as an empty list, or every session with nothing pre-boot would read
+    as a session whose document was never written.
+    """
+    data_dir = _three_bar_session(tmp_path, hinge)
+
+    document = _document(tmp_path, data_dir)
+
+    assert document["pre_boot_raw_event_ids"] == []
+    assert document["counts"]["pre_boot_lines_at_boot"] == 0
 
 
 def _stamp(hhmmss: str) -> int:

@@ -134,20 +134,55 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
 줄을 **서브프로세스로 그대로** 돌린다(`tools/tos_cp3/post_session_b3.py` ·
 설정 `config/tos_cp3_b3.yaml`). 읽을 것 둘:
 
-- `<session>/b3/report/summary.json` — **무엇을 봤나**. `unresolved.count` 가 §2-1 의
-  판정 수다. 이 파일을 쓰는 것은 `diff_decisions.py` 하나뿐이다.
+- `<session>/b3/report/summary.json` — **무엇을 봤나**. `unresolved.count` 와
+  `live_comparison.divergent` 가 §2-1 의 두 판정 수다. 이 파일을 쓰는 것은
+  `diff_decisions.py` 하나뿐이다.
+  - `summary_schema_version` **3 부터** `divergent` 가 「설명 안 되는 divergence」다
+    (2026-10-29). 선언된 차이는 `live_comparison.declared_difference_counts` 에
+    선언 id 별로, 대조에서 빼 둔 봉은 `live_comparison.excluded_bar_counts` 에
+    사유별로 따로 나온다 — 다섯 수(`identical` · `kind_only_matches` ·
+    선언 · `divergent` · `excluded_from_comparison`)의 합이 `bars_in_scope` 다.
+    v2 의 `divergent` 는 선언된 차이를 섞어 세므로 그 수로 §2-1 을 읽지 않는다.
 - `<session>/b3/status.json` — **돌았나**. 첫 단계 **전에** `verdict: running` 으로
   쓰이고 끝에 원자적으로 교체되므로, `running` 이 남아 있으면 **끝내지 못한 것**이다
   (예산 초과 · SIGKILL). `failed` 는 사유와 멈춘 단계(`stage`)를 싣고, `skipped` 는
   설정이나 시장 때문에 돌리지 않은 것이다. 단계 로그는 `<session>/b3/logs/`.
 
 **실측 2026-10-29 (long-20261028 세션 · 잎은 그 세션 뒤의 콜드 백업 gen9).** 여섯 단계
-25.9 s, `summary.json` 409 봉 · **unresolved 0** · `live_comparison.divergent`
-**26/409**(identical 383). 26 건은 전부 「오프라인 FLAT + capacity_denied」 대 「실시간
-PROPOSAL」이고, B1b 의 선언된 차이 B1b-D1(백테스트 예약 투영의 release 경로 부재,
-`tos/runtime/cp3/runner.py` 의 `--max-unresolved-send-per-scope` 설명)에 해당한다 —
-§2-1 의 「설명 안 되는 divergence 0」을 닫으려면 그 귀속을 따로 처분해야 한다. 상태판은
-그 수를 막힘이 아니라 **확인**으로 올린다.
+25.9 s, `summary.json` 409 봉 · **unresolved 0**.
+
+처음 그 실측의 `live_comparison.divergent` 는 **26/409** 였고, 그 26 건은 전부 이미
+기계가 읽을 수 있는 곳에 선언돼 있는데 대조가 그 곳을 읽지 않은 것이었다. 두 집합을
+읽게 한 뒤(2026-10-29) 세 세션 실측:
+
+| 세션 | 봉 | identical | 선언 B1b-D1 | 대조 제외 pre_boot | **divergent** |
+| --- | --- | --- | --- | --- | --- |
+| long-20261028 | 409 | 383 | 25 | 1 | **0** |
+| long-20261029 | 409 | 353 | 55 | 1 | **0** |
+| short-20261029 | 409 | 369 | 39 | 1 | **0** |
+
+- **B1b-D1** — 오프라인만 `capacity_denied` 이고 실시간은 아닌 봉. `tos.backtest` 는
+  한 scope 당 주문 하나를 run 내내 들고 있고(예약 투영에 release 경로가 없다) 첫 발사
+  뒤는 전부 정확한 capacity 거부라서 생기는 차이이고, B1b 가 자기 `lineage.json`
+  (`declared_differences`)에 그렇게 선언한다. **한 방향만**이다 — 실시간이 거부하고
+  오프라인이 아닌 경우는 이 차이가 아니고 divergent 로 남는다. 결정 종류까지 어긋나면
+  역시 divergent 다. lineage 가 그 id 를 선언하지 않으면 아무것도 재분류하지 않는다.
+  - ⚠ **선언된 한계**: 실시간의 **진짜 capacity 누수**(자기 예약을 들고 있는데 두 번째
+    노출을 허용)는 B3 에서 이 차이와 **구분되지 않는다** — `live.jsonl` 에 노출 상태가
+    없어 「release 돼서 거부 안 됨」과 「거부돼야 했는데 안 됨」을 가를 수 없다. B3 의
+    oracle 은 kickoff §3 B4(「체결 비교 포기」)대로 결정/의도 수준이고, 누수는 엔진 자신의
+    at-most-one-exposure 불변식이 잡는다.
+- **08:45 봉** — 부팅 시점에 이미 생산자 journal 에 있던 줄이라 설계상 boot 에서 stale
+  이고 엔진은 보류밖에 할 수 없다(`DECISION_WITHHELD` / `TIME_NOT_ADMITTED`). 러너의
+  `boot-journal-snapshot.json::pre_boot_raw_event_ids` 가 **id 로** 지목하는 봉만
+  빼고, 그 id 는 `consumed-ids.json` 이 실어 온다. 시각이나 순서로 빼지 않는다 —
+  **post-boot 의 `TIME_NOT_ADMITTED` 는 M5 ① stale 신호이고 그대로 센다**.
+  - **조건은 둘**: id 가 지목되고 **그 봉의 실시간 레코드가 보류 모양**
+    (`outcome_kind: NO_OUTCOME`)이어야 한다. 지목된 봉인데 실시간이 실제로 결정을 냈으면
+    그대로 대조하고 `live_comparison.pre_boot_bars_not_held_out` 에 id 를 남긴다.
+
+오프라인 분류(`bars` · `buckets` · `unresolved`)는 빼 둔 봉까지 409 봉 그대로다. 빠진
+것은 그 한 봉의 **실시간 대조**뿐이다.
 
 ⚠ 그 실측이 처음에는 거부로 끝났고, 그것이 **왜 여태 summary 가 없었는지**다:
 `live-decisions` 가 누적 잎 전체(6 일 2,348 건)를 담아 B3 가

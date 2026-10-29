@@ -355,6 +355,11 @@ def test_abort_day_with_b3(cfg: sb.BoardConfig):
         "compared_bars": 303,
         "identical": 277,
         "divergent": 26,
+        # v2 summary: it does not separate the declared families out of
+        # `divergent`, and `None` says so rather than claiming zero.
+        "declared": None,
+        "excluded": None,
+        "separates_declared": False,
         "window": "2026-10-08..2026-10-15",
     }
     assert any("ABORT: the producer stopped" in b for b in _issues(board, sb.BLOCK))
@@ -646,7 +651,7 @@ def test_n3_missing_expected_code_digest_after_boot_warns(
     "mutate, needle",
     [
         (lambda d: d.update(unresolved=3), "unresolved.count 가 정수가 아니다"),
-        (lambda d: d.update(summary_schema_version=3), "summary_schema_version=3"),
+        (lambda d: d.update(summary_schema_version=4), "summary_schema_version=4"),
         (lambda d: d["live_comparison"].pop("divergent"), "live_comparison"),
     ],
 )
@@ -665,10 +670,54 @@ def test_n4_b3_summary_of_another_shape_blocks_without_crashing(
     assert "B3 대조: summary 를 읽을 수 없음" in sb.render_text(board)
 
 
-def test_n4_b3_live_divergence_is_raised_as_a_warning(cfg: sb.BoardConfig):
+def test_n4_a_v2_divergence_count_is_a_warning_because_it_mixes_declared_ones(
+    cfg: sb.BoardConfig,
+):
+    """A v2 summary's ``divergent`` is NOT roadmap §2-1's number.
+
+    Concrete input: the 10-15 genesis summary, 26 divergent of 303 — a count
+    that mixes the B1b-D1 family in, because that shape had no bucket for it.
+    Reading it as "설명 안 되는 divergence" would report a session as failing
+    §2-1 on bars that are declared, so the board shows the count and keeps the
+    verdict at 확인.
+    """
+    board = _board(cfg, D1015)
     assert (
-        "long-20261015: B3 live divergent 26/303 — 귀속은 B3 리포트에서 확인"
-        in _issues(_board(cfg, D1015), sb.WARN)
+        "long-20261015: B3 live divergent 26/303 — 이 summary 모양은 선언된 차이를"
+        " 가르지 않는다" in _issues(board, sb.WARN)
+    )
+    assert "선언된 차이: 모름" in sb.render_text(board)
+
+
+def test_n4_a_v3_divergence_blocks_and_the_declared_buckets_show_separately(
+    state: Path, cfg: sb.BoardConfig
+):
+    """From v3 on, ``divergent`` IS §2-1's number, so it blocks like unresolved.
+
+    Concrete input: the same session rewritten in the v3 shape — 25 of the 26
+    bars attributed to B1b-D1, one bar held out as the boot journal's own, and
+    one left unexplained. The declared and held-out counts appear on their own
+    line: folded into the divergent line they would be unreadable, and folded
+    into ``divergent`` they would be unfalsifiable.
+    """
+    path = state / "cp3-sessions/long-20261015/b3/report/summary.json"
+    data = json.loads(path.read_text())
+    data["summary_schema_version"] = sb.B3_DECLARED_BUCKET_SCHEMA_VERSION
+    data["live_comparison"].update(
+        bars_in_scope=303,
+        excluded_from_comparison=1,
+        compared_bars=302,
+        divergent=1,
+        declared_difference_counts={"B1b-D1": 25},
+        excluded_bar_counts={"pre_boot_at_boot": 1},
+    )
+    path.write_text(json.dumps(data))
+    board = _board(cfg, D1015)
+    assert "long-20261015: B3 live divergent 1/302 (선언 B1b-D1 25)" in _issues(
+        board, sb.BLOCK
+    )
+    assert "선언된 차이: B1b-D1 25 · 대조 제외: pre_boot_at_boot 1" in sb.render_text(
+        board
     )
 
 
