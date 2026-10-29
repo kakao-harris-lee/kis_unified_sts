@@ -144,7 +144,7 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 
 ---
 
-## 3. 프로브 전수 표 (12 정본 + 4 census = 16, + 후속 7 = 23)
+## 3. 프로브 전수 표 (12 정본 + 4 census = 16, + 후속 8 = 24)
 
 공통 인자: `--asset {stock,futures}` · `--symbol` · `--quantity`(기본 1) ·
 `--price-offset-pct`(기본 10 — 미체결 유지용, **지정가 경로 전용**) · `--samples` ·
@@ -178,13 +178,15 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 | **N-19** | CORPORATE_ADMINISTRATIVE_EVENTS | SPEC_CROSSCHECK | NONE | (스크립트 아님 — 명세 대조 · 산출 `docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md`) | ~2-3 h 데스크워크 | LOW | 아니오 |
 | **P-CA** | CORPORATE_ADMINISTRATIVE_EVENTS | MANUAL (GET 전용) | MOCK_VTS / REAL_PROD (`--env`) | `python -m tools.broker_probes.run P-CA --asset stock --symbol <종목> --event-class <class> --effective-time <ISO> [--payable-time <ISO>] [--reference-check] --confirm` (2026-09-10 구현 착지 — **§5.8**) | 이벤트 창 전후 폴링 · 운영자 7-시각 기록 | LOW | 아니오 |
 | **P-VL** | MARKET_INSTRUMENT_CONSTRAINTS | QUERY (GET 전용) | MOCK_VTS | `python -m tools.broker_probes.run P-VL --asset futures --symbol <현재 잎> --confirm` (**§5.9**) | GET 4 + 토큰 1 (~10 s) | LOW | 아니오 |
+| **P-SC** | CANCELLATION | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-SC --asset stock --symbol 005930 --confirm` (**§5.10**) | ~5 min (주문 ≤5 + GET 폴링 60 s×2, 2 s 페이싱) | HIGH | 예 |
 
-> **P-NMPR·P-BAL·P-R5-PRE·P-R5·N-19·P-CA·P-VL은 정본 16에 속하지 않는다.** 각각
+> **P-NMPR·P-BAL·P-R5-PRE·P-R5·N-19·P-CA·P-VL·P-SC는 정본 16에 속하지 않는다.** 각각
 > N-17 대조, wave-3b 런타임 트레이스(H4), wave-3b D-2의 NOT-IN-SCOPE 항목,
-> 2026-08-07 non-trade 프로브 정의서, 그리고 CP-3 결정 9(2026-10-08 설계 §4)에서
-> 파생된 **후속 7건**이며, `registry.py`의 `source`가 "draft"·"plan" 어느 쪽으로도
+> 2026-08-07 non-trade 프로브 정의서, CP-3 결정 9(2026-10-08 설계 §4), 그리고
+> issue #948 순서 1에서
+> 파생된 **후속 8건**이며, `registry.py`의 `source`가 "draft"·"plan" 어느 쪽으로도
 > 시작하지 않아 `--coverage`의 정본 12 / census 4 카운트를 **바꾸지 않는다**. 캠페인
-> 집계에서 "23건 실행"을 "정본 전건 실행"으로 읽지 말 것.
+> 집계에서 "24건 실행"을 "정본 전건 실행"으로 읽지 말 것.
 >
 > **⚠ `P-R5`는 이 표에서 유일하게 실전 계좌에 주문을 내는 프로브다.** 다른 모든
 > `주문 발생 = 예` 행은 **모의투자 전용**이며 `assert_mock_host()`로 구조적으로
@@ -222,6 +224,7 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 | P-R5 | **실전 환경의 P-5.** 수락(t0)→조회 가시(t1) 지연을 모의 P-5와 **동일한 계산**으로 측정해 비교 가능하게 만든다. 존재 이유는 `config/execution.yaml::futures_fill_check_timeout_seconds`(1.0s)와 모의 p50 2632.9ms의 모순이며, 그 모순은 **실환경 측정 없이는 해소 불가**다(wave-3b D-2가 이 프로브를 명시적으로 지목). 부수 산출 2건: **submit 클래스** 페이싱 브래킷(P-13은 query 클래스만 측정 — 외삽 금지)과 실전 **페이지 크기** 1회 관측. n은 설계상 작다(실노출 비용) → `candidate_only` + 소표본 |
 | P-VL | 가격제한폭 **의미론**: 기준가격이 전일 **정산가**인지(`futs_sdpr` vs `futs_prdy_clpr`), 관측 band 가 시행세칙 제56조 산식(기준가격×비율 · 상한가 **내림** / 하한가 **올림**)을 재현하는지, 브로커 호가가 등록 틱의 배수인지. **호가수량한도는 주지 않는다** — `ord_psbl_qty` 는 공식 명세상 「주문가능수량」으로 예수금·증거금 **과 그 레그의 가격·방향·주문유형 파라미터**의 함수다(`probes_real_order.py::_preflight_instrument_state` 의 `interpretation` 키 — 「약어가 아니라 심볼로 인용한다」, 아래 §5.9 참조). ⚠ 이 레포에 `ord_psbl_qty` 관측은 **아직 없다** — P-R5-PRE 08-03 은 예수금 레그(`CTRP6550R`)에서 **그 전에** ABORT 했다(설계 v2 §4.3). 호가수량한도(별표 17의2 제1호 — **미니 정규 10,000 / 전체 정규 2,000**, `--symbol` 의 상품에 따라 다른 행)는 주문을 넣어 거부 코드를 받아야 보인다. 틱도 상품별이다 — 미니 0.02 · 전체 0.05(`config/execution.yaml`), 그리고 **배포된 paper 정책의 `tick_size: 5` 는 미니 잎과 불일치**하므로 프로브가 둘을 나란히 적고 판정하지 않는다. 1차 출처는 **규정 문서**이고 이 프로브는 **보강**이다(CP-3 결정 9 (a)). 2/3단계 확대는 기준종목 도달 사건에 달려 있어 프로브가 일으킬 수 없다 — 관측되면 기록, 아니면 미관측. 처분은 한 단어 상태가 아니라 **판정에서 파생된 자기 서술 복합 토큰**이다(설계 v2 §5 — 프로파일 `:4432` 꼴). L1·L2 PASS 면 `BAND_SEMANTICS_OBSERVED_ON_MOCK__TICK_FROM_REGULATION_NOT_BROKER__QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED`; L2 가 통과하지 못하면 **band 축이 OBSERVED 를 주장할 수 없다** |
 | P-NMPR | [필수] 2필드 빈 문자열 vs 명시 코드 A/B — 수락/거부와 등가성 직접 판정. B-arm(빈 값) 거부 = 수정 전 런타임이 계약 위반이었음을 확정 (N-17 소견 2). **수락 동수는 등가성이 아니다** — 조회면이 두 필드를 되돌려주지 않으면 "blank == 01/0"은 UNKNOWN으로 남는다 |
+| P-SC | **주식 모의 취소가 조회면에서 어떤 모양으로 오는가** — 원주문 행의 `cncl_yn='Y'` 인가, `orgn_odno` 가 원주문을 가리키는 **별도 행**인가, 둘 다인가. 브로커 프로파일 `capabilities.replace_semantics._kis.replace_probe_2026_07_31.orgn_odno_wire_form.reading` 이 「정정으로 생성된 행에서 이 필드가 실제로 원주문 ODNO 를 담는지는 **확인하지 않았다** — 추정 금지」라고 적은 그 필드의 첫 측정이다. **판정 5값**이고 `NEITHER_OBSERVED`(조회면이 답했고 둘 다 없었다)와 `UNDETERMINED`(조회면이 답하지 못했다)는 **다른 값**이다 — #948 순서 2·3 과 #980 이 전자를 후자로 읽으면 fail-open 이 된다. 부수 산출: 취소 ack **뒤** 체결이 더 붙는가(60 s 창 1회 관측 — 0건은 `0 ms` 가 **아니라** 미확립, P-FQP 와 같은 규율) · 모의에서 부분체결을 만들 수 있는가(P-11 실측상 기대값은 `NOT_PRODUCIBLE__NO_FILL` 이고 그것도 기록 대상). 실주문 0 · 한도 전량 YAML (`config/broker_probes/stock_cancel_probe.yaml`) |
 
 ---
 
@@ -1105,6 +1108,148 @@ code 표의 「5 실행 실패」 경로가 아니고, `ProbeError` 의 exit 4(�
 `.derived_from` 이 그것을 만든 레그 판정이다 — L2 가 통과하지 못하면 band 축은
 `OBSERVED_ON_MOCK` 를 주장하지 못하고 `L2_STAGE_RECORDED_ONLY` 또는
 `CONTRADICTED_ON_MOCK` 가 된다.
+
+### 5.10 P-SC 실행 절차 (주식 취소 행 모양) — 모의 주식 전용 · 실주문 0
+
+#### 목적
+
+**주식 MOCK 에서 취소가 조회면에 어떤 모양으로 나타나는지**를 측정한다. 이것이
+없어서 #939(PR-3b)는 취소 경로를 fail-closed 로 남겼고(`FILL_OBSERVER_CANCEL_
+UNSUPPORTED` 1회 기록 + 예약 유지), #948 순서 2·3 과 #980 은 추측 없이는 만들 수
+없다. 브로커 프로파일이 그 공백을 명시한다 —
+`capabilities.replace_semantics._kis.replace_probe_2026_07_31.orgn_odno_wire_form
+.reading`: 「정정으로 생성된 행에서 이 필드가 실제로 원주문 ODNO 를 담는지는
+**확인하지 않았다**(P-8 은 조회 행을 아티팩트에 남기지 않았다) — 추정 금지.」
+
+이 프로브는 **값을 기입하지 않는다**. 관측만 남기고, 기입은 §6 의 승인 사슬이 한다.
+
+#### 선행 조건
+
+| 조건 | 어디서 강제되는가 |
+|---|---|
+| 모의 호스트·모의 TR | `assert_mock_host()` · `assert_mock_trading_tr()` — 클라이언트의 단일 전송 지점, 우회 불가 |
+| 모의 **자격증명** | `assert_mock_only_env()` — `KIS_STOCK_MARKET`/`KIS_FUTURES_MARKET` 이 `mock` 이 아니거나 `KIS_REAL_TRADING` 이 참이면 첫 소켓 전에 거부. paper 스택은 실제로 `KIS_STOCK_MARKET=real` 로 돈다(주식 시세가 실전 키를 요구한다) — 즉 paper `.env` 를 소싱한 실수가 실주문 자격증명이 된다 |
+| `--asset stock` | 취소 TR(`VTTC0013U`)과 두 조회면(`VTTC0081R`·`VTTC8434R`)이 전부 국내주식. 선물은 거부 |
+| 거래일 09:00-15:20 KST | `assert_session_window()` — 휴장일은 `config/tos_runtime/paper/calendar.yaml` 의 `holidays`(`tools/tos_cp3/session_day.py` 가 유일한 판독기), 창은 YAML `session.window`. 시간 이동용 플래그는 **없다** |
+| 계좌가 비어 있음 | `assert_flat_start()` — 대상 종목 보유 0 **과** 미결 주문 0 을 GET 으로 증명해야 시작한다. 잔고는 연속조회 키를 걸어 페이지를 넘긴다(1페이지만 읽으면 2페이지 보유가 「미보유」로 읽힌다 — P-BAL 실측). 읽기가 **답하지 못하면**(페이지 캡·거부·스로틀·꽉 찬 페이지) 그것도 거부다 |
+| 주문 호출 예산 | `OrderBudget` — YAML `limits.max_order_calls`. 초과 시도는 `SafetyViolation`(아티팩트 없음, exit 3) |
+| 정리 | `_cleanup()` 이 `finally` 에서 돈다 — 남은 주문 취소 → 체결분 **시장가** 되팔기 → 잔고 GET 으로 flat 확인. 자기 결과를 기록하고 예외를 올리지 않는다(정리 traceback 이 측정 결과를 덮어쓰면 운영자는 계좌 상태를 알 수 없게 된다) |
+
+#### 명령
+
+```bash
+# 분리 워크트리에서, 주 체크아웃의 .venv 로 (워크트리에 .venv 를 설치하지 않는다)
+python -m tools.broker_probes.run P-SC --asset stock --symbol 005930 --confirm \
+  --token-cache-dir ~/.config/kis-probes/p-sc-<날짜>-token-cache \
+  --note "..."
+
+# 한도만 바꿔 돌릴 때 (기본 config/broker_probes/stock_cancel_probe.yaml)
+#   --config <다른 YAML>
+# 시행 A 만 (쉬는 주문 취소), 시행 B 만 (부분체결 시도)
+#   --trial a | --trial b
+```
+
+`--confirm` 없이 돌리면 네트워크 0 의 dry-run 이고, 보낼 **취소 본문**을 그대로
+찍는다. 그 경로에서는 세션/거래일 게이트가 명시적 skip 으로 남는다 — dry-run 은
+어느 시각에도 돌 수 있어야 한다.
+
+#### 두 시행
+
+- **A — 쉬는 주문 취소.** 시세에서 YAML `trials.a.price_offset_pct` 만큼 **아래**
+  지정가 매수 1주. 가격은 런타임 GET 시세와 브로커가 보고한 호가단위(`aspr_unit`)로
+  도출하고 터치에서 **멀어지는 방향**으로 스냅한다 — 리터럴 가격은 어디에도 없다.
+  제출 → `VTTC0081R` 조회(취소 전 원문) → 취소(`VTTC0013U`) → t+0 즉시 + 창이
+  닫힐 때까지 반복 조회.
+- **B — 부분체결 뒤 취소(최선 노력).** 터치를 넘어가는 지정가 2주. P-11 실측상
+  모의에서 marketable limit 은 체결되지 않았고(`P-11-20260730T002715Z`) 시장가는
+  즉시 전량 체결됐으므로(`P-11-20260731T015709Z`), **기대 결과는
+  `NOT_PRODUCIBLE__NO_FILL`** 이다. 전량 체결되면 `NOT_PRODUCIBLE__FILLED_FULLY`.
+  「모의에서 부분체결은 만들 수 없다」도 유효한 측정이며, 그 경우 #980 은 모의
+  증거 없이 처분해야 한다. 체결분은 정리 단계가 시장가로 되팔아 계좌를 비운다.
+
+#### 아티팩트 읽는 법
+
+경로·`artifact_id`·`UNAPPROVED_CANDIDATE` 규율은 §6.1 과 동일하다. 읽는 순서:
+
+1. **`measurements.mock_only_env_gate.verdict`** 와 **`credentials.environment`**
+   — `MOCK_ONLY` / `MOCK_VTS` 가 아니면 더 읽지 않는다.
+2. **`measurements.flat_start.verdict`** — `FLAT` 이어야 한다. 이게 없는 아티팩트는
+   시작 상태를 모르는 런이므로 어떤 행도 이 프로브 것이라고 말할 수 없다.
+3. **`measurements.trial_a.cancel_shape.shape`** — 측정의 본문. 5값이고 두 쌍이
+   서로 다르다는 것이 요점이다:
+   - `ORIGINAL_ROW_FLAGGED` — 원주문 행에 `cncl_yn='Y'`, 별도 행 없음.
+   - `SEPARATE_ROW_WITH_ORGN_ODNO` — `orgn_odno` 가 원주문을 가리키는 별도 행.
+     이 경우 `derived_row_orgn_odno_forms` 가 프로파일이 미확인이라 적은 그
+     필드의 **첫 실측**이다(`verbatim`·`length`·`leading_pad`).
+   - `BOTH` — 둘 다 관측(같은 스냅샷이 아니어도 된다 — 판정은 창 전체에서 낸다).
+   - `NEITHER_OBSERVED` — 조회면이 **답했고**(`rt_cd=0`, 잘리지 않은 페이지) 둘 다
+     없었다.
+   - `UNDETERMINED` — 조회면이 답하지 못했다, 또는 답한 페이지가 전부 꽉 차
+     있었다(행이 잘렸을 수 있다). **`NEITHER_OBSERVED` 로 읽지 말 것** — 그것이
+     #948 순서 2 가 fail-open 으로 넘어가는 경로다.
+   ⚠ **모양과 「취소 확인」은 다른 질문이다.** `cancel_shape` 는 「이 조회면에서
+   취소가 어떻게 보이는가」(측정)이고, `measurements.trial_a.cancel_confirmed`
+   는 「이 계좌에 주문을 더 올려도 되는가」(안전)다. 그래서
+   `NEITHER_OBSERVED` + `rmn_qty=0` 은 측정으로서 유효하면서 안전하고,
+   `NEITHER_OBSERVED` + 잔량 생존은 유효한 측정이면서 **안전하지 않다** —
+   후자면 시행 B 를 돌리지 않고 `PSC_STOP=cancel_not_confirmed` 로 멈춘다.
+   둘을 한 값으로 합치면 측정을 버리거나(NEITHER 를 실패로 취급) 살아 있는
+   주문 위에 주문을 올린다(NEITHER 를 성공으로 취급).
+   보조 필드: `snapshots_answered` / `snapshots_untruncated` 가 0 이면 판정의 근거가
+   없다는 뜻이고, `first_flagged_t_offset_ms` / `first_derived_t_offset_ms` 는 취소
+   ack 의 **페이서 릴리스 시점**부터의 ms 다(페이싱 수면을 브로커 지연으로 계상하지
+   않는다).
+4. **`measurements.trial_a.late_fill.verdict`** —
+   `LATE_FILL_OBSERVED_AFTER_CANCEL_ACK` / `NO_LATE_FILL_OBSERVED` /
+   `UNDETERMINED_*`. 0건은 `0 ms` 가 **아니라** 미확립이다(VP-002:756 · P-FQP 와
+   같은 규율). `measurement_gap_note` 가 불확실성을 명시한다 — 취소 전 체결수량은
+   취소 POST 보다 한 페이싱 간격 앞서 읽혔으므로, 직후에 처음 보인 증가는 그
+   간격 안에서 일어났을 수도 있다.
+5. **`measurements.trial_b.partial_fill.outcome`** — #980 용. 위 「두 시행」 참조.
+6. **`measurements.cleanup.status`** — `FLAT` 이어야 한다. 단계별 기록이 따로
+   남는다: `cancels` · `own_filled_qty` · `holding_after_cancels` ·
+   `sell_back`(상한 초과 수량은 `limits.max_quantity` 단위로 **쪼개져** 나가고
+   `chunks` 에 각 건이 남는다) · `orders_final_*`. 한 단계가 실패해도 다음
+   단계는 돈다 — 실패는 `*_exception` 으로 적힌다. `SHARES_STILL_HELD` ·
+   `ORDER_STILL_LIVE` · `UNDETERMINED` 면 **계좌를 손으로 확인**한다.
+   `holding_final` / `orders_final_live` 가 마지막으로 본 상태다.
+7. **`measurements.order_call_budget`** — 보낸 주문성 POST 전부가 `calls` 에
+   라벨로 남는다. 이 리스트가 실주문 0 과 「무엇을 몇 번 보냈는가」의 증거다.
+8. **`measurements.config`** — 그 런이 **허용받은** 한도. YAML 이 그 뒤 바뀌어도
+   아티팩트가 자기 한도를 들고 있다.
+
+러너가 읽는 앵커 3줄(모든 종료 경로에서 각 1회):
+
+```
+PSC_STOP=<none | dry_run | rejected | rate_limited | order_state_unknown
+        | query_unanswered | cancel_not_confirmed | cancel_not_sendable | probe_error>
+PSC_CANCEL_SHAPE=<위 5값>
+PSC_FLAT_AT_END=<yes | no | unknown>
+```
+
+- `order_state_unknown` — 주문성 POST 가 전송 중 사라졌다. 접수되어 지금 책에
+  걸려 있을 수 있고 **재전송은 하지 않는다**(중복 주문 위험). 정리 기록과 계좌를
+  손으로 확인한다.
+- `rejected` — 신규 **또는 취소**가 거부됐다. 취소 거부는 「원주문이 아직 일하고
+  있다」는 뜻이므로 그 뒤 주문을 더 내지 않는다.
+- `cancel_not_confirmed` — 취소는 **수락**됐는데 원주문이 멈춘 것을 끝까지 보지
+  못했다. 모양 판정은 여전히 유효한 측정일 수 있다(§3 위 「두 질문」 참조).
+- `cancel_not_sendable` — 수락 응답에 `KRX_FWDG_ORD_ORGNO` 가 없어 취소 본문을
+  **만들 수조차** 없었다. 손으로 취소해야 하고, 이것 자체가 수락 응답에 대한
+  측정 결과다.
+- `probe_error` — 주문이 하나 접수된 **뒤에** 선행조건 실패나 조회 유실이 났다.
+  아티팩트는 **남는다** — `measurements.aborted_after_first_order` 와 `errors[]`.
+
+증거 디렉터리로 복사할 때는 README 에 인용 토큰(`CITATION-RULE.md` 형식)을 적어
+`tools/tos_evidence_citation_check.py` 를 통과시킨다.
+
+#### 확립하지 **않는** 것
+
+- **실전 거동.** 모의 아티팩트는 `REAL_PROD` 문서에 인용할 수 없다(§6.2 ·
+  ADR-002-004 §13.14).
+- **늦은 체결의 한도.** 한 세션의 60초 창 1~2회는 `B_late_fill_observation` 의
+  hard maximum 을 정하지 못한다. 관측으로만 인용한다.
+- **다른 종목·다른 주문유형.** 한 계좌·한 종목·한 세션이다.
 
 ---
 

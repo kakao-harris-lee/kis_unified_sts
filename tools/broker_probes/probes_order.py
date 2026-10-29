@@ -116,6 +116,7 @@ _FUT_ORDER_PATH = "/uapi/domestic-futureoption/v1/trading/order"
 _FUT_CANCEL_PATH = "/uapi/domestic-futureoption/v1/trading/order-rvsecncl"
 _FUT_INQUIRE_PATH = "/uapi/domestic-futureoption/v1/trading/inquire-ccnl"
 _STOCK_ORDER_PATH = "/uapi/domestic-stock/v1/trading/order-cash"
+_STOCK_CANCEL_PATH = "/uapi/domestic-stock/v1/trading/order-rvsecncl"
 _STOCK_BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 _STOCK_DAILY_CCLD_PATH = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
 _FUT_PRICE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-price"
@@ -189,6 +190,44 @@ _STOCK_ORD_DVSN: dict[str, str] = {
 #: runtime sends, and this read-only inquiry is not one the runtime uses. Adding it
 #: there would imply runtime adoption that has not happened.
 _STOCK_DAILY_CCLD_TR_MOCK = "VTTC0081R"
+
+#: Mock TR for 주식주문(정정취소) — the stock cancel/amend POST.
+#:
+#: Official source (KIS ``open-trading-api`` ``examples_llm``):
+#: ``domestic_stock/order_rvsecncl/order_rvsecncl.py`` — 주식주문(정정취소),
+#: ``[v1_국내주식-003]``, ``API_URL`` = :data:`_STOCK_CANCEL_PATH`. Its ``tr_id``
+#: branch maps ``env_dv="demo"`` to ``VTTC0013U`` and ``env_dv="real"`` to
+#: ``TTTC0013U``. ``V``-prefixed, so ``assert_mock_trading_tr`` admits it and
+#: would refuse the 실전 twin.
+#:
+#: A literal rather than a ``get_tr_ids()`` lookup, for the reason
+#: :data:`_STOCK_DAILY_CCLD_TR_MOCK` is one: the audited SoT
+#: (``shared/execution/tr_ids.py``) carries the TRs the RUNTIME sends, and the
+#: runtime has no stock cancel path (its only ``order-rvsecncl`` is futures,
+#: ``executor.py:1069``). Adding this there would imply a runtime adoption that
+#: has not happened.
+_STOCK_CANCEL_TR_MOCK = "VTTC0013U"
+
+#: 정정취소구분코드 — ``"02"`` is 취소 (``"01"`` is 정정). Same wrapper's ``Args``:
+#: ``rvse_cncl_dvsn_cd (str): [필수] 정정취소구분코드 (ex. 01:정정,02:취소)``.
+#: Only the cancel value is defined here: this harness has no stock amend leg,
+#: and a code it does not exercise must not sit in the table waiting to be
+#: picked by mistake.
+_STOCK_CANCEL_DVSN_CANCEL = "02"
+
+#: 잔량전부주문여부 ``"Y"`` — cancel the whole remaining quantity. Same wrapper:
+#: ``qty_all_ord_yn (str): [필수] 잔량전부주문여부 (ex. Y:전량, N:일부)``.
+#: ``"Y"`` rather than ``"N"`` + a quantity because a partial cancel would leave
+#: a resting remainder behind on a probe whose cleanup contract is "the account
+#: ends flat"; ``ORD_QTY`` still carries the observed remainder so the request
+#: states what it believes it is cancelling.
+_STOCK_CANCEL_QTY_ALL = "Y"
+
+#: 거래소ID구분코드. ``"KRX"`` per the same wrapper's ``Args`` (``ex. KRX: 한국거래소,
+#: NXT:대체거래소, SOR:SOR``). KRX because the submit this cancel refers to is a
+#: KRX order (``stock_krx_*_mock`` TRs); an ATS/SOR cancel would be a different
+#: order's cancel.
+_STOCK_EXCG_KRX = "KRX"
 
 #: ``ORD_UNPR`` for a 시장가 stock order — the field is present but is not a price.
 #:
@@ -417,6 +456,16 @@ class Placed:
     #: Pacer release instant of the submit — post-sleep, immediately pre-wire.
     sent_at_monotonic: float
     body: dict[str, Any]
+    #: 거래소코드 (``KRX_FWDG_ORD_ORGNO``) from a STOCK accept response, verbatim.
+    #:
+    #: The stock cancel TR makes it mandatory (``order_rvsecncl`` raises
+    #: ``ValueError("krx_fwdg_ord_orgno is required")`` on an empty value), and
+    #: the accept response is where it comes from — ``order_cash``'s own
+    #: ``COLUMN_MAPPING`` is ``{KRX_FWDG_ORD_ORGNO: 거래소코드, ODNO: 주문번호,
+    #: ORD_TMD: 주문시간}``. Kept verbatim for the same reason ``odno`` is: it
+    #: goes straight back on the wire. Empty for a futures submit, which has no
+    #: such field.
+    krx_fwdg_ord_orgno: str = ""
 
     @property
     def key(self) -> str:
@@ -633,6 +682,81 @@ def build_stock_order_body(
         "ORD_DVSN": ord_dvsn,
         "ORD_QTY": str(qty),
         "ORD_UNPR": _STOCK_ORD_UNPR_MARKET if price is None else price.wire,
+    }
+
+
+def build_stock_cancel_body(
+    cano: str,
+    acnt_prdt_cd: str,
+    *,
+    orgn_odno: str,
+    krx_fwdg_ord_orgno: str,
+    remaining_qty: int,
+) -> dict[str, str]:
+    """The ``order-rvsecncl`` 취소 request body for a stock order.
+
+    Spec: ``examples_llm/domestic_stock/order_rvsecncl/order_rvsecncl.py``
+    (주식주문(정정취소), ``[v1_국내주식-003]``). Every field below is one that
+    wrapper declares ``[필수]`` and refuses as empty, which is why none of them
+    is omitted or defaulted here.
+
+    ``ORGN_ODNO`` and ``KRX_FWDG_ORD_ORGNO`` go on the wire **verbatim**, exactly
+    as the accept response returned them. Canonicalizing an identifier before
+    sending it back is a different thing from canonicalizing it for a comparison
+    (:func:`odno_key`): the broker is entitled to require the encoding it issued.
+
+    A module-level function rather than only a client method so a dry run can
+    print the exact body it would send without holding credentials.
+
+    Args:
+        cano: 종합계좌번호.
+        acnt_prdt_cd: 계좌상품코드.
+        orgn_odno: 원주문번호, verbatim from the submit's ``output.ODNO``.
+        krx_fwdg_ord_orgno: 거래소코드, verbatim from the submit's
+            ``output.KRX_FWDG_ORD_ORGNO``.
+        remaining_qty: The 잔여수량 the probe observed. It is sent alongside
+            ``QTY_ALL_ORD_YN="Y"`` so the request states the quantity it
+            believes it is cancelling; the ``"Y"`` is what makes the broker
+            cancel the whole remainder regardless.
+
+    Raises:
+        ProbeError: an empty 원주문번호 or 거래소코드, or a non-positive
+            remaining quantity. All three are refused rather than sent: the
+            wrapper's own ``ValueError`` would come back as an opaque broker
+            rejection, and a cancel for 0 shares is not a cancel.
+    """
+    if not str(orgn_odno).strip():
+        raise ProbeError(
+            "a stock cancel needs the 원주문번호 (ORGN_ODNO) from the accept "
+            "response; refusing to send an empty one"
+        )
+    if not str(krx_fwdg_ord_orgno).strip():
+        raise ProbeError(
+            "a stock cancel needs the 거래소코드 (KRX_FWDG_ORD_ORGNO) from the "
+            "accept response — order_rvsecncl declares it [필수] and refuses an "
+            "empty value, so an empty one here would surface as a broker rejection"
+        )
+    if remaining_qty <= 0:
+        raise ProbeError(
+            f"a stock cancel needs a positive 잔여수량 (got {remaining_qty}); "
+            "nothing is resting, so there is nothing to cancel"
+        )
+    return {
+        "CANO": cano,
+        "ACNT_PRDT_CD": acnt_prdt_cd,
+        "KRX_FWDG_ORD_ORGNO": str(krx_fwdg_ord_orgno),
+        "ORGN_ODNO": str(orgn_odno),
+        # 지정가. The cancelled order was a 지정가 order; ORD_DVSN on a cancel
+        # describes the ORIGINAL order's type (the wrapper's 주문구분).
+        "ORD_DVSN": _STOCK_ORD_DVSN["limit"],
+        "RVSE_CNCL_DVSN_CD": _STOCK_CANCEL_DVSN_CANCEL,
+        "ORD_QTY": str(remaining_qty),
+        # A cancel carries no price. The field is [필수], so it is present and
+        # set to the same "present, not a limit price" encoding a 시장가 order
+        # uses (:data:`_STOCK_ORD_UNPR_MARKET`).
+        "ORD_UNPR": _STOCK_ORD_UNPR_MARKET,
+        "QTY_ALL_ORD_YN": _STOCK_CANCEL_QTY_ALL,
+        "EXCG_ID_DVSN_CD": _STOCK_EXCG_KRX,
     }
 
 
@@ -963,6 +1087,92 @@ class MockTradingClient:
             order_type=order_type,
         )
 
+    def stock_cancel_body(
+        self, *, orgn_odno: str, krx_fwdg_ord_orgno: str, remaining_qty: int
+    ) -> dict[str, str]:
+        """This session's account bound to :func:`build_stock_cancel_body`."""
+        return build_stock_cancel_body(
+            self.creds.cano,
+            self.creds.acnt_prdt_cd,
+            orgn_odno=orgn_odno,
+            krx_fwdg_ord_orgno=krx_fwdg_ord_orgno,
+            remaining_qty=remaining_qty,
+        )
+
+    def submit_stock_verbose(
+        self, body: dict[str, str], *, side: str
+    ) -> tuple[Placed | None, int, dict[str, Any], str, float]:
+        """POST ``order-cash`` and keep the HTTP status and the raw body.
+
+        The stock twin of :meth:`submit_futures_verbose`, and verbose for the
+        same reason: ``is_rate_limited`` fires on HTTP 429 OR ``EGW00201``
+        anywhere in the envelope, and a caller handed only the parsed dict
+        cannot see the first — a throttle then arrives as ``placed is None`` and
+        gets reported as a broker rejection.
+
+        ``side`` picks the TR, and the two are different TRs rather than a field:
+        ``stock_krx_buy_mock`` (``VTTC0802U``) and ``stock_krx_sell_mock``
+        (``VTTC0801U``) — ``shared/execution/tr_ids.py``. KRX, not ATS: this
+        harness sends no ATS order, and the cancel TR's ``EXCG_ID_DVSN_CD`` is
+        ``KRX`` to match (:data:`_STOCK_EXCG_KRX`).
+
+        Returns:
+            ``(placed, http_status, parsed, raw_text, elapsed_ms)``. ``placed``
+            is ``None`` unless the call was a 200 with ``rt_cd == "0"`` and a
+            non-empty ``ODNO``; when it is not ``None`` it carries the
+            ``KRX_FWDG_ORD_ORGNO`` the cancel will need.
+
+        Raises:
+            ProbeError: unknown ``side``.
+        """
+        tr_key = {"BUY": "stock_krx_buy_mock", "SELL": "stock_krx_sell_mock"}.get(side)
+        if tr_key is None:
+            raise ProbeError(f"unknown stock order side {side!r} (expected BUY/SELL)")
+        status, parsed, ms, text = self.trading_call(
+            "POST", _STOCK_ORDER_PATH, self.tr_ids[tr_key], body=body
+        )
+        sent = self.last_send_instant()
+        output = parsed.get("output") or {}
+        odno = str(output.get("ODNO") or "").strip()
+        placed = (
+            Placed(
+                odno=odno,
+                sent_at_monotonic=sent,
+                body=dict(body),
+                krx_fwdg_ord_orgno=str(output.get("KRX_FWDG_ORD_ORGNO") or "").strip(),
+            )
+            if status == 200 and rt_cd_of(parsed) == "0" and odno
+            else None
+        )
+        return placed, status, parsed, text, ms
+
+    def cancel_stock_verbose(
+        self, *, orgn_odno: str, krx_fwdg_ord_orgno: str, remaining_qty: int
+    ) -> tuple[int, dict[str, Any], str, float, dict[str, str]]:
+        """POST the stock 취소 (``VTTC0013U``), keeping status, body and request.
+
+        The request body is returned as well as the answer because a cancel is
+        the one call in this harness whose *request* is the observation: #948
+        asks what shape the cancel takes on the query surface, and that is only
+        readable next to the ``ORGN_ODNO``/``KRX_FWDG_ORD_ORGNO`` that were
+        actually sent.
+
+        There is no classified twin, for the reason
+        :meth:`inquire_futures_classified` names: a resent order-mutating POST
+        is the duplicate-order hazard, so a transient here is the caller's to
+        record and never to retry blindly.
+        """
+        body = self.stock_cancel_body(
+            orgn_odno=orgn_odno,
+            krx_fwdg_ord_orgno=krx_fwdg_ord_orgno,
+            remaining_qty=remaining_qty,
+        )
+        assert_mock_trading_tr(_STOCK_CANCEL_TR_MOCK)
+        status, parsed, ms, text = self.trading_call(
+            "POST", _STOCK_CANCEL_PATH, _STOCK_CANCEL_TR_MOCK, body=body
+        )
+        return status, parsed, text, ms, body
+
     def submit_futures(
         self, body: dict[str, str]
     ) -> tuple[Placed | None, dict[str, Any], float]:
@@ -1172,8 +1382,32 @@ class MockTradingClient:
             payload=rows if isinstance(rows, list) else [],
         )
 
-    def stock_balance(self) -> dict[str, Any]:
-        """Mirror of ``shared/kis/client.py:920-933`` params, mock TR."""
+    def stock_balance(self, *, fk: str = "", nk: str = "") -> dict[str, Any]:
+        """The parsed balance page. See :meth:`stock_balance_verbose`."""
+        return self.stock_balance_verbose(fk=fk, nk=nk)[1]
+
+    def stock_balance_verbose(
+        self, *, fk: str = "", nk: str = ""
+    ) -> tuple[int, dict[str, Any], str, float]:
+        """Mirror of ``shared/kis/client.py:920-933`` params, mock TR.
+
+        Verbose — ``(http_status, parsed, raw_text, elapsed_ms)`` — because
+        ``is_rate_limited`` fires on HTTP 429 OR ``EGW00201`` anywhere in the
+        envelope, and a caller handed only the parsed dict cannot see the first.
+        A throttled page then reads as an ordinary ``rt_cd != 0`` rejection,
+        which for a probe whose precondition is "this account is flat" is the
+        difference between "could not establish it" and "the broker said no".
+
+        Args:
+            fk: ``CTX_AREA_FK100`` — the previous page's 연속조회검색조건100.
+            nk: ``CTX_AREA_NK100`` — the previous page's 연속조회키100.
+
+        Both default to ``""`` (first page), so every existing caller keeps the
+        exact params it had. They exist because a ONE-PAGE balance read cannot
+        tell "not held" from "held on a later page" — the defect P-BAL measured
+        and ``probes_ca._read_balance`` walks around. A probe whose safety rests
+        on "this account is flat" has to be able to walk.
+        """
         tr_id = "VTTC8434R"
         assert_mock_trading_tr(tr_id)
         params = {
@@ -1186,18 +1420,42 @@ class MockTradingClient:
             "FUND_STTL_ICLD_YN": "N",
             "FNCG_AMT_AUTO_RDPT_YN": "N",
             "PRCS_DVSN": "01",
-            "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": "",
+            "CTX_AREA_FK100": fk,
+            "CTX_AREA_NK100": nk,
         }
-        _status, parsed, _ms, _text = self.trading_call(
+        status, parsed, ms, text = self.trading_call(
             "GET", _STOCK_BALANCE_PATH, tr_id, params=params
         )
-        return parsed
+        return status, parsed, text, ms
 
     def stock_daily_ccld(
-        self, symbol: str, *, odno: str = "", day_offset: int = 0
+        self,
+        symbol: str,
+        *,
+        odno: str = "",
+        day_offset: int = 0,
+        fk: str = "",
+        nk: str = "",
     ) -> dict[str, Any]:
+        """The parsed inquiry page. See :meth:`stock_daily_ccld_verbose`."""
+        return self.stock_daily_ccld_verbose(
+            symbol, odno=odno, day_offset=day_offset, fk=fk, nk=nk
+        )[1]
+
+    def stock_daily_ccld_verbose(
+        self,
+        symbol: str,
+        *,
+        odno: str = "",
+        day_offset: int = 0,
+        fk: str = "",
+        nk: str = "",
+    ) -> tuple[int, dict[str, Any], str, float]:
         """주식일별주문체결조회 — read-only execution inquiry (mock ``VTTC0081R``).
+
+        Verbose — ``(http_status, parsed, raw_text, elapsed_ms)`` — for the
+        reason :meth:`stock_balance_verbose` is: HTTP 429 is invisible in the
+        parsed body, and this is the surface P-SC polls over and over.
 
         Spec: ``examples_llm/domestic_stock/inquire_daily_ccld/inquire_daily_ccld.py``
         (주식일별주문체결조회, ``[v1_국내주식-005]``), whose ``API_URL`` is
@@ -1238,6 +1496,13 @@ class MockTradingClient:
             odno: Optional server-side 주문번호 filter, verbatim.
             day_offset: Days back from today (KST) to query; both
                 ``INQR_STRT_DT`` and ``INQR_END_DT`` carry that one date.
+            fk: ``CTX_AREA_FK100`` — the previous page's 연속조회검색조건100.
+            nk: ``CTX_AREA_NK100`` — the previous page's 연속조회키100.
+
+        ``fk``/``nk`` default to ``""`` (first page), so P-11's single-page read
+        is unchanged. They exist because the 15-row 모의 page cap means a single
+        page cannot establish that NO order is open — a statement a probe whose
+        precondition is "flat account" has to be able to make or refuse to make.
 
         Returns:
             The parsed response — ``output1`` is the row array, ``output2`` totals.
@@ -1258,14 +1523,14 @@ class MockTradingClient:
             "ORD_GNO_BRNO": "",
             "ODNO": odno,
             "INQR_DVSN_1": "",
-            "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": "",
+            "CTX_AREA_FK100": fk,
+            "CTX_AREA_NK100": nk,
             "EXCG_ID_DVSN_CD": "KRX",
         }
-        _status, parsed, _ms, _text = self.trading_call(
+        status, parsed, ms, text = self.trading_call(
             "GET", _STOCK_DAILY_CCLD_PATH, tr_id, params=params
         )
-        return parsed
+        return status, parsed, text, ms
 
 
 # ---------------------------------------------------------------------------
