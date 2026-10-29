@@ -48,6 +48,16 @@ the boot refusal ``_wiring.py`` used to hardcode as
 configured gateway ``active_principal`` colliding with ANY scope's own
 principal (not just the one literal) is refused fail-closed at boot.
 
+**A READ principal is GET-only (#999).** ``principal_class`` and the
+endpoint/method/tuple surface beside it used to be derived independently, so
+they could disagree: moving an order surface onto a scope that still declared
+``principal_class: READ`` loaded (measured, review-998 r1).
+:func:`_check_read_scopes_are_read_only` now refuses that at load — a READ
+scope carries ``endpoint_class: BROKER_GET``, ``GET`` methods and
+``NON_AUTHORIZING_READ`` read tuples with no economic effect, by allowlist —
+for every configured scope, not only the active one. The field layer those
+values are parsed by lives in :mod:`tos_runtime.brokercap.scope_fields`.
+
 **EC-1 — no rewriting.** :func:`resolve_scope` admits a requested
 :class:`~tos.brokercap.routing.CapabilityTuple` **only** when some configured scope carries a tuple
 that is EXACTLY EQUAL to it (pydantic model equality) — it never mutates ``requested``, never
@@ -79,31 +89,33 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import ValidationError
 from tos.brokercap import (
     Admissibility,
     AssetScope,
-    AssuranceLevel,
     AuthorizationClass,
     BrokerEnvironment,
-    CapabilityDimension,
     CapabilityProvenance,
     CapabilityTuple,
     EconomicEffect,
     OperationClass,
-    ProbeManifest,
     ProfileKey,
-    ProvenanceClass,
     RequiredCapabilitySet,
     credential_principal_separation_ok,
     routing_admissibility,
 )
-from tos.brokercap.records import BrokerEvidenceRef
 from tos.egress import CredentialRouteInventoryEntry
 from tos.egressgw import TransportNature
 
-from tos_runtime._named_tbd import reject_named_tbd
 from tos_runtime.brokercap.instance_pin import render_pin
+from tos_runtime.brokercap.scope_fields import (
+    BrokerScopeConfigError,
+    build_capability_tuple,
+    build_profile_key,
+    build_provenance,
+    build_required_capability_set,
+    reject_named_tbd_field,
+    require,
+)
 
 __all__ = [
     "BrokerScope",
@@ -135,13 +147,6 @@ _RESTRICTIVENESS_RANK: dict[Admissibility, int] = {
 }
 
 
-class BrokerScopeConfigError(Exception):
-    """Raised when the broker-scopes config is missing, malformed, carries an
-    unfilled (named-TBD) structural field, names an axis combination the
-    kernel rejects (EC-3), or violates principal separation — fail-closed at
-    load, never a silent default or a kernel-bypassing construction."""
-
-
 class PrincipalClass(StrEnum):
     """Which kind of credential/identity a scope's ``principal`` carries."""
 
@@ -168,6 +173,25 @@ class ScopeDisposition(StrEnum):
     REDUCED = "REDUCED"
     UNSUPPORTED_DENY = "UNSUPPORTED_DENY"
     PROHIBITED = "PROHIBITED"
+
+
+# Everything a ``PrincipalClass.READ`` scope may carry, one allowlist per axis of its
+# own surface (#999, :func:`_check_read_scopes_are_read_only`). Allowlists, not
+# denylists of order-shaped names: a kernel axis that gains a member later stays out of
+# a read scope until it is listed here on purpose.
+_READ_ENDPOINT_CLASSES: frozenset[EndpointClass] = frozenset({EndpointClass.BROKER_GET})
+_READ_METHODS: frozenset[str] = frozenset({"GET"})
+_READ_OPERATIONS: frozenset[OperationClass] = frozenset(
+    {
+        OperationClass.MARKET_DATA_READ,
+        OperationClass.ACCOUNT_READ,
+        OperationClass.CAPABILITY_PROBE,
+    }
+)
+_READ_ECONOMIC_EFFECTS: frozenset[EconomicEffect] = frozenset({EconomicEffect.NONE})
+_READ_AUTHORIZATIONS: frozenset[AuthorizationClass] = frozenset(
+    {AuthorizationClass.NON_AUTHORIZING_READ}
+)
 
 
 @dataclass(frozen=True)
@@ -274,113 +298,6 @@ class ScopeResolution:
 # ===========================================================================
 
 
-def _require(value: Any, field: str, context: str) -> Any:
-    if value is None:
-        raise BrokerScopeConfigError(
-            f"{context}: {field!r} is still null (named-TBD) — refusing to load"
-        )
-    return value
-
-
-def _reject_tbd(value: Any, field: str, context: str) -> None:
-    reject_named_tbd(
-        value, field=field, context=context, error_cls=BrokerScopeConfigError
-    )
-
-
-def _as_str(value: Any) -> str:
-    """Narrow an untyped YAML value to ``str`` for enum/model construction —
-    a non-``str`` (including ``None``) raises ``ValueError``, caught by
-    every caller's own ``except (ValueError, ValidationError)`` alongside a
-    kernel-rejected axis combination (EC-3)."""
-    if not isinstance(value, str):
-        raise ValueError(f"expected a string, got {value!r}")
-    return value
-
-
-def _build_capability_tuple(raw: Mapping[str, Any], scope_name: str) -> CapabilityTuple:
-    """Validated construction only (never ``model_construct``) — a
-    structurally-forbidden axis combination (e.g. kernel rule 4:
-    ``BROKER_PRODUCTION`` x order x ``FUTURES``) raises here, wrapped with
-    the scope name (EC-3)."""
-    try:
-        return CapabilityTuple(
-            environment=BrokerEnvironment(_as_str(raw.get("environment"))),
-            operation_class=OperationClass(_as_str(raw.get("operation_class"))),
-            economic_effect=EconomicEffect(_as_str(raw.get("economic_effect"))),
-            asset_scope=AssetScope(_as_str(raw.get("asset_scope"))),
-            authorization_class=AuthorizationClass(
-                _as_str(raw.get("authorization_class"))
-            ),
-        )
-    except (ValueError, ValidationError) as exc:
-        raise BrokerScopeConfigError(
-            f"scope {scope_name!r}: capability tuple rejected by the kernel — {exc}"
-        ) from exc
-
-
-def _build_evidence_ref(raw: Mapping[str, Any] | None) -> BrokerEvidenceRef | None:
-    if raw is None:
-        return None
-    return BrokerEvidenceRef(
-        evidence_id=raw.get("evidence_id"),
-        generation=raw.get("generation"),
-        digest=raw.get("digest"),
-        environment=raw.get("environment"),
-    )
-
-
-def _build_provenance(raw: Mapping[str, Any], scope_name: str) -> CapabilityProvenance:
-    manifest_raw = raw.get("probe_manifest")
-    manifest: ProbeManifest | None = None
-    if manifest_raw is not None:
-        try:
-            manifest = ProbeManifest(
-                emits_orders=manifest_raw.get("emits_orders", False),
-                allowed_methods=tuple(manifest_raw.get("allowed_methods") or ()),
-                retention=manifest_raw.get("retention"),
-                ttl=manifest_raw.get("ttl"),
-                provenance=manifest_raw.get("provenance"),
-            )
-        except ValidationError as exc:
-            raise BrokerScopeConfigError(
-                f"scope {scope_name!r}: probe manifest rejected by the kernel — {exc}"
-            ) from exc
-    try:
-        source_ref = _as_str(raw.get("source_ref"))
-        captured_at = _as_str(raw.get("captured_at"))
-        context = f"scope {scope_name!r}: provenance"
-        _reject_tbd(source_ref, "source_ref", context)
-        _reject_tbd(captured_at, "captured_at", context)
-        return CapabilityProvenance(
-            provenance_class=ProvenanceClass(_as_str(raw.get("provenance_class"))),
-            source_ref=source_ref,
-            captured_at=captured_at,
-            evidence_ref=_build_evidence_ref(raw.get("evidence_ref")),
-            probe_manifest=manifest,
-        )
-    except (ValueError, ValidationError) as exc:
-        raise BrokerScopeConfigError(
-            f"scope {scope_name!r}: provenance rejected by the kernel — {exc}"
-        ) from exc
-
-
-def _build_profile_key(raw: Mapping[str, Any] | None) -> ProfileKey:
-    raw = raw or {}  # no TBD guard (W-A A-0 r2): 3 fields eq-read by kernel, 7 unread
-    return ProfileKey(
-        broker_id=raw.get("broker_id"),
-        api_product=raw.get("api_product"),
-        api_version=raw.get("api_version"),
-        environment=raw.get("environment"),
-        account_type=raw.get("account_type"),
-        market=raw.get("market"),
-        instrument_class=raw.get("instrument_class"),
-        order_type=raw.get("order_type"),
-        session_type=raw.get("session_type"),
-        credential_scope=raw.get("credential_scope"),
-    )
-
-
 def _most_restrictive(admissibilities: list[Admissibility]) -> Admissibility:
     return max(admissibilities, key=lambda a: _RESTRICTIVENESS_RANK[a])
 
@@ -417,45 +334,6 @@ def _build_scope_instance(
     return ScopeInstanceBinding(
         environment=environment, degraded_since_authorization=degraded_raw
     )
-
-
-def _build_required_capability_set(
-    raw: Mapping[str, Any] | None, scope_name: str
-) -> RequiredCapabilitySet | None:
-    """Parse the optional ``required_capability_set`` block (plan §2
-    decision 4) via **validated** kernel construction only — absent ⇒
-    ``None``. ``minimum_live_gate_satisfied`` is passed straight through
-    (``null`` is a legitimate, permanent value the kernel already treats as
-    non-``True`` ⇒ ``PROHIBITED``, the same discipline ``profile_evidence_ok``
-    already applies)."""
-    if raw is None:
-        return None
-    try:
-        required_dimensions = frozenset(
-            CapabilityDimension(_as_str(d))
-            for d in (raw.get("required_dimensions") or [])
-        )
-        required_level_raw = raw.get("required_level")
-        required_level = (
-            None
-            if required_level_raw is None
-            else AssuranceLevel(_as_str(required_level_raw))
-        )
-        approved_fallback_dimensions = frozenset(
-            CapabilityDimension(_as_str(d))
-            for d in (raw.get("approved_fallback_dimensions") or [])
-        )
-        return RequiredCapabilitySet(
-            required_dimensions=required_dimensions,
-            required_level=required_level,
-            minimum_live_gate_satisfied=raw.get("minimum_live_gate_satisfied"),
-            approved_fallback_dimensions=approved_fallback_dimensions,
-        )
-    except (ValueError, ValidationError) as exc:
-        raise BrokerScopeConfigError(
-            f"scope {scope_name!r}: required_capability_set rejected by the "
-            f"kernel — {exc}"
-        ) from exc
 
 
 def _resolve_scope_binding(
@@ -504,7 +382,7 @@ def _build_scope_identity(
     """Parse ``principal_class``/``principal``/``inside_boundary``/
     ``endpoint_class`` — split out of :func:`_build_scope` purely for the
     function size budget."""
-    principal_class_raw = _require(
+    principal_class_raw = require(
         raw.get("principal_class"), "principal_class", context
     )
     try:
@@ -514,25 +392,25 @@ def _build_scope_identity(
             f"{context}: unknown principal_class {principal_class_raw!r}"
         ) from exc
 
-    principal_raw = _require(raw.get("principal"), "principal", context)
+    principal_raw = require(raw.get("principal"), "principal", context)
     if not isinstance(principal_raw, str):
         raise BrokerScopeConfigError(
             f"{context}: 'principal' must be a string, got {principal_raw!r}"
         )
-    _reject_tbd(principal_raw, "principal", context)
+    reject_named_tbd_field(principal_raw, "principal", context)
     principal = principal_raw.replace(_ENVIRONMENT_LABEL_TOKEN, environment_label)
     if not principal:
         raise BrokerScopeConfigError(
             f"{context}: principal resolves to an empty string"
         )
 
-    inside_boundary = _require(raw.get("inside_boundary"), "inside_boundary", context)
+    inside_boundary = require(raw.get("inside_boundary"), "inside_boundary", context)
     if not isinstance(inside_boundary, bool):
         raise BrokerScopeConfigError(
             f"{context}: 'inside_boundary' must be a boolean, got {inside_boundary!r}"
         )
 
-    endpoint_class_raw = _require(raw.get("endpoint_class"), "endpoint_class", context)
+    endpoint_class_raw = require(raw.get("endpoint_class"), "endpoint_class", context)
     try:
         endpoint_class = EndpointClass(endpoint_class_raw)
     except ValueError as exc:
@@ -556,15 +434,15 @@ def _build_scope(
     default_asset_binding: Mapping[AssetScope, str],
     path: Path,
 ) -> BrokerScope:
-    name = _require(raw.get("name"), "name", "scope")
-    _reject_tbd(name, "name", "scope")
+    name = require(raw.get("name"), "name", "scope")
+    reject_named_tbd_field(name, "name", "scope")
     context = f"scope {name!r}"
 
     identity = _build_scope_identity(
         raw, environment_label=environment_label, context=context
     )
 
-    allowed_methods_raw = _require(
+    allowed_methods_raw = require(
         raw.get("allowed_methods"), "allowed_methods", context
     )
     if not isinstance(allowed_methods_raw, list) or not allowed_methods_raw:
@@ -572,15 +450,15 @@ def _build_scope(
             f"{context}: 'allowed_methods' must be a non-empty list"
         )
     for entry in allowed_methods_raw:
-        _reject_tbd(entry, "allowed_methods", context)
+        reject_named_tbd_field(entry, "allowed_methods", context)
     allowed_methods = tuple(allowed_methods_raw)
 
-    tuples_raw = _require(raw.get("capability_tuples"), "capability_tuples", context)
+    tuples_raw = require(raw.get("capability_tuples"), "capability_tuples", context)
     if not isinstance(tuples_raw, list) or not tuples_raw:
         raise BrokerScopeConfigError(
             f"{context}: 'capability_tuples' must be a non-empty list"
         )
-    capability_tuples = tuple(_build_capability_tuple(t, name) for t in tuples_raw)
+    capability_tuples = tuple(build_capability_tuple(t, name) for t in tuples_raw)
 
     # profile_evidence_ok is the ONE deliberate exception to named-TBD: null
     # is a legitimate, permanent "evidence not established" value, passed
@@ -594,12 +472,10 @@ def _build_scope(
         ]
     )
 
-    provenance = tuple(
-        _build_provenance(p, name) for p in (raw.get("provenance") or [])
-    )
-    profile_key = _build_profile_key(raw.get("profile_key"))
+    provenance = tuple(build_provenance(p, name) for p in (raw.get("provenance") or []))
+    profile_key = build_profile_key(raw.get("profile_key"))
     instance = _build_scope_instance(raw.get("instance"), context)
-    required_capability_set = _build_required_capability_set(
+    required_capability_set = build_required_capability_set(
         raw.get("required_capability_set"), name
     )
     environment_binding = _resolve_scope_binding(
@@ -688,6 +564,79 @@ def _resolve_instance_path(
     return candidate if candidate.is_absolute() else config_path.parent / candidate
 
 
+def _refuse_read_scope(
+    path: Path, scope_name: str, field: str, value: object, allowed: frozenset[Any]
+) -> BrokerScopeConfigError:
+    """The refusal :func:`_check_read_scopes_are_read_only` raises, naming the scope,
+    the offending field and the whole allowlist for that field."""
+    return BrokerScopeConfigError(
+        f"{path}: scope {scope_name!r} declares principal_class READ but its "
+        f"{field} {str(value)!r} is not read-only — a READ scope may carry only "
+        f"{sorted(str(member) for member in allowed)} there; refusing to load"
+    )
+
+
+def _check_read_scopes_are_read_only(
+    scopes: tuple[BrokerScope, ...], path: Path
+) -> None:
+    """Refuse a ``principal_class: READ`` scope whose own surface is not read-only
+    (#999): ``endpoint_class: BROKER_GET``, ``GET``-only methods, and capability tuples
+    that are ``NON_AUTHORIZING_READ`` read operations with no economic effect. Every
+    configured scope, not only the active one — an operator reaching for an order
+    fallback edits the table before choosing what to activate.
+
+    Each axis is an ALLOWLIST of what READ may carry (:data:`_READ_ENDPOINT_CLASSES`,
+    :data:`_READ_METHODS`, :data:`_READ_OPERATIONS`, :data:`_READ_ECONOMIC_EFFECTS`,
+    :data:`_READ_AUTHORIZATIONS`), not a denylist of order-shaped names.
+
+    Measured before this existed (review-998 r1): deleting ``MOCK_STOCK_ORDER`` and
+    moving its ``BROKER_ORDER`` / ``SUBMIT`` / MOCK_VTS / order-tuple surface onto
+    ``REAL_READ`` loaded, and the kis-mock wiring accepted it. The refusals that closed
+    that input — :func:`_check_no_duplicate_tuples` against ``MOCK_STOCK_ORDER``'s own
+    tuples, and ``PROHIBITED`` for every other order tuple — hold only while that order
+    scope exists, which is why this one names no other scope. It runs after both, so
+    each keeps raising its own refusal for the inputs it already covered.
+    """
+    for scope in scopes:
+        if scope.principal_class is not PrincipalClass.READ:
+            continue
+        if scope.endpoint_class not in _READ_ENDPOINT_CLASSES:
+            raise _refuse_read_scope(
+                path,
+                scope.name,
+                "endpoint_class",
+                scope.endpoint_class,
+                _READ_ENDPOINT_CLASSES,
+            )
+        for method in scope.allowed_methods:
+            if method not in _READ_METHODS:
+                raise _refuse_read_scope(
+                    path, scope.name, "allowed_methods entry", method, _READ_METHODS
+                )
+        for index, capability_tuple in enumerate(scope.capability_tuples):
+            for axis, value, allowed in (
+                ("operation_class", capability_tuple.operation_class, _READ_OPERATIONS),
+                (
+                    "economic_effect",
+                    capability_tuple.economic_effect,
+                    _READ_ECONOMIC_EFFECTS,
+                ),
+                (
+                    "authorization_class",
+                    capability_tuple.authorization_class,
+                    _READ_AUTHORIZATIONS,
+                ),
+            ):
+                if value not in allowed:
+                    raise _refuse_read_scope(
+                        path,
+                        scope.name,
+                        f"capability_tuples[{index}].{axis}",
+                        value,
+                        allowed,
+                    )
+
+
 def _check_principal_separation(scopes: tuple[BrokerScope, ...], path: Path) -> None:
     """Refuse when two DISTINCT scopes share a ``principal`` (plan §2
     decision 1; independent-review finding F2 generalizes this from
@@ -750,7 +699,7 @@ def _load_binding(
             raise BrokerScopeConfigError(
                 f"{path}: {field}[{key!r}] must be a string, got {value!r}"
             )
-        _reject_tbd(value, f"{field}[{key!r}]", str(path))
+        reject_named_tbd_field(value, f"{field}[{key!r}]", str(path))
         try:
             binding[member_type(key)] = value
         except ValueError as exc:
@@ -765,18 +714,17 @@ def load_broker_scopes(path: Path, *, environment_label: str) -> BrokerScopesCon
     (shaped like ``tos/runtime/config/broker_scopes.example.yaml``).
 
     Args:
-        path: The config file (every named-TBD filled — at minimum
-            ``active_scope``).
+        path: The config file (every named-TBD filled, at minimum ``active_scope``).
         environment_label: Substituted for the ``{environment_label}`` token
             in every scope's ``principal``, if present.
 
     Raises:
         BrokerScopeConfigError: The file is missing/unreadable/not valid
             YAML/not a mapping, a structural field is still ``null``
-            (named-TBD), a capability tuple is rejected by the kernel (EC-3),
-            two scopes of different principal classes share a principal, or
-            ``active_scope`` does not name a configured, non-``PROHIBITED``
-            scope.
+            (named-TBD), a READ scope is not read-only (#999), a capability
+            tuple is rejected by the kernel (EC-3), two scopes of different
+            principal classes share a principal, or ``active_scope`` does not
+            name a configured, non-``PROHIBITED`` scope.
     """
     if not path.is_file():
         raise BrokerScopeConfigError(f"broker-scopes config file not found: {path}")
@@ -846,6 +794,7 @@ def load_broker_scopes(path: Path, *, environment_label: str) -> BrokerScopesCon
             "boot with a prohibited active scope"
         )
 
+    _check_read_scopes_are_read_only(scopes, path)
     _check_instance_bindings(scopes, path)
     instance_path = _resolve_instance_path(
         raw.get("instance_path"), config_path=path, scopes=scopes
