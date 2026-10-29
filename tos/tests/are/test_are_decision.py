@@ -155,6 +155,26 @@ def test_over_headroom_projection_denies() -> None:
         assert _decide(projection=over).result is RiskDecisionResult.DENY
 
 
+def test_a_close_effect_does_not_double_the_position_usage() -> None:
+    projected = adverse_increment(
+        tuple(
+            clean_cell(
+                scenario=scenario,
+                conservative_current_usage=Decimal("60"),
+                conservative_current_usage_already_committed=Decimal("60"),
+                max_credible_command_effect=Decimal("-60"),
+                effective_limit=Decimal("100"),
+            )
+            for scenario in COVERAGE_FLOOR
+        ),
+        issue_scenario_set(),
+        required_scenario_kinds=COVERAGE_FLOOR,
+    )
+
+    assert projected.result is RiskDecisionResult.GRANT
+    assert _decide(projection=projected).result is RiskDecisionResult.GRANT
+
+
 def test_capacity_coverage_necessary_not_sufficient() -> None:
     """(§24.8) Even with a determinate GRANT projection, an UNKNOWN state stays UNKNOWN."""
     # snapshot incomplete (an UNKNOWN state) => UNKNOWN even though projection would grant.

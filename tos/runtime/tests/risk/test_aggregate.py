@@ -377,6 +377,43 @@ def test_snapshot_sums_every_outstanding_reservation_of_the_scope(
     assert snapshot.conservative_current_usage.magnitude("notional") == Decimal("350")
 
 
+def test_snapshot_nets_a_signed_close_vector_against_the_position(
+    ara_service: AggregateRiskService,
+    log: SqliteCommitLog,
+    instrument_key: InstrumentKey,
+    writer_epoch: int,
+) -> None:
+    seq = _commit_with_vector(
+        log,
+        reservation_id="resv-entry",
+        writer_epoch=writer_epoch,
+        instrument_key=instrument_key,
+        magnitude="250",
+        to_state=CapacityState.POSITION_CONSUMED,
+        expected_seq=-1,
+        cause=TransitionCause.FINAL_QUANTITY_PROOF,
+        command_type=CommandType.RELEASE_RESERVATION,
+        finality_witness=True,
+    )
+    _commit_with_vector(
+        log,
+        reservation_id="resv-close",
+        writer_epoch=writer_epoch,
+        instrument_key=instrument_key,
+        magnitude="-250",
+        to_state=CapacityState.ATTEMPT_BOUND,
+        expected_seq=seq,
+    )
+
+    snapshot = ara_service.snapshot(
+        instrument_key,
+        snapshot_generation=1,
+        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
+        all_fields_attributed=True,
+    )
+    assert snapshot.conservative_current_usage.magnitude("notional") == Decimal("0")
+
+
 def test_snapshot_excludes_released_reservations_from_usage(
     ara_service: AggregateRiskService,
     log: SqliteCommitLog,

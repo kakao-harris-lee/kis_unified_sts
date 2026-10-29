@@ -396,8 +396,10 @@ class KisOrderRow:
     @classmethod
     def from_wire(cls, row: Mapping[str, Any]) -> KisOrderRow:
         def _text(name: str) -> str | None:
-            value = str(row.get(name) or "").strip()
-            return value or None
+            value = row.get(name)
+            if not isinstance(value, str):
+                return None
+            return value.strip() or None
 
         ord_dt = str(row.get("ord_dt") or "").strip()
         return cls(
@@ -594,9 +596,7 @@ class KisStockBrokerWitness:
             )
         except WitnessUnavailable:
             raise
-        except (
-            Exception
-        ) as exc:  # noqa: BLE001 - same two-outcome contract as observe()
+        except Exception as exc:  # noqa: BLE001 - same two-outcome contract as observe()
             raise WitnessUnavailable(
                 f"KisStockBrokerWitness.order_rows: could not complete — {type(exc).__name__}"
             ) from exc

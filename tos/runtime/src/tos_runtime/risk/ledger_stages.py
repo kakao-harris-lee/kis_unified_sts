@@ -540,6 +540,7 @@ class AtomicCommitStage:
         reservation_id_provider: ReservationIdProvider,
         time_permits_new_risk: Callable[[], bool],
         effect_envelope_reader: EffectEnvelopeReader,
+        position_effect_reader: Callable[[], str | None] | None = None,
     ) -> None:
         self._log = log
         self._writer_epoch = writer_epoch
@@ -547,6 +548,7 @@ class AtomicCommitStage:
         self._reservation_id_provider = reservation_id_provider
         self._time_permits_new_risk = time_permits_new_risk
         self._effect_envelope_reader = effect_envelope_reader
+        self._position_effect_reader = position_effect_reader
 
     def _transition(
         self, request: StageRequest, reservation_id: str
@@ -560,7 +562,9 @@ class AtomicCommitStage:
         (:meth:`~tos_runtime.risk.aggregate.AggregateRiskService.snapshot`), so step 9 refuses
         to create it instead. ``None`` and an empty vector are both refused: step 5 itself
         admits neither (``tos.egressgw.economic_effect_envelope_verdict``), so either one here
-        means the envelope is not this attempt's.
+        means the envelope is not this attempt's. A CLOSE keeps that positive step-5 envelope
+        but stores its committed vector as negative exposure, so the ARE snapshot nets it against
+        the open position instead of counting both sides.
         """
         envelope = self._effect_envelope_reader()
         if envelope is None or not envelope.components:
@@ -568,6 +572,27 @@ class AtomicCommitStage:
                 CommitmentStep.ATOMIC_COMMIT,
                 "no step-5 economic effect envelope to record as this reservation's "
                 "committed vector — committing without one would hide its usage from ARE",
+            )
+        position_effect = (
+            request.proposal.position_effect
+            if self._position_effect_reader is None
+            else self._position_effect_reader()
+        )
+        committed_vector = envelope
+        if position_effect == _CLOSE_EFFECT:
+            committed_vector = CapacityVector(
+                components=tuple(
+                    component.model_copy(
+                        update={
+                            "magnitude": (
+                                None
+                                if component.magnitude is None
+                                else -component.magnitude
+                            )
+                        }
+                    )
+                    for component in envelope.components
+                )
             )
         return CapacityReservationTransition(
             reservation_id=reservation_id,
@@ -578,7 +603,7 @@ class AtomicCommitStage:
                 account=request.instrument_key.account,
                 instrument=request.instrument_key.instrument,
             ),
-            committed_vector=envelope,
+            committed_vector=committed_vector,
         )
 
     def __call__(self, request: StageRequest) -> StageVerdict:

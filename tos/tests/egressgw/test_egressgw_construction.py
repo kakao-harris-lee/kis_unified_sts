@@ -709,6 +709,22 @@ def test_the_step5_stage_is_unknown_when_no_construction_ran() -> None:
     assert verdict.outcome is StageOutcome.UNKNOWN
 
 
+def test_step5_does_not_retain_an_earlier_attempts_envelope_without_construction() -> (
+    None
+):
+    stage2 = _construction_stage()
+    stage5 = EconomicEffectStage(construction_stage=stage2)
+    stage2(_stage_request(CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION))
+    stage5(_stage_request(CommitmentStep.ECONOMIC_EFFECT_ENVELOPE))
+    assert stage5.envelope is not None
+
+    stage2.construction = None
+    verdict = stage5(_stage_request(CommitmentStep.ECONOMIC_EFFECT_ENVELOPE))
+
+    assert verdict.outcome is StageOutcome.UNKNOWN
+    assert stage5.envelope is None
+
+
 def test_the_step11_stage_issues_a_proof_that_fences_the_exact_command() -> None:
     """(ADR-002-020 §6.2/§15:414) The proof must bind the exact command digest."""
     stage2 = _construction_stage()
@@ -887,7 +903,8 @@ def test_admitted_shape_price_from_view_refuses_a_bool_or_float(value: object) -
     stay fail-closed until the deterministic-float projection rule is ratified.
     """
     projected = admitted_shape_price_from_view(
-        _single_value_view(value), field_key="close"  # type: ignore[arg-type]
+        _single_value_view(value),
+        field_key="close",  # type: ignore[arg-type]
     )
 
     assert projected is None

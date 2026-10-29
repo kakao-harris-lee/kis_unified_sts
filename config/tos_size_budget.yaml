@@ -162,12 +162,13 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/egressgw/construction.py
-  measured: 1238
+  measured: 1239
   owner: tos-kernel
   decomposition_order: 6
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성 ·
-    커널 라운드 #4 K-3(signer/approval/evidence 결속)으로 1215→1238 실측 갱신
+    커널 라운드 #4 K-3(signer/approval/evidence 결속)으로 1215→1238 실측 갱신 ·
+    #984 step 5 stale envelope 초기화 1줄 추가로 1239 실측 갱신
 - target: tos/src/tos/afg/predicates.py
   measured: 1186
   owner: tos-kernel
@@ -351,11 +352,12 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1227
+  measured: 1228
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-29 #984 CLOSE 부호 전달 재등재 1227→1228(+1)**: step 9 가 step 8 과 같은 `attempt_position_effect(construction_stage)` 를 읽어 CLOSE committed vector 를 음수 노출로 기록.
     **2026-10-28 #972 step 9 committed vector 재등재 1224→1227(+3)**: `_build_ledger_stages` 에 `economic_stage` 매개변수 1줄 + 호출부 전달 1줄 + step 9 `AtomicCommitStage` 의 `effect_envelope_reader=lambda: economic_stage.envelope` 1줄. 봉투를 committed vector 로 기록하는 판단·UNKNOWN 처분은 `risk/ledger_stages.py`(`AtomicCommitStage._transition`) 에 있다.
     **2026-10-28 #966 attempt 단위 예약 ID 재등재 1179→1224(+45)**: 신설 `_build_ledger_stages`(steps 8/9/10) 로의 분리가 본체 — `_build_realized_stages` 가 100줄 문턱을 넘었고(104), 분리는 `_build_currentness_stages` 의 기존 선례와 같은 처분이라 그 함수는 무예외로 돌아왔다. 호출부는 1건으로 줄었지만 신설 함수 자신(도크스트링 포함)이 모듈에 순증한다. 함께: step 8 의 `position_effect_reader`(#966 판정표 입력), step 9 의 `reservation_id_in_scope(request.instrument_key, permit.permit_id)`, step 14 의 `attempt_request_reservation_id`. 판정·식별 로직 자체는 `risk/ledger_stages.py`·`rcl/reservation_identity.py` 에 있다.
     **2026-10-27 #960 CLOSE 제안의 SIDE 재등재 1165→1179(+14)**: step 2 가 제안의 (position_effect, direction) 로 팔을 고르도록 `ProposalShapedConstructionStage`·`build_attempt_arms`·`attempt_reader`/`attempt_side` 를 결선 — import 6줄 + `_build_construction_stages` 의 arms 인자 블록 + step 3 의 `attempt_reader` 인자 + step 14 `side_action_scope` 의 attempt 읽기. 팔 선택·거부 로직 자체는 신설 `compose/_attempt_shape.py`·`_attempt_arm.py` 로 분리했고, `_build_realized_stages`/`_build_currentness_stages` 는 `construction_stages` 하나를 넘겨 두 함수 모두 100줄 문턱 아래 유지(무예외).

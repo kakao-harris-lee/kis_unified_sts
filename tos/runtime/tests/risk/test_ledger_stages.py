@@ -364,6 +364,34 @@ def test_step9_records_the_step5_envelope_as_the_committed_vector(
     log.verify_replay()
 
 
+def test_step9_records_a_close_as_negative_exposure(
+    log: SqliteCommitLog,
+    writer_epoch: int,
+    instrument_key: InstrumentKey,
+    afg_governor: ActionFlowGovernor,
+    projection_reader: SqliteReservationProjectionReader,
+) -> None:
+    permit = _committed_permit(afg_governor)
+    stage = AtomicCommitStage(
+        log,
+        writer_epoch=writer_epoch,
+        permit_provider=lambda _r: permit,
+        reservation_id_provider=_permit_scoped_id,
+        time_permits_new_risk=lambda: True,
+        effect_envelope_reader=_step5_envelope,
+        position_effect_reader=lambda: "CLOSE",
+    )
+    request = _request(CommitmentStep.ATOMIC_COMMIT, instrument_key)
+
+    assert stage(request).outcome is StageOutcome.ADMIT
+    committed = projection_reader.reservation_committed_vector(
+        _permit_scoped_id(request, permit)
+    )
+    assert committed is not None
+    assert committed.magnitude("notional") == Decimal("-250")
+    log.verify_replay()
+
+
 @pytest.mark.parametrize(
     "step5_envelope", [None, CapacityVector()], ids=["no-envelope", "empty-envelope"]
 )
