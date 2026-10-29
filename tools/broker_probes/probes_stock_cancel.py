@@ -60,6 +60,7 @@ refusal.
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import time
 from collections.abc import Callable
@@ -133,6 +134,17 @@ _STOP_REJECTED = "rejected"
 _STOP_RATE_LIMITED = "rate_limited"
 _STOP_ORDER_STATE_UNKNOWN = "order_state_unknown"
 _STOP_QUERY_UNANSWERED = "query_unanswered"
+#: The cancel was ACCEPTED and the order was never seen to stop working. The
+#: shape measurement may still be complete — this says only that the account
+#: is not in a state another order may be added to.
+_STOP_CANCEL_NOT_CONFIRMED = "cancel_not_confirmed"
+#: The cancel could not even be BUILT — the accept response carried no
+#: ``KRX_FWDG_ORD_ORGNO``, which ``order_rvsecncl`` declares [필수]. An order is
+#: resting that this probe cannot cancel.
+_STOP_CANCEL_NOT_SENDABLE = "cancel_not_sendable"
+#: A :class:`~tools.broker_probes.common.ProbeError` or a lost GET after the
+#: first accepted order. Recorded ON the artifact instead of replacing it.
+_STOP_PROBE_ERROR = "probe_error"
 
 # --- the thing being measured ----------------------------------------------
 #: The cancel appeared as a flag on the ORIGINAL row (``cncl_yn='Y'``), and no
@@ -265,6 +277,24 @@ class Config:
     trial_a: TrialLimits
     trial_b: TrialLimits
 
+    @property
+    def enabled_trials(self) -> int:
+        return 1 + (1 if self.trial_b.enabled else 0)
+
+    @property
+    def flatten_reserve(self) -> int:
+        """Order calls the capped sell-back can need, worst case.
+
+        Worst case is "every trial filled in full": the quantity to flatten is
+        then the sum of the trial quantities, and the sell-back is split into
+        orders of at most ``limits.max_quantity`` each. Derived rather than
+        configured, so it cannot drift from the two values it depends on.
+        """
+        total = self.trial_a.quantity + (
+            self.trial_b.quantity if self.trial_b.enabled else 0
+        )
+        return math.ceil(total / self.limits.max_quantity)
+
     def describe(self) -> dict[str, Any]:
         """The effective limits, for the artifact.
 
@@ -285,6 +315,7 @@ class Config:
                 "pace_s": self.limits.pace_s,
                 "pace_s_floor": self.limits.pace_s_floor,
                 "max_order_calls": self.limits.max_order_calls,
+                "flatten_reserve": self.flatten_reserve,
                 "max_quantity": self.limits.max_quantity,
                 "cleanup_cancel_attempts": self.limits.cleanup.cancel_attempts,
                 "cleanup_retry_s": self.limits.cleanup.retry_s,
@@ -471,7 +502,7 @@ def load_config(path: Path | str | None = None) -> Config:
                 "resting BUY at or below zero"
             )
 
-    return Config(
+    cfg = Config(
         path=target,
         session=SessionLimits(
             calendar_path=calendar_path,
@@ -485,6 +516,22 @@ def load_config(path: Path | str | None = None) -> Config:
         trial_a=trial_a,
         trial_b=trial_b,
     )
+    # The budget has to fit what the run is CERTAIN to need: one submit and one
+    # cancel per enabled trial, plus the reserved flatten calls. A smaller cap
+    # is not a tighter safety limit, it is a run that cannot finish — and the
+    # way it fails is by leaving a resting order or a holding behind, which is
+    # the opposite of what the cap is for.
+    floor = cfg.flatten_reserve + 2 * cfg.enabled_trials
+    if limits.max_order_calls < floor:
+        raise ProbeError(
+            f"limits.max_order_calls={limits.max_order_calls} is below the "
+            f"minimum {floor} this configuration needs: 2 calls (submit + cancel) "
+            f"for each of {cfg.enabled_trials} enabled trial(s) plus "
+            f"{cfg.flatten_reserve} reserved flatten call(s) "
+            f"(ceil(total trial quantity / limits.max_quantity)). A budget that "
+            "cannot fund the flatten ends the run holding shares it bought"
+        )
+    return cfg
 
 
 # ---------------------------------------------------------------------------
@@ -617,28 +664,73 @@ class OrderBudget:
     neither catches nor writes an artifact for. The budget exists because every
     other limit here bounds ONE call (a price, a quantity, an interval) and
     none of them bounds how many times a loop may send one.
+
+    Part of the cap is RESERVED for the flatten. The cleanup retries a cancel
+    up to ``limits.cleanup.cancel_attempts`` times, and each retry is an order
+    call: a broker that accepts every cancel and changes nothing will spend the
+    whole budget on cancels and leave nothing for the sell-back, ending the run
+    holding shares it bought. That is the worst outcome this probe can produce,
+    so the flatten's calls come out of a pool nothing else may touch.
     """
 
-    def __init__(self, limit: int) -> None:
+    def __init__(self, limit: int, *, reserved_for_flatten: int = 0) -> None:
         self.limit = int(limit)
+        self.reserved = max(0, int(reserved_for_flatten))
         self.spent: list[str] = []
+        self.reserve_spent: list[str] = []
 
     @property
     def remaining(self) -> int:
-        return self.limit - len(self.spent)
+        """General-purpose calls left. The reserve is NOT included."""
+        return self.limit - self.reserved - len(self.spent)
 
-    def spend(self, what: str) -> None:
+    @property
+    def reserve_remaining(self) -> int:
+        return self.reserved - len(self.reserve_spent)
+
+    def can_spend(self, *, from_reserve: bool = False) -> bool:
+        """Whether :meth:`spend` would succeed, without spending anything.
+
+        Callers that must RECORD a refusal rather than raise one (the cleanup,
+        which may not raise out of the caller's ``finally``) ask this first.
+        """
+        if from_reserve and self.reserve_remaining > 0:
+            return True
+        return self.remaining > 0
+
+    def spend(self, what: str, *, from_reserve: bool = False) -> None:
+        """Charge one order call, or refuse.
+
+        ``from_reserve`` PREFERS the reserve and falls back to the general
+        pool; an ordinary spend can never reach the reserve. One-directional on
+        purpose — a flatten should use its own pool first and may use what is
+        left over, while nothing else may eat the flatten's.
+        """
+        if from_reserve and self.reserve_remaining > 0:
+            self.reserve_spent.append(what)
+            return
         if self.remaining <= 0:
+            pool = (
+                f"{self.limit} calls, {self.reserved} of them reserved for the "
+                f"flatten ({self.reserve_remaining} of the reserve left)"
+            )
             raise SafetyViolation(
-                f"order-call budget exhausted ({self.limit} calls: "
-                f"{', '.join(self.spent)}) — refusing to send {what!r}. Raise "
-                "limits.max_order_calls in the P-SC config if the plan really "
-                "needs more, and say why"
+                f"order-call budget exhausted ({pool}: "
+                f"{', '.join(self.spent + self.reserve_spent)}) — refusing to "
+                f"send {what!r}. Raise limits.max_order_calls in the P-SC config "
+                "if the plan really needs more, and say why"
             )
         self.spent.append(what)
 
     def describe(self) -> dict[str, Any]:
-        return {"limit": self.limit, "used": len(self.spent), "calls": list(self.spent)}
+        return {
+            "limit": self.limit,
+            "reserved_for_flatten": self.reserved,
+            "used": len(self.spent) + len(self.reserve_spent),
+            "general_used": len(self.spent),
+            "reserve_used": len(self.reserve_spent),
+            "calls": list(self.spent) + list(self.reserve_spent),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -1052,6 +1144,68 @@ def classify_cancel_shape(
     }
 
 
+def classify_cancel_confirmed(
+    snapshots: list[dict[str, Any]], original_key: str
+) -> dict[str, Any]:
+    """Did the original order stop working? Separate from the cancel SHAPE.
+
+    Two different questions, deliberately not one value:
+
+    * :func:`classify_cancel_shape` answers "how does a cancel look on this
+      surface" — the measurement, and ``NEITHER_OBSERVED`` is a legitimate
+      answer to it.
+    * this answers "is it safe to put another order on this account" — and for
+      that, ``NEITHER_OBSERVED`` with a remainder still working is NOT safe,
+      while ``NEITHER_OBSERVED`` with ``rmn_qty=0`` is.
+
+    Collapsing them would either throw away the finding (treat NEITHER as a
+    failure) or add an order on top of a live one (treat it as a success).
+
+    Confirmed on the first answered snapshot whose original row shows
+    ``cncl_yn='Y'`` or ``rmn_qty == 0``. Not confirmed when no snapshot
+    answered, the original row never appeared, or a remainder kept working —
+    all three fail closed.
+    """
+    answered = [s for s in snapshots if s.get("read_status") in _READ_ANSWERED]
+    rows_seen = 0
+    for snapshot in answered:
+        row = (snapshot.get("original_row") or {}).get("raw") or {}
+        if not row:
+            continue
+        rows_seen += 1
+        cancelled = str(row.get("cncl_yn", "")).strip().upper() == "Y"
+        remaining = _ccld_int(row, "rmn_qty")
+        if cancelled or remaining == 0:
+            return {
+                "confirmed": True,
+                "original_odno_key": original_key,
+                "at_t_offset_ms": snapshot["t_offset_ms"],
+                "basis": "cncl_yn=Y" if cancelled else "rmn_qty=0",
+                "row": row,
+            }
+    if not answered:
+        reason = "no snapshot of the order surface answered"
+    elif rows_seen == 0:
+        reason = (
+            "the original order's row never appeared on any answered snapshot, "
+            "so whether it stopped working is unknown — CCLD_DVSN=00 should show "
+            "it either way, which makes this an unanswered question"
+        )
+    else:
+        reason = "the original row kept a working remainder (rmn_qty > 0, cncl_yn != Y)"
+    return {
+        "confirmed": False,
+        "original_odno_key": original_key,
+        "snapshots_answered": len(answered),
+        "snapshots_with_original_row": rows_seen,
+        "reason": reason,
+        "consequence": (
+            "no further order is placed on this account by this run; the cleanup "
+            "tries to cancel and the artifact records what it found"
+        ),
+    }
+
+
 def classify_late_fill(
     *,
     filled_before_cancel: int | None,
@@ -1125,6 +1279,8 @@ def _submit(
     *,
     side: str,
     label: str,
+    max_quantity: int,
+    from_reserve: bool = False,
 ) -> tuple[Placed | None, str, dict[str, Any]]:
     """One order POST. Returns ``(placed, stop_reason, record)``.
 
@@ -1132,8 +1288,27 @@ def _submit(
     POST is :data:`_STOP_ORDER_STATE_UNKNOWN` and never retried: the order may
     be resting right now under an ODNO this probe never saw, and a resend is
     the duplicate-order hazard.
+
+    ``max_quantity`` is enforced HERE, on the body about to go out, as well as
+    in the config loader. The loader can only check the two trial quantities,
+    which are written down; the sell-back quantity is derived at run time from
+    what actually filled, and that is the one number nobody wrote down.
+
+    Raises:
+        SafetyViolation: the body's ``ORD_QTY`` exceeds ``max_quantity``, or the
+            order-call budget is spent.
     """
-    budget.spend(label)
+    try:
+        quantity = int(body["ORD_QTY"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ProbeError(f"order body has no readable ORD_QTY: {body!r}") from exc
+    if quantity > max_quantity:
+        raise SafetyViolation(
+            f"refusing to send {label!r}: ORD_QTY={quantity} exceeds "
+            f"limits.max_quantity={max_quantity}. Split it or raise the cap in "
+            "the P-SC config and say why"
+        )
+    budget.spend(label, from_reserve=from_reserve)
     record: dict[str, Any] = {"label": label, "side": side, "body": dict(body)}
     try:
         placed, status, parsed, text, ms = client.submit_stock_verbose(body, side=side)
@@ -1194,9 +1369,33 @@ def _cancel(
     ``ack_monotonic`` is the pacer release instant of the cancel — the only
     honest t0 for the observation window, because a timestamp taken before the
     pacing gate would charge the pacing sleep to the broker.
+
+    It never raises for a cancel it cannot BUILD. ``build_stock_cancel_body``
+    refuses an empty ``ORGN_ODNO``/``KRX_FWDG_ORD_ORGNO`` or a zero quantity,
+    and this is also the cleanup's cancel: an exception here would abandon the
+    holding read and the sell-back that come after it, on exactly the input
+    (an accept response with no 거래소코드) where an order is resting that
+    nothing can cancel. The refusal is returned as
+    :data:`_STOP_CANCEL_NOT_SENDABLE` and recorded.
     """
-    budget.spend(label)
     record: dict[str, Any] = {"label": label, "remaining_qty_sent": remaining_qty}
+    try:
+        body_preview = client.stock_cancel_body(
+            orgn_odno=placed.odno,
+            krx_fwdg_ord_orgno=placed.krx_fwdg_ord_orgno,
+            remaining_qty=remaining_qty,
+        )
+    except ProbeError as exc:
+        # Nothing was sent, so nothing is charged to the budget.
+        record |= {
+            "outcome": _STOP_CANCEL_NOT_SENDABLE,
+            "not_sendable_because": str(exc),
+            "orgn_odno": placed.odno,
+            "krx_fwdg_ord_orgno": placed.krx_fwdg_ord_orgno,
+        }
+        run.observe(cancel=record)
+        return _STOP_CANCEL_NOT_SENDABLE, record, time.monotonic()
+    budget.spend(label)
     try:
         status, parsed, text, ms, body = client.cancel_stock_verbose(
             orgn_odno=placed.odno,
@@ -1207,6 +1406,7 @@ def _cancel(
         record |= {
             "outcome": _STOP_ORDER_STATE_UNKNOWN,
             "transport_excerpt": transport_excerpt(exc),
+            "request_body": body_preview,
         }
         run.observe(cancel=record)
         return _STOP_ORDER_STATE_UNKNOWN, record, time.monotonic()
@@ -1378,6 +1578,11 @@ def _cleanup(
         }
     keys = {p.key for p in placed}
     by_key = {p.key: p for p in placed}
+    # FOUR phases, each in its own try. One `try` around all of them was the
+    # r1 M2 defect: a cancel that could not even be built (no 거래소코드 in the
+    # accept response) threw, and the holding read and the sell-back — the two
+    # phases that decide whether the account ends flat — never ran. Each phase
+    # records its own outcome and the next one runs regardless.
     try:
         for attempt in range(cfg.limits.cleanup.cancel_attempts):
             read = read_order_rows(client, symbol, cfg, walk=False)
@@ -1399,7 +1604,7 @@ def _cleanup(
             for row in live:
                 key = odno_key(row.get("odno"))
                 remaining = _ccld_int(row, "rmn_qty") or 0
-                if budget.remaining <= 0:
+                if not budget.can_spend():
                     record["cancels"].append(
                         {
                             "attempt": attempt,
@@ -1408,7 +1613,7 @@ def _cleanup(
                         }
                     )
                     continue
-                outcome, cancel_record, _ack = _cancel(
+                outcome, _cancel_record, _ack = _cancel(
                     client,
                     run,
                     budget,
@@ -1419,40 +1624,38 @@ def _cleanup(
                 record["cancels"].append(
                     {"attempt": attempt, "odno_key": key, "outcome": outcome}
                 )
+                if outcome == _STOP_CANCEL_NOT_SENDABLE:
+                    # Retrying cannot help: the accept response is what is
+                    # missing, and it will be missing next time too.
+                    record["cancel_not_sendable"] = (
+                        "this run's own order cannot be cancelled through this "
+                        "harness at all — see trial_*.krx_fwdg_ord_orgno_absent. "
+                        "Cancel it by hand"
+                    )
             time.sleep(cfg.limits.cleanup.retry_s)
+    except Exception as exc:  # noqa: BLE001 - phase 1 must not skip phases 2-4
+        record["cancels_exception"] = f"{type(exc).__name__}: {exc}"
 
+    own_filled: dict[str, Any] = {"readable": False, "qty": 0}
+    holding: dict[str, Any] = {}
+    try:
         own_filled = _own_filled_qty(client, symbol, cfg, keys)
         record["own_filled_qty"] = own_filled
         holding = read_holding(client, symbol, cfg)
         record["holding_after_cancels"] = holding
+    except Exception as exc:  # noqa: BLE001 - phase 2 must not skip phases 3-4
+        record["holding_read_exception"] = f"{type(exc).__name__}: {exc}"
+
+    try:
         held = holding.get("qty")
         sell_qty = 0
         if holding.get("status") == _READ_OK and isinstance(held, int) and held > 0:
             # The cap, not the holding: never sell more than this run bought.
             sell_qty = min(held, own_filled["qty"] if own_filled["readable"] else 0)
         if sell_qty > 0:
-            if budget.remaining <= 0:
-                record["sell_back"] = {"outcome": _CLEAN_BUDGET_SPENT, "qty": sell_qty}
-            else:
-                # 시장가 so the flatten does not itself leave a resting order.
-                # P-11 measured that a 모의 marketable LIMIT does not fill while a
-                # 시장가 order fills at once (P-11-20260730T002715Z vs
-                # P-11-20260731T015709Z), so a limit sell-back would end the run
-                # with BOTH shares and an open order.
-                body = client.stock_order_body(symbol, sell_qty, order_type="market")
-                _sold, outcome, sell_record = _submit(
-                    client,
-                    run,
-                    budget,
-                    body,
-                    side="SELL",
-                    label=f"flatten-sell-{sell_qty}",
-                )
-                record["sell_back"] = {
-                    "outcome": outcome,
-                    "qty": sell_qty,
-                    "submit": sell_record,
-                }
+            record["sell_back"] = _flatten(
+                client, run, budget, cfg, symbol=symbol, qty=sell_qty
+            )
             final = read_holding(client, symbol, cfg)
             record["holding_final"] = final
             if final.get("status") != _READ_OK:
@@ -1474,7 +1677,11 @@ def _cleanup(
             )
         else:
             record["status"] = _CLEAN_FLAT
+    except Exception as exc:  # noqa: BLE001 - phase 3 must not skip phase 4
+        record["status"] = _CLEAN_UNKNOWN
+        record["sell_back_exception"] = f"{type(exc).__name__}: {exc}"
 
+    try:
         orders = read_order_rows(client, symbol, cfg, walk=False)
         own_live, other_live = 0, 0
         for row in orders.get("live_rows") or []:
@@ -1496,17 +1703,72 @@ def _cleanup(
             record["status"] = _CLEAN_STILL_LIVE
         elif orders.get("status") not in _READ_ANSWERED:
             record["status"] = _CLEAN_UNKNOWN
-    except Exception as exc:  # noqa: BLE001 - a cleanup failure must not mask results
-        # Including SafetyViolation. Raising out of the caller's `finally` would
-        # replace the finding the run exists to produce with a cleanup
-        # traceback, and the operator would lose the one thing they need most
-        # here: what state the account is in. The budget is still a hard cap —
-        # every spend site below checks `remaining` first, so reaching this arm
-        # through the budget means a bug worth recording, not worth re-raising.
+    except Exception as exc:  # noqa: BLE001 - the last phase, same rule
         record["status"] = _CLEAN_UNKNOWN
-        record["exception"] = f"{type(exc).__name__}: {exc}"
+        record["orders_final_exception"] = f"{type(exc).__name__}: {exc}"
+
+    record.setdefault("status", _CLEAN_UNKNOWN)
     record["budget"] = budget.describe()
     return record
+
+
+def _flatten(
+    client: MockTradingClient,
+    run: ProbeRun,
+    budget: OrderBudget,
+    cfg: Config,
+    *,
+    symbol: str,
+    qty: int,
+) -> dict[str, Any]:
+    """Sell ``qty`` back in orders of at most ``limits.max_quantity`` each.
+
+    Split rather than refused: a quantity above the cap is a real possibility
+    (two trials can both fill), and the two ways of not splitting are both bad
+    — one over-size order violates the cap the config states, and a refusal
+    ends the run holding shares this probe bought.
+
+    시장가, so the flatten does not itself leave a resting order. P-11 measured
+    that a 모의 marketable LIMIT does not fill while a 시장가 order fills at once
+    (``P-11-20260730T002715Z`` vs ``P-11-20260731T015709Z``), so a limit
+    sell-back would end the run with BOTH the shares and an open order.
+
+    The calls come from the flatten RESERVE first (see :class:`OrderBudget`),
+    so cleanup cancel retries cannot starve them.
+    """
+    chunks: list[dict[str, Any]] = []
+    remaining = qty
+    while remaining > 0:
+        chunk = min(remaining, cfg.limits.max_quantity)
+        if not budget.can_spend(from_reserve=True):
+            chunks.append({"qty": chunk, "outcome": _CLEAN_BUDGET_SPENT})
+            break
+        body = client.stock_order_body(symbol, chunk, order_type="market")
+        _sold, outcome, submit_record = _submit(
+            client,
+            run,
+            budget,
+            body,
+            side="SELL",
+            label=f"flatten-sell-{chunk}",
+            max_quantity=cfg.limits.max_quantity,
+            from_reserve=True,
+        )
+        chunks.append({"qty": chunk, "outcome": outcome, "submit": submit_record})
+        if outcome != _STOP_NONE:
+            # A refused or lost sell is not retried for the same reason a lost
+            # submit is not: it may have been accepted.
+            break
+        remaining -= chunk
+    bad = [c for c in chunks if c["outcome"] != _STOP_NONE]
+    return {
+        "qty": qty,
+        "outcome": bad[0]["outcome"] if bad else _STOP_NONE,
+        "max_quantity": cfg.limits.max_quantity,
+        "orders": len(chunks),
+        "chunks": chunks,
+        "quantity_unsold": remaining,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1564,8 +1826,14 @@ def _trial(
         "limit_price_tick": price.describe(),
     }
     body = client.stock_order_body(symbol, trial.quantity, price, order_type="limit")
-    placed, stop, _submit_record = _submit(
-        client, run, budget, body, side="BUY", label=f"{name}-submit"
+    placed, stop, submit_record = _submit(
+        client,
+        run,
+        budget,
+        body,
+        side="BUY",
+        label=f"{name}-submit",
+        max_quantity=cfg.limits.max_quantity,
     )
     if placed is None or stop != _STOP_NONE:
         return stop, record | {"stopped_at": "submit"}
@@ -1573,6 +1841,21 @@ def _trial(
     record["odno"] = placed.odno
     record["odno_key"] = placed.key
     record["krx_fwdg_ord_orgno"] = placed.krx_fwdg_ord_orgno
+
+    if not placed.krx_fwdg_ord_orgno:
+        # The accept response omitted 거래소코드, which order_rvsecncl declares
+        # [필수] and refuses as empty — so no cancel can be built for this
+        # order at all. A finding about the ACCEPT response, recorded next to
+        # that response rather than surfacing later as a cancel-time error.
+        record["krx_fwdg_ord_orgno_absent"] = (
+            "the accept response carried no KRX_FWDG_ORD_ORGNO (거래소코드), which "
+            "order_rvsecncl ([v1_국내주식-003]) declares [필수] and refuses as "
+            "empty. No cancel can be BUILT for this order, so none is sent and "
+            "no further order is placed. The order is resting and the cleanup "
+            "records what it could and could not do — settle it by hand"
+        )
+        record["accept_output"] = submit_record.get("output")
+        return _STOP_CANCEL_NOT_SENDABLE, record | {"stopped_at": "cancel_not_sendable"}
 
     pre = _snapshot(
         client,
@@ -1609,7 +1892,13 @@ def _trial(
         client, run, budget, placed, remaining_qty=remaining, label=f"{name}-cancel"
     )
     record["cancel"] = cancel_record
-    if stop in (_STOP_RATE_LIMITED, _STOP_ORDER_STATE_UNKNOWN):
+    if stop != _STOP_NONE:
+        # EVERY non-accepted cancel stops here, the broker's REJECTION included.
+        # A rejection is a measurement — it says the broker would not cancel
+        # this order — but it is also a statement that the order is STILL
+        # WORKING, and the observation window that follows would then be timing
+        # a cancel that never happened while the next trial queued an order on
+        # top of a live one. The rejection is recorded; the run goes to cleanup.
         return stop, record | {"stopped_at": "cancel"}
 
     snapshots = _observe_window(
@@ -1617,6 +1906,7 @@ def _trial(
     )
     record["post_cancel_snapshots"] = snapshots
     record["cancel_shape"] = classify_cancel_shape(snapshots, placed.key)
+    record["cancel_confirmed"] = classify_cancel_confirmed(snapshots, placed.key)
     record["late_fill"] = classify_late_fill(
         filled_before_cancel=filled_before,
         snapshots=snapshots,
@@ -1624,9 +1914,11 @@ def _trial(
     )
     if record["cancel_shape"]["snapshots_answered"] == 0:
         return _STOP_QUERY_UNANSWERED, record | {"stopped_at": "observation"}
-    # A REJECTED cancel is a measurement (it says the broker would not cancel
-    # this order), so it does not stop the run — the shape classification above
-    # already recorded what the surface showed.
+    if not record["cancel_confirmed"]["confirmed"]:
+        # The shape measurement above stands — this is the separate question of
+        # whether the account may carry another order (see
+        # :func:`classify_cancel_confirmed`).
+        return _STOP_CANCEL_NOT_CONFIRMED, record | {"stopped_at": "confirmation"}
     return _STOP_NONE, record
 
 
@@ -1763,7 +2055,15 @@ def probe_psc(args: argparse.Namespace) -> ProbeRun:
             "dry-run: the window and trading-day refusal gate the LIVE run only, "
             "and a dry run must stay runnable at any hour",
         )
-    budget = OrderBudget(cfg.limits.max_order_calls)
+    # The flatten's calls are reserved BEFORE the trials start, not found
+    # afterwards: the cleanup's cancel retries are order calls too, and a
+    # broker that accepts every cancel and changes nothing would spend the
+    # whole cap on them and leave the sell-back unfunded — ending the run
+    # holding shares this probe bought. ``load_config`` has already refused a
+    # cap too small to hold both the reserve and the trials.
+    budget = OrderBudget(
+        cfg.limits.max_order_calls, reserved_for_flatten=cfg.flatten_reserve
+    )
 
     if client is None:
         _dry_run(run, args, cfg)
@@ -1776,6 +2076,13 @@ def probe_psc(args: argparse.Namespace) -> ProbeRun:
     stop = _STOP_NONE
     shapes: list[str] = []
     cleanup: dict[str, Any] = {}
+    # "No intact answer, and our call rate is not why", plus every refusal this
+    # harness raises as a ProbeError. Built here rather than written into the
+    # ``except`` clause so the two sources stay one tuple.
+    abortable: tuple[type[BaseException], ...] = (
+        ProbeError,
+        *transport_transient_types(),
+    )
     try:
         run.measure("flat_start", assert_flat_start(client, args.symbol, cfg))
         # Trial A first and unconditionally unless --trial narrowed it away: it
@@ -1816,6 +2123,38 @@ def probe_psc(args: argparse.Namespace) -> ProbeRun:
                 shapes.append(record_b["cancel_shape"]["shape"])
         else:
             run.skip("trial B", skip_b)
+    except SafetyViolation:
+        # Re-raised deliberately: ``run.py`` writes NO artifact for a refused
+        # call, and that stays true. A SafetyViolation means the probe tried
+        # something the safety model forbids, and the two that can fire here —
+        # the quantity cap and the order-call budget — are both unreachable
+        # from the trial path by construction (config validation caps the trial
+        # quantities, and the reserve floor guarantees the trials' calls). The
+        # cleanup in the ``finally`` below still runs.
+        raise
+    except abortable as exc:
+        # A ProbeError or a lost GET. Before the first accepted order this is a
+        # precondition and must stay ``run.py`` rc 4 with no artifact — that is
+        # what every refusal path here depends on. AFTER one, the same
+        # exception would delete a measurement that is already complete: trial
+        # B failing to establish a 호가단위 would take trial A's whole cancel
+        # observation with it. So it is recorded ON the run and the run is
+        # returned normally, which writes the artifact.
+        if not placed:
+            raise
+        stop = _STOP_PROBE_ERROR
+        run.error(f"{type(exc).__name__} after {len(placed)} accepted order(s): {exc}")
+        run.measure(
+            "aborted_after_first_order",
+            {
+                "exception": f"{type(exc).__name__}: {exc}",
+                "accepted_orders": len(placed),
+                "note": (
+                    "trials ended here. Whatever measurement had completed is "
+                    "above; the cleanup below says what state the account is in"
+                ),
+            },
+        )
     finally:
         cleanup = _cleanup(client, run, budget, cfg, symbol=args.symbol, placed=placed)
         run.measure("cleanup", cleanup)

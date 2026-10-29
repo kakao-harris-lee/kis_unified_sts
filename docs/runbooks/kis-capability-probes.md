@@ -1187,6 +1187,14 @@ python -m tools.broker_probes.run P-SC --asset stock --symbol 005930 --confirm \
    - `UNDETERMINED` — 조회면이 답하지 못했다, 또는 답한 페이지가 전부 꽉 차
      있었다(행이 잘렸을 수 있다). **`NEITHER_OBSERVED` 로 읽지 말 것** — 그것이
      #948 순서 2 가 fail-open 으로 넘어가는 경로다.
+   ⚠ **모양과 「취소 확인」은 다른 질문이다.** `cancel_shape` 는 「이 조회면에서
+   취소가 어떻게 보이는가」(측정)이고, `measurements.trial_a.cancel_confirmed`
+   는 「이 계좌에 주문을 더 올려도 되는가」(안전)다. 그래서
+   `NEITHER_OBSERVED` + `rmn_qty=0` 은 측정으로서 유효하면서 안전하고,
+   `NEITHER_OBSERVED` + 잔량 생존은 유효한 측정이면서 **안전하지 않다** —
+   후자면 시행 B 를 돌리지 않고 `PSC_STOP=cancel_not_confirmed` 로 멈춘다.
+   둘을 한 값으로 합치면 측정을 버리거나(NEITHER 를 실패로 취급) 살아 있는
+   주문 위에 주문을 올린다(NEITHER 를 성공으로 취급).
    보조 필드: `snapshots_answered` / `snapshots_untruncated` 가 0 이면 판정의 근거가
    없다는 뜻이고, `first_flagged_t_offset_ms` / `first_derived_t_offset_ms` 는 취소
    ack 의 **페이서 릴리스 시점**부터의 ms 다(페이싱 수면을 브로커 지연으로 계상하지
@@ -1198,7 +1206,11 @@ python -m tools.broker_probes.run P-SC --asset stock --symbol 005930 --confirm \
    취소 POST 보다 한 페이싱 간격 앞서 읽혔으므로, 직후에 처음 보인 증가는 그
    간격 안에서 일어났을 수도 있다.
 5. **`measurements.trial_b.partial_fill.outcome`** — #980 용. 위 「두 시행」 참조.
-6. **`measurements.cleanup.status`** — `FLAT` 이어야 한다. `SHARES_STILL_HELD` ·
+6. **`measurements.cleanup.status`** — `FLAT` 이어야 한다. 단계별 기록이 따로
+   남는다: `cancels` · `own_filled_qty` · `holding_after_cancels` ·
+   `sell_back`(상한 초과 수량은 `limits.max_quantity` 단위로 **쪼개져** 나가고
+   `chunks` 에 각 건이 남는다) · `orders_final_*`. 한 단계가 실패해도 다음
+   단계는 돈다 — 실패는 `*_exception` 으로 적힌다. `SHARES_STILL_HELD` ·
    `ORDER_STILL_LIVE` · `UNDETERMINED` 면 **계좌를 손으로 확인**한다.
    `holding_final` / `orders_final_live` 가 마지막으로 본 상태다.
 7. **`measurements.order_call_budget`** — 보낸 주문성 POST 전부가 `calls` 에
@@ -1209,14 +1221,24 @@ python -m tools.broker_probes.run P-SC --asset stock --symbol 005930 --confirm \
 러너가 읽는 앵커 3줄(모든 종료 경로에서 각 1회):
 
 ```
-PSC_STOP=<none | dry_run | rejected | rate_limited | order_state_unknown | query_unanswered>
+PSC_STOP=<none | dry_run | rejected | rate_limited | order_state_unknown
+        | query_unanswered | cancel_not_confirmed | cancel_not_sendable | probe_error>
 PSC_CANCEL_SHAPE=<위 5값>
 PSC_FLAT_AT_END=<yes | no | unknown>
 ```
 
-`order_state_unknown` 은 주문성 POST 가 전송 중 사라진 경우다 — 접수되어 지금
-책에 걸려 있을 수 있고, **재전송은 하지 않는다**(중복 주문 위험). 그 토큰을 보면
-정리 기록과 계좌를 손으로 확인한다.
+- `order_state_unknown` — 주문성 POST 가 전송 중 사라졌다. 접수되어 지금 책에
+  걸려 있을 수 있고 **재전송은 하지 않는다**(중복 주문 위험). 정리 기록과 계좌를
+  손으로 확인한다.
+- `rejected` — 신규 **또는 취소**가 거부됐다. 취소 거부는 「원주문이 아직 일하고
+  있다」는 뜻이므로 그 뒤 주문을 더 내지 않는다.
+- `cancel_not_confirmed` — 취소는 **수락**됐는데 원주문이 멈춘 것을 끝까지 보지
+  못했다. 모양 판정은 여전히 유효한 측정일 수 있다(§3 위 「두 질문」 참조).
+- `cancel_not_sendable` — 수락 응답에 `KRX_FWDG_ORD_ORGNO` 가 없어 취소 본문을
+  **만들 수조차** 없었다. 손으로 취소해야 하고, 이것 자체가 수락 응답에 대한
+  측정 결과다.
+- `probe_error` — 주문이 하나 접수된 **뒤에** 선행조건 실패나 조회 유실이 났다.
+  아티팩트는 **남는다** — `measurements.aborted_after_first_order` 와 `errors[]`.
 
 증거 디렉터리로 복사할 때는 README 에 인용 토큰(`CITATION-RULE.md` 형식)을 적어
 `tools/tos_evidence_citation_check.py` 를 통과시킨다.

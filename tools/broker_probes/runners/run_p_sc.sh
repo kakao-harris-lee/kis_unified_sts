@@ -191,7 +191,19 @@ else
     esac
     ;;
   rejected)
-    VERDICT="STOP: the broker REJECTED a submit — read msg_cd/msg1 in the artifact; a re-run would be refused the same way"
+    VERDICT="STOP: the broker REJECTED a submit or the cancel — read msg_cd/msg1 in the artifact. A rejected CANCEL means trial A's order is still working, which is why no further order was placed"
+    ;;
+  cancel_not_confirmed)
+    # The cancel was ACCEPTED and the order was never seen to stop working.
+    # The shape measurement may be complete — that is a different question, and
+    # the shape= field above carries its answer.
+    VERDICT="STOP: the cancel was accepted but the order was never confirmed to stop working (cancel_confirmed=false) — no further order was placed. The shape verdict above may still be a valid measurement; read measurements.trial_a.cancel_confirmed.reason and check the account"
+    ;;
+  cancel_not_sendable)
+    VERDICT="STOP: the accept response carried no KRX_FWDG_ORD_ORGNO (거래소코드), which order_rvsecncl declares [필수] — so NO cancel could be built for this order. An order is resting that this harness cannot cancel: settle it by hand. This is itself a finding about the accept response"
+    ;;
+  probe_error)
+    VERDICT="STOP: a precondition or a lost GET ended the trials AFTER an order had been accepted. The artifact was still written and carries whatever had been measured plus the error — read measurements.aborted_after_first_order and errors[]"
     ;;
   rate_limited)
     VERDICT="STOP: rate-limited (HTTP 429 / EGW00201) — that is OUR call rate, and it stays a no-retry stop"

@@ -454,7 +454,9 @@ The probe prints exactly one of each, on every path it can leave by, and the
 runner reads only those:
 
 ```
-PSC_STOP=<none | dry_run | rejected | rate_limited | order_state_unknown | query_unanswered>
+PSC_STOP=<none | dry_run | rejected | rate_limited | order_state_unknown
+        | query_unanswered | cancel_not_confirmed | cancel_not_sendable
+        | probe_error>
 PSC_CANCEL_SHAPE=<ORIGINAL_ROW_FLAGGED | SEPARATE_ROW_WITH_ORGN_ODNO | BOTH
                 | NEITHER_OBSERVED | UNDETERMINED>
 PSC_FLAT_AT_END=<yes | no | unknown>
@@ -465,7 +467,10 @@ PSC_FLAT_AT_END=<yes | no | unknown>
 | `PSC_STOP=none` + a shape of `ORIGINAL_ROW_FLAGGED` / `SEPARATE_ROW_WITH_ORGN_ODNO` / `BOTH` | measured — this is the answer #948 step 2 needs |
 | `PSC_STOP=none` + `NEITHER_OBSERVED` | **also measured**, and consequential: the surface answered and marked the cancel in neither place. Read the artifact before designing a non-execution proof around either |
 | `PSC_STOP=none` + `UNDETERMINED` | nothing was established. **Not** "the cancel does not show up" |
-| `rejected` / `rate_limited` | the broker refused a submit, or our call rate did. No retry |
+| `rejected` / `rate_limited` | the broker refused a submit **or the cancel**, or our call rate did. No retry. A rejected cancel means trial A's order is still working, which is why no further order was placed |
+| `cancel_not_confirmed` | the cancel was ACCEPTED and the order was never seen to stop working. The shape verdict may still be a valid measurement — that is a different question; read `measurements.trial_a.cancel_confirmed.reason` |
+| `cancel_not_sendable` | the accept response carried no `KRX_FWDG_ORD_ORGNO`, so no cancel could be BUILT. An order is resting that this harness cannot cancel — settle it by hand. Itself a finding about the accept response |
+| `probe_error` | a precondition or a lost GET ended the trials after an order had been accepted. The artifact **was** written, with whatever had been measured plus the error (`measurements.aborted_after_first_order`, `errors[]`) |
 | `order_state_unknown` | an order POST was lost in transport. It is NOT resent (duplicate-order hazard) — read `measurements.cleanup` and check the account by hand |
 | `PSC_FLAT_AT_END` ≠ `yes` | settle the account by hand BEFORE scheduling P-SC again, whatever the shape verdict was |
 
