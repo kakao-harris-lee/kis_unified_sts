@@ -1629,7 +1629,22 @@ B1b 하네스의 커밋 사본(`tos/runtime/cp3/strategies/setup_d_long.strategy
     `session_scope.consumed_id_filter.session_day` 이고, null 이면(소비 id 가 한 날로
     모이지 않는 경우) 어떤 봉도 `seed_day` 로 부르지 않는다.
   `live_comparison.divergent` 는 **실시간 런타임이 오프라인 리플레이와 다르게 결정한
-  봉 수**다 — 0 이 아니면 그것이 소견이고, B3 는 그것을 거부가 아니라 보고로 낸다.
+  봉 중 선언된 차이로 설명되지 않는 수**다(`summary_schema_version` 3 부터,
+  2026-10-29) — 0 이 아니면 그것이 소견이고, B3 는 그것을 거부가 아니라 보고로 낸다.
+  - 선언된 차이는 `live_comparison.declared_difference_counts` 에 **선언 id 별로**
+    따로 센다. 지금은 **B1b-D1** 하나다: 오프라인만 `capacity_denied` 인 봉으로,
+    `tos.backtest` 의 예약 투영에 release 경로가 없어 첫 발사 뒤 전부 거부되는 차이를
+    B1b 가 자기 lineage 에 선언한 것이다. **한 방향만** — 실시간이 거부하고 오프라인이
+    아니면 divergent 다. lineage 가 그 id 를 선언하지 않으면 재분류는 없다.
+  - `live_comparison.excluded_bar_counts` 는 **대조에서 빼 둔** 봉이다. 지금은
+    `pre_boot_at_boot` 하나로, 러너의 `boot-journal-snapshot.json::pre_boot_raw_event_ids`
+    가 **id 로** 지목하는 봉(08:45)이다 — 부팅 때 이미 journal 에 있어 설계상 stale 이고
+    엔진은 보류밖에 못 한다. ⚠ 시각·순서가 아니라 **id 로** 빼므로 **post-boot 의
+    `TIME_NOT_ADMITTED` 는 그대로 divergent 로 센다**(그것이 M5 ① 이다). 그 봉은
+    오프라인 분류에는 그대로 남는다.
+  - 다섯 수 — `identical` · `kind_only_matches` · 선언 합 · `divergent` ·
+    `excluded_from_comparison` — 의 합이 `bars_in_scope` 다. 어느 버킷도 조용히
+    흡수하지 못한다.
   `live_comparison.kind_only_matches` 는 **반만 잰** 봉이다: 실시간 쪽이 `PROPOSAL`
   (「결정이 나왔고 no-action 은 아니다」)이고 오프라인이 ACTION 또는 FLAT 인 경우로,
   ACTION/FLAT 구분은 어떤 지속 레코드에도 없다(`position_effect` 는 `tos/src/tos/engine`

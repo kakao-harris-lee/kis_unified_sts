@@ -1421,6 +1421,17 @@ def build_consumed_ids_document(
             "pre_boot_lines_at_boot": len(pre_boot),
         },
         "raw_event_ids": sorted(consumed),
+        # The runner's boot-journal snapshot, copied through by id and not just
+        # by count. `diff_decisions.py` holds exactly these bars out of its LIVE
+        # comparison — a bar already in the producer's journal at boot is stale
+        # at boot BY DESIGN, so the runtime can only withhold on it, and the
+        # withhold is not a decision disagreement. B3 takes no
+        # `--boot-snapshot` of its own (it reads files, not stores), so this
+        # document is the only place it can learn WHICH bars those are. An
+        # empty list is a measurement ("the journal was empty at boot"); the
+        # key is always written, because B3 reads an absent key as "this
+        # document does not say" and then holds nothing out.
+        "pre_boot_raw_event_ids": sorted(pre_boot),
         "unpaired_reasons": dict(sorted(reasons.items())),
         "unpaired_reason_counts": dict(sorted(reason_counts.items())),
         "consumed_field_states": consumed_field_states(

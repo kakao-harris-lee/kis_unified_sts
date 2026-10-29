@@ -108,7 +108,13 @@ AUTHORITY_KINDS: tuple[str, ...] = (
 #: band 행처럼 날짜를 싣지 않는 행(REFUSED 는 trading_date 가 없다)은 이 범위로만 세션에 묶인다.
 BOOT_KIND = "TIME_SERVICE_STARTUP"
 #: diff_decisions.py 가 쓰는 summary 모양 — 다른 값이면 키를 믿지 않고 막힘으로 보고한다.
-B3_SUMMARY_SCHEMA_VERSIONS = frozenset({2})
+B3_SUMMARY_SCHEMA_VERSIONS = frozenset({2, 3})
+#: 선언된 divergence 를 자기 버킷(``live_comparison.declared_difference_counts``)에
+#: 담아 내는 첫 summary 모양. **그 아래 모양의 `divergent` 는 선언된 차이를 섞어 센다**
+#: — 로드맵 §2-1 의 「설명 안 되는 divergence」로 읽으면 안 되므로, v2 는 수를 그대로
+#: 보여 주되 판정을 «확인» 에 둔다. v3 부터는 `divergent` 가 바로 그 수이고 §2-1 을
+#: 못 채우는 것이라서 «막힘» 이다.
+B3_DECLARED_BUCKET_SCHEMA_VERSION = 3
 #: 세션 디렉터리 아래 B3 산출물 디렉터리. ``config/tos_cp3_b3.yaml::subdir`` 와 같아야 하고
 #: ``tests/tools/test_cp3_post_session_b3.py`` 가 그 일치를 고정한다 — 두 값이 어긋나면
 #: 상태판은 돌아간 대조를 «결과 없음» 으로 읽는다.
@@ -883,11 +889,20 @@ def b3_facts(session_dir: Path) -> dict[str, Any] | None:
             "error": "live_comparison 의 compared_bars/identical/divergent 가 정수가 아니다"
         }
     window = window if isinstance(window, dict) else {}
+    declared = live.get("declared_difference_counts")
+    excluded = live.get("excluded_bar_counts")
+    separates = version >= B3_DECLARED_BUCKET_SCHEMA_VERSION
     return {
         "unresolved": count,
         "compared_bars": live["compared_bars"],
         "identical": live["identical"],
         "divergent": live["divergent"],
+        # 「선언된 차이로 설명된 봉」과 「대조에서 빼 둔 봉」. ``None`` 은 0 이 아니라
+        # «이 summary 모양은 말하지 않는다» 다 — 그래야 아래 divergent 줄이 v2 의
+        # 섞인 수를 §2-1 의 수로 읽지 않는다.
+        "declared": declared if separates and isinstance(declared, dict) else None,
+        "excluded": excluded if separates and isinstance(excluded, dict) else None,
+        "separates_declared": separates,
         "window": f"{window.get('window_start')}..{window.get('window_end')}",
     }
 
@@ -1233,14 +1248,22 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
         else:
             if s.b3["unresolved"]:
                 issues.append((BLOCK, f"B3 unresolved={s.b3['unresolved']}"))
-            # §2-1 판정은 unresolved(설명 안 된 차이) 다. live divergent 는 귀속 규칙으로
-            # 설명된 차이를 포함하므로 막힘이 아니라 확인으로 올린다 — 숫자를 숨기지 않기 위해.
+            # §2-1 의 두 수 중 두 번째가 live divergent 다. **선언된 차이를 자기 버킷으로
+            # 가른 모양(v3)에서만** 그 수가 「설명 안 되는 divergence」이고, 그때는
+            # unresolved 와 같은 등급으로 막는다. 그 아래 모양은 선언된 차이를 섞어 세므로
+            # 수는 보여 주되 확인에 둔다 — 섞인 수를 §2-1 미달로 읽지 않기 위해.
             if s.b3["divergent"]:
+                declared = s.b3["declared"] or {}
+                tail = (
+                    f" (선언 {_fmt_counts(declared)})"
+                    if s.b3["separates_declared"]
+                    else " — 이 summary 모양은 선언된 차이를 가르지 않는다"
+                )
                 issues.append(
                     (
-                        WARN,
+                        BLOCK if s.b3["separates_declared"] else WARN,
                         f"B3 live divergent {s.b3['divergent']}/{s.b3['compared_bars']}"
-                        " — 귀속은 B3 리포트에서 확인",
+                        f"{tail}",
                     )
                 )
     elif s.status in ("ENDED", "ABORT", "FAILED"):
@@ -1702,6 +1725,19 @@ def render_text(board: Mapping[str, Any]) -> str:
                 f"    B3 대조: unresolved {b3['unresolved']} · divergent {b3['divergent']}/{b3['compared_bars']}"
                 f" (identical {b3['identical']}) · 창 {b3['window']}"
             )
+            # 선언된 차이와 대조에서 빼 둔 봉은 divergent 와 **따로** 보여 준다.
+            # 같은 줄에 섞으면 「설명 안 되는 divergence」가 몇인지 읽을 수 없다.
+            if b3["separates_declared"]:
+                add(
+                    f"      선언된 차이: {_fmt_counts(b3['declared'])}"
+                    f" · 대조 제외: {_fmt_counts(b3['excluded'])}"
+                )
+            else:
+                add(
+                    "      선언된 차이: 모름 — 이 summary 모양(v"
+                    f"{B3_DECLARED_BUCKET_SCHEMA_VERSION} 미만)은 선언된 차이를"
+                    " divergent 와 가르지 않는다"
+                )
     if board["cron"]:
         add("  크론 마지막 줄:")
         for name, line in board["cron"].items():

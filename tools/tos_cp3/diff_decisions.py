@@ -121,7 +121,14 @@ from tools.tos_cp3 import TOS_CP3_VERSION  # noqa: E402
 #: :data:`SUMMARY_SCHEMA_VERSION` moves with it: the two are bumped together
 #: because every shape change so far has touched both, and a reader comparing
 #: the two numbers should not have to work out which one lagged.
-LINEAGE_SCHEMA_VERSION = 2
+#:
+#: **2 -> 3 (2026-10-29).** The live-decision check row now carries
+#: ``in_scope`` / ``excluded`` / ``declared`` beside ``compared`` /
+#: ``divergent`` / ``kind_only_matches``, and the consumed-id row carries
+#: ``pre_boot_held_out_of_the_live_comparison``. Additions, not replacements —
+#: but it moves with :data:`SUMMARY_SCHEMA_VERSION` per the rule above, and
+#: that side IS a meaning change.
+LINEAGE_SCHEMA_VERSION = 3
 
 #: Summary schema version — see :data:`LINEAGE_SCHEMA_VERSION` for the 1 -> 2
 #: change. A literal in ``build_summary`` before 2026-10-09, which is why the
@@ -149,7 +156,23 @@ LINEAGE_SCHEMA_VERSION = 2
 #: meaning without the caller asking for it, and the one unconditional change
 #: is an ADDITION to a check row's detail fields. The version number is
 #: therefore honest, and this note is the record of what it covers.
-SUMMARY_SCHEMA_VERSION = 2
+#:
+#: **2 -> 3 (2026-10-29): two keys of ``live_comparison`` changed MEANING**, so
+#: by the rule above this is a bump and not an addition.
+#:
+#: * ``divergent`` no longer counts a bar whose only disagreement is one a
+#:   loaded lineage declares — those are counted under the declaration's id in
+#:   ``declared_difference_counts``. So ``divergent`` is now the number roadmap
+#:   §2-1 asks for ("설명 안 되는 divergence"), where a v2 ``divergent`` mixed
+#:   the declared families in. A v2 consumer would read the new number as the
+#:   old one and conclude the session improved.
+#: * ``compared_bars`` is the bars actually compared, which is now
+#:   ``bars_in_scope`` minus the boot journal's own bars
+#:   (``excluded_from_comparison``). On a v2 report the two were equal.
+#:
+#: ``tools/tos_cp3/status_board.py`` reads both versions and will not present a
+#: v2 ``divergent`` as the §2-1 number (``B3_DECLARED_BUCKET_SCHEMA_VERSION``).
+SUMMARY_SCHEMA_VERSION = 3
 
 #: Stable identity stamped on every diff line as ``source_id``.
 SOURCE_ID = f"tos-cp3-b3/{TOS_CP3_VERSION}"
@@ -2026,6 +2049,46 @@ LIVE_PROPOSAL_KIND = "PROPOSAL"
 #: disagreement about whether to act at all.
 PROPOSAL_COMPATIBLE_OFFLINE_KINDS = (TOS_ACTION, TOS_FLAT)
 
+#: The B1b declared difference that explains an offline-ONLY capacity denial —
+#: ``tos.backtest`` holds at most one order per scope for the whole run because
+#: its provisional reservation projection has no release path, so every firing
+#: after the first is denied OFFLINE while the live runtime, which releases, is
+#: not. The id is the one B1b's own lineage declares
+#: (``tos/runtime/cp3/differences.py``); this module only NAMES it and
+#: attributes nothing unless that lineage declares it, so a future B1b that
+#: releases its reservation stops excusing the shape it no longer produces.
+#:
+#: ⚠ ONE-DIRECTIONAL by construction — see
+#: :data:`DECLARED_CAPACITY_DENIAL_RULE`.
+LIVE_DECLARED_CAPACITY_DENIAL = "B1b-D1"
+
+#: Why :data:`LIVE_DECLARED_CAPACITY_DENIAL`'s bucket exists and what it will
+#: not take, carried into ``summary.json`` beside the count so a reader does not
+#: have to come here.
+DECLARED_CAPACITY_DENIAL_RULE = (
+    "the offline replay denied capacity on a firing and the live session did "
+    "not. B1b declares this: tos.backtest holds at most ONE order per scope "
+    "for the whole run (its provisional reservation projection has no release "
+    "path), so every firing after the first is an exact capacity denial "
+    "OFFLINE, while the live runtime releases and is not denied. "
+    "ONE-DIRECTIONAL: a LIVE denial the offline replay did not have is NOT "
+    "this difference and stays divergent. The outcome kinds must agree too "
+    "(exactly, or as a kind-only match) — a kind disagreement is a separate "
+    "finding and this bucket does not absorb it"
+)
+
+#: The name the live comparison holds the boot journal's own bars out under.
+#: The 08:45 bar of a CP-3 session is already in the producer's journal when
+#: the runtime boots, so it is stale at boot BY DESIGN: the engine withholds
+#: (``DECISION_WITHHELD`` / ``TIME_NOT_ADMITTED``) and there is no live decision
+#: to compare an offline one against.
+#:
+#: ⚠ Held out BY ID, from the runner's own boot-journal snapshot — never "the
+#: first bar" and never by time. A POST-boot withhold is the M5 ① stale signal
+#: (``memory/m5-time-not-admitted-is-stale-not-missing.md``) and must stay
+#: counted; excusing bars by position or by clock would hide exactly that.
+LIVE_EXCLUDED_PRE_BOOT = "pre_boot_at_boot"
+
 
 @dataclass(frozen=True)
 class ConsumedIdFilter:
@@ -2035,6 +2098,27 @@ class ConsumedIdFilter:
     sha256: str
     raw_event_ids: frozenset[str]
     unpaired_reasons: dict[str, str]
+    #: The runner's boot-journal snapshot, as the document copied it through.
+    #: ``None`` means the document does not carry the key at all — a hand-made
+    #: or older file — and then nothing is held out of the live comparison.
+    #: An empty frozenset is the measurement "the journal was empty at boot".
+    pre_boot_raw_event_ids: frozenset[str] | None = None
+
+
+@dataclass(frozen=True)
+class LiveExclusion:
+    """Compared bars held out of the LIVE comparison, under one reason's name.
+
+    The offline classification still covers them: only the live comparison is
+    silent, and only about the ids named here.
+    """
+
+    reason: str
+    raw_event_ids: frozenset[str]
+
+    @classmethod
+    def nothing(cls) -> LiveExclusion:
+        return cls(reason=LIVE_EXCLUDED_PRE_BOOT, raw_event_ids=frozenset())
 
 
 def load_consumed_ids(path: Path) -> ConsumedIdFilter:
@@ -2067,7 +2151,37 @@ def load_consumed_ids(path: Path) -> ConsumedIdFilter:
         sha256=sha256_file(path),
         raw_event_ids=frozenset(ids),
         unpaired_reasons={str(k): str(v) for k, v in reasons.items()},
+        pre_boot_raw_event_ids=_pre_boot_ids(document, path),
     )
+
+
+def _pre_boot_ids(document: dict[str, Any], path: Path) -> frozenset[str] | None:
+    """The document's ``pre_boot_raw_event_ids``, or ``None`` if it has none.
+
+    ``None`` rather than an empty set, and that distinction is the whole point:
+    an empty list is the runner's measurement "the journal was empty at boot",
+    while an ABSENT key is a document that does not say — a hand-made or older
+    file. Reading absence as "there were none" is the same thing, but reading
+    it as "hold these out" would silently excuse a pre-boot divergence that
+    nothing here can identify. So absence holds NOTHING out and the pre-boot
+    bar stays visible as a divergence.
+
+    Raises:
+        DiffDecisionsError: The key is present but is not a list of strings.
+            A present-but-malformed value is a different file, not a missing
+            one, and guessing past it would drop the ids it was meant to name.
+    """
+    if "pre_boot_raw_event_ids" not in document:
+        return None
+    ids = document["pre_boot_raw_event_ids"]
+    if not isinstance(ids, list) or not all(isinstance(value, str) for value in ids):
+        raise DiffDecisionsError(
+            f"{path}: pre_boot_raw_event_ids is {type(ids).__name__}, not a list "
+            "of raw_event_id strings. That key is the runner's own record of "
+            "what was already in the producer's journal at boot, and the live "
+            "comparison holds exactly those bars out"
+        )
+    return frozenset(ids)
 
 
 #: The timeframe token and the date width inside a ``raw_event_id``
@@ -2110,10 +2224,15 @@ def _default_reason(raw_event_id: str, session_day: str | None) -> str:
 
 def apply_consumed_filter(
     bars: list[JoinedBar], consumed: ConsumedIdFilter
-) -> tuple[list[JoinedBar], dict[str, Any], dict[str, Any]]:
+) -> tuple[list[JoinedBar], LiveExclusion, dict[str, Any], dict[str, Any]]:
     """Keep the bars the runtime consumed; count the rest by their reason.
 
-    Returns ``(kept bars, the summary block, the check row)``.
+    Returns ``(kept bars, the live exclusion, the summary block, the check
+    row)``. The exclusion is the subset of the KEPT bars the live comparison
+    cannot speak about — the ids the runner's boot-journal snapshot lists, which
+    this document carries through (:data:`LIVE_EXCLUDED_PRE_BOOT`). They stay in
+    the offline classification: B1b replayed them like any other bar, and only
+    the live side has nothing to say.
 
     Raises:
         DiffDecisionsError: The filter names an id the three artifacts do not
@@ -2140,6 +2259,14 @@ def apply_consumed_filter(
         )
         for bar in dropped
     )
+    kept_ids = {bar.raw_event_id for bar in kept}
+    pre_boot = consumed.pre_boot_raw_event_ids
+    exclusion = LiveExclusion(
+        reason=LIVE_EXCLUDED_PRE_BOOT,
+        raw_event_ids=(
+            frozenset() if pre_boot is None else frozenset(pre_boot) & kept_ids
+        ),
+    )
     block = {
         "consumed_id_filter": {
             "path": str(consumed.path),
@@ -2151,6 +2278,15 @@ def apply_consumed_filter(
             # can be called a seed-day bar, and REASON_SEED_DAY being 0 means
             # "not asked".
             "session_day": session_day,
+            # null when the document does not carry the key at all (see
+            # :func:`_pre_boot_ids`) — then nothing is held out of the live
+            # comparison, and a 0 here would read as "the journal was empty".
+            "pre_boot_raw_event_ids_at_boot": (
+                None if pre_boot is None else len(pre_boot)
+            ),
+            "pre_boot_bars_held_out_of_the_live_comparison": len(
+                exclusion.raw_event_ids
+            ),
         },
         "unpaired_offline_records_by_reason": dict(sorted(reason_counts.items())),
         "note": (
@@ -2169,6 +2305,7 @@ def apply_consumed_filter(
     }
     return (
         kept,
+        exclusion,
         block,
         check_entry(
             CHECK_CONSUMED_ID_FILTER,
@@ -2178,6 +2315,7 @@ def apply_consumed_filter(
             consumed=len(consumed.raw_event_ids),
             compared=len(kept),
             not_consumed=len(dropped),
+            pre_boot_held_out_of_the_live_comparison=len(exclusion.raw_event_ids),
         ),
     )
 
@@ -2208,14 +2346,56 @@ def load_live_records(path: Path) -> list[dict[str, Any]]:
     return list(records.values())
 
 
+def live_declared_differences(
+    declared_index: dict[str, list[dict[str, str]]],
+) -> dict[str, str]:
+    """The declared differences the LIVE comparison may attribute a bar to.
+
+    Today that is :data:`LIVE_DECLARED_CAPACITY_DENIAL` and only while B1b's
+    own lineage declares it — the id is read out of the lineage this run loaded,
+    never asserted here. Returns ``{id: item}``, empty when the lineage does not
+    declare it, and an empty mapping reclassifies nothing.
+    """
+    return {
+        entry["id"]: entry["item"]
+        for entry in declared_index.get(LABEL_TOS, ())
+        if entry["id"] == LIVE_DECLARED_CAPACITY_DENIAL
+    }
+
+
 def compare_live(
-    bars: list[JoinedBar], live: list[dict[str, Any]], *, path: Path
+    bars: list[JoinedBar],
+    live: list[dict[str, Any]],
+    *,
+    path: Path,
+    declared: dict[str, str] | None = None,
+    excluded: LiveExclusion | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Compare each live decision against the offline one for the same bar.
 
     Returns ``(the summary block, the check row)``. Divergences are REPORTED,
     never refused: "the live runtime decided differently from the offline
     replay" is the finding this input exists to surface.
+
+    A bar lands in exactly one of five reported places, and the five add up to
+    ``bars_in_scope``:
+
+    * **excluded** — its id is in ``excluded`` (the boot journal's own bars);
+      the live side cannot speak about it, so neither does this comparison;
+    * **identical** — both compared fields agree;
+    * **kind_only_matches** — a live :data:`LIVE_PROPOSAL_KIND` against an
+      offline ACTION or FLAT, with the denial agreeing;
+    * **declared_difference_counts** — the kinds agree and the capacity denial
+      differs in the one direction a loaded lineage declares (``declared``);
+    * **divergent** — everything else, which is the finding.
+
+    Args:
+        declared: ``{id: item}`` from :func:`live_declared_differences`. Absent
+            or empty reclassifies nothing — every such bar stays divergent.
+        excluded: Ids held out, from :func:`apply_consumed_filter`. Both sides
+            drop them BEFORE the pairing refusals below, so a held-out bar with
+            no live record is not a refusal either; that is the point of naming
+            the ids rather than inferring them.
 
     Raises:
         DiffDecisionsError: A compared bar has no live record, or a live
@@ -2224,6 +2404,17 @@ def compare_live(
             quietly answer a smaller question — the shape ``--consumed-ids``
             exists to make exact.
     """
+    declared = declared or {}
+    held_out = (excluded or LiveExclusion.nothing()).raw_event_ids
+    exclusion_reason = (excluded or LiveExclusion.nothing()).reason
+    in_scope = len(bars)
+    excluded_bars = [
+        {"raw_event_id": bar.raw_event_id, "reason": exclusion_reason}
+        for bar in bars
+        if bar.raw_event_id in held_out
+    ]
+    bars = [bar for bar in bars if bar.raw_event_id not in held_out]
+    live = [record for record in live if record["raw_event_id"] not in held_out]
     by_id = {record["raw_event_id"]: record for record in live}
     compared_ids = [bar.raw_event_id for bar in bars]
     missing = [key for key in compared_ids if key not in by_id]
@@ -2244,6 +2435,7 @@ def compare_live(
         )
     divergences: list[dict[str, Any]] = []
     kind_only: list[dict[str, Any]] = []
+    declared_bars: list[dict[str, Any]] = []
     for bar in bars:
         record = by_id[bar.raw_event_id]
         offline = {
@@ -2255,35 +2447,78 @@ def compare_live(
             live_side["outcome_kind"] == LIVE_PROPOSAL_KIND
             and offline["outcome_kind"] in PROPOSAL_COMPATIBLE_OFFLINE_KINDS
         )
-        if proposal_pair:
-            # The kinds agree as far as the live record can say; the capacity
-            # denial is still compared exactly, because that one IS recorded
-            # on both sides.
-            if offline["capacity_denied"] == live_side["capacity_denied"]:
+        kinds_agree = (
+            offline["outcome_kind"] == live_side["outcome_kind"] or proposal_pair
+        )
+        if kinds_agree and offline["capacity_denied"] == live_side["capacity_denied"]:
+            if proposal_pair:
+                # The kinds agree as far as the live record can say; the
+                # capacity denial was still compared exactly, because that one
+                # IS recorded on both sides.
                 kind_only.append(
                     {
                         "raw_event_id": bar.raw_event_id,
                         "offline_outcome_kind": offline["outcome_kind"],
                     }
                 )
-                continue
-        if offline != live_side:
-            divergences.append(
+            continue
+        if (
+            kinds_agree
+            and LIVE_DECLARED_CAPACITY_DENIAL in declared
+            and offline["capacity_denied"] is True
+            and live_side["capacity_denied"] is False
+        ):
+            # The one direction B1b declares, and only while it declares it.
+            # The reverse — a LIVE denial the offline replay did not have — is
+            # not this difference and falls through to divergent below.
+            declared_bars.append(
                 {
+                    "id": LIVE_DECLARED_CAPACITY_DENIAL,
                     "raw_event_id": bar.raw_event_id,
                     "offline": offline,
                     "live": live_side,
                 }
             )
+            continue
+        divergences.append(
+            {
+                "raw_event_id": bar.raw_event_id,
+                "offline": offline,
+                "live": live_side,
+            }
+        )
+    declared_counts = Counter(entry["id"] for entry in declared_bars)
     block = {
+        "bars_in_scope": in_scope,
+        "excluded_from_comparison": len(excluded_bars),
         "compared_bars": len(bars),
-        "identical": len(bars) - len(divergences) - len(kind_only),
+        "identical": (
+            len(bars) - len(divergences) - len(kind_only) - len(declared_bars)
+        ),
         "kind_only_matches": len(kind_only),
+        "declared_difference_counts": dict(sorted(declared_counts.items())),
         "divergent": len(divergences),
         "divergences": divergences[:LIVE_DIVERGENCE_LIST_CAP],
         "divergences_truncated": len(divergences) > LIVE_DIVERGENCE_LIST_CAP,
         "kind_only_match_bars": kind_only[:LIVE_DIVERGENCE_LIST_CAP],
         "kind_only_matches_truncated": len(kind_only) > LIVE_DIVERGENCE_LIST_CAP,
+        "declared_difference_bars": declared_bars[:LIVE_DIVERGENCE_LIST_CAP],
+        "declared_difference_bars_truncated": (
+            len(declared_bars) > LIVE_DIVERGENCE_LIST_CAP
+        ),
+        "declared_difference_rules": [
+            {
+                "id": difference_id,
+                "item": declared[difference_id],
+                "rule": DECLARED_CAPACITY_DENIAL_RULE,
+            }
+            for difference_id in sorted(declared)
+        ],
+        "excluded_bars": excluded_bars[:LIVE_DIVERGENCE_LIST_CAP],
+        "excluded_bars_truncated": len(excluded_bars) > LIVE_DIVERGENCE_LIST_CAP,
+        "excluded_bar_counts": (
+            {exclusion_reason: len(excluded_bars)} if excluded_bars else {}
+        ),
         "compared_fields": list(LIVE_COMPARED_FIELDS),
         "kind_only_note": (
             f"a live {LIVE_PROPOSAL_KIND} against an offline "
@@ -2293,6 +2528,26 @@ def compare_live(
             "matches rather than folded into them. A live "
             f"{LIVE_PROPOSAL_KIND} against an offline {TOS_NO_ACTION} is a "
             "divergence, not a kind-only match"
+        ),
+        "declared_difference_note": (
+            "bars whose only disagreement is one a LOADED lineage declares, "
+            "counted under that declaration's id instead of as a divergence — "
+            "so `divergent` is the count roadmap §2-1 asks for (설명 안 되는 "
+            "divergence). The rule for each id is beside it in "
+            "declared_difference_rules; an id its artifact does not declare "
+            "reclassifies nothing, and an empty mapping here means no "
+            "declaration applied"
+        ),
+        "excluded_note": (
+            f"{exclusion_reason}: bars already in the producer's journal when "
+            "the runtime booted (the runner's own boot-journal snapshot, "
+            "carried through consumed-ids.json::pre_boot_raw_event_ids). They "
+            "are stale at boot BY DESIGN — the engine withholds "
+            "(DECISION_WITHHELD / TIME_NOT_ADMITTED) — so there is no live "
+            "decision to compare one against. Held out BY ID, never by "
+            "position and never by clock: a POST-boot withhold is the M5 ① "
+            "stale signal and stays counted. The offline side still "
+            "classifies these bars; only this comparison is silent about them"
         ),
         "not_compared": (
             "rule_id (B1b resolves it from the emitted outcome's rationale, "
@@ -2306,10 +2561,15 @@ def compare_live(
             CHECK_LIVE_DECISIONS,
             "every compared bar has exactly one live decision and every live "
             "decision names a compared bar — a divergence between them is "
-            "reported in summary.json, not refused",
+            "reported in summary.json, not refused; a bar whose only "
+            "disagreement is a declared one is counted under that "
+            "declaration's id, and the boot journal's own bars are held out",
+            in_scope=in_scope,
+            excluded=len(excluded_bars),
             compared=len(bars),
             divergent=len(divergences),
             kind_only_matches=len(kind_only),
+            declared=len(declared_bars),
         ),
     )
 
@@ -2892,15 +3152,22 @@ def run(
     checks.extend(joined.checks)
 
     bars, session_scope, not_consumed = joined.bars, None, 0
+    live_excluded = LiveExclusion.nothing()
     if consumed_ids_json is not None:
         consumed = load_consumed_ids(consumed_ids_json)
-        bars, session_scope, filter_check = apply_consumed_filter(bars, consumed)
+        bars, live_excluded, session_scope, filter_check = apply_consumed_filter(
+            bars, consumed
+        )
         not_consumed = len(joined.bars) - len(bars)
         checks.append(filter_check)
     live_comparison = None
     if live_jsonl is not None:
         live_comparison, live_check = compare_live(
-            bars, load_live_records(live_jsonl), path=live_jsonl
+            bars,
+            load_live_records(live_jsonl),
+            path=live_jsonl,
+            declared=live_declared_differences(declared_index),
+            excluded=live_excluded,
         )
         checks.append(live_check)
 

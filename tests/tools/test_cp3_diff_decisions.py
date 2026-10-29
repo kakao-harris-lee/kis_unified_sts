@@ -2414,7 +2414,7 @@ def test_a_tos_action_against_an_opposite_direction_legacy_fire_is_unresolved(
     assert "legacy_long_entry" not in result.summary["attribution_rules"]
 
 
-def test_both_sidecars_declare_schema_version_two(
+def test_both_sidecars_declare_schema_version_three(
     coverage: tuple[Trio, dd.RunResult],
 ) -> None:
     """Review M3: the shape changed, so the version must say so.
@@ -2426,11 +2426,16 @@ def test_both_sidecars_declare_schema_version_two(
     ``totals.legacy_fired_long_admitted_by_position_model`` had been replaced.
     Pinned as a literal here AND asserted against the module constants, so
     neither can drift alone.
+
+    2 -> 3 (2026-10-29) is the same trap one level down: ``live_comparison``
+    keeps every key name it had while two of them — ``divergent`` and
+    ``compared_bars`` — mean something narrower, so a v2 consumer would read
+    the new numbers as the old ones and conclude a session improved.
     """
     _, result = coverage
-    assert dd.LINEAGE_SCHEMA_VERSION == dd.SUMMARY_SCHEMA_VERSION == 2
-    assert result.lineage["lineage_schema_version"] == 2
-    assert result.summary["summary_schema_version"] == 2
+    assert dd.LINEAGE_SCHEMA_VERSION == dd.SUMMARY_SCHEMA_VERSION == 3
+    assert result.lineage["lineage_schema_version"] == 3
+    assert result.summary["summary_schema_version"] == 3
     # The v1 keys are gone, which is what makes the bump necessary rather than
     # cosmetic. Asserted as absences: a bump beside a key that never left would
     # be a version number with nothing behind it.
@@ -2735,21 +2740,29 @@ def test_the_capacity_rules_why_does_not_overclaim(
 
 
 def _consumed_ids_doc(
-    path: Path, bars: list[BarSpec], *, reasons: dict[str, str] | None = None
+    path: Path,
+    bars: list[BarSpec],
+    *,
+    reasons: dict[str, str] | None = None,
+    pre_boot: list[BarSpec] | None = None,
 ) -> Path:
-    """What ``session_inputs.py consumed-ids`` writes, as this run needs it."""
+    """What ``session_inputs.py consumed-ids`` writes, as this run needs it.
+
+    ``pre_boot`` writes the document's ``pre_boot_raw_event_ids`` — the runner's
+    boot-journal snapshot, copied through by ``session_inputs.py``. ``None``
+    leaves the key OUT, which is a document that does not say.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
+    document: dict[str, Any] = {
+        "schema_version": 1,
+        "kind": "consumed_raw_event_ids",
+        "raw_event_ids": [bar.raw_event_id for bar in bars],
+        "unpaired_reasons": reasons or {},
+    }
+    if pre_boot is not None:
+        document["pre_boot_raw_event_ids"] = [bar.raw_event_id for bar in pre_boot]
     path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "kind": "consumed_raw_event_ids",
-                "raw_event_ids": [bar.raw_event_id for bar in bars],
-                "unpaired_reasons": reasons or {},
-            },
-            indent=2,
-            sort_keys=True,
-        ),
+        json.dumps(document, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     return path
@@ -3293,13 +3306,134 @@ def test_a_live_proposal_against_an_offline_no_action_is_a_divergence(
     assert live["divergences"][0]["raw_event_id"] == quiet.raw_event_id
 
 
-def test_a_live_proposal_whose_capacity_denial_disagrees_is_a_divergence(
+def test_a_live_proposal_whose_capacity_denial_disagrees_is_not_a_kind_only_match(
     tmp_path: Path,
 ) -> None:
     """The capacity denial IS on both sides, so it is compared exactly even
     when the kind can only be compared loosely. Without this the kind-only
     path would swallow a real disagreement about whether the one exposure slot
-    was taken."""
+    was taken.
+
+    The direction here — the LIVE side denied, the offline replay not — is the
+    one B1b-D1 does not cover, so it is a divergence. The mirror shape
+    (offline-denied, live-not) is the declared difference and is counted in its
+    own bucket; see
+    :func:`test_an_offline_only_capacity_denial_is_attributed_to_b1b_d1`.
+    """
+    bars = list(COVERAGE_BARS)
+    available = next(
+        bar
+        for bar in bars
+        if bar.tos_outcome_kind == "ACTION" and not bar.capacity_denied
+    )
+    trio = write_trio(tmp_path / "in", bars)
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=_consumed_ids_doc(
+            tmp_path / "session" / "consumed-ids.json", bars
+        ),
+        live_jsonl=_live_jsonl(
+            tmp_path / "session" / "live.jsonl",
+            _live_from(
+                bars,
+                **{
+                    available.raw_event_id: {
+                        "outcome_kind": dd.LIVE_PROPOSAL_KIND,
+                        "capacity_denied": True,
+                    }
+                },
+            ),
+        ),
+    )
+    live = result.summary["live_comparison"]
+    assert live["kind_only_matches"] == 0
+    assert live["divergent"] == 1
+    assert live["declared_difference_counts"] == {}
+    assert live["divergences"][0]["live"]["capacity_denied"] is True
+    assert live["divergences"][0]["offline"]["capacity_denied"] is False
+
+
+# ---------------------------------------------------------------------------
+# §3.6 live comparison: the two DECLARED divergence families
+# ---------------------------------------------------------------------------
+#
+# Roadmap §2-1 asks for "설명 안 되는 divergence 0". Both families below are
+# already declared in a machine-readable place the comparison did not read, so
+# every one of their bars was reported as an unexplained difference. These tests
+# pin WHICH bars each family takes and — more importantly — which it does not.
+
+
+def test_an_offline_only_capacity_denial_is_attributed_to_b1b_d1(
+    tmp_path: Path,
+) -> None:
+    """B1b-D1, read off B1b's own lineage rather than assumed.
+
+    Concrete input: the offline replay denied capacity on a firing
+    (``capacity_denied=true``) and the live session did not. That is exactly
+    what B1b declares: ``tos.backtest`` holds at most one order per scope for
+    the whole run because the provisional reservation projection has no release
+    path, so every firing after the first is denied OFFLINE while the live
+    runtime, which releases, is not. Measured on the 2026-10-28/29 sessions,
+    this is 25-55 of the 26-56 divergent bars per session.
+    """
+    bars = list(COVERAGE_BARS)
+    denied = next(
+        bar for bar in bars if bar.tos_outcome_kind == "ACTION" and bar.capacity_denied
+    )
+    trio = write_trio(tmp_path / "in", bars)
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=_consumed_ids_doc(
+            tmp_path / "session" / "consumed-ids.json", bars
+        ),
+        live_jsonl=_live_jsonl(
+            tmp_path / "session" / "live.jsonl",
+            _live_from(
+                bars,
+                **{denied.raw_event_id: {"capacity_denied": False}},
+            ),
+        ),
+    )
+    live = result.summary["live_comparison"]
+    assert live["divergent"] == 0
+    assert live["divergences"] == []
+    assert live["declared_difference_counts"] == {dd.LIVE_DECLARED_CAPACITY_DENIAL: 1}
+    assert live["declared_difference_bars"] == [
+        {
+            "id": dd.LIVE_DECLARED_CAPACITY_DENIAL,
+            "raw_event_id": denied.raw_event_id,
+            "offline": {"outcome_kind": "ACTION", "capacity_denied": True},
+            "live": {"outcome_kind": "ACTION", "capacity_denied": False},
+        }
+    ]
+    assert live["identical"] == len(bars) - 1
+    # The rule is named with the declaration's own `item`, so a reader can go
+    # look it up instead of taking this tool's word for it.
+    rule = next(
+        entry
+        for entry in live["declared_difference_rules"]
+        if entry["id"] == dd.LIVE_DECLARED_CAPACITY_DENIAL
+    )
+    assert rule["item"]
+    assert "ONE-DIRECTIONAL" in rule["rule"]
+
+
+def test_a_declared_denial_does_not_excuse_a_kind_disagreement(
+    tmp_path: Path,
+) -> None:
+    """**Guard.** The denial is declared; the outcome kind is not.
+
+    Concrete input: offline ``ACTION`` + denied against live ``NO_ACTION`` +
+    not-denied. Attributing this to B1b-D1 would hide a real disagreement about
+    whether to act at all behind a difference that is only about the capacity
+    slot. The bar stays divergent and B1b-D1's bucket stays empty.
+    """
     bars = list(COVERAGE_BARS)
     denied = next(
         bar for bar in bars if bar.tos_outcome_kind == "ACTION" and bar.capacity_denied
@@ -3319,7 +3453,7 @@ def test_a_live_proposal_whose_capacity_denial_disagrees_is_a_divergence(
                 bars,
                 **{
                     denied.raw_event_id: {
-                        "outcome_kind": dd.LIVE_PROPOSAL_KIND,
+                        "outcome_kind": "NO_ACTION",
                         "capacity_denied": False,
                     }
                 },
@@ -3327,7 +3461,257 @@ def test_a_live_proposal_whose_capacity_denial_disagrees_is_a_divergence(
         ),
     )
     live = result.summary["live_comparison"]
-    assert live["kind_only_matches"] == 0
     assert live["divergent"] == 1
-    assert live["divergences"][0]["live"]["capacity_denied"] is False
-    assert live["divergences"][0]["offline"]["capacity_denied"] is True
+    assert live["declared_difference_counts"] == {}
+    assert live["divergences"][0]["raw_event_id"] == denied.raw_event_id
+
+
+def _joined(bar: BarSpec) -> dd.JoinedBar:
+    """One bar as the lockstep join produces it, for the unit-level calls."""
+    return dd.JoinedBar(
+        raw_event_id=bar.raw_event_id,
+        as_of_ms=bar.as_of_ms,
+        legacy_outcome=bar.legacy_outcome,
+        legacy_direction=bar.legacy_direction,
+        admitted=bar.admitted,
+        tos_outcome_kind=bar.tos_outcome_kind,
+        tos_rule_id=bar.tos_rule_id,
+        tos_capacity_denied=bar.capacity_denied,
+        gates=(bar.entry_window, bar.hi_vol, bar.stall_ok, bar.reversal_ok),
+        z_x1000=bar.z_x1000,
+    )
+
+
+def test_red_without_the_b1b_declaration_an_offline_only_denial_is_divergent(
+    tmp_path: Path,
+) -> None:
+    """**Guard.** The attribution comes from the lineage, not from this tool.
+
+    The same bar, compared twice: once with the declaration a loaded B1b
+    lineage would supply, once with none. If the rule were a literal in this
+    module, a future B1b that RELEASES its reservation would keep excusing the
+    shape it no longer produces — and the one comparison §2-1 is read off would
+    stop being able to fail.
+
+    Called directly because a WHOLE run cannot reach this state, which is the
+    stronger guarantee and is asserted below: the offline attribution rule
+    ``agree_entry_capacity_denied`` already cites ``B1b-D1``, so a B1b lineage
+    that drops it refuses the run outright rather than quietly leaving the live
+    comparison to decide.
+    """
+    denied = next(
+        bar
+        for bar in COVERAGE_BARS
+        if bar.tos_outcome_kind == "ACTION" and bar.capacity_denied
+    )
+    bars = [_joined(denied)]
+    live = _live_from([denied], **{denied.raw_event_id: {"capacity_denied": False}})
+    path = tmp_path / "live.jsonl"
+
+    attributed, _ = dd.compare_live(
+        bars,
+        live,
+        path=path,
+        declared={dd.LIVE_DECLARED_CAPACITY_DENIAL: "one order per scope per run"},
+    )
+    assert attributed["divergent"] == 0
+    assert attributed["declared_difference_counts"] == {
+        dd.LIVE_DECLARED_CAPACITY_DENIAL: 1
+    }
+
+    undeclared, _ = dd.compare_live(bars, live, path=path, declared={})
+    assert undeclared["divergent"] == 1
+    assert undeclared["declared_difference_counts"] == {}
+    assert undeclared["declared_difference_rules"] == []
+    assert undeclared["divergences"][0]["raw_event_id"] == denied.raw_event_id
+
+    # And `declared` really is read off the lineage index, per artifact.
+    assert dd.live_declared_differences({dd.LABEL_TOS: []}) == {}
+    assert dd.live_declared_differences(
+        {
+            dd.LABEL_TOS: [
+                {"id": "B1b-D1", "raw_id": "B1b-D1", "item": "one order per scope"},
+                {"id": "B1b-D2", "raw_id": "B1b-D2", "item": "something else"},
+            ]
+        }
+    ) == {"B1b-D1": "one order per scope"}
+
+    # The declaration cannot disappear quietly: the offline side cites it too.
+    trio = write_trio(
+        tmp_path / "in",
+        list(COVERAGE_BARS),
+        b1b_ids=tuple(i for i in B1B_DIFFERENCE_IDS if i != "B1b-D1"),
+    )
+    with pytest.raises(dd.DiffDecisionsError, match="no input lineage declares"):
+        dd.run(
+            fields_jsonl=trio.fields,
+            legacy_jsonl=trio.legacy,
+            tos_jsonl=trio.tos,
+            out_dir=tmp_path / "out",
+        )
+
+
+def test_only_the_boot_journals_own_pre_boot_ids_leave_the_live_comparison(
+    tmp_path: Path,
+) -> None:
+    """The 08:45 bar, and nothing else, is held out of the live comparison.
+
+    Concrete input: two bars whose live record is ``NO_OUTCOME`` (the shape a
+    ``DECISION_WITHHELD`` / ``TIME_NOT_ADMITTED`` tick writes). One is listed in
+    the runner's boot-journal snapshot — it was already in the producer's
+    journal when the runtime booted, so it is stale at boot BY DESIGN and the
+    runtime can only withhold. The other is a post-boot tick, which is the M5 ①
+    stale signal and must stay counted.
+
+    By id, never "the first bar" and never by time: a post-boot withhold on an
+    early minute would otherwise be excused by position, which is the whole
+    defect M5 ① exists to count.
+    """
+    bars = list(COVERAGE_BARS)
+    at_boot, post_boot = bars[0], bars[5]
+    trio = write_trio(tmp_path / "in", bars)
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=_consumed_ids_doc(
+            tmp_path / "session" / "consumed-ids.json", bars, pre_boot=[at_boot]
+        ),
+        live_jsonl=_live_jsonl(
+            tmp_path / "session" / "live.jsonl",
+            _live_from(
+                bars,
+                **{
+                    at_boot.raw_event_id: {"outcome_kind": "NO_OUTCOME"},
+                    post_boot.raw_event_id: {"outcome_kind": "NO_OUTCOME"},
+                },
+            ),
+        ),
+    )
+    live = result.summary["live_comparison"]
+    assert live["bars_in_scope"] == len(bars)
+    assert live["excluded_bar_counts"] == {dd.LIVE_EXCLUDED_PRE_BOOT: 1}
+    assert live["excluded_bars"] == [
+        {"raw_event_id": at_boot.raw_event_id, "reason": dd.LIVE_EXCLUDED_PRE_BOOT}
+    ]
+    assert live["compared_bars"] == len(bars) - 1
+    assert live["divergent"] == 1
+    assert live["divergences"][0]["raw_event_id"] == post_boot.raw_event_id
+    # The offline side still classifies the held-out bar — only the LIVE
+    # comparison is silent about it.
+    assert result.summary["session_scope"]["consumed_id_filter"][
+        "compared_bars"
+    ] == len(bars)
+    assert len(_records(result)) == len(bars)
+
+
+def test_a_consumed_ids_document_with_no_pre_boot_list_holds_nothing_out(
+    tmp_path: Path,
+) -> None:
+    """**Guard.** Absent is "the document does not say", never "there were none".
+
+    A hand-made or older ``consumed-ids.json`` carries no
+    ``pre_boot_raw_event_ids``. The pre-boot bar then stays in the comparison
+    and is reported as a divergence — visible, which is the direction a missing
+    input has to fail in.
+    """
+    bars = list(COVERAGE_BARS)
+    at_boot = bars[0]
+    trio = write_trio(tmp_path / "in", bars)
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=_consumed_ids_doc(
+            tmp_path / "session" / "consumed-ids.json", bars
+        ),
+        live_jsonl=_live_jsonl(
+            tmp_path / "session" / "live.jsonl",
+            _live_from(bars, **{at_boot.raw_event_id: {"outcome_kind": "NO_OUTCOME"}}),
+        ),
+    )
+    live = result.summary["live_comparison"]
+    assert live["excluded_bar_counts"] == {}
+    assert live["compared_bars"] == len(bars)
+    assert live["divergent"] == 1
+    assert live["divergences"][0]["raw_event_id"] == at_boot.raw_event_id
+    scope = result.summary["session_scope"]["consumed_id_filter"]
+    assert scope["pre_boot_raw_event_ids_at_boot"] is None
+
+
+def test_every_bar_in_scope_lands_in_exactly_one_reported_live_bucket(
+    tmp_path: Path,
+) -> None:
+    """Nothing vanishes: the five counts add up to the bars in scope.
+
+    One bar of each kind at once — held out, declared, kind-only, divergent and
+    identical — so a bucket that silently absorbed a bar it should not have
+    would break the arithmetic instead of just moving a number.
+    """
+    bars = list(COVERAGE_BARS)
+    at_boot = bars[0]
+    declared = next(
+        bar for bar in bars if bar.tos_outcome_kind == "ACTION" and bar.capacity_denied
+    )
+    kind_only = next(
+        bar
+        for bar in bars
+        if bar.tos_outcome_kind == "ACTION"
+        and not bar.capacity_denied
+        and bar is not declared
+    )
+    divergent = bars[7]
+    trio = write_trio(tmp_path / "in", bars)
+    result = dd.run(
+        fields_jsonl=trio.fields,
+        legacy_jsonl=trio.legacy,
+        tos_jsonl=trio.tos,
+        out_dir=tmp_path / "out",
+        consumed_ids_json=_consumed_ids_doc(
+            tmp_path / "session" / "consumed-ids.json", bars, pre_boot=[at_boot]
+        ),
+        live_jsonl=_live_jsonl(
+            tmp_path / "session" / "live.jsonl",
+            _live_from(
+                bars,
+                **{
+                    at_boot.raw_event_id: {"outcome_kind": "NO_OUTCOME"},
+                    declared.raw_event_id: {"capacity_denied": False},
+                    kind_only.raw_event_id: {"outcome_kind": dd.LIVE_PROPOSAL_KIND},
+                    divergent.raw_event_id: {"outcome_kind": "NO_ACTION"},
+                },
+            ),
+        ),
+    )
+    live = result.summary["live_comparison"]
+    assert live["bars_in_scope"] == len(bars)
+    assert live["excluded_from_comparison"] == 1
+    assert live["compared_bars"] == len(bars) - 1
+    assert live["declared_difference_counts"] == {dd.LIVE_DECLARED_CAPACITY_DENIAL: 1}
+    assert live["kind_only_matches"] == 1
+    assert live["divergent"] == 1
+    assert live["identical"] == len(bars) - 1 - 3
+    assert (
+        live["identical"]
+        + live["kind_only_matches"]
+        + live["divergent"]
+        + sum(live["declared_difference_counts"].values())
+        == live["compared_bars"]
+    )
+    assert (
+        live["compared_bars"] + live["excluded_from_comparison"]
+        == live["bars_in_scope"]
+    )
+    # The lineage's own row carries the same five numbers, so the accounting is
+    # checkable from the sealed record and not only from the summary.
+    row = next(
+        entry
+        for entry in result.lineage["checks"]
+        if entry["name"] == dd.CHECK_LIVE_DECISIONS
+    )
+    assert row["in_scope"] == len(bars)
+    assert row["excluded"] == 1
+    assert row["declared"] == 1
+    assert row["divergent"] == 1
