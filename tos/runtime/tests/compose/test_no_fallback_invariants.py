@@ -30,7 +30,7 @@ nothing here stands in for the thing under test, and nothing here re-authors a c
 that already exists in one of the five files above.
 
 Measured while writing this (2026-10-29, shipped ``broker_scopes.example.yaml`` plus the
-four deployed trees): the read-only principal has NO path to an order endpoint. Four
+four deployed trees): the read-only principal has NO path to an order endpoint. Five
 independent rules close it, and each one has its own test below —
 
 1. every committed READ scope declares ``endpoint_class: BROKER_GET``, GET-only methods
@@ -45,7 +45,12 @@ independent rules close it, and each one has its own test below —
    and every other order tuple is ``PROHIBITED``
    (:func:`test_a_read_scope_cannot_acquire_an_order_capability`);
 4. the read credential can never be the order credential
-   (:func:`test_the_read_principal_can_never_be_the_order_principal`).
+   (:func:`test_the_read_principal_can_never_be_the_order_principal`);
+5. and — the rule clause 3 turned out to be standing in for — the loader itself refuses
+   a ``principal_class: READ`` scope whose endpoint, methods or tuples are not read-only,
+   by allowlist, whether or not an order scope exists beside it
+   (:func:`test_the_loader_refuses_a_read_scope_that_is_not_read_only`; #999, from
+   review-998 r1's bypass input).
 
 Clauses 1 and 2 sweep every committed scope table, and
 :func:`test_the_sweep_sees_every_deployed_tree` is what keeps that sweep honest: the
@@ -358,8 +363,8 @@ def test_a_read_scope_cannot_acquire_an_order_capability(
 
     Give the read scope the whole order surface — ``endpoint_class: BROKER_ORDER``, a
     ``SUBMIT`` method, the MOCK_VTS instance binding, ``profile_evidence_ok: true`` — and
-    one order capability tuple. All three inputs are refused AT LOAD, and the reasons are
-    structural rather than a list of forbidden names:
+    one order capability tuple. All three inputs are refused AT LOAD, each by a rule that
+    names no forbidden endpoint or method, only this table's own contents:
 
     * the two admissible order tuples (``BROKER_SIMULATION`` × ``STOCK`` × ``MOCK_ORDER``)
       are already held by ``MOCK_STOCK_ORDER``, and no two scopes may carry the same
@@ -371,6 +376,12 @@ def test_a_read_scope_cannot_acquire_an_order_capability(
     Clause 2 above is what a reader might expect to carry this on its own; it does not.
     It asks about the scope as COMMITTED, so without this test a table that handed the
     read principal an order capability would simply make clause 2's refusal disappear.
+
+    Both rules here read the rest of the table, so both stop holding if
+    ``MOCK_STOCK_ORDER`` is deleted in the same edit (review-998 r1 measured exactly
+    that). Clause 5 is the rule that does not: it reads nothing but the read scope
+    itself, and it runs after these two so each input above still refuses for the reason
+    this test pins.
     """
 
     def mutate(raw: dict[str, Any]) -> None:
@@ -429,3 +440,90 @@ def test_the_read_principal_can_never_be_the_order_principal(tmp_path: Path) -> 
     message = str(refusal.value)
     assert "share principal" in message, message
     assert "REAL_READ" in message and "MOCK_STOCK_ORDER" in message, message
+
+
+# ===========================================================================
+# Clause 5 — the loader itself refuses a READ scope that is not read-only
+# ===========================================================================
+
+#: review-998 r1's bypass input (issue #999): the order surface it moved onto
+#: ``REAL_READ`` — endpoint class, methods, MOCK_VTS instance binding, positive profile
+#: evidence and one order tuple — while leaving ``principal_class: READ`` in place.
+_ORDER_SURFACE: Mapping[str, Any] = {
+    "endpoint_class": "BROKER_ORDER",
+    "allowed_methods": ["SUBMIT", "CANCEL_REPLACE"],
+    "capability_tuples": [dict(_MOCK_STOCK_ORDER_SEND)],
+}
+
+
+def _order_shaped_read_scope(raw: dict[str, Any], **fields: Any) -> None:
+    """Apply ``fields`` to ``REAL_READ`` and DELETE ``MOCK_STOCK_ORDER``.
+
+    The deletion is review-998 r1's own input and the reason this clause exists: with
+    the order scope gone, the duplicate-tuple refusal clause 3 relies on has nothing
+    left to collide with, so every input below loads unless the loader itself checks
+    ``principal_class`` against the scope's own surface.
+    """
+    raw["scopes"] = [
+        scope for scope in raw["scopes"] if scope["name"] != "MOCK_STOCK_ORDER"
+    ]
+    scope = _scope(raw, "REAL_READ")
+    scope["profile_evidence_ok"] = True
+    scope["instance"] = {
+        "environment": "MOCK_VTS",
+        "degraded_since_authorization": False,
+    }
+    scope["profile_key"]["environment"] = "MOCK_VTS"
+    scope.update(fields)
+
+
+@pytest.mark.parametrize(
+    ("fields", "offending_field"),
+    [
+        pytest.param(
+            dict(_ORDER_SURFACE), "endpoint_class", id="review-998-order-surface"
+        ),
+        pytest.param(
+            {"allowed_methods": ["GET", "SUBMIT"]},
+            "allowed_methods",
+            id="a-non-GET-method-beside-GET",
+        ),
+        pytest.param(
+            {"capability_tuples": [dict(_MOCK_STOCK_ORDER_SEND)]},
+            "capability_tuples[0].operation_class",
+            id="an-order-tuple-under-a-GET-endpoint",
+        ),
+    ],
+)
+def test_the_loader_refuses_a_read_scope_that_is_not_read_only(
+    fields: Mapping[str, Any], offending_field: str, tmp_path: Path
+) -> None:
+    """**``principal_class: READ`` means BROKER_GET, GET and read-only tuples — checked
+    by the loader, not inferred from the presence of a neighbouring order scope.**
+
+    Clause 3's refusals all depend on ``MOCK_STOCK_ORDER`` existing: it is what owns the
+    only two admissible order tuples, so claiming one is a duplicate. Delete that scope
+    first — one line of YAML — and the read scope can take the whole order surface
+    (review-998 r1 finding 2, measured against this loader before issue #999: the table
+    loaded and the kis-mock wiring accepted it). No real order resulted, because the MOCK
+    host seal and the custody principal stop it, but §2-4's own shape — a READ principal
+    holding an order endpoint — was reachable by config edit alone.
+
+    The three inputs are the three surfaces a READ scope has: its endpoint class, its
+    methods, and its capability tuples. Each is refused AT LOAD naming the scope and the
+    field, and what the loader checks is an ALLOWLIST of what READ may carry
+    (``BROKER_GET`` / ``GET`` / ``NON_AUTHORIZING_READ`` read operations with no economic
+    effect), not a list of order-shaped names to forbid — so an axis member added to the
+    kernel later stays out of a read scope until someone lists it on purpose.
+    """
+    with pytest.raises(BrokerScopeConfigError) as refusal:
+        _load(
+            _BROKER_SCOPES_EXAMPLE_PATH,
+            tmp_path,
+            active_scope="REAL_READ",
+            mutate=lambda raw: _order_shaped_read_scope(raw, **fields),
+        )
+    message = str(refusal.value)
+    assert "REAL_READ" in message, message
+    assert offending_field in message, message
+    assert "principal_class READ" in message, message
