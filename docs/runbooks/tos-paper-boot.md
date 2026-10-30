@@ -327,6 +327,10 @@ bash <(git -C $MAIN show origin/main:tools/tos_cp3/runners/setup_stock_mock_once
 - 스크립트가 쓰는 `$ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml`(0600) = `tos-kis-mock-transport.md` §4 값 + `mode: live` · `endpoint_rest_base: "https://openapivts.koreainvestment.com:29443"`
   · `price_scale: 100` · `request_timeout_s: 10` · `min_send_interval_ms: 2000` · `app_key_request_wait_budget_ms: 4000` · `token_reissue_min_interval_s: 60` · `allow_plaintext_for_tests: false`
   · `ACNT_PRDT_CD` = **계좌 뒤 2자리**(다르면 코덱이 송신 거부). §4 표의 「`mode: live` 무조건 거부」는 옛 문장 — 지금은 compose 가 `codec_bound=True` 를 준다.
+  · ⚠ **이 파일은 준비 때 한 번 쓰이고 그 뒤 갱신되지 않는다.** 준비 뒤 main 에 새 필수 키가 생기면 부팅이 `KisMockTransportConfigError: … missing entry '<키>'` 로 거부한다(송신 0).
+    실제 사례 2026-10-30 첫 세션: 10-26 준비본에 #979(10-28)의 `app_key_request_wait_budget_ms` 가 없어 r1 부팅 거부. 고침은 그 키 한 줄을
+    스크립트 정본(`setup_stock_mock_once.sh` 의 같은 줄)과 **같은 값**으로 운영 파일에 추가 — 덮어쓰기 재실행은 거부되므로 손으로 넣는다.
+    세션 전날 점검: `diff <(grep -oE '^[a-z_A-Z]+:' $ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml | sort) <(git -C $MAIN show origin/main:tools/tos_cp3/runners/setup_stock_mock_once.sh | sed -n '/^mode: live/,/^allow_plaintext/p' | grep -oE '^[a-z_A-Z]+:' | sort)` — 출력이 없어야 한다.
 - **상시 승인(그날, 운영자 · #955)** — 파일 `$ST/cp3-setup-d-stock-custody/approvals/standing-session.yaml`(0600). 쓰는 때는 아래 «볼 것» 의 `render ok` 줄 뒤 · 첫 진입 전(런타임이 이미 떠 있어도 된다 — 첫 사용 때 결속).
   승인 없이는 신호가 와도 4단계에서 멎는다(송신 0). MOCK 트리가 아니면 rc 1 로 아무것도 쓰지 않는다 · 덮어쓰기는 `--replace` 뿐.
   **재작성**(예: `max_uses` 를 올림)은 운영자 권한이고 **재기동 뒤에** 적용된다 — 슬롯이 거래일로 키잉돼 이미 쓴 횟수는 그대로 센다.
