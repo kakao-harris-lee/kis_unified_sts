@@ -209,7 +209,17 @@ class DurableEntryCloseBoundReader:
         )
 
     def read(self) -> EntryCloseBound:
-        """The scope's proven open-entry bound, or a typed refusal (module docstring)."""
+        """The scope's proven open-entry bound, or a typed refusal (module docstring).
+
+        **A partially-filled entry has no bound here, and that is permanent** (review-1015 L2):
+        :func:`~tos_runtime.posttrade.close_history.durable_close_history` proves an entry only
+        through a TERMINAL ``FULL_FILL`` receipt, so an entry left at ``PARTIAL_FILL`` refuses
+        with ``ENTRY_FILL_UNPROVEN`` and every CLOSE of that scope stays UNKNOWN for as long as
+        the row lives. Nothing produces that shape today — the synthetic fill policy fills 100%
+        — and the same receipt is what #966's discharge already requires, so relaxing it here
+        alone would let a close be credited against a quantity discharge cannot account for.
+        If a partial synthetic fill ever becomes reachable, this is the refusal to revisit.
+        """
         key = InstrumentKey(account=self._account, instrument=self._instrument)
         try:
             rows = self._projection.scope_reservations(key)
@@ -287,6 +297,7 @@ def synthetic_close_fence(
     bound: EntryCloseBound,
     current: EntryCloseBound,
     proposed: Decimal,
+    granted_proposal_id: str,
 ) -> SyntheticCloseEntryFence | None:
     """Step 9's fence for a synthetic CLOSE, or ``None`` when the re-read does not bind.
 
@@ -294,9 +305,20 @@ def synthetic_close_fence(
     the fence is minted. Both must name the same entry with the same magnitudes
     (:meth:`EntryCloseBound.revalidates`), and the fence carries the RE-READ's RCL coordinate —
     which step 9 then requires to equal its own linearizable view.
+
+    ``granted_proposal_id`` is the id STEP 6 derived this credit for. It must equal the step-9
+    request's own, and it — not the request's — is what the fence carries, mirroring the broker
+    path's ``proof.proposal_id`` (review-1015 L1). Minting the fence from the request's id would
+    make :func:`~tos_runtime.risk.close_fence.synthetic_close_fence_valid` compare a value with
+    itself.
     """
     proposal_id = getattr(request.proposal, "proposal_id", None)
-    if type(proposal_id) is not str or not proposal_id:
+    if (
+        type(proposal_id) is not str
+        or not proposal_id
+        or type(granted_proposal_id) is not str
+        or granted_proposal_id != proposal_id
+    ):
         return None
     if not bound.revalidates(current):
         return None
@@ -322,7 +344,7 @@ def synthetic_close_fence(
     if close_within_entry(entry_quantity, prior_closed, proposed) is not True:
         return None
     return SyntheticCloseEntryFence(
-        proposal_id=proposal_id,
+        proposal_id=granted_proposal_id,
         account=current.account,
         instrument=current.instrument,
         entry_reservation_id=reservation_id,

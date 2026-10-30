@@ -295,7 +295,7 @@ class RiskStateService:
         self._close_fence_proof: HeldPositionProof | None = None
         #: The step-6 synthetic bound and the quantity it admitted, held for the step-9 fence
         #: exactly as ``_close_fence_proof`` holds the broker-held one — one use, per attempt.
-        self._close_fence_bound: tuple[EntryCloseBound, Decimal] | None = None
+        self._close_fence_bound: tuple[str, EntryCloseBound, Decimal] | None = None
         self._envelope_max = _envelope_max_vector(are_policy, hse_envelope)
         self._snapshot_seq = 0
         self._observation_seq = 0
@@ -501,20 +501,25 @@ class RiskStateService:
             self._close_fence_bound = None
         bound = self._read_entry_bound()
         if self._close_authority is CloseAuthoritySource.DURABLE_EVIDENCE:
-            return self._synthetic_close_effect(proposed, bound)
+            return self._synthetic_close_effect(request, proposed, bound)
         return self._broker_close_effect(request, proposed, bound)
 
     def _synthetic_close_effect(
-        self, proposed: Decimal | None, bound: EntryCloseBound
+        self, request: StageRequest, proposed: Decimal | None, bound: EntryCloseBound
     ) -> tuple[Decimal | None, dict[str, object]]:
         """SYNTHETIC transport: the durable evidence store is the broker (#1011)."""
         direction, failure = self._arm_direction()
         if failure is not None:
             return None, close_effect_audit(direction, failure, None, None, bound=bound)
         effect, status = synthetic_close_effect(bound, proposed)
-        if effect is not None and proposed is not None:
+        # The STEP-6 proposal id travels with the stash, exactly as the broker path carries
+        # `proof.proposal_id` (review-1015 L1). Without it `synthetic_close_fence` would copy
+        # step 9's own id into the fence and `synthetic_close_fence_valid` would compare that
+        # value with itself — a check that cannot fail is not a check.
+        proposal_id = getattr(request.proposal, "proposal_id", None)
+        if effect is not None and proposed is not None and type(proposal_id) is str:
             with self._close_proof_lock:
-                self._close_fence_bound = (bound, proposed)
+                self._close_fence_bound = (proposal_id, bound, proposed)
         return effect, close_effect_audit(direction, status, None, effect, bound=bound)
 
     def _broker_close_effect(
@@ -622,16 +627,21 @@ class RiskStateService:
         The synthetic counterpart of the broker-held currentness recheck above: a SECOND,
         independent read of the RCL + evidence store, required to name the same entry with the
         same magnitudes at a tip no older. The fence then carries that re-read tip, which step 9
-        pins its CAS to.
+        pins its CAS to. The stashed STEP-6 proposal id is what the fence is minted under
+        (review-1015 L1), so step 9 compares its own request against a value step 6 wrote.
         """
         with self._close_proof_lock:
             stashed = self._close_fence_bound
             self._close_fence_bound = None
         if stashed is None:
             return None
-        bound, proposed = stashed
+        proposal_id, bound, proposed = stashed
         return synthetic_close_fence(
-            request, bound=bound, current=self._read_entry_bound(), proposed=proposed
+            request,
+            bound=bound,
+            current=self._read_entry_bound(),
+            proposed=proposed,
+            granted_proposal_id=proposal_id,
         )
 
     def aggregate_inputs_for(
