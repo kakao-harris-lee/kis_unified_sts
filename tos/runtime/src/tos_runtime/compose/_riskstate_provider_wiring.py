@@ -11,7 +11,10 @@ from tos.engine import StageRequest
 from tos_runtime.compose._types import RiskStateConfigError
 from tos_runtime.risk.aggregate import AggregateRiskDecisionInputs
 from tos_runtime.risk.flow import ActionFlowDecisionInputs
-from tos_runtime.risk.ledger_stages import CloseProofCommitFence
+from tos_runtime.risk.ledger_stages import (
+    CloseProofCommitFence,
+    SyntheticCloseEntryFence,
+)
 from tos_runtime.riskstate.policies import (
     ACTION_FLOW_POLICY_CONFIG_NAME,
     AGGREGATE_RISK_POLICY_CONFIG_NAME,
@@ -27,7 +30,9 @@ class RiskStateProviders:
     cell: dict[str, RiskStateService | None]
     aggregate_inputs: Callable[[StageRequest], AggregateRiskDecisionInputs | None]
     action_flow_inputs: Callable[[StageRequest], ActionFlowDecisionInputs | None]
-    close_fence: Callable[[StageRequest], CloseProofCommitFence | None]
+    close_fence: Callable[
+        [StageRequest], CloseProofCommitFence | SyntheticCloseEntryFence | None
+    ]
 
 
 def build_risk_state_providers(
@@ -75,7 +80,9 @@ def build_risk_state_providers(
         service = risk_state_cell["service"]
         return None if service is None else service.action_flow_inputs_for(request)
 
-    def _close_fence_provider(request: StageRequest) -> CloseProofCommitFence | None:
+    def _close_fence_provider(
+        request: StageRequest,
+    ) -> CloseProofCommitFence | SyntheticCloseEntryFence | None:
         service = risk_state_cell["service"]
         return None if service is None else service.take_close_fence(request)
 

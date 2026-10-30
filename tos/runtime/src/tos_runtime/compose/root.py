@@ -130,6 +130,10 @@ from tos_runtime.risk.aggregate import (
     AggregateRiskDecisionInputs,
 )
 from tos_runtime.risk.flow import ActionFlowDecisionInputs
+from tos_runtime.riskstate.close_bound import (
+    CloseAuthoritySource,
+    DurableEntryCloseBoundReader,
+)
 from tos_runtime.time.sources import (
     MonotonicSource,
 )
@@ -157,6 +161,21 @@ _RELEASE_CONFIG_NAME = "release.yaml"
 #: proposal digest (``tos_runtime.authority.iap`` module docstring:
 #: "approvals/<proposal_digest>.yaml").
 _APPROVALS_DIRNAME = "approvals"
+
+
+def _close_authority_for(transport_kind: TransportKind) -> CloseAuthoritySource:
+    """What a CLOSE's quantity bound may rest on, from the boot's transport kind (#1011).
+
+    A ``kis-mock`` boot reaches a real broker, so its held-position proof bounds the close
+    (capped further by the TOS entry remainder, #1012 L3). A ``synthetic`` boot reaches nothing:
+    its own durable evidence store IS the broker, so the entry's proven FULL_FILL less its
+    proven closes is the only honest bound. Before this, the synthetic trees had no proof
+    provider at all, so every CLOSE answered ``PROVIDER_NOT_CONFIGURED`` and the scope sealed
+    itself at the first filled entry. Keyed on the transport, never on a tree name.
+    """
+    if transport_kind is TransportKind.SYNTHETIC:
+        return CloseAuthoritySource.DURABLE_EVIDENCE
+    return CloseAuthoritySource.BROKER_HELD_PROOF
 
 
 def compose_paper_runtime(
@@ -553,6 +572,16 @@ def compose_paper_runtime(
                 if posttrade.held_position_bridge is None
                 else posttrade.held_position_bridge.cell.validate_consumed
             ),
+            # #1011 — what a CLOSE's quantity bound may rest on, decided ONCE here from the
+            # boot's transport kind, never from a tree name (CloseAuthoritySource's docstring).
+            close_authority=_close_authority_for(transport_kind),
+            entry_close_bound_reader=DurableEntryCloseBoundReader(
+                rcl_log=boot.rcl.rcl_log,
+                evidence_store=boot.infra.evidence_store,
+                projection=boot.risk.projection,
+                account=construction.account,
+                instrument=construction.instrument,
+            ).read,
         )
     composed.risk_state = risk_state_cell["service"]
     # TOS Phase 5 W5 — late-bind the session-facts owner's own tick-generation cell now
