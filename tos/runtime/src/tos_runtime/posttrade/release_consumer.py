@@ -53,6 +53,7 @@ from tos.rcl import (
     AppendRefusal,
     CapacityReservationTransition,
     CapacityState,
+    LogView,
     ReservationScope,
 )
 from tos.time.domains import HealthState
@@ -62,10 +63,14 @@ from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.entry_discharge import (
     DischargeRefusal,
     any_quantity_filled,
-    entry_discharge_refusal,
-    entry_final_quantity,
     entry_release_command_id,
     other_outstanding,
+)
+from tos_runtime.posttrade.entry_recovery import (
+    discharge_entry,
+    pending_recovery_attempt_ids,
+    prepare_entry_discharge_pending,
+    resume_entry_discharge,
 )
 from tos_runtime.posttrade.finality import ReleaseFinalityProducer
 from tos_runtime.posttrade.release_currentness import latest_release_is_conflict_free
@@ -189,6 +194,8 @@ class ReleaseHoldReason(StrEnum):
     #: review-973 M3: a non-execution result (cancel/expire/reject) ended the ORDER, but this
     #: attempt had already filled part of it — releasing would discard capacity still held.
     FILLED_QUANTITY_STILL_HELD = "FILLED_QUANTITY_STILL_HELD"
+    #: A close release is held if its durable entry-recovery link could not be written first.
+    ENTRY_DISCHARGE_PENDING_UNAVAILABLE = "ENTRY_DISCHARGE_PENDING_UNAVAILABLE"
 
 
 #: :class:`~tos_runtime.posttrade.entry_discharge.DischargeRefusal` -> this module's own
@@ -201,15 +208,7 @@ _DISCHARGE_HOLD_REASONS: Mapping[DischargeRefusal, ReleaseHoldReason] = {
 
 
 class ReleaseOutcomeLike(Protocol):
-    """The read surface :func:`~tos_runtime.engine.finality_projection._project_release` needs
-    off whatever :meth:`FinalityReleaseConsumer.consume` (or a test double standing in for it)
-    returns (mypy stage 3 §1.3 rule 3 port introduction) — exactly the fields that caller reads
-    off the outcome, never the outcome TYPE itself, so a hand-built stand-in with the same
-    fields (no inheritance) satisfies it structurally. Declared as read-only properties (not
-    plain mutable attributes) because both real implementations
-    (:class:`ReleaseOutcome`/the test double) are frozen — a plain Protocol attribute demands a
-    SETTABLE variable and a frozen dataclass's field is read-only, so the mutable form would
-    reject exactly the frozen values this Protocol exists to accept."""
+    """Read-only result surface used by finality projection; frozen outcomes satisfy it."""
 
     @property
     def released(self) -> bool: ...
@@ -225,28 +224,10 @@ class ReleaseOutcomeLike(Protocol):
 
 @dataclass(frozen=True)
 class ReleaseOutcome:
-    """What :meth:`FinalityReleaseConsumer.consume` actually did for one attempt (kernel round #3
-    §2 decision 5 W2-K wiring).
+    """Data-only result of one consume call; the engine maps committed releases into its state.
 
-    Deliberately DATA ONLY — never a ``tos.engine.state`` import here (this module's own firewall
-    scope, module docstring, never grew to include it). The caller
-    (:func:`~tos_runtime.engine.finality_projection.project_finality`) is the one that turns this
-    into a kernel :class:`~tos.engine.state.FinalityProofRef` and calls
-    :meth:`~tos.engine.state.ProvisionalReservationLedger.release`.
-
-    Attributes:
-        released: ``True`` iff the RCL transition actually committed (``_release`` reached
-            :func:`~tos_runtime.rcl.finality_witness.release_reservation` without a
-            :class:`~tos_runtime.rcl.log.ReservationTransitionRefusal`). ``False`` for every hold
-            reason, every non-release-eligible result kind, and a refused RCL transition.
-        attempt_id: The attempt this outcome is for — always present, even on ``released=False``.
-        proof_digest: The committed :class:`~tos.posttrade.PostTradeFinalityProof`'s own
-            ``proof_id`` — ``None`` unless ``released`` is ``True``.
-        evidence_seq: The durable ``seq`` the ``CAPACITY_RELEASE_INTENT`` evidence row this
-            consumer appends BEFORE the RCL call itself received — ``None`` unless ``released``.
-        resolution_generation: The ``active_generation`` gate 4 validated the proof against (the
-            SAME value :meth:`_apply_gate4_and_release` fed
-            :func:`~tos.posttrade.finality_proof_current`) — ``None`` unless ``released``.
+    ``released`` is true only after the RCL transition commits. Proof digest, intent sequence,
+    and resolution generation are absent unless that release committed.
     """
 
     released: bool
@@ -280,13 +261,7 @@ class ReleaseConflictReader(Protocol):
 
 
 class FinalityConsumerTimeReader(TimeHealthReader, FreshnessTimeReader, Protocol):
-    """The combined read surface :class:`FinalityReleaseConsumer` needs off the runtime's time
-    service (mypy stage 3 §1.3 rule 3 port introduction) — :attr:`~TimeHealthReader.health_state`
-    (``_check_obligation_expiry``'s own gate) AND :meth:`~FreshnessTimeReader.current_snapshot`
-    (forwarded to :func:`~tos_runtime.recovery.reconciliation._build_freshness_marker` inside
-    :meth:`FinalityReleaseConsumer._reconcile`) — never the wider
-    :class:`~tos_runtime.time.service.TrustworthyTimeService`'s ``start``/``evaluate``/
-    ``wall_clock_now``."""
+    """The time health and freshness snapshot reads required by the release consumer."""
 
 
 @dataclass(frozen=True)
@@ -387,6 +362,22 @@ class FinalityReleaseConsumer:
         # docstring); nothing recorded, since no release was ever attempted.
         return ReleaseOutcome(released=False, attempt_id=payload.attempt_id)
 
+    def pending_recovery_attempt_ids(self) -> tuple[str, ...]:
+        """Close attempts whose own exact RCL release committed and still need entry recovery."""
+        return pending_recovery_attempt_ids(self)
+
+    def resume_entry_discharge(self, attempt_id: str) -> bool:
+        """Re-corroborate one pending entry discharge using the snapshot currently being served."""
+        return resume_entry_discharge(
+            self,
+            attempt_id,
+            hold_reasons=_DISCHARGE_HOLD_REASONS,
+        )
+
+    def release_hold_reason(self, reason: str) -> ReleaseHoldReason:
+        """Turn a bounded recovery reason code into the consumer's evidence vocabulary."""
+        return ReleaseHoldReason(reason)
+
     def _reservation_id(self, attempt_id: str) -> str | None:
         """THIS attempt's own RCL reservation id, or ``None`` when none can be attributed.
 
@@ -482,6 +473,23 @@ class FinalityReleaseConsumer:
                 ReleaseHoldReason.AMBIGUOUS_SCOPE_RESERVATIONS,
                 detail=", ".join(f"{r.reservation_id}={r.state.value}" for r in others),
             )
+        if not proof.proof_id:
+            return self._hold(
+                payload, reservation_id, ReleaseHoldReason.PROOF_NOT_RELOADED
+            )
+        pending = prepare_entry_discharge_pending(
+            self,
+            payload,
+            close_reservation_id=reservation_id,
+            entry=others[0],
+            proof_id=proof.proof_id,
+        )
+        if pending is None:
+            return self._hold(
+                payload,
+                reservation_id,
+                ReleaseHoldReason.ENTRY_DISCHARGE_PENDING_UNAVAILABLE,
+            )
         outcome = self._apply_gate4_and_release(
             payload,
             reservation_id=reservation_id,
@@ -489,6 +497,8 @@ class FinalityReleaseConsumer:
             obligation=obligation,
             report_reason=report.reason,
             to_state=CapacityState.RELEASED,
+            expected_reservation_last_seq=pending.close_last_seq,
+            expected_reservation_state=pending.close_state,
         )
         if outcome.released:
             self._discharge_entry(payload, others[0], proof=proof, report=report)
@@ -578,62 +588,14 @@ class FinalityReleaseConsumer:
         proof: PostTradeFinalityProof,
         report: ReconciliationReport,
     ) -> None:
-        """Take the closed entry's reservation ``POSITION_CONSUMED -> RELEASED`` (plan §2.4).
-
-        Runs only after this close attempt's OWN release has durably committed, and only when
-        :func:`~tos_runtime.posttrade.entry_discharge.entry_discharge_refusal` admits — see
-        that function for the two conjunctive conditions and why each is required.
-
-        The witness supplied to the RCL is the close's own finality proof: precisely the
-        artifact that proves the entry's position is gone. It is NOT re-used as a proof of the
-        entry's obligation — gate 4's non-transferability check binds that proof to the close
-        attempt's own obligation, and this transition claims nothing about the entry's.
-
-        The entry attempt is recovered from the entry reservation's own id (its permit, then
-        the durable evidence join) — never from the live in-flight attempt, which is the
-        close's. A pre-#966 scope-level entry row carries no attempt identity, so its quantity
-        cannot be proven and this holds: the honest outcome for an older ledger.
-
-        **Known limitation (not a new retry path).** Nothing retries a hold here — the fill
-        observer's loop stops once the close's own release command is committed. The entry then
-        stays ``POSITION_CONSUMED`` with a ``CAPACITY_RELEASE_HELD`` row naming why, which is
-        conservative: the scope still admits a further CLOSE but no new OPEN.
-        """
-        entry_attempt_id, entry_quantity = entry_final_quantity(
-            self.evidence_store,
-            account=self.account,
-            instrument=self.instrument,
-            reservation_id=entry.reservation_id,
-        )
-        refusal = entry_discharge_refusal(
+        """Take the closed entry's reservation ``POSITION_CONSUMED -> RELEASED``."""
+        discharge_entry(
+            self,
             payload,
-            entry_quantity=entry_quantity,
-            report=report,
-            instrument=self.instrument,
-        )
-        if refusal is not None:
-            self._hold(
-                payload,
-                entry.reservation_id,
-                _DISCHARGE_HOLD_REASONS[refusal],
-                detail=(
-                    f"entry attempt={entry_attempt_id} final_quantity={entry_quantity} "
-                    f"vs close filled={payload.filled_quantity} "
-                    f"remaining={payload.remaining_quantity}; "
-                    f"observed_positions={report.observed_positions}"
-                ),
-            )
-            return
-        self._release(
-            payload,
-            reservation_id=entry.reservation_id,
+            entry,
             proof=proof,
-            report_reason=report.reason,
-            to_state=CapacityState.RELEASED,
-            resolution_generation=self._active_generation(
-                account=self.account, instrument=self.instrument
-            ),
-            command_id=entry_release_command_id(payload.attempt_id),
+            report=report,
+            hold_reasons=_DISCHARGE_HOLD_REASONS,
         )
 
     # -- gate 3 (reconciliation) --------------------------------------------------------
@@ -703,6 +665,8 @@ class FinalityReleaseConsumer:
         obligation: EconomicObligationRecord,
         report_reason: str | None,
         to_state: CapacityState,
+        expected_reservation_last_seq: int | None = None,
+        expected_reservation_state: CapacityState | None = None,
     ) -> ReleaseOutcome:
         reservation_scope = self._reservation_scope(reservation_id)
         if reservation_scope is None:
@@ -738,6 +702,8 @@ class FinalityReleaseConsumer:
             report_reason=report_reason,
             to_state=to_state,
             resolution_generation=active_generation,
+            expected_reservation_last_seq=expected_reservation_last_seq,
+            expected_reservation_state=expected_reservation_state,
         )
 
     def _reservation_scope(self, reservation_id: str) -> ReservationScope | None:
@@ -789,24 +755,22 @@ class FinalityReleaseConsumer:
         to_state: CapacityState,
         resolution_generation: int | None,
         command_id: str | None = None,
+        expected_reservation_last_seq: int | None = None,
+        expected_reservation_state: CapacityState | None = None,
+        expected_writer_epoch: int | None = None,
+        expected_rcl_last_seq: int | None = None,
     ) -> ReleaseOutcome:
-        current_state = self.projection.reservation_state(reservation_id)
-        if current_state is None:
-            return self._hold(payload, reservation_id, ReleaseHoldReason.NO_RESERVATION)
-        # PR-3b: the CAS compares against the LOG tip, not this reservation's own last seq (every
-        # other RCL writer reads it the same way — risk/ledger_stages.py). The two differ as soon
-        # as any other entry lands after the commit, which is every real run.
-        try:
-            view = self.rcl_log.read_linearizable(
-                writer_epoch=self.rcl_log.current_epoch()
-            )
-        except Exception as exc:  # noqa: BLE001 - stale epoch / unreadable log -> hold
-            return self._hold(
-                payload,
-                reservation_id,
-                ReleaseHoldReason.RCL_TRANSITION_REFUSED,
-                detail=f"RCL tip unreadable: {type(exc).__name__}",
-            )
+        snapshot = self._read_release_snapshot(
+            payload,
+            reservation_id=reservation_id,
+            expected_reservation_last_seq=expected_reservation_last_seq,
+            expected_reservation_state=expected_reservation_state,
+            expected_writer_epoch=expected_writer_epoch,
+            expected_rcl_last_seq=expected_rcl_last_seq,
+        )
+        if snapshot is None:
+            return ReleaseOutcome(released=False, attempt_id=payload.attempt_id)
+        current_state, view = snapshot
         expected_seq = -1 if view.last_seq is None else view.last_seq
         # ★ kernel round #3 §2 decision 5 (ⓖ): SyntheticFinalityProducer hardcodes
         # obligation_generation=0 for every proof it mints (module docstring's own note); the
@@ -827,7 +791,7 @@ class FinalityReleaseConsumer:
         )
         transition = CapacityReservationTransition(
             reservation_id=reservation_id,
-            writer_epoch=self.rcl_log.current_epoch(),
+            writer_epoch=view.epoch,
             from_state=current_state,
             to_state=to_state,
             scope=ReservationScope(account=self.account, instrument=self.instrument),
@@ -871,6 +835,65 @@ class FinalityReleaseConsumer:
             evidence_seq=intent_receipt.seq,
             resolution_generation=generation,
         )
+
+    def _read_release_snapshot(
+        self,
+        payload: EgressResultPayload,
+        *,
+        reservation_id: str,
+        expected_reservation_last_seq: int | None,
+        expected_reservation_state: CapacityState | None,
+        expected_writer_epoch: int | None,
+        expected_rcl_last_seq: int | None,
+    ) -> tuple[CapacityState, LogView] | None:
+        current = self.projection.reservation_state(reservation_id)
+        if current is None:
+            self._hold(payload, reservation_id, ReleaseHoldReason.NO_RESERVATION)
+            return None
+        if (
+            expected_reservation_state is not None
+            and current is not expected_reservation_state
+        ):
+            self._hold(
+                payload,
+                reservation_id,
+                ReleaseHoldReason.RCL_TRANSITION_REFUSED,
+                detail="reservation state changed after pending entry discharge",
+            )
+            return None
+        try:
+            view = self.rcl_log.read_linearizable(
+                writer_epoch=self.rcl_log.current_epoch()
+            )
+        except Exception as exc:  # noqa: BLE001 - stale epoch / unreadable log -> hold
+            self._hold(
+                payload,
+                reservation_id,
+                ReleaseHoldReason.RCL_TRANSITION_REFUSED,
+                detail=f"RCL tip unreadable: {type(exc).__name__}",
+            )
+            return None
+        if expected_writer_epoch is not None and view.epoch != expected_writer_epoch:
+            detail = "RCL writer epoch changed after close history was read"
+        elif (
+            expected_writer_epoch is not None and expected_rcl_last_seq != view.last_seq
+        ):
+            detail = "RCL tip changed after close history was read"
+        elif (
+            expected_reservation_last_seq is not None
+            and self.projection.reservation_last_seq(reservation_id)
+            != expected_reservation_last_seq
+        ):
+            detail = "reservation sequence changed after pending entry discharge"
+        else:
+            return current, view
+        self._hold(
+            payload,
+            reservation_id,
+            ReleaseHoldReason.RCL_TRANSITION_REFUSED,
+            detail=detail,
+        )
+        return None
 
     # -- HELD ---------------------------------------------------------------------------
 

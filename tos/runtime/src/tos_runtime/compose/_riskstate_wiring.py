@@ -43,6 +43,7 @@ from tos.are import AdverseScenarioKind, AdverseScenarioSet
 from tos.canonical import CanonicalizationScheme
 from tos.egressgw import SizingBound, VenueQuantityConstraint
 from tos.egressgw.records import CandidateConstruction
+from tos.engine.records import StageRequest
 from tos.ioc import EconomicEffectEnvelope
 from tos.spg import BundleMemberKind, HardSafetyEnvelope
 from tos.venue import ActionClass
@@ -52,6 +53,10 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.riskstate.flow_observation import InboxFlowReader
+from tos_runtime.riskstate.held_position import (
+    HeldPositionCurrentness,
+    HeldPositionProof,
+)
 from tos_runtime.riskstate.policies import (
     ACTION_FLOW_POLICY_CONFIG_NAME,
     AGGREGATE_RISK_POLICY_CONFIG_NAME,
@@ -270,6 +275,13 @@ def build_risk_state_service(
     effect_envelope_reader: Callable[[], EconomicEffectEnvelope | None],
     venue_allowed_sides: frozenset[str],
     action_class_reader: Callable[[], ActionClass] | None = None,
+    attempt_arm_direction_reader: Callable[[], str | None] | None = None,
+    held_position_proof_reader: (
+        Callable[[StageRequest, str], HeldPositionProof | None] | None
+    ) = None,
+    held_position_currentness_reader: (
+        Callable[[HeldPositionProof], HeldPositionCurrentness | None] | None
+    ) = None,
 ) -> RiskStateService:
     """Load, activate, cross-check, and construct the production
     :class:`~tos_runtime.riskstate.service.RiskStateService` (module docstring).
@@ -323,6 +335,9 @@ def build_risk_state_service(
         environment_label=environment_label,
         action_class=construction.action_class,
         action_class_reader=action_class_reader,
+        attempt_arm_direction_reader=attempt_arm_direction_reader,
+        held_position_proof_reader=held_position_proof_reader,
+        held_position_currentness_reader=held_position_currentness_reader,
         activated_member_digests=(are_digest, afg_digest),
     )
 

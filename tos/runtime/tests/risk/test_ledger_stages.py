@@ -8,10 +8,18 @@ from pathlib import Path
 
 import pytest
 from tos.afg import ActionAmplificationEnvelope
-from tos.dsl import Proposal
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.dsl import DecisionContextCapsuleRef, Proposal, Proposer, build_proposal
 from tos.engine.records import InstrumentKey, StageRequest
 from tos.engine.vocabulary import CommitmentStep, StageAuthorityClass, StageOutcome
-from tos.rcl import CapacityComponent, CapacityState, CapacityVector
+from tos.rcl import (
+    AppendReceipt,
+    CapacityComponent,
+    CapacityState,
+    CapacityVector,
+    CommandType,
+    CommitEntry,
+)
 from tos.workload import RuntimeIdentity
 from tos_runtime.rcl.log import InjectedCrash, SqliteCommitLog
 from tos_runtime.rcl.projection import (
@@ -25,6 +33,7 @@ from tos_runtime.risk.ledger_stages import (
     ActionFlowDecisionStage,
     AggregateRiskDecisionStage,
     AtomicCommitStage,
+    CloseProofCommitFence,
     CommitmentUnavailabilityStage,
     LedgerVerificationStage,
     item15_fields,
@@ -372,6 +381,54 @@ def test_step9_records_a_close_as_negative_exposure(
     projection_reader: SqliteReservationProjectionReader,
 ) -> None:
     permit = _committed_permit(afg_governor)
+    proposal = build_proposal(
+        scheme=get_scheme(EV_L1_PROVISIONAL_VERSION),
+        proposer=Proposer(strategy_id="close-fence-test", strategy_version="v1"),
+        account=instrument_key.account,
+        instrument=instrument_key.instrument,
+        direction="LONG",
+        position_effect="CLOSE",
+        quantity_basis="SHARES:1",
+        rationale="step-9 close proof fence test",
+        decision_context_capsule=DecisionContextCapsuleRef(
+            capsule_id="capsule-close-test", canonical_digest="digest-close-test"
+        ),
+        dsl_version="1.0",
+        config_version="1.0",
+    )
+    assert proposal.proposal_id is not None
+    request = StageRequest(
+        step=CommitmentStep.ATOMIC_COMMIT,
+        instrument_key=instrument_key,
+        proposal=proposal,
+    )
+    proof_origin = log.append_cas(
+        CommitEntry(
+            command_id="approval-consume-close-test",
+            command_digest="approval-digest-close-test",
+            kind=CommandType.CONSUME_APPROVAL_DECISION,
+        ),
+        expected_seq=-1,
+        writer_epoch=writer_epoch,
+    )
+    assert isinstance(proof_origin, AppendReceipt)
+    close_fence = CloseProofCommitFence(
+        proposal_id=proposal.proposal_id,
+        account=instrument_key.account,
+        instrument=instrument_key.instrument,
+        attempt_ids=(),
+        as_of_generation=0,
+        observed_at_generation=0,
+        trading_date="20261029",
+        age_origin_ms=500,
+        rcl_writer_epoch=writer_epoch,
+        rcl_last_seq=0,
+        verified_rcl_writer_epoch=writer_epoch,
+        verified_rcl_last_seq=0,
+        current_now_ms=700,
+        current_trading_date="20261029",
+        max_age_ms=300,
+    )
     stage = AtomicCommitStage(
         log,
         writer_epoch=writer_epoch,
@@ -380,8 +437,8 @@ def test_step9_records_a_close_as_negative_exposure(
         time_permits_new_risk=lambda: True,
         effect_envelope_reader=_step5_envelope,
         position_effect_reader=lambda: "CLOSE",
+        close_proof_fence_reader=lambda _request: close_fence,
     )
-    request = _request(CommitmentStep.ATOMIC_COMMIT, instrument_key)
 
     assert stage(request).outcome is StageOutcome.ADMIT
     committed = projection_reader.reservation_committed_vector(

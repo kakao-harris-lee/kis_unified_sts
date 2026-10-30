@@ -115,8 +115,11 @@ injected callable.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 from tos.afg import ActionFlowPermit
@@ -160,6 +163,7 @@ __all__ = [
     "AggregateRiskDecisionStage",
     "AtomicCommitLogPort",
     "AtomicCommitStage",
+    "CloseProofCommitFence",
     "CommitmentUnavailabilityStage",
     "LedgerVerificationStage",
     "item15_fields",
@@ -195,6 +199,7 @@ GenerationProvider = Callable[[StageRequest], int]
 #: #972: the current attempt's step-5 Economic Effect Envelope (``tos.ioc.EconomicEffectEnvelope``
 #: is :class:`~tos.rcl.CapacityVector` itself), or ``None`` when step 5 derived none.
 EffectEnvelopeReader = Callable[[], CapacityVector | None]
+CloseProofFenceProvider = Callable[[StageRequest], "CloseProofCommitFence | None"]
 
 
 #: The two ``AttemptArm.position_effect`` tokens step 8 admits (#966) — the same spellings
@@ -202,6 +207,43 @@ EffectEnvelopeReader = Callable[[], CapacityVector | None]
 #: ``tos_runtime.compose._attempt_shape`` selects by.
 _OPEN_EFFECT = "OPEN"
 _CLOSE_EFFECT = "CLOSE"
+_CLOSE_PROOF_DATE = re.compile(r"[0-9]{8}")
+
+
+@dataclass(frozen=True)
+class CloseProofCommitFence:
+    """The step-6 CLOSE proof facts step 9 must bind and revalidate before commit.
+
+    The composition root builds this from the exact consumed held-position proof and the same
+    trusted clock/configuration used to validate that proof. Keeping this runtime-only record
+    local to the stage avoids introducing a kernel type or import edge.
+    """
+
+    proposal_id: str
+    account: str
+    instrument: str
+    attempt_ids: tuple[str, ...]
+    as_of_generation: int
+    observed_at_generation: int
+    trading_date: str
+    age_origin_ms: int
+    rcl_writer_epoch: int
+    rcl_last_seq: int | None
+    verified_rcl_writer_epoch: int
+    verified_rcl_last_seq: int | None
+    current_now_ms: int
+    current_trading_date: str | None
+    max_age_ms: int
+
+
+def _valid_close_proof_date(value: object) -> bool:
+    """Accept only a real Gregorian ``YYYYMMDD`` trading date."""
+    if not isinstance(value, str) or _CLOSE_PROOF_DATE.fullmatch(value) is None:
+        return False
+    try:
+        return datetime.strptime(value, "%Y%m%d").strftime("%Y%m%d") == value
+    except ValueError:
+        return False
 
 
 def _verdict(step: CommitmentStep, outcome: StageOutcome, reason: str) -> StageVerdict:
@@ -541,6 +583,7 @@ class AtomicCommitStage:
         time_permits_new_risk: Callable[[], bool],
         effect_envelope_reader: EffectEnvelopeReader,
         position_effect_reader: Callable[[], str | None] | None = None,
+        close_proof_fence_reader: CloseProofFenceProvider | None = None,
     ) -> None:
         self._log = log
         self._writer_epoch = writer_epoch
@@ -549,9 +592,14 @@ class AtomicCommitStage:
         self._time_permits_new_risk = time_permits_new_risk
         self._effect_envelope_reader = effect_envelope_reader
         self._position_effect_reader = position_effect_reader
+        self._close_proof_fence_reader = close_proof_fence_reader
 
     def _transition(
-        self, request: StageRequest, reservation_id: str
+        self,
+        request: StageRequest,
+        reservation_id: str,
+        *,
+        position_effect: str | None,
     ) -> CapacityReservationTransition | StageVerdict:
         """The ``COMMITTED_UNBOUND`` transition this commit writes, carrying step 5's envelope
         as its ``committed_vector`` (#972) — or the UNKNOWN verdict when there is none.
@@ -573,11 +621,6 @@ class AtomicCommitStage:
                 "no step-5 economic effect envelope to record as this reservation's "
                 "committed vector — committing without one would hide its usage from ARE",
             )
-        position_effect = (
-            request.proposal.position_effect
-            if self._position_effect_reader is None
-            else self._position_effect_reader()
-        )
         committed_vector = envelope
         if position_effect == _CLOSE_EFFECT:
             committed_vector = CapacityVector(
@@ -606,47 +649,127 @@ class AtomicCommitStage:
             committed_vector=committed_vector,
         )
 
-    def __call__(self, request: StageRequest) -> StageVerdict:
-        gate = _time_gate(self._time_permits_new_risk, CommitmentStep.ATOMIC_COMMIT)
-        if gate is not None:
-            return gate
-        permit = self._permit_provider(request)
-        if permit is None:
-            return _unknown(
-                CommitmentStep.ATOMIC_COMMIT,
-                "no Action Flow Permit is available to bind this commit",
-            )
-        binding = permit_reservation_binding(permit)
-        if binding is None:
-            return _unknown(
-                CommitmentStep.ATOMIC_COMMIT,
-                "permit.claim_nonce/.canonical_digest absent — cannot bind the "
-                "reservation commit to it",
-            )
-        claim_nonce, permit_digest = binding
-        reservation_id = self._reservation_id_provider(request, permit)
-        if reservation_id is None:
-            # #966: the reservation is named by the permit's own identity, so a permit that
-            # carries none cannot name one. UNKNOWN, never a scope-level fallback id — that is
-            # exactly the shared identity this issue removed.
-            return _unknown(
-                CommitmentStep.ATOMIC_COMMIT,
-                "the bound permit carries no identity — this attempt's reservation cannot "
-                "be named",
-            )
-        transition = self._transition(request, reservation_id)
-        if isinstance(transition, StageVerdict):
-            return transition
-        try:
-            view = self._log.read_linearizable(writer_epoch=self._writer_epoch)
-        except StaleEpochRead as exc:
-            return _unknown(CommitmentStep.ATOMIC_COMMIT, f"stale writer epoch: {exc}")
-        except (sqlite3.Error, OSError) as exc:
-            return _unknown(
-                CommitmentStep.ATOMIC_COMMIT,
-                f"RCL log unreachable: {type(exc).__name__}: {exc}",
-            )
+    def _close_fence_matches_request(
+        self, fence: CloseProofCommitFence, request: StageRequest
+    ) -> bool:
+        """Validate the consumed step-6 proof's exact scope and currentness fields."""
+        proposal_id = getattr(request.proposal, "proposal_id", None)
+        if (
+            type(proposal_id) is not str
+            or not proposal_id
+            or type(fence.proposal_id) is not str
+            or fence.proposal_id != proposal_id
+            or type(fence.account) is not str
+            or fence.account != request.instrument_key.account
+            or type(fence.instrument) is not str
+            or fence.instrument != request.instrument_key.instrument
+            or type(fence.attempt_ids) is not tuple
+            or fence.attempt_ids != ()
+        ):
+            return False
+        if (
+            type(fence.as_of_generation) is not int
+            or fence.as_of_generation < 0
+            or type(fence.observed_at_generation) is not int
+            or fence.observed_at_generation != fence.as_of_generation
+            or type(fence.rcl_last_seq) is not int
+            or fence.rcl_last_seq < 0
+            or fence.as_of_generation != fence.rcl_last_seq
+        ):
+            return False
+        if (
+            not _valid_close_proof_date(fence.trading_date)
+            or not _valid_close_proof_date(fence.current_trading_date)
+            or fence.current_trading_date != fence.trading_date
+        ):
+            return False
+        if (
+            type(fence.age_origin_ms) is not int
+            or fence.age_origin_ms < 0
+            or type(fence.current_now_ms) is not int
+            or fence.current_now_ms < fence.age_origin_ms
+            or type(fence.max_age_ms) is not int
+            or fence.max_age_ms <= 0
+            or fence.current_now_ms - fence.age_origin_ms > fence.max_age_ms
+        ):
+            return False
+        return not (
+            type(fence.rcl_writer_epoch) is not int
+            or fence.rcl_writer_epoch < 0
+            or type(fence.verified_rcl_writer_epoch) is not int
+            or fence.verified_rcl_writer_epoch != fence.rcl_writer_epoch
+            or type(fence.verified_rcl_last_seq) is not int
+            or fence.verified_rcl_last_seq < fence.rcl_last_seq
+        )
+
+    def _close_fence_matches_view(
+        self, fence: CloseProofCommitFence, view: LogView
+    ) -> bool:
+        """Require both the proof's RCL epoch and tip to match step 9's linearizable read."""
+        return (
+            fence.rcl_writer_epoch == self._writer_epoch
+            and fence.verified_rcl_writer_epoch == self._writer_epoch
+            and view.epoch == fence.verified_rcl_writer_epoch
+            and view.last_seq == fence.verified_rcl_last_seq
+        )
+
+    def _expected_seq(
+        self,
+        request: StageRequest,
+        *,
+        position_effect: str | None,
+        view: LogView,
+    ) -> int | StageVerdict:
+        """Return step 9's CAS coordinate, or a restrictive CLOSE-fence verdict."""
         expected_seq = -1 if view.last_seq is None else view.last_seq
+        if position_effect != _CLOSE_EFFECT:
+            return expected_seq
+        if self._close_proof_fence_reader is None:
+            return _unknown(
+                CommitmentStep.ATOMIC_COMMIT,
+                "no step-6 CLOSE proof fence provider is configured",
+            )
+        try:
+            fence = self._close_proof_fence_reader(request)
+        except Exception as exc:  # noqa: BLE001 - proof lookup cannot grant a close
+            return _unknown(
+                CommitmentStep.ATOMIC_COMMIT,
+                f"step-6 CLOSE proof fence unavailable: {type(exc).__name__}",
+            )
+        if type(fence) is not CloseProofCommitFence:
+            return _unknown(
+                CommitmentStep.ATOMIC_COMMIT,
+                "step-6 CLOSE proof fence is missing or has an invalid type",
+            )
+        if not self._close_fence_matches_request(fence, request):
+            return _unknown(
+                CommitmentStep.ATOMIC_COMMIT,
+                "step-6 CLOSE proof fence is not current for this exact scope/proposal",
+            )
+        if not self._close_fence_matches_view(fence, view):
+            return _unknown(
+                CommitmentStep.ATOMIC_COMMIT,
+                "RCL epoch/tip changed since the step-6 CLOSE proof was observed",
+            )
+        # Use the proof's captured tip as the CAS coordinate. A same-epoch writer that commits
+        # after this read therefore yields SEQ_MISMATCH instead of authorizing a stale close.
+        if type(fence.verified_rcl_last_seq) is not int:
+            return _unknown(
+                CommitmentStep.ATOMIC_COMMIT,
+                "step-6 CLOSE proof has no verified current RCL tip",
+            )
+        return fence.verified_rcl_last_seq
+
+    def _apply_transition(
+        self,
+        transition: CapacityReservationTransition,
+        *,
+        claim_nonce: str,
+        permit_digest: str,
+        permit: ActionFlowPermit,
+        expected_seq: int,
+    ) -> StageVerdict:
+        """Write the one atomic reservation/permit entry and map its structural result."""
         try:
             result = self._log.apply_reservation_transition(
                 transition,
@@ -689,9 +812,77 @@ class AtomicCommitStage:
             bound_digest=permit_digest,
             bound_identity=permit.permit_id,
             reason=(
-                f"reservation {reservation_id!r} committed at seq={result.seq} "
+                f"reservation {transition.reservation_id!r} committed at seq={result.seq} "
                 f"with bound permit {permit.permit_id!r}"
             ),
+        )
+
+    def __call__(self, request: StageRequest) -> StageVerdict:
+        gate = _time_gate(self._time_permits_new_risk, CommitmentStep.ATOMIC_COMMIT)
+        if gate is not None:
+            return gate
+        try:
+            position_effect = (
+                request.proposal.position_effect
+                if self._position_effect_reader is None
+                else self._position_effect_reader()
+            )
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - an unknown effect cannot grant a commit
+            return _unknown(
+                CommitmentStep.ATOMIC_COMMIT,
+                f"position effect unavailable: {type(exc).__name__}",
+            )
+        permit = self._permit_provider(request)
+        if permit is None:
+            return _unknown(
+                CommitmentStep.ATOMIC_COMMIT,
+                "no Action Flow Permit is available to bind this commit",
+            )
+        binding = permit_reservation_binding(permit)
+        if binding is None:
+            return _unknown(
+                CommitmentStep.ATOMIC_COMMIT,
+                "permit.claim_nonce/.canonical_digest absent — cannot bind the "
+                "reservation commit to it",
+            )
+        claim_nonce, permit_digest = binding
+        reservation_id = self._reservation_id_provider(request, permit)
+        if reservation_id is None:
+            # #966: the reservation is named by the permit's own identity, so a permit that
+            # carries none cannot name one. UNKNOWN, never a scope-level fallback id — that is
+            # exactly the shared identity this issue removed.
+            return _unknown(
+                CommitmentStep.ATOMIC_COMMIT,
+                "the bound permit carries no identity — this attempt's reservation cannot "
+                "be named",
+            )
+        transition = self._transition(
+            request, reservation_id, position_effect=position_effect
+        )
+        if isinstance(transition, StageVerdict):
+            return transition
+        try:
+            view = self._log.read_linearizable(writer_epoch=self._writer_epoch)
+        except StaleEpochRead as exc:
+            return _unknown(CommitmentStep.ATOMIC_COMMIT, f"stale writer epoch: {exc}")
+        except (sqlite3.Error, OSError) as exc:
+            return _unknown(
+                CommitmentStep.ATOMIC_COMMIT,
+                f"RCL log unreachable: {type(exc).__name__}: {exc}",
+            )
+        expected_seq = self._expected_seq(
+            request, position_effect=position_effect, view=view
+        )
+        if isinstance(expected_seq, StageVerdict):
+            return expected_seq
+        return self._apply_transition(
+            transition,
+            claim_nonce=claim_nonce,
+            permit_digest=permit_digest,
+            permit=permit,
+            expected_seq=expected_seq,
         )
 
 

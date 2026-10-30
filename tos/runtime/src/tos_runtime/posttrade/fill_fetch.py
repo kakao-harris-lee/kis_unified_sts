@@ -5,8 +5,9 @@
 * **FETCH** (this module) — network only. One :class:`FetchPlan` (built on the loop thread from
   durable evidence) is run by :func:`run_fetch`: the ``VTTC0081R`` order reads for the planned
   dates and, when the release path will need it, the release reconciliation's broker snapshot.
-  It touches no engine, no RCL, and no observer state; what it produces is a
-  :class:`FetchResult`, data only.
+  A separately scoped stock held-position observation may also be requested by cadence, even
+  when there are no ACK reads. It touches no engine, no RCL, and no observer state; what it
+  produces is a :class:`FetchResult`, data only.
 * **APPLY** (the observer) — everything else, on the loop thread only: classifying rows, every
   observer evidence row, feeding the engine, finality, release, re-projection.
 
@@ -59,6 +60,7 @@ __all__ = [
     "FetchPlan",
     "FetchResult",
     "FetchRunner",
+    "HeldPositionSnapshot",
     "OrderRowsReader",
     "PrefetchedSnapshot",
     "SnapshotPrefetcher",
@@ -102,6 +104,30 @@ class PrefetchedSnapshot:
 
 
 @dataclass(frozen=True)
+class HeldPositionSnapshot:
+    """A periodic CLOSE-position double observation read on the FETCH worker.
+
+    ``scope`` is the risk-only scope actually passed to ``prefetch`` (account and exactly one
+    instrument, with no historical order dates). ``first_balance_read_started_ms`` and
+    ``confirmation_balance_read_started_ms`` are the raw grants returned by
+    :attr:`SnapshotRead.age_origin_ms`; unlike the release snapshot's compatibility timestamp,
+    they are deliberately left ``None`` when the witness did not record a balance grant. Both
+    raw samples and grants are retained for the cache's independent strict comparison.
+    """
+
+    scope: WitnessScope | None
+    today: str | None
+    generation: int | None
+    tip: tuple[int, int | None] | None
+    token: int | None
+    first: WitnessSnapshot | WitnessUnavailable
+    confirmation: WitnessSnapshot | WitnessUnavailable | None
+    first_balance_read_started_ms: int | None
+    confirmation_balance_read_started_ms: int | None
+    read_finished_ms: int
+
+
+@dataclass(frozen=True)
 class SnapshotRead:
     """What :meth:`SnapshotPrefetcher.prefetch` read, and when it started reading.
 
@@ -112,8 +138,8 @@ class SnapshotRead:
         age_origin_ms: The grant of the BALANCE read's first request — the age origin
             (review-979 r1 HIGH). The witness reads closed earlier days first, then the balance,
             then today; everything that can still change is read from here on
-            (``KisStockBrokerWitness.observe``'s read-order note). ``None``: falls back to
-            ``first_request_ms``, then to before the call.
+            (``KisStockBrokerWitness.observe``'s read-order note). Release snapshots retain their
+            compatibility fallback; CLOSE proof uses this raw field and refuses ``None``.
     """
 
     outcome: WitnessSnapshot | WitnessUnavailable
@@ -167,6 +193,19 @@ class SnapshotPrefetcher(Protocol):
         read). Yields the list each such answer is appended to (APPLY)."""
         ...
 
+    def serving_required(
+        self,
+        prefetched: PrefetchedSnapshot,
+        *,
+        expected_scope: WitnessScope,
+        expected_today: str,
+        max_age_ms: int,
+        now_ms: Callable[[], int],
+    ) -> AbstractContextManager[list[SnapshotUse]]:
+        """Serve only this scope/date; mismatch, unknown date, or expiry must refuse rather
+        than fall through to a live broker read on the session-loop thread."""
+        ...
+
 
 @dataclass(frozen=True)
 class FetchPlan:
@@ -184,6 +223,21 @@ class FetchPlan:
         today: The trusted trading date the snapshot is read under.
         reproject_ids: Attempts whose finality re-run is due — a snapshot is always fetched for
             them.
+        held_position_snapshot_due: Whether this plan includes a cadence-due CLOSE snapshot
+            request. It remains true when date/scope is unavailable so APPLY can invalidate an
+            older proof rather than silently leave it usable.
+        held_position_scope: Optional, one-instrument risk-only scope to fetch for CLOSE proof.
+            It is independent of order reads and is fetched even when ``reads`` is empty.
+        held_position_generation: RCL sequence captured when the held-position plan was built;
+            ``None`` means the observation cannot prove a position.
+        held_position_tip: Atomic ``(writer_epoch, last_seq)`` captured with the generation; the
+            cache compares both to reject an epoch change even when sequence numbers match.
+        held_position_token: The held-position cache's pending token, captured before FETCH; an
+            older worker result cannot overwrite a newer cache request.
+        recovery_attempt_ids: Close attempts whose entry discharge should be resumed from the
+            release-scope snapshot; never resumed by a live read on the session loop.
+        evidence_seq_at_plan: Durable evidence tail captured before planning. The loop uses it to
+            preempt a risk-only FETCH if a new ACK arrives while its broker read is in flight.
     """
 
     reads: tuple[tuple[str, WitnessScope], ...]
@@ -193,15 +247,33 @@ class FetchPlan:
     snapshot_scope: WitnessScope | None
     today: str | None
     reproject_ids: tuple[str, ...]
+    held_position_snapshot_due: bool = False
+    held_position_scope: WitnessScope | None = None
+    held_position_generation: int | None = None
+    held_position_tip: tuple[int, int | None] | None = None
+    held_position_token: int | None = None
+    recovery_attempt_ids: tuple[str, ...] = ()
+    evidence_seq_at_plan: int | None = None
+
+    @property
+    def risk_only(self) -> bool:
+        """Whether the plan contains only optional CLOSE risk observation work."""
+        return (
+            self.held_position_snapshot_due
+            and not self.reads
+            and not self.reproject_ids
+            and not self.recovery_attempt_ids
+        )
 
 
 @dataclass(frozen=True)
 class FetchResult:
-    """What one FETCH read: each planned date's rows or its unavailability, and the snapshot."""
+    """What one FETCH read: planned order rows, release snapshot, and optional CLOSE snapshot."""
 
     plan: FetchPlan
     reads: tuple[tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable], ...]
     snapshot: PrefetchedSnapshot | None
+    held_position_snapshot: HeldPositionSnapshot | None = None
 
 
 class OrderRowsReader(Protocol):
@@ -245,6 +317,101 @@ def may_release(plan: FetchPlan, rows: tuple[KisOrderRow, ...]) -> bool:
     )
 
 
+def _release_snapshot(
+    plan: FetchPlan,
+    *,
+    releasing: bool,
+    snapshots: SnapshotPrefetcher | None,
+    monotonic: MonotonicSource,
+    stop: Callable[[], bool],
+) -> PrefetchedSnapshot | None:
+    """Prefetch the existing release scope, retaining its established age fallback."""
+    if (
+        not releasing
+        or snapshots is None
+        or plan.snapshot_scope is None
+        or plan.today is None
+        or stop()
+    ):
+        return None
+    called_ms = monotonic.now_ms()
+    read = snapshots.prefetch(plan.snapshot_scope, today=plan.today, abort=stop)
+    # Release reconciliation keeps its existing fallback for snapshots whose witness did not
+    # report the balance grant; that compatibility rule is not used by CLOSE risk proof.
+    origin = (
+        read.age_origin_ms if read.age_origin_ms is not None else read.first_request_ms
+    )
+    started = called_ms if origin is None else max(called_ms, origin)
+    return PrefetchedSnapshot(
+        key=snapshot_key(plan.snapshot_scope),
+        today=plan.today,
+        outcome=read.outcome,
+        read_started_ms=started,
+        read_finished_ms=monotonic.now_ms(),
+        first_request_ms=read.first_request_ms,
+    )
+
+
+def _held_position_snapshot(
+    plan: FetchPlan,
+    *,
+    snapshots: SnapshotPrefetcher | None,
+    monotonic: MonotonicSource,
+    stop: Callable[[], bool],
+) -> HeldPositionSnapshot | None:
+    """Read two complete risk-only observations or retain explicit failure evidence."""
+    if not plan.held_position_snapshot_due:
+        return None
+    first: WitnessSnapshot | WitnessUnavailable
+    confirmation: WitnessSnapshot | WitnessUnavailable | None = None
+    first_started: int | None = None
+    confirmation_started: int | None = None
+    if plan.today is None:
+        first = WitnessUnavailable("held-position snapshot has no trusted trading date")
+    elif plan.held_position_generation is None:
+        first = WitnessUnavailable(
+            "held-position snapshot has no trusted RCL generation"
+        )
+    elif plan.held_position_scope is None:
+        first = WitnessUnavailable("held-position snapshot scope is unavailable")
+    elif snapshots is None:
+        first = WitnessUnavailable("held-position snapshot reader is unavailable")
+    elif stop():
+        first = WitnessUnavailable("held-position snapshot fetch was stopped")
+    else:
+        first_read = snapshots.prefetch(
+            plan.held_position_scope, today=plan.today, abort=stop
+        )
+        first = first_read.outcome
+        first_started = first_read.age_origin_ms
+        # A first failure, incomplete position list, non-independent source, or missing balance
+        # grant cannot establish a comparable sample, so do not spend another paced read.
+        if (
+            isinstance(first, WitnessSnapshot)
+            and first.positions_complete
+            and first.independent_of_evidence_store
+            and first_started is not None
+            and not stop()
+        ):
+            confirmation_read = snapshots.prefetch(
+                plan.held_position_scope, today=plan.today, abort=stop
+            )
+            confirmation = confirmation_read.outcome
+            confirmation_started = confirmation_read.age_origin_ms
+    return HeldPositionSnapshot(
+        scope=plan.held_position_scope,
+        today=plan.today,
+        generation=plan.held_position_generation,
+        tip=plan.held_position_tip,
+        token=plan.held_position_token,
+        first=first,
+        confirmation=confirmation,
+        first_balance_read_started_ms=first_started,
+        confirmation_balance_read_started_ms=confirmation_started,
+        read_finished_ms=monotonic.now_ms(),
+    )
+
+
 def run_fetch(
     plan: FetchPlan,
     *,
@@ -265,7 +432,7 @@ def run_fetch(
         return stop() or monotonic.now_ms() >= plan.deadline_ms
 
     reads: list[tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable]] = []
-    releasing = bool(plan.reproject_ids)
+    releasing = bool(plan.reproject_ids or plan.recovery_attempt_ids)
     for date, scope in plan.reads:
         try:
             _date, rows = orders.order_rows(
@@ -276,33 +443,26 @@ def run_fetch(
             continue
         reads.append((date, rows))
         releasing = releasing or may_release(plan, rows)
-    snapshot = None
-    if (
-        releasing
-        and snapshots is not None
-        and plan.snapshot_scope is not None
-        and plan.today is not None
-        and not stop()
-    ):
-        called_ms = monotonic.now_ms()
-        read = snapshots.prefetch(plan.snapshot_scope, today=plan.today, abort=stop)
-        # Issue #970 / review-979 r1 HIGH: aged from the balance read's pacer grant (else the
-        # first request's), never earlier than the call.
-        origin = (
-            read.age_origin_ms
-            if read.age_origin_ms is not None
-            else read.first_request_ms
-        )
-        started = called_ms if origin is None else max(called_ms, origin)
-        snapshot = PrefetchedSnapshot(
-            key=snapshot_key(plan.snapshot_scope),
-            today=plan.today,
-            outcome=read.outcome,
-            read_started_ms=started,
-            read_finished_ms=monotonic.now_ms(),
-            first_request_ms=read.first_request_ms,
-        )
-    return FetchResult(plan=plan, reads=tuple(reads), snapshot=snapshot)
+    # Do not reuse the release read for CLOSE proof: its scope may contain historical order
+    # dates, while the risk proof binds one instrument and one RCL generation. Run the double
+    # observation first so the release/recovery snapshot is the final broker read before APPLY;
+    # otherwise two paced CLOSE reads can make that single-use snapshot stale before it is served.
+    held_position_snapshot = _held_position_snapshot(
+        plan, snapshots=snapshots, monotonic=monotonic, stop=stop
+    )
+    snapshot = _release_snapshot(
+        plan,
+        releasing=releasing,
+        snapshots=snapshots,
+        monotonic=monotonic,
+        stop=stop,
+    )
+    return FetchResult(
+        plan=plan,
+        reads=tuple(reads),
+        snapshot=snapshot,
+        held_position_snapshot=held_position_snapshot,
+    )
 
 
 class FetchRunner:
@@ -313,11 +473,24 @@ class FetchRunner:
         self._stop = threading.Event()
         self._executor: ThreadPoolExecutor | None = None
         self._future: Future[FetchResult] | None = None
+        self._job_stop: threading.Event | None = None
+        self._job_plan: FetchPlan | None = None
+        self._job_cancelled = False
 
     @property
     def busy(self) -> bool:
-        """A FETCH is in flight (submitted, not yet taken)."""
+        """A FETCH is still running; completed results wait for APPLY via :meth:`has_job`."""
         return self._future is not None and not self._future.done()
+
+    @property
+    def has_job(self) -> bool:
+        """A submitted result remains untaken, even if the worker has finished."""
+        return self._future is not None
+
+    @property
+    def current_plan(self) -> FetchPlan | None:
+        """The submitted plan while its result is still waiting to be taken."""
+        return self._job_plan
 
     def submit(self, plan: FetchPlan) -> None:
         """Start ``plan`` on the worker. Refused while one is in flight or after close."""
@@ -329,7 +502,27 @@ class FetchRunner:
             self._executor = ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="tos-fill-fetch"
             )
-        self._future = self._executor.submit(self._fetch, plan, self._stop.is_set)
+        job_stop = threading.Event()
+        self._job_stop = job_stop
+        self._job_plan = plan
+        self._job_cancelled = False
+        self._future = self._executor.submit(
+            self._fetch, plan, lambda: self._stop.is_set() or job_stop.is_set()
+        )
+
+    def cancel_risk_only(self) -> bool:
+        """Cooperatively stop an obsolete risk-only read; never interrupt fill/recovery work."""
+        if (
+            not self.busy
+            or self._future is None
+            or self._job_plan is None
+            or not self._job_plan.risk_only
+            or self._job_stop is None
+        ):
+            return False
+        self._job_cancelled = True
+        self._job_stop.set()
+        return True
 
     def take_done(self) -> FetchResult | None:
         """The finished FETCH's result (once), or ``None`` while none is finished. A FETCH that
@@ -339,11 +532,19 @@ class FetchRunner:
         if future is None or not future.done() or self._stop.is_set():
             return None
         self._future = None
-        return future.result()
+        cancelled = self._job_cancelled
+        self._job_stop = None
+        self._job_plan = None
+        self._job_cancelled = False
+        result = future.result()
+        return None if cancelled else result
 
     def close(self) -> None:
         """Stop and join the worker; an in-flight result is dropped, never applied."""
         self._stop.set()
         executor, self._executor, self._future = self._executor, None, None
+        self._job_stop = None
+        self._job_plan = None
+        self._job_cancelled = False
         if executor is not None:
             executor.shutdown(wait=True, cancel_futures=True)

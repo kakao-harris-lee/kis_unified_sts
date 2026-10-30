@@ -35,6 +35,7 @@ from tos_runtime.rcl.reservation_lookup import attempt_id_for_reservation
 from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
 from tos_runtime.recon.ports import WitnessScope, WitnessUnavailable
 from tos_runtime.recon.service import ReconciliationReport
+from tos_runtime.risk.close_quantity import close_within_entry
 
 __all__ = [
     "DischargeRefusal",
@@ -250,6 +251,7 @@ def entry_discharge_refusal(
     payload: EgressResultPayload,
     *,
     entry_quantity: Decimal | None,
+    prior_closed: Decimal | None,
     report: ReconciliationReport,
     instrument: str,
 ) -> DischargeRefusal | None:
@@ -257,9 +259,9 @@ def entry_discharge_refusal(
 
     Conjunctive, in the plan's own order (§2.4):
 
-    1. the close's cumulative filled quantity equals the entry's recorded final filled quantity
-       AND its remaining quantity is zero — the position the entry reservation accounts for is
-       discharged in full, not in part. This is what makes
+    1. prior proven closes plus this close's final filled quantity equal the entry's recorded
+       final filled quantity AND this close's remaining quantity is zero — the position the
+       entry reservation accounts for is discharged in full. This is what makes
        ``TransitionCause.FINAL_QUANTITY_PROOF`` an honest claim rather than a label;
     2. the broker-side reading corroborates it (:func:`broker_position_flat`).
 
@@ -271,7 +273,10 @@ def entry_discharge_refusal(
         or payload.filled_quantity is None
         or payload.remaining_quantity is None
         or Decimal(payload.remaining_quantity) != Decimal(0)
-        or Decimal(payload.filled_quantity) != entry_quantity
+        or close_within_entry(entry_quantity, prior_closed, payload.filled_quantity)
+        is not True
+        or prior_closed is None
+        or prior_closed + payload.filled_quantity != entry_quantity
     ):
         return DischargeRefusal.QUANTITY_UNPROVEN
     if not broker_position_flat(report, instrument):

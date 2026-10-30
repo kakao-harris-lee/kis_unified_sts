@@ -57,7 +57,6 @@ from tos_runtime.brokercap import (
     transport_nature,
 )
 from tos_runtime.compose._attempt_arm import (
-    attempt_position_effect,
     attempt_reader,
     attempt_side,
 )
@@ -78,6 +77,7 @@ from tos_runtime.compose._egress_coordinates import (
     load_egress_coordinates,
 )
 from tos_runtime.compose._envelope_wiring import build_construction_inputs
+from tos_runtime.compose._ledger_wiring import _build_ledger_stages
 from tos_runtime.compose._pending_dimensions import PendingDimensionSpec
 from tos_runtime.compose._request_digest import (
     RequestBytesDigestSource,
@@ -102,7 +102,6 @@ from tos_runtime.compose.context import (
     ComposeContextResolver,
     RecordingActionFlowGovernor,
     VerdictRecorder,
-    make_permit_provider,
     record_egress_identity_observation,
 )
 from tos_runtime.currentness.proof import EgressCurrentnessProofIssuer
@@ -122,7 +121,6 @@ from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.rcl.reservation_identity import (
     attempt_request_reservation_id,
-    reservation_id_in_scope,
 )
 from tos_runtime.release.admission import ReleaseAdmissionService
 from tos_runtime.release.config import load_release_config
@@ -133,7 +131,7 @@ from tos_runtime.risk.flow import ActionFlowDecisionInputs
 from tos_runtime.risk.ledger_stages import (
     ActionFlowDecisionStage,
     AggregateRiskDecisionStage,
-    AtomicCommitStage,
+    CloseProofCommitFence,
     CommitmentUnavailabilityStage,
     LedgerVerificationStage,
 )
@@ -717,6 +715,7 @@ def _build_realized_stages(
     action_flow_inputs_provider: Callable[
         [StageRequest], ActionFlowDecisionInputs | None
     ],
+    close_proof_fence_reader: Callable[[StageRequest], CloseProofCommitFence | None],
     custody_root: Path,
     environment_label: str,
     uid: int,
@@ -773,6 +772,7 @@ def _build_realized_stages(
         economic_stage=construction_stages.economic_stage,
         generation_provider=generation_provider,
         time_gate=time_gate,
+        close_proof_fence_reader=close_proof_fence_reader,
     )
     step13_recorder, step14_stage = _build_currentness_stages(
         rcl_log=rcl_log,
@@ -792,56 +792,6 @@ def _build_realized_stages(
         step13_recorder=step13_recorder,
         step14_stage=step14_stage,
     )
-
-
-def _build_ledger_stages(
-    *,
-    rcl_log: SqliteCommitLog,
-    projection: SqliteReservationProjectionReader,
-    writer_epoch: int,
-    flow_governor: RecordingActionFlowGovernor,
-    construction_stage: OrderConstructionStage,
-    economic_stage: EconomicEffectStage,
-    generation_provider: Callable[[StageRequest], int],
-    time_gate: Callable[[], bool],
-) -> tuple[LedgerVerificationStage, VerdictRecorder, CommitmentUnavailabilityStage]:
-    """Steps 8 (Ledger Verification), 9 (Atomic Commit) and 10 (Commitment Unavailability) —
-    split out of :func:`_build_realized_stages` purely for the function size budget, the same
-    decomposition :func:`_build_currentness_stages` already is. No behavioural difference from
-    having these three inline there.
-
-    The three share the #966 reservation identity between them: step 9 mints the id from the
-    permit it binds, and steps 8/10 read the same scope/row back — see
-    :mod:`tos_runtime.rcl.reservation_identity`.
-    """
-    step8_stage = LedgerVerificationStage(
-        rcl_log,
-        projection,
-        writer_epoch=writer_epoch,
-        # #966: admission depends on whether this attempt opens or closes a position (the
-        # stage's own docstring table), read off the arm step 2 selected.
-        position_effect_reader=lambda: attempt_position_effect(construction_stage),
-    )
-    step9_recorder = VerdictRecorder(
-        AtomicCommitStage(
-            rcl_log,
-            writer_epoch=writer_epoch,
-            permit_provider=make_permit_provider(
-                flow_governor,
-                permit_generation_provider=generation_provider,
-                command_identity_provider=lambda request: (
-                    request.proposal.canonical_digest or ""
-                ),
-            ),
-            reservation_id_provider=lambda request, permit: reservation_id_in_scope(
-                request.instrument_key, permit.permit_id
-            ),
-            time_permits_new_risk=time_gate,
-            effect_envelope_reader=lambda: economic_stage.envelope,
-            position_effect_reader=lambda: attempt_position_effect(construction_stage),
-        )
-    )
-    return step8_stage, step9_recorder, CommitmentUnavailabilityStage(projection)
 
 
 def _build_currentness_stages(

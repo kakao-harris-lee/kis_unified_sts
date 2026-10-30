@@ -350,11 +350,24 @@ def test_partial_then_full_fill_releases_once_with_connected_evidence(
     } == {(attempt_id, _ODNO, date)}
     assert {r["attempt_id"] for r in _rows(runtime, "FILL_OBSERVED")} == {attempt_id}
 
-    # Terminal: no further GET at all; one order POST in the whole run; reconciliation read the
-    # real (fake-server) order inquiry.
+    # Terminal: a held-position proof may still read broker holdings and order rows after the
+    # entry has transitioned to POSITION_CONSUMED. Those risk-only GETs must not reproject the
+    # already released fill.
     before = len(server.all_requests)
-    assert observer.poll_once().polled is False
-    assert len(server.all_requests) == before
+    terminal_results = _rows(runtime, "EGRESS_RESULT_CONSUMED")
+    observed_fills = _rows(runtime, "FILL_OBSERVED")
+    repeat_report = observer.poll_once()
+    assert repeat_report.emitted == ()
+    assert repeat_report.reprojected == ()
+    assert _rows(runtime, "EGRESS_RESULT_CONSUMED") == terminal_results
+    assert _rows(runtime, "FILL_OBSERVED") == observed_fills
+    assert _rcl_releases(runtime) == 1
+    # Any new GET belongs to the independent held-position proof; order submission stays once.
+    assert all(
+        request.method == "GET"
+        for request in server.all_requests[before:]
+        if request.path != "/oauth2/tokenP"
+    )
     assert len(server.requests_for(_ORDER_PATH)) == 1
     assert {r.method for r in server.all_requests if r.path != "/oauth2/tokenP"} == {
         "GET",

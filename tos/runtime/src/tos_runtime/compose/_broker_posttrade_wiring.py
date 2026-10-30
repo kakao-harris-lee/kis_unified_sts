@@ -44,6 +44,7 @@ from tos.engine.records import EgressResultPayload, EngineEvent
 from tos.engine.vocabulary import EventKind, ResultDisposition
 
 from tos_runtime.brokercap import BrokerScopesConfig
+from tos_runtime.compose._held_position_wiring import HeldPositionBridge
 from tos_runtime.compose._kis_credential_wiring import (
     KisCredentialSessionsCell,
     kis_mock_credential_session,
@@ -70,6 +71,7 @@ from tos_runtime.posttrade.fill_observer_config import FillObserverConfigError
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
 from tos_runtime.posttrade.release_consumer import (
     FinalityConsumerPort,
+    FinalityReleaseConsumer,
     release_command_id,
 )
 from tos_runtime.recon.ports import WitnessScope, WitnessSnapshot, WitnessUnavailable
@@ -136,6 +138,7 @@ class DeferredKisWitness:
         self._max_age_ms = 0
         self._now_ms: Callable[[], int] = lambda: 0
         self._uses: list[SnapshotUse] = []
+        self._strict_thread: int | None = None
 
     def _ready(self) -> KisStockBrokerWitness:
         if self.inner is None:
@@ -153,6 +156,8 @@ class DeferredKisWitness:
             and served.today == self._trading_date_now()
         ):
             age_ms = self._now_ms() - served.read_started_ms
+            if self._strict_thread == threading.get_ident() and age_ms < 0:
+                raise WitnessUnavailable("prefetched snapshot monotonic age is invalid")
             if age_ms > self._max_age_ms:
                 # Still a HOLD either way; the reason tells an operator a read that can never
                 # be served (its own window outran the limit) from one that aged until APPLY.
@@ -173,6 +178,8 @@ class DeferredKisWitness:
             if isinstance(served.outcome, WitnessUnavailable):
                 raise served.outcome
             return served.outcome
+        if self._strict_thread == threading.get_ident():
+            raise WitnessUnavailable("required prefetched snapshot does not match")
         return self._ready().observe(scope)
 
     def prefetch(
@@ -224,6 +231,48 @@ class DeferredKisWitness:
         finally:
             self._served, self._served_thread, self._uses = None, None, []
 
+    @contextmanager
+    def serving_required(
+        self,
+        prefetched: PrefetchedSnapshot | None,
+        *,
+        expected_scope: WitnessScope,
+        expected_today: str,
+        max_age_ms: int,
+        now_ms: Callable[[], int],
+    ) -> Iterator[list[SnapshotUse]]:
+        """Serve only a matching prefetched snapshot; never perform loop-thread I/O."""
+        previous = (
+            self._served,
+            self._served_thread,
+            self._max_age_ms,
+            self._now_ms,
+            self._uses,
+            self._strict_thread,
+        )
+        uses: list[SnapshotUse] = []
+        self._strict_thread = threading.get_ident()
+        self._served = (
+            prefetched
+            if prefetched is not None
+            and prefetched.key == snapshot_key(expected_scope)
+            and prefetched.today == expected_today
+            else None
+        )
+        self._served_thread = self._strict_thread
+        self._max_age_ms, self._now_ms, self._uses = max_age_ms, now_ms, uses
+        try:
+            yield uses
+        finally:
+            (
+                self._served,
+                self._served_thread,
+                self._max_age_ms,
+                self._now_ms,
+                self._uses,
+                self._strict_thread,
+            ) = previous
+
     def order_rows(
         self,
         scope: WitnessScope,
@@ -250,6 +299,7 @@ class BrokerPosttrade:
     observer_config: FillObserverConfig | None = None
     finality_producer: SyntheticFinalityProducer | BrokerFinalityProducer | None = None
     release_consumer: FinalityConsumerPort | None = None
+    held_position_bridge: HeldPositionBridge | None = None
     #: The runtime's trusted trading-date reader (the one ACKs are stamped with).
     trading_date_now: Callable[[], str | None] = lambda: None
 
@@ -404,6 +454,8 @@ def attach_fill_observer(
         return held is not None and held.attempt_id == attempt_id
 
     instrument_key = runtime.context_resolver.instrument_key
+    bridge = posttrade.held_position_bridge
+    recovery = consumer if isinstance(consumer, FinalityReleaseConsumer) else None
     runtime.fill_observer = KisMockFillObserver(
         config=posttrade.observer_config,
         orders=posttrade.witness,
@@ -421,6 +473,22 @@ def attach_fill_observer(
         # Issue #950: the release reconciliation's broker read is prefetched by the observer's
         # FETCH thread and served here on the loop thread.
         snapshots=posttrade.witness,
+        held_position_tip=None if bridge is None else bridge.tip_tuple,
+        held_position_eligible=(
+            None
+            if bridge is None
+            else lambda: bridge.eligible(
+                instrument_key.account, instrument_key.instrument
+            )
+        ),
+        mark_held_position_pending=None if bridge is None else bridge.cell.mark_pending,
+        publish_held_position_snapshot=None if bridge is None else bridge.publish,
+        pending_recovery_attempt_ids=(
+            None if recovery is None else recovery.pending_recovery_attempt_ids
+        ),
+        resume_entry_discharge=(
+            None if recovery is None else recovery.resume_entry_discharge
+        ),
     )
     return runtime
 

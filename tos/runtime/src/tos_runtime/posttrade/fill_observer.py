@@ -85,11 +85,13 @@ from tos_runtime.posttrade.fill_fetch import (
     FetchPlan,
     FetchResult,
     FetchRunner,
+    HeldPositionSnapshot,
     OrderRowsReader,
     SnapshotPrefetcher,
     SnapshotUse,
     odno_key,
     run_fetch,
+    snapshot_key,
 )
 from tos_runtime.posttrade.fill_observer_config import (
     FILL_OBSERVER_CONFIG_NAME,
@@ -97,7 +99,10 @@ from tos_runtime.posttrade.fill_observer_config import (
     FillObserverConfigError,
     load_fill_observer_config,
 )
-from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
+from tos_runtime.posttrade.fill_observer_plan import (
+    build_fetch_plan,
+    preempt_risk_only_fetch,
+)
 from tos_runtime.recon.ports import WitnessScope, WitnessUnavailable
 from tos_runtime.recon.witness_kis import KisOrderRow
 from tos_runtime.time.sources import MonotonicSource
@@ -250,6 +255,22 @@ class KisMockFillObserver:
     #: The release reconciliation's snapshot prefetch (``fill_fetch`` module docstring);
     #: ``None`` = no prefetch, the release path reads the broker live.
     snapshots: SnapshotPrefetcher | None = None
+    #: Optional stock CLOSE-proof polling path; compose supplies all three hooks only when the
+    #: configured cadence and cache are available. The cache remains loop-thread-owned.
+    held_position_tip: Callable[[], tuple[int, int | None] | None] | None = None
+    #: Whether this stock scope currently has exactly one eligible POSITION_CONSUMED entry.
+    #: Missing/unreadable eligibility disables periodic risk reads.
+    held_position_eligible: Callable[[], bool] | None = None
+    #: The cache invalidates its previous proof and returns a token at plan time; only the
+    #: result carrying this token may publish into that one-use cell.
+    mark_held_position_pending: Callable[[WitnessScope | None], int | None] | None = (
+        None
+    )
+    publish_held_position_snapshot: Callable[[HeldPositionSnapshot], None] | None = None
+    #: Deferred entry-discharge recovery (issue #1004). The resume callback runs only while an
+    #: exact release-scope snapshot is being served on this loop thread.
+    pending_recovery_attempt_ids: Callable[[], tuple[str, ...]] | None = None
+    resume_entry_discharge: Callable[[str], object] | None = None
     _last_poll_ms: int | None = field(default=None, init=False)
     _last_reproject_ms: dict[str, int] = field(default_factory=dict, init=False)
     _untrackable_recorded: set[str] = field(default_factory=set, init=False)
@@ -263,6 +284,9 @@ class KisMockFillObserver:
     _reread_now: bool = field(default=False, init=False)
     _expired_run: int = field(default=0, init=False)
     _expired_run_date: str | None = field(default=None, init=False)
+    _last_held_position_poll_ms: int | None = field(default=None, init=False)
+    _last_recovery_resume_ms: dict[str, int] = field(default_factory=dict, init=False)
+    _preempted_for_fill: bool = field(default=False, init=False)
 
     # -- entry points --------------------------------------------------------------------
 
@@ -285,10 +309,20 @@ class KisMockFillObserver:
         if done is not None:
             return self._apply(done)
         if self._runner.busy:
+            if preempt_risk_only_fetch(self, self._runner):
+                # Do not make newly durable fill work wait behind optional paced reads. The
+                # worker checks its abort predicate between pages; this loop performs no GET.
+                self._preempted_for_fill = True
+            return FillPollReport(polled=False)
+        if self._runner.has_job:
+            # The worker finished after ``take_done`` observed it running. Keep its result for
+            # the next pass instead of submitting over an un-applied Future.
             return FillPollReport(polled=False)
         now = self.monotonic.now_ms()
+        preempted_for_fill, self._preempted_for_fill = self._preempted_for_fill, False
         if (
-            self._last_poll_ms is not None
+            not preempted_for_fill
+            and self._last_poll_ms is not None
             and now - self._last_poll_ms < self.config.poll_interval_ms
         ):
             return FillPollReport(polled=False)
@@ -326,61 +360,8 @@ class KisMockFillObserver:
     # -- plan (loop thread) / FETCH (worker) / APPLY (loop thread) ------------------------
 
     def _plan(self) -> FetchPlan | None:
-        """What the next FETCH reads, from durable evidence: the dates of attempts still open on
-        the broker side, plus the finality re-runs that are due. ``None`` when there is neither.
-        """
-        tracked = self._tracked_attempts()
-        reproject_ids = self._due_reprojects(tracked)
-        pending = [t for t in tracked.values() if not t.terminal and self._due(t)]
-        if not pending and not reproject_ids:
-            return None
-        now = self.monotonic.now_ms()
-        if pending:
-            self._last_poll_ms = now
-        instrument_key = InstrumentKey(account=self.account, instrument=self.instrument)
-        reads = tuple(
-            (
-                date,
-                WitnessScope(
-                    account=self.account,
-                    instrument_keys=(instrument_key,),
-                    attempt_ids=tuple(
-                        t.attempt_id for t in pending if t.trading_date == date
-                    ),
-                    order_dates=(date,),
-                ),
-            )
-            for date in sorted({t.trading_date for t in pending})
-        )
-        today = self.today()
-        return FetchPlan(
-            reads=reads,
-            targets=frozenset((odno_key(t.odno), t.trading_date) for t in pending),
-            instrument=self.instrument,
-            deadline_ms=now + self.config.poll_deadline_ms,
-            snapshot_scope=None if today is None else self._release_scope(),
-            today=today,
-            reproject_ids=reproject_ids,
-        )
-
-    def _release_scope(self) -> WitnessScope:
-        """The scope the release consumer's reconciliation will ask the witness for
-        (``release_consumer._reconcile``: this account/instrument, every recorded receipt's
-        trading date) — what the snapshot is prefetched under. A scope that turns out different
-        is not served; the live read answers it (``fill_fetch`` module docstring)."""
-        instrument_key = InstrumentKey(account=self.account, instrument=self.instrument)
-        try:
-            receipts = SqliteEvidenceReceiptReader(self.evidence_store).receipts(
-                WitnessScope(account=self.account, instrument_keys=(instrument_key,))
-            )
-        except WitnessUnavailable:
-            receipts = ()
-        dates = {r.trading_date for r in receipts if r.trading_date is not None}
-        return WitnessScope(
-            account=self.account,
-            instrument_keys=(instrument_key,),
-            order_dates=tuple(sorted(dates)),
-        )
+        """Build the next worker plan from durable attempts and configured independent polls."""
+        return build_fetch_plan(self)
 
     def _fetch(self, plan: FetchPlan, stop: Callable[[], bool]) -> FetchResult:
         """FETCH: :func:`~tos_runtime.posttrade.fill_fetch.run_fetch` over this observer's
@@ -397,6 +378,14 @@ class KisMockFillObserver:
         """APPLY one FETCH's result, on the calling (loop) thread. The durable picture is
         re-derived first, so an attempt that turned terminal since the plan is left alone. The
         prefetched snapshot is served to every reconciliation this APPLY triggers."""
+        if (
+            result.held_position_snapshot is not None
+            and self.publish_held_position_snapshot is not None
+        ):
+            # Publish before recovery/finality/engine mutations in this APPLY. The receiver can
+            # compare the plan's RCL generation with the current tip; a later consumer must
+            # recheck it too. This callback is never invoked on the worker thread.
+            self.publish_held_position_snapshot(result.held_position_snapshot)
         tracked = self._tracked_attempts()
         emitted: list[tuple[str, EgressResultKind, ResultDisposition | None]] = []
         held: list[tuple[str, EgressResultKind]] = []
@@ -412,7 +401,30 @@ class KisMockFillObserver:
             if self.snapshots is not None
             else nullcontext(uses)
         )
+        recovery_snapshot_matches = (
+            result.snapshot is not None
+            and result.plan.snapshot_scope is not None
+            and result.plan.today is not None
+            and result.snapshot.key == snapshot_key(result.plan.snapshot_scope)
+            and result.snapshot.today == result.plan.today
+            and self.today() == result.plan.today
+        )
         with serving as uses:
+            if recovery_snapshot_matches and self.resume_entry_discharge is not None:
+                assert self.snapshots is not None
+                assert result.snapshot is not None
+                assert result.plan.snapshot_scope is not None
+                assert result.plan.today is not None
+                with self.snapshots.serving_required(
+                    result.snapshot,
+                    expected_scope=result.plan.snapshot_scope,
+                    expected_today=result.plan.today,
+                    max_age_ms=self.config.release_snapshot_max_age_ms,
+                    now_ms=self.monotonic.now_ms,
+                ) as recovery_uses:
+                    for attempt_id in result.plan.recovery_attempt_ids:
+                        self.resume_entry_discharge(attempt_id)
+                uses.extend(recovery_uses)
             reprojected = self._reproject_unreleased(tracked, result.plan.reproject_ids)
             planned = dict(result.plan.reads)
             for date, outcome in result.reads:
@@ -466,21 +478,6 @@ class KisMockFillObserver:
                     "consecutive_expired": consecutive,
                 },
             )
-
-    def _due(self, attempt: _Tracked) -> bool:
-        """Today's ACKs are read every poll. An unresolved ACK from an EARLIER trading day is
-        re-read under its own date at ``prior_day_poll_interval_ms`` (Codex r2 MEDIUM): an
-        overdue row is a warning, not an end — the attempt is only done on a terminal broker
-        result (or a recorded hold)."""
-        today = self.today()
-        if today is None or attempt.trading_date >= today:
-            return True
-        now = self.monotonic.now_ms()
-        last = self._last_prior_day_read_ms.get(attempt.attempt_id)
-        if last is not None and now - last < self.config.prior_day_poll_interval_ms:
-            return False
-        self._last_prior_day_read_ms[attempt.attempt_id] = now
-        return True
 
     def _read_failed(
         self, date: str, attempts: list[_Tracked], exc: WitnessUnavailable

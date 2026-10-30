@@ -6,8 +6,8 @@ state service wave, lane b; ``docs/plans/2026-09-16-tos-risk-state-service-plan.
 build one :class:`~tos_runtime.risk.aggregate.AggregateRiskDecisionInputs` /
 :class:`~tos_runtime.risk.flow.ActionFlowDecisionInputs` per :class:`~tos.engine.records
 .StageRequest`, from the field-source table plan §2.1 lays out — **structural derivation** for
-every field the runtime can genuinely observe (position usage from durable evidence, command
-effect from the live construction, flow observation from the durable inbox/RCL log) and
+every field the runtime can genuinely observe (position usage from durable evidence, OPEN
+command effect from the live construction, flow observation from the durable inbox/RCL log) and
 **governed-policy declaration** for every field a deployment must instead attest (limits,
 scope, deployment facts). It authors **no** attestation-only bool
 (``all_fields_attributed``/``numerically_safe``/``valuation_ok``/
@@ -15,6 +15,14 @@ scope, deployment facts). It authors **no** attestation-only bool
 ``flow_commitment_exclusive``) itself — every one of those stays ``None`` here, so
 :mod:`tos_runtime.compose._risk_attestations`'s existing ``_restrictive_merge`` governs them
 unchanged (plan §2.1's own "정책은 이 표 밖의 값을 만들지 않는다").
+
+**CLOSE effects require broker-held proof (#1004).** A close may reduce aggregate risk only when
+the optional injected reader returns a one-use, complete, fresh, independent, per-attempt KIS
+stock holding proof for the exact current ``AttemptArm.direction``. The held-position cell issuing
+that proof rechecks trusted date and RCL tip. Local fills and ``POSITION_CONSUMED`` rows never
+stand in for current holdings. When the reader, direction, or proof is absent or invalid, the
+effect stays ``None`` and ARE returns ``UNKNOWN``; a composition that does not wire a proof reader
+therefore blocks all CLOSEs at step 6.
 
 **Two governed-instance boot events, once.** :meth:`__init__` appends
 ``AGGREGATE_RISK_POLICY_BOUND`` / ``ACTION_FLOW_POLICY_BOUND`` — the SAME "print which
@@ -86,6 +94,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from decimal import Decimal
+from threading import Lock
 
 from tos.afg import (
     ActionCause,
@@ -105,14 +114,23 @@ from tos.venue import ActionClass
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.reservation_identity import scope_reservation_id
+from tos_runtime.recon.ports import WitnessScope
 from tos_runtime.risk.aggregate import AggregateRiskDecisionInputs
+from tos_runtime.risk.close_quantity import close_within_entry
 from tos_runtime.risk.flow import ActionFlowDecisionInputs
+from tos_runtime.risk.ledger_stages import CloseProofCommitFence
 from tos_runtime.riskstate.flow_observation import (
     FlowObservation,
     InboxFlowReader,
     committed_flow_vectors,
     to_action_cause,
     to_observed_amplification,
+)
+from tos_runtime.riskstate.held_position import (
+    HeldPositionCurrentness,
+    HeldPositionProof,
+    PositionSide,
+    RclTip,
 )
 from tos_runtime.riskstate.policies import (
     LoadedActionFlowPolicy,
@@ -212,46 +230,19 @@ class RiskStateService:
         action_class: ActionClass,
         activated_member_digests: tuple[str, str],
         action_class_reader: Callable[[], ActionClass] | None = None,
+        attempt_arm_direction_reader: Callable[[], str | None] | None = None,
+        held_position_proof_reader: (
+            Callable[[StageRequest, str], HeldPositionProof | None] | None
+        ) = None,
+        held_position_currentness_reader: (
+            Callable[[HeldPositionProof], HeldPositionCurrentness | None] | None
+        ) = None,
     ) -> None:
-        """Compose the service over its injected readers and record the two boot-time
-        ``*_POLICY_BOUND`` evidence rows (module docstring).
+        """Compose injected policy/readers and append the two boot policy-bound events.
 
-        Args:
-            are_policy: The loaded, activated Aggregate Risk Policy instance.
-            afg_policy: The loaded, activated Action Flow Policy instance.
-            scheme: The registered canonicalization scheme.
-            hse_envelope: The already-loaded Hard Safety Envelope
-                (:attr:`~tos_runtime.safety.profile.SafetyProfileService.envelope`) — the
-                ``injected_envelope_max`` source (plan §2.1).
-            scenario_set: The loaded ``AdverseScenarioSet`` (``risk.yaml``) — carried for
-                interface symmetry with the caller's own construction; this service does not
-                read it directly (the kernel's ``adverse_increment`` consumes it, not this
-                producer, plan §0's own layering table).
-            required_scenario_kinds: The loaded coverage floor (``risk.yaml``).
-            position_reader: The single-source position observation reader (DR-0003 §2.2).
-            flow_reader: The inbox/evidence/RCL-log flow observation reader (DR-0003 §2.3).
-            rcl_log: The RCL commit log — :func:`~tos_runtime.riskstate.flow_observation
-                .committed_flow_vectors`'s own port.
-            construction_stage_reader: The current attempt's step-2 construction, or ``None``
-                before step 2 has run.
-            effect_envelope_reader: The current attempt's step-5 economic effect envelope, or
-                ``None`` before step 5 has run.
-            rcl_tip_reader: The RCL log's current linearizable tip, or ``None`` on a read
-                failure (never raises).
-            monotonic_reader: The time service's current monotonic reading, or ``None``.
-            max_attempts_reader: The governing ``ActionAmplificationEnvelope.max_attempts``
-                bound (module docstring's own "added dependency" deviation).
-            current_seq_reader: The inbox's currently-being-handled row seq, or ``None``
-                when nothing is pending (module docstring's own "resolved structurally"
-                section) — sourced from ``SqliteEventInbox.next_unconsumed()``.
-            evidence_store: The durable evidence append port.
-            environment_label: Used to compose this service's own snapshot/observation ids.
-            action_class: This composition's fixed, per-attempt :class:`~tos.venue.ActionClass`.
-            activated_member_digests: ``(are_activation_digest, afg_activation_digest)`` —
-                recorded on the boot evidence rows (module docstring).
-            action_class_reader: THIS attempt's action class (step 2's selected arm, #960) —
-                a CLOSE is judged as a CLOSE at step 7, not as the boot ``action_class``.
-                Omitted, ``action_class`` applies to every attempt.
+        The optional CLOSE readers consume and revalidate the one-use held-position proof.
+        Without them, or when any proof input is unavailable, CLOSE remains UNKNOWN. Other
+        argument contracts follow the named runtime ports and the module-level plan references.
         """
         self._are_policy = are_policy
         self._afg_policy = afg_policy
@@ -272,6 +263,11 @@ class RiskStateService:
         self._environment_label = environment_label
         self._action_class = action_class
         self._action_class_reader = action_class_reader
+        self._attempt_arm_direction_reader = attempt_arm_direction_reader
+        self._held_position_proof_reader = held_position_proof_reader
+        self._held_position_currentness_reader = held_position_currentness_reader
+        self._close_proof_lock = Lock()
+        self._close_fence_proof: HeldPositionProof | None = None
         self._envelope_max = _envelope_max_vector(are_policy, hse_envelope)
         self._snapshot_seq = 0
         self._observation_seq = 0
@@ -362,6 +358,7 @@ class RiskStateService:
         flow_obs: FlowObservation,
         committed_vectors: tuple[CapacityVector, ...],
         extra_absent: tuple[str, ...],
+        close_effect: dict[str, object] | None = None,
     ) -> None:
         """Record ONE ``RISK_STATE_OBSERVED`` row carrying BOTH position and flow state
         (plan §2.4's own "position 관측 + flow 관측 + absent_fields" shape) — split out of
@@ -387,36 +384,235 @@ class RiskStateService:
             }
             | ({"committed_flow_vectors"} if not committed_vectors else set())
         )
-        self._evidence_store.append(
-            {
-                "attempt_id": attempt_id,
-                "position": {
-                    "scope_key": position_obs.scope_key,
-                    "confirmed_net": str(position_obs.confirmed_net),
-                    "unknown_buy": str(position_obs.unknown_buy),
-                    "unknown_sell": str(position_obs.unknown_sell),
-                    "in_flight_buy": str(position_obs.in_flight_buy),
-                    "in_flight_sell": str(position_obs.in_flight_sell),
-                    "attempts_seen": position_obs.attempts_seen,
-                    "sources": list(position_obs.sources),
-                },
-                "flow": {
-                    "queue_depth": flow_obs.queue_depth,
-                    "in_flight": flow_obs.in_flight,
-                    "attempts_for_cause": flow_obs.attempts_for_cause,
-                    "duplicates_rejected": flow_obs.duplicates_rejected,
-                    "replays": flow_obs.replays,
-                    "replays_definition": flow_obs.replays_definition,
-                    "root_event_seq": flow_obs.root_event_seq,
-                    "handling_started_monotonic": flow_obs.handling_started_monotonic,
-                    "lineage_found": flow_obs.lineage_found,
-                    "sources": list(flow_obs.sources),
-                    "committed_flow_vectors_count": len(committed_vectors),
-                },
-                "absent_fields": absent,
+        observation: dict[str, object] = {
+            "attempt_id": attempt_id,
+            "position": {
+                "scope_key": position_obs.scope_key,
+                "confirmed_net": str(position_obs.confirmed_net),
+                "unknown_buy": str(position_obs.unknown_buy),
+                "unknown_sell": str(position_obs.unknown_sell),
+                "in_flight_buy": str(position_obs.in_flight_buy),
+                "in_flight_sell": str(position_obs.in_flight_sell),
+                "attempts_seen": position_obs.attempts_seen,
+                "sources": list(position_obs.sources),
             },
+            "flow": {
+                "queue_depth": flow_obs.queue_depth,
+                "in_flight": flow_obs.in_flight,
+                "attempts_for_cause": flow_obs.attempts_for_cause,
+                "duplicates_rejected": flow_obs.duplicates_rejected,
+                "replays": flow_obs.replays,
+                "replays_definition": flow_obs.replays_definition,
+                "root_event_seq": flow_obs.root_event_seq,
+                "handling_started_monotonic": flow_obs.handling_started_monotonic,
+                "lineage_found": flow_obs.lineage_found,
+                "sources": list(flow_obs.sources),
+                "committed_flow_vectors_count": len(committed_vectors),
+            },
+            "absent_fields": absent,
+        }
+        if close_effect is not None:
+            observation["close_effect"] = close_effect
+        self._evidence_store.append(
+            observation,
             kind=_OBSERVED_KIND,
             record_class=_OBSERVED_KIND,
+        )
+
+    @staticmethod
+    def _close_proof_matches(
+        proof: HeldPositionProof, request: StageRequest, direction: str | None
+    ) -> bool:
+        """Check the consumed value is bound to this proposal, instrument, side, and tip."""
+        if direction not in (PositionSide.LONG.value, PositionSide.SHORT.value):
+            return False
+        proposal_id = getattr(request.proposal, "proposal_id", None)
+        return (
+            type(proof) is HeldPositionProof
+            and type(proof.scope) is WitnessScope
+            and proof.scope.account == request.instrument_key.account
+            and proof.scope.instrument_keys == (request.instrument_key,)
+            and proof.scope.attempt_ids == ()
+            and type(proof.scope.as_of_generation) is int
+            and type(proposal_id) is str
+            and proof.proposal_id == proposal_id
+            and type(proof.observed_at_generation) is int
+            and proof.scope.as_of_generation == proof.observed_at_generation
+            and type(proof.rcl_tip) is RclTip
+            and proof.rcl_tip.last_seq == proof.observed_at_generation
+            and proof.side is PositionSide(direction)
+            and type(proof.held_quantity) is Decimal
+            and proof.held_quantity.is_finite()
+            and proof.held_quantity > 0
+            and proof.provenance == "kis-mock-stock"
+            and type(proof.trading_date) is str
+            and type(proof.age_origin_ms) is int
+            and proof.age_origin_ms >= 0
+            and type(proof.max_age_ms) is int
+            and proof.max_age_ms > 0
+        )
+
+    @staticmethod
+    def _close_effect_audit(
+        direction: str | None,
+        status: str,
+        proof: HeldPositionProof | None,
+        effect: Decimal | None,
+    ) -> dict[str, object]:
+        """Return bounded proof metadata for the durable risk observation row."""
+        accepted_proof = (
+            proof
+            if status
+            in (
+                "PROOF_ACCEPTED",
+                "QUANTITY_EXCEEDS_HELD",
+                "QUANTITY_UNKNOWN",
+            )
+            else None
+        )
+        tip = None if accepted_proof is None else accepted_proof.rcl_tip
+        return {
+            "direction": direction,
+            "proof_status": status,
+            "proof_provenance": (
+                None if accepted_proof is None else accepted_proof.provenance
+            ),
+            "held_quantity": (
+                None if accepted_proof is None else str(accepted_proof.held_quantity)
+            ),
+            "proof_trading_date": (
+                None if accepted_proof is None else accepted_proof.trading_date
+            ),
+            "proof_age_origin_ms": (
+                None if accepted_proof is None else accepted_proof.age_origin_ms
+            ),
+            "proof_max_age_ms": (
+                None if accepted_proof is None else accepted_proof.max_age_ms
+            ),
+            "proof_generation": (
+                None
+                if accepted_proof is None
+                else accepted_proof.observed_at_generation
+            ),
+            "proof_rcl_writer_epoch": None if tip is None else tip.writer_epoch,
+            "proof_rcl_last_seq": None if tip is None else tip.last_seq,
+            "max_credible_command_effect": str(effect) if effect is not None else None,
+        }
+
+    def _read_close_proof(
+        self, request: StageRequest
+    ) -> tuple[str | None, HeldPositionProof | None, str]:
+        """Consume one cache proof for the selected AttemptArm's held side."""
+        try:
+            direction = (
+                None
+                if self._attempt_arm_direction_reader is None
+                else self._attempt_arm_direction_reader()
+            )
+        except Exception:  # noqa: BLE001 - direction failures fail closed
+            return None, None, "DIRECTION_ERROR"
+        if direction not in (PositionSide.LONG.value, PositionSide.SHORT.value):
+            return direction, None, "DIRECTION_UNAVAILABLE"
+        if self._held_position_proof_reader is None:
+            return direction, None, "PROVIDER_NOT_CONFIGURED"
+        try:
+            proof = self._held_position_proof_reader(request, direction)
+        except Exception:  # noqa: BLE001 - provider failures cannot grant risk credit
+            return direction, None, "PROVIDER_ERROR"
+        return (
+            direction,
+            proof,
+            "PROOF_UNAVAILABLE" if proof is None else "PROOF_INVALID",
+        )
+
+    def _close_command_effect(
+        self, request: StageRequest, proposed: Decimal | None
+    ) -> tuple[Decimal | None, dict[str, object]]:
+        """Consume the current attempt's proof before deriving risk credit."""
+        with self._close_proof_lock:
+            self._close_fence_proof = None
+        direction, proof, status = self._read_close_proof(request)
+        effect: Decimal | None = None
+        proof_matches = type(proof) is HeldPositionProof and self._close_proof_matches(
+            proof, request, direction
+        )
+        held_quantity = (
+            proof.held_quantity
+            if proof_matches and type(proof) is HeldPositionProof
+            else None
+        )
+        bounded = close_within_entry(
+            entry=held_quantity,
+            closed=Decimal(0),
+            proposed=proposed,
+        )
+        if proof_matches and bounded is True and proposed is not None:
+            effect = -proposed
+            status = "PROOF_ACCEPTED"
+        elif proof_matches and bounded is False:
+            status = "QUANTITY_EXCEEDS_HELD"
+        elif proof_matches:
+            status = "QUANTITY_UNKNOWN"
+        elif proof is not None:
+            status = "PROOF_SCOPE_OR_SIDE_INVALID"
+
+        if effect is not None and type(proof) is HeldPositionProof:
+            with self._close_proof_lock:
+                self._close_fence_proof = proof
+        return effect, self._close_effect_audit(direction, status, proof, effect)
+
+    def take_close_fence(self, request: StageRequest) -> CloseProofCommitFence | None:
+        """Consume step 6's exact CLOSE proof for the step-9 RCL commit fence."""
+        proposal_id = getattr(request.proposal, "proposal_id", None)
+        with self._close_proof_lock:
+            proof = self._close_fence_proof
+            self._close_fence_proof = None
+        if type(proof) is not HeldPositionProof or type(proposal_id) is not str:
+            return None
+        if not self._close_proof_matches(proof, request, proof.side.value):
+            return None
+        if self._held_position_currentness_reader is None:
+            return None
+        try:
+            currentness = self._held_position_currentness_reader(proof)
+        except Exception:  # noqa: BLE001 - currentness failures deny commit
+            return None
+        if type(currentness) is not HeldPositionCurrentness:
+            return None
+        verified_tip = currentness.rcl_tip
+        if (
+            type(currentness.current_now_ms) is not int
+            or type(currentness.current_trading_date) is not str
+            or type(verified_tip) is not RclTip
+            or verified_tip.writer_epoch != proof.rcl_tip.writer_epoch
+            or proof.rcl_tip.last_seq is None
+            or verified_tip.last_seq is None
+            or verified_tip.last_seq < proof.rcl_tip.last_seq
+            or currentness.current_now_ms < proof.age_origin_ms
+            or currentness.current_now_ms - proof.age_origin_ms > proof.max_age_ms
+            or currentness.current_trading_date != proof.trading_date
+        ):
+            return None
+        generation = proof.scope.as_of_generation
+        if type(generation) is not int:
+            return None
+        instrument_key = proof.scope.instrument_keys[0]
+        return CloseProofCommitFence(
+            proposal_id=proof.proposal_id,
+            account=proof.scope.account,
+            instrument=instrument_key.instrument,
+            attempt_ids=proof.scope.attempt_ids,
+            as_of_generation=generation,
+            observed_at_generation=proof.observed_at_generation,
+            trading_date=proof.trading_date,
+            age_origin_ms=proof.age_origin_ms,
+            rcl_writer_epoch=proof.rcl_tip.writer_epoch,
+            rcl_last_seq=proof.rcl_tip.last_seq,
+            verified_rcl_writer_epoch=verified_tip.writer_epoch,
+            verified_rcl_last_seq=verified_tip.last_seq,
+            current_now_ms=currentness.current_now_ms,
+            current_trading_date=currentness.current_trading_date,
+            max_age_ms=proof.max_age_ms,
         )
 
     def aggregate_inputs_for(
@@ -436,11 +632,11 @@ class RiskStateService:
             if self._action_class_reader is None
             else self._action_class_reader()
         )
-        if (
-            max_credible_command_effect is not None
-            and action_class is ActionClass.CLOSE
-        ):
-            max_credible_command_effect = -max_credible_command_effect
+        close_effect: dict[str, object] | None = None
+        if action_class is ActionClass.CLOSE:
+            max_credible_command_effect, close_effect = self._close_command_effect(
+                request, max_credible_command_effect
+            )
         effect_envelope = self._effect_envelope_reader()
         effect_digest = (
             None
@@ -456,7 +652,7 @@ class RiskStateService:
         )
         grant_identity = getattr(request.proposal, "proposal_id", None)
         lineage_ref = request.reference.event_id
-        absent = tuple(
+        absent_fields = tuple(
             name
             for name, value in (
                 ("max_credible_command_effect", max_credible_command_effect),
@@ -466,12 +662,19 @@ class RiskStateService:
             )
             if value is None
         )
+        if close_effect is not None and close_effect["proof_status"] not in (
+            "PROOF_ACCEPTED",
+            "QUANTITY_EXCEEDS_HELD",
+            "QUANTITY_UNKNOWN",
+        ):
+            absent_fields = (*absent_fields, "held_position_proof")
         self._record_observation(
             attempt_id=grant_identity,
             position_obs=position_obs,
             flow_obs=flow_obs,
             committed_vectors=committed_vectors,
-            extra_absent=absent,
+            extra_absent=absent_fields,
+            close_effect=close_effect,
         )
         return AggregateRiskDecisionInputs(
             cells=cells,

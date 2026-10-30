@@ -22,24 +22,39 @@ reasons that had nothing to do with the command's side:
 
 Both are fixed, so the full cycle now runs here: entry → fill → close → fill → broker flat →
 the entry's reservation RELEASED → a fresh entry ADMITs at step 8 again.
+
+These lifecycle tests use the synthetic step-6/7 providers from
+``test_compose_root._compose`` and have no held-position proof producer. Their local boot
+wrapper supplies a test-only trusted step-9 fence bound to the exact proposal, scope, RCL
+writer epoch and tip. The production stage still performs its normal fence checks. This fake
+stands in only for the proof source in this fixture; the product-path held-position proof is
+covered separately by the real RiskStateService e2e tests.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any
 
 import pytest
+import tos_runtime.compose.root as compose_root
 import yaml
 from tos.egressgw import derive_economic_effect_envelope
 from tos.engine.vocabulary import CommitmentStep, StageOutcome
 from tos.rcl import CapacityState, CapacityVector
+from tos_runtime.risk.ledger_stages import CloseProofCommitFence
 
 from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
 from .conftest import write_approval_file
-from .test_kis_mock_e2e_honesty import _ENVIRONMENT_LABEL, _boot
+from .test_kis_mock_e2e_honesty import (
+    _ENVIRONMENT_LABEL,
+)
+from .test_kis_mock_e2e_honesty import (
+    _boot as _boot_without_close_fence,
+)
 from .test_kis_mock_fill_finality_e2e import (
     _OMIT_OUTPUT1,
     _ORDER_PATH,
@@ -57,6 +72,7 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 _EXIT_CLOSE = fx.UPPER_BAND + 1_000
 _ENTRY_ONLY_MAPPING = fx.band_reversion_strategy_mapping
+_ENTRY_DISCHARGE_PENDING = "ENTRY_DISCHARGE_PENDING"
 
 
 @pytest.fixture()
@@ -67,6 +83,61 @@ def server() -> Iterator[FakeKisServer]:
         yield srv
     finally:
         srv.stop()
+
+
+def _boot(tmp_path, config_dir, data_dir, custody_root):
+    """Boot with a test-only current CLOSE fence for this suite's synthetic risk inputs.
+
+    The fence is a positive test fixture, not a product proof: it is minted only for a valid
+    proposal and derives its RCL epoch/tip from the live test runtime immediately before the
+    commit. ``AtomicCommitStage`` still checks proposal, scope, age/date fields and exact tip.
+    """
+    runtime_ref: dict[str, Any] = {}
+    build_providers = compose_root.build_risk_state_providers
+
+    def _build_test_providers(**kwargs):
+        providers = build_providers(**kwargs)
+
+        def _test_close_fence(request):
+            runtime = runtime_ref.get("runtime")
+            proposal_id = getattr(request.proposal, "proposal_id", None)
+            if runtime is None or type(proposal_id) is not str or not proposal_id:
+                return None
+            log = runtime.rcl_log
+            writer_epoch = log.current_epoch()
+            view = log.read_linearizable(writer_epoch=writer_epoch)
+            if view.last_seq is None:
+                return None
+            generation = view.last_seq
+            return CloseProofCommitFence(
+                proposal_id=proposal_id,
+                account=request.instrument_key.account,
+                instrument=request.instrument_key.instrument,
+                attempt_ids=(),
+                as_of_generation=generation,
+                observed_at_generation=generation,
+                trading_date="20261029",
+                age_origin_ms=0,
+                rcl_writer_epoch=writer_epoch,
+                rcl_last_seq=view.last_seq,
+                verified_rcl_writer_epoch=writer_epoch,
+                verified_rcl_last_seq=view.last_seq,
+                current_now_ms=0,
+                current_trading_date="20261029",
+                max_age_ms=1,
+            )
+
+        return replace(providers, close_fence=_test_close_fence)
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(
+            compose_root, "build_risk_state_providers", _build_test_providers
+        )
+        runtime = _boot_without_close_fence(
+            tmp_path, config_dir, data_dir, custody_root
+        )
+    runtime_ref["runtime"] = runtime
+    return runtime
 
 
 def _exit_rule() -> dict[str, Any]:
@@ -146,6 +217,10 @@ def _reservations(runtime) -> dict[str, CapacityState]:
         reservation_id: state
         for reservation_id, state, _seq, _scope in runtime.rcl_log.reservation_rows()
     }
+
+
+def _release_hold_reasons(runtime) -> list[str]:
+    return [row["reason"] for row in _rows(runtime, "CAPACITY_RELEASE_HELD")]
 
 
 def _step5_envelope(runtime) -> CapacityVector:
@@ -323,7 +398,9 @@ def test_an_entry_then_its_close_then_a_re_entry_in_one_process(
     after_close = _reservations(runtime)
     assert set(after_close.values()) == {CapacityState.RELEASED}, after_close
     assert after_close[entry_reservation_id] is CapacityState.RELEASED
-    assert _rows(runtime, "CAPACITY_RELEASE_HELD") == []
+    # The split-close recovery path keeps the durable pending marker as audit evidence even
+    # after both releases complete; it is not an unresolved broker-position hold.
+    assert _release_hold_reasons(runtime) == [_ENTRY_DISCHARGE_PENDING]
     destinations = [r["destination"] for r in _rows(runtime, "CAPACITY_RELEASE_INTENT")]
     assert destinations == ["POSITION_CONSUMED", "RELEASED", "RELEASED"]
 
@@ -364,8 +441,10 @@ def test_a_partial_close_leaves_the_entry_reservation_held(
 
     after = _reservations(runtime)
     assert after[entry_reservation_id] is CapacityState.POSITION_CONSUMED
-    held = [r["reason"] for r in _rows(runtime, "CAPACITY_RELEASE_HELD")]
-    assert held == ["BROKER_POSITION_NOT_FLAT"]
+    assert _release_hold_reasons(runtime) == [
+        _ENTRY_DISCHARGE_PENDING,
+        "BROKER_POSITION_NOT_FLAT",
+    ]
     # The close's own reservation is still released — it opened no position either way.
     assert CapacityState.RELEASED in set(after.values())
     _close(runtime)
@@ -470,8 +549,10 @@ def test_an_unreadable_holding_quantity_keeps_the_entry_and_denies_a_re_entry(
 
     after = _reservations(runtime)
     assert after[entry_reservation_id] is CapacityState.POSITION_CONSUMED
-    held = [r["reason"] for r in _rows(runtime, "CAPACITY_RELEASE_HELD")]
-    assert held == ["BROKER_POSITION_NOT_FLAT"]
+    assert _release_hold_reasons(runtime) == [
+        _ENTRY_DISCHARGE_PENDING,
+        "BROKER_POSITION_NOT_FLAT",
+    ]
 
     # ...and the scope does NOT reopen: step 8 still sees one consumed position.
     _order_response(server, "0000000503")
@@ -508,7 +589,7 @@ def test_a_zero_holding_quantity_is_proven_flat_and_releases_the_entry(
     )
 
     assert _reservations(runtime)[entry_reservation_id] is CapacityState.RELEASED
-    assert _rows(runtime, "CAPACITY_RELEASE_HELD") == []
+    assert _release_hold_reasons(runtime) == [_ENTRY_DISCHARGE_PENDING]
 
     _order_response(server, "0000000603")
     (again,) = runtime.run_once((_entry_tick(seq=2),))
@@ -562,8 +643,10 @@ def test_a_malformed_holdings_container_keeps_the_entry_and_denies_a_re_entry(
     assert (
         _reservations(runtime)[entry_reservation_id] is CapacityState.POSITION_CONSUMED
     ), label
-    held = [r["reason"] for r in _rows(runtime, "CAPACITY_RELEASE_HELD")]
-    assert held == ["BROKER_POSITION_NOT_FLAT"]
+    assert _release_hold_reasons(runtime) == [
+        _ENTRY_DISCHARGE_PENDING,
+        "BROKER_POSITION_NOT_FLAT",
+    ]
 
     _order_response(server, "0000000703")
     (again,) = runtime.run_once((_entry_tick(seq=2),))
@@ -609,8 +692,10 @@ def test_a_holdings_pdno_that_is_not_a_string_keeps_the_entry_and_denies_a_re_en
     assert (
         _reservations(runtime)[entry_reservation_id] is CapacityState.POSITION_CONSUMED
     )
-    held = [r["reason"] for r in _rows(runtime, "CAPACITY_RELEASE_HELD")]
-    assert held == ["BROKER_POSITION_NOT_FLAT"]
+    assert _release_hold_reasons(runtime) == [
+        _ENTRY_DISCHARGE_PENDING,
+        "BROKER_POSITION_NOT_FLAT",
+    ]
 
     _order_response(server, "0000000903")
     (again,) = runtime.run_once((_entry_tick(seq=2),))
@@ -693,5 +778,5 @@ def test_an_empty_holdings_list_is_proven_flat_and_releases_the_entry(
     broker.fill(runtime, odno="0000000802", holdings_container=[])
 
     assert _reservations(runtime)[entry_reservation_id] is CapacityState.RELEASED
-    assert _rows(runtime, "CAPACITY_RELEASE_HELD") == []
+    assert _release_hold_reasons(runtime) == [_ENTRY_DISCHARGE_PENDING]
     _close(runtime)

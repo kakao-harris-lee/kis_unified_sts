@@ -109,10 +109,19 @@ from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.recon.ports import WitnessScope, WitnessSnapshot
 from tos_runtime.riskstate.flow_observation import (
     REPLAYS_DEFINITION,
     FlowObservation,
     InboxFlowReader,
+)
+from tos_runtime.riskstate.held_position import (
+    HeldPositionCell,
+    HeldPositionConfig,
+    HeldPositionCurrentness,
+    HeldPositionProof,
+    PositionSide,
+    RclTip,
 )
 from tos_runtime.riskstate.policies import (
     load_action_flow_policy,
@@ -319,6 +328,13 @@ def _service(
     current_seq_reader: Callable[[], int | None] | None = None,
     monotonic_reader: Callable[[], int | None] | None = None,
     construction: CandidateConstruction | None = None,
+    attempt_arm_direction_reader: Callable[[], str | None] | None = None,
+    held_position_proof_reader: (
+        Callable[[StageRequest, str], HeldPositionProof | None] | None
+    ) = None,
+    held_position_currentness_reader: (
+        Callable[[HeldPositionProof], HeldPositionCurrentness | None] | None
+    ) = None,
 ) -> RiskStateService:
     are_path = tmp_path / "aggregate_risk_policy.yaml"
     are_path.write_text(
@@ -368,6 +384,9 @@ def _service(
         environment_label="riskstate-wiring-test",
         action_class=action_class,
         action_class_reader=action_class_reader,
+        attempt_arm_direction_reader=attempt_arm_direction_reader,
+        held_position_proof_reader=held_position_proof_reader,
+        held_position_currentness_reader=held_position_currentness_reader,
         activated_member_digests=("are-activation-digest", "afg-activation-digest"),
     )
 
@@ -494,7 +513,7 @@ class TestAggregateInputsFor:
         assert inputs.cells[0].conservative_current_usage == Decimal("0")
         assert inputs.cells[0].required_concurrent_overlap_effect == Decimal("2")
 
-    def test_a_close_command_effect_reduces_projected_exposure(
+    def test_close_without_a_broker_holding_proof_has_unknown_effect(
         self,
         tmp_path: Path,
         evidence_store: SqliteEvidenceStore,
@@ -518,7 +537,96 @@ class TestAggregateInputsFor:
         )
 
         assert inputs is not None
+        assert inputs.cells[0].max_credible_command_effect is None
+
+    def test_cell_proof_bounds_close_effect_to_confirmed_holding(
+        self,
+        tmp_path: Path,
+        evidence_store: SqliteEvidenceStore,
+        inbox: SqliteEventInbox,
+        rcl_log: SqliteCommitLog,
+    ) -> None:
+        """Only a fresh two-view broker proof lets step 6 credit a bounded CLOSE."""
+
+        class Clock:
+            def now_ms(self) -> int:
+                return 1_000
+
+            def today(self) -> str:
+                return "20261029"
+
+        scope = WitnessScope(
+            account=_ACCOUNT,
+            instrument_keys=(InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),),
+            as_of_generation=9,
+        )
+        tip = RclTip(writer_epoch=2, last_seq=9)
+        verified_tip = RclTip(writer_epoch=2, last_seq=10)
+        current_tip = [tip]
+        cell = HeldPositionCell(
+            config=HeldPositionConfig(max_age_ms=500),
+            clock=Clock(),
+            rcl_tip_reader=lambda: current_tip[0],
+            tip_compatible=lambda origin, current: origin == tip
+            and current == verified_tip,
+        )
+        snapshot = WitnessSnapshot(
+            observed_at_generation=9,
+            orders=(),
+            positions=((_INSTRUMENT, Decimal("80")),),
+            positions_complete=True,
+            provenance="kis-mock-stock",
+            independent_of_evidence_store=True,
+            order_inquiry_date="20261029",
+        )
+        token = cell.mark_pending(scope)
+        assert cell.publish(
+            scope,
+            snapshot,
+            confirming_snapshot=snapshot,
+            age_origin_ms=900,
+            confirming_age_origin_ms=950,
+            trading_date="20261029",
+            rcl_tip_at_start=tip,
+            pending_token=token,
+        )
+        current_tip[0] = verified_tip
+
+        def consume_proof(
+            request: StageRequest, direction: str
+        ) -> HeldPositionProof | None:
+            return cell.consume(
+                scope,
+                PositionSide(direction),
+                proposal_id=request.proposal.proposal_id,
+            )
+
+        construction = CandidateConstruction.model_construct(
+            derivation=QuantityDerivation.model_construct(quantity=Decimal("60"))
+        )
+        service = _service(
+            tmp_path,
+            evidence_store,
+            inbox,
+            rcl_log,
+            action_class_reader=lambda: ActionClass.CLOSE,
+            construction=construction,
+            attempt_arm_direction_reader=lambda: PositionSide.LONG.value,
+            held_position_proof_reader=consume_proof,
+            held_position_currentness_reader=cell.validate_consumed,
+        )
+
+        request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
+        inputs = service.aggregate_inputs_for(request)
+
+        assert inputs is not None
         assert inputs.cells[0].max_credible_command_effect == Decimal("-60")
+        fence = service.take_close_fence(request)
+        assert fence is not None
+        assert fence.proposal_id == "prop-1"
+        assert fence.as_of_generation == 9
+        assert fence.rcl_last_seq == 9
+        assert fence.verified_rcl_last_seq == 10
 
     def test_records_risk_state_observed_evidence(
         self,

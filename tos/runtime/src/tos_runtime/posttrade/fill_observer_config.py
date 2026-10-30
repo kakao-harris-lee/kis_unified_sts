@@ -79,6 +79,8 @@ class FillObserverConfig:
     poll_deadline_ms: int
     witness_request_timeout_s: float
     release_snapshot_max_age_ms: int
+    held_position_poll_interval_ms: int | None = None
+    held_position_max_age_ms: int | None = None
 
 
 _WITNESS_KEYS = (
@@ -124,6 +126,13 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         raise FillObserverConfigError(f"{path}: unreadable ({exc})") from exc
     if not isinstance(raw, dict):
         raise FillObserverConfigError(f"{path}: must be a top-level mapping")
+    held_keys = ("held_position_poll_interval_ms", "held_position_max_age_ms")
+    if any(key in raw for key in held_keys) and not all(
+        key in raw for key in held_keys
+    ):
+        raise FillObserverConfigError(
+            f"{path}: held position bounds must be supplied together"
+        )
     missing = [key for key in _WITNESS_KEYS if key not in raw]
     if missing:
         raise FillObserverConfigError(f"{path}: missing {missing}")
@@ -149,5 +158,15 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         ),
         release_snapshot_max_age_ms=_positive_int(
             raw, "release_snapshot_max_age_ms", path
+        ),
+        held_position_poll_interval_ms=(
+            _positive_int(raw, "held_position_poll_interval_ms", path)
+            if "held_position_poll_interval_ms" in raw
+            else None
+        ),
+        held_position_max_age_ms=(
+            _positive_int(raw, "held_position_max_age_ms", path)
+            if "held_position_max_age_ms" in raw
+            else None
         ),
     )

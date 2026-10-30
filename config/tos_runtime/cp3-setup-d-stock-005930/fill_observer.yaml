@@ -90,3 +90,8 @@ prior_day_poll_interval_ms: 600000
 # visible as "expired" rows. Compose refuses the boot below 2 x min_send_interval_ms — the
 # 2000 this replaced was exactly that "always expired" combination once #970 paced the GETs.
 release_snapshot_max_age_ms: 6000
+
+# Separate bounds for the one-use pretrade holdings proof. Both account for
+# paced balance and order inquiries; stale or missing snapshots block CLOSE.
+held_position_poll_interval_ms: 12000
+held_position_max_age_ms: 12000
