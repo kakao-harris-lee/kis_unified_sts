@@ -107,9 +107,28 @@ release_snapshot_max_age_ms: 6000
 # the position open overnight. 12000 (poll) + 500 (a plan is only due on a loop pass) + 6700
 # (read window to publish) = 19200, so 20000 leaves ~800 ms of jitter and each proof's validity
 # overlaps its successor's by ~1.3 s. Raising the poll interval means raising this with it.
+#
+# ⚠ What that ~800 ms does NOT cover (review-1014 r1 L1): one more paced GET is 2000 ms. A
+# second order page (max_pages 10 allows ten), a second balance page, or any other app-key
+# request landing between these four grants pushes the publish past the expiry and reopens a
+# ~1.2 s hole per cycle. That is fail-closed (the CLOSE reads PROOF_UNAVAILABLE and the
+# position stays open) and far smaller than the ~6.7 s of every 12 s before this change, but
+# it is the operator's number to raise if the walk is ever more than one page.
+#
+# ⚠ This is also the bound on broker-side changes the RCL cannot see (review-1014 r1 L2). A
+# manual HTS sell after the confirming read leaves the proof usable for up to this long —
+# ~20 s now, ~12 s before, since the next plan no longer burns it — until the refresh answers
+# and either replaces it or clears it (a flat account and a non-FILLED order are both refused
+# by the publish validation). Worst case is a 1-share CLOSE against a flat MOCK cash account,
+# which the broker rejects; no short can result. It is this file's staleness tolerance, not a
+# new class of risk — a TOS-originated fill or close commits to the RCL first, and the tip CAS
+# refuses the proof at consume and again at step 9.
+#
 # A proof is still refused once it is past this age — the one bound every freshness check on
 # it reads — and a FAILED refresh still burns it; only the next plan no longer does (#1010).
 # Compose refuses the boot below 3 x min_send_interval_ms (the double read's own span, the
-# #970 pacing trap its release sibling fell into) or below the poll interval.
+# #970 pacing trap its release sibling fell into) or below the poll interval PLUS that read
+# (max_age == poll — the 12000/12000 this file carried before #1010 — is refused at every
+# pacing; the guard's first draft admitted it, review-1014 r1 M1).
 held_position_poll_interval_ms: 12000
 held_position_max_age_ms: 20000

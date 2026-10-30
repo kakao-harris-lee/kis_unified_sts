@@ -412,11 +412,22 @@ def test_a_snapshot_age_limit_below_two_intervals_refuses_the_boot(
         # Below the double read's own span: the CLOSE proof's four paced GETs are granted at
         # 0 / S / 2S / 3S, so a bound under 3 x S is expired the moment it is published.
         (lambda s: (3 * s - 1, 2 * s), "the double read that refreshes it"),
-        # Below one poll period: a replacement arrives only once per poll, so a shorter bound
-        # leaves the cache empty between polls — issue #1010's hole, made permanent.
-        (lambda s: (3 * s, 3 * s + 1), "one held-position poll period"),
+        # Below one poll period PLUS that read: the replacement is only planned a poll period
+        # later and still costs the four GETs, so the proof expires before it exists.
+        (lambda s: (3 * s, 3 * s + 1), "poll period plus the double read"),
+        # The #1010 stock tree itself (12000/12000 under 2000 ms pacing), and the smaller pair
+        # the first draft of this guard also admitted (review-1014 r1 M1). max_age == poll
+        # cannot leave room for the read that refreshes it at any S, so neither depends on the
+        # interval this deployment happens to pace at.
+        (lambda _s: (12_000, 12_000), "poll period plus the double read"),
+        (lambda _s: (6_000, 6_000), "poll period plus the double read"),
     ],
-    ids=["below-the-double-read", "below-one-poll-period"],
+    ids=[
+        "below-the-double-read",
+        "below-one-poll-period-plus-the-read",
+        "the-1010-stock-tree",
+        "max-age-equal-to-poll",
+    ],
 )
 def test_an_unreachable_held_position_age_limit_refuses_the_boot(
     tmp_path,
@@ -431,7 +442,7 @@ def test_an_unreachable_held_position_age_limit_refuses_the_boot(
     """The CLOSE proof's bound is read from the same pacer as its release sibling above, so it
     is refused the same way (L1 of #1012; R5 incident #970). Both floors are derived from the
     deployed ``min_send_interval_ms``, never a second literal; the shipped tree sits above
-    both."""
+    both (``test_the_shipped_held_position_bounds_clear_the_boot_floors``)."""
     _sealed_mock_deployment(config_dir, custody_root, server, monkeypatch)
     transport = yaml.safe_load(
         (config_dir / "kis_mock_transport.yaml").read_text("utf-8")
