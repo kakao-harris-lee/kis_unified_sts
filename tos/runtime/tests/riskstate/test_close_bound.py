@@ -149,6 +149,35 @@ def _commit(
     assert not isinstance(receipt, AppendRefusal), receipt
 
 
+def _commit_other_scope(rcl_log: SqliteCommitLog) -> None:
+    """Advance the log's tip with a reservation of a DIFFERENT scope.
+
+    The tip is log-wide, the bound is scope-wide: this is the shape of advance that must NOT
+    withdraw a fence, because nothing about this scope's proven entry changed.
+    """
+    identity = RuntimeIdentity(
+        cell_id="close-bound-test-cell", process_nonce="close-bound-test-nonce"
+    )
+    epoch = rcl_log.current_epoch() or rcl_log.acquire_epoch(identity)
+    view = rcl_log.read_linearizable(writer_epoch=epoch)
+    receipt = rcl_log.apply_reservation_transition(
+        CapacityReservationTransition(
+            reservation_id="resv-other-scope-close-bound",
+            writer_epoch=epoch,
+            from_state=CapacityState.COMMITTED_UNBOUND,
+            to_state=CapacityState.POTENTIALLY_LIVE,
+            scope=ReservationScope(account=_ACCOUNT, instrument="OTHER-SYMBOL"),
+        ),
+        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        command_type=CommandType.BIND_ATTEMPT,
+        command_id="cmd-close-bound-other-scope",
+        command_digest="cmd-close-bound-other-scope",
+        expected_seq=-1 if view.last_seq is None else view.last_seq,
+        finality_witness=None,
+    )
+    assert not isinstance(receipt, AppendRefusal), receipt
+
+
 def _record_full_fill(
     store: SqliteEvidenceStore, *, attempt_id: str, filled: Decimal
 ) -> None:
@@ -691,3 +720,139 @@ def test_close_authority_source_is_a_closed_two_member_vocabulary(
     """Pins the dispatch vocabulary the composition root selects by transport kind."""
     assert source.value in ("BROKER_HELD_PROOF", "DURABLE_EVIDENCE")
     assert len(CloseAuthoritySource) == 2
+
+
+# ===========================================================================
+# review-1015 M1/L1 — what happens to the step-6 stash between step 6 and step 9
+# ===========================================================================
+
+
+def _granted_close(
+    tmp_path: Path,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    rcl_log: SqliteCommitLog,
+) -> RiskStateService:
+    """Seed entry 1, let step 6 grant a CLOSE of 1, and leave the fence stash armed."""
+    _seed_filled_entry(rcl_log, evidence_store, quantity=Decimal("1"))
+    service = _service(
+        tmp_path,
+        evidence_store,
+        inbox,
+        rcl_log,
+        quantity=Decimal("1"),
+        close_authority=CloseAuthoritySource.DURABLE_EVIDENCE,
+    )
+    effect, _audit = _close_effect(service)
+    assert effect == Decimal("-1")
+    return service
+
+
+def test_a_competing_reservation_committed_after_step6_withdraws_the_fence(
+    tmp_path: Path,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """A second outstanding reservation lands between step 6 and step 9: no fence is minted.
+
+    Concrete input: step 6 grants, then another attempt commits its own reservation into the
+    same scope. The fence re-read now sees two outstanding rows, which is not the shape a
+    CLOSE may be bounded in, so step 9 gets ``None`` and answers UNKNOWN. Nothing about the
+    already-granted step-6 effect can resurrect it.
+    """
+    service = _granted_close(tmp_path, evidence_store, inbox, rcl_log)
+    _record_join(
+        evidence_store,
+        attempt_id="attempt-close-bound-competing",
+        permit_identity="afg-permit-close-bound-competing",
+    )
+    _commit(
+        rcl_log,
+        reservation_id=permit_reservation_id(
+            _ACCOUNT, _INSTRUMENT, "afg-permit-close-bound-competing"
+        ),
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.POTENTIALLY_LIVE,
+        command_id="cmd-close-bound-competing",
+        command_type=CommandType.BIND_ATTEMPT,
+        cause=TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        finality_witness=None,
+    )
+
+    assert (
+        service.take_close_fence(_stage_request(step=CommitmentStep.ATOMIC_COMMIT))
+        is None
+    )
+
+
+def test_an_approval_only_tip_advance_still_mints_a_fence_at_the_new_tip(
+    tmp_path: Path,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """The one tolerated advance: the log moved, but the proven entry facts did not.
+
+    This is exactly the claim the PR body makes — a tip advance is tolerated *because* the
+    fence carries the RE-READ tip, which step 9 then requires to equal its own view. A commit
+    that changes this scope's reservations is the previous test; this one does not.
+    """
+    service = _granted_close(tmp_path, evidence_store, inbox, rcl_log)
+    epoch = rcl_log.current_epoch()
+    assert epoch is not None
+    before = rcl_log.read_linearizable(writer_epoch=epoch).last_seq
+    _commit_other_scope(rcl_log)
+    after = rcl_log.read_linearizable(writer_epoch=epoch).last_seq
+    assert before is not None and after is not None and after > before
+
+    fence = service.take_close_fence(_stage_request(step=CommitmentStep.ATOMIC_COMMIT))
+    assert type(fence) is SyntheticCloseEntryFence
+    assert fence.rcl_last_seq == after, (fence.rcl_last_seq, before, after)
+
+
+def test_a_writer_epoch_change_after_step6_withdraws_the_fence(
+    tmp_path: Path,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """Another writer took the log: the step-6 reading belongs to a superseded epoch."""
+    service = _granted_close(tmp_path, evidence_store, inbox, rcl_log)
+    rcl_log.acquire_epoch(
+        RuntimeIdentity(cell_id="close-bound-other-cell", process_nonce="other-nonce")
+    )
+
+    assert (
+        service.take_close_fence(_stage_request(step=CommitmentStep.ATOMIC_COMMIT))
+        is None
+    )
+
+
+def test_the_fence_is_minted_under_the_step6_proposal_not_the_step9_request(
+    tmp_path: Path,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """review-1015 L1 — the stash carries step 6's proposal id, so the check can fail.
+
+    Before this binding, ``synthetic_close_fence`` copied the step-9 request's own id into the
+    fence and ``synthetic_close_fence_valid`` then compared that value with itself. Here step 9
+    arrives under a DIFFERENT proposal than the one step 6 credited, and gets nothing.
+    """
+    service = _granted_close(tmp_path, evidence_store, inbox, rcl_log)
+    other = StageRequest.model_construct(
+        step=CommitmentStep.ATOMIC_COMMIT,
+        instrument_key=_KEY,
+        proposal=Proposal.model_construct(proposal_id="prop-close-bound-OTHER"),
+        reference=OrderingEvent.model_construct(
+            event_id="root-event-close-bound", causal_predecessor_ids=()
+        ),
+        prior_verdicts=(),
+        attempt=None,
+        value_view=None,
+        held_position_magnitude=None,
+    )
+
+    assert service.take_close_fence(other) is None
