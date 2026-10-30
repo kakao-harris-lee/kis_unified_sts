@@ -371,6 +371,7 @@ sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payl
 sqlite3 -readonly $L/rcl.sqlite3 "SELECT seq,kind,substr(command_id,1,64) FROM entries WHERE kind IN ('ConsumeApprovalDecision','CommitReservation','ReleaseReservation') ORDER BY seq"
 ```
 - **신호가 없으면**(`SEND_SEALED` 0 · `FLOW_HALTED` 가 `INDEPENDENT_APPROVAL` 이전에서만 · `COORDINATOR_MESH_HELD` 0) 코드 실패가 아니다 — 수용은 다음 거래일로 넘어간다(새 세션 디렉터리 · 같은 잎).
+- **⛔ 세션일에는 같은 모의 계좌·005930 으로 취소 프로브(P-SC, `kis-capability-probes.md` §5.10)를 돌리지 않는다.** 그날 그 종목에 FILLED 가 아닌 주문이 한 건이라도 있으면 보유 증명(`_quantity_for_snapshot`)이 None 이 되어 그날 CLOSE 가 모두 UNKNOWN 이다(fail-closed · 송신 0 · 포지션은 다음 날로 넘어간다 — review-1007 L4, #1012). 프로브는 세션이 없는 날에 돌린다.
 - **되돌림.** 세션을 시작하지 않으면 끝이다 — LONG·SHORT·상주는 이 트리와 경로·키·잎을 공유하지 않는다. 송신을 막으려면 `$ST/cp3-setup-d-stock-custody/kis_mock.app_*` 를 지운다 — 부팅은 되지만 첫 토큰 사용(브로커 사실 GET·송신)이 거부돼 송신 0. 잎은 append-only 증거라 지우지 않는다.
 
 #### 7.2-g 개장 지연일(날짜별 세션 예외) — 수능일 등 (#924)
