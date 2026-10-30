@@ -169,7 +169,11 @@ def _held_position_request(
     today: str | None,
     instrument_key: InstrumentKey,
 ) -> tuple[WitnessScope | None, int | None, tuple[int, int | None] | None, int | None]:
-    """Capture the atomic RCL tip and invalidate/mark the one-use cache before FETCH."""
+    """Capture the atomic RCL tip and reserve the one-use cache's refresh token before FETCH.
+
+    Reserving the token does not burn the proof already cached — that is the cache's own rule
+    (issue #1010); it expires on its configured age, not on this plan.
+    """
     raw_tip = (
         None
         if not due or source.held_position_tip is None

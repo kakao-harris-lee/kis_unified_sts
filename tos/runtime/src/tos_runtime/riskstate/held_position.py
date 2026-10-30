@@ -3,9 +3,10 @@
 The balance requests themselves belong to the composition root's existing asynchronous fetch
 runner. That runner calls :meth:`publish` with two matching complete broker snapshots and the
 monotonic grant instants of both balance reads. The decision path calls :meth:`consume`, which
-never waits for I/O and burns a matching proof before returning it. An unavailable, pending,
-stale, cross-date, incomplete, synthetic, changed-view, or competing-order observation supplies
-no proof.
+never waits for I/O and burns a matching proof before returning it. An unavailable, stale,
+cross-date, incomplete, synthetic, changed-view, or competing-order observation supplies no
+proof. Scheduling the next read does not: a cached proof is held, under its own unchanged
+freshness bound, until a newer one replaces it or that refresh FAILS (issue #1010).
 
 KIS's current witness is stock-only and reports positive held quantities. It can prove a long
 holding (including a complete flat result of zero); it cannot prove a short holding. Futures and
@@ -306,6 +307,11 @@ class HeldPositionCell:
     read, then :meth:`publish` only after that read completes successfully. Exceptions,
     ``WitnessUnavailable``, and other failures should call :meth:`invalidate`. A decision
     consumes a proof synchronously; no broker request or wait occurs in :meth:`consume`.
+
+    Exactly four events end a cached proof: it is consumed, it ages past ``max_age_ms``
+    (checked at :meth:`consume` and again at :meth:`validate_consumed`, both against the one
+    configured bound), its refresh fails, or a newer proof replaces it. Merely scheduling
+    that refresh does not (issue #1010).
     """
 
     def __init__(
@@ -328,15 +334,21 @@ class HeldPositionCell:
         self._revision = 0
 
     def mark_pending(self, scope: WitnessScope | None = None) -> int:
-        """Burn cached proof and return the token this refresh must present to publish.
+        """Reserve the token this refresh must present to publish; keep what is cached.
 
         This cache holds one scope at a time. The token prevents a slow, older worker result
-        from replacing state from a newer refresh.
+        from replacing state from a newer refresh, and it alone orders publishes.
+
+        Issue #1010: scheduling a read is not evidence against the proof already held. Burning
+        it here emptied the cache for the whole worker window — four paced GETs, ~6.7 s to
+        publish against a 12 s cadence — so a CLOSE proposed in that hole spent its one
+        standing-approval use at step 4 and then read PROOF_UNAVAILABLE at step 6, and the
+        position stayed open. The retained reading keeps its own ``age_origin_ms``, so
+        :meth:`consume` still refuses it past ``max_age_ms``; a refresh that FAILS still burns
+        it (:meth:`reject`, :meth:`invalidate`, and the publish validation below).
         """
         with self._lock:
-            del scope  # Scope is carried back to publish; invalidation is cell-wide.
-            self._proof = None
-            self._consumed_proof = None
+            del scope  # Scope is carried back to publish; the token is cell-wide.
             self._revision += 1
             return self._revision
 
@@ -410,16 +422,16 @@ class HeldPositionCell:
         trusted date passed to ``KisStockBrokerWitness.observe(..., today=...)``. The scope is the
         base account/instrument scope with no attempt IDs; no attempt exists in broker evidence.
 
-        Invalid input clears any cached proof and returns ``False``. It never converts an
-        unavailable or malformed observation into a flat account.
+        Invalid input is a failed refresh: it clears any cached proof and returns ``False``. It
+        never converts an unavailable or malformed observation into a flat account. A superseded
+        or absent token is not this refresh's failure — it returns ``False`` and leaves the
+        cache untouched, so the proof in hand survives until this read answers (issue #1010).
         """
         if type(pending_token) is not int:
             return False
         with self._lock:
             if self._revision != pending_token:
                 return False
-            self._proof = None
-            self._consumed_proof = None
         instrument_key = _scope_instrument(scope)
         generation = scope.as_of_generation
         if (
