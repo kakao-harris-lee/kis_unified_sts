@@ -488,15 +488,66 @@ def test_stale_or_cross_date_snapshot_is_burned_and_unavailable() -> None:
     assert _consume(cell, _SCOPE, PositionSide.LONG) is None
 
 
-def test_pending_or_failed_refresh_invalidates_previous_proof() -> None:
-    cell, _ = _cell()
+def test_a_scheduled_refresh_keeps_the_previous_proof_until_a_newer_one_publishes() -> (
+    None
+):
+    """Issue #1010's failing input: a CLOSE proposed right after a new plan marked the
+    refresh pending. Burning the proof there left the cache empty for the ~6.7 s the four
+    paced GETs need, so that CLOSE spent its one standing-approval use and then read
+    PROOF_UNAVAILABLE. The retained reading keeps its own age origin; a newer publish
+    replaces it."""
+    cell, clock = _cell()
     assert _publish(cell)
 
-    cell.mark_pending()
+    cell.mark_pending(_SCOPE)  # the next plan; its paced GETs have not answered yet
+    clock.now = 1_300  # 400 ms into the refresh, inside the retained reading's 500 ms
+    proof = _consume(cell, _SCOPE, PositionSide.LONG)
+    assert proof is not None
+    assert proof.age_origin_ms == 900
+
+    assert _publish(cell, age_origin_ms=1_250, confirming_age_origin_ms=1_280)
+    replacing = _consume(cell, _SCOPE, PositionSide.LONG)
+    assert replacing is not None
+    assert replacing.age_origin_ms == 1_250
+
+
+def test_a_retained_proof_is_still_refused_once_it_is_past_max_age() -> None:
+    """Retention is not an extension: the bound is the reading's own age origin against the
+    one configured ``max_age_ms``, pending refresh or not."""
+    cell, clock = _cell()
+    assert _publish(cell)
+
+    cell.mark_pending(_SCOPE)
+    clock.now = 1_401  # 501 ms past the retained reading's age origin
+    assert _consume(cell, _SCOPE, PositionSide.LONG) is None
+
+
+def test_a_scheduled_refresh_keeps_a_proof_awaiting_its_commit_fence() -> None:
+    """The step-9 fence outlives the next plan too: only the consumed proof's own age, date
+    and tip may refuse it."""
+    cell, _ = _cell()
+    assert _publish(cell)
+    proof = _consume(cell, _SCOPE, PositionSide.LONG)
+    assert proof is not None
+
+    cell.mark_pending(_SCOPE)
+    assert cell.validate_consumed(proof) is not None
+
+
+def test_failed_refresh_invalidates_previous_proof() -> None:
+    cell, _ = _cell()
+    assert _publish(cell)
+    token = cell.mark_pending(_SCOPE)
+    assert cell.reject(token)
     assert _consume(cell, _SCOPE, PositionSide.LONG) is None
 
     assert _publish(cell)
     cell.invalidate()
+    assert _consume(cell, _SCOPE, PositionSide.LONG) is None
+
+    # A refresh that answers with an unusable snapshot is a failed refresh as well.
+    assert _publish(cell)
+    assert not _publish(cell, _snapshot(positions=()))
     assert _consume(cell, _SCOPE, PositionSide.LONG) is None
 
 

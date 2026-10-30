@@ -334,6 +334,64 @@ def _refuse_snapshot_age_below_two_intervals(
         )
 
 
+def _refuse_unreachable_held_position_age(
+    max_age_ms: int | None,
+    poll_interval_ms: int | None,
+    min_interval_ms: int,
+    path: Path,
+) -> None:
+    """Refuse a ``held_position_max_age_ms`` no refresh of that cache could ever satisfy.
+
+    The CLOSE proof is a DOUBLE read — balance plus today's order walk, twice — and every
+    request on the app key is ``min_send_interval_ms`` apart, so its four GETs are granted at
+    0, S, 2S and 3S from the age origin (the FIRST balance grant,
+    ``fill_fetch.SnapshotRead.age_origin_ms``). Below 3 x S the proof is already expired when it
+    is published, and no CLOSE ever gets one.
+
+    It must also outlive one ``held_position_poll_interval_ms`` **plus that same double read**:
+    the replacement is only PLANNED one poll period after this one, and from there it still
+    costs the four paced GETs before it can publish. So a bound below ``poll + 3 x S`` expires
+    before its successor exists, whatever the pacing. ``max_age == poll`` — #1010's own stock
+    tree, 12000/12000 under 2000 ms pacing — is refused by that floor at every S. Both are
+    floors, not a fit: the shipped bound adds the responses and one loop pass on top, so
+    successive windows overlap.
+
+    Incident (R5, issue #970): the sibling ``release_snapshot_max_age_ms`` was set to 2000 in
+    the stock MOCK tree, then #970 paced every app-key request 2000 ms apart — a release that
+    could never pass, with no error anywhere. This bound is aged from the same pacer grants,
+    one read longer, and its failure is quieter still: the empty half of the duty cycle in
+    issue #1010 cost a CLOSE its one standing-approval use at step 4 before step 6 could read
+    PROOF_UNAVAILABLE, and the position stayed open overnight. The first draft of this guard
+    (review-1014 r1 M1) compared against the poll period alone and so admitted 12000/12000 —
+    the very configuration it names. A guard has to refuse its own incident.
+
+    Raises:
+        FillObserverConfigError: ``max_age_ms`` below the double read's span, or below one poll
+            period plus that read. Absent bounds (no held-position cache on this boot) pass.
+    """
+    if max_age_ms is None or poll_interval_ms is None:
+        return
+    double_read_ms = 3 * min_interval_ms
+    if max_age_ms < double_read_ms:
+        raise FillObserverConfigError(
+            f"{path}: held_position_max_age_ms {max_age_ms} is shorter than the double read "
+            f"that refreshes it (3 x kis_mock_transport.yaml::min_send_interval_ms "
+            f"{min_interval_ms} = {double_read_ms}) — its four paced GETs would publish a "
+            "proof that is already expired and no CLOSE could ever hold one"
+        )
+    cycle_floor_ms = poll_interval_ms + double_read_ms
+    if max_age_ms < cycle_floor_ms:
+        raise FillObserverConfigError(
+            f"{path}: held_position_max_age_ms {max_age_ms} is shorter than one held-position "
+            f"poll period plus the double read that refreshes it "
+            f"(held_position_poll_interval_ms {poll_interval_ms} + 3 x "
+            f"kis_mock_transport.yaml::min_send_interval_ms {min_interval_ms} = "
+            f"{cycle_floor_ms}) — the proof would expire before its replacement could be "
+            "published, and a CLOSE proposed in that hole would spend its standing-approval "
+            "use before reading PROOF_UNAVAILABLE"
+        )
+
+
 def build_broker_posttrade(
     *,
     config_dir: Path,
@@ -357,6 +415,12 @@ def build_broker_posttrade(
     observer_config = load_fill_observer_config(path)
     _refuse_snapshot_age_below_two_intervals(
         observer_config.release_snapshot_max_age_ms,
+        transport_config.min_send_interval_ms,
+        path,
+    )
+    _refuse_unreachable_held_position_age(
+        observer_config.held_position_max_age_ms,
+        observer_config.held_position_poll_interval_ms,
         transport_config.min_send_interval_ms,
         path,
     )

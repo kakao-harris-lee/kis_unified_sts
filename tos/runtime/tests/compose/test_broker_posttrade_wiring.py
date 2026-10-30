@@ -19,7 +19,10 @@ from tos.brokercap import mock_order_without_position_or_cash
 from tos.engine.records import EgressResultPayload, InstrumentKey
 from tos.engine.vocabulary import EgressResultKind
 from tos_runtime.brokercap import load_broker_scopes
-from tos_runtime.compose._broker_posttrade_wiring import DeferredKisWitness
+from tos_runtime.compose._broker_posttrade_wiring import (
+    DeferredKisWitness,
+    _refuse_unreachable_held_position_age,
+)
 from tos_runtime.posttrade.broker_finality import BrokerFinalityProducer
 from tos_runtime.posttrade.config import FinalityConfig
 from tos_runtime.posttrade.fill_fetch import PrefetchedSnapshot, snapshot_key
@@ -121,6 +124,32 @@ def test_stock_mock_boot_refuses_a_real_tr_id(
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(KisWitnessConfigError, match="TTTC0081R"):
         _boot(tmp_path, config_dir, data_dir, custody_root)
+
+
+def test_the_shipped_held_position_bounds_clear_the_boot_floors() -> None:
+    """The shipped CLOSE-proof bounds clear both boot floors at the operator-approved pacing,
+    and ``max_age == poll`` — #1010's own tree — does not. review-1014 r1 M1: the first draft
+    of the guard compared against the poll period alone and admitted the configuration it
+    names, so this pins the floor the deployed tree actually has to clear."""
+    # kis_mock_transport.yaml is operator-deployed, not in this tree: this is the approved
+    # min_send_interval_ms that fill_observer.yaml's own derivation cites. The boot test in
+    # test_paced_release_snapshot.py reads the deployed file instead.
+    approved_interval_ms = 2_000
+    path = _STOCK / "fill_observer.yaml"
+    config = load_fill_observer_config(path)
+    max_age_ms = config.held_position_max_age_ms
+    poll_interval_ms = config.held_position_poll_interval_ms
+    assert max_age_ms is not None and poll_interval_ms is not None
+
+    _refuse_unreachable_held_position_age(
+        max_age_ms, poll_interval_ms, approved_interval_ms, path
+    )
+    with pytest.raises(
+        FillObserverConfigError, match="poll period plus the double read"
+    ):
+        _refuse_unreachable_held_position_age(
+            poll_interval_ms, poll_interval_ms, approved_interval_ms, path
+        )
 
 
 def test_the_committed_fill_observer_config_loads() -> None:
