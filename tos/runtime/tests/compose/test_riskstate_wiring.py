@@ -110,6 +110,7 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recon.ports import WitnessScope, WitnessSnapshot
+from tos_runtime.risk.ledger_stages import CloseProofCommitFence
 from tos_runtime.riskstate.close_bound import EntryCloseBound
 from tos_runtime.riskstate.flow_observation import (
     REPLAYS_DEFINITION,
@@ -641,7 +642,10 @@ class TestAggregateInputsFor:
         assert inputs is not None
         assert inputs.cells[0].max_credible_command_effect == Decimal("-60")
         fence = service.take_close_fence(request)
-        assert fence is not None
+        # The broker-held authority must mint the BROKER fence, never the synthetic one
+        # (#1011 made the return a union). Narrowing here is the assertion, not a formality:
+        # the three fields below exist only on `CloseProofCommitFence`.
+        assert isinstance(fence, CloseProofCommitFence)
         assert fence.proposal_id == "prop-1"
         assert fence.as_of_generation == 9
         assert fence.rcl_last_seq == 9
