@@ -17,6 +17,15 @@ owners" split):
   an Action Flow observation, plus the pure transforms onto the kernel's own
   ``ActionCause``/``ObservedAmplification`` shapes (DR-0003 §2.3).
 
+Two later additions sit alongside them, both about ONE question — how much of a CLOSE a
+deployment can prove is actually held:
+
+* :mod:`tos_runtime.riskstate.held_position` — the broker-held proof cell a KIS boot consumes
+  (#1004);
+* :mod:`tos_runtime.riskstate.close_bound` — the durable entry/proven-close bound a synthetic
+  boot rests on entirely and a KIS boot caps its holding with (#1011, #1012 L3), plus
+  :mod:`tos_runtime.riskstate.close_effect`, the pure audit/predicate helpers both share.
+
 Referenced design: ADR-002-021 §9/§12/ARE-INV-006, ADR-002-022 §5.8/§12, DR-0003 §2.2/§2.3.
 
 Firewall (R1, runtime scope): stdlib + ``pyyaml`` (transitively) + ``tos.*`` +

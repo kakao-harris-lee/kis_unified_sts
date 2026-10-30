@@ -52,6 +52,10 @@ from tos_runtime.compose._types import ConstructionConfig
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.riskstate.close_bound import (
+    CloseAuthoritySource,
+    EntryCloseBound,
+)
 from tos_runtime.riskstate.flow_observation import InboxFlowReader
 from tos_runtime.riskstate.held_position import (
     HeldPositionCurrentness,
@@ -282,9 +286,16 @@ def build_risk_state_service(
     held_position_currentness_reader: (
         Callable[[HeldPositionProof], HeldPositionCurrentness | None] | None
     ) = None,
+    close_authority: CloseAuthoritySource = CloseAuthoritySource.BROKER_HELD_PROOF,
+    entry_close_bound_reader: Callable[[], EntryCloseBound] | None = None,
 ) -> RiskStateService:
     """Load, activate, cross-check, and construct the production
     :class:`~tos_runtime.riskstate.service.RiskStateService` (module docstring).
+
+    ``close_authority`` is the boot's transport-kind decision about what a CLOSE's quantity
+    bound may rest on (#1011); ``entry_close_bound_reader`` supplies the durable entry/proven-
+    close magnitudes both authorities read. Neither is derived here — the composition root owns
+    the transport fact and passes it down, so this function never guesses from a config path.
 
     Raises:
         tos_runtime.riskstate.VenuePolicyConfigError: either policy YAML is missing/malformed.
@@ -338,6 +349,8 @@ def build_risk_state_service(
         attempt_arm_direction_reader=attempt_arm_direction_reader,
         held_position_proof_reader=held_position_proof_reader,
         held_position_currentness_reader=held_position_currentness_reader,
+        close_authority=close_authority,
+        entry_close_bound_reader=entry_close_bound_reader,
         activated_member_digests=(are_digest, afg_digest),
     )
 

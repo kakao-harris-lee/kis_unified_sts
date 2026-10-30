@@ -110,6 +110,8 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recon.ports import WitnessScope, WitnessSnapshot
+from tos_runtime.risk.ledger_stages import CloseProofCommitFence
+from tos_runtime.riskstate.close_bound import EntryCloseBound
 from tos_runtime.riskstate.flow_observation import (
     REPLAYS_DEFINITION,
     FlowObservation,
@@ -335,6 +337,7 @@ def _service(
     held_position_currentness_reader: (
         Callable[[HeldPositionProof], HeldPositionCurrentness | None] | None
     ) = None,
+    entry_close_bound_reader: Callable[[], EntryCloseBound] | None = None,
 ) -> RiskStateService:
     are_path = tmp_path / "aggregate_risk_policy.yaml"
     are_path.write_text(
@@ -387,6 +390,7 @@ def _service(
         attempt_arm_direction_reader=attempt_arm_direction_reader,
         held_position_proof_reader=held_position_proof_reader,
         held_position_currentness_reader=held_position_currentness_reader,
+        entry_close_bound_reader=entry_close_bound_reader,
         activated_member_digests=("are-activation-digest", "afg-activation-digest"),
     )
 
@@ -604,6 +608,21 @@ class TestAggregateInputsFor:
         construction = CandidateConstruction.model_construct(
             derivation=QuantityDerivation.model_construct(quantity=Decimal("60"))
         )
+        # Since #1012 L3 the broker holding is only ONE of the two caps: the close must
+        # also fit what remains of the TOS entry, so this suite's proof-cell test states that
+        # entry explicitly (80 bought by TOS, nothing closed yet). The durable derivation of
+        # this pair is covered in ``tests/riskstate/test_close_bound.py``.
+        entry_bound = EntryCloseBound(
+            account=_ACCOUNT,
+            instrument=_INSTRUMENT,
+            entry_reservation_id="resv-riskstate-wiring-entry",
+            entry_attempt_id="attempt-riskstate-wiring-entry",
+            entry_quantity=Decimal("80"),
+            prior_closed=Decimal("0"),
+            rcl_writer_epoch=2,
+            rcl_last_seq=9,
+            refusal=None,
+        )
         service = _service(
             tmp_path,
             evidence_store,
@@ -614,6 +633,7 @@ class TestAggregateInputsFor:
             attempt_arm_direction_reader=lambda: PositionSide.LONG.value,
             held_position_proof_reader=consume_proof,
             held_position_currentness_reader=cell.validate_consumed,
+            entry_close_bound_reader=lambda: entry_bound,
         )
 
         request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
@@ -622,7 +642,10 @@ class TestAggregateInputsFor:
         assert inputs is not None
         assert inputs.cells[0].max_credible_command_effect == Decimal("-60")
         fence = service.take_close_fence(request)
-        assert fence is not None
+        # The broker-held authority must mint the BROKER fence, never the synthetic one
+        # (#1011 made the return a union). Narrowing here is the assertion, not a formality:
+        # the three fields below exist only on `CloseProofCommitFence`.
+        assert isinstance(fence, CloseProofCommitFence)
         assert fence.proposal_id == "prop-1"
         assert fence.as_of_generation == 9
         assert fence.rcl_last_seq == 9

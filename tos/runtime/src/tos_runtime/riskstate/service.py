@@ -114,11 +114,28 @@ from tos.venue import ActionClass
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.reservation_identity import scope_reservation_id
-from tos_runtime.recon.ports import WitnessScope
 from tos_runtime.risk.aggregate import AggregateRiskDecisionInputs
 from tos_runtime.risk.close_quantity import close_within_entry
 from tos_runtime.risk.flow import ActionFlowDecisionInputs
-from tos_runtime.risk.ledger_stages import CloseProofCommitFence
+from tos_runtime.risk.ledger_stages import (
+    CloseProofCommitFence,
+    SyntheticCloseEntryFence,
+)
+from tos_runtime.riskstate.close_bound import (
+    CloseAuthoritySource,
+    CloseBoundRefusal,
+    EntryCloseBound,
+    synthetic_close_effect,
+    synthetic_close_fence,
+)
+from tos_runtime.riskstate.close_effect import (
+    ABSENT_BOUND_FIELD,
+    PROOF_BEARING_STATUSES,
+    close_effect_audit,
+    close_proof_matches,
+    refused_bound,
+    tightest_cap,
+)
 from tos_runtime.riskstate.flow_observation import (
     FlowObservation,
     InboxFlowReader,
@@ -237,12 +254,18 @@ class RiskStateService:
         held_position_currentness_reader: (
             Callable[[HeldPositionProof], HeldPositionCurrentness | None] | None
         ) = None,
+        close_authority: CloseAuthoritySource = CloseAuthoritySource.BROKER_HELD_PROOF,
+        entry_close_bound_reader: Callable[[], EntryCloseBound] | None = None,
     ) -> None:
         """Compose injected policy/readers and append the two boot policy-bound events.
 
         The optional CLOSE readers consume and revalidate the one-use held-position proof.
-        Without them, or when any proof input is unavailable, CLOSE remains UNKNOWN. Other
-        argument contracts follow the named runtime ports and the module-level plan references.
+        Without them, or when any proof input is unavailable, CLOSE remains UNKNOWN.
+        ``close_authority`` selects which bound a CLOSE rests on (#1011 — the composition root
+        derives it from the boot's transport kind), and ``entry_close_bound_reader`` supplies
+        the durable entry/proven-close magnitudes BOTH authorities need: the synthetic one as
+        its whole bound, the broker one as the extra TOS-entry cap (#1012 L3). Other argument
+        contracts follow the named runtime ports and the module-level plan references.
         """
         self._are_policy = are_policy
         self._afg_policy = afg_policy
@@ -266,8 +289,13 @@ class RiskStateService:
         self._attempt_arm_direction_reader = attempt_arm_direction_reader
         self._held_position_proof_reader = held_position_proof_reader
         self._held_position_currentness_reader = held_position_currentness_reader
+        self._close_authority = close_authority
+        self._entry_close_bound_reader = entry_close_bound_reader
         self._close_proof_lock = Lock()
         self._close_fence_proof: HeldPositionProof | None = None
+        #: The step-6 synthetic bound and the quantity it admitted, held for the step-9 fence
+        #: exactly as ``_close_fence_proof`` holds the broker-held one — one use, per attempt.
+        self._close_fence_bound: tuple[str, EntryCloseBound, Decimal] | None = None
         self._envelope_max = _envelope_max_vector(are_policy, hse_envelope)
         self._snapshot_seq = 0
         self._observation_seq = 0
@@ -419,90 +447,8 @@ class RiskStateService:
             record_class=_OBSERVED_KIND,
         )
 
-    @staticmethod
-    def _close_proof_matches(
-        proof: HeldPositionProof, request: StageRequest, direction: str | None
-    ) -> bool:
-        """Check the consumed value is bound to this proposal, instrument, side, and tip."""
-        if direction not in (PositionSide.LONG.value, PositionSide.SHORT.value):
-            return False
-        proposal_id = getattr(request.proposal, "proposal_id", None)
-        return (
-            type(proof) is HeldPositionProof
-            and type(proof.scope) is WitnessScope
-            and proof.scope.account == request.instrument_key.account
-            and proof.scope.instrument_keys == (request.instrument_key,)
-            and proof.scope.attempt_ids == ()
-            and type(proof.scope.as_of_generation) is int
-            and type(proposal_id) is str
-            and proof.proposal_id == proposal_id
-            and type(proof.observed_at_generation) is int
-            and proof.scope.as_of_generation == proof.observed_at_generation
-            and type(proof.rcl_tip) is RclTip
-            and proof.rcl_tip.last_seq == proof.observed_at_generation
-            and proof.side is PositionSide(direction)
-            and type(proof.held_quantity) is Decimal
-            and proof.held_quantity.is_finite()
-            and proof.held_quantity > 0
-            and proof.provenance == "kis-mock-stock"
-            and type(proof.trading_date) is str
-            and type(proof.age_origin_ms) is int
-            and proof.age_origin_ms >= 0
-            and type(proof.max_age_ms) is int
-            and proof.max_age_ms > 0
-        )
-
-    @staticmethod
-    def _close_effect_audit(
-        direction: str | None,
-        status: str,
-        proof: HeldPositionProof | None,
-        effect: Decimal | None,
-    ) -> dict[str, object]:
-        """Return bounded proof metadata for the durable risk observation row."""
-        accepted_proof = (
-            proof
-            if status
-            in (
-                "PROOF_ACCEPTED",
-                "QUANTITY_EXCEEDS_HELD",
-                "QUANTITY_UNKNOWN",
-            )
-            else None
-        )
-        tip = None if accepted_proof is None else accepted_proof.rcl_tip
-        return {
-            "direction": direction,
-            "proof_status": status,
-            "proof_provenance": (
-                None if accepted_proof is None else accepted_proof.provenance
-            ),
-            "held_quantity": (
-                None if accepted_proof is None else str(accepted_proof.held_quantity)
-            ),
-            "proof_trading_date": (
-                None if accepted_proof is None else accepted_proof.trading_date
-            ),
-            "proof_age_origin_ms": (
-                None if accepted_proof is None else accepted_proof.age_origin_ms
-            ),
-            "proof_max_age_ms": (
-                None if accepted_proof is None else accepted_proof.max_age_ms
-            ),
-            "proof_generation": (
-                None
-                if accepted_proof is None
-                else accepted_proof.observed_at_generation
-            ),
-            "proof_rcl_writer_epoch": None if tip is None else tip.writer_epoch,
-            "proof_rcl_last_seq": None if tip is None else tip.last_seq,
-            "max_credible_command_effect": str(effect) if effect is not None else None,
-        }
-
-    def _read_close_proof(
-        self, request: StageRequest
-    ) -> tuple[str | None, HeldPositionProof | None, str]:
-        """Consume one cache proof for the selected AttemptArm's held side."""
+    def _arm_direction(self) -> tuple[str | None, str | None]:
+        """The side token step 2's selected arm carries, or a fail-closed audit status."""
         try:
             direction = (
                 None
@@ -510,13 +456,22 @@ class RiskStateService:
                 else self._attempt_arm_direction_reader()
             )
         except Exception:  # noqa: BLE001 - direction failures fail closed
-            return None, None, "DIRECTION_ERROR"
+            return None, "DIRECTION_ERROR"
         if direction not in (PositionSide.LONG.value, PositionSide.SHORT.value):
-            return direction, None, "DIRECTION_UNAVAILABLE"
+            return direction, "DIRECTION_UNAVAILABLE"
+        return direction, None
+
+    def _read_close_proof(
+        self, request: StageRequest
+    ) -> tuple[str | None, HeldPositionProof | None, str]:
+        """Consume one cache proof for the selected AttemptArm's held side."""
+        direction, failure = self._arm_direction()
+        if failure is not None:
+            return direction, None, failure
         if self._held_position_proof_reader is None:
             return direction, None, "PROVIDER_NOT_CONFIGURED"
         try:
-            proof = self._held_position_proof_reader(request, direction)
+            proof = self._held_position_proof_reader(request, str(direction))
         except Exception:  # noqa: BLE001 - provider failures cannot grant risk credit
             return direction, None, "PROVIDER_ERROR"
         return (
@@ -525,15 +480,60 @@ class RiskStateService:
             "PROOF_UNAVAILABLE" if proof is None else "PROOF_INVALID",
         )
 
+    def _read_entry_bound(self) -> EntryCloseBound:
+        """The durable open-entry bound of this scope, or a typed refusal (#1011)."""
+        if self._entry_close_bound_reader is None:
+            return refused_bound(CloseBoundRefusal.READER_NOT_CONFIGURED)
+        try:
+            bound = self._entry_close_bound_reader()
+        except Exception:  # noqa: BLE001 - a reader failure cannot grant risk credit
+            return refused_bound(CloseBoundRefusal.READER_UNUSABLE)
+        if type(bound) is not EntryCloseBound:
+            return refused_bound(CloseBoundRefusal.READER_UNUSABLE)
+        return bound
+
     def _close_command_effect(
         self, request: StageRequest, proposed: Decimal | None
     ) -> tuple[Decimal | None, dict[str, object]]:
-        """Consume the current attempt's proof before deriving risk credit."""
+        """Derive this CLOSE's risk credit under the boot's own close authority (#1011)."""
         with self._close_proof_lock:
             self._close_fence_proof = None
+            self._close_fence_bound = None
+        bound = self._read_entry_bound()
+        if self._close_authority is CloseAuthoritySource.DURABLE_EVIDENCE:
+            return self._synthetic_close_effect(request, proposed, bound)
+        return self._broker_close_effect(request, proposed, bound)
+
+    def _synthetic_close_effect(
+        self, request: StageRequest, proposed: Decimal | None, bound: EntryCloseBound
+    ) -> tuple[Decimal | None, dict[str, object]]:
+        """SYNTHETIC transport: the durable evidence store is the broker (#1011)."""
+        direction, failure = self._arm_direction()
+        if failure is not None:
+            return None, close_effect_audit(direction, failure, None, None, bound=bound)
+        effect, status = synthetic_close_effect(bound, proposed)
+        # The STEP-6 proposal id travels with the stash, exactly as the broker path carries
+        # `proof.proposal_id` (review-1015 L1). Without it `synthetic_close_fence` would copy
+        # step 9's own id into the fence and `synthetic_close_fence_valid` would compare that
+        # value with itself — a check that cannot fail is not a check.
+        proposal_id = getattr(request.proposal, "proposal_id", None)
+        if effect is not None and proposed is not None and type(proposal_id) is str:
+            with self._close_proof_lock:
+                self._close_fence_bound = (proposal_id, bound, proposed)
+        return effect, close_effect_audit(direction, status, None, effect, bound=bound)
+
+    def _broker_close_effect(
+        self, request: StageRequest, proposed: Decimal | None, bound: EntryCloseBound
+    ) -> tuple[Decimal | None, dict[str, object]]:
+        """KIS stock: the broker holding, capped by what remains of the TOS entry (#1012 L3).
+
+        The cap is ``min(held, entry - proven closes)``. Before it, a scope holding shares
+        bought outside TOS admitted a close of the whole holding; the entry then refused to
+        discharge (``CLOSED_OVER_ENTRY``) and the scope sealed itself.
+        """
         direction, proof, status = self._read_close_proof(request)
         effect: Decimal | None = None
-        proof_matches = type(proof) is HeldPositionProof and self._close_proof_matches(
+        proof_matches = type(proof) is HeldPositionProof and close_proof_matches(
             proof, request, direction
         )
         held_quantity = (
@@ -542,7 +542,7 @@ class RiskStateService:
             else None
         )
         bounded = close_within_entry(
-            entry=held_quantity,
+            entry=tightest_cap(held_quantity, bound.remaining),
             closed=Decimal(0),
             proposed=proposed,
         )
@@ -559,17 +559,21 @@ class RiskStateService:
         if effect is not None and type(proof) is HeldPositionProof:
             with self._close_proof_lock:
                 self._close_fence_proof = proof
-        return effect, self._close_effect_audit(direction, status, proof, effect)
+        return effect, close_effect_audit(direction, status, proof, effect, bound=bound)
 
-    def take_close_fence(self, request: StageRequest) -> CloseProofCommitFence | None:
-        """Consume step 6's exact CLOSE proof for the step-9 RCL commit fence."""
+    def take_close_fence(
+        self, request: StageRequest
+    ) -> CloseProofCommitFence | SyntheticCloseEntryFence | None:
+        """Consume step 6's exact CLOSE bound/proof for the step-9 RCL commit fence."""
+        if self._close_authority is CloseAuthoritySource.DURABLE_EVIDENCE:
+            return self._synthetic_close_fence(request)
         proposal_id = getattr(request.proposal, "proposal_id", None)
         with self._close_proof_lock:
             proof = self._close_fence_proof
             self._close_fence_proof = None
         if type(proof) is not HeldPositionProof or type(proposal_id) is not str:
             return None
-        if not self._close_proof_matches(proof, request, proof.side.value):
+        if not close_proof_matches(proof, request, proof.side.value):
             return None
         if self._held_position_currentness_reader is None:
             return None
@@ -613,6 +617,31 @@ class RiskStateService:
             current_now_ms=currentness.current_now_ms,
             current_trading_date=currentness.current_trading_date,
             max_age_ms=proof.max_age_ms,
+        )
+
+    def _synthetic_close_fence(
+        self, request: StageRequest
+    ) -> SyntheticCloseEntryFence | None:
+        """Re-read the durable bound step 6 granted against, and fence step 9 on it (#1011).
+
+        The synthetic counterpart of the broker-held currentness recheck above: a SECOND,
+        independent read of the RCL + evidence store, required to name the same entry with the
+        same magnitudes at a tip no older. The fence then carries that re-read tip, which step 9
+        pins its CAS to. The stashed STEP-6 proposal id is what the fence is minted under
+        (review-1015 L1), so step 9 compares its own request against a value step 6 wrote.
+        """
+        with self._close_proof_lock:
+            stashed = self._close_fence_bound
+            self._close_fence_bound = None
+        if stashed is None:
+            return None
+        proposal_id, bound, proposed = stashed
+        return synthetic_close_fence(
+            request,
+            bound=bound,
+            current=self._read_entry_bound(),
+            proposed=proposed,
+            granted_proposal_id=proposal_id,
         )
 
     def aggregate_inputs_for(
@@ -662,12 +691,14 @@ class RiskStateService:
             )
             if value is None
         )
-        if close_effect is not None and close_effect["proof_status"] not in (
-            "PROOF_ACCEPTED",
-            "QUANTITY_EXCEEDS_HELD",
-            "QUANTITY_UNKNOWN",
+        if (
+            close_effect is not None
+            and close_effect["proof_status"] not in PROOF_BEARING_STATUSES
         ):
-            absent_fields = (*absent_fields, "held_position_proof")
+            absent_fields = (
+                *absent_fields,
+                ABSENT_BOUND_FIELD[self._close_authority],
+            )
         self._record_observation(
             attempt_id=grant_identity,
             position_obs=position_obs,

@@ -134,6 +134,7 @@ from tos_runtime.risk.ledger_stages import (
     CloseProofCommitFence,
     CommitmentUnavailabilityStage,
     LedgerVerificationStage,
+    SyntheticCloseEntryFence,
 )
 from tos_runtime.strategy.resolve import (
     ResolvedStrategyRegistry,
@@ -715,7 +716,9 @@ def _build_realized_stages(
     action_flow_inputs_provider: Callable[
         [StageRequest], ActionFlowDecisionInputs | None
     ],
-    close_proof_fence_reader: Callable[[StageRequest], CloseProofCommitFence | None],
+    close_proof_fence_reader: Callable[
+        [StageRequest], CloseProofCommitFence | SyntheticCloseEntryFence | None
+    ],
     custody_root: Path,
     environment_label: str,
     uid: int,

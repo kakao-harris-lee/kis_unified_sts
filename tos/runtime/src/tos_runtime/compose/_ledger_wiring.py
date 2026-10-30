@@ -26,6 +26,7 @@ from tos_runtime.risk.ledger_stages import (
     CloseProofCommitFence,
     CommitmentUnavailabilityStage,
     LedgerVerificationStage,
+    SyntheticCloseEntryFence,
 )
 
 
@@ -39,7 +40,9 @@ def _build_ledger_stages(
     economic_stage: EconomicEffectStage,
     generation_provider: Callable[[StageRequest], int],
     time_gate: Callable[[], bool],
-    close_proof_fence_reader: Callable[[StageRequest], CloseProofCommitFence | None],
+    close_proof_fence_reader: Callable[
+        [StageRequest], CloseProofCommitFence | SyntheticCloseEntryFence | None
+    ],
 ) -> tuple[LedgerVerificationStage, VerdictRecorder, CommitmentUnavailabilityStage]:
     """Wire steps 8 (Ledger Verification), 9 (Atomic Commit) and 10
     (Commitment Unavailability).

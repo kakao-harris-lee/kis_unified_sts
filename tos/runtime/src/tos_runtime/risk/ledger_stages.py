@@ -115,11 +115,8 @@ injected callable.
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from datetime import datetime
 from typing import Protocol
 
 from tos.afg import ActionFlowPermit
@@ -152,6 +149,13 @@ from tos_runtime.rcl.projection import (
 )
 from tos_runtime.rcl.reservation_identity import reservation_id_in_scope
 from tos_runtime.risk.aggregate import AggregateRiskDecisionInputs, AggregateRiskService
+from tos_runtime.risk.close_fence import (
+    CloseProofCommitFence,
+    SyntheticCloseEntryFence,
+    close_proof_fence_matches_request,
+    close_proof_fence_matches_view,
+    synthetic_close_fence_valid,
+)
 from tos_runtime.risk.flow import (
     ActionFlowDecisionInputs,
     ActionFlowGovernor,
@@ -166,7 +170,9 @@ __all__ = [
     "CloseProofCommitFence",
     "CommitmentUnavailabilityStage",
     "LedgerVerificationStage",
+    "SyntheticCloseEntryFence",
     "item15_fields",
+    "synthetic_close_fence_valid",
     "verdict_for_scope",
 ]
 
@@ -199,7 +205,14 @@ GenerationProvider = Callable[[StageRequest], int]
 #: #972: the current attempt's step-5 Economic Effect Envelope (``tos.ioc.EconomicEffectEnvelope``
 #: is :class:`~tos.rcl.CapacityVector` itself), or ``None`` when step 5 derived none.
 EffectEnvelopeReader = Callable[[], CapacityVector | None]
-CloseProofFenceProvider = Callable[[StageRequest], "CloseProofCommitFence | None"]
+#: Either step-6 CLOSE fence a composition can hand step 9 — the broker-held proof fence a KIS
+#: stock boot consumes, or the synthetic bound fence a ``SYNTHETIC_FUTURES_ORDER`` boot derives
+#: from its own durable evidence (#1011). Which one a boot produces is decided once, at the
+#: composition root, by transport kind; this stage dispatches on the record's exact type and
+#: never widens either one's checks to cover the other.
+CloseProofFenceProvider = Callable[
+    [StageRequest], "CloseProofCommitFence | SyntheticCloseEntryFence | None"
+]
 
 
 #: The two ``AttemptArm.position_effect`` tokens step 8 admits (#966) — the same spellings
@@ -207,43 +220,6 @@ CloseProofFenceProvider = Callable[[StageRequest], "CloseProofCommitFence | None
 #: ``tos_runtime.compose._attempt_shape`` selects by.
 _OPEN_EFFECT = "OPEN"
 _CLOSE_EFFECT = "CLOSE"
-_CLOSE_PROOF_DATE = re.compile(r"[0-9]{8}")
-
-
-@dataclass(frozen=True)
-class CloseProofCommitFence:
-    """The step-6 CLOSE proof facts step 9 must bind and revalidate before commit.
-
-    The composition root builds this from the exact consumed held-position proof and the same
-    trusted clock/configuration used to validate that proof. Keeping this runtime-only record
-    local to the stage avoids introducing a kernel type or import edge.
-    """
-
-    proposal_id: str
-    account: str
-    instrument: str
-    attempt_ids: tuple[str, ...]
-    as_of_generation: int
-    observed_at_generation: int
-    trading_date: str
-    age_origin_ms: int
-    rcl_writer_epoch: int
-    rcl_last_seq: int | None
-    verified_rcl_writer_epoch: int
-    verified_rcl_last_seq: int | None
-    current_now_ms: int
-    current_trading_date: str | None
-    max_age_ms: int
-
-
-def _valid_close_proof_date(value: object) -> bool:
-    """Accept only a real Gregorian ``YYYYMMDD`` trading date."""
-    if not isinstance(value, str) or _CLOSE_PROOF_DATE.fullmatch(value) is None:
-        return False
-    try:
-        return datetime.strptime(value, "%Y%m%d").strftime("%Y%m%d") == value
-    except ValueError:
-        return False
 
 
 def _verdict(step: CommitmentStep, outcome: StageOutcome, reason: str) -> StageVerdict:
@@ -649,70 +625,6 @@ class AtomicCommitStage:
             committed_vector=committed_vector,
         )
 
-    def _close_fence_matches_request(
-        self, fence: CloseProofCommitFence, request: StageRequest
-    ) -> bool:
-        """Validate the consumed step-6 proof's exact scope and currentness fields."""
-        proposal_id = getattr(request.proposal, "proposal_id", None)
-        if (
-            type(proposal_id) is not str
-            or not proposal_id
-            or type(fence.proposal_id) is not str
-            or fence.proposal_id != proposal_id
-            or type(fence.account) is not str
-            or fence.account != request.instrument_key.account
-            or type(fence.instrument) is not str
-            or fence.instrument != request.instrument_key.instrument
-            or type(fence.attempt_ids) is not tuple
-            or fence.attempt_ids != ()
-        ):
-            return False
-        if (
-            type(fence.as_of_generation) is not int
-            or fence.as_of_generation < 0
-            or type(fence.observed_at_generation) is not int
-            or fence.observed_at_generation != fence.as_of_generation
-            or type(fence.rcl_last_seq) is not int
-            or fence.rcl_last_seq < 0
-            or fence.as_of_generation != fence.rcl_last_seq
-        ):
-            return False
-        if (
-            not _valid_close_proof_date(fence.trading_date)
-            or not _valid_close_proof_date(fence.current_trading_date)
-            or fence.current_trading_date != fence.trading_date
-        ):
-            return False
-        if (
-            type(fence.age_origin_ms) is not int
-            or fence.age_origin_ms < 0
-            or type(fence.current_now_ms) is not int
-            or fence.current_now_ms < fence.age_origin_ms
-            or type(fence.max_age_ms) is not int
-            or fence.max_age_ms <= 0
-            or fence.current_now_ms - fence.age_origin_ms > fence.max_age_ms
-        ):
-            return False
-        return not (
-            type(fence.rcl_writer_epoch) is not int
-            or fence.rcl_writer_epoch < 0
-            or type(fence.verified_rcl_writer_epoch) is not int
-            or fence.verified_rcl_writer_epoch != fence.rcl_writer_epoch
-            or type(fence.verified_rcl_last_seq) is not int
-            or fence.verified_rcl_last_seq < fence.rcl_last_seq
-        )
-
-    def _close_fence_matches_view(
-        self, fence: CloseProofCommitFence, view: LogView
-    ) -> bool:
-        """Require both the proof's RCL epoch and tip to match step 9's linearizable read."""
-        return (
-            fence.rcl_writer_epoch == self._writer_epoch
-            and fence.verified_rcl_writer_epoch == self._writer_epoch
-            and view.epoch == fence.verified_rcl_writer_epoch
-            and view.last_seq == fence.verified_rcl_last_seq
-        )
-
     def _expected_seq(
         self,
         request: StageRequest,
@@ -736,17 +648,30 @@ class AtomicCommitStage:
                 CommitmentStep.ATOMIC_COMMIT,
                 f"step-6 CLOSE proof fence unavailable: {type(exc).__name__}",
             )
+        if type(fence) is SyntheticCloseEntryFence:
+            if not synthetic_close_fence_valid(
+                fence, request, writer_epoch=self._writer_epoch, view=view
+            ):
+                return _unknown(
+                    CommitmentStep.ATOMIC_COMMIT,
+                    "step-6 synthetic CLOSE bound is not current for this exact "
+                    "scope/proposal, does not fit the proven entry, or was read at "
+                    "another RCL revision",
+                )
+            return fence.rcl_last_seq
         if type(fence) is not CloseProofCommitFence:
             return _unknown(
                 CommitmentStep.ATOMIC_COMMIT,
                 "step-6 CLOSE proof fence is missing or has an invalid type",
             )
-        if not self._close_fence_matches_request(fence, request):
+        if not close_proof_fence_matches_request(fence, request):
             return _unknown(
                 CommitmentStep.ATOMIC_COMMIT,
                 "step-6 CLOSE proof fence is not current for this exact scope/proposal",
             )
-        if not self._close_fence_matches_view(fence, view):
+        if not close_proof_fence_matches_view(
+            fence, writer_epoch=self._writer_epoch, view=view
+        ):
             return _unknown(
                 CommitmentStep.ATOMIC_COMMIT,
                 "RCL epoch/tip changed since the step-6 CLOSE proof was observed",

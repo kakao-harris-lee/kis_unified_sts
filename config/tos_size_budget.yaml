@@ -352,11 +352,12 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1178
+  measured: 1181
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-30 #1011 synthetic CLOSE fence 재등재 1178→1181(+3)**: step 9 fence 리더 타입이 `CloseProofCommitFence | SyntheticCloseEntryFence | None` 로 넓어져 주석 아닌 애노테이션만 3줄이 됐다(import 1줄 + 애노테이션 줄바꿈 2줄). 판정은 `risk/close_fence.py`·`risk/ledger_stages.py` 에 있고 이 모듈은 타입만 관통한다.
     **#975/#1004 분해 1228→1178**: step 8–10 결선을 별도 모듈로 옮겨 CLOSE 증거 fence 배선을 추가하면서 기존 모듈 크기를 줄임.
     **2026-10-29 #984 CLOSE 부호 전달 재등재 1227→1228(+1)**: step 9 가 step 8 과 같은 `attempt_position_effect(construction_stage)` 를 읽어 CLOSE committed vector 를 음수 노출로 기록.
     **2026-10-28 #972 step 9 committed vector 재등재 1224→1227(+3)**: `_build_ledger_stages` 에 `economic_stage` 매개변수 1줄 + 호출부 전달 1줄 + step 9 `AtomicCommitStage` 의 `effect_envelope_reader=lambda: economic_stage.envelope` 1줄. 봉투를 committed vector 로 기록하는 판단·UNKNOWN 처분은 `risk/ledger_stages.py`(`AtomicCommitStage._transition`) 에 있다.
@@ -758,11 +759,12 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 488
+  measured: 498
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-30 #1011 CLOSE 수량 상한 원천 재등재 488→498(+10)**: `build_risk_state_service(...)` 에 `close_authority=_close_authority_for(transport_kind)` 1줄(주석 2줄) + `entry_close_bound_reader=DurableEntryCloseBoundReader(...).read` 7줄. 전송 종류→상한 원천의 판단 자체는 모듈 수준 `_close_authority_for` 로 빼 함수 밖에 두었고, 여기 남은 것은 결선뿐이다(synthetic 트리는 브로커가 없어 증거 저장소가 곧 브로커 — 결선 순서는 root.py 에서만 표현된다). 호출 시퀀스 무변경.
     **#975/#1004 분해 490→488**: 위험 상태 제공자와 CLOSE 증거 fence 결선을 별도 모듈로 옮김.
     **2026-10-27 #960 CLOSE 제안의 SIDE 재등재 487→490(+3)**: `build_risk_state_service(action_class_reader=...)` 인자 3줄 — step 7 이 boot action class 가 아니라 step 2 가 고른 이 시도의 action class 로 판정해야 한다(CLOSE 는 ORDINARY_REDUCE_OR_EXIT). 읽기 자체는 `compose/_attempt_arm.py::attempt_action_class`. 호출 시퀀스 무변경.
     **2026-10-24 standing session approval 재등재 479→487(+8)**: `_build_realized_stages(standing=build_standing_approval(...))` 호출 인자 — 조립은 신설 `compose/_standing_wiring.py`.
