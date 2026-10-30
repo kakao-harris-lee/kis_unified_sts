@@ -91,7 +91,25 @@ prior_day_poll_interval_ms: 600000
 # 2000 this replaced was exactly that "always expired" combination once #970 paced the GETs.
 release_snapshot_max_age_ms: 6000
 
-# Separate bounds for the one-use pretrade holdings proof. Both account for
-# paced balance and order inquiries; stale or missing snapshots block CLOSE.
+# Separate bounds for the one-use pretrade holdings proof. Both account for paced balance and
+# order inquiries; a stale or missing proof blocks CLOSE.
+#
+# The proof is a DOUBLE read — balance + today's order walk, twice — and every request on the
+# app key is kis_mock_transport.yaml::min_send_interval_ms (2000) apart, so its four GETs are
+# granted at 0 / 2000 / 4000 / 6000 ms from the age origin (the FIRST balance grant) and the
+# last answers in ~0.2 s (P-11 2026-08-05): one read window ≈ 6.2 s, published one loop pass
+# later (marketfeed.yaml poll_interval_ms 400 + journal_pass_allowance_ms 100) at ≈ 6.7 s.
+#
+# max_age must therefore OUTLIVE one poll period plus that window, or the two validity windows
+# do not overlap and the cache is empty for the rest of the cycle. 12000 = 12000 was exactly
+# that (issue #1010): a proof existed ~45% of the time, and a CLOSE proposed in the hole spent
+# its one standing-approval use at step 4 before step 6 could read PROOF_UNAVAILABLE, leaving
+# the position open overnight. 12000 (poll) + 500 (a plan is only due on a loop pass) + 6700
+# (read window to publish) = 19200, so 20000 leaves ~800 ms of jitter and each proof's validity
+# overlaps its successor's by ~1.3 s. Raising the poll interval means raising this with it.
+# A proof is still refused once it is past this age — the one bound every freshness check on
+# it reads — and a FAILED refresh still burns it; only the next plan no longer does (#1010).
+# Compose refuses the boot below 3 x min_send_interval_ms (the double read's own span, the
+# #970 pacing trap its release sibling fell into) or below the poll interval.
 held_position_poll_interval_ms: 12000
-held_position_max_age_ms: 12000
+held_position_max_age_ms: 20000
