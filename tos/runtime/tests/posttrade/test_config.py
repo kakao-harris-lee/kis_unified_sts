@@ -189,9 +189,7 @@ def test_the_shipped_example_file_carries_no_witness_key() -> None:
     ledger on for every tree created after it — the exact "merging an ON value switches it on
     early" failure the plan's deploy note calls out.
     """
-    example = (
-        Path(__file__).resolve().parents[2] / "config" / "finality.example.yaml"
-    )
+    example = Path(__file__).resolve().parents[2] / "config" / "finality.example.yaml"
     raw = yaml.safe_load(example.read_text(encoding="utf-8"))
     assert "witness" not in raw
     assert "witness: synthetic_venue_ledger" in example.read_text(encoding="utf-8")

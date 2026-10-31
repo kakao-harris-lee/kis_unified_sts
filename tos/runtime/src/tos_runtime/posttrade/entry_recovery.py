@@ -48,7 +48,10 @@ from tos_runtime.posttrade.entry_recovery_pending import (
 )
 from tos_runtime.rcl.log import ReservationTransitionRecord, SqliteCommitLog
 from tos_runtime.rcl.projection import ScopeReservation
-from tos_runtime.recon.service import ReconciliationReport
+from tos_runtime.recon.service import (
+    ReconciliationReport,
+    witness_independence_collapsed,
+)
 
 if TYPE_CHECKING:
     from tos_runtime.posttrade.release_consumer import (
@@ -734,7 +737,16 @@ def _report_and_quantity_admit(
             signature=signature,
         ):
             return False
-        reason = "RECONCILIATION_UNAVAILABLE" if report is None else "NOT_CORROBORATED"
+        # #1011 §3.5: the recovery pass records the SAME split the release path does
+        # (`release_consumer.uncorroborated_hold_reason`), through the one shared
+        # predicate — a split that reached only the release path would leave this pass
+        # reporting a conflict the witness never found.
+        if report is None:
+            reason = "RECONCILIATION_UNAVAILABLE"
+        elif witness_independence_collapsed(report):
+            reason = "WITNESS_NOT_INDEPENDENT"
+        else:
+            reason = "NOT_CORROBORATED"
         _record_recovery_hold(
             consumer,
             payload=payload,

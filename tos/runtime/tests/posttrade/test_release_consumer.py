@@ -785,7 +785,9 @@ def test_full_fill_with_non_independent_witness_holds(
     assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
     held = _held_rows(evidence_store)
     assert len(held) == 1
-    assert held[0]["reason"] == ReleaseHoldReason.NOT_CORROBORATED.value
+    # #1011 §3.5: the store-derived witness earns its OWN reason, not the conflict one. The
+    # release decision is unchanged — still HELD, still POTENTIALLY_LIVE above.
+    assert held[0]["reason"] == ReleaseHoldReason.WITNESS_NOT_INDEPENDENT.value
 
 
 # -- CANCEL_ACK / EXPIRED / REJECT -> RELEASED --------------------------------------

@@ -110,6 +110,7 @@ from tos_runtime.recon.ports import (
 
 __all__ = [
     "WITNESS_NOT_INDEPENDENT_REASON",
+    "witness_independence_collapsed",
     "AttemptClassification",
     "ReconciliationClass",
     "ReconciliationReport",
@@ -129,6 +130,30 @@ _WITNESS_INDEPENDENCE_CLASS = "BROKER_WITNESS"
 #: caller (:mod:`tos_runtime.recovery.reconciliation`) can report it honestly rather than folding
 #: it into a generic "not corroborated".
 WITNESS_NOT_INDEPENDENT_REASON = "WITNESS_NOT_INDEPENDENT"
+
+
+def witness_independence_collapsed(report: ReconciliationReport | None) -> bool:
+    """Whether ``report`` failed to corroborate BECAUSE its witness was store-derived.
+
+    The ONE predicate behind #1011 §3.5's reason split. It lives here, next to the reason
+    string itself, because two post-trade modules have to classify the same report into their
+    OWN hold vocabulary and cannot import each other:
+    :func:`tos_runtime.posttrade.release_consumer.uncorroborated_hold_reason` (the release
+    path) and :mod:`tos_runtime.posttrade.entry_recovery` (the entry-discharge recovery pass,
+    which ``release_consumer`` imports). Two hand-typed copies of the comparison is exactly
+    the shape ``_DISCHARGE_HOLD_REASONS`` already avoids: the vocabulary lives where it is
+    owned, the mapping lives in each caller, and the predicate exists once.
+
+    Args:
+        report: A reconciliation report, or ``None`` when ``reconcile`` itself raised —
+            which is a different, unavailable-rather-than-uncorroborated state and is
+            therefore ``False`` here.
+
+    Returns:
+        ``True`` iff ``report`` names :data:`WITNESS_NOT_INDEPENDENT_REASON`.
+    """
+    return report is not None and report.reason == WITNESS_NOT_INDEPENDENT_REASON
+
 
 #: The two capacity-releasing fields this service actually has quantity data for
 #: (``tos.recon.CAPACITY_RELEASING_FIELDS`` names both; RCL carries no per-dimension

@@ -706,7 +706,8 @@ def _post_trade_dimension_reader_for(
     reason that structurally means gate 3's reconciliation found a genuine conflict
     (an orphan broker order or a non-``MATCHED`` classification) between what this scope
     expected and what actually happened downstream. Every other HELD reason (no witness
-    yet, proof not yet reloaded, reconciliation itself unavailable, ...) is a normal,
+    yet, proof not yet reloaded, reconciliation itself unavailable,
+    ``WITNESS_NOT_INDEPENDENT`` since #1011 §3.5, ...) is a normal,
     transient "not yet complete" gate, not a conflict this dimension reports on — folding
     them all into ``False`` would permanently block new risk on ordinary pipeline timing,
     which plan §2 decision 5 explicitly rejects.

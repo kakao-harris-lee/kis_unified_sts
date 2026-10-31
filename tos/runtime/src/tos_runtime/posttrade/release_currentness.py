@@ -56,7 +56,13 @@ def latest_release_is_conflict_free(
       reconciliation itself unavailable, the RCL transition itself refused, a quantity not yet
       proven, ...) ⇒ ``True`` — a normal, transient "not yet complete" gate, never a conflict;
       folding every hold into ``False`` would permanently block new risk on ordinary pipeline
-      timing, which this dimension does not do.
+      timing, which this dimension does not do. **``WITNESS_NOT_INDEPENDENT`` is one of these
+      (#1011 §3.5):** a store-derived witness cannot corroborate anything, which says nothing
+      about whether this scope and the venue disagree. Until that reason had a string of its
+      own it arrived here spelled ``NOT_CORROBORATED``, so every synthetic leaf reported a
+      conflict it never had (#1011 F6). The scan below is UNCHANGED — the one literal it
+      compares against is still ``NOT_CORROBORATED`` — which is exactly what makes the split
+      visible here.
 
     Args:
         evidence_store: The durable evidence store the rows live in.
