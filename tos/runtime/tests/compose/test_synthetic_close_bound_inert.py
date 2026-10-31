@@ -6,7 +6,7 @@ The durable CLOSE bound (`tos_runtime.riskstate.close_bound`) assumes a filled e
 root has is :class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness`, which is
 derived from the evidence store it would be corroborating, so
 :mod:`tos_runtime.posttrade.release_consumer` holds the release with
-``NOT_CORROBORATED / WITNESS_NOT_INDEPENDENT`` and the reservation stays
+``WITNESS_NOT_INDEPENDENT`` (#1011 §3.5) and the reservation stays
 ``COMMITTED_UNBOUND`` forever. That is the W2-R "정직 상태" design, asserted by
 ``test_compose_root.py::test_full_fill_hand_off_never_releases_rcl_capacity_end_to_end``.
 
@@ -79,7 +79,7 @@ def test_an_uncorroborated_synthetic_fill_leaves_the_close_bound_inert_and_the_s
     approved OPEN handed off, three idle passes. Concrete result today:
 
     * the scope's ONE reservation is ``COMMITTED_UNBOUND`` (not ``POSITION_CONSUMED``);
-    * the release is held with ``NOT_CORROBORATED / WITNESS_NOT_INDEPENDENT``;
+    * the release is held with ``WITNESS_NOT_INDEPENDENT``;
     * :meth:`DurableEntryCloseBoundReader.read` refuses with
       ``ENTRY_NOT_SOLE_CONSUMED_POSITION``, so step 6 can only be UNKNOWN;
     * step 8 DENIES both a CLOSE and a further OPEN over that row — the seal #1011 describes.
@@ -105,7 +105,7 @@ def test_an_uncorroborated_synthetic_fill_leaves_the_close_bound_inert_and_the_s
         assert len(held) == 1, held
         payload = json.loads(held[0][0])["payload"]
         assert (payload["reason"], payload["detail"]) == (
-            "NOT_CORROBORATED",
+            "WITNESS_NOT_INDEPENDENT",
             "WITNESS_NOT_INDEPENDENT",
         )
 

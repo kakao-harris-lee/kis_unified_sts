@@ -110,6 +110,7 @@ from tos_runtime.recon.ports import (
 
 __all__ = [
     "WITNESS_NOT_INDEPENDENT_REASON",
+    "witness_independence_collapsed",
     "AttemptClassification",
     "ReconciliationClass",
     "ReconciliationReport",
@@ -129,6 +130,65 @@ _WITNESS_INDEPENDENCE_CLASS = "BROKER_WITNESS"
 #: caller (:mod:`tos_runtime.recovery.reconciliation`) can report it honestly rather than folding
 #: it into a generic "not corroborated".
 WITNESS_NOT_INDEPENDENT_REASON = "WITNESS_NOT_INDEPENDENT"
+
+
+def witness_independence_collapsed(report: ReconciliationReport | None) -> bool:
+    """Whether the witness's lost independence is the ONLY reason ``report`` did not clear.
+
+    The ONE predicate behind #1011 §3.5's reason split. It lives here, next to the reason
+    string itself, because two post-trade modules have to classify the same report into their
+    OWN hold vocabulary and cannot import each other:
+    :func:`tos_runtime.posttrade.release_consumer.uncorroborated_hold_reason` (the release
+    path) and :mod:`tos_runtime.posttrade.entry_recovery` (the entry-discharge recovery pass,
+    which ``release_consumer`` imports). Two hand-typed copies of the comparison is exactly
+    the shape ``_DISCHARGE_HOLD_REASONS`` already avoids: the vocabulary lives where it is
+    owned, the mapping lives in each caller, and the predicate exists once.
+
+    **Three conditions, not one (review-1018 M1).** :meth:`~ReconciliationService._reason_for`
+    stamps :data:`WITNESS_NOT_INDEPENDENT_REASON` on ANY uncleared report whose witness
+    declared itself store-derived — it decides that BEFORE looking at orphans or conflicts, so
+    the reason alone means "store-derived and not cleared", not "independence was the only
+    problem". Mapping that straight onto the softer hold reason let a genuine disagreement
+    (plan §5 ④'s "진짜 충돌 → False 유지") be recorded as an independence hold, which the
+    POST_TRADE currentness dimension then reads as conflict-free. Measured, at the service
+    level: a store-derived witness reporting qty 5 / rem 5 against a receipt of 10 / 0 gave
+    hold ``WITNESS_NOT_INDEPENDENT`` and POST_TRADE ``True``.
+
+    So this also requires that nothing ELSE in the report disagreed:
+
+    * no field is ``CONFLICTED`` (the kernel's own :func:`~tos.recon.any_field_conflicted` —
+      never a second hand-typed scan); and
+    * every classification is :attr:`~ReconciliationClass.MATCHED`. That excludes
+      :attr:`~ReconciliationClass.ORPHAN_BROKER_ORDER` — a venue order nothing accounts for,
+      the §3.4 crash-before-evidence catch — and also the one-sided
+      ``STALE_RESERVATION``/``RECEIPT_ONLY`` shapes. The independence collapse itself produces
+      no non-MATCHED classification (:func:`_classify_attempt` reads existence only), so a
+      clean store-derived report is still all-MATCHED and still answers ``True`` here.
+
+    No shipped witness can currently produce the narrowed-away cases: the only store-derived
+    witness, :class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness`, reads the
+    same evidence rows as the receipt path, so its quantities cannot diverge from them. The
+    guarantee belongs in the code rather than in how that one class happens to be built —
+    which is the whole point of a future store-derived witness reading a different table.
+
+    Args:
+        report: A reconciliation report, or ``None`` when ``reconcile`` itself raised —
+            which is a different, unavailable-rather-than-uncorroborated state and is
+            therefore ``False`` here.
+
+    Returns:
+        ``True`` iff ``report`` names :data:`WITNESS_NOT_INDEPENDENT_REASON` AND carries no
+        conflicted field AND classifies every attempt and order ``MATCHED``.
+    """
+    if report is None or report.reason != WITNESS_NOT_INDEPENDENT_REASON:
+        return False
+    if any_field_conflicted(report.field_confidences):
+        return False
+    return all(
+        item.classification is ReconciliationClass.MATCHED
+        for item in report.classifications
+    )
+
 
 #: The two capacity-releasing fields this service actually has quantity data for
 #: (``tos.recon.CAPACITY_RELEASING_FIELDS`` names both; RCL carries no per-dimension
@@ -307,6 +367,70 @@ def _quantity_observations(
     return tuple(observations)
 
 
+def _quantity_field_verdicts(
+    *,
+    evidence: EgressReceiptObservation | None,
+    witness_order: WitnessOrder | None,
+    freshness: FreshnessMarker,
+    witness_independence_class: str,
+    proof_inputs: ReleaseProofInputs,
+) -> tuple[tuple[FieldConfidence, ...], dict[SafetyRelevantField, bool], bool]:
+    """Both quantity fields' confidences, release-proof gates, and the disagreement flag.
+
+    Split out of :meth:`ReconciliationService._attempt_field_confidences_and_gates` for the
+    100-line function budget when review-1018 M1 added the third return value; a pure
+    extraction of that method's own loop, no behaviour change.
+
+    The third value is ``True`` when any path recorded ``agrees_within_tolerance is False`` —
+    see that method's docstring for why the fact cannot be read back off the returned
+    confidences when the witness is store-derived.
+    """
+    evidence_values = {
+        SafetyRelevantField.CUMULATIVE_FILLED_QUANTITY: (
+            None if evidence is None else evidence.filled_quantity
+        ),
+        SafetyRelevantField.REMAINING_EXECUTABLE_QUANTITY: (
+            None if evidence is None else evidence.remaining_quantity
+        ),
+    }
+    witness_values = {
+        SafetyRelevantField.CUMULATIVE_FILLED_QUANTITY: (
+            None if witness_order is None else witness_order.quantity
+        ),
+        SafetyRelevantField.REMAINING_EXECUTABLE_QUANTITY: (
+            None if witness_order is None else witness_order.remaining
+        ),
+    }
+    evidence_source_ref = "" if evidence is None else evidence.source_ref
+
+    confidences: list[FieldConfidence] = []
+    proof_ok_by_field: dict[SafetyRelevantField, bool] = {}
+    disagreed = False
+    for field in _QUANTITY_FIELDS:
+        obs = _quantity_observations(
+            field=field,
+            evidence_value=evidence_values[field],
+            witness_value=witness_values[field],
+            freshness=freshness,
+            evidence_source_ref=evidence_source_ref,
+            witness_independence_class=witness_independence_class,
+        )
+        confidence = FieldConfidence(
+            field=field,
+            confidence_class=classify_field(obs, freshness),
+            bound=conservative_bound_of(obs),
+            freshness_marker=freshness,
+        )
+        confidences.append(confidence)
+        disagreed = disagreed or any(
+            observation.agrees_within_tolerance is False for observation in obs
+        )
+        proof_ok_by_field[field] = field_specific_release_proof_ok(
+            field, confidence, proof_inputs
+        )
+    return tuple(confidences), proof_ok_by_field, disagreed
+
+
 def _classify_attempt(
     *,
     rcl_present: bool,
@@ -474,10 +598,19 @@ class ReconciliationService:
         witness_order: WitnessOrder | None,
         freshness: FreshnessMarker,
         witness_independence_class: str,
-    ) -> tuple[ReconciliationClass, tuple[FieldConfidence, ...], bool, bool]:
-        """One attempt's classification, field confidences, rearm-ok, capacity-ok.
+    ) -> tuple[ReconciliationClass, tuple[FieldConfidence, ...], bool, bool, bool]:
+        """One attempt's classification, field confidences, rearm-ok, capacity-ok, disagreed.
 
         Split out of :meth:`reconcile` to stay under the module's function size budget.
+
+        The fifth value (review-1018 M1) is whether any path's recorded magnitude
+        DISAGREED with another's (``agrees_within_tolerance is False``). It is not
+        recoverable from the returned confidences: when the witness is store-derived both
+        paths carry the SAME independence class, so :func:`~tos.recon.classify_field`
+        degrades a disagreement to ``SINGLE_SOURCE`` rather than ``CONFLICTED`` (measured —
+        witness 5/5 against a receipt 10/0 yields SINGLE_SOURCE on both quantity fields).
+        A disagreement that leaves no trace on the report is exactly what let M1's input be
+        recorded as an independence hold, so the fact is carried out of here explicitly.
         """
         classification = _classify_attempt(
             rcl_present=rcl_present, evidence=evidence, witness_order=witness_order
@@ -504,43 +637,15 @@ class ReconciliationService:
             final_quantity_proof_token=fqp_token, freshness=freshness
         )
 
-        evidence_values = {
-            SafetyRelevantField.CUMULATIVE_FILLED_QUANTITY: (
-                None if evidence is None else evidence.filled_quantity
-            ),
-            SafetyRelevantField.REMAINING_EXECUTABLE_QUANTITY: (
-                None if evidence is None else evidence.remaining_quantity
-            ),
-        }
-        witness_values = {
-            SafetyRelevantField.CUMULATIVE_FILLED_QUANTITY: (
-                None if witness_order is None else witness_order.quantity
-            ),
-            SafetyRelevantField.REMAINING_EXECUTABLE_QUANTITY: (
-                None if witness_order is None else witness_order.remaining
-            ),
-        }
-        evidence_source_ref = "" if evidence is None else evidence.source_ref
-
-        for field in _QUANTITY_FIELDS:
-            obs = _quantity_observations(
-                field=field,
-                evidence_value=evidence_values[field],
-                witness_value=witness_values[field],
-                freshness=freshness,
-                evidence_source_ref=evidence_source_ref,
-                witness_independence_class=witness_independence_class,
-            )
-            confidence = FieldConfidence(
-                field=field,
-                confidence_class=classify_field(obs, freshness),
-                bound=conservative_bound_of(obs),
-                freshness_marker=freshness,
-            )
-            field_confidences.append(confidence)
-            proof_ok_by_field[field] = field_specific_release_proof_ok(
-                field, confidence, proof_inputs
-            )
+        quantity_confidences, quantity_proof_ok, disagreed = _quantity_field_verdicts(
+            evidence=evidence,
+            witness_order=witness_order,
+            freshness=freshness,
+            witness_independence_class=witness_independence_class,
+            proof_inputs=proof_inputs,
+        )
+        field_confidences.extend(quantity_confidences)
+        proof_ok_by_field.update(quantity_proof_ok)
 
         conflicted = any_field_conflicted(tuple(field_confidences))
         rearm_ok = (
@@ -553,7 +658,13 @@ class ReconciliationService:
             and not conflicted
             and all(proof_ok_by_field.values())
         )
-        return classification, tuple(field_confidences), rearm_ok, capacity_ok
+        return (
+            classification,
+            tuple(field_confidences),
+            rearm_ok,
+            capacity_ok,
+            disagreed,
+        )
 
     def _reconcile_attempt(
         self,
@@ -563,15 +674,17 @@ class ReconciliationService:
         witness_by_attempt: dict[str, WitnessOrder],
         freshness: FreshnessMarker,
         witness_independence_class: str,
-    ) -> tuple[AttemptClassification, tuple[FieldConfidence, ...], bool, bool]:
+    ) -> tuple[AttemptClassification, tuple[FieldConfidence, ...], bool, bool, bool]:
         """One known attempt id's full verdict — split out of :meth:`reconcile` to stay
-        under the module's function size budget."""
+        under the module's function size budget. The fifth value is the magnitude
+        disagreement flag (review-1018 M1 — see
+        :meth:`_attempt_field_confidences_and_gates`)."""
         rcl_state = self._rcl_reader.reservation_state(
             self._reservation_id_for(attempt_id)
         )
         evidence = receipts_by_attempt.get(attempt_id)
         witness_order = witness_by_attempt.get(attempt_id)
-        classification, confidences, rearm_ok, capacity_ok = (
+        classification, confidences, rearm_ok, capacity_ok, disagreed = (
             self._attempt_field_confidences_and_gates(
                 rcl_present=rcl_state is not None,
                 evidence=evidence,
@@ -587,7 +700,7 @@ class ReconciliationService:
                 None if witness_order is None else witness_order.broker_execution_id
             ),
         )
-        return record, confidences, rearm_ok, capacity_ok
+        return record, confidences, rearm_ok, capacity_ok, disagreed
 
     @staticmethod
     def _classify_orphan_order(
@@ -670,19 +783,23 @@ class ReconciliationService:
         field_confidences: list[FieldConfidence] = []
         rearm_flags: list[bool] = []
         capacity_flags: list[bool] = []
+        disagreed = False
 
         for attempt_id in sorted(attempt_ids):
-            record, confidences, rearm_ok, capacity_ok = self._reconcile_attempt(
-                attempt_id,
-                receipts_by_attempt=receipts_by_attempt,
-                witness_by_attempt=witness_by_attempt,
-                freshness=freshness,
-                witness_independence_class=witness_independence_class,
+            record, confidences, rearm_ok, capacity_ok, attempt_disagreed = (
+                self._reconcile_attempt(
+                    attempt_id,
+                    receipts_by_attempt=receipts_by_attempt,
+                    witness_by_attempt=witness_by_attempt,
+                    freshness=freshness,
+                    witness_independence_class=witness_independence_class,
+                )
             )
             classifications.append(record)
             field_confidences.extend(confidences)
             rearm_flags.append(rearm_ok)
             capacity_flags.append(capacity_ok)
+            disagreed = disagreed or attempt_disagreed
 
         for order in orphan_orders:
             record, confidence = self._classify_orphan_order(
@@ -700,6 +817,7 @@ class ReconciliationService:
             rearm_flags=rearm_flags,
             witness_involved=bool(witness_by_attempt) or bool(orphan_orders),
             snapshot=snapshot,
+            any_path_disagreed=disagreed,
         )
         return ReconciliationReport(
             field_confidences=tuple(field_confidences),
@@ -718,10 +836,20 @@ class ReconciliationService:
         rearm_flags: list[bool],
         witness_involved: bool,
         snapshot: WitnessSnapshot,
+        any_path_disagreed: bool = False,
     ) -> str | None:
         """The report's own ``reason`` — split out of :meth:`reconcile` to stay under the
         module's function size budget (independent-review finding F2 added the
-        ``WITNESS_NOT_INDEPENDENT_REASON`` branch)."""
+        ``WITNESS_NOT_INDEPENDENT_REASON`` branch).
+
+        ``any_path_disagreed`` narrows that branch (review-1018 M1): the independence reason
+        is a claim that the collapse is WHY nothing cleared, so a report in which two paths
+        actually reported different magnitudes must not carry it. With a store-derived witness
+        such a disagreement cannot surface as ``CONFLICTED`` — both paths share one
+        independence class, so ``classify_field`` degrades it to ``SINGLE_SOURCE`` — which is
+        why the fact is passed in rather than re-derived from the confidences here. Such a
+        report falls through to ``None``, which every caller already maps to "not
+        corroborated"."""
         if not rearm_flags:
             return "no observations in scope"
         fully_cleared = (bool(capacity_flags) and all(capacity_flags)) and (
@@ -731,6 +859,7 @@ class ReconciliationService:
             not fully_cleared
             and witness_involved
             and not snapshot.independent_of_evidence_store
+            and not any_path_disagreed
         ):
             # Independent-review finding F2: name the witness-independence collapse
             # explicitly rather than folding it into a generic "not corroborated" — this

@@ -2168,7 +2168,10 @@ class TestOrthostateAndFinalityProjectionWiring:
         assert held_payload["reservation_id"] == attempt_request_reservation_id(
             instrument_key, flow.attempt
         )
-        assert held_payload["reason"] == "NOT_CORROBORATED"
+        # #1011 §3.5: the store-derived witness's hold carries its OWN reason. `detail` is
+        # the report's raw reason, so the two now read the same — which is the point: the
+        # evidence row no longer spells this "a reconciliation conflict".
+        assert held_payload["reason"] == "WITNESS_NOT_INDEPENDENT"
         assert held_payload["detail"] == "WITNESS_NOT_INDEPENDENT"
         intent_rows = runtime.evidence_store.connection.execute(
             "SELECT COUNT(*) FROM entries WHERE kind = 'CAPACITY_RELEASE_INTENT'"

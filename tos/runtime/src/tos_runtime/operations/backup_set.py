@@ -47,6 +47,16 @@ change) and would silently drop the restored path from the object it returns. No
 refusal: a rollback to pre-wave code operating on a post-wave backup restores the marketfeed file
 but loses its path from the returned set without any error.
 
+**The synthetic venue ledger joined for the same reason (#1011 P2).** On a SYNTHETIC tree
+the venue ledger IS the venue's record: it is what
+:class:`~tos_runtime.recon.witness_synthetic_venue.SyntheticVenueLedgerWitness` reads, and
+therefore what decides whether a filled entry's capacity is ever released. A restored set
+without it is not a smaller set — every reconciliation on it answers
+:class:`~tos_runtime.recon.ports.WitnessUnavailable` (fail-closed, so nothing is released on a
+false flat) and the restored deployment can never close the entry it restored. It is OPTIONAL
+for the same reason ``composite_state`` and ``marketfeed`` are (:data:`_OPTIONAL_FILES`): a
+boot with the witness key absent never creates the file, which is every shipped tree today.
+
 **Restore is always non-live** (mirrors :func:`tos_runtime.evidence.backup.restore`'s own
 ADR-002-016 discipline) and refuses a destination that resolves inside, or equal to, the live
 source data directory the manifest itself recorded — a restore can never silently land back on
@@ -84,6 +94,7 @@ from tos_runtime.engine.replay import ReplayableCore, ReplayVerdict, replay_engi
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
 from tos_runtime.marketfeed.store import MARKETFEED_FILE_NAME
+from tos_runtime.venue_ledger.synthetic import VENUE_LEDGER_FILE_NAME
 
 __all__ = [
     "MANIFEST_SUFFIX",
@@ -129,7 +140,9 @@ _CHAIN_GENESIS = ""
 #: (``composite_state`` is kernel-owned/opaque; ``marketfeed`` has no ``seq`` column at all — see
 #: that function's own docstring). Every site that special-cased ``"composite_state"`` on its own
 #: reads this set instead, so a future optional member is added in ONE place, not N.
-_OPTIONAL_FILES: frozenset[str] = frozenset({"composite_state", "marketfeed"})
+_OPTIONAL_FILES: frozenset[str] = frozenset(
+    {"composite_state", "marketfeed", "venue_ledger"}
+)
 
 #: The manifest filename suffix :func:`backup_set` writes. PUBLIC because
 #: :mod:`tos_runtime.compose._operations_wiring` SCANS for manifests rather than building one
@@ -167,8 +180,8 @@ class RestoreRefused(RuntimeError):
 
 
 class DurableSetPaths(BaseModel):
-    """The five files one durable set is made of (``marketfeed`` joined the set in the
-    tick-source wave — module docstring)."""
+    """The six files one durable set is made of (``marketfeed`` joined in the tick-source
+    wave, ``venue_ledger`` in #1011 P2 — module docstring)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -177,6 +190,7 @@ class DurableSetPaths(BaseModel):
     inbox: Path
     composite_state: Path
     marketfeed: Path
+    venue_ledger: Path
 
     @classmethod
     def from_data_dir(cls, data_dir: Path) -> DurableSetPaths:
@@ -189,6 +203,7 @@ class DurableSetPaths(BaseModel):
             inbox=data_dir / INBOX_FILE_NAME,
             composite_state=data_dir / COMPOSITE_STATE_FILE_NAME,
             marketfeed=data_dir / MARKETFEED_FILE_NAME,
+            venue_ledger=data_dir / VENUE_LEDGER_FILE_NAME,
         )
 
 
@@ -526,12 +541,13 @@ def backup_set(
     stopped or not-yet-started runtime) is responsible for that.
 
     Args:
-        paths: The five source files. ``evidence``/``rcl``/``inbox`` must already exist (refused
+        paths: The six source files. ``evidence``/``rcl``/``inbox`` must already exist (refused
             otherwise — never silently backs up an absent store as a fresh empty file, which
-            ``sqlite3.connect`` would do by default). ``composite_state`` and ``marketfeed`` MAY
-            be absent (:data:`_OPTIONAL_FILES` — a runtime that never wrote a composite, or never
-            ticked, never creates that file) — recorded honestly as ``None`` in the manifest
-            rather than fabricated.
+            ``sqlite3.connect`` would do by default). ``composite_state``, ``marketfeed`` and
+            ``venue_ledger`` MAY be absent (:data:`_OPTIONAL_FILES` — a runtime that never wrote
+            a composite, never ticked, or booted without the venue-ledger witness key never
+            creates that file) — recorded honestly as ``None`` in the manifest rather than
+            fabricated.
         dest_dir: Where ``gen{generation}/`` and the manifest are written. Never deleted, never
             overwritten.
         generation: Must be strictly greater than the highest existing ``gen*`` manifest already
@@ -562,6 +578,7 @@ def backup_set(
         "inbox": paths.inbox,
         "composite_state": paths.composite_state,
         "marketfeed": paths.marketfeed,
+        "venue_ledger": paths.venue_ledger,
     }
     for name, source_path in file_specs.items():
         if name in _OPTIONAL_FILES:
@@ -622,6 +639,27 @@ class RestoredSet(BaseModel):
     manifest: BackupSetManifest
 
 
+def _fill_pre_membership_paths(
+    restored_file_paths: dict[str, Path], dest_dir: Path
+) -> None:
+    """Give a manifest written before a member joined the set that member's path anyway.
+
+    A manifest written before ``marketfeed`` joined (plan §6 ④), or before ``venue_ledger`` did
+    (#1011 P2), has no such key in its own ``files`` at all — not even a ``None`` entry, because
+    the key did not exist yet. That is a real, different fact from "this store existed and was
+    empty at backup time": the old manifest legitimately PREDATES the store, so the restored
+    directory simply has no such file. Never fabricate one, and never raise a bare ``KeyError``
+    that hides which shape of manifest this is.
+
+    Mutates ``restored_file_paths`` in place, adding only keys it does not already carry.
+    """
+    for name, file_name in (
+        ("marketfeed", MARKETFEED_FILE_NAME),
+        ("venue_ledger", VENUE_LEDGER_FILE_NAME),
+    ):
+        restored_file_paths.setdefault(name, dest_dir / file_name)
+
+
 def restore_set(
     manifest_path: Path,
     dest_dir: Path,
@@ -635,8 +673,9 @@ def restore_set(
     :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.verify_or_raise` — the same check
     :mod:`tos_runtime.evidence.backup`'s own ``restore()`` performs.
 
-    **Backward compatibility with a pre-marketfeed manifest.** A manifest written before
-    ``marketfeed`` joined the backup set (plan §6 ④) has no ``"marketfeed"`` key in ``files`` at
+    **Backward compatibility with a pre-marketfeed (or pre-venue-ledger) manifest.** A manifest
+    written before ``marketfeed`` joined the backup set (plan §6 ④) — or before ``venue_ledger``
+    did (#1011 P2) — has no such key in ``files`` at
     all — not even a ``None`` entry. That legitimately means "this manifest predates this store",
     the same fact ``composite_state=None`` records for a runtime that never wrote one; the
     restored set is given a ``marketfeed`` path with no file behind it rather than a
@@ -690,15 +729,7 @@ def restore_set(
             )
         restored_file_paths[name] = dest_path
 
-    # Backward compatibility with a manifest written BEFORE marketfeed joined the backup set
-    # (plan §6 ④): such a manifest's own `files` has no "marketfeed" key at all — not even a
-    # `None` entry — because the key did not exist yet. That is a real, different fact from "this
-    # store existed and was empty at backup time": the old manifest legitimately PREDATES this
-    # store, so the restored set simply has no such file, exactly like the composite_state-absent
-    # case above (``BackupSetManifest.files``'s own docstring). Never fabricate a file for it, and
-    # never raise a bare KeyError that hides which shape of manifest this is.
-    if "marketfeed" not in restored_file_paths:
-        restored_file_paths["marketfeed"] = dest_dir / MARKETFEED_FILE_NAME
+    _fill_pre_membership_paths(restored_file_paths, dest_dir)
 
     restored_paths = DurableSetPaths(
         evidence=restored_file_paths["evidence"],
@@ -706,6 +737,7 @@ def restore_set(
         inbox=restored_file_paths["inbox"],
         composite_state=restored_file_paths["composite_state"],
         marketfeed=restored_file_paths["marketfeed"],
+        venue_ledger=restored_file_paths["venue_ledger"],
     )
 
     restored_evidence_store = SqliteEvidenceStore(

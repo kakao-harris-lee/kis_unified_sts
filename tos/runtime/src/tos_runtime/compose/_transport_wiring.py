@@ -86,6 +86,10 @@ from tos_runtime.transport.kis_mock.config import (
     load_kis_mock_transport_config,
 )
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
+from tos_runtime.venue_ledger.synthetic import (
+    RecordingSyntheticTransport,
+    SyntheticVenueLedger,
+)
 
 __all__ = [
     "KIS_MOCK_TRANSPORT_CONFIG_NAME",
@@ -454,6 +458,40 @@ evidence_recorder = _evidence_recorder
 # ===========================================================================
 
 
+def _build_synthetic_transport(
+    *,
+    venue_ledger: SyntheticVenueLedger | None,
+    trading_date_now: Callable[[], str | None] | None,
+) -> Transport:
+    """The ``synthetic`` branch of :func:`build_transport` (split out for the function budget).
+
+    The kernel ``SyntheticPaperTransport(SyntheticFillPolicy(...))`` is constructed here
+    unchanged. With a ``venue_ledger`` it is wrapped in a
+    :class:`~tos_runtime.venue_ledger.synthetic.RecordingSyntheticTransport` (#1011 P2), which
+    records every result into the venue's own file BEFORE returning it — so "the venue accepted
+    it and nothing recorded it" is unrepresentable.
+
+    Raises:
+        TransportWiringError: A ledger was supplied without the runtime's trusted trading-date
+            reader. An undated row carries no ``order_date`` for the witness's cross-reference
+            join at all, so this fails the boot rather than recording rows no witness can join.
+    """
+    synthetic = SyntheticPaperTransport(
+        SyntheticFillPolicy(fill_numerator=1, fill_denominator=1, lot_size=Decimal("1"))
+    )
+    if venue_ledger is None:
+        return synthetic
+    if trading_date_now is None:
+        raise TransportWiringError(
+            "build_transport: a venue ledger requires the runtime's trusted trading-date "
+            "reader — an undated venue row carries no order_date for the witness's "
+            "cross-reference join at all; refusing to boot"
+        )
+    return RecordingSyntheticTransport(
+        synthetic, venue_ledger, trading_date_now=trading_date_now
+    )
+
+
 def build_transport(
     kind: TransportKind,
     *,
@@ -465,6 +503,7 @@ def build_transport(
     runtime_identity: RuntimeIdentity,
     trading_date_now: Callable[[], str | None] | None = None,
     credential_sessions: KisCredentialSessions,
+    venue_ledger: SyntheticVenueLedger | None = None,
 ) -> Transport:
     """Construct the selected transport (module docstring item 6).
 
@@ -496,13 +535,24 @@ def build_transport(
             ``kis_mock.*`` session from it. Required, never defaulted: a private registry here
             would silently give the ``kis_quote`` intake a second token lifecycle for the same
             app key (the collision C-2 exists to prevent).
+        venue_ledger: #1011 P2 — this boot's synthetic venue ledger
+            (:mod:`tos_runtime.compose._venue_ledger_wiring` decides whether there is one), or
+            ``None``. When present the ``synthetic`` branch returns the SAME kernel transport
+            wrapped in a :class:`~tos_runtime.venue_ledger.synthetic
+            .RecordingSyntheticTransport`, which records every result before returning it.
 
     Returns:
         The constructed transport, structurally satisfying the kernel's
         :class:`~tos.brokeradapter.Transport` Protocol either way.
 
     Raises:
-        TransportWiringError: ``kind`` is ``kis-mock`` and ``transport_config`` is ``None`` — a
+        TransportWiringError: ``kind`` is ``kis-mock`` and a ``venue_ledger`` was supplied (the
+            ledger is the SYNTHETIC venue's own record — the primary refusal is
+            :func:`~tos_runtime.compose._venue_ledger_wiring.build_synthetic_venue_ledger`'s,
+            before any file exists; this one is the same refusal restated where the wrapping
+            would actually happen, so a future caller that bypasses that function cannot wrap a
+            broker-reaching transport); or ``kind`` is ``kis-mock`` and ``transport_config`` is
+            ``None`` — a
             caller contract violation (:func:`resolve_transport_boot` always returns a
             non-``None`` config for ``kis-mock``; not a reachable state through this module's own
             call sites, but a typed refusal rather than a bare ``assert`` — independent review
@@ -511,10 +561,14 @@ def build_transport(
             frames from the actual contract violation instead of naming it).
     """
     if kind is TransportKind.SYNTHETIC:
-        return SyntheticPaperTransport(
-            SyntheticFillPolicy(
-                fill_numerator=1, fill_denominator=1, lot_size=Decimal("1")
-            )
+        return _build_synthetic_transport(
+            venue_ledger=venue_ledger, trading_date_now=trading_date_now
+        )
+    if venue_ledger is not None:
+        raise TransportWiringError(
+            f"build_transport: a venue ledger was supplied for a {kind.value!r} transport — "
+            "the ledger is the SYNTHETIC venue's own record and must never be written for a "
+            "transport that reaches a broker; refusing to boot"
         )
     if transport_config is None:
         raise TransportWiringError(

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -27,10 +28,16 @@ from tos_runtime.operations.backup_set import (
     DurableSetPaths,
     RestoreRefused,
     backup_set,
+    manifest_path_for,
     next_generation,
     restore_set,
 )
 from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.venue_ledger.synthetic import (
+    VENUE_LEDGER_FILE_NAME,
+    SyntheticVenueLedger,
+    VenueLedgerReader,
+)
 
 from ..marketfeed._store_fixtures import INSTRUMENT_KEY, one_bar
 from ..marketfeed._store_fixtures import SCHEME as MARKETFEED_SCHEME
@@ -39,8 +46,18 @@ from .conftest import SCHEME, FixedKeyProvider
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
 
+#: The one venue result ``_build_live_set(with_venue_ledger=True)`` records, so the
+#: restore assertions name a concrete row rather than merely a non-empty file.
+_VENUE_ATTEMPT = "attempt-backup"
+_VENUE_EXECUTION_ID = f"syn-exec:{_VENUE_ATTEMPT}:FULL_FILL"
+
+
 def _build_live_set(
-    data_dir: Path, *, with_entries: bool = True, with_marketfeed: bool = False
+    data_dir: Path,
+    *,
+    with_entries: bool = True,
+    with_marketfeed: bool = False,
+    with_venue_ledger: bool = False,
 ) -> DurableSetPaths:
     """Build one real, closed durable set directly under ``data_dir`` (the SAME filenames
     :func:`~tos_runtime.operations.backup_set.DurableSetPaths.from_data_dir` expects).
@@ -48,6 +65,9 @@ def _build_live_set(
     ``marketfeed`` mirrors ``composite_state``'s own optionality: most tests leave it absent
     (``with_marketfeed=False``, the default) to exercise the "never fabricate a backup for an
     absent optional member" path; the tests that need a real one pass ``with_marketfeed=True``.
+    ``venue_ledger`` (#1011 P2) is optional for the same reason and then some: a boot whose
+    ``finality.yaml`` does not select the venue-ledger witness never creates that file, which
+    is every shipped tree today.
     """
     key_provider = FixedKeyProvider()
     evidence = SqliteEvidenceStore(
@@ -73,6 +93,22 @@ def _build_live_set(
         marketfeed_store = SqliteSnapshotStore(data_dir / MARKETFEED_FILE_NAME)
         marketfeed_store.close()
 
+    if with_venue_ledger:
+        ledger = SyntheticVenueLedger(data_dir / VENUE_LEDGER_FILE_NAME)
+        ledger.record(
+            attempt_id=_VENUE_ATTEMPT,
+            broker_execution_id=_VENUE_EXECUTION_ID,
+            account="acct-backup",
+            instrument="101W12",
+            side="BUY",
+            quantity=Decimal("1"),
+            filled_quantity=Decimal("1"),
+            remaining_quantity=Decimal("0"),
+            result_kind="FULL_FILL",
+            trading_date="20261031",
+        )
+        ledger.close()
+
     return DurableSetPaths.from_data_dir(data_dir)
 
 
@@ -90,7 +126,7 @@ def _fake_identity():
 # -- backup_set ---------------------------------------------------------------------------------
 
 
-def test_backup_set_writes_a_manifest_with_five_files_and_facts(tmp_path: Path) -> None:
+def test_backup_set_writes_a_manifest_with_six_files_and_facts(tmp_path: Path) -> None:
     live_dir = tmp_path / "live"
     live_dir.mkdir()
     paths = _build_live_set(
@@ -107,10 +143,14 @@ def test_backup_set_writes_a_manifest_with_five_files_and_facts(tmp_path: Path) 
         "inbox",
         "composite_state",
         "marketfeed",
+        "venue_ledger",
     }
     for name, entry in manifest.files.items():
-        if name == "marketfeed":
-            continue  # absent in this fixture (with_marketfeed=False) — asserted below
+        if name in ("marketfeed", "venue_ledger"):
+            # Both absent in this fixture — asserted below. `venue_ledger` is absent on
+            # every boot that does not set `finality.yaml::witness` (#1011 P2), which is
+            # every shipped tree today.
+            continue
         # composite_state IS present in this fixture (_build_live_set always creates it) —
         # only marketfeed is the absent-optional-member case here.
         assert entry is not None
@@ -125,6 +165,7 @@ def test_backup_set_writes_a_manifest_with_five_files_and_facts(tmp_path: Path) 
     assert composite_state_entry is not None
     assert composite_state_entry.last_seq is None  # kernel-owned — never queried
     assert manifest.files["marketfeed"] is None  # absent — never fabricated
+    assert manifest.files["venue_ledger"] is None  # ditto (#1011 P2)
 
     manifest_path = backups_dir / "gen1.set.manifest.json"
     assert manifest_path.is_file()
@@ -499,3 +540,91 @@ def test_last_seq_for_handles_every_durable_set_paths_member(tmp_path: Path) -> 
 
     with pytest.raises(RuntimeError, match="nonexistent-store"):
         _last_seq_for("nonexistent-store", empty_db)
+
+
+# ===========================================================================
+# #1011 P2 (review-1018 L1) — the venue ledger as a backup-set member
+# ===========================================================================
+
+
+def test_a_set_containing_a_venue_ledger_backs_up_restores_and_reopens(
+    tmp_path: Path,
+) -> None:
+    """The present case: back up a set WITH a venue ledger, restore it, reopen the store.
+
+    Concrete input: a live set whose ``venue_ledger.sqlite3`` holds one recorded FULL_FILL.
+    Concrete result: the manifest carries a digested entry for it (``last_seq`` honestly
+    ``None`` — it is an optional member with no ``seq`` column this module queries), the
+    restored file is byte-verified against that digest, and the restored file reopens through
+    the REAL :class:`~tos_runtime.venue_ledger.synthetic.SyntheticVenueLedger` constructor,
+    which re-runs the schema-ledger version check — so a restored ledger is a bootable one.
+
+    Why it matters rather than being symmetry: on a synthetic tree the ledger IS the venue's
+    record, and it is what decides whether a filled entry's capacity is ever released. A
+    restored set without it fails closed (every reconciliation answers ``WitnessUnavailable``),
+    but the deployment can then never close the entry it restored.
+    """
+    live_dir = tmp_path / "live"
+    live_dir.mkdir()
+    paths = _build_live_set(live_dir, with_venue_ledger=True)
+    assert paths.venue_ledger.is_file()
+    backups_dir = tmp_path / "backups"
+
+    manifest = backup_set(paths, backups_dir, generation=1)
+
+    entry = manifest.files["venue_ledger"]
+    assert entry is not None
+    assert Path(entry.path).is_file()
+    assert len(entry.file_digest) == 64
+    assert entry.last_seq is None  # optional member — never queried for a seq
+
+    restore_dir = tmp_path / "restored"
+    restored = restore_set(
+        manifest_path_for(backups_dir, 1), restore_dir, key_provider=FixedKeyProvider()
+    )
+
+    assert restored.paths.venue_ledger == restore_dir / VENUE_LEDGER_FILE_NAME
+    assert restored.paths.venue_ledger.is_file()
+
+    reopened = SyntheticVenueLedger(restored.paths.venue_ledger)
+    try:
+        fills = VenueLedgerReader(restored.paths.venue_ledger).fills()
+    finally:
+        reopened.close()
+    assert [fill.attempt_id for fill in fills] == [_VENUE_ATTEMPT]
+    assert fills[0].broker_execution_id == _VENUE_EXECUTION_ID
+    assert fills[0].filled_quantity == Decimal("1")
+
+
+def test_restore_set_handles_a_manifest_written_before_the_venue_ledger_joined_the_set(
+    tmp_path: Path,
+) -> None:
+    """Backward compatibility: every manifest taken from a tree running today has no key.
+
+    Concrete input: a manifest with ``"venue_ledger"`` deleted from both ``files`` and
+    ``source_paths`` — the real shape of every backup written before #1011 P2. Concrete
+    result: the restored set is given the path with no file behind it, never a fabricated
+    file and never a bare ``KeyError``, exactly as the pre-marketfeed case above.
+    """
+    live_dir = tmp_path / "live"
+    live_dir.mkdir()
+    paths = _build_live_set(live_dir, with_venue_ledger=True)
+    backups_dir = tmp_path / "backups"
+    backup_set(paths, backups_dir, generation=1)
+
+    manifest_path = manifest_path_for(backups_dir, 1)
+    manifest_json = json.loads(manifest_path.read_text())
+    assert "venue_ledger" in manifest_json["files"]  # sanity: this wave's code wrote it
+    del manifest_json["files"]["venue_ledger"]
+    del manifest_json["source_paths"]["venue_ledger"]
+    manifest_path.write_text(json.dumps(manifest_json))
+
+    restore_dir = tmp_path / "restored"
+    restored = restore_set(manifest_path, restore_dir, key_provider=FixedKeyProvider())
+
+    assert restored.paths.venue_ledger == restore_dir / VENUE_LEDGER_FILE_NAME
+    assert not restored.paths.venue_ledger.is_file()
+    # The members that WERE in that manifest are unaffected by the missing key.
+    assert restored.paths.evidence.is_file()
+    assert restored.paths.rcl.is_file()
+    assert restored.paths.inbox.is_file()

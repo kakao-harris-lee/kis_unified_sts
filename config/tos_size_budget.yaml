@@ -616,11 +616,12 @@ exceptions:
     `ComposeContextResolver(...)` 호출부 pass-through 1→3줄(+2줄) + 도크스트링
     설명 확장(+2줄).
 - target: tos/runtime/src/tos_runtime/compose/_engine_wiring.py::wire_engine_and_driver
-  measured: 162
+  measured: 167
   owner: tos-runtime
   decomposition_order: 33
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-31 #1011 P2 venue 원장 배선 재등재 162→167(+5)**: `venue_ledger` 파라미터 1줄 + 그 도크스트링 3줄 + `build_transport(...)` 호출에 전달 1줄. 이 함수는 전송을 만드는 유일한 자리라 「원장을 감싼 전송」도 여기서만 표현된다. 판단(설정 키 + 전송 종류)은 신설 `_venue_ledger_wiring.py` 에, 감싸는 일 자체는 `_transport_wiring._build_synthetic_transport` 에 있다. 호출 시퀀스 무변경.
     **2026-10-28 #966 재등재 156→162(+6)**: `CapacityObligationRecorder` 의 `reservation_id_resolver` 가 scope 상수 대신 durable permit 조인(`rcl/reservation_lookup.reservation_id_for_attempt`)을 타도록 인자 5줄 + 사유 주석. SEND_REFUSED 가 가리키는 attempt 의 예약은 #966 부터 attempt 마다 다르므로 scope 하나로 답하면 다른 attempt 의 상태를 읽는다. 조인·판독 로직 자체는 신설 `rcl/reservation_lookup.py`.
     **2026-10-23 PR-3b 재등재 155→156(+1)**: `build_engine_driver(...)` 에 `broker_sourced=broker_posttrade_enabled(active_scope, transport_config)` 1줄 — 주식 MOCK 부팅은 브로커 체결 증명 생산자를 쓴다. 판단 자체는 `_posttrade_source.py`.
     팀리드 CR-4 후속(orthostate/finality 결선, plan §2.2) — CPL-6 이
@@ -759,11 +760,12 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 498
+  measured: 517
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-31 #1011 P2 venue 원장 배선 재등재 498→517(+19)**: `build_synthetic_venue_ledger(...)` 호출 7줄 + 사유 주석 5줄, `_finalize(venue_ledger=)` 1줄, `composed.venue_ledger` 1줄 + provenance 4줄, `apply_release_wiring(venue_witness=)` 1줄, `apply_recovery_barrier(witness=)` 의 조건식 5줄(기존 1줄 대체). 쓰는 쪽(전송)은 `_finalize` 전, 읽는 쪽(증인)은 release·recovery 결선에 필요해 **두 시점 사이**를 잇는 결선이고, 그 순서는 root.py 에서만 표현된다. 호출 시퀀스 무변경.
     **2026-10-30 #1011 CLOSE 수량 상한 원천 재등재 488→498(+10)**: `build_risk_state_service(...)` 에 `close_authority=_close_authority_for(transport_kind)` 1줄(주석 2줄) + `entry_close_bound_reader=DurableEntryCloseBoundReader(...).read` 7줄. 전송 종류→상한 원천의 판단 자체는 모듈 수준 `_close_authority_for` 로 빼 함수 밖에 두었고, 여기 남은 것은 결선뿐이다(synthetic 트리는 브로커가 없어 증거 저장소가 곧 브로커 — 결선 순서는 root.py 에서만 표현된다). 호출 시퀀스 무변경.
     **#975/#1004 분해 490→488**: 위험 상태 제공자와 CLOSE 증거 fence 결선을 별도 모듈로 옮김.
     **2026-10-27 #960 CLOSE 제안의 SIDE 재등재 487→490(+3)**: `build_risk_state_service(action_class_reader=...)` 인자 3줄 — step 7 이 boot action class 가 아니라 step 2 가 고른 이 시도의 action class 로 판정해야 한다(CLOSE 는 ORDINARY_REDUCE_OR_EXIT). 읽기 자체는 `compose/_attempt_arm.py::attempt_action_class`. 호출 시퀀스 무변경.
@@ -1000,11 +1002,12 @@ exceptions:
     `tos.egressgw.venuefacts.venue_session_account_facts_current` 로 이관되며
     이 리졸버는 세 원시 sub-fact 를 각각 공급할 뿐 합성하지 않는다.
 - target: tos/runtime/src/tos_runtime/compose/_finalize_wiring.py::_finalize
-  measured: 124
+  measured: 128
   owner: tos-runtime
   decomposition_order: 41
   expires_on: '2026-12-31'
   note: >-
+    **2026-10-31 #1011 P2 venue 원장 배선 재등재 124→128(+4)**: `venue_ledger` 파라미터 1줄 + `wire_engine_and_driver(...)` 호출에 전달 1줄 + 사유 주석 2줄. 전송을 만드는 경로가 root → _finalize → wire_engine_and_driver 하나라 원장 쓰기 객체도 그 경로로만 내려간다. 호출 시퀀스 무변경.
     **2026-10-23 PR-3b Codex r3 재등재 123→124(+1)**: `_verify_boot_replay(...)` 호출에 `rcl_log=rcl.rcl_log` 1줄 — 부팅 replay 가 기록된 엔진 투영 해제를 증거가 아니라 RCL 자신의 커밋 상태(`committed_command`)로 확인한다.
     **2026-10-09 PR #890 재리뷰 LOW-2 재등재 116→123(+7)**: 셀의 「채우기」와
     「소비자 시작」을 **분리**했다 — `fill` 은 `wire_engine_and_driver` **앞**(레지스트리

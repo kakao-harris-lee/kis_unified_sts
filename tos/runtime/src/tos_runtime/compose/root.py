@@ -113,6 +113,9 @@ from tos_runtime.compose._types import (
     ReleaseAdmissionRefused,
     RiskStateConfigError,
 )
+from tos_runtime.compose._venue_ledger_wiring import (
+    build_synthetic_venue_ledger,
+)
 from tos_runtime.compose._venue_wiring import (
     build_band_reader_factory,
     build_venue_service,
@@ -126,6 +129,9 @@ from tos_runtime.compose._wiring import (
 )
 from tos_runtime.nontrade.config import NONTRADE_CONFIG_NAME
 from tos_runtime.rcl.log import StaleEpochRead
+from tos_runtime.recon.witness_synthetic_venue import (
+    SYNTHETIC_VENUE_LEDGER_PROVENANCE,
+)
 from tos_runtime.risk.aggregate import (
     AggregateRiskDecisionInputs,
 )
@@ -334,6 +340,18 @@ def compose_paper_runtime(
         account=construction.account,
         instrument=construction.instrument,
     )
+    # #1011 P2: `finality.yaml::witness` + the transport kind decide, here and nowhere else,
+    # whether this boot records synthetic venue results into their own ledger and reconciles
+    # against it. Built BEFORE `_finalize` because the transport wraps the writer, and in ONE
+    # place with the witness so the two can never point at different files. The key ON with a
+    # broker-reaching transport refuses the boot before any file is created.
+    venue_ledger = build_synthetic_venue_ledger(
+        config_dir=config_dir,
+        data_dir=data_dir,
+        transport_kind=transport_kind,
+        scheme=_SCHEME,
+        trading_date_now=trading_date_reader,
+    )
     # PR-3b: a stock MOCK boot reconciles fills against the KIS witness (release + recovery).
     posttrade = build_broker_posttrade(
         config_dir=config_dir,
@@ -508,7 +526,11 @@ def compose_paper_runtime(
         # clock and calendar as every session phase (plan 2026-09-26 egress trading date).
         trading_date_now=trading_date_reader,
         credential_sessions_cell=credential_sessions_cell,
+        venue_ledger=venue_ledger.ledger,
     )
+    composed.venue_ledger = venue_ledger
+    if venue_ledger.witness is not None:
+        composed.broker_witness_provenance = SYNTHETIC_VENUE_LEDGER_PROVENANCE
     # TOS venue constraint service wave (plan §2 decision 9) — attach the already-live venue
     # service to the composed runtime (the service itself was built earlier, above, before
     # `_build_construction_stages`; this just publishes it on `ComposedRuntime.venue`, mirroring
@@ -628,6 +650,7 @@ def compose_paper_runtime(
         monotonic_source=boot.infra.monotonic_source,
         post_trade_dimension_state=boot.risk.post_trade_dimension_state,
         posttrade=posttrade,
+        venue_witness=venue_ledger.witness,
     )
     composed = apply_recovery_barrier(
         composed,
@@ -635,7 +658,9 @@ def compose_paper_runtime(
         data_dir=data_dir,
         custody_root=custody_root,
         scheme=_SCHEME,
-        witness=posttrade.witness,
+        witness=(
+            posttrade.witness if posttrade.witness is not None else venue_ledger.witness
+        ),
     )
     composed = attach_fill_observer(
         composed, posttrade, monotonic=boot.infra.monotonic_source

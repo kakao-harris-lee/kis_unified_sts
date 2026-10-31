@@ -2,7 +2,8 @@
 (TOS Phase 5 W4 plan §2 decision 3; ``marketfeed`` entry added by the tick-source wave, plan
 ``docs/plans/2026-09-16-tos-tick-source-plan.md`` §2 decision 3).
 
-**Baseline v1, per store.** Each runtime-owned durable store (evidence, RCL, inbox, marketfeed)
+**Baseline v1, per store.** Each runtime-owned durable store (evidence, RCL, inbox,
+marketfeed, venue ledger)
 gets exactly one registered migration: version 1, "baseline — current DDL as of the store's own
 introduction". A future wave that actually changes a table's shape adds a SECOND
 ``SchemaMigration`` per affected store; this module does not invent placeholder future versions.
@@ -116,6 +117,7 @@ __all__ = [
     "MARKETFEED_MIGRATIONS",
     "RCL_MIGRATIONS",
     "STORE_MIGRATIONS",
+    "VENUE_LEDGER_MIGRATIONS",
     "SchemaMigration",
     "SchemaMigrationRefused",
     "apply_migrations",
@@ -554,11 +556,82 @@ MARKETFEED_MIGRATIONS: tuple[SchemaMigration, ...] = (
     ),
 )
 
+# -- synthetic venue ledger baseline (mirrors tos_runtime.venue_ledger.synthetic) --------------
+#
+# #1011 P2 (review-1017 N2). The store landed in P1 with its own `schema_ledger` genesis but
+# NO entry here, so `migrate` had no path to a pre-existing file and `test_cli.py`'s
+# `set(MIGRATE_PATH_BY_STORE) == set(STORE_MIGRATIONS)` pin covered nothing about it. Both are
+# registered together, in this commit, for exactly that reason.
+#
+# Duplicated, not imported — the whole-module discipline above ("Deliberately self-contained"):
+# `apply_migrations` must bring a PRE-EXISTING file up to baseline without constructing
+# `SyntheticVenueLedger`, whose own constructor would refuse that file first.
+
+_VENUE_LEDGER_BASELINE_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS venue_results (
+        written_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        trading_date TEXT NOT NULL,
+        broker_execution_id TEXT NOT NULL,
+        attempt_id TEXT NOT NULL,
+        account TEXT NOT NULL,
+        instrument TEXT NOT NULL,
+        side TEXT,
+        quantity TEXT,
+        filled_quantity TEXT,
+        remaining_quantity TEXT,
+        result_kind TEXT NOT NULL,
+        UNIQUE (broker_execution_id)
+    )
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS venue_results_no_update
+    BEFORE UPDATE ON venue_results
+    BEGIN
+        SELECT RAISE(ABORT, 'tos_runtime venue ledger: venue_results is append-only — UPDATE forbidden');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS venue_results_no_delete
+    BEFORE DELETE ON venue_results
+    BEGIN
+        SELECT RAISE(ABORT, 'tos_runtime venue ledger: venue_results is append-only — DELETE forbidden');
+    END
+    """,
+)
+
+VENUE_LEDGER_MIGRATIONS: tuple[SchemaMigration, ...] = (
+    SchemaMigration(
+        version=1,
+        description=(
+            "baseline — venue_results (append-only, one row per result the synthetic venue "
+            "produced, UNIQUE on broker_execution_id)"
+        ),
+        statements=_VENUE_LEDGER_BASELINE_STATEMENTS,
+        expected_tables={
+            "venue_results": (
+                "written_seq",
+                "trading_date",
+                "broker_execution_id",
+                "attempt_id",
+                "account",
+                "instrument",
+                "side",
+                "quantity",
+                "filled_quantity",
+                "remaining_quantity",
+                "result_kind",
+            ),
+        },
+    ),
+)
+
 STORE_MIGRATIONS: Mapping[str, tuple[SchemaMigration, ...]] = {
     "evidence": EVIDENCE_MIGRATIONS,
     "rcl": RCL_MIGRATIONS,
     "inbox": INBOX_MIGRATIONS,
     "marketfeed": MARKETFEED_MIGRATIONS,
+    "venue_ledger": VENUE_LEDGER_MIGRATIONS,
 }
 
 
@@ -661,7 +734,7 @@ def apply_migrations(
     Args:
         path: The sqlite file to migrate in place.
         store_name: One of :data:`STORE_MIGRATIONS`'s keys (``"evidence"`` / ``"rcl"`` /
-            ``"inbox"`` / ``"marketfeed"``).
+            ``"inbox"`` / ``"marketfeed"`` / ``"venue_ledger"``).
         monotonic_ns: Injected monotonic-clock callable for the ledger row's
             ``applied_at_monotonic_ns``.
 

@@ -44,6 +44,10 @@ from tos_runtime.operations.schema_migrations import (
 )
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.schema import RCL_SCHEMA_VERSION
+from tos_runtime.venue_ledger.synthetic import (
+    VENUE_LEDGER_SCHEMA_VERSION,
+    SyntheticVenueLedger,
+)
 
 from .conftest import FixedKeyProvider
 
@@ -322,6 +326,8 @@ def _build_fresh_store(store: str, tmp_path: Path) -> Path:
         SqliteEventInbox(path, scheme=_SCHEME).close()
     elif store == "marketfeed":
         SqliteSnapshotStore(path).close()
+    elif store == "venue_ledger":
+        SyntheticVenueLedger(path).close()
     elif store == "rcl":
         evidence = SqliteEvidenceStore(
             tmp_path / "rcl-evidence.sqlite3", key_provider=FixedKeyProvider()
@@ -1597,11 +1603,13 @@ def _non_table_objects(path: Path) -> list[tuple[str, str, str, str]]:
     return [row for row in _normalized_sqlite_objects(path) if row[0] != "table"]
 
 
-@pytest.mark.parametrize("store", ["evidence", "inbox", "marketfeed", "rcl"])
+@pytest.mark.parametrize(
+    "store", ["evidence", "inbox", "marketfeed", "rcl", "venue_ledger"]
+)
 def test_every_store_converges_from_a_truly_empty_file(
     store: str, tmp_path: Path
 ) -> None:
-    """Genesis and ``migrate``-from-empty agree, for ALL FOUR stores.
+    """Genesis and ``migrate``-from-empty agree, for ALL FIVE stores.
 
     Two gaps this closes (adversarial review (a), Claude-lane LOW-3). First,
     :func:`_build_pre_ledger_evidence_file` keeps the store's own ``entries``/``outbox``, so
@@ -1610,7 +1618,9 @@ def test_every_store_converges_from_a_truly_empty_file(
     own ``CREATE TABLE`` literals is invisible to it. Starting from an EMPTY file makes
     ``apply_migrations`` produce every object itself, so the baseline statements really are
     compared against the store's. Second, nothing pinned convergence for the other three
-    stores at all.
+    stores at all. ``venue_ledger`` joined this parametrisation with its own registration
+    (#1011 P2, review-1017 N2): it shipped in P1 with a genesis path and no migration, so
+    until now nothing compared its two `CREATE TABLE` literals at all.
 
     ``rcl`` is compared by ``PRAGMA table_info`` instead of ``sqlite_master.sql``: its v2 is an
     ``ALTER TABLE ... ADD COLUMN``, and sqlite stores the post-ALTER text with different
@@ -1879,6 +1889,7 @@ def test_no_store_has_a_migration_newer_than_its_own_schema_version() -> None:
         "rcl": RCL_SCHEMA_VERSION,
         "inbox": INBOX_SCHEMA_VERSION,
         "marketfeed": MARKETFEED_SCHEMA_VERSION,
+        "venue_ledger": VENUE_LEDGER_SCHEMA_VERSION,
     }
 
     assert set(expected) == set(

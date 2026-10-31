@@ -32,9 +32,7 @@ or mutate the engine's reservation projection.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Protocol
 
 from tos.canonical import CanonicalizationScheme
@@ -61,7 +59,6 @@ from tos.time.domains import HealthState
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.entry_discharge import (
-    DischargeRefusal,
     any_quantity_filled,
     entry_release_command_id,
     other_outstanding,
@@ -74,6 +71,13 @@ from tos_runtime.posttrade.entry_recovery import (
 )
 from tos_runtime.posttrade.finality import ReleaseFinalityProducer
 from tos_runtime.posttrade.release_currentness import latest_release_is_conflict_free
+from tos_runtime.posttrade.release_hold import (
+    DISCHARGE_HOLD_REASONS as _DISCHARGE_HOLD_REASONS,
+)
+from tos_runtime.posttrade.release_hold import (
+    ReleaseHoldReason,
+    uncorroborated_hold_reason,
+)
 from tos_runtime.rcl.finality_witness import release_reservation
 from tos_runtime.rcl.log import ReservationTransitionRefusal, SqliteCommitLog
 from tos_runtime.rcl.projection import (
@@ -113,6 +117,7 @@ __all__ = [
     "FinalityReleaseConsumer",
     "ReleaseConflictReader",
     "ReleaseHoldReason",
+    "uncorroborated_hold_reason",
     "ReleaseOutcome",
     "ReleaseOutcomeLike",
 ]
@@ -158,53 +163,6 @@ def release_command_id(attempt_id: str) -> str:
     """The RCL idempotency key of ``attempt_id``'s release transition — the ONE spelling, so the
     fill observer (PR-3b) can ask the RCL whether that release actually committed."""
     return f"release-{attempt_id}"
-
-
-class ReleaseHoldReason(StrEnum):
-    """Why :meth:`FinalityReleaseConsumer.consume` recorded ``CAPACITY_RELEASE_HELD`` instead of
-    releasing (module docstring's numbered gate list)."""
-
-    #: Gate 1 (``FULL_FILL`` only): the durable witness row is not ``True``.
-    NO_WITNESS = "NO_WITNESS"
-    #: Gate 2: the expected durable proof/obligation row could not be re-loaded.
-    PROOF_NOT_RELOADED = "PROOF_NOT_RELOADED"
-    #: The non-execution proof itself could not be built (kernel gate refusal).
-    NON_EXECUTION_PROOF_UNPRODUCIBLE = "NON_EXECUTION_PROOF_UNPRODUCIBLE"
-    #: Gate 3: :meth:`~tos_runtime.recon.service.ReconciliationService.reconcile` itself raised.
-    RECONCILIATION_UNAVAILABLE = "RECONCILIATION_UNAVAILABLE"
-    #: Gate 3: the report did not positively corroborate this exact attempt.
-    NOT_CORROBORATED = "NOT_CORROBORATED"
-    #: Gate 4: :func:`~tos.posttrade.predicates.finality_proof_non_transferable` is ``False``.
-    PROOF_NOT_TRANSFERABLE = "PROOF_NOT_TRANSFERABLE"
-    #: Gate 4: :func:`~tos.posttrade.predicates.finality_proof_current` is ``False``.
-    PROOF_NOT_CURRENT = "PROOF_NOT_CURRENT"
-    #: The reservation's own current state could not be read (no reservation for this scope).
-    NO_RESERVATION = "NO_RESERVATION"
-    #: Every prior gate passed but the RCL log itself refused the transition (e.g. a concurrent
-    #: writer moved the tip — a genuine CAS race, not a gate this consumer can pre-empt).
-    RCL_TRANSITION_REFUSED = "RCL_TRANSITION_REFUSED"
-    #: #966: the scope's OTHER outstanding reservations are not the one shape a close is
-    #: admitted over (exactly one, at ``POSITION_CONSUMED``) — two of them, or one mid-flight.
-    AMBIGUOUS_SCOPE_RESERVATIONS = "AMBIGUOUS_SCOPE_RESERVATIONS"
-    #: #966: the close did not provably discharge the entry in full (quantities disagree, a
-    #: remainder is left, or the entry's own final quantity is not on record).
-    ENTRY_QUANTITY_UNPROVEN = "ENTRY_QUANTITY_UNPROVEN"
-    #: #966: the witness still observes a non-zero holding of this instrument.
-    BROKER_POSITION_NOT_FLAT = "BROKER_POSITION_NOT_FLAT"
-    #: review-973 M3: a non-execution result (cancel/expire/reject) ended the ORDER, but this
-    #: attempt had already filled part of it — releasing would discard capacity still held.
-    FILLED_QUANTITY_STILL_HELD = "FILLED_QUANTITY_STILL_HELD"
-    #: A close release is held if its durable entry-recovery link could not be written first.
-    ENTRY_DISCHARGE_PENDING_UNAVAILABLE = "ENTRY_DISCHARGE_PENDING_UNAVAILABLE"
-
-
-#: :class:`~tos_runtime.posttrade.entry_discharge.DischargeRefusal` -> this module's own
-#: evidence vocabulary. The two live apart so ``entry_discharge`` never imports this module
-#: (which imports it) — the mapping is the one place they meet.
-_DISCHARGE_HOLD_REASONS: Mapping[DischargeRefusal, ReleaseHoldReason] = {
-    DischargeRefusal.QUANTITY_UNPROVEN: ReleaseHoldReason.ENTRY_QUANTITY_UNPROVEN,
-    DischargeRefusal.POSITION_NOT_FLAT: ReleaseHoldReason.BROKER_POSITION_NOT_FLAT,
-}
 
 
 class ReleaseOutcomeLike(Protocol):
@@ -439,7 +397,7 @@ class FinalityReleaseConsumer:
             return self._hold(
                 payload,
                 reservation_id,
-                ReleaseHoldReason.NOT_CORROBORATED,
+                uncorroborated_hold_reason(report),
                 detail=report.reason,
             )
         # #966: an entry's fill CONSUMES capacity (it leaves a position behind); a close's fill
@@ -533,7 +491,7 @@ class FinalityReleaseConsumer:
             return self._hold(
                 payload,
                 reservation_id,
-                ReleaseHoldReason.NOT_CORROBORATED,
+                uncorroborated_hold_reason(report),
                 detail=report.reason,
             )
         produced = self.finality_producer.produce_non_execution(payload)

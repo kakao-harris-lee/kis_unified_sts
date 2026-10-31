@@ -24,7 +24,11 @@ from pathlib import Path
 
 import pytest
 import yaml
-from tos_runtime.posttrade.config import FinalityConfigError, load_finality_config
+from tos_runtime.posttrade.config import (
+    FinalityConfigError,
+    PostTradeWitnessKind,
+    load_finality_config,
+)
 
 _VALID_RAW: dict[str, object] = {
     "currency": "KRW",
@@ -126,3 +130,66 @@ def test_string_field_blank_is_refused(tmp_path: Path, field: str) -> None:
     raw = dict(_VALID_RAW, **{field: "   "})
     with pytest.raises(FinalityConfigError, match=field):
         load_finality_config(_write(tmp_path, raw))
+
+
+# ===========================================================================
+# #1011 P2 — the optional `witness` key (module `config.py`'s own "witness" section)
+# ===========================================================================
+
+
+def test_an_absent_witness_key_is_the_store_derived_default(tmp_path: Path) -> None:
+    """No key at all ⇒ ``witness is None`` — today's behaviour, not a missing value.
+
+    Concrete input: ``_VALID_RAW`` itself, which every shipped tree's ``finality.yaml``
+    matches in this respect (none of them carries the key). The load must succeed and report
+    the absence, because compose reads exactly this to keep ``SyntheticLedgerWitness``.
+    """
+    config = load_finality_config(_write(tmp_path, _VALID_RAW))
+    assert config.witness is None
+
+
+def test_the_venue_ledger_token_selects_that_witness(tmp_path: Path) -> None:
+    """The ONE recognized value decodes to the ONE enum member."""
+    raw = dict(_VALID_RAW, witness="synthetic_venue_ledger")
+    config = load_finality_config(_write(tmp_path, raw))
+    assert config.witness is PostTradeWitnessKind.SYNTHETIC_VENUE_LEDGER
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "synthetic-venue-ledger",  # hyphens, not the token
+        "synthetic_ledger",  # the store-derived one has no token at all
+        "SYNTHETIC_VENUE_LEDGER",
+        "",
+        None,  # not a named-TBD placeholder here — see the loader's own docstring
+        7,
+        True,
+    ],
+)
+def test_an_unrecognized_witness_value_refuses_the_load(
+    tmp_path: Path, value: object
+) -> None:
+    """A misspelling must refuse, never fall back to the store-derived witness.
+
+    Concrete failing input: ``witness: synthetic-venue-ledger`` (hyphens). Silently ignoring
+    it would boot a tree on the store-derived witness while its own config says it reconciles
+    against the venue ledger — the two have opposite ``independent_of_evidence_store`` values,
+    so that divergence decides whether capacity is ever released.
+    """
+    raw = dict(_VALID_RAW, witness=value)
+    with pytest.raises(FinalityConfigError, match="witness"):
+        load_finality_config(_write(tmp_path, raw))
+
+
+def test_the_shipped_example_file_carries_no_witness_key() -> None:
+    """``finality.example.yaml`` ships the key COMMENTED OUT (plan §4 P2: "shipped trees OFF").
+
+    The example is what a new tree is copied from, so an uncommented value here would turn the
+    ledger on for every tree created after it — the exact "merging an ON value switches it on
+    early" failure the plan's deploy note calls out.
+    """
+    example = Path(__file__).resolve().parents[2] / "config" / "finality.example.yaml"
+    raw = yaml.safe_load(example.read_text(encoding="utf-8"))
+    assert "witness" not in raw
+    assert "witness: synthetic_venue_ledger" in example.read_text(encoding="utf-8")

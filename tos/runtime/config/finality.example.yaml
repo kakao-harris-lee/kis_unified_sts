@@ -33,3 +33,19 @@ proof_recipe_id: null
 # FinalityReleaseConsumer records (never acts on) a RELEASE_PROOF_OVERDUE evidence
 # row — an incident candidate for an operator, not a state change.
 release_proof_wait_ms: null
+
+# #1011 P2 (docs/plans/2026-10-31-tos-synthetic-venue-ledger-plan.md §3.2) — OPTIONAL,
+# and the ONLY key in this file that is. ABSENT (the shipped state, below) keeps today's
+# behaviour: a SYNTHETIC boot reconciles against SyntheticLedgerWitness, which re-reads
+# the evidence store it would be corroborating, declares
+# independent_of_evidence_store=False, and holds every release. Uncomment to select the
+# synthetic venue ledger instead (tos_runtime.venue_ledger.synthetic): the transport
+# records every result it produced into venue_ledger.sqlite3 before returning it, and
+# SyntheticVenueLedgerWitness reads only that file.
+#
+#   witness: synthetic_venue_ledger
+#
+# A kis-mock boot with this key set REFUSES to boot: the ledger is the SYNTHETIC venue's
+# own record, and a tree that reaches a real broker must read that broker. Unlike the
+# keys above, `null` here is NOT a named-TBD placeholder — it is refused, because
+# "unfilled" and "deliberately default" must not look the same.

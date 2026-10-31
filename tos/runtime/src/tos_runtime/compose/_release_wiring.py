@@ -45,6 +45,7 @@ from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.posttrade.config import load_finality_config
 from tos_runtime.posttrade.release_consumer import FinalityReleaseConsumer
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
+from tos_runtime.recon.ports import BrokerWitness
 
 # TOS Phase 5 W1 factory reuse (team-lead directive, plan §10 row ①③) — see this module's own
 # docstring "Reuses tos_runtime.recovery.reconciliation's own private factories".
@@ -68,6 +69,7 @@ def apply_release_wiring(
     monotonic_source: MonotonicSource,
     post_trade_dimension_state: _PostTradeDimensionState,
     posttrade: BrokerPosttrade | None = None,
+    venue_witness: BrokerWitness | None = None,
 ) -> ComposedRuntime:
     """Build the TOS Phase 5 W2-R :class:`~tos_runtime.posttrade.release_consumer
     .FinalityReleaseConsumer` and attach it to ``runtime.driver``.
@@ -99,6 +101,14 @@ def apply_release_wiring(
             the consumer reconciles against the KIS witness and re-loads broker proofs; the built
             producer and consumer are recorded on it for the fill observer. ``None`` or disabled
             keeps the synthetic witness and producer.
+        venue_witness: #1011 P2 — this boot's
+            :class:`~tos_runtime.recon.witness_synthetic_venue.SyntheticVenueLedgerWitness`, or
+            ``None``. Read ONLY when ``posttrade`` supplies none, which is every synthetic boot;
+            the two can never both be set, because a venue ledger is refused for the
+            broker-reaching transport a ``posttrade`` witness requires
+            (:func:`~tos_runtime.compose._venue_ledger_wiring.build_synthetic_venue_ledger`).
+            ``None`` keeps :class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness`
+            — today's behaviour.
 
     Returns:
         ``runtime`` itself. A no-op (returns ``runtime`` unchanged) when ``runtime.driver`` is
@@ -110,12 +120,13 @@ def apply_release_wiring(
     finality_config = load_finality_config(config_dir / FINALITY_CONFIG_NAME)
     instrument_key = runtime.context_resolver.instrument_key
     broker = posttrade is not None and posttrade.enabled
+    broker_witness = posttrade.witness if posttrade is not None else None
     recon_service = _build_reconciliation_service(
         runtime.rcl_log,
         runtime.evidence_store,
         account=instrument_key.account,
         instrument=instrument_key.instrument,
-        witness=posttrade.witness if posttrade is not None else None,
+        witness=broker_witness if broker_witness is not None else venue_witness,
     )
     finality_producer = finality_producer_for(broker, finality_config, scheme)
     consumer = FinalityReleaseConsumer(
