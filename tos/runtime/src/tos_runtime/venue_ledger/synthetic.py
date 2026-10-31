@@ -26,13 +26,22 @@ non-acceptance (RFC-005 §11:322-323). The reservation stays POTENTIALLY_LIVE, t
 consumed, and nothing is resubmitted" (``tos/src/tos/egressgw/gateway.py``). This module invents
 no new halt reason, no new disposition, and no new recovery path; it raises into that one.
 
-**Identity, and what a re-send does.** A row's identity is ``(trading_date,
-broker_execution_id)`` — UNIQUE, the same per-day-sequence discipline
-``tos_runtime.recon.service._join_orders_by_execution_id`` already applies to a KIS ODNO (C-1).
-The kernel stamps a deterministic ``broker_execution_id`` derived from ``(attempt_id, kind)``, so
-re-sending the same attempt after a restart (§2-3 drill) reproduces the same key and
-:meth:`SyntheticVenueLedger.record` leaves ONE row: the venue holds one execution, so the
-witness's net position counts one fill. The result itself is returned unchanged, which is the
+**Identity, and what a re-send does.** A row's identity is ``broker_execution_id`` ALONE —
+UNIQUE, with no date in the key. The kernel stamps a deterministic
+``syn-exec:{attempt_id}:{kind}``, which already carries the attempt and the kind and is therefore
+globally unique on its own; a KIS ODNO needs its date because it is a *per-day sequence*, and
+this id is not one. Keying on ``(trading_date, broker_execution_id)`` looked like the same
+discipline and was measurably weaker (review-1017 L1): re-sending the same attempt across a
+midnight boundary produced a SECOND row for one execution, and the witness netted the fill twice.
+
+So re-sending the same attempt after a restart (§2-3 drill) reproduces the same key on ANY day
+and :meth:`SyntheticVenueLedger.record` leaves ONE row: the venue holds one execution, so the
+witness's net position counts one fill. ``trading_date`` stays a column — it is the date the
+venue executed (the FIRST recorded one, since the table is append-only) and the
+``(broker_execution_id, order_date)`` half of
+``tos_runtime.recon.service._join_orders_by_execution_id``'s C-1 cross-reference — but it is not
+part of the identity. A later re-send therefore never rewrites it. The result itself is returned
+unchanged, which is the
 only answer consistent with the kernel ``Transport`` contract ("transmit exactly once and return
 the typed result"; a fate that is unknown is ``UNKNOWN``/``TIMEOUT``, never a rejection) AND with
 the engine's own duplicate handling: ``tos.engine.state.ProvisionalReservationLedger
@@ -115,7 +124,7 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
     filled_quantity TEXT,
     remaining_quantity TEXT,
     result_kind TEXT NOT NULL,
-    UNIQUE (trading_date, broker_execution_id)
+    UNIQUE (broker_execution_id)
 )
 """
 
@@ -152,6 +161,16 @@ _ROW_COLUMNS: tuple[str, ...] = (
     "remaining_quantity",
     "result_kind",
     "trading_date",
+)
+
+#: The columns that say WHAT the venue executed, compared on a UNIQUE conflict to tell a
+#: re-send of one execution from a different result claiming an identity the venue already used.
+#: ``trading_date`` is excluded (review-1017 L1): it records WHEN this process observed the
+#: execution, and the same attempt re-sent after a midnight boundary carries a later date while
+#: being the same single execution. Treating that as a mismatch would refuse the very re-send
+#: the single-shot contract requires to be answered with the unchanged result.
+_EXECUTION_FACT_COLUMNS: tuple[str, ...] = tuple(
+    column for column in _ROW_COLUMNS if column != "trading_date"
 )
 
 _SELECT_ROWS_SQL = f"SELECT {', '.join(_ROW_COLUMNS)}, written_seq FROM {_TABLE} ORDER BY written_seq ASC"
@@ -371,15 +390,18 @@ class SyntheticVenueLedger:
             filled_quantity: The result's filled magnitude, if any.
             remaining_quantity: The result's remaining magnitude, if any.
             result_kind: The ``EgressResultKind`` token.
-            trading_date: The KST trading date (``YYYYMMDD``) from trusted time.
+            trading_date: The KST trading date (``YYYYMMDD``) from trusted time. Recorded, and
+                NOT part of the row's identity — a re-send across a midnight boundary is still
+                the same single execution (review-1017 L1, module docstring).
 
         Returns:
-            ``True`` when this call wrote the row; ``False`` when the identical row was already
-            present (a re-send of the same deterministic attempt — module docstring).
+            ``True`` when this call wrote the row; ``False`` when the same execution was already
+            recorded, on this trading date or an earlier one (a re-send of the same
+            deterministic attempt — module docstring).
 
         Raises:
-            VenueLedgerWriteFailed: A field is not recordable, the row's identity collides with
-                a DIFFERENT recorded result, or sqlite refused the write.
+            VenueLedgerWriteFailed: A field is not recordable, the execution identity is already
+                held by a DIFFERENT recorded result, or sqlite refused the write.
         """
         values = self._validated_row(
             attempt_id=attempt_id,
@@ -448,8 +470,8 @@ class SyntheticVenueLedger:
         if not valid_trading_date(trading_date):
             raise VenueLedgerWriteFailed(
                 f"SyntheticVenueLedger.record: trading_date={trading_date!r} is not a "
-                "YYYYMMDD KST trading date — the date is half of a venue row's identity "
-                "(UNIQUE (trading_date, broker_execution_id)) and half of the witness join key"
+                "YYYYMMDD KST trading date — it is half of the witness's "
+                "(broker_execution_id, order_date) cross-reference join key"
             )
         return (
             attempt_id,
@@ -465,34 +487,37 @@ class SyntheticVenueLedger:
         )
 
     def _already_recorded(self, values: tuple[object, ...]) -> bool:
-        """Whether the colliding row is byte-identical to ``values`` (module docstring).
+        """Whether the colliding row reports the SAME execution as ``values`` (module docstring).
 
-        An identical row is the deterministic re-send: the venue holds ONE execution, so this
-        reports "already there" and no second fill is created. A row that differs under the same
-        identity is not a re-send — it is a different result claiming an identity the venue has
-        already used, which is the fail-closed refusal.
+        Compared on :data:`_EXECUTION_FACT_COLUMNS` — every column except ``trading_date``. A row
+        agreeing on all of them is the deterministic re-send, on this day or a later one: the
+        venue holds ONE execution, so this reports "already there" and no second fill is created.
+        A row that differs is not a re-send — it is a different result claiming an identity the
+        venue has already used, which is the fail-closed refusal.
 
         Raises:
-            VenueLedgerWriteFailed: The stored row differs, or it vanished between the conflict
-                and this read.
+            VenueLedgerWriteFailed: The stored row reports a different execution, or it vanished
+                between the conflict and this read.
         """
-        trading_date = values[_ROW_COLUMNS.index("trading_date")]
         execution_id = values[_ROW_COLUMNS.index("broker_execution_id")]
+        facts = tuple(
+            values[_ROW_COLUMNS.index(column)] for column in _EXECUTION_FACT_COLUMNS
+        )
         row = self._conn.execute(
-            f"SELECT {', '.join(_ROW_COLUMNS)} FROM {_TABLE} "
-            "WHERE trading_date = ? AND broker_execution_id = ?",
-            (trading_date, execution_id),
+            f"SELECT {', '.join(_EXECUTION_FACT_COLUMNS)} FROM {_TABLE} "
+            "WHERE broker_execution_id = ?",
+            (execution_id,),
         ).fetchone()
         if row is None:  # pragma: no cover - UNIQUE fired, so the row exists
             raise VenueLedgerWriteFailed(
-                "SyntheticVenueLedger.record: identity "
-                f"({trading_date!r}, {execution_id!r}) collided but no row is readable"
+                "SyntheticVenueLedger.record: execution identity "
+                f"{execution_id!r} collided but no row is readable"
             )
-        if tuple(row) != values:
+        if tuple(row) != facts:
             raise VenueLedgerWriteFailed(
-                "SyntheticVenueLedger.record: identity "
-                f"({trading_date!r}, {execution_id!r}) is already held by a DIFFERENT recorded "
-                f"result {tuple(row)!r} — not a re-send of {values!r}"
+                "SyntheticVenueLedger.record: execution identity "
+                f"{execution_id!r} is already held by a DIFFERENT recorded "
+                f"result {tuple(row)!r} — not a re-send of {facts!r}"
             )
         return False
 
@@ -613,7 +638,7 @@ class RecordingSyntheticTransport:
                 unavailable date to ``None`` so the ACK still reaches the inbox, an unavailable
                 date here is a write failure. There the BROKER is the independent record and an
                 undated receipt merely cannot join; here the row IS the record, and an undated
-                one has no identity (UNIQUE) and no join key at all.
+                one carries no ``order_date`` for the witness's cross-reference join at all.
         """
         self._inner = inner
         self._ledger = ledger

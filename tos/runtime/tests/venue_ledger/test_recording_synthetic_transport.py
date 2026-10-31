@@ -36,6 +36,8 @@ from tos.engine import (
     build_attempt_request,
 )
 from tos.ordering import OrderingEvent
+from tos_runtime.recon.ports import WitnessScope
+from tos_runtime.recon.witness_synthetic_venue import SyntheticVenueLedgerWitness
 from tos_runtime.venue_ledger.synthetic import (
     RecordingSyntheticTransport,
     SyntheticVenueLedger,
@@ -353,10 +355,50 @@ def test_a_different_result_under_the_same_identity_is_refused(ledger) -> None:
         ledger.record(filled_quantity=Decimal("2"), **common)
 
 
-def test_the_same_execution_id_on_another_day_is_another_row(
-    ledger, ledger_path
+def test_resending_the_same_attempt_on_another_trading_date_is_still_one_row(
+    ledger, ledger_path: Path
 ) -> None:
-    """Identity is the PAIR — the same per-day-sequence discipline the KIS ODNO join uses."""
+    """Regression, review-1017 L1 (measured on the original key).
+
+    With ``UNIQUE (trading_date, broker_execution_id)``, sending attempt ``a`` on 20261030 and
+    re-sending the SAME attempt on 20261031 wrote a SECOND row for one execution, and the
+    witness netted the fill twice — a position of 2 where the venue holds 1. The id
+    ``syn-exec:{attempt}:{kind}`` already carries the attempt and the kind, so the date never
+    belonged in the key: unlike a KIS ODNO it is not a per-day sequence.
+    """
+    inner = _full_fill_transport()
+    today = ["20261030"]
+    transport = RecordingSyntheticTransport(
+        inner, ledger, trading_date_now=lambda: today[0]
+    )
+    attempt = _attempt()
+
+    first = _send(transport, attempt=attempt)
+    today[0] = "20261031"
+    second = _send(transport, attempt=attempt)
+
+    rows = VenueLedgerReader(ledger_path).fills()
+    assert len(rows) == 1, "one execution, one row, whatever day it is re-sent on"
+    # Append-only: the recorded date stays the day the venue actually executed.
+    assert rows[0].trading_date == "20261030"
+    assert second == first, "the kernel result is returned unchanged on the re-send"
+
+    witness = SyntheticVenueLedgerWitness(
+        VenueLedgerReader(ledger_path),
+        buy_side_token=BUY,
+        sell_side_token=SELL,
+        trading_date_now=lambda: today[0],
+    )
+    snapshot = witness.observe(WitnessScope(account=ACCOUNT, instrument_keys=(_key(),)))
+    assert snapshot.positions == ((INSTRUMENT, Decimal("1")),), "net 1, never 2"
+
+
+def test_a_different_execution_under_the_same_id_is_refused_on_any_date(
+    ledger,
+) -> None:
+    """The "different stored row -> refuse" rule survives the key change: only
+    ``trading_date`` is excluded from the comparison, so a magnitude that disagrees is still a
+    refusal even when the dates differ."""
     common = {
         "attempt_id": "a1",
         "broker_execution_id": "syn-exec:a1:FULL_FILL",
@@ -364,13 +406,15 @@ def test_the_same_execution_id_on_another_day_is_another_row(
         "instrument": INSTRUMENT,
         "side": BUY,
         "quantity": Decimal("1"),
-        "filled_quantity": Decimal("1"),
         "remaining_quantity": Decimal("0"),
         "result_kind": "FULL_FILL",
     }
-    assert ledger.record(trading_date="20261030", **common) is True
-    assert ledger.record(trading_date=TODAY, **common) is True
-    assert len(VenueLedgerReader(ledger_path).fills()) == 2
+    assert (
+        ledger.record(filled_quantity=Decimal("1"), trading_date="20261030", **common)
+        is True
+    )
+    with pytest.raises(VenueLedgerWriteFailed, match="DIFFERENT recorded result"):
+        ledger.record(filled_quantity=Decimal("2"), trading_date=TODAY, **common)
 
 
 # ============================================================================
