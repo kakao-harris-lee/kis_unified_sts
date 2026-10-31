@@ -90,7 +90,7 @@ def _fake_identity():
 # -- backup_set ---------------------------------------------------------------------------------
 
 
-def test_backup_set_writes_a_manifest_with_five_files_and_facts(tmp_path: Path) -> None:
+def test_backup_set_writes_a_manifest_with_six_files_and_facts(tmp_path: Path) -> None:
     live_dir = tmp_path / "live"
     live_dir.mkdir()
     paths = _build_live_set(
@@ -107,10 +107,14 @@ def test_backup_set_writes_a_manifest_with_five_files_and_facts(tmp_path: Path) 
         "inbox",
         "composite_state",
         "marketfeed",
+        "venue_ledger",
     }
     for name, entry in manifest.files.items():
-        if name == "marketfeed":
-            continue  # absent in this fixture (with_marketfeed=False) — asserted below
+        if name in ("marketfeed", "venue_ledger"):
+            # Both absent in this fixture — asserted below. `venue_ledger` is absent on
+            # every boot that does not set `finality.yaml::witness` (#1011 P2), which is
+            # every shipped tree today.
+            continue
         # composite_state IS present in this fixture (_build_live_set always creates it) —
         # only marketfeed is the absent-optional-member case here.
         assert entry is not None
@@ -125,6 +129,7 @@ def test_backup_set_writes_a_manifest_with_five_files_and_facts(tmp_path: Path) 
     assert composite_state_entry is not None
     assert composite_state_entry.last_seq is None  # kernel-owned — never queried
     assert manifest.files["marketfeed"] is None  # absent — never fabricated
+    assert manifest.files["venue_ledger"] is None  # ditto (#1011 P2)
 
     manifest_path = backups_dir / "gen1.set.manifest.json"
     assert manifest_path.is_file()

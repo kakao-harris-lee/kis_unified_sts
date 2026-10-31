@@ -94,16 +94,18 @@ __all__ = [
 ]
 
 #: The venue ledger's own file inside the data leaf — deliberately NOT
-#: ``evidence.sqlite3``/``rcl.sqlite3`` (module docstring "Where it lives"). Not a backup-set
-#: member yet: adding it to the cold backup is P3's own step, with its runbook row.
+#: ``evidence.sqlite3``/``rcl.sqlite3`` (module docstring "Where it lives"). Since #1011 P2 it
+#: is a backup-set member (:class:`~tos_runtime.operations.backup_set.DurableSetPaths`), an
+#: OPTIONAL one: a boot without ``finality.yaml::witness`` never creates the file. P3 still owns
+#: the runbook row that tells an operator where it is and how to roll back.
 VENUE_LEDGER_FILE_NAME = "venue_ledger.sqlite3"
 
 #: This store's schema version, in the shared ``schema_ledger`` discipline every other
-#: runtime-owned sqlite store uses (``tos_runtime.operations.schema_ledger``). Deliberately NOT
-#: registered in ``STORE_MIGRATIONS``/``MIGRATE_PATH_BY_STORE`` yet: those two are pinned equal
-#: to each other (``tos/runtime/tests/compose/test_cli.py``) and the second lives under
-#: ``compose/``, so registering the pair belongs with the P2 compose wiring that first gives this
-#: store a real data-leaf path. A v1 store with no migrations needs no ``migrate`` run.
+#: runtime-owned sqlite store uses (``tos_runtime.operations.schema_ledger``). Registered in
+#: ``STORE_MIGRATIONS``/``MIGRATE_PATH_BY_STORE`` since #1011 P2 (review-1017 N2) — the two are
+#: pinned equal to each other (``tos/runtime/tests/compose/test_cli.py``) and the second lives
+#: under ``compose/``, so the pair was registered with the compose wiring that first gives this
+#: store a real data-leaf path.
 VENUE_LEDGER_SCHEMA_VERSION = 1
 
 #: The one table. Rows cover every result the venue produced, not only fills — an ACK or a

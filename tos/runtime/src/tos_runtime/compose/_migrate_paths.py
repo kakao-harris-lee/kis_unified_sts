@@ -28,6 +28,10 @@ MIGRATE_PATH_BY_STORE: dict[str, Callable[[DurableSetPaths, Path], Path]] = {
     "rcl": lambda paths, _data_dir: paths.rcl,
     "inbox": lambda paths, _data_dir: paths.inbox,
     "marketfeed": lambda _paths, data_dir: data_dir / MARKETFEED_FILE_NAME,
+    # #1011 P2 (review-1017 N2): the synthetic venue ledger. It IS a backup-set member
+    # (it joined in the same commit), so it resolves through `DurableSetPaths` like the
+    # three above rather than straight off `data_dir`.
+    "venue_ledger": lambda paths, _data_dir: paths.venue_ledger,
 }
 
 
