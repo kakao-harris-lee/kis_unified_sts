@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 from tos.rcl import CapacityState
+from tos_runtime.calendar.ports import FixedWallClockReference
+from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.rcl.projection import (
     SqliteReservationProjectionReader,
     outstanding_reservations,
@@ -40,10 +42,15 @@ from tos_runtime.venue_ledger.synthetic import (
     VenueLedgerReader,
 )
 
+from . import _fixtures as fx
 from .conftest import write_approval_file
 from .test_compose_root import _compose, _reach_trusted
 from .test_synthetic_close_bound_inert import _hand_off_a_filled_entry
 from .test_venue_ledger_wiring import turn_the_venue_ledger_on
+
+#: Captured BEFORE the full-cycle test monkeypatches it, so the entry+exit mapping is
+#: built from the real one rather than from itself.
+_BAND_ONLY_MAPPING = fx.band_reversion_strategy_mapping
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -396,3 +403,170 @@ def test_the_approval_helper_is_the_one_the_inert_twin_uses() -> None:
         "test_synthetic_close_bound_inert"
     )
     assert callable(write_approval_file)
+
+
+# ===========================================================================
+# ⑤ (second half) — the completion condition: entry -> close -> a fresh entry
+# ===========================================================================
+
+
+def _entry_exit_mapping() -> dict[str, object]:
+    """The suite's band-reversion strategy PLUS the exit rule below."""
+    mapping = _BAND_ONLY_MAPPING()
+    mapping["policy"]["rules"].append(_exit_rule())  # type: ignore[index]
+    return mapping
+
+
+def _exit_rule() -> dict[str, object]:
+    """``close > upper_band`` -> close the long (the shipped setup-D trees' own shape).
+
+    A local copy rather than an import from ``test_close_proposal_e2e``: that suite is the
+    kis-mock lifecycle, and this file stays a SYNTHETIC-only e2e with no fake broker anywhere
+    in its import graph.
+    """
+    rationale = "close pierced the upper band — synthetic venue-ledger exit"
+    return {
+        "all_of": [
+            {
+                "left": {"ref": ["capsule", fx.VALUE_NAMESPACE, "close"]},
+                "op": "GT",
+                "right": {"ref": ["capsule", fx.VALUE_NAMESPACE, "upper_band"]},
+            }
+        ],
+        "decision": {
+            "kind": "ACTION",
+            "rationale": rationale,
+            "target": {
+                "kind": "ACTION",
+                "account": fx.ACCOUNT,
+                "instrument": fx.INSTRUMENT,
+                "direction": "SHORT",
+                "position_effect": "CLOSE",
+                "quantity_basis": "RISK",
+                "edge_or_confidence": "venue-ledger-e2e",
+                "rationale": rationale,
+            },
+        },
+    }
+
+
+def _boot_with_the_production_risk_service(
+    config_dir: Path, data_dir: Path, custody_root: Path
+):
+    """Boot with the REAL step 6/7 risk-state service, not this suite's test providers.
+
+    The full cycle needs it: a synthetic CLOSE's step-9 commit fence
+    (``SyntheticCloseEntryFence``) is minted from the bound the REAL
+    :class:`~tos_runtime.riskstate.service.RiskStateService` stashed while deciding step 6
+    (``_synthetic_close_fence``). With ``_compose``'s injected step-6 provider that stash never
+    happens and the CLOSE halts with "step-6 CLOSE proof fence is missing" — a property of the
+    test seam, not of the venue ledger.
+
+    Same construction ``test_close_risk_flat_regression.py`` uses for the same reason.
+    """
+    fx.write_band_strategy_file(config_dir)
+    return compose_paper_runtime(
+        config_dir,
+        data_dir,
+        custody_root,
+        "non-live-test",
+        construction=fx.construction_config(),
+        aggregate_risk_inputs_provider=None,
+        action_flow_inputs_provider=None,
+        wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
+    )
+
+
+def _approve_and_run(runtime, custody_root: Path, event):
+    """Discover, write the operator approval for that exact proposal, then run it for real."""
+    (discovery,) = runtime.run_once((event,))
+    assert discovery.pipeline is not None and discovery.pipeline.proposal is not None
+    construction = runtime.construction_stage.construction
+    assert construction is not None and construction.intent is not None
+    write_approval_file(
+        custody_root,
+        proposal_digest=discovery.pipeline.proposal.canonical_digest,
+        environment_label="non-live-test",
+        approved_intent_envelope_digest=construction.intent.canonical_digest,
+    )
+    (result,) = runtime.run_once((event,))
+    return discovery, result
+
+
+def test_the_whole_cycle_entry_close_and_a_fresh_entry_in_one_process(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The plan's completion condition on a synthetic tree: entry -> close -> next entry.
+
+    Concrete input: one tree with ``witness: synthetic_venue_ledger``, an entry+exit strategy,
+    and three ticks in ONE process — a crossing entry tick, an exit tick above the upper band,
+    and a second crossing entry tick. Concrete result:
+
+    * the entry fills and reaches ``POSITION_CONSUMED``;
+    * the CLOSE is admitted and hands off over that one consumed position;
+    * the close's fill nets the venue ledger to ZERO, which is what
+      ``entry_discharge.broker_position_flat`` needs: BOTH reservations end ``RELEASED``;
+    * and the scope admits a fresh OPEN again.
+
+    Before the venue ledger this was unreachable on a synthetic tree at step one: the entry
+    never left ``COMMITTED_UNBOUND`` (#1011 F4/F5), so there was no CLOSE to admit and no
+    position to discharge.
+    """
+    monkeypatch.setattr(fx, "band_reversion_strategy_mapping", _entry_exit_mapping)
+    turn_the_venue_ledger_on(config_dir_with_risk_state)
+    runtime = _boot_with_the_production_risk_service(
+        config_dir_with_risk_state, data_dir, custody_root
+    )
+    assert runtime.risk_state is not None
+    try:
+        _reach_trusted(runtime)
+
+        # --- the entry ---------------------------------------------------------------
+        _, entry = _approve_and_run(runtime, custody_root, fx.crossing_event(seq=0))
+        assert entry.flow is not None and entry.flow.handed_off is True
+        for _ in range(3):
+            runtime.run_once(())
+        entry_rows = _reservations(runtime)
+        assert [state for _id, state in entry_rows] == [
+            CapacityState.POSITION_CONSUMED
+        ], entry_rows
+        entry_reservation_id = entry_rows[0][0]
+
+        # --- the exit ----------------------------------------------------------------
+        exit_tick = fx.crossing_event(seq=1, close=fx.UPPER_BAND + 1_000)
+        discovery, exit_ = _approve_and_run(runtime, custody_root, exit_tick)
+        proposal = discovery.pipeline.proposal
+        assert (proposal.position_effect, proposal.direction) == ("CLOSE", "SHORT")
+        assert exit_.flow is not None and exit_.flow.handed_off is True
+        for _ in range(3):
+            runtime.run_once(())
+
+        # --- the venue is flat, so BOTH reservations end RELEASED ---------------------
+        instrument_key = runtime.context_resolver.instrument_key
+        witness = runtime.venue_ledger.witness
+        assert witness is not None
+        snapshot = witness.observe(
+            WitnessScope(
+                account=instrument_key.account, instrument_keys=(instrument_key,)
+            )
+        )
+        assert snapshot.positions == (), snapshot.positions
+        assert snapshot.positions_complete is True
+
+        after = dict(_reservations(runtime))
+        assert set(after.values()) == {CapacityState.RELEASED}, after
+        assert after[entry_reservation_id] is CapacityState.RELEASED
+
+        # --- and the scope trades again ----------------------------------------------
+        scope_rows = SqliteReservationProjectionReader(
+            runtime.rcl_log
+        ).scope_reservations(instrument_key)
+        assert outstanding_reservations(scope_rows) == ()
+        assert verdict_for_scope("OPEN", scope_rows).outcome.value == "ADMIT"
+        _, again = _approve_and_run(runtime, custody_root, fx.crossing_event(seq=2))
+        assert again.flow is not None and again.flow.handed_off is True
+    finally:
+        _close_runtime(runtime)
