@@ -64,6 +64,7 @@ from tos_runtime.posttrade.config import load_finality_config
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
+from tos_runtime.venue_ledger.synthetic import SyntheticVenueLedger
 
 __all__ = ["_finalize"]
 
@@ -169,6 +170,7 @@ def _finalize(
     transport_config: KisMockTransportConfig | None,
     trading_date_now: Callable[[], str | None] | None = None,
     credential_sessions_cell: KisCredentialSessionsCell | None = None,
+    venue_ledger: SyntheticVenueLedger | None = None,
 ) -> ComposedRuntime:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring (delegated to
     :func:`~tos_runtime.compose._engine_wiring.wire_engine_and_driver`) + the boot-time replay
@@ -219,6 +221,9 @@ def _finalize(
         safety_mesh=risk.safety_mesh.services,
         mesh_snapshot_refresher=risk.safety_mesh.refresh_tick_snapshot,
         trading_date_now=trading_date_now,
+        # #1011 P2: the synthetic transport records into this boot's venue ledger
+        # before it answers, when `finality.yaml::witness` selected one.
+        venue_ledger=venue_ledger,
     )
 
     if credential_sessions_cell is not None:

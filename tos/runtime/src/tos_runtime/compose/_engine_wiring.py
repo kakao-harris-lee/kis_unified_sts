@@ -108,6 +108,7 @@ from tos_runtime.safety.ports import SafetyMeshService
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
+from tos_runtime.venue_ledger.synthetic import SyntheticVenueLedger
 
 __all__ = [
     "ENGINE_DRIVER_CONFIG_NAME",
@@ -550,6 +551,7 @@ def wire_engine_and_driver(
     safety_mesh: Sequence[SafetyMeshService] = (),
     mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None,
     trading_date_now: Callable[[], str | None] | None = None,
+    venue_ledger: SyntheticVenueLedger | None = None,
 ) -> WiredEngine:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring — split out of ``_wiring.py``'s
     ``_finalize`` purely for the size budget; no behavioural difference from having this inline
@@ -583,6 +585,9 @@ def wire_engine_and_driver(
             :func:`~tos_runtime.compose._transport_wiring.build_transport` (C-2 decision (C)).
         mesh_snapshot_refresher: Forwarded to :func:`_build_preconditions` — see its own
             docstring.
+        venue_ledger: Forwarded to
+            :func:`~tos_runtime.compose._transport_wiring.build_transport` (#1011 P2) — ``None``
+            on every boot whose ``finality.yaml`` does not select the venue-ledger witness.
     """
     # #966: a SEND_REFUSED names an attempt, and since #966 each attempt holds its own
     # reservation (tos_runtime.rcl.reservation_identity), so the resolver can no longer answer
@@ -635,6 +640,7 @@ def wire_engine_and_driver(
         runtime_identity=identity,
         trading_date_now=trading_date_now,
         credential_sessions=credential_sessions,
+        venue_ledger=venue_ledger,
     )
     gateway = BrokerEgressGateway(
         contexts=context_resolver, transport=transport, sink=gateway_sink

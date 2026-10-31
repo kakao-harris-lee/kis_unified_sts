@@ -505,6 +505,12 @@ EXAMPLE_TOUCHPOINTS: dict[str, frozenset[str]] = {
         {
             "tos_runtime/compose/_finalize_wiring.py",
             "tos_runtime/compose/_release_wiring.py",
+            # #1011 P2: a third wiring call site, NOT a second schema reader — it re-loads the
+            # file through the same canonical `load_finality_config` for its one optional
+            # `witness` key, exactly as the two above re-load it for their own keys. No
+            # EXAMPLE_REQUIRED_PATHS entry follows from it: `witness` is OPTIONAL and the
+            # shipped example carries it commented out on purpose (absent = today's behaviour).
+            "tos_runtime/compose/_venue_ledger_wiring.py",
         }
     ),
     "kis_mock_transport": frozenset({"tos_runtime/compose/_transport_wiring.py"}),

@@ -639,6 +639,27 @@ class RestoredSet(BaseModel):
     manifest: BackupSetManifest
 
 
+def _fill_pre_membership_paths(
+    restored_file_paths: dict[str, Path], dest_dir: Path
+) -> None:
+    """Give a manifest written before a member joined the set that member's path anyway.
+
+    A manifest written before ``marketfeed`` joined (plan §6 ④), or before ``venue_ledger`` did
+    (#1011 P2), has no such key in its own ``files`` at all — not even a ``None`` entry, because
+    the key did not exist yet. That is a real, different fact from "this store existed and was
+    empty at backup time": the old manifest legitimately PREDATES the store, so the restored
+    directory simply has no such file. Never fabricate one, and never raise a bare ``KeyError``
+    that hides which shape of manifest this is.
+
+    Mutates ``restored_file_paths`` in place, adding only keys it does not already carry.
+    """
+    for name, file_name in (
+        ("marketfeed", MARKETFEED_FILE_NAME),
+        ("venue_ledger", VENUE_LEDGER_FILE_NAME),
+    ):
+        restored_file_paths.setdefault(name, dest_dir / file_name)
+
+
 def restore_set(
     manifest_path: Path,
     dest_dir: Path,
@@ -708,20 +729,7 @@ def restore_set(
             )
         restored_file_paths[name] = dest_path
 
-    # Backward compatibility with a manifest written BEFORE marketfeed joined the backup set
-    # (plan §6 ④): such a manifest's own `files` has no "marketfeed" key at all — not even a
-    # `None` entry — because the key did not exist yet. That is a real, different fact from "this
-    # store existed and was empty at backup time": the old manifest legitimately PREDATES this
-    # store, so the restored set simply has no such file, exactly like the composite_state-absent
-    # case above (``BackupSetManifest.files``'s own docstring). Never fabricate a file for it, and
-    # never raise a bare KeyError that hides which shape of manifest this is.
-    if "marketfeed" not in restored_file_paths:
-        restored_file_paths["marketfeed"] = dest_dir / MARKETFEED_FILE_NAME
-    # The identical case for the venue ledger (#1011 P2): every manifest written before it
-    # joined the set — which is every manifest taken from a tree running today — has no
-    # "venue_ledger" key at all.
-    if "venue_ledger" not in restored_file_paths:
-        restored_file_paths["venue_ledger"] = dest_dir / VENUE_LEDGER_FILE_NAME
+    _fill_pre_membership_paths(restored_file_paths, dest_dir)
 
     restored_paths = DurableSetPaths(
         evidence=restored_file_paths["evidence"],

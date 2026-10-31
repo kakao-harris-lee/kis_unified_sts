@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import os
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -40,6 +40,7 @@ from tos_runtime.authority.iap import (
 from tos_runtime.brokercap import BrokerScopesConfig
 from tos_runtime.calendar.owner import SessionFactsOwner
 from tos_runtime.compose._safety_wiring import SafetyMeshSnapshot
+from tos_runtime.compose._venue_ledger_wiring import SyntheticVenueLedgerParts
 from tos_runtime.compose.context import (
     ComposeContextResolver,
     RecordingActionFlowGovernor,
@@ -380,6 +381,15 @@ class ComposedRuntime:
     #: PR-3b — provenance of the broker witness release and recovery reconcile against:
     #: ``"kis-mock-stock"`` on a stock MOCK boot, ``"synthetic-ledger"`` otherwise.
     broker_witness_provenance: str = "synthetic-ledger"
+
+    #: #1011 P2 — this boot's synthetic venue ledger parts, or an all-``None``
+    #: :class:`~tos_runtime.compose._venue_ledger_wiring.SyntheticVenueLedgerParts`
+    #: when ``finality.yaml::witness`` selected none (every shipped tree today).
+    #: Published so a caller that owns this runtime's lifetime can close the
+    #: writer's sqlite connection alongside ``rcl_log``/``evidence_store``.
+    venue_ledger: SyntheticVenueLedgerParts = field(
+        default_factory=SyntheticVenueLedgerParts
+    )
 
     def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
         """Drive ``events`` through :attr:`driver` to completion, one at a time.
