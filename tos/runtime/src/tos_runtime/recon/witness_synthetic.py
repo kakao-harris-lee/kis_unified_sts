@@ -64,7 +64,7 @@ from tos_runtime.recon.ports import (
     WitnessUnavailable,
 )
 
-__all__ = ["SyntheticLedgerWitness"]
+__all__ = ["EGRESS_KIND_TO_WITNESS_STATE", "SyntheticLedgerWitness"]
 
 #: The two ``EvidenceKind`` members (``tos.engine.vocabulary.EvidenceKind``) that carry a
 #: re-injected egress result's own reported magnitudes (module docstring). Named as plain
@@ -77,7 +77,11 @@ _EGRESS_RESULT_KINDS: frozenset[str] = frozenset(
 #: ``EgressResultKind`` (``tos.engine.vocabulary``) -> :class:`WitnessOrderState`. Any
 #: value absent from this map (including ``None``) falls back to ``UNKNOWN`` — fail-closed,
 #: never a silent KeyError and never a guessed "probably fine" state.
-_EGRESS_KIND_TO_WITNESS_STATE: Mapping[str, WitnessOrderState] = {
+#:
+#: Public (#1011 §3.2): :mod:`tos_runtime.recon.witness_synthetic_venue` maps the SAME kernel
+#: result tokens onto the SAME witness states from a different durable source, and two copies of
+#: this table could drift into two different readings of one ``EgressResultKind`` (CLAUDE.md DRY).
+EGRESS_KIND_TO_WITNESS_STATE: Mapping[str, WitnessOrderState] = {
     "ACK": WitnessOrderState.ACKED,
     "FULL_FILL": WitnessOrderState.FILLED,
     "PARTIAL_FILL": WitnessOrderState.PARTIAL,
@@ -179,7 +183,7 @@ class SyntheticLedgerWitness:
 
     def _order_from_payload(self, payload: Mapping[str, object]) -> WitnessOrder:
         kind = payload.get("egress_result_kind")
-        state = _EGRESS_KIND_TO_WITNESS_STATE.get(
+        state = EGRESS_KIND_TO_WITNESS_STATE.get(
             kind if isinstance(kind, str) else "", WitnessOrderState.UNKNOWN
         )
         attempt_id = payload.get("attempt_id")
