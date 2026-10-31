@@ -115,6 +115,9 @@ from tos_runtime import (
 from tos_runtime import (
     venue as r_venue,
 )
+from tos_runtime import (
+    venue_ledger as r_venue_ledger,
+)
 from tos_runtime.compose import _cli_ops as r_compose_cli_ops
 from tos_runtime.compose import _construction_config as r_compose_construction_config
 from tos_runtime.compose import _migrate_paths as r_compose_migrate_paths
@@ -123,6 +126,17 @@ from tos_runtime.compose import (
 )
 from tos_runtime.compose import _run_dispatch as r_compose_run_dispatch
 from tos_runtime.compose import cli as r_compose_cli
+
+# Listed by name because ``tos_runtime.recon``'s own ``__init__`` deliberately does
+# NOT re-export it (that edge would close an import cycle through
+# ``tos_runtime.venue_ledger``), so walking the ``recon`` package alone never reaches
+# it. Without this line the walk's verdict would depend on whether some other test
+# file in the session happened to import it first — exactly the session-order
+# dependence the first assertion in ``test_every_module_is_imported`` exists to rule
+# out (review-802 LOW-3).
+from tos_runtime.recon import (
+    witness_synthetic_venue as r_recon_witness_synthetic_venue,
+)
 from tos_runtime.safety import ack as r_safety_ack
 
 from tos import (
@@ -320,6 +334,7 @@ _IMPORTED_MODULES: tuple[ModuleType, ...] = (
     r_time,
     r_transport,
     r_venue,
+    r_venue_ledger,
     k_staterestore_l3_worker,
     r_compose_cli_ops,
     r_compose_construction_config,
@@ -327,6 +342,7 @@ _IMPORTED_MODULES: tuple[ModuleType, ...] = (
     r_compose_nontrade_eval_dispatch,
     r_compose_run_dispatch,
     r_compose_cli,
+    r_recon_witness_synthetic_venue,
     r_safety_ack,
 )
 
@@ -461,7 +477,7 @@ def test_every_module_is_imported() -> None:
     only check that would catch a module reached through a path the walk cannot
     see at all.
     """
-    assert len(_IMPORTED_MODULES) >= 74
+    assert len(_IMPORTED_MODULES) >= 76
     on_disk = _module_names_on_disk()
     # The two distribution roots are imported by construction — every name in
     # the list is a submodule of one of them — and are not walk seeds
