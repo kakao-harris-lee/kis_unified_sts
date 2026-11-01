@@ -383,22 +383,33 @@ KRX 가 어떤 날의 개장·종료를 옮기면(수능일: 주식·지수선�
 러너 첫 줄 대기(지연분만큼 늘어남)·밴드 기동 시각·cron 래퍼 정지 시각(`그날 종료 + CP3_DAILY_STOP_AFTER_CLOSE_MIN`)이
 모두 읽는다. 다른 곳에 시각을 다시 적지 않는다.
 
-**2026-11-19(2027학년도 수능) — 아직 비어 있다.** 2026-10-24 기준 KRX 공지가 없다(작년 공지 10-30).
-공지가 나오면: ① 공지 URL·시각으로 네 파일에 같은 항목 추가 ② `calendar_version` 과 각 트리
-`time.yaml::trading_calendar_version` 을 같은 커밋에서 올린다 ③ PR. 선례(2025-11-13): 주식
-10:00–16:30, KOSPI200·미니 선물 개장·종료 각 +1h — **선례는 참고일 뿐, 공지 확인 전 입력 금지.**
+**2026-11-19(2027학년도 수능) — DRAFT 로 적혀 있다(머지 전).** 2026-11-01 기준 KRX·KIS 의 2026
+공지가 아직 없어, 네 캘린더의 항목에는 **작년 선례값**이 들어 있고 `calendar_version` 은
+`krx-2026.10` → `krx-2026.11` 로 올라가 있다. 선례 = 2025-11-10 자 KIS 공지 두 건(2025-11-13):
+주식 PRE_OPEN 09:30–09:40 · CONTINUOUS 10:00–16:30 · AFTER_HOURS 16:40–17:00
+([num=45644](https://securities.koreainvestment.com/main/customer/notice/Notice.jsp?cmd=TF04ga000002&num=45644)) ·
+KOSPI200·미니 선물 CONTINUOUS 09:45–16:45
+([num=45643](https://securities.koreainvestment.com/main/customer/notice/Notice.jsp?cmd=TF04ga000002&num=45643)).
+선례 공지의 「최종거래일 종목 16:20 종료」는 11-19 에 해당하지 않는다 — 11 월 mini 만기는
+`futures_expiry`(둘째 목요일)대로 **2026-11-12** 이고 11-19 는 셋째 목요일이다.
+
+**운영자 확인 전에는 머지하지 않는다.** 2026 공지가 나오면: ① 시각이 선례와 같은지 대조
+② `reason` 의 선례 URL 을 2026 공지 URL 로 교체(시각이 다르면 시각도) ③ 네 파일 바이트 동일
+유지(md5) ④ 그 PR 을 ready 로 돌려 머지.
 
 **머지 뒤, 11-19 전 dry-run (읽기 전용, 운영자):**
 
 ```bash
 git -C $MAIN fetch -q origin
 for dir in LONG SHORT; do ~/.config/kis-probes/run-cp3-tenant-daily.sh $dir --preflight 2026-11-19; done
-# 기대: "PREFLIGHT session krx-index-futures CONTINUOUS 2026-11-19 <공지 개장>-<공지 종료> OVERRIDE · stop_at=<종료+5분>"
+# 기대(선례값 기준): "PREFLIGHT session krx-index-futures CONTINUOUS 2026-11-19 09:45-16:45 OVERRIDE · stop_at=16:50"
 #        (18일 등 평일은 "08:45-15:45 regular · stop_at=15:50")
+#        2026 공지가 선례와 다른 시각이면 이 기대값도 그 시각으로 바뀐다.
 # 주식(수동 세션)의 정지 시각은 같은 리더로 구한다 — TOS_STOCK_STOP_AT 에 그대로 넣는다:
 .venv/bin/python -P -m tools.tos_cp3.session_day stop-at \
   --producer-config config/tos_probes/cp3-live-producer-stock-005930.yaml \
   --repo-root . --date 2026-11-19 --after-close-min 5
+# 기대(선례값 기준): 16:35 — 주식 종료 16:30 + 5분. 평일(11-18)은 15:35.
 ```
 
 래퍼는 cron 이 설치한 사본이므로 이 PR 머지 뒤 `install_tenant_cron.sh --apply` 로 사본을 한 번

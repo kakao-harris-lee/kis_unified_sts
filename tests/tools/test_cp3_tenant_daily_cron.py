@@ -17,10 +17,13 @@ import shutil
 import stat
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
 import yaml
+
+from tools.tos_cp3 import session_day
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RUNNERS = _REPO_ROOT / "tools" / "tos_cp3" / "runners"
@@ -322,6 +325,34 @@ def test_real_tenant_calendars_carry_the_krx_year_end_close() -> None:
             str(h) for h in yaml.safe_load(path.read_text(encoding="utf-8"))["holidays"]
         }
         assert "2026-12-31" in holidays, tree
+
+
+def test_real_tenant_calendars_carry_the_exam_day_override() -> None:
+    """#924: the wrapper derives the stop time from the tree's own calendar, so the
+    2026-11-19 (2027학년도 수능) entry must BE in those files — the fixture calendar above
+    proves the mechanism, this proves the shipped data. 16:45 + 5 for futures, 16:30 + 5
+    for the stock tree; the weekday before stays regular."""
+    for tree in ("cp3-setup-d-long", "cp3-setup-d-short", "cp3-setup-d-stock-005930"):
+        path = _REPO_ROOT / "config" / "tos_runtime" / tree / "calendar.yaml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert sorted(str(k) for k in data["session_overrides"]) == ["2026-11-19"], tree
+
+    def _stop(producer_rel: str, day: str) -> str:
+        session = session_day.load_producer_session(
+            _REPO_ROOT / producer_rel, repo_root=_REPO_ROOT
+        )
+        return session.stop_at(date.fromisoformat(day), after_close_min=5)
+
+    assert _stop("config/tos_probes/cp3-live-producer.yaml", "2026-11-19") == "16:50"
+    assert _stop("config/tos_probes/cp3-live-producer.yaml", "2026-11-18") == "15:50"
+    assert (
+        _stop("config/tos_probes/cp3-live-producer-stock-005930.yaml", "2026-11-19")
+        == "16:35"
+    )
+    assert (
+        _stop("config/tos_probes/cp3-live-producer-stock-005930.yaml", "2026-11-18")
+        == "15:35"
+    )
 
 
 def test_open_day_runs_the_runner_with_every_tenant_value(env: Env) -> None:

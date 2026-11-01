@@ -30,7 +30,12 @@
 # 위 「버전 개정」 규칙대로 calendar_version 을 "krx-2026.09.1" → "krx-2026.10" 으로 올리고
 # time.yaml 의 trading_calendar_version 도 같은 커밋에서 올린다. 2026-06-03(지방선거일)은 이미 지난 날이라
 # 추가하지 않는다(운영자 검토 후보로 남김).
-calendar_version: "krx-2026.10"
+#
+# 11-19 추가(DRAFT · 2026-11-01, #924): 아래 session_overrides 에 2026-11-19(2027학년도 수능)
+# 항목이 들어갔다 — **선례값이고 KRX 2026 공지 확인 전이다**(상세는 그 블록 주석). 캘린더 내용이
+# 바뀌었으므로 위 「버전 개정」 규칙대로 calendar_version 을 "krx-2026.10" → "krx-2026.11" 로 올리고
+# time.yaml 의 trading_calendar_version 도 같은 커밋에서 올린다.
+calendar_version: "krx-2026.11"
 tz_id: "Asia/Seoul"
 closed_phase: "CLOSED"
 holidays:            # config/market_schedule.yaml:98-117 의 2026 항목 20건을 그대로 옮김(정본) · shared/calendar.py 표는 정정 대상
@@ -69,21 +74,30 @@ sessions:
 # 시각을 다시 적지 않는다. 휴장은 여기가 아니라 holidays 에. days 는 쓰지 않는다(날짜가 곧 요일).
 # 항목을 넣으면 캘린더 내용이 바뀌므로 calendar_version 을 올리고 time.yaml 의
 # trading_calendar_version 을 같은 커밋에서 같이 올린다(상단 「버전 개정」 규칙).
+# 형식은 아래 2026-11-19 항목이 본보기다 — 정규 창에 PRE_OPEN/AFTER_HOURS 가 있는 클래스는
+# 그날 그 창들도 공지대로 함께 적는다(예외 목록이 정규 목록을 통째로 대신한다).
 #
-# ⏳ 2026-11-19(2027학년도 수능): KRX 공지가 나오면(~10-30 예상) 공지 URL 을 reason 에 적어 추가.
-#    선례(2025-11-13 공지): 주식 10:00–16:30, KOSPI200·미니 선물 개장·종료 각 +1h. 공지 확인 전 추측 입력 금지.
-#    형식:
-#    "2026-11-19":
-#      reason: "KRX 공지 <URL> — 2027학년도 수능"
-#      sessions:
-#        krx-stock:
-#          - {phase: CONTINUOUS, start: "HH:MM", end: "HH:MM", crosses_midnight: false}
-#        krx-index-futures:
-#          - {phase: CONTINUOUS, start: "HH:MM", end: "HH:MM", crosses_midnight: false}
-#    (정규 창에 PRE_OPEN/AFTER_HOURS 가 있는 클래스는 그날 그 창들도 공지대로 함께 적는다 —
-#     예외 목록이 정규 목록을 통째로 대신한다.)
-#    추가 후 운영자 확인: docs/runbooks/tos-paper-boot.md §7.2-g
-session_overrides: {}
+# ⚠ 아래 2026-11-19(2027학년도 수능) 항목의 시각은 **작년 선례값**이다 — 2026-11-01 기준
+#   KRX·KIS 의 2026 공지가 아직 없다. 선례 = 2025-11-10 자 KIS 공지 두 건(2025-11-13 수능일):
+#     · 주식   https://securities.koreainvestment.com/main/customer/notice/Notice.jsp?cmd=TF04ga000002&num=45644
+#              PRE_OPEN 09:30–09:40 · CONTINUOUS 10:00–16:30 · AFTER_HOURS 16:40–17:00 (정규 대비 각 +1h)
+#     · 선물   https://securities.koreainvestment.com/main/customer/notice/Notice.jsp?cmd=TF04ga000002&num=45643
+#              KOSPI200·미니 CONTINUOUS 09:45–16:45 (정규 대비 +1h)
+#   선례 공지의 「최종거래일 종목 16:20 종료」는 이 날에 해당하지 않는다 — 2026-11 의 mini 만기는
+#   아래 futures_expiry(둘째 목요일)대로 2026-11-12 이고, 11-19 는 셋째 목요일이다.
+#   **2026 공지가 확인되면** reason 의 선례 URL 을 2026 공지 URL 로 바꾸고, 시각이 선례와 다르면
+#   같이 고친다. 확인 전에는 이 항목이 담긴 PR 을 머지하지 않는다(#924 · 운영자 확인:
+#   docs/runbooks/tos-paper-boot.md §7.2-g).
+session_overrides:
+  "2026-11-19":
+    reason: "DRAFT 선례(2025-11-13 KIS 공지 num=45644/45643) — 2027학년도 수능 · KRX 2026 공지 확인 전 머지 금지"
+    sessions:
+      krx-stock:
+        - {phase: PRE_OPEN,    start: "09:30", end: "09:40", crosses_midnight: false}
+        - {phase: CONTINUOUS,  start: "10:00", end: "16:30", crosses_midnight: false}
+        - {phase: AFTER_HOURS, start: "16:40", end: "17:00", crosses_midnight: false}
+      krx-index-futures:
+        - {phase: CONTINUOUS,  start: "09:45", end: "16:45", crosses_midnight: false}
 futures_expiry:
   # months = 매월(mini 월물 · 운영자 2026-09-24 개정 — 상단 주석) · 둘째 목요일
   krx-index-futures: {weekday: THU, ordinal: 2, months: [1,2,3,4,5,6,7,8,9,10,11,12], expired_phase: EXPIRED}

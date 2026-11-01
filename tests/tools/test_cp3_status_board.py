@@ -1885,7 +1885,7 @@ def test_the_streak_section_is_rendered_with_its_reason(streak_cfg: sb.BoardConf
         "■ 연속 깨끗한 거래일 (§2-1 · 목표 10 거래일",
         "long       5/10 · 시작 2026-10-02",
         "마지막 깨짐 2026-10-01 — 세션 디렉터리 없음",
-        "cp3-setup-d-long/calendar.yaml (krx-2026.10)",
+        "cp3-setup-d-long/calendar.yaml (krx-2026.11)",
     ):
         assert needle in text, needle
 
