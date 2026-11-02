@@ -478,8 +478,41 @@ def apply_operations_wiring(
             record_class=_OPERATOR_PROJECTION_ENABLED_KIND,
             runtime_identity=composed.identity,
         )
+    _run_boot_unsent_release(composed)
     _bind_after_turn(composed, after_turn)
     return composed
+
+
+def _run_boot_unsent_release(composed: ComposedRuntime) -> None:
+    """#974 Q2's ONE boot pass (plan §3.3), placed here on purpose (review-1023 M1).
+
+    **Why not in ``apply_release_wiring``, where it was.** That runs BEFORE
+    :func:`~tos_runtime.compose._recovery_wiring.apply_recovery_barrier`, so a boot whose barrier
+    then held would already have committed an RCL ``RELEASED`` transition — against that
+    module's own invariant, "A HOLD verdict never releases capacity … There is no code path left
+    that could touch capacity". The released reservation is, by the predicate, one that never
+    reached the venue, so no broker exposure followed; the invariant is the thing that was wrong.
+
+    Two positive gates, both required. The barrier must have ADMITTED
+    (:attr:`~tos_runtime.recovery.barrier.RecoveryVerdict.ready`, the identity-checked bool that
+    module computes once so no caller re-derives it with a bare truthiness test), and a driver
+    must still be attached — a HOLD detaches it, so the second gate alone would already be
+    enough, and both are here because this is the invariant's own edge.
+
+    The replay-verdict precondition review-1022 item 3 asks for is upheld further up the call
+    graph: ``compose_paper_runtime`` only reaches this wiring if ``_finalize`` returned, and
+    ``_finalize``'s boot replay raises ``EngineReplayDiverged`` on anything but ``ok``. That same
+    replay has rebuilt the live core's reservation projection (#944), so the pass's ledger
+    cross-check sees the real held entry.
+
+    Args:
+        composed: The post-barrier runtime.
+    """
+    if composed.driver is None or composed.unsent_release is None:
+        return
+    if composed.recovery is None or not composed.recovery.ready:
+        return
+    composed.unsent_release.run()
 
 
 def _bind_after_turn(
@@ -496,11 +529,21 @@ def _bind_after_turn(
       is a read of that state, so exporting before it would publish a document one turn stale.
     * the operator projection exporter runs second, only when ``projection_path`` was given.
 
-    Nothing propagates out of a turn either way:
-    :meth:`~tos_runtime.engine.driver.EngineDriver._fire_after_turn` catches and counts whatever
-    a bound callback raises. One raising pass does skip the rest of THIS turn's composition (the
-    exporter would then publish on the next turn instead) — which is the same contract each pass
-    already had on its own, not a new coupling introduced by composing them.
+    **A raising pass never silences the one after it (review-1023 LOW-3).** Each pass runs in
+    its own ``try``, so a release pass that throws on every turn — an ``evidence_store.append``
+    failure, or ``apply_reservation_transition`` raising something other than
+    ``ReservationTransitionRefusal`` — still leaves the exporter to publish. That matters
+    specifically because the exporter is what makes the failure visible at all: it exports
+    :attr:`~tos_runtime.engine.driver.EngineDriver.after_turn_failures` /
+    ``after_turn_last_error``, so a composition where the thrower suppressed the publisher would
+    hide its own breakage from the operator.
+
+    The first exception is then RE-RAISED, after every pass has run. That is what keeps it
+    counted: :meth:`~tos_runtime.engine.driver.EngineDriver._fire_after_turn` catches and counts
+    whatever comes out of the bound callback, and swallowing it here would reset
+    ``after_turn_failures`` to a permanent zero — a silent failure, which is the opposite of
+    what LOW-3 asked for. The count the exporter publishes is therefore one turn behind the
+    failure, exactly as the exporter already reports its own write failures.
 
     Args:
         composed: The runtime being wired; a ``None`` ``driver`` (the recovery barrier held it
@@ -517,12 +560,16 @@ def _bind_after_turn(
         passes.append(exporter_callback)
     if not passes:
         return
-    if len(passes) == 1:
-        driver.bind_after_turn(passes[0])
-        return
 
     def _after_turn() -> None:
+        first_failure: BaseException | None = None
         for one_pass in passes:
-            one_pass()
+            try:
+                one_pass()
+            except Exception as exc:  # noqa: BLE001 - isolated, then re-raised below
+                if first_failure is None:
+                    first_failure = exc
+        if first_failure is not None:
+            raise first_failure
 
     driver.bind_after_turn(_after_turn)

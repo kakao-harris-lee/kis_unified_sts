@@ -31,9 +31,12 @@ from typing import Any
 
 import pytest
 from tos.rcl import CapacityState
+from tos_runtime.calendar.ports import FixedWallClockReference
+from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.posttrade.unsent_release import (
     CAPACITY_RELEASE_INTENT_KIND,
     UNSENT_RELEASE_CAUSE,
+    UnsentReleasePass,
     unsent_release_command_id,
 )
 from tos_runtime.rcl.projection import (
@@ -43,6 +46,7 @@ from tos_runtime.rcl.projection import (
 from tos_runtime.recon.ports import WitnessScope
 from tos_runtime.risk.ledger_stages import verdict_for_scope
 
+from ..recovery.test_drill import _mark_handling_started
 from . import _fixtures as fx
 from .test_compose_root import _reach_trusted
 from .test_synthetic_venue_ledger_e2e import (
@@ -317,3 +321,145 @@ def test_a_crash_between_the_rcl_release_and_the_engine_discard_is_finished_at_b
         assert len(_rows(third, _DISCARD_KIND)) == 1
     finally:
         _close_runtime(third)
+
+
+# ===========================================================================
+# review-1023 M1 — a held recovery barrier releases no capacity
+# ===========================================================================
+
+
+def test_a_held_recovery_barrier_boot_releases_nothing(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """review-1023 M1 — the boot pass is now after the barrier, so a HOLD gives nothing back.
+
+    ``_recovery_wiring``'s own invariant is "A HOLD verdict never releases capacity … There is
+    no code path left that could touch capacity". Running the boot pass from
+    ``apply_release_wiring`` broke it, because that runs BEFORE the barrier.
+
+    Concrete input: boot 1 leaves a halted step-14 CLOSE reservation held (the pass is disabled
+    for that boot, so nothing is released and the predicate is satisfied on the next one) plus a
+    crash-window marker — an ``EVENT_HANDLING_STARTED`` with no ``EVENT_CONSUMED``, the same
+    injection ``tests/recovery/test_drill.py`` uses. Boot 2 therefore HOLDs.
+
+    Concrete result on boot 2: no RCL transition for that reservation, no discard row, no
+    cause-tagged intent row — and the reservation is still exactly where boot 1 left it. Mutate
+    `_run_boot_unsent_release` to drop either gate, or move the call back into
+    ``apply_release_wiring``, and this fails.
+
+    Note on what the two gates each buy: a HOLD also detaches the driver, so the
+    ``driver is None`` gate alone already stops this. The ``recovery.ready`` gate is the
+    invariant said out loud rather than inferred from a side effect of the barrier.
+    """
+    monkeypatch.setattr(fx, "band_reversion_strategy_mapping", _entry_exit_mapping)
+    turn_the_venue_ledger_on(config_dir_with_risk_state)
+    runtime = _boot_with_the_production_risk_service(
+        config_dir_with_risk_state, data_dir, custody_root
+    )
+    try:
+        # Disable the release path for THIS boot only, so the reservation is still held — and
+        # untouched in both stores — when the next boot's barrier holds.
+        monkeypatch.setattr(UnsentReleasePass, "run", lambda _self: False)
+        halted_reservation_id, _ = _entry_then_halted_close(runtime, custody_root)
+        instrument_key = runtime.context_resolver.instrument_key
+        assert runtime.core.ledger.outstanding(instrument_key) is not None
+        assert _rows(runtime, _DISCARD_KIND) == []
+        _mark_handling_started(runtime, fx.crossing_event(seq=9))
+    finally:
+        _close_runtime(runtime)
+    monkeypatch.undo()
+    monkeypatch.setattr(fx, "band_reversion_strategy_mapping", _entry_exit_mapping)
+
+    held = _boot_with_the_production_risk_service(
+        config_dir_with_risk_state, data_dir, custody_root
+    )
+    try:
+        assert held.recovery is not None and held.recovery.ready is False
+        assert held.driver is None
+
+        assert _rows(held, _DISCARD_KIND) == []
+        assert [
+            row
+            for row in _rows(held, CAPACITY_RELEASE_INTENT_KIND)
+            if row.get("cause") == UNSENT_RELEASE_CAUSE
+        ] == []
+        assert (
+            SqliteReservationProjectionReader(held.rcl_log).reservation_state(
+                halted_reservation_id
+            )
+            is CapacityState.COMMITTED_UNBOUND
+        )
+    finally:
+        _close_runtime(held)
+
+
+# ===========================================================================
+# review-1023 LOW-3 — a raising release pass never silences the exporter
+# ===========================================================================
+
+
+def test_a_raising_release_pass_still_lets_the_operator_projection_publish(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """review-1023 LOW-3 — the thrower must not suppress the component that reports it.
+
+    The operator projection exporter is what publishes
+    :attr:`~tos_runtime.engine.driver.EngineDriver.after_turn_failures`. Composing it after a
+    release pass that raises on every turn, without isolation, meant the exporter never ran and
+    the operator never saw the breakage.
+
+    Concrete input: a boot with ``projection_path`` set and a release pass whose every per-turn
+    call raises. Concrete result: the projection file is still rewritten on each turn (its
+    ``projection_generation`` advances), and the driver's failure counter is non-zero and
+    reaches the exported document. Remove the per-pass ``try`` in ``_bind_after_turn`` and the
+    generation stops advancing; swallow the exception instead of re-raising it and the count
+    stays at zero.
+
+    Only ``__call__`` — the ``bind_after_turn`` callback shape — is broken here, deliberately.
+    The boot pass calls ``run()`` directly, and a boot that cannot evaluate its own capacity
+    release has always refused to compose rather than carrying on; that is a different contract
+    from a per-turn pass, and this test is about the per-turn one.
+    """
+    monkeypatch.setattr(fx, "band_reversion_strategy_mapping", _entry_exit_mapping)
+    turn_the_venue_ledger_on(config_dir_with_risk_state)
+
+    def _boom(self: UnsentReleasePass) -> None:
+        raise RuntimeError("the release pass is broken")
+
+    monkeypatch.setattr(UnsentReleasePass, "__call__", _boom)
+    projection_path = tmp_path / "operator_projection.json"
+    fx.write_band_strategy_file(config_dir_with_risk_state)
+    runtime = compose_paper_runtime(
+        config_dir_with_risk_state,
+        data_dir,
+        custody_root,
+        "non-live-test",
+        construction=fx.construction_config(),
+        aggregate_risk_inputs_provider=None,
+        action_flow_inputs_provider=None,
+        wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
+        projection_path=projection_path,
+    )
+    try:
+        _reach_trusted(runtime)
+        assert runtime.driver is not None
+        assert projection_path.is_file()
+        before = json.loads(projection_path.read_text())["projection_generation"]
+
+        runtime.run_once((fx.crossing_event(seq=0),))
+
+        after = json.loads(projection_path.read_text())
+        assert after["projection_generation"] > before
+        assert runtime.driver.after_turn_failures >= 1
+        assert "the release pass is broken" in (
+            runtime.driver.after_turn_last_error or ""
+        )
+    finally:
+        _close_runtime(runtime)
