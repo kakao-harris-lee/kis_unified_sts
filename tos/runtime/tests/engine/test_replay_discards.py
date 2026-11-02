@@ -79,8 +79,10 @@ def _driver(
 def _held_proposal_id(core: EngineCore) -> str:
     """The proposal id of the reservation the halted flow left behind."""
     held = core.ledger.outstanding(fx.instrument_key())
-    assert held is not None and held.proposal_id is not None
-    return held.proposal_id
+    assert held is not None
+    proposal_id = held.proposal_id
+    assert isinstance(proposal_id, str)
+    return proposal_id
 
 
 def _record_discard(

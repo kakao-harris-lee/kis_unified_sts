@@ -25,6 +25,9 @@ Regime tag: authoring evidence only; closes no EV (design #31 §1.1).
 
 from __future__ import annotations
 
+from decimal import Decimal
+from typing import Any
+
 import pytest
 from tos.engine import (
     CommitmentStep,
@@ -155,16 +158,16 @@ def test_an_attempt_with_an_applied_egress_result_is_refused(
     ledger, key = _committed_ledger()
     ledger.bind_attempt(key, attempt_id=_ATTEMPT)
     ledger.mark_potentially_live(key)
+    fills = kind is EgressResultKind.FULL_FILL
     applied = ledger.apply_egress_result(
         EgressResultPayload(
             instrument_key=key,
             attempt_id=_ATTEMPT,
             kind=kind,
-            **(
-                {"filled_quantity": "1", "remaining_quantity": "0"}
-                if kind is EgressResultKind.FULL_FILL
-                else {}
-            ),
+            # Only the fill-bearing kinds carry magnitudes; the payload's own shape validator
+            # requires both of them there and refuses them anywhere else.
+            filled_quantity=Decimal("1") if fills else None,
+            remaining_quantity=Decimal("0") if fills else None,
         )
     )
     assert applied.disposition is ResultDisposition.APPLIED
@@ -244,18 +247,21 @@ def test_a_discarded_attempt_may_be_committed_and_bound_again() -> None:
         ),
     ],
 )
-def test_only_the_typed_token_is_accepted(bogus: object) -> None:
+def test_only_the_typed_token_is_accepted(bogus: Any) -> None:
     ledger, key = _committed_ledger()
     with pytest.raises(TypeError, match="UnsentDiscardRef"):
-        ledger.discard_unsent(bogus)  # type: ignore[arg-type]
+        ledger.discard_unsent(bogus)
     assert ledger.outstanding(key) is not None
 
 
 def test_the_reason_is_a_closed_vocabulary() -> None:
     """A free-form cause cannot reach the kernel — the record a replay reads back is validated
-    into this same type (``UnsentDiscardReason``'s own docstring)."""
+    into this same type (``UnsentDiscardReason``'s own docstring). ``model_validate`` is the exact
+    seam the boot replay uses to turn a durable row back into this token."""
     with pytest.raises(ValueError):
-        UnsentDiscardRef(proposal_id=_PROPOSAL, reason="whatever-I-like")  # type: ignore[arg-type]
+        UnsentDiscardRef.model_validate(
+            {"proposal_id": _PROPOSAL, "reason": "whatever-I-like"}
+        )
 
 
 # ===========================================================================
