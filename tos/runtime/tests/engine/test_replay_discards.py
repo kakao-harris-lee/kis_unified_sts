@@ -21,6 +21,7 @@ from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.engine import (
     CommitmentStep,
     EngineCore,
+    Stage,
     UnsentDiscardReason,
     UnsentDiscardRef,
 )
@@ -44,7 +45,7 @@ _NO_TIMEOUT_WITHIN_TEST = 10**12
 _HALT_STEP = CommitmentStep.COMMITMENT_UNAVAILABILITY
 
 
-def _halting_stages() -> dict[CommitmentStep, object]:
+def _halting_stages() -> dict[CommitmentStep, Stage]:
     return fx.admitting_stages(unknown_steps=frozenset({_HALT_STEP}))
 
 
