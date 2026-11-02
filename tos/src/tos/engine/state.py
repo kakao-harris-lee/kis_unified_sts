@@ -49,6 +49,14 @@ Two structural properties carry the design's weight:
   any later :meth:`_store` call, whether or not the scope has since moved on to a new attempt) —
   only the *scope* reopens, for a genuinely fresh attempt, never the same one.
 
+* **A never-sent reservation is discarded, not released (2026-11-01 plan §3.2; issue #974).**
+  :meth:`ProvisionalReservationLedger.discard_unsent` is the one way out for a reservation whose
+  flow halted between step 9's atomic commit and the Send Boundary: it is ``NOT_SENT``, so no
+  egress result will ever arrive for it and the release path above structurally cannot take it.
+  It *removes* the entry rather than reaching ``RELEASED`` — nothing was ever an economic effect
+  — and it is gated on its own typed :class:`~tos.engine.records.UnsentDiscardRef` token plus a
+  positively-``NOT_SENT``, pre-``POTENTIALLY_LIVE`` projection. See that method for the gates.
+
 Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #31 §0.3). No clock, no RNG.
 """
 
@@ -62,6 +70,7 @@ from tos.engine.records import (
     EgressResultPayload,
     InstrumentKey,
     ProvisionalReservation,
+    UnsentDiscardRef,
 )
 from tos.engine.vocabulary import (
     TERMINAL_RESULT_KINDS,
@@ -258,6 +267,18 @@ class FinalityProofRef(FrozenModel):
     proof_digest: str
     evidence_seq: int
     resolution_generation: int
+
+
+#: The only two capacity states a never-sent reservation is ever projected in: step 9's atomic
+#: commit (:meth:`ProvisionalReservationLedger.commit_unbound`) and step 14's attempt binding
+#: (:meth:`ProvisionalReservationLedger.bind_attempt`). ``POTENTIALLY_LIVE`` and every later rank
+#: has passed :meth:`ProvisionalReservationLedger.mark_potentially_live`, which the sequencer
+#: calls *before* the external call precisely so a crash can never be read as "not sent"
+#: (ADR-002-002 INV-005:168) — so none of them is discardable, ever (plan §3.4: "may have been
+#: sent" is broker-proof territory, not this method's).
+_DISCARDABLE_CAPACITY: frozenset[CapacityState] = frozenset(
+    {CapacityState.COMMITTED_UNBOUND, CapacityState.ATTEMPT_BOUND}
+)
 
 
 def knowledge_for_result(kind: EgressResultKind) -> EgressKnowledge:
@@ -506,6 +527,76 @@ class ProvisionalReservationLedger:
             self._released_attempt_ids.setdefault(
                 self._key_tuple(reservation.instrument_key), set()
             ).add(ref.attempt_id)
+            return True
+        return False
+
+    def discard_unsent(self, ref: UnsentDiscardRef) -> bool:
+        """Drop a reservation that was committed but **never sent** (plan §3.2; issue #974).
+
+        The gap this closes: step 9's ``ATOMIC_COMMIT`` occupies the scope, but steps 10-14 can
+        still halt the flow before the Send Boundary. What is left behind is ``NOT_SENT``, and
+        :meth:`release` structurally cannot take it — its :data:`_RELEASABLE_KNOWLEDGE` gate admits
+        only the four *settled* knowledge states, none of which a never-sent reservation can ever
+        reach, because no egress result will ever arrive for an attempt that never left the core.
+        Without this method the scope stays occupied for the life of the process AND across every
+        boot (the replay rebuilds the same projection), so :meth:`admits_new_exposure` keeps
+        denying at the sequencer's step-8 capacity pre-check and an open position can no longer be
+        closed through the engine at all.
+
+        **Not a second release path.** Nothing here reaches ``RELEASED`` and no proof is asserted:
+        the entry is *removed*, which is the honest projection of "this reservation never became an
+        economic effect", where :meth:`release` mirrors an RCL-recorded release of an effect that
+        really existed. The removed attempt is deliberately **not** remembered in
+        ``_released_attempt_ids``: that memory stops a broker-settled attempt from transitioning
+        again, and a never-sent attempt reached no broker, so refusing it later would raise
+        :class:`~tos.engine._base.ArtifactIntegrityError` over a fact that never happened.
+
+        Three fail-closed gates, none of them the reason string:
+
+        1. ``knowledge is NOT_SENT`` — the positive statement that nothing was handed off. Every
+           other member is reached only via :meth:`mark_potentially_live` or an applied result.
+        2. ``capacity_state`` in :data:`_DISCARDABLE_CAPACITY` — ``POTENTIALLY_LIVE`` or later is
+           refused outright (see that constant).
+        3. No egress result has been applied to this reservation's own attempt. Redundant with (1)
+           today — every :data:`_RESULT_TRANSITIONS` entry moves ``knowledge`` off ``NOT_SENT`` —
+           and kept as the defence in depth the sequencer's own step-9 re-check models: a future
+           result kind leaving ``knowledge`` untouched would otherwise silently open the discard to
+           an attempt the broker has already answered. Keyed by ``attempt_id``, so a scope that
+           legitimately reopened after a release is never refused by its predecessor's signatures.
+
+        Args:
+            ref: The typed :class:`UnsentDiscardRef` token.
+
+        Returns:
+            ``True`` iff a reservation for ``ref.proposal_id`` was found, passed all three gates,
+            and was removed — the scope then admits a new exposure again. ``False`` in every other
+            case (unknown proposal, a repeat discard, or any gate refusing), never an exception:
+            the "conservative recorded outcome, never a crash" discipline :meth:`release` and
+            :meth:`apply_egress_result` already follow.
+
+        Raises:
+            TypeError: ``ref`` is not an :class:`UnsentDiscardRef` — a :class:`FinalityProofRef`
+                included, since it gates the other, unrelated path.
+        """
+        if not isinstance(ref, UnsentDiscardRef):
+            raise TypeError(
+                "ProvisionalReservationLedger.discard_unsent requires an UnsentDiscardRef — got "
+                f"{type(ref).__name__} (the discard is a typed-token gate only, never a bare "
+                "proposal id and never the FinalityProofRef that gates release)"
+            )
+        for key_tuple, reservation in tuple(self._reservations.items()):
+            if reservation.proposal_id != ref.proposal_id:
+                continue
+            if reservation.knowledge is not EgressKnowledge.NOT_SENT:
+                return False
+            if reservation.capacity_state not in _DISCARDABLE_CAPACITY:
+                return False
+            if reservation.attempt_id is not None and any(
+                signature[0] == reservation.attempt_id
+                for signature in self._applied_result_signatures.get(key_tuple, ())
+            ):
+                return False
+            del self._reservations[key_tuple]
             return True
         return False
 

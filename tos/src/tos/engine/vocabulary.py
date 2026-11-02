@@ -39,6 +39,7 @@ __all__ = [
     "COORDINATOR_REALIZED_STEPS",
     "GUARANTEED_FAIL_CLOSED_STEPS",
     "INJECTED_STAGE_STEPS",
+    "RESERVATION_DISCARDED_UNSENT_KIND",
     "SEND_BOUNDARY_STEPS",
     "SEQUENCED_STEPS",
     "AdmissionVerdict",
@@ -53,6 +54,7 @@ __all__ = [
     "ResultDisposition",
     "StageAuthorityClass",
     "StageOutcome",
+    "UnsentDiscardReason",
     "step_number",
 ]
 
@@ -530,6 +532,34 @@ class EvidenceKind(StrEnum):
     #: admissible alike, never only the admissible ones (design #21's own "a disposition grants
     #: nothing" — this evidence kind records the judgement, not a grant).
     CORPORATE_ACTION_CONSUMED = "CORPORATE_ACTION_CONSUMED"
+
+
+class UnsentDiscardReason(StrEnum):
+    """Why a never-sent provisional reservation was discarded (2026-11-01 unsent-reservation-
+    release plan §3.2; :meth:`~tos.engine.state.ProvisionalReservationLedger.discard_unsent`).
+
+    Closed like every other vocabulary here, for a concrete reason: the cause originates in the
+    runtime caller, is carried verbatim into the durable
+    :data:`RESERVATION_DISCARDED_UNSENT_KIND` record, and is validated back out of that record by
+    a boot replay — a free string would let a replay feed the kernel a cause nobody ratified. One
+    member today; a second is a plan revision, not a code change.
+    """
+
+    #: The flow that committed this reservation halted before the Send Boundary, and the runtime's
+    #: combined evidence predicate (plan §3.1) positively established that nothing was ever handed
+    #: off. **Not** "no send was observed": an unreadable or ambiguous history stays sealed.
+    UNSENT_FLOW_NON_EXECUTION = "UNSENT_FLOW_NON_EXECUTION"
+
+
+#: The durable record kind the runtime appends for every accepted
+#: :meth:`~tos.engine.state.ProvisionalReservationLedger.discard_unsent`, and the kind a boot
+#: replay reads back to re-apply it (plan §3.2). Its payload is exactly a
+#: :class:`~tos.engine.records.UnsentDiscardRef`. Deliberately **not** an :class:`EvidenceKind`
+#: member: every member of that enum is emitted by kernel code through the injected sink, and the
+#: reservation ledger has no sink and writes nothing (``tos.engine.state`` — no clock, no I/O).
+#: The name is declared here, in the kernel that owns the vocabulary, so the runtime writer and
+#: the replay reader cannot drift apart on it.
+RESERVATION_DISCARDED_UNSENT_KIND = "RESERVATION_DISCARDED_UNSENT"
 
 
 # ===========================================================================
