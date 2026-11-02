@@ -47,6 +47,16 @@ __all__ = [
 _RELEASE_INTENT_KIND = "CAPACITY_RELEASE_INTENT"
 _RELEASE_HELD_KIND = "CAPACITY_RELEASE_HELD"
 _RELEASE_COMMAND_PREFIX = "release-"
+#: #974 Q2 — the cause and RCL command-id prefix :mod:`tos_runtime.posttrade.unsent_release`
+#: writes for a reservation whose flow halted before the Send Boundary. Redeclared as literals
+#: rather than imported, the SAME lockstep-literal convention this module already uses for its
+#: own kind strings (and :mod:`~tos_runtime.posttrade.release_currentness` for the pair above);
+#: ``tests/posttrade/test_unsent_release.py`` asserts the two spellings against that module's own
+#: public constants. Such a release names NO attempt and NO finality proof — there is neither,
+#: because nothing was ever sent — so it is read here as "this reservation closed nothing",
+#: never as a malformed release record.
+_UNSENT_RELEASE_CAUSE = "UNSENT_FLOW_NON_EXECUTION"
+_UNSENT_RELEASE_COMMAND_PREFIX = "release-unsent-"
 _FINAL_QUANTITY_PROOF = TransitionCause.FINAL_QUANTITY_PROOF
 _RELEASED = CapacityState.RELEASED
 _POSITION_CONSUMED = CapacityState.POSITION_CONSUMED
@@ -248,6 +258,17 @@ def _release_evidence(store: SqliteEvidenceStore) -> tuple[_ReleaseEvidence, ...
             raise ValueError("release evidence payload is malformed")
         attempt_id = payload.get("attempt_id")
         reservation_id = payload.get("reservation_id")
+        if kind == _RELEASE_INTENT_KIND and payload.get("cause") == (
+            _UNSENT_RELEASE_CAUSE
+        ):
+            # #974 Q2 (see the constant): a never-sent reservation's release carries no attempt
+            # and no proof, so it cannot be decoded as an attempt-keyed release outcome. Skipped
+            # BEFORE the two checks below, which it would otherwise fail — turning every later
+            # CLOSE in the scope into RELEASE_UNPROVEN. Skipping cannot turn a refusal into a
+            # proof: every consumer of these rows filters them by an attempt id this row does
+            # not carry, so a decoded one could only ever have been ignored or fatal.
+            # :func:`_never_sent_release_ids` reads the same rows for the one thing they DO say.
+            continue
         if not isinstance(attempt_id, str) or not attempt_id:
             raise ValueError("release evidence has no attempt id")
         if reservation_id is not None and (
@@ -301,6 +322,74 @@ def _release_evidence(store: SqliteEvidenceStore) -> tuple[_ReleaseEvidence, ...
             )
         )
     return tuple(decoded)
+
+
+def _never_sent_release_ids(store: SqliteEvidenceStore) -> frozenset[str]:
+    """Reservation ids a ``CAPACITY_RELEASE_INTENT`` names as a #974 never-sent release.
+
+    Half of the two-source proof :func:`_never_sent_release_proven` needs; the other half is the
+    committed RCL transition itself. Read strictly, exactly like :func:`_release_evidence`: a
+    malformed row raises, and the caller turns that into a refusal rather than a smaller set.
+    """
+    ids: set[str] = set()
+    for (payload_json,) in store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
+        (_RELEASE_INTENT_KIND,),
+    ).fetchall():
+        value = json.loads(payload_json, object_pairs_hook=_strict_object)
+        payload = value.get("payload") if isinstance(value, dict) else None
+        if not isinstance(payload, dict):
+            raise ValueError("release evidence payload is malformed")
+        if payload.get("cause") != _UNSENT_RELEASE_CAUSE:
+            continue
+        reservation_id = payload.get("reservation_id")
+        if not isinstance(reservation_id, str) or not reservation_id:
+            raise ValueError("never-sent release intent has no reservation id")
+        ids.add(reservation_id)
+    return frozenset(ids)
+
+
+def _never_sent_release_proven(
+    transitions: tuple[ReservationTransitionRecord, ...],
+    never_sent_ids: frozenset[str],
+    *,
+    reservation_id: str,
+    account: str,
+    instrument: str,
+) -> bool:
+    """Whether ``reservation_id`` is PROVEN to be a #974 reservation that never sent anything.
+
+    Such a reservation closed no quantity — it reached the venue in no form — so counting it as
+    a prior close would be inventing one, and refusing the whole history because it carries no
+    FULL_FILL would re-seal exactly the scope #974's release path exists to re-open.
+
+    Both halves are required, and both are positive. The RCL transition must be this scope's
+    single ``RELEASED`` one under ``FINAL_QUANTITY_PROOF`` with a witness AND under
+    :data:`_UNSENT_RELEASE_COMMAND_PREFIX`'s idempotency key, which only
+    :func:`tos_runtime.posttrade.unsent_release.unsent_release_command_id` ever writes; and the
+    evidence store must carry the matching intent row. Direction matters: this exclusion REMOVES
+    quantity from the prior-close total, so an unproven one would hand a later CLOSE more
+    headroom than the entry justifies — which is why neither half alone is enough and why a real
+    ``release-{attempt_id}`` release can never reach it.
+    """
+    if reservation_id not in never_sent_ids:
+        return False
+    releases = tuple(
+        row
+        for row in transitions
+        if row.reservation_id == reservation_id and row.to_state is _RELEASED
+    )
+    if len(releases) != 1:
+        return False
+    transition = releases[0]
+    return (
+        transition.command_id == f"{_UNSENT_RELEASE_COMMAND_PREFIX}{reservation_id}"
+        and transition.kind is CommandType.RELEASE_RESERVATION
+        and transition.cause is _FINAL_QUANTITY_PROOF
+        and transition.finality_witness is True
+        and transition.scope.account == account
+        and transition.scope.instrument == instrument
+    )
 
 
 def _final_full_fill_quantity(
@@ -587,12 +676,21 @@ def _prove_candidates(
     transitions: tuple[ReservationTransitionRecord, ...],
     receipt_rows: tuple[_ReceiptObservation, ...],
     release_evidence: tuple[_ReleaseEvidence, ...],
+    never_sent_ids: frozenset[str],
 ) -> tuple[Decimal, Decimal | None] | CloseHistoryRefusal:
     """Prove each later reservation and sum only the distinct final close quantities."""
     seen_attempts = {entry_attempt_id}
     prior_total = Decimal(0)
     current_quantity: Decimal | None = None
     for reservation_id in candidate_ids:
+        if reservation_id != current_reservation_id and _never_sent_release_proven(
+            transitions,
+            never_sent_ids,
+            reservation_id=reservation_id,
+            account=account,
+            instrument=instrument,
+        ):
+            continue  # #974 Q2 — see that function: it closed nothing, so it counts nothing
         attempt_id = _attempt_for_reservation(
             evidence_store,
             reservation_id=reservation_id,
@@ -805,6 +903,7 @@ def durable_close_history(
     entry_attempt_id, entry_quantity, receipt_rows = entry_proof
     try:
         release_evidence = _release_evidence(evidence_store)
+        never_sent_ids = _never_sent_release_ids(evidence_store)
     except Exception:  # noqa: BLE001 - malformed/unreadable release proof must hold
         return _refused(
             CloseHistoryRefusal.RELEASE_UNPROVEN, entry_attempt_id=entry_attempt_id
@@ -821,6 +920,7 @@ def durable_close_history(
         transitions=context.snapshot.transitions,
         receipt_rows=receipt_rows,
         release_evidence=release_evidence,
+        never_sent_ids=never_sent_ids,
     )
     if isinstance(totals, CloseHistoryRefusal):
         return _refused(totals, entry_attempt_id=entry_attempt_id)

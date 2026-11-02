@@ -44,6 +44,7 @@ from tos_runtime.compose._posttrade_source import finality_producer_for
 from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.posttrade.config import load_finality_config
 from tos_runtime.posttrade.release_consumer import FinalityReleaseConsumer
+from tos_runtime.posttrade.unsent_release import UnsentReleasePass
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.recon.ports import BrokerWitness
 
@@ -148,4 +149,37 @@ def apply_release_wiring(
     if posttrade is not None:
         posttrade.finality_producer = finality_producer
         posttrade.release_consumer = consumer
+    runtime.unsent_release = _build_unsent_release(runtime, scheme=scheme)
     return runtime
+
+
+def _build_unsent_release(
+    runtime: ComposedRuntime, *, scheme: CanonicalizationScheme
+) -> UnsentReleasePass:
+    """Build #974 Q2's never-sent release pass — **built here, never run here**.
+
+    **It only constructs.** An earlier revision made the plan §3.3 boot pass from this function,
+    which put it BEFORE :func:`~tos_runtime.compose._recovery_wiring.apply_recovery_barrier` and
+    so let a HOLD boot give capacity back — against that module's own stated invariant, "A HOLD
+    verdict never releases capacity … There is no code path left that could touch capacity"
+    (review-1023 M1). Both the boot run and the per-turn binding now live in
+    :func:`~tos_runtime.compose._operations_wiring.apply_operations_wiring`, which runs after the
+    barrier; see :attr:`~tos_runtime.compose._types.ComposedRuntime.unsent_release`.
+
+    Args:
+        runtime: The runtime whose ``core.ledger`` / RCL log / evidence store this pass acts on.
+        scheme: The SAME canonicalization scheme this runtime composed with.
+
+    Returns:
+        The built pass, to publish on the runtime.
+    """
+    instrument_key = runtime.context_resolver.instrument_key
+    return UnsentReleasePass(
+        rcl_log=runtime.rcl_log,
+        projection=SqliteReservationProjectionReader(runtime.rcl_log),
+        evidence_store=runtime.evidence_store,
+        ledger=runtime.core.ledger,
+        scheme=scheme,
+        account=instrument_key.account,
+        instrument=instrument_key.instrument,
+    )
