@@ -49,11 +49,15 @@ from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.sinks import EngineEvidenceSinkAdapter
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.nontrade.latch import latch_restrictive
+from tos_runtime.posttrade import unsent_release
 from tos_runtime.posttrade.close_history import (
     _UNSENT_RELEASE_CAUSE,
     _UNSENT_RELEASE_COMMAND_PREFIX,
+    _never_sent_release_ids,
+    _never_sent_release_proven,
 )
 from tos_runtime.posttrade.unsent_release import (
+    _DISCARDABLE_CAPACITY_STATES,
     CAPACITY_RELEASE_INTENT_KIND,
     SEND_EVIDENCE_KINDS,
     UNSENT_RELEASE_CAUSE,
@@ -62,7 +66,7 @@ from tos_runtime.posttrade.unsent_release import (
     find_unsent_release_candidate,
     unsent_release_command_id,
 )
-from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.log import ReservationTransitionRecord, SqliteCommitLog
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.rcl.reservation_identity import permit_reservation_id
 
@@ -88,6 +92,7 @@ _HALT_STEP = CommitmentStep.TRANSMISSION_CAPABILITY.value
 #: Step 18 — AFTER the send boundary. ``TRANSMIT_RAISED``'s own step (review-1022 item 3).
 _NETWORK_CALL_STEP = CommitmentStep.NETWORK_CALL.value
 _NO_TIMEOUT_WITHIN_TEST = 10**12
+_COMMITTED = CapacityState.COMMITTED_UNBOUND
 
 
 # ===========================================================================
@@ -142,6 +147,7 @@ def _write_halted_flow(
     outcome_digest: str | None = _OUTCOME_DIGEST,
     fingerprint: bool = True,
     unreadable_event_id: bool = False,
+    halt_row: bool = True,
 ) -> None:
     """Append the rows one pre-send halt leaves behind, in the order the live run writes them.
 
@@ -182,7 +188,7 @@ def _write_halted_flow(
             kind=send_kind,
             record_class=send_kind,
         )
-    if halt_step is not None:
+    if halt_step is not None and halt_row:
         store.append(
             {
                 "kind": "FLOW_HALTED",
@@ -872,3 +878,380 @@ def test_the_kernel_at_most_one_retention_is_what_anchors_the_predicate(
     )
     candidate = _candidate(evidence_store)
     assert candidate is not None and candidate.event_id == _EVENT_ID
+
+
+# ===========================================================================
+# review-1023 LOW-1 — the ledger's own two axes, read before the RCL write
+# ===========================================================================
+
+
+def test_a_held_reservation_past_not_sent_is_refused_before_the_rcl_write(
+    evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
+) -> None:
+    """review-1023 LOW-1. The RCL release commits first by design, so without this the kernel's
+    gates would only get their say after capacity had already been given back.
+
+    Concrete input: the evidence predicate is satisfied, but the scope's held reservation has
+    moved past ``NOT_SENT`` (a hand-off marked it ``POTENTIALLY_LIVE``/``SENT_UNCONFIRMED``).
+    Concrete result: no RCL transition at all, and the entry is still held.
+    """
+    _write_halted_flow(evidence_store)
+    _open_rcl_reservation(
+        rcl_log,
+        reservation_id=_RESERVATION_ID,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+    )
+    ledger = _ledger()
+    ledger.mark_potentially_live(_KEY)
+
+    assert _pass(rcl_log, evidence_store, ledger).run() is False
+
+    assert ledger.outstanding(_KEY) is not None
+    assert _release_transitions(rcl_log) == []
+    assert _seqs(evidence_store, RESERVATION_DISCARDED_UNSENT_KIND) == []
+
+
+def _discard_ref() -> UnsentDiscardRef:
+    return UnsentDiscardRef(
+        proposal_id=_PROPOSAL_ID,
+        reason=UnsentDiscardReason.UNSENT_FLOW_NON_EXECUTION,
+    )
+
+
+def test_the_pre_check_states_are_exactly_the_ones_the_kernel_discards() -> None:
+    """The local copy of the kernel's discardable pair, pinned against the kernel itself.
+
+    ``_DISCARDABLE_CAPACITY`` is private in ``tos.engine.state``, so this module spells the two
+    states out for its pre-RCL check. This drives
+    :meth:`~tos.engine.state.ProvisionalReservationLedger.discard_unsent` over the states a
+    never-sent scope can actually reach and asserts the set the kernel accepts is exactly the
+    set the pre-check admits — a kernel-side change to the pair cannot pass silently here.
+    """
+    accepted: set[CapacityState] = set()
+    for state, attempt_id in (
+        (CapacityState.COMMITTED_UNBOUND, None),
+        (CapacityState.ATTEMPT_BOUND, "attempt-probe"),
+    ):
+        ledger = _ledger(attempt_id=attempt_id)
+        held = ledger.outstanding(_KEY)
+        assert held is not None and held.capacity_state is state
+        if ledger.discard_unsent(_discard_ref()):
+            accepted.add(state)
+    live = _ledger()
+    live.mark_potentially_live(_KEY)
+    assert live.discard_unsent(_discard_ref()) is False
+    assert accepted == set(_DISCARDABLE_CAPACITY_STATES)
+
+
+# ===========================================================================
+# review-1023 M2 — the verdict is computed at most once per held reservation
+# ===========================================================================
+
+
+def _counting_evaluator(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Wrap the REAL scanner so a test can count how often it actually ran."""
+    calls: list[int] = []
+    real = unsent_release.evaluate_unsent_release
+
+    def _counted(*args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(unsent_release, "evaluate_unsent_release", _counted)
+    return calls
+
+
+def test_a_settled_verdict_is_scanned_once_however_many_turns_follow(
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """review-1023 M2. The ordinary case: a reservation that WAS sent and awaits finality.
+
+    Concrete input: such a scope, with a history the predicate refuses, driven through ten
+    turns. Concrete result: ONE evidence scan, not ten — and the same answer every time.
+    """
+    _write_halted_flow(evidence_store, send_kind="SEND_HANDED_OFF")
+    _open_rcl_reservation(
+        rcl_log,
+        reservation_id=_RESERVATION_ID,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+    )
+    release = _pass(rcl_log, evidence_store, _ledger())
+    calls = _counting_evaluator(monkeypatch)
+
+    for _ in range(10):
+        assert release.run() is False
+
+    assert len(calls) == 1
+
+
+def test_a_settled_verdict_is_not_rescanned_even_as_evidence_grows(
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rows keep landing every turn, which is why a tip comparison alone would not help.
+
+    The window ``(commit_seq, consumed_seq)`` is closed once the anchor's receipt exists, so a
+    settled verdict is never re-derived — including when later ticks halt at step 8 and append
+    the very ``FLOW_STEP_ADMITTED`` rows that made the scan linear in the first place.
+    """
+    _write_halted_flow(evidence_store, send_kind="SEND_HANDED_OFF")
+    _open_rcl_reservation(
+        rcl_log,
+        reservation_id=_RESERVATION_ID,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+    )
+    release = _pass(rcl_log, evidence_store, _ledger())
+    calls = _counting_evaluator(monkeypatch)
+
+    assert release.run() is False
+    for seq in range(5):
+        _write_halted_flow(
+            evidence_store,
+            event_id=f"event-step-8-{seq}",
+            permit_identity=None,
+            halt_step=CommitmentStep.LEDGER_VERIFICATION.value,
+        )
+        assert release.run() is False
+
+    assert len(calls) == 1
+
+
+def test_a_second_pass_with_no_new_rows_issues_no_scan_query(
+    evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
+) -> None:
+    """The same claim measured at the sqlite boundary rather than at the Python call.
+
+    Counts statements executed on the evidence connection. A SETTLED verdict needs nothing at
+    all — not even the tip read — so the second pass issues zero queries where the first issued
+    the predicate's whole sequence.
+    """
+    _write_halted_flow(evidence_store, send_kind="SEND_HANDED_OFF")
+    _open_rcl_reservation(
+        rcl_log,
+        reservation_id=_RESERVATION_ID,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+    )
+    release = _pass(rcl_log, evidence_store, _ledger())
+
+    first: list[str] = []
+    evidence_store.connection.set_trace_callback(first.append)
+    try:
+        assert release.run() is False
+    finally:
+        evidence_store.connection.set_trace_callback(None)
+    assert any("FLOW_STEP_ADMITTED" in sql for sql in first), first
+
+    second: list[str] = []
+    evidence_store.connection.set_trace_callback(second.append)
+    try:
+        assert release.run() is False
+    finally:
+        evidence_store.connection.set_trace_callback(None)
+    assert second == []
+
+
+def test_an_unsettled_verdict_costs_one_indexed_tip_read_per_turn(
+    evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
+) -> None:
+    """The only case that re-reads anything: the anchor's receipt is not durable yet.
+
+    Even then the repeat is a single ``MAX(seq)`` on an INTEGER PRIMARY KEY — one B-tree seek,
+    not a scan — so the per-turn cost does not grow with history in this case either.
+    """
+    _write_halted_flow(evidence_store, consumed=False)
+    _open_rcl_reservation(
+        rcl_log,
+        reservation_id=_RESERVATION_ID,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+    )
+    release = _pass(rcl_log, evidence_store, _ledger())
+    release.run()
+
+    statements: list[str] = []
+    evidence_store.connection.set_trace_callback(statements.append)
+    try:
+        assert release.run() is False
+    finally:
+        evidence_store.connection.set_trace_callback(None)
+
+    assert len(statements) == 1, statements
+    assert "MAX(seq)" in statements[0]
+
+
+def test_an_unsettled_verdict_is_re_asked_once_the_receipt_lands(
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one state a later append can move: the anchor's receipt is not durable yet.
+
+    Concrete input: a halted flow whose ``EVENT_CONSUMED`` has not been written. Concrete
+    result: the verdict is NOT remembered as settled — a repeat with no new rows is still cheap
+    (no re-scan), and once the receipt lands the pass re-asks and releases.
+    """
+    _write_halted_flow(evidence_store, consumed=False)
+    _open_rcl_reservation(
+        rcl_log,
+        reservation_id=_RESERVATION_ID,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+    )
+    ledger = _ledger()
+    release = _pass(rcl_log, evidence_store, ledger)
+    calls = _counting_evaluator(monkeypatch)
+
+    assert release.run() is False
+    assert release.run() is False  # no new rows -> not re-scanned
+    assert len(calls) == 1
+
+    # Only the receipt lands — no second anchor, no second halt row.
+    _write_halted_flow(
+        evidence_store, permit_identity=None, halt_row=False, consumed=True
+    )
+    assert release.run() is True
+    assert len(calls) == 2
+    assert ledger.outstanding(_KEY) is None
+
+
+# ===========================================================================
+# review-1023 LOW-2 — close_history needs BOTH markers, never one
+# ===========================================================================
+
+
+def _unsent_rcl_transition(
+    *,
+    command_id: str,
+    cause: TransitionCause = TransitionCause.FINAL_QUANTITY_PROOF,
+    finality_witness: bool | None = True,
+    account: str = _ACCOUNT,
+    instrument: str = _INSTRUMENT,
+) -> ReservationTransitionRecord:
+    return ReservationTransitionRecord(
+        seq=7,
+        command_id=command_id,
+        kind=CommandType.RELEASE_RESERVATION,
+        reservation_id=_RESERVATION_ID,
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.RELEASED,
+        scope=ReservationScope(account=account, instrument=instrument),
+        cause=cause,
+        finality_witness=finality_witness,
+    )
+
+
+def _proven(
+    transitions: tuple[ReservationTransitionRecord, ...],
+    never_sent_ids: frozenset[str],
+) -> bool:
+    return _never_sent_release_proven(
+        transitions,
+        never_sent_ids,
+        reservation_id=_RESERVATION_ID,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+    )
+
+
+def _unsent_marker() -> ReservationTransitionRecord:
+    return _unsent_rcl_transition(command_id=unsent_release_command_id(_RESERVATION_ID))
+
+
+def test_both_markers_together_exclude_the_reservation_from_the_close_history() -> None:
+    """The positive control the two negatives below are only meaningful against."""
+    assert _proven((_unsent_marker(),), frozenset({_RESERVATION_ID})) is True
+
+
+def test_the_rcl_marker_alone_does_not_exclude_the_reservation() -> None:
+    """review-1023 LOW-2, half one. An RCL ``release-unsent-*`` transition with NO intent row
+    naming that reservation must still be proven as an ordinary close — the exclusion REMOVES
+    quantity from the prior-close total, so one source can never be enough.
+
+    Mutation guard: delete ``if reservation_id not in never_sent_ids: return False`` from
+    ``_never_sent_release_proven`` and this test fails.
+    """
+    assert _proven((_unsent_marker(),), frozenset()) is False
+
+
+def test_the_intent_row_alone_does_not_exclude_the_reservation() -> None:
+    """review-1023 LOW-2, half two. An intent row naming the reservation, with the RCL release
+    committed under the ORDINARY ``release-{attempt_id}`` key, must still be proven as a close.
+
+    Mutation guard: delete the ``command_id`` comparison from ``_never_sent_release_proven``
+    and this test fails.
+    """
+    assert (
+        _proven(
+            (_unsent_rcl_transition(command_id="release-attempt-that-really-sent"),),
+            frozenset({_RESERVATION_ID}),
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("cause", TransitionCause.STRONGLY_AUTHORIZED_COMMAND),
+        ("finality_witness", None),
+        ("account", "another-account"),
+        ("instrument", "another-instrument"),
+    ],
+)
+def test_every_other_clause_of_the_rcl_marker_is_load_bearing(
+    field_name: str, value: Any
+) -> None:
+    """Each remaining clause on its own: break it and the reservation is no longer excluded."""
+    transition = _unsent_rcl_transition(
+        command_id=unsent_release_command_id(_RESERVATION_ID),
+        **{field_name: value},
+    )
+    assert _proven((transition,), frozenset({_RESERVATION_ID})) is False
+
+
+def test_a_second_released_transition_for_the_same_reservation_refuses() -> None:
+    """Two ``RELEASED`` rows for one reservation is not a shape this exclusion reasons about."""
+    assert (
+        _proven(
+            (_unsent_marker(), _unsent_rcl_transition(command_id="release-other")),
+            frozenset({_RESERVATION_ID}),
+        )
+        is False
+    )
+
+
+def test_the_intent_ids_reader_only_collects_cause_tagged_rows(
+    evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
+) -> None:
+    """``_never_sent_release_ids`` is the evidence half, and an ordinary finality intent is not
+    one. Driven through the real release action, so the row it collects is the row this path
+    actually writes."""
+    evidence_store.append(
+        {
+            "attempt_id": "attempt-a-real-release",
+            "reservation_id": "resv-some-other",
+            "proof_id": "synthetic-fqp-proof:attempt-a-real-release",
+            "destination": CapacityState.RELEASED.value,
+            "report_reason": None,
+            "resolution_generation": 0,
+        },
+        kind=CAPACITY_RELEASE_INTENT_KIND,
+        record_class=CAPACITY_RELEASE_INTENT_KIND,
+    )
+    _write_halted_flow(evidence_store)
+    _open_rcl_reservation(
+        rcl_log,
+        reservation_id=_RESERVATION_ID,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+    )
+    assert _pass(rcl_log, evidence_store, _ledger()).run() is True
+
+    assert _never_sent_release_ids(evidence_store) == frozenset({_RESERVATION_ID})

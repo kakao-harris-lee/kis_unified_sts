@@ -70,7 +70,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from tos.canonical import CanonicalizationScheme, derive_id
 from tos.dsl import Proposal
@@ -79,6 +79,7 @@ from tos.engine.state import ProvisionalReservationLedger
 from tos.engine.vocabulary import (
     RESERVATION_DISCARDED_UNSENT_KIND,
     CommitmentStep,
+    EgressKnowledge,
     UnsentDiscardReason,
 )
 from tos.rcl import (
@@ -104,6 +105,8 @@ __all__ = [
     "UNSENT_RELEASE_COMMAND_PREFIX",
     "UnsentReleaseCandidate",
     "UnsentReleasePass",
+    "UnsentReleaseVerdict",
+    "evaluate_unsent_release",
     "find_unsent_release_candidate",
     "unsent_release_command_id",
 ]
@@ -140,6 +143,16 @@ SEND_EVIDENCE_KINDS: tuple[str, ...] = (
 #: on an evidence predicate rather than on a post-trade finality proof (there is no proof: nothing
 #: was ever executed). :mod:`tos_runtime.posttrade.close_history` reads exactly this string.
 UNSENT_RELEASE_CAUSE = UnsentDiscardReason.UNSENT_FLOW_NON_EXECUTION.value
+
+#: The two capacity states a never-sent reservation can be in — step 9's ``COMMITTED_UNBOUND``
+#: and step 12's ``ATTEMPT_BOUND``. The SAME pair :data:`tos.engine.state._DISCARDABLE_CAPACITY`
+#: gates the kernel's own discard on, spelled here (not imported — it is private there) for the
+#: read-only pre-check :meth:`UnsentReleasePass._ledger_still_admits_a_discard` makes BEFORE the
+#: RCL write. ``tests/posttrade/test_unsent_release.py`` pins the two against the kernel method's
+#: own behaviour, so a kernel-side change to the pair cannot pass silently here.
+_DISCARDABLE_CAPACITY_STATES: frozenset[CapacityState] = frozenset(
+    {CapacityState.COMMITTED_UNBOUND, CapacityState.ATTEMPT_BOUND}
+)
 
 #: The RCL idempotency-key prefix for this release path — deliberately NOT
 #: :func:`tos_runtime.posttrade.release_consumer.release_command_id`'s ``release-{attempt_id}``
@@ -206,6 +219,29 @@ class UnsentReleaseCandidate:
     consumed_evidence_seq: int
 
 
+@dataclass(frozen=True)
+class UnsentReleaseVerdict:
+    """The §3.1 answer, plus whether anything could still change it (review-1023 M2).
+
+    Attributes:
+        candidate: The judged candidate, or ``None`` for "the conditions do not hold" and for
+            "the store could not be read" alike.
+        final: ``True`` once the anchor flow's own ``EVENT_CONSUMED`` receipt was read. Every
+            condition this module evaluates lives inside the closed window
+            ``(commit_seq, consumed_seq)``, so from that point on no later row can change the
+            answer and a caller may remember it for as long as the scope holds that same
+            reservation. ``False`` while the anchor or its receipt is still missing — the only
+            state a later append can move — so a caller must ask again when new evidence lands.
+    """
+
+    candidate: UnsentReleaseCandidate | None
+    final: bool
+
+
+#: The one verdict that is both negative and not yet settled: re-ask when evidence grows.
+_UNDECIDED = UnsentReleaseVerdict(candidate=None, final=False)
+
+
 def find_unsent_release_candidate(
     evidence_store: SqliteEvidenceStore, *, account: str, instrument: str
 ) -> UnsentReleaseCandidate | None:
@@ -224,47 +260,78 @@ def find_unsent_release_candidate(
         conditions do not hold" and for "the store could not be read" alike (module docstring's
         fail-closed discipline: an unreadable or ambiguous history keeps the reservation sealed).
     """
-    try:
-        return _candidate(evidence_store, account=account, instrument=instrument)
-    except (sqlite3.Error, ValueError, TypeError, KeyError):
-        return None
+    return evaluate_unsent_release(
+        evidence_store, account=account, instrument=instrument
+    ).candidate
 
 
-def _candidate(
+def evaluate_unsent_release(
     evidence_store: SqliteEvidenceStore, *, account: str, instrument: str
-) -> UnsentReleaseCandidate | None:
-    """:func:`find_unsent_release_candidate`'s body, without the read-failure guard."""
+) -> UnsentReleaseVerdict:
+    """:func:`find_unsent_release_candidate`, plus the settledness bit a cache needs.
+
+    Args:
+        evidence_store: The durable evidence store the live run recorded into.
+        account: The scope account.
+        instrument: The scope instrument.
+
+    Returns:
+        The :class:`UnsentReleaseVerdict`. A read failure is :data:`_UNDECIDED`: unreadable is
+        never "settled no", so a caller retries it rather than remembering it.
+    """
+    try:
+        return _verdict(evidence_store, account=account, instrument=instrument)
+    except (sqlite3.Error, ValueError, TypeError, KeyError):
+        return _UNDECIDED
+
+
+def _verdict(
+    evidence_store: SqliteEvidenceStore, *, account: str, instrument: str
+) -> UnsentReleaseVerdict:
+    """:func:`evaluate_unsent_release`'s body, without the read-failure guard."""
     conn = evidence_store.connection
     commit = _latest_atomic_commit(conn, account=account, instrument=instrument)
     if commit is None:
-        return None  # condition 1
+        return _UNDECIDED  # condition 1 — and a commit can still land
     commit_seq, event_id, permit_identity = commit
     consumed = _consumed_receipt(conn, event_id=event_id, after_seq=commit_seq)
     if consumed is None:
-        return None  # condition 5
+        return _UNDECIDED  # condition 5 — the receipt can still land
     consumed_seq, receipt = consumed
+    # Past this line the window (commit_seq, consumed_seq) is closed, so whatever this function
+    # answers is the answer for as long as the scope holds this reservation (review-1023 M2).
+    settled = _settled(None)
     halt_step = _pre_send_halt_step(
         conn, event_id=event_id, lo=commit_seq, hi=consumed_seq
     )
     if halt_step is None:
-        return None  # condition 2
+        return settled  # condition 2
     if _handling_was_interrupted(conn, event_id=event_id, receipt=receipt):
-        return None  # condition 4
+        return settled  # condition 4
     if _send_evidence_between(conn, lo=commit_seq, hi=consumed_seq):
-        return None  # condition 3 (durable send records)
+        return settled  # condition 3 (durable send records)
     if not _receipt_says_no_hand_off(receipt, halt_step=halt_step):
-        return None  # condition 3 (the receipt's own independent fingerprint)
+        return settled  # condition 3 (the receipt's own independent fingerprint)
     proposal_id = _proposal_id(receipt)
     if proposal_id is None:
-        return None
-    return UnsentReleaseCandidate(
-        event_id=event_id,
-        proposal_id=proposal_id,
-        permit_identity=permit_identity,
-        attempt_id=_attempt_id(conn, event_id=event_id, lo=commit_seq, hi=consumed_seq),
-        halt_step=halt_step,
-        consumed_evidence_seq=consumed_seq,
+        return settled
+    return _settled(
+        UnsentReleaseCandidate(
+            event_id=event_id,
+            proposal_id=proposal_id,
+            permit_identity=permit_identity,
+            attempt_id=_attempt_id(
+                conn, event_id=event_id, lo=commit_seq, hi=consumed_seq
+            ),
+            halt_step=halt_step,
+            consumed_evidence_seq=consumed_seq,
+        )
     )
+
+
+def _settled(candidate: UnsentReleaseCandidate | None) -> UnsentReleaseVerdict:
+    """A verdict reached with the anchor's receipt in hand — see :class:`UnsentReleaseVerdict`."""
+    return UnsentReleaseVerdict(candidate=candidate, final=True)
 
 
 def _payload(payload_json: str) -> dict[str, object]:
@@ -465,6 +532,14 @@ class UnsentReleasePass:
     scheme: CanonicalizationScheme
     account: str
     instrument: str
+    #: review-1023 M2 — the one remembered verdict, keyed by the held reservation's own identity
+    #: (``(proposal_id, attempt_id)``) and the evidence tip it was computed at. In-memory only
+    #: and never persisted: a fresh process re-derives it from the same durable rows. At most one
+    #: entry, because a scope holds at most one unresolved reservation — :meth:`_candidate_for`
+    #: clears it before writing, so this never grows with the session.
+    _verdict_cache: dict[
+        tuple[str | None, str | None], tuple[int | None, UnsentReleaseVerdict]
+    ] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     @property
     def instrument_key(self) -> InstrumentKey:
@@ -490,9 +565,7 @@ class UnsentReleasePass:
             # discard has happened, every later call — this process's next turn, or the next
             # boot's pass after the replay re-applied the row — stops here and writes nothing.
             return False
-        candidate = find_unsent_release_candidate(
-            self.evidence_store, account=self.account, instrument=self.instrument
-        )
+        candidate = self._candidate_for(held)
         if candidate is None or not self._same_reservation(held, candidate):
             return False
         reservation_id = permit_reservation_id(
@@ -506,6 +579,56 @@ class UnsentReleasePass:
         ):
             return False
         return self._discard_and_record(candidate, reservation_id=reservation_id)
+
+    def _candidate_for(
+        self, held: ProvisionalReservation
+    ) -> UnsentReleaseCandidate | None:
+        """:func:`evaluate_unsent_release` for ``held``, computed at most once (review-1023 M2).
+
+        **Why remembering it is sound.** Every §3.1 condition is evaluated inside the window
+        ``(commit_seq, consumed_seq)`` of ONE flow, and the anchor of that window — the scope's
+        newest step-9 commit — cannot move while the scope holds a reservation: the kernel's
+        at-most-one exposure retention refuses a second commit, and the sequencer's step-8
+        pre-check refuses the flow before it. So for a fixed held reservation the answer is
+        fixed too, once :attr:`UnsentReleaseVerdict.final` says the receipt was in hand.
+
+        **Why the cost mattered.** This runs after every drained turn. Before the cache, a scope
+        holding a reservation re-scanned and JSON-decoded every ``FLOW_STEP_ADMITTED`` row newer
+        than its anchor, on the loop thread — and each later tick refused at step 8 adds more of
+        them (review-1023 M2 measured 59 ms per turn at 20k rows). The ordinary case is a
+        reservation that WAS sent and is awaiting finality, where the verdict is a settled "no".
+
+        An unsettled verdict (no anchor yet, or its receipt not yet durable) is re-asked, but
+        only when the evidence store has actually grown — ``MAX(seq)`` on an INTEGER PRIMARY KEY
+        is a single B-tree seek, not a scan.
+        """
+        key = (held.proposal_id, held.attempt_id)
+        cached = self._verdict_cache.get(key)
+        if cached is not None:
+            tip, verdict = cached
+            if verdict.final or tip == self._evidence_tip():
+                return verdict.candidate
+        verdict = evaluate_unsent_release(
+            self.evidence_store, account=self.account, instrument=self.instrument
+        )
+        self._verdict_cache.clear()
+        self._verdict_cache[key] = (self._evidence_tip(), verdict)
+        return verdict.candidate
+
+    def _evidence_tip(self) -> int | None:
+        """The evidence store's newest ``seq``, or ``None`` when it cannot be read.
+
+        ``None`` never equals a remembered tip, so an unreadable store re-asks rather than
+        serving a stale unsettled verdict — the same fail-closed direction as the predicate's own
+        read-failure answer.
+        """
+        try:
+            row = self.evidence_store.connection.execute(
+                "SELECT MAX(seq) FROM entries"
+            ).fetchone()
+        except sqlite3.Error:
+            return None
+        return None if row is None or row[0] is None else int(row[0])
 
     def _same_reservation(
         self, held: ProvisionalReservation, candidate: UnsentReleaseCandidate
@@ -522,6 +645,25 @@ class UnsentReleasePass:
             held.instrument_key == self.instrument_key
             and held.proposal_id == candidate.proposal_id
             and held.attempt_id == candidate.attempt_id
+            and self._ledger_still_admits_a_discard(held)
+        )
+
+    @staticmethod
+    def _ledger_still_admits_a_discard(held: ProvisionalReservation) -> bool:
+        """review-1023 LOW-1 — the kernel's own two axes, read BEFORE the irreversible RCL write.
+
+        The RCL release commits first by design (plan §3.3), so without this the kernel's gates
+        would only get their say after capacity had already been given back. These are the same
+        two axes :meth:`~tos.engine.state.ProvisionalReservationLedger.discard_unsent` checks,
+        read-only, and the kernel still checks them afterwards — this is an ordering fix, not a
+        replacement, and deliberately not the decision either: it cannot distinguish a genuinely
+        never-sent reservation from a replay-rebuilt ``ATTEMPT_BOUND``/``NOT_SENT`` one whose
+        transmit raised (review-1022 item 3), which is exactly why the evidence predicate stays
+        primary and runs first.
+        """
+        return (
+            held.knowledge is EgressKnowledge.NOT_SENT
+            and held.capacity_state in _DISCARDABLE_CAPACITY_STATES
         )
 
     def _reservation_state(self, reservation_id: str) -> CapacityState | None:
