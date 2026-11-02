@@ -175,6 +175,7 @@ from tos.engine.records import (
     StageRequest,
     StageVerdict,
     TimeAdmissionInputs,
+    UnsentDiscardRef,
     egress_result_outcome_digest,
     event_identity,
 )
@@ -214,6 +215,7 @@ from tos.engine.vocabulary import (
     FILL_RESULT_KINDS,
     GUARANTEED_FAIL_CLOSED_STEPS,
     INJECTED_STAGE_STEPS,
+    RESERVATION_DISCARDED_UNSENT_KIND,
     SEND_BOUNDARY_STEPS,
     SEQUENCED_STEPS,
     TERMINAL_RESULT_KINDS,
@@ -229,6 +231,7 @@ from tos.engine.vocabulary import (
     ResultDisposition,
     StageAuthorityClass,
     StageOutcome,
+    UnsentDiscardReason,
     step_number,
 )
 
@@ -245,6 +248,7 @@ __all__ = [
     "FILL_RESULT_KINDS",
     "GUARANTEED_FAIL_CLOSED_STEPS",
     "INJECTED_STAGE_STEPS",
+    "RESERVATION_DISCARDED_UNSENT_KIND",
     "SEND_BOUNDARY_STEPS",
     "SEQUENCED_STEPS",
     "TERMINAL_RESULT_KINDS",
@@ -260,6 +264,7 @@ __all__ = [
     "ResultDisposition",
     "StageAuthorityClass",
     "StageOutcome",
+    "UnsentDiscardReason",
     "step_number",
     # records
     "ATTEMPT_ID_PREFIX",
@@ -280,6 +285,7 @@ __all__ = [
     "StageRequest",
     "StageVerdict",
     "TimeAdmissionInputs",
+    "UnsentDiscardRef",
     "egress_result_outcome_digest",
     "event_identity",
     # admission (D1 ↔ D4)
