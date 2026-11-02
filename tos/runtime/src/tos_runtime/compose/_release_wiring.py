@@ -44,6 +44,7 @@ from tos_runtime.compose._posttrade_source import finality_producer_for
 from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.posttrade.config import load_finality_config
 from tos_runtime.posttrade.release_consumer import FinalityReleaseConsumer
+from tos_runtime.posttrade.unsent_release import UnsentReleasePass
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.recon.ports import BrokerWitness
 
@@ -148,4 +149,46 @@ def apply_release_wiring(
     if posttrade is not None:
         posttrade.finality_producer = finality_producer
         posttrade.release_consumer = consumer
+    runtime.unsent_release = _build_and_run_unsent_release(runtime, scheme=scheme)
     return runtime
+
+
+def _build_and_run_unsent_release(
+    runtime: ComposedRuntime, *, scheme: CanonicalizationScheme
+) -> UnsentReleasePass:
+    """Build #974 Q2's never-sent release pass and make its ONE boot pass (plan §3.3).
+
+    **Why here, and why it is already "after the replay verdict is ok".** This function is only
+    reachable from :func:`apply_release_wiring`, which ``compose_paper_runtime`` calls after
+    ``_finalize`` returned — and ``_finalize``'s own boot replay
+    (:func:`~tos_runtime.compose._engine_wiring.verify_replay_or_halt`) raises
+    ``EngineReplayDiverged`` out of compose on anything but ``ok``. So a diverged boot never
+    reaches this line at all, which is review-1022 item 3's "the boot pass must not run unless
+    the replay verdict is ok" — enforced by the call graph rather than by a flag this module
+    would have to be trusted to read. The replay has also, by this point, rebuilt the live core's
+    reservation projection (#944), so the pass's ledger cross-check sees the real held entry.
+
+    The per-turn pass is NOT bound here: see :attr:`~tos_runtime.compose._types.ComposedRuntime
+    .unsent_release` for why ``apply_operations_wiring`` is the single ``bind_after_turn`` site.
+
+    Args:
+        runtime: The runtime whose ``core.ledger`` / RCL log / evidence store this pass acts on.
+        scheme: The SAME canonicalization scheme this runtime composed with.
+
+    Returns:
+        The built pass, to publish on the runtime. Its boot ``run()`` has already happened; the
+        return value of that run is deliberately not propagated — "nothing to release" is the
+        ordinary answer on every boot, and a release that did happen is on record in both stores.
+    """
+    instrument_key = runtime.context_resolver.instrument_key
+    unsent_release = UnsentReleasePass(
+        rcl_log=runtime.rcl_log,
+        projection=SqliteReservationProjectionReader(runtime.rcl_log),
+        evidence_store=runtime.evidence_store,
+        ledger=runtime.core.ledger,
+        scheme=scheme,
+        account=instrument_key.account,
+        instrument=instrument_key.instrument,
+    )
+    unsent_release.run()
+    return unsent_release

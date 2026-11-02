@@ -71,6 +71,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -445,6 +446,7 @@ def apply_operations_wiring(
     )
     composed.operations = operations
 
+    after_turn: Callable[[], None] | None = None
     if projection_path is not None:
         # Two-step construction (team-lead Phase B directive: fold the exporter's own
         # write-side failures/last_error into the SAME document's export field): the exporter
@@ -468,8 +470,7 @@ def apply_operations_wiring(
         exporter = ProjectionExporter(path=projection_path, projection=projection)
         exporter_cell.append(exporter)
         exporter.export()
-        if composed.driver is not None:
-            composed.driver.bind_after_turn(exporter.as_after_turn_callback())
+        after_turn = exporter.as_after_turn_callback()
         path_digest = hashlib.sha256(str(projection_path).encode("utf-8")).hexdigest()
         composed.evidence_store.append(
             {"path_digest": path_digest},
@@ -477,4 +478,51 @@ def apply_operations_wiring(
             record_class=_OPERATOR_PROJECTION_ENABLED_KIND,
             runtime_identity=composed.identity,
         )
+    _bind_after_turn(composed, after_turn)
     return composed
+
+
+def _bind_after_turn(
+    composed: ComposedRuntime, exporter_callback: Callable[[], None] | None
+) -> None:
+    """Bind the driver's ONE per-turn callback — this is the single site that does (#974 Q2).
+
+    The driver holds one :meth:`~tos_runtime.engine.driver.EngineDriver.bind_after_turn` slot and
+    this wiring runs last, so composing here is what lets two independent per-turn passes coexist
+    without the driver growing a second seam. Both are optional and the composition is explicit:
+
+    * :attr:`~tos_runtime.compose._types.ComposedRuntime.unsent_release` runs FIRST — it is the
+      one that can change state (a never-sent reservation's release), and the operator projection
+      is a read of that state, so exporting before it would publish a document one turn stale.
+    * the operator projection exporter runs second, only when ``projection_path`` was given.
+
+    Nothing propagates out of a turn either way:
+    :meth:`~tos_runtime.engine.driver.EngineDriver._fire_after_turn` catches and counts whatever
+    a bound callback raises. One raising pass does skip the rest of THIS turn's composition (the
+    exporter would then publish on the next turn instead) — which is the same contract each pass
+    already had on its own, not a new coupling introduced by composing them.
+
+    Args:
+        composed: The runtime being wired; a ``None`` ``driver`` (the recovery barrier held it
+            back) binds nothing at all, since a detached driver processes no turns.
+        exporter_callback: The operator projection exporter's own callback, or ``None``.
+    """
+    driver = composed.driver
+    if driver is None:
+        return
+    passes: list[Callable[[], None]] = []
+    if composed.unsent_release is not None:
+        passes.append(composed.unsent_release)
+    if exporter_callback is not None:
+        passes.append(exporter_callback)
+    if not passes:
+        return
+    if len(passes) == 1:
+        driver.bind_after_turn(passes[0])
+        return
+
+    def _after_turn() -> None:
+        for one_pass in passes:
+            one_pass()
+
+    driver.bind_after_turn(_after_turn)
