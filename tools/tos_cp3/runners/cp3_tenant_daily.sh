@@ -29,15 +29,22 @@
 #      the operator's call (runbook §7.2-d), never this script's.
 #   4. remove this direction's earlier worktrees (registered ones, never --force),
 #      fetch, add a fresh DETACHED worktree of origin/main.
-#   4b. STOCK only, after the fetch and BEFORE the worktree: the operation
-#      transport config ($STATE/cp3-setup-d-stock-ops/kis_mock_transport.yaml) is
-#      written once at setup and never updated, so a new required key on main is a
-#      boot refusal and 0 sends (10-30 r1, runbook §7.2-f). Its top-level keys are
-#      compared with setup_stock_mock_once.sh's at origin/main; a difference is a
-#      refusal that alerts and creates nothing.
 #   5. holiday/weekend check against the tenant calendar IN THAT TREE (+ any
 #      CP3_DAILY_EXTRA_CLOSED dates) — closed means SKIP: worktree
 #      removed, exit 0, no alert.
+#   5b. STOCK only, after the holiday check and before the runner — two steps
+#      that decide whether the session can send at all:
+#        * the operation transport config
+#          ($STATE/cp3-setup-d-stock-ops/kis_mock_transport.yaml) is written once
+#          at setup and never updated, so a new required key on main is a boot
+#          refusal and 0 sends (10-30 r1, runbook §7.2-f). Its top-level keys are
+#          compared with setup_stock_mock_once.sh's at origin/main.
+#        * the standing approval artifact's path is FIXED, so yesterday's file has
+#          to leave it before the runtime boots — otherwise today's write is
+#          refused and, worse, boot binds the stale digest (review-1031 HIGH-1).
+#          A file carrying another day's date is MOVED to approvals-archive/.
+#      Either one differing from what the day needs is a refusal that alerts; both
+#      run after the holiday check so a weekday holiday still skips silently.
 #   6. run_tenant_session.sh from that tree, every TENANT_* value set here. STOCK
 #      takes that set from the tracked env example in that tree (one definition,
 #      the file §7.2-f's start block sources) and this wrapper only names the
@@ -45,9 +52,10 @@
 #   6b. STOCK only: wait (bounded) for the runner's `render ok` line, then write
 #      today's standing approval (#955) — without it the flow stops at step 4 and
 #      the session sends nothing. A session that ended before the render gets no
-#      approval; a failed write alerts but never stops the session.
+#      approval; a slot that already carried today's date is left alone; a failed
+#      write alerts but never stops the session.
 #   7. one telegram line at the end: rc 0/143 is a normal end, anything else is a
-#      failure line. Pre-runner refusals (1-3, 4b, fetch, worktree) are failure lines.
+#      failure line. Pre-runner refusals (1-3, 5b, fetch, worktree) are failure lines.
 #
 # Telegram reuses the resident wrapper's channel (briefing bot) and the same rule:
 # read only the two TELEGRAM_BRIEFING_* lines from $MAIN/.env, never source it.
@@ -126,6 +134,9 @@ STOCK)
   # Cron is always run 1. A second session on the same day stays the operator's
   # own RUN=2 start block (§7.2-f); this wrapper refuses one (session dir check).
   RUN=1
+  APPROVAL_FILE=$CUSTODY_ROOT/approvals/standing-session.yaml
+  APPROVAL_ARCHIVE=$CUSTODY_ROOT/approvals-archive
+  APPROVAL_TODAY_PRESENT=0
   ;;
 esac
 CAL_REL=config/tos_runtime/$TREE/calendar.yaml
@@ -254,6 +265,40 @@ stock_transport_keydiff() {
   return 1
 }
 
+# STOCK — approval_slot FILE: whose trading date the standing approval artifact
+# carries. stdout `absent` · `today` · `stale <YYYYMMDD>`, exit 0; exit 2 with the
+# reason when a file IS there but cannot be read as one (review-1031 HIGH-1: the
+# one thing not to do here is guess).
+approval_slot() {
+  "$PY" - "$1" "$STAMP" <<'PY'
+import sys
+import yaml
+path, stamp = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+except FileNotFoundError:
+    print("absent")
+    sys.exit(0)
+except Exception as exc:  # noqa: BLE001 — an unreadable artifact is a refusal
+    print(f"unreadable: {path}: {exc}")
+    sys.exit(2)
+if not isinstance(doc, dict):
+    print(f"not a YAML mapping: {path}")
+    sys.exit(2)
+raw = doc.get("trading_date")
+# `trading_date: '20261103'` as the writer emits it. An unquoted 20261103 loads as
+# an int and str() gives the same 8 digits; a `2026-11-03` date does NOT, and that
+# is refused rather than normalised — a file this script cannot read exactly is a
+# file it must not move.
+text = "" if raw is None else str(raw).strip()
+if len(text) != 8 or not text.isdigit():
+    print(f"trading_date is {raw!r}, not YYYYMMDD: {path}")
+    sys.exit(2)
+print("today" if text == stamp else f"stale {text}")
+PY
+}
+
 # STOCK — write_standing_approval: today's session-scoped standing approval (#955,
 # runbook §7.2-f). Without it a signal stops at step 4 and the session sends
 # nothing, so this is part of the unattended run, not an extra.
@@ -265,10 +310,17 @@ stock_transport_keydiff() {
 #
 # A failed write alerts and returns 0: the session is already up and its own end
 # line still has to carry the run rc.
+# A file already carrying TODAY's date is not rewritten (the writer would refuse
+# it anyway, and re-deriving it is the operator's `--replace` call). Set by the
+# pre-runner slot step below.
 APPROVAL_WAIT_TRIES=${CP3_DAILY_APPROVAL_WAIT_TRIES:-120}
 APPROVAL_WAIT_SLEEP_S=${CP3_DAILY_APPROVAL_WAIT_SLEEP_S:-10}
 write_standing_approval() {
   local sl=$SESSION/session.log i=0 arc
+  if [ "$APPROVAL_TODAY_PRESENT" = 1 ]; then
+    log "오늘($STAMP) 날짜 상시 승인이 이미 있다 — 쓰지 않는다 (재작성은 운영자의 --replace · 런북 §7.2-f)"
+    return 0
+  fi
   while [ "$i" -lt "$APPROVAL_WAIT_TRIES" ]; do
     grep -q 'render ok' "$sl" 2>/dev/null && break
     kill -0 "$runner_pid" 2>/dev/null || break
@@ -356,6 +408,16 @@ if [ "$MODE" = preflight ]; then
       ;;
     *) log "PREFLIGHT transport config not comparable — a run would refuse: $kd" ;;
     esac
+    # Read-only: says what the run WOULD do with the approval slot, moves nothing.
+    slot=$(approval_slot "$APPROVAL_FILE")
+    case $? in
+    0) case "$slot" in
+      absent) log "PREFLIGHT standing approval slot free — the run writes today's after 'render ok'" ;;
+      today) log "PREFLIGHT standing approval slot already carries $STAMP — the run would keep it and write nothing" ;;
+      *) log "PREFLIGHT standing approval slot carries ${slot#stale } — the run would archive it to $APPROVAL_ARCHIVE/standing-session.${slot#stale }.yaml" ;;
+      esac ;;
+    *) log "PREFLIGHT standing approval slot not readable — a run would refuse: $slot" ;;
+    esac
   else
     inst=$(PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$MAIN "$PY" -c 'import datetime, sys
 from shared.instruments.futures import get_front_month_code
@@ -400,18 +462,6 @@ for old in "$STATE"/measure/$WT_OLD_GLOB; do
 done
 
 git -C "$MAIN" fetch -q origin || fail 1 "git fetch failed in $MAIN"
-
-# STOCK step 4b — before the worktree, so a mismatch creates nothing.
-if [ "$MARKET" = stock ]; then
-  kd=$(stock_transport_keydiff)
-  case $? in
-  0) log "transport config keys = 정본 ($TRANSPORT_CONFIG)" ;;
-  1) fail 2 "운영 전송 설정 키가 정본(origin/main:$SETUP_REL)과 다르다 — 이대로 부팅하면 거부되고 송신 0 이다. 그 키를 정본과 같은 값으로 손으로 넣을 것 (런북 §7.2-f):
-$kd" ;;
-  *) fail 2 "전송 설정 키 대조 실패 — $kd" ;;
-  esac
-fi
-
 [ -e "$WT" ] && fail 2 "$WT already exists — refusing"
 mkdir -p "$STATE/measure"
 git -C "$MAIN" worktree add -q --detach "$WT" origin/main || fail 1 "worktree add failed: $WT"
@@ -435,6 +485,78 @@ case $mrc in
   fail 2 "holiday check failed (rc=$mrc) on $WT/$CAL_REL for $TODAY — not skipped, not run"
   ;;
 esac
+
+# ------------------------------------------------- STOCK pre-runner steps ----
+#
+# AFTER the holiday check (review-1031 LOW-1): a weekday holiday has to SKIP
+# silently, and it would not if a stale operation file refused the day first.
+# BEFORE the runner, because both of these decide whether the session can send.
+#
+# fail_wt — the two refusals above spell these two steps out inline; from here on
+# a refusal has the same shape often enough to name it.
+fail_wt() {
+  git -C "$MAIN" worktree remove "$WT" 2>/dev/null
+  fail "$1" "$2"
+}
+
+if [ "$MARKET" = stock ]; then
+  # 1) the operation transport config's keys (header step 4b).
+  kd=$(stock_transport_keydiff)
+  case $? in
+  0) log "transport config keys = 정본 ($TRANSPORT_CONFIG)" ;;
+  1) fail_wt 2 "운영 전송 설정 키가 정본(origin/main:$SETUP_REL)과 다르다 — 이대로 부팅하면 거부되고 송신 0 이다. 그 키를 정본과 같은 값으로 손으로 넣을 것 (런북 §7.2-f):
+$kd" ;;
+  *) fail_wt 2 "전송 설정 키 대조 실패 — $kd" ;;
+  esac
+
+  # 2) one approval slot, and it must be today's (review-1031 HIGH-1).
+  #
+  # The artifact path is FIXED — $CUSTODY_ROOT/approvals/standing-session.yaml
+  # (tos_runtime STANDING_APPROVAL_RELPATH). Two facts about it meant the second
+  # cron day onwards would send nothing:
+  #   * the writer REFUSES an existing file unless --replace
+  #     (authority/standing_cli.py write_standing_document), so yesterday's file
+  #     makes today's write exit 1 and every signal stops at step 4;
+  #   * --replace alone does not fix it: the runtime's bind_at_boot() binds
+  #     whatever is in that path WHEN IT BOOTS, and any other digest afterwards is
+  #     refused as `digest_changed_since_bound` for the life of that process
+  #     (authority/standing.py). So the stale file has to be gone before boot.
+  # Hence: moved out here, before the runner starts. Moved and not deleted — it is
+  # the record of that day's authority — and moved OUTSIDE approvals/, because
+  # per-proposal approval files live in that directory.
+  slot=$(approval_slot "$APPROVAL_FILE")
+  case $? in
+  0) ;;
+  *) fail_wt 2 "상시 승인 파일을 읽을 수 없다 — $slot
+손으로 보고 치우거나 고칠 것(런북 §7.2-f). 추측해서 옮기지 않았다 — 송신 0" ;;
+  esac
+  case "$slot" in
+  absent)
+    log "standing approval slot free ($APPROVAL_FILE)"
+    ;;
+  today)
+    APPROVAL_TODAY_PRESENT=1
+    log "standing approval slot already carries today ($STAMP) — 보존하고 쓰지 않는다"
+    ;;
+  "stale "*)
+    was=${slot#stale }
+    mkdir -m 700 -p "$APPROVAL_ARCHIVE" || fail_wt 2 "cannot create $APPROVAL_ARCHIVE"
+    dest=$APPROVAL_ARCHIVE/standing-session.$was.yaml
+    n=1
+    while [ -e "$dest" ]; do
+      # Never overwrite an archived file: one more day's authority record.
+      dest=$APPROVAL_ARCHIVE/standing-session.$was.$n.yaml
+      n=$((n + 1))
+      [ "$n" -gt 99 ] && fail_wt 2 "cannot find a free archive name for $APPROVAL_FILE ($was) under $APPROVAL_ARCHIVE"
+    done
+    mv -n "$APPROVAL_FILE" "$dest" || fail_wt 2 "cannot archive $APPROVAL_FILE -> $dest"
+    # `mv -n` does nothing and still exits 0 when the target appeared in between.
+    [ -e "$APPROVAL_FILE" ] && fail_wt 2 "$APPROVAL_FILE is still there after mv -n to $dest — refusing (a stale approval at boot binds its digest for the whole session)"
+    log "archived the $was standing approval -> $dest"
+    ;;
+  *) fail_wt 2 "approval_slot said '$slot', which this script does not understand" ;;
+  esac
+fi
 
 if [ -z "$STOP_AT" ]; then
   STOP_AT=$(session_day stop-at "$WT" "$WT/$PRODUCER_REL" 2>&1) || {
