@@ -400,12 +400,12 @@ def compose_paper_runtime(
         trading_date_reader=trading_date_reader,
     )
 
-    # #1011/#1015's durable CLOSE bound reader, built ONCE here because TWO consumers need the
-    # very same source: step 6's risk-state service (below, `entry_close_bound_reader=`) and —
-    # since #1025 — step 2, which sizes a FLAT proposal from `read().remaining` instead of the
-    # kernel's in-memory projection read (`_attempt_shape.py`'s module docstring). Two readers
-    # built separately would be two readings of the same stores at two instants, which is
-    # exactly the disagreement between step 2 and step 8 that #1025 is.
+    # #1011/#1015's durable CLOSE bound reader, built ONCE so step 6's risk-state service
+    # (below) and — since #1025 — step 2 rest on the SAME source: step 2 sizes a FLAT proposal
+    # from `read().remaining` instead of the kernel's in-memory projection read. Sharing the
+    # callable saves no read (the reader is stateless; every `.read()` re-reads the stores,
+    # which step 6's own second reading and step 9's fence re-check depend on) — it is what
+    # keeps the two steps from being pointed at different stores, scopes or arithmetic.
     entry_close_bound_reader = DurableEntryCloseBoundReader(
         rcl_log=boot.rcl.rcl_log,
         evidence_store=boot.infra.evidence_store,
