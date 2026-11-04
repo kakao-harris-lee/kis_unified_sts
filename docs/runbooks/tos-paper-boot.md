@@ -285,16 +285,35 @@ tools/tos_cp3/runners/install_tenant_cron.sh --apply         # 백업(crontab.ba
 — 기본 빈 값, KRX 연말 `2026-12-31` 은 달력에 있음) → `run_tenant_session.sh`(정지 = 그날 종료 + `CP3_DAILY_STOP_AFTER_CLOSE_MIN`:
 선물 +5분 = 평일 15:50, 주식 +10분 = 평일 15:40 · 개장 지연일은 §7.2-g) → **(STOCK) `render ok` 뒤 상시 승인 작성**.
 
-**STOCK 만의 두 단계.** 둘 다 §7.2-f 를 손으로 돌릴 때와 같은 일을 래퍼가 하는 것이다.
+**STOCK 만의 세 단계.** 셋 다 §7.2-f 를 손으로 돌릴 때와 같은 일을 래퍼가 하는 것이고, 앞의
+둘은 **휴장 판정 뒤·러너 전**에 돈다(휴장일은 운영 파일이 어떻든 조용히 SKIP 해야 한다).
 - **운영 전송 설정 키 대조** — `$ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml` 의 최상위 키를
   `origin/main:tools/tos_cp3/runners/setup_stock_mock_once.sh` 의 정본 블록과 비교한다. 다르면
-  **워크트리를 만들기 전에** rc 2 로 거부하고 알린다(그 상태로 부팅하면 `KisMockTransportConfigError`
-  로 거부돼 송신 0 이다 — 실제 사례 10-30 r1, §7.2-f). 값이 아니라 **키 이름만** 본다.
-- **상시 승인(#955)** — `session.log` 의 `render ok` 를 기다린 뒤(상한 20분) 그날짜 승인을 쓴다.
-  이것이 11-03 위임 절차의 마지막 단계였고, 승인이 없으면 신호가 와도 4단계에서 멎어 송신 0 이다.
-  세션이 render 전에 끝났으면 **쓰지 않는다**(묶을 렌더본이 없다). 쓰기 rc 는 cron 로그에
-  `write-standing-approval rc=N` 으로 남고 출력은 `approval.out` 에 있다. 실패는 알리지만 세션을
-  죽이지 않는다 — 종료 줄은 러너 rc 를 그대로 싣는다.
+  rc 2 로 거부하고(워크트리는 되돌린다) 알린다. 그 상태로 부팅하면 `KisMockTransportConfigError`
+  로 거부돼 송신 0 이다 — 실제 사례 10-30 r1, §7.2-f. 값이 아니라 **키 이름만** 본다.
+- **어제 승인 치우기** — 승인 파일 경로는 **고정**이다(`approvals/standing-session.yaml` =
+  `tos_runtime.authority.standing.STANDING_APPROVAL_RELPATH`). 그래서 매일 돌리면 두 가지가 겹친다:
+  ① 작성기는 파일이 있으면 `--replace` 없이는 거부하므로 **둘째 날부터 쓰기가 rc 1** 이고 신호가
+  4단계에서 멎는다, ② `--replace` 만으로도 모자라다 — 런타임의 `bind_at_boot()` 이 **부팅 시점에
+  그 경로에 있던 것**의 digest 를 결속하고, 그 뒤에 쓰인 파일은 그 프로세스가 사는 동안
+  `digest_changed_since_bound` 로 거부된다. 그래서 **러너 전에** 다른 날짜 파일을
+  `$ST/cp3-setup-d-stock-custody/approvals-archive/standing-session.<그날짜>.yaml` 로 **옮긴다**
+  (지우지 않는다 — 그날 권한의 기록이다 · 이름이 겹치면 `.1`·`.2` 를 붙이고 **절대 덮어쓰지 않는다** ·
+  `approvals/` **밖**에 두는 이유는 그 디렉터리가 제안별 승인 파일 자리이기 때문이다). 파일이 이미
+  **오늘 날짜**면 그대로 두고 아래 쓰기를 **건너뛴다**(재작성은 운영자의 `--replace`). 파일을 읽을 수
+  없으면(날짜 형식이 다름 · YAML 아님) **추측하지 않고** rc 2 로 거부하고 알린다 — 송신 0.
+- **상시 승인(#955)** — `session.log` 의 `render ok` 를 기다린 뒤(상한 20분) 그날짜 승인을
+  `--replace` 없이 쓴다. 이것이 11-03 위임 절차의 마지막 단계였고, 승인이 없으면 신호가 와도
+  4단계에서 멎어 송신 0 이다. 세션이 render 전에 끝났으면 **쓰지 않는다**(묶을 렌더본이 없다).
+  쓰기 rc 는 cron 로그에 `write-standing-approval rc=N` 으로 남고 출력은 `approval.out` 에 있다.
+  실패는 알리지만 세션을 죽이지 않는다 — 종료 줄은 러너 rc 를 그대로 싣는다.
+
+`--preflight` 는 셋 다 **읽기 전용으로** 보고한다(키 일치 여부 · 승인 슬롯이 비었나 · 오늘 것인가 ·
+다른 날짜면 어디로 옮겨질 것인가). 옮기지 않는다.
+
+⚠ 어제 워크트리 제거의 주식 쪽 glob 은 `wt-cp3-stock-r*-2*` 라서 **지난 날짜의 손 r2 워크트리도
+함께 지운다**(그날의 `r1`·`r2` 는 둘 다 지난 날짜다). 세션 아티팩트(`cp3-sessions/…`)는 건드리지
+않으므로 로그·증거는 남는다 — 그 안에서 조사할 것이 있으면 워크트리가 아니라 세션 디렉터리를 본다.
 
 **텔레그램 (briefing 채널 · 자격증명은 상주 래퍼와 같은 `$MAIN/.env` 두 줄).** 본문은 rc ·
 방향 · 날짜 · 경로뿐이다 — `runner.out` 은 옮기지 않는다(좌표 규율).
@@ -306,6 +325,7 @@ tools/tos_cp3/runners/install_tenant_cron.sh --apply         # 백업(crontab.ba
 | 잠금 점유 (앞선 호출이 아직 돈다) | 실패 한 줄 | 75 |
 | 세션 디렉터리 이미 있음 · 부모 없음 · 호스트 zone ≠ +0900 | 실패 한 줄 | 2 |
 | (STOCK) 운영 전송 설정 키가 정본과 다름 · 그 파일이 없음 | 실패 한 줄 + diff(키 이름) | 2 |
+| (STOCK) 승인 파일을 읽을 수 없음 · 치우지 못함 | 실패 한 줄 — **옮기지 않았다**(추측하지 않는다) | 2 |
 | (STOCK) 상시 승인 쓰기 실패 · `render ok` 가 20분 안에 오지 않음 | `상시 승인 쓰기 실패` / `상시 승인 못 씀` 한 줄 — 세션은 계속 돈다 | 러너 rc (승인 실패가 rc 를 바꾸지 않는다) |
 | 휴장 판정 자체가 실패(달력 못 읽음 · 날짜 오류 · `yaml` import 실패 등) | 실패 한 줄 — **SKIP 으로 읽지 않는다**(판정 스크립트의 «휴장» 은 종료코드 10 하나뿐) | 2 |
 | 달력에 그 해 휴장일이 하나도 없다(달력이 해를 넘기지 못함) | 실패 한 줄 | 2 |
@@ -349,7 +369,8 @@ for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
 | 세션 자리 | `$ST/cp3-sessions/stock-r1-<YYYYMMDD>` (cron 은 항상 `r1`) · 워크트리 `$ST/measure/wt-cp3-stock-r1-<YYYYMMDD>` |
 | 정지 | 그날 `krx-stock` CONTINUOUS 종료 + 10분 = 평일 **15:40** (달력에서 날마다 읽는다 — 개장 지연일은 §7.2-g) |
 | 자동 상시 승인 | `render ok` 뒤 래퍼가 그날짜 승인을 쓴다 — 아래 «상시 승인» 의 명령 그대로, rc 는 cron 로그 `write-standing-approval rc=N` · 출력은 `approval.out` |
-| 사전 점검 | 아래 «세션 전날 점검» 의 키 대조를 래퍼가 매 호출 한다 — 다르면 워크트리 전에 거부(송신 0)하고 알린다 |
+| 어제 승인 파일 | 러너 전에 `$C/approvals-archive/standing-session.<그날짜>.yaml` 로 **옮긴다**(지우지 않는다 · 겹치면 `.1` · 덮어쓰지 않는다). 승인 경로가 고정이라 치우지 않으면 **둘째 날부터 송신 0** 이다 — 아래 «상시 승인» |
+| 사전 점검 | 아래 «세션 전날 점검» 의 키 대조를 래퍼가 매 호출 한다 — 다르면 거부(송신 0)하고 알린다 |
 | 끄기 (하루) | 그날 cron 줄을 주석 처리한다(`crontab -e`) |
 | 끄기 (영구) | `install_tenant_cron.sh --remove --apply` 는 세 방향을 모두 뗀다. STOCK 만 떼려면 그 줄을 손으로 지운다 |
 | 송신만 막기 | `$ST/cp3-setup-d-stock-custody/kis_mock.app_*` 를 지운다 — 부팅은 되고 첫 토큰 사용이 거부돼 송신 0 (아래 «되돌림») |
@@ -379,6 +400,12 @@ bash <(git -C $MAIN show origin/main:tools/tos_cp3/runners/setup_stock_mock_once
 - **상시 승인(그날 · #955)** — 파일 `$ST/cp3-setup-d-stock-custody/approvals/standing-session.yaml`(0600). **cron 세션에서는 래퍼가 쓴다**(`render ok` 뒤 · 첫 진입 전 · 운영자 결정 2026-11-05 이 11-03 의 위임 절차를 매 거래일로 확장). 손으로 쓰는 때(재기동 `RUN=2` 등)는 아래 «볼 것» 의 `render ok` 줄 뒤 · 첫 진입 전(런타임이 이미 떠 있어도 된다 — 첫 사용 때 결속).
   승인 없이는 신호가 와도 4단계에서 멎는다(송신 0). MOCK 트리가 아니면 rc 1 로 아무것도 쓰지 않는다 · 덮어쓰기는 `--replace` 뿐.
   **재작성**(예: `max_uses` 를 올림)은 운영자 권한이고 **재기동 뒤에** 적용된다 — 슬롯이 거래일로 키잉돼 이미 쓴 횟수는 그대로 센다.
+  ⚠ **경로가 고정이므로 슬롯은 하루에 하나다.** 작성기는 파일이 있으면 `--replace` 없이 거부하고(→ rc 1), 런타임의 `bind_at_boot()` 은
+  **부팅 시점에 그 경로에 있던 것**을 결속해 그 뒤에 쓰인 파일을 `digest_changed_since_bound` 로 거부한다 — 즉 `--replace` 로도 못 고친다.
+  그래서 cron 래퍼는 **러너를 띄우기 전에** 다른 날짜 파일을 `$C/approvals-archive/standing-session.<그날짜>.yaml` 로 옮긴다
+  (지우지 않는다 · 이름이 겹치면 `.1` · 덮어쓰지 않는다 · `approvals/` 밖 — 그 디렉터리는 제안별 승인 파일 자리다). 이미 **오늘 날짜**면
+  그대로 두고 쓰기를 건너뛴다. 손으로 재기동(`RUN=2`)할 때도 같다 — 어제 파일이 `approvals/` 에 남아 있으면 **그 세션은 송신 0** 이므로,
+  cron 을 끈 날 손으로 돌릴 때는 먼저 그 파일을 같은 이름 규칙으로 `approvals-archive/` 로 옮긴다.
   **청산(10-26)**: 이 승인은 1주 진입 BUY 하나만 허락하고 청산은 승인되지 않는다(#960: CLOSE 명령이 BUY 로 만들어진다). 세션 뒤 모의 계좌에
   1주 롱이 남는다 — 평탄하게 하려면 모의투자 HTS 에서 손으로 판다. ⛔ 청산을 제안별 승인 파일로 **절대** 승인하지 않는다(두 번째 1주를 **산다**).
 - **genesis** = 빈 잎 `$ST/cp3-setup-d-stock-005930-data/005930` 에 대한 첫 `run`(러너가 잎을 만든다 · 되돌릴 수 없다 · 승인 행위는 없다). 다음 날부터는 같은 잎을 잇는다.
