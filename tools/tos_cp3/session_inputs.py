@@ -2019,7 +2019,10 @@ def live_decision_records(data_dir: Path) -> list[dict[str, Any]]:
     (``marketfeed/store.py::SqliteSnapshotStore.put``, one
     ``BEGIN IMMEDIATE``/``COMMIT``), then the inbox admission of the tick that
     names it (``engine/inbox.py::SqliteEventInbox.enqueue``, likewise), then
-    the engine records of the decision it caused — see
+    the tick's ``handling_started`` stamp, the engine records of the decision
+    it caused, and last its ``consumed`` stamp (``engine/driver.py::
+    _process_next``) — a block read first therefore always finds its tick
+    already stamped as started — see
     ``marketfeed/scheduler.py::tick_once``, where ``store.put`` precedes
     ``driver.enqueue_and_run``. So: blocks, then ticks, then snapshots. Every
     block read then has its tick in the later inbox read, and every tick has
