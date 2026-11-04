@@ -2008,12 +2008,46 @@ def live_decision_records(data_dir: Path) -> list[dict[str, Any]]:
     ``as_of_ms`` is the snapshot's — the WRITE stamp the producer put on the
     journal line — and is deliberately not comparable to B1a's label-derived
     ``as_of_ms``; B3 does not compare them.
+
+    ⛔ **The three reads go in the REVERSE of the runtime's write order**, and
+    that is the whole reason this function reads the stores in the order it
+    does. Each is its own read-only connection taken at its own moment, so a
+    LIVE session keeps writing between them; the only order in which every
+    cross-store reference a read can see is already satisfied by the stores
+    read AFTER it is the reverse of the order the writes happen in. The runtime
+    writes one tick as: the snapshot and its preimages
+    (``marketfeed/store.py::SqliteSnapshotStore.put``, one
+    ``BEGIN IMMEDIATE``/``COMMIT``), then the inbox admission of the tick that
+    names it (``engine/inbox.py::SqliteEventInbox.enqueue``, likewise), then
+    the tick's ``handling_started`` stamp, the engine records of the decision
+    it caused, and last its ``consumed`` stamp (``engine/driver.py::
+    _process_next``) — a block read first therefore always finds its tick
+    already stamped as started — see
+    ``marketfeed/scheduler.py::tick_once``, where ``store.put`` precedes
+    ``driver.enqueue_and_run``. So: blocks, then ticks, then snapshots. Every
+    block read then has its tick in the later inbox read, and every tick has
+    its snapshot in the later marketfeed read.
+
+    **Measured.** On 2026-11-04 11:19:07 KST, with the LONG CP-3 session
+    running, the status board read snapshots FIRST and refused the whole leaf:
+    inbox seq 4138 named a snapshot (as_of 11:19:02.225) issued 5 s earlier but
+    after that first read — a tick and its decision written inside the window
+    between two reads. Nothing was lost; the same command read clean after the
+    close. The refusals below are NOT relaxed: after a reverse-order read a
+    tick whose snapshot is missing is a real loss and still raises.
+
+    The surplus this order leaves is benign and already handled: a snapshot or
+    a tick newer than the blocks read is simply unconsumed, and an unconsumed
+    tail is a normal session shape — :func:`_attribute` walks the BLOCKS, so a
+    tick with no decision is skipped here and counted in the sidecar
+    (``ticks_without_a_decision``), and a snapshot with no tick is what the
+    final pre-stop bar always looks like.
     """
+    blocks = read_decision_blocks(data_dir)
+    ticks = read_decision_ticks(data_dir)
     snapshots = read_snapshots(data_dir)
     _assert_one_instrument(snapshots)
     by_snapshot = {snapshot.snapshot_id: snapshot for snapshot in snapshots}
-    ticks = read_decision_ticks(data_dir)
-    blocks = read_decision_blocks(data_dir)
     records: list[dict[str, Any]] = []
     for index, (block, tick, how) in enumerate(_attribute(blocks, ticks)):
         snapshot = by_snapshot.get(tick.snapshot_id)
