@@ -70,6 +70,7 @@ from tos_runtime.posttrade.entry_recovery import (
     resume_entry_discharge,
 )
 from tos_runtime.posttrade.finality import ReleaseFinalityProducer
+from tos_runtime.posttrade.rcl_history_cache import ReservationHistoryCache
 from tos_runtime.posttrade.release_currentness import latest_release_is_conflict_free
 from tos_runtime.posttrade.release_hold import (
     DISCHARGE_HOLD_REASONS as _DISCHARGE_HOLD_REASONS,
@@ -281,6 +282,12 @@ class FinalityReleaseConsumer:
     #: point (a monotonic reading is never meaningful across a restart).
     _wait_start_ms: dict[tuple[str, int | None], int] = field(
         default_factory=dict, init=False, repr=False, compare=False
+    )
+    #: In-memory-only RCL transition snapshot reused across loop passes that committed
+    #: nothing (#1008, :mod:`tos_runtime.posttrade.rcl_history_cache`). Same in-memory
+    #: discipline as :attr:`_wait_start_ms`: never persisted, empty in a fresh process.
+    _history_cache: ReservationHistoryCache = field(
+        default_factory=ReservationHistoryCache, init=False, repr=False, compare=False
     )
 
     # -- entry point -----------------------------------------------------------------
