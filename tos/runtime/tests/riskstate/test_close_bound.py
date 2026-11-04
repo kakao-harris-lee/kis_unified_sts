@@ -856,3 +856,99 @@ def test_the_fence_is_minted_under_the_step6_proposal_not_the_step9_request(
     )
 
     assert service.take_close_fence(other) is None
+
+
+# ===========================================================================
+# issue #1025 — what this reader hands STEP 2, for each shape that refuses
+# ===========================================================================
+
+
+def _reader(rcl_log: SqliteCommitLog, evidence_store: SqliteEvidenceStore):
+    return DurableEntryCloseBoundReader(
+        rcl_log=rcl_log,
+        evidence_store=evidence_store,
+        projection=SqliteReservationProjectionReader(rcl_log),
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+    )
+
+
+def _bind_a_close_in_flight(
+    rcl_log: SqliteCommitLog, store: SqliteEvidenceStore
+) -> None:
+    """A second reservation of this scope bound to an attempt and left POTENTIALLY_LIVE.
+
+    The durable state between a CLOSE's send and its fill — the first half of
+    :func:`_seed_prior_close`, without the release that ends it.
+    """
+    _record_join(
+        store, attempt_id=_PRIOR_CLOSE_ATTEMPT, permit_identity=_PRIOR_CLOSE_PERMIT
+    )
+    _commit(
+        rcl_log,
+        reservation_id=_prior_close_reservation_id(),
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.POTENTIALLY_LIVE,
+        command_id="cmd-close-in-flight",
+        command_type=CommandType.BIND_ATTEMPT,
+        cause=TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        finality_witness=None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("shape", "expected_refusal"),
+    [
+        ("no-entry", "ENTRY_NOT_SOLE_CONSUMED_POSITION"),
+        ("close-in-flight", "ENTRY_NOT_SOLE_CONSUMED_POSITION"),
+        ("prior-close-unproven", "FILL_UNPROVEN"),
+    ],
+)
+def test_remaining_is_absent_for_every_shape_that_refuses(
+    shape: str,
+    expected_refusal: str,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """``read().remaining`` is ``None`` whenever the bound is not proven — step 2's input (#1025).
+
+    Since #1025 this reader also sizes a FLAT exit proposal at step 2
+    (``tos_runtime/compose/_attempt_shape.py``), which consumes nothing but
+    :attr:`~tos_runtime.riskstate.close_bound.EntryCloseBound.remaining`. The three refusal
+    shapes the plan names are driven here against real stores so the step-2 side — which
+    asserts "a refused bound denies the FLAT at rule 4", in
+    ``tos/runtime/tests/compose/test_attempt_shape.py`` — is bound to the reasons this reader
+    actually produces rather than to invented ones.
+
+    ``no-entry`` and ``close-in-flight`` share a reason on purpose: the fail-closed clause is
+    "EXACTLY ONE outstanding row, at POSITION_CONSUMED", and both violate it. Pinning them as
+    two cases keeps "a CLOSE in flight refuses" from quietly becoming untrue if that clause is
+    ever relaxed to "at least one consumed entry".
+    """
+    if shape != "no-entry":
+        _seed_filled_entry(rcl_log, evidence_store, quantity=Decimal("2"))
+    if shape == "close-in-flight":
+        _bind_a_close_in_flight(rcl_log, evidence_store)
+    if shape == "prior-close-unproven":
+        _seed_prior_close(rcl_log, evidence_store, quantity=Decimal("1"), proven=False)
+
+    bound = _reader(rcl_log, evidence_store).read()
+    assert bound.refusal == expected_refusal, bound
+    assert bound.proven is False
+    assert bound.remaining is None
+
+
+def test_remaining_is_the_proven_entry_less_its_proven_closes(
+    evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
+) -> None:
+    """The positive half: a proven entry with a proven partial close leaves the difference.
+
+    This is the quantity step 2 now sizes a FLAT exit at, so "remaining" being the remainder
+    rather than the whole entry is what keeps a second exit from over-closing.
+    """
+    _seed_filled_entry(rcl_log, evidence_store, quantity=Decimal("2"))
+    _seed_prior_close(rcl_log, evidence_store, quantity=Decimal("1"), proven=True)
+    bound = _reader(rcl_log, evidence_store).read()
+    assert bound.proven is True, bound
+    assert (bound.entry_quantity, bound.prior_closed) == (Decimal("2"), Decimal("1"))
+    assert bound.remaining == Decimal("1")

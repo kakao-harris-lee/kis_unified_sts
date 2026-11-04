@@ -6,18 +6,22 @@ Against the SHIPPED order construction policies (the CP-3 LONG and SHORT tenant 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.dsl import FLAT_QUANTITY_BASIS
 from tos.egressgw import (
+    AdmittedPriceObservation,
     EconomicEffectStage,
     EffectBasis,
     EffectDimensionSpec,
     VenueQuantityConstraint,
 )
 from tos.engine import CommitmentStep, StageOutcome
+from tos.engine.vocabulary import CAPSULE_CONTEXT_SOURCE
 from tos.venue import ActionClass
 from tos_runtime.compose._attempt_arm import (
     attempt_action_class,
@@ -30,6 +34,7 @@ from tos_runtime.compose._attempt_shape import (
     select_attempt_arm,
 )
 from tos_runtime.compose._envelope_wiring import build_construction_envelope
+from tos_runtime.riskstate.close_bound import CloseBoundRefusal, EntryCloseBound
 from tos_runtime.venue import load_order_construction_policy
 
 from . import _fixtures as fx
@@ -69,6 +74,7 @@ def ocps(tmp_path_factory: pytest.TempPathFactory) -> dict[str, object]:
             account="a",
             instrument="i",
             direction=direction,
+            admits_flat_exit=True,  # #1025
         )
         path = tmp_path_factory.mktemp(direction.lower()) / "ocp.yaml"
         path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
@@ -189,12 +195,13 @@ def test_no_arm_is_a_refusal_never_the_boot_class(
 # ===========================================================================
 
 
-def _stage(ocp, arms=None) -> ProposalShapedConstructionStage:
+def _stage(ocp, arms=None, *, price=None, entry_close_bound_reader=None):
     ocp, built = _arms(ocp, ActionClass.NEW_LONG)
     return ProposalShapedConstructionStage(
         arms=built if arms is None else arms,
         loaded_ocp=ocp,
-        price=None,
+        entry_close_bound_reader=entry_close_bound_reader,
+        price=price,
         venue_constraint=_VENUE.quantity_constraint,
         scheme=_SCHEME,
         intent_id="intent-1",
@@ -208,12 +215,18 @@ def _stage(ocp, arms=None) -> ProposalShapedConstructionStage:
     )
 
 
-def _request(*, effect: str, direction: str):
+def _request(*, effect: str, direction: str, basis: str = "RISK", held=None):
     base = fx.stage_request(step=CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION)
     proposal = base.proposal.model_copy(
-        update={"position_effect": effect, "direction": direction}
+        update={
+            "position_effect": effect,
+            "direction": direction,
+            "quantity_basis": basis,
+        }
     )
-    return base.model_copy(update={"proposal": proposal})
+    return base.model_copy(
+        update={"proposal": proposal, "held_position_magnitude": held}
+    )
 
 
 def test_a_close_with_no_arm_is_denied_at_step_2_with_its_reason(ocps) -> None:
@@ -301,3 +314,176 @@ def test_step_5_derives_the_close_arms_effect_envelope_not_the_boot_arms(ocps) -
     assert stage.effect_specs == boot_specs
     stage(_request(effect="CLOSE", direction="LONG"))
     assert stage.attempt is None and stage.effect_specs == boot_specs
+
+
+# ===========================================================================
+# issue #1025 — a FLAT proposal's held position comes from the durable reader,
+# and an ACTION proposal's request is not touched at all
+# ===========================================================================
+
+#: An admitted Critical Input price, so a request reaches construction rule 4 (the held-position
+#: rule) instead of being denied two rules earlier for having no price. The value is arbitrary:
+#: every assertion below is about WHICH rule denied, never about a size.
+_PRICE = AdmittedPriceObservation(
+    source=CAPSULE_CONTEXT_SOURCE, value=Decimal("100"), snapshot_digest="cis-1025"
+)
+
+#: Construction rule 4's own denial (``tos/src/tos/egressgw/construction.py:421-426``), pinned
+#: as a fragment: a FLAT denied for ANY other reason must not read as this one.
+_NO_HELD_POSITION = "closes a position but no held position was observed"
+
+
+def _bound(*, remaining: Decimal | None, refusal: str | None) -> EntryCloseBound:
+    """An :class:`EntryCloseBound` in the exact shape its own reader returns.
+
+    A refusal leaves every quantity absent (``DurableEntryCloseBoundReader._refused``), and a
+    proven bound carries ``entry_quantity``/``prior_closed`` whose difference is ``remaining``.
+    That the three real refusal paths produce these shapes is pinned where they are produced,
+    in ``tos/runtime/tests/riskstate/test_close_bound.py``; what is measured here is what step 2
+    does with each shape.
+    """
+    return EntryCloseBound(
+        account="88888888-01",
+        instrument="101W09",
+        entry_reservation_id=None if refusal is not None else "res-1025",
+        entry_attempt_id=None if refusal is not None else "attempt-1025",
+        entry_quantity=remaining,
+        prior_closed=None if remaining is None else Decimal("0"),
+        rcl_writer_epoch=None if refusal is not None else 1,
+        rcl_last_seq=None if refusal is not None else 7,
+        refusal=refusal,
+    )
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        # The reason BOTH "no proven entry" and "a CLOSE already in flight on this scope"
+        # produce: the scope does not hold exactly one outstanding POSITION_CONSUMED row.
+        CloseBoundRefusal.ENTRY_NOT_SOLE_CONSUMED_POSITION.value,
+        # An unproven prior close, under the close-history layer's own spelling (it passes
+        # through unchanged so an audit row never loses which layer refused).
+        "FILL_UNPROVEN",
+        # The projection itself could not be read.
+        CloseBoundRefusal.SCOPE_READ_FAILED.value,
+    ],
+    ids=["entry-not-sole-consumed", "prior-close-unproven", "scope-unreadable"],
+)
+def test_a_refused_durable_bound_denies_the_flat_at_rule_4(ocps, refusal) -> None:
+    """Every refusal leaves step 2 with NO held position, so the kernel denies — fail-closed.
+
+    The reader never returns a quantity it could not prove, and step 2 never substitutes one:
+    the copy it hands the kernel carries ``None``, and the denial is byte-identical to the one a
+    tree with no durable reader at all produces (the control below).
+    """
+    stage = _stage(
+        ocps[_LONG_OCP],
+        price=_PRICE,
+        entry_close_bound_reader=lambda: _bound(remaining=None, refusal=refusal),
+    )
+    verdict = stage(
+        _request(effect="CLOSE", direction="SHORT", basis=FLAT_QUANTITY_BASIS)
+    )
+    assert verdict.outcome is StageOutcome.DENY
+    assert _NO_HELD_POSITION in (stage.construction.denial_reason or "")
+
+
+def test_a_reader_that_raises_denies_the_flat_rather_than_propagating(ocps) -> None:
+    """An unreadable bound proves nothing, and a raising reader must not become a stage crash.
+
+    A raise out of step 2 would be a ``STAGE_RAISED`` halt, which is also a no-send — but it
+    would lose the kernel's own reason and leave the flow's halt attributed to a stage failure
+    rather than to an unproven held position.
+    """
+
+    def _raises() -> EntryCloseBound:
+        raise RuntimeError("the projection is unreadable")
+
+    stage = _stage(ocps[_LONG_OCP], price=_PRICE, entry_close_bound_reader=_raises)
+    verdict = stage(
+        _request(effect="CLOSE", direction="SHORT", basis=FLAT_QUANTITY_BASIS)
+    )
+    assert verdict.outcome is StageOutcome.DENY
+    assert _NO_HELD_POSITION in (stage.construction.denial_reason or "")
+
+
+def test_no_reader_at_all_denies_the_flat_exactly_as_before(ocps) -> None:
+    """The control: with no reader wired, the FLAT denial is the pre-#1025 one, unchanged."""
+    stage = _stage(ocps[_LONG_OCP], price=_PRICE)
+    verdict = stage(
+        _request(effect="CLOSE", direction="SHORT", basis=FLAT_QUANTITY_BASIS)
+    )
+    assert verdict.outcome is StageOutcome.DENY
+    assert _NO_HELD_POSITION in (stage.construction.denial_reason or "")
+
+
+def test_a_proven_bound_carries_the_flat_past_rule_4(ocps) -> None:
+    """A proven remainder is the held position, so rule 4 no longer denies.
+
+    This test deliberately stops at "past rule 4": this suite's venue constraint is empty by
+    construction (``_VENUE``), so the derivation then denies on THAT, and the full derivation is
+    measured end to end against real policies in
+    ``test_flat_exit_held_quantity.py``. What is proven here is the one step that was missing —
+    the kernel sees a held position.
+    """
+    stage = _stage(
+        ocps[_LONG_OCP],
+        price=_PRICE,
+        entry_close_bound_reader=lambda: _bound(remaining=Decimal("10"), refusal=None),
+    )
+    stage(_request(effect="CLOSE", direction="SHORT", basis=FLAT_QUANTITY_BASIS))
+    assert _NO_HELD_POSITION not in (stage.construction.denial_reason or "")
+
+
+def test_an_action_proposals_request_is_never_shaped_and_never_reads_the_bound(
+    ocps,
+) -> None:
+    """An ACTION proposal's request is passed through untouched (plan §2).
+
+    The reader is the ONLY thing that can change the request, so "untouched" is measurable as
+    "never consulted": an OPEN/RISK attempt leaves the call count at zero, while the FLAT
+    attempt that follows on the same stage consults it exactly once. The second half is what
+    makes the first half an assertion about ACTION rather than about a reader that is never
+    called at all.
+
+    It is also the plan's cost claim: the durable read happens only when a FLAT proposal has
+    already selected an arm, never once per pass.
+    """
+    calls: list[int] = []
+
+    def _counting() -> EntryCloseBound:
+        calls.append(1)
+        return _bound(remaining=Decimal("10"), refusal=None)
+
+    stage = _stage(ocps[_LONG_OCP], price=_PRICE, entry_close_bound_reader=_counting)
+
+    stage(_request(effect="OPEN", direction="LONG"))
+    assert calls == []
+    # An ACTION proposal that happens to carry a CLOSE effect reads no bound either: the basis,
+    # not the effect, is what rule 4 keys on.
+    stage(_request(effect="CLOSE", direction="SHORT"))
+    assert calls == []
+
+    stage(_request(effect="CLOSE", direction="SHORT", basis=FLAT_QUANTITY_BASIS))
+    assert calls == [1]
+
+
+def test_a_refused_arm_never_reaches_the_bound_reader(ocps) -> None:
+    """A FLAT whose (effect, direction) selects no arm is refused BEFORE any durable read.
+
+    The arm refusal is a step-2 denial in its own right, and reading the stores for an attempt
+    that cannot be shaped would be a cost with no consumer.
+    """
+    calls: list[int] = []
+
+    def _counting() -> EntryCloseBound:
+        calls.append(1)
+        return _bound(remaining=Decimal("10"), refusal=None)
+
+    stage = _stage(ocps[_LONG_OCP], price=_PRICE, entry_close_bound_reader=_counting)
+    verdict = stage(
+        _request(effect="CLOSE", direction="LONG", basis=FLAT_QUANTITY_BASIS)
+    )
+    assert verdict.outcome is StageOutcome.DENY
+    assert "no single construction arm" in (stage.construction.denial_reason or "")
+    assert calls == []
