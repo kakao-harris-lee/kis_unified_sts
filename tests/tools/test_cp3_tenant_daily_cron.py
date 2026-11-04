@@ -295,6 +295,30 @@ def _stock_host_state(env: Env, *, transport: str | None = None) -> Path:
     return path
 
 
+#: The standing approval artifact's FIXED path and the archive beside it
+#: (tos_runtime ``authority.standing.STANDING_APPROVAL_RELPATH``).
+_APPROVAL_REL = "cp3-setup-d-stock-custody/approvals/standing-session.yaml"
+_ARCHIVE_REL = "cp3-setup-d-stock-custody/approvals-archive"
+
+
+def _approval_doc(trading_date: str) -> str:
+    """The shape ``write-standing-approval`` emits, trimmed to what the wrapper reads."""
+    return (
+        "schema: tos-standing-session-approval/1\n"
+        "environment_label: paper\n"
+        f"trading_date: '{trading_date}'\n"
+        "instrument: '005930'\n"
+        "max_quantity: 1\n"
+    )
+
+
+def _write_approval(env: Env, body: str) -> Path:
+    path = env.state / _APPROVAL_REL
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
 # ------------------------------------------------------------------ installer
 
 
@@ -902,6 +926,7 @@ def test_stock_preflight_reports_the_window_leaf_and_transport_keys(env: Env) ->
     assert "market=OPEN" in r.stdout and "instrument=005930" in r.stdout
     assert f"leaf {env.state}/cp3-setup-d-stock-005930-data/005930" in r.stdout
     assert "transport config keys = 정본" in r.stdout
+    assert "standing approval slot free" in r.stdout
     assert f"session dir {_stock_session(env, _OPEN_DAY)}" in r.stdout
     assert f"worktree {_stock_wt(env, _OPEN_DAY)}" in r.stdout
 
@@ -928,6 +953,133 @@ def test_stock_preflight_names_a_transport_key_difference_without_refusing(
     assert "keys DIFFER" in r.stdout and "a run would refuse" in r.stdout
     assert "only_key:" in r.stdout
     assert "market=OPEN" in r.stdout  # the rest of the preflight still reports
+
+
+# ------------------------------------- review-1031: the one approval slot ----
+#
+# The artifact path is fixed, so the slot is a resource the day has to take over:
+# the writer refuses an existing file without --replace, and the runtime's
+# bind_at_boot() binds whatever sits there when it boots (after which any other
+# digest is `digest_changed_since_bound` for that whole process). Left alone, the
+# SECOND cron day would write nothing and send nothing.
+
+
+def test_stock_1031_yesterdays_approval_is_archived_before_the_runner(
+    env: Env,
+) -> None:
+    _data_parents(env)
+    stale = _write_approval(env, _approval_doc("20261023"))
+    stale_bytes = stale.read_bytes()
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "archived the 20261023 standing approval" in r.stdout
+    assert not stale.exists()
+    # Moved, not deleted — it is the record of that day's authority — and OUTSIDE
+    # approvals/, where per-proposal approval files live. Same name the operator
+    # used by hand on 2026-11-05.
+    archived = env.state / _ARCHIVE_REL / "standing-session.20261023.yaml"
+    assert archived.read_bytes() == stale_bytes
+    assert not list((env.state / _APPROVAL_REL).parent.iterdir())
+    # …and today's approval is then written, without --replace.
+    assert "write-standing-approval rc=0" in r.stdout
+    argv = env.approval_argv.read_text(encoding="utf-8").splitlines()
+    assert argv[-2:] == ["--trading-date", _OPEN_DAY]
+    assert "--replace" not in argv
+
+
+def test_stock_1031_todays_approval_is_kept_and_not_rewritten(env: Env) -> None:
+    """A manual RUN=2 restart: the slot already carries today, so it stays and the
+    write is skipped — re-deriving it is the operator's `--replace` call."""
+    _data_parents(env)
+    mine = _write_approval(env, _approval_doc(_OPEN_DAY.replace("-", "")))
+    kept = mine.read_bytes()
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "already carries today" in r.stdout and "쓰지 않는다" in r.stdout
+    assert mine.read_bytes() == kept
+    assert not (env.state / _ARCHIVE_REL).exists()
+    assert not env.approval_argv.exists()
+    assert "write-standing-approval rc=" not in r.stdout
+
+
+def test_stock_1031_an_archive_name_collision_gets_a_suffix(env: Env) -> None:
+    _data_parents(env)
+    archive = env.state / _ARCHIVE_REL
+    archive.mkdir(mode=0o700, parents=True)
+    taken = archive / "standing-session.20261023.yaml"
+    taken.write_text("already archived under that name\n", encoding="utf-8")
+    _write_approval(env, _approval_doc("20261023"))
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert taken.read_text(encoding="utf-8") == "already archived under that name\n"
+    suffixed = archive / "standing-session.20261023.1.yaml"
+    assert "trading_date: '20261023'" in suffixed.read_text(encoding="utf-8")
+    assert f"-> {suffixed}" in r.stdout
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "trading_date: 2026-10-23\n",  # a date, not the writer's 8-digit string
+        "schema: tos-standing-session-approval/1\n",  # no trading_date at all
+        "- not: a mapping\n",
+        "trading_date: '20261023'\n  bad: indent\n",  # not loadable
+        "",  # empty file
+    ],
+)
+def test_stock_1031_an_unreadable_approval_file_is_refused(env: Env, body: str) -> None:
+    """Not guessed at, not moved: a file this wrapper cannot read exactly is a file
+    it must not decide about."""
+    _data_parents(env)
+    path = _write_approval(env, body)
+    before = path.read_bytes()
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 2, r.stdout
+    assert "상시 승인 파일을 읽을 수 없다" in r.stdout and "notify-body" in r.stdout
+    assert path.read_bytes() == before
+    assert not (env.state / _ARCHIVE_REL).exists()
+    assert not env.approval_argv.exists()
+    assert not _stock_session(env, _OPEN_DAY).exists()
+    assert not _stock_wt(env, _OPEN_DAY).exists()
+
+
+def test_stock_1031_low1_a_holiday_skips_before_the_operation_file_checks(
+    env: Env,
+) -> None:
+    """review-1031 LOW-1: a weekday holiday skips silently even when both operation
+    files would refuse the day — the calendar is asked first."""
+    _data_parents(env)
+    _stock_host_state(env, transport="mode: live\nonly_key: 1\n")
+    _write_approval(env, "nonsense: [\n")
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_HOLIDAY)
+    assert r.returncode == 0, r.stdout
+    assert "SKIP" in r.stdout
+    assert "notify-body" not in r.stdout
+    assert "keys" not in r.stdout and "approval" not in r.stdout
+    assert not (env.state / _ARCHIVE_REL).exists()
+
+
+def test_stock_1031_preflight_names_the_slot_without_moving_anything(
+    env: Env,
+) -> None:
+    _data_parents(env)
+    stale = _write_approval(env, _approval_doc("20261023"))
+    before = stale.read_bytes()
+    r = env.daily("STOCK", "--preflight", _OPEN_DAY)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "standing approval slot carries 20261023" in r.stdout
+    assert f"{env.state}/{_ARCHIVE_REL}/standing-session.20261023.yaml" in r.stdout
+    assert stale.read_bytes() == before
+    assert not (env.state / _ARCHIVE_REL).exists()
+
+    _write_approval(env, _approval_doc(_OPEN_DAY.replace("-", "")))
+    mine = env.daily("STOCK", "--preflight", _OPEN_DAY)
+    assert f"slot already carries {_OPEN_DAY.replace('-', '')}" in mine.stdout
+
+    _write_approval(env, "- not: a mapping\n")
+    bad = env.daily("STOCK", "--preflight", _OPEN_DAY)
+    assert bad.returncode == 0  # the preflight reports; only a run refuses
+    assert "slot not readable" in bad.stdout and "a run would refuse" in bad.stdout
 
 
 @pytest.mark.parametrize("apply", [False, True])
