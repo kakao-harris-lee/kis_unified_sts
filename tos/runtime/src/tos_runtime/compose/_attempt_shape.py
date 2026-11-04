@@ -34,13 +34,33 @@ No arm, or more than one, is a step-2 DENY carrying the reason — the same deni
 :class:`~tos.egressgw.CandidateConstruction` shape a denied size derivation produces — never a
 fallback to the boot action class.
 
+**A FLAT proposal's held position comes from the DURABLE entry remainder (issue #1025).** The
+kernel offers step 2 the sequencer's own observation, ``ledger.outstanding_consumed_magnitude``
+(``tos/src/tos/engine/sequencer.py:467``) — a read of the engine's IN-MEMORY reservation
+projection. The runtime releases that memory reservation the moment the entry fills (the RCL
+row goes to ``POSITION_CONSUMED``; ``posttrade/release_consumer.py``), which is exactly what
+#966 needs for the kernel's at-most-one pre-check to let a CLOSE through — and it leaves the
+memory read ``None`` for the whole life of the open position. So a ``ZERO_POSITION`` proposal
+was denied by construction rule 4 ("no held position was observed") for every entry that had
+actually filled. :class:`ProposalShapedConstructionStage` therefore hands the kernel stage a
+copy of the request whose ``held_position_magnitude`` is
+:attr:`~tos_runtime.riskstate.close_bound.EntryCloseBound.remaining` — the SAME durable source
+step 6's CLOSE bound already rests on (#1011/#1015), so the two steps cannot disagree about
+what is held. Only for a FLAT proposal: an ACTION proposal's request is passed through
+untouched, since its basis sizes from the risk budget and never reads this field. If the reader
+refuses (no proven entry, a CLOSE already in flight, an unproven prior close) the copy carries
+``None`` and the kernel's rule-4 denial stands, byte for byte — fail-closed.
+
 Firewall: stdlib + ``tos.*`` + ``tos_runtime.*`` only.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from decimal import Decimal
 from typing import Any
 
+from tos.dsl import FLAT_QUANTITY_BASIS
 from tos.egressgw import (
     CandidateConstruction,
     DerivationOutcome,
@@ -58,6 +78,7 @@ from tos_runtime.compose._envelope_wiring import (
     build_construction_envelope,
     resolve_construction_direction,
 )
+from tos_runtime.riskstate.close_bound import EntryCloseBound
 from tos_runtime.venue import LoadedOrderConstructionPolicy, VenueConstraintService
 from tos_runtime.venue._order_construction_policy_loader import (
     _DIRECTION_NAMED_ACTION_CLASSES,
@@ -173,6 +194,12 @@ class ProposalShapedConstructionStage(OrderConstructionStage):
     CURRENT attempt selected (``None`` before step 2 ran or when it refused) — steps 3/7/14 and
     the send-boundary context read it so the whole attempt uses one action class and one side.
     :attr:`effect_specs` follows the same arm, since step 5 derives its envelope from it.
+
+    ``entry_close_bound_reader`` is the composition's ONE
+    :meth:`~tos_runtime.riskstate.close_bound.DurableEntryCloseBoundReader.read` — the same
+    callable the risk-state service decides step 6 with (``compose/root.py``) — and it is read
+    only for a FLAT proposal that already selected an arm (module docstring). ``None`` leaves
+    the kernel's own observation in place, which for a FLAT proposal means rule 4 denies.
     """
 
     def __init__(
@@ -180,6 +207,7 @@ class ProposalShapedConstructionStage(OrderConstructionStage):
         *,
         arms: tuple[AttemptArm, ...],
         loaded_ocp: LoadedOrderConstructionPolicy,
+        entry_close_bound_reader: Callable[[], EntryCloseBound] | None = None,
         **stage_kwargs: Any,
     ) -> None:
         super().__init__(envelope=arms[0].envelope, **stage_kwargs)
@@ -188,7 +216,41 @@ class ProposalShapedConstructionStage(OrderConstructionStage):
             for arm in arms
         )
         self._loaded_ocp = loaded_ocp
+        self._entry_close_bound_reader = entry_close_bound_reader
         self.attempt: AttemptArm | None = None
+
+    def _durable_held_position(self) -> Decimal | None:
+        """The proven open-entry remainder of this scope, or ``None`` for every refusal.
+
+        Never raises and never guesses: an absent reader, a reader that raises, something that
+        is not an :class:`~tos_runtime.riskstate.close_bound.EntryCloseBound`, a refused bound
+        and an absent remainder all answer ``None``, which the kernel reads as "no held
+        position was observed" and denies.
+        """
+        reader = self._entry_close_bound_reader
+        if reader is None:
+            return None
+        try:
+            bound = reader()
+        except Exception:  # noqa: BLE001 - an unreadable bound proves nothing
+            return None
+        if type(bound) is not EntryCloseBound or not bound.proven:
+            return None
+        remaining = bound.remaining
+        return remaining if type(remaining) is Decimal else None
+
+    def _shaped_request(self, request: StageRequest) -> StageRequest:
+        """``request`` for an ACTION proposal; a copy carrying the durable remainder for FLAT.
+
+        :class:`~tos.engine.StageRequest` is frozen, so this is a ``model_copy`` of it rather
+        than a mutation — the kernel stage receives a well-formed request either way, and the
+        sequencer's own request object is left exactly as it built it.
+        """
+        if getattr(request.proposal, "quantity_basis", None) != FLAT_QUANTITY_BASIS:
+            return request
+        return request.model_copy(
+            update={"held_position_magnitude": self._durable_held_position()}
+        )
 
     @property
     def effect_specs(self) -> tuple[EffectDimensionSpec, ...]:
@@ -222,7 +284,7 @@ class ProposalShapedConstructionStage(OrderConstructionStage):
             )
             return candidate_command_verdict(self.construction, step=request.step)
         (stage,) = [s for arm, s in self._arm_stages if arm is selected]
-        verdict = stage(request)
+        verdict = stage(self._shaped_request(request))
         self.attempt = selected
         self.construction = stage.construction
         return verdict

@@ -54,6 +54,17 @@
 # (tos_runtime/transport/kis_mock/codec.py KIS_ORDER_CASH_WIRE_FIELDS) — that
 # is a further NEW policy generation, not an in-place edit.
 #
+# APPROVAL PROVENANCE (`_runtime.construction.sizing.admitted_quantity_bases`,
+# generation 4 — 청산(FLAT) 허용): docs/plans/2026-11-04-tos-flat-exit-held-
+# quantity-plan.md §2, 운영자 승인 2026-11-03 (안 A). `ZERO_POSITION` 을 admitted
+# set 에 더한다 = 「TOS 경유 청산을 허용한다」. 그전까지 세 CP-3 트리의 청산 제안은
+# 전부 step 2 규칙 2 에서 거부됐다 — 11-03 실측 step-2 halt 건수: LONG 295 ·
+# SHORT 251 · 주식 30 (#1025). 발행된 정책의 **내용 개정**이므로 새 generation 이고,
+# 아래 OPERATOR-FILL 리프를 채우는 pre-activation 행위와는 다르다. 진입 basis
+# `RISK` 는 그대로다: 더한 것은 커널 예약 토큰 하나뿐이고, 집합 밖 토큰은 여전히
+# 거부된다(tos/src/tos/egressgw/construction.py:396). 상주 `paper` 트리는 FLAT
+# 규칙이 없어 이 generation 을 받지 않는다(plan §2 — 소비자 없는 확장을 하지 않는다).
+#
 # OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"): scope.accounts,
 # scope.instruments (same values as venue_constraint_policy.yaml), then
 # `tos-runtime print-policy-digests --config-dir <dir>`
@@ -65,13 +76,14 @@
 # below): `_runtime.construction.sizing.admitted_quantity_bases` (["RISK"]) and
 # `_runtime.construction.axes`' DIRECTION entry ("LONG"). Both were operator-fill
 # gates this header previously listed; filling them is the pre-activation act, not a
-# content revision, so policy_generation stays 3.
+# content revision, so policy_generation did not move for that act. The FLAT revision
+# above (generation 4, #1025) IS a content revision of that same leaf, and it moved it.
 # =============================================================================
 
 artifact_type: ORDER_CONSTRUCTION_POLICY
 schema_version: "1.0-DRAFT"
 policy_id: "ocp-paper-krx-index-futures"
-policy_generation: 3
+policy_generation: 4
 construction_generation: 1
 canonical_digest: TBD
 status: ISSUED
@@ -129,6 +141,7 @@ approved_by:
   - "operator (System Owner) — 2026-09-16, venue-constraint-service plan §6 ② 채택 (generation 1: scope/admission coordinates)"
   - "operator (System Owner) — 2026-09-16, OCP sizing values proposal §2 채택 (generation 2: _runtime.construction)"
   - "operator (System Owner) — 2026-09-16, OCP effect_dimensions proposal §2/§4 채택 (generation 3: _runtime.construction.effect_dimensions)"
+  - "operator (System Owner) — 2026-11-03, flat-exit held-quantity plan §2 채택 (generation 4: admitted_quantity_bases 에 ZERO_POSITION 추가 — TOS 경유 청산 허용, #1025)"
 authority:
   grants_approval: false
   creates_capacity: false
@@ -145,7 +158,7 @@ evidence:
   independent_review_id: "PR #694 / #699 independent review (sonnet) — see plan §7"
   evidence_location: "evidence store row ORDER_CONSTRUCTION_POLICY_BOUND"
 _model_view:
-  policy_generation: 3
+  policy_generation: 4
   policy_version: "1.0.0"
 _runtime:
   canonicalization_version: "ev-l1-provisional-0"
@@ -184,12 +197,22 @@ _runtime:
       # 전략은 `strategies/setup_d_long.strategy.yaml` 이고, `quantity_basis` 를 선언하는
       # target 은 그 파일의 **진입 규칙 R1 하나뿐**이며 값은 `RISK` 다(실측: 그 파일에서
       # `quantity_basis` 는 1회 — 청산 R2·R3 의 FLAT target 은 이 키를 갖지 않는다).
-      # 그래서 이 admitted set 은 **같은 토큰 하나**로 그대로 성립하고 값은 바꾸지 않았다.
-      # (tos/src/tos/egressgw/construction.py:396 refuses a basis outside this set). Filling an
-      # OPERATOR-FILL leaf is the documented pre-activation act this file's own header
-      # prescribes, not a content revision — no policy_generation bump (same treatment as
-      # scope.accounts/scope.instruments, which the render script fills off-repo).
-      admitted_quantity_bases: ["RISK"]
+      # 그래서 **진입** basis 는 `RISK` 한 토큰이고, 그 값은 바꾸지 않았다. OPERATOR-FILL
+      # 리프를 채우는 것은 이 파일 헤더가 규정한 pre-activation 행위이지 내용 개정이 아니라서
+      # 그때는 policy_generation 을 올리지 않았다(scope.accounts/scope.instruments 와 같은
+      # 취급 — 렌더 스크립트가 저장소 밖에서 채운다).
+      #
+      # ⚠ 청산(FLAT) 토큰 추가는 **내용 개정**이고 generation 4 다(#1025 · 운영자 승인
+      # 2026-11-03 · plan docs/plans/2026-11-04-tos-flat-exit-held-quantity-plan.md §2 ·
+      # 위 APPROVAL PROVENANCE 블록 + approved_by 행). 청산 규칙 R2·R3 의 FLAT target 은
+      # `quantity_basis` 를 선언하지 않으므로 커널 예약 토큰 `ZERO_POSITION`
+      # (tos/src/tos/dsl/proposal.py:49 `FLAT_QUANTITY_BASIS`)을 들고 온다. 이 집합이
+      # `["RISK"]` 이던 동안 step 2 규칙 2 가 **모든 청산 제안을 거부**했다 — 11-03 실측
+      # step-2 halt 건수: LONG 295 · SHORT 251 · 주식 30 (#1025). 진입이 체결돼
+      # POSITION_CONSUMED 가 된 scope 는 청산도 새 진입(step 8)도 못 해 봉인된다.
+      # 집합 밖 토큰은 여전히 거부된다(tos/src/tos/egressgw/construction.py:396): 아래 둘이
+      # 승인된 닫힌 집합 전부다.
+      admitted_quantity_bases: ["RISK", "ZERO_POSITION"]
     axes:
       # ENVIRONMENT/ORDER_TYPE/ACCOUNT/INSTRUMENT are derived from scope.environments/
       # scope.order_types/scope.accounts/scope.instruments above (never restated here).

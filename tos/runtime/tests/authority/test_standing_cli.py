@@ -102,7 +102,12 @@ def test_writes_the_artifact_for_the_mock_stock_tree(tmp_path: Path, capsys) -> 
     assert [a.max_uses for a in approval.actions] == [1, 1]
     out = capsys.readouterr().out
     assert approval.digest in out
-    assert "exit row cannot match until #960 (CLOSE commands are built as BUY)" in out
+    # The command used to print "exit row cannot match until #960 (CLOSE commands are built as
+    # BUY)" next to this artifact. #960 landed (step 2 now builds the command from the
+    # proposal's own effect/direction) and #1025 measured the exit row MATCHING end to end
+    # (``test_flat_exit_held_quantity.py``), so the note is gone rather than reworded — a
+    # standing caveat about a closed defect reads as a live limitation.
+    assert "#960" not in out
 
 
 @pytest.mark.parametrize("tree", ["cp3-setup-d-long", "cp3-setup-d-short"])

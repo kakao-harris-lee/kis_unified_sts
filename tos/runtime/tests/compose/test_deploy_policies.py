@@ -108,11 +108,17 @@ _ADOPTED_TENANT_MAX_QTY = 10000
 #: ⚠ The LONG tree's OCP is **digest-identical, not comment-only** (review L1). The 2026-10-09
 #: tick correction rewrote its ``unit_multiplier_currency_and_numeric_rules`` line, which is
 #: template DATA (DR-0002 §2.1 -- preserved, never interpreted by the runtime), not a comment.
-#: The ``canonical_digest`` is unchanged regardless (``c90444b9...`` measured for the resident,
-#: LONG and SHORT trees alike -- that digest tracks neither the DATA prose nor ``policy_id``),
-#: which is why the id stays shared and the rename rule is unaffected. The earlier
-#: "comment-only" wording was true when written and stopped being true in this PR's own first
-#: commit.
+#: Its ``canonical_digest`` DID stay equal to the resident one through that edit (the digest
+#: tracks neither the DATA prose nor ``policy_id``), and stopped being equal on 2026-11-04:
+#: #1025's FLAT admission is a content revision, so the tenant trees' ``policy_generation``
+#: went 3 -> 4, and generation IS one of the three fields DR-0002 §2.3 binds the digest to.
+#: Measured: resident ``c90444b9...`` (gen 3), LONG and SHORT ``1d0ecc72...`` (gen 4, still
+#: equal to each other), stock ``a17d4730...`` (gen 5).
+#:
+#: The id still stays shared and the rename rule is still satisfied -- the rule is about two
+#: documents an activation record cannot tell apart, and ``(kind, member_id, generation)`` now
+#: tells these apart by generation. The earlier "comment-only" wording was true when written
+#: and stopped being true in PR #884's own first commit.
 _TENANT_VENUE_POLICY_ID = "vcp-paper-cp3-setup-d-long-krx-index-futures"
 
 #: The provenance sentence design §8 step 5 requires next to that value. Pinned as a STRING so
@@ -361,6 +367,20 @@ _ADOPTED_OCP_VERSION = "1.0.0"
 #: ``tests/compose/test_deploy_approved_values.py`` pins the two against each other.
 _OCP_ADMITTED_QUANTITY_BASIS = "RISK"
 
+#: The SECOND admitted basis, in the three CP-3 tenant trees only (#1025, operator approval
+#: 2026-11-03, ``docs/plans/2026-11-04-tos-flat-exit-held-quantity-plan.md`` §2). It is the
+#: kernel's reserved FLAT token (``tos/src/tos/dsl/proposal.py::FLAT_QUANTITY_BASIS``), which a
+#: Setup D exit rule's ``FLAT`` target carries because it declares no ``quantity_basis`` of its
+#: own. While the set was ``["RISK"]`` alone, construction rule 2 denied EVERY exit proposal on
+#: those trees (measured 2026-11-03: LONG 295 / SHORT 251 / stock 30 step-2 halts).
+#:
+#: The resident ``paper`` tree deliberately does NOT admit it -- its boot-proof strategy has no
+#: FLAT rule, so admitting the token there would widen an authorized closed set for no consumer.
+#: That asymmetry is why :func:`_filled` takes ``admits_flat_exit`` rather than reading the
+#: expectation off the document: a test that derived the set from the file it checks would pass
+#: whatever the file said, including a ``paper`` tree that had quietly grown the token.
+_OCP_FLAT_QUANTITY_BASIS = "ZERO_POSITION"
+
 #: ``_runtime.construction.axes``' ``DIRECTION`` entry as SHIPPED since W-A / A-5. One
 #: direction per composition is all the current (proposal-path-less) design can express; the
 #: SHORT arm is produced by ``scripts/tos/render_paper_config.py --direction SHORT``, never by
@@ -382,6 +402,7 @@ def _filled(
     account: str,
     instrument: str,
     direction: str = _OCP_DIRECTION,
+    admits_flat_exit: bool = False,
 ) -> dict:
     """The real document with ONLY the operator-fill coordinates filled -- exactly what
     ``scripts/tos/render_paper_config.py`` fills off-repo before ``print-policy-digests``.
@@ -396,6 +417,12 @@ def _filled(
     deployments -- and the CP-3 SHORT tenant tree passes ``"SHORT"``. A single hard-coded
     ``LONG`` here would have forced the SHORT tree's callers to skip this helper, and with it
     the ``admitted_quantity_bases`` check.
+
+    ``admits_flat_exit`` is the same kind of parameter for the SECOND admitted basis
+    (:data:`_OCP_FLAT_QUANTITY_BASIS`, #1025): the three CP-3 tenant trees pass ``True``, the
+    resident ``paper`` tree does not, and the assertion below still reads the file. It defaults
+    to ``False`` so a tenant caller that forgets it goes RED rather than quietly accepting
+    whichever set the document happens to carry.
 
     ⚠ What the axis block below does and does not check: it asserts there is exactly ONE
     ``DIRECTION`` entry and that its value is the expected one. It does **not** check the length
@@ -433,9 +460,10 @@ def _filled(
         band_source["approved_source_prefixes"] = ["tos-cp3-live"]
     construction = raw.get("_runtime", {}).get("construction")
     if construction is not None:
-        assert construction["sizing"]["admitted_quantity_bases"] == [
-            _OCP_ADMITTED_QUANTITY_BASIS
-        ]
+        expected_bases = [_OCP_ADMITTED_QUANTITY_BASIS]
+        if admits_flat_exit:
+            expected_bases.append(_OCP_FLAT_QUANTITY_BASIS)
+        assert construction["sizing"]["admitted_quantity_bases"] == expected_bases
         direction_entries = [
             entry for entry in construction["axes"] if entry["axis"] == "DIRECTION"
         ]

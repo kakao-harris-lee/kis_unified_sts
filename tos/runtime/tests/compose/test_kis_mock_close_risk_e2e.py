@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 import tos_runtime.transport.kis_mock.pacer as pacer_module
 import yaml
+from tos.dsl import FLAT_QUANTITY_BASIS
 from tos.engine.vocabulary import CommitmentStep, StageOutcome
 from tos.rcl import CapacityState
 from tos_runtime.calendar.ports import FixedWallClockReference
@@ -615,5 +616,223 @@ def test_kis_mock_close_needs_fresh_bounded_worker_position_proof(
             )
             assert close_result.flow is None or close_result.flow.handed_off is not True
             assert len(server.requests_for(_ORDER_PATH)) == posts_before_close == 1
+    finally:
+        _close(runtime)
+
+
+# ===========================================================================
+# issue #1025 — a FLAT exit on this transport, bounded by the REAL broker proof
+# ===========================================================================
+
+
+def _write_flat_exit_strategy(
+    config_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The band entry plus the shipped Setup D exit shape: ``decision.kind: FLAT``.
+
+    The sibling :func:`_write_close_strategy` authors an ``ACTION`` close with
+    ``quantity_basis: "RISK"``, which sizes from the risk budget. This one authors no basis at
+    all, exactly as ``setup_d_long.strategy.yaml``'s R2/R3 do, so the proposal carries the
+    kernel's ``FLAT_QUANTITY_BASIS`` and step 2 sizes it from the durable entry remainder.
+    """
+    original = fx.band_reversion_strategy_mapping
+
+    def flat_exit_mapping() -> dict[str, object]:
+        mapping = original()
+        policy = mapping["policy"]
+        assert isinstance(policy, dict)
+        rules = policy["rules"]
+        assert isinstance(rules, list)
+        rationale = "close above upper band — FLAT exit, real held proof e2e"
+        rules.append(
+            {
+                "all_of": [
+                    {
+                        "left": {"ref": ["capsule", fx.VALUE_NAMESPACE, "close"]},
+                        "op": "GT",
+                        "right": {"ref": ["capsule", fx.VALUE_NAMESPACE, "upper_band"]},
+                    }
+                ],
+                "decision": {
+                    "kind": "FLAT",
+                    "rationale": rationale,
+                    "target": {
+                        "kind": "FLAT",
+                        "account": fx.ACCOUNT,
+                        "instrument": fx.INSTRUMENT,
+                        "direction": "SHORT",
+                        "position_effect": "CLOSE",
+                        "rationale": rationale,
+                    },
+                },
+            }
+        )
+        return mapping
+
+    monkeypatch.setattr(fx, "band_reversion_strategy_mapping", flat_exit_mapping)
+    fx.write_band_strategy_file(config_dir)
+
+
+@pytest.mark.parametrize(
+    ("broker_holds_the_whole_entry", "expected_status", "expected_extra_posts"),
+    [(True, "PROOF_ACCEPTED", 1), (False, "QUANTITY_EXCEEDS_HELD", 0)],
+    ids=["held-equals-remaining", "held-below-remaining"],
+)
+def test_a_flat_exits_durable_size_is_still_capped_by_the_real_broker_holding(
+    broker_holds_the_whole_entry: bool,
+    expected_status: str,
+    expected_extra_posts: int,
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server: FakeKisServer,
+) -> None:
+    """#1025's stock half, against the REAL ``BROKER_HELD_PROOF`` bound — no injected provider.
+
+    Step 2 now sizes a FLAT exit from the durable entry remainder (#1025), and the plan's §2
+    disposition is that step 6 must still bound that size by what the broker proves is held: a
+    broker holding SMALLER than the remainder refuses the close rather than sending a reduced
+    one (a smaller exit is a new proposal's business).
+
+    Concrete input: the composed kis-mock boot with the production ``RiskStateService`` and the
+    asynchronous FETCH/APPLY held-position path (only the fake broker is a double); one filled
+    entry of ``open_quantity``; then an exit tick, with the account reporting either exactly
+    ``open_quantity`` or one unit.
+
+    Concrete result:
+
+    * step 2 derives the FLAT quantity as ``open_quantity`` in BOTH cases — the durable
+      remainder, which is not what the broker says;
+    * holding == remainder: step 6 answers ``PROOF_ACCEPTED`` and the close POSTs;
+    * holding < remainder: step 6 answers ``QUANTITY_EXCEEDS_HELD``, the flow does not hand off,
+      and the order count is unchanged — the entry's POST stays the only one.
+    """
+    from .test_flat_exit_held_quantity import admit_the_flat_basis
+
+    clock = _PacedClock()
+    monkeypatch.setattr(pacer_module, "sleep", clock.sleep)
+    _sealed_mock_deployment(
+        config_dir_with_risk_state, custody_root, server, monkeypatch
+    )
+    _script_order_ack(server, _ODNO)
+    _write_flat_exit_strategy(config_dir_with_risk_state, monkeypatch)
+    admit_the_flat_basis(config_dir_with_risk_state)
+    _speed_observer_polls(config_dir_with_risk_state)
+    runtime = compose_paper_runtime(
+        config_dir_with_risk_state,
+        data_dir,
+        custody_root,
+        _ENVIRONMENT_LABEL,
+        construction=fx.construction_config(),
+        aggregate_risk_inputs_provider=None,
+        action_flow_inputs_provider=None,
+        transport_kind=TransportKind.KIS_MOCK,
+        monotonic_source=clock,
+        wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
+    )
+    try:
+        assert type(runtime.risk_state) is RiskStateService
+        observer = runtime.fill_observer
+        assert observer is not None and observer.snapshots is not None
+        published, bridge = _capture_published(observer)
+        assert runtime.session_facts is not None
+        date = runtime.session_facts.trading_date_now(fx.INSTRUMENT_CLASS)
+        assert date is not None
+        _script_witness(
+            server, config_dir_with_risk_state, date=date, rows=[], holdings=()
+        )
+
+        # --- the entry -----------------------------------------------------------------
+        open_event = fx.crossing_event(seq=1)
+        _discover_and_approve(runtime, custody_root, open_event)
+        open_construction = runtime.construction_stage.construction
+        assert open_construction is not None
+        open_quantity = open_construction.derivation.quantity
+        assert open_quantity is not None and open_quantity > 0
+        open_row = _row(
+            odno=_ODNO,
+            date=date,
+            ord_qty=open_quantity,
+            filled=open_quantity,
+            remaining=Decimal(0),
+        )
+        _script_witness(
+            server,
+            config_dir_with_risk_state,
+            date=date,
+            rows=[open_row],
+            holdings=((fx.INSTRUMENT, open_quantity),),
+        )
+        open_result = runtime.run_once((open_event,))[0]
+        assert open_result.flow is not None and open_result.flow.handed_off is True
+        assert len(server.requests_for(_ORDER_PATH)) == 1
+
+        # The worker reads the real fill and the holding; the entry reaches POSITION_CONSUMED.
+        _wait_for_publish(observer, published, len(published))
+        assert any(
+            state is CapacityState.POSITION_CONSUMED
+            for _reservation_id, state, _seq, _scope in runtime.rcl_log.reservation_rows()
+        )
+
+        # --- what the broker says it holds when the exit is decided --------------------
+        holdings = (
+            ((fx.INSTRUMENT, open_quantity),)
+            if broker_holds_the_whole_entry
+            else ((fx.INSTRUMENT, Decimal(1)),)
+        )
+        _script_witness(
+            server,
+            config_dir_with_risk_state,
+            date=date,
+            rows=[open_row],
+            holdings=holdings,
+        )
+        _wait_for_publish(observer, published, len(published))
+
+        # --- the FLAT exit -------------------------------------------------------------
+        close_event = fx.crossing_event(seq=2, close=fx.UPPER_BAND + 1_000)
+        discovery = _discover_and_approve(runtime, custody_root, close_event)
+        assert discovery.pipeline is not None
+        assert discovery.pipeline.proposal is not None
+        assert discovery.pipeline.proposal.quantity_basis == FLAT_QUANTITY_BASIS
+        close_construction = runtime.construction_stage.construction
+        assert close_construction is not None
+        # Step 2's own number: the DURABLE entry remainder, in both cases.
+        assert close_construction.derivation.quantity == open_quantity
+
+        _script_witness(
+            server,
+            config_dir_with_risk_state,
+            date=date,
+            rows=[open_row],
+            holdings=holdings,
+        )
+        _wait_for_publish(observer, published, len(published))
+        assert bridge.cell._proof is not None
+        _script_order_ack(server, _CLOSE_ODNO)
+        posts_before_close = len(server.requests_for(_ORDER_PATH))
+        close_result = runtime.run_once((close_event,))[0]
+
+        observation = [
+            row for row in _risk_observations(runtime) if "close_effect" in row
+        ][-1]
+        assert observation["close_effect"]["proof_status"] == expected_status, (
+            observation["close_effect"],
+            bridge.cell._proof,
+        )
+        assert Decimal(observation["close_effect"]["held_quantity"]) == holdings[0][1]
+        step6 = _step_verdict(close_result, CommitmentStep.AGGREGATE_RISK_DECISION)
+        assert (
+            len(server.requests_for(_ORDER_PATH))
+            == posts_before_close + expected_extra_posts
+        )
+        if broker_holds_the_whole_entry:
+            assert step6.outcome is StageOutcome.ADMIT, step6.reason
+            assert close_result.flow is not None
+            assert close_result.flow.handed_off is True, close_result.flow.detail
+        else:
+            assert step6.outcome is not StageOutcome.ADMIT
+            assert close_result.flow is None or close_result.flow.handed_off is not True
     finally:
         _close(runtime)
