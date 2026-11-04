@@ -450,7 +450,9 @@ def parse_runner_log(text: str) -> RunnerLog:
                 continue
             if name == "repo_commit":
                 out.repo_commit = m.group(1)
-            elif name == "market":
+            elif name == "market" and out.market is None:
+                # 첫 줄만 — 러너 5b 가 먼저 적는다. 같은 로그에 쓰는 자식 프로세스가
+                # 나중에 같은 꼴의 줄을 내도 덮지 못한다(review-1030 LOW-1).
                 out.market = m.group(1)
             elif name == "data_leaf":
                 out.instrument, out.data_leaf = m.group(1), m.group(2)
