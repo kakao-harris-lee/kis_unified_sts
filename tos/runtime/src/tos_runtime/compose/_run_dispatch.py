@@ -49,7 +49,31 @@ def install_run_stop_signal_handlers() -> tuple[Callable[[], bool], Callable[[],
     BETWEEN passes (that method's own docstring), so a signal received mid-``tick_once`` still
     lets the in-flight tick finish before the loop exits; ``restore()`` puts back whatever
     handler was previously installed (Python's own default, ordinarily) so a caller — or a test
-    driving several ``dispatch_run`` calls in one process — never leaks a stale handler.
+    driving several ``dispatch_run`` calls in one process — never leaks a stale handler. That
+    is the ONLY reason ``restore`` exists, and it is why it still restores on the path a test
+    with a stub scheduler takes: no stop signal ever arrived there.
+
+    **Once a stop signal HAS arrived, ``restore()`` is a no-op** — it leaves the flag handler
+    installed, so every repeat ``SIGINT``/``SIGTERM`` for the rest of the process is a no-op
+    too. One requested stop delivers the stop signal MORE THAN ONCE:
+    ``tools/broker_probes/runners/_common.sh``'s ``stop_supervised`` signals ``run``'s whole
+    process GROUP, and GNU ``timeout`` — itself in that group, supervising the runtime — then
+    forwards the signal to its child and re-signals the group (coreutils ``cleanup()``:
+    ``send_sig(monitored_pid, sig)`` then ``send_sig(0, sig)``). The runtime therefore takes
+    two or three ``SIGTERM``s, the later ones delayed by scheduling. While ``restore()`` put
+    ``SIG_DFL`` back unconditionally, a late one landing anywhere after it — inside
+    :func:`~tos_runtime.compose._broker_posttrade_wiring.close_fill_observer`, inside the final
+    ``print``, or between :func:`dispatch_run` returning and the process exiting — killed the
+    process by default action. Measured: the CP-3 SHORT session of 2026-11-03 ended ``run`` with
+    rc=143 at its scheduled 15:50 stop (``session.log``: ``Terminated``, where a clean session
+    prints ``run: stopped (signal received).``), 1 session in ~19, and the status board counts
+    only rc 0 as a clean trading day.
+
+    Suppressing the restore is the fix rather than changing the runner's group signalling,
+    because the group ``SIGKILL`` that follows the grace period is exactly what a genuinely
+    stuck shutdown needs (that function's own comments) and ``SIGKILL`` is not blockable — the
+    supervisor keeps its last resort either way. A repeat stop signal during shutdown has
+    nothing left to ask for: the stop it requests is already under way.
     """
     stop_requested = False
 
@@ -67,6 +91,11 @@ def install_run_stop_signal_handlers() -> tuple[Callable[[], bool], Callable[[],
         signal.signal(sig, _handle_stop_signal)
 
     def _restore() -> None:
+        if stop_requested:
+            # See this function's docstring: a stop signal already arrived, so the duplicates
+            # the runner's group signalling delivers are still in flight. Keeping this handler
+            # installed makes them no-ops instead of a default-action kill (rc=143).
+            return
         for sig, handler in previous_handlers:
             signal.signal(sig, handler)
 

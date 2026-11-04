@@ -8,7 +8,7 @@ env, zero writes outside a temp directory**. ``127.0.0.1``/``::1`` sockets and
 ``tmp_path`` sqlite files are explicitly ALLOWED — that is this package's
 whole reason to exist (D2's `SqliteCommitLog`, D3's evidence store, etc.).
 
-This file installs TWO autouse guards:
+This file installs THREE autouse guards:
 
   ``_hermetic_network_guard``  every ``socket.socket`` method that can send a
                                packet to an address — ``connect``,
@@ -24,6 +24,9 @@ This file installs TWO autouse guards:
                                to refuse any WRITE-mode target whose resolved
                                path lies outside the test's own ``tmp_path``
                                — read modes are never restricted.
+  ``_stop_signal_handlers``    this process's ``SIGINT``/``SIGTERM`` handlers
+                               are put back after every test, so no test can
+                               leave one installed for the next.
 
 Independent review (2026-09-08, MEDIUM) reproduced two gaps in the original
 cut of this file, both closed here: (1) only ``connect`` was guarded —
@@ -50,7 +53,9 @@ from __future__ import annotations
 import builtins
 import os
 import pathlib
+import signal
 import socket
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -246,3 +251,35 @@ def _hermetic_write_guard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(pathlib.Path, "open", guarded_path_open)
     monkeypatch.setattr(pathlib.Path, "write_text", guarded_write_text)
     monkeypatch.setattr(pathlib.Path, "write_bytes", guarded_write_bytes)
+
+
+# ============================================================================
+# Stop-signal handler guard — process state no test may leave behind
+# ============================================================================
+
+
+@pytest.fixture(autouse=True)
+def _stop_signal_handlers() -> Iterator[None]:
+    """Autouse: put this process's ``SIGINT``/``SIGTERM`` handlers back after every test.
+
+    Signal handlers are PROCESS state, not test state, and
+    :func:`~tos_runtime.compose._run_dispatch.install_run_stop_signal_handlers`'s own
+    ``restore()`` deliberately does NOT put the previous handler back once a stop signal has
+    arrived (that function's docstring: the duplicate ``SIGTERM``s one requested stop delivers
+    must stay no-ops, or ``run`` exits 143 instead of 0). So every test that drives
+    ``dispatch_run`` to a real signal — ``tests/compose/test_run_e2e.py``'s argv-path e2e sends
+    itself a real ``SIGINT``, and ``tests/compose/test_cli.py`` has the handler unit tests —
+    ends with that flag handler still installed, and under ``pytest -n auto`` (how CI runs this
+    suite) the NEXT test on that worker comes from whichever file xdist scheduled there. A
+    leaked handler is silent until something depends on the default action, which is the worst
+    way to find out.
+
+    Restores whatever was installed rather than forcing a baseline: a test that wants to start
+    from the handlers a fresh process has says so itself.
+    """
+    saved = [(sig, signal.getsignal(sig)) for sig in (signal.SIGINT, signal.SIGTERM)]
+    try:
+        yield
+    finally:
+        for sig, handler in saved:
+            signal.signal(sig, handler)

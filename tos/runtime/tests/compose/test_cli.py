@@ -340,17 +340,109 @@ def test_dispatch_run_passes_the_loaded_construction_config_through(
     assert captured_kwargs["transport_kind"] == args.transport
 
 
-def test_install_run_stop_signal_handlers_flips_stop_on_sigint_and_restores() -> None:
+def _install_fresh_process_stop_handlers() -> None:
+    """Pin ``SIGINT``/``SIGTERM`` to what a FRESH process has, as the baseline the three tests
+    below measure ``restore()`` against.
+
+    They cannot read the ambient handlers instead: ``install_run_stop_signal_handlers``'s own
+    ``restore()`` leaves its flag handler installed once a stop signal has arrived (that
+    function's docstring), so under ``pytest -n auto`` whatever ran before on this xdist worker
+    decides what is installed now. ``conftest.py``'s autouse ``_stop_signal_handlers`` fixture
+    puts the real handlers back afterwards, so pinning them here leaks nothing.
+    """
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+
+def test_install_run_stop_signal_handlers_restores_without_a_stop_signal() -> None:
+    """``restore()``'s whole reason to exist: a caller — or a test driving several
+    ``dispatch_run`` calls in one process — never leaks a stale handler."""
+    _install_fresh_process_stop_handlers()
+
     stop, restore = _run_dispatch.install_run_stop_signal_handlers()
-    try:
-        assert stop() is False
-        os.kill(os.getpid(), signal.SIGINT)
-        assert stop() is True
-    finally:
-        restore()
-    # After restore(), the default Python SIGINT handler (raises KeyboardInterrupt) is back.
+    assert signal.getsignal(signal.SIGINT) is not signal.default_int_handler
+    assert stop() is False
+
+    restore()
+
+    # The default Python SIGINT handler (raises KeyboardInterrupt) is back.
+    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+    assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
     with pytest.raises(KeyboardInterrupt):
         os.kill(os.getpid(), signal.SIGINT)
+
+
+def test_install_run_stop_signal_handlers_flips_stop_then_ignores_repeats() -> None:
+    """A stop signal flips the predicate, and after that ``restore()`` must leave the flag
+    handler installed so the duplicates one requested stop delivers are no-ops (regression,
+    CP-3 SHORT 2026-11-03 rc=143 — ``install_run_stop_signal_handlers``'s own docstring).
+    """
+    _install_fresh_process_stop_handlers()
+
+    stop, restore = _run_dispatch.install_run_stop_signal_handlers()
+    assert stop() is False
+    os.kill(os.getpid(), signal.SIGTERM)
+    assert stop() is True
+
+    restore()
+
+    # Asserted BEFORE the repeats are delivered: with SIG_DFL back for SIGTERM the second
+    # signal would kill the whole pytest session instead of failing this test (the lesson
+    # `test_run_e2e.py`'s module-level docstring records about real-signal tests).
+    assert signal.getsignal(signal.SIGTERM) is not signal.SIG_DFL
+    assert signal.getsignal(signal.SIGINT) is not signal.default_int_handler
+    os.kill(os.getpid(), signal.SIGTERM)
+    os.kill(os.getpid(), signal.SIGINT)
+    assert stop() is True
+
+
+def test_dispatch_run_survives_a_second_stop_signal_during_shutdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Regression: the CP-3 SHORT session of 2026-11-03 ended ``run`` with rc=143 instead of 0
+    at its scheduled 15:50 stop. One requested stop delivers the stop signal two or three
+    times — ``stop_supervised`` SIGTERMs ``run``'s process group and GNU ``timeout``, in that
+    same group, forwards it to its child and re-signals the group — and a late duplicate
+    landing after the ``finally``'s ``restore()`` had put ``SIG_DFL`` back killed the process
+    by default action.
+
+    Shaped like the real arc rather than by setting a flag: the stop arrives as a real
+    ``SIGTERM`` from inside ``run_forever``, the duplicate as a real ``SIGTERM`` from inside
+    ``close_fill_observer`` — i.e. during the ``finally``, after ``restore()`` has run.
+    """
+    _install_fresh_process_stop_handlers()
+    second_signal_window: list[object] = []
+
+    class _SignallingScheduler:
+        def run_forever(self, *, _sleep=None, stop=None) -> None:  # noqa: ANN001,ANN202
+            os.kill(os.getpid(), signal.SIGTERM)
+            assert stop() is True
+
+    def _close_fill_observer_and_signal_again(_composed: object) -> None:
+        handler = signal.getsignal(signal.SIGTERM)
+        second_signal_window.append(handler)
+        # Checked before delivering, for the reason the test above states: a regression must
+        # fail THIS test, not kill the pytest session with signal 15.
+        assert handler is not signal.SIG_DFL
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    monkeypatch.setattr(
+        _run_dispatch, "load_construction_config", lambda _path: object()
+    )
+    monkeypatch.setattr(
+        _run_dispatch,
+        "compose_paper_runtime",
+        lambda *_a, **_k: _FakeComposed(marketfeed=_SignallingScheduler()),
+    )
+    monkeypatch.setattr(
+        _run_dispatch, "close_fill_observer", _close_fill_observer_and_signal_again
+    )
+
+    exit_code = cli._dispatch_run(_make_args(tmp_path))
+
+    assert len(second_signal_window) == 1
+    assert exit_code == 0
+    assert "stopped" in capsys.readouterr().out
 
 
 # -- backup-set ----------------------------------------------------------------
