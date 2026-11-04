@@ -33,18 +33,27 @@ _OPEN_DAY = "2026-10-26"  # a Monday, not a holiday
 #: shifts an hour late. Not a real KRX notice — tests only.
 _OVERRIDE_DAY = "2026-12-03"
 
+#: Like the real tenant calendars (§7.2-g keeps the four byte-identical), this
+#: carries BOTH session classes: the futures wrapper reads ``krx-index-futures``
+#: and the stock one ``krx-stock``, whose CONTINUOUS close is 15:30.
 _CALENDAR = f"""calendar_version: "t"
 holidays:
   - "{_HOLIDAY}"
 sessions:
   krx-index-futures:
     - {{phase: CONTINUOUS, start: "08:45", end: "15:45", days: [MON,TUE,WED,THU,FRI], crosses_midnight: false}}
+  krx-stock:
+    - {{phase: PRE_OPEN,    start: "08:30", end: "08:40", days: [MON,TUE,WED,THU,FRI], crosses_midnight: false}}
+    - {{phase: CONTINUOUS,  start: "09:00", end: "15:30", days: [MON,TUE,WED,THU,FRI], crosses_midnight: false}}
+    - {{phase: AFTER_HOURS, start: "15:40", end: "16:00", days: [MON,TUE,WED,THU,FRI], crosses_midnight: false}}
 session_overrides:
   "{_OVERRIDE_DAY}":
     reason: "test fixture — fictitious late open"
     sessions:
       krx-index-futures:
         - {{phase: CONTINUOUS, start: "09:45", end: "16:45", crosses_midnight: false}}
+      krx-stock:
+        - {{phase: CONTINUOUS, start: "10:00", end: "16:30", crosses_midnight: false}}
 """
 
 _PRODUCER_CONFIG = """calendar_yaml: config/tos_runtime/cp3-setup-d-long/calendar.yaml
@@ -52,11 +61,38 @@ calendar_session_id: krx-index-futures
 calendar_session_phase: CONTINUOUS
 """
 
+_STOCK_PRODUCER_CONFIG = """calendar_yaml: config/tos_runtime/cp3-setup-d-stock-005930/calendar.yaml
+calendar_session_id: krx-stock
+calendar_session_phase: CONTINUOUS
+market: stock
+"""
+
 _STUB_RUNNER = """#!/bin/bash
 # Test stub: record what the wrapper handed over, exit with the requested rc.
 env | grep '^TENANT_' | sort
+# A stock session: the wrapper waits for this line in TENANT_LOG before it writes
+# today's standing approval. CP3_TEST_STUB_NO_RENDER=1 withholds it.
+if [ -n "${TENANT_KIS_MOCK_TRANSPORT_CONFIG:-}" ] && [ -z "${CP3_TEST_STUB_NO_RENDER:-}" ]; then
+  echo "render ok -> ${TENANT_RENDER_OUT:-}" >>"$TENANT_LOG"
+fi
+[ -n "${CP3_TEST_STUB_SLEEP_S:-}" ] && sleep "$CP3_TEST_STUB_SLEEP_S"
 exit "${CP3_TEST_STUB_RC:-0}"
 """
+
+#: Stub of the runtime CLI the wrapper reaches with the `-c` form (§7.2-f: `-m`
+#: would do nothing and exit 0). Records argv so the invocation itself is pinned.
+_STUB_COMPOSE_CLI = '''"""Test stub of tos_runtime.compose.cli."""
+
+import os
+import pathlib
+
+
+def main(argv):
+    out = os.environ.get("FAKE_APPROVAL_OUT")
+    if out:
+        pathlib.Path(out).write_text("\\n".join(argv) + "\\n", encoding="utf-8")
+    return int(os.environ.get("FAKE_APPROVAL_RC", "0"))
+'''
 
 _FAKE_CRONTAB = """#!/bin/bash
 # Test stub: `crontab -l` prints $FAKE_CRONTAB_FILE, `crontab FILE` replaces it.
@@ -92,7 +128,25 @@ CRON_TZ=Asia/Seoul
 _LEGACY_LINES = """CRON_TZ=Asia/Seoul
 38 8 * * 1-5 /usr/bin/flock -n /tmp/a.lock /bin/bash /x/run-cp3-tenant-daily.sh LONG >> /x/l.log 2>&1 # cp3-long-tenant-daily
 40 8 * * 1-5 /usr/bin/flock -n /tmp/b.lock /bin/bash /x/run-cp3-tenant-daily.sh SHORT >> /x/s.log 2>&1 # cp3-short-tenant-daily
+53 8 * * 1-5 /bin/bash /x/run-cp3-tenant-daily.sh STOCK >> /x/k.log 2>&1 # cp3-stock-tenant-daily
 """
+
+
+def _canonical_transport_block() -> str:
+    """The `mode: live` … `allow_plaintext…` block of the real setup script.
+
+    Read from the shipped ``setup_stock_mock_once.sh`` rather than copied here, so
+    the "keys agree" case keeps agreeing when a key is added to the canonical set
+    (the #979 / 10-30 r1 failure was exactly a key added on one side only).
+    """
+    lines = (
+        (_REPO_ROOT / "tools/tos_cp3/runners/setup_stock_mock_once.sh")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("mode: live"))
+    end = next(i for i, ln in enumerate(lines) if ln.startswith("allow_plaintext"))
+    return "\n".join(lines[start : end + 1]) + "\n"
 
 
 def _git(*args: str, cwd: Path) -> str:
@@ -123,11 +177,31 @@ class Env:
         _write(
             seed / "tools/tos_cp3/runners/run_tenant_session.sh", _STUB_RUNNER, 0o755
         )
-        for lc in ("long", "short"):
-            _write(
-                seed / f"config/tos_runtime/cp3-setup-d-{lc}/calendar.yaml", _CALENDAR
-            )
+        for tree in (
+            "cp3-setup-d-long",
+            "cp3-setup-d-short",
+            "cp3-setup-d-stock-005930",
+        ):
+            _write(seed / f"config/tos_runtime/{tree}/calendar.yaml", _CALENDAR)
         _write(seed / "config/tos_probes/cp3-live-producer.yaml", _PRODUCER_CONFIG)
+        _write(
+            seed / "config/tos_probes/cp3-live-producer-stock-005930.yaml",
+            _STOCK_PRODUCER_CONFIG,
+        )
+        # The stock session's TENANT_* set and the canonical transport keys are the
+        # SHIPPED files, not copies: the wrapper sources one and diffs against the
+        # other, so a drifting copy here would hide the drift it is meant to catch.
+        for rel in (
+            "tools/tos_cp3/runners/stock-mock-session.env.example",
+            "tools/tos_cp3/runners/setup_stock_mock_once.sh",
+        ):
+            shutil.copy(_REPO_ROOT / rel, seed / rel)
+        for rel in (
+            "tos/runtime/src/tos_runtime/__init__.py",
+            "tos/runtime/src/tos_runtime/compose/__init__.py",
+        ):
+            _write(seed / rel, "")
+        _write(seed / "tos/runtime/src/tos_runtime/compose/cli.py", _STUB_COMPOSE_CLI)
         # The wrapper derives the stop time through the SHIPPED day-window reader.
         shutil.copy(
             _REPO_ROOT / "tools/tos_cp3/session_day.py",
@@ -158,15 +232,20 @@ class Env:
         _write(bindir / "crontab", _FAKE_CRONTAB, 0o755)
         _write(bindir / "install", _FAKE_INSTALL, 0o755)
         self.crontab = tmp / "crontab.txt"
+        self.approval_argv = tmp / "approval-argv.txt"
         self.base_env = {
             "PATH": f"{bindir}:{os.environ['PATH']}",
             "HOME": str(self.home),
             "TZ": "Asia/Seoul",
             "FAKE_CRONTAB_FILE": str(self.crontab),
+            "FAKE_APPROVAL_OUT": str(self.approval_argv),
             "CP3_DAILY_MAIN": str(self.main),
             "CP3_DAILY_STATE": str(self.state),
             "CP3_DAILY_LOCK_DIR": str(self.locks),
             "CP3_DAILY_NOTIFY": "0",
+            # The 20-minute `render ok` wait, shortened: 3 × 1 s.
+            "CP3_DAILY_APPROVAL_WAIT_TRIES": "3",
+            "CP3_DAILY_APPROVAL_WAIT_SLEEP_S": "1",
             "LANG": "C.UTF-8",
         }
 
@@ -196,6 +275,48 @@ def env(tmp_path: Path) -> Env:
 def _data_parents(env: Env) -> None:
     for lc in ("long", "short"):
         (env.state / f"cp3-setup-d-{lc}-data").mkdir(mode=0o700)
+    _stock_host_state(env)
+
+
+def _stock_host_state(env: Env, *, transport: str | None = None) -> Path:
+    """The STOCK tenant's one-time host state (§7.2-f): durable parent, custody,
+    and the operation transport config. Returns the transport config's path."""
+    for name in (
+        "cp3-setup-d-stock-005930-data",
+        "cp3-setup-d-stock-custody",
+        "cp3-setup-d-stock-ops",
+    ):
+        (env.state / name).mkdir(mode=0o700, exist_ok=True)
+    path = env.state / "cp3-setup-d-stock-ops/kis_mock_transport.yaml"
+    path.write_text(
+        _canonical_transport_block() if transport is None else transport,
+        encoding="utf-8",
+    )
+    return path
+
+
+#: The standing approval artifact's FIXED path and the archive beside it
+#: (tos_runtime ``authority.standing.STANDING_APPROVAL_RELPATH``).
+_APPROVAL_REL = "cp3-setup-d-stock-custody/approvals/standing-session.yaml"
+_ARCHIVE_REL = "cp3-setup-d-stock-custody/approvals-archive"
+
+
+def _approval_doc(trading_date: str) -> str:
+    """The shape ``write-standing-approval`` emits, trimmed to what the wrapper reads."""
+    return (
+        "schema: tos-standing-session-approval/1\n"
+        "environment_label: paper\n"
+        f"trading_date: '{trading_date}'\n"
+        "instrument: '005930'\n"
+        "max_quantity: 1\n"
+    )
+
+
+def _write_approval(env: Env, body: str) -> Path:
+    path = env.state / _APPROVAL_REL
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return path
 
 
 # ------------------------------------------------------------------ installer
@@ -217,6 +338,11 @@ def test_dry_run_is_the_default_and_writes_nothing(env: Env) -> None:
         f"+40 8 * * 1-5 /bin/bash {dest} SHORT >> {env.state}/cp3-short-tenant-daily.cron.log 2>&1 # cp3-short-tenant-daily"
         in r.stdout
     )
+    # STOCK: 08:53, inside §7.2-f's 08:52-09:05 start window.
+    assert (
+        f"+53 8 * * 1-5 /bin/bash {dest} STOCK >> {env.state}/cp3-stock-tenant-daily.cron.log 2>&1 # cp3-stock-tenant-daily"
+        in r.stdout
+    )
     assert "+CRON_TZ=Asia/Seoul" in r.stdout
 
 
@@ -227,8 +353,10 @@ def test_apply_replaces_hand_lines_keeps_the_rest_and_is_idempotent(env: Env) ->
     tab = env.crontab.read_text(encoding="utf-8")
     assert tab.startswith(_OTHER_LINES)
     assert "/usr/bin/flock -n /tmp/a.lock" not in tab  # hand lines gone
+    assert "/x/k.log" not in tab  # the one-off stock line too
     assert tab.count("# cp3-long-tenant-daily") == 1
     assert tab.count("# cp3-short-tenant-daily") == 1
+    assert tab.count("# cp3-stock-tenant-daily") == 1
     assert tab.count("# BEGIN CP3_TENANT_DAILY") == 1
     assert "CP3_DAILY_TODAY" not in tab  # the test-only knob never reaches cron
 
@@ -586,6 +714,372 @@ def test_n6_no_crontab_at_all_is_an_empty_crontab(env: Env) -> None:
     r = env.install("--apply")
     assert r.returncode == 0, r.stderr
     assert "# BEGIN CP3_TENANT_DAILY" in env.crontab.read_text(encoding="utf-8")
+
+
+# --------------------------------------------- STOCK (#M2, operator 2026-11-05)
+#
+# The third direction: the kis-mock tenant of runbook §7.2-f, which SENDS. What is
+# new next to LONG/SHORT is the stock session window (krx-stock, close 15:30), the
+# `stock-r<RUN>-` session naming, the transport-key precheck and the standing
+# approval the session cannot send without.
+
+
+def _stock_session(env: Env, day: str, run: int = 1) -> Path:
+    return env.state / "cp3-sessions" / f"stock-r{run}-{day.replace('-', '')}"
+
+
+def _stock_wt(env: Env, day: str, run: int = 1) -> Path:
+    return env.state / "measure" / f"wt-cp3-stock-r{run}-{day.replace('-', '')}"
+
+
+def test_stock_open_day_hands_the_runner_the_env_examples_tenant_values(
+    env: Env,
+) -> None:
+    _data_parents(env)
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    session = _stock_session(env, _OPEN_DAY)
+    out = (session / "runner.out").read_text(encoding="utf-8")
+    for expected in (
+        "TENANT_TREE=cp3-setup-d-stock-005930",
+        # The wrapper's direction is STOCK; the SESSION's direction is Setup D LONG,
+        # and the runner accepts only LONG/SHORT.
+        "TENANT_DIRECTION=LONG",
+        "TENANT_INSTRUMENT=005930",
+        "TENANT_ENVIRONMENT_LABEL=paper",
+        # krx-stock CONTINUOUS close 15:30 + 10 — the 11-03 sequence's 15:40.
+        "TENANT_STOP_AT=15:40",
+        f"TENANT_DATA_PARENT={env.state}/cp3-setup-d-stock-005930-data",
+        f"TENANT_CUSTODY_ROOT={env.state}/cp3-setup-d-stock-custody",
+        f"TENANT_KIS_MOCK_TRANSPORT_CONFIG={env.state}/cp3-setup-d-stock-ops/kis_mock_transport.yaml",
+        f"TENANT_ENV_FILE={env.main}/.env.mock",
+        f"TENANT_LOG={session}/session.log",
+        f"TENANT_RENDER_OUT={session}/render",
+        f"TENANT_JOURNAL={session}/journal.jsonl",
+        f"TENANT_PRODUCER_SESSION_DIR={session}/producer",
+        f"TENANT_PRODUCER_CONFIG={_stock_wt(env, _OPEN_DAY)}"
+        "/config/tos_probes/cp3-live-producer-stock-005930.yaml",
+    ):
+        assert expected in out, out
+    assert (session / "runner.pid").read_text(encoding="utf-8").strip().isdigit()
+    assert "일일 세션 종료" in r.stdout and "정상" in r.stdout
+    assert _git("rev-parse", "HEAD", cwd=_stock_wt(env, _OPEN_DAY)) == _git(
+        "rev-parse", "origin/main", cwd=env.main
+    )
+
+
+def test_stock_the_standing_approval_is_written_after_render_ok(env: Env) -> None:
+    """#955: without today's standing approval the flow stops at step 4 and the
+    session sends nothing, so writing it is part of the unattended run. The `-c`
+    form is what runs — `python -m tos_runtime.compose.cli` would exit 0 silently."""
+    _data_parents(env)
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "write-standing-approval rc=0" in r.stdout
+    session = _stock_session(env, _OPEN_DAY)
+    assert env.approval_argv.read_text(encoding="utf-8").splitlines() == [
+        "write-standing-approval",
+        "--config-dir",
+        f"{session}/render",
+        "--custody-root",
+        f"{env.state}/cp3-setup-d-stock-custody",
+        "--environment-label",
+        "paper",
+        "--trading-date",
+        _OPEN_DAY,
+    ]
+    assert (session / "approval.out").exists()
+
+
+def test_stock_no_approval_when_the_session_ends_before_render_ok(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily(
+        "STOCK",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        CP3_TEST_STUB_NO_RENDER="1",
+        CP3_TEST_STUB_RC="3",
+    )
+    assert r.returncode == 3, r.stdout
+    assert not env.approval_argv.exists()
+    assert "write-standing-approval rc=" not in r.stdout
+    assert "render ok 전에 끝났다" in r.stdout
+    assert f"일일 세션 실패 ({_OPEN_DAY}) rc=3" in r.stdout
+
+
+def test_stock_a_session_that_never_renders_alerts_and_keeps_running(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily(
+        "STOCK",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        CP3_TEST_STUB_NO_RENDER="1",
+        CP3_TEST_STUB_SLEEP_S="6",
+    )
+    assert r.returncode == 0, r.stdout  # the runner's own rc, waited for
+    assert not env.approval_argv.exists()
+    assert "no 'render ok' within 3s" in r.stdout
+    assert "상시 승인 못 씀" in r.stdout
+
+
+def test_stock_a_failed_approval_write_alerts_but_does_not_kill_the_session(
+    env: Env,
+) -> None:
+    _data_parents(env)
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY, FAKE_APPROVAL_RC="1")
+    assert r.returncode == 0, r.stdout  # the runner's rc decides, not the approval's
+    assert "write-standing-approval rc=1" in r.stdout
+    assert "상시 승인 쓰기 실패" in r.stdout and "notify-body" in r.stdout
+    assert "일일 세션 종료" in r.stdout and "정상" in r.stdout
+
+
+def test_stock_a_transport_key_missing_from_the_operation_file_is_refused(
+    env: Env,
+) -> None:
+    """The 10-30 r1 failure: #979 added `app_key_request_wait_budget_ms` on 10-28,
+    the 10-26 operation file did not have it, and the session refused at boot with
+    0 sends. Refused here instead, before anything is created."""
+    _data_parents(env)
+    path = env.state / "cp3-setup-d-stock-ops/kis_mock_transport.yaml"
+    kept = [
+        ln
+        for ln in path.read_text(encoding="utf-8").splitlines()
+        if not ln.startswith("app_key_request_wait_budget_ms:")
+    ]
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 2, r.stdout
+    assert "운영 전송 설정 키가 정본" in r.stdout and "notify-body" in r.stdout
+    assert "app_key_request_wait_budget_ms:" in r.stdout  # the diff names the key
+    assert not _stock_session(env, _OPEN_DAY).exists()
+    assert not _stock_wt(env, _OPEN_DAY).exists()
+    assert not env.approval_argv.exists()
+
+
+def test_stock_a_missing_transport_config_is_refused_not_skipped(env: Env) -> None:
+    _data_parents(env)
+    (env.state / "cp3-setup-d-stock-ops/kis_mock_transport.yaml").unlink()
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 2, r.stdout
+    assert "SKIP" not in r.stdout
+    assert (
+        "전송 설정 키 대조 실패" in r.stdout and "transport config missing" in r.stdout
+    )
+    assert not _stock_wt(env, _OPEN_DAY).exists()
+
+
+def test_stock_holiday_is_a_silent_skip(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_HOLIDAY)
+    assert r.returncode == 0, r.stdout
+    assert "SKIP" in r.stdout
+    assert "notify-body" not in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+    assert not _stock_wt(env, _HOLIDAY).exists()
+    assert not env.approval_argv.exists()
+
+
+def test_stock_924_a_dated_override_moves_the_stop_with_the_stock_close(
+    env: Env,
+) -> None:
+    _data_parents(env)
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OVERRIDE_DAY)
+    assert r.returncode == 0, r.stdout
+    out = (_stock_session(env, _OVERRIDE_DAY) / "runner.out").read_text(
+        encoding="utf-8"
+    )
+    assert "TENANT_STOP_AT=16:40" in out  # 16:30 + 10, not the futures 16:50
+    assert "10:00-16:30 OVERRIDE" in r.stdout
+
+
+def test_stock_one_session_per_day_and_old_worktrees_are_cleared(env: Env) -> None:
+    _data_parents(env)
+    assert env.daily("STOCK", CP3_DAILY_TODAY="2026-10-23").returncode == 0
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "removed old worktree" in r.stdout
+    assert not _stock_wt(env, "2026-10-23").exists()
+    again = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert again.returncode == 2
+    assert "already exists" in again.stdout and "실패" in again.stdout
+
+
+def test_stock_holds_its_own_lock(env: Env) -> None:
+    _data_parents(env)
+    env.locks.mkdir(exist_ok=True)
+    with open(env.locks / "cp3-stock-tenant-daily.wrapper.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+        assert env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY).returncode == 0
+    assert r.returncode == 75
+    assert "lock busy" in r.stdout and "실패" in r.stdout
+    assert not _stock_session(env, _OPEN_DAY).exists()
+
+
+def test_stock_preflight_reports_the_window_leaf_and_transport_keys(env: Env) -> None:
+    _data_parents(env)
+    before = sorted(
+        p.relative_to(env.tmp) for p in env.tmp.rglob("*") if ".git" not in p.parts
+    )
+    r = env.daily("STOCK", "--preflight", _OPEN_DAY)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"krx-stock CONTINUOUS {_OPEN_DAY} 09:00-15:30 regular" in r.stdout
+    assert "stop_at=15:40" in r.stdout
+    assert "market=OPEN" in r.stdout and "instrument=005930" in r.stdout
+    assert f"leaf {env.state}/cp3-setup-d-stock-005930-data/005930" in r.stdout
+    assert "transport config keys = 정본" in r.stdout
+    assert "standing approval slot free" in r.stdout
+    assert f"session dir {_stock_session(env, _OPEN_DAY)}" in r.stdout
+    assert f"worktree {_stock_wt(env, _OPEN_DAY)}" in r.stdout
+
+    closed = env.daily("STOCK", "--preflight", _HOLIDAY)
+    assert closed.returncode == 0 and "market=CLOSED" in closed.stdout
+
+    override = env.daily("STOCK", "--preflight", _OVERRIDE_DAY)
+    assert "10:00-16:30 OVERRIDE" in override.stdout
+    assert "stop_at=16:40" in override.stdout
+
+    after = sorted(
+        p.relative_to(env.tmp) for p in env.tmp.rglob("*") if ".git" not in p.parts
+    )
+    assert after == before
+
+
+def test_stock_preflight_names_a_transport_key_difference_without_refusing(
+    env: Env,
+) -> None:
+    _data_parents(env)
+    _stock_host_state(env, transport="mode: live\nonly_key: 1\n")
+    r = env.daily("STOCK", "--preflight", _OPEN_DAY)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "keys DIFFER" in r.stdout and "a run would refuse" in r.stdout
+    assert "only_key:" in r.stdout
+    assert "market=OPEN" in r.stdout  # the rest of the preflight still reports
+
+
+# ------------------------------------- review-1031: the one approval slot ----
+#
+# The artifact path is fixed, so the slot is a resource the day has to take over:
+# the writer refuses an existing file without --replace, and the runtime's
+# bind_at_boot() binds whatever sits there when it boots (after which any other
+# digest is `digest_changed_since_bound` for that whole process). Left alone, the
+# SECOND cron day would write nothing and send nothing.
+
+
+def test_stock_1031_yesterdays_approval_is_archived_before_the_runner(
+    env: Env,
+) -> None:
+    _data_parents(env)
+    stale = _write_approval(env, _approval_doc("20261023"))
+    stale_bytes = stale.read_bytes()
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "archived the 20261023 standing approval" in r.stdout
+    assert not stale.exists()
+    # Moved, not deleted — it is the record of that day's authority — and OUTSIDE
+    # approvals/, where per-proposal approval files live. Same name the operator
+    # used by hand on 2026-11-05.
+    archived = env.state / _ARCHIVE_REL / "standing-session.20261023.yaml"
+    assert archived.read_bytes() == stale_bytes
+    assert not list((env.state / _APPROVAL_REL).parent.iterdir())
+    # …and today's approval is then written, without --replace.
+    assert "write-standing-approval rc=0" in r.stdout
+    argv = env.approval_argv.read_text(encoding="utf-8").splitlines()
+    assert argv[-2:] == ["--trading-date", _OPEN_DAY]
+    assert "--replace" not in argv
+
+
+def test_stock_1031_todays_approval_is_kept_and_not_rewritten(env: Env) -> None:
+    """A manual RUN=2 restart: the slot already carries today, so it stays and the
+    write is skipped — re-deriving it is the operator's `--replace` call."""
+    _data_parents(env)
+    mine = _write_approval(env, _approval_doc(_OPEN_DAY.replace("-", "")))
+    kept = mine.read_bytes()
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "already carries today" in r.stdout and "쓰지 않는다" in r.stdout
+    assert mine.read_bytes() == kept
+    assert not (env.state / _ARCHIVE_REL).exists()
+    assert not env.approval_argv.exists()
+    assert "write-standing-approval rc=" not in r.stdout
+
+
+def test_stock_1031_an_archive_name_collision_gets_a_suffix(env: Env) -> None:
+    _data_parents(env)
+    archive = env.state / _ARCHIVE_REL
+    archive.mkdir(mode=0o700, parents=True)
+    taken = archive / "standing-session.20261023.yaml"
+    taken.write_text("already archived under that name\n", encoding="utf-8")
+    _write_approval(env, _approval_doc("20261023"))
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert taken.read_text(encoding="utf-8") == "already archived under that name\n"
+    suffixed = archive / "standing-session.20261023.1.yaml"
+    assert "trading_date: '20261023'" in suffixed.read_text(encoding="utf-8")
+    assert f"-> {suffixed}" in r.stdout
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "trading_date: 2026-10-23\n",  # a date, not the writer's 8-digit string
+        "schema: tos-standing-session-approval/1\n",  # no trading_date at all
+        "- not: a mapping\n",
+        "trading_date: '20261023'\n  bad: indent\n",  # not loadable
+        "",  # empty file
+    ],
+)
+def test_stock_1031_an_unreadable_approval_file_is_refused(env: Env, body: str) -> None:
+    """Not guessed at, not moved: a file this wrapper cannot read exactly is a file
+    it must not decide about."""
+    _data_parents(env)
+    path = _write_approval(env, body)
+    before = path.read_bytes()
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 2, r.stdout
+    assert "상시 승인 파일을 읽을 수 없다" in r.stdout and "notify-body" in r.stdout
+    assert path.read_bytes() == before
+    assert not (env.state / _ARCHIVE_REL).exists()
+    assert not env.approval_argv.exists()
+    assert not _stock_session(env, _OPEN_DAY).exists()
+    assert not _stock_wt(env, _OPEN_DAY).exists()
+
+
+def test_stock_1031_low1_a_holiday_skips_before_the_operation_file_checks(
+    env: Env,
+) -> None:
+    """review-1031 LOW-1: a weekday holiday skips silently even when both operation
+    files would refuse the day — the calendar is asked first."""
+    _data_parents(env)
+    _stock_host_state(env, transport="mode: live\nonly_key: 1\n")
+    _write_approval(env, "nonsense: [\n")
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_HOLIDAY)
+    assert r.returncode == 0, r.stdout
+    assert "SKIP" in r.stdout
+    assert "notify-body" not in r.stdout
+    assert "keys" not in r.stdout and "approval" not in r.stdout
+    assert not (env.state / _ARCHIVE_REL).exists()
+
+
+def test_stock_1031_preflight_names_the_slot_without_moving_anything(
+    env: Env,
+) -> None:
+    _data_parents(env)
+    stale = _write_approval(env, _approval_doc("20261023"))
+    before = stale.read_bytes()
+    r = env.daily("STOCK", "--preflight", _OPEN_DAY)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "standing approval slot carries 20261023" in r.stdout
+    assert f"{env.state}/{_ARCHIVE_REL}/standing-session.20261023.yaml" in r.stdout
+    assert stale.read_bytes() == before
+    assert not (env.state / _ARCHIVE_REL).exists()
+
+    _write_approval(env, _approval_doc(_OPEN_DAY.replace("-", "")))
+    mine = env.daily("STOCK", "--preflight", _OPEN_DAY)
+    assert f"slot already carries {_OPEN_DAY.replace('-', '')}" in mine.stdout
+
+    _write_approval(env, "- not: a mapping\n")
+    bad = env.daily("STOCK", "--preflight", _OPEN_DAY)
+    assert bad.returncode == 0  # the preflight reports; only a run refuses
+    assert "slot not readable" in bad.stdout and "a run would refuse" in bad.stdout
 
 
 @pytest.mark.parametrize("apply", [False, True])
