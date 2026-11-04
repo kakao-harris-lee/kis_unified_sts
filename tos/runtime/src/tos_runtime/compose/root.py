@@ -400,10 +400,24 @@ def compose_paper_runtime(
         trading_date_reader=trading_date_reader,
     )
 
+    # #1011/#1015's durable CLOSE bound reader, built ONCE here because TWO consumers need the
+    # very same source: step 6's risk-state service (below, `entry_close_bound_reader=`) and —
+    # since #1025 — step 2, which sizes a FLAT proposal from `read().remaining` instead of the
+    # kernel's in-memory projection read (`_attempt_shape.py`'s module docstring). Two readers
+    # built separately would be two readings of the same stores at two instants, which is
+    # exactly the disagreement between step 2 and step 8 that #1025 is.
+    entry_close_bound_reader = DurableEntryCloseBoundReader(
+        rcl_log=boot.rcl.rcl_log,
+        evidence_store=boot.infra.evidence_store,
+        projection=boot.risk.projection,
+        account=construction.account,
+        instrument=construction.instrument,
+    ).read
     construction_stages = _build_construction_stages(
         construction,
         venue_service=venue_service,
         loaded_ocp=loaded_ocp,
+        entry_close_bound_reader=entry_close_bound_reader,
     )
     # Late-bind the CONSTRAINT dimension reader's cell now step 3's own VerdictRecorder
     # exists (Phase 5 W3.2, plan §2 decision 2).
@@ -597,13 +611,8 @@ def compose_paper_runtime(
             # #1011 — what a CLOSE's quantity bound may rest on, decided ONCE here from the
             # boot's transport kind, never from a tree name (CloseAuthoritySource's docstring).
             close_authority=_close_authority_for(transport_kind),
-            entry_close_bound_reader=DurableEntryCloseBoundReader(
-                rcl_log=boot.rcl.rcl_log,
-                evidence_store=boot.infra.evidence_store,
-                projection=boot.risk.projection,
-                account=construction.account,
-                instrument=construction.instrument,
-            ).read,
+            # The SAME reader step 2 was given above (#1025) — one source for both steps.
+            entry_close_bound_reader=entry_close_bound_reader,
         )
     composed.risk_state = risk_state_cell["service"]
     # TOS Phase 5 W5 — late-bind the session-facts owner's own tick-generation cell now
