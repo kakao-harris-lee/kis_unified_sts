@@ -231,21 +231,26 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
   grep 'band_published\|band_fetch_failed' "$SESSION/producer/band-log.jsonl"
   ```
 
-#### 7.2-e CP-3 tenant 세션 — 매 거래일 무인 cron (재범위 M1 · 운영자 2026-10-22)
+#### 7.2-e CP-3 tenant 세션 — 매 거래일 무인 cron (재범위 M1 · 운영자 2026-10-22 · M2 주식 2026-11-05)
 
-§7.2-d 를 거래일마다 LONG·SHORT 한 번씩 무인으로 돌린다. 2026-10-22 에 손으로 넣은 두 줄
-(비커밋 `~/.config/kis-probes/run-cp3-tenant-daily.sh`)을 저장소가 소유하는 형태로 바꾼 것이다.
+§7.2-d 를 거래일마다 LONG·SHORT 한 번씩, §7.2-f 를 STOCK 한 번씩 무인으로 돌린다. 2026-10-22 에
+손으로 넣은 두 줄(비커밋 `~/.config/kis-probes/run-cp3-tenant-daily.sh`)을 저장소가 소유하는
+형태로 바꾼 것이고, **STOCK 은 운영자 결정 2026-11-05**(「주식 트리 매일 cron 등록 진행해」)로
+11-03 의 위임받은 1회 절차(`~/.config/kis-probes/run-stock-mock-20261103.sh`)를 같은 래퍼의 세
+번째 방향으로 옮긴 것이다 — 11-20 전에 M2(첫 모의 체결)가 매 거래일 한 번씩 기회를 갖도록.
+LONG·SHORT 는 synthetic 이라 **아무것도 송신하지 않고**, STOCK 은 **모의 계좌로 실제 송신한다**
+(실주문 0 · 1주 · 005930).
 
 | 무엇 | 어디 |
 | --- | --- |
-| 래퍼 원본(추적) | `tools/tos_cp3/runners/cp3_tenant_daily.sh` |
+| 래퍼 원본(추적) | `tools/tos_cp3/runners/cp3_tenant_daily.sh` — 방향 `LONG`·`SHORT`·`STOCK` |
 | 래퍼 설치본 | `~/.config/kis-probes/run-cp3-tenant-daily.sh` (mode 700 · 설치기가 **`origin/main` 에서** 복사) |
 | 설치기 | `tools/tos_cp3/runners/install_tenant_cron.sh` — **기본 dry-run** · `--apply` · `--remove` · 멱등 |
-| cron 블록 | `# BEGIN CP3_TENANT_DAILY` … `# END CP3_TENANT_DAILY` — LONG `38 8 * * 1-5` · SHORT `40 8 * * 1-5` |
-| cron stdout | `~/.local/state/tos/cp3-{long,short}-tenant-daily.cron.log` (⚠ 로테이션 없음) |
-| 세션 아티팩트 | `~/.local/state/tos/cp3-sessions/{long,short}-<YYYYMMDD>/` (`runner.out` · `session.log` · `producer/` · `config/`) |
-| 그날의 워크트리 | `~/.local/state/tos/measure/wt-cp3-{long,short}-<YYYYMMDD>` — 다음 거래일 호출이 지운다 |
-| 잠금 | `/tmp/cp3-{long,short}-tenant-daily.wrapper.lock` — 래퍼 **안에서** `flock -n`. 10-22 손 설치 줄이 바깥 flock 으로 잡던 `….lock` 과 **다른 경로**다 — 같은 경로면 바깥·안쪽 잠금이 서로 막아 매일 거부된다 |
+| cron 블록 | `# BEGIN CP3_TENANT_DAILY` … `# END CP3_TENANT_DAILY` — LONG `38 8 * * 1-5` · SHORT `40 8 * * 1-5` · **STOCK `53 8 * * 1-5`** |
+| cron stdout | `~/.local/state/tos/cp3-{long,short,stock}-tenant-daily.cron.log` (⚠ 로테이션 없음) |
+| 세션 아티팩트 | `~/.local/state/tos/cp3-sessions/{long,short}-<YYYYMMDD>/` · 주식은 `stock-r1-<YYYYMMDD>/` (`runner.out` · `session.log` · `producer/` · 렌더본 — 선물은 `config/`, 주식은 `render/` · 주식만 `runner.pid`·`approval.out`) |
+| 그날의 워크트리 | `~/.local/state/tos/measure/wt-cp3-{long,short}-<YYYYMMDD>` · 주식은 `wt-cp3-stock-r1-<YYYYMMDD>` — 다음 거래일 호출이 지운다 |
+| 잠금 | `/tmp/cp3-{long,short,stock}-tenant-daily.wrapper.lock` — 래퍼 **안에서** `flock -n`. 10-22 손 설치 줄이 바깥 flock 으로 잡던 `….lock` 과 **다른 경로**다 — 같은 경로면 바깥·안쪽 잠금이 서로 막아 매일 거부된다 |
 
 **설치 (PR 머지 뒤, 운영자).** 먼저 dry-run 으로 diff 를 보고, 같은 명령에 `--apply` 를 붙인다.
 
@@ -263,16 +268,33 @@ tools/tos_cp3/runners/install_tenant_cron.sh --apply         # 백업(crontab.ba
   (빈 crontab 으로 읽으면 상주·콜드 백업 줄이 통째로 지워진다) · `BEGIN` 표지에 짝 `END` 가 없을 때.
 - 순서는 **crontab 먼저, 래퍼 다음**이고, 래퍼 단계가 실패하면 crontab 을 백업으로 되돌리고 래퍼도
   `.bak` 에서 복원한다 — 실패한 설치는 둘 다 원래대로 남는다.
-- 블록 밖의 `# cp3-{long,short}-tenant-daily` 꼬리표 줄(10-22 손 설치분)은 지운다 — 한 방향이 두
+- 블록 밖의 `# cp3-{long,short,stock}-tenant-daily` 꼬리표 줄(10-22 손 설치분)은 지운다 — 한 방향이 두
   번 걸리지 않게. 그 위의 꼬리표 없는 `CRON_TZ=Asia/Seoul` 한 줄은 남는다(무해). 나머지 줄은
-  바이트 그대로다. 제거는 `--remove`(dry-run) → `--remove --apply`.
+  바이트 그대로다(`# run-stock-mock-<날짜>` 같은 1회용 줄도 **남는다** — 꼬리표가 다르다. 설치
+  당일에 아직 발화하지 않은 1회용 주식 줄이 있으면 그 줄을 먼저 손으로 지우고 설치한다). 제거는
+  `--remove`(dry-run) → `--remove --apply`.
 - 시각이 08:45 가 아니라 08:38/08:40 인 이유: 생산자가 CONTINUOUS 08:45 전에 떠 있어야 하고,
-  두 생산자가 REAL 조회 키를 함께 쓰는데 KIS 토큰 발급이 분당 1 회다.
+  두 생산자가 REAL 조회 키를 함께 쓰는데 KIS 토큰 발급이 분당 1 회다. STOCK 이 08:53 인 이유는
+  §7.2-f 의 시작 창 08:52–09:05(주식 CONTINUOUS 개장 09:00 · 첫 행 대기 상한 600 s)이고, 선물
+  두 줄과 간격을 둘 필요가 없는 이유는 주식 생산자가 **주식** REAL 키, 주식 런타임이 **모의** 키를
+  써서 앱 키 지문이 서로 다르기 때문이다(분당 1회 발급이 겹치지 않는다).
 
 **한 호출이 하는 일.** 잠금 → 같은 날 세션 디렉터리가 있으면 거부 → durable set 부모
 (§7.2-b)가 없으면 거부(첫 genesis 는 운영자 몫) → 그 방향의 어제 워크트리 제거(`--force` 없이)
-→ fetch → `origin/main` 분리 워크트리 → **그 트리의** tenant 달력으로 휴장·주말 판정(+ `CP3_DAILY_EXTRA_CLOSED`
-— 기본 빈 값, KRX 연말 `2026-12-31` 은 달력에 있음) → `run_tenant_session.sh`(정지 = 그날 종료 + 5분, 평일 15:50 · 개장 지연일은 §7.2-g).
+→ fetch → **(STOCK) 운영 전송 설정 키 대조** → `origin/main` 분리 워크트리 → **그 트리의** tenant 달력으로 휴장·주말 판정(+ `CP3_DAILY_EXTRA_CLOSED`
+— 기본 빈 값, KRX 연말 `2026-12-31` 은 달력에 있음) → `run_tenant_session.sh`(정지 = 그날 종료 + `CP3_DAILY_STOP_AFTER_CLOSE_MIN`:
+선물 +5분 = 평일 15:50, 주식 +10분 = 평일 15:40 · 개장 지연일은 §7.2-g) → **(STOCK) `render ok` 뒤 상시 승인 작성**.
+
+**STOCK 만의 두 단계.** 둘 다 §7.2-f 를 손으로 돌릴 때와 같은 일을 래퍼가 하는 것이다.
+- **운영 전송 설정 키 대조** — `$ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml` 의 최상위 키를
+  `origin/main:tools/tos_cp3/runners/setup_stock_mock_once.sh` 의 정본 블록과 비교한다. 다르면
+  **워크트리를 만들기 전에** rc 2 로 거부하고 알린다(그 상태로 부팅하면 `KisMockTransportConfigError`
+  로 거부돼 송신 0 이다 — 실제 사례 10-30 r1, §7.2-f). 값이 아니라 **키 이름만** 본다.
+- **상시 승인(#955)** — `session.log` 의 `render ok` 를 기다린 뒤(상한 20분) 그날짜 승인을 쓴다.
+  이것이 11-03 위임 절차의 마지막 단계였고, 승인이 없으면 신호가 와도 4단계에서 멎어 송신 0 이다.
+  세션이 render 전에 끝났으면 **쓰지 않는다**(묶을 렌더본이 없다). 쓰기 rc 는 cron 로그에
+  `write-standing-approval rc=N` 으로 남고 출력은 `approval.out` 에 있다. 실패는 알리지만 세션을
+  죽이지 않는다 — 종료 줄은 러너 rc 를 그대로 싣는다.
 
 **텔레그램 (briefing 채널 · 자격증명은 상주 래퍼와 같은 `$MAIN/.env` 두 줄).** 본문은 rc ·
 방향 · 날짜 · 경로뿐이다 — `runner.out` 은 옮기지 않는다(좌표 규율).
@@ -283,6 +305,8 @@ tools/tos_cp3/runners/install_tenant_cron.sh --apply         # 백업(crontab.ba
 | 러너 실패 (3 · 4 · 5 · 129/130 · 그 밖) | `일일 세션 실패 … rc=N` + 뜻 한 줄 | 러너 rc |
 | 잠금 점유 (앞선 호출이 아직 돈다) | 실패 한 줄 | 75 |
 | 세션 디렉터리 이미 있음 · 부모 없음 · 호스트 zone ≠ +0900 | 실패 한 줄 | 2 |
+| (STOCK) 운영 전송 설정 키가 정본과 다름 · 그 파일이 없음 | 실패 한 줄 + diff(키 이름) | 2 |
+| (STOCK) 상시 승인 쓰기 실패 · `render ok` 가 20분 안에 오지 않음 | `상시 승인 쓰기 실패` / `상시 승인 못 씀` 한 줄 — 세션은 계속 돈다 | 러너 rc (승인 실패가 rc 를 바꾸지 않는다) |
 | 휴장 판정 자체가 실패(달력 못 읽음 · 날짜 오류 · `yaml` import 실패 등) | 실패 한 줄 — **SKIP 으로 읽지 않는다**(판정 스크립트의 «휴장» 은 종료코드 10 하나뿐) | 2 |
 | 달력에 그 해 휴장일이 하나도 없다(달력이 해를 넘기지 못함) | 실패 한 줄 | 2 |
 | fetch · 워크트리 실패 | 실패 한 줄 | 1 |
@@ -290,7 +314,7 @@ tools/tos_cp3/runners/install_tenant_cron.sh --apply         # 백업(crontab.ba
 
 그래서 **거래일 09:00 까지 방향마다 줄이 하나도 없으면** 그 자체가 소견이다 — cron 이 돌지
 않았거나(`cron.log` 에 그날 줄 없음) 텔레그램 전송이 실패했다(`telegram notify FAILED` — HTTP 4xx·5xx 도 실패로 센다(`curl --fail`), 자격증명이 없으면 무엇이 없는지 그 줄에 적힌다). 정상
-줄은 15:50 정지 뒤에 오므로, 낮 동안의 확인은 `cp3-sessions/<dir>-<날짜>/session.log` 를 본다.
+줄은 15:50(주식 15:40) 정지 뒤에 오므로, 낮 동안의 확인은 `cp3-sessions/<dir>-<날짜>/session.log` 를 본다.
 
 **11-11(수) 롤 dry-run — 11-12 첫 실롤 전날.** mini 11월물(`A05611`) 만기는 11-12(목)이고
 `get_front_month_code` 는 만기 **당일까지** 11월물을 준다 — 그래서 12월물 잎(`A05612`)의 첫
@@ -310,9 +334,29 @@ for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
 세션 쓰인다). 11-13 저녁에는
 `cold-backup-cp3-{long,short}.log` 에 새 잎이 함께 올라갔는지 본다(§7.7 — 래퍼는 `A0####` 잎을 순회).
 
-#### 7.2-f CP-3 주식 MOCK 세션 (M2) — 첫 세션 2026-10-26(월) · 손으로 한 번 · cron 없음
+#### 7.2-f CP-3 주식 MOCK 세션 (M2) — 첫 세션 2026-10-26(월) · **매 거래일 무인 cron 08:53** (운영자 2026-11-05)
 
 005930 · 1주 · Setup D LONG · 09:00–15:30 · **모의 계좌만**. 수용(rescope §3 M2) = 체결 1건 이상 + 사슬 연결.
+
+**⚙ 매 거래일 자동 (운영자 결정 2026-11-05 — 「주식 트리 매일 cron 등록 진행해」).** 11-03 의
+위임받은 1회 절차(`run-stock-mock-20261103.sh`)가 **매 거래일**로 확장됐다. cron 줄은 선물과 같은
+래퍼의 세 번째 방향이고, 설치·제거·멱등성·텔레그램은 **§7.2-e** 가 정본이다.
+
+| 무엇 | 값 |
+| --- | --- |
+| cron 줄 | `53 8 * * 1-5 /bin/bash ~/.config/kis-probes/run-cp3-tenant-daily.sh STOCK >> ~/.local/state/tos/cp3-stock-tenant-daily.cron.log 2>&1 # cp3-stock-tenant-daily` |
+| 설치 | `tools/tos_cp3/runners/install_tenant_cron.sh`(dry-run → `--apply`) — LONG·SHORT 줄과 같은 블록, 멱등 |
+| 세션 자리 | `$ST/cp3-sessions/stock-r1-<YYYYMMDD>` (cron 은 항상 `r1`) · 워크트리 `$ST/measure/wt-cp3-stock-r1-<YYYYMMDD>` |
+| 정지 | 그날 `krx-stock` CONTINUOUS 종료 + 10분 = 평일 **15:40** (달력에서 날마다 읽는다 — 개장 지연일은 §7.2-g) |
+| 자동 상시 승인 | `render ok` 뒤 래퍼가 그날짜 승인을 쓴다 — 아래 «상시 승인» 의 명령 그대로, rc 는 cron 로그 `write-standing-approval rc=N` · 출력은 `approval.out` |
+| 사전 점검 | 아래 «세션 전날 점검» 의 키 대조를 래퍼가 매 호출 한다 — 다르면 워크트리 전에 거부(송신 0)하고 알린다 |
+| 끄기 (하루) | 그날 cron 줄을 주석 처리한다(`crontab -e`) |
+| 끄기 (영구) | `install_tenant_cron.sh --remove --apply` 는 세 방향을 모두 뗀다. STOCK 만 떼려면 그 줄을 손으로 지운다 |
+| 송신만 막기 | `$ST/cp3-setup-d-stock-custody/kis_mock.app_*` 를 지운다 — 부팅은 되고 첫 토큰 사용이 거부돼 송신 0 (아래 «되돌림») |
+
+손으로 시작하는 것은 이제 **재기동용**이다(같은 날 두 번째 세션 = `RUN=2`, 아래 «08:55 시작» 블록).
+cron 이 이미 `r1` 을 만들었으므로 래퍼를 다시 불러도 「세션 디렉터리 이미 있음」으로 거부된다.
+
 ✅ 2026-10-24 오프라인 드라이런이 찾은 막힘 다섯은 **모두 main 에 해소**됐다(main `957507b9` 로 리허설 — 부팅 수용 · 접속 0) —
 B1 세션 안 승인 불가 → 세션 한정 상시 승인 #955 · B2 렌더본 `instance_path` · B3 OCP `wire_codec` → #956 · B4 활성 기록 빈 승인 id → #959 ·
 B5 개장 때 권한 증인 소멸 → #957(패스마다 heartbeat + 주식 트리만 `containment_bound_ms: 90000`). 다시 보이면 아래 «볼 것» 질의가 잡는다.
@@ -331,14 +375,15 @@ bash <(git -C $MAIN show origin/main:tools/tos_cp3/runners/setup_stock_mock_once
     실제 사례 2026-10-30 첫 세션: 10-26 준비본에 #979(10-28)의 `app_key_request_wait_budget_ms` 가 없어 r1 부팅 거부. 고침은 그 키 한 줄을
     스크립트 정본(`setup_stock_mock_once.sh` 의 같은 줄)과 **같은 값**으로 운영 파일에 추가 — 덮어쓰기 재실행은 거부되므로 손으로 넣는다.
     세션 전날 점검: `diff <(grep -oE '^[a-z_A-Z]+:' $ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml | sort) <(git -C $MAIN show origin/main:tools/tos_cp3/runners/setup_stock_mock_once.sh | sed -n '/^mode: live/,/^allow_plaintext/p' | grep -oE '^[a-z_A-Z]+:' | sort)` — 출력이 없어야 한다.
-- **상시 승인(그날, 운영자 · #955)** — 파일 `$ST/cp3-setup-d-stock-custody/approvals/standing-session.yaml`(0600). 쓰는 때는 아래 «볼 것» 의 `render ok` 줄 뒤 · 첫 진입 전(런타임이 이미 떠 있어도 된다 — 첫 사용 때 결속).
+    **cron 래퍼가 매 호출 같은 대조를 한다**(§7.2-e «STOCK 만의 두 단계») — 다르면 그날 세션을 시작하지 않고 알린다. `run-cp3-tenant-daily.sh STOCK --preflight <날짜>` 로도 같은 줄을 읽기 전용으로 볼 수 있다.
+- **상시 승인(그날 · #955)** — 파일 `$ST/cp3-setup-d-stock-custody/approvals/standing-session.yaml`(0600). **cron 세션에서는 래퍼가 쓴다**(`render ok` 뒤 · 첫 진입 전 · 운영자 결정 2026-11-05 이 11-03 의 위임 절차를 매 거래일로 확장). 손으로 쓰는 때(재기동 `RUN=2` 등)는 아래 «볼 것» 의 `render ok` 줄 뒤 · 첫 진입 전(런타임이 이미 떠 있어도 된다 — 첫 사용 때 결속).
   승인 없이는 신호가 와도 4단계에서 멎는다(송신 0). MOCK 트리가 아니면 rc 1 로 아무것도 쓰지 않는다 · 덮어쓰기는 `--replace` 뿐.
   **재작성**(예: `max_uses` 를 올림)은 운영자 권한이고 **재기동 뒤에** 적용된다 — 슬롯이 거래일로 키잉돼 이미 쓴 횟수는 그대로 센다.
   **청산(10-26)**: 이 승인은 1주 진입 BUY 하나만 허락하고 청산은 승인되지 않는다(#960: CLOSE 명령이 BUY 로 만들어진다). 세션 뒤 모의 계좌에
   1주 롱이 남는다 — 평탄하게 하려면 모의투자 HTS 에서 손으로 판다. ⛔ 청산을 제안별 승인 파일로 **절대** 승인하지 않는다(두 번째 1주를 **산다**).
 - **genesis** = 빈 잎 `$ST/cp3-setup-d-stock-005930-data/005930` 에 대한 첫 `run`(러너가 잎을 만든다 · 되돌릴 수 없다 · 승인 행위는 없다). 다음 날부터는 같은 잎을 잇는다.
 
-**08:55 시작(창 08:52–09:05: 첫 행은 09:01:0x 에 오고 첫 행 대기 상한이 600 s).** LONG 08:38·SHORT 08:40 는 **선물** REAL 키, 이 세션은 **주식** REAL 키(생산자·band)와 모의 키(런타임) — 지문이 서로 달라 분당 1회 토큰 발급이 겹치지 않는다.
+**08:55 시작 — 손으로(재기동 `RUN=2`, 또는 cron 줄을 끈 날).** 창 08:52–09:05: 첫 행은 09:01:0x 에 오고 첫 행 대기 상한이 600 s. cron 의 `r1` 은 08:53 에 이 블록과 같은 일을 한다. LONG 08:38·SHORT 08:40 는 **선물** REAL 키, 이 세션은 **주식** REAL 키(생산자·band)와 모의 키(런타임) — 지문이 서로 달라 분당 1회 토큰 발급이 겹치지 않는다.
 ```bash
 D=$(TZ=Asia/Seoul date +%Y%m%d) RUN=${RUN:-1}; WT=$ST/measure/wt-cp3-stock-r$RUN-$D   # 같은 날 재기동은 RUN=2 로 이 블록을 다시
 git -C $MAIN fetch -q origin && git -C $MAIN worktree add -q --detach $WT origin/main && export TOS_REPO=$WT TOS_PYTHON=$MAIN/.venv/bin/python \
@@ -371,8 +416,9 @@ sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payl
 sqlite3 -readonly $L/rcl.sqlite3 "SELECT seq,kind,substr(command_id,1,64) FROM entries WHERE kind IN ('ConsumeApprovalDecision','CommitReservation','ReleaseReservation') ORDER BY seq"
 ```
 - **신호가 없으면**(`SEND_SEALED` 0 · `FLOW_HALTED` 가 `INDEPENDENT_APPROVAL` 이전에서만 · `COORDINATOR_MESH_HELD` 0) 코드 실패가 아니다 — 수용은 다음 거래일로 넘어간다(새 세션 디렉터리 · 같은 잎).
-- **⛔ 세션일에는 같은 모의 계좌·005930 으로 취소 프로브(P-SC, `kis-capability-probes.md` §5.10)를 돌리지 않는다.** 그날 그 종목에 FILLED 가 아닌 주문이 한 건이라도 있으면 보유 증명(`_quantity_for_snapshot`)이 None 이 되어 그날 CLOSE 가 모두 UNKNOWN 이다(fail-closed · 송신 0 · 포지션은 다음 날로 넘어간다 — review-1007 L4, #1012). 프로브는 세션이 없는 날에 돌린다.
-- **되돌림.** 세션을 시작하지 않으면 끝이다 — LONG·SHORT·상주는 이 트리와 경로·키·잎을 공유하지 않는다. 송신을 막으려면 `$ST/cp3-setup-d-stock-custody/kis_mock.app_*` 를 지운다 — 부팅은 되지만 첫 토큰 사용(브로커 사실 GET·송신)이 거부돼 송신 0. 잎은 append-only 증거라 지우지 않는다.
+- **⛔ 세션일에는 같은 모의 계좌·005930 으로 취소 프로브(P-SC, `kis-capability-probes.md` §5.10)를 돌리지 않는다.** 그날 그 종목에 FILLED 가 아닌 주문이 한 건이라도 있으면 보유 증명(`_quantity_for_snapshot`)이 None 이 되어 그날 CLOSE 가 모두 UNKNOWN 이다(fail-closed · 송신 0 · 포지션은 다음 날로 넘어간다 — review-1007 L4, #1012).
+  **2026-11-05 cron 등록 뒤에는 모든 거래일이 세션일이다.** 그래서 005930 으로 P-SC 를 돌리려면 **그날 `# cp3-stock-tenant-daily` cron 줄을 먼저 주석 처리**하고(그리고 그날 세션이 이미 떠 있지 않은지 `cp3-sessions/stock-r1-<날짜>` 로 확인하고) 돌린 뒤 되살린다. 주말·휴장일은 애초에 세션이 없으므로 그냥 돌려도 된다.
+- **되돌림.** cron 줄을 떼면(§7.2-f 머리의 «끄기») 다음 거래일부터 세션이 없다 — LONG·SHORT·상주는 이 트리와 경로·키·잎을 공유하지 않는다. 송신만 막으려면 `$ST/cp3-setup-d-stock-custody/kis_mock.app_*` 를 지운다 — 부팅은 되지만 첫 토큰 사용(브로커 사실 GET·송신)이 거부돼 송신 0 (cron 줄은 그대로여도 된다). 잎은 append-only 증거라 지우지 않는다.
 
 #### 7.2-g 개장 지연일(날짜별 세션 예외) — 수능일 등 (#924)
 
@@ -392,13 +438,15 @@ KRX 가 어떤 날의 개장·종료를 옮기면(수능일: 주식·지수선�
 
 ```bash
 git -C $MAIN fetch -q origin
-for dir in LONG SHORT; do ~/.config/kis-probes/run-cp3-tenant-daily.sh $dir --preflight 2026-11-19; done
+for dir in LONG SHORT STOCK; do ~/.config/kis-probes/run-cp3-tenant-daily.sh $dir --preflight 2026-11-19; done
 # 기대: "PREFLIGHT session krx-index-futures CONTINUOUS 2026-11-19 <공지 개장>-<공지 종료> OVERRIDE · stop_at=<종료+5분>"
 #        (18일 등 평일은 "08:45-15:45 regular · stop_at=15:50")
-# 주식(수동 세션)의 정지 시각은 같은 리더로 구한다 — TOS_STOCK_STOP_AT 에 그대로 넣는다:
+#       STOCK 은 "krx-stock CONTINUOUS … OVERRIDE · stop_at=<종료+10분>" (평일은 "09:00-15:30 regular · stop_at=15:40")
+# 손으로 시작하는 주식 세션(재기동)의 정지 시각은 같은 리더로 구한다 — TOS_STOCK_STOP_AT 에 그대로 넣는다
+# (--after-close-min 10 = cron 래퍼의 STOCK 기본값):
 .venv/bin/python -P -m tools.tos_cp3.session_day stop-at \
   --producer-config config/tos_probes/cp3-live-producer-stock-005930.yaml \
-  --repo-root . --date 2026-11-19 --after-close-min 5
+  --repo-root . --date 2026-11-19 --after-close-min 10
 ```
 
 래퍼는 cron 이 설치한 사본이므로 이 PR 머지 뒤 `install_tenant_cron.sh --apply` 로 사본을 한 번
