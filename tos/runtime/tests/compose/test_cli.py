@@ -16,7 +16,6 @@ import ast
 import os
 import signal
 import stat
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -341,27 +340,25 @@ def test_dispatch_run_passes_the_loaded_construction_config_through(
     assert captured_kwargs["transport_kind"] == args.transport
 
 
-@pytest.fixture
-def _stop_signal_handlers_restored() -> Iterator[None]:
-    """Put this process's ``SIGINT``/``SIGTERM`` handlers back after the test.
+def _install_fresh_process_stop_handlers() -> None:
+    """Pin ``SIGINT``/``SIGTERM`` to what a FRESH process has, as the baseline the three tests
+    below measure ``restore()`` against.
 
-    ``install_run_stop_signal_handlers``'s own ``restore()`` deliberately does NOT once a stop
-    signal has arrived (that function's docstring — the late duplicates the runner's group
-    signalling delivers must stay no-ops), so every test below that actually delivers a signal
-    would otherwise leak the flag handler into the rest of the session.
+    They cannot read the ambient handlers instead: ``install_run_stop_signal_handlers``'s own
+    ``restore()`` leaves its flag handler installed once a stop signal has arrived (that
+    function's docstring), so under ``pytest -n auto`` whatever ran before on this xdist worker
+    decides what is installed now. ``conftest.py``'s autouse ``_stop_signal_handlers`` fixture
+    puts the real handlers back afterwards, so pinning them here leaks nothing.
     """
-    saved = [(sig, signal.getsignal(sig)) for sig in (signal.SIGINT, signal.SIGTERM)]
-    try:
-        yield
-    finally:
-        for sig, handler in saved:
-            signal.signal(sig, handler)
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
 
-@pytest.mark.usefixtures("_stop_signal_handlers_restored")
 def test_install_run_stop_signal_handlers_restores_without_a_stop_signal() -> None:
     """``restore()``'s whole reason to exist: a caller — or a test driving several
     ``dispatch_run`` calls in one process — never leaks a stale handler."""
+    _install_fresh_process_stop_handlers()
+
     stop, restore = _run_dispatch.install_run_stop_signal_handlers()
     assert signal.getsignal(signal.SIGINT) is not signal.default_int_handler
     assert stop() is False
@@ -370,16 +367,18 @@ def test_install_run_stop_signal_handlers_restores_without_a_stop_signal() -> No
 
     # The default Python SIGINT handler (raises KeyboardInterrupt) is back.
     assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+    assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
     with pytest.raises(KeyboardInterrupt):
         os.kill(os.getpid(), signal.SIGINT)
 
 
-@pytest.mark.usefixtures("_stop_signal_handlers_restored")
 def test_install_run_stop_signal_handlers_flips_stop_then_ignores_repeats() -> None:
     """A stop signal flips the predicate, and after that ``restore()`` must leave the flag
     handler installed so the duplicates one requested stop delivers are no-ops (regression,
     CP-3 SHORT 2026-11-03 rc=143 — ``install_run_stop_signal_handlers``'s own docstring).
     """
+    _install_fresh_process_stop_handlers()
+
     stop, restore = _run_dispatch.install_run_stop_signal_handlers()
     assert stop() is False
     os.kill(os.getpid(), signal.SIGTERM)
@@ -397,7 +396,6 @@ def test_install_run_stop_signal_handlers_flips_stop_then_ignores_repeats() -> N
     assert stop() is True
 
 
-@pytest.mark.usefixtures("_stop_signal_handlers_restored")
 def test_dispatch_run_survives_a_second_stop_signal_during_shutdown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -412,6 +410,7 @@ def test_dispatch_run_survives_a_second_stop_signal_during_shutdown(
     ``SIGTERM`` from inside ``run_forever``, the duplicate as a real ``SIGTERM`` from inside
     ``close_fill_observer`` — i.e. during the ``finally``, after ``restore()`` has run.
     """
+    _install_fresh_process_stop_handlers()
     second_signal_window: list[object] = []
 
     class _SignallingScheduler:
