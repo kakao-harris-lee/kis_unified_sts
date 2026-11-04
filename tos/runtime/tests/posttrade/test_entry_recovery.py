@@ -21,11 +21,12 @@ from tos.workload import RuntimeIdentity
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.entry_recovery import prepare_entry_discharge_pending
+from tos_runtime.posttrade.entry_recovery_pending import ENTRY_DISCHARGE_PENDING_KIND
 from tos_runtime.posttrade.release_consumer import (
     FinalityReleaseConsumer,
     ReleaseOutcome,
 )
-from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.log import ReservationTransitionHistory, SqliteCommitLog
 
 from ..engine.conftest import FakeMonotonicSource, FixedKeyProvider
 from . import test_release_consumer as cycle
@@ -76,6 +77,82 @@ def _consumer(
         inbox=inbox,
         witness=cycle._CycleWitness(),
         monotonic_source=monotonic_source,
+    )
+
+
+def _count_history_reads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Spy on the one expensive read: ``verify_replay`` plus a full row decode (#1008)."""
+    reads = [0]
+    original = SqliteCommitLog.reservation_transition_history
+
+    def counted(
+        self: SqliteCommitLog, *, writer_epoch: int
+    ) -> ReservationTransitionHistory:
+        reads[0] += 1
+        return original(self, writer_epoch=writer_epoch)
+
+    monkeypatch.setattr(SqliteCommitLog, "reservation_transition_history", counted)
+    return reads
+
+
+def _arrange_pending_row(
+    *,
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    monotonic_source: FakeMonotonicSource,
+    monkeypatch: pytest.MonkeyPatch,
+) -> EgressResultPayload:
+    """One durable pending row: the close released its own reservation, then the process died."""
+    payload = cycle._arrange_close(rcl_log, evidence_store, inbox)
+    assert isinstance(payload, EgressResultPayload)
+
+    def crash_before_entry(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("simulated process stop before entry discharge")
+
+    monkeypatch.setattr(FinalityReleaseConsumer, "_discharge_entry", crash_before_entry)
+    with pytest.raises(RuntimeError, match="simulated process stop"):
+        _consumer(
+            rcl_log=rcl_log,
+            evidence_store=evidence_store,
+            inbox=inbox,
+            monotonic_source=monotonic_source,
+        ).consume(payload)
+    return payload
+
+
+def _commit_a_scanned_pending_row(
+    rcl_log: SqliteCommitLog, evidence_store: SqliteEvidenceStore, index: int
+) -> None:
+    """One more pending row the scan must walk, with its close-release command committed.
+
+    A committed ``release-<attempt>`` is exactly what makes the scan read the RCL history
+    for a row (:func:`~tos_runtime.posttrade.entry_recovery._valid_close_commit`), which
+    is the per-close accumulation #1008 measured. The row still authorizes nothing — its
+    command digest is not the release digest — so the scan's answer is unchanged.
+    """
+    attempt_id = f"attempt-accumulated-{index}"
+    cycle._commit_named_reservation(
+        rcl_log,
+        reservation_id=f"res-accumulated-{index}",
+        to_state=CapacityState.POSITION_CONSUMED,
+        command_id=f"release-{attempt_id}",
+    )
+    evidence_store.append(
+        {
+            "attempt_id": attempt_id,
+            "close_reservation_id": f"res-accumulated-{index}",
+            "close_last_seq": 0,
+            "close_state": CapacityState.POTENTIALLY_LIVE.value,
+            "entry_reservation_id": f"res-accumulated-entry-{index}",
+            "entry_last_seq": 0,
+            "account": cycle._ACCOUNT,
+            "instrument": cycle._INSTRUMENT,
+            "proof_id": f"proof-accumulated-{index}",
+            "egress_payload": {},
+        },
+        kind=ENTRY_DISCHARGE_PENDING_KIND,
+        record_class=ENTRY_DISCHARGE_PENDING_KIND,
     )
 
 
@@ -270,3 +347,79 @@ def test_entry_version_change_after_pending_fails_closed(
         CapacityState.POSITION_CONSUMED
     )
     assert _entry_release_rows(rcl_log, cycle._entry_reservation_id()) == ()
+
+
+def test_idle_pass_does_not_reread_the_rcl_history_until_the_tip_moves(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    monotonic_source: FakeMonotonicSource,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1008 — a pass that committed nothing reuses the snapshot it already holds."""
+    payload = _arrange_pending_row(
+        rcl_log=rcl_log,
+        evidence_store=evidence_store,
+        inbox=inbox,
+        monotonic_source=monotonic_source,
+        monkeypatch=monkeypatch,
+    )
+    restarted = _consumer(
+        rcl_log=rcl_log,
+        evidence_store=evidence_store,
+        inbox=inbox,
+        monotonic_source=monotonic_source,
+    )
+    reads = _count_history_reads(monkeypatch)
+
+    assert restarted.pending_recovery_attempt_ids() == (payload.attempt_id,)
+    cold = reads[0]
+    assert cold >= 1
+    assert restarted.pending_recovery_attempt_ids() == (payload.attempt_id,)
+    assert reads[0] == cold
+
+    # The tip moves: the next pass must read again, and still answer the same.
+    cycle._commit_named_reservation(
+        rcl_log,
+        reservation_id="res-tip-moved",
+        to_state=CapacityState.POSITION_CONSUMED,
+        command_id="cmd-tip-moved",
+    )
+    assert restarted.pending_recovery_attempt_ids() == (payload.attempt_id,)
+    assert reads[0] > cold
+
+
+def test_accumulated_pending_rows_do_not_cost_one_full_read_each(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    monotonic_source: FakeMonotonicSource,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1008 — per-pass read count is independent of how many pending rows are recorded."""
+    payload = _arrange_pending_row(
+        rcl_log=rcl_log,
+        evidence_store=evidence_store,
+        inbox=inbox,
+        monotonic_source=monotonic_source,
+        monkeypatch=monkeypatch,
+    )
+    restarted = _consumer(
+        rcl_log=rcl_log,
+        evidence_store=evidence_store,
+        inbox=inbox,
+        monotonic_source=monotonic_source,
+    )
+    reads = _count_history_reads(monkeypatch)
+
+    assert restarted.pending_recovery_attempt_ids() == (payload.attempt_id,)
+    one_row_cost = reads[0]
+    assert one_row_cost == 1
+
+    for index in range(8):
+        _commit_a_scanned_pending_row(rcl_log, evidence_store, index)
+    mark = reads[0]
+
+    # Nine rows, the same cold-cache cost as one — and the same answer, in the same order.
+    assert restarted.pending_recovery_attempt_ids() == (payload.attempt_id,)
+    assert reads[0] - mark == one_row_cost

@@ -46,7 +46,7 @@ from tos_runtime.posttrade.entry_recovery_pending import (
 from tos_runtime.posttrade.entry_recovery_pending import (
     strict_object as _strict_object,
 )
-from tos_runtime.rcl.log import ReservationTransitionRecord, SqliteCommitLog
+from tos_runtime.rcl.log import ReservationTransitionRecord
 from tos_runtime.rcl.projection import ScopeReservation
 from tos_runtime.recon.service import (
     ReconciliationReport,
@@ -76,14 +76,21 @@ class RecoveryInputs:
 
 
 def _transition_for_command(
-    rcl_log: SqliteCommitLog, command_id: str
+    consumer: FinalityReleaseConsumer, command_id: str
 ) -> tuple[ReservationTransitionRecord, int, str | None] | None:
+    """The committed transition for ``command_id``, read through the pass cache (#1008).
+
+    The discovery scan asks this once per pending row per release leg, which is where the
+    repeated full history read came from. The cache serves the SAME snapshot only while
+    the RCL has committed nothing (:mod:`tos_runtime.posttrade.rcl_history_cache`), so
+    the verdict below is the verdict a fresh read would give.
+    """
     try:
-        commit = rcl_log.committed_command(command_id)
+        commit = consumer.rcl_log.committed_command(command_id)
         if commit is None:
             return None
-        history = rcl_log.reservation_transition_history(
-            writer_epoch=rcl_log.current_epoch()
+        history = consumer._history_cache.history(
+            consumer.rcl_log, consumer.evidence_store
         )
     except Exception:  # noqa: BLE001 - unavailable or corrupt RCL is not authorization
         return None
@@ -103,7 +110,7 @@ def _committed_release_matches(
     instrument: str,
     command_id: str,
 ) -> tuple[ReservationTransitionRecord, int] | None:
-    match = _transition_for_command(consumer.rcl_log, command_id)
+    match = _transition_for_command(consumer, command_id)
     if match is None:
         return None
     row, seq, digest = match
