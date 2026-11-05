@@ -491,9 +491,13 @@ def _reset_futures_open_cache():
 
 @pytest.fixture(scope="session")
 def requires_repo_checkout():
-    """Precondition for a test that clones THIS repository.
+    """Precondition for a test that needs THIS repository's git metadata.
 
-    Request it from any test that runs ``git clone <repo root>``. It skips in exactly one
+    Request it from any test that reads the checkout through git — ``git clone <repo root>``
+    (the original case, #835) and equally a read of a tracked file's committed ``HEAD`` blob,
+    as ``scripts/tos/render_paper_config.py::broker_profile_pin`` does for the stock tree's
+    broker profile (#958, #1024). Both need the same thing and fail the same way without it:
+    ``fatal: not a git repository``. It skips in exactly one
     place — the ``Dockerfile.test`` image, which sets
     ``KIS_TEST_IMAGE_NO_GIT_METADATA`` because ``.dockerignore`` excludes ``.git`` — and
     nowhere else. With no repository and no marker the test is allowed to run and fail
