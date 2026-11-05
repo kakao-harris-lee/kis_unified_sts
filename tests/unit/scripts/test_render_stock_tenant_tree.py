@@ -48,7 +48,18 @@ def _journal(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(scope="module")
-def rendered(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def rendered(
+    tmp_path_factory: pytest.TempPathFactory, requires_repo_checkout: None
+) -> Path:
+    """One render of the REAL stock tree, shared by the tests below that read it.
+
+    ``requires_repo_checkout`` (``tests/conftest.py``) is the precondition — the same one
+    the mock-boot file states at length: the stock manifest binds
+    ``docs/broker-profiles/…-draft.yaml`` from THIS checkout and
+    :func:`rpc.broker_profile_pin` reads it as a committed ``HEAD`` blob (#958), which the
+    ``Dockerfile.test`` image has no git metadata for (#835, #895). Skips there and only
+    there; everywhere a repository is expected a missing one still fails loudly.
+    """
     base = tmp_path_factory.mktemp("stock-render")
     out = base / "out"
     rpc.render(
