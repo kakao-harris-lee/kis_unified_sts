@@ -456,32 +456,29 @@ KRX 가 어떤 날의 개장·종료를 옮기면(수능일: 주식·지수선�
 러너 첫 줄 대기(지연분만큼 늘어남)·밴드 기동 시각·cron 래퍼 정지 시각(`그날 종료 + CP3_DAILY_STOP_AFTER_CLOSE_MIN`)이
 모두 읽는다. 다른 곳에 시각을 다시 적지 않는다.
 
-**2026-11-19(2027학년도 수능) — DRAFT 로 적혀 있다(머지 전).** 2026-11-01 기준 KRX·KIS 의 2026
-공지가 아직 없어, 네 캘린더의 항목에는 **작년 선례값**이 들어 있고 `calendar_version` 은
-`krx-2026.10` → `krx-2026.11` 로 올라가 있다. 선례 = 2025-11-10 자 KIS 공지 두 건(2025-11-13):
-주식 PRE_OPEN 09:30–09:40 · CONTINUOUS 10:00–16:30 · AFTER_HOURS 16:40–17:00
-([num=45644](https://securities.koreainvestment.com/main/customer/notice/Notice.jsp?cmd=TF04ga000002&num=45644)) ·
-KOSPI200·미니 선물 CONTINUOUS 09:45–16:45
-([num=45643](https://securities.koreainvestment.com/main/customer/notice/Notice.jsp?cmd=TF04ga000002&num=45643)).
-선례 공지의 「최종거래일 종목 16:20 종료」는 11-19 에 해당하지 않는다 — 11 월 mini 만기는
-`futures_expiry`(둘째 목요일)대로 **2026-11-12** 이고 11-19 는 셋째 목요일이다.
+**2026-11-19(2027학년도 수능) — KRX 2026-11-05 공지로 확인됐다.** 네 캘린더의 항목은 **공지값**이고
+(선례값이 아니다) `calendar_version` 은 `krx-2026.10` → `krx-2026.11` 로 올라가 있다. 출처 =
+한국거래소 공지(2026-11-05) 「대학수학능력시험일(11.19) 증권시장 등 거래시간 임시 변경」 —
+`www.krx.co.kr` 공지사항이고 세부 시각이 첨부파일이라 안정 permalink 가 없다. 그래서 같은 날 보도
+두 건을 같이 적는다(둘 다 그 공지의 시각을 그대로 전한다):
+[뉴스핌 2026-11-05 10:23](https://www.newspim.com/news/view/20261105000442) ·
+[아시아투데이 2026-11-05 14:50](https://www.asiatoday.co.kr/kn/view.php?key=20261105010002121).
 
-**운영자 확인 전에는 머지하지 않는다.** 2026 공지가 나오면: ① 시각이 선례와 같은지 대조
-② `reason` 의 선례 URL 을 2026 공지 URL 로 교체(시각이 다르면 시각도) ③ 네 파일 바이트 동일
-유지(md5) ④ 그 PR 을 ready 로 돌려 머지.
+| 클래스 | 공지 시각 (정규 대비 개장·종료 각 +1h) |
+| --- | --- |
+| `krx-stock` | PRE_OPEN(장전 시간외 종가) 09:30–09:40 · CONTINUOUS 10:00–16:30 · AFTER_HOURS(장후 시간외 종가) 16:40–17:00 |
+| `krx-index-futures` | KOSPI200·미니 CONTINUOUS 09:45–16:45 |
 
-**공지가 선례와 다르면 — 머지 전/후로 갈린다 (리뷰 #1021 LOW-2).**
+공지값은 작년 선례(2025-11-13)와 **같았다** — 그래서 2026-11-01 초안의 시각을 한 자도 고치지 않았고
+`calendar_version` 도 `krx-2026.11` 그대로다(main 에 아직 없던 값이라 올릴 것이 없다). 공지의
+「최종거래일 종목 16:20 종료」는 11-19 에 해당하지 않는다 — 11 월 mini 만기는 `futures_expiry`(둘째
+목요일)대로 **2026-11-12** 이고 11-19 는 셋째 목요일이다. 공지의 나머지 창(시간외 접속매매
+17:00–20:00 · 대량·바스켓매매 · 야간 파생 19:00→06:00)은 정규 캘린더에도 없어 모델하지 않는다.
 
-- **(a) #1021 머지 전**: 그 PR 에서 시각만 고친다. `calendar_version` 은 **`krx-2026.11` 그대로**
-  (아직 main 에 없던 값이라 올릴 것이 없다). 고친 뒤 아래 dry-run 을 다시 돌려 숫자를 본문에
-  갱신한다.
-- **(b) #1021 머지 뒤**: 새 PR 로 항목을 고치고 `calendar_version` 을 **`krx-2026.11` →
-  `krx-2026.11.1`** 로 올린다. 네 트리의 `time.yaml::trading_calendar_version` 도 **같은 커밋**에
-  (불일치 = `SessionCalendarMismatch` 부팅 거부).
-- **(c) 2026-11-17(화) 18:00 KST 까지 공지가 없으면**: 선례값으로 머지할지, 정규 시각 그대로 둘지
-  **운영자가 정한다**. 선례값 머지 = 공지가 선례와 같다는 데 거는 것이고, 그대로 두기 =
-  #924 가 적은 실패(첫 줄 대기 실패 · 주식 커서 `153000` 고정으로 15:31–16:30 봉 유실)를 그날
-  받아들이는 것이다.
+**이 항목을 또 고쳐야 할 때 (리뷰 #1021 LOW-2).** 공지 정정이 나오거나 다음 수능일을 적을 때는
+**머지 뒤**의 경로를 탄다: 새 PR 로 항목을 고치고 `calendar_version` 을 **`krx-2026.11` →
+`krx-2026.11.1`** 로 올린다. 네 트리의 `time.yaml::trading_calendar_version` 도 **같은 커밋**에
+(불일치 = `SessionCalendarMismatch` 부팅 거부). 네 파일 바이트 동일도 유지한다(`md5sum`).
 
 **기한: 2026-11-19 아침 부팅 전까지 머지되어 있어야 한다.** cron 은 LONG 08:38 · SHORT 08:40 KST 에
 뜨고(`crontab -l | grep cp3-.*-tenant-daily`), 상주 paper 는 08:45 다. 래퍼들은 매 세션 `origin/main`
@@ -509,16 +506,17 @@ for dir in LONG SHORT STOCK; do ~/.config/kis-probes/run-cp3-tenant-daily.sh $di
 `~/.config/kis-probes/run-cp3-tenant-daily.sh` 는 이미 main 의
 `tools/tos_cp3/runners/cp3_tenant_daily.sh` 와 **바이트 동일**이고, 정지 시각을 이미
 `session_day` 로 그날 캘린더에서 도출한다 — `STOP_AT` 의 기본값은 비어 있고
-(`cp3_tenant_daily.sh:72` `STOP_AT=${CP3_DAILY_STOP_AT:-}`) :262 에서
-`STOP_AT=$(session_day stop-at …)` 로 채운다. 코드에 박힌 `15:50` 은 없다(:46 의 `15:50` 은
-이 손잡이가 **예전에** 갖던 기본값을 설명하는 주석이다). #1021 은 이 래퍼를 건드리지 않으므로 머지 뒤
-`install_tenant_cron.sh --apply` 는 **필요 없다**. (이 문단의 이전 판은 재설치가 필요하다고
-적었는데, 사실이 아니다.) 같은지 한 줄로 확인한다:
+(`cp3_tenant_daily.sh:104` `STOP_AT=${CP3_DAILY_STOP_AT:-}`) :561-566 에서
+`STOP_AT=$(session_day stop-at …)` 로 채운다. 정지 시각이 코드에 박힌 곳은 없다 — 테넌트별
+기본 여유분만 있고(`:118` LONG/SHORT 5 분 · `:133` STOCK 10 분) 종료 시각 자체는 그날 캘린더에서
+온다. #1021 은 이 래퍼를 건드리지 않으므로 머지 뒤 `install_tenant_cron.sh --apply` 는
+**필요 없다**. (이 문단의 이전 판은 재설치가 필요하다고 적었는데, 사실이 아니다.) 같은지 한 줄로
+확인한다:
 
 ```bash
 sha256sum ~/.config/kis-probes/run-cp3-tenant-daily.sh \
   <(git -C $MAIN show origin/main:tools/tos_cp3/runners/cp3_tenant_daily.sh)
-# 두 줄의 해시가 같아야 한다 (2026-11-02 실측: 6a4a34a3e23a…)
+# 두 줄의 해시가 같아야 한다 (2026-11-06 실측, #1031 머지 뒤: 2e6403508ecd…)
 # 다르면 그때만 `tools/tos_cp3/runners/install_tenant_cron.sh --apply`
 ```
 
@@ -529,7 +527,7 @@ sha256sum ~/.config/kis-probes/run-cp3-tenant-daily.sh \
 - `tos-paper-session.sh:62` `STOP_HHMM=${TOS_PAPER_STOP_HHMM:-15:45}`
 - crontab `45 15 * * 1-5 … tos-paper-session.sh stop` — 캘린더와 무관하게 15:45 에 멈춘다
 
-그래서 11-19 에는 선물 마지막 1시간(선례값 기준 15:45→16:45)이 빠진다. **다만 세션 게이트는
+그래서 11-19 에는 선물 마지막 1시간(공지값 15:45→16:45)이 빠진다. **다만 세션 게이트는
 override 를 읽으므로** 그날 09:45 개장도, 15:45 까지의 창도 올바르다 — override 가 아예 없을
 때보다 나쁘지 않다(없으면 08:45 개장으로 잡아 첫 줄 대기부터 실패한다).
 

@@ -163,8 +163,8 @@ def test_shipped_tenant_calendars_carry_the_exam_day_override() -> None:
     """The four shipped trees declare 2026-11-19 (#924) and nothing else.
 
     Replaces the earlier "``session_overrides: {}`` until KRX publishes a notice"
-    assertion: the dated entry is now shipped (on precedent values, pending the KRX
-    2026 notice), so the guard is that the ONE declared date is that one — a second
+    assertion: the dated entry is shipped on the values of the KRX notice of
+    2026-11-05, so the guard is that the ONE declared date is that one — a second
     undeclared date, or the entry quietly dropped, is the failure this catches.
     """
     for tree in _SHIPPED_TREES:
@@ -226,7 +226,7 @@ def test_shipped_exam_day_moves_both_classes_and_the_day_before_does_not(
 
 def test_shipped_exam_day_is_not_the_november_expiry() -> None:
     """``futures_expiry`` (second Thursday) puts November's mini expiry on 11-12, so the
-    precedent notice's "last-trading-day series closes 16:20" does not apply to 11-19.
+    notice's "last-trading-day series closes 16:20" does not apply to 11-19.
     """
     cfg = _shipped("paper")
     assert SHIPPED_NOV_EXPIRY.weekday() == 3 and SHIPPED_EXAM_DAY.weekday() == 3
