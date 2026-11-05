@@ -202,7 +202,7 @@ jobs:
       - name: Pin mdBook v0.5.4 (tos-spec build)
         run: |
           set -euo pipefail
-          curl -sSL -o /tmp/mdbook.tar.gz \
+          curl -sSL --fail --retry 3 --retry-all-errors -o /tmp/mdbook.tar.gz \
             https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz
           echo "3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7  /tmp/mdbook.tar.gz" | sha256sum -c -
           tar -xzf /tmp/mdbook.tar.gz -C /tmp
@@ -271,7 +271,7 @@ jobs:
         # governance batteries below drive u17-verify.sh.
         run: |
           set -euo pipefail
-          curl -sL -o /tmp/yq_linux_amd64 \
+          curl -sSL --fail --retry 3 --retry-all-errors -o /tmp/yq_linux_amd64 \
             https://github.com/mikefarah/yq/releases/download/v4.48.1/yq_linux_amd64
           echo "99df6047f5b577a9d25f969f7c3823ada3488de2e2115b30a0abb10d9324fd9f  /tmp/yq_linux_amd64" | sha256sum -c -
           sudo install -m 0755 /tmp/yq_linux_amd64 /usr/bin/yq
