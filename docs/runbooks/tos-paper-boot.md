@@ -489,8 +489,9 @@ KRX 가 어떤 날의 개장·종료를 옮기면(수능일: 주식·지수선�
 
 **기한: 2026-11-19 아침 부팅 전까지 머지되어 있어야 한다.** cron 은 LONG 08:38 · SHORT 08:40 ·
 STOCK 08:53 KST 에 뜨고(`crontab -l | grep cp3-.*-tenant-daily`), 상주 paper 는 08:45 다. 래퍼들은
-매 세션 `origin/main` 에서 **새 워크트리를 떠서** 부팅하므로 재시작·재설치는 필요 없다 — 그 시각
-전에 `origin/main` 에 들어가 있기만 하면 된다. 가장 이른 08:38 을 넘기면 그날 그 세션은 정규 시각으로
+매 세션 `origin/main` 에서 **새 워크트리를 떠서** 부팅하므로 캘린더 값에는 재시작이 필요 없다 — 그 시각
+전에 `origin/main` 에 들어가 있기만 하면 된다. **단 #1021 은 래퍼 자체(승인 대기)도 바꾸므로 머지 뒤
+`install_tenant_cron.sh --apply` 한 번은 필수다**(아래 「CP-3 cron 래퍼」). 가장 이른 08:38 을 넘기면 그날 그 세션은 정규 시각으로
 이미 떠 있다(08:53 STOCK 은 그만큼 여유가 더 있다).
 
 **머지 뒤, 11-19 전 dry-run (읽기 전용, 운영자):**
@@ -510,22 +511,23 @@ for dir in LONG SHORT STOCK; do ~/.config/kis-probes/run-cp3-tenant-daily.sh $di
 # 기대: 16:40 — 주식 종료 16:30 + 10분. 평일(11-18)은 15:40.
 ```
 
-**CP-3 cron 래퍼 — 재설치 불필요(리뷰 #1021 LOW-3 정정).** 설치본
-`~/.config/kis-probes/run-cp3-tenant-daily.sh` 는 이미 main 의
-`tools/tos_cp3/runners/cp3_tenant_daily.sh` 와 **바이트 동일**이고, 정지 시각을 이미
+**CP-3 cron 래퍼 — 머지 뒤 재설치 필수(review-1021 r2).** #1021 r2 가 래퍼의 STOCK 상시 승인
+대기를 그날 개장 지연만큼 늘렸다(`write_standing_approval`). 설치본
+`~/.config/kis-probes/run-cp3-tenant-daily.sh` 는 복사본이라, 재설치하지 않으면 11-19 08:53 STOCK 이
+옛 20분 고정 대기를 돌려 승인을 못 쓰고 그날 송신 0 이다. 그래서 머지 뒤
+`bash tools/tos_cp3/runners/install_tenant_cron.sh --apply` 를 한 번 돌리고 아래 해시 비교로 확인한다.
+정지 시각 쪽은 원래부터 코드에 박혀 있지 않다 — 래퍼는 정지 시각을
 `session_day` 로 그날 캘린더에서 도출한다 — `STOP_AT` 의 기본값은 비어 있고
 (`cp3_tenant_daily.sh:104` `STOP_AT=${CP3_DAILY_STOP_AT:-}`) :561-566 에서
 `STOP_AT=$(session_day stop-at …)` 로 채운다. 정지 시각이 코드에 박힌 곳은 없다 — 테넌트별
 기본 여유분만 있고(`:118` LONG/SHORT 5 분 · `:133` STOCK 10 분) 종료 시각 자체는 그날 캘린더에서
-온다. #1021 은 이 래퍼를 건드리지 않으므로 머지 뒤 `install_tenant_cron.sh --apply` 는
-**필요 없다**. (이 문단의 이전 판은 재설치가 필요하다고 적었는데, 사실이 아니다.) 같은지 한 줄로
-확인한다:
+온다. 재설치 뒤 같은지 한 줄로 확인한다:
 
 ```bash
 sha256sum ~/.config/kis-probes/run-cp3-tenant-daily.sh \
   <(git -C $MAIN show origin/main:tools/tos_cp3/runners/cp3_tenant_daily.sh)
-# 두 줄의 해시가 같아야 한다 (2026-11-06 실측, #1031 머지 뒤: 2e6403508ecd…)
-# 다르면 그때만 `tools/tos_cp3/runners/install_tenant_cron.sh --apply`
+# 두 줄의 해시가 같아야 한다 (#1021 머지 전 설치본은 2e6403508ecd… — 머지 뒤엔 달라지는 게 정상)
+# 다르면 `tools/tos_cp3/runners/install_tenant_cron.sh --apply`
 ```
 
 **상주 paper 세션은 11-19 의 마지막 1시간을 못 받는다 (리뷰 #1021 LOW-1 · 받아들이는 손실).**
