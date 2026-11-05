@@ -9,7 +9,8 @@ normal result path (``EGRESS_RESULT`` through the durable inbox, then finality a
 **What it tracks comes from durable evidence, not memory.** An attempt is tracked when an
 ``EGRESS_RESULT_CONSUMED`` row records its ``ACK`` with an ODNO and a trading date. What was already
 reported is the latest recorded result for that attempt, so a restart re-derives the same picture
-and an execution observed twice is reported once.
+and an execution observed twice is reported once. An ACK missing either one is not tracked, and
+one ``FILL_OBSERVER_ACK_UNTRACKABLE`` row says why — never a silent skip (:meth:`_trackable`).
 
 **Two separate "done"s (PR-3b review HIGH 1).** The broker side is done when a terminal result
 (``FULL_FILL``/``CANCEL_ACK``/``EXPIRED``/``REJECT``) is recorded — the observer stops reading the
@@ -681,8 +682,9 @@ class KisMockFillObserver:
                     evidence_kind == "EGRESS_RESULT_CONSUMED"
                     and kind is EgressResultKind.ACK
                     and isinstance(row.get("broker_execution_id"), str)
-                    and isinstance(row.get("trading_date"), str)
-                    and self._trackable(attempt_id, row["broker_execution_id"])
+                    and self._trackable(
+                        attempt_id, row["broker_execution_id"], row.get("trading_date")
+                    )
                 ):
                     tracked[attempt_id] = _Tracked(
                         attempt_id=attempt_id,
@@ -719,12 +721,15 @@ class KisMockFillObserver:
                 attempt.released = self.release_committed(attempt.attempt_id)
         return tracked
 
-    def _trackable(self, attempt_id: str, odno: str) -> bool:
-        """An ACK whose ODNO has no usable digits (``odno_key`` is ``None`` — e.g. all zeros)
-        would match every row that also has none (Claude review LOW 3). It is never tracked;
-        one ``FILL_OBSERVER_ACK_UNTRACKABLE`` row says so, so the reservation's hold is visible.
-        """
-        if odno_key(odno) is not None:
+    def _trackable(self, attempt_id: str, odno: str, trading_date: Any) -> bool:
+        """An ACK that cannot be joined to a broker row by ODNO is never tracked; one
+        ``FILL_OBSERVER_ACK_UNTRACKABLE`` row names the reason, so the hold is visible:
+        ``odno_no_digits`` (``odno_key`` is ``None``, e.g. all zeros — it would match every row
+        that also has none, Claude review LOW 3) or ``no_trading_date`` (an ODNO is a per-day
+        sequence; a silent guard dropped such an ACK until 2026-11-05, when the first stock MOCK
+        order's fill stayed unobserved 6.5 h). No date is invented in its place."""
+        dated = isinstance(trading_date, str)
+        if dated and odno_key(odno) is not None:
             return True
         if attempt_id not in self._untrackable_recorded:
             already = self.evidence_store.connection.execute(
@@ -732,10 +737,9 @@ class KisMockFillObserver:
                 (FILL_OBSERVER_ACK_UNTRACKABLE_KIND, f'%"{attempt_id}"%'),
             ).fetchone()[0]
             if not already:
-                self._record(
-                    FILL_OBSERVER_ACK_UNTRACKABLE_KIND,
-                    {"attempt_id": attempt_id, "broker_execution_id": odno},
-                )
+                fields = {"attempt_id": attempt_id, "broker_execution_id": odno}
+                fields["reason"] = "odno_no_digits" if dated else "no_trading_date"
+                self._record(FILL_OBSERVER_ACK_UNTRACKABLE_KIND, fields)
             self._untrackable_recorded.add(attempt_id)
         return False
 
