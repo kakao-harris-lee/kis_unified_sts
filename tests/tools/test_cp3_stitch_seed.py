@@ -754,6 +754,10 @@ def _write_calendar(tmp_path: Path, *, session_end: str = "09:20") -> Path:
             {"phase": "CONTINUOUS", "start": "08:45", "end": session_end}
         ]
     }
+    # Same reason as ``test_cp3_live_producer.py::_write_calendar``: the shipped dated
+    # override (2026-11-19, #924) names ``krx-stock`` too, and an override for a class
+    # the regular ``sessions`` do not declare is refused at load.
+    source["session_overrides"] = {}
     path = tmp_path / "calendar.yaml"
     path.write_text(yaml.safe_dump(source, allow_unicode=True), encoding="utf-8")
     return path

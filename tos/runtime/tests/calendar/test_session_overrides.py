@@ -1,7 +1,9 @@
 """Dated session overrides (issue #924) — loader shape, phase shift, digest.
 
-The override date used here (2026-12-03, a Thursday) is FICTITIOUS: no KRX notice
-moves that day. The real exam-day entry is added only once KRX publishes it.
+The override date used in the tmp_path fixtures (2026-12-03, a Thursday) is
+FICTITIOUS: no KRX notice moves that day. The SHIPPED entry is the real one,
+2026-11-19 (2027학년도 수능) — asserted against the deployed files at the end of this
+module.
 
 Hermetic (D1.4): every case writes its own YAML under tmp_path.
 """
@@ -136,17 +138,107 @@ def test_an_override_changes_the_digest(tmp_path, cfg) -> None:
     assert calendar_bind_digest(cfg) != calendar_bind_digest(plain)
 
 
-def test_shipped_tenant_calendars_load_with_no_dated_overrides() -> None:
-    """The four shipped trees carry ``session_overrides: {}`` until KRX publishes a notice."""
+#: The shipped exam-day entry (#924): 2026-11-19, 2027학년도 수능. A Thursday, and NOT
+#: the November mini expiry (that is the second Thursday, 2026-11-12 — asserted below).
+SHIPPED_EXAM_DAY = datetime.date(2026, 11, 19)
+#: The regular weekday right before it, the control in every comparison here.
+SHIPPED_REGULAR_DAY = datetime.date(2026, 11, 18)
+#: November's mini expiry under ``futures_expiry`` (second Thursday).
+SHIPPED_NOV_EXPIRY = datetime.date(2026, 11, 12)
+
+_SHIPPED_TREES = (
+    "paper",
+    "cp3-setup-d-long",
+    "cp3-setup-d-short",
+    "cp3-setup-d-stock-005930",
+)
+
+
+def _shipped(tree: str):
     root = Path(__file__).resolve().parents[4] / "config" / "tos_runtime"
-    for tree in (
-        "paper",
-        "cp3-setup-d-long",
-        "cp3-setup-d-short",
-        "cp3-setup-d-stock-005930",
-    ):
-        loaded = load_calendar_config(root / tree / "calendar.yaml")
-        assert loaded.session_overrides == {}, tree
+    return load_calendar_config(root / tree / "calendar.yaml")
+
+
+def test_shipped_tenant_calendars_carry_the_exam_day_override() -> None:
+    """The four shipped trees declare 2026-11-19 (#924) and nothing else.
+
+    Replaces the earlier "``session_overrides: {}`` until KRX publishes a notice"
+    assertion: the dated entry is shipped on the values of the KRX notice of
+    2026-11-05, so the guard is that the ONE declared date is that one — a second
+    undeclared date, or the entry quietly dropped, is the failure this catches.
+    """
+    for tree in _SHIPPED_TREES:
+        loaded = _shipped(tree)
+        assert sorted(str(k) for k in loaded.session_overrides) == [
+            SHIPPED_EXAM_DAY.isoformat()
+        ], tree
+
+
+@pytest.mark.parametrize("tree", _SHIPPED_TREES)
+def test_shipped_exam_day_moves_both_classes_and_the_day_before_does_not(
+    tree: str,
+) -> None:
+    """2026-11-18 keeps the regular windows; 2026-11-19 carries the late ones — for
+    the stock class (all three phases) and the futures class alike (#924 수용 기준 ③)."""
+    cfg = _shipped(tree)
+
+    def windows(day, cls):
+        return [
+            (w.phase, w.start.isoformat(), w.end.isoformat())
+            for w in cfg.windows_on(day, cls)
+        ]
+
+    assert windows(SHIPPED_REGULAR_DAY, "krx-stock") == [
+        ("PRE_OPEN", "08:30:00", "08:40:00"),
+        ("CONTINUOUS", "09:00:00", "15:30:00"),
+        ("AFTER_HOURS", "15:40:00", "16:00:00"),
+    ]
+    assert windows(SHIPPED_REGULAR_DAY, "krx-index-futures") == [
+        ("CONTINUOUS", "08:45:00", "15:45:00"),
+    ]
+    # the exam day: every regular window of each class, each an hour late
+    assert windows(SHIPPED_EXAM_DAY, "krx-stock") == [
+        ("PRE_OPEN", "09:30:00", "09:40:00"),
+        ("CONTINUOUS", "10:00:00", "16:30:00"),
+        ("AFTER_HOURS", "16:40:00", "17:00:00"),
+    ]
+    assert windows(SHIPPED_EXAM_DAY, "krx-index-futures") == [
+        ("CONTINUOUS", "09:45:00", "16:45:00"),
+    ]
+    # the phase gate agrees: 09:10 stock trades on a regular day and is shut on the exam
+    # day (its PRE_OPEN has not started yet); 16:00 futures is the mirror image.
+    assert (
+        session_phase_at(_ms(SHIPPED_REGULAR_DAY, 9, 10), "krx-stock", cfg).phase
+        == "CONTINUOUS"
+    )
+    assert not session_phase_at(_ms(SHIPPED_EXAM_DAY, 9, 10), "krx-stock", cfg).is_open
+    assert (
+        session_phase_at(_ms(SHIPPED_EXAM_DAY, 9, 35), "krx-stock", cfg).phase
+        == "PRE_OPEN"
+    )
+    assert not session_phase_at(
+        _ms(SHIPPED_REGULAR_DAY, 16, 0), "krx-index-futures", cfg
+    ).is_open
+    assert session_phase_at(
+        _ms(SHIPPED_EXAM_DAY, 16, 0), "krx-index-futures", cfg
+    ).is_open
+
+
+def test_shipped_exam_day_is_not_the_november_expiry() -> None:
+    """``futures_expiry`` (second Thursday) puts November's mini expiry on 11-12, so the
+    notice's "last-trading-day series closes 16:20" does not apply to 11-19.
+    """
+    cfg = _shipped("paper")
+    assert SHIPPED_NOV_EXPIRY.weekday() == 3 and SHIPPED_EXAM_DAY.weekday() == 3
+    assert (
+        maturity_at(_ms(SHIPPED_NOV_EXPIRY, 15, 50), "krx-index-futures", cfg).expired
+        is True
+    )
+    # 11-19 after its own (shifted) close is still not an expiry flip
+    assert (
+        maturity_at(_ms(SHIPPED_EXAM_DAY, 16, 50), "krx-index-futures", cfg).expired
+        is False
+    )
 
 
 @pytest.mark.parametrize(

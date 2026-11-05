@@ -404,6 +404,12 @@ def _write_calendar(tmp_path: Path, *, session_end: str = TARGET_SESSION_END) ->
             {"phase": "CONTINUOUS", "start": "08:45", "end": session_end}
         ]
     }
+    # The shipped file carries a dated override naming BOTH classes (2026-11-19, #924)
+    # and this fixture declares only ``krx-index-futures``. An override for a class the
+    # regular ``sessions`` do not declare is refused at load, so the shipped entry goes
+    # with the shipped session list it belongs to. Overrides are not what this file
+    # tests — ``test_cp3_session_day.py`` pins them, shipped entry included.
+    source["session_overrides"] = {}
     path = tmp_path / "calendar.yaml"
     path.write_text(yaml.safe_dump(source, allow_unicode=True), encoding="utf-8")
     return path

@@ -642,6 +642,11 @@ def _stock_calendar(tmp_path: Path) -> Path:
             {"phase": "CONTINUOUS", "start": "09:00", "end": TARGET_SESSION_END}
         ]
     }
+    # The shipped file now carries a dated override naming BOTH classes (2026-11-19,
+    # #924). This fixture declares only ``krx-stock``, and an override for a class the
+    # regular sessions do not declare is refused at load — so the shipped entry goes
+    # with the shipped sessions it belongs to. ``_override_calendar`` writes its own.
+    source["session_overrides"] = {}
     path = tmp_path / "calendar.yaml"
     path.write_text(yaml.safe_dump(source, allow_unicode=True), encoding="utf-8")
     return path
@@ -858,11 +863,18 @@ def test_924_the_session_end_cursor_follows_each_days_close(tmp_path: Path) -> N
     assert real_quotes_mod.resolve_initial_cursor(literal) == ""
 
 
-def test_924_the_shipped_stock_cursor_is_153000_on_a_regular_day() -> None:
+def test_924_the_shipped_stock_cursor_follows_the_shipped_exam_day_override() -> None:
+    """``quote_initial_cursor: session_end`` on the DEPLOYED calendar: 153000 on a
+    regular day, 163000 on 2026-11-19 (2027학년도 수능), whose CONTINUOUS closes 16:30.
+
+    The second assertion replaces the earlier "the shipped calendar declares no dated
+    overrides" expectation now that the entry ships: a day-one cursor fixed at 153000
+    would drop every 15:31-16:30 bar of that session (#924 「무엇이 문제인가」)."""
     config = config_mod.load_config(STOCK_CONFIG, repo_root=_REPO_ROOT)
-    assert (
-        real_quotes_mod.resolve_initial_cursor(config)(date(2026, 10, 26)) == "153000"
-    )
+    cursor = real_quotes_mod.resolve_initial_cursor(config)
+    assert cursor(date(2026, 10, 26)) == "153000"  # a regular Monday
+    assert cursor(date(2026, 11, 18)) == "153000"  # the regular day before the exam day
+    assert cursor(date(2026, 11, 19)) == "163000"  # the shipped override's close
 
 
 def test_924_quotes_page_calls_a_per_day_cursor() -> None:

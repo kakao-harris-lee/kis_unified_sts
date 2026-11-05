@@ -1,8 +1,9 @@
 """#924 — the legacy-side reader of dated session overrides (tools/tos_cp3/session_day.py).
 
 One reader for the producer, the band launch, the runner's first-row bound and the cron
-wrapper's stop time. The override date (2026-12-03) is FICTITIOUS — tests only.
-The runtime's own loader of the same key is pinned in
+wrapper's stop time. The tmp_path fixtures' override date (2026-12-03) is FICTITIOUS —
+tests only; the SHIPPED entry is 2026-11-19 (2027학년도 수능) and is asserted against the
+deployed files below. The runtime's own loader of the same key is pinned in
 ``tos/runtime/tests/calendar/test_session_overrides.py``.
 """
 
@@ -87,12 +88,75 @@ def test_override_day_window_and_regular_fallback(tmp_path: Path) -> None:
     assert session.stop_at(REGULAR, after_close_min=5) == "15:50"
 
 
-def test_the_shipped_calendar_has_no_dated_overrides() -> None:
+#: The shipped exam-day entry (#924): 2026-11-19, 2027학년도 수능 — and the regular
+#: weekday before it, the control. Both are Nov 2026 weekdays the calendar does not
+#: close.
+SHIPPED_EXAM_DAY = date(2026, 11, 19)
+SHIPPED_REGULAR_DAY = date(2026, 11, 18)
+
+
+def test_the_shipped_calendar_carries_the_exam_day_override() -> None:
+    """The shipped futures producer reads 2026-11-19 (#924) out of its tree's calendar.
+
+    Replaces the earlier "no dated overrides" assertion: the entry is shipped now, so
+    the guard is that the ONE declared date is that one and the stop time follows that
+    day's close (16:45 + 5), while the day before stays regular (15:45 + 5).
+    """
     session = session_day.load_producer_session(
         _REPO_ROOT / "config/tos_probes/cp3-live-producer.yaml", repo_root=_REPO_ROOT
     )
-    assert session.calendar["session_overrides"] == {}
+    assert sorted(str(k) for k in session.calendar["session_overrides"]) == [
+        SHIPPED_EXAM_DAY.isoformat()
+    ]
+    exam = session.window(SHIPPED_EXAM_DAY)
+    assert (exam.start.isoformat(), exam.end.isoformat(), exam.overridden) == (
+        "09:45:00",
+        "16:45:00",
+        True,
+    )
+    assert session.stop_at(SHIPPED_EXAM_DAY, after_close_min=5) == "16:50"
+    assert session.open_delay_s(SHIPPED_EXAM_DAY) == 3600
+    regular = session.window(SHIPPED_REGULAR_DAY)
+    assert (regular.start.isoformat(), regular.end.isoformat(), regular.overridden) == (
+        "08:45:00",
+        "15:45:00",
+        False,
+    )
+    assert session.stop_at(SHIPPED_REGULAR_DAY, after_close_min=5) == "15:50"
+    assert session.open_delay_s(SHIPPED_REGULAR_DAY) == 0
     assert session.stop_at(REGULAR, after_close_min=5) == "15:50"
+
+
+def test_the_shipped_stock_calendar_carries_the_exam_day_override() -> None:
+    """Same entry, read through the STOCK producer config: all three stock phases move,
+    so the session-end cursor and the stop time come from 16:30, not 15:30 (#924)."""
+    session = session_day.load_producer_session(
+        _REPO_ROOT / "config/tos_probes/cp3-live-producer-stock-005930.yaml",
+        repo_root=_REPO_ROOT,
+    )
+    assert session.stop_at(SHIPPED_EXAM_DAY, after_close_min=5) == "16:35"
+    assert session.stop_at(SHIPPED_REGULAR_DAY, after_close_min=5) == "15:35"
+    assert session.open_delay_s(SHIPPED_EXAM_DAY) == 3600
+    windows = {
+        w.phase: (w.start.isoformat(), w.end.isoformat())
+        for w in session_day.windows_on(session.calendar, "krx-stock", SHIPPED_EXAM_DAY)
+    }
+    assert windows == {
+        "PRE_OPEN": ("09:30:00", "09:40:00"),
+        "CONTINUOUS": ("10:00:00", "16:30:00"),
+        "AFTER_HOURS": ("16:40:00", "17:00:00"),
+    }
+    regular = {
+        w.phase: (w.start.isoformat(), w.end.isoformat())
+        for w in session_day.windows_on(
+            session.calendar, "krx-stock", SHIPPED_REGULAR_DAY
+        )
+    }
+    assert regular == {
+        "PRE_OPEN": ("08:30:00", "08:40:00"),
+        "CONTINUOUS": ("09:00:00", "15:30:00"),
+        "AFTER_HOURS": ("15:40:00", "16:00:00"),
+    }
 
 
 def test_band_open_follows_the_override(tmp_path: Path) -> None:
@@ -179,9 +243,27 @@ def test_cli_prints_one_value(tmp_path: Path) -> None:
 
 
 def _raw_calendar(tmp_path: Path, overrides_yaml: str) -> Path:
-    base = _SHIPPED.read_text(encoding="utf-8").replace("session_overrides: {}\n", "")
+    """The shipped calendar with its own ``session_overrides`` block swapped for
+    *overrides_yaml* (raw text, so a malformed shape survives to the loader).
+
+    The shipped block is a real dated entry now (2026-11-19, #924), so it is cut out by
+    line between ``session_overrides:`` and ``futures_expiry:`` rather than matched as
+    the literal ``session_overrides: {}``: that literal stopped matching when the entry
+    shipped, and every case here would silently have become a TWO-entry file.
+    """
+    lines = _SHIPPED.read_text(encoding="utf-8").splitlines(keepends=True)
+    start = next(
+        i for i, line in enumerate(lines) if line.startswith("session_overrides:")
+    )
+    end = next(
+        i
+        for i, line in enumerate(lines)
+        if i > start and line.startswith("futures_expiry:")
+    )
     path = tmp_path / "calendar.yaml"
-    path.write_text(base + overrides_yaml, encoding="utf-8")
+    path.write_text(
+        "".join(lines[:start]) + overrides_yaml + "".join(lines[end:]), encoding="utf-8"
+    )
     return path
 
 

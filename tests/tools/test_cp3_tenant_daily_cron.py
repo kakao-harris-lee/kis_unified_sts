@@ -17,10 +17,13 @@ import shutil
 import stat
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
 import yaml
+
+from tools.tos_cp3 import session_day
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RUNNERS = _REPO_ROOT / "tools" / "tos_cp3" / "runners"
@@ -71,8 +74,10 @@ _STUB_RUNNER = """#!/bin/bash
 # Test stub: record what the wrapper handed over, exit with the requested rc.
 env | grep '^TENANT_' | sort
 # A stock session: the wrapper waits for this line in TENANT_LOG before it writes
-# today's standing approval. CP3_TEST_STUB_NO_RENDER=1 withholds it.
+# today's standing approval. CP3_TEST_STUB_NO_RENDER=1 withholds it, and
+# CP3_TEST_STUB_RENDER_AFTER_S delays it (the real render follows the open).
 if [ -n "${TENANT_KIS_MOCK_TRANSPORT_CONFIG:-}" ] && [ -z "${CP3_TEST_STUB_NO_RENDER:-}" ]; then
+  [ -n "${CP3_TEST_STUB_RENDER_AFTER_S:-}" ] && sleep "$CP3_TEST_STUB_RENDER_AFTER_S"
   echo "render ok -> ${TENANT_RENDER_OUT:-}" >>"$TENANT_LOG"
 fi
 [ -n "${CP3_TEST_STUB_SLEEP_S:-}" ] && sleep "$CP3_TEST_STUB_SLEEP_S"
@@ -450,6 +455,34 @@ def test_real_tenant_calendars_carry_the_krx_year_end_close() -> None:
             str(h) for h in yaml.safe_load(path.read_text(encoding="utf-8"))["holidays"]
         }
         assert "2026-12-31" in holidays, tree
+
+
+def test_real_tenant_calendars_carry_the_exam_day_override() -> None:
+    """#924: the wrapper derives the stop time from the tree's own calendar, so the
+    2026-11-19 (2027학년도 수능) entry must BE in those files — the fixture calendar above
+    proves the mechanism, this proves the shipped data. 16:45 + 5 for futures, 16:30 + 5
+    for the stock tree; the weekday before stays regular."""
+    for tree in ("cp3-setup-d-long", "cp3-setup-d-short", "cp3-setup-d-stock-005930"):
+        path = _REPO_ROOT / "config" / "tos_runtime" / tree / "calendar.yaml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert sorted(str(k) for k in data["session_overrides"]) == ["2026-11-19"], tree
+
+    def _stop(producer_rel: str, day: str) -> str:
+        session = session_day.load_producer_session(
+            _REPO_ROOT / producer_rel, repo_root=_REPO_ROOT
+        )
+        return session.stop_at(date.fromisoformat(day), after_close_min=5)
+
+    assert _stop("config/tos_probes/cp3-live-producer.yaml", "2026-11-19") == "16:50"
+    assert _stop("config/tos_probes/cp3-live-producer.yaml", "2026-11-18") == "15:50"
+    assert (
+        _stop("config/tos_probes/cp3-live-producer-stock-005930.yaml", "2026-11-19")
+        == "16:35"
+    )
+    assert (
+        _stop("config/tos_probes/cp3-live-producer-stock-005930.yaml", "2026-11-18")
+        == "15:35"
+    )
 
 
 def test_open_day_runs_the_runner_with_every_tenant_value(env: Env) -> None:
@@ -888,6 +921,54 @@ def test_stock_924_a_dated_override_moves_the_stop_with_the_stock_close(
     )
     assert "TENANT_STOP_AT=16:40" in out  # 16:30 + 10, not the futures 16:50
     assert "10:00-16:30 OVERRIDE" in r.stdout
+
+
+def test_stock_924_the_approval_wait_grows_with_the_dated_open_delay(
+    env: Env,
+) -> None:
+    """review-1021 r1 HIGH: `render ok` follows the OPEN — the runner's first-row
+    wait ends there — so on an override day it arrives an hour late (on 11-05 the
+    first-row wait started 08:53:06 and the render came 09:01:25; a 10:00 open puts
+    it past 10:01). With a FIXED bound the wait expires first, nothing writes
+    today's standing approval, and the session sends 0 all day. The wrapper's bound
+    grows by the same delay the runner's own first-row bound grows by.
+
+    Scaled for speed: a 1 × 1 s base bound (the real 120 × 10), the fixture's
+    09:00 -> 10:00 stock open = 3600 s of extra bound, and a render 3 s in — past
+    the base bound, well inside the extended one.
+    """
+    _data_parents(env)
+    r = env.daily(
+        "STOCK",
+        CP3_DAILY_TODAY=_OVERRIDE_DAY,
+        CP3_DAILY_APPROVAL_WAIT_TRIES="1",
+        CP3_DAILY_APPROVAL_WAIT_SLEEP_S="1",
+        CP3_TEST_STUB_RENDER_AFTER_S="3",
+    )
+    assert r.returncode == 0, r.stdout
+    assert "개장이 정규보다 3600s 늦다" in r.stdout
+    assert "상시 승인 대기를 3601s 로 늘린다" in r.stdout
+    assert "no 'render ok' within" not in r.stdout
+    assert "write-standing-approval rc=0" in r.stdout
+    assert env.approval_argv.exists()
+
+
+def test_stock_924_a_regular_day_keeps_the_fixed_approval_wait(env: Env) -> None:
+    """The other half of the pair: a regular day's delay is 0, so the bound is the
+    configured one and the same late render runs it out — the extension is read
+    from the calendar, not handed out to every day."""
+    _data_parents(env)
+    r = env.daily(
+        "STOCK",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        CP3_DAILY_APPROVAL_WAIT_TRIES="1",
+        CP3_DAILY_APPROVAL_WAIT_SLEEP_S="1",
+        CP3_TEST_STUB_RENDER_AFTER_S="3",
+    )
+    assert r.returncode == 0, r.stdout  # the runner's own rc, waited for
+    assert "개장이 정규보다" not in r.stdout
+    assert "no 'render ok' within 1s" in r.stdout
+    assert not env.approval_argv.exists()
 
 
 def test_stock_one_session_per_day_and_old_worktrees_are_cleared(env: Env) -> None:
