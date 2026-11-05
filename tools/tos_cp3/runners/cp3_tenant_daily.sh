@@ -51,9 +51,10 @@
 #      host's paths through TOS_*.
 #   6b. STOCK only: wait (bounded) for the runner's `render ok` line, then write
 #      today's standing approval (#955) — without it the flow stops at step 4 and
-#      the session sends nothing. A session that ended before the render gets no
-#      approval; a slot that already carried today's date is left alone; a failed
-#      write alerts but never stops the session.
+#      the session sends nothing. The bound grows by this day's open delay, because
+#      the render follows the open (#924, §7.2-g). A session that ended before the
+#      render gets no approval; a slot that already carried today's date is left
+#      alone; a failed write alerts but never stops the session.
 #   7. one telegram line at the end: rc 0/143 is a normal end, anything else is a
 #      failure line. Pre-runner refusals (1-3, 5b, fetch, worktree) are failure lines.
 #
@@ -80,7 +81,8 @@
 #   ⛔ CP3_DAILY_TODAY      test-only date override (YYYY-MM-DD). Never in a cron
 #                           line: the runner itself still runs on the real clock.
 #   ⛔ CP3_DAILY_APPROVAL_WAIT_TRIES / _SLEEP_S  120 / 10 — test-only: the STOCK
-#                           `render ok` wait (20 minutes). Never in a cron line.
+#                           `render ok` wait (20 minutes, PLUS this day's open
+#                           delay — #924). Never in a cron line.
 set -u
 umask 077
 
@@ -313,15 +315,41 @@ PY
 # A file already carrying TODAY's date is not rewritten (the writer would refuse
 # it anyway, and re-deriving it is the operator's `--replace` call). Set by the
 # pre-runner slot step below.
+#
+# ⏳ The wait bound counts from the cron minute, and `render ok` lands after the
+# runner's own first-row wait, which ends at the OPEN (on 11-05 the stock session
+# started waiting at 08:53:06 and rendered at 09:01:25). On a dated-override day
+# (#924) the open moves later, so the render moves with it — a 10:00 open puts it
+# past 10:01, hours beyond the fixed 1200 s, and the wait would expire with no
+# approval written: the whole day would send 0 (review-1021 r1 HIGH). The runner
+# already grows its first-row bound by exactly this delay (run_tenant_session.sh
+# step 5c), so the wrapper grows its wait by the same number of seconds, read from
+# the same place (`session_day open-delay`) — never typed here.
+# A failed read falls back to 0 with a log line rather than aborting: the runner
+# reads the same calendar itself in step 5c and refuses the session if it cannot.
 APPROVAL_WAIT_TRIES=${CP3_DAILY_APPROVAL_WAIT_TRIES:-120}
 APPROVAL_WAIT_SLEEP_S=${CP3_DAILY_APPROVAL_WAIT_SLEEP_S:-10}
 write_standing_approval() {
-  local sl=$SESSION/session.log i=0 arc
+  local sl=$SESSION/session.log i=0 arc delay extra=0 tries=$APPROVAL_WAIT_TRIES
   if [ "$APPROVAL_TODAY_PRESENT" = 1 ]; then
     log "오늘($STAMP) 날짜 상시 승인이 이미 있다 — 쓰지 않는다 (재작성은 운영자의 --replace · 런북 §7.2-f)"
     return 0
   fi
-  while [ "$i" -lt "$APPROVAL_WAIT_TRIES" ]; do
+  delay=$(session_day open-delay "$WT" "$WT/$PRODUCER_REL" 2>&1)
+  case "$delay" in
+  '' | *[!0-9]*)
+    log "오늘 개장 지연을 읽지 못했다 — 상시 승인 대기는 기본 $((tries * APPROVAL_WAIT_SLEEP_S))s 그대로: $delay"
+    ;;
+  *)
+    # The ternary short-circuits, so a test-only _SLEEP_S=0 does not divide by zero.
+    extra=$((APPROVAL_WAIT_SLEEP_S > 0 ? delay / APPROVAL_WAIT_SLEEP_S : 0))
+    if [ "$extra" -gt 0 ]; then
+      tries=$((tries + extra))
+      log "개장이 정규보다 ${delay}s 늦다 (#924) — 상시 승인 대기를 $((tries * APPROVAL_WAIT_SLEEP_S))s 로 늘린다"
+    fi
+    ;;
+  esac
+  while [ "$i" -lt "$tries" ]; do
     grep -q 'render ok' "$sl" 2>/dev/null && break
     kill -0 "$runner_pid" 2>/dev/null || break
     sleep "$APPROVAL_WAIT_SLEEP_S"
@@ -329,7 +357,7 @@ write_standing_approval() {
   done
   if ! grep -q 'render ok' "$sl" 2>/dev/null; then
     if kill -0 "$runner_pid" 2>/dev/null; then
-      log "no 'render ok' within $((APPROVAL_WAIT_TRIES * APPROVAL_WAIT_SLEEP_S))s — 상시 승인을 쓰지 않았다 (세션은 그대로 둔다)"
+      log "no 'render ok' within $((tries * APPROVAL_WAIT_SLEEP_S))s — 상시 승인을 쓰지 않았다 (세션은 그대로 둔다)"
       notify "CP-3 tenant $DIR 상시 승인 못 씀 ($TODAY) — render ok 가 오지 않았다. 승인 없이는 송신 0
 세션 $SESSION (session.log)"
     else

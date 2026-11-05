@@ -453,8 +453,15 @@ KRX 가 어떤 날의 개장·종료를 옮기면(수능일: 주식·지수선�
 **캘린더 한 곳**에 적는다 — `config/tos_runtime/{paper,cp3-setup-d-long,cp3-setup-d-short,cp3-setup-d-stock-005930}/calendar.yaml`
 의 `session_overrides` (네 파일은 바이트 동일 유지 · 형식은 파일 안 주석). 이 한 항목을 런타임 세션
 게이트(`tos_runtime.calendar`)·생산자 첫 봉/종료 커서·주식 첫 페이지 커서(`quote_initial_cursor: session_end`)·
-러너 첫 줄 대기(지연분만큼 늘어남)·밴드 기동 시각·cron 래퍼 정지 시각(`그날 종료 + CP3_DAILY_STOP_AFTER_CLOSE_MIN`)이
+러너 첫 줄 대기(지연분만큼 늘어남)·밴드 기동 시각·cron 래퍼 정지 시각(`그날 종료 + CP3_DAILY_STOP_AFTER_CLOSE_MIN`)·
+**cron 래퍼의 (STOCK) 상시 승인 `render ok` 대기**(기본 1200s + 그날 개장 지연 — `render ok` 는 개장을
+따라오므로, 고정 대기는 지연일에 먼저 만료되고 그날 송신이 0 이 된다. review-1021 r1 HIGH)가
 모두 읽는다. 다른 곳에 시각을 다시 적지 않는다.
+
+⚠ 그 **상시 승인 대기**는 래퍼(`tools/tos_cp3/runners/cp3_tenant_daily.sh`) 안에 있고,
+`~/.config/kis-probes/run-cp3-tenant-daily.sh` 는 그 **복사본**이다. 래퍼가 바뀐 PR 을 머지한 뒤에는
+운영자가 `bash tools/tos_cp3/runners/install_tenant_cron.sh --apply` 를 한 번 다시 돌려야
+설치된 복사본이 따라온다(설치본은 `origin/main` 에서 복사된다 — 작업 트리에서 복사하지 않는다).
 
 **2026-11-19(2027학년도 수능) — KRX 2026-11-05 공지로 확인됐다.** 네 캘린더의 항목은 **공지값**이고
 (선례값이 아니다) `calendar_version` 은 `krx-2026.10` → `krx-2026.11` 로 올라가 있다. 출처 =
@@ -480,10 +487,11 @@ KRX 가 어떤 날의 개장·종료를 옮기면(수능일: 주식·지수선�
 `krx-2026.11.1`** 로 올린다. 네 트리의 `time.yaml::trading_calendar_version` 도 **같은 커밋**에
 (불일치 = `SessionCalendarMismatch` 부팅 거부). 네 파일 바이트 동일도 유지한다(`md5sum`).
 
-**기한: 2026-11-19 아침 부팅 전까지 머지되어 있어야 한다.** cron 은 LONG 08:38 · SHORT 08:40 KST 에
-뜨고(`crontab -l | grep cp3-.*-tenant-daily`), 상주 paper 는 08:45 다. 래퍼들은 매 세션 `origin/main`
-에서 **새 워크트리를 떠서** 부팅하므로 재시작·재설치는 필요 없다 — 그 시각 전에 `origin/main` 에
-들어가 있기만 하면 된다. 08:38 을 넘기면 그날 세션은 정규 시각으로 이미 떠 있다.
+**기한: 2026-11-19 아침 부팅 전까지 머지되어 있어야 한다.** cron 은 LONG 08:38 · SHORT 08:40 ·
+STOCK 08:53 KST 에 뜨고(`crontab -l | grep cp3-.*-tenant-daily`), 상주 paper 는 08:45 다. 래퍼들은
+매 세션 `origin/main` 에서 **새 워크트리를 떠서** 부팅하므로 재시작·재설치는 필요 없다 — 그 시각
+전에 `origin/main` 에 들어가 있기만 하면 된다. 가장 이른 08:38 을 넘기면 그날 그 세션은 정규 시각으로
+이미 떠 있다(08:53 STOCK 은 그만큼 여유가 더 있다).
 
 **머지 뒤, 11-19 전 dry-run (읽기 전용, 운영자):**
 
@@ -546,8 +554,8 @@ override 를 읽으므로** 그날 09:45 개장도, 15:45 까지의 창도 올�
 # 되돌리는 것을 잊으면 그 뒤로 매일 한 시간씩 길어진다 — 「권장」이 그냥 받아들이는 쪽인 이유다.
 ```
 
-주식 수동 세션(`TOS_STOCK_STOP_AT`)은 위 dry-run 의 `16:35` 를 그대로 넣는다 — 이쪽은 상주
-래퍼와 무관하게 캘린더에서 읽은 값이다.
+주식 수동 세션(`TOS_STOCK_STOP_AT`)은 위 dry-run 의 `16:40`(= 16:30 종료 + 10분) 을 그대로 넣는다 —
+이쪽은 상주 래퍼와 무관하게 캘린더에서 읽은 값이다.
 
 #### 7.2-h synthetic venue 원장 (#1011) — 켜기 · 볼 것 · 되돌림
 
