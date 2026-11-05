@@ -310,7 +310,20 @@ _SIGNAL_ROW = {
 
 
 @pytest.fixture(scope="module")
-def rendered(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def rendered(
+    tmp_path_factory: pytest.TempPathFactory, requires_repo_checkout: None
+) -> Path:
+    """One render of the REAL stock tree, shared by every test below that reads it.
+
+    ``requires_repo_checkout`` (``tests/conftest.py``) is the precondition: this renders
+    ``_STOCK``, whose manifest binds ``docs/broker-profiles/…-draft.yaml`` from THIS
+    checkout, and :func:`rpc.broker_profile_pin` refuses a profile it cannot read as a
+    committed ``HEAD`` blob (#958). The ``Dockerfile.test`` image deliberately has no git
+    metadata — ``.dockerignore`` excludes ``.git`` — so the render refuses there and these
+    tests skip, in that image and ONLY there (#835, #895). On the host ``test`` job, in the
+    Dev Container and on a laptop the marker is unset, so a missing work tree still fails
+    loudly; see ``tests/support/git_env.py`` for why a bare "no repo -> skip" was a hole.
+    """
     base = tmp_path_factory.mktemp("stock-mock-render")
     journal = base / "journal.jsonl"
     journal.write_text("", encoding="utf-8")
