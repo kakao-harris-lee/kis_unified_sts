@@ -81,6 +81,16 @@ read inside that block, so the wait still ends before ``t0`` (decision 6: "대�
 then sends nothing and ends ``REJECT`` with ``reason=throttled`` — the same disposition KIS's own
 ``EGW00201`` gets, and true here because nothing reached the broker. Never a resend.
 
+**Trading date (incident 2026-11-05).** ``trading_date_now`` is read ONCE per ``send_once``, at
+send start — before the token/pacer/credential block — and that one reading is what stamps the
+result. It used to be read after the POST returned, and on the first-ever CP-3 stock MOCK order
+(005930) the send blocked ~2340 ms on its pacer slot: by then the conservative wall clock was
+past its 1000 ms freshness bound, the source answered ``None``, and the ACK went out undated.
+An undated ACK cannot be joined to a broker row by ODNO (a per-day sequence), so the fill
+observer never polled for it and the fill stayed unobserved for 6.5 h. Reading before the wait
+cannot fix an untrusted clock — it only stops this adapter's own wait from making a trusted one
+stale. ``None`` is still ``None``: nothing is ever guessed.
+
 Firewall: stdlib (``hashlib``, ``json``) + ``tos.*`` (``tos.brokeradapter``,
 ``tos.egressgw``, ``tos.engine``, ``tos.ordering``) + ``tos_runtime.custody``/``tos_runtime.
 time`` + this package's own sibling modules only. No third-party import, no ``os.environ``.
@@ -291,7 +301,12 @@ class KisMockTransport:
         seal, tr_id, body_bytes = self._prepare_send(attempt)
         if self._config.mode == "dry_run":
             return self._dry_run_result(attempt.attempt_id, seal, tr_id, body_bytes)
-        return self._perform_live_send(attempt.attempt_id, seal, tr_id, body_bytes)
+        # The date is read HERE — once, before the token/pacer/credential block, so no wait can
+        # happen between the reading and the send (module docstring "Trading date").
+        trading_date = self._stamp_trading_date()
+        return self._perform_live_send(
+            attempt.attempt_id, seal, tr_id, body_bytes, trading_date=trading_date
+        )
 
     def _prepare_send(self, attempt: AttemptRequest) -> tuple[SendSeal, str, bytes]:
         """Resolve the seal, pick the TR id, and verify the digest binding (decision 3).
@@ -361,16 +376,25 @@ class KisMockTransport:
         )
 
     def _perform_live_send(
-        self, attempt_id: str, seal: SendSeal, tr_id: str, body_bytes: bytes
+        self,
+        attempt_id: str,
+        seal: SendSeal,
+        tr_id: str,
+        body_bytes: bytes,
+        *,
+        trading_date: str | None,
     ) -> EgressResultPayload:
         """decision 2/6 — exactly one POST, paced by the app key's pacer, with typed-fault
-        mapping (module docstring "Pacing")."""
+        mapping (module docstring "Pacing"). ``trading_date`` was captured by the caller before
+        any wait (module docstring "Trading date")."""
         try:
             # A token POST is paced too; its refused slot ends this attempt the same way. Any
             # other token fault propagates unchanged (TokenStale, a client error).
             access_token = self._ensure_token_string()
         except KisPacingRefused as exc:
-            return self._pacing_refused(attempt_id, seal, exc)
+            return self._pacing_refused(
+                attempt_id, seal, exc, trading_date=trading_date
+            )
         try:
             # (review F5) The app key/secret are loaded inside the NARROWEST possible ``with``
             # block, wrapped directly around the one POST, so the handles are zeroed the
@@ -386,7 +410,9 @@ class KisMockTransport:
                     path=self._config.order_path,
                 )
         except KisPacingRefused as exc:
-            return self._pacing_refused(attempt_id, seal, exc)
+            return self._pacing_refused(
+                attempt_id, seal, exc, trading_date=trading_date
+            )
         except KisMockTimeoutError:
             return self._finish(
                 attempt_id=attempt_id,
@@ -396,6 +422,7 @@ class KisMockTransport:
                 t0=t0,
                 extra={"reason": "socket_timeout"},
                 status=None,
+                trading_date=trading_date,
             )
         except KisMockConnectionError:
             return self._finish(
@@ -406,6 +433,7 @@ class KisMockTransport:
                 t0=t0,
                 extra={"reason": "connection_error"},
                 status=None,
+                trading_date=trading_date,
             )
         kind, broker_execution_id, extra = self._map_response(response)
         return self._finish(
@@ -416,10 +444,16 @@ class KisMockTransport:
             t0=t0,
             extra=extra,
             status=response.status,
+            trading_date=trading_date,
         )
 
     def _pacing_refused(
-        self, attempt_id: str, seal: SendSeal, exc: KisPacingRefused
+        self,
+        attempt_id: str,
+        seal: SendSeal,
+        exc: KisPacingRefused,
+        *,
+        trading_date: str | None,
     ) -> EgressResultPayload:
         """The app key's pacer refused this attempt's slot: nothing was sent, so ``REJECT``
         (``reason=throttled``, like ``EGW00201``; ``sent: false`` tells the two apart).
@@ -437,6 +471,7 @@ class KisMockTransport:
                 "detail": str(exc),
             },
             status=None,
+            trading_date=trading_date,
         )
 
     def _tr_id_for_side(self, side: str) -> str:
@@ -506,6 +541,7 @@ class KisMockTransport:
         t0: int,
         extra: Mapping[str, Any],
         status: int | None,
+        trading_date: str | None,
     ) -> EgressResultPayload:
         latency_ms = self._monotonic.now_ms() - t0
         self._evidence(
@@ -526,16 +562,15 @@ class KisMockTransport:
             broker_execution_id=broker_execution_id,
             reference=seal.reference,
             # A KIS ODNO is a per-day sequence: the date is what makes it an identity. Only a
-            # result the broker actually numbered gets one.
-            trading_date=(
-                self._stamp_trading_date() if broker_execution_id is not None else None
-            ),
+            # result the broker actually numbered gets one. The date itself was captured at
+            # send start — never re-read here (module docstring "Trading date").
+            trading_date=(trading_date if broker_execution_id is not None else None),
         )
 
     def _stamp_trading_date(self) -> str | None:
-        """The injected trading date, or ``None``. Called AFTER a real order was acknowledged, so a
-        failure here must never lose the result: any exception degrades to ``None`` — an undated
-        result simply cannot join by ODNO (review finding 2)."""
+        """The injected trading date, or ``None``. Called at send start, so a failure here must
+        never lose the send: any exception degrades to ``None`` — an undated result simply cannot
+        join by ODNO (review finding 2), which the fill observer then says out loud."""
         if self._trading_date_now is None:
             return None
         try:

@@ -62,6 +62,7 @@ from tos_runtime.marketfeed.scheduler import TickScheduler
 from tos_runtime.nontrade.convert import payload_from_observation
 from tos_runtime.nontrade.observations import NonTradeObservation
 from tos_runtime.nontrade.processor import NonTradeEventProcessor, NonTradeOutcome
+from tos_runtime.posttrade.unsent_release import UnsentReleasePass
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recovery.barrier import RecoveryVerdict
 from tos_runtime.riskstate.service import RiskStateService
@@ -381,6 +382,16 @@ class ComposedRuntime:
     #: PR-3b — provenance of the broker witness release and recovery reconcile against:
     #: ``"kis-mock-stock"`` on a stock MOCK boot, ``"synthetic-ledger"`` otherwise.
     broker_witness_provenance: str = "synthetic-ledger"
+    #: #974 Q2 — the never-sent reservation release pass
+    #: (:class:`~tos_runtime.posttrade.unsent_release.UnsentReleasePass`), built and run once at
+    #: boot by :func:`~tos_runtime.compose._release_wiring.apply_release_wiring`. Published
+    #: rather than bound there because the driver holds exactly ONE
+    #: :meth:`~tos_runtime.engine.driver.EngineDriver.bind_after_turn` slot:
+    #: :func:`~tos_runtime.compose._operations_wiring.apply_operations_wiring` runs last and is
+    #: the single binding site, composing this pass with the operator projection exporter when
+    #: that one is enabled too. ``None`` when ``driver`` was already ``None`` at release wiring
+    #: time (nothing to run it after).
+    unsent_release: UnsentReleasePass | None = None
 
     #: #1011 P2 — this boot's synthetic venue ledger parts, or an all-``None``
     #: :class:`~tos_runtime.compose._venue_ledger_wiring.SyntheticVenueLedgerParts`

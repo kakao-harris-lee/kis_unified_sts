@@ -8,9 +8,12 @@
 #
 # Runbook docs/runbooks/tos-paper-boot.md §7.2-e. Idempotent: the block is
 # delimited by BEGIN/END markers and replaced whole; lines tagged
-# `# cp3-long-tenant-daily` / `# cp3-short-tenant-daily` outside the block (the
-# hand-installed 2026-10-22 lines) are dropped so a direction is never scheduled
-# twice. Every other crontab line is kept byte for byte.
+# `# cp3-{long,short,stock}-tenant-daily` outside the block (the hand-installed
+# 2026-10-22 lines) are dropped so a direction is never scheduled twice. Every
+# other crontab line is kept byte for byte — including a one-off stock line like
+# `# run-stock-mock-<date>`, whose tag is different: if such a line has not fired
+# yet on install day, remove it by hand first or the day gets two sessions
+# (runbook §7.2-e).
 #
 # Provenance: the wrapper copied to $DEST is read with `git show origin/main:…`,
 # never from a working tree, and --apply refuses unless THIS installer's bytes
@@ -49,8 +52,15 @@ SELF_REL=tools/tos_cp3/runners/install_tenant_cron.sh
 # REAL read key and KIS issues at most one token per minute. Both start before
 # the 08:45 CONTINUOUS open (calendar.yaml krx-index-futures) and before the
 # resident paper session's own 08:45 line.
+#
+# STOCK is 08:53, inside the 08:52-09:05 start window §7.2-f names (the stock
+# CONTINUOUS open is 09:00 and the runner's first-row wait is 600 s from it). It
+# does not need a gap from the two futures lines: the stock producer uses the
+# stock REAL key and the runtime the mock key, different app-key fingerprints, so
+# their once-a-minute token issues never collide with the futures one.
 LONG_AT="38 8"
 SHORT_AT="40 8"
+STOCK_AT="53 8"
 BEGIN_MARK="# BEGIN CP3_TENANT_DAILY"
 END_MARK="# END CP3_TENANT_DAILY"
 
@@ -88,7 +98,7 @@ awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
   index($0, b) == 1 { if (skip) bad = 1; skip = 1; next }
   skip && index($0, e) == 1 { skip = 0; next }
   skip { next }
-  /# cp3-(long|short)-tenant-daily[[:space:]]*$/ { next }
+  /# cp3-(long|short|stock)-tenant-daily[[:space:]]*$/ { next }
   { print }
   END { exit (skip || bad) ? 3 : 0 }
 ' "$CUR" >"$NEW" ||
@@ -100,6 +110,7 @@ if [ "$REMOVE" = 0 ]; then
     echo "CRON_TZ=Asia/Seoul"
     line LONG long "$LONG_AT"
     line SHORT short "$SHORT_AT"
+    line STOCK stock "$STOCK_AT"
     echo "$END_MARK"
   } >>"$NEW"
 fi

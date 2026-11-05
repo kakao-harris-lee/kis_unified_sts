@@ -911,6 +911,7 @@ def test_policy_digests_cannot_tell_the_two_trees_apart(tmp_path: Path) -> None:
                 environment="paper",
                 account="a",
                 instrument="i",
+                admits_flat_exit=True,  # #1025
             ),
         ),
         scheme=_SCHEME,
@@ -924,6 +925,7 @@ def test_policy_digests_cannot_tell_the_two_trees_apart(tmp_path: Path) -> None:
                 account="a",
                 instrument="i",
                 direction="SHORT",
+                admits_flat_exit=True,  # #1025
             ),
         ),
         scheme=_SCHEME,

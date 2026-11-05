@@ -532,6 +532,8 @@ def test_an_ack_whose_odno_has_no_usable_digits_is_never_tracked(
     assert len(server.all_requests) == before
     (untrackable,) = _rows(runtime, "FILL_OBSERVER_ACK_UNTRACKABLE")
     assert untrackable["broker_execution_id"] == "0000000000"
+    # The reason tells this refusal apart from the undated ACK's (incident 2026-11-05).
+    assert untrackable["reason"] == "odno_no_digits"
     _close(runtime)
 
 

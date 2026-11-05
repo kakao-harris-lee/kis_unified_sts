@@ -54,6 +54,7 @@ from tos.engine.vocabulary import (
     ResultDisposition,
     StageAuthorityClass,
     StageOutcome,
+    UnsentDiscardReason,
 )
 from tos.nontrade import (
     CorrectionReversalRecord,
@@ -86,6 +87,7 @@ __all__ = [
     "StageRequest",
     "StageVerdict",
     "TimeAdmissionInputs",
+    "UnsentDiscardRef",
     "egress_result_outcome_digest",
     "event_identity",
 ]
@@ -651,6 +653,40 @@ class ProvisionalReservation(FrozenModel):
     #: unwinding a settlement that was already proven before the quarantine began.
     pre_quarantine_capacity: CapacityState | None = None
     authority: AllFalseCoordinatorAuthority = AllFalseCoordinatorAuthority()
+
+
+class UnsentDiscardRef(FrozenModel):
+    """The typed token gating :meth:`~tos.engine.state.ProvisionalReservationLedger
+    .discard_unsent` (2026-11-01 unsent-reservation-release plan §3.2; issue #974).
+
+    It lives here, beside the :class:`ProvisionalReservation` it names, because it is also the
+    payload shape of the durable
+    :data:`~tos.engine.vocabulary.RESERVATION_DISCARDED_UNSENT_KIND` record — the runtime writes
+    exactly these fields and a boot replay validates them back into this same type, so replay
+    re-makes the identical call.
+
+    **Why a token at all, and why not :class:`~tos.engine.state.FinalityProofRef`.** Those two
+    methods are the only ways a scope's occupancy is ever given back, so both refuse anything but
+    their own type (``TypeError``) rather than accept a bare string a caller derived from
+    somewhere. They are deliberately *distinct* types — passing one where the other belongs is a
+    type error, not a silently-wrong mutation — and they key on different identities for a
+    structural reason: a finality proof resolves one *attempt*, so it keys on ``attempt_id``; a
+    never-sent reservation may hold no attempt at all (``COMMITTED_UNBOUND`` is reached at step 9,
+    five steps before step 14 binds one), so the only identity spanning the whole discardable
+    window is the ``proposal_id`` ``commit_unbound`` recorded. ``FinalityProofRef``'s evidence
+    coordinates have no counterpart here on purpose: the kernel verifies no evidence (it reads no
+    store), and the runtime predicate that does (plan §3.1) belongs to the caller.
+
+    Attributes:
+        proposal_id: The proposal whose reservation this discards — matched across every scope the
+            ledger holds, so the caller need not re-derive which one holds it.
+        reason: The closed :class:`~tos.engine.vocabulary.UnsentDiscardReason` cause. Carried into
+            evidence, never consulted by the gates: a reason explains a discard, it never licenses
+            one.
+    """
+
+    proposal_id: str
+    reason: UnsentDiscardReason
 
 
 class EgressResultOutcome(FrozenModel):

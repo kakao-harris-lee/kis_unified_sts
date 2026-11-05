@@ -136,6 +136,7 @@ from tos_runtime.risk.ledger_stages import (
     LedgerVerificationStage,
     SyntheticCloseEntryFence,
 )
+from tos_runtime.riskstate.close_bound import EntryCloseBound
 from tos_runtime.strategy.resolve import (
     ResolvedStrategyRegistry,
     resolve_strategy_registry,
@@ -544,10 +545,17 @@ def _build_construction_stages(
     *,
     venue_service: VenueConstraintService,
     loaded_ocp: LoadedOrderConstructionPolicy,
+    entry_close_bound_reader: Callable[[], EntryCloseBound] | None = None,
 ) -> _ConstructionStages:
     """Steps 2/3/5/11 (design #34 §3.2). Step 2's OCP coordinates come from ``build_venue_service``
     (plan §2 decision 6); envelope/intent/command-id/generation come from the governed OCP
-    (``_envelope_wiring.py``, a′ wave). Step 3 folds the governed ``venue_service``."""
+    (``_envelope_wiring.py``, a′ wave). Step 3 folds the governed ``venue_service``.
+
+    ``entry_close_bound_reader`` is the composition's ONE durable CLOSE-bound reader, threaded
+    into step 2 so a FLAT proposal's held position is the same proven entry remainder step 6
+    decides against (issue #1025; ``_attempt_shape.py``'s own module docstring). It is the
+    reader the composition root also hands the risk-state service — one instance, never a
+    second one built here, and never selected by tree name."""
     inputs = build_construction_inputs(
         construction, venue_service=venue_service, loaded_ocp=loaded_ocp, scheme=_SCHEME
     )
@@ -558,6 +566,7 @@ def _build_construction_stages(
             venue_service=venue_service,
         ),
         loaded_ocp=loaded_ocp,
+        entry_close_bound_reader=entry_close_bound_reader,  # #1025: FLAT held position
         price=construction.price,
         venue_constraint=venue_service.quantity_constraint,
         scheme=_SCHEME,

@@ -8,7 +8,8 @@
   digest(source_revision · activation) 와 런타임 ``code_digest`` 대 ``release.yaml``
   ``expected_code_digest``.
 * 그 세션 날짜로 한정한 틱 수, 결정 종류, 보류(DECISION_WITHHELD 등) 사유와 흐름 정지 사유
-  분포, M5 첫 수(값을 쥐고도 UNKNOWN 으로 거절된 post-boot 봉), ``MARKETFEED_FIELD_REFUSED``
+  분포(선물 트리의 4단계 UNKNOWN 은 따로 떼어 이름을 붙인다 — :func:`_fmt_flow_halts`),
+  M5 첫 수(값을 쥐고도 UNKNOWN 으로 거절된 post-boot 봉), ``MARKETFEED_FIELD_REFUSED``
   행, ``VENUE_BAND_OBSERVED`` 행, ``MARKETFEED_PASS_OVERRUN`` 행 수와 가장 긴 pass(#949).
 * B3 대조 — 먼저 **돌았는가**(``<session>/b3/status.json``, 세션 러너 step 14 가 자동으로
   남긴다), 그 다음 **무엇을 봤는가**(``<session>/b3/report/summary.json``) — unresolved ·
@@ -74,6 +75,16 @@ NORMAL_END_RCS = frozenset({0, 143})
 
 #: stale 거절로 읽는 보류 사유(#931 운영자 지시). 그 밖의 사유는 1건이라도 막힘.
 STALE_HALT_REASON = "TIME_NOT_ADMITTED"
+
+#: 4단계(독립 승인) 흐름 정지를 가르는 두 값 — ``FLOW_HALTED`` 행의 ``halt_reason`` 과
+#: ``step``(런타임 ``engine.vocabulary.HaltReason`` / ``CommitmentStep`` 의 값).
+STAGE_UNKNOWN_HALT_REASON = "STAGE_UNKNOWN"
+INDEPENDENT_APPROVAL_STEP = "INDEPENDENT_APPROVAL"
+#: 「결정 전용」으로 보는 시장 — 러너가 session.log 에 적는 ``market=`` 값
+#: (``run_tenant_session.sh`` step 5b: 생산자 config 와 트리 RENDER.yaml 이 일치한 값).
+DECISION_ONLY_MARKET = "futures"
+#: 그 시장의 4단계 UNKNOWN 정지에 붙이는 이름 — :func:`_fmt_flow_halts` 참조.
+STEP4_UNKNOWN_EXPECTED_LABEL = "4단계 승인 없음(선물 결정 전용 — 예상)"
 
 FIELD_REFUSED_KIND = "MARKETFEED_FIELD_REFUSED"
 #: ``MARKETFEED_FIELD_REFUSED.refused_by_reason`` 의 stale 키(런타임 ``_derive_field_state``).
@@ -375,6 +386,10 @@ class RunnerLog:
 
     first_ts: str | None = None
     repo_commit: str | None = None
+    #: 러너 step 5b 가 적은 시장(``futures`` · ``stock``) — 생산자 config 와 트리
+    #: RENDER.yaml 이 **일치했을 때만** 적히므로 트리의 범위를 말하는 값이다. 그 줄이
+    #: 없는 옛 세션 로그(~2026-10-23)에서는 ``None`` 이고, 그때는 시장을 모른다.
+    market: str | None = None
     instrument: str | None = None
     data_leaf: str | None = None
     tree_id: str | None = None
@@ -398,6 +413,8 @@ class RunnerLog:
 
 _RUNNER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("repo_commit", re.compile(r"checkout ok: .*repo_commit=(\w+)")),
+    # 줄 머리를 고정한다 — 뒤의 B3 줄(`=== B3 … market=… ceiling …`)도 같은 토큰을 싣는다.
+    ("market", re.compile(r"^market=(\w+) \(tree and producer agree\)")),
     ("data_leaf", re.compile(r"instrument=(\S+) · data leaf (\S+)")),
     ("render", re.compile(r"=== RENDER tree=(\S+) direction=(\S+)")),
     ("band_ok", re.compile(r"band line ok · .*digest=(\w+)")),
@@ -433,6 +450,10 @@ def parse_runner_log(text: str) -> RunnerLog:
                 continue
             if name == "repo_commit":
                 out.repo_commit = m.group(1)
+            elif name == "market" and out.market is None:
+                # 첫 줄만 — 러너 5b 가 먼저 적는다. 같은 로그에 쓰는 자식 프로세스가
+                # 나중에 같은 꼴의 줄을 내도 덮지 못한다(review-1030 LOW-1).
+                out.market = m.group(1)
             elif name == "data_leaf":
                 out.instrument, out.data_leaf = m.group(1), m.group(2)
             elif name == "render":
@@ -739,6 +760,13 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
     flow_halts = Counter(
         r["flow_halt_reason"] for r in ticks if r.get("flow_halt_reason") is not None
     )
+    # 위 분포의 **부분집합** — 같은 틱 목록에서 세므로 STAGE_UNKNOWN 수를 넘지 못한다.
+    step4_unknown = sum(
+        1
+        for r in ticks
+        if r.get("flow_halt_reason") == STAGE_UNKNOWN_HALT_REASON
+        and r.get("flow_halt_step") == INDEPENDENT_APPROVAL_STEP
+    )
     withheld_post_boot = [
         r for r in post_boot if r["outcome_kind"] == si.NO_OUTCOME_KIND
     ]
@@ -836,6 +864,7 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
         "outcomes": dict(sorted(outcomes.items())),
         "withheld_by_reason": dict(sorted(withheld.items())),
         "flow_halts": dict(sorted(flow_halts.items())),
+        "flow_halts_independent_approval_unknown": step4_unknown,
         "capacity_denied": sum(1 for r in ticks if r.get("capacity_denied")),
         "handed_off": sum(1 for r in ticks if r.get("handed_off")),
         "stale_withheld_post_boot": stale,
@@ -1873,6 +1902,7 @@ def _session_json(s: TenantSession) -> dict[str, Any]:
         "run_alive": s.run_alive,
         "producer_alive": s.producer_alive,
         "instrument": r.instrument,
+        "market": r.market,
         "tree_id": r.tree_id,
         "direction": r.direction,
         "repo_commit": r.repo_commit,
@@ -1929,6 +1959,33 @@ def _fmt_counts(counts: Mapping[str, Any] | None) -> str:
     return " · ".join(f"{k} {v}" for k, v in counts.items())
 
 
+def _fmt_flow_halts(store: Mapping[str, Any], market: str | None) -> str:
+    """흐름 정지 사유 분포. 선물 트리의 4단계 UNKNOWN 은 떼어 이름을 붙인다.
+
+    상주 session 승인은 **설계상 MOCK 주식 전용**이고(``tos/runtime/src/tos_runtime/
+    authority/standing.py`` 모듈 docstring · ``provide()``), 선물 트리에 남는 원천은
+    건당 운영자 승인 파일뿐이다 — 그 파일은 제안이 생긴 뒤에만 쓸 수 있고 멈춘 제안을
+    다시 끌지 않으므로, 2·3 단계를 지난 선물 진입 제안은 4단계에서 UNKNOWN 으로 멈춘다.
+    운영자 판정 2026-11-05: **선물 트리는 결정 전용**이고 이 정지가 예상 종착이다
+    (LONG 실측 11 부팅 67 건 · 그중 2026-11-04 40 건, 4단계 admit 은 한 번도 없다).
+    그래서 소견(막힘/확인)을 새로 올리지 않고 줄에 이름만 붙인다.
+
+    시장을 모르는 세션(``market=`` 줄이 없는 옛 로그)과 주식 트리에서는 떼지 않는다 —
+    주식 4단계 UNKNOWN 은 standing 승인이 덮어야 하는 것이라 예상이 아니다.
+    """
+    counts = dict(store["flow_halts"])
+    step4 = store.get("flow_halts_independent_approval_unknown") or 0
+    if market != DECISION_ONLY_MARKET or not step4:
+        return _fmt_counts(counts)
+    rest = counts.get(STAGE_UNKNOWN_HALT_REASON, 0) - step4
+    if rest > 0:
+        counts[STAGE_UNKNOWN_HALT_REASON] = rest
+    else:
+        counts.pop(STAGE_UNKNOWN_HALT_REASON, None)
+    counts[STEP4_UNKNOWN_EXPECTED_LABEL] = step4
+    return _fmt_counts(counts)
+
+
 def _short(value: str | None, n: int = 12) -> str:
     return value[:n] if value else "—"
 
@@ -1977,7 +2034,8 @@ def render_text(board: Mapping[str, Any]) -> str:
             )
             add(f"    보류 사유: {_fmt_counts(st['withheld_by_reason'])}")
             add(
-                f"    흐름 정지: {_fmt_counts(st['flow_halts'])} · capacity_denied {st['capacity_denied']} · handed_off {st['handed_off']}"
+                f"    흐름 정지: {_fmt_flow_halts(st, s['market'])}"
+                f" · capacity_denied {st['capacity_denied']} · handed_off {st['handed_off']}"
             )
             ratio = st["m5_ratio"]
             add(

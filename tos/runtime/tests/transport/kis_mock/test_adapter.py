@@ -317,11 +317,12 @@ def test_ack_path(server: FakeKisServer) -> None:
     assert record["seal_digest"] == seal.seal_digest
 
 
-def test_ack_is_stamped_with_the_trading_date_at_the_ack_instant(
+def test_ack_is_stamped_with_the_trading_date_captured_at_send_start(
     server: FakeKisServer,
 ) -> None:
     """Plan 2026-09-26 egress trading date T-3: the ODNO is a per-day sequence, so the result the
-    broker numbered carries the KST trading date read when it acknowledged."""
+    broker numbered carries the KST trading date — read ONCE, at send start (2026-11-05).
+    """
     attempt, seal = _live_ack_setup(server)
     calls: list[None] = []
 
@@ -336,6 +337,50 @@ def test_ack_is_stamped_with_the_trading_date_at_the_ack_instant(
     assert result.broker_execution_id == "ODNO-1"
     assert result.trading_date == "20260805"
     assert len(calls) == 1
+
+
+def test_the_date_is_captured_before_the_send_blocks_not_after_the_post(
+    server: FakeKisServer,
+) -> None:
+    """Incident 2026-11-05 (CP-3 stock MOCK 005930, the first-ever MOCK order): the send blocked
+    ~2340 ms waiting for its app-key pacer slot, so a date read AFTER the POST found the
+    conservative wall clock stale (max age 1000 ms) and answered ``None``. The ACK went out
+    undated, the fill observer could not join it by ODNO, and the fill stayed unobserved for
+    6.5 h. The date is therefore read at send start, before any wait.
+
+    The scripted clock advance stands in for that blocked send (``on_request`` fires on the
+    server thread once the POST has arrived — i.e. after the pacer wait), so no real time
+    passes. Mutation: read the date in ``_finish`` instead -> ``None`` -> red.
+    """
+    attempt, seal = _live_ack_setup(server)
+    mono = FakeMonotonicSource()
+    server.set_response(
+        ORDER_PATH,
+        status=200,
+        body={
+            "rt_cd": "0",
+            "msg_cd": "APBK0013",
+            "msg1": "정상처리",
+            "output": {"ODNO": "ODNO-1"},
+        },
+        on_request=lambda: mono.advance(2_340),
+    )
+    #: ``compose/_session_wiring``'s conservative freshness bound for a wall-clock reading.
+    freshness_age_ms = 1_000
+
+    def trading_date_now() -> str | None:
+        return "20261105" if mono.now_ms() <= freshness_age_ms else None
+
+    transport, _, _, _ = _build_transport(
+        server,
+        seals={attempt.attempt_id: seal},
+        monotonic=mono,
+        trading_date_now=trading_date_now,
+    )
+    result = _send(transport, attempt)
+    assert result.kind is EgressResultKind.ACK
+    assert result.broker_execution_id == "ODNO-1"
+    assert result.trading_date == "20261105"
 
 
 def test_ack_without_an_established_date_carries_none(server: FakeKisServer) -> None:

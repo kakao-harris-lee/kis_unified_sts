@@ -112,7 +112,11 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
             "_runtime.wire_codec",
             "policy_generation",
             "_model_view.policy_generation",
+            # This tree is one generation AHEAD of LONG (wire_codec took 4 here), so every
+            # later approval row sits at a different index: #1025's FLAT approval is row 3 in
+            # LONG and row 4 here, and row 3 here is still the wire-codec one.
             "approved_by.3",
+            "approved_by.4",
         }
     ),
     "venue_constraint_policy.yaml": frozenset(
@@ -361,6 +365,9 @@ def _install_stock_tree(config_dir: Path) -> str:
             environment=_VENUE_POLICY_ENVIRONMENT,
             account=_VENUE_POLICY_ACCOUNT,
             instrument=_VENUE_POLICY_INSTRUMENT,
+            # #1025: this tenant tree's OCP admits the FLAT basis; the venue policy has no
+            # sizing block for the flag to mean anything, so it is named per file.
+            admits_flat_exit=name == "order_construction_policy.yaml",
         )
         (config_dir / name).write_text(
             yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
@@ -517,7 +524,9 @@ def test_the_stock_ocp_declares_the_kis_mock_wire_codec_and_a_null_one_refuses_t
     )
     assert ocp.wire_codec_kind == "kis-order-cash-v1"
     assert ocp.wire_fields == KIS_ORDER_CASH_WIRE_FIELDS
-    assert ocp.policy.policy_generation == 4
+    # generation 5 since #1025 added the FLAT basis to this tree's admitted set; the
+    # wire codec this test is about landed in generation 4 and is unchanged by it.
+    assert ocp.policy.policy_generation == 5
 
     _mock_stock_deployment(config_dir, custody_root, server, monkeypatch)
     path = config_dir / "order_construction_policy.yaml"
@@ -536,6 +545,7 @@ def _write_filled(directory: Path, name: str) -> Path:
         environment=_VENUE_POLICY_ENVIRONMENT,
         account=_VENUE_POLICY_ACCOUNT,
         instrument=_VENUE_POLICY_INSTRUMENT,
+        admits_flat_exit=name == "order_construction_policy.yaml",  # #1025
     )
     path = directory / name
     path.write_text(

@@ -39,6 +39,7 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.orthostate_projection import (
     NEW_RISK_HALTED_BY_COUPLING_VIOLATION,
 )
+from tos_runtime.engine.replay_discards import EngineDiscards
 from tos_runtime.engine.replay_releases import EngineReleases, RclCommitted
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -413,6 +414,29 @@ def _load_releases(
     )
 
 
+def _load_discards(
+    evidence_store: SqliteEvidenceStore, emergency_log: EmergencyAppendLog
+) -> EngineDiscards:
+    """The live engine's recorded never-sent discards, each replay refusal recorded as a
+    ``REPLAY_DIVERGED`` halt (:mod:`tos_runtime.engine.replay_discards`).
+
+    Applied just after :func:`_load_releases`'s own rows at every boundary. The relative order is
+    immaterial — a discard and a release can never name the same reservation, one being
+    ``NOT_SENT`` and the other settled — and is fixed only so the replay stays deterministic.
+    """
+
+    def _halt(payload: dict[str, Any]) -> None:
+        record_halt(
+            evidence_store,
+            emergency_log,
+            payload=payload,
+            kind=_REPLAY_DIVERGED_KIND,
+            record_class=_REPLAY_DIVERGED_RECORD_CLASS,
+        )
+
+    return EngineDiscards.load(evidence_store, on_divergence=_halt)
+
+
 def replay_engine(
     inbox: SqliteEventInbox,
     evidence_store: SqliteEvidenceStore,
@@ -463,6 +487,7 @@ def replay_engine(
 
     recorded = _recorded_receipts(evidence_store)
     releases = _load_releases(evidence_store, emergency_log, rcl_committed)
+    discards = _load_discards(evidence_store, emergency_log)
     admitted = list(inbox.replay())
     if window_events is not None:
         admitted = admitted[-window_events:]
@@ -480,6 +505,7 @@ def replay_engine(
             # admitted but not yet consumed) — not a divergence, just not yet a baseline.
             continue
         diverged.extend(releases.before(event, event_id, core))
+        diverged.extend(discards.before(event_id, core))
         outcome = _compare_one_event(
             event,
             recorded[event_id],
@@ -502,6 +528,7 @@ def replay_engine(
         if outcome.diverged:
             diverged.append(event_id)
     diverged.extend(releases.before(None, None, core))
+    diverged.extend(discards.before(None, core))
     return ReplayVerdict(
         total_compared=compared,
         diverged=tuple(diverged),

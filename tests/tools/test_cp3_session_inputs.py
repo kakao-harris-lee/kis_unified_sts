@@ -1250,6 +1250,122 @@ def test_red_a_tick_whose_snapshot_is_missing_is_refused(
         si.live_decision_records(data_dir)
 
 
+def _append_consumed_bar(
+    hinge: dict[str, Any], data_dir: Path, bar: Bar, *, tick_seq: int
+) -> None:
+    """Append one more consumed bar, in the RUNTIME's own write order.
+
+    Snapshot and preimage first (``marketfeed/store.py::SqliteSnapshotStore
+    .put``), then the inbox admission of the tick that names it
+    (``engine/inbox.py::SqliteEventInbox.enqueue``), then the decision record
+    that admission caused — the order ``marketfeed/scheduler.py::tick_once``
+    writes, each commit separate, exactly as a live session grows its stores
+    while a reader is part-way through them.
+
+    ``tick_seq`` is 1-based over the session's bars, so ``tick_seq - 1`` is this
+    bar's index and :func:`_seq` of it lands inside ``bar.window``.
+    """
+    conn = sqlite3.connect(data_dir / hinge["marketfeed"]["file_name"])
+    try:
+        conn.execute(
+            "INSERT INTO snapshots "
+            "(snapshot_id, instrument, as_of_ms, snapshot_json) VALUES (?, ?, ?, ?)",
+            (bar.snapshot_id, INSTRUMENT, bar.as_of_ms, bar.snapshot_json),
+        )
+        conn.execute(
+            "INSERT INTO preimages (snapshot_id, raw_event_id, preimage_json) "
+            "VALUES (?, ?, ?)",
+            (bar.snapshot_id, bar.raw_event_id, bar.preimage_json),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    conn = sqlite3.connect(data_dir / hinge["inbox"]["file_name"])
+    try:
+        conn.execute(
+            "INSERT INTO events (seq, kind, payload_json, "
+            "handling_started_evidence_seq, consumed_evidence_seq) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (tick_seq, "DECISION_TICK", bar.tick_payload, *bar.window),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    conn = sqlite3.connect(data_dir / hinge["evidence"]["file_name"])
+    try:
+        conn.execute(
+            "INSERT INTO entries VALUES (?, ?, ?)",
+            (
+                _seq(tick_seq - 1),
+                "DECISION_OUTCOME_EMITTED",
+                _emitted(hinge, bar),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("appended", [1, 3], ids=["after the first read", "at every"])
+def test_a_bar_written_between_two_store_reads_is_not_a_lost_snapshot(
+    tmp_path: Path,
+    hinge: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    appended: int,
+) -> None:
+    """**The 2026-11-04 false refusal's red proof.**
+
+    Concrete input: a LIVE session that admits one more tick in the window
+    between two of the three store reads. At 11:19:07 KST that day the status
+    board read ``marketfeed`` FIRST and refused the whole leaf — ``inbox seq
+    4138 names snapshot 'cis-7907fe…', which the marketfeed store does not
+    hold`` — for a snapshot issued at 11:19:02.225, 5 s before the command ran
+    but after that first read. Nothing was lost: the same command read clean
+    after the close.
+
+    Each case appends a snapshot + tick + decision triple in the runtime's own
+    write order (:func:`_append_consumed_bar`) after a read returns. With ONE
+    append, after the first read, the old order (snapshots, ticks, blocks)
+    raises exactly the refusal above; appending at every read also makes it
+    raise ``capsule … is not one the inbox admitted``, the same race on the
+    other pair. Under the reverse order (blocks, ticks, snapshots) every
+    cross-store reference a read can see is satisfied by the stores read after
+    it, so nothing raises: the surplus is an unconsumed tick and unconsumed
+    bars, both normal session shapes.
+    """
+    bars = _bars(hinge, 1 + appended)
+    data_dir = _session(
+        tmp_path,
+        hinge,
+        bars[:1],
+        entries=[(_seq(0), "DECISION_OUTCOME_EMITTED", _emitted(hinge, bars[0]))],
+    )
+
+    pending = iter(enumerate(bars[1:], start=2))
+
+    def keeps_ticking(reader: Any) -> Any:
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
+            result = reader(*args, **kwargs)
+            queued = next(pending, None)
+            if queued is not None:
+                tick_seq, bar = queued
+                _append_consumed_bar(hinge, data_dir, bar, tick_seq=tick_seq)
+            return result
+
+        return wrapped
+
+    for name in ("read_snapshots", "read_decision_ticks", "read_decision_blocks"):
+        monkeypatch.setattr(si, name, keeps_ticking(getattr(si, name)))
+
+    records = si.live_decision_records(data_dir)
+
+    # Only the decision the blocks read saw is attributed; the bars written
+    # after it are unconsumed, not missing.
+    assert [record["raw_event_id"] for record in records] == [bars[0].raw_event_id]
+    assert [record["attributed_by"] for record in records] == ["capsule_id"]
+    assert next(pending, None) is None, "a queued bar was never written"
+
+
 def test_a_tick_without_a_decision_is_reported_not_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:

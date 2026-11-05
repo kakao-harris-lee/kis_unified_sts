@@ -108,11 +108,14 @@ _DIFFERS_FROM_RESIDENT: dict[str, str] = {
         "which is false in a tree that does not contain it"
     ),
     "order_construction_policy.yaml": (
-        "digest-identical; template DATA prose differs -- the tick 5 -> 2 correction rewrote the "
+        "template DATA prose differs -- the tick 5 -> 2 correction rewrote the "
         "unit_multiplier_currency_and_numeric_rules line (DR-0002 §2.1 template DATA, never "
-        "interpreted by the runtime), so this is NOT comment-only. The canonical_digest is "
-        "unchanged (c90444b9..., measured for paper/LONG/SHORT alike). The SHORT tree also flips "
-        "the DIRECTION axis and renames policy_id"
+        "interpreted by the runtime), so this is NOT comment-only. Since 2026-11-04 the typed "
+        "content differs too: #1025 added ZERO_POSITION to admitted_quantity_bases, a content "
+        "revision, so policy_generation went 3 -> 4 and with it the canonical_digest (measured: "
+        "resident c90444b9... gen 3, LONG/SHORT 1d0ecc72... gen 4 -- equal to each other). The "
+        "shared policy_id stays: (kind, member_id, generation) still tells the two documents "
+        "apart. The SHORT tree also flips the DIRECTION axis and renames policy_id"
     ),
     "RENDER.yaml": (
         "not a copy candidate at all -- a render manifest describes ITS OWN tree's slots and "

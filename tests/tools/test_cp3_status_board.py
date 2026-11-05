@@ -1448,6 +1448,151 @@ def test_a_mid_session_loss_turns_the_exit_code_to_1(tmp_path: Path, state: Path
     assert rc() == 1
 
 
+# --- 4단계(독립 승인) UNKNOWN 정지 — 선물 결정 전용(운영자 판정 2026-11-05) ---------
+
+#: 10-15 세션의 첫 제안 블록(evidence seq 46, 09:04 봉) 과 그 다음 결정(936) 사이의
+#: 빈 seq — 여기 넣은 흐름 정지 행은 그 제안의 것으로 읽힌다. 같은 날에는 녹화된
+#: ``VENUE_ADMISSIBILITY_DECISION`` UNKNOWN 두 건(940 · 1688)과 ``STAGE_DENIED``
+#: 한 건(49475)이 이미 있어, 한 줄에서 세 경우를 모두 본다.
+STEP4_HALT_SEQ = 500
+
+
+def _append_step4_unknown(state: Path, seq: int = STEP4_HALT_SEQ) -> None:
+    """런타임 ``engine.sequencer._halt`` 가 4단계에서 쓰는 행 모양 그대로.
+
+    ``step`` · ``halt_reason`` · ``detail`` 은 실 잎
+    (``~/.local/state/tos/cp3-setup-d-long-data/A05611/evidence.sqlite3``, 2026-11-05
+    읽기 전용 확인: 이 모양 67행)에서 그대로 옮겼다.
+    """
+    _append_rows(
+        state,
+        "long-A05611",
+        [
+            (
+                seq,
+                (
+                    "FLOW_HALTED",
+                    {
+                        "kind": "FLOW_HALTED",
+                        "step": sb.INDEPENDENT_APPROVAL_STEP,
+                        "halt_reason": sb.STAGE_UNKNOWN_HALT_REASON,
+                        "detail": (
+                            "no independent approval decision is available for this "
+                            "proposal — UNKNOWN is restrictive, never an assumed grant"
+                        ),
+                        "instrument_key": {
+                            "account": "6004929703",
+                            "instrument": "A05611",
+                        },
+                    },
+                ),
+            )
+        ],
+    )
+
+
+def _set_market(state: Path, name: str, market: str) -> None:
+    """러너 step 5b 의 market 줄을 세션 로그에 넣는다.
+
+    픽스처(10-15~10-23)는 그 줄이 생기기 전 녹화다. 줄 모양은 실 로그 그대로다 —
+    ``cp3-sessions/long-20261104/session.log`` 5번째 줄
+    ``market=futures (tree and producer agree) · transport=synthetic``.
+    """
+    path = state / "cp3-sessions" / name / "session.log"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    ts = lines[0][:19]
+    transport = "synthetic" if market == "futures" else "kis-mock"
+    at = next(i for i, line in enumerate(lines) if " instrument=" in line)
+    lines.insert(
+        at, f"{ts} market={market} (tree and producer agree) · transport={transport}"
+    )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_the_market_line_of_a_tenant_session_is_read(state: Path):
+    """러너 step 5b 의 ``market=`` 줄 — 트리의 범위를 말하는 유일한 로그 줄이다."""
+    _set_market(state, "long-20261015", "futures")
+    runner = sb.parse_runner_log(
+        (state / "cp3-sessions/long-20261015/session.log").read_text(encoding="utf-8")
+    )
+    assert runner.market == "futures"
+    # 뒤에 오는 B3 줄(`=== B3 … market=… ceiling …`)은 이 값을 덮지 않는다.
+    b3_only = sb.parse_runner_log(
+        "2026-10-15 15:50:03 === B3 session-dir=/x instrument=A05611 "
+        "market=stock ceiling 600s"
+    )
+    assert b3_only.market is None
+
+
+def test_futures_tree_step4_unknown_is_labelled_expected(
+    state: Path, cfg: sb.BoardConfig
+):
+    """선물 트리의 4단계 UNKNOWN 은 떼어 이름을 붙이고, 다른 단계는 그대로 둔다.
+
+    상주 session 승인은 설계상 MOCK 주식 전용이라(``tos_runtime.authority.standing``)
+    선물 진입 제안은 4단계에서 멈춘다. 운영자 판정 2026-11-05: 선물 트리는 결정
+    전용이고 이 정지가 예상 종착이다(LONG 실측 11 부팅 67 건 · 11-04 40 건, 4단계
+    admit 은 한 번도 없다). 같은 날의 ``VENUE_ADMISSIBILITY_DECISION`` UNKNOWN 두
+    건은 4단계가 아니므로 기존 이름 아래 그대로 남는다.
+    """
+    _append_step4_unknown(state)
+    _set_market(state, "long-20261015", "futures")
+    board = _board(cfg, D1015)
+    s = _session(board, "long-20261015")
+    assert s["market"] == "futures"
+    st = s["store"]
+    # 기존 필드는 그대로 전체 분포를 싣고, 새 필드가 그 부분집합을 센다.
+    assert st["flow_halts"] == {"STAGE_DENIED": 1, "STAGE_UNKNOWN": 3}
+    assert st["flow_halts_independent_approval_unknown"] == 1
+    assert (
+        "흐름 정지: STAGE_DENIED 1 · STAGE_UNKNOWN 2"
+        f" · {sb.STEP4_UNKNOWN_EXPECTED_LABEL} 1" in sb.render_text(board)
+    )
+    # 예상 종착이므로 소견(막힘·확인)은 새로 올리지 않는다.
+    assert not any(sb.STEP4_UNKNOWN_EXPECTED_LABEL in i for i in _issues(board))
+
+
+def test_stock_tree_step4_unknown_is_not_labelled_expected(
+    state: Path, cfg: sb.BoardConfig
+):
+    """주식 트리에서는 떼지 않는다 — standing 승인이 덮어야 하는 것이라 예상이 아니다."""
+    _append_step4_unknown(state)
+    _set_market(state, "long-20261015", "stock")
+    board = _board(cfg, D1015)
+    s = _session(board, "long-20261015")
+    assert s["market"] == "stock"
+    # 기계용 필드는 시장과 무관하게 같은 수를 싣는다(이름을 붙이는 쪽만 가른다).
+    assert s["store"]["flow_halts_independent_approval_unknown"] == 1
+    text = sb.render_text(board)
+    assert "흐름 정지: STAGE_DENIED 1 · STAGE_UNKNOWN 3" in text
+    assert sb.STEP4_UNKNOWN_EXPECTED_LABEL not in text
+
+
+def test_a_session_log_without_a_market_line_is_not_labelled_expected(
+    state: Path, cfg: sb.BoardConfig
+):
+    """market 줄이 없는 옛 세션(~10-23) — 시장을 모르면 「예상」이라 말하지 않는다."""
+    _append_step4_unknown(state)
+    board = _board(cfg, D1015)
+    assert _session(board, "long-20261015")["market"] is None
+    text = sb.render_text(board)
+    assert "흐름 정지: STAGE_DENIED 1 · STAGE_UNKNOWN 3" in text
+    assert sb.STEP4_UNKNOWN_EXPECTED_LABEL not in text
+
+
+def test_without_a_step4_halt_a_futures_line_is_unchanged(
+    state: Path, cfg: sb.BoardConfig
+):
+    """4단계 정지가 0 이면 선물 트리에서도 이름을 붙이지 않는다(빈 꼬리 금지)."""
+    _set_market(state, "long-20261015", "futures")
+    board = _board(cfg, D1015)
+    st = _session(board, "long-20261015")["store"]
+    assert st["flow_halts_independent_approval_unknown"] == 0
+    text = sb.render_text(board)
+    assert "흐름 정지: STAGE_DENIED 1 · STAGE_UNKNOWN 2" in text
+    assert sb.STEP4_UNKNOWN_EXPECTED_LABEL not in text
+
+
 # --- 연속 깨끗한 거래일 (로드맵 §2-1 · §3 M4) -------------------------------------
 
 #: 2026-10-12(월) 앞의 두 주. 10-09(한글날·금) · 10-05(대체휴일·월) 가 휴장이고 그 양쪽에
