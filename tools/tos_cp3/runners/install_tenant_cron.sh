@@ -8,8 +8,9 @@
 #
 # Runbook docs/runbooks/tos-paper-boot.md §7.2-e. Idempotent: the block is
 # delimited by BEGIN/END markers and replaced whole; lines tagged
-# `# cp3-{long,short,stock}-tenant-daily` outside the block (the hand-installed
-# 2026-10-22 lines) are dropped so a direction is never scheduled twice. Every
+# `# cp3-{long,short,stock}-tenant-{daily,catchup}` outside the block (the
+# hand-installed 2026-10-22 lines) are dropped so a direction is never scheduled
+# twice — and `--remove` takes the block, both kinds of line with it. Every
 # other crontab line is kept byte for byte — including a one-off stock line like
 # `# run-stock-mock-<date>`, whose tag is different: if such a line has not fired
 # yet on install day, remove it by hand first or the day gets two sessions
@@ -61,6 +62,26 @@ SELF_REL=tools/tos_cp3/runners/install_tenant_cron.sh
 LONG_AT="38 8"
 SHORT_AT="40 8"
 STOCK_AT="53 8"
+
+# @reboot catch-up (#1038 · the 2026-11-06 reboot at 09:00:53): this cron does not
+# replay a missed line, so a boot after the minute above means that direction never
+# starts. One `@reboot` line per direction calls the wrapper's `--catch-up HH:MM`
+# with the SAME minute as its regular line — derived from the constants above by
+# `hhmm`, never typed a second time — and the wrapper decides whether anything is
+# left to do (trading day · past that minute · before the stop · no session dir).
+#
+# The sleeps: enough for the host to finish booting (clock, network, the git fetch
+# the wrapper does), and ≥ 150 s apart for LONG and SHORT because those two
+# producers share the REAL read key and KIS issues at most one token per minute —
+# the same reason the regular lines are two minutes apart. STOCK keeps the same gap
+# although it does not need one (different app-key fingerprints, §7.2-e).
+#
+# No `%` anywhere in these lines on purpose: Ubuntu's cron (3.0pl1) reads an
+# unescaped `%` in the command field as a newline (the rest becomes stdin), so any
+# future edit that needs one has to write `\%`.
+LONG_SLEEP=90
+SHORT_SLEEP=240
+STOCK_SLEEP=390
 BEGIN_MARK="# BEGIN CP3_TENANT_DAILY"
 END_MARK="# END CP3_TENANT_DAILY"
 
@@ -92,13 +113,25 @@ line() { # line DIR lc AT
     "$3" "$DEST" "$1" "$STATE" "$2" "$2"
 }
 
+hhmm() { # hhmm "MINUTE HOUR" -> HH:MM — the one place a schedule constant becomes a time
+  printf '%02d:%02d\n' "$((10#${1#* }))" "$((10#${1% *}))"
+}
+
+# `@reboot` has no day-of-week field: the weekday/holiday decision is the wrapper's
+# calendar step, the same one the regular lines go through. Same log file as the
+# regular line — one file per direction, whichever line started the session.
+reboot_line() { # reboot_line DIR lc AT SLEEP_S
+  printf '@reboot sleep %s; /bin/bash %s %s --catch-up %s >> %s/cp3-%s-tenant-daily.cron.log 2>&1 # cp3-%s-tenant-catchup\n' \
+    "$4" "$DEST" "$1" "$(hhmm "$3")" "$STATE" "$2" "$2"
+}
+
 # Everything except our block and the hand-installed tagged lines.
 # A BEGIN with no END would drop every line after it, so that is an ABORT (rc 3).
 awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
   index($0, b) == 1 { if (skip) bad = 1; skip = 1; next }
   skip && index($0, e) == 1 { skip = 0; next }
   skip { next }
-  /# cp3-(long|short|stock)-tenant-daily[[:space:]]*$/ { next }
+  /# cp3-(long|short|stock)-tenant-(daily|catchup)[[:space:]]*$/ { next }
   { print }
   END { exit (skip || bad) ? 3 : 0 }
 ' "$CUR" >"$NEW" ||
@@ -111,6 +144,9 @@ if [ "$REMOVE" = 0 ]; then
     line LONG long "$LONG_AT"
     line SHORT short "$SHORT_AT"
     line STOCK stock "$STOCK_AT"
+    reboot_line LONG long "$LONG_AT" "$LONG_SLEEP"
+    reboot_line SHORT short "$SHORT_AT" "$SHORT_SLEEP"
+    reboot_line STOCK stock "$STOCK_AT" "$STOCK_SLEEP"
     echo "$END_MARK"
   } >>"$NEW"
 fi

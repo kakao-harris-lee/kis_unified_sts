@@ -1176,3 +1176,250 @@ def test_n6_a_begin_without_end_aborts(env: Env, apply: bool) -> None:
     assert "without a matching" in r.stderr
     assert env.crontab.read_text(encoding="utf-8") == broken
     assert not Path(f"{env.crontab}.writes").exists()
+
+
+# ------------------------------------ #1038 @reboot catch-up (the 11-06 reboot)
+#
+# The host rebooted at 09:00:53 on 2026-11-06 and this cron does not replay a
+# missed line, so 08:38 · 08:40 · 08:53 never fired. The three `@reboot` lines call
+# `--catch-up HH:MM` with the regular lines' own minutes, and the wrapper decides.
+
+#: What the wrapper is handed, per direction: the regular minute as HH:MM and the
+#: boot stagger. A second copy of the installer's constants ON PURPOSE — a drift in
+#: ``LONG_AT`` / ``LONG_SLEEP`` has to fail here.
+_CATCHUP = (
+    ("LONG", "long", 90, "08:38"),
+    ("SHORT", "short", 240, "08:40"),
+    ("STOCK", "stock", 390, "08:53"),
+)
+
+
+def test_1038_dry_run_shows_the_three_reboot_lines(env: Env) -> None:
+    env.crontab.write_text(_OTHER_LINES, encoding="utf-8")
+    r = env.install()
+    assert r.returncode == 0, r.stderr
+    dest = env.dest_dir / "run-cp3-tenant-daily.sh"
+    for direction, lc, sleep_s, at in _CATCHUP:
+        assert (
+            f"+@reboot sleep {sleep_s}; /bin/bash {dest} {direction} --catch-up {at}"
+            f" >> {env.state}/cp3-{lc}-tenant-daily.cron.log 2>&1"
+            f" # cp3-{lc}-tenant-catchup" in r.stdout
+        ), r.stdout
+    assert env.crontab.read_text(encoding="utf-8") == _OTHER_LINES
+
+
+def test_1038_apply_writes_them_in_the_block_and_remove_takes_them_with_it(
+    env: Env,
+) -> None:
+    env.crontab.write_text(_OTHER_LINES, encoding="utf-8")
+    assert env.install("--apply").returncode == 0
+    tab = env.crontab.read_text(encoding="utf-8")
+    body = tab.split("# BEGIN CP3_TENANT_DAILY", 1)[1].split("# END", 1)[0]
+    reboot = [ln for ln in body.splitlines() if ln.startswith("@reboot")]
+    assert len(reboot) == 3, tab
+    assert [ln.split("--catch-up ", 1)[1].split()[0] for ln in reboot] == [
+        at for _, _, _, at in _CATCHUP
+    ]
+    sleeps = [int(ln.split("sleep ", 1)[1].split(";", 1)[0]) for ln in reboot]
+    # LONG and SHORT share the REAL read key and KIS issues one token a minute —
+    # the same reason their regular lines are two minutes apart.
+    assert sleeps[1] - sleeps[0] >= 120, sleeps
+    assert sleeps[2] - sleeps[1] >= 120, sleeps
+    # Ubuntu cron 3.0pl1 reads an unescaped `%` in the command field as a newline.
+    assert all("%" not in ln for ln in reboot), reboot
+
+    again = env.install("--apply")
+    assert again.returncode == 0 and "crontab unchanged" in again.stdout
+
+    assert env.install("--remove", "--apply").returncode == 0
+    after = env.crontab.read_text(encoding="utf-8")
+    assert "@reboot" not in after and "catchup" not in after
+    assert after.startswith(_OTHER_LINES)
+
+
+def test_1038_a_hand_installed_catchup_line_outside_the_block_is_dropped(
+    env: Env,
+) -> None:
+    """Same rule as the 10-22 hand `-tenant-daily` lines: one direction, one line."""
+    env.crontab.write_text(
+        _OTHER_LINES + "@reboot sleep 60; /bin/bash /x/run-cp3-tenant-daily.sh LONG"
+        " --catch-up 08:38 >> /x/l.log 2>&1 # cp3-long-tenant-catchup\n",
+        encoding="utf-8",
+    )
+    assert env.install("--apply").returncode == 0
+    tab = env.crontab.read_text(encoding="utf-8")
+    assert "/x/l.log" not in tab
+    assert tab.count("# cp3-long-tenant-catchup") == 1
+    assert tab.startswith(_OTHER_LINES)
+
+
+def test_1038_catchup_runs_the_session_the_reboot_missed(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily(
+        "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="09:10"
+    )
+    assert r.returncode == 0, r.stdout
+    assert "재부팅 catch-up 기동" in r.stdout  # NOTIFY=0 logs the body it would send
+    assert "TENANT_STOP_AT=15:50" in _runner_out(env, "long", _OPEN_DAY)
+    assert "일일 세션 종료" in r.stdout and "정상" in r.stdout
+
+
+def test_1038_b_a_boot_before_the_regular_minute_does_nothing(env: Env) -> None:
+    """The regular line is still going to fire, so the catch-up must not race it —
+    and it must not fetch or add a worktree on the way to that conclusion."""
+    _data_parents(env)
+    r = env.daily(
+        "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="08:20"
+    )
+    assert r.returncode == 0, r.stdout
+    assert "CATCH-UP SKIP" in r.stdout and "08:38" in r.stdout
+    assert "notify-body" not in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+    assert not (env.state / "measure").exists()
+
+
+def test_1038_a_a_holiday_takes_the_wrappers_existing_silent_skip(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily(
+        "SHORT", "--catch-up", "08:40", CP3_DAILY_TODAY=_HOLIDAY, CP3_DAILY_NOW="09:10"
+    )
+    assert r.returncode == 0, r.stdout
+    assert "SKIP" in r.stdout and "notify-body" not in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+
+
+def test_1038_c_a_boot_past_the_stop_time_starts_nothing(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily(
+        "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="15:50"
+    )
+    assert r.returncode == 0, r.stdout
+    assert "CATCH-UP SKIP" in r.stdout and "15:50" in r.stdout
+    assert "notify-body" not in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+    assert not (
+        env.state / f"measure/wt-cp3-long-{_OPEN_DAY.replace('-', '')}"
+    ).exists()
+
+
+def test_1038_c_the_stop_bound_is_the_run_paths_own_derivation(env: Env) -> None:
+    """#924 × #1038: 16:00 is past a regular day's 15:50 and inside the override
+    day's 16:50, because the bound comes from that day's close, not from a literal."""
+    _data_parents(env)
+    regular = env.daily(
+        "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="16:00"
+    )
+    assert regular.returncode == 0 and "CATCH-UP SKIP" in regular.stdout
+    late = env.daily(
+        "LONG",
+        "--catch-up",
+        "08:38",
+        CP3_DAILY_TODAY=_OVERRIDE_DAY,
+        CP3_DAILY_NOW="16:00",
+    )
+    assert late.returncode == 0, late.stdout
+    assert "TENANT_STOP_AT=16:50" in _runner_out(env, "long", _OVERRIDE_DAY)
+
+
+def test_1038_d_a_session_cut_by_a_mid_day_reboot_is_not_restarted(env: Env) -> None:
+    """A second session on one day stays the operator's RUN=2 decision (§7.2-f)."""
+    _data_parents(env)
+    session = env.state / "cp3-sessions" / f"long-{_OPEN_DAY.replace('-', '')}"
+    session.mkdir(parents=True)
+    (session / "runner.out").write_text("cut by the reboot\n", encoding="utf-8")
+    r = env.daily(
+        "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="09:10"
+    )
+    assert r.returncode == 0, r.stdout
+    assert "CATCH-UP SKIP" in r.stdout and "RUN=2" in r.stdout
+    assert "notify-body" not in r.stdout
+    assert (session / "runner.out").read_text(encoding="utf-8") == "cut by the reboot\n"
+
+
+def test_1038_d_a_still_running_session_is_a_quiet_skip_not_a_lock_alert(
+    env: Env,
+) -> None:
+    """A catch-up that fires while the regular line's call is still running finds
+    both the lock held and a session dir — and `lock busy` is an alert. The session
+    dir is asked about first, before the lock, and a live session owns one."""
+    _data_parents(env)
+    (env.state / "cp3-sessions" / f"long-{_OPEN_DAY.replace('-', '')}").mkdir(
+        parents=True
+    )
+    env.locks.mkdir()
+    with open(env.locks / "cp3-long-tenant-daily.wrapper.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        r = env.daily(
+            "LONG",
+            "--catch-up",
+            "08:38",
+            CP3_DAILY_TODAY=_OPEN_DAY,
+            CP3_DAILY_NOW="09:10",
+        )
+    assert r.returncode == 0, r.stdout
+    assert "CATCH-UP SKIP" in r.stdout
+    assert "lock busy" not in r.stdout and "notify-body" not in r.stdout
+
+
+@pytest.mark.parametrize(
+    "bad", ["", "8:38", "0838", "25:00", "08:60", "08:3x", "08:38:00", "08:38 "]
+)
+def test_1038_a_time_the_wrapper_cannot_read_exactly_is_refused(
+    env: Env, bad: str
+) -> None:
+    _data_parents(env)
+    r = env.daily(
+        "LONG", "--catch-up", bad, CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="09:10"
+    )
+    assert r.returncode == 2, r.stdout
+    assert "want HH:MM" in r.stderr
+    assert not (env.state / "cp3-sessions").exists()
+
+
+def test_1038_an_unreadable_now_override_is_refused(env: Env) -> None:
+    """The test-only clock knob gets the same strictness — a mis-typed one would
+    otherwise let the catch-up tests above pass by exiting for the wrong reason."""
+    r = env.daily(
+        "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="9:10"
+    )
+    assert r.returncode == 2 and "want HH:MM" in r.stderr
+
+
+def test_1038_stock_a_late_start_still_writes_the_standing_approval(env: Env) -> None:
+    """11-06 by hand: the STOCK session started at 09:13 and `render ok` came ~60 s
+    later, so the late start does not disturb the approval wait. Without the
+    approval the session sends nothing (#955)."""
+    _data_parents(env)
+    r = env.daily(
+        "STOCK",
+        "--catch-up",
+        "08:53",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        CP3_DAILY_NOW="09:13",
+        CP3_TEST_STUB_RENDER_AFTER_S="1",
+    )
+    assert r.returncode == 0, r.stdout
+    assert "재부팅 catch-up 기동" in r.stdout
+    assert "write-standing-approval rc=0" in r.stdout
+    assert env.approval_argv.read_text(encoding="utf-8").splitlines()[-1] == _OPEN_DAY
+    out = (_stock_session(env, _OPEN_DAY) / "runner.out").read_text(encoding="utf-8")
+    assert "TENANT_STOP_AT=15:40" in out
+
+
+def test_1038_stock_a_catchup_that_skips_does_not_touch_the_approval_slot(
+    env: Env,
+) -> None:
+    """The stop-time gate decides BEFORE the STOCK pre-runner steps: a catch-up that
+    is not going to run a session must not move this host's approval file nor alert
+    about its transport keys."""
+    _data_parents(env)
+    stale = _write_approval(env, _approval_doc("20261023"))
+    before = stale.read_bytes()
+    r = env.daily(
+        "STOCK", "--catch-up", "08:53", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="15:40"
+    )
+    assert r.returncode == 0, r.stdout
+    assert "CATCH-UP SKIP" in r.stdout and "notify-body" not in r.stdout
+    assert stale.read_bytes() == before
+    assert not (env.state / _ARCHIVE_REL).exists()
+    assert not _stock_session(env, _OPEN_DAY).exists()

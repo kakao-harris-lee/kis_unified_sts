@@ -246,7 +246,7 @@ LONG·SHORT 는 synthetic 이라 **아무것도 송신하지 않고**, STOCK 은
 | 래퍼 원본(추적) | `tools/tos_cp3/runners/cp3_tenant_daily.sh` — 방향 `LONG`·`SHORT`·`STOCK` |
 | 래퍼 설치본 | `~/.config/kis-probes/run-cp3-tenant-daily.sh` (mode 700 · 설치기가 **`origin/main` 에서** 복사) |
 | 설치기 | `tools/tos_cp3/runners/install_tenant_cron.sh` — **기본 dry-run** · `--apply` · `--remove` · 멱등 |
-| cron 블록 | `# BEGIN CP3_TENANT_DAILY` … `# END CP3_TENANT_DAILY` — LONG `38 8 * * 1-5` · SHORT `40 8 * * 1-5` · **STOCK `53 8 * * 1-5`** |
+| cron 블록 | `# BEGIN CP3_TENANT_DAILY` … `# END CP3_TENANT_DAILY` — LONG `38 8 * * 1-5` · SHORT `40 8 * * 1-5` · **STOCK `53 8 * * 1-5`** + 같은 블록의 `@reboot` catch-up 세 줄(아래) |
 | cron stdout | `~/.local/state/tos/cp3-{long,short,stock}-tenant-daily.cron.log` (⚠ 로테이션 없음) |
 | 세션 아티팩트 | `~/.local/state/tos/cp3-sessions/{long,short}-<YYYYMMDD>/` · 주식은 `stock-r1-<YYYYMMDD>/` (`runner.out` · `session.log` · `producer/` · 렌더본 — 선물은 `config/`, 주식은 `render/` · 주식만 `runner.pid`·`approval.out`) |
 | 그날의 워크트리 | `~/.local/state/tos/measure/wt-cp3-{long,short}-<YYYYMMDD>` · 주식은 `wt-cp3-stock-r1-<YYYYMMDD>` — 다음 거래일 호출이 지운다 |
@@ -278,6 +278,30 @@ tools/tos_cp3/runners/install_tenant_cron.sh --apply         # 백업(crontab.ba
   §7.2-f 의 시작 창 08:52–09:05(주식 CONTINUOUS 개장 09:00 · 첫 행 대기 상한 600 s)이고, 선물
   두 줄과 간격을 둘 필요가 없는 이유는 주식 생산자가 **주식** REAL 키, 주식 런타임이 **모의** 키를
   써서 앱 키 지문이 서로 다르기 때문이다(분당 1회 발급이 겹치지 않는다).
+
+**`@reboot` catch-up 세 줄 (#1038).** 2026-11-06 호스트가 03:56 에 멈추고 09:00:53 에 재부팅됐고,
+이 cron(Ubuntu 3.0pl1)은 **놓친 줄을 다시 돌리지 않는다** — 08:38·08:40·08:53 이 전부 미발화했고
+그날 세션은 09:09–09:13 에 손으로 살렸다(래퍼는 늦은 시작을 받는다). 그래서 설치기가 같은 블록에
+방향별 `@reboot` 줄을 하나씩 더 쓴다 — `sleep 90`(LONG) · `240`(SHORT) · `390`(STOCK) 뒤에
+`run-cp3-tenant-daily.sh <DIR> --catch-up HH:MM`, **HH:MM 은 정규 줄과 같은 스케줄 상수에서
+만든다**(설치기의 `hhmm`, 두 번 타이핑하지 않는다). sleep 은 부팅이 끝날 시간(시계·네트워크·래퍼의
+fetch)이고 LONG·SHORT 사이를 150 s 벌린 것은 정규 줄이 2분 벌어진 것과 같은 이유다(두 생산자가
+REAL 조회 키를 공유 · KIS 토큰 발급 분당 1회). `@reboot` 에는 요일 필드가 없다 — 거래일 판정은
+래퍼의 달력 단계가 그대로 한다. 줄에 `%` 를 쓰지 않는다(이 cron 은 명령 필드의 `%` 를 줄바꿈으로
+읽는다 — 필요하면 `\%`). 제거는 정규 줄과 같다(`--remove` 가 블록째 지운다).
+
+`--catch-up HH:MM` 은 **넷이 모두 참일 때만** 평소 실행 경로로 들어가고, 아니면 이유 한 줄
+(`CATCH-UP SKIP …`)을 로그하고 **rc 0 · 알림 없이** 끝난다.
+① 오늘이 거래일 — 새 판정이 아니다. 그대로 위의 휴장 판정을 타고 휴장일은 기존 조용한 SKIP 이다.
+② 지금(KST) ≥ HH:MM — 부팅이 그 분보다 이르면 정규 줄이 아직 발화하므로 아무것도 하지 않는다.
+③ 지금 < 그날 stop_at — 실행 경로와 **같은** 도출이라 개장 지연일(#924)에는 이 상한도 함께 늘어난다.
+④ 오늘 세션 디렉터리가 없다 — 장중 재부팅으로 끊긴 세션은 **자동 재기동하지 않는다**(두 번째 세션은
+운영자의 RUN=2 결정 · §7.2-f). 돌고 있는 세션은 디렉터리를 갖고 있으므로 `lock busy` 실패로
+알리지 않고 여기서 조용히 끝난다. 넷이 통과하면 텔레그램에 `재부팅 catch-up 기동` 한 줄을 보낸 뒤
+정규 줄과 **똑같이** 돈다(같은 잠금 · 같은 단계 · STOCK 은 `render ok` 뒤 상시 승인까지).
+
+⚠ 상주 paper 세션(`tos-paper-session.sh`, 저장소 밖 · 08:45 줄)은 이 블록이 아니다 — 그 `@reboot`
+줄은 운영자가 손으로 단다(#1038 범위 밖).
 
 **한 호출이 하는 일.** 잠금 → 같은 날 세션 디렉터리가 있으면 거부 → durable set 부모
 (§7.2-b)가 없으면 거부(첫 genesis 는 운영자 몫) → 그 방향의 어제 워크트리 제거(`--force` 없이)

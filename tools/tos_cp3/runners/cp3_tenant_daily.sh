@@ -3,6 +3,7 @@
 #
 #   cp3_tenant_daily.sh LONG|SHORT|STOCK                      # the cron call (runs the session)
 #   cp3_tenant_daily.sh LONG|SHORT|STOCK --preflight [DATE]   # read-only check for DATE (KST, default today)
+#   cp3_tenant_daily.sh LONG|SHORT|STOCK --catch-up HH:MM     # @reboot: run the day's session if the HH:MM line was missed
 #
 # Rescope plan docs/plans/2026-10-22-tos-rescope-plan.md M1 (operator 2026-10-22:
 # 「tenant 세션 cron 상시화 진행해」「SHORT도 같은 방식으로 상시화해」) and M2
@@ -58,6 +59,25 @@
 #   7. one telegram line at the end: rc 0/143 is a normal end, anything else is a
 #      failure line. Pre-runner refusals (1-3, 5b, fetch, worktree) are failure lines.
 #
+# What `--catch-up HH:MM` adds (#1038 — the 2026-11-06 reboot): the host came back
+# at 09:00:53 and this cron (Ubuntu 3.0pl1) does NOT replay a missed line, so the
+# 08:38 · 08:40 · 08:53 lines never fired and that day's sessions only happened
+# because a session was resumed by hand at 09:09-09:13. The installer's `@reboot`
+# lines call this mode with the direction's OWN regular minute, and it enters the
+# run path above only when all four of these hold — otherwise it logs ONE line and
+# exits 0, with no alert:
+#   a. today is a trading day — not a second calendar decision: the day goes through
+#      step 5 above and takes its existing silent SKIP when the market is closed;
+#   b. now (KST) >= HH:MM — a boot earlier than the regular minute leaves the day to
+#      the regular line, which is still going to fire;
+#   c. now < this day's stop_at — the same derivation the run path uses, so a dated
+#      override (#924) moves this bound with the close;
+#   d. today's session dir does not exist — a session cut by a mid-day reboot is NOT
+#      restarted here. A second session on one day stays the operator's RUN=2
+#      decision (runbook §7.2-f).
+# When it does proceed it sends one telegram line saying the start is a reboot
+# catch-up, and then runs exactly as the cron line would: same lock, same steps.
+#
 # Telegram reuses the resident wrapper's channel (briefing bot) and the same rule:
 # read only the two TELEGRAM_BRIEFING_* lines from $MAIN/.env, never source it.
 # Bodies carry rc, direction, date and paths only — no runner output, because
@@ -80,6 +100,8 @@
 #   CP3_DAILY_NOTIFY        1   — 0 logs the body instead of sending it
 #   ⛔ CP3_DAILY_TODAY      test-only date override (YYYY-MM-DD). Never in a cron
 #                           line: the runner itself still runs on the real clock.
+#   ⛔ CP3_DAILY_NOW        test-only clock override (HH:MM), read by `--catch-up`
+#                           only. Never in a cron line, same reason.
 #   ⛔ CP3_DAILY_APPROVAL_WAIT_TRIES / _SLEEP_S  120 / 10 — test-only: the STOCK
 #                           `render ok` wait (20 minutes, PLUS this day's open
 #                           delay — #924). Never in a cron line.
@@ -91,14 +113,25 @@ case "$DIR" in
 LONG) lc=long ;;
 SHORT) lc=short ;;
 STOCK) lc=stock ;;
-*) echo "usage: $0 LONG|SHORT|STOCK [--preflight [YYYY-MM-DD]]" >&2; exit 2 ;;
+*) echo "usage: $0 LONG|SHORT|STOCK [--preflight [YYYY-MM-DD] | --catch-up HH:MM]" >&2; exit 2 ;;
 esac
 MODE=run
-if [ "${2:-}" = "--preflight" ]; then
-  MODE=preflight
-elif [ -n "${2:-}" ]; then
-  echo "usage: $0 LONG|SHORT|STOCK [--preflight [YYYY-MM-DD]]" >&2; exit 2
-fi
+CATCH_UP_AT=
+case "${2:-}" in
+"") ;;
+--preflight) MODE=preflight ;;
+--catch-up)
+  MODE=catchup
+  CATCH_UP_AT=${3:-}
+  # Strict: the cron line carries this time, and a time this script cannot read
+  # exactly is a time it must not compare against.
+  case "$CATCH_UP_AT" in
+  [01][0-9]:[0-5][0-9] | 2[0-3]:[0-5][0-9]) ;;
+  *) echo "bad --catch-up time '$CATCH_UP_AT' (want HH:MM, 00:00-23:59)" >&2; exit 2 ;;
+  esac
+  ;;
+*) echo "usage: $0 LONG|SHORT|STOCK [--preflight [YYYY-MM-DD] | --catch-up HH:MM]" >&2; exit 2 ;;
+esac
 
 MAIN=${CP3_DAILY_MAIN:-/home/deploy/project/kis_unified_sts}
 STATE=${CP3_DAILY_STATE:-$HOME/.local/state/tos}
@@ -150,6 +183,15 @@ case "$TODAY" in
 [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
 *) echo "bad date '$TODAY' (want YYYY-MM-DD)" >&2; exit 2 ;;
 esac
+# Only `--catch-up` reads a clock — every other mode is decided by the date alone.
+NOW=
+if [ "$MODE" = catchup ]; then
+  NOW=${CP3_DAILY_NOW:-$(TZ=Asia/Seoul date +%H:%M)}
+  case "$NOW" in
+  [01][0-9]:[0-5][0-9] | 2[0-3]:[0-5][0-9]) ;;
+  *) echo "bad time '$NOW' (want HH:MM, 00:00-23:59)" >&2; exit 2 ;;
+  esac
+fi
 STAMP=${TODAY//-/}
 if [ "$MARKET" = stock ]; then
   # `stock-r<RUN>-<날짜>` — the name the status board parses (_SESSION_DIR_RE) and
@@ -164,6 +206,10 @@ else
 fi
 
 log() { printf '%s [%s] %s\n' "$(TZ=Asia/Seoul date '+%F %T')" "$DIR" "$*"; }
+
+# hhmm_min HH:MM — minutes since midnight, for the `--catch-up` comparisons.
+# `10#` because `$((08))` is an invalid octal literal, and 08:38 is a real cron time.
+hhmm_min() { echo $((10#${1%%:*} * 60 + 10#${1##*:})); }
 
 notify() {
   local tok chat
@@ -467,6 +513,23 @@ fi
 # wrong hour.
 [ "$(date +%z)" = "+0900" ] || fail 2 "host zone is $(date +%z), not +0900 — cron times are not KST (CRON_TZ is ignored by this cron)"
 
+# `--catch-up` gates b and d (#1038). Both before the lock and the fetch: a reboot
+# catch-up that has nothing to do must cost nothing and must not alert. d first asks
+# the cheapest question there is — a path — and asking it here is also what keeps a
+# RUNNING session from being reported as `lock busy`: the live session holds the
+# lock AND owns a session dir. The run path's own `$SESSION already exists` refusal
+# below stays as the backstop for the race between these two lines.
+if [ "$MODE" = catchup ]; then
+  if [ "$(hhmm_min "$NOW")" -lt "$(hhmm_min "$CATCH_UP_AT")" ]; then
+    log "CATCH-UP SKIP — 지금 $NOW 은 정규 cron 시각 $CATCH_UP_AT 전이다; 그 줄이 발화한다"
+    exit 0
+  fi
+  if [ -e "$SESSION" ]; then
+    log "CATCH-UP SKIP — 오늘 세션 디렉터리가 이미 있다 ($SESSION); 끊긴 세션을 자동 재기동하지 않는다 (RUN=2 는 운영자 결정 · 런북 §7.2-f)"
+    exit 0
+  fi
+fi
+
 mkdir -p "$LOCK_DIR" 2>/dev/null
 # `.wrapper.lock`, not the `.lock` the 2026-10-22 hand-installed lines take with an
 # OUTER flock: an outer and an inner flock on one path would refuse every call.
@@ -513,6 +576,32 @@ case $mrc in
   fail 2 "holiday check failed (rc=$mrc) on $WT/$CAL_REL for $TODAY — not skipped, not run"
   ;;
 esac
+
+# The stop time, and — in catch-up mode — the last of the four gates (#1038 c).
+# It sits here, between the holiday check and the STOCK pre-runner steps, because a
+# catch-up that is already past the stop has to decide BEFORE those steps move this
+# host's standing-approval file or alert about its transport keys: a reboot
+# catch-up that is not going to run a session changes nothing and says nothing.
+if [ -z "$STOP_AT" ]; then
+  STOP_AT=$(session_day stop-at "$WT" "$WT/$PRODUCER_REL" 2>&1) || {
+    git -C "$MAIN" worktree remove "$WT" 2>/dev/null
+    fail 2 "stop time not derivable from $WT/$PRODUCER_REL's calendar for $TODAY: $STOP_AT"
+  }
+  log "stop_at $STOP_AT ($(session_day show "$WT" "$WT/$PRODUCER_REL" 2>&1) + ${STOP_AFTER_CLOSE_MIN}m)"
+else
+  log "stop_at $STOP_AT (CP3_DAILY_STOP_AT)"
+fi
+
+if [ "$MODE" = catchup ]; then
+  if [ "$(hhmm_min "$NOW")" -ge "$(hhmm_min "$STOP_AT")" ]; then
+    log "CATCH-UP SKIP — 지금 $NOW 은 오늘 정지 시각 $STOP_AT 이후다; 남은 세션 시간이 없다"
+    git -C "$MAIN" worktree remove "$WT" && log "removed $WT"
+    exit 0
+  fi
+  # Gates a-d all hold: this is a start the day would not otherwise have had.
+  notify "CP-3 tenant $DIR 재부팅 catch-up 기동 ($TODAY) — 정규 cron $CATCH_UP_AT 줄이 재부팅으로 미발화했다
+지금 $NOW · 정지 $STOP_AT · 세션 $SESSION"
+fi
 
 # ------------------------------------------------- STOCK pre-runner steps ----
 #
@@ -584,16 +673,6 @@ $kd" ;;
     ;;
   *) fail_wt 2 "approval_slot said '$slot', which this script does not understand" ;;
   esac
-fi
-
-if [ -z "$STOP_AT" ]; then
-  STOP_AT=$(session_day stop-at "$WT" "$WT/$PRODUCER_REL" 2>&1) || {
-    git -C "$MAIN" worktree remove "$WT" 2>/dev/null
-    fail 2 "stop time not derivable from $WT/$PRODUCER_REL's calendar for $TODAY: $STOP_AT"
-  }
-  log "stop_at $STOP_AT ($(session_day show "$WT" "$WT/$PRODUCER_REL" 2>&1) + ${STOP_AFTER_CLOSE_MIN}m)"
-else
-  log "stop_at $STOP_AT (CP3_DAILY_STOP_AT)"
 fi
 
 mkdir -p "$SESSION"
