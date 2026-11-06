@@ -75,6 +75,9 @@
 #   d. today's session dir does not exist — a session cut by a mid-day reboot is NOT
 #      restarted here. A second session on one day stays the operator's RUN=2
 #      decision (runbook §7.2-f).
+# A lock held by that direction's REGULAR run is the same kind of no-op (one more
+# line, exit 0): the day is already being started by the line that owns the lock, so
+# the `lock busy` failure a regular call reports would be a false alarm here.
 # When it does proceed it sends one telegram line saying the start is a reboot
 # catch-up, and then runs exactly as the cron line would: same lock, same steps.
 #
@@ -129,6 +132,13 @@ case "${2:-}" in
   [01][0-9]:[0-5][0-9] | 2[0-3]:[0-5][0-9]) ;;
   *) echo "bad --catch-up time '$CATCH_UP_AT' (want HH:MM, 00:00-23:59)" >&2; exit 2 ;;
   esac
+  # Nothing follows the time (review-1039 LOW-2): this mode is called from a cron
+  # line, and a 4th word there is a typo whose silent half-meaning would be a
+  # session nobody asked for.
+  [ -z "${4:-}" ] ||
+    { echo "unexpected argument '$4' after --catch-up $CATCH_UP_AT" >&2
+      echo "usage: $0 LONG|SHORT|STOCK [--preflight [YYYY-MM-DD] | --catch-up HH:MM]" >&2
+      exit 2; }
   ;;
 *) echo "usage: $0 LONG|SHORT|STOCK [--preflight [YYYY-MM-DD] | --catch-up HH:MM]" >&2; exit 2 ;;
 esac
@@ -535,7 +545,19 @@ mkdir -p "$LOCK_DIR" 2>/dev/null
 # OUTER flock: an outer and an inner flock on one path would refuse every call.
 LOCK=$LOCK_DIR/cp3-$lc-tenant-daily.wrapper.lock
 exec 9>"$LOCK" || fail 2 "cannot open lock $LOCK"
-flock -n 9 || fail 75 "lock busy ($LOCK) — 앞선 $DIR 호출이 아직 돈다. 오늘 세션은 시작하지 않았다"
+flock -n 9 || {
+  # In catch-up mode a held lock is the regular run, not a failure (review-1039
+  # LOW-1). The windows are real: LONG's `@reboot sleep 90` lands inside the 08:38
+  # call when the host boots around 08:36:30-08:37, STOCK's `sleep 390` inside the
+  # 08:53 one when it boots around 08:46:30-08:47 — and that call has not created
+  # its session dir yet, so gate d above cannot see it. The day is already being
+  # started by the line that owns the lock; alerting would be a false alarm.
+  if [ "$MODE" = catchup ]; then
+    log "CATCH-UP SKIP — lock held by the regular run ($LOCK); 정규 줄의 호출이 오늘 세션을 이미 시작하고 있다"
+    exit 0
+  fi
+  fail 75 "lock busy ($LOCK) — 앞선 $DIR 호출이 아직 돈다. 오늘 세션은 시작하지 않았다"
+}
 
 [ -e "$SESSION" ] && fail 2 "$SESSION already exists — refusing (one session per day)"
 [ -d "$DATA_PARENT" ] || fail 2 "data parent missing: $DATA_PARENT (create it 0700 first — runbook §7.2-b)"

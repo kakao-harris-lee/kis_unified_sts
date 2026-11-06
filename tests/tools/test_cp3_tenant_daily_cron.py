@@ -1361,6 +1361,48 @@ def test_1038_d_a_still_running_session_is_a_quiet_skip_not_a_lock_alert(
     assert "lock busy" not in r.stdout and "notify-body" not in r.stdout
 
 
+def test_1039_low1_a_lock_held_by_the_regular_run_is_a_quiet_skip(env: Env) -> None:
+    """review-1039 LOW-1: the two can overlap for real — a boot at 08:36:30-08:37
+    puts LONG's `sleep 90` inside the 08:38 call, which has not created its session
+    dir yet, so gate d cannot see it. The day IS being started; `lock busy` + a
+    telegram would be a false alarm. A regular call still fails 75 (test above)."""
+    _data_parents(env)
+    env.locks.mkdir()
+    with open(env.locks / "cp3-long-tenant-daily.wrapper.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        r = env.daily(
+            "LONG",
+            "--catch-up",
+            "08:38",
+            CP3_DAILY_TODAY=_OPEN_DAY,
+            CP3_DAILY_NOW="08:38",
+        )
+    assert r.returncode == 0, r.stdout
+    assert "CATCH-UP SKIP" in r.stdout and "lock held by the regular run" in r.stdout
+    assert "lock busy" not in r.stdout and "notify-body" not in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+    assert not (env.state / "measure").exists()
+
+
+@pytest.mark.parametrize("extra", ["LONG", "--preflight", _OPEN_DAY, "0"])
+def test_1039_low2_an_argument_after_the_time_is_refused(env: Env, extra: str) -> None:
+    """review-1039 LOW-2: a 4th word in the cron line is a typo, and half-reading it
+    would start a session nobody asked for."""
+    _data_parents(env)
+    r = env.daily(
+        "LONG",
+        "--catch-up",
+        "08:38",
+        extra,
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        CP3_DAILY_NOW="09:10",
+    )
+    assert r.returncode == 2, r.stdout
+    assert f"unexpected argument '{extra}'" in r.stderr
+    assert "usage:" in r.stderr
+    assert not (env.state / "cp3-sessions").exists()
+
+
 @pytest.mark.parametrize(
     "bad", ["", "8:38", "0838", "25:00", "08:60", "08:3x", "08:38:00", "08:38 "]
 )
