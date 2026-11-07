@@ -679,6 +679,14 @@ def _migration_copy(tmp_path: Path, replace: tuple[str, str] | None = None):
     markdown_text = (_REPO_ROOT / status.MIGRATION_MD).read_text(encoding="utf-8")
     if replace is not None:
         old, new = replace
+        # A replacement that matches nothing would leave the live corpus intact
+        # and the test below asserting nothing.  That fail-open is not
+        # hypothetical: marking the legacy-removal rows retired rewrote their
+        # `current_level`, and every fixture quoting one of those rows went on
+        # "passing" its own replace while testing the unedited corpus.  The
+        # fixtures below quote rows the removal KEEPS; this assert is what
+        # makes that a stated fact instead of a hope.
+        assert old in csv_text, f"fixture no longer matches the register: {old!r}"
         csv_text = csv_text.replace(old, new)
         markdown_text = markdown_text.replace(old, new)
     csv_path.write_text(csv_text, encoding="utf-8")
@@ -705,6 +713,93 @@ def test_legacy_census_rejects_a_gap_in_the_route_numbering(tmp_path):
     csv_path, markdown_path = _migration_copy(tmp_path, ("LEGACY-007", "LEGACY-009"))
 
     with pytest.raises(status.StatusError, match="contiguous LEGACY-001..LEGACY-007"):
+        status.validate_migration_conformance(
+            _REPO_ROOT, csv_path, markdown_path, _real_vocabulary()
+        )
+
+
+# --------------------------------------------------------------------------
+# Retirement marker: a route deleted from the tree keeps its row, and the
+# marker has to be true.  (docs/plans/2026-11-07-legacy-removal-plan.md)
+# --------------------------------------------------------------------------
+
+#: READ-003 as the live corpus carries it: a path that exists, and no marker.
+#: READ-003 deliberately, not one of the rows the legacy removal retires -- a
+#: fixture that quotes a retired row stops editing anything the day it is
+#: marked.  Its category is warning-only, so dropping it from the census sets
+#: changes no verdict here.
+_LIVE_ROW = (
+    "READ-003,BROKER_READ_SITE,services/screener.py stock universe screener,"
+    "RFC-002 section 10 market-data ingress and ADR-002-018 Critical Input "
+    "provenance,SERVICE_RANKING_READ_NO_ORDER_EGRESS"
+)
+_LIVE_LEVEL = "SERVICE_RANKING_READ_NO_ORDER_EGRESS"
+_LIVE_PATH = "services/screener.py stock universe screener"
+#: A path that is not in the tree, as a retired row's path will not be.
+_GONE = "services/deleted_screener.py stock universe screener"
+#: A stand-in sha: the `legacy-final` tag, which the legacy-removal plan uses as
+#: the commit where the deleted routes last existed.
+_RETIRED = f"{status.RETIRED_LEVEL_PREFIX}6fc17c0f8d25"
+
+
+def test_a_retired_row_whose_source_is_gone_passes(tmp_path):
+    # The point of the marker: the row, its ID, and its history stay after the
+    # file is deleted.
+    csv_path, markdown_path = _migration_copy(
+        tmp_path,
+        (
+            _LIVE_ROW,
+            _LIVE_ROW.replace(_LIVE_PATH, _GONE).replace(_LIVE_LEVEL, _RETIRED),
+        ),
+    )
+
+    rows, _, _ = status.validate_migration_conformance(
+        _REPO_ROOT, csv_path, markdown_path, _real_vocabulary()
+    )
+
+    assert rows == _EXPECTED_MIGRATION_REGISTER_ROWS
+
+
+def test_a_retired_row_whose_source_still_exists_fails(tmp_path):
+    # The marker must be true.  Marking a route that is still in the tree would
+    # otherwise be a way to stop checking a live route.
+    csv_path, markdown_path = _migration_copy(
+        tmp_path, (_LIVE_ROW, _LIVE_ROW.replace(_LIVE_LEVEL, _RETIRED))
+    )
+
+    with pytest.raises(status.StatusError, match="marked retired"):
+        status.validate_migration_conformance(
+            _REPO_ROOT, csv_path, markdown_path, _real_vocabulary()
+        )
+
+
+def test_an_unmarked_row_whose_source_is_gone_still_fails(tmp_path):
+    # Unchanged behaviour for every row without the marker: a vanished source
+    # path is a failure, not a silent deregistration.
+    csv_path, markdown_path = _migration_copy(
+        tmp_path, (_LIVE_ROW, _LIVE_ROW.replace(_LIVE_PATH, _GONE))
+    )
+
+    with pytest.raises(status.StatusError, match="source path is missing"):
+        status.validate_migration_conformance(
+            _REPO_ROOT, csv_path, markdown_path, _real_vocabulary()
+        )
+
+
+def test_a_malformed_retirement_marker_is_rejected(tmp_path):
+    # The sha is the whole point of the marker -- it is where the deleted source
+    # can still be read.  A marker without one does not disarm the check.
+    csv_path, markdown_path = _migration_copy(
+        tmp_path,
+        (
+            _LIVE_ROW,
+            _LIVE_ROW.replace(_LIVE_PATH, _GONE).replace(
+                _LIVE_LEVEL, f"{status.RETIRED_LEVEL_PREFIX}legacy-final"
+            ),
+        ),
+    )
+
+    with pytest.raises(status.StatusError, match="retirement marker must be"):
         status.validate_migration_conformance(
             _REPO_ROOT, csv_path, markdown_path, _real_vocabulary()
         )
@@ -1116,11 +1211,14 @@ def test_a_new_unregistered_read_site_is_still_reported(tmp_path):
 
 
 def test_a_component_may_not_sit_in_both_the_blocking_and_warning_censuses(tmp_path):
+    # READ-003, not READ-007 as this fixture first read: READ-007's path is one
+    # the legacy removal deletes, and a fixture quoting a retired row silently
+    # stops editing anything (see _migration_copy).
     csv_path, markdown_path = _migration_copy(
         tmp_path,
         (
-            "READ-007,BROKER_READ_SITE,services/trading/market_data_bootstrap.py",
-            "READ-007,BROKER_READ_SITE,scripts/trading/flatten_all.py",
+            "READ-003,BROKER_READ_SITE,services/screener.py",
+            "READ-003,BROKER_READ_SITE,scripts/trading/flatten_all.py",
         ),
     )
 
@@ -1137,8 +1235,8 @@ def test_a_component_may_not_hold_both_warning_only_categories(tmp_path):
     csv_path, markdown_path = _migration_copy(
         tmp_path,
         (
-            "READ-007,BROKER_READ_SITE,services/trading/market_data_bootstrap.py",
-            "READ-007,BROKER_READ_SITE,shared/execution/mock_mirror.py",
+            "READ-003,BROKER_READ_SITE,services/screener.py",
+            "READ-003,BROKER_READ_SITE,shared/execution/mock_mirror.py",
         ),
     )
 

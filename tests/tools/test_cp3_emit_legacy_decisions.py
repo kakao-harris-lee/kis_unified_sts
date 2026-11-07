@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 import sys
 import warnings
 from collections import Counter
@@ -1329,6 +1330,38 @@ def test_the_units_table_cannot_rot_behind_the_projection_table() -> None:
 # ---------------------------------------------------------------------------
 
 
+#: Paths a B3 declared difference cites that the legacy-removal L2 step deletes
+#: (``docs/plans/2026-11-07-legacy-removal-plan.md``).  The declaration text is
+#: part of B3's output and stays byte-identical, so the citation outlives the
+#: file: the source last existed at tag ``legacy-final``, and that is where this
+#: test reads it instead of the working tree.  A cited path that is simply gone
+#: and is NOT listed here is still a failure.
+_RETIRED_AT_LEGACY_FINAL = frozenset({"services/trading/orchestrator.py"})
+
+
+def _assert_cited_source_defines(relative: str, symbol: str) -> None:
+    """Assert a B3 citation names real code, retired or not."""
+    path = produce_fields.REPO_ROOT / relative
+    if path.is_file():
+        assert symbol in path.read_text(encoding="utf-8")
+        return
+    assert relative in _RETIRED_AT_LEGACY_FINAL, (
+        f"{relative} is cited by a declared difference but is not in the tree "
+        "and is not recorded as retired at tag `legacy-final`"
+    )
+    blob = subprocess.run(
+        ["git", "cat-file", "-p", f"legacy-final:{relative}"],
+        cwd=produce_fields.REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # No tag (a shallow or tagless CI checkout) means the sub-check cannot run;
+    # the retirement listing above is then the whole assertion.
+    if blob.returncode == 0:
+        assert symbol in blob.stdout
+
+
 def test_the_new_declared_differences_cite_code_that_exists(
     strategy: produce_fields.StrategyInputs,
     anchor: produce_fields.OpenAnchor,
@@ -1340,10 +1373,9 @@ def test_the_new_declared_differences_cite_code_that_exists(
     }
     assert set(declared) == {f"L{index}" for index in range(1, 13)}
 
-    orchestrator = (
-        produce_fields.REPO_ROOT / "services" / "trading" / "orchestrator.py"
-    ).read_text(encoding="utf-8")
-    assert "def _filter_reentry_guarded_signals" in orchestrator
+    _assert_cited_source_defines(
+        "services/trading/orchestrator.py", "def _filter_reentry_guarded_signals"
+    )
     execution_yaml = (produce_fields.REPO_ROOT / "config" / "execution.yaml").read_text(
         encoding="utf-8"
     )

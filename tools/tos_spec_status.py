@@ -142,6 +142,15 @@ REQUIRED_MIGRATION_FIELDS = (
     "decommission_criteria",
     "authority_state",
 )
+#: ``current_level`` prefix for a register row whose source route was deleted
+#: from the tree.  Deleting the route IS the retirement the row tracks, so the
+#: row and its ID stay (the register is a history and the ID blocks must stay
+#: contiguous) while the file does not.  The suffix is the 12-character commit
+#: sha where the source last existed -- tag ``legacy-final`` for the 2026-11
+#: legacy removal, ``docs/plans/2026-11-07-legacy-removal-plan.md`` -- so the
+#: code a frozen row describes is still fetchable.
+RETIRED_LEVEL_PREFIX = "RETIRED_SOURCE_REMOVED@"
+_RETIRED_LEVEL = re.compile(rf"^{re.escape(RETIRED_LEVEL_PREFIX)}[0-9a-f]{{12}}$")
 REQUIRED_BROKER_SYMBOL_FIELDS = (
     "symbol",
     "kind",
@@ -2122,11 +2131,38 @@ def validate_migration_conformance(
         )
 
     def _components(category: str) -> set[str]:
-        """Resolve one category's component paths, requiring each to exist."""
+        """Resolve one category's live component paths, requiring each to exist.
+
+        A row whose ``current_level`` carries ``RETIRED_LEVEL_PREFIX`` records a
+        route that has been deleted from the tree, and is excluded from the
+        census sets this returns: a path that does not exist cannot be scanned,
+        and leaving it in the fail-closed exemption set would pre-exempt
+        whatever later takes its name.
+
+        The marker is not a way to stop checking a route.  A retired row whose
+        file is still present fails -- the marker has to be true -- and every
+        row without it stays fail-closed on existence exactly as before.
+        """
         components: set[str] = set()
         for row in (row for row in rows if row["category"] == category):
             component = row["component"].split(maxsplit=1)[0]
-            if not (repo_root / component).is_file():
+            exists = (repo_root / component).is_file()
+            level = row["current_level"]
+            if level.startswith(RETIRED_LEVEL_PREFIX):
+                if not _RETIRED_LEVEL.match(level):
+                    raise StatusError(
+                        f"{csv_path}: {row['record_id']} retirement marker must "
+                        f"be {RETIRED_LEVEL_PREFIX}<12-hex-commit-sha>, "
+                        f"got {level!r}"
+                    )
+                if exists:
+                    raise StatusError(
+                        f"{csv_path}: {row['record_id']} is marked retired "
+                        f"({level}) but its source path still exists: "
+                        f"{repo_root / component}"
+                    )
+                continue
+            if not exists:
                 raise StatusError(
                     f"{csv_path}: {row['record_id']} source path is missing: "
                     f"{repo_root / component}"
