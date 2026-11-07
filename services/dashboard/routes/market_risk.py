@@ -32,17 +32,49 @@ _RISK_LATEST_KEY = os.environ.get("MARKET_RISK_LATEST_KEY", "market:risk:latest"
 # market-structure stale threshold (14h) unless overridden.
 _RISK_STALE_SECONDS = int(os.environ.get("MARKET_RISK_STALE_SECONDS", "50400"))
 
-# Night-close staleness bound. This used to read
-# ``NightCloseCaptureConfig.redis_ttl_seconds`` from config/night_futures.yaml
-# so the dashboard bound could not drift from the collector's TTL (O11-③).
-# The collector (services/night_futures_collector) was removed with the legacy
-# runtime, taking that loader with it, so nothing publishes
-# market:structure:night_close any more and there is no second bound left to
-# drift from: the 51h value the collector shipped stays here as the sole bound,
-# env-overridable as before.
-# This whole route is slated for removal in L4 of the legacy-removal plan.
+# Fallback shipped default (mirrors config/night_futures.yaml's own value) —
+# used only if the file or the key is absent; keep it in sync with the YAML,
+# though _default_night_close_stale_seconds reading the config directly is the
+# actual source of truth.
+_NIGHT_CLOSE_STALE_FALLBACK_SECONDS = 183600
+
+
+def _default_night_close_stale_seconds() -> int:
+    """Night-close staleness bound, single-sourced with the key's TTL.
+
+    O11-③ review: this used to be an independent hardcoded 86400 that could
+    (and did) drift from ``config/night_futures.yaml``'s
+    ``night_close_capture.redis_ttl_seconds`` — once that TTL widened to
+    survive the Friday-close -> Monday-premarket weekend gap, the old
+    hardcoded 24h bound would have rendered a legitimately fresh Monday read
+    as ``stale``. Reading the YAML value here (rather than keeping a second,
+    independently-tunable number) is what keeps the Redis-expiry bound and the
+    "is this too old to trust" bound from drifting apart again.
+
+    The pydantic loader this used to go through
+    (``services/night_futures_collector/config.py::NightCloseCaptureConfig``)
+    went with the legacy runtime, so the value is read straight from the YAML
+    — same single source, one less hop. This whole route is slated for removal
+    in L4 of the legacy-removal plan.
+    """
+    try:
+        from shared.config.loader import ConfigLoader
+
+        raw = ConfigLoader.load("night_futures.yaml")
+        section = raw.get("night_close_capture") if isinstance(raw, dict) else None
+        section = section if isinstance(section, dict) else {}
+        ttl = section.get("redis_ttl_seconds")
+        if ttl is not None:
+            return int(ttl)
+    except Exception:  # noqa: BLE001 - fall back to the shipped default
+        pass
+    return _NIGHT_CLOSE_STALE_FALLBACK_SECONDS
+
+
 _NIGHT_CLOSE_STALE_SECONDS = int(
-    os.environ.get("MARKET_RISK_NIGHT_STALE_SECONDS", "183600")
+    os.environ.get(
+        "MARKET_RISK_NIGHT_STALE_SECONDS", str(_default_night_close_stale_seconds())
+    )
 )
 
 # Component names in the fixed Phase 1a contract order.

@@ -47,10 +47,12 @@ night_close_capture:
   # gap. 51h (not 72h) keeps a real margin under a missed-capture case a day
   # later still reading as stale (~71h48m > 51h).
   #
-  # The capture collector and the market-structure collector that both reused
-  # this value as their freshness bound were removed with the legacy runtime,
-  # and no code loads this file any more. It is kept as the operator reference
-  # for the night tr_key above, which `tools/broker_probes/probes_real.py`
-  # points at in its --help; the dashboard's own bound is now the literal in
-  # services/dashboard/routes/market_risk.py.
+  # The capture collector and the market-structure collector that used to
+  # reuse this value went with the legacy runtime, so the remaining reader is
+  # services/dashboard/routes/market_risk.py's _default_night_close_stale_
+  # seconds (via _night_close_summary). It reads THIS value rather than
+  # carrying its own, so the Redis-expiry bound and the "is this too old to
+  # trust" bound still cannot drift apart. The night tr_key above is also the
+  # operator reference `tools/broker_probes/probes_real.py` points at in its
+  # --help.
   redis_ttl_seconds: 183600

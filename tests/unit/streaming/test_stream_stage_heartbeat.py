@@ -714,6 +714,31 @@ def test_the_shipped_interval_is_what_the_harvester_predicts():
     )
 
 
+def test_the_shipped_gap_clears_the_bound_it_is_scored_against():
+    """What the harvester measures is the *gap*, not the configured interval.
+
+    The gap is the interval plus the poll that closes it, plus the second its
+    truncated timestamps can add — so the shipped interval has to clear the
+    harvester's ``liveness_max_gap_seconds`` with the poll block included, not
+    on its own.
+
+    One honest limit, changed by the legacy removal. This used to read the
+    block from ``services/order_router/config.py`` — the only one of the five
+    stage services that took it from config — so two of the three operands
+    came from shipped files. All five services are gone now, so the block is
+    ``_SHIPPED_BLOCK``, this file's own 2000ms constant. The two operands that
+    can actually drift (``config/streaming.yaml`` and
+    ``config/f9_observation.yaml``) are still read from the shipped files, and
+    at the shipped 60s interval the block cannot mislead: it would have to
+    exceed 119s to push the sum past the bound.
+    """
+    max_gap = harvest.load_observation_config().liveness_max_gap_seconds
+    shipped = StreamStageConfig.from_yaml().heartbeat_interval_seconds
+
+    assert shipped + _SHIPPED_BLOCK + TIMESTAMP_RESOLUTION_SECONDS <= max_gap
+    assert shipped <= max_heartbeat_interval_seconds(_SHIPPED_BLOCK)
+
+
 @pytest.mark.parametrize("block_ms", [0, -1])
 @pytest.mark.parametrize("build", [_stage, _multi_stage])
 def test_a_non_positive_poll_block_is_refused_by_both_stages(build, block_ms):
