@@ -45,10 +45,12 @@ night_close_capture:
   # closes ~06:00 KST Saturday, and Monday's premarket read at ~05:48 KST is
   # ~47h48m later — a 24h TTL would have expired the key over the weekend
   # gap. 51h (not 72h) keeps a real margin under a missed-capture case a day
-  # later still reading as stale (~71h48m > 51h) — see
-  # services/dashboard/routes/market_risk.py's _night_close_summary and
-  # services/market_structure_collector/main.py's _read_night_close, which
-  # both reuse this SAME value (redis_ttl_seconds) as their freshness bound
-  # so the Redis-expiry bound and the "is this too old to trust" bound
-  # cannot drift apart.
+  # later still reading as stale (~71h48m > 51h).
+  #
+  # The capture collector and the market-structure collector that both reused
+  # this value as their freshness bound were removed with the legacy runtime,
+  # and no code loads this file any more. It is kept as the operator reference
+  # for the night tr_key above, which `tools/broker_probes/probes_real.py`
+  # points at in its --help; the dashboard's own bound is now the literal in
+  # services/dashboard/routes/market_risk.py.
   redis_ttl_seconds: 183600

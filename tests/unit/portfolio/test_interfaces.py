@@ -78,10 +78,6 @@ def test_importing_interfaces_does_not_load_hedge_or_execution_modules():
                 or name.startswith("shared.execution.")
                 or name == "shared.order"
                 or name.startswith("shared.order.")
-                or name == "services.order_router"
-                or name.startswith("services.order_router.")
-                or name == "services.stock_order_router"
-                or name.startswith("services.stock_order_router.")
             )
         )
         if forbidden:

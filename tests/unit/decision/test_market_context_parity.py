@@ -207,30 +207,6 @@ def _builder_marketcontext_threading() -> dict[str, set[str]]:
     )
 
 
-def _fcp_builder_call_kwargs() -> set[str]:
-    """Keyword names the decoupled FuturesContextProvider passes to build_market_context.
-
-    Post-F-9 the decoupled live producer threads a real session ``vwap`` and
-    still omits atr_90th / spread (the F-4 builder defaults). This AST-pins that
-    vwap IS passed, so removing it again — which would reopen the #533/#537-class
-    Setup-D-inert gap — fails the contract test below.
-    """
-    from services.decision_engine import context_provider as fcp_mod
-
-    tree = ast.parse(inspect.getsource(fcp_mod))
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "build_market_context"
-        ):
-            return {kw.arg for kw in node.keywords if kw.arg is not None}
-    raise AssertionError(
-        "no build_market_context(...) call found in FuturesContextProvider — "
-        "the decoupled-vwap-gap pin cannot introspect the provider"
-    )
-
-
 def _replay_constructor_kwargs() -> set[str]:
     """AST-extract the keyword names of the ``MarketContext(...)`` call in replay.
 
@@ -624,19 +600,6 @@ def test_builder_has_no_vwap_fallback() -> None:
     without_vwap = {k: v for k, v in _builder_minimal_kwargs().items() if k != "vwap"}
     with pytest.raises(TypeError):
         build_market_context(**without_vwap)
-
-
-def test_decoupled_producer_threads_vwap_into_the_builder() -> None:
-    """AST pin — the inverse of the pre-cutover assertion.
-
-    Dropping the kwarg again would reopen the Setup-D-inert gap, so it fails
-    here rather than going unnoticed until a shadow session produces nothing.
-    """
-    assert "vwap" in _fcp_builder_call_kwargs(), (
-        "FuturesContextProvider no longer passes vwap to build_market_context — "
-        "the decoupled Setup-D-inert gap has been reopened. It must source the "
-        "engine's session VWAP (get_indicators()['vwap'])."
-    )
 
 
 def test_replay_vwap_is_data_driven_not_the_current_price() -> None:

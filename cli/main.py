@@ -20,7 +20,6 @@ from cli.commands import common as common_commands
 from cli.commands import health as health_commands
 from cli.commands import paper as paper_commands
 from cli.commands import stock_backfill as stock_backfill_commands
-from cli.commands import trading_control as trading_control_commands
 from cli.commands.data import data_cmd
 from cli.commands.portfolio import portfolio_cmd
 from cli.commands.tos_status import tos_cmd
@@ -52,15 +51,6 @@ stock_backfill_status = stock_backfill_commands.stock_backfill_status
 stock_backfill_today = stock_backfill_commands.stock_backfill_today
 stock_backfill_universe = stock_backfill_commands.stock_backfill_universe
 
-_futures_orchestrator_blocked = trading_control_commands._futures_orchestrator_blocked
-_futures_orchestrator_enabled = trading_control_commands._futures_orchestrator_enabled
-_stock_orchestrator_blocked = trading_control_commands._stock_orchestrator_blocked
-_stock_orchestrator_enabled = trading_control_commands._stock_orchestrator_enabled
-trade = trading_control_commands.trade
-trade_start = trading_control_commands.trade_start
-trade_status = trading_control_commands.trade_status
-trade_stop = trading_control_commands.trade_stop
-
 # 로깅 설정
 logging.basicConfig(
     level=logging.INFO,
@@ -83,7 +73,6 @@ def cli(verbose: bool):
         mlflow      MLflow 관련 명령
         data        Research market-data export/validation
         collect     데이터 수집 명령
-        trade       트레이딩 제어 명령
         health      시스템 헬스 체크
         tos         TOS 한 장 상태판 (읽기 전용)
     """
@@ -1242,7 +1231,6 @@ def scan_daily(symbols: str | None):
 # =============================================================================
 
 
-cli.add_command(trade)
 cli.add_command(paper)
 cli.add_command(health)
 

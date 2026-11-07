@@ -24,7 +24,6 @@ import time
 import pytest
 
 import scripts.ops.f9_observation_harvest as harvest
-from services.order_router.config import Phase4ExecutionConfig
 from shared.streaming.stage import (
     LIVENESS_MAX_GAP_SECONDS,
     TIMESTAMP_RESOLUTION_SECONDS,
@@ -713,32 +712,6 @@ def test_the_shipped_interval_is_what_the_harvester_predicts():
         f"config/streaming.yaml heartbeats every {shipped}s but "
         f"config/f9_observation.yaml predicts {expected}s"
     )
-
-
-def test_the_shipped_gap_clears_the_bound_it_is_scored_against():
-    """Three real sources, no literals: the claim that actually matters.
-
-    What the harvester measures is the *gap* between two emitted lines —
-    interval plus the poll that closes it, plus the second its truncated
-    timestamps can add — not the configured interval.
-
-    ``from_yaml()`` rather than ``load()``: the shipped file is what this test
-    guards, and ``load()``'s fallback would answer with the field default and
-    hide a bad value in the file behind it. Here an out-of-bound file raises.
-
-    One honest limit: the block read here is **order_router's**, the only one of
-    the five services that takes it from config; the other four pass a literal
-    2000 at their call sites. It stands proxy for all five. At the shipped
-    60s interval that proxy cannot mislead — the block would have to exceed
-    119s to push the sum past the bound — but the next reader should know it is
-    one service's value rather than a fleet-wide one.
-    """
-    max_gap = harvest.load_observation_config().liveness_max_gap_seconds
-    shipped = StreamStageConfig.from_yaml().heartbeat_interval_seconds
-    shipped_block = Phase4ExecutionConfig.from_yaml().xread_block_ms / 1000
-
-    assert shipped + shipped_block + TIMESTAMP_RESOLUTION_SECONDS <= max_gap
-    assert shipped <= max_heartbeat_interval_seconds(shipped_block)
 
 
 @pytest.mark.parametrize("block_ms", [0, -1])

@@ -17,12 +17,11 @@ stacks with Docker Compose profiles instead.
 
 ## Scheduler
 
-One-shot scheduled jobs run through the Compose `scheduler` service with
-supercronic. The source of truth is [`scheduler.crontab`](scheduler.crontab).
-
-```bash
-docker compose --env-file .env.paper --profile scheduler up -d scheduler
-```
+Removed. One-shot scheduled jobs used to run through the Compose `scheduler`
+service with supercronic, driven by `scheduler.crontab`. That service and its
+crontab went with the legacy runtime
+(`docs/plans/2026-11-07-legacy-removal-plan.md`, L1/L2); every job in it
+invoked a deleted service or script.
 
 Do not install host crontab entries for the current paper/live runtime. Historical
 host-cron notes are kept under `docs/archive/operations/crontab.md`.

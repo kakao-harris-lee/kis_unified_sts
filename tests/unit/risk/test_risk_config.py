@@ -58,28 +58,6 @@ class TestFuturesRiskConfigFromYaml:
         assert config.account_equity_krw == pytest.approx(50_000_000.0)
         assert isinstance(config.account_equity_krw, float)
 
-    def test_account_equity_krw_accepts_scientific_notation(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The shared knob must not be narrower here than in the margin lane.
-
-        ``FuturesMarginConfig.fallback_account_equity_krw`` is a ``float``, so
-        ``FUTURES_MARGIN_FALLBACK_EQUITY=5e7`` is valid for the margin daemon.
-        While this field was an ``int`` the same value raised
-        ``ValidationError(int_parsing)`` inside ``from_yaml()``, crash-looping
-        services/risk_filter while the margin lane kept running on it.
-        """
-        from services.futures_margin_risk.config import FuturesMarginConfig
-
-        monkeypatch.setenv("FUTURES_MARGIN_FALLBACK_EQUITY", "5e7")
-        ConfigLoader.clear_cache()
-        assert FuturesRiskConfig.from_yaml().account_equity_krw == pytest.approx(
-            50_000_000.0
-        )
-        assert FuturesMarginConfig.load_or_default().fallback_account_equity_krw == (
-            pytest.approx(50_000_000.0)
-        )
-
     @pytest.mark.parametrize("bad", ["0", "-1"])
     def test_account_equity_krw_rejects_nonpositive(
         self, monkeypatch: pytest.MonkeyPatch, bad: str
@@ -97,18 +75,6 @@ class TestFuturesRiskConfigFromYaml:
         ConfigLoader.clear_cache()
         with pytest.raises(ValidationError):
             FuturesRiskConfig.from_yaml()
-
-    def test_account_equity_krw_matches_leverage_denominator(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Same denominator as the futures margin read-model / LeverageFilter."""
-        from services.futures_margin_risk.config import FuturesMarginConfig
-
-        monkeypatch.delenv("FUTURES_MARGIN_FALLBACK_EQUITY", raising=False)
-        ConfigLoader.clear_cache()
-        assert float(FuturesRiskConfig.from_yaml().account_equity_krw) == pytest.approx(
-            FuturesMarginConfig.load_or_default().fallback_account_equity_krw
-        )
 
     def test_account_equity_krw_follows_env_override(
         self, monkeypatch: pytest.MonkeyPatch
