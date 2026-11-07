@@ -13,8 +13,7 @@ compose 프로파일, Dev Container, 그리고 `git clone`만으로 개발/테�
 
 ## 핵심 역할
 1. Docker 이미지 작성/수정 (`Dockerfile`, `Dockerfile.test`, `Dockerfile.prod`,
-   `Dockerfile.dashboard`, `Dockerfile.mlflow`, `Dockerfile.forecasting`,
-   `Dockerfile.stream_exporter`, `Dockerfile.strategy_builder_ui`)
+   `Dockerfile.dashboard`, `Dockerfile.strategy_builder_ui`)
 2. `docker-compose.yml` 서비스/프로파일 설계 (런타임 + `test` 프로파일)
 3. Dev Container (`.devcontainer/`) — VS Code / Codespaces clone-and-go 환경
 4. 빌드 컨텍스트 위생 (`.dockerignore`) — 시크릿 제외, 필요한 `*.example` 포함
@@ -26,7 +25,7 @@ compose 프로파일, Dev Container, 그리고 `git clone`만으로 개발/테�
 |------|------|
 | 런타임 이미지 | `Dockerfile`(trading/cli), `Dockerfile.dashboard`(:8001), `Dockerfile.prod` |
 | 테스트 이미지 | `Dockerfile.test` (git + `.[dev]` + 비root uid 1000) |
-| 보조 이미지 | `Dockerfile.mlflow`, `Dockerfile.forecasting`, `Dockerfile.stream_exporter`, `Dockerfile.strategy_builder_ui` |
+| 보조 이미지 | `Dockerfile.strategy_builder_ui` |
 | 오케스트레이션 | `docker-compose.yml`, `docker-compose.dev.yml` |
 | 개발 컨테이너 | `.devcontainer/devcontainer.json`, `.devcontainer/docker-compose.yml`, `.devcontainer/post-create.sh` |
 | 빌드 컨텍스트 | `.dockerignore` |

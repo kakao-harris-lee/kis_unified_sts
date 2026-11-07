@@ -12,17 +12,20 @@ Two separate questions, deliberately answered separately:
     Given that they may, *can* they? If the answer is no, that is a broken
     environment, not a reason to go quiet. A skip here is how the CI
     ``performance`` job measured 13 of 25 benchmarks for four months while
-    reporting green: the twelve Redis benchmarks skipped with the reason "Redis
-    not available (start with: docker-compose up -d redis)" even though the
-    Redis service container was up and healthy — the real cause was the unset
-    flag, and nothing in the report distinguished the two.
+    reporting green (that job and its suite were removed in the legacy cleanup
+    L1; the lesson is why this module still fails instead of skipping): the
+    twelve Redis benchmarks skipped with the reason "Redis not available (start
+    with: docker-compose up -d redis)" even though the Redis service container
+    was up and healthy — the real cause was the unset flag, and nothing in the
+    report distinguished the two.
 
 The two answers are combined in ONE place, ``tests/conftest.py``, which already
 owns the list of live-infra modules (``_LIVE_INFRA_TEST_PATHS``): not allowed →
 skip; allowed but unreachable → the gated items FAIL at setup. Doing it there
-rather than per module covers all nine modules instead of two, and keeps the
-blast radius to those items — an earlier draft raised at import time in two
-modules, which aborted collection for the whole session and ran zero tests.
+rather than per module covers every module on that list at once, and keeps the
+blast radius to those items — an earlier draft raised at import time inside the
+gated modules, which aborted collection for the whole session and ran zero
+tests.
 """
 
 from __future__ import annotations
