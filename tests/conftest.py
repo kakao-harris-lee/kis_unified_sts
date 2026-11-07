@@ -45,8 +45,6 @@ _LIVE_INFRA_TEST_PATHS = {
     "tests/integration/test_llm_market_context.py",
     "tests/integration/test_rate_limiter_redis.py",
     "tests/integration/test_redis_tls.py",
-    "tests/performance/test_redis_load.py",
-    "tests/performance/test_websocket_load.py",
     "tests/services/trading/test_risk_integration.py",
     "tests/shared/risk/test_persistence.py",
 }
@@ -357,8 +355,7 @@ def pytest_runtest_setup(item):
     Failing per item, rather than raising at import time in the test modules,
     keeps the blast radius to the gated tests: the rest of the session still
     runs instead of pytest aborting collection with zero tests executed. It
-    also covers all of ``_LIVE_INFRA_TEST_PATHS``, not just the two
-    performance modules.
+    also covers all of ``_LIVE_INFRA_TEST_PATHS``.
     """
     if "live_infra" not in item.keywords or not live_infra_enabled():
         return

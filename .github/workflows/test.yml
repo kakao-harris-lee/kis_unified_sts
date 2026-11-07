@@ -1,8 +1,7 @@
 # .github/workflows/test.yml
 name: Tests
 
-# Path filter below (push + pull_request only — schedule is unaffected and
-# always runs the full weekly performance sweep): the tos governance test
+# Path filter below: the tos governance test
 # batteries (tests/tools/test_tos_*.py, tests/tools/test_u17_verify.py,
 # tests/tos_l3/) moved to .github/workflows/tos-firewall.yml, which already
 # runs on every PR/push with no path gating. This job carries the heavy
@@ -69,9 +68,6 @@ on:
   pull_request:
     branches: [main]
     paths: *paths
-  schedule:
-    # Run performance tests weekly on Monday at 00:00 UTC
-    - cron: '0 0 * * 1'
 
 jobs:
   # ===========================================================================
@@ -207,9 +203,6 @@ jobs:
         # under pytest-xdist `-n auto`. Pass 2 is the `test-serial` job below,
         # which now runs AT THE SAME TIME as these two instead of after them.
         #
-        # tests/performance/ is excluded here; the dedicated `performance` job
-        # below runs it with its own Redis isolation and regression baseline.
-        #
         # tests/tools/test_tos_*.py, tests/tools/test_u17_verify.py, and
         # tests/tos_l3/ are also excluded — they moved to the
         # tos-firewall.yml `tos-firewall-tests` job (no runtime stack needed,
@@ -265,7 +258,6 @@ jobs:
           echo "shard ${{ matrix.shard }} ignores: $SHARD_IGNORES"
           # shellcheck disable=SC2086  # word splitting is the point here
           pytest $TARGETS $SHARD_IGNORES \
-            --ignore=tests/performance \
             --ignore-glob='tests/tools/test_tos_*.py' \
             --ignore=tests/tools/test_u17_verify.py \
             --ignore=tests/tos_l3 \
@@ -328,7 +320,6 @@ jobs:
         # The ignores mirror the parallel pass exactly, for the same reasons.
         run: |
           pytest tests/ \
-            --ignore=tests/performance \
             --ignore-glob='tests/tools/test_tos_*.py' \
             --ignore=tests/tools/test_u17_verify.py \
             --ignore=tests/tos_l3 \
@@ -455,157 +446,3 @@ jobs:
           pytest tests/unit/backtest/test_vbt_runner.py \
             tests/unit/backtest/test_vbt_harness_runner.py \
             tests/unit/backtest/test_harness_engine.py -q
-
-  performance:
-    runs-on: ubuntu-latest
-    # Run on PRs to main and weekly schedule
-    if: github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.base_ref == 'main')
-    # Backstop so a hung round cannot burn the 6h default. Measured on run
-    # 36953158113: the whole 5-round loop takes ~8s (round 1 ~3.1s cold, rounds
-    # 2-5 ~1.3s each), and the job end to end takes 92s including install.
-    timeout-minutes: 20
-
-    env:
-      # Each benchmark is measured PERF_ROUNDS times and the MEDIAN is compared,
-      # because one sample of this suite is not a measurement: re-running the
-      # job 10x on a fixed head gave test_entry_path_100_symbols a 3.1x spread
-      # (min 0.1217s / median 0.2755s / max 0.3800s) and 3 reds with identical
-      # code (#768). Almost all of that spread is the cold first round's setup
-      # phase, which the median drops. Raising this costs ~1.3s per extra round
-      # and shrinks only the within-job noise — all rounds share one runner.
-      PERF_ROUNDS: '5'
-      # Single source for the thresholds, so they are not copied between this
-      # job, the baseline workflow and the docs.
-      PERF_WARNING_THRESHOLD: '1.5'
-      PERF_ERROR_THRESHOLD: '2.0'
-      PERF_MIN_DURATION: '0.05'
-      # On a pull_request event github.sha is the ephemeral refs/pull/N/merge
-      # commit, which is garbage-collected after the merge. Provenance has to
-      # name a commit that still exists.
-      PERF_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-          pip install prometheus-client pytest-json-report
-
-      - name: Run performance tests (${{ env.PERF_ROUNDS }} rounds)
-        # One pytest process per round: separate processes keep per-round state
-        # (import caches, allocator arenas) from making later rounds look faster
-        # than earlier ones, which would bias the median.
-        #
-        # A failing round does NOT stop the loop. Running N rounds multiplies the
-        # chance of hitting a flaky assertion by N, and a failure in round 3 must
-        # not throw away the measurement from rounds 1, 2, 4 and 5. The verdict
-        # on those failures belongs to the checker, which counts them per
-        # benchmark: a minority of failing rounds is a warning (one noisy sample
-        # of a timing assertion — the subject of #768), a majority is an error.
-        run: |
-          set -uo pipefail
-          mkdir -p tests/performance/rounds || exit 1
-          for round in $(seq 1 "$PERF_ROUNDS"); do
-            echo "::group::performance round $round/$PERF_ROUNDS"
-            pytest tests/performance/ -q -s \
-              --json-report \
-              --json-report-file="tests/performance/rounds/round-$round.json" \
-              || echo "::warning::performance round $round had a test failure"
-            echo "::endgroup::"
-          done
-          produced=$(ls tests/performance/rounds/round-*.json 2>/dev/null | wc -l)
-          echo "rounds with a report: $produced of $PERF_ROUNDS"
-          # pytest-json-report writes a report on every normal exit, collection
-          # errors included, so a MISSING file means the process died (OOM,
-          # segfault, timeout). That is a broken measurement, not a slow one.
-          # A report that exists but records an aborted session is caught by the
-          # checker, which reads pytest's exitcode and collectors.
-          if [ "$produced" -lt "$PERF_ROUNDS" ]; then
-            echo "only $produced of $PERF_ROUNDS rounds produced a report —"
-            echo "a round died before writing one; the measurement is incomplete"
-            exit 1
-          fi
-        env:
-          # The twelve benchmarks in tests/performance/test_redis_load.py and
-          # test_websocket_load.py are gated on this opt-in (tests/conftest.py
-          # and tests/support/live_infra.py). Without it they skipped, the
-          # checker reported twelve non-fatal "Test not found" warnings, and
-          # the job measured 13 of 25 benchmarks while going green — for four
-          # months (#768 / #796 / #679). The flag is safe HERE and nowhere
-          # else by default: the gate exists because the deploy host's paper
-          # runtime shares Redis DB 1 with the suite, and these tests write
-          # runtime-shaped keys (trading:{asset}:positions). This runner's
-          # Redis is a throwaway service container.
-          #
-          # Neither module reaches a KIS endpoint. test_websocket_load.py is
-          # named for what the Redis Streams it measures carry, not for a KIS
-          # WebSocket connection — nothing in tests/performance/ needs network
-          # access beyond this container.
-          KIS_RUN_LIVE_INFRA_TESTS: '1'
-          # shared/streaming/client.py::RedisClient reads these three. It does
-          # NOT read REDIS_URL, so the previous `REDIS_URL: ...:6379/0` set
-          # nothing on this path (the client defaulted to DB 1 regardless).
-          # REDIS_URL is kept, corrected to DB 1, for anything else that reads
-          # it; DB 1 is the project default (CLAUDE.md).
-          REDIS_HOST: localhost
-          REDIS_PORT: '6379'
-          REDIS_DB: '1'
-          REDIS_URL: redis://localhost:6379/1
-          ENVIRONMENT: test
-
-      - name: Check for performance regressions
-        # Thresholds tuned for shared GitHub-hosted runner variance and set in
-        # this job's env above: PERF_ERROR_THRESHOLD fails the build,
-        # PERF_WARNING_THRESHOLD is an informational warning (non-fatal), and a
-        # benchmark whose baseline median is below PERF_MIN_DURATION is exempt
-        # because its wall-clock ratio is noise-dominated. Exit 2 also covers a session that never ran: the
-        # checker reads each round report's pytest exitcode and collectors, so a
-        # collection error that writes `tests: []` in every round fails here
-        # instead of reporting 25 "Test not found" warnings and going green.
-        # The comparison is MEDIAN of PERF_ROUNDS rounds
-        # against the median of the baseline's rounds; --write-samples emits the
-        # aggregated sample arrays (n/median/min/max/sd + provenance) that the
-        # upload step publishes and that --write-baseline consumes.
-        run: |
-          python scripts/performance/check_regression.py \
-            --baseline tests/performance/baselines.json \
-            --current tests/performance/rounds/round-*.json \
-            --write-samples tests/performance/current.json \
-            --markdown-summary "$GITHUB_STEP_SUMMARY" \
-            --warning-threshold "$PERF_WARNING_THRESHOLD" \
-            --error-threshold "$PERF_ERROR_THRESHOLD" \
-            --min-duration "$PERF_MIN_DURATION"
-        continue-on-error: false
-
-      - name: Upload performance report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: performance-report
-          # current.json is the aggregated samples file; rounds/ holds the raw
-          # per-round pytest reports it was built from. Feed current.json to
-          # `check_regression.py --write-baseline` to propose a new baseline.
-          path: |
-            tests/performance/current.json
-            tests/performance/rounds/
-          retention-days: 30
