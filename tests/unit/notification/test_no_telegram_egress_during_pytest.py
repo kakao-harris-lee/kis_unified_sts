@@ -17,10 +17,6 @@ so they observe the session-level environment as the orchestrator would.
 from __future__ import annotations
 
 import os
-from types import SimpleNamespace
-from unittest.mock import patch
-
-import pytest
 
 from shared.notification.telegram import resolve_domain_credentials
 
@@ -55,26 +51,3 @@ def test_resolve_domain_credentials_returns_empty_for_all_domains():
         )
 
 
-@pytest.mark.asyncio
-async def test_orchestrator_notify_does_not_send_when_credentials_scrubbed():
-    """The real orchestrator._notify short-circuits without a notifier.
-
-    Drives the exact code path that emits "🚀 Trading Started" /
-    "🛑 Trading Stopped" (bypassing the heavy __init__) and asserts it never
-    constructs a TelegramNotifier when the session has no credentials — so a
-    real orchestrator started in a test cannot reach the network.
-    """
-    from services.trading.orchestrator import TradingOrchestrator
-
-    orch = TradingOrchestrator.__new__(TradingOrchestrator)
-    orch.config = SimpleNamespace(
-        enable_telegram=True,
-        asset_class="stock",
-        telegram_token="",
-        telegram_chat_id="",
-    )
-
-    with patch("services.monitoring.notifier.TelegramNotifier") as mock_notifier_cls:
-        await orch._notify("🚀 Trading Started")
-
-    mock_notifier_cls.assert_not_called()

@@ -40,57 +40,6 @@ def _execution_section() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_live_futures_path_config_yields_a_constructed_limiter():
-    """The real order_router wiring, fed the real execution.yaml section."""
-    from services.order_router.main import build_live_execution_config
-
-    config = build_live_execution_config(_execution_section(), redis_url=_REDIS_URL)
-    executor = OrderExecutor(config)
-
-    assert executor._rate_limiter is not None
-    assert executor._rate_limiter.key == "kis:ratelimit:futures"
-
-
-def test_live_futures_path_honours_the_configured_pacing():
-    """``orders_per_second: 5.0`` must reach the limiter, not be discarded.
-
-    The expected value is hardcoded on purpose. Comparing the config back to
-    the section it came from passes for ANY consistent wiring, including one
-    reading the wrong key — it only proves the object is self-consistent.
-    """
-    from services.order_router.main import build_live_execution_config
-
-    section = _execution_section()
-    assert "orders_per_second" in section, "execution.yaml uses the legacy spelling"
-    assert section["orders_per_second"] == 5.0, (
-        "execution.yaml changed its configured pacing; update this pin "
-        "deliberately rather than re-deriving it from the file"
-    )
-
-    config = build_live_execution_config(section, redis_url=_REDIS_URL)
-    executor = OrderExecutor(config)
-
-    assert config.requests_per_second == 5.0
-    assert executor._rate_limiter.max_requests == 5
-
-
-def test_pacing_falls_back_to_the_model_default_without_the_legacy_key():
-    """Negative: with the key REMOVED the default must apply, not 5.0.
-
-    Without this, a wiring that hardcoded 5.0 anywhere in the path would pass
-    the positive test above.
-    """
-    from services.order_router.main import build_live_execution_config
-
-    section = _execution_section()
-    section.pop("orders_per_second")
-
-    config = build_live_execution_config(section, redis_url=_REDIS_URL)
-
-    assert config.requests_per_second == 20.0
-    assert OrderExecutor(config)._rate_limiter.max_requests == 20
-
-
 def test_no_redis_url_still_means_no_limiter():
     """Negative control: the opt-out is unchanged."""
     executor = OrderExecutor(ExecutionConfig(trading_mode="PAPER"))
@@ -163,78 +112,6 @@ def test_canonical_requests_per_second_still_accepted():
 # ---------------------------------------------------------------------------
 
 
-def test_live_config_forces_real_trading_mode():
-    """The live branch owns this decision, not the TRADING_MODE env var.
-
-    The live/paper selector is FUTURES_ORDER_ROUTER. With TRADING_MODE unset,
-    execution.yaml resolves trading_mode to PAPER; KISFuturesAdapter derives
-    ``is_mock = trading_mode != "REAL"``, so the LIVE router would have aimed
-    at the KIS mock host — which does not serve futures at all.
-    """
-    from services.order_router.main import build_live_execution_config
-
-    section = _execution_section()
-    section["trading_mode"] = "PAPER"  # what ${TRADING_MODE:PAPER} yields unset
-
-    config = build_live_execution_config(section, redis_url=_REDIS_URL)
-
-    assert config.trading_mode == "REAL"
-
-
-def test_live_config_forces_real_even_when_yaml_says_mock():
-    from services.order_router.main import build_live_execution_config
-
-    section = _execution_section()
-    section["trading_mode"] = "MOCK"
-
-    assert (
-        build_live_execution_config(section, redis_url=_REDIS_URL).trading_mode
-        == "REAL"
-    )
-
-
-def test_live_startup_refuses_an_executor_without_an_auth_manager():
-    """A live router that silently places zero orders is worse than one that
-    refuses to start."""
-    from services.order_router.main import _assert_live_executor_can_authenticate
-
-    executor = OrderExecutor(ExecutionConfig(trading_mode="REAL"))
-    assert executor.auth_manager is None
-
-    with pytest.raises(RuntimeError, match="no auth_manager"):
-        _assert_live_executor_can_authenticate(executor)
-
-
-def test_live_startup_refuses_empty_credentials():
-    from types import SimpleNamespace
-
-    from services.order_router.main import _assert_live_executor_can_authenticate
-
-    executor = OrderExecutor(
-        ExecutionConfig(trading_mode="REAL"),
-        auth_manager=SimpleNamespace(config=SimpleNamespace(app_key="", app_secret="")),
-    )
-
-    with pytest.raises(RuntimeError, match="credentials are empty"):
-        _assert_live_executor_can_authenticate(executor)
-
-
-def test_live_startup_accepts_a_real_auth_manager():
-    """Negative control: a properly wired executor starts."""
-    from types import SimpleNamespace
-
-    from services.order_router.main import _assert_live_executor_can_authenticate
-
-    executor = OrderExecutor(
-        ExecutionConfig(trading_mode="REAL"),
-        auth_manager=SimpleNamespace(
-            config=SimpleNamespace(app_key="k", app_secret="s")
-        ),
-    )
-
-    _assert_live_executor_can_authenticate(executor)  # must not raise
-
-
 @pytest.mark.asyncio
 async def test_wired_live_executor_can_build_auth_headers(monkeypatch):
     """End of the #7 chain: with an auth_manager, header building is reachable.
@@ -272,47 +149,6 @@ def test_unwired_live_executor_cannot_build_auth_headers():
 # ---------------------------------------------------------------------------
 # Review attempt-2 #6 — the auth assertion's CALL SITE, not just the helper
 # ---------------------------------------------------------------------------
-
-
-def test_live_executor_builder_refuses_empty_credentials(monkeypatch):
-    """Deleting the assertion CALL must break something.
-
-    The helper was pinned by three tests while its call site was inlined in
-    `_build_and_run`, so replacing the call with `pass` killed nothing.
-    """
-    from services.order_router.main import build_live_order_executor
-    from shared.kis.auth import KISAuthConfig
-
-    # KISAuthConfig.__post_init__ falls back to these; a developer shell that
-    # has them set would otherwise mask the empty-credential case.
-    monkeypatch.delenv("KIS_APP_KEY", raising=False)
-    monkeypatch.delenv("KIS_APP_SECRET", raising=False)
-
-    with pytest.raises(RuntimeError, match="credentials are empty"):
-        build_live_order_executor(
-            _execution_section(),
-            redis_url=_REDIS_URL,
-            kis_auth=KISAuthConfig(app_key="", app_secret="", is_real=True),
-        )
-
-
-def test_live_executor_builder_returns_a_wired_executor(monkeypatch):
-    """Negative control: with credentials it builds and carries the manager."""
-    from services.order_router.main import build_live_order_executor
-    from shared.kis.auth import KISAuthConfig
-
-    monkeypatch.delenv("KIS_APP_KEY", raising=False)
-    monkeypatch.delenv("KIS_APP_SECRET", raising=False)
-
-    executor = build_live_order_executor(
-        _execution_section(),
-        redis_url=_REDIS_URL,
-        kis_auth=KISAuthConfig(app_key="k", app_secret="s", is_real=True),
-    )
-
-    assert executor.auth_manager is not None
-    assert executor.config.trading_mode == "REAL"
-    assert executor._rate_limiter is not None
 
 
 # ---------------------------------------------------------------------------

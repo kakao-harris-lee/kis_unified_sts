@@ -303,23 +303,6 @@ def test_manager_mark_once_in_finally_even_on_exception():
     assert exit_gate._decided_at.get(sym) == 2
 
 
-def test_orchestrator_wires_set_indicator_engine():
-    """The orchestrator must call StrategyManager.set_indicator_engine after
-    _init_indicator_engine — otherwise the live gate is a no-op in production.
-    This test would FAIL if the wiring line were removed.
-    """
-    import inspect
-
-    from services.trading import orchestrator as orch_mod
-
-    src = inspect.getsource(orch_mod.TradingOrchestrator._init_indicator_engine)
-    assert "set_indicator_engine" in src, (
-        "orchestrator._init_indicator_engine must wire the indicator engine "
-        "into the StrategyManager (set_indicator_engine) or the live "
-        "decision-cadence gate is bypassed"
-    )
-
-
 # ---------------------------------------------------------------------------
 # Backtest adapter: mark-once-after-both invariant + dead-flag removal
 # ---------------------------------------------------------------------------

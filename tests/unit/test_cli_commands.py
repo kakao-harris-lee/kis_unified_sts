@@ -28,8 +28,6 @@ def option_default(command, name):
 print(json.dumps({
     "module": main.DEFAULT_DASHBOARD_URL,
     "health": option_default(main.health, "url"),
-    "trade_status": option_default(main.trade_status, "url"),
-    "trade_stop": option_default(main.trade_stop, "url"),
     "paper_status": option_default(main.paper_status, "url"),
     "paper_stop": option_default(main.paper_stop, "url"),
 }))
@@ -96,14 +94,6 @@ class TestCLIHelp:
         result = runner.invoke(cli, ["collect", "--help"])
         assert result.exit_code == 0
         assert "collect" in result.output.lower()
-
-    def test_trade_help(self, runner):
-        """Test trade help command."""
-        from cli.main import cli
-
-        result = runner.invoke(cli, ["trade", "--help"])
-        assert result.exit_code == 0
-        assert "trade" in result.output.lower()
 
     def test_mlflow_help(self, runner):
         """Test mlflow help command."""
@@ -641,91 +631,6 @@ class TestBackfillCommands:
         assert "Invalid value for '--sink'" in result.output
 
 
-class TestTradeCommands:
-    """Test trade commands."""
-
-    @pytest.mark.parametrize("asset", ["stock", "futures"])
-    def test_trade_start_paper_single_enters_orchestrator(
-        self,
-        runner,
-        monkeypatch,
-        asset,
-    ):
-        """Paper start should route to the orchestrator without live confirmation."""
-        from cli.main import cli
-        from services.trading import orchestrator as orchestrator_module
-
-        seen_configs = []
-
-        class FakeOrchestrator:
-            def __init__(self, config):
-                self.config = config
-                seen_configs.append(config)
-
-            async def run(self):
-                raise AssertionError("single-session smoke should not run daemon mode")
-
-            async def run_session(self):
-                return None
-
-            async def stop(self):
-                return None
-
-        monkeypatch.setattr(
-            orchestrator_module.TradingConfig,
-            "_get_futures_default_symbols",
-            staticmethod(lambda: ["101V6000"]),
-        )
-        monkeypatch.setattr(
-            orchestrator_module,
-            "TradingOrchestrator",
-            FakeOrchestrator,
-        )
-
-        result = runner.invoke(
-            cli,
-            [
-                "trade",
-                "start",
-                "--asset",
-                asset,
-                "--paper",
-                "--single",
-                "--capital",
-                "10000000",
-            ],
-        )
-
-        assert result.exit_code == 0, result.output
-        assert len(seen_configs) == 1
-        assert seen_configs[0].asset_class == asset
-        assert seen_configs[0].paper_trading is True
-        assert "Starting Paper Trading" in result.output
-
-    def test_trade_status(self, runner, mocker):
-        """Test trade status command shows 'not running' when no server."""
-        from cli.main import cli
-
-        mocker.patch("httpx.get", side_effect=ConnectionError("no server"))
-        result = runner.invoke(cli, ["trade", "status"])
-        assert result.exit_code == 0
-        assert "Status" in result.output
-
-    def test_live_noninteractive_confirm_requires_live_env(self, runner, monkeypatch):
-        """--yes-live is reserved for explicit live environments."""
-        from cli.main import cli
-
-        monkeypatch.delenv("KIS_REAL_TRADING", raising=False)
-
-        result = runner.invoke(
-            cli,
-            ["trade", "start", "--asset", "stock", "--live", "--yes-live"],
-        )
-
-        assert result.exit_code == 1
-        assert "--yes-live requires KIS_REAL_TRADING=true" in result.output
-
-
 class TestHealthCommand:
     """Test health command."""
 
@@ -777,8 +682,6 @@ class TestHealthCommand:
 
         defaults = {
             "health": option_default(main.health, "url"),
-            "trade_status": option_default(main.trade_status, "url"),
-            "trade_stop": option_default(main.trade_stop, "url"),
             "paper_status": option_default(main.paper_status, "url"),
             "paper_stop": option_default(main.paper_stop, "url"),
         }

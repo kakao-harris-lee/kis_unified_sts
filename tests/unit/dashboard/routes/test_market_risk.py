@@ -249,8 +249,12 @@ def test_night_close_flags_a_missed_capture_a_day_later(monkeypatch, redis_clien
 
 
 def test_default_night_close_stale_seconds_reads_the_shipped_config():
-    """Config round-trip: the module-load-time default matches the shipped
-    config/night_futures.yaml::redis_ttl_seconds (single source, O11-③)."""
+    """Config round-trip: the bound comes from the YAML, not a second number.
+
+    config/night_futures.yaml::night_close_capture.redis_ttl_seconds is the
+    single source for both the key's Redis TTL and this freshness bound
+    (O11-\u2462).
+    """
     from services.dashboard.routes.market_risk import (
         _default_night_close_stale_seconds,
     )
@@ -263,12 +267,14 @@ def test_default_night_close_stale_seconds_threads_through_the_loaded_config(
 ):
     """Proves the success path reads the config value, not just the fallback
     constant (both currently equal 183600, which alone can't tell them apart)."""
-    from services.night_futures_collector.config import NightCloseCaptureConfig
+    from shared.config.loader import ConfigLoader
 
     monkeypatch.setattr(
-        NightCloseCaptureConfig,
-        "load_or_default",
-        classmethod(lambda cls, *a, **kw: cls(redis_ttl_seconds=999)),
+        ConfigLoader,
+        "load",
+        classmethod(
+            lambda cls, *a, **kw: {"night_close_capture": {"redis_ttl_seconds": 999}}
+        ),
     )
     from services.dashboard.routes.market_risk import (
         _default_night_close_stale_seconds,
@@ -280,14 +286,12 @@ def test_default_night_close_stale_seconds_threads_through_the_loaded_config(
 def test_default_night_close_stale_seconds_falls_back_when_config_load_fails(
     monkeypatch,
 ):
-    from services.night_futures_collector.config import NightCloseCaptureConfig
+    from shared.config.loader import ConfigLoader
 
     def _broken(cls, *args, **kwargs):
         raise ValueError("malformed night_futures.yaml")
 
-    monkeypatch.setattr(
-        NightCloseCaptureConfig, "load_or_default", classmethod(_broken)
-    )
+    monkeypatch.setattr(ConfigLoader, "load", classmethod(_broken))
     from services.dashboard.routes.market_risk import (
         _default_night_close_stale_seconds,
     )
@@ -296,27 +300,30 @@ def test_default_night_close_stale_seconds_falls_back_when_config_load_fails(
 
 
 def test_night_close_stale_seconds_module_constant_matches_the_config_default():
-    """The unpatched module constant itself — not just the helper function —
+    """The unpatched module constant itself - not just the helper function -
     must equal the config's redis_ttl_seconds when no env override is set.
 
     Every other test in this file monkeypatches
     ``market_risk._NIGHT_CLOSE_STALE_SECONDS`` to a literal, so nothing else
-    exercises the module-load-time assignment
-    (``_NIGHT_CLOSE_STALE_SECONDS = int(os.environ.get(..., str(
-    _default_night_close_stale_seconds())))``) against the real config load.
+    exercises the module-load-time assignment against the real config load.
     """
     import os
+    from pathlib import Path
+
+    import yaml
 
     from services.dashboard.routes import market_risk
-    from services.night_futures_collector.config import NightCloseCaptureConfig
 
     if os.environ.get("MARKET_RISK_NIGHT_STALE_SECONDS") is not None:
         pytest.skip("MARKET_RISK_NIGHT_STALE_SECONDS overridden in this environment")
 
-    assert (
-        NightCloseCaptureConfig.load_or_default().redis_ttl_seconds
-        == market_risk._NIGHT_CLOSE_STALE_SECONDS
-    )
+    shipped = yaml.safe_load(
+        (
+            Path(__file__).resolve().parents[4] / "config" / "night_futures.yaml"
+        ).read_text(encoding="utf-8")
+    )["night_close_capture"]["redis_ttl_seconds"]
+
+    assert shipped == market_risk._NIGHT_CLOSE_STALE_SECONDS
     assert market_risk._NIGHT_CLOSE_STALE_SECONDS == 183600
 
 

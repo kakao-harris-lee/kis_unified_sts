@@ -40,30 +40,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata for Trading API
-        id: meta-api
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=tag
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=sha-
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build and push Trading API
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile.prod
-          push: ${{ github.event_name != 'pull_request' && (github.event_name == 'release' || github.event.inputs.push_image == 'true' || startsWith(github.ref, 'refs/tags/')) }}
-          tags: ${{ steps.meta-api.outputs.tags }}
-          labels: ${{ steps.meta-api.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
-
+      # The Trading API image (Dockerfile.prod → `cli.main trade start`) was
+      # removed with the legacy runtime; the dashboard image below is the only
+      # Python image this repo still ships.
       - name: Extract metadata for Dashboard
         id: meta-dashboard
         uses: docker/metadata-action@v5

@@ -312,22 +312,6 @@ def test_validate_blocking_subset_raises_on_orphan(monkeypatch) -> None:
         mg._validate_blocking_subset()
 
 
-def test_margin_snapshot_key_matches_publisher() -> None:
-    """F2: the consumer's default snapshot key must equal the publisher's.
-
-    Both derive from the shared ``MARGIN_RISK_LATEST_KEY`` SoT constant; this
-    pins that they stay identical so a rename can never desync publish/consume
-    into a permanently empty (silently inert) gate.
-    """
-    from services.futures_margin_risk.config import MarginRedisConfig
-    from shared.risk.config import MarginGateFilterSettings
-    from shared.risk.futures_margin import MARGIN_RISK_LATEST_KEY
-
-    consumer_key = MarginGateFilterSettings().latest_key
-    publisher_key = MarginRedisConfig().latest_key
-    assert consumer_key == publisher_key == MARGIN_RISK_LATEST_KEY
-
-
 # ---------------------------------------------------------------------------
 # F3: raw-bytes snapshot (non-decoded client) → fail OPEN
 # ---------------------------------------------------------------------------

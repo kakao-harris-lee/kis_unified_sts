@@ -24,7 +24,6 @@ import time
 import pytest
 
 import scripts.ops.f9_observation_harvest as harvest
-from services.order_router.config import Phase4ExecutionConfig
 from shared.streaming.stage import (
     LIVENESS_MAX_GAP_SECONDS,
     TIMESTAMP_RESOLUTION_SECONDS,
@@ -716,29 +715,28 @@ def test_the_shipped_interval_is_what_the_harvester_predicts():
 
 
 def test_the_shipped_gap_clears_the_bound_it_is_scored_against():
-    """Three real sources, no literals: the claim that actually matters.
+    """What the harvester measures is the *gap*, not the configured interval.
 
-    What the harvester measures is the *gap* between two emitted lines —
-    interval plus the poll that closes it, plus the second its truncated
-    timestamps can add — not the configured interval.
+    The gap is the interval plus the poll that closes it, plus the second its
+    truncated timestamps can add — so the shipped interval has to clear the
+    harvester's ``liveness_max_gap_seconds`` with the poll block included, not
+    on its own.
 
-    ``from_yaml()`` rather than ``load()``: the shipped file is what this test
-    guards, and ``load()``'s fallback would answer with the field default and
-    hide a bad value in the file behind it. Here an out-of-bound file raises.
-
-    One honest limit: the block read here is **order_router's**, the only one of
-    the five services that takes it from config; the other four pass a literal
-    2000 at their call sites. It stands proxy for all five. At the shipped
-    60s interval that proxy cannot mislead — the block would have to exceed
-    119s to push the sum past the bound — but the next reader should know it is
-    one service's value rather than a fleet-wide one.
+    One honest limit, changed by the legacy removal. This used to read the
+    block from ``services/order_router/config.py`` — the only one of the five
+    stage services that took it from config — so two of the three operands
+    came from shipped files. All five services are gone now, so the block is
+    ``_SHIPPED_BLOCK``, this file's own 2000ms constant. The two operands that
+    can actually drift (``config/streaming.yaml`` and
+    ``config/f9_observation.yaml``) are still read from the shipped files, and
+    at the shipped 60s interval the block cannot mislead: it would have to
+    exceed 119s to push the sum past the bound.
     """
     max_gap = harvest.load_observation_config().liveness_max_gap_seconds
     shipped = StreamStageConfig.from_yaml().heartbeat_interval_seconds
-    shipped_block = Phase4ExecutionConfig.from_yaml().xread_block_ms / 1000
 
-    assert shipped + shipped_block + TIMESTAMP_RESOLUTION_SECONDS <= max_gap
-    assert shipped <= max_heartbeat_interval_seconds(shipped_block)
+    assert shipped + _SHIPPED_BLOCK + TIMESTAMP_RESOLUTION_SECONDS <= max_gap
+    assert shipped <= max_heartbeat_interval_seconds(_SHIPPED_BLOCK)
 
 
 @pytest.mark.parametrize("block_ms", [0, -1])

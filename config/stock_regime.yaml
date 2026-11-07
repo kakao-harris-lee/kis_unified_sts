@@ -3,9 +3,10 @@
 # M4-P (StockStrategyDaemon) computes the market-wide regime each eval cycle
 # (median MFI over its watchlist universe → MarketClassifier) and publishes a
 # JSON payload to `redis_key`. Consumers:
-#   * M4-X (StockExitDaemon) — passes the regime as market_state to
-#     ThreeStageExit.scan_positions, enabling `enable_bear_exit`
-#     (config/stock_exit.yaml) to liquidate on BEAR_* regimes.
+#   * M4-X (StockExitDaemon) — passed the regime as market_state to
+#     ThreeStageExit.scan_positions, enabling `enable_bear_exit` to liquidate
+#     on BEAR_* regimes. That daemon and its config were removed with the
+#     legacy runtime; only `shared/streaming/stock_regime.py` reads this file.
 #   * M4-P itself — skips entry evaluation while the regime is BEAR_*
 #     (block_entries_in_bear), preventing long-entry → immediate bear-exit
 #     fee churn.
@@ -31,9 +32,10 @@ stock_regime:
   # Relaxed to false so entries are not globally suppressed in BEAR_* regimes —
   # we want trades to flow for paper/shadow observation, then tighten per-strategy.
   # NOTE: regime-gated strategies (momentum_breakout/williams_r) still self-gate
-  # to bull states; pattern_pullback + LLM picks can fire in bear. If bear-exit
-  # (config/stock_exit.yaml enable_bear_exit) is on, watch for entry→bear-exit
-  # churn and tune there next. Re-enable this to restore the blanket bear block.
+  # to bull states; pattern_pullback + LLM picks can fire in bear. Bear-exit
+  # (`enable_bear_exit`) lived in the removed M4-X daemon's config, so the
+  # entry→bear-exit churn this warned about can no longer happen.
+  # Re-enable this to restore the blanket bear block.
   block_entries_in_bear: false    # M4-P skips check_entries during BEAR_* regimes
   max_age_seconds: 300            # consumer-side staleness gate (M4-P eval cadence is 60s)
   warn_indicator_lag_seconds: 180 # in-session WARNING when MFI candles lag the publish clock

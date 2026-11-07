@@ -18,8 +18,9 @@
 # mode, reaction matrix, staleness bound, Redis key — lives in
 # config/market_risk_gate.yaml; THAT file's `mode` is the single
 # off/shadow/enforce switch. This section only controls how the decision_engine
-# daemon interprets the gate's shadow-mode output; mirrors
-# config/stock_market_risk_gate.yaml for the stock M4-P pipeline.
+# daemon interprets the gate's shadow-mode output. The daemon itself was
+# removed with the legacy runtime; what still reads this file is the dashboard
+# event-context route and the F-9 log harvester.
 market_risk_gate:
   # Shadow-mode would-block observations repeat every eval cycle (~60s tick)
   # for as long as the band holds; log at most once per interval per reason

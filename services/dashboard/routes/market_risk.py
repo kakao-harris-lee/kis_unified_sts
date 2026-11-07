@@ -13,7 +13,6 @@ history endpoint returns empty series when the Parquet dataset is missing.
 from __future__ import annotations
 
 import json
-import logging
 import os
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -21,7 +20,6 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
 
-logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/market-risk", tags=["market-risk"])
 
 KST = ZoneInfo("Asia/Seoul")
@@ -34,36 +32,43 @@ _RISK_LATEST_KEY = os.environ.get("MARKET_RISK_LATEST_KEY", "market:risk:latest"
 # market-structure stale threshold (14h) unless overridden.
 _RISK_STALE_SECONDS = int(os.environ.get("MARKET_RISK_STALE_SECONDS", "50400"))
 
-# Fallback shipped default (mirrors NightCloseCaptureConfig's own field
-# default) — used only if the config load itself fails; keep this in sync
-# with config/night_futures.yaml, though _default_night_close_stale_seconds
-# reading the config directly is the actual source of truth.
+# Fallback shipped default (mirrors config/night_futures.yaml's own value) —
+# used only if the file or the key is absent; keep it in sync with the YAML,
+# though _default_night_close_stale_seconds reading the config directly is the
+# actual source of truth.
 _NIGHT_CLOSE_STALE_FALLBACK_SECONDS = 183600
 
 
 def _default_night_close_stale_seconds() -> int:
-    """Night-close staleness bound, single-sourced with the collector's TTL.
+    """Night-close staleness bound, single-sourced with the key's TTL.
 
     O11-③ review: this used to be an independent hardcoded 86400 that could
     (and did) drift from ``config/night_futures.yaml``'s
-    ``redis_ttl_seconds`` — once that TTL widened to survive the
-    Friday-close -> Monday-premarket weekend gap, the old hardcoded 24h bound
-    would have rendered a legitimately fresh Monday read as ``stale``.
-    Reusing ``redis_ttl_seconds`` here (rather than adding a second,
-    independently-tunable field) is what keeps the two bounds from drifting
-    apart again — see ``NightCloseCaptureConfig.redis_ttl_seconds``'s
-    docstring/comment for the full rationale.
+    ``night_close_capture.redis_ttl_seconds`` — once that TTL widened to
+    survive the Friday-close -> Monday-premarket weekend gap, the old
+    hardcoded 24h bound would have rendered a legitimately fresh Monday read
+    as ``stale``. Reading the YAML value here (rather than keeping a second,
+    independently-tunable number) is what keeps the Redis-expiry bound and the
+    "is this too old to trust" bound from drifting apart again.
+
+    The pydantic loader this used to go through
+    (``services/night_futures_collector/config.py::NightCloseCaptureConfig``)
+    went with the legacy runtime, so the value is read straight from the YAML
+    — same single source, one less hop. This whole route is slated for removal
+    in L4 of the legacy-removal plan.
     """
     try:
-        from services.night_futures_collector.config import NightCloseCaptureConfig
+        from shared.config.loader import ConfigLoader
 
-        return int(NightCloseCaptureConfig.load_or_default().redis_ttl_seconds)
-    except Exception:
-        logger.warning(
-            "night_futures.yaml load failed for the dashboard staleness bound; "
-            "using the shipped fallback"
-        )
-        return _NIGHT_CLOSE_STALE_FALLBACK_SECONDS
+        raw = ConfigLoader.load("night_futures.yaml")
+        section = raw.get("night_close_capture") if isinstance(raw, dict) else None
+        section = section if isinstance(section, dict) else {}
+        ttl = section.get("redis_ttl_seconds")
+        if ttl is not None:
+            return int(ttl)
+    except Exception:  # noqa: BLE001 - fall back to the shipped default
+        pass
+    return _NIGHT_CLOSE_STALE_FALLBACK_SECONDS
 
 
 _NIGHT_CLOSE_STALE_SECONDS = int(
