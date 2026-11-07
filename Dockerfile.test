@@ -59,11 +59,10 @@ COPY . .
 RUN useradd -m -u 1000 tester && chown -R tester:tester /app
 USER tester
 
-# Default: the CI two-pass run — parallel (non-serial) then serial, with
-# tests/performance excluded (CI runs those in a separate job). Override per-run
-# with e.g. `docker compose --profile test run --rm tests pytest tests/unit -q`.
+# Default: the CI two-pass run — parallel (non-serial) then serial. Override
+# per-run with e.g. `docker compose --profile test run --rm tests pytest tests/unit -q`.
 CMD ["bash", "-lc", "\
-  pytest tests/ --ignore=tests/performance -n auto -m 'not serial' \
+  pytest tests/ -n auto -m 'not serial' \
     --timeout=180 --timeout-method=thread -q \
-  && pytest tests/ --ignore=tests/performance -m serial \
+  && pytest tests/ -m serial \
     --timeout=180 --timeout-method=thread -q"]

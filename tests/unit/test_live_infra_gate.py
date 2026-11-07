@@ -200,27 +200,3 @@ class TestRuntestSetupGate:
         for _ in range(5):
             root_conftest.pytest_runtest_setup(_Item("live_infra"))
         assert len(calls) == 1
-
-
-class TestThePerformanceModulesHaveNoSecondGate:
-    """F6: two gates meant two reason strings to keep in sync."""
-
-    @pytest.mark.parametrize(
-        "module",
-        [
-            "tests/performance/test_redis_load.py",
-            "tests/performance/test_websocket_load.py",
-        ],
-    )
-    def test_no_module_level_skipif_or_import_time_raise(self, module):
-        """Checked on the AST, not the text: the comments explain the history."""
-        import ast
-
-        tree = ast.parse((root_conftest.project_root / module).read_text())
-        names = {
-            node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
-        } | {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
-        assert "skipif" not in names
-        assert "require_redis" not in names
-        # ...and the conftest still owns them.
-        assert module in root_conftest._LIVE_INFRA_TEST_PATHS

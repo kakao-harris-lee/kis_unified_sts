@@ -7,8 +7,8 @@ SHELL := /usr/bin/env bash
 COMPOSE ?= docker compose
 
 # Two-pass pytest mirroring .github/workflows/test.yml (parallel non-serial,
-# then serial), with the performance suite excluded (it has its own CI job).
-PYTEST_FLAGS := --ignore=tests/performance --timeout=180 --timeout-method=thread -q
+# then serial).
+PYTEST_FLAGS := --timeout=180 --timeout-method=thread -q
 
 .PHONY: help setup env test test-unit test-docker lint fmt typecheck up down ui clean
 

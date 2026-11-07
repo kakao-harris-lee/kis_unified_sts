@@ -35,26 +35,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  stream-exporter:
-    build:
-      context: ..
-      dockerfile: Dockerfile.stream_exporter
-    container_name: sts-stream-exporter
-    restart: unless-stopped
-    network_mode: host
-    command: ["python", "/app/services/monitoring/stream_exporter.py"]
-    environment:
-      - REDIS_HOST=${MONITORING_STREAM_EXPORTER_REDIS_HOST:-127.0.0.1}
-      - REDIS_PORT=${MONITORING_STREAM_EXPORTER_REDIS_PORT:-6379}
-      - REDIS_DB=${MONITORING_STREAM_EXPORTER_REDIS_DB:-1}
-      - REDIS_PASSWORD=${MONITORING_STREAM_EXPORTER_REDIS_PASSWORD:-changeme}
-      - STREAM_EXPORTER_PORT=9093
-      - STREAM_EXPORTER_STREAMS=market:ticks,raw_data
-      - STREAM_EXPORTER_READ_COUNT=200
-      - STREAM_EXPORTER_BLOCK_MS=1000
-      - STREAM_EXPORTER_SYMBOL_TTL_SECONDS=1800
-      - STREAM_EXPORTER_MAX_SYMBOLS_PER_ASSET=60
-
 volumes:
   monitoring_prometheus_data:
     external: true

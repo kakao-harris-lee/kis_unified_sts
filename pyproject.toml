@@ -91,7 +91,9 @@ dependencies = [
     "pycryptodome>=3.19",  # AES decryption
 
     # MLflow (Backtesting). Cap below 4 so a fresh install can't pull a major
-    # with a different sqlite schema than the pinned Dockerfile.mlflow server.
+    # with a different sqlite schema than the existing ./mlflow.db store.
+    # (The mlflow UI container and Dockerfile.mlflow were removed in the legacy
+    # cleanup L1 — the clients write ./mlflow.db directly.)
     "mlflow>=2.9,<4",
 
     # Web API (dashboard). Also pulled transitively by mlflow-skinny, so the

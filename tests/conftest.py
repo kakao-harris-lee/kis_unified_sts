@@ -45,8 +45,6 @@ _LIVE_INFRA_TEST_PATHS = {
     "tests/integration/test_llm_market_context.py",
     "tests/integration/test_rate_limiter_redis.py",
     "tests/integration/test_redis_tls.py",
-    "tests/performance/test_redis_load.py",
-    "tests/performance/test_websocket_load.py",
     "tests/services/trading/test_risk_integration.py",
     "tests/shared/risk/test_persistence.py",
 }
@@ -68,9 +66,11 @@ _LIVE_INFRA_TEST_PATHS = {
 #   "may this process hold real broker      -> was the same flag, now always no
 #    credentials and read a .env?"
 #
-# Tying them together made the one CI job that always opts in (`performance`,
-# which injects KIS_RUN_LIVE_INFRA_TESTS=1) the only job with no scrub, no
-# dotenv guard and no token-cache pin. Nothing in this test tree needs real
+# Tying them together made the one CI job that always opted in (`performance`,
+# which injected KIS_RUN_LIVE_INFRA_TESTS=1 — that job and its suite were
+# removed in the legacy cleanup L1) the only job with no scrub, no dotenv guard
+# and no token-cache pin. No CI job opts in today, and the unconditional scrub
+# is what keeps that true of the next one. Nothing in this test tree needs real
 # broker credentials — the probe harness that does lives in tools/, not here —
 # so there is no third mode to support. Redis settings are unaffected: the
 # scrub touches only KIS_*/TELEGRAM_*, and REDIS_HOST/PORT/DB come from the
@@ -357,8 +357,7 @@ def pytest_runtest_setup(item):
     Failing per item, rather than raising at import time in the test modules,
     keeps the blast radius to the gated tests: the rest of the session still
     runs instead of pytest aborting collection with zero tests executed. It
-    also covers all of ``_LIVE_INFRA_TEST_PATHS``, not just the two
-    performance modules.
+    also covers all of ``_LIVE_INFRA_TEST_PATHS``.
     """
     if "live_infra" not in item.keywords or not live_infra_enabled():
         return

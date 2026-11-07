@@ -9,9 +9,13 @@
 # and MUST be recreated with `up -d --no-deps` (NEVER `docker compose down`) so paper trading
 # state/streams are not torn down. See CLAUDE.md + docs/runbooks/paper-live-code-separation.md.
 #
+# NOTE (legacy cleanup L1, 2026-11-07): the 24 legacy compose services and their profiles
+# are gone from docker-compose.yml — the surviving stack (dashboard, strategy-builder-ui,
+# caddy, redis, prometheus) carries no profile. This script is itself removed in L3.
+#
 # Safety:
 #   * Services to (re)build/recreate are AUTO-DETECTED from the currently-running project
-#     topology, so the disabled monolith `trader` is never accidentally started. Override
+#     topology, so a service that is not up is never accidentally started. Override
 #     with DEPLOY_SERVICES="svc1 svc2".
 #   * Cleanup only prunes DANGLING (untagged) images — it never removes other projects'
 #     images (e.g. bid_vector_*) and never runs `docker system prune`.
@@ -19,7 +23,7 @@
 # Usage:
 #   scripts/deploy_paper.sh [deploy|verify|cleanup]   (default: deploy = build+recreate+verify+cleanup)
 #   scripts/deploy_paper.sh --dry-run                 # print the commands, run nothing
-#   scripts/deploy_paper.sh --services "stock-market-ingest dashboard"
+#   scripts/deploy_paper.sh --services "dashboard strategy-builder-ui"
 #   scripts/deploy_paper.sh --no-build                # recreate current images only
 #   scripts/deploy_paper.sh --no-cleanup              # skip image prune
 #   scripts/deploy_paper.sh -y                        # non-interactive (skip confirmation)
@@ -27,7 +31,7 @@
 # Env overrides (config-driven, no hardcoded creds):
 #   DEPLOY_ENV_FILE     (default .env.paper)
 #   DEPLOY_SERVICES     (default: auto-detected running services)
-#   DEPLOY_PROFILES     (default: "stock-ingest stock-pipeline research trading news producers scheduler")
+#   DEPLOY_PROFILES     (default: "" — the surviving stack has no profiled service)
 #   DASHBOARD_HOST_PORT (default 5081)
 #   DEPLOY_VERIFY_WAIT  (default 12)  seconds to wait before verifying
 #   DEPLOY_RESTART_WATCH(default 20)  seconds to watch RestartCount for a crash-loop
@@ -46,8 +50,10 @@ ENV_FILE="${DEPLOY_ENV_FILE:-.env.paper}"
 DASHBOARD_HOST_PORT="${DASHBOARD_HOST_PORT:-5081}"
 VERIFY_WAIT_SECONDS="${DEPLOY_VERIFY_WAIT:-12}"
 RESTART_WATCH_SECONDS="${DEPLOY_RESTART_WATCH:-20}"
-DEFAULT_PROFILES="stock-ingest stock-pipeline research trading news producers scheduler"
-PROFILES="${DEPLOY_PROFILES:-$DEFAULT_PROFILES}"
+# Empty by default: every profiled legacy service was removed from
+# docker-compose.yml in the legacy cleanup L1, so there is no profile to pass.
+DEFAULT_PROFILES=""
+PROFILES="${DEPLOY_PROFILES-$DEFAULT_PROFILES}"
 
 CMD="deploy"
 DO_BUILD=1
