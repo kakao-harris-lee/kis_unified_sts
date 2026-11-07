@@ -42,6 +42,16 @@ LEGACY-006 defaults to the **real** market when `KIS_FUTURES_MARKET` is unset,
 and LEGACY-007's startup barrier is **unconsumed**, so a divergent broker view
 does not in fact block resume and must not be relied on as a fence.
 
+**A retired route keeps its row.** When a route is deleted from the tree,
+deleting it *is* the retirement its `decommission_criteria` tracks, so the row
+and its ID stay — this register is a history and the ID blocks are contiguous —
+and its `current_level` becomes `RETIRED_SOURCE_REMOVED@<12-hex commit sha>`,
+naming the commit where the source last existed. The checker then requires that
+path to be **absent** and drops the row from the §2 reverse-census exemption
+sets: a marked row whose file is still present fails, so the marker cannot be
+used to stop checking a live route, and a later file of the same name is not
+pre-exempted by the dead row. Every unmarked row stays fail-closed on existence.
+
 `docker-compose.yml` explicitly requires the futures monolith to be disabled at
 F-9 cutover, but an environment switch alone is not sufficient proof. A cutover
 must also fence credentials and network routes, bind a new generation, reconcile
