@@ -74,9 +74,13 @@ on:
       # a change to it runs the UI suite. A path filter that names a directory
       # which does not exist yet simply never matches; it is not an error.
       #
-      # src/lib/builder/catalogSot.test.ts reads
-      #   ../../../../config/strategy_builder/indicators.yaml
-      # so a backend indicator-catalog change runs the UI suite too.
+      # config/strategy_builder/** was listed here for
+      # src/lib/builder/catalogSot.test.ts, which read
+      # ../../../../config/strategy_builder/indicators.yaml. That test went with
+      # the strategy builder page (legacy removal L5), so nothing in this suite
+      # reads that directory any more and the entry is gone. Re-derive the list
+      # with the grep above rather than adding a path "just in case": a path
+      # nothing reads only runs the suite for nothing.
       #
       # src/app/api/caddyRouting.ts reads
       #   ../../../../caddy/Caddyfile
@@ -91,7 +95,6 @@ on:
       # to caddy/** would only run the suite for nothing.
       - 'tos/runtime/tests/fixtures/**'
       - 'tests/fixtures/**'
-      - 'config/strategy_builder/**'
       - 'caddy/Caddyfile'
       # This workflow.
       - '.github/workflows/ui.yml'

@@ -141,13 +141,14 @@ services:
 
   # =============================================================================
   # Caddy reverse proxy — single external entry on DASHBOARD_HOST_PORT.
-  # STS API → dashboard:8001 (FastAPI, API-only): /api/kis-builder/*,
-  #   /api/{trading,signals,trades,strategies,strategy-lab,strategy-builder,
-  #   metrics,health}*, plus /health, /docs, /openapi.json, /redoc, /metrics.
-  # Everything else → strategy-builder-ui:3100 (Next.js): UI pages, /_next/*,
-  #   and the upstream-compat
-  #   /api/{auth,account,orders,market,symbols,files,experiments} proxy handled
-  #   by the Next.js catch-all.
+  # STS API → dashboard:8001 (FastAPI, API-only): /api/tos/*, plus /health,
+  #   /docs, /openapi.json and /redoc. That is the dashboard's whole surface
+  #   after legacy removal L4 — the /api/{kis-builder,trading,signals,trades,
+  #   strategies,strategy-lab,strategy-builder,metrics,health}* prefixes,
+  #   /metrics and /ws are gone.
+  # Everything else → strategy-builder-ui:3100 (Next.js): the /tos page, the /
+  #   redirect to it, /_next/* assets, and the catch-all /api proxy, which
+  #   resolves /api/tos/projection so `npm run dev` (no Caddy) works too.
   # HTTP-only; expose one host web port mapped to Caddy's internal :5080.
   # =============================================================================
   caddy:
