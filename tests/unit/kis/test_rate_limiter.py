@@ -92,9 +92,15 @@ class TestRateLimiterBackoff:
         start = time.monotonic()
         limiter.penalty(0.05)  # 50ms penalty
         await limiter.acquire()
-        elapsed = time.monotonic() - start
+        done = time.monotonic()
+        elapsed = done - start
 
-        # Should have waited at least ~50ms
+        # The deterministic half: acquire() must not return before the penalty
+        # deadline it was given, whatever the wall clock did. This one cannot be
+        # satisfied by a slow import or missed by a fast one.
+        assert done >= limiter._penalty_until
+
+        # The wall-clock half, kept as the end-to-end check on the window.
         assert elapsed >= 0.04
 
     @pytest.mark.asyncio
