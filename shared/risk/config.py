@@ -631,7 +631,8 @@ class MarginGateFilterSettings(BaseModel):
     """Futures margin-risk new-entry gate (Phase 4-f, plan §6(d) / 설계 2.7).
 
     Wires the futures margin read-model (``shared/risk/futures_margin.py``,
-    published to ``futures:risk:latest`` by ``services/futures_margin_risk``)
+    published to ``futures:risk:latest`` by the deleted
+    ``services/futures_margin_risk``)
     into the World-B ``RiskFilterLayer`` as a new-entry gate. The filter reads
     the already-classified ``risk_level`` and only *branches* on it — every
     threshold lives on the publish side (``config/futures_margin.yaml``), so no
@@ -664,7 +665,7 @@ class MarginGateFilterSettings(BaseModel):
     latest_key: str = Field(
         default=MARGIN_RISK_LATEST_KEY,
         description=(
-            "Redis hash published by services/futures_margin_risk. Default is the "
+            "Redis hash the deleted services/futures_margin_risk published. "
             "shared publish-side SoT constant (MARGIN_RISK_LATEST_KEY) so a rename "
             "cannot desync publisher/consumer into a silently-inert gate (F2)."
         ),
@@ -842,7 +843,7 @@ class FuturesRiskConfig(ServiceConfigBase):
         gt=0,
         description=(
             "Account equity in KRW — the MDD filters' denominator. float/gt=0 "
-            "mirrors services/futures_margin_risk/config.py::"
+            "mirrored the deleted services/futures_margin_risk/config.py::"
             "fallback_account_equity_krw, because config/risk.yaml now shares "
             "that block's ${FUTURES_MARGIN_FALLBACK_EQUITY:...} knob (F-9 gap "
             "G4): an int field would reject the scientific notation the margin "

@@ -41,20 +41,31 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
 
 ## Current Runtime Architecture
 
-- `shared/`: reusable strategy, execution, indicators, streaming, storage,
-  forecasting, risk, models, and config logic.
-- `services/`: runtime processes.
-  - `services/trading/`: monolithic orchestrator, still used for futures paper/live
-    unless a decoupled futures cutover is explicitly performed.
-  - `services/stock_strategy`, `stock_risk_filter`, `stock_order_router`,
-    `stock_exit`, `stock_monitor`: decoupled stock M4/M5 pipeline.
-  - `services/market_ingest`, `decision_engine`, `risk_filter`, `order_router`,
-    `futures_monitor`, `kill_switch`: decoupled futures pipeline services.
-  - `services/dashboard`: the single FastAPI API/metrics app behind Caddy.
-- `strategy-builder-ui/`: the only frontend. It serves Cockpit, positions,
-  signals, trades, experiments, strategy builder, and executor pages.
-- `config/`: YAML strategy/risk/execution/storage/infra config.
-- `cli/main.py`: `sts` command entrypoint.
+The legacy trading runtime is **gone** (removal plan
+`docs/plans/2026-11-07-legacy-removal-plan.md`, steps L1–L6, merged 2026-11).
+What runs is the TOS kernel plus a read-only operator surface.
+
+- `tos/`, `tos-spec/`, `tos-evidence/`, `tools/tos_*`: the TOS kernel, its spec
+  corpus, its evidence, and the CP-3 measurement tools. See `tos/CLAUDE.md`.
+- `tools/broker_probes/`: KIS capability probes (mock-account GET reads; order
+  probes are interlocked by `config/futures_live.yaml::enabled`).
+- `shared/`: what the surviving roots import — the CP-3 producer and B3 witness
+  path (backtest replay, Setup D decision, instruments, determinism, market-data
+  store), KIS auth/client, indicators, config, storage, risk primitives, LLM
+  analysis. Packages reachable only through `__init__` fan-out are still being
+  measured away (removal plan L7).
+- `services/dashboard`: the FastAPI app behind Caddy. Its whole surface is
+  `/api/tos/*`, `/health` and the OpenAPI docs.
+- `services/monitoring`: metrics/health helpers `shared/kis` imports lazily.
+- `strategy-builder-ui/`: the only frontend. It serves the `/tos` operator page,
+  a `/` redirect to it, and the `/api` proxy.
+- `config/`: YAML config for what remains — `config/tos_runtime/` tenant trees,
+  `config/tos_*.yaml` gates, KIS/execution/risk/storage/streaming settings, and
+  one strategy file (`config/strategies/futures/setup_d_vwap_reversion.yaml`,
+  the B3 witness's).
+- `cli/main.py`: `sts` entrypoint; the only command group is `sts tos`.
+- `scripts/`: `scripts/tos/` tenant-tree rendering and the Setup D walk-forward
+  script the B3 witness loads by path.
 
 ## tos Kernel Boundary (two projects in one repo)
 
@@ -106,35 +117,41 @@ import firewall or authorize trading.
 
 ## Trading Runtime Rules
 
-### Stock
+The legacy stock and futures runtimes no longer exist. There is no stock
+pipeline, no futures orchestrator, no decoupled futures services, and no strategy
+registry roster: L6 deleted every `shared/strategy/entry/*` module, so
+`EntryRegistry` is empty and no strategy can be built. The only trading-shaped
+thing that runs is the TOS CP-3 tenant session (`tos/`), which is paper/synthetic
+except for the KIS **mock** stock tenant.
 
-- Standard stock paper flow is the decoupled Compose pipeline:
-  `stock-ingest` + `stock-pipeline`.
-- After stock cutover, block the monolithic stock orchestrator with
-  `STOCK_ORCHESTRATOR_ENABLED=false`.
-- Rollback path: restore `STOCK_ORCHESTRATOR_ENABLED=true` and follow
-  `docs/runbooks/stock-pipeline-cutover-m5d.md`.
-- Active stock behavior is screener/universe driven plus configured strategies
-  such as `bb_reversion`, `opening_volume_surge`, `volume_accumulation`, and
-  newer registry strategies as enabled in YAML.
-- Three-stage exit is stock-only unless a future design explicitly generalizes it.
+What is still true and still enforced:
 
-### Futures
-
-- Current primary futures strategy path is Setup A/C:
-  `setup_a_gap_reversion` and `setup_c_event_reaction`.
+- **No legacy live-futures runtime remains** (the `live_mode_guard` module and
+  the order router are gone). One real-money order path does remain:
+  `tools/broker_probes/probes_real_order.py` (P-R5 stage 2), permanently blocked
+  by policy (see Non-Negotiable Rules). Every order probe calls
+  `tools/broker_probes/common.py::assert_no_live_futures_config`, which refuses
+  to run while `config/futures_live.yaml::enabled` is true — that is why the file
+  stays. Absence is not what stops a live futures order here; policy is.
+- **Real futures account is never funded** — see Non-Negotiable Rules.
+  Real-money order probes (P-R5 stage 2) are policy-blocked.
 - Futures ML/RL/TFT runtime paths are removed. Do not reintroduce `sts rl *`,
   `sts tft *`, `shared/ml/rl`, `shared/ml/tft`, `RLMPPOEntry`, `RLMPPOExit`, or
   RL/TFT config profiles.
 - Futures strategy expansion should use LLM market context plus explicit
   indicator/strategy-native rules such as Williams %R, RSI, MACD, ATR, momentum
-  decay, or Setup target exits.
-- Live futures is guarded by `config/futures_live.yaml::enabled` plus Redis flag
-  `futures:live:suspended`. See `shared/execution/live_mode_guard.py`.
-- Decoupled futures services are available through Compose profiles
-  `futures-ingest`, `futures-pipeline`, and `futures-killswitch`; perform cutover
-  only via `docs/runbooks/futures-pipeline-cutover-f9.md`.
-- Real futures account is never funded — see Non-Negotiable Rules. Real-money order probes (P-R5 stage 2) are policy-blocked; paper stays VirtualBroker (real orders 0).
+  decay, or Setup target exits. (The modules that implemented these were removed
+  in L1–L6; the rule is kept for future work.)
+- Three-stage exit is stock-only unless a future design explicitly generalizes
+  it. (`shared/strategy/exit/three_stage.py` survives; the stock runtime that
+  drove it was removed in L1–L6.)
+- `shared/decision/setups/vwap_reversion.py` and its dependencies are the **B3
+  witness**: the CP-3 post-session comparison reads this legacy Setup D
+  implementation. Keep it byte-identical until `TOS_PAPER_READY`
+  (`docs/plans/2026-11-07-legacy-removal-plan.md` §2, operator decision 3).
+- The retired cutover runbooks (`stock-pipeline-cutover-m5d.md`,
+  `futures-pipeline-cutover-f9.md`, `paper-live-code-separation.md`) are history,
+  not procedure. Their code last existed at tag `legacy-final` (`6fc17c0f8d25`).
 
 ## Storage And Data
 
@@ -157,6 +174,15 @@ import firewall or authorize trading.
   2. Shared implementation under `shared/strategy/...`.
   3. Registry wiring and focused unit tests.
   4. Backtest or paper validation artifacts when behavior changes materially.
+
+Status note (legacy runtime removed in L1–L6; rule kept for future work):
+`registry.py`, `factory.py` and `builtin_components.py` survive, but every
+`shared/strategy/entry/*` module was outside the surviving import closure and was
+deleted, so the entry roster is currently empty and `StrategyFactory` builds
+nothing. The executing authority today is the TOS kernel, where a strategy is
+Tenant Content (DSL + profile) under `config/tos_runtime/`. L7 measures whether
+the registry path itself can go (`docs/plans/2026-11-07-legacy-removal-plan.md`
+§3).
 
 ## Development Discipline (operator directive, 2026-08-19)
 
@@ -201,12 +227,24 @@ import firewall or authorize trading.
 
 ```bash
 pip install -e ".[dev]"
-pytest tests/ -v --cov=shared --cov=services
+pytest tests/ -q                  # tests/tools is ~60% of the wall time
 ruff check .
 black --check .
 mypy shared/ --ignore-missing-imports --no-error-summary
-docker compose up -d
-sts --help
+docker compose up -d              # dashboard + strategy-builder-ui + caddy + redis + prometheus
+sts tos status                    # the one-page operator status board
+```
+
+TOS checkers (what CI gates on — see `.github/workflows/tos-{gate,firewall}.yml`):
+
+```bash
+python tools/tos_spec_status.py --check
+python tools/tos_firewall_check.py
+# `lint-imports` as CI runs it (.github/workflows/tos-firewall.yml): plain, after
+# an editable install of the root project and tos/runtime. Without that install
+# the contracts' root packages do not resolve; a local shortcut is
+# `PYTHONPATH=.:tos/src:tos/runtime/src lint-imports`, which is NOT what gates.
+lint-imports
 ```
 
 Frontend:
@@ -216,6 +254,7 @@ cd strategy-builder-ui
 npm run dev
 npm run build
 npm run lint
+npm test
 ```
 
 ## Harness: Trading Platform Agent Team
@@ -312,6 +351,8 @@ Agent roster, skill list, directory layout, and execution detail live under
 - Superpowers plan archive/index: `docs/superpowers/plans/INDEX.md`
 - Port policy: `docs/ports.md`
 - Runtime storage: `docs/runtime_storage_architecture.md`
-- Stock cutover: `docs/runbooks/stock-pipeline-cutover-m5d.md`
-- Futures cutover: `docs/runbooks/futures-pipeline-cutover-f9.md`
-- Paper/live source separation: `docs/runbooks/paper-live-code-separation.md`
+- Runbook index: `README.md` § Runbooks
+- Retired (history, not procedure — their code last existed at tag
+  `legacy-final`): `docs/runbooks/stock-pipeline-cutover-m5d.md` ·
+  `docs/runbooks/futures-pipeline-cutover-f9.md` ·
+  `docs/runbooks/paper-live-code-separation.md`

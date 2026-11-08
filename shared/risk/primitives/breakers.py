@@ -3,7 +3,7 @@
 Single source for the *boolean threshold math* that was independently
 re-implemented by two families of consumers:
 
-* ``services/kill_switch`` — catastrophic force-flatten conditions
+* ``services/kill_switch`` (deleted) — catastrophic force-flatten conditions
   (``DailyLossCondition`` / ``WeeklyLossCondition`` / ``MonthlyLossCondition`` /
   ``ConsecutiveLossesCondition``).
 * ``shared/risk/filters`` — soft entry filters (``DailyMDDFilter`` /

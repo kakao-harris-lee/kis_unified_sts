@@ -1,6 +1,14 @@
 # Documentation Index
 
-Last updated: 2026-10-06 (TOS system context, interface catalog, legacy disposition and integration plan).
+Last updated: 2026-11-08 (legacy runtime removal L1–L6).
+
+> **The legacy trading runtime no longer exists.** Removal plan:
+> [plans/2026-11-07-legacy-removal-plan.md](plans/2026-11-07-legacy-removal-plan.md);
+> the code last existed at tag `legacy-final` (`6fc17c0f8d25`). Documents below
+> that describe the stock/futures pipelines, the orchestrator, the strategy
+> registry roster or the `sts backtest`/`optimize`/`mlflow` commands are
+> **historical records**, whether or not they sit under `archive/`. Current
+> state: [PROJECT_STATUS.md](PROJECT_STATUS.md) § Legacy runtime removed.
 
 Top-level `docs/` index.  For plans see [plans/INDEX.md](plans/INDEX.md);
 for runbooks see [README.md § Runbooks](../README.md#runbooks).

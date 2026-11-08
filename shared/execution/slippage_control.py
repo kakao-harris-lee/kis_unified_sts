@@ -218,7 +218,8 @@ def deep_merge_config_dict(
 ) -> dict[str, Any]:
     """Recursively merge two config dictionaries without mutating inputs.
 
-    Moved here from ``services/trading/orchestrator.py`` (O-A, F-9 Gate 1b
+    Moved here from the since-deleted ``services/trading/orchestrator.py``
+    (O-A, F-9 Gate 1b
     control-parity closure) — no other caller existed, so the orchestrator's
     former ``_deep_merge_config_dict`` static method is retired in favor of
     this module function rather than kept as a wrapper.
@@ -286,7 +287,7 @@ def load_futures_slippage_config(
     ``from_dict``'s coercion errors from the merge step's own config-load
     errors (see :func:`load_futures_slippage_raw`'s docstring) should call
     the two halves separately instead of this convenience wrapper — see
-    ``services/trading/orchestrator.py::_init_futures_slippage_controller``.
+    the deleted ``services/trading/orchestrator.py::_init_futures_slippage_controller``.
     """
     return SlippageControlConfig.from_dict(
         load_futures_slippage_raw(exec_cfg, paper_trading=paper_trading)

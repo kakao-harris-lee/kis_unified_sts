@@ -1,6 +1,46 @@
 # Project Status - KIS Unified Trading Platform
 
-**Last updated**: 2026-10-07 (first real paper-session Control Plane observation and same-day restart identity observation; 2026-10-06 TOS architecture/documentation refresh, repository `5c4f38e9`)
+**Last updated**: 2026-11-08 (legacy runtime removal L1–L6). Earlier sections
+keep their original dates and are historical records, not current state.
+
+## Legacy runtime removed — 2026-11
+
+The legacy KIS trading runtime is gone. The removal plan
+(`plans/2026-11-07-legacy-removal-plan.md`, operator-approved 2026-11-07) took it
+out in six steps; the code last existed at tag `legacy-final` (`6fc17c0f8d25`)
+and every step is revertible per PR.
+
+| Step | What went |
+|---|---|
+| L1 | root scripts, the legacy Compose services (24) and their Dockerfiles, the performance job |
+| L2 | `services/` minus `dashboard` and `monitoring` — the orchestrator and the decoupled stock/futures pipelines |
+| L3 | `cli/` minus `sts tos`, `scripts/` minus `scripts/tos` + the Setup D walk-forward, `jobs/`, `core/` |
+| L4 | dashboard reduced to `/api/tos/*` + `/health` + OpenAPI |
+| L5 | UI reduced to the `/tos` page, the `/` redirect and the `/api` proxy |
+| L6 | `shared/` + `services/` modules outside the surviving import closure (214), their tests (275 + 23 repairs), 60 config files with no reader, 10 unused UI dependencies |
+
+What this means for the reader of the sections below: the stock pipeline, the
+futures orchestrator and decoupled services, the strategy registry roster, the
+backtest/optimize/mlflow CLI groups and the Compose trading profiles **no longer
+exist**. Observations recorded about them stay as history. Live futures was
+already policy-blocked and is now unreachable from this tree: the guard module
+and order router are deleted, and `config/futures_live.yaml` survives only
+because `tools/broker_probes/common.py` reads its `enabled` flag to refuse order
+probes. The real futures account is still never funded.
+
+Two things were deliberately **kept** against the closure measurement, each with
+its reason recorded in the PR: `shared/execution/executor.py` (and its three
+imports), because `docs/broker-profiles/BROKER-TRANSPORT-SYMBOLS.csv` binds the
+`ORDER_SENDER` symbol to that file and `tools/tos_spec_status.py --check`
+requires the class to exist; and `shared/decision/setups/vwap_reversion.py` with
+its dependencies, which is the CP-3 **B3 witness** and stays byte-identical
+until `TOS_PAPER_READY`. B3 byte-identity was measured across the removal: the
+2026-11-06 LONG window's `decisions.jsonl` is identical before and after
+(sha256 `8c8093e6…`).
+
+Register rows for deleted routes keep their IDs and carry
+`RETIRED_SOURCE_REMOVED@6fc17c0f8d25`
+(`tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.csv`).
 
 ## Current TOS snapshot — 2026-10-06
 

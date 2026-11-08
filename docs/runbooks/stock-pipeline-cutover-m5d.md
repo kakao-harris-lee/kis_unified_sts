@@ -1,5 +1,14 @@
 # Runbook: Stock Pipeline Cutover (M5d, Compose)
 
+> **RETIRED — history, not procedure.** The pipeline this runbook cuts over
+> (`services/stock_*`, the monolithic orchestrator, the
+> `STOCK_ORCHESTRATOR_ENABLED` flag and the `stock-ingest` / `stock-pipeline`
+> Compose profiles) no longer exists: the legacy-removal plan
+> (`docs/plans/2026-11-07-legacy-removal-plan.md`) deleted it in steps L1, L2
+> and L6. The code last existed at tag `legacy-final` (`6fc17c0f8d25`), which is
+> where to read it. Kept because the cutover it records happened — do not follow
+> it.
+
 Flip stock **paper** trading from the monolithic compose `trader` loop to the
 decoupled M4 pipeline (M4-P -> M4-R -> M4-O -> M4-X) + M5a monitor + M5b LLM
 context job + M5c daily risk reset. Paper->paper: M4-O still uses `VirtualBroker`.

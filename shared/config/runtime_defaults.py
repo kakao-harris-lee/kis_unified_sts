@@ -32,7 +32,7 @@ def host_path_for_container_runtime_path(container_path: str) -> Path:
 
     Host-run scripts (e.g. ``scripts/trading/recover_positions.py``) run
     directly on the host, outside any container, but must write to the same
-    file a containerized consumer (e.g. ``services/order_router/main.py``)
+    file a containerized consumer (e.g. the deleted ``services/order_router``)
     reads via ``config/kill_switch.yaml``. Both processes need to agree on
     exactly one file — deriving the host path from the single configured
     container path (rather than hardcoding a second host-side literal) keeps

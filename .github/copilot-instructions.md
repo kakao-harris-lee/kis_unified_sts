@@ -2,7 +2,13 @@
 
 ## Project Overview
 
-Unified short-term trading system for Korean stocks and futures via KIS (Korea Investment & Securities) API. The core goal is **optimizing entry/exit timing** through configuration-driven strategies with MLflow-tracked backtesting.
+Two projects in one repository. The **TOS kernel** (`tos/`, `tos-spec/`,
+`tos-evidence/`, `tools/tos_*`) is the live one — read `tos/CLAUDE.md` before
+touching it. The legacy KIS trading runtime it replaced was deleted in
+2026-11 (`docs/plans/2026-11-07-legacy-removal-plan.md`, steps L1–L6); it last
+existed at tag `legacy-final` (`6fc17c0f8d25`). What survives outside `tos/` is
+the CP-3 measurement path, the KIS broker probes, a read-only operator
+dashboard, and the `shared/` modules those import.
 
 ## Architecture Principles
 
@@ -22,14 +28,25 @@ if pnl_pct >= self.config.breakeven_threshold_pct:
 
 Config files live in `config/` with this structure:
 
-- `strategies/{stock,futures}/` — Strategy YAML files
-- `exit/` — Exit strategy configs (three_stage, market_regime, time_decay)
-- `kis/` — API authentication
-- `ml/` — legacy non-runtime ML config only
+- `tos_runtime/` — TOS tenant trees (calendar, release, profile). Digest-bound —
+  do not edit as a side effect of other work.
+- `tos_*.yaml` — TOS gates (completion, size budget, status board, CP-3 B3).
+- `tos_probes/`, `broker_probes/` — probe configs.
+- `kis/` — API authentication; `exit/three_stage.yaml`, `gates/`, `ml/`,
+  `strategy_builder/`, `strategy_lab/` — what the surviving `shared/` reads.
+- `strategies/futures/setup_d_vwap_reversion.yaml` — the only strategy YAML
+  left; it is the CP-3 B3 witness's input.
 
 ### Strategy Pattern with Registry
 
-Entry/Exit/Position sizing are **independent, composable components** registered via decorators or `register_builtin_components()`. All registry classes and `StrategyFactory` live in `shared/strategy/registry.py`.
+Entry/Exit/Position sizing are **independent, composable components** registered
+via decorators or `register_builtin_components()`. All registry classes and
+`StrategyFactory` live in `shared/strategy/registry.py`.
+
+Status note (legacy runtime removed in L1–L6): every `shared/strategy/entry/*`
+module was deleted, so the entry roster is currently **empty** and
+`StrategyFactory` builds nothing. Execution authority today is the TOS kernel,
+where a strategy is Tenant Content under `config/tos_runtime/`.
 
 ### Key Abstractions
 
@@ -41,77 +58,34 @@ Entry/Exit/Position sizing are **independent, composable components** registered
 | `TradingStrategy`      | Composes entry/exit/sizing     | `shared/strategy/base.py`     |
 | `StrategyFactory`      | Creates strategies from config | `shared/strategy/registry.py` |
 
-### Runtime Trading Layer
+### What is left of `shared/`
 
-| Component             | Purpose                                        | Location                               |
-| --------------------- | ---------------------------------------------- | -------------------------------------- |
-| `TradingOrchestrator` | Full trading lifecycle & main loop             | `services/trading/orchestrator.py`     |
-| `StrategyManager`     | Multi-strategy management & signal aggregation | `shared/strategy/manager.py` |
-| `MarketDataProvider`  | Market data collection                         | `services/trading/data_provider.py`    |
-| `IndicatorEngine`     | Indicator calculation/caching                  | `shared/indicators/streaming/engine.py` |
-| `PositionTracker`     | Position tracking                              | `services/trading/position_tracker.py` |
-| `HolidayCache`        | Trading holiday cache                          | `services/trading/holiday_cache.py`    |
-| `TradingPipeline`     | Data pipeline orchestration                    | `services/trading/pipeline.py`         |
+| Area | Purpose |
+| --- | --- |
+| `shared/backtest/market_context_replay.py`, `shared/decision/` | the CP-3 producer and the **B3 witness** (legacy Setup D). Keep byte-identical until `TOS_PAPER_READY` |
+| `shared/strategy/exit/setup_target_exit.py` | the witness's exit; `three_stage`, `momentum_decay`, `trix_golden_exit`, `technical_consensus_exit` are the other registered exits |
+| `shared/indicators/`, `shared/instruments/`, `shared/determinism/` | pure commons; four of the six packages the tos import firewall allows |
+| `shared/kis/` | KIS auth + REST client + stock feed |
+| `shared/storage/` | Parquet/DuckDB market-data store, SQLite runtime ledger |
+| `shared/llm/` | Korean market-analysis collectors (still imported, not scheduled) |
+| `shared/execution/executor.py` | kept **only** because `docs/broker-profiles/BROKER-TRANSPORT-SYMBOLS.csv` binds the `ORDER_SENDER` symbol to it and `tools/tos_spec_status.py --check` requires the class to exist. Nothing calls it |
 
 ### No Code Duplication
 
-Shared logic goes in `shared/` modules — never duplicate across `domains/stock/` and `domains/futures/`. Use:
-
-- `shared/indicators/` — Technical indicators (TechnicalCalculator, OrderBookAnalyzer, VolumeAcceleration, VWAP)
-- `shared/models/` — Data models (Position, Signal, ExitSignal, PositionState)
-- `shared/backtest/` — Backtesting engine with MLflow integration
-
-### Registered Entry Strategies
-
-| Name                   | Class                             | Location                                        |
-| ---------------------- | --------------------------------- | ----------------------------------------------- |
-| `mean_reversion`       | `MeanReversionEntry`              | `shared/strategy/entry/mean_reversion.py`       |
-| `microstructure`       | `MicrostructureEntry`             | `shared/strategy/entry/microstructure.py`       |
-| `ofi_momentum`         | `OFIMomentumEntry`                | `shared/strategy/entry/ofi_momentum.py`         |
-| `breakout`             | `BreakoutEntry`                   | `shared/strategy/entry/breakout.py`             |
-| `opening_volume_surge` | `OpeningVolumeSurgeEntry`         | `shared/strategy/entry/opening_volume_surge.py` |
-| `stochrsi_trend`       | `StochRSITrendEntry`              | `shared/strategy/entry/stochrsi_trend.py`       |
-| `v35_optimized`        | `V35OptimizedEntry`               | `shared/strategy/entry/v35_optimized.py`        |
-| `volume_accumulation`  | `VolumeAccumulationBreakoutEntry` | `shared/strategy/entry/volume_accumulation.py`  |
-| `setup_a_gap_reversion`| `SetupAEntryAdapter`              | `shared/strategy/entry/setup_adapters.py`       |
-| `setup_c_event_reaction`| `SetupCEntryAdapter`             | `shared/strategy/entry/setup_adapters.py`       |
-
-### Registered Exit Strategies
-
-| Name             | Class               | Location                                 |
-| ---------------- | ------------------- | ---------------------------------------- |
-| `three_stage`    | `ThreeStageExit`    | `shared/strategy/exit/three_stage.py`    |
-| `atr_trailing`   | `ATRTrailingExit`   | `shared/strategy/exit/atr_trailing.py`   |
-| `market_regime`  | `MarketRegimeExit`  | `shared/strategy/exit/market_regime.py`  |
-| `time_decay`     | `TimeDecayExit`     | `shared/strategy/exit/time_decay.py`     |
-| `momentum_decay` | `MomentumDecayExit` | `shared/strategy/exit/momentum_decay.py` |
-| `setup_target_exit` | `SetupTargetExit` | `shared/strategy/exit/setup_target_exit.py` |
-
-## Adding a New Strategy
-
-1. Create config: `config/strategies/{stock,futures}/{name}.yaml`
-2. Implement Entry/Exit classes in `shared/strategy/entry/` or `exit/` (if reusing existing, skip)
-3. Register: `@EntryRegistry.register("name")` or add to `register_builtin_components()`
-4. **No further code changes needed** — `enabled: true` in YAML activates it
+Shared logic goes in `shared/` modules. Packages that are reachable only through
+package `__init__` fan-out are still being measured away (removal plan L7) — do
+not add new dependencies on them.
 
 ## CLI Commands
 
 All CLI commands are defined in `cli/main.py` (Click-based):
 
+`sts tos` is the only command group left — `backtest`, `optimize`, `mlflow`,
+`collect`, `backfill`, `websocket`, `trade` and `paper` went with the legacy
+runtime (removal plan L3).
+
 ```bash
-sts backtest run --strategy bb_reversion --asset futures --data ./data.csv
-sts backtest best --strategy bb_reversion --asset futures
-sts backtest list --asset stock
-sts optimize --strategy bb_reversion --asset futures --data ./data.csv --trials 100
-sts mlflow ui
-sts mlflow list
-sts collect start -s 005930
-sts backfill today
-sts stock-backfill run --days 7
-sts websocket start
-sts trade start --strategy bb_reversion --asset stock --paper
-sts paper start --strategy bb_reversion --asset stock
-sts trade start --strategy setup_a_gap_reversion --asset futures --paper
+sts tos status     # one-page operator status board
 ```
 
 ## Git Worktree Workflow
@@ -154,10 +128,19 @@ git worktree prune
 black . && ruff check --fix .
 
 # Type check
-mypy shared/ domains/
+mypy shared/ --ignore-missing-imports --no-error-summary
 
 # Test
-pytest tests/ -v --cov=shared
+pytest tests/ -q
+
+# TOS checkers (what CI gates on)
+python tools/tos_spec_status.py --check
+python tools/tos_firewall_check.py
+# `lint-imports` as CI runs it (.github/workflows/tos-firewall.yml): plain, after
+# an editable install of the root project and tos/runtime. Without that install
+# the contracts' root packages do not resolve; a local shortcut is
+# `PYTHONPATH=.:tos/src:tos/runtime/src lint-imports`, which is NOT what gates.
+lint-imports
 ```
 
 ## Environment Variables
@@ -168,7 +151,7 @@ pytest tests/ -v --cov=shared
 | `KIS_FUTURES_APP_KEY`, `KIS_FUTURES_APP_SECRET`, `KIS_FUTURES_ACCOUNT_NO` | Futures KIS API credentials         |
 | `KIS_STOCK_MARKET`, `KIS_FUTURES_MARKET`                                  | Trading mode (`real`/`mock`)        |
 | `KIS_CONFIG_DIR`                                                          | Override config directory path      |
-| `CLICKHOUSE_*`, `REDIS_*`, `MLFLOW_TRACKING_URI`                          | Infrastructure settings             |
+| `REDIS_*`                                                                 | Infrastructure settings (DB 1)      |
 | `OPENAI_API_KEY`, `KRX_API_KEY`, `DART_API_KEY`                           | LLM/data APIs                       |
 | `TELEGRAM_STOCK_*`, `TELEGRAM_FUTURES_*`, `TELEGRAM_BRIEFING_*`           | Telegram notifications              |
 | `API_KEY`, `PROMETHEUS_PORT`                                              | API/monitoring                      |
@@ -178,21 +161,16 @@ Config YAML supports `${VAR_NAME}` / `${VAR_NAME:default}` syntax for secrets.
 
 ## Market Classifier
 
-`shared/strategy/market_classifier.py` provides MFI/ADX-based market state classification used by `MarketRegimeExit`.
+`shared/strategy/market_classifier.py` provides MFI/ADX-based market state
+classification. Its consumer (`MarketRegimeExit`) no longer exists.
 
 ## LLM Market Analysis Module
 
-`shared/llm/` provides OpenAI GPT-based market analysis with Korean financial data collectors (14 modules).
-
-Key exports: `run_unified_analysis()`, `get_stock_detail_briefing()`
-
-### Cron Scripts
-
-| Script                                          | Time  | Description        |
-| ----------------------------------------------- | ----- | ------------------ |
-| `scripts/analysis/llm_nightly_analysis.py`      | 21:00 | 익일 트레이딩 분석 |
-| `scripts/analysis/llm_premarket_briefing.py`    | 08:30 | 장전 최종 브리핑   |
-| `scripts/analysis/llm_market_close_briefing.py` | 15:30 | 장 마감 요약       |
+`shared/llm/` provides OpenAI GPT-based market analysis with Korean financial
+data collectors. Nothing schedules it any more: the briefing scripts under
+`scripts/analysis/` and their cron lines went with the legacy runtime
+(removal plan L3). The only cron on the deploy host runs the TOS session
+wrappers in `~/.config/kis-probes/` (`docs/runbooks/tos-paper-boot.md` §7.2).
 
 ## Key Patterns
 
