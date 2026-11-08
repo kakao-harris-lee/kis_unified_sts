@@ -441,8 +441,10 @@ jobs:
         run: |
           python -c "import talib; import vectorbt; print('vectorbt', vectorbt.__version__)"
 
-      - name: Vectorbt parity suites (P3-a/b/d + engine selector)
-        run: |
-          pytest tests/unit/backtest/test_vbt_runner.py \
-            tests/unit/backtest/test_vbt_harness_runner.py \
-            tests/unit/backtest/test_harness_engine.py -q
+      # The P3-a/b/d parity suites that used to run here
+      # (tests/unit/backtest/test_{vbt_runner,vbt_harness_runner,harness_engine}.py)
+      # went with the legacy removal L6
+      # (docs/plans/2026-11-07-legacy-removal-plan.md §3): two of the three
+      # modules under test were outside the surviving import closure and were
+      # deleted, and the third's suite could not be collected without them. The
+      # import smoke above is what this advisory job was declared to verify.
