@@ -154,13 +154,17 @@ def test_auth_public_paths():
 
     middleware = APIKeyMiddleware(app=MagicMock(), api_key="secret-key")
 
-    # Public paths
-    assert middleware._is_public_path("/") is True
+    # Public paths. /health is the container health check (Dockerfile.dashboard
+    # HEALTHCHECK + docker-compose healthcheck curl it with no API key).
     assert middleware._is_public_path("/health") is True
     assert middleware._is_public_path("/docs") is True
     assert middleware._is_public_path("/redoc") is True
     assert middleware._is_public_path("/openapi.json") is True
 
-    # Protected paths
-    assert middleware._is_public_path("/api/v1/positions") is False
+    # Protected paths. "/" (the removed root pointer) and "/metrics" (the
+    # removed Prometheus endpoint) lost their exemptions with the routes they
+    # served in L4.
+    assert middleware._is_public_path("/") is False
+    assert middleware._is_public_path("/metrics") is False
+    assert middleware._is_public_path("/api/tos/projection") is False
     assert middleware._is_public_path("/ws") is False

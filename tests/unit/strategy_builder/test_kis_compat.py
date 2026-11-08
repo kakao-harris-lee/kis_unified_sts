@@ -1,7 +1,5 @@
 """Compatibility tests for the imported KIS Strategy Builder UI."""
 
-import pytest
-
 from shared.strategy_builder.evaluator import StrategyBuilderEvaluator
 from shared.strategy_builder.kis_compat import (
     apply_kis_preset_params,
@@ -164,24 +162,6 @@ def test_candlestick_builder_condition_preserves_signal_direction():
 
     assert state.entry.conditions[0].operator.value == "greater_than"
     assert state.exit.conditions[0].operator.value == "less_than"
-
-
-@pytest.mark.asyncio
-async def test_kis_builder_compat_routes_execute_paper_signal():
-    from services.dashboard.routes import kis_builder
-
-    listed = await kis_builder.list_strategies()
-    assert listed["total"] >= 27
-
-    response = await kis_builder.execute_strategy(
-        kis_builder.ExecuteStrategyRequest(
-            strategy_id="donchian_breakout",
-            stocks=["005930"],
-        )
-    )
-
-    assert response["status"] == "success"
-    assert response["results"][0]["action"] == "BUY"
 
 
 def test_approx_templates_present_parse_and_labeled():

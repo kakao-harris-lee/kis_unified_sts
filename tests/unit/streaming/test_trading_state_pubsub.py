@@ -1,11 +1,10 @@
 """Pub/sub producer contract: TradingStatePublisher → ``trading:events:{topic}``.
 
-Verifies the S1b fix. State writes now ALSO ``PUBLISH`` to the exact channels the
-dashboard WebSocket subscriber
-(``services/dashboard/websocket_publisher.py::_pubsub_loop``) reads, with a
-payload the subscriber can parse. The subscriber derives the WS topic from the
-channel name (``channel.rsplit(":", 1)[-1]``) and reads ``asset_class`` from the
-JSON payload — both are asserted here so the two ends stay in contract.
+Verifies the S1b fix. State writes ALSO ``PUBLISH`` to ``trading:events:{topic}``
+with a JSON payload carrying ``asset_class``. The subscriber this contract was
+written against — the dashboard ``/ws`` publisher — was deleted in the legacy
+removal L4, so only the producer half is pinned here: the channel names and the
+payload shape it emits.
 """
 
 from __future__ import annotations

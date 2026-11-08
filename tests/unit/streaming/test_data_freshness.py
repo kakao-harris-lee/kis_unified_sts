@@ -1,10 +1,13 @@
-"""Data-freshness writer — round-trip against the dashboard health parser.
+"""Data-freshness writer — snapshot schema, TTL and naive (KST) ``checked_at``.
 
 Verifies the S2 fix. ``DataFreshnessTracker`` writes
-``trading:{asset}:data_freshness`` in the exact schema that
-``services/dashboard/routes/health.py::get_data_freshness`` parses back
-(``symbol_count`` / ``fresh_count`` / ``last_tick_s``), with a TTL, and using a
-naive (KST) ``checked_at``.
+``trading:{asset}:data_freshness`` with ``symbol_count`` / ``fresh_count`` /
+``last_tick_s``, a TTL, and a naive (KST) ``checked_at``.
+
+The reader this schema was agreed with — the dashboard's
+``/api/health/data-freshness`` — was deleted in the legacy removal L4, and the
+round-trip test that drove it went with it. What remains here pins the writer's
+own output; nothing reads it today.
 """
 
 from __future__ import annotations
@@ -105,28 +108,3 @@ def test_write_snapshot_swallows_redis_error():
     tracker.record_tick("A", now=1000.0)
     # Best-effort: must return None rather than raise.
     assert tracker.write_snapshot(["A"], now=1001.0, redis_client=_BoomRedis()) is None
-
-
-@pytest.mark.asyncio
-async def test_roundtrip_through_health_endpoint(fake_redis, monkeypatch):
-    """The snapshot the tracker writes parses cleanly through get_data_freshness."""
-    from services.dashboard.routes import health
-
-    tracker = DataFreshnessTracker("stock", window_seconds=60.0)
-    now = 5000.0
-    tracker.record_tick("A", now=now - 3)  # fresh
-    tracker.record_tick("B", now=now - 10)  # fresh
-    tracker.record_tick("C", now=now - 200)  # stale
-    tracker.write_snapshot(["A", "B", "C"], now=now, redis_client=fake_redis)
-
-    monkeypatch.setattr(health, "_get_redis_client", lambda: fake_redis)
-    result = await health.get_data_freshness(asset_class="stock")
-
-    sources = result["sources"]
-    assert len(sources) == 1
-    src = sources[0]
-    assert src["asset_class"] == "stock"
-    assert src["symbol_count"] == 3
-    assert src["fresh_count"] == 2
-    assert src["last_tick_s"] == 3
-    assert src["fresh_ratio"] == pytest.approx(2 / 3, abs=1e-4)
