@@ -40,7 +40,8 @@ market_schedule:
     # compose restart 가 새 코드로 재기동한다 (2026-09-11 A01609 만기 사고).
     # 개장(regular.open) 전이어야 한다. trader-futures 는 세션 시작마다
     # 재해석하므로 이 값을 쓰지 않는다.
-    # shared/execution/futures_instrument.py::FrontMonthRolloverSchedule
+    # 이 값을 읽던 shared/execution/futures_instrument.py 와 디커플 데몬들은
+    # 레거시 제거(L2/L6)로 사라졌다 — 남은 값은 기록이다.
     front_month_rollover:
       check_time: "08:30"
       poll_interval_seconds: 60

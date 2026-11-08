@@ -145,7 +145,7 @@ class MarketTickMessage(StreamMessage):
     # producers that publish trade-only ticks omit them, and pre-existing
     # entries decode unchanged (no schema_version bump). Present so a stream
     # consumer can serve `get_orderbook_snapshot` with the same contract as
-    # the KIS WS feed — see shared/streaming/consumer_feed.py.
+    # the KIS WS feed.
     bid_price_1: float | None = Field(default=None, ge=0)
     bid_qty_1: float | None = Field(default=None, ge=0)
     ask_price_1: float | None = Field(default=None, ge=0)

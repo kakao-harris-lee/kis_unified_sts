@@ -5,12 +5,11 @@ scalar indicator value per cycle, so the cross operators (``cross_above`` /
 ``cross_below``) — which need a distinct previous observation — could never fire,
 and this module refused to enable such strategies.
 
-That limitation is gone. The declarative Indicator Context
-(``shared/strategy_builder/indicator_context.py``) computes every indicator from
-the OHLCV history window via the TA-Lib engine and hands the evaluator the *full*
-series, so cross operators (and arbitrary-period moving averages) now work in
-every runtime that runs ``builder_v1`` (stock daemon, monolith orchestrator,
-backtest).
+That limitation is gone. The declarative Indicator Context computed every
+indicator from the OHLCV history window via the TA-Lib engine and handed the
+evaluator the *full* series, so cross operators (and arbitrary-period moving
+averages) worked in every runtime that ran ``builder_v1``. Those runtimes, and
+the context module itself, were deleted with the legacy tree.
 
 The module is retained as a stable API for its callers (the strategy factory and
 the dashboard support-hint endpoint) but the unsupported-operator set is now

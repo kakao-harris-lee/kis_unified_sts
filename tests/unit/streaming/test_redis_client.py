@@ -193,9 +193,10 @@ class TestFailFastConnectDefaults:
     redis-py 7.x's own `redis.Redis(...)` default retry is
     `Retry(ExponentialWithJitterBackoff(base=1, cap=10), retries=3)`, applied to
     connection errors — against an unreachable Redis that makes a single failed
-    acquisition take ~9.6s on the strategy hot path
-    (`shared/strategy/gates/adapter_helper.py::acquire_infra_clients`). These
-    tests pin `_create_client`'s override: NoBackoff + 0 retries by default.
+    acquisition take ~9.6s on the strategy hot path (the deleted
+    `shared/strategy/gates/adapter_helper.py::acquire_infra_clients` was the
+    measured case). These tests pin `_create_client`'s override: NoBackoff + 0
+    retries by default.
     """
 
     def test_default_retry_is_no_backoff_zero_retries(self):

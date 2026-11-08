@@ -7,11 +7,9 @@ This module provides:
     - DataCollector: Main collector class with Redis publishing
 
 Usage:
-    >>> from shared.collector import DataCollector, TickData
-    >>> from shared.kis.websocket import KISWebSocketAdapter, create_websocket_adapter
+    >>> from shared.collector import DataCollector, MockAPIAdapter, TickData
     >>>
-    >>> adapter = create_websocket_adapter(is_real=True)
-    >>> collector = DataCollector(adapter)
+    >>> collector = DataCollector(MockAPIAdapter())
     >>> collector.start(["101V01"])  # KOSPI200 Mini
 """
 

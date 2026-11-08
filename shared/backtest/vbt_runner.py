@@ -146,8 +146,7 @@ def vectorbt_available() -> bool:
 
     ``find_spec`` 자체가 던지는 예외(차단 finder / 깨진 설치)도 "미설치"로
     취급한다. 어댑터/harness 를 구동하기 *전에* 호출해, seam 이 legacy 로 깨끗이
-    폴백하거나(:class:`VectorbtRunner._ensure_supported`) harness 구동을 건너뛰게
-    (:class:`~shared.backtest.vbt_harness_runner.VbtHarnessRunner.run`) 한다 —
+    폴백하게(:class:`VectorbtRunner._ensure_supported`) 한다 —
     lazy import 시점까지 가면 전체 해석 비용을 낭비하고 ``ModuleNotFoundError`` 가
     폴백 경로를 우회한다 (TA-Lib 미설치 함정과 동일 클래스).
     """

@@ -40,9 +40,10 @@ Design constraints
 * Value-preserving -- the calculator classes are the *only* home of this math;
   :class:`ReferenceBackend` wraps them for engine consumers, and the
   ``shared.indicators.reference`` shim re-exports them for direct consumers
-  (``shared/indicators/volume_ratio.py``, ``shared/regime/adaptive_detector.py``,
-  ``shared/strategy/entry/trix_golden.py``, ``shared/llm/stock_screening.py``,
-  runtime ATR/StochRSI paths). Numeric contracts are pinned by
+  (``shared/regime/adaptive_detector.py``, ``shared/llm/stock_screening.py``,
+  runtime ATR/StochRSI paths; ``shared/indicators/volume_ratio.py`` and
+  ``shared/strategy/entry/trix_golden.py`` were two more until L6 deleted them).
+  Numeric contracts are pinned by
   ``tests/unit/indicators/test_reference_contract.py``.
 
 Standards references
@@ -373,10 +374,10 @@ class StochRSICalculator:
     When the RSI window is flat (max == min) the raw StochRSI is set to 50
     (neutral) to avoid division by zero.
 
-    This is the producer that ``shared/strategy/entry/stochrsi_trend.py``
-    requires. That strategy reads flat keys ``stochrsi_k``, ``stochrsi_d`` and
-    ``stochrsi_k_prev`` (the previous bar's %K, needed for crossover detection);
-    ``latest_values`` emits exactly those three keys.
+    ``latest_values`` emits flat keys ``stochrsi_k``, ``stochrsi_d`` and
+    ``stochrsi_k_prev`` (the previous bar's %K, needed for crossover detection).
+    That shape was fixed by ``shared/strategy/entry/stochrsi_trend.py``, the
+    consumer L6 deleted; the keys stay because they are the backend's contract.
 
     RSI convention: the same Wilder smoothing as
     ``shared.indicators.momentum.RSICalculator``, via the module-level

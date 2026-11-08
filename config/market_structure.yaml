@@ -66,8 +66,8 @@ collector:
     index_market_div: "U"
     index_code: "2001"
   basis:
-    # Annual risk-free rate for the theoretical fair value
-    # (shared/arbitrage/basis_calculator.py).
+    # Annual risk-free rate for the theoretical fair value. Its reader,
+    # shared/arbitrage/basis_calculator.py, was deleted in L6.
     risk_free_rate: 0.035
   derived:
     foreign_cum_window_days: 20

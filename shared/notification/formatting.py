@@ -13,8 +13,7 @@ callback_data scheme (bot-service handlers MUST parse exactly this):
     ``reject:{approval_id}``    — reject / discard a pending signal.
     ``close:{asset}:{code}``    — close an open position.
 
-    ``approval_id`` is ``"{asset}:{signal_id}"`` (see
-    :func:`shared.streaming.approval_keys.approval_field_id`) — it already
+    ``approval_id`` is ``"{asset}:{signal_id}"`` — it already
     contains a colon, so a callback_data of ``"approve:stock:ab12cd34"``
     is parsed by splitting on the FIRST colon only:
     ``action, approval_id = callback_data.split(":", 1)``. For ``close``,
@@ -154,8 +153,7 @@ def approval_buttons(approval_id: str) -> InlineKeyboardMarkup:
     """Return the [승인]/[거부] keyboard for a pending-approval signal.
 
     Args:
-        approval_id: ``"{asset}:{signal_id}"``, as returned by
-            :func:`shared.streaming.approval_gate.record_pending`.
+        approval_id: ``"{asset}:{signal_id}"``.
 
     Returns:
         A two-button row: ``approve:{approval_id}`` / ``reject:{approval_id}``

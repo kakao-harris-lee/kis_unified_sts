@@ -108,9 +108,9 @@ class UnifiedMarketAnalyzer:
             prompt_addendum: Optional extra text appended to the LLM system prompt.
                 When non-empty, it is injected after the base system prompt so the
                 LLM focuses on a specific asset class or trading context.  Loaded
-                from ``config/llm.yaml::futures.prompt_addendum`` by
-                :class:`~shared.llm.context_publisher.LLMContextPublisher`
-                when ``asset_class="futures"``.
+                from ``config/llm.yaml::futures.prompt_addendum`` by the
+                caller (the futures context publisher that passed it was deleted
+                in L6; the parameter itself is unchanged).
 
         Returns:
             MarketAnalysis 결과.

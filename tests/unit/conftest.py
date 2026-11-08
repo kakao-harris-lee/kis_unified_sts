@@ -7,10 +7,10 @@ Hermetic Redis guard
 environment provides. When no Redis server is reachable there, redis-py 7.x's
 default connection retry policy (3 retries with exponential backoff) makes
 every *failed* acquisition take about 9.6 seconds. Any unit test that reaches
-the real singleton without mocking it first — e.g. via
-``shared/strategy/entry/setup_eval_publisher.py``'s
-``publish_setup_eval() -> acquire_infra_clients() -> RedisClient.get_client()``
-chain — therefore stalls for that long *per call*. A single test file making
+the real singleton without mocking it first — the deleted
+``shared/strategy/entry/setup_eval_publisher.py``'s ``publish_setup_eval() ->
+acquire_infra_clients() -> RedisClient.get_client()`` chain was the case that
+prompted this — therefore stalls for that long *per call*. A single test file making
 a few dozen such calls can take minutes, making the unit suite look hung even
 though CI passes (the ``test`` job runs a real Redis service container).
 

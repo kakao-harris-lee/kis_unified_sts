@@ -565,7 +565,8 @@ class PortfolioMddFilterSettings(BaseModel):
     The filter reads the ``portfolio:equity:latest`` hash published by
     ``services/portfolio_monitor`` and fails OPEN whenever the key is absent,
     stale, unparseable, or the published breaker ``mode`` is not ``enforce``.
-    Stage thresholds/size factors live in ``config/portfolio.yaml`` — this
+    Stage thresholds/size factors live in ``config/portfolio.yaml`` (whose
+    loader was deleted in L6; the file is kept as the declared structure) — this
     block only wires the read side.
     """
 

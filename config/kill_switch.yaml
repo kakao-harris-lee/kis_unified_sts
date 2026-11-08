@@ -79,8 +79,9 @@ kill_switch:
     news_pipeline_lag_seconds:
       enabled: true
       threshold: 1800            # 30 minutes — conservative default per plan §4 Phase 0.4
-      # Redis stream key inspected for lag computation. Must match the news
-      # collector's output stream (canonical: config/news_sources.yaml::redis_stream).
+      # Redis stream key inspected for lag computation. It matched the news
+      # collector's output stream; that collector and its
+      # config/news_sources.yaml were deleted in L6.
       stream_key: "stream:news.raw"
 kill_switch_consumer:
   poll_interval_seconds: 5.0          # How often TradingOrchestrator polls the sentinel
