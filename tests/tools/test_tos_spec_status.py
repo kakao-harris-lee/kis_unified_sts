@@ -723,20 +723,22 @@ def test_legacy_census_rejects_a_gap_in_the_route_numbering(tmp_path):
 # marker has to be true.  (docs/plans/2026-11-07-legacy-removal-plan.md)
 # --------------------------------------------------------------------------
 
-#: READ-003 as the live corpus carries it: a path that exists, and no marker.
-#: READ-003 deliberately, not one of the rows the legacy removal retires -- a
-#: fixture that quotes a retired row stops editing anything the day it is
-#: marked.  Its category is warning-only, so dropping it from the census sets
-#: changes no verdict here.
+#: READ-008 as the live corpus carries it: a path that exists, and no marker.
+#: It has to be a row that is NOT retired -- a fixture that quotes a retired row
+#: stops editing anything the day it is marked.  This was READ-003
+#: (`services/screener.py`) until L6 deleted that file and retired the row, for
+#: exactly that reason; READ-008 is the remaining live BROKER_READ_SITE, whose
+#: category is warning-only, so dropping it from the census sets changes no
+#: verdict here.
 _LIVE_ROW = (
-    "READ-003,BROKER_READ_SITE,services/screener.py stock universe screener,"
-    "RFC-002 section 10 market-data ingress and ADR-002-018 Critical Input "
-    "provenance,SERVICE_RANKING_READ_NO_ORDER_EGRESS"
+    "READ-008,BROKER_READ_SITE,shared/llm/unified_trading_analyzer.py LLM "
+    "analyzer facade,RFC-002 section 10 market-data ingress and ADR-002-018 "
+    "Critical Input provenance,IN_PROCESS_ANALYSIS_READ_NO_ORDER_EGRESS"
 )
-_LIVE_LEVEL = "SERVICE_RANKING_READ_NO_ORDER_EGRESS"
-_LIVE_PATH = "services/screener.py stock universe screener"
+_LIVE_LEVEL = "IN_PROCESS_ANALYSIS_READ_NO_ORDER_EGRESS"
+_LIVE_PATH = "shared/llm/unified_trading_analyzer.py LLM analyzer facade"
 #: A path that is not in the tree, as a retired row's path will not be.
-_GONE = "services/deleted_screener.py stock universe screener"
+_GONE = "shared/llm/deleted_trading_analyzer.py LLM analyzer facade"
 #: A stand-in sha: the `legacy-final` tag, which the legacy-removal plan uses as
 #: the commit where the deleted routes last existed.
 _RETIRED = f"{status.RETIRED_LEVEL_PREFIX}6fc17c0f8d25"
@@ -1110,9 +1112,11 @@ def test_cli_check_fails_closed_and_reports_git_failure_on_stderr(
 # The defect these guard against is concrete: an earlier shape of the census
 # tested the blocking tier *after* a ``continue`` on the exemption set, so
 # registering a read site to quiet its warning also disarmed the blocking check
-# for that path forever.  ``shared/execution/mock_mirror.py`` is the live case
-# that makes this more than theory -- it constructs a real OrderExecutor and is
-# kept out of the blocking tier only by having no ``__main__`` guard.
+# for that path forever.  ``shared/execution/mock_mirror.py`` was the case that
+# made this more than theory -- it constructed a real OrderExecutor and was kept
+# out of the blocking tier only by having no ``__main__`` guard.  L6 deleted it
+# and retired MOCK-001; the fixtures below stage the same shape in a fake repo,
+# which is what they always did.
 # --------------------------------------------------------------------------
 
 
@@ -1211,9 +1215,11 @@ def test_a_new_unregistered_read_site_is_still_reported(tmp_path):
 
 
 def test_a_component_may_not_sit_in_both_the_blocking_and_warning_censuses(tmp_path):
-    # READ-003, not READ-007 as this fixture first read: READ-007's path is one
-    # the legacy removal deletes, and a fixture quoting a retired row silently
-    # stops editing anything (see _migration_copy).
+    # READ-008, not READ-007 or READ-003 as this fixture read before: both of
+    # those paths are ones the legacy removal deletes, and a fixture quoting a
+    # retired row silently stops editing anything (see _migration_copy). L6
+    # deleted `services/screener.py` and retired READ-003, so the fixture moved
+    # again — to READ-008, the remaining live BROKER_READ_SITE.
     #
     # The path it is repointed AT must be a LIVE blocking-census component, or
     # `_components` raises "source path is missing" before the both-censuses
@@ -1224,8 +1230,8 @@ def test_a_component_may_not_sit_in_both_the_blocking_and_warning_censuses(tmp_p
     csv_path, markdown_path = _migration_copy(
         tmp_path,
         (
-            "READ-003,BROKER_READ_SITE,services/screener.py",
-            "READ-003,BROKER_READ_SITE,shared/execution/executor.py",
+            "READ-008,BROKER_READ_SITE,shared/llm/unified_trading_analyzer.py",
+            "READ-008,BROKER_READ_SITE,shared/execution/executor.py",
         ),
     )
 
@@ -1239,11 +1245,22 @@ def test_a_component_may_not_hold_both_warning_only_categories(tmp_path):
     # MOCK-001 records an order-sender construction that is merely non-invocable;
     # READ-xxx records that no order sender exists at all.  A path holding both
     # would let the weaker description stand in for the stricter one.
+    #
+    # L6 deleted `shared/execution/mock_mirror.py` and retired MOCK-001, which
+    # leaves the live corpus with NO MOCK_CONFINED_ORDER_SITE row — so the
+    # collision cannot be staged by repointing a read row at one any more. The
+    # fixture instead un-retires MOCK-001 in its copy, onto the one path READ-008
+    # already holds: component AND `current_level` in a single replacement, since
+    # a retired row is dropped from the census sets before the overlap check.
     csv_path, markdown_path = _migration_copy(
         tmp_path,
         (
-            "READ-003,BROKER_READ_SITE,services/screener.py",
-            "READ-003,BROKER_READ_SITE,shared/execution/mock_mirror.py",
+            "shared/execution/mock_mirror.py mock-confined paper order mirror,"
+            "RFC-002 section 10.7/10.8 and ADR-002-004 section 8.2 Submission "
+            "Idempotency,RETIRED_SOURCE_REMOVED@6fc17c0f8d25",
+            "shared/llm/unified_trading_analyzer.py mock-confined paper order "
+            "mirror,RFC-002 section 10.7/10.8 and ADR-002-004 section 8.2 "
+            "Submission Idempotency,IN_PROCESS_MOCK_ORDER_SENDER_NON_ENTRYPOINT",
         ),
     )
 
