@@ -1,8 +1,12 @@
 # F-9 Gate 1 shadow observation — harvest targets and observation evidence.
 #
-# Read by scripts/ops/f9_observation_harvest.py. Nothing in that script hardcodes
-# a service name, a container name, a log pattern, or a threshold; they all live
-# here (CLAUDE.md: configuration-driven only).
+# Was read by scripts/ops/f9_observation_harvest.py, which went with the legacy
+# futures pipeline in the legacy removal L3
+# (docs/plans/2026-11-07-legacy-removal-plan.md). What still reads this file is
+# tests/unit/streaming/test_stream_stage_heartbeat.py, which holds
+# liveness_expected_interval_seconds below equal to config/streaming.yaml's
+# heartbeat interval. shared/streaming/stage.py still mirrors the derived 180s
+# liveness bound in a comment; L6 judges that module and this file together.
 #
 # The session window is NOT here — it is read from
 # config/market_schedule.yaml::market_schedule.futures.regular.{open,close}

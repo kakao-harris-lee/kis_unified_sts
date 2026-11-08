@@ -4,12 +4,11 @@
 # the full pytest suite can run in Docker. Three things the bare runtime
 # Dockerfile does NOT provide but the suite needs:
 #   1. dev/test deps  -> pip install ".[dev]" (pytest, xdist, fakeredis, ...).
-#   2. the `git` CLI   -> tests/unit/ops/test_live_preflight.py and
-#                         test_promote_live.py shell out to git to build
-#                         throwaway repos under tmp_path.
-#   3. a non-root user -> tests that assert a path is *not* writable (e.g. the
-#                         recover_positions sentinel fallback) only hold for a
-#                         non-root user; root can mkdir/write anywhere.
+#   2. the `git` CLI   -> tests/support/git_env.py builds throwaway repos under
+#                         tmp_path, and tests/unit/config/test_dotenv_call_gate.py
+#                         scans the tracked file list rather than rglob.
+#   3. a non-root user -> tests that assert a path is *not* writable only hold
+#                         for a non-root user; root can mkdir/write anywhere.
 #
 # Redis is supplied by the `redis-test` compose service. This image expects it
 # reachable at localhost:6379 — the `tests` compose service shares redis-test's

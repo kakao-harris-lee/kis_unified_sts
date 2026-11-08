@@ -52,8 +52,10 @@ consumer_stage:
   # ⚠ 그리고 이 값은 수집기의 liveness_expected_interval_seconds 와 **같아야**
   # 한다. 수집기는 그 설정값으로 «몇 줄이 나와야 하는가» 를 예측하므로, 여기만
   # 바꾸면 밀도가 어긋난다. 두 파일의 동일성은
-  # tests/unit/scripts/ops/test_f9_observation_harvest.py 가 실제 파일에서 읽어
-  # 단언한다.
+  # tests/unit/streaming/test_stream_stage_heartbeat.py 의
+  # test_the_shipped_interval_is_what_the_observation_config_predicts 가 두
+  # shipped 파일에서 직접 읽어 단언한다(레거시 제거 L3 전에는 수집기 시험이
+  # 그 자리였다).
   #
   # 수집기가 재는 것은 «설정한 간격»이 아니라 «실제로 찍힌 두 줄 사이»다.
   # 하트비트는 폴링 중에 만기가 되고 «다음 폴링이 반환될 때» 나오므로
