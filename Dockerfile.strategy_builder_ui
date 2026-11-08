@@ -51,7 +51,8 @@ USER node
 
 EXPOSE 3100
 
-# Healthcheck: Next.js answers GET / with the Cockpit home page at 200.
+# Healthcheck: GET / redirects (307) to /tos and `fetch` follows it to a 200.
+# The Cockpit home page it used to answer with was deleted in L5.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD node -e "fetch('http://localhost:3100/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
