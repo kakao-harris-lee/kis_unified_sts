@@ -6,8 +6,19 @@ A consumer that is alive but idle used to emit nothing at any log level
 tests pin the line that tells them apart, and the three properties that make it
 worth trusting: it fires on the *idle* path, it survives a subclass that
 overrides ``post_poll``, and no supplier of the interval — YAML, env, or a
-service's own call site — can push it past the gap bound
-``scripts/ops/f9_observation_harvest.py`` scores against.
+service's own call site — can push it past the gap bound this module copies
+from ``config/f9_observation.yaml``.
+
+The harvester that derived that bound
+(``scripts/ops/f9_observation_harvest.py``) went with the legacy futures
+pipeline in the legacy removal L3
+(``docs/plans/2026-11-07-legacy-removal-plan.md``). What survives here is what
+can still be read from a shipped file: ``config/streaming.yaml`` and
+``config/f9_observation.yaml`` must keep predicting the same heartbeat
+interval. The one check that needed the harvester's *derived*
+``liveness_max_gap_seconds`` — the equality between it and this module's
+``LIVENESS_MAX_GAP_SECONDS`` mirror — has no source left and was removed with
+it; L6 judges ``shared/streaming`` and that config together.
 
 Time is injected, never slept: the clock is stepped by the fake Redis at a
 chosen poll, so "one interval elapsed" is an exact fact rather than a wall-clock
@@ -20,10 +31,11 @@ import asyncio
 import logging
 import shlex
 import time
+from pathlib import Path
 
 import pytest
+import yaml
 
-import scripts.ops.f9_observation_harvest as harvest
 from shared.streaming.stage import (
     LIVENESS_MAX_GAP_SECONDS,
     TIMESTAMP_RESOLUTION_SECONDS,
@@ -35,6 +47,8 @@ from shared.streaming.stage import (
 )
 
 _INTERVAL = 60.0
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 _REAL_SLEEP = asyncio.sleep
 
@@ -671,42 +685,31 @@ def test_out_of_bound_config_falls_back_to_the_field_default_with_a_warning(
     assert _audit_records(caplog, "stream_stage_config_load_failed")
 
 
-def test_the_copied_bound_is_the_harvesters_liveness_bound():
-    """This module's mirror must be the number the harvester actually scores.
+def _f9_liveness_expected_interval_seconds() -> int:
+    """``config/f9_observation.yaml``'s own predicted heartbeat interval.
 
-    The mirror exists because a live consumer must not fail to start over an
-    ops harvest config. The cost of a copy is that it can drift, and it did:
-    until 2026-09-23 it mirrored ``observation_max_gap_seconds`` (1800), which
-    the harvester applies to gaps between proofs of CONSUMPTION. Once the
-    harvester grew a separate ``liveness`` group scoring heartbeats at 180s,
-    the copy was defending a bound nothing checked — and
-    ``heartbeat_interval_seconds: 300`` passed every guard-rail the code and
-    the config comments stated while making every healthy quiet day read
-    ``stale_observation``.
-
-    So the assertion is equality against the harvester's DERIVED liveness
-    bound, not an inequality against its staleness bound. An inequality is what
-    let the two drift three orders of magnitude apart while still passing.
+    Read straight from the shipped file: the module that used to hand this
+    value over (``scripts/ops/f9_observation_harvest.py``) is gone, and the
+    key is a plain scalar, so reading it is a read and not a second
+    implementation of anything.
     """
-    harvester = harvest.load_observation_config()
-
-    assert harvester.liveness_max_gap_seconds == LIVENESS_MAX_GAP_SECONDS
-    # And the staleness bound is a different, larger number that no longer
-    # governs this file — pinned so that "they happen to be equal" can never
-    # become the reason this test passes.
-    assert harvester.observation_max_gap_seconds > harvester.liveness_max_gap_seconds
+    document = yaml.safe_load(
+        (_REPO_ROOT / "config" / "f9_observation.yaml").read_text(encoding="utf-8")
+    )
+    return int(document["f9_observation"]["liveness_expected_interval_seconds"])
 
 
-def test_the_shipped_interval_is_what_the_harvester_predicts():
+def test_the_shipped_interval_is_what_the_observation_config_predicts():
     """Equality, in both directions, or the density rule measures the wrong thing.
 
-    The harvester predicts how many heartbeats a stretch should hold from its
-    OWN ``liveness_expected_interval_seconds``. Set this file's interval lower
-    and a healthy day reads stale; set it higher and a dead stretch reads
-    alive. Neither failure announces itself anywhere but in the verdict.
+    ``config/f9_observation.yaml`` predicts how many heartbeats a stretch
+    should hold from its OWN ``liveness_expected_interval_seconds``. Set this
+    file's interval lower and a healthy day reads stale; set it higher and a
+    dead stretch reads alive. Neither failure announces itself anywhere but in
+    the verdict.
     """
     shipped = StreamStageConfig.from_yaml().heartbeat_interval_seconds
-    expected = harvest.load_observation_config().liveness_expected_interval_seconds
+    expected = _f9_liveness_expected_interval_seconds()
 
     assert shipped == expected, (
         f"config/streaming.yaml heartbeats every {shipped}s but "
@@ -715,24 +718,22 @@ def test_the_shipped_interval_is_what_the_harvester_predicts():
 
 
 def test_the_shipped_gap_clears_the_bound_it_is_scored_against():
-    """What the harvester measures is the *gap*, not the configured interval.
+    """What the bound measures is the *gap*, not the configured interval.
 
     The gap is the interval plus the poll that closes it, plus the second its
-    truncated timestamps can add — so the shipped interval has to clear the
-    harvester's ``liveness_max_gap_seconds`` with the poll block included, not
-    on its own.
+    truncated timestamps can add — so the shipped interval has to clear
+    ``LIVENESS_MAX_GAP_SECONDS`` with the poll block included, not on its own.
 
-    One honest limit, changed by the legacy removal. This used to read the
-    block from ``services/order_router/config.py`` — the only one of the five
-    stage services that took it from config — so two of the three operands
-    came from shipped files. All five services are gone now, so the block is
-    ``_SHIPPED_BLOCK``, this file's own 2000ms constant. The two operands that
-    can actually drift (``config/streaming.yaml`` and
-    ``config/f9_observation.yaml``) are still read from the shipped files, and
+    Two honest limits, both from the legacy removal. The block used to be read
+    from ``services/order_router/config.py`` (L2) and the bound from the F-9
+    harvester (L3); both are gone, so those two operands are now this file's
+    ``_SHIPPED_BLOCK`` and ``shared/streaming/stage.py``'s own mirror. The one
+    operand that still drifts against a different file —
+    ``config/streaming.yaml``'s interval — is read from the shipped file, and
     at the shipped 60s interval the block cannot mislead: it would have to
     exceed 119s to push the sum past the bound.
     """
-    max_gap = harvest.load_observation_config().liveness_max_gap_seconds
+    max_gap = LIVENESS_MAX_GAP_SECONDS
     shipped = StreamStageConfig.from_yaml().heartbeat_interval_seconds
 
     assert shipped + _SHIPPED_BLOCK + TIMESTAMP_RESOLUTION_SECONDS <= max_gap
