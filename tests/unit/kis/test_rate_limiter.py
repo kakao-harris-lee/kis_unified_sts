@@ -78,9 +78,19 @@ class TestRateLimiterBackoff:
     @pytest.mark.asyncio
     async def test_acquire_respects_penalty(self):
         limiter = _RateLimiter(max_requests=100)
-        limiter.penalty(0.05)  # 50ms penalty
 
+        # `start` is taken BEFORE penalty(), not between it and acquire().
+        # penalty() sets `_penalty_until = monotonic() + backoff` and only then
+        # calls `_record_rate_limit_penalty()`, whose lazy
+        # `from services.monitoring.metrics import ...` costs ~12ms the first
+        # time anything in the process imports it. Clocking from after penalty()
+        # therefore measured `0.05 - that import`, and whether this test paid the
+        # cold import at all depended on which other test had imported the
+        # metrics module earlier in the same pass. Measuring the whole window
+        # removes the ordering dependency and still asserts what the name says:
+        # acquire() does not return before the penalty expires.
         start = time.monotonic()
+        limiter.penalty(0.05)  # 50ms penalty
         await limiter.acquire()
         elapsed = time.monotonic() - start
 
