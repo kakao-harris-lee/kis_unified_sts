@@ -35,7 +35,14 @@ from shared.strategy.registry import (
 )
 
 # Entry component names registered only for these tests.
-HEALTHY_ENTRY = "mean_reversion"  # a real, registered built-in
+#
+# HEALTHY_ENTRY was `mean_reversion`, a real built-in, until L6 deleted every
+# `shared.strategy.entry.*` module and left the entry registry empty
+# (docs/plans/2026-11-07-legacy-removal-plan.md §3). What these tests pin is the
+# FACTORY's roster behaviour — one component that builds, one that raises, one
+# that opts out — so the healthy case is now a probe like the other two rather
+# than a dependency on whichever strategies happen to ship.
+HEALTHY_ENTRY = "roster_probe_healthy_entry"
 MISCONFIGURED_ENTRY = "roster_probe_misconfigured_entry"
 EXCLUDED_ENTRY = "roster_probe_excluded_entry"
 
@@ -44,6 +51,13 @@ MISCONFIG_MESSAGE = (
     "forecast_integration.enabled is true but no forecast client was supplied"
 )
 EXCLUSION_MESSAGE = "uses operators the streaming runtime cannot evaluate"
+
+
+class _HealthyEntry:
+    """Builds without complaint — the roster's positive control."""
+
+    def __init__(self, params: dict[str, Any]) -> None:
+        self.params = params
 
 
 class _MisconfiguredEntry:
@@ -69,6 +83,7 @@ def registries() -> Iterator[None]:
         SizerRegistry: dict(SizerRegistry._components),
     }
     register_builtin_components()
+    EntryRegistry.register_class(HEALTHY_ENTRY, _HealthyEntry)
     EntryRegistry.register_class(MISCONFIGURED_ENTRY, _MisconfiguredEntry)
     EntryRegistry.register_class(EXCLUDED_ENTRY, _DeliberatelyExcludedEntry)
     yield

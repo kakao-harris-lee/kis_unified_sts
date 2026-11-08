@@ -53,7 +53,7 @@ def validate_exit_primitive(state: BuilderState) -> str | None:
         return (
             f"exit_primitive '{name}' is the builder's own declarative exit and "
             "cannot be composed with itself; pick a stateful primitive such as "
-            "three_stage, atr_dynamic, chandelier_exit, or momentum_decay"
+            "three_stage, momentum_decay, or setup_target_exit"
         )
 
     from shared.strategy.registry import ExitRegistry, register_builtin_components

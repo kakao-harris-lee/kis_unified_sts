@@ -230,7 +230,7 @@ class ExitPrimitiveRef(BaseModel):
     """Reference to a registered exit component (``ExitRegistry`` name).
 
     Lets a builder strategy compose a stateful exit primitive (e.g.
-    ``three_stage``, ``atr_dynamic``, ``chandelier_exit``, ``momentum_decay``)
+    ``three_stage``, ``momentum_decay``, ``setup_target_exit``)
     with the declarative stop/target/trailing risk block. Name resolution
     against the registry happens at strategy-build/validation time (the schema
     layer stays import-cycle free); unknown names are rejected there with the

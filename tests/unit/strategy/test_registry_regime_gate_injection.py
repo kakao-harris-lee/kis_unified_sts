@@ -8,26 +8,50 @@ attaches it to the constructed adapter.  Missing section or enabled:false
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from typing import Any
+
 import pytest
+
+#: The gate-bearing entry used to be `setup_a_gap_reversion`. L6 deleted every
+#: `shared.strategy.entry.*` module (docs/plans/2026-11-07-legacy-removal-plan.md
+#: §3), so the entry under test is a probe registered here. What the factory
+#: actually keys on is unchanged: an entry instance that carries a `_gate_cfg`
+#: attribute gets `regime_gate_cfg_from_yaml(...)` written into it
+#: (`shared/strategy/factory.py:157-160`), which is the injection this file pins.
+_PROBE_ENTRY = "regime_gate_probe_entry"
+
+
+class _GateBearingEntry:
+    """Minimal entry with the attribute the factory's injection looks for."""
+
+    def __init__(self, params: dict[str, Any]) -> None:
+        self.params = params
+        self._gate_cfg = None
 
 
 @pytest.fixture(autouse=True)
-def _register_builtins():
-    """Ensure builtin components are registered before each test."""
-    from shared.strategy.registry import register_builtin_components
+def _register_builtins() -> Iterator[None]:
+    """Register builtins plus the probe entry; restore the registry afterwards."""
+    from shared.strategy.registry import EntryRegistry, register_builtin_components
 
     register_builtin_components()
+    snapshot = dict(EntryRegistry._components)
+    EntryRegistry.register_class(_PROBE_ENTRY, _GateBearingEntry)
+    yield
+    EntryRegistry.clear()
+    EntryRegistry._components.update(snapshot)
 
 
 def _base_setup_a_cfg(regime_gate_section=None):
-    """Minimal Setup A YAML cfg dict; optionally embed a regime_gate section."""
+    """Minimal futures cfg dict; optionally embed a regime_gate section."""
     cfg = {
         "strategy": {
-            "name": "setup_a_gap_reversion",
+            "name": "regime_gate_probe",
             "asset_class": "futures",
             "enabled": True,
             "entry": {
-                "type": "setup_a_gap_reversion",
+                "type": _PROBE_ENTRY,
                 "params": {},
             },
             "exit": {"type": "setup_target_exit", "params": {}},
