@@ -72,9 +72,7 @@ where a strategy is Tenant Content under `config/tos_runtime/`.
 
 ### No Code Duplication
 
-Shared logic goes in `shared/` modules. Packages that are reachable only through
-package `__init__` fan-out are still being measured away (removal plan L7) — do
-not add new dependencies on them.
+Shared logic goes in `shared/` modules.
 
 ## CLI Commands
 
