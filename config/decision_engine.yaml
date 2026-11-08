@@ -10,7 +10,9 @@
 # the daemon never loaded them (it built each Setup with the Pydantic field
 # defaults), while two no-arg `SetupCConfig.from_yaml()` callers DID load them —
 # services/dashboard/routes/event_context.py and scripts/walk_forward_phase3.py.
-# Those callers now read the strategies file, so all three paths agree.
+# Those callers were themselves removed in the legacy removal L3/L4; the no-arg
+# default now resolves to the strategies file for every remaining caller
+# (pinned by tests/unit/decision_engine/test_setup_config_source_of_truth.py).
 # See docs/plans/2026-09-08-setup-d-decoupled-port.md §0-2 / §3-A.
 
 # services/decision_engine consumer-side wiring for the shared market-risk
