@@ -9,11 +9,17 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
-# Paths that don't require authentication
+# Paths that don't require authentication.
+#
+# ``/health`` is the container health check: Dockerfile.dashboard's HEALTHCHECK
+# and docker-compose.yml both curl it with no API key, and strategy-builder-ui
+# and caddy wait on `service_healthy`, so it must stay exempt.
+#
+# The root pointer ``/`` and the Prometheus ``/metrics`` scrape endpoint were
+# removed with the legacy routers (legacy-removal plan L4), so their exemptions
+# went with them — those paths now answer 401 under auth instead of 404.
 PUBLIC_PATHS = {
-    "/",
     "/health",
-    "/metrics",
     "/docs",
     "/redoc",
     "/openapi.json",

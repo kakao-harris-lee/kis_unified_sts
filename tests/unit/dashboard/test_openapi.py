@@ -33,9 +33,10 @@ async def test_openapi_has_tags():
     data = response.json()
     assert "tags" in data
     tag_names = [tag["name"] for tag in data["tags"]]
-    assert "trading" in tag_names
-    assert "signals" in tag_names
-    assert "trades" in tag_names
+    # L4 reduced the app to the TOS projection surface, so "tos" is the only
+    # declared tag left (the trading/signals/trades tags went with their
+    # routers).
+    assert tag_names == ["tos"]
 
 
 @pytest.mark.asyncio

@@ -57,10 +57,11 @@ def _entry_params(registry_name: str) -> dict:
 def test_core_config_points_at_the_strategy_yaml(setup_cls, config_cls) -> None:
     """The no-arg ``from_yaml()`` must resolve the deployed strategy file.
 
-    ``SetupCConfig.from_yaml()`` is called with no arguments by
-    ``services/dashboard/routes/event_context.py``; that call site must land on
-    the same parameters the runtime uses. ``scripts/walk_forward_phase3.py``
-    was the second such caller until the legacy removal L3.
+    ``SetupCConfig.from_yaml()`` with no arguments must land on the same
+    parameters the runtime uses. Its two no-arg callers —
+    ``scripts/walk_forward_phase3.py`` and
+    ``services/dashboard/routes/event_context.py`` — were removed in the legacy
+    removal L3 and L4; the default-resolution contract is pinned here regardless.
     """
     assert (
         config_cls._default_config_file

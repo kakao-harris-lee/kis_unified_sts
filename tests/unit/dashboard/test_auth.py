@@ -11,7 +11,7 @@ async def test_api_key_auth_rejects_missing_key():
     app = create_app(require_auth=True, api_key="test-secret-key")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/api/trading/status")
+        response = await client.get("/api/tos/projection")
 
     assert response.status_code == 401
     assert "detail" in response.json()
@@ -26,7 +26,7 @@ async def test_api_key_auth_accepts_valid_key():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get(
-            "/api/trading/status",
+            "/api/tos/projection",
             headers={"X-API-Key": "test-secret-key"},
         )
 
@@ -42,7 +42,7 @@ async def test_api_key_auth_rejects_invalid_key():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get(
-            "/api/trading/status",
+            "/api/tos/projection",
             headers={"X-API-Key": "wrong-key"},
         )
 
@@ -70,6 +70,6 @@ async def test_auth_disabled_by_default():
     app = create_app(require_auth=False)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/api/trading/status")
+        response = await client.get("/api/tos/projection")
 
     assert response.status_code == 200
