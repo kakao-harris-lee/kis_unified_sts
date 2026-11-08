@@ -1,14 +1,11 @@
 /**
  * Reachability guardrail for every same-origin /api call site in the UI.
  *
- * This app has two same-origin API clients, and both reach the same proxy:
- * src/lib/dashboard/client.ts (axios, empty baseURL) and src/lib/api/client.ts
- * (fetch, empty baseURL — its own head comment says the catch-all proxy
- * rewrites its paths). Harvesting one of them leaves the other free to add an
- * unroutable path: a scratch `apiGet("/api/screener/latest")` in
- * src/lib/api/experiments.ts passed this file while the proxy 404'd it. Both
- * trees are walked recursively, so a call site in a subdirectory is covered
- * too. `builder-ui-two-api-clients-auth` records the same two-client trap.
+ * One client tree is left: src/lib/dashboard (axios, empty baseURL). The second
+ * one, src/lib/api (fetch, empty baseURL), went with the legacy pages in L5 —
+ * `builder-ui-two-api-clients-auth` records why both had to be harvested while
+ * both existed, and this list grows back the moment a second tree reappears.
+ * The tree is walked recursively, so a call site in a subdirectory is covered.
  *
  * In the deployed stack an /api path is served either by Caddy's
  * `@to_dashboard` matcher (straight to dashboard:8001) or by the Next
@@ -16,7 +13,7 @@
  * Caddy's `handle {}` fallback reaches. A path in neither place answers 404
  * from the proxy with `{"detail":"Unsupported Strategy Builder API path"}` —
  * the defect commit 1a614f09 fixed for `market-risk`/`portfolio` and this file
- * prevents from recurring. Frontend unit tests mock both clients, so nothing
+ * prevents from recurring. Frontend unit tests mock the client, so nothing
  * else in the suite exercises the real routing for a new call site.
  *
  * The asserted property is the stronger of the two: every call site must
@@ -24,9 +21,10 @@
  * Caddy membership alone is not reachability — `next dev` (npm run dev, the
  * documented frontend workflow) serves the UI on :3100 with no Caddy in front,
  * so a root reachable only via `@to_dashboard` 404s there. The concrete input
- * this rejects and a union-of-both-lists check would accept: adding
- * `path /api/analytics /api/analytics/*` to caddy/Caddyfile instead of adding
- * `analytics` to `directRoots`.
+ * this rejects and a union-of-both-lists check would accept: adding a path to
+ * caddy/Caddyfile for a new root instead of adding that root to `directRoots`.
+ * That is not hypothetical after L5: `tos` is in BOTH lists today, so the next
+ * root added is the one at risk.
  *
  * The Caddyfile is still parsed, to say in the failure message whether the
  * unresolvable root is Caddy-direct (works in the container, 404s under
@@ -40,12 +38,8 @@ import { relative, resolve } from "node:path";
 import { caddyDirectRoots } from "./caddyRouting";
 import { targetPathFor } from "./proxyRouting";
 
-// Both same-origin API client trees. Neither is more authoritative than the
-// other: a path added under either one is served by the same proxy.
-const CLIENT_LIB_DIRS = [
-  resolve(__dirname, "../../lib/dashboard"),
-  resolve(__dirname, "../../lib/api"),
-];
+/** Every same-origin API client tree. A second one goes in this list, not beside it. */
+const CLIENT_LIB_DIRS = [resolve(__dirname, "../../lib/dashboard")];
 /** A dynamic `${...}` segment stands in for any single path segment. */
 const DYNAMIC_SEGMENT = "__dynamic__";
 
@@ -100,20 +94,14 @@ describe("every same-origin API call site is reachable through the deployed stac
   it("finds the call sites it is meant to guard", () => {
     const paths = callSitePaths();
     // A regex that silently matched nothing would make every assertion below
-    // vacuously true, so pin the shape of the harvest itself.
-    expect(paths.length).toBeGreaterThan(90);
-    // One pin per client tree, so dropping either one is red rather than a
-    // smaller number nobody reads.
-    expect(paths.map((p) => p.apiPath)).toContain("/api/trades/statistics");
-    expect(paths.map((p) => p.apiPath)).toContain(
-      `/api/signals/${DYNAMIC_SEGMENT}/trace`,
-    );
-    expect(paths.map((p) => p.file)).toContain("lib/dashboard/trades.ts");
-    expect(paths.map((p) => p.file)).toContain("lib/api/symbols.ts");
+    // vacuously true, so pin the shape of the harvest itself. One call site is
+    // left in the whole UI; name it rather than counting, so deleting it is red
+    // instead of being a smaller number nobody reads.
+    expect(paths.map((p) => p.apiPath)).toContain("/api/tos/projection");
+    expect(paths.map((p) => p.file)).toContain("lib/dashboard/tos.ts");
   });
 
-  // A literal may carry its own query string or fragment — src/lib/api/
-  // symbols.ts builds `/api/symbols/search?${params}`. Those belong to the
+  // A literal may carry its own query string or fragment. Those belong to the
   // request, not to the path, and `targetPathFor` is given segments only. Left
   // attached they ride along on the last segment, which the exact-path
   // allowlist compares whole: "tos/projection?include=foo" is not
@@ -123,7 +111,7 @@ describe("every same-origin API call site is reachable through the deployed stac
     ["/api/tos/projection", ["tos", "projection"]],
     ["/api/tos/projection?include=foo", ["tos", "projection"]],
     ["/api/tos/projection#anchor", ["tos", "projection"]],
-    [`/api/symbols/search?${DYNAMIC_SEGMENT}`, ["symbols", "search"]],
+    [`/api/tos/projection?since=${DYNAMIC_SEGMENT}`, ["tos", "projection"]],
   ])("segments %s without its query or fragment", (apiPath, expected) => {
     expect(segmentsOf(apiPath)).toEqual(expected);
     expect(targetPathFor(segmentsOf(apiPath))).not.toBeNull();

@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Suspense } from "react";
 import { Geist, Geist_Mono, Noto_Sans_KR } from "next/font/google";
 import "./globals.css";
 import { Navigation } from "@/components/layout";
@@ -23,8 +22,8 @@ const notoSansKR = Noto_Sans_KR({
 });
 
 export const metadata: Metadata = {
-  title: "KIS Strategy Builder - 전략 빌더",
-  description: "한국투자증권 API 기반 퀀트 전략 프레임워크",
+  title: "KIS TOS 운영 상태",
+  description: "TOS 런타임이 내보낸 읽기 전용 운영 상태",
 };
 
 export default function RootLayout({
@@ -39,22 +38,21 @@ export default function RootLayout({
       <body
         className={`${notoSansKR.variable} ${geistSans.variable} ${geistMono.variable} antialiased min-h-screen`}
       >
-        {/* Suspense wraps the entire Providers tree because AssetClassContext
-            calls useSearchParams() — Next.js requires a Suspense boundary on
-            any client-side bailout that reads search params. */}
-        <Suspense fallback={null}>
-          <Providers>
-            <Navigation />
-            <main className="min-h-[calc(100vh-4rem)]">{children}</main>
-            <footer className="border-t border-slate-200 dark:border-slate-800">
-              <div className="max-w-7xl mx-auto px-4 py-4">
-                <p className="text-center text-sm text-slate-500">
-                  투자에는 원금 손실의 위험이 있으며, 과거 성과가 미래를 보장하지 않습니다.
-                </p>
-              </div>
-            </footer>
-          </Providers>
-        </Suspense>
+        {/* The <Suspense> that used to wrap this tree existed for
+            AssetClassContext's useSearchParams() bailout. That provider went
+            with the dashboard pages (legacy removal L5) and nothing left in the
+            shell reads search params, so the boundary has nothing to catch. */}
+        <Providers>
+          <Navigation />
+          <main className="min-h-[calc(100vh-4rem)]">{children}</main>
+          <footer className="border-t border-slate-200 dark:border-slate-800">
+            <div className="max-w-7xl mx-auto px-4 py-4">
+              <p className="text-center text-sm text-slate-500">
+                조회 결과는 거래 실행 권한을 부여하지 않습니다.
+              </p>
+            </div>
+          </footer>
+        </Providers>
       </body>
     </html>
   );

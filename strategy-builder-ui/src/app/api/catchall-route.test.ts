@@ -51,450 +51,16 @@ afterEach(() => {
   ambientAuthEnv.clear();
 });
 
-describe("strategy-builder-ui API catch-all proxy", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("proxies Quant Ops Workbench dashboard routes as same-origin /api roots", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(JSON.stringify({ status: "ok" })));
-
-    const response = await GET(
-      requestFor("/api/health/summary?asset_class=futures"),
-      contextFor(["health", "summary"]),
-    );
-
-    expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "http://localhost:5081/api/health/summary?asset_class=futures",
-    );
-  });
-
-  it("proxies feedback report routes to the STS dashboard (Phase 6B)", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(JSON.stringify({ kind: "weekly", reports: [] })));
-
-    const response = await GET(
-      requestFor("/api/reports/feedback?kind=weekly&limit=8"),
-      contextFor(["reports", "feedback"]),
-    );
-
-    expect(response.status).toBe(200);
-    expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "http://localhost:5081/api/reports/feedback?kind=weekly&limit=8",
-    );
-  });
-
-  // The three roots of this group reach the dashboard only through this proxy
-  // (they are absent from Caddy's @to_dashboard matcher), and every call the UI
-  // makes under them is a read-only GET: analytics.py declares
-  // /strategy-correlation and /exposure-history, evidence.py /summary,
-  // market_data.py /bars. Before they joined directRoots the proxy answered
-  // 404 {"detail":"Unsupported Strategy Builder API path"} while the identical
-  // paths answered 200 on dashboard:8001.
-  it.each([
-    [
-      "/api/analytics/strategy-correlation?asset_class=stock&days=30",
-      ["analytics", "strategy-correlation"],
-    ],
-    [
-      "/api/analytics/exposure-history?asset_class=stock&days=30",
-      ["analytics", "exposure-history"],
-    ],
-    ["/api/evidence/summary?asset_class=stock", ["evidence", "summary"]],
-    [
-      "/api/market-data/bars?symbol=005930&timeframe=daily&days=5",
-      ["market-data", "bars"],
-    ],
-  ] as ReadonlyArray<readonly [string, string[]]>)(
-    "forwards %s at its own path, never a kis-builder rewrite",
-    async (url, path) => {
-      const fetchMock = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(Response.json({ status: "ok" }));
-
-      const response = await GET(requestFor(url), contextFor(path));
-
-      expect(response.status).toBe(200);
-      expect(String(fetchMock.mock.calls[0][0])).toBe(`http://localhost:5081${url}`);
-    },
-  );
-
-  // These three have no `degradedResponse` arm, so an offline dashboard must
-  // surface as 503 rather than an empty state the UI would render as real data.
-  it.each([
-    ["/api/analytics/strategy-correlation", ["analytics", "strategy-correlation"]],
-    ["/api/evidence/summary", ["evidence", "summary"]],
-    ["/api/market-data/bars", ["market-data", "bars"]],
-  ] as ReadonlyArray<readonly [string, string[]]>)(
-    "reports %s as unavailable instead of fabricating an empty state",
-    async (url, path) => {
-      vi.spyOn(globalThis, "fetch").mockRejectedValue(
-        Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-      );
-
-      const response = await GET(requestFor(url), contextFor(path));
-      const body = await response.json();
-
-      expect(response.status).toBe(503);
-      expect(response.headers.get("x-kis-degraded")).toBeNull();
-      expect(body.upstream_path).toBe(url);
-    },
-  );
-
-  it("keeps bare /api/strategies on the STS registry route", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(JSON.stringify({ strategies: [] })));
-
-    const response = await GET(
-      requestFor("/api/strategies"),
-      contextFor(["strategies"]),
-    );
-
-    expect(response.status).toBe(200);
-    expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "http://localhost:5081/api/strategies",
-    );
-  });
-
-  it("keeps Strategy Builder /api/strategies/* compatibility routes on kis-builder", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(JSON.stringify({ strategies: [] })));
-
-    const response = await GET(
-      requestFor("/api/strategies/custom"),
-      contextFor(["strategies", "custom"]),
-    );
-
-    expect(response.status).toBe(200);
-    expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "http://localhost:5081/api/kis-builder/strategies/custom",
-    );
-  });
-
-  it("does not fake success for mutating Strategy Builder compatibility routes when upstream is offline", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const response = await POST(
-      requestWithMethod("/api/strategies/preview-code", "POST"),
-      contextFor(["strategies", "preview-code"]),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(503);
-    expect(body.upstream_path).toBe("/api/kis-builder/strategies/preview-code");
-  });
-
-  it("does not fake success for PUT and DELETE routes when upstream is offline", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const putResponse = await PUT(
-      requestWithMethod("/api/kis-builder/registered/example", "PUT"),
-      contextFor(["kis-builder", "registered", "example"]),
-    );
-    const deleteResponse = await DELETE(
-      requestWithMethod("/api/kis-builder/registered/example", "DELETE"),
-      contextFor(["kis-builder", "registered", "example"]),
-    );
-
-    expect(putResponse.status).toBe(503);
-    expect((await putResponse.json()).upstream_path).toBe("/api/kis-builder/registered/example");
-    expect(deleteResponse.status).toBe(503);
-    expect((await deleteResponse.json()).upstream_path).toBe("/api/kis-builder/registered/example");
-  });
-
-  it("returns degraded Strategy Builder GET fallback for /api/strategies/* compatibility routes", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const response = await GET(
-      requestFor("/api/strategies/custom"),
-      contextFor(["strategies", "custom"]),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("x-kis-degraded")).toBe("dashboard_api_unavailable");
-    expect(body.strategies).toEqual([]);
-    expect(body.notes[0]).toContain("/api/kis-builder/strategies/custom");
-  });
-
-  it("marks direct strategies registry fallback as unavailable", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const response = await GET(
-      requestFor("/api/strategies?asset_class=stock"),
-      contextFor(["strategies"]),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("x-kis-degraded")).toBe("dashboard_api_unavailable");
-    expect(body.strategies).toEqual([]);
-    expect(body.notes[0]).toContain("Dashboard API unavailable");
-  });
-
-  it("returns a local degraded risk payload when the upstream dashboard is offline", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const response = await GET(
-      requestFor("/api/trading/risk-exposure?asset_class=futures"),
-      contextFor(["trading", "risk-exposure"]),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body.asset_class).toBe("futures");
-    expect(body.portfolio.open_positions).toBe(0);
-    expect(body.notes[0]).toContain("Dashboard API unavailable");
-  });
-
-  it("returns degraded risk payload when the upstream dashboard returns 500", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ detail: "boom" }), { status: 500 }),
-    );
-
-    const response = await GET(
-      requestFor("/api/trading/risk-exposure?asset_class=futures"),
-      contextFor(["trading", "risk-exposure"]),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("x-kis-degraded")).toBe("dashboard_api_unavailable");
-    expect(body.asset_class).toBe("futures");
-    expect(body.notes[0]).toContain("Dashboard API unavailable");
-  });
-
-  it("returns degraded coverage payload when the upstream dashboard returns 404", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ detail: "missing" }), { status: 404 }),
-    );
-
-    const response = await GET(
-      requestFor("/api/coverage?asset_class=futures"),
-      contextFor(["coverage"]),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("x-kis-degraded")).toBe("dashboard_api_unavailable");
-    expect(body.asset_class).toBe("futures");
-    expect(body.missing_evidence).toContain("dashboard_api");
-  });
-
-  it("marks health fallback as degraded instead of healthy when the upstream dashboard is offline", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const response = await GET(
-      requestFor("/api/health/summary?asset_class=futures"),
-      contextFor(["health", "summary"]),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body.processes[0].alive).toBe(false);
-    expect(body.data_sources[0].fresh_ratio).toBe(0);
-    expect(body.ops_summary.health.dashboard).toBe("degraded");
-  });
-
-  it("returns a contract-compatible signal history fallback", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const response = await GET(
-      requestFor("/api/signals/history?days=14&asset_class=futures"),
-      contextFor(["signals", "history"]),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body.history).toEqual([]);
-    expect(body.total_signals).toBe(0);
-    expect(body.days).toBe(14);
-    expect(body.notes[0]).toContain("Dashboard API unavailable");
-  });
-
-  it("returns explicit degraded signal trace payload when the dashboard is offline", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const response = await GET(
-      requestFor("/api/signals/sig-1/trace?asset_class=futures"),
-      contextFor(["signals", "sig-1", "trace"]),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("x-kis-degraded")).toBe("dashboard_api_unavailable");
-    expect(body.signal.id).toBe("sig-1");
-    expect(body.summary.state).toBe("unknown");
-    expect(body.llm_context.status).toBe("unknown");
-    expect(body.lifecycle.status).toBe("not_available");
-    expect(body.evidence_gaps[0].code).toBe("dashboard_api_unavailable");
-  });
-
-  it("returns explicit degraded lifecycle payload when the dashboard is offline", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const response = await GET(
-      requestFor("/api/trades/lifecycle?trade_id=trade-1&symbol=005930&asset_class=futures"),
-      contextFor(["trades", "lifecycle"]),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body.asset_class).toBe("futures");
-    expect(body.steps[0].source).toBe("not_available");
-    expect(body.warnings).toContain("dashboard_api_unavailable");
-  });
-
-  it("returns explicit degraded event context payload when the dashboard is offline", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const response = await GET(
-      requestFor("/api/event-context/diagnostics?asset_class=futures"),
-      contextFor(["event-context", "diagnostics"]),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body.event_scores.status).toBe("unknown");
-    expect(body.missing_evidence).toContain("dashboard_api");
-  });
-
-  it("returns explicit degraded coverage payload when the dashboard is offline", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const response = await GET(
-      requestFor("/api/coverage?asset_class=futures"),
-      contextFor(["coverage"]),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("x-kis-degraded")).toBe("dashboard_api_unavailable");
-    expect(body.asset_class).toBe("futures");
-    expect(body.missing_evidence).toContain("dashboard_api");
-    expect(body.notes[0]).toContain("Dashboard API unavailable");
-  });
-
-  it("returns explicit degraded experiment comparison payload when the dashboard is offline", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const response = await GET(
-      requestFor("/api/experiments/latest/compare-paper"),
-      contextFor(["experiments", "latest", "compare-paper"]),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body.source.ledger_available).toBe(false);
-    expect(body.missing_evidence).toContain("dashboard_api");
-  });
-
-  it("returns explicit degraded Strategy Builder promotion sources when the dashboard is offline", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const registered = await GET(
-      requestFor("/api/kis-builder/registered"),
-      contextFor(["kis-builder", "registered"]),
-    );
-    const activity = await GET(
-      requestFor("/api/kis-builder/registered/activity"),
-      contextFor(["kis-builder", "registered", "activity"]),
-    );
-    const strategies = await GET(
-      requestFor("/api/kis-builder/strategies"),
-      contextFor(["kis-builder", "strategies"]),
-    );
-
-    expect(registered.status).toBe(200);
-    expect(await registered.json()).toMatchObject({ strategies: [], total: 0 });
-    expect(activity.status).toBe(200);
-    expect(await activity.json()).toMatchObject({ activity: [] });
-    expect(strategies.status).toBe(200);
-    expect(await strategies.json()).toMatchObject({ strategies: [] });
-  });
-
-  it("marks array-contract trade fallbacks with a degraded response header", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const byStrategy = await GET(
-      requestFor("/api/trades/by-strategy"),
-      contextFor(["trades", "by-strategy"]),
-    );
-    const closed = await GET(
-      requestFor("/api/trades/closed?asset_class=futures"),
-      contextFor(["trades", "closed"]),
-    );
-    const fills = await GET(
-      requestFor("/api/trades/fills?asset_class=futures"),
-      contextFor(["trades", "fills"]),
-    );
-
-    expect(byStrategy.status).toBe(200);
-    expect(byStrategy.headers.get("x-kis-degraded")).toBe("dashboard_api_unavailable");
-    expect(await byStrategy.json()).toEqual([]);
-    expect(closed.status).toBe(200);
-    expect(closed.headers.get("x-kis-degraded")).toBe("dashboard_api_unavailable");
-    expect(await closed.json()).toEqual([]);
-    expect(fills.status).toBe(200);
-    expect(fills.headers.get("x-kis-degraded")).toBe("dashboard_api_unavailable");
-    expect(await fills.json()).toMatchObject({ fills: [] });
-  });
-
-  it("returns a local unauthenticated status when the builder auth upstream is offline", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const response = await GET(
-      requestFor("/api/auth/status"),
-      contextFor(["auth", "status"]),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body.authenticated).toBe(false);
-    expect(body.mode).toBe("vps");
-  });
-});
-
-
+// ---------------------------------------------------------------------------
+// One root is left (legacy removal L4/L5): `tos`, whose only path is the
+// read-only projection. The degraded empty-state fallbacks this proxy used to
+// serve for the legacy reads went with those endpoints, so an unreachable
+// dashboard is a 503 here rather than a fabricated snapshot — which is what the
+// TOS page needs, since it must distinguish "no new state" from "all clear".
+// ---------------------------------------------------------------------------
 describe("TOS projection proxy boundary", () => {
   afterEach(() => vi.restoreAllMocks());
+
   it("forwards only the projection GET without a cached or fabricated response", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ available: false }));
     const response = await GET(requestFor("/api/tos/projection"), contextFor(["tos", "projection"]));
@@ -503,6 +69,18 @@ describe("TOS projection proxy boundary", () => {
     expect(fetchMock.mock.calls[0][1]?.cache).toBe("no-store");
     expect(await response.json()).toEqual({ available: false });
   });
+
+  it("carries the query string through to the dashboard", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ available: false }));
+    await GET(
+      requestFor("/api/tos/projection?include=raw"),
+      contextFor(["tos", "projection"]),
+    );
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "http://localhost:5081/api/tos/projection?include=raw",
+    );
+  });
+
   it("refuses mutation and unknown TOS paths without reaching upstream", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     for (const [method, handler] of [["POST", POST], ["PUT", PUT], ["DELETE", DELETE]] as const) {
@@ -513,103 +91,87 @@ describe("TOS projection proxy boundary", () => {
     expect(response.status).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
   it.each([
-    [["tos", "projection", "extra"], "/api/tos/projection/extra"],
     [["tos"], "/api/tos"],
+    [["tos", "projection", "extra"], "/api/tos/projection/extra"],
     [["tos", "projection", ""], "/api/tos/projection/"],
-  ])("refuses %s instead of treating it as the projection", async (path, url) => {
-    // Exercises the exactPathRoots allowlist in proxyRouting.ts: with that lookup
-    // removed, all three of these proxy through as if they were the projection.
+    [["tos", "projection", "a", "b"], "/api/tos/projection/a/b"],
+    [["tos", "rearm"], "/api/tos/rearm"],
+    [["tos", "projections"], "/api/tos/projections"],
+    [["tos", "PROJECTION"], "/api/tos/PROJECTION"],
+  ])("refuses %s — the allowlist is exact, not a prefix", async (path, url) => {
+    // Exercises the exactPathRoots allowlist in proxyRouting.ts: with that
+    // lookup removed, every one of these proxies through as if it were the
+    // projection.
     const fetchMock = vi.spyOn(globalThis, "fetch");
-    const response = await GET(requestFor(url), contextFor(path));
+    const response = await GET(requestFor(url), contextFor(path as string[]));
     expect(response.status).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
   });
-  it.each([401, 403, 503])("preserves upstream status %s instead of inventing an empty healthy snapshot", async (status) => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ detail: "unavailable" }, { status }));
-    const response = await GET(requestFor("/api/tos/projection"), contextFor(["tos", "projection"]));
-    expect(response.status).toBe(status);
+
+  it("answers an unknown path under the GET-only root as 404, not 405", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const response = await POST(
+      requestWithMethod("/api/tos/rearm", "POST"),
+      contextFor(["tos", "rearm"]),
+    );
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
-  it("reports network failure as 503", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+
+  it.each([401, 403, 404, 503])(
+    "preserves upstream status %s instead of inventing an empty healthy snapshot",
+    async (status) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ detail: "unavailable" }, { status }));
+      const response = await GET(requestFor("/api/tos/projection"), contextFor(["tos", "projection"]));
+      expect(response.status).toBe(status);
+      expect(response.headers.get("x-kis-degraded")).toBeNull();
+    },
+  );
+
+  it("reports network failure as 503, naming the upstream path", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
+    );
     const response = await GET(requestFor("/api/tos/projection"), contextFor(["tos", "projection"]));
+    const body = await response.json();
     expect(response.status).toBe(503);
+    expect(response.headers.get("x-kis-degraded")).toBeNull();
+    expect(body.upstream_path).toBe("/api/tos/projection");
   });
 });
 
+// ---------------------------------------------------------------------------
+// Caddy proxies /api/tos* straight to dashboard:8001 AND the root is in this
+// proxy's table, so both entry points reach the dashboard: the container
+// through Caddy, `npm run dev` through here. The two lists are read, never
+// copied, so neither this comment nor a hand-kept list has to stay in step.
+// ---------------------------------------------------------------------------
+describe("Caddy and the proxy routing table agree on the surviving root", () => {
+  it("reads /api/tos out of the deployed Caddyfile as dashboard-bound", () => {
+    expect([...caddyDirectRoots()].sort()).toEqual(["tos"]);
+  });
+
+  it("leaves no proxy-only root without an auth case in this file", () => {
+    // Before L5 this difference was non-empty (analytics, coverage,
+    // event-context, evidence, market-data, market-risk, portfolio, reports)
+    // and each root needed its own 401/forwarding case below, because a root
+    // reachable ONLY through this proxy is a root whose auth guard nothing else
+    // exercises. The difference is empty now. A root added to directRoots
+    // without a Caddyfile entry turns this red, which is the signal to add that
+    // root's cases rather than to widen this assertion.
+    const caddyDirect = caddyDirectRoots();
+    expect([...directRoots].filter((root) => !caddyDirect.has(root))).toEqual([]);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // #861 review note f — the proxy attaches the server-side dashboard key to
-// every upstream call, so it must authenticate the caller first. Caddy routes
-// most /api roots straight to dashboard:8001; the rest — the roots in
-// `directRoots` that Caddy does not route to the dashboard itself — reach it
-// ONLY through here, so before this guard they answered 200 with no key while
-// the identical paths 401'd on the dashboard directly.
-//
-// `PROXY_ONLY_ROOTS` below is the canonical list of those roots and is held
-// equal to that derived difference, so neither this comment nor the list has to
-// be kept in step by hand: adding a root to `directRoots` without a Caddy entry
-// and without a case here is red.
-//
-// Design decision recorded by these tests: there is NO public exception. The
-// compat roots (auth/account/orders/market/files/symbols/experiments) are
-// authenticated too — every browser caller already attaches X-API-Key from
-// NEXT_PUBLIC_API_KEY (src/lib/api/client.ts since #469,
-// src/lib/dashboard/client.ts), and the one header-less consumer (the weekly
-// report <a href> in app/risk/components/FeedbackSummaryCard.tsx) now
-// downloads through that authenticated client instead.
+// every upstream call, so it must authenticate the caller first. Every browser
+// caller already attaches X-API-Key from NEXT_PUBLIC_API_KEY
+// (src/lib/dashboard/client.ts), so there is no public exception.
 // ---------------------------------------------------------------------------
-
-// One real subpath per root. The urls carry query strings where the real call
-// sites do, so the forwarding assertions exercise the search-string passthrough
-// too; the derived check below compares roots, not urls.
-const PROXY_ONLY_ROOTS: ReadonlyArray<readonly [string, string[]]> = [
-  ["/api/analytics/strategy-correlation?asset_class=stock", ["analytics", "strategy-correlation"]],
-  ["/api/coverage?asset_class=futures", ["coverage"]],
-  ["/api/event-context/diagnostics", ["event-context", "diagnostics"]],
-  ["/api/evidence/summary?asset_class=stock", ["evidence", "summary"]],
-  ["/api/market-data/bars?symbol=005930", ["market-data", "bars"]],
-  ["/api/market-risk", ["market-risk"]],
-  ["/api/portfolio/equity", ["portfolio", "equity"]],
-  ["/api/reports/feedback?kind=weekly", ["reports", "feedback"]],
-];
-
-describe("PROXY_ONLY_ROOTS is the roots Caddy does not take itself", () => {
-  it("equals directRoots minus every root Caddy proxies to the dashboard", () => {
-    const caddyDirect = caddyDirectRoots();
-    const derived = [...directRoots].filter((root) => !caddyDirect.has(root)).sort();
-    const listed = [...new Set(PROXY_ONLY_ROOTS.map(([, path]) => path[0]))].sort();
-
-    // Deriving it is the point: a root added to directRoots with no Caddy entry
-    // and no case above would otherwise keep its 401-and-forwarding behaviour
-    // untested, which is how analytics/evidence/market-data arrived unrouted.
-    expect(listed).toEqual(derived);
-  });
-
-  // Caddy proxies to the dashboard in two forms, and the derived set above is
-  // wrong if either is missed: `trades` through the named `@to_dashboard`
-  // matcher, `kis-builder` through a path written inline on its own `handle`.
-  // Reading only the named matcher reported kis-builder as proxy-only, which it
-  // is not. Pin one root per form, and one the Caddyfile has never listed.
-  it.each([
-    ["trades", true, "named @to_dashboard matcher"],
-    ["kis-builder", true, "inline handle path"],
-    ["coverage", false, "no Caddy block — proxy only"],
-  ])("reads %s from the Caddyfile as caddy-direct=%s (%s)", (root, expected) => {
-    expect(caddyDirectRoots().has(root as string)).toBe(expected);
-  });
-});
-
-const COMPAT_ROOTS: ReadonlyArray<readonly [string, string[]]> = [
-  ["/api/auth/status", ["auth", "status"]],
-  ["/api/account/info", ["account", "info"]],
-  ["/api/orders/pending", ["orders", "pending"]],
-  ["/api/market/price/005930", ["market", "price", "005930"]],
-  ["/api/files/export", ["files", "export"]],
-  ["/api/symbols/status", ["symbols", "status"]],
-  ["/api/experiments/latest", ["experiments", "latest"]],
-];
-
 describe("proxy authenticates callers before lending the dashboard key", () => {
   const SERVER_KEY = "proxy-server-key";
 
@@ -633,85 +195,33 @@ describe("proxy authenticates callers before lending the dashboard key", () => {
     } as NextRequest;
   }
 
-  it.each(PROXY_ONLY_ROOTS)(
-    "rejects %s with 401 when the caller presents no key",
-    async (url, path) => {
-      const fetchMock = vi.spyOn(globalThis, "fetch");
-
-      const response = await GET(requestFor(url), contextFor(path));
-
-      expect(response.status).toBe(401);
-      expect(await response.json()).toEqual({ detail: "Invalid or missing API key" });
-      expect(fetchMock).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each(PROXY_ONLY_ROOTS)(
-    "forwards %s upstream with the server key once the caller authenticates",
-    async (url, path) => {
-      const fetchMock = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(Response.json({ ok: true }));
-
-      const response = await GET(
-        requestWithKey(url, SERVER_KEY),
-        contextFor(path),
-      );
-
-      expect(response.status).toBe(200);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      const forwarded = new Headers(fetchMock.mock.calls[0][1]?.headers as HeadersInit);
-      expect(forwarded.get("X-API-Key")).toBe(SERVER_KEY);
-    },
-  );
-
-  it.each(COMPAT_ROOTS)(
-    "rejects compat root %s with 401 too — no public exception",
-    async (url, path) => {
-      const fetchMock = vi.spyOn(globalThis, "fetch");
-
-      const response = await GET(requestFor(url), contextFor(path));
-
-      expect(response.status).toBe(401);
-      expect(fetchMock).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each(COMPAT_ROOTS)(
-    "forwards compat root %s to kis-builder with the server key when authenticated",
-    async (url, path) => {
-      const fetchMock = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(Response.json({ ok: true }));
-
-      const response = await GET(
-        requestWithKey(url, SERVER_KEY),
-        contextFor(path),
-      );
-
-      expect(response.status).toBe(200);
-      expect(String(fetchMock.mock.calls[0][0])).toContain("/api/kis-builder/");
-      const forwarded = new Headers(fetchMock.mock.calls[0][1]?.headers as HeadersInit);
-      expect(forwarded.get("X-API-Key")).toBe(SERVER_KEY);
-    },
-  );
-
-  it("rejects the Caddy-direct roots through the dev-server proxy as well", async () => {
+  it("rejects the projection with 401 when the caller presents no key", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
 
-    const caddyDirect: ReadonlyArray<readonly [string, string[]]> = [
-      ["/api/trades?page=1", ["trades"]],
-      ["/api/signals", ["signals"]],
-      ["/api/trading/status", ["trading", "status"]],
-      ["/api/strategies", ["strategies"]],
-      ["/api/kis-builder/registered", ["kis-builder", "registered"]],
-      ["/api/tos/projection", ["tos", "projection"]],
-    ];
-    for (const [url, path] of caddyDirect) {
-      const response = await GET(requestFor(url), contextFor(path));
-      expect(response.status).toBe(401);
-    }
+    const response = await GET(
+      requestFor("/api/tos/projection"),
+      contextFor(["tos", "projection"]),
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ detail: "Invalid or missing API key" });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards the projection with the server key once the caller authenticates", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ ok: true }));
+
+    const response = await GET(
+      requestWithKey("/api/tos/projection", SERVER_KEY),
+      contextFor(["tos", "projection"]),
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const forwarded = new Headers(fetchMock.mock.calls[0][1]?.headers as HeadersInit);
+    expect(forwarded.get("X-API-Key")).toBe(SERVER_KEY);
   });
 
   it.each(["POST", "PUT", "DELETE"] as const)(
@@ -719,12 +229,14 @@ describe("proxy authenticates callers before lending the dashboard key", () => {
     async (method) => {
       const fetchMock = vi.spyOn(globalThis, "fetch");
       const handler = { POST, PUT, DELETE }[method];
-      const request = requestWithMethod("/api/kis-builder/register-paper", method);
+      const request = requestWithMethod("/api/tos/projection", method);
       const arrayBuffer = vi.fn(async () => new ArrayBuffer(0));
       (request as unknown as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer =
         arrayBuffer;
 
-      const response = await handler(request, contextFor(["kis-builder", "register-paper"]));
+      // 401, not the 405 a read-only root answers an authenticated mutation
+      // with: the key check runs before the path and the method are resolved.
+      const response = await handler(request, contextFor(["tos", "projection"]));
 
       expect(response.status).toBe(401);
       expect(arrayBuffer).not.toHaveBeenCalled();
@@ -741,18 +253,6 @@ describe("proxy authenticates callers before lending the dashboard key", () => {
     expect(response.status).toBe(401);
   });
 
-  it("does not serve the degraded empty state to an unauthenticated caller", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const response = await GET(requestFor("/api/coverage"), contextFor(["coverage"]));
-
-    expect(response.status).toBe(401);
-    expect(response.headers.get("x-kis-degraded")).toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it.each([
     ["a wrong key of the same length", "proxy-server-kez"],
     ["a shorter key", "proxy"],
@@ -762,8 +262,8 @@ describe("proxy authenticates callers before lending the dashboard key", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
 
     const response = await GET(
-      requestWithKey("/api/coverage", presented),
-      contextFor(["coverage"]),
+      requestWithKey("/api/tos/projection", presented),
+      contextFor(["tos", "projection"]),
     );
 
     expect(response.status).toBe(401);
@@ -777,20 +277,23 @@ describe("proxy authenticates callers before lending the dashboard key", () => {
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(Response.json({ ok: true }));
 
-    const rejected = await GET(requestFor("/api/coverage"), contextFor(["coverage"]));
+    const rejected = await GET(
+      requestFor("/api/tos/projection"),
+      contextFor(["tos", "projection"]),
+    );
     expect(rejected.status).toBe(401);
     expect(fetchMock).not.toHaveBeenCalled();
 
     const accepted = await GET(
-      requestWithKey("/api/coverage", "dashboard-only-key"),
-      contextFor(["coverage"]),
+      requestWithKey("/api/tos/projection", "dashboard-only-key"),
+      contextFor(["tos", "projection"]),
     );
     expect(accepted.status).toBe(200);
   });
 });
 
 describe("proxy with no key configured stays open, matching the dashboard", () => {
-  // services/dashboard/app.py:206 installs APIKeyMiddleware only under
+  // services/dashboard/app.py installs APIKeyMiddleware only under
   // `require_auth and api_key`. With no key configured the dashboard enforces
   // nothing and this proxy attaches nothing, so enforcing here would break the
   // keyless dev setup without protecting anything.
@@ -805,91 +308,14 @@ describe("proxy with no key configured stays open, matching the dashboard", () =
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(Response.json({ ok: true }));
 
-    const response = await GET(requestFor("/api/coverage"), contextFor(["coverage"]));
-
-    expect(response.status).toBe(200);
-    const forwarded = new Headers(fetchMock.mock.calls[0][1]?.headers as HeadersInit);
-    expect(forwarded.has("X-API-Key")).toBe(false);
-  });
-});
-
-
-// ---------------------------------------------------------------------------
-// #861 review notes c (rear) and d — `tos` was a dedicated early return in
-// targetPathFor(), outside both compatRoots and directRoots, so isDirectPath()
-// disagreed with the path targetPathFor() actually produced; and HEAD was
-// refused on the TOS projection while every other root proxied it.
-//
-// `tos` is now an ordinary direct root with an exact-path allowlist, and the
-// GET-only rule is a property of the root rather than of one literal target.
-//
-// Deployment note: Caddy sends /api/tos* straight to dashboard:8001
-// (caddy/Caddyfile @to_dashboard), so everything below is dev-server /
-// defence-in-depth behaviour, not the deployed request path.
-// ---------------------------------------------------------------------------
-describe("TOS routing lives in the routing table", () => {
-  afterEach(() => vi.restoreAllMocks());
-
-  it("resolves the projection through the direct-root form, never a kis-builder rewrite", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(Response.json({ available: false }));
-
     const response = await GET(
       requestFor("/api/tos/projection"),
       contextFor(["tos", "projection"]),
     );
 
     expect(response.status).toBe(200);
-    expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "http://localhost:5081/api/tos/projection",
-    );
-    expect(String(fetchMock.mock.calls[0][0])).not.toContain("/api/kis-builder/");
-  });
-
-  it.each([
-    [["tos"], "/api/tos"],
-    [["tos", "projection", "extra"], "/api/tos/projection/extra"],
-    [["tos", "projection", ""], "/api/tos/projection/"],
-    [["tos", "projection", "a", "b"], "/api/tos/projection/a/b"],
-    [["tos", "rearm"], "/api/tos/rearm"],
-    [["tos", "projections"], "/api/tos/projections"],
-    [["tos", "PROJECTION"], "/api/tos/PROJECTION"],
-  ])("refuses %s — the allowlist is exact, not a prefix", async (path, url) => {
-    const fetchMock = vi.spyOn(globalThis, "fetch");
-
-    const response = await GET(requestFor(url), contextFor(path as string[]));
-
-    expect(response.status).toBe(404);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("does not turn ordinary direct roots into exact-path roots", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(Response.json({ ok: true }));
-
-    const response = await GET(
-      requestFor("/api/portfolio/equity/history?days=30"),
-      contextFor(["portfolio", "equity", "history"]),
-    );
-
-    expect(response.status).toBe(200);
-    expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "http://localhost:5081/api/portfolio/equity/history?days=30",
-    );
-  });
-
-  it("answers an unknown path under the GET-only root as 404, not 405", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch");
-
-    const response = await POST(
-      requestWithMethod("/api/tos/rearm", "POST"),
-      contextFor(["tos", "rearm"]),
-    );
-
-    expect(response.status).toBe(404);
-    expect(fetchMock).not.toHaveBeenCalled();
+    const forwarded = new Headers(fetchMock.mock.calls[0][1]?.headers as HeadersInit);
+    expect(forwarded.has("X-API-Key")).toBe(false);
   });
 });
 
@@ -915,96 +341,88 @@ describe("TOS HEAD policy", () => {
     expect(await response.json()).toEqual({ detail: "Read-only TOS endpoint" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
-
-  it("still proxies HEAD for every other root, bodyless", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(null, { status: 200 }));
-
-    const response = await GET(
-      requestWithMethod("/api/coverage?asset_class=futures", "HEAD"),
-      contextFor(["coverage"]),
-    );
-
-    expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][1]?.method).toBe("HEAD");
-    expect(fetchMock.mock.calls[0][1]?.body).toBeUndefined();
-  });
-
-  it("serves the degraded HEAD fallback for a proxied root when upstream is offline", async () => {
-    // degradedResponse() explicitly admits HEAD alongside GET; with tos the only
-    // GET-only root, that branch is reachable rather than dead code.
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
-    );
-
-    const response = await GET(
-      requestWithMethod("/api/coverage?asset_class=futures", "HEAD"),
-      contextFor(["coverage"]),
-    );
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("x-kis-degraded")).toBe("dashboard_api_unavailable");
-  });
 });
 
-
-describe("the exact-path allowlist applies to every root, not only to tos", () => {
+// ---------------------------------------------------------------------------
+// The routing table has one root today, so every property below would be
+// vacuous if it were only exercised through `tos`. A second root is injected
+// for the duration of each test instead — the same technique the `strategies`
+// cases used before that root was deleted (#868 review finding 1), which is
+// what keeps "the allowlist applies to every root" an assertion rather than a
+// restatement of the tos entry.
+// ---------------------------------------------------------------------------
+describe("the routing rules are properties of the table, not of tos", () => {
   afterEach(() => {
-    exactPathRoots.delete("strategies");
+    directRoots.delete("probe");
+    exactPathRoots.delete("probe");
     vi.restoreAllMocks();
   });
 
-  // #868 review finding 1: `strategies` has its own early return in
-  // targetPathFor(), and with the allowlist lookup placed after it a
-  // `strategies` entry was silently ignored — the same root-specific
-  // short-circuit this PR removed from `tos`. The lookup now runs first.
-  it("refuses a strategies path outside its allowlist entry", async () => {
+  it("refuses a path outside a second root's allowlist entry", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(Response.json({ ok: true }));
-    exactPathRoots.set("strategies", new Set(["strategies/custom"]));
+    directRoots.add("probe");
+    exactPathRoots.set("probe", new Set(["probe/allowed"]));
 
     const response = await GET(
-      requestFor("/api/strategies/anything"),
-      contextFor(["strategies", "anything"]),
+      requestFor("/api/probe/other"),
+      contextFor(["probe", "other"]),
     );
 
     expect(response.status).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("still routes the allowlisted strategies path through its own early return", async () => {
+  it("forwards that root's allowlisted path at its own /api path", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(Response.json({ ok: true }));
-    exactPathRoots.set("strategies", new Set(["strategies/custom"]));
+    directRoots.add("probe");
+    exactPathRoots.set("probe", new Set(["probe/allowed"]));
 
     const response = await GET(
-      requestFor("/api/strategies/custom"),
-      contextFor(["strategies", "custom"]),
+      requestFor("/api/probe/allowed"),
+      contextFor(["probe", "allowed"]),
     );
 
     expect(response.status).toBe(200);
     expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "http://localhost:5081/api/kis-builder/strategies/custom",
+      "http://localhost:5081/api/probe/allowed",
     );
   });
 
-  it("leaves strategies alone while it has no allowlist entry", async () => {
+  it("does not turn an ordinary direct root into an exact-path root", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(Response.json({ ok: true }));
+    directRoots.add("probe");
 
     const response = await GET(
-      requestFor("/api/strategies/anything"),
-      contextFor(["strategies", "anything"]),
+      requestFor("/api/probe/any/depth?days=30"),
+      contextFor(["probe", "any", "depth"]),
     );
 
     expect(response.status).toBe(200);
     expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "http://localhost:5081/api/kis-builder/strategies/anything",
+      "http://localhost:5081/api/probe/any/depth?days=30",
     );
+  });
+
+  it("proxies HEAD for a root that is not GET-only, bodyless", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    directRoots.add("probe");
+
+    const response = await GET(
+      requestWithMethod("/api/probe/status", "HEAD"),
+      contextFor(["probe", "status"]),
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("HEAD");
+    expect(fetchMock.mock.calls[0][1]?.body).toBeUndefined();
   });
 });

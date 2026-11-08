@@ -44,14 +44,16 @@ function blocks(text: string): Array<{ args: string; body: string }> {
  * The `/api/<root>` prefixes Caddy proxies to the dashboard itself.
  *
  * Two forms reach dashboard:8001 and both count — a path matcher written inline
- * on the directive (`handle /api/kis-builder/* { reverse_proxy dashboard:8001 }`)
+ * on the directive (`handle /api/some-root/* { reverse_proxy dashboard:8001 }`)
  * and a named matcher the directive references (`@to_dashboard { path … }` with
- * `handle @to_dashboard { reverse_proxy dashboard:8001 }`). Reading only the
- * named one reports `kis-builder` as unreachable by Caddy, which is false.
+ * `handle @to_dashboard { reverse_proxy dashboard:8001 }`). Only the named form
+ * is in the Caddyfile today; the inline form stays supported here because
+ * reading only the named one once reported `kis-builder` — then written inline
+ * — as unreachable by Caddy, which was false.
  *
  * Roots only: these blocks also match non-/api paths (/health, /docs,
- * /openapi.json, /redoc, /metrics, /ws) that no routing table of the proxy's
- * covers, and they are not what any caller of this function asks about.
+ * /openapi.json, /redoc) that no routing table of the proxy's covers, and they
+ * are not what any caller of this function asks about.
  */
 export function caddyDirectRoots(): Set<string> {
   const config = withoutComments(readFileSync(CADDYFILE, "utf8"));
