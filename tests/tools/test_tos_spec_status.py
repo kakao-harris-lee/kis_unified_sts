@@ -1214,11 +1214,18 @@ def test_a_component_may_not_sit_in_both_the_blocking_and_warning_censuses(tmp_p
     # READ-003, not READ-007 as this fixture first read: READ-007's path is one
     # the legacy removal deletes, and a fixture quoting a retired row silently
     # stops editing anything (see _migration_copy).
+    #
+    # The path it is repointed AT must be a LIVE blocking-census component, or
+    # `_components` raises "source path is missing" before the both-censuses
+    # check is ever reached. It used to be `scripts/trading/flatten_all.py`
+    # (LEGACY-006); the legacy removal L3 deleted that file and retired the row,
+    # which takes it out of the census the same way. `shared/execution/
+    # executor.py` is LEGACY-005 — the one LEGACY_ROUTE row the removal keeps.
     csv_path, markdown_path = _migration_copy(
         tmp_path,
         (
             "READ-003,BROKER_READ_SITE,services/screener.py",
-            "READ-003,BROKER_READ_SITE,scripts/trading/flatten_all.py",
+            "READ-003,BROKER_READ_SITE,shared/execution/executor.py",
         ),
     )
 
