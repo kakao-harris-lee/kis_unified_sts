@@ -52,12 +52,17 @@ sets: a marked row whose file is still present fails, so the marker cannot be
 used to stop checking a live route, and a later file of the same name is not
 pre-exempted by the dead row. Every unmarked row stays fail-closed on existence.
 
-**Retired at tag `legacy-final` (`6fc17c0f8d25`)** by L2 of the legacy-removal
-plan (`docs/plans/2026-11-07-legacy-removal-plan.md`): LEGACY-001, LEGACY-002,
-LEGACY-003, LEGACY-004 and LEGACY-007 above, and READ-001, READ-002, READ-004,
-READ-005, READ-006 and READ-007 in §2.1. Their repository paths no longer
-exist, and both tables describe those routes as they last existed at that
-commit. Every other row in §2 and §2.1 still names a path in the tree.
+**Retired at tag `legacy-final` (`6fc17c0f8d25`)** by L2 and L3 of the
+legacy-removal plan (`docs/plans/2026-11-07-legacy-removal-plan.md`): L2 retired
+LEGACY-001, LEGACY-002, LEGACY-003, LEGACY-004 and LEGACY-007 above, and
+READ-001, READ-002, READ-004, READ-005, READ-006 and READ-007 in §2.1; L3
+retired LEGACY-006, whose own decommission criterion was that "the script
+entrypoint and imports [are] removed" — `scripts/trading/flatten_all.py` went
+with the rest of `scripts/`, so the operator CLI that built a real `KISClient`
+and issued per-position market-close orders no longer exists. Their repository
+paths no longer exist, and both tables describe those routes as they last
+existed at that commit. Every other row in §2 and §2.1 still names a path in
+the tree.
 
 `docker-compose.yml` explicitly requires the futures monolith to be disabled at
 F-9 cutover, but an environment switch alone is not sufficient proof. A cutover

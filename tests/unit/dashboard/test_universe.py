@@ -394,8 +394,9 @@ async def test_resolve_finds_name_in_each_raw_source(monkeypatch, redis_key):
     these four, only screener_universe (services/screener.py) and
     theme_targets (services/theme_discovery.py) actually publish a ``names``
     dict in production today. daily_watchlist (services/daily_scanner.py,
-    scripts/daily_indicator_scanner.py's compat payload) and daily_indicators
-    (scripts/daily_indicator_scanner.py) currently publish only scoring
+    the deleted scripts/daily_indicator_scanner.py's compat payload) and
+    daily_indicators (same script, deleted in the legacy removal L3) published
+    only scoring
     diagnostics under ``metadata`` (e.g. ``trade_trend_priority``), with no
     ``name``/``stock_name``/``prdt_name`` field — so in practice those two
     keys never carry a resolvable name today. This test still proves

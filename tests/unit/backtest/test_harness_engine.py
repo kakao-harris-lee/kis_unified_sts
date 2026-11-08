@@ -16,17 +16,16 @@ optimizer 스크립트들의 단일 chokepoint 다. 검증 계약:
 
 라우팅 로직은 모듈 어트리뷰트 monkeypatch(가짜 엔진)로, 실경로는
 ``test_vbt_harness_runner`` 의 검증된 시나리오 픽스처로 커버한다(vectorbt
-필요 층은 ``importorskip``). argparse 스모크는 5개 스크립트의 ``--help`` 에
-``--engine`` 노출을 확인한다.
+필요 층은 ``importorskip``).
+
+``--engine`` 플래그를 노출하던 walk-forward / optimizer 스크립트 5개는 레거시
+제거 계획 L3 에서 지워졌으므로 argparse 스모크도 함께 사라졌다. 선택기 자체의
+계약은 위 네 가지로 그대로 남는다.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import logging
-import subprocess
-import sys
-from pathlib import Path
 
 import pytest
 
@@ -53,8 +52,6 @@ from tests.unit.backtest.test_vbt_harness_runner import (
 )
 
 pytestmark = pytest.mark.backtest
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 # ---------------------------------------------------------------------------
@@ -331,38 +328,3 @@ class TestParityFallbackStatefulRegression:
         assert [t.ticks_net for t in result.trades] == [
             t.ticks_net for t in baseline.trades
         ]
-
-
-# ---------------------------------------------------------------------------
-# argparse smoke — all 5 scripts expose --engine in --help.
-# ---------------------------------------------------------------------------
-
-_SCRIPTS = [
-    "scripts/walk_forward_phase3.py",
-    "scripts/walk_forward_bootstrap.py",
-    "scripts/walk_forward_sensitivity.py",
-    "scripts/walk_forward_paper_foldin.py",
-    "scripts/optimize_decision_engine.py",
-]
-
-
-class TestArgparseSmoke:
-    @pytest.mark.parametrize("script", _SCRIPTS)
-    def test_help_exposes_engine_flag(self, script):
-        if (
-            script == "scripts/optimize_decision_engine.py"
-            and importlib.util.find_spec("optuna") is None
-        ):
-            # optimize_decision_engine.py 는 optuna 미설치 시 argparse 전에
-            # SystemExit — optuna 없는 CI(gating test job)에서는 스킵.
-            pytest.skip("optuna not installed — script exits before argparse")
-        proc = subprocess.run(
-            [sys.executable, script, "--help"],
-            capture_output=True,
-            text=True,
-            cwd=_REPO_ROOT,
-            timeout=180,
-        )
-        assert proc.returncode == 0, proc.stderr
-        assert "--engine" in proc.stdout
-        assert "vectorbt" in proc.stdout

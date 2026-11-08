@@ -52,20 +52,14 @@ DOTENV_API_ALLOWED: dict[str, str] = {
 #: Each named function must *call* ``hermetic_mode_enabled``; nothing else can
 #: see these, so the registration is a claim the gate verifies rather than an
 #: exemption to park things in.
-HAND_ROLLED_READERS: dict[str, tuple[str, str]] = {
-    "scripts/analysis/stock_paper_daily_verification.py": (
-        "_load_repo_env",
-        "keeps a no-dependency fallback for standalone verifier runs",
-    ),
-    "scripts/analysis/validate_opening_volume_surge_candidates.py": (
-        "_load_env_file",
-        "best-effort loader written before python-dotenv was a dependency",
-    ),
-    "scripts/analysis/kis_daily_futures_probe.py": (
-        "_load_credentials",
-        "reads two KIS_FUTURES_* keys out of .env by hand",
-    ),
-}
+#:
+#: Empty since the legacy removal L3
+#: (``docs/plans/2026-11-07-legacy-removal-plan.md``): the three registered
+#: readers all lived under ``scripts/analysis/`` and went with that tree. The
+#: parametrised check below therefore reports "empty parameter set" — that is
+#: the honest reading, not a silently passing gate. Register the next
+#: hand-rolled reader here and it is checked again.
+HAND_ROLLED_READERS: dict[str, tuple[str, str]] = {}
 
 
 def tracked_python_files(root: Path) -> list[Path]:

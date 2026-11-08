@@ -58,9 +58,9 @@ def test_core_config_points_at_the_strategy_yaml(setup_cls, config_cls) -> None:
     """The no-arg ``from_yaml()`` must resolve the deployed strategy file.
 
     ``SetupCConfig.from_yaml()`` is called with no arguments by
-    ``services/dashboard/routes/event_context.py`` and
-    ``scripts/walk_forward_phase3.py``; those call sites must land on the same
-    parameters the runtime uses.
+    ``services/dashboard/routes/event_context.py``; that call site must land on
+    the same parameters the runtime uses. ``scripts/walk_forward_phase3.py``
+    was the second such caller until the legacy removal L3.
     """
     assert (
         config_cls._default_config_file

@@ -22,8 +22,9 @@ BacktestDecisionHarness` 가 여전히 SoT(결과 무변형 반환)이고, 이 �
 
 시나리오 프리미티브(``run_harness_and_runner`` / ``HARNESS_PARITY_SCENARIOS`` /
 ``TICK_SIZE_POINTS`` / ``CONTRACT_SPEC`` / 각 ``scenario_*`` 빌더)는 모듈 레벨에
-있고 ``scripts/vbt_parity_report.py`` 가 그대로 import 한다 — 리포트와 게이트가
-항상 같은 매트릭스를 돌게 해 드리프트를 구조적으로 차단한다.
+있다. 이것들을 import 하던 ``scripts/vbt_parity_report.py`` 는 레거시 제거 L3
+(``docs/plans/2026-11-07-legacy-removal-plan.md``)에서 지워졌으므로, 지금 이
+매트릭스를 쓰는 것은 이 시험뿐이다.
 """
 
 from __future__ import annotations
@@ -69,7 +70,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 # scenarios produce parity=OK with full symmetric coverage and correct sizer
 # scaling. Excursion prices / bar timings / warmup counts / scenario scripts
 # are LOAD-BEARING — coverage depends on them exactly. Do NOT edit.
-# scripts/vbt_parity_report.py imports the public names from this module.
 # ===========================================================================
 
 KST = ZoneInfo("Asia/Seoul")
@@ -240,7 +240,8 @@ def scenario_no_next_bar():
     return df, {_ts(_D2, 7): _sig("long", 100, 99.0, 101.0)}, None, 0.0
 
 
-# Public matrix consumed by BOTH the test module AND scripts/vbt_parity_report.py
+# Public matrix. Its second consumer, scripts/vbt_parity_report.py, was
+# deleted in the legacy removal L3.
 HARNESS_PARITY_SCENARIOS: dict[str, Callable[[], tuple]] = {
     "symmetric_mix": scenario_symmetric_mix,
     "long_only": scenario_long_only,

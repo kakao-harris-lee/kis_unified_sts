@@ -11,7 +11,13 @@
 #
 # NOTE (legacy cleanup L1, 2026-11-07): the 24 legacy compose services and their profiles
 # are gone from docker-compose.yml — the surviving stack (dashboard, strategy-builder-ui,
-# caddy, redis, prometheus) carries no profile. This script is itself removed in L3.
+# caddy, redis, prometheus) carries no profile.
+#
+# NOTE (legacy cleanup L3, 2026-11-08): L1 predicted this script would go with the rest
+# of scripts/. It did not: the five surviving containers are redeployed with it, and
+# docker-compose.yml's TOS_OPERATOR_PROJECTION_DIR comment, docs/runbooks/
+# tos-paper-projection-connection.md and docs/testing/2026-10-06-tos-control-plane.md
+# all name it as the procedure. It is live operator tooling, not legacy runtime.
 #
 # Safety:
 #   * Services to (re)build/recreate are AUTO-DETECTED from the currently-running project

@@ -66,7 +66,8 @@ liveness:
   #
   # Both relationships are asserted against the real files:
   # tests/unit/decision_engine/test_liveness_heartbeat.py and
-  # tests/unit/scripts/ops/test_f9_observation_harvest.py.
+  # tests/unit/streaming/test_stream_stage_heartbeat.py (the harvester's own
+  # test was deleted with the harvester in the legacy removal L3).
   #
   # Cost at 60s: a 6.5h (23,400s) session emits at most 390 lines. That is the
   # dominant term in this container's log volume (the real 2026-09-18 producer

@@ -173,9 +173,15 @@ LEGACY_SETUP_SOURCE = REPO_ROOT / "shared" / "decision" / "setups" / "vwap_rever
 
 #: The walk-forward harness whose single-position gate and exit simulation the
 #: ``would_be_admitted_by_legacy_position_model`` flag replicates. Loaded BY
-#: PATH (``scripts/`` is not a package) the way the repo already loads analysis
-#: scripts from tests — e.g. ``tests/unit/analysis/test_regime_gate_counterfactual.py``
-#: lines 6-9 — so the exit simulation is that script's own code and not a copy.
+#: PATH (``scripts/`` is not a package) with
+#: ``importlib.util.spec_from_file_location``, so the exit simulation is that
+#: script's own code and not a copy.
+#:
+#: This path load is also why the script survived the legacy removal L3
+#: (``docs/plans/2026-11-07-legacy-removal-plan.md``), which deleted the rest of
+#: ``scripts/``: an AST import closure cannot see a load by path, so the B3
+#: witness's only remaining dependency on that tree is this one line. Moving or
+#: deleting the script changes what B3 compares against.
 WALKFORWARD_SCRIPT = (
     REPO_ROOT / "scripts" / "analysis" / "walkforward_setup_d_vwap_reversion.py"
 )

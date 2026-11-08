@@ -6,7 +6,12 @@ checkout's ``.env``, put the operator's real KIS app key in the test process
 and had a real token issued and written to ``.kis_token_real``. The mechanism
 was python-dotenv's ``find_dotenv()``, which walks from the calling file up to
 the filesystem root, reached by the argument-less ``load_dotenv()`` that
-``cli/commands/common.py`` ran at import time.
+``cli/commands/common.py`` ran at import time. That module went with the legacy
+CLI in the legacy removal L3
+(``docs/plans/2026-11-07-legacy-removal-plan.md``), so the probe below now reads
+``DASHBOARD_HOST_PORT`` through the shipped helper it used
+(``shared.config.runtime_defaults.dashboard_host_port_from_env``) in the same
+order — load first, read after — rather than through the deleted wrapper.
 
 Two layers are asserted here, and they fail independently:
 
@@ -50,23 +55,21 @@ CHECKOUT_PORT = "5999"
 _COPIED = (
     "shared/config/dotenv_guard.py",
     "shared/config/runtime_defaults.py",
-    "cli/commands/common.py",
 )
 _PACKAGE_MARKERS = (
     "shared/__init__.py",
     "shared/config/__init__.py",
-    "cli/__init__.py",
-    "cli/commands/__init__.py",
 )
 
 _PROBE = """
 import json
 import os
 
-import cli.commands.common as common
 from shared.config import dotenv_guard
+from shared.config.runtime_defaults import dashboard_host_port_from_env
 
 loaded = dotenv_guard.load_project_dotenv()
+dashboard_url = f"http://localhost:{dashboard_host_port_from_env()}"
 print(json.dumps({
     "loaded": None if loaded is None else str(loaded),
     "candidates": [str(c) for c in dotenv_guard.project_dotenv_candidates()],
@@ -74,7 +77,7 @@ print(json.dumps({
     "KIS_APP_KEY": os.environ.get("KIS_APP_KEY"),
     "KIS_STOCK_APP_KEY": os.environ.get("KIS_STOCK_APP_KEY"),
     "DASHBOARD_HOST_PORT": os.environ.get("DASHBOARD_HOST_PORT"),
-    "dashboard_url": common.DEFAULT_DASHBOARD_URL,
+    "dashboard_url": dashboard_url,
 }))
 """
 
