@@ -129,7 +129,7 @@ What is still true and still enforced:
 - **No legacy live-futures runtime remains** (the `live_mode_guard` module and
   the order router are gone). One real-money order path does remain:
   `tools/broker_probes/probes_real_order.py` (P-R5 stage 2), permanently blocked
-  by policy (see Non-Negotiable Rules). Every order probe calls
+  by policy (see Non-Negotiable Rules). Every futures order probe calls
   `tools/broker_probes/common.py::assert_no_live_futures_config`, which refuses
   to run while `config/futures_live.yaml::enabled` is true — that is why the file
   stays. Absence is not what stops a live futures order here; policy is.
