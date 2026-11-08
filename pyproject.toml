@@ -301,12 +301,6 @@ ignore = [
 "scripts/**/*.py" = [
     "E402",   # standalone scripts may patch sys.path before importing project modules
 ]
-"run_*.py" = [
-    "E402",   # standalone entry scripts may patch sys.path before importing project modules
-]
-"verify_*.py" = [
-    "E402",   # standalone verification scripts may patch sys.path before project imports
-]
 
 [tool.ruff.lint.isort]
 known-first-party = ["shared", "services", "cli"]

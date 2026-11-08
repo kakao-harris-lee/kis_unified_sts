@@ -16,17 +16,10 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  # KIS Dashboard API 메트릭 (compose network; legacy services/api gateway 통합됨).
-  # Caddy 가 /metrics 를 dashboard 로 라우팅하지만, 같은 네트워크의 Prometheus 는
-  # dashboard:8001 을 직접 스크랩한다. 호스트에서 대시보드를 띄우면
-  # host.docker.internal:8001 로 바꾼다.
-  - job_name: 'kis-dashboard'
-    static_configs:
-      - targets: ['dashboard:8001']
-    metrics_path: /metrics
-    scrape_interval: 5s
-    scrape_timeout: 5s
-    honor_labels: true
+  # `kis-dashboard` (dashboard:8001/metrics) 잡은 L4 에서 지웠다: /metrics 를
+  # 올리던 라우트가 사라져 타깃이 404 로 영구 down 이고, 그 메트릭의 생산자인
+  # 레거시 트레이딩 서비스는 2026-10-08 부터 정지라 값도 전부 0이었다
+  # (docs/plans/2026-11-07-legacy-removal-plan.md §3 L6).
 
   # Redis 메트릭 (Redis Exporter — monitoring/docker-compose.yml 스택)
   - job_name: 'redis'

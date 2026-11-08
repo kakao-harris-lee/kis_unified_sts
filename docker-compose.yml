@@ -1,36 +1,6 @@
 # KIS Unified Trading Platform - Docker Compose
 # 개발/운영 환경 통합 구성
 
-# NOTE: REDIS_PASSWORD uses ${VAR-default} (no colon) on purpose — an explicitly
-# empty REDIS_PASSWORD must pass through as "no auth" (e.g. the paper stack points
-# at a password-less host redis via host.docker.internal). With ${VAR:-default} an
-# empty value would become "changeme" and AUTH would fail against that server.
-# Unset still defaults to changeme. Do NOT re-add the colon.
-
-x-redis-runtime-env: &redis-runtime-env
-  REDIS_HOST: "${REDIS_HOST:-redis}"
-  REDIS_PORT: "${REDIS_PORT:-6379}"
-  REDIS_DB: "${REDIS_DB:-1}"
-  REDIS_STOCK_DB: "${REDIS_STOCK_DB:-1}"
-  REDIS_FUTURES_DB: "${REDIS_FUTURES_DB:-1}"
-  REDIS_SYSTEM_DB: "${REDIS_SYSTEM_DB:-1}"
-  REDIS_PASSWORD: "${REDIS_PASSWORD-changeme}"
-  REDIS_URL: "${REDIS_URL:-redis://:${REDIS_PASSWORD-changeme}@redis:6379/1}"
-  REDIS_TLS_ENABLED: "${REDIS_TLS_ENABLED:-false}"
-  REDIS_TLS_CERT_REQS: "${REDIS_TLS_CERT_REQS:-required}"
-  REDIS_TLS_CA_CERTS: "${REDIS_TLS_CA_CERTS:-}"
-
-x-runtime-storage-env: &runtime-storage-env
-  ENVIRONMENT: "${ENVIRONMENT:-dev}"
-  RUNTIME_STORAGE_BACKEND: "${RUNTIME_STORAGE_BACKEND:-sqlite}"
-  RUNTIME_STORAGE_SQLITE_PATH: "${RUNTIME_STORAGE_SQLITE_PATH:-data/runtime/dev/runtime.db}"
-  RUNTIME_STORAGE_SQLITE_WAL: "${RUNTIME_STORAGE_SQLITE_WAL:-true}"
-  RUNTIME_STORAGE_SQLITE_BUSY_TIMEOUT_MS: "${RUNTIME_STORAGE_SQLITE_BUSY_TIMEOUT_MS:-5000}"
-  RUNTIME_STORAGE_SQLITE_SYNCHRONOUS: "${RUNTIME_STORAGE_SQLITE_SYNCHRONOUS:-NORMAL}"
-  MARKET_DATA_SOURCE: "${MARKET_DATA_SOURCE:-parquet}"
-  MARKET_DATA_PARQUET_ROOT: "${MARKET_DATA_PARQUET_ROOT:-data/market}"
-  DASHBOARD_TRADE_STATS_SOURCE: "${DASHBOARD_TRADE_STATS_SOURCE:-runtime_ledger}"
-
 services:
   # =============================================================================
   # 대시보드 API
@@ -46,7 +16,12 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      <<: [*redis-runtime-env, *runtime-storage-env]
+      # Only what the reduced app still reads. The Redis and runtime-storage
+      # blocks (REDIS_*, RUNTIME_STORAGE_*, MARKET_DATA_*,
+      # DASHBOARD_TRADE_STATS_SOURCE) went with their readers in L4/L6; so did
+      # DASHBOARD_KRX_NAME_FALLBACK, KRX_API_KEY, METRICS_REQUIRE_AUTH and
+      # TRADING_ASSET_CLASS. ENVIRONMENT stays — shared/api/cors.py reads it.
+      ENVIRONMENT: "${ENVIRONMENT:-dev}"
       API_KEY: "${API_KEY:-}"
       DASHBOARD_REQUIRE_AUTH: "${DASHBOARD_REQUIRE_AUTH:-true}"
       DASHBOARD_API_KEY: "${DASHBOARD_API_KEY:-}"
@@ -56,18 +31,11 @@ services:
       # the two are a pair, and one wrong value looks exactly like no value at
       # all (`available=false, reason="projection file absent"`).
       TOS_OPERATOR_PROJECTION_PATH: "${TOS_OPERATOR_PROJECTION_PATH:-/app/data/tos_runtime/operator_projection.json}"
-      DASHBOARD_KRX_NAME_FALLBACK: "${DASHBOARD_KRX_NAME_FALLBACK:-true}"
-      KRX_API_KEY: "${KRX_API_KEY:-}"
-      METRICS_REQUIRE_AUTH: "${METRICS_REQUIRE_AUTH:-false}"
-      TRADING_ASSET_CLASS: "${TRADING_ASSET_CLASS:-stock}"
     volumes:
+      # Read-only throughout: the nested rw bind on config/strategies/built
+      # existed for POST /api/kis-builder/register-paper, which L4 deleted along
+      # with the rest of the builder routes. Nothing in the app writes here now.
       - ./config:/app/config:ro
-      # Builder→paper registration drop point: the only path the dashboard
-      # *writes* under /app/config. This nested rw bind overrides the :ro parent
-      # for that subtree so POST /api/kis-builder/register-paper (and the
-      # enable/unregister endpoints) can materialize built/<id>.yaml. Trading
-      # services read it back through their own ./config:ro mount (same host dir).
-      - ./config/strategies/built:/app/config/strategies/built
       - ./logs:/app/logs
       - ./reports:/app/reports:ro
       - ./data/runtime:/app/data/runtime
@@ -177,6 +145,11 @@ services:
   # =============================================================================
   # Redis (상태 캐시, 세션)
   # =============================================================================
+  # NOTE: REDIS_PASSWORD uses ${VAR-default} (no colon) on purpose — an explicitly
+  # empty REDIS_PASSWORD must pass through as "no auth" (e.g. the paper stack points
+  # at a password-less host redis via host.docker.internal). With ${VAR:-default} an
+  # empty value would become "changeme" and AUTH would fail against that server.
+  # Unset still defaults to changeme. Do NOT re-add the colon.
   redis:
     image: redis:7-alpine
     container_name: ${COMPOSE_PROJECT_NAME:-kis}-redis
