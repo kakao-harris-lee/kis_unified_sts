@@ -3,20 +3,24 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "next-themes";
 import { useState } from "react";
-import { AuthProvider } from "@/contexts";
-import { AssetClassProvider } from "@/contexts/dashboard/AssetClassContext";
-import { ToastProvider } from "@/components/ui";
-import { RealtimeBridge } from "@/components/providers/RealtimeBridge";
 import type { ReactNode } from "react";
 
 interface ProvidersProps {
   children: ReactNode;
 }
 
-// React Query + AssetClassProvider are required by the dashboard pages ported
-// from the Vite SPA (2026-05-28 big-bang). Build a fresh QueryClient per
-// component mount so the app survives Next.js fast-refresh in dev without
-// leaking subscriptions; defaults mirror the Vite SPA configuration.
+// Only what the one surviving screen (`/tos`) needs: a theme and a React Query
+// client. Two shell-wide providers were removed with the endpoints they called
+// (legacy removal L4 deleted both from services/dashboard, review-1045 r1 LOW-1
+// reported them still running here):
+//   - RealtimeBridge opened `/ws` and reconnected forever with backoff;
+//   - AuthProvider polled `/api/auth/status` every 30s.
+// `/tos` needs neither: lib/dashboard/tos.ts authenticates with the static
+// X-API-Key that lib/dashboard/client.ts attaches, and it refreshes by polling
+// its own query, not by a socket.
+//
+// Build a fresh QueryClient per component mount so the app survives Next.js
+// fast-refresh in dev without leaking subscriptions.
 export function Providers({ children }: ProvidersProps) {
   const [queryClient] = useState(
     () =>
@@ -34,16 +38,7 @@ export function Providers({ children }: ProvidersProps) {
     // defaultTheme="system" + enableSystem preserves the prior behavior: users
     // on OS dark still land in dark on first visit (no stored preference yet).
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-      <QueryClientProvider client={queryClient}>
-        {/* Single /ws subscription → React Query invalidation. Mounted here so it
-            lives under QueryClientProvider and mounts exactly once for the app. */}
-        <RealtimeBridge />
-        <AuthProvider>
-          <AssetClassProvider>
-            <ToastProvider>{children}</ToastProvider>
-          </AssetClassProvider>
-        </AuthProvider>
-      </QueryClientProvider>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     </ThemeProvider>
   );
 }
