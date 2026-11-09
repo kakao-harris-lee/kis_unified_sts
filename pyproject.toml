@@ -316,11 +316,15 @@ strict_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 
+# `mlflow.*` / `optuna.*` were listed here until the legacy removal L7
+# (docs/plans/2026-11-07-legacy-removal-plan.md §3) deleted their only importers
+# (`shared/backtest/{mlflow_tracker,optimizer}.py`). With `warn_unused_configs`
+# on, a section no module matches is itself reported, so they are removed rather
+# than left as dead config. The packages stay declared dependencies — that is a
+# separate question from which modules mypy must stop resolving.
 [[tool.mypy.overrides]]
 module = [
     "redis.*",
-    "mlflow.*",
-    "optuna.*",
 ]
 ignore_missing_imports = true
 

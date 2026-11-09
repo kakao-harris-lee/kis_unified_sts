@@ -32,21 +32,21 @@ Config files live in `config/` with this structure:
   do not edit as a side effect of other work.
 - `tos_*.yaml` — TOS gates (completion, size budget, status board, CP-3 B3).
 - `tos_probes/`, `broker_probes/` — probe configs.
-- `kis/` — API authentication; `exit/three_stage.yaml`, `gates/`, `ml/`,
-  `strategy_builder/`, `strategy_lab/` — what the surviving `shared/` reads.
+- `kis/` — API authentication; `storage.yaml` / `streaming.yaml` /
+  `execution.yaml` — what the surviving `shared/` reads.
 - `strategies/futures/setup_d_vwap_reversion.yaml` — the only strategy YAML
   left; it is the CP-3 B3 witness's input.
 
-### Strategy Pattern with Registry
+### Strategy Pattern with Registry (retired)
 
-Entry/Exit/Position sizing are **independent, composable components** registered
-via decorators or `register_builtin_components()`. All registry classes and
-`StrategyFactory` live in `shared/strategy/registry.py`.
-
-Status note (legacy runtime removed in L1–L6): every `shared/strategy/entry/*`
-module was deleted, so the entry roster is currently **empty** and
-`StrategyFactory` builds nothing. Execution authority today is the TOS kernel,
-where a strategy is Tenant Content under `config/tos_runtime/`.
+Entry/Exit/Position sizing used to be independent, composable components
+registered through `shared/strategy/registry.py` and assembled by
+`StrategyFactory`. L6 deleted every `shared/strategy/entry/*` module, which left
+the entry roster empty, and L7 deleted the registry, the factory and the
+remaining exits and sizers — all of them outside the surviving import closure
+(`docs/plans/2026-11-07-legacy-removal-plan.md` §3). Execution authority today
+is the TOS kernel, where a strategy is Tenant Content under
+`config/tos_runtime/`. Do not reintroduce the registry here.
 
 ### Key Abstractions
 
@@ -56,19 +56,22 @@ where a strategy is Tenant Content under `config/tos_runtime/`.
 | `ExitSignalGenerator`  | Determines exit conditions     | `shared/strategy/base.py`     |
 | `PositionSizer`        | Calculates position sizes      | `shared/strategy/base.py`     |
 | `TradingStrategy`      | Composes entry/exit/sizing     | `shared/strategy/base.py`     |
-| `StrategyFactory`      | Creates strategies from config | `shared/strategy/registry.py` |
+
+Only the base classes survive; the one concrete implementation left is the
+witness's exit (below).
 
 ### What is left of `shared/`
 
 | Area | Purpose |
 | --- | --- |
 | `shared/backtest/market_context_replay.py`, `shared/decision/` | the CP-3 producer and the **B3 witness** (legacy Setup D). Keep byte-identical until `TOS_PAPER_READY` |
-| `shared/strategy/exit/setup_target_exit.py` | the witness's exit; `three_stage`, `momentum_decay`, `trix_golden_exit`, `technical_consensus_exit` are the other registered exits |
-| `shared/indicators/`, `shared/instruments/`, `shared/determinism/` | pure commons; four of the six packages the tos import firewall allows |
-| `shared/kis/` | KIS auth + REST client + stock feed |
-| `shared/storage/` | Parquet/DuckDB market-data store, SQLite runtime ledger |
-| `shared/llm/` | Korean market-analysis collectors (still imported, not scheduled) |
-| `shared/execution/executor.py` | kept **only** because `docs/broker-profiles/BROKER-TRANSPORT-SYMBOLS.csv` binds the `ORDER_SENDER` symbol to it and `tools/tos_spec_status.py --check` requires the class to exist. Nothing calls it |
+| `shared/strategy/exit/setup_target_exit.py` | the witness's exit, and the only exit implementation left — L7 deleted `three_stage`, `momentum_decay`, `trix_golden_exit` and `technical_consensus_exit` with the registry |
+| `shared/{models,indicators,resilience,utils,exceptions,determinism}/` | the six packages the tos import firewall allows; kept whole even where unused, because narrowing that surface is a boundary-design change |
+| `shared/instruments/` | futures contract specs the witness reads |
+| `shared/kis/auth.py` | KIS auth for the CP-3 quote client |
+| `shared/storage/{config,market_data_store}.py` | Parquet/DuckDB market-data store |
+| `shared/llm/{data_classes,market_context}.py` | the two type-hint modules `shared/strategy/base.py` still names; L7 deleted the other 37 |
+| `shared/execution/executor.py`, `shared/kis/client.py` **and their import closures** | kept **only** because `docs/broker-profiles/BROKER-TRANSPORT-SYMBOLS.csv` binds `ORDER_SENDER` / `BROKER_CLIENT_READ` to them and `tools/tos_spec_status.py --check` requires those classes to exist. Nothing calls them; `services/monitoring/`, `shared/streaming/`, `shared/observability/` and `shared/http/` are in the tree only because those two import them |
 
 ### No Code Duplication
 
@@ -157,25 +160,22 @@ lint-imports
 
 Config YAML supports `${VAR_NAME}` / `${VAR_NAME:default}` syntax for secrets.
 
-## Market Classifier
+## Removed in L7 — do not look for these
 
-`shared/strategy/market_classifier.py` provides MFI/ADX-based market state
-classification. Its consumer (`MarketRegimeExit`) no longer exists.
+`shared/strategy/registry.py` · `factory.py` · `market_classifier.py` ·
+`technical_consensus.py` · `builtin_components.py` · `shared/strategy/exit/`
+(all but `setup_target_exit.py`) · `shared/strategy/position/` ·
+`shared/strategy/gates/` · `shared/strategy_builder/` · `shared/strategy_lab/` ·
+`shared/regime/` · `shared/notification/` · `shared/features/` ·
+`shared/llm/` (all but `data_classes.py` and `market_context.py`) ·
+`shared/backtest/` (all but `market_context_replay.py`) ·
+`shared/storage/runtime_ledger*` · `shared/kis/stock_feed.py` ·
+`shared/collector/` (all but `historical/ohlcv_parser.py`).
 
-## LLM Market Analysis Module
-
-`shared/llm/` provides OpenAI GPT-based market analysis with Korean financial
-data collectors. Nothing schedules it any more: the briefing scripts under
-`scripts/analysis/` and their cron lines went with the legacy runtime
-(removal plan L3). The only cron on the deploy host runs the TOS session
-wrappers in `~/.config/kis-probes/` (`docs/runbooks/tos-paper-boot.md` §7.2).
-
-## Key Patterns
-
-### 3-Stage Exit State Machine
-
-`shared/strategy/exit/three_stage.py` — flagship exit strategy:
-
-1. **SURVIVAL** — Hard stop loss protection
-2. **BREAKEVEN** — Lock in break-even after threshold gain
-3. **MAXIMIZE** — Trailing stop to capture upside (dynamic width: normal/tight)
+They were outside the import closure the TOS roots reach
+(`docs/plans/2026-11-07-legacy-removal-plan.md` §3); the code is in git history
+from tag `legacy-final` (`6fc17c0f8d25`) onward. The 3-stage exit state machine,
+the MFI/ADX market classifier and the Korean LLM market-analysis collectors
+documented here until L7 all went with that set — nothing scheduled them, and
+the only cron on the deploy host runs the TOS session wrappers in
+`~/.config/kis-probes/` (`docs/runbooks/tos-paper-boot.md` §7.2).

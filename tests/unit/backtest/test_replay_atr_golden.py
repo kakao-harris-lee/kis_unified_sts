@@ -83,6 +83,7 @@ def _frozen_compute_atr(
     for i in range(n):
         start = max(0, i - _ATR_PERIOD + 1)
         atr[i] = tr[start : i + 1].mean()
+    return atr
 
 
 class TestReplayAtrGolden:
