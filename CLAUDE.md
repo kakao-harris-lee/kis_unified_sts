@@ -143,8 +143,9 @@ What is still true and still enforced:
   decay, or Setup target exits. (The modules that implemented these were removed
   in L1–L6; the rule is kept for future work.)
 - Three-stage exit is stock-only unless a future design explicitly generalizes
-  it. (`shared/strategy/exit/three_stage.py` survives; the stock runtime that
-  drove it was removed in L1–L6.)
+  it. (The stock runtime that drove it was removed in L1–L6, and
+  `shared/strategy/exit/three_stage.py` itself went in L7; the rule is kept for
+  future work.)
 - `shared/decision/setups/vwap_reversion.py` and its dependencies are the **B3
   witness**: the CP-3 post-session comparison reads this legacy Setup D
   implementation. Keep it byte-identical until `TOS_PAPER_READY`
@@ -155,7 +156,10 @@ What is still true and still enforced:
 
 ## Storage And Data
 
-- Runtime ledger: SQLite WAL via `shared/storage/runtime_ledger.py`.
+- Runtime ledger: the legacy SQLite WAL ledger (`shared/storage/runtime_ledger.py`)
+  fell outside the surviving import closure and went in L7
+  (`docs/plans/2026-11-07-legacy-removal-plan.md` §3). There is no legacy runtime
+  ledger any more; `tos_runtime` owns its own per-session stores.
 - Runtime streams/state: Redis DB 1.
 - Historical market data: Parquet/DuckDB through
   `shared/storage/market_data_store.py`.
@@ -164,25 +168,22 @@ What is still true and still enforced:
 - Backtests must avoid look-ahead bias. Use `LookaheadGuard` and keep indicator
   inputs bounded by the current context timestamp.
 
-## Strategy Implementation Pattern
+## Strategy Implementation Pattern (retired)
 
-- Strategy components register through `shared/strategy/registry.py`.
-- Entry generators, exit generators, and position sizers are composed through
-  `TradingStrategy`; keep asset-specific code thin.
-- New strategy work should include:
-  1. YAML config under `config/strategies/{stock,futures}/`.
-  2. Shared implementation under `shared/strategy/...`.
-  3. Registry wiring and focused unit tests.
-  4. Backtest or paper validation artifacts when behavior changes materially.
+Strategy components used to register through `shared/strategy/registry.py` and be
+composed by `StrategyFactory` into a `TradingStrategy`. L6 deleted every
+`shared/strategy/entry/*` module, which left the entry roster empty, and L7
+deleted `registry.py`, `factory.py`, `builtin_components.py` and the remaining
+exits and sizers — all of them outside the surviving import closure
+(`docs/plans/2026-11-07-legacy-removal-plan.md` §3).
 
-Status note (legacy runtime removed in L1–L6; rule kept for future work):
-`registry.py`, `factory.py` and `builtin_components.py` survive, but every
-`shared/strategy/entry/*` module was outside the surviving import closure and was
-deleted, so the entry roster is currently empty and `StrategyFactory` builds
-nothing. The executing authority today is the TOS kernel, where a strategy is
-Tenant Content (DSL + profile) under `config/tos_runtime/`. L7 measures whether
-the registry path itself can go (`docs/plans/2026-11-07-legacy-removal-plan.md`
-§3).
+What is left of `shared/strategy/` is `base.py` (the abstract classes),
+`market_data.py`, `market_time.py`, and `exit/setup_target_exit.py` — the CP-3
+B3 witness's exit and the helpers it reaches. The only strategy YAML left is
+`config/strategies/futures/setup_d_vwap_reversion.yaml`, that witness's input.
+
+Execution authority today is the TOS kernel, where a strategy is Tenant Content
+(DSL + profile) under `config/tos_runtime/`. Do not reintroduce the registry here.
 
 ## Development Discipline (operator directive, 2026-08-19)
 

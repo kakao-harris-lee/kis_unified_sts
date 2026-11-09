@@ -1,7 +1,10 @@
 # Market-structure daily series (Market Risk Score, unified roadmap Phase 0).
 #
-# Consumed by shared/storage/market_structure_store.py and the (future)
-# market_structure collector. The parquet root itself comes from
+# Its loader (shared/storage/market_structure_store.py) fell outside the import
+# closure and went with the legacy removal L7
+# (docs/plans/2026-11-07-legacy-removal-plan.md §3). The file stays because
+# tools/broker_probes/probes_real.py names it as the source of the N-18c
+# day-session futures code. The parquet root itself comes from
 # config/storage.yaml::market_data.parquet.root; only the dataset subpath and
 # snapshot policy live here. Intraday provisional values are Redis-only and
 # are never written to this dataset.

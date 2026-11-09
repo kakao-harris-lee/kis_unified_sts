@@ -1,53 +1,7 @@
-"""Storage interfaces and implementations for runtime/research persistence."""
+"""Storage interfaces and implementations for runtime/research persistence.
 
-from shared.storage.config import (
-    DashboardStorageConfig,
-    MarketDataStorageConfig,
-    ParquetMarketDataConfig,
-    RuntimeStorageConfig,
-    SQLiteStorageConfig,
-    StorageConfig,
-)
-from shared.storage.market_data_store import (
-    MarketDataStore,
-    MarketDataStoreError,
-    ParquetMarketDataStore,
-    create_market_data_store,
-    load_market_bars_for_backtest,
-)
-from shared.storage.market_structure_store import (
-    MarketStructureConfig,
-    MarketStructureSnapshotSettings,
-    MarketStructureStorageSettings,
-    MarketStructureStoreError,
-    ParquetMarketStructureStore,
-    create_market_structure_store,
-)
-from shared.storage.runtime_ledger import (
-    RuntimeLedger,
-    RuntimeLedgerError,
-    SQLiteRuntimeLedger,
-)
-
-__all__ = [
-    "DashboardStorageConfig",
-    "MarketDataStorageConfig",
-    "MarketDataStore",
-    "MarketDataStoreError",
-    "MarketStructureConfig",
-    "MarketStructureSnapshotSettings",
-    "MarketStructureStorageSettings",
-    "MarketStructureStoreError",
-    "ParquetMarketDataConfig",
-    "ParquetMarketDataStore",
-    "ParquetMarketStructureStore",
-    "RuntimeLedger",
-    "RuntimeLedgerError",
-    "RuntimeStorageConfig",
-    "SQLiteRuntimeLedger",
-    "SQLiteStorageConfig",
-    "StorageConfig",
-    "create_market_data_store",
-    "create_market_structure_store",
-    "load_market_bars_for_backtest",
-]
+스토어는 정의 모듈에서 바로 가져온다 —
+`from shared.storage.market_data_store import ParquetMarketDataStore`.
+부채꼴 re-export 는 레거시 제거 L7 에서 걷어냈다
+(docs/plans/2026-11-07-legacy-removal-plan.md §3).
+"""

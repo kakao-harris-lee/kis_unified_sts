@@ -28,11 +28,13 @@ Conventions are pinned bit-for-bit to the sites they absorb:
 Golden pins: ``tests/unit/strategy/test_p1b2_embedded_math_golden.py`` (strategy
 outputs), ``tests/unit/indicators/test_series_primitives.py`` (primitive
 contracts), plus the P1-b3/b4 site pins
-(``tests/unit/trading/test_p1b3_trading_residuals_golden.py``,
-``tests/unit/test_daily_scanner_indicator_golden.py``,
-``tests/unit/scanner/test_accumulation_indicator_golden.py``,
-``tests/unit/llm/test_llm_indicator_golden.py``,
-``tests/unit/regime/test_regime_indicator_golden.py``). Convergence of these
+(the P1-b3/b4 site pins went with their sites in the legacy removal —
+``tests/unit/trading/test_p1b3_trading_residuals_golden.py``,
+``tests/unit/test_daily_scanner_indicator_golden.py`` and
+``tests/unit/scanner/test_accumulation_indicator_golden.py`` in L1–L6,
+``tests/unit/llm/test_llm_indicator_golden.py`` and
+``tests/unit/regime/test_regime_indicator_golden.py`` in L7,
+docs/plans/2026-11-07-legacy-removal-plan.md §3). Convergence of these
 pandas conventions onto the TA-Lib backend is the separately-gated P1-c
 convention flip — do not change values here without that gate.
 """

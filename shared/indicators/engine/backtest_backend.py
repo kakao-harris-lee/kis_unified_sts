@@ -10,7 +10,10 @@ established compat-backend pattern (:mod:`daily_backend`, :mod:`momentum_backend
 **reproduced bit-for-bit, moved verbatim** — behind the ``IndicatorBackend``
 interface so the indicator package is the single owner of the math. The
 adapters become thin delegates; the golden regression
-``tests/unit/backtest/test_indicator_delegation_golden.py`` pins bit-identity.
+``tests/unit/backtest/test_replay_atr_golden.py`` pins bit-identity for the one
+adapter that survived the legacy removal L7 (``market_context_replay``; the
+daily/live adapter pins went with their modules —
+docs/plans/2026-11-07-legacy-removal-plan.md §3).
 
 Convention notes (each id documents where it deliberately differs from the
 standard/reference implementations — P1-c convention-flip candidates):

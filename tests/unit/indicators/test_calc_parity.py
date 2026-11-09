@@ -8,8 +8,9 @@
     * RSI        : 런타임(rolling-SMA) vs shared(Wilder EMA)  -> 값이 다름
     * Stochastic : 런타임 ``stoch_k``/``stoch_d`` vs shared ``sto_k``/``sto_d``
                    -> 키 이름이 다름 (같은 파일 안에서도 두 규약이 공존)
-    * ADX        : 런타임(full Wilder-smoothed ADX) vs regime detector(단일 DX)
-                   -> 알고리즘 자체가 다름
+    * ADX        : 런타임(full Wilder-smoothed ADX) 스냅샷. 두 번째 경로였던
+                   regime detector 는 레거시 제거 L7 에서 사라졌다
+                   (docs/plans/2026-11-07-legacy-removal-plan.md §3)
     * Bollinger  : 런타임(sample std, ddof=1) -> 스냅샷 특성화만 수행
 
 이 파일은 "정답"을 규정하는 테스트가 아니라, **현재 동작을 스냅샷으로 고정하는
@@ -40,7 +41,6 @@ from shared.indicators.momentum import RSICalculator, StochasticCalculator
 # 대상 구현 (읽기/임포트 전용 — 수정 금지)
 from shared.indicators.streaming.calculations import IndicatorCalculationMixin
 from shared.indicators.streaming.candles import Candle
-from shared.regime.adaptive_detector import AdaptiveRegimeDetector
 
 pytestmark = pytest.mark.unit
 
@@ -158,15 +158,11 @@ _STOCH_D_RUNTIME = 49.647273
 _STOCH_K_SHARED = 56.017756
 _STOCH_D_SHARED = 77.266641
 
-# ADX: full Wilder-smoothed ADX(런타임) vs regime detector.
-# M2 (2026-07-04): detector._calc_adx 가 canonical Wilder ADX(reference.ADXCalculator)
-# 로 위임되어 두 경로가 이제 수렴한다. 과거 detector 는 단일-bar DX(15.873272)를
-# 냈으나(방향성 이동 규칙 누락 + SMA-DI + DX→ADX 스무딩 생략), 이제 canonical
-# Wilder ADX(31.634448)를 낸다. 런타임과의 0.08 잔차는 첫 DI 를 seed bar 에서
-# 보고하느냐 한 bar 뒤에서 보고하느냐의 warmup-seed 차이일 뿐, 둘 다 정통 Wilder.
+# ADX: full Wilder-smoothed ADX(런타임).
+# 두 번째 경로였던 `shared/regime/adaptive_detector._calc_adx` 는 레거시 제거 L7
+# 에서 모듈째 사라졌다. 런타임 값이 정통 Wilder 인지는 `test_reference.py` 의
+# `_ADX_REF` 대조가 계속 고정한다(그쪽은 reference.ADXCalculator 가 기준이다).
 _ADX_RUNTIME_WILDER = 31.719136
-_ADX_DETECTOR_WILDER = 31.634448  # was 15.873272 (defective single-bar DX)
-_ADX_WARMUP_SEED_DELTA = 0.084688  # detector(calculate_last) vs runtime warmup offset
 
 # Bollinger (런타임 ddof=1 sample std)
 _BB_LOWER = 99.902454
@@ -299,69 +295,35 @@ def test_stochastic_values_in_range_and_snapshotted(
 
 
 # ---------------------------------------------------------------------------
-# 3) ADX 두 구현 대조
+# 3) ADX 런타임 경로 특성화
 # ---------------------------------------------------------------------------
 
 
-def test_adx_range_invariant_both_paths(
-    candles: list[Candle], ohlcv: dict[str, list[float]]
-) -> None:
-    """ADX/DX 는 두 구현 모두 [0, 100] 범위 불변식을 지킨다."""
+def test_adx_range_invariant_runtime_path(candles: list[Candle]) -> None:
+    """ADX/DX 는 [0, 100] 범위 불변식을 지킨다."""
     adx_runtime = IndicatorCalculationMixin._calc_adx(candles, period=14)
-    detector = AdaptiveRegimeDetector()
-    adx_detector = detector._calc_adx(
-        np.asarray(ohlcv["high"]),
-        np.asarray(ohlcv["low"]),
-        np.asarray(ohlcv["close"]),
-        period=14,
-    )
 
     assert adx_runtime is not None
     assert 0.0 <= adx_runtime <= 100.0
-    assert 0.0 <= float(adx_detector) <= 100.0
 
 
-def test_adx_two_implementations_converge(
-    candles: list[Candle], ohlcv: dict[str, list[float]]
-) -> None:
-    """두 ADX 구현이 이제 canonical Wilder ADX 로 **수렴**함을 고정 (M2, 2026-07-04).
+def test_adx_runtime_snapshot(candles: list[Candle]) -> None:
+    """런타임 ADX 값 스냅샷 (canonical Wilder ADX).
 
-    과거(특성화 하네스의 원래 목적): detector 는 이름만 ADX 이고 실제로는 마지막
-    바의 단일 DX(15.873272)를 rolling-mean(단순평균)으로 산출했다 — 방향성 이동
-    규칙 누락 + SMA-DI + DX→ADX Wilder 스무딩 생략. 런타임(31.719136)과 약 15.8
-    포인트 벌어져, ADX 를 임계값으로 쓰는 regime gate 가 오작동했다.
-
-    수정(Diff 2): ``shared/regime/adaptive_detector._calc_adx`` 를
-    ``reference.ADXCalculator(period).calculate_last(...)`` 에 위임 → 이제 detector
-    도 canonical Wilder ADX(31.634448)를 낸다. 런타임과의 0.08 잔차는 첫 DI 를
-    seed bar 에서 보고하느냐 한 bar 뒤에서 보고하느냐의 warmup-seed 차이뿐이며,
-    둘 다 정통 Wilder 이므로 warmup tolerance(0.1) 안에서 일치해야 한다.
-
-    이 테스트가 다시 벌어지면(delta > 0.1) detector 위임이 풀렸거나 세 번째 ADX
-    구현이 재도입된 것이다.
+    과거(특성화 하네스의 원래 목적): `shared/regime/adaptive_detector._calc_adx`
+    는 이름만 ADX 이고 실제로는 마지막 바의 단일 DX(15.873272)를 단순평균으로
+    산출했다 — 방향성 이동 규칙 누락 + SMA-DI + DX→ADX Wilder 스무딩 생략.
+    런타임(31.719136)과 약 15.8 포인트 벌어져, ADX 를 임계값으로 쓰는 regime
+    gate 가 오작동했다. M2(2026-07-04) 에서 detector 가
+    `reference.ADXCalculator` 에 위임하도록 고쳐 두 경로가 수렴했고, L7 에서
+    detector 모듈 자체가 사라졌다(폐포 밖 —
+    docs/plans/2026-11-07-legacy-removal-plan.md §3). 남은 런타임 경로의 값을
+    여기서 계속 고정한다.
     """
     adx_runtime = IndicatorCalculationMixin._calc_adx(candles, period=14)
-    detector = AdaptiveRegimeDetector()
-    adx_detector = float(
-        detector._calc_adx(
-            np.asarray(ohlcv["high"]),
-            np.asarray(ohlcv["low"]),
-            np.asarray(ohlcv["close"]),
-            period=14,
-        )
-    )
 
     assert adx_runtime is not None
-    # (a) 각 경로 값 스냅샷 (둘 다 canonical Wilder ADX)
     assert adx_runtime == pytest.approx(_ADX_RUNTIME_WILDER, abs=_SNAPSHOT_ABS_TOL)
-    assert adx_detector == pytest.approx(_ADX_DETECTOR_WILDER, abs=_SNAPSHOT_ABS_TOL)
-
-    # (b) 수렴 불변식: 두 정통 Wilder ADX 가 warmup-seed 오프셋(≈0.08) 안에서 일치
-    delta = abs(adx_runtime - adx_detector)
-    assert delta == pytest.approx(_ADX_WARMUP_SEED_DELTA, abs=_SNAPSHOT_ABS_TOL)
-    assert (
-        delta < 0.1
-    ), "ADX 두 경로가 다시 벌어짐 — detector 위임 해제 또는 세 번째 ADX 재도입?"
 
 
 # ---------------------------------------------------------------------------

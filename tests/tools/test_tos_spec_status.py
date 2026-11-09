@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -672,23 +673,38 @@ def test_stale_direct_table_summary_fails(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------
 
 
-def _migration_copy(tmp_path: Path, replace: tuple[str, str] | None = None):
+def _migration_copy(
+    tmp_path: Path,
+    replace: tuple[str, str] | Sequence[tuple[str, str]] | None = None,
+):
+    """Copy the live register, optionally rewriting it, into ``tmp_path``.
+
+    ``replace`` is one ``(old, new)`` pair or a sequence of them, applied in
+    order; each must match what the text looks like at its turn.  The sequence
+    form exists because the legacy removal left EVERY register row retired bar
+    one, so a fixture that needs a live row has to un-retire one first and then
+    mutate it -- two edits, both of which must stay loud.
+    """
     csv_path = tmp_path / "MIGRATION-CONFORMANCE-REGISTER.csv"
     markdown_path = tmp_path / "MIGRATION-CONFORMANCE-REGISTER.md"
     csv_text = (_REPO_ROOT / status.MIGRATION_CSV).read_text(encoding="utf-8")
     markdown_text = (_REPO_ROOT / status.MIGRATION_MD).read_text(encoding="utf-8")
     if replace is not None:
-        old, new = replace
-        # A replacement that matches nothing would leave the live corpus intact
-        # and the test below asserting nothing.  That fail-open is not
-        # hypothetical: marking the legacy-removal rows retired rewrote their
-        # `current_level`, and every fixture quoting one of those rows went on
-        # "passing" its own replace while testing the unedited corpus.  The
-        # fixtures below quote rows the removal KEEPS; this assert is what
-        # makes that a stated fact instead of a hope.
-        assert old in csv_text, f"fixture no longer matches the register: {old!r}"
-        csv_text = csv_text.replace(old, new)
-        markdown_text = markdown_text.replace(old, new)
+        # A single pair is a 2-tuple of str; a sequence of pairs is a tuple of
+        # those. `isinstance(..., tuple)` cannot tell them apart -- look at the
+        # first element instead.
+        pairs = [replace] if isinstance(replace[0], str) else list(replace)
+        for old, new in pairs:
+            # A replacement that matches nothing would leave the live corpus
+            # intact and the test below asserting nothing.  That fail-open is
+            # not hypothetical: marking the legacy-removal rows retired rewrote
+            # their `current_level`, and every fixture quoting one of those rows
+            # went on "passing" its own replace while testing the unedited
+            # corpus.  This assert is what makes the match a stated fact
+            # instead of a hope.
+            assert old in csv_text, f"fixture no longer matches the register: {old!r}"
+            csv_text = csv_text.replace(old, new)
+            markdown_text = markdown_text.replace(old, new)
     csv_path.write_text(csv_text, encoding="utf-8")
     markdown_path.write_text(markdown_text, encoding="utf-8")
     return csv_path, markdown_path
@@ -723,22 +739,41 @@ def test_legacy_census_rejects_a_gap_in_the_route_numbering(tmp_path):
 # marker has to be true.  (docs/plans/2026-11-07-legacy-removal-plan.md)
 # --------------------------------------------------------------------------
 
-#: READ-008 as the live corpus carries it: a path that exists, and no marker.
-#: It has to be a row that is NOT retired -- a fixture that quotes a retired row
-#: stops editing anything the day it is marked.  This was READ-003
-#: (`services/screener.py`) until L6 deleted that file and retired the row, for
-#: exactly that reason; READ-008 is the remaining live BROKER_READ_SITE, whose
-#: category is warning-only, so dropping it from the census sets changes no
-#: verdict here.
-_LIVE_ROW = (
+#: READ-008 exactly as the live corpus carries it since L7 retired it.
+#:
+#: These four tests need a row that is NOT retired, because a fixture quoting a
+#: retired row stops editing anything.  There is no longer one to quote: the
+#: fixture was READ-003 (`services/screener.py`) until L6 deleted that file,
+#: then READ-008 (`shared/llm/unified_trading_analyzer.py`) until L7 deleted
+#: that one with the rest of the LLM collector tree
+#: (`docs/plans/2026-11-07-legacy-removal-plan.md` §3).  The ONE row the removal
+#: leaves live is LEGACY-005 (`shared/execution/executor.py`), and it cannot be
+#: used here: it is blocking-tier, so retiring it in a copy drops the real
+#: `OrderExecutor` site out of the fail-closed exemption set and the REVERSE
+#: CENSUS fails instead of the retirement rule under test.
+#:
+#: So the fixture un-retires READ-008 in its own copy first (``_UNRETIRE``),
+#: onto a path that IS in the tree, and mutates from there.  Both edits go
+#: through ``_migration_copy``'s match assert, so neither can go quiet.
+_RETIRED_READ_ROW = (
     "READ-008,BROKER_READ_SITE,shared/llm/unified_trading_analyzer.py LLM "
     "analyzer facade,RFC-002 section 10 market-data ingress and ADR-002-018 "
-    "Critical Input provenance,IN_PROCESS_ANALYSIS_READ_NO_ORDER_EGRESS"
+    "Critical Input provenance,RETIRED_SOURCE_REMOVED@6fc17c0f8d25"
 )
 _LIVE_LEVEL = "IN_PROCESS_ANALYSIS_READ_NO_ORDER_EGRESS"
-_LIVE_PATH = "shared/llm/unified_trading_analyzer.py LLM analyzer facade"
+#: A path that IS in the tree. `shared/kis/client.py` is the deployment's
+#: concrete broker read client (BROKER-TRANSPORT-SYMBOLS binds
+#: `BROKER_CLIENT_READ`'s `KISClient` to it), so a BROKER_READ_SITE row naming
+#: it is coherent, and L7 keeps the file for that binding.
+_LIVE_PATH = "shared/kis/client.py broker read client"
+_LIVE_ROW = _RETIRED_READ_ROW.replace(
+    "shared/llm/unified_trading_analyzer.py LLM analyzer facade", _LIVE_PATH
+).replace("RETIRED_SOURCE_REMOVED@6fc17c0f8d25", _LIVE_LEVEL)
+#: The first edit every test below applies: put a live BROKER_READ_SITE row back
+#: into the copy, so there is something for the second edit to break.
+_UNRETIRE = (_RETIRED_READ_ROW, _LIVE_ROW)
 #: A path that is not in the tree, as a retired row's path will not be.
-_GONE = "shared/llm/deleted_trading_analyzer.py LLM analyzer facade"
+_GONE = "shared/kis/deleted_client.py broker read client"
 #: A stand-in sha: the `legacy-final` tag, which the legacy-removal plan uses as
 #: the commit where the deleted routes last existed.
 _RETIRED = f"{status.RETIRED_LEVEL_PREFIX}6fc17c0f8d25"
@@ -750,8 +785,11 @@ def test_a_retired_row_whose_source_is_gone_passes(tmp_path):
     csv_path, markdown_path = _migration_copy(
         tmp_path,
         (
-            _LIVE_ROW,
-            _LIVE_ROW.replace(_LIVE_PATH, _GONE).replace(_LIVE_LEVEL, _RETIRED),
+            _UNRETIRE,
+            (
+                _LIVE_ROW,
+                _LIVE_ROW.replace(_LIVE_PATH, _GONE).replace(_LIVE_LEVEL, _RETIRED),
+            ),
         ),
     )
 
@@ -766,7 +804,8 @@ def test_a_retired_row_whose_source_still_exists_fails(tmp_path):
     # The marker must be true.  Marking a route that is still in the tree would
     # otherwise be a way to stop checking a live route.
     csv_path, markdown_path = _migration_copy(
-        tmp_path, (_LIVE_ROW, _LIVE_ROW.replace(_LIVE_LEVEL, _RETIRED))
+        tmp_path,
+        (_UNRETIRE, (_LIVE_ROW, _LIVE_ROW.replace(_LIVE_LEVEL, _RETIRED))),
     )
 
     with pytest.raises(status.StatusError, match="marked retired"):
@@ -779,7 +818,8 @@ def test_an_unmarked_row_whose_source_is_gone_still_fails(tmp_path):
     # Unchanged behaviour for every row without the marker: a vanished source
     # path is a failure, not a silent deregistration.
     csv_path, markdown_path = _migration_copy(
-        tmp_path, (_LIVE_ROW, _LIVE_ROW.replace(_LIVE_PATH, _GONE))
+        tmp_path,
+        (_UNRETIRE, (_LIVE_ROW, _LIVE_ROW.replace(_LIVE_PATH, _GONE))),
     )
 
     with pytest.raises(status.StatusError, match="source path is missing"):
@@ -794,9 +834,12 @@ def test_a_malformed_retirement_marker_is_rejected(tmp_path):
     csv_path, markdown_path = _migration_copy(
         tmp_path,
         (
-            _LIVE_ROW,
-            _LIVE_ROW.replace(_LIVE_PATH, _GONE).replace(
-                _LIVE_LEVEL, f"{status.RETIRED_LEVEL_PREFIX}legacy-final"
+            _UNRETIRE,
+            (
+                _LIVE_ROW,
+                _LIVE_ROW.replace(_LIVE_PATH, _GONE).replace(
+                    _LIVE_LEVEL, f"{status.RETIRED_LEVEL_PREFIX}legacy-final"
+                ),
             ),
         ),
     )
@@ -1215,11 +1258,14 @@ def test_a_new_unregistered_read_site_is_still_reported(tmp_path):
 
 
 def test_a_component_may_not_sit_in_both_the_blocking_and_warning_censuses(tmp_path):
-    # READ-008, not READ-007 or READ-003 as this fixture read before: both of
-    # those paths are ones the legacy removal deletes, and a fixture quoting a
-    # retired row silently stops editing anything (see _migration_copy). L6
-    # deleted `services/screener.py` and retired READ-003, so the fixture moved
-    # again — to READ-008, the remaining live BROKER_READ_SITE.
+    # The read row is repointed at a path the BLOCKING census already holds, so
+    # one path sits in both. It used to be READ-007, then READ-003, then
+    # READ-008 as each predecessor's file was deleted and its row retired —
+    # a fixture quoting a retired row silently stops editing anything (see
+    # _migration_copy). L7 retired READ-008 too, so the single replacement is
+    # now component AND `current_level` together: a retired row is dropped from
+    # the census sets before the overlap check, so the row has to be un-retired
+    # in the copy for the collision to exist at all.
     #
     # The path it is repointed AT must be a LIVE blocking-census component, or
     # `_components` raises "source path is missing" before the both-censuses
@@ -1230,8 +1276,12 @@ def test_a_component_may_not_sit_in_both_the_blocking_and_warning_censuses(tmp_p
     csv_path, markdown_path = _migration_copy(
         tmp_path,
         (
-            "READ-008,BROKER_READ_SITE,shared/llm/unified_trading_analyzer.py",
-            "READ-008,BROKER_READ_SITE,shared/execution/executor.py",
+            "shared/llm/unified_trading_analyzer.py LLM analyzer facade,"
+            "RFC-002 section 10 market-data ingress and ADR-002-018 Critical "
+            "Input provenance,RETIRED_SOURCE_REMOVED@6fc17c0f8d25",
+            "shared/execution/executor.py LLM analyzer facade,"
+            "RFC-002 section 10 market-data ingress and ADR-002-018 Critical "
+            "Input provenance,IN_PROCESS_ANALYSIS_READ_NO_ORDER_EGRESS",
         ),
     )
 
@@ -1246,21 +1296,25 @@ def test_a_component_may_not_hold_both_warning_only_categories(tmp_path):
     # READ-xxx records that no order sender exists at all.  A path holding both
     # would let the weaker description stand in for the stricter one.
     #
-    # L6 deleted `shared/execution/mock_mirror.py` and retired MOCK-001, which
-    # leaves the live corpus with NO MOCK_CONFINED_ORDER_SITE row — so the
-    # collision cannot be staged by repointing a read row at one any more. The
-    # fixture instead un-retires MOCK-001 in its copy, onto the one path READ-008
-    # already holds: component AND `current_level` in a single replacement, since
-    # a retired row is dropped from the census sets before the overlap check.
+    # L6 deleted `shared/execution/mock_mirror.py` and retired MOCK-001, and L7
+    # deleted `shared/llm/unified_trading_analyzer.py` and retired READ-008 —
+    # so the live corpus now has NO live row in EITHER warning-only category and
+    # the collision cannot be staged by repointing one at the other. The fixture
+    # un-retires both in its copy, onto one path that is in the tree: component
+    # AND `current_level` in each replacement, since a retired row is dropped
+    # from the census sets before the overlap check.
     csv_path, markdown_path = _migration_copy(
         tmp_path,
         (
-            "shared/execution/mock_mirror.py mock-confined paper order mirror,"
-            "RFC-002 section 10.7/10.8 and ADR-002-004 section 8.2 Submission "
-            "Idempotency,RETIRED_SOURCE_REMOVED@6fc17c0f8d25",
-            "shared/llm/unified_trading_analyzer.py mock-confined paper order "
-            "mirror,RFC-002 section 10.7/10.8 and ADR-002-004 section 8.2 "
-            "Submission Idempotency,IN_PROCESS_MOCK_ORDER_SENDER_NON_ENTRYPOINT",
+            _UNRETIRE,
+            (
+                "shared/execution/mock_mirror.py mock-confined paper order "
+                "mirror,RFC-002 section 10.7/10.8 and ADR-002-004 section 8.2 "
+                "Submission Idempotency,RETIRED_SOURCE_REMOVED@6fc17c0f8d25",
+                f"{_LIVE_PATH},RFC-002 section 10.7/10.8 and ADR-002-004 "
+                "section 8.2 Submission Idempotency,"
+                "IN_PROCESS_MOCK_ORDER_SENDER_NON_ENTRYPOINT",
+            ),
         ),
     )
 

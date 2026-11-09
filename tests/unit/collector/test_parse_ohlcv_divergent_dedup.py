@@ -15,7 +15,7 @@ count.
 
 from __future__ import annotations
 
-from shared.collector.historical.backfill import parse_ohlcv
+from shared.collector.historical.ohlcv_parser import parse_ohlcv
 
 
 def _row(time_str: str, o: float, h: float, low: float, c: float, v: int) -> dict:

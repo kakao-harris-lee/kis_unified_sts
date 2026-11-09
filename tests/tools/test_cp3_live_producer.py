@@ -1308,9 +1308,12 @@ def _import_closure(module_name: str, *, root: Path | None = None) -> set[str]:
 
     * **parent packages.** Importing ``a.b.c`` executes ``a/__init__.py`` and
       ``a/b/__init__.py``, so whatever THOSE import is in the graph too. The
-      measured consequence of skipping them: the real closure reaches
+      measured consequence of skipping them: the real closure reached
       ``shared.execution`` through ``shared.backtest.config``, and the old walk
       reported the producer as having no ``shared.execution`` edge at all.
+      (Both edges are gone since L7 — see :data:`PURE_SHARED_EXECUTION` — so
+      the two walks agree on that module today. The planted-edge red proof
+      below, not the real closure, is what keeps this walker honest.)
     * **relative imports.** ``from .b import thing`` has ``node.module is
       None`` or a non-zero ``node.level``; the old walk skipped every one, so
       any package that reaches an order path through its own siblings was
@@ -1354,22 +1357,26 @@ def _import_closure(module_name: str, *, root: Path | None = None) -> set[str]:
 #: The ONLY ``shared.execution`` modules the producer's closure may reach.
 #: Measured on this branch, and asserted by EQUALITY below rather than by
 #: "none of the bad ones" — an exact set is what turns a NEW arrival red.
-#: All five are pure value/config modules: none contains an order call
-#: (``place_order``/``order_cash``/``.post(``), which is checked here too so
-#: the allowlist cannot quietly absorb something that grows one.
-PURE_SHARED_EXECUTION = frozenset(
-    {
-        "shared.execution",
-        "shared.execution.config",
-        "shared.execution.contract_spec",
-        "shared.execution.slippage_control",
-        "shared.execution.slippage_model",
-        "shared.execution.tr_ids",
-    }
-)
+#:
+#: It is now EMPTY, and that is a measurement, not a relaxation. The producer
+#: reached ``shared.execution`` through exactly two edges: the package's own
+#: ``__init__``, which eagerly re-exported ``slippage_control``, and
+#: ``shared.backtest.config``. The legacy removal L7
+#: (``docs/plans/2026-11-07-legacy-removal-plan.md`` §3) removed that fan-out
+#: re-export and deleted ``shared/backtest/config.py`` and
+#: ``shared/execution/slippage_{control,model}.py``, so the credentialed
+#: producer process now reaches NO ``shared.execution`` module at all.
+#: Equality against the empty set is the strongest form of this pin: anything
+#: that re-opens the edge is red, including a module with no order call.
+#: Each allowlisted module is still checked for an order call
+#: (``place_order``/``order_cash``/``.post(``) so the allowlist cannot quietly
+#: absorb one if a later branch has to put something back.
+PURE_SHARED_EXECUTION: frozenset[str] = frozenset()
 
-#: Modules that can put an order on the wire. Forbidden by NAME, because
-#: "`shared.execution` is absent" is no longer true of the real closure.
+#: Modules that can put an order on the wire. Forbidden by NAME as well, so the
+#: pin keeps its teeth independently of how the closure is reached: this check
+#: stays red on a direct import even if someone also widens
+#: :data:`PURE_SHARED_EXECUTION` above.
 ORDER_EMITTING_MODULES = (
     "shared.execution.executor",
     "shared.execution.venue_router",
@@ -1461,7 +1468,9 @@ def test_the_band_process_reaches_no_shared_execution_module_the_producer_does_n
 
     Both processes carry the same credentials against the same host, so the
     honest statement is that the band process widened nothing. A deny list
-    would stay green on the sixth module; equality does not.
+    would stay green on the next module; equality does not. Since L7 that set
+    is empty (see :data:`PURE_SHARED_EXECUTION`), so this now reads "neither
+    process reaches ``shared.execution`` at all".
     """
 
     def reached(closure: set[str]) -> set[str]:
@@ -1484,11 +1493,13 @@ def test_item5_the_reached_shared_execution_modules_are_exactly_the_pure_set(
 ) -> None:
     """Exact equality, so a newly reached module is red rather than tolerated.
 
-    The producer reaches ``shared.execution`` transitively (e.g. through
-    ``shared.backtest.config``). A containment check over a deny list would
-    stay green when the next refactor pulls in a sixth module; equality does
-    not. Each allowlisted module is also checked to contain no order call, so
-    the list cannot absorb one that grows a wire path later.
+    The producer used to reach ``shared.execution`` transitively — through
+    ``shared.backtest.config`` and the package ``__init__``'s fan-out
+    re-export. L7 removed both, so the measured set is now empty. A containment
+    check over a deny list would stay green when the next refactor pulls one
+    back in; equality does not. Each allowlisted module is also checked to
+    contain no order call, so the list cannot absorb one that grows a wire path
+    later.
     """
     reached = {
         name

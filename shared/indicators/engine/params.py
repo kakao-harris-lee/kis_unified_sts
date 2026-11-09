@@ -1,10 +1,11 @@
 """Shared parameter-coercion helpers for engine backends.
 
-The fallback defaults each backend passes to these (e.g. ``period=14``) mirror
-the builder catalog (``config/strategy_builder/indicators.yaml``); the intended
-path always supplies explicit params resolved from that catalog, so these
-defaults are last-resort only. Kept in one module so both backends coerce
-identically (DRY).
+The fallback defaults each backend passes to these (e.g. ``period=14``) mirrored
+the builder catalog (``config/strategy_builder/indicators.yaml``), which supplied
+explicit params on the intended path, so these defaults were last-resort only.
+That catalog and its loader went with the legacy removal L7
+(docs/plans/2026-11-07-legacy-removal-plan.md §3); callers now always pass
+explicit params. Kept in one module so both backends coerce identically (DRY).
 """
 
 from __future__ import annotations

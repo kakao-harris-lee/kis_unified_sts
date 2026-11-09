@@ -1,22 +1,7 @@
-"""API utilities and helpers.
+"""API 공통 모듈.
 
-This package provides utilities for API implementation including
-error sanitization, CORS configuration, request handling, and response formatting.
+구성요소는 정의 모듈에서 바로 가져온다 —
+`from shared.api.cors import get_cors_config`.
+부채꼴 re-export 는 레거시 제거 L7 에서 걷어냈다
+(docs/plans/2026-11-07-legacy-removal-plan.md §3).
 """
-
-from .cors import (
-    CORS_ALLOWED_HEADERS,
-    CORS_ALLOWED_METHODS,
-    get_cors_config,
-    load_api_config,
-)
-from .error_sanitizer import sanitize_error_dict, sanitize_error_message
-
-__all__ = [
-    "CORS_ALLOWED_HEADERS",
-    "CORS_ALLOWED_METHODS",
-    "get_cors_config",
-    "load_api_config",
-    "sanitize_error_dict",
-    "sanitize_error_message",
-]

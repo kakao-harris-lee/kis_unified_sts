@@ -171,7 +171,7 @@ class MarketContextReplay:
         The ATR math is delegated to the backtest-convention indicator engine
         (``atr_partial``: TR seed high-low at bar 0, partial-window means —
         the replay's historical convention, bit-identical; pinned by
-        ``tests/unit/backtest/test_indicator_delegation_golden.py``). The ATR
+        ``tests/unit/backtest/test_replay_atr_golden.py``). The ATR
         at bar ``i`` uses only bars ``<= i`` (trailing windows, no look-ahead);
         ``atr_90th_percentile`` is intentionally a fixed full-series reference,
         unchanged from the pre-delegation behavior.
