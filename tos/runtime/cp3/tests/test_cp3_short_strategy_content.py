@@ -96,6 +96,30 @@ def _require_repo_root() -> Path:
     return repo_root
 
 
+#: Paths this file reads that the legacy removal deletes
+#: (``docs/plans/2026-11-07-legacy-removal-plan.md``; L6 for the Setup D entry
+#: adapter). The source last existed at tag ``legacy-final``.
+#: ``tests/tools/test_cp3_emit_legacy_decisions.py`` reads that blob with ``git
+#: cat-file``; this file cannot, because ``subprocess`` is firewall-forbidden
+#: inside ``tos/`` (TOS-FW-B, ``tools/tos_firewall_check.py``). So the
+#: sub-assertion that needs the source is skipped once the path is retired, and
+#: this listing is what keeps a path that is simply GONE -- and not recorded as
+#: retired -- from passing silently.
+_RETIRED_AT_LEGACY_FINAL = frozenset({"shared/strategy/entry/setup_d_adapter.py"})
+
+
+def _retired_aware_source(repo_root: Path, relative: str) -> str | None:
+    """The working-tree text of ``relative``, or ``None`` once L6 retired it."""
+    path = repo_root / relative
+    if path.is_file():
+        return path.read_text(encoding="utf-8")
+    assert relative in _RETIRED_AT_LEGACY_FINAL, (
+        f"{relative} is read by this test but is not in the tree and is not "
+        "recorded as retired at tag `legacy-final`"
+    )
+    return None
+
+
 def _short_content() -> runner.LoadedStrategyContent:
     """The committed SHORT strategy content, through the production loader."""
     return runner.load_strategy_content(
@@ -534,16 +558,20 @@ def test_the_regime_guard_difference_says_why_it_cannot_show_up(
 
     # The claims are checked against the files they are about. (1) the block is
     # still downstream of check() in the adapter.
+    # L6 retired the adapter (see ``_RETIRED_AT_LEGACY_FINAL``), so this half
+    # runs only while the file is still in the tree; (2) and (3) below run
+    # either way.
     repo_root = _require_repo_root()
-    adapter = (
-        repo_root / "shared" / "strategy" / "entry" / "setup_d_adapter.py"
-    ).read_text(encoding="utf-8")
-    check_at = adapter.index("self._setup.check(")
-    block_at = adapter.index("short_blocked_regimes")
-    assert check_at < block_at, (
-        "the regime block moved ahead of check(); B1b-D8's note now claims "
-        "something false about what B2 measures"
+    adapter = _retired_aware_source(
+        repo_root, "shared/strategy/entry/setup_d_adapter.py"
     )
+    if adapter is not None:
+        check_at = adapter.index("self._setup.check(")
+        block_at = adapter.index("short_blocked_regimes")
+        assert check_at < block_at, (
+            "the regime block moved ahead of check(); B1b-D8's note now claims "
+            "something false about what B2 measures"
+        )
     # (2) the NEGATIVE half, which the previous revision never checked: the
     # setup `check()` B2 drives must itself contain no regime block. Reading
     # only the adapter leaves "B2 never applies it" resting on the absence

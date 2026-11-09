@@ -64,6 +64,29 @@ _LEGACY_STRATEGY_YAML = (
     _REPO_ROOT / "config" / "strategies" / "futures" / "setup_d_vwap_reversion.yaml"
 )
 
+#: Paths this file reads that the legacy removal deletes
+#: (``docs/plans/2026-11-07-legacy-removal-plan.md``; L6 for the Setup D entry adapter). The
+#: source last existed at tag ``legacy-final``.
+#: ``tests/tools/test_cp3_emit_legacy_decisions.py`` reads that blob with ``git cat-file``;
+#: this file cannot, because ``subprocess`` is firewall-forbidden inside ``tos/`` (TOS-FW-B,
+#: ``tools/tos_firewall_check.py``). So the sub-assertion that needs the source is skipped once
+#: the path is retired, and this listing is what keeps a path that is simply GONE -- and not
+#: recorded as retired -- from passing silently.
+_RETIRED_AT_LEGACY_FINAL = frozenset({"shared/strategy/entry/setup_d_adapter.py"})
+
+
+def _retired_aware_source(relative: str) -> str | None:
+    """The working-tree text of ``relative``, or ``None`` once L6 retired it."""
+    path = _REPO_ROOT / relative
+    if path.is_file():
+        return path.read_text(encoding="utf-8")
+    assert relative in _RETIRED_AT_LEGACY_FINAL, (
+        f"{relative} is read by this test but is not in the tree and is not recorded as "
+        "retired at tag `legacy-final`"
+    )
+    return None
+
+
 _LONG_STRATEGY_REL = "strategies/setup_d_long.strategy.yaml"
 _SHORT_STRATEGY_REL = "strategies/setup_d_short.strategy.yaml"
 
@@ -1099,9 +1122,13 @@ def test_short_tree_records_its_parity_result() -> None:
     # The disposition is a claim about ANOTHER file's call order, so it is read there too: if
     # the regime block ever moves ahead of check(), B2 would start seeing it and the README's
     # "cannot appear in this comparison" becomes false.
-    adapter = _REPO_ROOT / "shared" / "strategy" / "entry" / "setup_d_adapter.py"
-    source = adapter.read_text(encoding="utf-8")
-    assert source.index("self._setup.check(") < source.index("short_blocked_regimes"), (
-        "the regime block moved ahead of check(); README §3.3 2 now claims something false "
-        "about what a B1a/B2/B1b comparison can see"
-    )
+    # L6 retired the adapter (see ``_RETIRED_AT_LEGACY_FINAL``), so this half runs only while
+    # the file is still in the tree; everything above it runs either way.
+    source = _retired_aware_source("shared/strategy/entry/setup_d_adapter.py")
+    if source is not None:
+        assert source.index("self._setup.check(") < source.index(
+            "short_blocked_regimes"
+        ), (
+            "the regime block moved ahead of check(); README §3.3 2 now claims something "
+            "false about what a B1a/B2/B1b comparison can see"
+        )
