@@ -1,5 +1,15 @@
 # Runbook: Futures Decoupled Pipeline Cutover (F-9, Compose)
 
+> **RETIRED — history, not procedure.** Both sides of this cutover are gone: the
+> `trader-futures` orchestrator and the decoupled services
+> (`services/{market_ingest,decision_engine,risk_filter,order_router,futures_monitor,kill_switch}`)
+> were deleted by the legacy-removal plan
+> (`docs/plans/2026-11-07-legacy-removal-plan.md`) in steps L1, L2 and L6, and
+> so were the `futures-ingest` / `futures-pipeline` / `futures-killswitch`
+> Compose profiles. The code last existed at tag `legacy-final`
+> (`6fc17c0f8d25`), which is where to read it. Kept because the F-9 Gate
+> measurements it records happened — do not follow it.
+
 Flip futures trading from the in-process `trader-futures` orchestrator loop to the
 decoupled daemon chain: decision_engine → risk_filter → order_router →
 futures_monitor (+ kill_switch for live). Operational risks: silent stop, double

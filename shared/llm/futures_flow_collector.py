@@ -115,7 +115,7 @@ class FuturesFlowCollector(DataCollector):
         """Read foreign-futures net flow from the market-structure read-model.
 
         Sources the ``market:structure:latest`` hash published by
-        ``services/market_structure_collector`` (KIS FHPTJ04030000 daily
+        the deleted ``services/market_structure_collector`` (KIS FHPTJ04030000 daily
         snapshot). Returns ``(net_qty, cum20, missing)`` where ``net_qty`` is the
         day's foreign net contracts and ``cum20`` is the rolling ~20-trading-day
         cumulative (``fut_foreign_net_qty_cum20`` — NOT a 5-day figure).

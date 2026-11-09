@@ -8,7 +8,7 @@ only *read* precomputed values
 (``docs/plans/2026-07-08-new-architecture-refactoring-plan.md`` §3, P1-b item 2).
 
 P1-b items 3/4 extend this module with the conventions absorbed from the last
-hand-rolled sites outside the package (services/trading residuals,
+hand-rolled sites outside the package (the deleted services/trading residuals,
 daily_scanner, accumulation scanner, LLM analyzers, regime detectors):
 SMA-convention RSI, MACD lines (both EWM adjust conventions), plain rolling
 std, trailing extrema/ROC/mean-ratio, mean-normalized regression slope, and

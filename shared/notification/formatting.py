@@ -316,7 +316,7 @@ def format_notable_exit(
 ) -> str:
     """Format a "notable exit" alert (2 lines: header + PnL, no footer strategy).
 
-    Used by ``services/stock_monitor/alerts.py::AlertSink.on_exit`` — the
+    Was used by ``services/stock_monitor/alerts.py::AlertSink.on_exit`` — the
     monitor bridge, unlike ``TelegramNotifier``, does not carry a stock/
     instrument name or strategy at the exit-fill call site (only ``code``,
     ``pnl``, ``pnl_pct``), so this formatter renders the concise style with

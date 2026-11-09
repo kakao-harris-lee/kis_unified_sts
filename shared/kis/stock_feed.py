@@ -317,7 +317,7 @@ class KISStockPriceFeed:
             # self-heal in-place without disturbing the caller — a raise here
             # would force the caller to restart the feed even though the
             # background reconnect already covers recovery. (Approval-fetch
-            # failures above DO raise; services/market_ingest catches those and
+            # failures above DO raise; the deleted services/market_ingest caught those and
             # retries start() with backoff rather than crash-looping.)
             logger.warning(
                 "[StockPriceFeed] Initial connect timed out; the feed will keep "

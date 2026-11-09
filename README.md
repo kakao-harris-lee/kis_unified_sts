@@ -19,13 +19,14 @@ For the full documentation map, read [docs/INDEX.md](docs/INDEX.md).
 
 - **Frontend/API**: Caddy is the only host web entrypoint. It routes the Next.js
   UI (`strategy-builder-ui`) and FastAPI dashboard API (`services/dashboard`).
-- **Stock paper runtime**: decoupled Compose pipeline
-  (`stock-ingest` + `stock-pipeline`) after M5d cutover.
-- **Futures runtime**: Setup A/C with LLM market context and explicit
-  indicator/strategy-native exits. Decoupled futures services are available via
-  `futures-ingest`, `futures-pipeline`, and `futures-killswitch` profiles.
-- **Removed paths**: futures ML/RL/TFT runtime code and old `sts rl *` /
-  `sts tft *` commands are removed.
+- **Trading runtime**: the TOS kernel (`tos/`) and its CP-3 tenant sessions.
+  Futures tenants are synthetic (they send nothing); the stock tenant sends to
+  the KIS **mock** account only.
+- **Removed paths**: the legacy stock and futures runtimes — the orchestrator,
+  the decoupled stock/futures services, the strategy registry roster, the
+  backtest/optimize/mlflow CLI groups and the futures ML/RL/TFT code — are gone
+  (`docs/plans/2026-11-07-legacy-removal-plan.md`, L1–L6). They last existed at
+  tag `legacy-final` (`6fc17c0f8d25`).
 - **Storage**: Redis DB 1 for runtime streams/state, SQLite WAL for runtime
   ledger, Parquet/DuckDB for historical market data. ClickHouse is not an active
   runtime dependency.
@@ -102,13 +103,13 @@ The test and Dev Container paths do **not** need (and should not have) a `.env`.
 docker compose up -d
 ```
 
-Useful profiles:
+The default stack is five services: `dashboard`, `strategy-builder-ui`,
+`caddy`, `redis`, `prometheus`. The stock/futures pipeline profiles went with
+the legacy runtime (`docs/plans/2026-11-07-legacy-removal-plan.md`); the only
+remaining profile is `test`:
 
 ```bash
-docker compose --profile stock-pipeline up -d
-docker compose --profile stock-ingest --profile stock-pipeline up -d
-docker compose --profile futures-pipeline up -d
-docker compose --profile futures-ingest --profile futures-pipeline up -d
+docker compose --profile test run --rm tests
 ```
 
 ### Access URLs
@@ -120,23 +121,28 @@ docker compose --profile futures-ingest --profile futures-pipeline up -d
 ## Common Commands
 
 ```bash
-# CLI help
+# CLI help. `sts tos` is the only command group — the backtest/optimize/mlflow/
+# collect/trade/paper groups went with the legacy runtime
+# (docs/plans/2026-11-07-legacy-removal-plan.md, L3).
 sts --help
 
-# Backtest
-sts backtest run --strategy bb_reversion --asset stock
-
-# Parameter optimization
-sts optimize --strategy bb_reversion --asset stock --metric sharpe_ratio --trials 100
-
-# MLflow UI for backtest/optimization tracking
-sts mlflow ui
+# One-page operator status board (sessions, B3 verdicts, clean-day streaks)
+sts tos status
 
 # Tests and checks
-pytest tests/ -v --cov=shared --cov=services --cov=domains
+pytest tests/ -q
 ruff check .
 black --check .
 mypy shared/ --ignore-missing-imports --no-error-summary
+
+# TOS checkers (what CI gates on)
+python tools/tos_spec_status.py --check
+python tools/tos_firewall_check.py
+# `lint-imports` as CI runs it (.github/workflows/tos-firewall.yml): plain, after
+# an editable install of the root project and tos/runtime. Without that install
+# the contracts' root packages do not resolve; a local shortcut is
+# `PYTHONPATH=.:tos/src:tos/runtime/src lint-imports`, which is NOT what gates.
+lint-imports
 ```
 
 Frontend:
@@ -146,35 +152,40 @@ cd strategy-builder-ui
 npm run dev
 npm run build
 npm run lint
+npm test
 ```
 
 ## Project Structure
 
 ```text
-shared/              reusable strategy, execution, risk, storage, streaming, model logic
-services/            runtime apps and daemons
-  dashboard/         FastAPI API, health, metrics, WebSocket routes
-  trading/           monolithic trading orchestrator
-  stock_*            decoupled stock pipeline services
-  decision_engine/   futures decision producer
-  risk_filter/       futures risk filter
-  order_router/      futures paper/live router
-  futures_monitor/   futures dashboard/alert bridge
-strategy-builder-ui/ Next.js frontend: cockpit, builder, executor, experiments
-config/              YAML configs for strategies, execution, risk, storage, infra
-cli/main.py          sts command entrypoint
-tests/               unit, integration, performance, and service tests
+tos/                 TOS kernel + tos_runtime shell (see tos/CLAUDE.md)
+tos-spec/            TOS spec corpus; tos-evidence/ its evidence
+tools/tos_*          CP-3 producer, B3 witness, spec/firewall/status checkers
+tools/broker_probes/ KIS capability probes (GET reads; order probes interlocked)
+shared/              what the surviving roots import — replay/decision/indicators,
+                     KIS auth+client, config, storage, risk primitives, LLM
+services/dashboard/  FastAPI app: /api/tos/*, /health, OpenAPI docs
+services/monitoring/ metrics/health helpers shared/kis imports lazily
+strategy-builder-ui/ Next.js frontend: the /tos operator page and the /api proxy
+config/              tos_runtime tenant trees, tos_* gates, KIS/execution/risk/
+                     storage/streaming settings, one Setup D strategy YAML
+cli/main.py          sts entrypoint (`sts tos` only)
+scripts/             scripts/tos/ tenant rendering + the Setup D walk-forward
+tests/               unit, integration, and tool tests
 docs/                architecture, plans, runbooks, operations docs
 ```
 
 ## Strategy Notes
 
-- Strategy implementations live under `shared/strategy/`.
-- Strategy YAML lives under `config/strategies/{stock,futures}/`.
+- There is no strategy registry roster any more: L6 deleted every
+  `shared/strategy/entry/*` module, so `EntryRegistry` is empty and
+  `StrategyFactory` can build nothing. A strategy is Tenant Content (DSL +
+  profile) under `config/tos_runtime/`, executed by the TOS kernel.
+- `config/strategies/futures/setup_d_vwap_reversion.yaml` is the one strategy
+  YAML left — it is the CP-3 B3 witness's input and is read by
+  `tools/tos_cp3/emit_legacy_decisions.py`.
 - New thresholds, risk knobs, symbols, and feature flags should be added to
   config files, not hardcoded.
-- Stock swing positions must remain strategy-signal based; do not force blanket
-  EOD liquidation.
 - Futures strategies must support long and short symmetry.
 
 ## Runbooks
@@ -186,16 +197,16 @@ docs/                architecture, plans, runbooks, operations docs
 
 | Runbook | Use |
 |---|---|
-| [stock-pipeline-cutover-m5d.md](docs/runbooks/stock-pipeline-cutover-m5d.md) | Stock decoupled pipeline cutover/rollback |
+| [stock-pipeline-cutover-m5d.md](docs/runbooks/stock-pipeline-cutover-m5d.md) | **RETIRED** — the pipeline it cuts over was deleted (L1/L2/L6). History only |
 | [stock-strategy-reactivation.md](docs/runbooks/stock-strategy-reactivation.md) | Stock strategy evidence review before reactivation |
 | [bb-reversion-15m-paper.md](docs/runbooks/bb-reversion-15m-paper.md) | `bb_reversion_15m` paper validation — PAPER-ONLY, live flags must stay off |
-| [stock-stream-cutover.md](docs/runbooks/stock-stream-cutover.md) | M1c — 모놀리식 orchestrator 의 시세 원천을 WebSocket ↔ Redis 틱 스트림으로 전환 (`STOCK_MARKET_DATA_SOURCE`). **표준 경로는 decoupled 파이프라인이라 평시에는 해당 없다**; `STOCK_ORCHESTRATOR_ENABLED=true` 롤백 시에만 쓴다. 플래그를 읽는 코드는 `services/trading/market_data_bootstrap.py:126` 에 살아 있다 |
+| [stock-stream-cutover.md](docs/runbooks/stock-stream-cutover.md) | **RETIRED** — 플래그(`STOCK_MARKET_DATA_SOURCE`)를 읽던 `services/trading/market_data_bootstrap.py` 가 L2 에서 사라졌다. History only |
 
 ### Futures
 
 | Runbook | Use |
 |---|---|
-| [futures-pipeline-cutover-f9.md](docs/runbooks/futures-pipeline-cutover-f9.md) | Futures decoupled pipeline cutover |
+| [futures-pipeline-cutover-f9.md](docs/runbooks/futures-pipeline-cutover-f9.md) | **RETIRED** — both sides of the cutover were deleted (L1/L2/L6). History only |
 | [futures-paradigm-operations.md](docs/runbooks/futures-paradigm-operations.md) | Futures daily operations checklist |
 | [futures-paradigm-rollback.md](docs/runbooks/futures-paradigm-rollback.md) | Emergency futures rollback |
 | [futures-paradigm-failure-modes.md](docs/runbooks/futures-paradigm-failure-modes.md) | Futures failure modes — symptoms and first response |
@@ -234,7 +245,7 @@ docs/                architecture, plans, runbooks, operations docs
 |---|---|
 | [ops-readiness-checks.md](docs/runbooks/ops-readiness-checks.md) | Offline readiness checks for common post-cutover gates |
 | [market-open-pipeline-verification.md](docs/runbooks/market-open-pipeline-verification.md) | Pre-open and post-open pipeline verification |
-| [paper-live-code-separation.md](docs/runbooks/paper-live-code-separation.md) | Validated-code live clone and promotion |
+| [paper-live-code-separation.md](docs/runbooks/paper-live-code-separation.md) | **RETIRED** — there is no live clone to promote to (L1–L6). History only |
 | [telegram-interactive-alerts.md](docs/runbooks/telegram-interactive-alerts.md) | Telegram approve/reject + close bot: config, rollout, rollback |
 | [track-a-quarterly-rebalancing.md](docs/runbooks/track-a-quarterly-rebalancing.md) | Track A 분기 리밸런싱 체크리스트 (수동 트랙) |
 

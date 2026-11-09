@@ -1,5 +1,11 @@
 # Runbook — Paper/Live Source-Code Separation
 
+> **RETIRED — history, not procedure.** There is no live clone to promote to:
+> the legacy-removal plan (`docs/plans/2026-11-07-legacy-removal-plan.md`)
+> deleted the trading runtime in steps L1–L6, and with it every order path this
+> runbook promotes. The code last existed at tag `legacy-final`
+> (`6fc17c0f8d25`). Kept as a record — do not follow it.
+
 Design: `docs/superpowers/specs/archive/2026-06-04-paper-live-code-separation-design.md`
 
 LIVE trading runs only validated (annotated-tag) code from a **separate clone**.
