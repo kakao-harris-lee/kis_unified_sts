@@ -70,7 +70,7 @@ witness's exit (below).
 | `shared/instruments/` | futures contract specs the witness reads |
 | `shared/kis/auth.py` | KIS auth for the CP-3 quote client |
 | `shared/storage/{config,market_data_store}.py` | Parquet/DuckDB market-data store |
-| `shared/llm/{data_classes,market_context}.py` | the two type-hint modules `shared/strategy/base.py` still names; L7 deleted the other 37 |
+| `shared/llm/{data_classes,market_context}.py` | the two type-hint modules `shared/strategy/base.py` still names; L7 deleted the other 35 |
 | `shared/execution/executor.py`, `shared/kis/client.py` **and their import closures** | kept **only** because `docs/broker-profiles/BROKER-TRANSPORT-SYMBOLS.csv` binds `ORDER_SENDER` / `BROKER_CLIENT_READ` to them and `tools/tos_spec_status.py --check` requires those classes to exist. Nothing calls them; `services/monitoring/`, `shared/streaming/`, `shared/observability/` and `shared/http/` are in the tree only because those two import them |
 
 ### No Code Duplication
