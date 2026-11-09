@@ -3,55 +3,11 @@
 진입/청산/포지션 사이징 전략 추상화 계층.
 
 Usage:
-    from shared.strategy import (
-        EntrySignalGenerator,
-        ExitSignalGenerator,
-        StrategyFactory,
-        EntryRegistry,
-        ExitRegistry,
-    )
+    from shared.strategy.base import EntrySignalGenerator, TradingStrategy
+    from shared.strategy.registry import EntryRegistry, StrategyFactory
 
-    # 데코레이터로 등록
-    @EntryRegistry.register("my_entry")
-    class MyEntry(EntrySignalGenerator):
-        ...
-
-    # 팩토리로 전략 생성
-    strategy = StrategyFactory.create_from_file("stock", "bb_reversion")
+부채꼴 re-export 는 레거시 제거 L7 에서 걷어냈다
+(docs/plans/2026-11-07-legacy-removal-plan.md §3): `shared.strategy` 를
+import 하는 것만으로 registry → factory → strategy_builder → strategy_lab 가
+따라 들어와 폐포가 부풀었다. 이름은 정의 모듈에서 바로 가져온다.
 """
-
-from shared.strategy.base import (
-    EntryContext,
-    EntrySignalGenerator,
-    ExitContext,
-    ExitSignalGenerator,
-    PositionSizer,
-    TradingStrategy,
-)
-from shared.strategy.registry import (
-    ComponentNotFoundError,
-    EntryRegistry,
-    ExitRegistry,
-    RegistryError,
-    SizerRegistry,
-    StrategyFactory,
-    register_builtin_components,
-)
-
-__all__ = [
-    # Base Classes
-    "EntrySignalGenerator",
-    "ExitSignalGenerator",
-    "PositionSizer",
-    "TradingStrategy",
-    "EntryContext",
-    "ExitContext",
-    # Registry
-    "EntryRegistry",
-    "ExitRegistry",
-    "SizerRegistry",
-    "StrategyFactory",
-    "RegistryError",
-    "ComponentNotFoundError",
-    "register_builtin_components",
-]

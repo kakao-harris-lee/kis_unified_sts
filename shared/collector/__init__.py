@@ -1,25 +1,5 @@
 """Data collector module for real-time market data ingestion.
 
-This module provides:
-    - TickData: Data model for tick/orderbook data
-    - BaseAPIAdapter: Abstract adapter interface
-    - MockAPIAdapter: Mock adapter for testing
-    - DataCollector: Main collector class with Redis publishing
-
-Usage:
-    >>> from shared.collector import DataCollector, MockAPIAdapter, TickData
-    >>>
-    >>> collector = DataCollector(MockAPIAdapter())
-    >>> collector.start(["101V01"])  # KOSPI200 Mini
+구성요소는 정의 모듈에서 바로 가져온다. 부채꼴 re-export 는 레거시 제거 L7 에서
+걷어냈다 (docs/plans/2026-11-07-legacy-removal-plan.md §3).
 """
-
-from shared.collector.adapter import BaseAPIAdapter, MockAPIAdapter
-from shared.collector.collector import DataCollector
-from shared.collector.models import TickData
-
-__all__ = [
-    "TickData",
-    "BaseAPIAdapter",
-    "MockAPIAdapter",
-    "DataCollector",
-]

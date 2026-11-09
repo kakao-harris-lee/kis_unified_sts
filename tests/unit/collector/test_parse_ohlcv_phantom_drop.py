@@ -8,7 +8,7 @@ times. The aggregator now drops any minute bar below
 
 from __future__ import annotations
 
-from shared.collector.historical.backfill import parse_ohlcv
+from shared.collector.historical.ohlcv_parser import parse_ohlcv
 
 
 def _tick(time_str: str, price: float, volume: int) -> dict:

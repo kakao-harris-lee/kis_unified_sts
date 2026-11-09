@@ -1,21 +1,7 @@
 """KIS API 통합 모듈
 
-주식(quant_moment_sts)과 선물(kospi_mini_sts) 공통 KIS API 어댑터.
-
-Modules:
-    auth: 인증 및 토큰 관리
-    websocket: 실시간 WebSocket 데이터 수신 (선물)
-    stock_feed: 실시간 WebSocket 데이터 수신 (주식)
-    client: REST API 클라이언트
+인증·시세 클라이언트는 정의 모듈에서 바로 가져온다 —
+`from shared.kis.auth import KISAuthManager`.
+부채꼴 re-export 는 레거시 제거 L7 에서 걷어냈다
+(docs/plans/2026-11-07-legacy-removal-plan.md §3).
 """
-
-from shared.kis.auth import KISAuthConfig, KISAuthManager
-from shared.kis.ranking_client import KISRankingClient
-from shared.kis.stock_feed import KISStockPriceFeed
-
-__all__ = [
-    "KISAuthManager",
-    "KISAuthConfig",
-    "KISRankingClient",
-    "KISStockPriceFeed",
-]

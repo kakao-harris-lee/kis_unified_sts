@@ -7,7 +7,7 @@ import pytest
 
 
 def test_parquet_market_data_store_appends_and_queries_minute_bars(tmp_path):
-    from shared.storage import ParquetMarketDataStore
+    from shared.storage.market_data_store import ParquetMarketDataStore
 
     store = ParquetMarketDataStore(tmp_path / "market", asset_class="stock")
     written = store.append_minute_bars(
@@ -56,7 +56,7 @@ def test_parquet_market_data_store_appends_and_queries_minute_bars(tmp_path):
 
 
 def test_parquet_market_data_store_supports_daily_bars_and_limit(tmp_path):
-    from shared.storage import ParquetMarketDataStore
+    from shared.storage.market_data_store import ParquetMarketDataStore
 
     store = ParquetMarketDataStore(tmp_path / "market", asset_class="stock")
     written = store.append_daily_bars(
@@ -82,7 +82,7 @@ def test_parquet_market_data_store_supports_daily_bars_and_limit(tmp_path):
 
 
 def test_parquet_market_data_store_manifest_without_manifest_file(tmp_path):
-    from shared.storage import ParquetMarketDataStore
+    from shared.storage.market_data_store import ParquetMarketDataStore
 
     store = ParquetMarketDataStore(tmp_path / "market", asset_class="futures")
     store.append_minute_bars(
@@ -107,7 +107,10 @@ def test_parquet_market_data_store_manifest_without_manifest_file(tmp_path):
 
 
 def test_parquet_market_data_store_rejects_missing_columns(tmp_path):
-    from shared.storage import MarketDataStoreError, ParquetMarketDataStore
+    from shared.storage.market_data_store import (
+        MarketDataStoreError,
+        ParquetMarketDataStore,
+    )
 
     store = ParquetMarketDataStore(tmp_path / "market", asset_class="stock")
 
@@ -116,7 +119,7 @@ def test_parquet_market_data_store_rejects_missing_columns(tmp_path):
 
 
 def test_parquet_market_data_store_replaces_minute_day(tmp_path):
-    from shared.storage import ParquetMarketDataStore
+    from shared.storage.market_data_store import ParquetMarketDataStore
 
     store = ParquetMarketDataStore(tmp_path / "market", asset_class="futures")
     store.replace_minute_day(
@@ -171,7 +174,10 @@ def test_parquet_market_data_store_replaces_minute_day(tmp_path):
 
 
 def test_parquet_market_data_store_rejects_wrong_replace_day(tmp_path):
-    from shared.storage import MarketDataStoreError, ParquetMarketDataStore
+    from shared.storage.market_data_store import (
+        MarketDataStoreError,
+        ParquetMarketDataStore,
+    )
 
     store = ParquetMarketDataStore(tmp_path / "market", asset_class="stock")
 
@@ -194,12 +200,12 @@ def test_parquet_market_data_store_rejects_wrong_replace_day(tmp_path):
 
 
 def test_load_market_bars_for_backtest_uses_storage_config(tmp_path):
-    from shared.storage import (
+    from shared.storage.config import (
         MarketDataStorageConfig,
         ParquetMarketDataConfig,
         StorageConfig,
-        load_market_bars_for_backtest,
     )
+    from shared.storage.market_data_store import load_market_bars_for_backtest
 
     root = tmp_path / "market"
     config = StorageConfig(
@@ -209,7 +215,7 @@ def test_load_market_bars_for_backtest_uses_storage_config(tmp_path):
         )
     )
 
-    from shared.storage import ParquetMarketDataStore
+    from shared.storage.market_data_store import ParquetMarketDataStore
 
     ParquetMarketDataStore(root, asset_class="futures").append_minute_bars(
         [
