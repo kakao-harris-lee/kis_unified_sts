@@ -4,9 +4,10 @@ These tests pin the *reference* (standard-accurate) calculators against known,
 deterministic inputs and cross-check them against the existing established
 standards in the repo:
 
-    * ADX  -- canonical Wilder-smoothed ADX; proven to (a) sit in [0, 100],
-      (b) be much smoother than the raw DX series, and (c) diverge sharply from
-      the defective ``adaptive_detector._calc_adx`` (single, SMA-smoothed DX).
+    * ADX  -- canonical Wilder-smoothed ADX; proven to (a) sit in [0, 100] and
+      (b) be much smoother than the raw DX series. The third cross-check, against
+      ``shared/regime/adaptive_detector.py::_calc_adx``, went with that module in
+      the legacy removal L7 (docs/plans/2026-11-07-legacy-removal-plan.md §3).
     * StochRSI  -- values in [0, 100], correct K/D smoothing relationship, and a
       ``latest_values`` dict carrying exactly the flat keys the strategy needs.
 
@@ -33,7 +34,6 @@ from shared.indicators.reference import (
 # Target (read/import only)
 from shared.indicators.streaming.calculations import IndicatorCalculationMixin
 from shared.indicators.streaming.candles import Candle
-from shared.regime.adaptive_detector import AdaptiveRegimeDetector
 
 pytestmark = pytest.mark.unit
 
@@ -89,13 +89,9 @@ def frame(ohlcv: dict[str, list[float]]) -> pd.DataFrame:
 # Snapshot constants (deterministic; documented cross-checks)
 # ---------------------------------------------------------------------------
 
-# ADX: reference (canonical Wilder) vs runtime canonical Wilder vs detector DX.
+# ADX: reference (canonical Wilder) vs runtime canonical Wilder.
 _ADX_REF = 31.634448  # reference series/scalar
 _ADX_RUNTIME_WILDER = 31.719136  # from test_calc_parity (runtime _calc_adx)
-# M2 (2026-07-04): detector._calc_adx now delegates to ADXCalculator, so it
-# yields the canonical Wilder ADX (== _ADX_REF) instead of the old defective
-# single-bar DX (15.873272).
-_ADX_DETECTOR_WILDER = 31.634448  # was 15.873272 (defective single-bar DX)
 
 # StochRSI (last bar) + prior-bar %K.
 _STOCHRSI_K = 11.901304
@@ -198,35 +194,6 @@ def test_adx_reference_close_to_runtime_canonical_wilder(frame: pd.DataFrame) ->
     """
     adx_ref = float(ADXCalculator(period=14).calculate(frame)["adx"].dropna().iloc[-1])
     assert adx_ref == pytest.approx(_ADX_RUNTIME_WILDER, abs=0.5)
-
-
-def test_adx_reference_agrees_with_detector_after_delegation(
-    frame: pd.DataFrame, ohlcv: dict[str, list[float]]
-) -> None:
-    """Reference Wilder ADX now AGREES with ``detector._calc_adx`` (M2).
-
-    ``adaptive_detector._calc_adx`` used to be named ADX but returned a single,
-    SMA-smoothed DX (no directional-movement rule, no final DX smoothing),
-    yielding ~15.9 vs the correct Wilder ADX ~31.6 -- under-reporting trend
-    strength by roughly half. It now delegates to ``ADXCalculator``, so the two
-    are the same value. If this ever diverges again (> 1e-6) the detector has
-    stopped delegating or a third ADX has been reintroduced.
-    """
-    adx_ref = float(ADXCalculator(period=14).calculate(frame)["adx"].dropna().iloc[-1])
-
-    detector = AdaptiveRegimeDetector()
-    detector_adx = float(
-        detector._calc_adx(
-            np.asarray(ohlcv["high"]),
-            np.asarray(ohlcv["low"]),
-            np.asarray(ohlcv["close"]),
-            period=14,
-        )
-    )
-
-    assert detector_adx == pytest.approx(_ADX_DETECTOR_WILDER, abs=_TOL)
-    # Exact delegation: detector == reference calculate_last (same code path).
-    assert detector_adx == pytest.approx(adx_ref, abs=1e-9)
 
 
 def test_adx_flat_market_is_zero() -> None:

@@ -4,9 +4,12 @@ Before this module the only ATR-percentile computation in the repo lived inside
 :meth:`shared.backtest.market_context_replay.MarketContextReplay._precompute`
 (``float(np.nanpercentile(atr_series, 90))``) and was reachable only from a
 backtest.  The production ``VolatilityFilter`` threshold therefore had no
-writer at all.  Promoting the arithmetic here lets the replay reference and the
-live :mod:`shared.risk.volatility_reference` publisher share ONE implementation
-instead of growing a second, subtly different one.
+writer at all.  Promoting the arithmetic here let the replay reference and the
+live ``shared.risk.volatility_reference`` publisher share ONE implementation
+instead of growing a second, subtly different one.  That live publisher fell
+outside the import closure and was deleted in the legacy removal L7
+(docs/plans/2026-11-07-legacy-removal-plan.md §3); the replay side remains, and
+this module stays its single home for the percentile.
 
 Only the *percentile* is shared.  The ATR series itself is produced differently
 on each side and deliberately so:

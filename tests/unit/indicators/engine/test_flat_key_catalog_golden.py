@@ -7,8 +7,12 @@ Both indicator-context paths converge on it:
 * legacy/live — ``IndicatorResult.flat_latest()`` derives its keys from
   ``flat_key`` and the streaming payload assembly
   (``shared/indicators/streaming/queries.py``) publishes the same names;
-* builder — the evaluator columns are user-scoped ``alias.output``, but every
-  canonical/scalar consumer (cache panel, ``flat_latest``) uses ``flat_key``.
+* builder — the evaluator columns were user-scoped ``alias.output``, but every
+  canonical/scalar consumer (cache panel, ``flat_latest``) used ``flat_key``.
+  That second path (``shared/strategy_builder/``) fell outside the import
+  closure and was removed in the legacy removal L7
+  (docs/plans/2026-11-07-legacy-removal-plan.md §3), so its catalog sweep went
+  with it; the literal pins below are what still guards the vocabulary.
 
 This module pins the shared vocabulary to exact literal strings so any edit to
 the override table (or a new hand-maintained mapping) trips loudly instead of
@@ -24,8 +28,8 @@ from shared.indicators.engine.spec import flat_key
 
 # The shared vocabulary: every (indicator_id, output) whose flat key is
 # consumed by BOTH paths (live streaming payload literals in
-# shared/indicators/streaming/queries.py AND the builder catalog /
-# flat_latest()). Values are the exact live payload key strings.
+# shared/indicators/streaming/queries.py AND flat_latest()). Values are the
+# exact live payload key strings.
 _SHARED_VOCABULARY_PINS: dict[tuple[str, str], str] = {
     ("bollinger", "upper"): "bb_upper",
     ("bollinger", "middle"): "bb_middle",
@@ -66,16 +70,3 @@ def test_period_keyed_ema_sma_flat_keys_are_pinned(period: int) -> None:
     # derives the same key through flat_key's period-keyed rule.
     assert flat_key("ema", "value", {"period": period}) == f"ema_{period}"
     assert flat_key("sma", "value", {"period": period}) == f"sma_{period}"
-
-
-def test_full_builder_catalog_derives_through_flat_key() -> None:
-    """Every builder-catalog output must resolve to a non-empty flat key and
-    multi-output indicators must not collapse onto one key."""
-    from shared.strategy_builder.catalog import load_capabilities
-
-    for indicator in load_capabilities().indicators:
-        keys = {flat_key(indicator.id, output.id) for output in indicator.outputs}
-        assert all(keys), f"{indicator.id}: empty flat key"
-        assert len(keys) == len(
-            indicator.outputs
-        ), f"{indicator.id}: outputs collapse onto one flat key"

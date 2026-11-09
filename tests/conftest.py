@@ -40,10 +40,8 @@ _LIVE_INFRA_TEST_PATHS = {
     # write/delete runtime-shaped keys such as trading:{asset}:positions and
     # risk:portfolio:state, so they must never run accidentally while paper
     # trading is active on the same host.
-    "tests/integration/test_llm_market_context.py",
     "tests/integration/test_rate_limiter_redis.py",
     "tests/integration/test_redis_tls.py",
-    "tests/shared/risk/test_persistence.py",
 }
 
 

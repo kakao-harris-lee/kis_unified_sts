@@ -40,9 +40,11 @@ Design constraints
 * Value-preserving -- the calculator classes are the *only* home of this math;
   :class:`ReferenceBackend` wraps them for engine consumers, and the
   ``shared.indicators.reference`` shim re-exports them for direct consumers
-  (``shared/regime/adaptive_detector.py``, ``shared/llm/stock_screening.py``,
-  runtime ATR/StochRSI paths; ``shared/indicators/volume_ratio.py`` and
-  ``shared/strategy/entry/trix_golden.py`` were two more until L6 deleted them).
+  (the runtime ATR/StochRSI paths). Four more consumers existed until the legacy
+  removal deleted them: ``shared/indicators/volume_ratio.py`` and
+  ``shared/strategy/entry/trix_golden.py`` in L6,
+  ``shared/regime/adaptive_detector.py`` and ``shared/llm/stock_screening.py``
+  in L7 (docs/plans/2026-11-07-legacy-removal-plan.md §3).
   Numeric contracts are pinned by
   ``tests/unit/indicators/test_reference_contract.py``.
 

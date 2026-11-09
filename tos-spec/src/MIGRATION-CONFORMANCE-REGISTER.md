@@ -52,7 +52,7 @@ sets: a marked row whose file is still present fails, so the marker cannot be
 used to stop checking a live route, and a later file of the same name is not
 pre-exempted by the dead row. Every unmarked row stays fail-closed on existence.
 
-**Retired at tag `legacy-final` (`6fc17c0f8d25`)** by L2, L3 and L6 of the
+**Retired at tag `legacy-final` (`6fc17c0f8d25`)** by L2, L3, L6 and L7 of the
 legacy-removal plan (`docs/plans/2026-11-07-legacy-removal-plan.md`): L2 retired
 LEGACY-001, LEGACY-002, LEGACY-003, LEGACY-004 and LEGACY-007 above, and
 READ-001, READ-002, READ-004, READ-005, READ-006 and READ-007 in §2.1; L3
@@ -64,13 +64,19 @@ READ-003 (`services/screener.py`) in §2.1 and MOCK-001
 (`shared/execution/mock_mirror.py`) in §2.2 — both were outside the import
 closure the TOS roots still reach and were deleted with the rest of the legacy
 `shared/` and `services/` tree, so there is no longer a stock ranking read site
-and no longer an in-process mock order sender. Their repository paths no longer
-exist, and both tables describe those routes as they last existed at that
-commit. Every other row in §2, §2.1 and §2.2 still names a path in the tree —
-LEGACY-005 (`shared/execution/executor.py`) among them: L6 deliberately kept
-that file, because `docs/broker-profiles/BROKER-TRANSPORT-SYMBOLS.csv` binds the
+and no longer an in-process mock order sender; L7 retired READ-008
+(`shared/llm/unified_trading_analyzer.py`) in §2.1 — the LLM analyzer facade
+fell out of the closure once the fan-out `shared/llm/__init__.py` re-export was
+removed, so the library facade that built a `KISClient` beside the KRX and DART
+collectors no longer exists. Their repository paths no longer exist, and both
+tables describe those routes as they last existed at that commit. Every other
+row in §2, §2.1 and §2.2 still names a path in the tree — LEGACY-005
+(`shared/execution/executor.py`) among them: L6 deliberately kept that file,
+because `docs/broker-profiles/BROKER-TRANSPORT-SYMBOLS.csv` binds the
 `ORDER_SENDER` symbol `OrderExecutor` to it and the symbol-grounding check
-requires the class to exist outside `tos/` and tests.
+requires the class to exist outside `tos/` and tests. L7 kept
+`shared/kis/client.py` for the same reason: the same CSV binds
+`BROKER_CLIENT_READ`'s `KISClient` to it.
 
 `docker-compose.yml` explicitly requires the futures monolith to be disabled at
 F-9 cutover, but an environment switch alone is not sufficient proof. A cutover

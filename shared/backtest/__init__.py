@@ -7,5 +7,6 @@
 (docs/plans/2026-11-07-legacy-removal-plan.md §3): `import shared.backtest` 하나로
 optimizer → backend → vbt_runner · mlflow_tracker · adapter → regime 이 따라
 들어왔고, 그 때문에 `import shared.backtest` 가 vectorbt 유무에 민감했다. 지금은
-`__init__` 이 아무것도 import 하지 않으므로 그 민감도 자체가 없다.
+`__init__` 이 아무것도 import 하지 않고, 그 모듈들도 폐포 밖이라 같이 사라졌다 —
+저장소에 vectorbt 를 import 하는 코드는 0 이다.
 """

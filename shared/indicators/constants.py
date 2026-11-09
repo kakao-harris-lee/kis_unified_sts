@@ -14,7 +14,9 @@ from __future__ import annotations
 # - ``StreamingIndicatorResolver`` ``get_recent_candles(limit=...)``
 #   (shared/indicators/resolver.py) — the ``ohlcv`` window handed to
 #   builder_v1 strategies.
-# - ``BuilderCondition.window`` validation (shared/strategy_builder/schema.py)
-#   — a percentile window larger than this could fire in backtest but NEVER
-#   live (permanent missing-data), a silent parity trap.
+# (``BuilderCondition.window`` validation in shared/strategy_builder/schema.py
+#  was a third consumer — a percentile window larger than this could fire in
+#  backtest but NEVER live, a silent parity trap. That package fell outside the
+#  import closure and went in the legacy removal L7,
+#  docs/plans/2026-11-07-legacy-removal-plan.md §3.)
 LIVE_CANDLE_HISTORY_MAXLEN = 240

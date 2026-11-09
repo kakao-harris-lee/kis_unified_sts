@@ -6,23 +6,21 @@ These tests lock each consumer to the canonical SMA-of-True-Range value computed
 *independently here*, so the migration is verified non-circularly and cannot
 silently drift from the standalone-ATR convention every consumer used before.
 
-Three consumers are left: the fourth, ``shared/strategy/entry/trix_golden.py``,
-was deleted with the rest of the legacy entry strategies in L6
-(docs/plans/2026-11-07-legacy-removal-plan.md §3), and its pin went with it.
+One consumer is left --- ``IndicatorCalculationMixin``. The other three went
+with the legacy removal and their pins went with them: ``shared/strategy/entry/
+trix_golden.py`` in L6, ``shared/llm/stock_screening.py::calc_atr_pct`` and
+``shared/regime/adaptive_detector.py::_calc_atr`` in L7 (both outside the new
+import closure --- docs/plans/2026-11-07-legacy-removal-plan.md §3).
 """
 
 from __future__ import annotations
 
 import math
 
-import numpy as np
-import pandas as pd
 import pytest
 
 from shared.indicators.streaming.calculations import IndicatorCalculationMixin
 from shared.indicators.streaming.candles import Candle
-from shared.llm.stock_screening import calc_atr_pct
-from shared.regime.adaptive_detector import AdaptiveRegimeDetector
 
 _PERIOD = 14
 
@@ -87,35 +85,8 @@ def test_runtime_calc_atr_normalized_is_raw_over_close() -> None:
     assert norm == pytest.approx(raw / (closes[-1] + 1e-10), abs=1e-12)
 
 
-def test_llm_calc_atr_pct_is_canonical_fraction() -> None:
-    highs, lows, closes = _ohlc()
-    df = pd.DataFrame({"고가": highs, "저가": lows, "종가": closes})
-    expected = _expected_atr_sma(highs, lows, closes, _PERIOD) / closes[-1]
-    assert calc_atr_pct(df, _PERIOD) == pytest.approx(expected, abs=1e-9)
-
-
-def test_regime_calc_atr_is_canonical_sma() -> None:
-    """Phase 1b: the regime detector's ATR delegates to the canonical SMA ATR.
-
-    The detector gates on ``len(df) >= min_bars (50) > period + 1``, so this
-    (steady-state) equality is what the live-but-dormant detector actually sees.
-    """
-    highs, lows, closes = _ohlc()
-    expected = _expected_atr_sma(highs, lows, closes, _PERIOD)
-    got = AdaptiveRegimeDetector()._calc_atr(
-        np.asarray(highs), np.asarray(lows), np.asarray(closes), period=_PERIOD
-    )
-    assert got == pytest.approx(expected, abs=1e-9)
-
-
 def test_atr_consumers_insufficient_data_return_zero() -> None:
     highs, lows, closes = _ohlc(n=5)  # < period + 1
     candles = _candles(highs, lows, closes)
     assert IndicatorCalculationMixin._calc_atr_raw(candles, _PERIOD) == 0.0
     assert IndicatorCalculationMixin._calc_atr_normalized(candles, _PERIOD) == 0.0
-    assert (
-        calc_atr_pct(
-            pd.DataFrame({"고가": highs, "저가": lows, "종가": closes}), _PERIOD
-        )
-        == 0.0
-    )
