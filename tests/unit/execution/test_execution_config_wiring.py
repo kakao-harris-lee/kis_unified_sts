@@ -3,10 +3,10 @@
 ``OrderExecutor`` builds a rate limiter only when ``redis_url`` is set. Two
 runtime paths passed none and therefore ran completely unpaced:
 
-* ``services/order_router/main.py`` — the LIVE futures order path, built from
-  ``config/execution.yaml::execution`` which carries no ``redis_url``;
-* ``shared/execution/mock_mirror.py`` — mirrors every stock paper entry/exit to
-  the KIS mock account.
+``services/order_router/main.py`` — the LIVE futures order path, built from
+``config/execution.yaml::execution`` which carries no ``redis_url`` — was one;
+``shared/execution/mock_mirror.py`` was the other. Both are gone (L6), and what
+remains pinned here is the wiring rule itself.
 
 Compounding it, ``execution.yaml`` spells the pacing limit ``orders_per_second``
 while the model field is ``requests_per_second``; Pydantic's default
@@ -45,33 +45,6 @@ def test_no_redis_url_still_means_no_limiter():
     executor = OrderExecutor(ExecutionConfig(trading_mode="PAPER"))
 
     assert executor._rate_limiter is None
-
-
-@pytest.mark.asyncio
-async def test_mock_mirror_paces_on_its_own_bucket(monkeypatch):
-    """The mirror paces its orders, and NOT out of the real path's budget.
-
-    The mirror authenticates against 모의투자 with a different key on a
-    different host, so its traffic does not consume the real account's broker
-    allowance. Sharing ``kis:ratelimit:stock`` would spend the REAL stock
-    path's tokens on MOCK traffic.
-    """
-    from shared.execution.mock_mirror import MockAccountMirror
-
-    monkeypatch.setenv("KIS_STOCK_APP_KEY", "test-key")
-    monkeypatch.setenv("KIS_STOCK_APP_SECRET", "test-secret")
-    monkeypatch.setenv("KIS_STOCK_ACCOUNT_NO", "5011064801")
-    monkeypatch.setenv("REDIS_URL", _REDIS_URL)
-
-    mirror = MockAccountMirror(asset_class="stock")
-    try:
-        assert await mirror.initialize() is True
-        assert mirror._executor._rate_limiter is not None
-        assert mirror._executor._rate_limiter.key != "kis:ratelimit:stock"
-        assert mirror._executor._rate_limiter.key == "kis:ratelimit:stock-mock-mirror"
-    finally:
-        if mirror._executor is not None:
-            await mirror._executor.cleanup()
 
 
 # ---------------------------------------------------------------------------

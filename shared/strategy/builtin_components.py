@@ -10,102 +10,13 @@ logger = logging.getLogger("shared.strategy.registry")
 
 BuiltinComponentTable = tuple[tuple[str, tuple[tuple[str, str], ...], str], ...]
 
-_BUILTIN_ENTRY_COMPONENTS: BuiltinComponentTable = (
-    (
-        "shared.strategy.entry.stochrsi_trend",
-        (("stochrsi_trend", "StochRSITrendEntry"),),
-        "StochRSITrendEntry",
-    ),
-    (
-        "shared.strategy.entry.mean_reversion",
-        (("mean_reversion", "MeanReversionEntry"),),
-        "MeanReversionEntry",
-    ),
-    (
-        "shared.strategy.entry.breakout",
-        (("breakout", "BreakoutEntry"),),
-        "BreakoutEntry",
-    ),
-    (
-        "shared.strategy.entry.opening_volume_surge",
-        (("opening_volume_surge", "OpeningVolumeSurgeEntry"),),
-        "OpeningVolumeSurgeEntry",
-    ),
-    (
-        "shared.strategy.entry.volume_accumulation",
-        (("volume_accumulation", "VolumeAccumulationBreakoutEntry"),),
-        "VolumeAccumulationBreakoutEntry",
-    ),
-    (
-        "shared.strategy.entry.trix_golden",
-        (("trix_golden", "TrixGoldenEntry"),),
-        "TrixGoldenEntry",
-    ),
-    (
-        "shared.strategy.entry.williams_r",
-        (("williams_r", "WilliamsREntry"),),
-        "WilliamsREntry",
-    ),
-    (
-        "shared.strategy.entry.macd_ema_crossover",
-        (("macd_ema_crossover", "MACDEMACrossoverEntry"),),
-        "MACDEMACrossoverEntry",
-    ),
-    (
-        "shared.strategy.entry.builder_strategy",
-        (("builder_v1", "BuilderStrategyEntry"),),
-        "BuilderStrategyEntry",
-    ),
-    (
-        "shared.strategy.entry.technical_consensus",
-        (("technical_consensus", "TechnicalConsensusEntry"),),
-        "TechnicalConsensusEntry",
-    ),
-    (
-        "shared.strategy.entry.llm_directed_indicator",
-        (("llm_directed_indicator", "LLMDirectedIndicatorEntry"),),
-        "LLMDirectedIndicatorEntry",
-    ),
-    (
-        "shared.strategy.entry.trend_pullback",
-        (("trend_pullback", "TrendPullbackEntry"),),
-        "TrendPullbackEntry",
-    ),
-    (
-        "shared.strategy.entry.momentum_breakout",
-        (("momentum_breakout", "MomentumBreakoutEntry"),),
-        "MomentumBreakoutEntry",
-    ),
-    (
-        "shared.strategy.entry.trend_continuation_vwap",
-        (("trend_continuation_vwap", "TrendContinuationVWAPEntry"),),
-        "TrendContinuationVWAPEntry",
-    ),
-    (
-        "shared.strategy.entry.daily_pullback",
-        (("daily_pullback", "DailyPullbackEntry"),),
-        "DailyPullbackEntry",
-    ),
-    (
-        "shared.strategy.entry.pattern_pullback",
-        (("pattern_pullback", "PatternPullbackEntry"),),
-        "PatternPullbackEntry",
-    ),
-    (
-        "shared.strategy.entry.setup_adapters",
-        (
-            ("setup_a_gap_reversion", "SetupAEntryAdapter"),
-            ("setup_c_event_reaction", "SetupCEntryAdapter"),
-            ("setup_d_vwap_reversion", "SetupDEntryAdapter"),
-        ),
-        "Setup adapters (SetupAEntryAdapter, SetupCEntryAdapter, SetupDEntryAdapter)",
-    ),
-    (
-        "shared.strategy.entry.vr_composite",
-        (("vr_composite", "VRCompositeEntry"),),
-        "VRCompositeEntry",
-    ),
-)
+#: Entry components are EMPTY since the legacy-removal step L6: every
+#: ``shared.strategy.entry.*`` module was outside the surviving import closure
+#: and was deleted (docs/plans/2026-11-07-legacy-removal-plan.md §3). The table
+#: and its loader stay because ``register_builtin_components`` is still the one
+#: place a component is wired, and ``EntryRegistry`` is still read by
+#: ``StrategyFactory``; L7 measures whether that whole path can go.
+_BUILTIN_ENTRY_COMPONENTS: BuiltinComponentTable = ()
 
 _BUILTIN_EXIT_COMPONENTS: BuiltinComponentTable = (
     (
@@ -119,34 +30,9 @@ _BUILTIN_EXIT_COMPONENTS: BuiltinComponentTable = (
         "MomentumDecayExit",
     ),
     (
-        "shared.strategy.exit.builder_strategy_exit",
-        (("builder_v1_exit", "BuilderStrategyExit"),),
-        "BuilderStrategyExit",
-    ),
-    (
         "shared.strategy.exit.trix_golden_exit",
         (("trix_golden_exit", "TrixGoldenExit"),),
         "TrixGoldenExit",
-    ),
-    (
-        "shared.strategy.exit.williams_r_exit",
-        (("williams_r_exit", "WilliamsRExit"),),
-        "WilliamsRExit",
-    ),
-    (
-        "shared.strategy.exit.llm_directed_indicator_exit",
-        (("llm_directed_indicator_exit", "LLMDirectedIndicatorExit"),),
-        "LLMDirectedIndicatorExit",
-    ),
-    (
-        "shared.strategy.exit.mean_reversion_exit",
-        (("mean_reversion_exit", "MeanReversionExit"),),
-        "MeanReversionExit",
-    ),
-    (
-        "shared.strategy.exit.atr_dynamic",
-        (("atr_dynamic", "ATRDynamicExit"),),
-        "ATRDynamicExit",
     ),
     (
         "shared.strategy.exit.setup_target_exit",
@@ -154,24 +40,9 @@ _BUILTIN_EXIT_COMPONENTS: BuiltinComponentTable = (
         "SetupTargetExit",
     ),
     (
-        "shared.strategy.exit.track_a_exit",
-        (("track_a_exit", "TrackAExit"),),
-        "TrackAExit",
-    ),
-    (
-        "shared.strategy.exit.chandelier_exit",
-        (("chandelier_exit", "ChandelierExit"),),
-        "ChandelierExit",
-    ),
-    (
         "shared.strategy.exit.technical_consensus_exit",
         (("technical_consensus_exit", "TechnicalConsensusExit"),),
         "TechnicalConsensusExit",
-    ),
-    (
-        "shared.strategy.exit.vr_composite_exit",
-        (("vr_composite_exit", "VRCompositeExit"),),
-        "VRCompositeExit",
     ),
 )
 
@@ -188,11 +59,6 @@ _BUILTIN_SIZER_COMPONENTS: BuiltinComponentTable = (
             ("risk_based", "RiskBasedSizer"),
         ),
         "Position sizers",
-    ),
-    (
-        "shared.strategy.position.llm_adaptive_sizer",
-        (("llm_adaptive", "LLMAdaptiveSizer"),),
-        "LLMAdaptiveSizer",
     ),
 )
 

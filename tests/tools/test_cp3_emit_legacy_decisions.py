@@ -1330,13 +1330,19 @@ def test_the_units_table_cannot_rot_behind_the_projection_table() -> None:
 # ---------------------------------------------------------------------------
 
 
-#: Paths a B3 declared difference cites that the legacy-removal L2 step deletes
-#: (``docs/plans/2026-11-07-legacy-removal-plan.md``).  The declaration text is
-#: part of B3's output and stays byte-identical, so the citation outlives the
-#: file: the source last existed at tag ``legacy-final``, and that is where this
-#: test reads it instead of the working tree.  A cited path that is simply gone
+#: Paths a B3 declared difference cites that the legacy removal deletes
+#: (``docs/plans/2026-11-07-legacy-removal-plan.md``; L2 for the orchestrator,
+#: L6 for the Setup D entry adapter).  The declaration text is part of B3's
+#: output and stays byte-identical, so the citation outlives the file: the
+#: source last existed at tag ``legacy-final``, and that is where this test
+#: reads it instead of the working tree.  A cited path that is simply gone
 #: and is NOT listed here is still a failure.
-_RETIRED_AT_LEGACY_FINAL = frozenset({"services/trading/orchestrator.py"})
+_RETIRED_AT_LEGACY_FINAL = frozenset(
+    {
+        "services/trading/orchestrator.py",
+        "shared/strategy/entry/setup_d_adapter.py",
+    }
+)
 
 
 def _assert_cited_source_defines(relative: str, symbol: str) -> None:
@@ -1386,16 +1392,16 @@ def test_the_new_declared_differences_cite_code_that_exists(
     )
     assert "UPPER BOUND" in declared["L10"]["note"]
 
-    adapter = (
-        produce_fields.REPO_ROOT
-        / "shared"
-        / "strategy"
-        / "entry"
-        / "setup_d_adapter.py"
-    ).read_text(encoding="utf-8")
-    assert '"no_market_context"' in adapter
-    assert '"regime_gate_blocked"' in adapter
-    assert "_apply_regime_gate" in adapter
+    # Same treatment as the orchestrator above: L6 deleted the adapter, so the
+    # three symbols L11 names are read from the `legacy-final` blob instead of
+    # the working tree.  This was the one citation that read a file by hand
+    # rather than through the retirement-aware helper.
+    for symbol in (
+        '"no_market_context"',
+        '"regime_gate_blocked"',
+        "_apply_regime_gate",
+    ):
+        _assert_cited_source_defines("shared/strategy/entry/setup_d_adapter.py", symbol)
     assert declared["L11"]["value"]["regime_gate_enabled_in_yaml"] is False
 
     assert "atr_90th_percentile" in declared["L12"]["note"]

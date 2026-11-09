@@ -557,10 +557,9 @@ def build_volatility_reference_provider(
     """Build the filter-side reader for the published reference.
 
     ``RiskFilterLayer.evaluate`` is synchronous, so the reader uses a sync
-    Redis client created lazily on first use — the identical pattern
-    :class:`~shared.risk.filters.margin_gate.MarginGateFilter` and
-    :class:`~shared.risk.filters.portfolio_mdd.PortfolioMddFilter` use.  It only
-    ever reads; the publisher owns every key.
+    Redis client created lazily on first use — the identical pattern the
+    deleted ``shared.risk.filters`` gates used.  It only ever reads; the
+    publisher owns every key.
 
     Every failure mode — Redis down, absent field, corrupt JSON, stale
     timestamp — resolves to ``None``, which the filter treats as "skip, with a

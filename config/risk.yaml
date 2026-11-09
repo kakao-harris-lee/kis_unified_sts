@@ -1,9 +1,9 @@
 risk:
   # F-9 Gate 1 gap G4 (2026-09-10): MDD 필터(Daily/Weekly)의 분모를
   # LeverageFilter · 선물 증거금 읽기 모델과 **같은 값**으로 통일한다.
-  # 이 값의 유일한 소비처는 shared/risk/layer.py:246,250 (DailyMDDFilter /
-  # WeeklyMDDFilter) 이며 사이징 경로는 쓰지 않는다(모놀리식은
-  # config/risk_management.yaml::RiskConfig 를 쓴다).
+  # 이 값의 유일한 소비처였던 shared/risk/layer.py (DailyMDDFilter /
+  # WeeklyMDDFilter) 는 레거시 제거 L6 으로 사라졌다. 사이징 경로는 이 값을
+  # 쓰지 않았다(모놀리식은 config/risk_management.yaml::RiskConfig 를 썼다).
   # 이전 값 5,000,000원 × 3% = 150,000원 한도라, 정상 크기 kospi200 1계약
   # stop 1회(2026-09-10 −588,839원)로 섀도 체인이 당일 락아웃되어
   # orchestrator 재진입(당일 11건)을 재현하지 못했다.
@@ -70,12 +70,12 @@ risk:
   # 선물 전략 3종(config/strategies/futures/{setup_a_gap_reversion,
   # setup_c_event_reaction,setup_d_vwap_reversion}.yaml) 중 앞의 둘은
   # position.params 에 max_positions 를 지정하지 않아
-  # shared/strategy/position/llm_adaptive_sizer.py:152 의 기본값 5 를 쓰고,
+  # shared/strategy/position/llm_adaptive_sizer.py(L6 에서 삭제)의 기본값 5 를 썼고,
   # setup_d 는 fixed 사이저로 setup_d_vwap_reversion.yaml:147 에서 1 을 명시
   # — 5+5+1=11. 이 값은 활성 전략 구성이 바뀌면 같이 재측정해야 한다(자동
   # 동기화 없음). 이 11은 FUTURES_TRADING_STRATEGY 가 비어있다고 가정한다
-  # (docker-compose.yml:166 기본값 빈 문자열 ⇒ StrategyManager가 enabled:true인
-  # 선물 전략 전부를 로드— shared/strategy/manager.py:309-325); 그
+  # (기본값 빈 문자열 ⇒ StrategyManager가 enabled:true인 선물 전략 전부를
+  # 로드 — shared/strategy/manager.py, L6 에서 삭제); 그
   # 변수로 전략을 하나로 고정하면 모놀리식 캡은 그 전략 하나의 max_positions로
   # 줄어든다. max_total_positions 은 이번 동등성 범위 밖 — 손대지 않음.
   concurrent_positions:

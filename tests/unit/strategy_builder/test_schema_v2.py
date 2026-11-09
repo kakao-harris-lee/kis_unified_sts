@@ -212,7 +212,7 @@ def test_validate_exit_primitive_unknown_name_lists_available() -> None:
     assert error is not None
     assert "not_a_real_exit" in error
     assert "Available" in error
-    assert "atr_dynamic" in error
+    assert "momentum_decay" in error
 
 
 def test_validate_exit_primitive_rejects_self_reference() -> None:
@@ -223,7 +223,7 @@ def test_validate_exit_primitive_rejects_self_reference() -> None:
 
 
 def test_validate_exit_primitive_accepts_registered_primitive() -> None:
-    state = _state(exit_primitive=ExitPrimitiveRef(primitive="atr_dynamic"))
+    state = _state(exit_primitive=ExitPrimitiveRef(primitive="momentum_decay"))
     assert validate_exit_primitive(state) is None
 
 
@@ -246,14 +246,17 @@ def test_validate_exit_primitive_allows_three_stage_for_stock() -> None:
 
 
 def test_validate_exit_primitive_rejects_uncataloged_registry_exit() -> None:
-    # track_a_exit is a real ExitRegistry component but deliberately NOT in
-    # the builder catalog (its default eod_close would violate the "no blanket
-    # stock EOD liquidation" rule). The catalog is an allow-list: registered
-    # but uncataloged names must be rejected with an actionable message.
-    state = _state(exit_primitive=ExitPrimitiveRef(primitive="track_a_exit"))
+    # trix_golden_exit is a real ExitRegistry component but deliberately NOT in
+    # the builder catalog. The catalog is an allow-list: registered but
+    # uncataloged names must be rejected with an actionable message. This was
+    # track_a_exit until L6 deleted that component
+    # (docs/plans/2026-11-07-legacy-removal-plan.md §3) — a name that is no
+    # longer registered would take the "unknown exit primitive" branch instead
+    # and stop testing the allow-list.
+    state = _state(exit_primitive=ExitPrimitiveRef(primitive="trix_golden_exit"))
     error = validate_exit_primitive(state)
     assert error is not None
-    assert "track_a_exit" in error
+    assert "trix_golden_exit" in error
     assert "not exposed to the builder" in error
     assert "catalog entry" in error
 
@@ -262,10 +265,6 @@ def test_validate_exit_primitive_rejects_uncataloged_registry_exit() -> None:
     ("primitive", "asset_class"),
     [
         ("three_stage", "stock"),
-        ("atr_dynamic", "stock"),
-        ("atr_dynamic", "futures"),
-        ("chandelier_exit", "stock"),
-        ("chandelier_exit", "futures"),
         ("momentum_decay", "stock"),
         ("momentum_decay", "futures"),
         ("setup_target_exit", "futures"),
@@ -353,7 +352,10 @@ def test_capabilities_expose_v2_vocabulary() -> None:
     primitives = {primitive.id: primitive for primitive in capabilities.exit_primitives}
     assert "three_stage" in primitives
     assert primitives["three_stage"].asset_classes == ["stock"]
-    assert "atr_dynamic" in primitives
-    assert set(primitives["atr_dynamic"].asset_classes) == {"stock", "futures"}
+    # momentum_decay carries no asset_classes key, which the catalog reads as
+    # "both". atr_dynamic used to stand here; L6 deleted its component and the
+    # catalog entry with it.
+    assert "momentum_decay" in primitives
+    assert set(primitives["momentum_decay"].asset_classes) == {"stock", "futures"}
     assert "regime_gate" in capabilities.gate_fields
     assert "cooldown_seconds" in capabilities.gate_fields

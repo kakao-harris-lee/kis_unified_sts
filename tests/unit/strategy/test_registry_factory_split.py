@@ -46,6 +46,11 @@ def test_builtin_components_module_exports_registry_facade_registration() -> Non
 
     builtin_module.register_builtin_components()
 
-    assert EntryRegistry.is_registered("mean_reversion")
+    # No entry assertion: L6 deleted every `shared.strategy.entry.*` module, so
+    # the entry table is empty by design and
+    # tests/unit/strategy/test_registry_builtin_components.py pins that
+    # emptiness. What this test is about is that the facade call reaches all
+    # three registries, which the exit and sizer rosters still show.
+    assert not EntryRegistry.list_all()
     assert ExitRegistry.is_registered("three_stage")
     assert SizerRegistry.is_registered("fixed")

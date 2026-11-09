@@ -1,10 +1,12 @@
 ## Live-mode futures configuration — Phase 5 Task 5
 ##
-## Consumed by `shared/execution/live_mode_guard.py::LiveModeGuard`.
-## The order_router daemon (services/order_router/main.py) calls
-## `LiveModeGuard.is_live_suspended(redis)` BEFORE every order submission;
-## when suspended, the order is rejected and the signal is XACK'd as a
-## skip (no retry).
+## The runtime that consumed this file — `shared/execution/live_mode_guard.py`
+## and the `services/order_router` daemon that called it before every order
+## submission — was deleted by the legacy removal (L2/L6,
+## docs/plans/2026-11-07-legacy-removal-plan.md). The file stays because
+## `tools/broker_probes/common.py::assert_live_mode_not_enabled` still READS
+## `enabled` here and refuses to run an order probe while it is true: that
+## interlock is live, and deleting this file would remove it.
 ##
 ## Two independent suspend triggers, by design:
 ##   1. `enabled: false` — config-level pause (default; "off" until Phase 5

@@ -201,9 +201,9 @@ class RegimePerformanceConfig:
     redis_key_prefix: str = "regime_performance"
     redis_db: int = 1  # DB 1 is standard for this project
     # Per AGENTS.md §2.4: every Redis key MUST define a TTL. Regime stats are
-    # running aggregates that span many trading days, so the default matches
-    # ``RUNNING_TOTALS_TTL_SECONDS`` in ``shared/streaming/trading_state.py``
-    # (30 days). Tune via YAML if a different retention is desired.
+    # running aggregates that span many trading days, so the default is 30
+    # days — the value the deleted ``shared/streaming/trading_state.py`` used
+    # for its running totals. Tune via YAML if a different retention is desired.
     redis_ttl_seconds: int = 60 * 60 * 24 * 30  # 30 days
 
     def __post_init__(self):

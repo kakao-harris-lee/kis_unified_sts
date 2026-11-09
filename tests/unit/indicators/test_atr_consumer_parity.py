@@ -5,6 +5,10 @@ migrated four standalone ATR consumers to ``reference.ATRCalculator(mode="sma")`
 These tests lock each consumer to the canonical SMA-of-True-Range value computed
 *independently here*, so the migration is verified non-circularly and cannot
 silently drift from the standalone-ATR convention every consumer used before.
+
+Three consumers are left: the fourth, ``shared/strategy/entry/trix_golden.py``,
+was deleted with the rest of the legacy entry strategies in L6
+(docs/plans/2026-11-07-legacy-removal-plan.md §3), and its pin went with it.
 """
 
 from __future__ import annotations
@@ -19,7 +23,6 @@ from shared.indicators.streaming.calculations import IndicatorCalculationMixin
 from shared.indicators.streaming.candles import Candle
 from shared.llm.stock_screening import calc_atr_pct
 from shared.regime.adaptive_detector import AdaptiveRegimeDetector
-from shared.strategy.entry.trix_golden import TrixGoldenEntry
 
 _PERIOD = 14
 
@@ -89,15 +92,6 @@ def test_llm_calc_atr_pct_is_canonical_fraction() -> None:
     df = pd.DataFrame({"고가": highs, "저가": lows, "종가": closes})
     expected = _expected_atr_sma(highs, lows, closes, _PERIOD) / closes[-1]
     assert calc_atr_pct(df, _PERIOD) == pytest.approx(expected, abs=1e-9)
-
-
-def test_trix_calc_atr_pct_is_canonical_fraction() -> None:
-    highs, lows, closes = _ohlc()
-    df = pd.DataFrame({"high": highs, "low": lows, "close": closes})
-    expected = _expected_atr_sma(highs, lows, closes, _PERIOD) / closes[-1]
-    assert TrixGoldenEntry._calc_atr_pct(df, _PERIOD) == pytest.approx(
-        expected, abs=1e-9
-    )
 
 
 def test_regime_calc_atr_is_canonical_sma() -> None:

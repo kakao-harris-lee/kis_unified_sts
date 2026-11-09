@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 # built-in `redis.Redis(...)` default is `Retry(ExponentialWithJitterBackoff(base=1,
 # cap=10), retries=3)`, applied to connection errors (not just command errors).
 # Against an unreachable Redis, that makes a single failed acquisition take
-# ~9.6s — and `shared/strategy/gates/adapter_helper.py::acquire_infra_clients()`
-# calls this on the strategy hot path claiming "hot-path safe". These env vars
+# ~9.6s — and the deleted `shared/strategy/gates/adapter_helper.py` called this
+# on the strategy hot path claiming "hot-path safe". These env vars
 # make the connect-time behavior config-driven; defaults keep the previously
 # hardcoded socket_timeout unchanged but cut connect_timeout and disable
 # connection retries so a down Redis fails fast instead of stalling.

@@ -25,7 +25,7 @@ class RuntimeLedger(Protocol):
     """Durable runtime ledger contract.
 
     ``track_id`` tags rows with the unified-portfolio track ("A" core /
-    "B" stock / "C" futures — see ``shared.portfolio.config``). It is
+    "B" stock / "C" futures). It is
     optional everywhere: omitted (None) keeps legacy callers unchanged and
     leaves the column NULL. When None, implementations fall back to a
     ``track_id`` key in the record mapping itself.

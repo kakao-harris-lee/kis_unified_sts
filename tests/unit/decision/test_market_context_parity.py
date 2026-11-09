@@ -1,11 +1,24 @@
 """P6-d (§8-2): live-producer ↔ backtest-replay MarketContext field parity.
 
+**Setup D only, since the legacy removal L6.** The original covered Setup A/C/D;
+`shared/decision/setups/{gap_reversion,event_reaction}.py` were outside the
+surviving import closure and were deleted
+(docs/plans/2026-11-07-legacy-removal-plan.md §3), which took this whole file
+with them. It is restored narrowed to Setup D because
+:class:`shared.backtest.market_context_replay.MarketContextReplay` is what the
+CP-3 **B3 witness** replays through — B3 byte-identity pins today's numbers, but
+only this file pins the *structure*: that the replay keeps populating every
+contract field, and that the canonical builder keeps threading them. Everything
+below is the original contract with the A/C half removed; no assertion was
+weakened to make it pass.
+
 Why this file exists
 --------------------
 Every live ``MarketContext`` flows through the *canonical assembler*
 :func:`shared.decision.context.build_market_context` (both the decoupled
 ``services/decision_engine/context_provider.py`` and the orchestrator
-``shared/strategy/entry/setup_context_builder.py`` call it). The **backtest
+``shared/strategy/entry/setup_context_builder.py`` called it — both deleted in
+L6; the builder itself survives as the contract's other side). The **backtest
 replay** :class:`shared.backtest.market_context_replay.MarketContextReplay`
 does NOT — it constructs ``MarketContext(...)`` directly, computing each field
 from bar data.
@@ -13,23 +26,26 @@ from bar data.
 That bypass is the parity hazard behind #533/#537: a field the replay computes
 (``last_15min_high``/``last_15min_low``) was silently defaulted on the live side
 to ``current_price``, collapsing Setup C's breakout range so it could NEVER
-fire live while the replay happily produced breakouts (Setup D also fades a
-15-min range, but self-computes it from closes and does NOT read
-``ctx.last_15min_*`` — see ``_SETUP_READ_FIELDS`` below). The pre-existing
-``tests/unit/strategy/test_setup_c_15min_range_wiring.py`` locks that ONE field
-pair through the live engine; this file adds the *structural* contract so the
-NEXT field added to one producer but not the other fails loudly, not silently.
+fire live while the replay happily produced breakouts. Setup C is gone, and
+Setup D self-computes its 15-min range from closes rather than reading
+``ctx.last_15min_*`` — so that pair is no longer in ``_SETUP_READ_FIELDS``. The
+replay still *populates* it, and the PRIOR-15 off-by-one is still locked below,
+because the replay's derivation rules are what B3 replays. This file is the
+*structural* contract: the NEXT field added to one producer but not the other
+fails loudly, not silently.
 
 The contract, in three layers:
   (a) FIELD-SET completeness — both producers must name every
       :data:`MARKET_CONTEXT_FIELDS` field explicitly (builder via its signature,
       replay via its constructor keywords). A new dataclass field breaks this
       until both sides are updated.
-  (b) SETUP-READ value parity — for one synthetic bar, the fields Setup A/C/D
-      actually consume are computed by the replay and, independently, by this
+  (b) SETUP-READ value parity — for one synthetic bar, the fields Setup D
+      actually consumes are computed by the replay and, independently, by this
       test; feeding the test's values through the canonical builder must yield an
-      identical MarketContext. Locks the ``last_15min`` PRIOR-15 off-by-one, the
-      session-VWAP formula, ``today_open``/``prev_close`` session boundaries.
+      identical MarketContext. The replay-derivation half additionally locks the
+      ``last_15min`` PRIOR-15 off-by-one and the ``today_open``/``prev_close``
+      session boundaries — fields Setup D does not read, but the replay still
+      computes and B3 still replays.
   (c) DEFAULT-POLICY contract — the remaining F-4 builder defaults (spread→1.0,
       atr_90th→atr_14*1.5) are pinned against the replay's behaviour:
       ``current_spread_ticks`` is a SHARED constant (1.0) on both sides;
@@ -64,7 +80,7 @@ from shared.decision.context import (
     MARKET_CONTEXT_FIELDS,
     build_market_context,
 )
-from shared.decision.setups import event_reaction, gap_reversion, vwap_reversion
+from shared.decision.setups import vwap_reversion
 from shared.execution.contract_spec import ContractSpec
 
 KST = ZoneInfo("Asia/Seoul")
@@ -73,31 +89,27 @@ SYMBOL = "A05603"
 # ---------------------------------------------------------------------------
 # Setup-read field contract
 # ---------------------------------------------------------------------------
-# The MarketContext fields Setup A / C / D actually consume (verified below by
-# AST-extracting every ``ctx.<attr>`` access from the three setup modules).
-# Method accesses expand to their backing fields:
+# The MarketContext fields Setup D actually consumes (verified below by
+# AST-extracting every ``ctx.<attr>`` access from the setup module). Method
+# accesses expand to their backing fields:
 #   minutes_since_open() / market_open_time() -> now, market_open_hour/minute
-#   find_recent_event()                       -> scheduled_events, now
 #
-# Fields absent here are the F-4 "unused" trio that no setup reads
-# (atr_90th_percentile, current_spread_ticks) plus vwap for A/C — locked
-# independently by tests/unit/strategy/test_setup_ac_field_invariance.py. vwap
-# IS read by Setup D, so it is in the parity set.
+# Eight contract fields are deliberately absent. ``atr_90th_percentile`` and
+# ``current_spread_ticks`` are the F-4 pair no setup ever read. The other six
+# (``prev_close``, ``today_open``, ``last_15min_high``, ``last_15min_low``,
+# ``macro_overnight``, ``scheduled_events``) were read by Setup A/C, which L6
+# deleted. They stay in the CONTRACT — the replay must still populate them and
+# layer (a) checks that — they are just no longer consumed by a setup, so there
+# is no live↔replay value parity left to assert for them.
 _SETUP_READ_FIELDS: frozenset[str] = frozenset(
     {
         "now",
         "symbol",
         "current_price",
         "atr_14",
-        "prev_close",  # Setup A gap
-        "today_open",  # Setup A gap
-        "last_15min_high",  # Setup C breakout range (Setup D self-computes its own)
-        "last_15min_low",  # Setup C breakout range (Setup D self-computes its own)
         "vwap",  # Setup D VWAP-stretch (z = (price - vwap) / atr)
-        "macro_overnight",  # Setup A overnight bias
-        "scheduled_events",  # Setup C event window
-        "market_open_hour",  # all: minutes_since_open()
-        "market_open_minute",  # all: minutes_since_open()
+        "market_open_hour",  # minutes_since_open()
+        "market_open_minute",  # minutes_since_open()
     }
 )
 
@@ -110,14 +122,16 @@ _METHOD_BACKING_FIELDS: dict[str, set[str]] = {
 
 
 def _ctx_attrs_read_by_setups() -> set[str]:
-    """AST-extract every ``ctx.<attr>`` / ``context.<attr>`` name from the setups.
+    """AST-extract every ``ctx.<attr>`` / ``context.<attr>`` name from Setup D.
 
-    This makes ``_SETUP_READ_FIELDS`` self-validating: if a setup starts reading a
-    new MarketContext field, the guard test below fails until that field is added
-    to the parity set (forcing an explicit decision, not a silent gap).
+    This makes ``_SETUP_READ_FIELDS`` self-validating: if the setup starts reading
+    a new MarketContext field, the guard test below fails until that field is
+    added to the parity set (forcing an explicit decision, not a silent gap). The
+    loop keeps its tuple shape — it scanned Setup A/C/D before L6 deleted the
+    first two, and a future setup is added here.
     """
     attrs: set[str] = set()
-    for mod in (gap_reversion, event_reaction, vwap_reversion):
+    for mod in (vwap_reversion,):
         tree = ast.parse(inspect.getsource(mod))
         for node in ast.walk(tree):
             if (
@@ -150,7 +164,7 @@ def _ctx_alias_bindings() -> list[str]:
     """
     alias_names = {"ctx", "context"}
     bindings: list[str] = []
-    for mod in (gap_reversion, event_reaction, vwap_reversion):
+    for mod in (vwap_reversion,):
         mod_name = mod.__name__.rsplit(".", 1)[-1]
         tree = ast.parse(inspect.getsource(mod))
         for node in ast.walk(tree):
@@ -272,7 +286,7 @@ def test_builder_signature_threads_every_contract_field() -> None:
 
 
 def test_setups_do_not_alias_the_context() -> None:
-    """Setups must read ``ctx.<field>`` directly — never alias/stash/forward ctx (F2).
+    """Setup D must read ``ctx.<field>`` directly — never alias/stash/forward ctx (F2).
 
     The field-coverage guard (``test_setup_read_field_list_covers_all_setup_consumption``)
     AST-scans for bare ``ctx.<attr>`` reads. If a setup aliased the context
@@ -311,9 +325,9 @@ def test_setup_read_fields_are_a_subset_of_the_contract() -> None:
 
 
 def test_setup_read_field_list_covers_all_setup_consumption() -> None:
-    """AST proof that ``_SETUP_READ_FIELDS`` covers what A/C/D consume.
+    """AST proof that ``_SETUP_READ_FIELDS`` covers what Setup D consumes.
 
-    Guards against a setup silently starting to read a MarketContext field that
+    Guards against the setup silently starting to read a MarketContext field that
     the parity value-check (below) does not yet cover.
     """
     contract = set(MARKET_CONTEXT_FIELDS)
@@ -432,12 +446,18 @@ def _expected_session_vwap(rows: list[dict], idx: int, sess_start: int) -> float
 # ---------------------------------------------------------------------------
 
 
-def test_replay_derives_setup_read_fields_per_contract() -> None:
-    """Replay computes each setup-read field exactly as an independent reference.
+def test_replay_derives_its_fields_per_contract() -> None:
+    """Replay computes each field exactly as an independent reference.
 
-    Locks the field-derivation RULES that the live path must match: the
-    ``last_15min`` PRIOR-15 (current-bar-excluded) window, the session-VWAP
-    formula, and the ``today_open`` / ``prev_close`` session boundaries.
+    Locks the replay's field-derivation RULES: the ``last_15min`` PRIOR-15
+    (current-bar-excluded) window, the session-VWAP formula, and the
+    ``today_open`` / ``prev_close`` session boundaries.
+
+    Deliberately wider than ``_SETUP_READ_FIELDS``: Setup D reads only
+    ``current_price`` and ``vwap`` of these, but the replay still derives the
+    others and the CP-3 B3 witness replays this exact code, so a change to any of
+    these rules changes B3's parent artifact. The #533/#537 off-by-one lock below
+    is the reason this half was worth restoring at all.
     """
     rows = _two_session_rows()
     ctx = _replay_ctx_at(rows, _PICK)

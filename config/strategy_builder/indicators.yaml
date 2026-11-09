@@ -37,14 +37,13 @@ strategy_builder:
       name_ko: "3단계 청산"
       description: "생존→본전→극대화 3단계 상태머신 청산 (주식 전용 운영 규칙)"
       asset_classes: [stock]
-    - id: atr_dynamic
-      name: ATR Dynamic Exit
-      name_ko: "ATR 동적 청산"
-      description: "ATR 배수 기반 동적 손절/트레일링 청산"
-    - id: chandelier_exit
-      name: Chandelier Exit
-      name_ko: "샹들리에 청산"
-      description: "최고가 대비 ATR 배수 트레일링 청산"
+    # atr_dynamic and chandelier_exit were here until L6
+    # (docs/plans/2026-11-07-legacy-removal-plan.md §3) deleted
+    # shared/strategy/exit/{atr_dynamic,chandelier_exit}.py. The registry is the
+    # validation SoT and this list must stay a SUBSET of it — a catalog entry
+    # whose component no longer exists passes schema validation and then fails
+    # at factory create, which is exactly what
+    # tests/unit/strategy_builder/test_schema_v2.py pins.
     - id: momentum_decay
       name: Momentum Decay Exit
       name_ko: "모멘텀 소진 청산"

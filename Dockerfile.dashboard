@@ -1,8 +1,8 @@
 # Dockerfile.dashboard
-# API-only FastAPI service. The UI (Cockpit, Positions, Signals, Trades,
-# Strategy Lab, Strategy Builder, Strategy Execute) lives in the Next.js
-# app at strategy-builder-ui:3100 (see Dockerfile.strategy_builder_ui),
-# routed by Caddy through DASHBOARD_HOST_PORT.
+# API-only FastAPI service. Its whole surface after legacy removal L4 is
+# /api/tos/*, /health and the OpenAPI docs; the operator UI (the /tos page)
+# lives in the Next.js app at strategy-builder-ui:3100 (see
+# Dockerfile.strategy_builder_ui), routed by Caddy through DASHBOARD_HOST_PORT.
 #
 # Before 2026-05-28 this image bundled a Vite SPA build stage. The Vite
 # SPA was merged into the Next.js app; the build stage is gone.
@@ -22,6 +22,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# The three distribution packages (pyproject `[tool.hatch.build.targets.wheel]
+# packages`) are copied whole: after L6 that is services/{dashboard,monitoring},
+# cli/{main,commands/tos_status} and the shared/ closure those two still need.
+# services/monitoring stays because shared/kis/{client,stock_feed}.py import
+# services.monitoring.metrics lazily, and cli/ because pyproject installs the
+# `sts` entrypoint from cli.main.
 COPY pyproject.toml README.md ./
 COPY shared/ ./shared/
 COPY services/ ./services/

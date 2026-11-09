@@ -128,10 +128,10 @@ async def test_can_use_detected_price_for_legacy_behavior():
     assert signal.metadata["trigger_price"] == pytest.approx(98.0)
 
 
-def test_setup_a_config_uses_setup_target_exit():
-    # setup_a_gap_reversion was migrated from setup_target_exit to track_a_exit
-    # (ATR trailing + crash guard + catastrophic backstop).
-    # setup_target_exit remains registered as the rollback path.
-    config = ConfigLoader.load_strategy("futures", "setup_a_gap_reversion")
+def test_setup_d_config_uses_setup_target_exit():
+    # The last futures strategy YAML in the tree. L6 deleted the others with
+    # their entry modules (docs/plans/2026-11-07-legacy-removal-plan.md §3);
+    # this one is the CP-3 B3 witness's strategy and stays.
+    config = ConfigLoader.load_strategy("futures", "setup_d_vwap_reversion")
 
     assert config["strategy"]["exit"]["type"] == "setup_target_exit"

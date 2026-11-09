@@ -7,8 +7,6 @@ Usage:
 
     publisher = StreamPublisher("PREDICTION_STREAM")
     publisher.publish({"symbol": "101V3000", "up_prob": 0.85})
-
-Consumer-group daemons subclass ``shared.streaming.stage.StreamStage``.
 """
 
 from shared.streaming.client import RedisClient
