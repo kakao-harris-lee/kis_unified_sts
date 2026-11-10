@@ -56,7 +56,6 @@ class TestSomething:
 
 ## conftest 위생 (`tests/conftest.py`)
 - 싱글톤/레지스트리 리셋 fixture(ConfigLoader, Prometheus REGISTRY) 유지.
-- MLflow는 로컬 sqlite로 고정(override). 외부 서버 의존 금지.
 - xdist 워커별 Hypothesis 저장 디렉터리 분리.
 - 새 전역 env 강제는 신중히 — 원인이 `.env`면 conftest 땜질보다 `.env` 미생성이 근본 수정.
 

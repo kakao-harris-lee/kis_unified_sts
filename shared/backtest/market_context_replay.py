@@ -155,7 +155,7 @@ class MarketContextReplay:
                     f"(max single-bar move {max_ret:.1%}). Typical clean "
                     f"KOSPI200 futures data is <0.5%. Backtest numbers on "
                     f"this data are unreliable; regenerate the Parquet dataset "
-                    f"or filter corrupted bars before trusting Optuna/WF "
+                    f"or filter corrupted bars before trusting walk-forward "
                     f"results."
                 )
                 log.warning(msg)

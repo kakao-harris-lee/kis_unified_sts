@@ -110,7 +110,7 @@ jobs:
 
       - &install
         name: Install minimal dependencies
-        # Deliberately minimal — the heavy runtime stack (talib/mlflow/...) is
+        # Deliberately minimal — the heavy runtime stack (talib/pandas/...) is
         # NOT needed:
         #   * tos + its 4 pinned third parties + pytest/hypothesis, via the
         #     tos package's own [test] extra.
