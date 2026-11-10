@@ -1,7 +1,7 @@
 """Secrets management - load from environment variables.
 
 환경변수 구조:
-- 공통: REDIS_*, MLFLOW_*
+- 공통: REDIS_*
 - 주식: KIS_STOCK_*, TELEGRAM_STOCK_*
 - 선물: KIS_FUTURES_*, TELEGRAM_FUTURES_*
 - LLM: OPENAI_*, KRX_*, TELEGRAM_BRIEFING_*

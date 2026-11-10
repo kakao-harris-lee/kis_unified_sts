@@ -157,20 +157,6 @@ TOKEN_CACHE_SNAPSHOT = hermetic_env.snapshot_token_caches(
     hermetic_env.token_cache_witnesses(project_root)
 )
 
-# Cap MLflow's HTTP retry budget for tests so dashboard tests don't spend
-# 4+ minutes retrying against an unreachable tracking server. Default is 7
-# retries with exponential backoff. Set BEFORE any test imports MLflow so
-# the env var is read at client construction.
-os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "1")
-os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "5")
-
-# Pin MLflow to local sqlite for the whole test session. .env sets
-# MLFLOW_TRACKING_URI to the docker mlflow server (http://localhost:5000), and
-# clients now honor it (resolve_tracking_uri) — but the suite must never depend
-# on that server running. Override (not setdefault) so the .env value can't leak
-# in; individual tests still pass explicit throwaway URIs where needed.
-os.environ["MLFLOW_TRACKING_URI"] = "sqlite:///mlflow.db"
-
 # --- pytest-xdist worker isolation -------------------------------------------
 # xdist workers are separate processes, so in-process singletons are already
 # isolated per worker. The remaining cross-worker hazard among the *parallel*
