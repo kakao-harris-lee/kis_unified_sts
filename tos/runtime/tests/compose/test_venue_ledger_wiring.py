@@ -75,7 +75,7 @@ def test_without_the_key_the_boot_has_no_ledger_and_the_old_witness(
 ) -> None:
     """No key ⇒ no ledger file, no venue witness, and the store-derived one still wired.
 
-    This is the control for every test below, and since the 2026-11-16 switch-on it is the
+    This is the control for every test below, and since the #1053 switch-on it is the
     state of ONE shipped tree: ``config/tos_runtime/cp3-setup-d-stock-005930`` (kis-mock),
     where the key is refused by design. The three synthetic trees carry it — see
     :func:`test_shipped_trees_carry_exactly_the_operator_chosen_witness_key`.
@@ -320,7 +320,7 @@ def test_a_misspelled_witness_key_refuses_the_boot(
 # ===========================================================================
 
 #: Every shipped tree -> the ``witness`` value its ``finality.yaml`` must carry, or ``None``
-#: for "the key must be absent". The switch-on PR (2026-11-16, the first trading day after
+#: for "the key must be absent". The switch-on PR (#1053, the first trading day after
 #: 11-13) turned the three SYNTHETIC trees on; the stock tree is kis-mock, where the key
 #: refuses the boot by design, so "absent" there is a safety property, not an oversight.
 _SHIPPED_TREE_WITNESS: dict[str, str | None] = {
