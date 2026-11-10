@@ -295,6 +295,11 @@ _VALUE_PINS: dict[str, Any] = {
     # §29 Q3 remains an OPEN question naming no approved identifier; this opaque token asserts
     # the absence, it does not claim an approval.
     "finality.yaml::proof_recipe_id": "tos-paper-proof-recipe-bootproof-g1",
+    # #1011 P2 switch-on (2026-11-16 — the first trading day after 11-13, operator decision
+    # 2026-10-31; wiring merged OFF in #1018). Selects the independent synthetic venue-ledger
+    # witness; without it the store-derived witness declares
+    # ``independent_of_evidence_store=False`` and every capacity release is HELD.
+    "finality.yaml::witness": "synthetic_venue_ledger",
     # --- safety_envelope.yaml --------------------------------------------
     "safety_envelope.yaml::envelope.envelope_id": "tos-paper-envelope-g1",
     "safety_envelope.yaml::envelope.envelope_generation": 1,

@@ -75,9 +75,10 @@ def test_without_the_key_the_boot_has_no_ledger_and_the_old_witness(
 ) -> None:
     """No key ⇒ no ledger file, no venue witness, and the store-derived one still wired.
 
-    This is the control for every test below, and it is also the state of all four shipped
-    trees: ``config/tos_runtime/{paper,cp3-setup-d-long,cp3-setup-d-short}`` carry no
-    ``witness`` key, so merging P2 changes nothing about how they boot.
+    This is the control for every test below, and since the 2026-11-16 switch-on it is the
+    state of ONE shipped tree: ``config/tos_runtime/cp3-setup-d-stock-005930`` (kis-mock),
+    where the key is refused by design. The three synthetic trees carry it — see
+    :func:`test_shipped_trees_carry_exactly_the_operator_chosen_witness_key`.
     """
     runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
     try:
@@ -315,21 +316,29 @@ def test_a_misspelled_witness_key_refuses_the_boot(
 
 
 # ===========================================================================
-# the shipped trees stay OFF (plan §4 P2: "shipped trees are not turned on here")
+# which shipped trees are ON (plan §4 P2 "켜기", operator decision 2026-10-31)
 # ===========================================================================
 
+#: Every shipped tree -> the ``witness`` value its ``finality.yaml`` must carry, or ``None``
+#: for "the key must be absent". The switch-on PR (2026-11-16, the first trading day after
+#: 11-13) turned the three SYNTHETIC trees on; the stock tree is kis-mock, where the key
+#: refuses the boot by design, so "absent" there is a safety property, not an oversight.
+_SHIPPED_TREE_WITNESS: dict[str, str | None] = {
+    "paper": "synthetic_venue_ledger",
+    "cp3-setup-d-long": "synthetic_venue_ledger",
+    "cp3-setup-d-short": "synthetic_venue_ledger",
+    "cp3-setup-d-stock-005930": None,
+}
 
-@pytest.mark.parametrize(
-    "tree",
-    ["paper", "cp3-setup-d-long", "cp3-setup-d-short", "cp3-setup-d-stock-005930"],
-)
-def test_no_shipped_tree_carries_the_witness_key(tree: str) -> None:
-    """The deploy guard for this PR.
 
-    The resident trees boot from ``origin/main`` every morning, so a merged ON value would
-    switch the ledger on BEFORE the operator's chosen day (the first trading day after
-    11-13). This test is what makes "merging P2 changes nothing operationally" checkable
-    rather than asserted in a PR body.
+@pytest.mark.parametrize("tree", sorted(_SHIPPED_TREE_WITNESS))
+def test_shipped_trees_carry_exactly_the_operator_chosen_witness_key(tree: str) -> None:
+    """The deploy guard: a two-sided pin, not a one-sided "stays off".
+
+    The resident trees boot from ``origin/main`` every morning, so this table is what
+    actually decides which witness each tree holds tomorrow. Both directions are failures:
+    a synthetic tree losing the key seals its scope again after the first entry, and the
+    stock tree gaining it makes that tree refuse to boot at 08:53.
     """
     path = (
         Path(__file__).resolve().parents[4]
@@ -339,7 +348,14 @@ def test_no_shipped_tree_carries_the_witness_key(tree: str) -> None:
         / FINALITY_CONFIG_NAME
     )
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert "witness" not in raw, (
-        f"{tree}/{FINALITY_CONFIG_NAME} carries the venue-ledger key — the switch-on day is "
-        "the operator's, in its own PR (plan §4 P2)"
+    expected = _SHIPPED_TREE_WITNESS[tree]
+    if expected is None:
+        assert "witness" not in raw, (
+            f"{tree}/{FINALITY_CONFIG_NAME} carries the venue-ledger key — this tree reaches "
+            "a real mock broker, so the key refuses its boot (plan 2026-10-31 §3.2)"
+        )
+        return
+    assert raw.get("witness") == expected, (
+        f"{tree}/{FINALITY_CONFIG_NAME} must carry witness: {expected} — removing it puts "
+        "the tree back on the store-derived witness, which holds every capacity release"
     )

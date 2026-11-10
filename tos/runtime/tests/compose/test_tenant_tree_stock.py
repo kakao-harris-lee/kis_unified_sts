@@ -93,6 +93,11 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
         }
     ),
     "egress_coordinates.yaml": frozenset({"endpoint.value", "route_identity.value"}),
+    # #1011 P2 switch-on (2026-11-16, operator decision 2026-10-31): the three SYNTHETIC
+    # trees carry `witness: synthetic_venue_ledger`. This tree reaches a real mock broker,
+    # and the venue ledger is the SYNTHETIC venue's own record, so the key refuses the boot
+    # here by design (plan 2026-10-31 §3.2) — the absence is the safety property.
+    "finality.yaml": frozenset({"witness"}),
     "construction.yaml": frozenset({"instrument_class"}),
     "marketfeed.yaml": frozenset({"instrument_class", "unit"}),
     "aggregate_risk_policy.yaml": frozenset(
