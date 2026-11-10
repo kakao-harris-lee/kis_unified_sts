@@ -141,7 +141,7 @@ def test_an_absent_witness_key_is_the_store_derived_default(tmp_path: Path) -> N
     """No key at all ⇒ ``witness is None`` — today's behaviour, not a missing value.
 
     Concrete input: ``_VALID_RAW`` itself, which the kis-mock stock tree's ``finality.yaml``
-    matches in this respect (the three synthetic trees carry the key since the 2026-11-16
+    matches in this respect (the three synthetic trees carry the key since the #1053
     switch-on). The load must succeed and report the absence, because compose reads exactly
     this to keep ``SyntheticLedgerWitness``.
     """
