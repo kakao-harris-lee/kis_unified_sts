@@ -1,4 +1,5 @@
 """Position.profit_pct / profit_rate — close 이후 안정성 회귀 테스트."""
+
 from datetime import datetime
 
 import pytest

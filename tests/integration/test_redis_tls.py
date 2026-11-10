@@ -8,6 +8,7 @@ Run with: pytest tests/integration/test_redis_tls.py -v
 To skip these tests when Redis is unavailable:
     pytest -m "not integration"
 """
+
 import os
 
 import pytest
@@ -33,6 +34,7 @@ def redis_available():
 
     try:
         import redis
+
         r = redis.Redis.from_url(
             os.getenv("REDIS_URL", "redis://localhost:6379/1"),
             socket_timeout=1,
@@ -122,8 +124,9 @@ def test_redis_url_tls_false_values(clean_env, monkeypatch):
         SecretsManager.clear_cache()
 
         url = SecretsManager.redis_url()
-        assert url.startswith("redis://") and not url.startswith("rediss://"), \
-            f"TLS_ENABLED={value} should disable TLS"
+        assert url.startswith("redis://") and not url.startswith(
+            "rediss://"
+        ), f"TLS_ENABLED={value} should disable TLS"
 
 
 def test_redis_url_with_password_non_tls(clean_env, monkeypatch):
@@ -217,7 +220,9 @@ def test_redis_client_tls_settings_applied(clean_env, monkeypatch):
     from shared.streaming.client import RedisClient
 
     monkeypatch.setenv("REDIS_TLS_ENABLED", "true")
-    monkeypatch.setenv("REDIS_TLS_CERT_REQS", "none")  # Use "none" for testing without certs
+    monkeypatch.setenv(
+        "REDIS_TLS_CERT_REQS", "none"
+    )  # Use "none" for testing without certs
     monkeypatch.setenv("REDIS_HOST", os.getenv("REDIS_HOST", "localhost"))
     monkeypatch.setenv("REDIS_PORT", os.getenv("REDIS_PORT", "6379"))
     monkeypatch.setenv("REDIS_DB", "1")
@@ -234,14 +239,19 @@ def test_redis_client_tls_settings_applied(clean_env, monkeypatch):
             # If we get here, verify TLS settings were applied
             conn_kwargs = client.connection_pool.connection_kwargs
             assert conn_kwargs.get("ssl") is True, "SSL should be enabled"
-            assert conn_kwargs.get("ssl_cert_reqs") == ssl.CERT_NONE, "Should use CERT_NONE"
+            assert (
+                conn_kwargs.get("ssl_cert_reqs") == ssl.CERT_NONE
+            ), "Should use CERT_NONE"
 
         except Exception as e:
             # Connection may fail if Redis doesn't support TLS
             # That's OK - we verified the configuration was attempted
             error_str = str(e).lower()
             # These are expected errors when Redis doesn't support TLS
-            if any(kw in error_str for kw in ("ssl", "certificate", "connection", "timeout", "timed out")):
+            if any(
+                kw in error_str
+                for kw in ("ssl", "certificate", "connection", "timeout", "timed out")
+            ):
                 pytest.skip(f"Redis TLS not available in test environment: {e}")
             else:
                 raise
@@ -278,13 +288,23 @@ def test_redis_client_cert_reqs_mapping(clean_env, monkeypatch):
                 conn_kwargs = client.connection_pool.connection_kwargs
 
                 assert conn_kwargs.get("ssl") is True, "SSL should be enabled"
-                assert conn_kwargs.get("ssl_cert_reqs") == expected_const, \
-                    f"CERT_REQS={cert_reqs_str} should map to {expected_const}"
+                assert (
+                    conn_kwargs.get("ssl_cert_reqs") == expected_const
+                ), f"CERT_REQS={cert_reqs_str} should map to {expected_const}"
 
             except Exception as e:
                 # Connection may fail, that's OK - we're testing configuration
                 error_str = str(e).lower()
-                if any(kw in error_str for kw in ("ssl", "certificate", "connection", "timeout", "timed out")):
+                if any(
+                    kw in error_str
+                    for kw in (
+                        "ssl",
+                        "certificate",
+                        "connection",
+                        "timeout",
+                        "timed out",
+                    )
+                ):
                     # Expected when Redis doesn't support TLS
                     pass
                 else:
@@ -354,18 +374,33 @@ async def test_rate_limiter_tls_settings_applied(clean_env, monkeypatch, redis_u
             # Verify metrics work
             metrics = await limiter.get_metrics()
             if metrics.get("current_usage", 0) < 1:
-                pytest.skip("Redis TLS connected but usage tracking not working (TLS not truly active)")
+                pytest.skip(
+                    "Redis TLS connected but usage tracking not working (TLS not truly active)"
+                )
 
         except Exception as e:
             # Connection may fail if Redis doesn't support TLS
             error_str = str(e).lower()
-            if any(kw in error_str for kw in ("ssl", "certificate", "connection", "timeout", "timed out", "refused", "auth")):
+            if any(
+                kw in error_str
+                for kw in (
+                    "ssl",
+                    "certificate",
+                    "connection",
+                    "timeout",
+                    "timed out",
+                    "refused",
+                    "auth",
+                )
+            ):
                 pytest.skip(f"Redis TLS not available in test environment: {e}")
             else:
                 # Check if fallback limiter is working
                 metrics = await limiter.get_metrics()
                 if metrics.get("using_fallback"):
-                    pytest.skip("Rate limiter fell back to in-memory mode (Redis TLS not available)")
+                    pytest.skip(
+                        "Rate limiter fell back to in-memory mode (Redis TLS not available)"
+                    )
                 raise
     finally:
         await limiter.reset()
@@ -399,10 +434,23 @@ async def test_rate_limiter_fallback_on_tls_failure(clean_env, monkeypatch):
             # Verify we're using fallback
             metrics = await limiter.get_metrics()
             if not metrics.get("using_fallback"):
-                pytest.skip("Redis connected without TLS enforcement; fallback not triggered")
+                pytest.skip(
+                    "Redis connected without TLS enforcement; fallback not triggered"
+                )
         except Exception as e:
             error_str = str(e).lower()
-            if any(kw in error_str for kw in ("ssl", "certificate", "timeout", "timed out", "connection", "refused", "auth")):
+            if any(
+                kw in error_str
+                for kw in (
+                    "ssl",
+                    "certificate",
+                    "timeout",
+                    "timed out",
+                    "connection",
+                    "refused",
+                    "auth",
+                )
+            ):
                 pytest.skip(f"Redis TLS not available in test environment: {e}")
             raise
 
@@ -447,7 +495,18 @@ async def test_rate_limiter_url_parsing_with_tls(clean_env, monkeypatch):
 
             except Exception as e:
                 error_str = str(e).lower()
-                if any(kw in error_str for kw in ("ssl", "certificate", "timeout", "timed out", "connection", "refused", "auth")):
+                if any(
+                    kw in error_str
+                    for kw in (
+                        "ssl",
+                        "certificate",
+                        "timeout",
+                        "timed out",
+                        "connection",
+                        "refused",
+                        "auth",
+                    )
+                ):
                     pytest.skip(f"Redis TLS not available for {url}")
                 elif not should_use_tls:
                     # Non-TLS should work
@@ -526,7 +585,9 @@ async def test_backward_compatibility_existing_code(clean_env, monkeypatch, redi
 
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 @pytest.mark.asyncio
-async def test_e2e_all_redis_clients_respect_tls_disabled(clean_env, monkeypatch, redis_url):
+async def test_e2e_all_redis_clients_respect_tls_disabled(
+    clean_env, monkeypatch, redis_url
+):
     """End-to-end test: all Redis clients work with TLS disabled."""
     from shared.config.secrets import SecretsManager
     from shared.execution.rate_limiter import RedisRateLimiter

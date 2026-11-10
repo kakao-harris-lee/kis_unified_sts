@@ -265,9 +265,7 @@ class TestAsyncSessionWithTimeoutMixin:
 
                 MockTimeout.assert_called_once_with(total=15.0)
                 # Session is created with timeout and SSL connector
-                MockSession.assert_called_once_with(
-                    timeout=mock_timeout, connector=ANY
-                )
+                MockSession.assert_called_once_with(timeout=mock_timeout, connector=ANY)
 
     @pytest.mark.asyncio
     async def test_default_timeout(self):

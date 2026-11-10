@@ -25,6 +25,7 @@ from shared.kis.error_rate import ErrorRateConfig, KISApiErrorRateTracker
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_config(
     *,
     enabled: bool = True,
@@ -173,9 +174,7 @@ class TestConcurrentSafety:
         await asyncio.gather(record_n_successes(), record_n_errors())
 
         total_events = len(tracker._events)
-        assert total_events == 2 * n, (
-            f"Expected {2 * n} events, got {total_events}"
-        )
+        assert total_events == 2 * n, f"Expected {2 * n} events, got {total_events}"
 
     @pytest.mark.asyncio
     async def test_concurrent_rate_is_valid_fraction(self):

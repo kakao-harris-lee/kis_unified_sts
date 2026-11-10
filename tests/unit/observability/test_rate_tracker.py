@@ -156,7 +156,9 @@ class TestLifecycle:
     async def test_start_creates_task(self) -> None:
         tracker = _make_tracker(publish_interval_seconds=0.1)
         mock_redis = MagicMock()
-        with patch("shared.streaming.client.RedisClient.get_client", return_value=mock_redis):
+        with patch(
+            "shared.streaming.client.RedisClient.get_client", return_value=mock_redis
+        ):
             await tracker.start()
             try:
                 assert tracker._publish_task is not None
@@ -168,7 +170,9 @@ class TestLifecycle:
     async def test_start_is_idempotent(self) -> None:
         tracker = _make_tracker(publish_interval_seconds=0.1)
         mock_redis = MagicMock()
-        with patch("shared.streaming.client.RedisClient.get_client", return_value=mock_redis):
+        with patch(
+            "shared.streaming.client.RedisClient.get_client", return_value=mock_redis
+        ):
             await tracker.start()
             task_1 = tracker._publish_task
             await tracker.start()  # second call — no-op
@@ -180,7 +184,9 @@ class TestLifecycle:
     async def test_stop_cancels_task(self) -> None:
         tracker = _make_tracker(publish_interval_seconds=0.1)
         mock_redis = MagicMock()
-        with patch("shared.streaming.client.RedisClient.get_client", return_value=mock_redis):
+        with patch(
+            "shared.streaming.client.RedisClient.get_client", return_value=mock_redis
+        ):
             await tracker.start()
             assert tracker._running is True
             await tracker.stop()
@@ -191,7 +197,9 @@ class TestLifecycle:
     async def test_stop_safe_when_never_started(self) -> None:
         tracker = _make_tracker()
         mock_redis = MagicMock()
-        with patch("shared.streaming.client.RedisClient.get_client", return_value=mock_redis):
+        with patch(
+            "shared.streaming.client.RedisClient.get_client", return_value=mock_redis
+        ):
             await tracker.stop()  # must not raise
 
     @pytest.mark.asyncio
@@ -218,7 +226,9 @@ class TestRedisWrite:
         tracker.record_success()  # rate = 0.5
 
         mock_redis = MagicMock()
-        with patch("shared.streaming.client.RedisClient.get_client", return_value=mock_redis):
+        with patch(
+            "shared.streaming.client.RedisClient.get_client", return_value=mock_redis
+        ):
             await tracker._write_to_redis()
 
         mock_redis.setex.assert_called_once()
@@ -234,7 +244,9 @@ class TestRedisWrite:
         tracker.record_success()
 
         mock_redis = MagicMock()
-        with patch("shared.streaming.client.RedisClient.get_client", return_value=mock_redis):
+        with patch(
+            "shared.streaming.client.RedisClient.get_client", return_value=mock_redis
+        ):
             await tracker._write_to_redis()
 
         _, ttl, _ = mock_redis.setex.call_args[0]
@@ -247,7 +259,9 @@ class TestRedisWrite:
         tracker.record_success()
 
         mock_redis = MagicMock()
-        with patch("shared.streaming.client.RedisClient.get_client", return_value=mock_redis):
+        with patch(
+            "shared.streaming.client.RedisClient.get_client", return_value=mock_redis
+        ):
             await tracker._write_to_redis()
 
         _, ttl, _ = mock_redis.setex.call_args[0]
@@ -259,7 +273,9 @@ class TestRedisWrite:
         tracker.record_failure()
 
         mock_redis = MagicMock()
-        with patch("shared.streaming.client.RedisClient.get_client", return_value=mock_redis):
+        with patch(
+            "shared.streaming.client.RedisClient.get_client", return_value=mock_redis
+        ):
             await tracker._write_to_redis()
 
         mock_redis.setex.assert_not_called()
@@ -280,7 +296,9 @@ class TestPublishLoop:
         tracker.record_success()
 
         mock_redis = MagicMock()
-        with patch("shared.streaming.client.RedisClient.get_client", return_value=mock_redis):
+        with patch(
+            "shared.streaming.client.RedisClient.get_client", return_value=mock_redis
+        ):
             await tracker.start()
             await asyncio.sleep(0.15)  # allow ≥2 ticks
             await tracker.stop()
@@ -295,7 +313,9 @@ class TestPublishLoop:
 
         mock_redis = MagicMock()
         mock_redis.setex.side_effect = ConnectionError("Redis unavailable")
-        with patch("shared.streaming.client.RedisClient.get_client", return_value=mock_redis):
+        with patch(
+            "shared.streaming.client.RedisClient.get_client", return_value=mock_redis
+        ):
             await tracker.start()
             await asyncio.sleep(0.20)  # survive multiple failing ticks
             await tracker.stop()
@@ -307,7 +327,9 @@ class TestPublishLoop:
         tracker = _make_tracker(enabled=False, publish_interval_seconds=0.05)
 
         mock_redis = MagicMock()
-        with patch("shared.streaming.client.RedisClient.get_client", return_value=mock_redis):
+        with patch(
+            "shared.streaming.client.RedisClient.get_client", return_value=mock_redis
+        ):
             await tracker.start()
             await asyncio.sleep(0.12)
             await tracker.stop()

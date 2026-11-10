@@ -87,7 +87,10 @@ class TestIndicatorCacheBasics:
         warm_engine.get_indicators("005930")
         stats_after = warm_engine.get_cache_stats()
 
-        assert stats_after["indicator_cache_misses"] == stats_before["indicator_cache_misses"] + 1
+        assert (
+            stats_after["indicator_cache_misses"]
+            == stats_before["indicator_cache_misses"] + 1
+        )
         assert stats_after["indicator_cache_hits"] == 0
         assert stats_after["indicator_cache_size"] == 1
 
@@ -299,7 +302,9 @@ class TestMomentumCacheStats:
 
         # Get momentum indicators and cache hit (use min_candles=1 to bypass guard)
         warm_engine.get_momentum_indicators(symbol, timeframe=5, min_candles=1)
-        warm_engine.get_momentum_indicators(symbol, timeframe=5, min_candles=1)  # cache hit
+        warm_engine.get_momentum_indicators(
+            symbol, timeframe=5, min_candles=1
+        )  # cache hit
         stats_before = warm_engine.get_cache_stats()
 
         assert stats_before["momentum_cache_hits"] == 1

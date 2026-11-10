@@ -12,20 +12,25 @@ from shared.kis.client import KISAuthConfig, KISClient
 def mock_auth_manager():
     with patch("shared.kis.client.KISAuthManager") as MockManager:
         instance = MockManager.get_instance.return_value
-        instance.get_auth_headers_async = AsyncMock(return_value={"Authorization": "Bearer token"})
+        instance.get_auth_headers_async = AsyncMock(
+            return_value={"Authorization": "Bearer token"}
+        )
         yield instance
+
 
 @pytest.fixture
 def client(mock_auth_manager):
     config = KISAuthConfig(app_key="test", app_secret="test", is_real=False)
     return KISClient(config)
 
+
 @pytest.mark.asyncio
 async def test_is_futures_detection(client):
     assert client._is_futures("101S6000") is True  # KOSPI 200
     assert client._is_futures("105S6000") is True  # KOSPI 200 Mini
-    assert client._is_futures("005930") is False   # Samsung Electronics
-    assert client._is_futures("000660") is False   # SK Hynix
+    assert client._is_futures("005930") is False  # Samsung Electronics
+    assert client._is_futures("000660") is False  # SK Hynix
+
 
 @pytest.mark.asyncio
 async def test_get_futures_current_price(client):
@@ -41,8 +46,8 @@ async def test_get_futures_current_price(client):
             "futs_hgpr": "351.00",
             "futs_lwpr": "349.50",
             "acml_vol": "1000",
-            "futs_prdy_ctrt": "0.50"
-        }
+            "futs_prdy_ctrt": "0.50",
+        },
     }
 
     with patch("aiohttp.ClientSession.get") as mock_get:
@@ -63,9 +68,12 @@ async def test_get_futures_current_price(client):
 
         # Verify TR ID and URL
         call_args = mock_get.call_args
-        assert "/uapi/domestic-futureoption/v1/quotations/inquire-price" in call_args[0][0]
+        assert (
+            "/uapi/domestic-futureoption/v1/quotations/inquire-price" in call_args[0][0]
+        )
         assert call_args[1]["headers"]["tr_id"] == "FHMIF10000000"
         assert call_args[1]["params"]["FID_COND_MRKT_DIV_CODE"] == "F"
+
 
 @pytest.mark.asyncio
 async def test_get_futures_minute_bars(client):
@@ -78,16 +86,16 @@ async def test_get_futures_minute_bars(client):
                 "stck_oprc": "350.00",
                 "stck_hgpr": "351.00",
                 "stck_lwpr": "349.50",
-                "cntg_vol": "10"
+                "cntg_vol": "10",
             },
             {
                 "stck_prpr": "350.00",
                 "stck_oprc": "349.50",
                 "stck_hgpr": "350.00",
                 "stck_lwpr": "349.00",
-                "cntg_vol": "20"
-            }
-        ]
+                "cntg_vol": "20",
+            },
+        ],
     }
 
     with patch("aiohttp.ClientSession.get") as mock_get:
@@ -109,7 +117,10 @@ async def test_get_futures_minute_bars(client):
 
         # Verify TR ID and URL
         call_args = mock_get.call_args
-        assert "/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice" in call_args[0][0]
+        assert (
+            "/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice"
+            in call_args[0][0]
+        )
         assert call_args[1]["headers"]["tr_id"] == "FHKIF03020200"
 
 

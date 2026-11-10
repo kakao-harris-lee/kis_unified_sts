@@ -1,4 +1,5 @@
 """Test Redis rate limiter."""
+
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,7 +25,9 @@ class TestRedisRateLimiter:
         mock_pipe = MagicMock()
         mock_pipe.zremrangebyscore = MagicMock(return_value=mock_pipe)
         mock_pipe.zcard = MagicMock(return_value=mock_pipe)
-        mock_pipe.execute = AsyncMock(return_value=[0, 5])  # [zremrangebyscore result, zcard result]
+        mock_pipe.execute = AsyncMock(
+            return_value=[0, 5]
+        )  # [zremrangebyscore result, zcard result]
         redis.pipeline = MagicMock(return_value=mock_pipe)
 
         return redis
@@ -36,6 +39,7 @@ class TestRedisRateLimiter:
             MockRedis.from_url = MagicMock(return_value=mock_redis)
 
             from shared.execution.rate_limiter import RedisRateLimiter
+
             limiter = RedisRateLimiter(
                 redis_url="redis://localhost:6379",
                 key_prefix="test",
@@ -149,6 +153,7 @@ class TestRedisRateLimiter:
             MockRedis.from_url = MagicMock(return_value=mock_redis)
 
             from shared.execution.rate_limiter import RedisRateLimiter
+
             limiter = RedisRateLimiter(
                 redis_url="redis://localhost:6379",
                 key_prefix="test-fallback",
@@ -240,6 +245,7 @@ class TestMetricsCaching:
             MockRedis.from_url = MagicMock(return_value=mock_redis)
 
             from shared.execution.rate_limiter import RedisRateLimiter
+
             limiter = RedisRateLimiter(
                 redis_url="redis://localhost:6379",
                 key_prefix="test-cache",
@@ -269,6 +275,7 @@ class TestMetricsCaching:
             MockRedis.from_url = MagicMock(return_value=mock_redis)
 
             from shared.execution.rate_limiter import RedisRateLimiter
+
             limiter = RedisRateLimiter(
                 redis_url="redis://localhost:6379",
                 key_prefix="test-cache",
@@ -307,6 +314,7 @@ class TestRedisFailureScenarios:
             MockRedis.from_url = MagicMock(return_value=mock_redis)
 
             from shared.execution.rate_limiter import RedisRateLimiter
+
             limiter = RedisRateLimiter(
                 redis_url="redis://localhost:6379",
                 key_prefix="test",
@@ -325,6 +333,7 @@ class TestRedisFailureScenarios:
             MockRedis.from_url = MagicMock(return_value=mock_redis)
 
             from shared.execution.rate_limiter import RedisRateLimiter
+
             limiter = RedisRateLimiter(
                 redis_url="redis://localhost:6379",
                 key_prefix="test",

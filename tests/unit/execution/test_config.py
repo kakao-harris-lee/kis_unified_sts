@@ -1,4 +1,5 @@
 """Test order execution configuration."""
+
 import pytest
 
 

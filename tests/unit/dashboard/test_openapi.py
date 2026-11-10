@@ -1,4 +1,5 @@
 """Test OpenAPI documentation."""
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 

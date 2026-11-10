@@ -6,6 +6,7 @@ Run with: pytest tests/integration/test_rate_limiter_redis.py -v
 To skip these tests when Redis is unavailable:
     pytest -m "not integration"
 """
+
 import asyncio
 import os
 
@@ -29,6 +30,7 @@ def redis_available():
 
     try:
         import redis
+
         r = redis.Redis.from_url(
             os.getenv("REDIS_URL", "redis://localhost:6379/1"),
             socket_timeout=1,
@@ -158,6 +160,7 @@ async def test_separate_keys_isolated(redis_url):
 
         # Stock should be blocked
         from shared.execution.exceptions import RateLimitExceeded
+
         with pytest.raises(RateLimitExceeded):
             await limiter_stock.acquire(timeout=0.1)
 
@@ -183,6 +186,7 @@ async def test_separate_keys_isolated(redis_url):
 @pytest.mark.asyncio
 async def test_concurrent_requests(limiter):
     """Test rate limiter handles concurrent requests correctly."""
+
     # Launch 20 concurrent requests (limit is 10)
     async def make_request():
         try:

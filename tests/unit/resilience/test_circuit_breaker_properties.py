@@ -84,10 +84,13 @@ class TestCircuitBreakerProperties:
         assert status["success_count"] == success_count
 
     @given(
-        name=st.text(min_size=1, max_size=50, alphabet=st.characters(
-            whitelist_categories=("Lu", "Ll", "Nd"),
-            whitelist_characters="-_"
-        ))
+        name=st.text(
+            min_size=1,
+            max_size=50,
+            alphabet=st.characters(
+                whitelist_categories=("Lu", "Ll", "Nd"), whitelist_characters="-_"
+            ),
+        )
     )
     @settings(max_examples=30)
     def test_name_preserved(self, name: str):
@@ -109,6 +112,7 @@ class TestCircuitBreakerProperties:
         # Interleave failures and successes randomly
         operations = failures + successes
         import random
+
         random.shuffle(operations)
 
         for op in operations:

@@ -22,9 +22,7 @@ def test_order_response_success():
     from shared.execution.models import OrderResponse
 
     response = OrderResponse(
-        success=True,
-        order_no="0001234567",
-        message="Order accepted"
+        success=True, order_no="0001234567", message="Order accepted"
     )
 
     assert response.success is True
@@ -35,10 +33,7 @@ def test_order_response_failure():
     """Test failed OrderResponse."""
     from shared.execution.models import OrderResponse
 
-    response = OrderResponse(
-        success=False,
-        message="Insufficient balance"
-    )
+    response = OrderResponse(success=False, message="Insufficient balance")
 
     assert response.success is False
     assert response.order_no is None

@@ -249,7 +249,9 @@ class TestConfigLoaderThreadSafety:
         with ThreadPoolExecutor(max_workers=num_loaders + num_reloaders) as executor:
             futures = []
             futures.extend([executor.submit(load_config) for _ in range(num_loaders)])
-            futures.extend([executor.submit(reload_config) for _ in range(num_reloaders)])
+            futures.extend(
+                [executor.submit(reload_config) for _ in range(num_reloaders)]
+            )
 
             for future in as_completed(futures):
                 future.result()
@@ -342,13 +344,11 @@ class TestConfigLoaderThreadSafety:
 
         for i in range(5):
             strategy_file = strategies_dir / f"strategy{i}.yaml"
-            strategy_file.write_text(
-                f"""
+            strategy_file.write_text(f"""
 strategy:
   name: strategy{i}
   enabled: true
-"""
-            )
+""")
 
         errors = []
 
@@ -403,9 +403,9 @@ strategy:
         # All instances should have the same id
         assert len(instances) == num_threads
         unique_instances = set(instances)
-        assert len(unique_instances) == 1, (
-            f"Expected 1 unique instance, got {len(unique_instances)}: {unique_instances}"
-        )
+        assert (
+            len(unique_instances) == 1
+        ), f"Expected 1 unique instance, got {len(unique_instances)}: {unique_instances}"
 
     def test_concurrent_get_config_dir(self):
         """get_config_dir 동시 호출 시 안전해야 함
@@ -444,7 +444,9 @@ strategy:
         assert len(results) == num_threads
         first_result = results[0]
         for result in results[1:]:
-            assert result == first_result, "get_config_dir results differ across threads"
+            assert (
+                result == first_result
+            ), "get_config_dir results differ across threads"
 
         # Result should be a valid Path
         assert isinstance(first_result, Path)
