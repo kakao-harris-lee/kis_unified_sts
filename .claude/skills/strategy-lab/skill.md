@@ -16,7 +16,7 @@ KIS Unified Trading Platform의 **1차 전략 개발 파이프라인** 스킬.
 |---------|---------------|------|
 | `indicator-specialist` | 지표 시그널 리서치/설계 (Williams %R/RSI/MACD) | Phase 1 |
 | `strategy-architect` | Entry/Exit/Sizer 조립 + 레지스트리 등록 | Phase 1 |
-| `backtest-engineer` | 백테스트 + Optuna 최적화 + holdout 분리 | Phase 2 |
+| `backtest-engineer` | 백테스트 + 파라미터 최적화 + holdout 분리 | Phase 2 |
 | `regime-gate-analyst` | RegimeGate head-to-head + counterfactual 검증 | Phase 3 |
 | `strategy-builder` | (선택) 노코드 빌더 전략 paper 연결 | Phase 1' |
 | `model-evaluator` | 성과 평가 + 승격 판정 | Phase 4 |
@@ -30,7 +30,7 @@ Phase 1: 설계            Phase 2: 백테스트/최적화   Phase 3: 게이트 
 │ indicator-spec.  │   │ backtest-engineer│   │ regime-gate-     │   │ model-       │   │ model-       │
 │ + strategy-arch. │ → │                  │ → │ analyst          │ → │ evaluator    │ → │ deployer     │
 │                  │   │ - 백테스트       │   │ - head-to-head   │   │ - 종합 판정  │   │ - Gate 1–3   │
-│ - 지표 시그널    │   │ - Optuna         │   │ - counterfactual │   │ - PASS/REJECT│   │ - Paper→Live │
+│ - 지표 시그널    │   │ - walk-forward   │   │ - counterfactual │   │ - PASS/REJECT│   │ - Paper→Live │
 │ - Entry/Exit     │   │ - holdout 분리   │   │ - regime 분포    │   │              │   │ - 운영자 승인│
 └─────────────────┘   └─────────────────┘   └─────────────────┘   └──────────────┘   └──────────────┘
         ↑ (선택) strategy-builder: 노코드 빌더 → builder_v1 → paper
@@ -44,7 +44,7 @@ indicator-specialist: RL 대체 지표 리서치 (Williams %R/RSI/MACD 등)
     ↓
 strategy-architect: Entry/Exit/Sizer 조립 + YAML + 레지스트리 등록
     ↓
-backtest-engineer: 백테스트 + Optuna (train/holdout 분리)
+backtest-engineer: 백테스트 (train/holdout 분리)
     ↓
 regime-gate-analyst: RegimeGate head-to-head (Δ 양수 + 유의) + counterfactual
     ↓ [PASS]
@@ -79,7 +79,7 @@ backtest-engineer: 현행 파라미터 성과 분석
     ↓
 indicator-specialist / strategy-architect: 지표 필터/파라미터 개선
     ↓
-backtest-engineer: 재최적화 (Optuna)
+backtest-engineer: 재최적화
     ↓
 model-evaluator: before/after 비교 판정
 ```

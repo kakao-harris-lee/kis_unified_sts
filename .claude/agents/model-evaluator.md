@@ -53,8 +53,6 @@ python scripts/gate_futures_strategy.py --gate --head-to-head --holdout-split <d
 
 ## 참조 구조
 - 백테스트 엔진: `shared/backtest/engine.py`
-- Optuna 최적화: `shared/backtest/optimizer.py`
-- MLflow 추적: `shared/backtest/mlflow_tracker.py`
 - Counterfactual: `scripts/analysis/regime_gate_counterfactual.py`
 
 ## 출력 형식

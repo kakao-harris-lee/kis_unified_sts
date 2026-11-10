@@ -25,7 +25,7 @@ Claude 4렌즈 감사관은 **증거 생성**을 담당하며, 심각도 정규�
 | `indicator-specialist` | 지표 시그널 리서치 | 지표, Williams %R, RSI, MACD, StochRSI, consensus, RL 재학습 |
 | `regime-gate-analyst` | RegimeGate 검증 | RegimeGate, 레짐, head-to-head, counterfactual, 게이트 |
 | `strategy-builder` | 노코드 빌더 | builder, 빌더, builder_v1, 노코드, 빌더 UI |
-| `backtest-engineer` | 백테스트/최적화 | 백테스트, Optuna, MLflow, 성과 분석, holdout |
+| `backtest-engineer` | 백테스트/최적화 | 백테스트, 최적화, 성과 분석, holdout |
 
 ### 전략/모델 승격 팀
 | 에이전트 | 전문 영역 | 트리거 키워드 |
@@ -187,7 +187,7 @@ RL 재학습/복귀 검토 (명시적)      → rl-pipeline 스킬 (DEPRECATED, 
 ### 신규 지표 전략 개발 → 승격 (strategy-lab 위임)
 ```
 Phase 1: indicator-specialist + strategy-architect → 지표 시그널 설계/조립
-Phase 2: backtest-engineer → 백테스트 + Optuna (holdout 분리)
+Phase 2: backtest-engineer → 백테스트 (holdout 분리)
 Phase 3: regime-gate-analyst → RegimeGate head-to-head + counterfactual
 Phase 4: model-evaluator → 종합 승격 판정
 Phase 5: model-deployer → Phase 5 Gate 1–3 + 운영자 승인 → Paper→Live
