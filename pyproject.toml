@@ -90,19 +90,20 @@ dependencies = [
     "websocket-client>=1.6",
     "pycryptodome>=3.19",  # AES decryption
 
-    # MLflow (Backtesting). Cap below 4 so a fresh install can't pull a major
-    # with a different sqlite schema than the existing ./mlflow.db store.
-    # (The mlflow UI container and Dockerfile.mlflow were removed in the legacy
-    # cleanup L1 — the clients write ./mlflow.db directly.)
-    "mlflow>=2.9,<4",
-
-    # Web API (dashboard). Also pulled transitively by mlflow-skinny, so the
-    # cap must live here in base deps — a cap in the `api` extra does NOT bind
-    # the `.[dev]` CI install and pip would resolve mlflow's `fastapi<1` to the
-    # latest. Cap <0.135: FastAPI 0.135 added `_IncludedRouter` entries to
+    # Web API (dashboard). Both of these must be in *base* deps, not the `api`
+    # extra: `Dockerfile.dashboard` installs plain `.` and runs `python -m
+    # uvicorn`, and the `.[dev]` CI install runs dashboard tests that
+    # `import uvicorn.config`. Until the legacy cleanup C4 they arrived
+    # transitively through mlflow-skinny (which requires fastapi + uvicorn);
+    # mlflow is gone, so they are declared here directly.
+    # Cap <0.135: FastAPI 0.135 added `_IncludedRouter` entries to
     # `app.routes` that lack `.path`, breaking the dashboard websocket
     # route-registration test. Lift once that test handles the new route type.
+    # uvicorn is deliberately extra-less here — mlflow-skinny pulled plain
+    # uvicorn, so this keeps the dashboard image on the same asyncio event
+    # loop it runs on today. The `api` extra still offers `[standard]`.
     "fastapi>=0.109,<0.135",
+    "uvicorn>=0.25",
 
     # LLM Analysis
     "openai>=1.0",
@@ -148,39 +149,11 @@ dev = [
     "line_profiler>=4.1",  # line-level hot-path profiling (indicators/forecasting)
 ]
 
-optimization = [
-    "optuna>=3.4",
-    "optuna-dashboard>=0.14",
-]
-
 # Numba JIT for custom/composite indicators (WS-A5). Isolated as an optional
 # extra: numba's supported-numpy ceiling lags core numpy, so pin/verify numpy
 # alignment when enabling (WS-A5 gate) rather than forcing it on the runtime.
 performance = [
     "numba>=0.60",
-]
-
-# Vectorized backtesting (WS-A4). Heavy transitive deps (numba, plotly) kept
-# out of the runtime install footprint on purpose.
-# >=1.0: shared/backtest/vbt_runner.py is written against the 1.0.0 API where
-# Portfolio.trades.records is a pandas DataFrame (0.26-era returns a numpy
-# structured array), so the old >=0.26 floor would silently break the runner.
-# <1.1: parity evidence (docs/plans/2026-07-10-vbt-parity-report.md) was
-# produced on 1.0.0; unpinned floors are the repo's documented dep-drift trap
-# (fastapi #481, aiohttp #388). Raise the cap only after rerunning the parity
-# suite green on the new version.
-backtest = [
-    "vectorbt>=1.0,<1.1",
-    # vectorbt 1.0.x registers plotly's mapbox traces (`scattermapbox`) at *import*
-    # time (`vectorbt/_settings.py`), so an incompatible plotly breaks `import
-    # vectorbt` before any of our code runs.  plotly 7.0 removed those traces
-    # ("Bad property path: scattermapbox / Did you mean \"scattermap\"?").
-    #
-    # The boundary is **measured, not assumed**: the last green `backtest-extra`
-    # run (2026-07-20) resolved plotly 6.9.0, the first red one (2026-08-28)
-    # resolved 7.0.0.  Capping at `<6` — the intuitive guess — would have been
-    # wrong by a whole major.
-    "plotly<7",
 ]
 
 visualization = [
@@ -190,9 +163,10 @@ visualization = [
 ]
 
 api = [
-    # fastapi is declared (and version-capped) in base `dependencies` because it
-    # is also a transitive mlflow-skinny dep and must be constrained for the
-    # `.[dev]` CI install too.
+    # fastapi and uvicorn are declared in base `dependencies` (see the comment
+    # there): the dashboard image and the `.[dev]` CI install both need them,
+    # and an extra does not bind either. This extra only adds uvicorn's
+    # `[standard]` speedups on top plus the rate limiter.
     "fastapi>=0.109,<0.135",
     "uvicorn[standard]>=0.25",
     "slowapi>=0.1.9",  # Rate limiting
@@ -203,7 +177,7 @@ monitoring = [
 ]
 
 all = [
-    "kis-unified-sts[dev,optimization,visualization,api,monitoring]",
+    "kis-unified-sts[dev,visualization,api,monitoring]",
 ]
 
 [project.scripts]
@@ -319,9 +293,10 @@ warn_unused_ignores = true
 # `mlflow.*` / `optuna.*` were listed here until the legacy removal L7
 # (docs/plans/2026-11-07-legacy-removal-plan.md §3) deleted their only importers
 # (`shared/backtest/{mlflow_tracker,optimizer}.py`). With `warn_unused_configs`
-# on, a section no module matches is itself reported, so they are removed rather
-# than left as dead config. The packages stay declared dependencies — that is a
-# separate question from which modules mypy must stop resolving.
+# on, a section no module matches is itself reported, so they were removed
+# rather than left as dead config. The legacy cleanup C4
+# (docs/plans/2026-11-10-legacy-cleanup-phase2-plan.md §2) then dropped the
+# packages themselves from `dependencies`.
 [[tool.mypy.overrides]]
 module = [
     "redis.*",
