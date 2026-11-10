@@ -39,9 +39,6 @@ build/
 .coverage
 coverage.xml
 
-# MLflow
-mlruns/
-
 # Logs
 *.log
 logs/
@@ -67,7 +64,6 @@ open-trading-api/
 
 # Local artifacts
 .venv/
-output/
 pids/
 *.pth
 monitoring/prometheus/alert_rules.yml
@@ -85,10 +81,6 @@ kis_docs/
 .kis_token_mock
 .serena/
 
-# RL/ML training artifacts
-models/futures/rl/
-models/futures/tft/
-
 # Data
 data/
 !shared/ml/data/
@@ -99,8 +91,10 @@ shared/ml/data/**/__pycache__/
 shared/ml/data/**/*.pyc
 tests/unit/ml/data/**/__pycache__/
 tests/unit/ml/data/**/*.pyc
+# Probe evidence: tools/broker_probes/ writes JSON artifacts under
+# tools/broker_probes/results/ (tools/broker_probes/run.py) — this bare pattern
+# is what keeps them out of the index.
 results/
-mlflow.db
 
 # Node.js
 node_modules/
