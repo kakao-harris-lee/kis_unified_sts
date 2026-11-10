@@ -4,7 +4,8 @@
 does TODAY: the only witness it has re-reads the evidence store, so the release holds with
 ``WITNESS_NOT_INDEPENDENT``, the entry never reaches ``POSITION_CONSUMED``, #1015's durable
 CLOSE bound stays inert and the scope seals at its first filled entry. It stays green, unchanged,
-because it describes the key-OFF boot — which is every shipped tree.
+because it describes the key-OFF boot — which was every shipped tree until the 2026-11-16
+switch-on, and is the kis-mock stock tree now.
 
 This file is the same sequence with ``finality.yaml::witness: synthetic_venue_ledger`` set, and
 every assertion is the OPPOSITE one. The pair differ in one YAML line and nothing else: the

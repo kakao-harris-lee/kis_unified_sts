@@ -455,7 +455,8 @@ def test_an_uncorroborated_entry_fill_refuses_the_flat_exit_and_sends_nothing(
     custody_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The venue-ledger-OFF tree — every shipped tree today — still refuses the exit.
+    """The venue-ledger-OFF tree — every shipped tree before the 2026-11-16 switch-on, and
+    any tree the key is removed from — still refuses the exit.
 
     Concrete input: the same entry+FLAT-exit strategy with the admitted basis, but WITHOUT
     ``finality.yaml::witness: synthetic_venue_ledger``. The entry hands off and its synthetic

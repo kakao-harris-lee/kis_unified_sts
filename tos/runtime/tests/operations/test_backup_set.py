@@ -66,8 +66,8 @@ def _build_live_set(
     (``with_marketfeed=False``, the default) to exercise the "never fabricate a backup for an
     absent optional member" path; the tests that need a real one pass ``with_marketfeed=True``.
     ``venue_ledger`` (#1011 P2) is optional for the same reason and then some: a boot whose
-    ``finality.yaml`` does not select the venue-ledger witness never creates that file, which
-    is every shipped tree today.
+    ``finality.yaml`` does not select the venue-ledger witness never creates that file — every
+    shipped tree until the 2026-11-16 switch-on, and the kis-mock stock tree now.
     """
     key_provider = FixedKeyProvider()
     evidence = SqliteEvidenceStore(
@@ -148,8 +148,8 @@ def test_backup_set_writes_a_manifest_with_six_files_and_facts(tmp_path: Path) -
     for name, entry in manifest.files.items():
         if name in ("marketfeed", "venue_ledger"):
             # Both absent in this fixture — asserted below. `venue_ledger` is absent on
-            # every boot that does not set `finality.yaml::witness` (#1011 P2), which is
-            # every shipped tree today.
+            # every boot that does not set `finality.yaml::witness` (#1011 P2): every shipped
+            # tree until the 2026-11-16 switch-on, and the kis-mock stock tree now.
             continue
         # composite_state IS present in this fixture (_build_live_set always creates it) —
         # only marketfeed is the absent-optional-member case here.

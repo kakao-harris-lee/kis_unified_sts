@@ -140,9 +140,10 @@ def test_string_field_blank_is_refused(tmp_path: Path, field: str) -> None:
 def test_an_absent_witness_key_is_the_store_derived_default(tmp_path: Path) -> None:
     """No key at all ⇒ ``witness is None`` — today's behaviour, not a missing value.
 
-    Concrete input: ``_VALID_RAW`` itself, which every shipped tree's ``finality.yaml``
-    matches in this respect (none of them carries the key). The load must succeed and report
-    the absence, because compose reads exactly this to keep ``SyntheticLedgerWitness``.
+    Concrete input: ``_VALID_RAW`` itself, which the kis-mock stock tree's ``finality.yaml``
+    matches in this respect (the three synthetic trees carry the key since the 2026-11-16
+    switch-on). The load must succeed and report the absence, because compose reads exactly
+    this to keep ``SyntheticLedgerWitness``.
     """
     config = load_finality_config(_write(tmp_path, _VALID_RAW))
     assert config.witness is None
