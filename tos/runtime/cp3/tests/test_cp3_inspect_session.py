@@ -42,7 +42,12 @@ from tos_runtime.operations.backup_set import EVIDENCE_FILE_NAME, INBOX_FILE_NAM
 
 from .._base import Cp3RunnerRefusal
 from ..inspect_evidence import DECISION_TICK_KIND, read_bar_evidence
-from ..inspect_session import inspect_session, render_json, render_text
+from ..inspect_session import (
+    InspectReport,
+    inspect_session,
+    render_json,
+    render_text,
+)
 from ._cp3_fixtures import (
     BINDINGS_PATH,
     INSTRUMENT,
@@ -246,7 +251,7 @@ def _write_stores(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def report(tmp_path: Path):  # type: ignore[no-untyped-def]
+def report(tmp_path: Path) -> InspectReport:
     """The inspection of the five-bar fixture against the committed strategy."""
     return inspect_session(
         journal_path=_write_journal(tmp_path),
@@ -309,26 +314,28 @@ def _block(text: str, first_line: str) -> str:
     return "\n".join(lines[start : end + 1])
 
 
-def test_legend_is_the_authored_comparison_order(report: Any) -> None:
+def test_legend_is_the_authored_comparison_order(report: InspectReport) -> None:
     """The legend names every rule and every comparison, in the authored order."""
     assert _block(render_text(report), _EXPECTED_LEGEND.splitlines()[0]) == (
         _EXPECTED_LEGEND
     )
 
 
-def test_bar_table_matches_the_golden_text(report: Any) -> None:
+def test_bar_table_matches_the_golden_text(report: InspectReport) -> None:
     """One line per bar: fields, marks, first-match decision, engine's own answer."""
     assert _block(render_text(report), _EXPECTED_BARS.splitlines()[0]) == _EXPECTED_BARS
 
 
-def test_summary_matches_the_golden_text(report: Any) -> None:
+def test_summary_matches_the_golden_text(report: InspectReport) -> None:
     """The per-comparison false shares — the roadmap §P1 completion question."""
     assert _block(render_text(report), _EXPECTED_SUMMARY.splitlines()[0]) == (
         _EXPECTED_SUMMARY
     )
 
 
-def test_le_threshold_edge_is_inclusive_and_its_neighbour_is_not(report: Any) -> None:
+def test_le_threshold_edge_is_inclusive_and_its_neighbour_is_not(
+    report: InspectReport,
+) -> None:
     """``-1800`` fires R1; ``-1799`` fails exactly the threshold comparison.
 
     Without the second half, a binding the stream never crosses would be
@@ -418,7 +425,7 @@ def test_without_a_data_dir_the_rules_still_render(tmp_path: Path) -> None:
     assert "evidence  (not read — no --data-dir)" in render_text(report)
 
 
-def test_json_carries_every_comparison_and_the_summary(report: Any) -> None:
+def test_json_carries_every_comparison_and_the_summary(report: InspectReport) -> None:
     """The machine document is the same data, not a second, thinner answer."""
     document = json.loads(render_json(report))
     assert document["session"] == "fixture-20261110"
