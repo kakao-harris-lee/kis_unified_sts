@@ -91,14 +91,6 @@ EVIDENCE_KINDS_OF_INTEREST: tuple[str, ...] = (
     "EVENT_CONSUMED",
 )
 
-#: ``(file name, declared schema version)`` per store this module opens. The
-#: version is the writing store's own constant, never a literal here.
-_STORE_VERSIONS: tuple[tuple[str, int], ...] = (
-    (MARKETFEED_FILE_NAME, MARKETFEED_SCHEMA_VERSION),
-    (INBOX_FILE_NAME, INBOX_SCHEMA_VERSION),
-    (EVIDENCE_FILE_NAME, EVIDENCE_SCHEMA_VERSION),
-)
-
 
 @dataclass(frozen=True)
 class BarEvidence:
@@ -433,16 +425,3 @@ def read_bar_evidence(
         ]
         out[raw_event_id] = _evidence_from_window(raw_event_id, tick, window)
     return out
-
-
-def assert_store_versions(data_dir: Path) -> None:
-    """Pin all three stores' schema versions without reading any rows.
-
-    Raises:
-        Cp3RunnerRefusal: Any store is missing or carries an unpinned version.
-    """
-    for file_name, expected in _STORE_VERSIONS:
-        with _read_only(data_dir / file_name) as connection:
-            _pin_schema_version(
-                connection, path=data_dir / file_name, expected=expected
-            )
