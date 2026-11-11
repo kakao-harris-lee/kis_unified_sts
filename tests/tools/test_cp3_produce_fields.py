@@ -54,6 +54,7 @@ from shared.instruments.contract_spec import (
 )
 from shared.strategy.exit.setup_target_exit import SetupTargetExit
 from shared.strategy.market_time import is_trading_day_kst
+from tools.tos_cp3 import legacy_setup_d_driver as legacy_driver  # noqa: E402
 from tools.tos_cp3 import produce_fields
 
 SYMBOL = "101S6000"
@@ -174,7 +175,7 @@ def _produce(
         # MarketContextReplay warns on synthetic series whose 1-min returns are
         # large; the warning is about research trustworthiness, not correctness.
         warnings.simplefilter("ignore")
-        return produce_fields.produce_records(
+        return legacy_driver.produce_records(
             df.reset_index(drop=True),
             symbol=SYMBOL,
             strategy=strategy,
@@ -769,7 +770,7 @@ def test_zero_atr_bars_are_omitted_not_filled(
 ) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        produced = produce_fields.produce_bars(
+        produced = legacy_driver.produce_bars(
             _bars_with_flat_run(),
             symbol=SYMBOL,
             strategy=strategy,
@@ -835,8 +836,8 @@ def test_the_observer_sees_every_replayed_bar_and_changes_no_record(
             "anchor": anchor,
             "emit_days": emit,
         }
-        plain = produce_fields.produce_bars(bars.reset_index(drop=True), **kwargs)
-        watched = produce_fields.produce_bars(
+        plain = legacy_driver.produce_bars(bars.reset_index(drop=True), **kwargs)
+        watched = legacy_driver.produce_bars(
             bars.reset_index(drop=True),
             **kwargs,
             observer=lambda stamp, ev: seen.append((stamp, dict(ev))),
@@ -915,12 +916,12 @@ def test_an_observer_cannot_write_into_the_setups_eval(
             "anchor": anchor,
             "emit_days": emit,
         }
-        plain = produce_fields.produce_bars(bars.reset_index(drop=True), **kwargs)
+        plain = legacy_driver.produce_bars(bars.reset_index(drop=True), **kwargs)
         with pytest.raises(TypeError):
-            produce_fields.produce_bars(
+            legacy_driver.produce_bars(
                 bars.reset_index(drop=True), **kwargs, observer=write_through
             )
-        tolerated = produce_fields.produce_bars(
+        tolerated = legacy_driver.produce_bars(
             bars.reset_index(drop=True),
             **kwargs,
             observer=write_through_and_swallow,
@@ -1136,7 +1137,7 @@ def test_d7_measurement_buckets_are_disjoint_exhaustive_and_session_bounded(
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        measurement = produce_fields.measure_moving_vs_frozen_exit(
+        measurement = legacy_driver.measure_moving_vs_frozen_exit(
             bars.reset_index(drop=True),
             symbol=SYMBOL,
             strategy=strategy,
@@ -1257,7 +1258,7 @@ def _lineage_kwargs(
     df = bars.reset_index(drop=True)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        produced = produce_fields.produce_bars(
+        produced = legacy_driver.produce_bars(
             df,
             symbol=SYMBOL,
             strategy=strategy,
@@ -1344,9 +1345,9 @@ def test_duplicate_bar_timestamps_are_refused() -> None:
     with pytest.raises(
         produce_fields.ProduceFieldsError, match="duplicate bar timestamps"
     ):
-        produce_fields._bar_lookup(pd.DataFrame(rows))
+        legacy_driver._bar_lookup(pd.DataFrame(rows))
 
     # The same frame without the duplicate is accepted, so the guard is not
     # simply rejecting every two-row frame.
     rows[1]["timestamp"] = base + timedelta(minutes=1)
-    assert len(produce_fields._bar_lookup(pd.DataFrame(rows))) == 2
+    assert len(legacy_driver._bar_lookup(pd.DataFrame(rows))) == 2

@@ -37,6 +37,7 @@ from tools.broker_probes.common import (
     assert_read_only_call,
 )
 from tools.tos_cp3 import quote_client
+from tools.tos_cp3.legacy_setup_d_driver import produce_bars  # noqa: E402
 from tools.tos_cp3.live_producer import band_line as band_line_mod
 from tools.tos_cp3.live_producer import band_probe
 from tools.tos_cp3.live_producer import config as config_mod
@@ -48,7 +49,6 @@ from tools.tos_cp3.minute_probe import frame as bars_to_frame
 from tools.tos_cp3.produce_fields import (
     ContractSpecRegistry,
     load_strategy_inputs,
-    produce_bars,
     resolve_contract_spec,
     resolve_open_anchor,
 )

@@ -52,6 +52,7 @@ import pytest
 from shared.backtest.market_context_replay import MarketContextReplay
 from shared.decision.setups.vwap_reversion import SetupDVWAPReversion
 from tools.tos_cp3 import emit_legacy_decisions, produce_fields
+from tools.tos_cp3 import legacy_setup_d_driver as legacy_driver  # noqa: E402
 
 #: B1a's suite lives in this directory and is imported by its top-level module
 #: name. pytest's default ``prepend`` import mode puts this directory on
@@ -323,7 +324,7 @@ def test_join_invariant_b1a_and_b2_key_sequences_are_identical(
     """Same bars, same keys, same ``z_x1000`` — the three things B3 relies on."""
     with _quiet():
         warnings.simplefilter("ignore")
-        b1a_records = produce_fields.produce_records(
+        b1a_records = legacy_driver.produce_records(
             bars.reset_index(drop=True),
             symbol=SYMBOL,
             strategy=strategy,
@@ -1044,7 +1045,7 @@ def test_a_duplicated_bar_timestamp_is_refused(
     with pytest.raises(produce_fields.ProduceFieldsError, match="duplicate bar"):
         with _quiet():
             warnings.simplefilter("ignore")
-            produce_fields.produce_records(
+            legacy_driver.produce_records(
                 duplicated.reset_index(drop=True),
                 symbol=SYMBOL,
                 strategy=strategy,
@@ -1073,7 +1074,7 @@ def test_the_omission_leg_of_the_join_is_exercised(
 
     with _quiet():
         warnings.simplefilter("ignore")
-        b1a_produced = produce_fields.produce_bars(
+        b1a_produced = legacy_driver.produce_bars(
             flat,
             symbol=SYMBOL,
             strategy=strategy,

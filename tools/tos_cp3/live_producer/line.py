@@ -21,7 +21,8 @@ from datetime import datetime
 from typing import Any
 
 from tools.tos_cp3 import TOS_CP3_VERSION
-from tools.tos_cp3.produce_fields import OpenAnchor, StrategyInputs, produce_bars
+from tools.tos_cp3.legacy_setup_d_driver import produce_bars
+from tools.tos_cp3.produce_fields import OpenAnchor, StrategyInputs
 
 #: The allowlist prefix added to ``bootproof_guard`` in PR-2, and the full
 #: ``source_id`` every line carries. The delimiter rule there means the prefix

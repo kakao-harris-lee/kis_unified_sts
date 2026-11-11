@@ -35,8 +35,10 @@ import yaml
 from shared.collector.historical.ohlcv_parser import parse_ohlcv
 from tools.tos_cp3 import diff_decisions as dd
 from tools.tos_cp3 import emit_legacy_decisions as b2
+from tools.tos_cp3 import legacy_setup_d_driver as legacy_driver  # noqa: E402
 from tools.tos_cp3 import produce_fields as b1a
 from tools.tos_cp3 import stitch as stitch_mod
+from tools.tos_cp3.legacy_setup_d_driver import produce_bars  # noqa: E402
 from tools.tos_cp3.live_producer import config as config_mod
 from tools.tos_cp3.live_producer import producer as producer_mod
 from tools.tos_cp3.live_producer import sinks as sinks_mod
@@ -47,7 +49,6 @@ from tools.tos_cp3.produce_fields import (
     ContractSpecRegistry,
     ProduceFieldsError,
     load_strategy_inputs,
-    produce_bars,
     resolve_contract_spec,
     resolve_open_anchor,
 )
@@ -1307,7 +1308,7 @@ def test_b1a_refuses_a_lineage_whose_three_exit_doors_do_not_add_up(
         },
         market_open="auto",
     )
-    produced = b1a.produce_bars(
+    produced = legacy_driver.produce_bars(
         window.df,
         symbol=NEW,
         strategy=window.strategy,

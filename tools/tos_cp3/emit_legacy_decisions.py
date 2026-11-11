@@ -111,6 +111,7 @@ from shared.decision.setups.vwap_reversion import (  # noqa: E402
 )
 from shared.instruments.contract_spec import ContractSpec  # noqa: E402
 from tools.tos_cp3 import TOS_CP3_VERSION  # noqa: E402
+from tools.tos_cp3.legacy_setup_d_driver import _bar_lookup  # noqa: E402
 
 # Imported, not restated. The leading-underscore names are B1a's internals on
 # purpose: the window loader, the bar accounting, the omission predicate and
@@ -130,7 +131,6 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     StitchedInputs,
     StrategyInputs,
     _bar_accounting,
-    _bar_lookup,
     _git_identity,
     _inputs_unusable,
     _runtime_versions,

@@ -19,6 +19,7 @@ real 20-day and recorded-session runs are measurements in the PR body, not tests
 
 from __future__ import annotations
 
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ import yaml
 from shared.indicators.fields import load_fields_file, parse_fields_document
 from shared.instruments.contract_spec import ContractSpec
 from tools.tos_cp3 import fields_equivalence as fe
+from tools.tos_cp3 import legacy_setup_d_driver as legacy_driver  # noqa: E402
 from tools.tos_cp3 import produce_fields as pf
 from tools.tos_cp3.produce_fields import (
     FIELD_ORDER,
@@ -636,7 +638,7 @@ class TestDeclarativeProducer:
         """Same join keys, same stamps, same fifteen values, same order."""
         document = load_fields_file(_fields_yaml("cp3-setup-d-long"))
         inputs = _inputs(document, _frame(), strategy)
-        legacy = pf.produce_bars(
+        legacy = legacy_driver.produce_bars(
             inputs.df,
             symbol=inputs.symbol,
             strategy=strategy,
@@ -681,7 +683,7 @@ class TestDeclarativeProducer:
             document=document,
             emit_days=inputs.emit_days,
         )
-        legacy = pf.produce_bars(
+        legacy = legacy_driver.produce_bars(
             inputs.df,
             symbol=inputs.symbol,
             strategy=strategy,
@@ -729,7 +731,7 @@ class TestDeclarativeProducer:
             document=document,
             emit_days=inputs.emit_days,
         )
-        legacy = pf.produce_bars(
+        legacy = legacy_driver.produce_bars(
             inputs.df,
             symbol=inputs.symbol,
             strategy=strategy,
@@ -758,7 +760,7 @@ class TestDeclarativeProducer:
         """
         document = load_fields_file(_fields_yaml("cp3-setup-d-long"))
         inputs = _inputs(document, _frame(), strategy)
-        legacy = pf.produce_bars(
+        legacy = legacy_driver.produce_bars(
             inputs.df,
             symbol=inputs.symbol,
             strategy=strategy,
@@ -983,27 +985,46 @@ class TestTheRestatedRegistryName:
         raw = yaml.safe_load(STRATEGY_YAML.read_text(encoding="utf-8"))
         assert raw["strategy"]["entry"]["type"] == pf.SETUP_D_REGISTRY_NAME
 
-    def test_only_the_two_functions_still_to_move_name_the_legacy_class(self) -> None:
-        """The §5.2 countdown, as a number rather than a promise.
+    def test_produce_fields_names_the_legacy_class_nowhere(self) -> None:
+        """Plan §5.2, as a number rather than a promise: the count is ZERO.
 
-        The remaining code references are exactly the legacy driver and the D7
-        measurement — the two functions the move commit relocates. When this
-        count reaches zero the criterion is met; until then this test says how
-        far there is to go, and fails if a NEW use appears.
+        The two functions that used to hold it — the legacy driver and the D7
+        measurement — now live in ``tools/tos_cp3/legacy_setup_d_driver.py``,
+        which is where this assertion says they are. Reading the AST rather
+        than the import list is deliberate: a name reached through an alias or
+        a re-export would still show up here.
         """
         import ast
 
-        source = Path(pf.__file__).read_text(encoding="utf-8")
-        enclosing = set()
-        tree = ast.parse(source)
-        uses = [
-            node.lineno
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Name) and node.id == "SetupDVWAPReversion"
-        ]
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and any(
-                node.lineno <= line <= (node.end_lineno or node.lineno) for line in uses
-            ):
-                enclosing.add(node.name)
-        assert enclosing == {"produce_bars", "measure_moving_vs_frozen_exit"}, enclosing
+        for module, expected in ((pf, False), (legacy_driver, True)):
+            tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+            named = {
+                node.lineno
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Name) and node.id == "SetupDVWAPReversion"
+            }
+            assert bool(named) is expected, (module.__name__, sorted(named))
+
+    def test_what_of_the_legacy_module_produce_fields_still_binds(self) -> None:
+        """Exactly one name, and it is a CONFIG dataclass — not the setup.
+
+        Said precisely because the imprecise version is tempting: importing
+        ``produce_fields`` still executes
+        ``shared/decision/setups/vwap_reversion.py``, because ``SetupDConfig``
+        — the thresholds dataclass ``load_strategy_inputs`` fills and
+        ``live_producer/frame.py::build_seed`` reads ``vol_window_bars`` out of
+        — is declared in that same file. So plan §5.2's claim is about the
+        DECIDING class, which the module no longer names anywhere; it is not a
+        claim that the witness left the live producer's import closure. Moving
+        ``SetupDConfig`` is a separate change with its own reasons.
+        """
+        import tools.tos_cp3.produce_fields as module
+
+        bound = {
+            name
+            for name, value in vars(module).items()
+            if getattr(value, "__module__", None)
+            == "shared.decision.setups.vwap_reversion"
+        }
+        assert bound == {"SetupDConfig"}, bound
+        assert sys.modules["shared.decision.setups.vwap_reversion"] is not None

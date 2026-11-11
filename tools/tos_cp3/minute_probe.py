@@ -31,13 +31,13 @@ from tools.broker_probes.common import (
     resolve_credentials,
     secret_fingerprint,
 )
+from tools.tos_cp3.legacy_setup_d_driver import produce_bars  # noqa: E402
 from tools.tos_cp3.produce_fields import (
     DEFAULT_MIN_BARS_PER_DAY,
     ContractSpecRegistry,
     OpenAnchor,
     StrategyInputs,
     load_strategy_inputs,
-    produce_bars,
     resolve_contract_spec,
     resolve_open_anchor,
 )

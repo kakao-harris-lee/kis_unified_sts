@@ -60,6 +60,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from shared.collector.historical.ohlcv_parser import parse_ohlcv  # noqa: E402
+from tools.tos_cp3.legacy_setup_d_driver import produce_bars  # noqa: E402
 from tools.tos_cp3.live_producer.stitch_seed import shift_bars  # noqa: E402
 from tools.tos_cp3.minute_probe import frame as bars_to_frame  # noqa: E402
 from tools.tos_cp3.produce_fields import (  # noqa: E402
@@ -67,7 +68,6 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     ContractSpecRegistry,
     ProducedBars,
     load_strategy_inputs,
-    produce_bars,
     resolve_contract_spec,
     resolve_open_anchor,
 )
