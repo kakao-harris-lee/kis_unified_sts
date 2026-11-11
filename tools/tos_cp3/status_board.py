@@ -19,10 +19,12 @@
   ``MARKETFEED_PASS_OVERRUN`` · 권한 행.
 * 세션마다 권한 행 — ``AUTHORITY_WITNESS_LOST``(#957) 수와 standing 세션 승인
   ``APPROVAL_STANDING_BOUND/CONSUMED/REFUSED/NOT_COVERED``(#955) 수·사유.
-* 트리(LONG · SHORT)마다 **연속 깨끗한 거래일** 과 목표(로드맵 §2-1 · §3 M4) — 시작
-  날짜, 마지막으로 깨진 날과 그 사유. 거래일은 그 트리의 tenant 캘린더에서 읽으므로
-  주말·휴장(12-25 · 12-31)은 연속을 깨지도 늘리지도 않고, 거래일인데 세션이 없으면
-  깬다. 깨끗한 하루의 조건은 ``config/tos_status_board.yaml::clean_streak`` 에 있다.
+* 세는 트리(지금은 LONG)마다 **깨끗한 거래일 누적** 과 목표 — 창의 시작, 가장 오래된
+  깨끗한 날, 마지막으로 깨진 날과 그 사유. 거래일은 그 트리의 tenant 캘린더에서
+  읽으므로 주말·휴장(12-25 · 12-31)은 세지도 깨지도 않고, **깨진 거래일은 그날만 세지
+  않는다** — 앞의 기록을 지우지 않는다(2026-11-11 완화,
+  ``docs/plans/2026-11-11-tos-paper-ready-relaxation.md`` §2 문장 1 «연속은 요구하지
+  않는다»). 깨끗한 하루의 조건은 ``config/tos_status_board.yaml::clean_streak`` 에 있다.
 
 **읽기 전용.** sqlite 는 :func:`tools.tos_cp3.session_inputs._connect_ro`
 (``file:…?mode=ro`` + ``PRAGMA user_version`` 핀)로만 연다. 파일은 읽기만 하고, 프로세스
@@ -127,9 +129,10 @@ BOOT_KIND = "TIME_SERVICE_STARTUP"
 B3_SUMMARY_SCHEMA_VERSIONS = frozenset({2, 3})
 #: 선언된 divergence 를 자기 버킷(``live_comparison.declared_difference_counts``)에
 #: 담아 내는 첫 summary 모양. **그 아래 모양의 `divergent` 는 선언된 차이를 섞어 센다**
-#: — 로드맵 §2-1 의 「설명 안 되는 divergence」로 읽으면 안 되므로, v2 는 수를 그대로
-#: 보여 주되 판정을 «확인» 에 둔다. v3 부터는 `divergent` 가 바로 그 수이고 §2-1 을
-#: 못 채우는 것이라서 «막힘» 이다.
+#: — 「설명 안 되는 divergence」로 읽으면 안 되므로 v2 는 수를 그대로 보여 주되 그
+#: 사실을 줄에 적는다. v3 부터는 `divergent` 가 바로 그 수다. 2026-11-11 완화 뒤
+#: 두 모양 모두 «확인» 이다(그 수는 깨끗함 판정에서 빠진다 —
+#: ``docs/plans/2026-11-11-tos-paper-ready-relaxation.md`` §2 문장 1).
 B3_DECLARED_BUCKET_SCHEMA_VERSION = 3
 #: 세션 디렉터리 아래 B3 산출물 디렉터리. ``config/tos_cp3_b3.yaml::subdir`` 와 같아야 하고
 #: ``tests/tools/test_cp3_post_session_b3.py`` 가 그 일치를 고정한다 — 두 값이 어긋나면
@@ -160,7 +163,7 @@ _LOG_LINE_RE = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (?P<msg
 
 @dataclass(frozen=True)
 class StreakTree:
-    """연속 판정이 세는 한 트리 — 세션 디렉터리 label 과 그 트리의 tenant 캘린더."""
+    """누적 판정이 세는 한 트리 — 세션 디렉터리 label 과 그 트리의 tenant 캘린더."""
 
     label: str
     calendar_yaml: Path
@@ -168,7 +171,7 @@ class StreakTree:
 
 @dataclass(frozen=True)
 class StreakConfig:
-    """``config/tos_status_board.yaml::clean_streak`` 의 값(로드맵 §2-1 · §3 M4)."""
+    """``config/tos_status_board.yaml::clean_streak`` 의 값(2026-11-11 완화 §2 문장 1)."""
 
     target_days: int
     window_days: int
@@ -1017,7 +1020,7 @@ def b3_facts(session_dir: Path) -> dict[str, Any] | None:
         "divergent": live["divergent"],
         # 「선언된 차이로 설명된 봉」과 「대조에서 빼 둔 봉」. ``None`` 은 0 이 아니라
         # «이 summary 모양은 말하지 않는다» 다 — 그래야 아래 divergent 줄이 v2 의
-        # 섞인 수를 §2-1 의 수로 읽지 않는다.
+        # 섞인 수를 「설명 안 되는 차이」로 읽지 않는다.
         "declared": declared if separates and isinstance(declared, dict) else None,
         "excluded": excluded if separates and isinstance(excluded, dict) else None,
         "separates_declared": separates,
@@ -1348,7 +1351,7 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
         verdict = s.b3_run["verdict"]
         where = f" ({s.b3_run['stage']})" if s.b3_run["stage"] else ""
         if verdict == B3_VERDICT_SKIPPED:
-            # 설정·시장으로 «돌리지 않기로 한» 것. §2-1 을 재지 못한 것은 맞으므로
+            # 설정·시장으로 «돌리지 않기로 한» 것. B3 가 돌지 않은 것은 맞으므로
             # 숨기지 않고, 결함이 아니므로 막힘도 아니다.
             issues.append((WARN, f"B3 대조 건너뜀 — {s.b3_run['reason']}"))
         elif verdict == "running" and not s.b3_run["overdue"]:
@@ -1357,19 +1360,23 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
             issues.append(
                 (
                     BLOCK,
-                    f"B3 대조가 §2-1 을 재지 못했다 — {verdict}{where}: {s.b3_run['reason']}",
+                    f"B3 대조가 돌지 않았다 — {verdict}{where}: {s.b3_run['reason']}",
                 )
             )
     elif s.b3 is not None:
         if "error" in s.b3:
             issues.append((BLOCK, f"B3 summary 를 읽을 수 없다 — {s.b3['error']}"))
         else:
+            # 두 수는 계속 올리지만 등급은 «확인» 이다 — 2026-11-11 완화
+            # (docs/plans/2026-11-11-tos-paper-ready-relaxation.md §2 문장 1:
+            # «unresolved · divergent 는 상태판에 계속 «확인» 으로 나오지만 깨끗함
+            # 판정에서 빠진다 — B3 는 레거시 증인과의 대조이지 과정의 동작 조건이
+            # 아니다»). 수를 숨기지는 않는다: 막는 것만 그만둔다.
             if s.b3["unresolved"]:
-                issues.append((BLOCK, f"B3 unresolved={s.b3['unresolved']}"))
-            # §2-1 의 두 수 중 두 번째가 live divergent 다. **선언된 차이를 자기 버킷으로
-            # 가른 모양(v3)에서만** 그 수가 「설명 안 되는 divergence」이고, 그때는
-            # unresolved 와 같은 등급으로 막는다. 그 아래 모양은 선언된 차이를 섞어 세므로
-            # 수는 보여 주되 확인에 둔다 — 섞인 수를 §2-1 미달로 읽지 않기 위해.
+                issues.append((WARN, f"B3 unresolved={s.b3['unresolved']}"))
+            # **선언된 차이를 자기 버킷으로 가른 모양(v3)에서만** divergent 가 「설명
+            # 안 되는 divergence」다. 그 아래 모양은 선언된 차이를 섞어 세므로 그
+            # 사실을 줄에 적는다 — 섞인 수를 설명 안 되는 차이로 읽지 않기 위해.
             if s.b3["divergent"]:
                 declared = s.b3["declared"] or {}
                 tail = (
@@ -1379,7 +1386,7 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
                 )
                 issues.append(
                     (
-                        BLOCK if s.b3["separates_declared"] else WARN,
+                        WARN,
                         f"B3 live divergent {s.b3['divergent']}/{s.b3['compared_bars']}"
                         f"{tail}",
                     )
@@ -1568,7 +1575,7 @@ def paper_facts(
 
 
 # ---------------------------------------------------------------------------
-# consecutive clean trading days — roadmap §2-1 · §3 M4
+# clean trading days, counted cumulatively — 2026-11-11 완화 §2 문장 1
 # ---------------------------------------------------------------------------
 
 #: 그날의 판정이 더 바뀌지 않는 세션 상태. 나머지(RUNNING · PRE-BOOT · NOT-BOOTED)는
@@ -1617,15 +1624,18 @@ def load_tree_calendar(path: Path) -> TreeCalendar:
 def day_clean(session: TenantSession | None, scfg: StreakConfig) -> str:
     """깨끗한 거래일인가 — 깨끗하면 ``""``, 아니면 **왜 아닌지** 한 줄.
 
-    §2-1 의 조건 전부가 참이어야 한다: 세션이 ``clean_run_rcs`` 안의 rc 로 끝났고 ·
-    B3 실행 기록의 verdict 가 ``ok`` 이고 · summary 모양이
-    v:data:`B3_DECLARED_BUCKET_SCHEMA_VERSION` 이상이고 · 대조한 봉이 0 이 아니고 ·
-    ``unresolved`` 0 ·
-    (설명 안 되는) ``divergent`` 0.
+    조건은 둘뿐이다(2026-11-11 완화,
+    ``docs/plans/2026-11-11-tos-paper-ready-relaxation.md`` §2 문장 1): 세션이 기동해
+    ``clean_run_rcs`` 안의 rc 로 끝났고 · B3 대조가 **돌았다**(실행 기록
+    ``b3/status.json`` 의 verdict 가 ``ok``).
 
-    빠진 것 · 읽히지 않는 것 · 옛 모양 · 실패는 전부 깨끗하지 않다. 건너뛰는 분기는
-    없다 — ``unresolved`` 와 ``divergent`` 는 좋은 값이 0 이라서, 재지 못한 하루를
-    조용히 통과시키면 그것이 10 일 중 하루로 센다.
+    B3 가 **무엇을 봤는지**(``unresolved`` · ``divergent`` · summary 모양 · 대조한 봉
+    수)는 더는 보지 않는다 — B3 는 레거시 증인과의 대조이지 과정의 동작 조건이 아니다.
+    그 수들은 :func:`tenant_issues` 가 «확인» 으로 계속 올리므로 숨지 않는다.
+
+    세션이 없는 것 · 끝나지 않은 것 · rc 가 다른 것 · B3 실행 기록이 없거나 읽히지
+    않거나 ok 가 아닌 것은 깨끗하지 않다. 깨끗하지 않은 하루는 그날만 세지 않고
+    앞의 누적을 지우지 않는다(:func:`tree_streak`).
     """
     if session is None:
         return "세션 디렉터리 없음"
@@ -1642,38 +1652,18 @@ def day_clean(session: TenantSession | None, scfg: StreakConfig) -> str:
         return f"B3 실행 기록을 읽을 수 없다 — {run['error']}"
     if not run["ok"]:
         where = f" ({run['stage']})" if run["stage"] else ""
-        return (
-            f"B3 대조가 §2-1 을 재지 못했다 — {run['verdict']}{where}: {run['reason']}"
-        )
-    b3 = session.b3
-    if b3 is None:
-        return f"B3 summary 없음 ({B3_SUBDIR}/report/summary.json)"
-    if "error" in b3:
-        return f"B3 summary 를 읽을 수 없다 — {b3['error']}"
-    if not b3["separates_declared"]:
-        return (
-            f"B3 summary 모양이 v{B3_DECLARED_BUCKET_SCHEMA_VERSION} 미만 —"
-            " divergent 가 선언된 차이를 섞어 세므로 §2-1 을 재지 못한다"
-        )
-    if b3["compared_bars"] <= 0:
-        # 0 봉 대조의 `unresolved 0` · `divergent 0` 은 「차이가 없다」가 아니라
-        # 「아무것도 재지 않았다」다(review-1003). 두 수의 좋은 값이 0 이라서 이 하루는
-        # 조건을 모두 통과한 것처럼 보이고, 그러면 10 일 중 하루로 센다.
-        return "B3 대조한 봉이 0 — 재지 못한 것이 0 으로 읽힌다"
-    if b3["unresolved"]:
-        return f"B3 unresolved={b3['unresolved']}"
-    if b3["divergent"]:
-        return f"B3 설명 안 되는 divergent={b3['divergent']}/{b3['compared_bars']}"
+        return f"B3 대조가 돌지 않았다 — {run['verdict']}{where}: {run['reason']}"
     return ""
 
 
 def day_pending(session: TenantSession | None) -> str | None:
     """상태판 날짜를 아직 판정할 수 없는 이유 — 없으면 ``None``.
 
-    끝나지 않은 하루를 「깨끗하지 않다」로 세면 연속 수가 장중에는 언제나 0 이 된다.
-    그래서 보류는 **상태판 날짜(= 오늘)에만** 둔다: 세는 것은 끝난 거래일이고, 오늘은
-    끝나면 센다. 앞선 거래일에는 이 함수를 쓰지 않으므로 같은 모양이 어제의 것이면
-    :func:`day_clean` 이 그대로 연속을 깬다 — 보류가 하루를 영구히 사면하지 않는다.
+    아직 돌고 있는 오늘을 「깨끗하지 않다」로 적으면 장중에는 늘 오늘이 「마지막으로
+    깨진 날」로 올라간다. 그래서 보류는 **상태판 날짜(= 오늘)에만** 둔다: 세는 것은
+    끝난 거래일이고, 오늘은 끝나면 센다. 앞선 거래일에는 이 함수를 쓰지 않으므로 같은
+    모양이 어제의 것이면 :func:`day_clean` 이 그대로 「깨진 날」로 적는다 — 보류가
+    하루를 영구히 사면하지 않는다.
     """
     if session is None:
         return "세션 디렉터리 아직 없음"
@@ -1682,10 +1672,10 @@ def day_pending(session: TenantSession | None) -> str | None:
     run = session.b3_run
     if session.status == "ENDED" and run is None:
         # 러너 step 14 는 첫 단계 **전에** status.json 을 쓴다(#1000). 정지와 그 쓰기
-        # 사이가 이 창이고, 끝까지 비어 있으면 오늘이 어제가 되는 순간 연속을 깬다.
+        # 사이가 이 창이고, 끝까지 비어 있으면 오늘이 어제가 되는 순간 깨진 날이 된다.
         return (
             f"B3 기록 없음({B3_SUBDIR}/status.json) — 정지 직후면 정상이고,"
-            " 끝까지 없으면 내일 연속을 깬다"
+            " 끝까지 없으면 내일 깨진 날로 적힌다"
         )
     if isinstance(run, dict) and run.get("verdict") == "running" and not run["overdue"]:
         where = f" ({run['stage']})" if run.get("stage") else ""
@@ -1701,11 +1691,18 @@ def tree_streak(
     today: _dt.date,
     scfg: StreakConfig,
 ) -> dict[str, Any]:
-    """한 트리의 «지금 연속 몇 거래일 깨끗한가».
+    """한 트리의 «창 안에서 깨끗한 거래일이 몇 날인가» — **누적**.
 
-    *day* 에서 하루씩 거꾸로 걸으며 거래일만 판정한다. 비거래일(주말·휴장)은 연속을
-    깨지도 늘리지도 않고, **거래일인데 세션이 없으면 깬다**. 목표에 닿거나 깨진 날을
-    만나면 멈춘다.
+    *day* 에서 하루씩 거꾸로 ``window_days`` 달력일을 걸으며 거래일만 판정한다.
+    비거래일(주말·휴장)은 세지도 깨지도 않고, **깨진 거래일은 그날만 세지 않는다** —
+    앞의 누적을 지우지 않는다(2026-11-11 완화,
+    ``docs/plans/2026-11-11-tos-paper-ready-relaxation.md`` §2 문장 1 «연속은 요구하지
+    않는다. 깨진 날(LOST·FAILED·세션 없음)은 그날만 세지 않고 앞의 기록을 지우지
+    않는다»). 목표에 닿으면 더 걷지 않는다.
+
+    마지막으로 깨진 거래일과 그 사유는 계속 보고한다 — 거꾸로 걷기 때문에 처음 만나는
+    깨진 날이 가장 최근이다. ``window_start`` 는 거꾸로 걸어 닿은 가장 오래된 달력일
+    (= 센 창의 시작)이고, 목표에 닿아 멈췄으면 거기서 멈춘 날짜다.
     """
     out: dict[str, Any] = {
         "label": tree.label,
@@ -1719,7 +1716,7 @@ def tree_streak(
         "pending": None,
         "broke_on": None,
         "broke_reason": None,
-        "window_exhausted": False,
+        "window_start": None,
         "error": None,
     }
     try:
@@ -1728,8 +1725,9 @@ def tree_streak(
         out["error"] = f"{type(exc).__name__}: {exc}"
         return out
     out["calendar_version"] = calendar.version
-    streak = 0
+    clean = 0
     start: _dt.date | None = None
+    walked: _dt.date | None = None
     cursor = day
     for _ in range(scfg.window_days):
         try:
@@ -1742,6 +1740,7 @@ def tree_streak(
             # 거래일인지 모르는 날에 닿았다 — 센 수는 하한으로 남기고 사유를 올린다.
             out["error"] = str(exc)
             break
+        walked = cursor
         if sd.is_trading_day(cursor, calendar.holidays):
             session = sessions.get((cursor.strftime("%Y%m%d"), tree.label))
             pending = day_pending(session) if cursor == day == today else None
@@ -1750,19 +1749,19 @@ def tree_streak(
             else:
                 why = day_clean(session, scfg)
                 if why:
-                    out["broke_on"] = cursor.isoformat()
-                    out["broke_reason"] = why
-                    break
-                streak += 1
-                start = cursor
-                if streak >= scfg.target_days:
-                    break
+                    if out["broke_on"] is None:
+                        out["broke_on"] = cursor.isoformat()
+                        out["broke_reason"] = why
+                else:
+                    clean += 1
+                    start = cursor
+                    if clean >= scfg.target_days:
+                        break
         cursor -= _dt.timedelta(days=1)
-    else:
-        out["window_exhausted"] = True
-    out["days"] = streak
-    out["met"] = streak >= scfg.target_days
+    out["days"] = clean
+    out["met"] = clean >= scfg.target_days
     out["start"] = start.isoformat() if start else None
+    out["window_start"] = walked.isoformat() if walked else None
     return out
 
 
@@ -1834,8 +1833,8 @@ def build_board(
         if _SESSION_DIR_RE.match(p.name).group("day") in history_days  # type: ignore[union-attr]
     ]
     paper = paper_facts(cfg, date_iso, proc_root=live_root)
-    # 연속 판정은 이력 창(history_days)보다 멀리 볼 수 있다. 이미 읽은 세션을 다시 읽지
-    # 않고, 모자란 날짜만 저장소 없이(연속 조건에 쓰지 않는다) 채운다.
+    # 깨끗한 날 누적은 이력 창(history_days)보다 멀리 볼 수 있다. 이미 읽은 세션을 다시
+    # 읽지 않고, 모자란 날짜만 저장소 없이(깨끗함 조건에 쓰지 않는다) 채운다.
     scfg = cfg.clean_streak
     by_key: dict[tuple[str, str], TenantSession] = {
         (s.day, s.label): s for s in history + on_day
@@ -1864,14 +1863,14 @@ def build_board(
         issues.extend((level, s.name, text) for level, text in s.issues)
     issues.extend((level, "paper", text) for level, text in paper["issues"])
     # 수가 목표보다 작은 것은 소견이 아니다(채우는 동안은 그게 정상). **셀 수 없는** 것만
-    # 올린다 — 캘린더를 읽지 못하면 §2-1 을 재지 못한 것이고 그 사실은 숨기지 않는다.
+    # 올린다 — 캘린더를 읽지 못하면 깨끗한 날을 세지 못한 것이고 그 사실은 숨기지 않는다.
     for t in streak:
         if t["error"]:
             issues.append(
                 (
                     WARN,
                     f"streak/{t['label']}",
-                    f"연속 거래일을 셀 수 없다 — {t['error']}",
+                    f"깨끗한 거래일을 셀 수 없다 — {t['error']}",
                 )
             )
     return {
@@ -2183,23 +2182,24 @@ def render_text(board: Mapping[str, Any]) -> str:
     streak = board.get("clean_streak") or []
     if streak:
         add(
-            f"■ 연속 깨끗한 거래일 (§2-1 · 목표 {streak[0]['target_days']} 거래일"
-            " · 끝난 거래일만 · 판정에는 넣지 않는다)"
+            f"■ 깨끗한 거래일 누적 (창 {streak[0]['window_days']}일 · 목표"
+            f" {streak[0]['target_days']} 거래일 · 끝난 거래일만 · 연속 아님"
+            " · 판정에는 넣지 않는다)"
         )
         for t in streak:
             line = f"  {t['label']:<10} {t['days']}/{t['target_days']}"
             line += " ✔ 목표 충족" if t["met"] else ""
             if t["start"]:
-                line += f" · 시작 {t['start']}"
+                line += f" · 가장 오래된 깨끗한 날 {t['start']}"
             add(line)
+            if t["window_start"]:
+                add(f"    센 창 {t['window_start']} ~ {board['date']}")
             if t["pending"]:
                 add(f"    {board['date']} 보류 — {t['pending']}")
             if t["broke_on"]:
-                add(f"    마지막 깨짐 {t['broke_on']} — {t['broke_reason']}")
-            if t["window_exhausted"]:
                 add(
-                    f"    창 {t['window_days']} 달력일 안에서 깨진 날을 만나지 못했다"
-                    " — 이 수는 하한이다"
+                    f"    마지막 깨진 거래일 {t['broke_on']} — {t['broke_reason']}"
+                    " (누적을 지우지 않는다)"
                 )
             if t["error"]:
                 add(f"    셀 수 없다 — {t['error']}")
