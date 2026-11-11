@@ -71,7 +71,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -554,13 +554,32 @@ def run_declarative(
             continue
         values = evaluated.values
         unusable = _inputs_unusable(
-            float(values["close"]), float(values["vwap"]), float(values["atr"])
+            *(_number(values, name) for name in ("close", "vwap", "atr"))
         )
         if unusable is not None:
             omitted.append((raw_event_id, unusable))
             continue
         records[raw_event_id] = dict(evaluated.published)
     return records, omitted
+
+
+def _number(values: Mapping[str, Any], name: str) -> float:
+    """Read a declared NUMBER field, refusing a shape the omission gate cannot use.
+
+    ``produce_fields._inputs_unusable`` is asked the same question on both
+    sides, so it has to be handed the same three floats. A declaration whose
+    ``close``/``vwap``/``atr`` is missing or non-numeric could not answer it,
+    and silently coercing would make the omitted lists agree for the wrong
+    reason.
+    """
+    value = values.get(name)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise EquivalenceError(
+            f"the declaration's {name!r} is {value!r}, which the omission gate "
+            "cannot read as a price — fields.yaml must declare close, vwap and "
+            "atr as numbers"
+        )
+    return float(value)
 
 
 def run_legacy(
