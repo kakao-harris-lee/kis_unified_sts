@@ -362,6 +362,46 @@ class TestParams:
             "must be finite",
         )
 
+    @pytest.mark.parametrize("literal", [".nan", ".inf", "-.inf"])
+    def test_non_finite_const_op_value(self, literal: str) -> None:
+        """A non-finite literal field would poison every comparison below it."""
+        raw = yaml.safe_load(
+            "schema: tos-fields/1\n"
+            f"catalog: {CATALOG_VERSION}\n"
+            "fields:\n"
+            f"  - {{name: k, op: const, params: {{value: {literal}}}}}\n"
+            "  - {name: probe, op: gt, inputs: [k], params: {const: 0}}\n"
+            "publish:\n"
+            "  - {field: probe}\n"
+        )
+        assert not math.isfinite(raw["fields"][0]["params"]["value"])
+        _refuse(raw, "must be finite")
+
+    def test_const_requires_a_value(self) -> None:
+        _refuse(document([{"name": "k", "op": "const"}]), "missing required")
+
+    def test_const_value_must_be_a_number(self) -> None:
+        _refuse(
+            document([{"name": "k", "op": "const", "params": {"value": "1.0"}}]),
+            "must be a number",
+        )
+
+    def test_const_takes_no_inputs(self) -> None:
+        _refuse(
+            document(
+                [
+                    _CLOSE,
+                    {
+                        "name": "k",
+                        "op": "const",
+                        "inputs": ["close"],
+                        "params": {"value": 1.0},
+                    },
+                ]
+            ),
+            "arity",
+        )
+
     def test_non_finite_mult(self) -> None:
         _refuse(
             document(

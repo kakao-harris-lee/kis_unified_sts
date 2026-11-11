@@ -50,10 +50,6 @@ TREE_ANCHORS = {
     "cp3-setup-d-stock-005930": (9, 0),
 }
 
-#: The one field of ``FIELD_ORDER`` this catalog version cannot express — see
-#: the ⚠ block at the top of each ``fields.yaml``.
-NOT_YET_REPRODUCED = frozenset({"reversal_ok"})
-
 
 def _fields_yaml(tree: str) -> Path:
     return REPO_ROOT / "config" / "tos_runtime" / tree / "fields.yaml"
@@ -141,11 +137,51 @@ class TestDeclarationMatchesTheStrategyYaml:
         hour, minute = TREE_ANCHORS[tree]
         assert (spec.params["open_hour"], spec.params["open_minute"]) == (hour, minute)
 
-    def test_publishes_field_order_minus_the_one_gap(self, tree: str) -> None:
+    def test_publishes_every_field_order_field_in_order(self, tree: str) -> None:
+        """All 15, in ``FIELD_ORDER``'s order — nothing left behind.
+
+        The journal's key order is what makes the CP-3 file byte-stable, and a
+        kernel poll is refused whole on a missing key
+        (``tos_runtime/marketfeed/journal.py``), so "the same set" is not
+        enough: it has to be the same sequence.
+        """
         document = load_fields_file(_fields_yaml(tree))
         published = tuple(entry.name for entry in document.publish)
-        expected = tuple(name for name in FIELD_ORDER if name not in NOT_YET_REPRODUCED)
-        assert published == expected
+        assert published == FIELD_ORDER
+        assert len(published) == 15
+
+    def test_reversal_confirmation_matches_the_strategy_yaml(
+        self, tree: str, strategy: Any
+    ) -> None:
+        """The gate that needed the ``const`` op, and its two companions."""
+        document = _by_name(load_fields_file(_fields_yaml(tree)))
+        config = strategy.entry_config
+        assert config.reversal_confirm_enabled is True
+        assert document["improve_raw"].params["const"] == float(
+            config.reversal_confirm_atr_mult
+        )
+        # The difference is taken through a 1.0 divisor, which is exact.
+        assert document["one"].params["value"] == 1.0
+        assert document["z_improvement"].inputs == ("abs_prev_z", "abs_z", "one")
+        # requires_price_turn is true, so the turn gates are part of the chain.
+        assert config.reversal_confirm_requires_price_turn is True
+        assert set(document["reversal_ok"].inputs) == {
+            "stall_ok",
+            "prev_close_known",
+            "turn_long_gate",
+            "turn_short_gate",
+            "improve_ok",
+        }
+
+    def test_a_missing_prior_close_rejects_rather_than_permits(self, tree: str) -> None:
+        """Legacy step 6: ``prev_close is None`` -> ``reversal_ok = False``.
+
+        Both resolutions must be ``when_missing: false``; ``true`` would turn
+        the legacy's reject into a pass on every warmup bar.
+        """
+        document = _by_name(load_fields_file(_fields_yaml(tree)))
+        for name in ("prev_close_known", "improve_ok", "turn_long", "turn_short"):
+            assert document[name].params["when_missing"] is False, name
 
     def test_no_trend_field_because_the_gate_ships_off(
         self, tree: str, strategy: Any
@@ -243,6 +279,7 @@ class TestHarnessEndToEnd:
         result = fe.compare(_inputs(document, _frame(), strategy), mode="window")
         assert result.bars_compared > 500
         assert result.cells_compared > 7000
+        assert len(result.published_fields) == 15
         assert result.divergences == (), result.render()
         assert result.omitted_lists_agree
         assert result.bar_sets_agree

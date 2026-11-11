@@ -353,7 +353,10 @@ def _validate_params(
             if not 0.0 <= q <= 100.0:
                 raise FieldSpecError(f"bad params: {what} must be in [0, 100], got {q}")
             out[key] = q
-        elif key in {"const", "mult", "lo", "hi"}:
+        elif key in {"const", "mult", "lo", "hi", "value"}:
+            # ``_as_float`` refuses a non-finite literal, so `const value: .nan`
+            # — a constant that makes every comparison against it false — is a
+            # load refusal like any other dead threshold.
             out[key] = _as_float(value, what=what)
         elif key == "when_missing":
             out[key] = _as_bool(value, what=what)

@@ -242,6 +242,7 @@ TOS checkers (what CI gates on — see `.github/workflows/tos-{gate,firewall}.ym
 ```bash
 python tools/tos_spec_status.py --check
 python tools/tos_firewall_check.py
+mypy tools/tos_*.py tools/tos_cp3 --ignore-missing-imports --explicit-package-bases  # tos-firewall-static runs this
 # `lint-imports` as CI runs it (.github/workflows/tos-firewall.yml): plain, after
 # an editable install of the root project and tos/runtime. Without that install
 # the contracts' root packages do not resolve; a local shortcut is

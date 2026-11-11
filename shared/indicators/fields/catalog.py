@@ -59,8 +59,28 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Final
 
-#: Catalog version. A ``fields.yaml`` pins it and boot is refused on a mismatch,
-#: so a catalog change can never silently alter a shipped tenant's fields.
+#: Catalog version. A ``fields.yaml`` pins it and boot is refused on a mismatch
+#: (``schema.py``), so a catalog change can never silently alter a shipped
+#: tenant's fields.
+#:
+#: **When this must be bumped.** The version is compared for EQUALITY against a
+#: document's ``catalog:`` key, and this module holds exactly ONE op registry —
+#: there is no per-version op table, so the version gates compatibility between
+#: the loaded catalog and a declaration, not "which ops version N had". That
+#: makes the rule:
+#:
+#: * **Adding** an op does NOT bump it. Every document that loaded against the
+#:   previous op set still loads and still evaluates identically: the set only
+#:   grew, and a declaration cannot use an op it does not name. ``const`` was
+#:   added this way (P2-b).
+#: * **Removing** an op, or changing what an existing one COMPUTES or accepts,
+#:   DOES bump it — those are the changes that would make an unchanged
+#:   declaration mean something else, which is the whole point of the pin.
+#:
+#: The residual this leaves: a declaration written against the grown ``/1`` and
+#: deployed against an older ``/1`` is refused by op name ("unknown op"), not by
+#: the version gate. That refusal is correct and specific, so the version does
+#: not need to carry it.
 CATALOG_VERSION: Final[str] = "tos-field-catalog/1"
 
 
@@ -197,6 +217,13 @@ _CATALOG: Final[tuple[OpSpec, ...]] = (
         returns=_NUM,
         required_params=("open_hour", "open_minute"),
         summary="elapsed minutes from the configured KST session open to this bar",
+    ),
+    # --- literal ------------------------------------------------------------
+    _op(
+        "const",
+        returns=_NUM,
+        required_params=("value",),
+        summary="a declared finite constant, the same on every bar",
     ),
     # --- arithmetic ---------------------------------------------------------
     _op(

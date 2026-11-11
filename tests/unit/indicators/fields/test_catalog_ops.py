@@ -44,7 +44,16 @@ class TestCatalogShape:
         assert CATALOG_VERSION == "tos-field-catalog/1"
 
     def test_is_exactly_the_plan_table(self) -> None:
-        """§2.3's table, op for op. A new op is a reviewed catalog change."""
+        """§2.3's table, op for op, plus `const`.
+
+        `const` is the one op added after the first catalog PR (P2-b): the
+        legacy's `abs(prev_z) - abs(z) >= 0.2` needs a difference compared to a
+        constant, and `ratio_z`'s divisor must be a FIELD, so a literal-valued
+        field is what makes that shape expressible. Adding an op does not bump
+        `CATALOG_VERSION` — see the rule next to that constant.
+
+        A new op is a reviewed catalog change; this test is the review's record.
+        """
         assert set(known_op_names()) == {
             "abs",
             "all",
@@ -56,6 +65,7 @@ class TestCatalogShape:
             "bar.open",
             "bar.volume",
             "between",
+            "const",
             "gated_lag",
             "gated_max",
             "gated_min",
@@ -413,3 +423,64 @@ class TestBooleanOps:
         fields.append({"name": "probe", "op": op, "inputs": names})
         bars = [bar(0, high=12.0, low=8.0, close=10.0)]
         assert _last(fields, bars)["probe"] is expected
+
+
+class TestConst:
+    FIELDS = [
+        {"name": "one", "op": "const", "params": {"value": 1.0}},
+        {"name": "probe", "op": "gt", "inputs": ["one"], "params": {"const": 0}},
+    ]
+
+    def test_is_the_declared_value(self) -> None:
+        assert _last(self.FIELDS, [bar(0)])["one"] == 1.0
+
+    @pytest.mark.parametrize("value", [0.0, 1.0, -2.5, 0.2, 1e9, -1e-9])
+    def test_any_finite_value(self, value: float) -> None:
+        fields = [
+            {"name": "k", "op": "const", "params": {"value": value}},
+            {"name": "probe", "op": "gt", "inputs": ["k"], "params": {"const": -1e18}},
+        ]
+        assert _last(fields, [bar(0)])["k"] == value
+
+    def test_same_on_every_bar(self) -> None:
+        values = _values(self.FIELDS, [bar(i) for i in range(5)])
+        assert [row["one"] for row in values] == [1.0] * 5
+
+    def test_divisor_of_one_makes_ratio_z_an_exact_difference(self) -> None:
+        """Why the op exists: ``x / 1.0 == x`` in IEEE-754, so ``ratio_z`` with
+        a 1.0 divisor is the legacy's plain subtraction, bit for bit."""
+        fields = [
+            {"name": "one", "op": "const", "params": {"value": 1.0}},
+            {"name": "h", "op": "bar.high"},
+            {"name": "lo", "op": "bar.low"},
+            {"name": "diff", "op": "ratio_z", "inputs": ["h", "lo", "one"]},
+            {"name": "probe", "op": "gt", "inputs": ["diff"], "params": {"const": 0}},
+        ]
+        for high, low in ((12.25, 8.5), (0.3, 0.1), (1.7995, 1.5995), (100.1, 100.0)):
+            bars = [bar(0, high=high, low=low, close=low)]
+            assert _last(fields, bars)["diff"] == high - low
+
+    def test_the_legacy_z_improvement_gate_is_reproducible(self) -> None:
+        """``abs(prev_z) - abs(z) >= reversal_confirm_atr_mult`` — the shape
+        that was inexpressible before this op."""
+        fields = [
+            {"name": "one", "op": "const", "params": {"value": 1.0}},
+            {"name": "h", "op": "bar.high"},
+            {"name": "lo", "op": "bar.low"},
+            {"name": "improvement", "op": "ratio_z", "inputs": ["h", "lo", "one"]},
+            {
+                "name": "probe",
+                "op": "ge",
+                "inputs": ["improvement"],
+                "params": {"const": 0.2},
+            },
+        ]
+        # 0.25 clears the 0.2 gate; 0.125 does not. Both differences are
+        # exact in binary — `1.2 - 1.0` would NOT be (it is
+        # 0.19999999999999996, i.e. below the gate), which is exactly why the
+        # legacy's own subtraction has to be reproduced rather than approximated.
+        assert _last(fields, [bar(0, high=1.25, low=1.0, close=1.0)])["probe"] is True
+        assert _last(fields, [bar(0, high=1.125, low=1.0, close=1.0)])["probe"] is False
+        # The near-gate case, pinned against plain Python arithmetic.
+        assert (1.2 - 1.0) < 0.2
+        assert _last(fields, [bar(0, high=1.2, low=1.0, close=1.0)])["probe"] is False
