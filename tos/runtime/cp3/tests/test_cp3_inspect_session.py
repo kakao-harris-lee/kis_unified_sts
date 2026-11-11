@@ -398,7 +398,7 @@ _EXPECTED_SUMMARY = """summary — 8 bars · 4 counted on the engine's value vie
   decisions: R0-DEFAULT-NO-ACTION 3 · R2-EXIT-VWAP-REVERTED 2 · R1-ENTRY-LONG 1 · R3-EXIT-EOD 1
   value view ≠ journal: 1 bars · hi_vol 1
   decision ≠ engine outcome: 1 bars (0 not comparable)
-  withheld (empty value view): 1 bars
+  withheld (empty view or DECISION_WITHHELD): 1 bars
   evidence outcomes: NoActionOutcome 3 · Proposal 1 · TIME_NOT_ADMITTED 1
   evidence halts: STAGE_DENIED@CANDIDATE_COMMAND_CONSTRUCTION 1
   unjoined: 2 snapshots name this raw_event_id — which one the engine decided on is ambiguous 1 · no preimage row names this raw_event_id 1 · tick event-7 exists but handling never completed (handling_started_evidence_seq=71, consumed_evidence_seq=None) 1"""
@@ -475,6 +475,50 @@ def test_an_explicit_empty_view_is_withheld_and_not_evaluated(
     assert row.env_values == {}
     assert row.flags == "--W-"
     assert report.withheld_bars == 1
+
+
+def test_a_recorded_withheld_decision_is_withheld_even_with_a_full_view(
+    tmp_path: Path,
+) -> None:
+    """A tick whose view carried values can still have been withheld.
+
+    Freshness refused, a coordinator precondition refused: the pipeline never
+    reached an input signature, so re-evaluating the policy on those values
+    would print a decision the engine never made. The empty-view test alone
+    misses this shape (LOW-B, round-2 review of #1058).
+    """
+    data_dir = _write_stores(tmp_path)
+    with closing(sqlite3.connect(data_dir / EVIDENCE_FILE_NAME)) as evidence:
+        # Inside bar 2's window (21 < seq <= 24), whose value view is FULL.
+        evidence.execute(
+            "INSERT INTO entries VALUES (?, ?, ?)",
+            (
+                23,
+                "DECISION_WITHHELD",
+                _entry_payload({"halt_reason": "TIME_NOT_ADMITTED"}),
+            ),
+        )
+        evidence.commit()
+    report = inspect_session(
+        journal_path=_write_journal(tmp_path),
+        strategy_path=STRATEGY_PATH,
+        bindings_path=BINDINGS_PATH,
+        data_dir=data_dir,
+    )
+    row = report.bars[2]
+    assert row.evidence is not None
+    assert row.evidence.value_view  # the view is NOT empty
+    assert row.evidence.view_is_explicitly_empty is False
+    assert row.evidence.withheld_reason == "TIME_NOT_ADMITTED"
+    assert row.evidence.withheld is True
+    assert row.evaluation == EVALUATION_WITHHELD
+    assert row.counted is False
+    assert row.rules == ()
+    assert row.decision_rule_id is None
+    assert row.flags == "--W-"
+    # It leaves the denominators, so they drop from four bars to three.
+    assert (report.withheld_bars, report.counted_bars) == (2, 3)
+    assert all(rule.bars == 3 for rule in report.rules)
 
 
 def test_withheld_and_substituted_bars_leave_every_denominator(

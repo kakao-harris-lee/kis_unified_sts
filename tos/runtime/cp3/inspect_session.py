@@ -108,7 +108,7 @@ from .inspect_report import (
     render_text,
     value_text,
 )
-from .strategy import load_strategy_content
+from .strategy import LoadedStrategyContent, load_strategy_content
 
 __all__ = [
     "DISPLAY_TZ_ID",
@@ -398,16 +398,21 @@ def _evaluation_source(
 ) -> tuple[str, dict[str, ScalarValue]]:
     """``(evaluation source, the values the rules are evaluated on)`` for one bar.
 
-    The order matters. A readable, non-empty engine view wins outright — it is
-    what the engine evaluated. An explicit-empty view is the withheld shape and
-    evaluates nothing. Everything else falls back to the journal line, and
-    whether that counts depends on whether an engine view was ever asked for
-    (see :data:`~cp3.inspect_report.EVALUATION_JOURNAL_ONLY`).
+    The order matters, and **withheld is tried first**
+    (:attr:`~cp3.inspect_evidence.BarEvidence.withheld`, LOW-B of the round-2
+    review of #1058). A tick can publish a view carrying values and still have
+    been withheld; evaluating that view would print a decision the engine never
+    made, so "the engine declined to decide" outranks "here are its inputs".
+
+    After that: a readable, non-empty engine view is what the engine evaluated.
+    Everything else falls back to the journal line, and whether that counts
+    depends on whether an engine view was ever asked for (see
+    :data:`~cp3.inspect_report.EVALUATION_JOURNAL_ONLY`).
     """
+    if evidence is not None and evidence.withheld:
+        return EVALUATION_WITHHELD, {}
     if evidence is not None and evidence.joined and evidence.value_view:
         return EVALUATION_ENGINE_VIEW, dict(evidence.value_view)
-    if evidence is not None and evidence.view_is_explicitly_empty:
-        return EVALUATION_WITHHELD, {}
     if not evidence_asked:
         return EVALUATION_JOURNAL_ONLY, dict(bar.fields)
     return EVALUATION_JOURNAL_UNJOINED, dict(bar.fields)
@@ -572,6 +577,60 @@ def _tallies(rows: Sequence[BarRow]) -> _Tallies:
     )
 
 
+def _build_report(
+    rows: Sequence[BarRow],
+    *,
+    policy: DecisionPolicy,
+    content: LoadedStrategyContent,
+    instrument: str,
+    journal_path: Path,
+    data_dir: Path | None,
+    window_from: str | None,
+    window_to: str | None,
+    session_name: str | None,
+) -> InspectReport:
+    """Fold the evaluated rows into the report, counting each population once.
+
+    Split from :func:`inspect_session` for the 100-line function cap
+    ``config/tos_size_budget.yaml`` enforces over this tree.
+    """
+    tallies = _tallies(rows)
+    default_rule_id, _default_kind = content.rule_index[policy.default.rationale]
+    return InspectReport(
+        session_name=session_name or journal_path.parent.name,
+        instrument=instrument,
+        strategy_path=content.strategy_path,
+        strategy_sha256=content.strategy_sha256,
+        bindings_path=content.bindings_path,
+        bindings=dict(content.bindings),
+        data_dir=data_dir,
+        window_from=window_from,
+        window_to=window_to,
+        default_rule_id=default_rule_id,
+        default_decision_kind=str(policy.default.kind),
+        bars=tuple(rows),
+        rules=_summarize(policy, rows, content.rule_index),
+        counted_bars=sum(1 for row in rows if row.counted),
+        withheld_bars=sum(1 for row in rows if row.evaluation == EVALUATION_WITHHELD),
+        substituted_bars=sum(
+            1 for row in rows if row.evaluation == EVALUATION_JOURNAL_UNJOINED
+        ),
+        view_diff_bars=sum(1 for row in rows if row.view_diff),
+        view_diff_fields=tallies.view_diff_fields,
+        disagreement_bars=sum(1 for row in rows if row.decision_disagrees),
+        not_comparable_bars=sum(
+            1 for row in rows if row.counted and row.engine_shape is None
+        ),
+        decision_counts=_tally(
+            [row.decision_rule_id for row in rows if row.decision_rule_id is not None]
+        ),
+        outcome_counts=tallies.outcome_counts,
+        halt_counts=tallies.halt_counts,
+        unjoined_counts=tallies.unjoined_counts,
+        view_refusal_counts=tallies.view_refusal_counts,
+    )
+
+
 def inspect_session(
     *,
     journal_path: Path,
@@ -590,8 +649,12 @@ def inspect_session(
             its ``strategies/`` directory.
         bindings_path: The ``strategy_bindings.yaml`` beside that directory.
         data_dir: The tenant durable-set leaf to read the engine's value views
-            and decision records from, or ``None`` to evaluate the journal line
-            alone (every bar then falls outside the denominators).
+            and decision records from, or ``None`` to evaluate the producer's
+            journal line alone. ``None`` makes every bar
+            :data:`~cp3.inspect_report.EVALUATION_JOURNAL_ONLY`, which **is**
+            counted: only withheld and journal-substituted bars leave the
+            denominators, and both need a view to have been asked for
+            (:func:`_evaluation_source`).
         window_from: Inclusive KST ``HH:MM`` lower bound, or ``None``.
         window_to: Inclusive KST ``HH:MM`` upper bound, or ``None``.
         session_name: A label for the header; defaults to the journal's parent
@@ -634,40 +697,16 @@ def inspect_session(
         )
         for bar in bars
     ]
-    tallies = _tallies(rows)
-    default_rule_id, _default_kind = content.rule_index[policy.default.rationale]
-    return InspectReport(
-        session_name=session_name or journal_path.parent.name,
+    return _build_report(
+        rows,
+        policy=policy,
+        content=content,
         instrument=instrument,
-        strategy_path=content.strategy_path,
-        strategy_sha256=content.strategy_sha256,
-        bindings_path=content.bindings_path,
-        bindings=dict(content.bindings),
+        journal_path=journal_path,
         data_dir=data_dir,
         window_from=window_from,
         window_to=window_to,
-        default_rule_id=default_rule_id,
-        default_decision_kind=str(policy.default.kind),
-        bars=tuple(rows),
-        rules=_summarize(policy, rows, content.rule_index),
-        counted_bars=sum(1 for row in rows if row.counted),
-        withheld_bars=sum(1 for row in rows if row.evaluation == EVALUATION_WITHHELD),
-        substituted_bars=sum(
-            1 for row in rows if row.evaluation == EVALUATION_JOURNAL_UNJOINED
-        ),
-        view_diff_bars=sum(1 for row in rows if row.view_diff),
-        view_diff_fields=tallies.view_diff_fields,
-        disagreement_bars=sum(1 for row in rows if row.decision_disagrees),
-        not_comparable_bars=sum(
-            1 for row in rows if row.counted and row.engine_shape is None
-        ),
-        decision_counts=_tally(
-            [row.decision_rule_id for row in rows if row.decision_rule_id is not None]
-        ),
-        outcome_counts=tallies.outcome_counts,
-        halt_counts=tallies.halt_counts,
-        unjoined_counts=tallies.unjoined_counts,
-        view_refusal_counts=tallies.view_refusal_counts,
+        session_name=session_name,
     )
 
 

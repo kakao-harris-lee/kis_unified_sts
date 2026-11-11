@@ -17,12 +17,14 @@ dataclasses a future Control Plane API reuses carry no evaluation machinery.
   recorded. On a session where the inspector and the engine read the same
   inputs through the same evaluator this must be zero; a non-zero count means
   the screen is lying about something, so it is counted rather than smoothed.
-* ``W`` — the engine published an **explicit-empty** value view for this bar, so
-  every operand resolved to ``UNKNOWN`` and no rule could fire for reasons that
-  have nothing to do with the authored thresholds (that is the shape a
-  ``DECISION_WITHHELD`` tick has). Such a bar is NOT evaluated and is **outside
-  every per-comparison denominator** — counting it would report "entry_window
-  was false" about a bar where nothing was read.
+* ``W`` — the engine declined to decide on this bar, in either of the two shapes
+  :attr:`~cp3.inspect_evidence.BarEvidence.withheld` names: an **explicit-empty**
+  value view (every operand ``UNKNOWN``, so no rule could fire for reasons that
+  have nothing to do with the authored thresholds), or a recorded
+  ``DECISION_WITHHELD`` (the pipeline never reached an input signature — which
+  can happen on a tick whose view DID carry values). Such a bar is NOT evaluated
+  and is **outside every per-comparison denominator** — counting it would report
+  "entry_window was false" about a bar the engine never judged.
 * ``U`` — an engine view was asked for and is not usable (the chain broke, or
   the recorded view is one this reader refused), so the rules were evaluated on
   the **journal** line as a substitute. Shown, because the fields are still
@@ -80,7 +82,8 @@ __all__ = [
 #: population a per-comparison denominator may contain.
 EVALUATION_ENGINE_VIEW = "engine_view"
 
-#: The engine published an explicit-empty view, so nothing was evaluated.
+#: The engine declined to decide — an explicit-empty view or a recorded
+#: ``DECISION_WITHHELD`` — so nothing was evaluated.
 EVALUATION_WITHHELD = "withheld"
 
 #: The evidence chain broke; rules were evaluated on the journal line instead of
@@ -147,11 +150,15 @@ class BarRow:
     Attributes:
         fields: The producer's journal line for this bar.
         env_values: What the rules were ACTUALLY evaluated on — the engine's
-            value view for a counted bar, the journal line for an unjoined one,
-            and empty for a withheld one.
-        evaluation: One of :data:`EVALUATION_ENGINE_VIEW` /
-            :data:`EVALUATION_WITHHELD` / :data:`EVALUATION_JOURNAL_UNJOINED`.
-        counted: Whether this bar is inside the per-comparison denominators.
+            value view when one was read, the journal line when none was asked
+            for or none was usable, and empty for a withheld bar.
+        evaluation: One of the four sources, in the order
+            :func:`~cp3.inspect_session._evaluation_source` tries them:
+            :data:`EVALUATION_WITHHELD`, :data:`EVALUATION_ENGINE_VIEW`,
+            :data:`EVALUATION_JOURNAL_ONLY`, :data:`EVALUATION_JOURNAL_UNJOINED`.
+        counted: Whether this bar is inside the per-comparison denominators —
+            true for :data:`EVALUATION_ENGINE_VIEW` and
+            :data:`EVALUATION_JOURNAL_ONLY`, false for the other two.
         view_diff: ``field_key -> (engine view, journal)`` for every key the two
             disagree on; empty when they agree or only one of them exists.
         engine_shape: ``"no_action"`` / ``"proposal"`` from the recorded
@@ -408,7 +415,10 @@ def _summary_lines(report: InspectReport) -> list[str]:
             f"  decision ≠ engine outcome: {report.disagreement_bars} bars "
             f"({report.not_comparable_bars} not comparable)"
         )
-        lines.append(f"  withheld (empty value view): {report.withheld_bars} bars")
+        lines.append(
+            f"  withheld (empty view or DECISION_WITHHELD): "
+            f"{report.withheld_bars} bars"
+        )
         lines.append(_tally_line("evidence outcomes", report.outcome_counts))
         lines.append(_tally_line("evidence halts", report.halt_counts))
         lines.append(_tally_line("unjoined", report.unjoined_counts))

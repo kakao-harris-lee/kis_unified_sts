@@ -169,11 +169,31 @@ class BarEvidence:
     def view_is_explicitly_empty(self) -> bool:
         """Whether the engine published a view that admitted no value at all.
 
-        That is the shape a withheld tick has: every DSL operand resolves to
-        ``UNKNOWN``, so no rule can fire for a reason that has nothing to do
-        with the authored thresholds.
+        That is the usual shape a withheld tick has: every DSL operand resolves
+        to ``UNKNOWN``, so no rule can fire for a reason that has nothing to do
+        with the authored thresholds. It is not the ONLY such shape — see
+        :attr:`withheld`.
         """
         return self.value_view is not None and not self.value_view
+
+    @property
+    def withheld(self) -> bool:
+        """Whether the engine declined to decide on this bar at all.
+
+        Two shapes, and either one is enough (LOW-B, round-2 review of #1058):
+
+        * an **explicit-empty** value view (:attr:`view_is_explicitly_empty`);
+        * a recorded ``DECISION_WITHHELD`` (:attr:`withheld_reason`), which says
+          the pipeline never reached an input signature.
+
+        The second is the one the empty-view test alone misses. A tick can
+        publish a view carrying values and STILL be withheld — freshness
+        refused, a coordinator precondition refused — and re-evaluating the
+        policy on those values would produce a decision the engine never made.
+        That is precisely the phantom the ``V``/``D`` markers exist to prevent,
+        so such a bar is not evaluated and not counted either.
+        """
+        return self.view_is_explicitly_empty or self.withheld_reason is not None
 
 
 @dataclass(frozen=True)
