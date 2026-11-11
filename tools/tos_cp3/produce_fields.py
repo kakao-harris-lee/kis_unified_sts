@@ -122,7 +122,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Final
 
 import yaml
 
@@ -202,6 +202,18 @@ JOURNAL_REQUIRED_KEYS = (
 #: Output file names inside ``--out``.
 FIELDS_FILENAME = "fields.jsonl"
 LINEAGE_FILENAME = "lineage.json"
+
+#: ``SetupDVWAPReversion.REGISTRY_NAME``, restated as a literal.
+#:
+#: P2-c's completion criterion is ZERO legacy imports in this module (plan
+#: ``docs/plans/2026-11-11-tos-p2-declarative-fields.md`` §5.2), and two of the
+#: four uses were this one string. Restating it is the same move this file
+#: already makes for ``JOURNAL_REQUIRED_KEYS`` ("restated as a literal because
+#: the import firewall forbids importing it"), and it is honest for the same
+#: reason: ``tests/tools/test_cp3_fields_equivalence.py`` asserts this literal
+#: EQUALS the class attribute, so the two cannot drift while the class exists.
+#: When the class is finally gone from this repo the test is what says so.
+SETUP_D_REGISTRY_NAME: Final[str] = "setup_d_vwap_reversion"
 
 #: Price scale: index points → hundredths of an index point. Exact for the
 #: KOSPI200 futures tick (0.05 pt → 5 units); :func:`_assert_scale_covers_tick`
@@ -361,10 +373,10 @@ def load_strategy_inputs(path: Path) -> StrategyInputs:
     entry = strategy.get("entry") or {}
     exit_ = strategy.get("exit") or {}
     entry_type = entry.get("type")
-    if entry_type != SetupDVWAPReversion.REGISTRY_NAME:
+    if entry_type != SETUP_D_REGISTRY_NAME:
         raise ProduceFieldsError(
             f"{path}: strategy.entry.type is {entry_type!r}; this producer "
-            f"only knows {SetupDVWAPReversion.REGISTRY_NAME!r}"
+            f"only knows {SETUP_D_REGISTRY_NAME!r}"
         )
 
     entry_params = dict(entry.get("params") or {})
@@ -1983,7 +1995,7 @@ def build_lineage(
         "strategy": {
             "path": str(strategy.path),
             "sha256": strategy.sha256,
-            "entry_type": SetupDVWAPReversion.REGISTRY_NAME,
+            "entry_type": SETUP_D_REGISTRY_NAME,
             "entry_params_yaml": strategy.entry_params,
             "exit_params_yaml": strategy.exit_params,
             "entry_params_used": strategy.entry_config.model_dump(mode="json"),

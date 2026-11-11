@@ -803,3 +803,51 @@ class TestPublishCoverageRefusal:
             load_fields_file(_fields_yaml("cp3-setup-d-long")),
             strategies_dir=strategies,
         )
+
+
+class TestTheRestatedRegistryName:
+    """``produce_fields.SETUP_D_REGISTRY_NAME`` must equal the class attribute.
+
+    P2-c drives the legacy imports in ``produce_fields.py`` to zero (plan §5.2),
+    and two of the four uses were the registry-name string. Restating a literal
+    is only honest while something compares it to its source — this is that
+    something. A test MAY import the legacy class: a test is not the producer
+    path, which is the thing the criterion is about.
+    """
+
+    def test_the_literal_equals_the_class_attribute(self) -> None:
+        from shared.decision.setups.vwap_reversion import SetupDVWAPReversion
+
+        assert pf.SETUP_D_REGISTRY_NAME == SetupDVWAPReversion.REGISTRY_NAME
+
+    def test_the_shipped_strategy_yaml_declares_that_type(self) -> None:
+        """...and the string is the one the shipped strategy actually carries,
+        so the loader's refusal is about a real value rather than a typo both
+        sides share."""
+        raw = yaml.safe_load(STRATEGY_YAML.read_text(encoding="utf-8"))
+        assert raw["strategy"]["entry"]["type"] == pf.SETUP_D_REGISTRY_NAME
+
+    def test_only_the_two_functions_still_to_move_name_the_legacy_class(self) -> None:
+        """The §5.2 countdown, as a number rather than a promise.
+
+        The remaining code references are exactly the legacy driver and the D7
+        measurement — the two functions the move commit relocates. When this
+        count reaches zero the criterion is met; until then this test says how
+        far there is to go, and fails if a NEW use appears.
+        """
+        import ast
+
+        source = Path(pf.__file__).read_text(encoding="utf-8")
+        enclosing = set()
+        tree = ast.parse(source)
+        uses = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and node.id == "SetupDVWAPReversion"
+        ]
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and any(
+                node.lineno <= line <= (node.end_lineno or node.lineno) for line in uses
+            ):
+                enclosing.add(node.name)
+        assert enclosing == {"produce_bars", "measure_moving_vs_frozen_exit"}, enclosing
