@@ -1,4 +1,11 @@
-# CP-3 SHORT tenant — declarative indicator fields (P2-b).
+# CP-3 Setup D tenant — declarative indicator fields (P2-b).
+#
+# ⚠ 이 파일은 LONG 트리와 SHORT 트리에서 **바이트 동일**하다. 방향은 필드에
+# 없다 — z 의 부호가 양쪽(정체·되돌림) 조건을 고르고, 어느 쪽으로 진입하는지는
+# 전략 DSL 의 임계 부호가 정한다(LONG 트리는 `z_x1000 <= -1800`). 그래서 한쪽을
+# 고치면 **같은 PR 에서 다른 쪽도 같은 바이트로** 고쳐야 하고,
+# `tos/runtime/tests/compose/test_tenant_tree_copies.py` 가 그 동일성을 센다.
+# STOCK 트리의 사본은 개장 앵커 두 칸만 다르다.
 #
 # 상위: docs/plans/2026-11-11-tos-p2-declarative-fields.md §2.2 · 카탈로그
 # `tos-field-catalog/1` (`shared/indicators/fields/catalog.py`).
@@ -10,10 +17,6 @@
 # `config/strategies/futures/setup_d_vwap_reversion.yaml` 과 같아야 하며**, 그
 # 일치를 `tests/tools/test_cp3_fields_equivalence.py` 가 고정한다(계획 §6 위험 4 —
 # 정본이 fields.yaml 로 옮겨 가는 것은 P2-c).
-#
-# 방향은 필드에 없다 — 필드는 방향 중립이고(z 의 부호가 양쪽 조건을 고른다)
-# 방향은 전략 DSL 의 임계 부호가 정한다. 그래서 이 파일은 LONG 트리의 것과
-# **바이트 동일**하다(머리말의 트리 이름만 다르다).
 #
 # 세 트리(LONG · SHORT · STOCK)의 이 파일은 **개장 앵커 두 칸만 다르다**:
 # 선물은 08:45(`config/market_schedule.yaml::market_schedule.futures.regular.open`,

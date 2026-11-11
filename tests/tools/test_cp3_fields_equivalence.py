@@ -193,10 +193,22 @@ class TestDeclarationMatchesTheStrategyYaml:
 
 
 class TestTreesDifferOnlyByTheirAnchor:
-    def test_long_and_short_declarations_are_identical_apart_from_the_header(
-        self,
-    ) -> None:
-        """Direction lives in the DSL's threshold sign, never in the fields."""
+    def test_long_and_short_declarations_are_byte_identical(self) -> None:
+        """Direction lives in the DSL's threshold sign, never in the fields.
+
+        BYTE identity, not just parsed equality: the two files have no reason
+        to differ at all, and ``tos/runtime/tests/compose/test_tenant_tree_copies.py``
+        counts them as one of the LONG-identical tenant files. Parsed equality
+        is asserted below as well, so a divergence says which kind it is.
+        """
+        assert (
+            _fields_yaml("cp3-setup-d-long").read_bytes()
+            == _fields_yaml("cp3-setup-d-short").read_bytes()
+        )
+
+    def test_long_and_short_declarations_parse_identically(self) -> None:
+        """The same claim at the parsed level, so a header-only drift is named
+        as a header-only drift rather than as a semantic one."""
         long_doc = parse_fields_document(
             yaml.safe_load(_fields_yaml("cp3-setup-d-long").read_text("utf-8"))
         )
