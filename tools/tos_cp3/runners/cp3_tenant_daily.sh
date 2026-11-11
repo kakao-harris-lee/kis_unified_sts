@@ -745,6 +745,45 @@ else
 fi
 log "runner rc=$rc session=$SESSION"
 
+# --- the bar-document export (roadmap §P1 ②) -------------------------------
+#
+# HERE, and not inside run_tenant_session.sh, for one reason: the session AND
+# its B3 reconciliation (that script's step 14) must both be finished, and
+# "the runner returned" is exactly that point. Before the exit-code `case`
+# below, because that case `exit`s on the normal codes.
+#
+# ⛔ **It cannot change this session's verdict.** Same discipline as B3: the rc
+# is logged and discarded. The session's exit code is about the runtime and the
+# producer, and a read-only export that could not run says nothing about
+# either. Nothing between here and the `case` may fail the script, so every
+# expansion is `${VAR:-}` (this script runs under `set -u`) and the only
+# command is wrapped in `timeout`.
+#
+# It READS the session directory and the tenant durable set — both 0700, both
+# owned by the user this cron runs as — and WRITES only into
+# $TOS_OPERATOR_PROJECTION_DIR, the directory the dashboard already has
+# bind-mounted read-only. Nothing under the state tree is modified.
+#
+# ⚠ Unset variable = SKIP, logged. That variable is not part of the tenant
+# cron's environment today (it lives in .env.paper, for the resident paper
+# session), so until an operator exports it for this wrapper the hook says so
+# and does nothing. A guessed destination would write a document the container
+# does not mount, which from the page is indistinguishable from no document.
+BARS_CEILING_S=${CP3_BARS_CEILING_S:-120}
+if [ -z "${TOS_OPERATOR_PROJECTION_DIR:-}" ]; then
+  log "=== BARS EXPORT SKIPPED — TOS_OPERATOR_PROJECTION_DIR is unset, so there is no directory the dashboard reads; set it for this wrapper to enable the /tos bar panel (this does NOT affect the session)"
+elif [ ! -x "$WT/tools/tos_cp3/export_bars.py" ] && [ ! -f "$WT/tools/tos_cp3/export_bars.py" ]; then
+  log "=== BARS EXPORT SKIPPED — $WT/tools/tos_cp3/export_bars.py is absent at this origin/main revision (this does NOT affect the session)"
+else
+  log "=== BARS EXPORT session=$SESSION -> ${TOS_OPERATOR_PROJECTION_DIR}/bars ceiling ${BARS_CEILING_S}s"
+  timeout --kill-after=5s "${BARS_CEILING_S}s" \
+    "$PY" "$WT/tools/tos_cp3/export_bars.py" "$SESSION" \
+    --out-dir "$TOS_OPERATOR_PROJECTION_DIR" \
+    --state-dir "$STATE" >>"$SESSION/bars-export.out" 2>&1
+  bars_rc=$?
+  log "=== END BARS EXPORT rc=$bars_rc (record: $SESSION/bars-export.out · this rc does NOT change the session's)"
+fi
+
 # Exit codes: runbook §7.2-d 「종료 코드」.
 case $rc in
 0 | 143)

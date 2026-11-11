@@ -84,6 +84,24 @@ fi
 exit "${CP3_TEST_STUB_RC:-0}"
 """
 
+#: Stub of the bar-document exporter the wrapper's post-B3 hook calls (roadmap
+#: §P1 ②). Records its argv and honours two knobs so the hook's NON-FATALITY and
+#: its ceiling can be exercised without the real inspection. What the real
+#: exporter does is pinned by tests/tools/test_cp3_export_bars.py.
+_STUB_EXPORT_BARS = """#!/usr/bin/env python3
+import os
+import pathlib
+import sys
+import time
+
+pathlib.Path(os.environ["FAKE_EXPORT_ARGV"]).write_text(
+    "\\n".join(sys.argv[1:]) + "\\n", encoding="utf-8"
+)
+if os.environ.get("FAKE_EXPORT_HANG_S"):
+    time.sleep(float(os.environ["FAKE_EXPORT_HANG_S"]))
+sys.exit(int(os.environ.get("FAKE_EXPORT_RC", "0")))
+"""
+
 #: Stub of the runtime CLI the wrapper reaches with the `-c` form (§7.2-f: `-m`
 #: would do nothing and exit 0). Records argv so the invocation itself is pinned.
 _STUB_COMPOSE_CLI = '''"""Test stub of tos_runtime.compose.cli."""
@@ -182,6 +200,7 @@ class Env:
         _write(
             seed / "tools/tos_cp3/runners/run_tenant_session.sh", _STUB_RUNNER, 0o755
         )
+        _write(seed / "tools/tos_cp3/export_bars.py", _STUB_EXPORT_BARS, 0o755)
         for tree in (
             "cp3-setup-d-long",
             "cp3-setup-d-short",
@@ -238,12 +257,15 @@ class Env:
         _write(bindir / "install", _FAKE_INSTALL, 0o755)
         self.crontab = tmp / "crontab.txt"
         self.approval_argv = tmp / "approval-argv.txt"
+        self.export_argv = tmp / "export-argv.txt"
+        self.projection = tmp / "paper-projection"
         self.base_env = {
             "PATH": f"{bindir}:{os.environ['PATH']}",
             "HOME": str(self.home),
             "TZ": "Asia/Seoul",
             "FAKE_CRONTAB_FILE": str(self.crontab),
             "FAKE_APPROVAL_OUT": str(self.approval_argv),
+            "FAKE_EXPORT_ARGV": str(self.export_argv),
             "CP3_DAILY_MAIN": str(self.main),
             "CP3_DAILY_STATE": str(self.state),
             "CP3_DAILY_LOCK_DIR": str(self.locks),
@@ -1465,3 +1487,143 @@ def test_1038_stock_a_catchup_that_skips_does_not_touch_the_approval_slot(
     assert stale.read_bytes() == before
     assert not (env.state / _ARCHIVE_REL).exists()
     assert not _stock_session(env, _OPEN_DAY).exists()
+
+
+# ===========================================================================
+# The post-B3 bar-document export hook (roadmap §P1 ②)
+# ===========================================================================
+#
+# The tenant cron boots from an origin/main detached worktree every morning, so
+# a broken wrapper breaks the NEXT day's sessions. Every test here asserts the
+# same property from a different angle: whatever the export does, the session's
+# verdict and exit code are untouched.
+#
+# "After B3" is structural rather than asserted directly: B3 is step 14 INSIDE
+# run_tenant_session.sh, so the hook running after the runner returns is after
+# B3 by construction. What IS asserted is the hook's position relative to the
+# runner's own rc line, which the wrapper logs the moment the runner returns.
+#
+# ⚠ Not covered, by decision: the `export_bars.py is absent at this revision`
+# SKIP branch. It exists because the wrapper and the exporter land in separate
+# PRs, so a session may boot from an origin/main that has only one of them —
+# and exercising it would mean pushing a file removal into the fixture origin
+# mid-test, which costs more than the two-line branch is worth. The branch is
+# a `[ ! -f ]` guard with no decision in it.
+
+_SESSION_DAY = _OPEN_DAY.replace("-", "")
+
+
+def _long_session_dir(env: Env) -> Path:
+    return env.state / "cp3-sessions" / f"long-{_SESSION_DAY}"
+
+
+def test_the_export_hook_skips_loudly_when_no_projection_dir_is_set(env: Env) -> None:
+    """Unset variable is a SKIP with a reason, never a guessed destination.
+
+    A document written somewhere the dashboard does not mount is, from the page,
+    indistinguishable from no document at all. This is also the state of the
+    tenant cron TODAY — the variable lives in .env.paper, for the resident paper
+    session — so this test pins that the hook is inert until an operator opts in.
+    """
+    _data_parents(env)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "BARS EXPORT SKIPPED — TOS_OPERATOR_PROJECTION_DIR is unset" in r.stdout
+    assert not env.export_argv.exists()
+    assert "일일 세션 종료" in r.stdout
+
+
+def test_the_export_hook_runs_after_the_runner_and_keeps_the_session_rc(
+    env: Env,
+) -> None:
+    """Enabled: it runs after the runner, with the session dir and the state root."""
+    _data_parents(env)
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
+    )
+    assert r.returncode == 0, r.stdout
+    assert env.export_argv.read_text(encoding="utf-8").splitlines() == [
+        str(_long_session_dir(env)),
+        "--out-dir",
+        str(env.projection),
+        "--state-dir",
+        str(env.state),
+    ]
+    lines = r.stdout.splitlines()
+    runner_rc = next(i for i, line in enumerate(lines) if "runner rc=" in line)
+    export = next(i for i, line in enumerate(lines) if "BARS EXPORT session=" in line)
+    assert runner_rc < export
+    assert "END BARS EXPORT rc=0" in r.stdout
+    assert "일일 세션 종료" in r.stdout and "정상" in r.stdout
+
+
+def test_a_failing_export_does_not_change_the_sessions_verdict(env: Env) -> None:
+    """The one property that matters: the export's rc is logged and discarded."""
+    _data_parents(env)
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
+        FAKE_EXPORT_RC="2",
+    )
+    assert r.returncode == 0, r.stdout
+    assert "END BARS EXPORT rc=2" in r.stdout
+    assert "this rc does NOT change the session's" in r.stdout
+    assert "일일 세션 종료" in r.stdout and "정상" in r.stdout
+
+
+def test_a_succeeding_export_does_not_mask_a_failing_session(env: Env) -> None:
+    """A session that failed keeps ITS code, not the export's."""
+    _data_parents(env)
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        CP3_TEST_STUB_RC="3",
+        TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
+    )
+    assert r.returncode == 3, r.stdout
+    assert "END BARS EXPORT rc=0" in r.stdout
+    assert "ABORT" in r.stdout
+
+
+def test_a_hanging_export_is_bounded_and_still_not_fatal(env: Env) -> None:
+    """A wedged export must not hold the cron wrapper's flock past midnight.
+
+    That would refuse TOMORROW's session ("lock busy"), a bigger loss than a
+    missing document — the same reasoning B3's own ceiling records.
+    """
+    _data_parents(env)
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
+        CP3_BARS_CEILING_S="1",
+        FAKE_EXPORT_HANG_S="30",
+    )
+    assert r.returncode == 0, r.stdout
+    # 124 is `timeout`'s own code for "the ceiling fired".
+    assert "END BARS EXPORT rc=124" in r.stdout
+    assert "일일 세션 종료" in r.stdout
+
+
+def test_the_hook_adds_nothing_to_the_state_tree(env: Env) -> None:
+    """It READS the 0700 state tree; the only thing it writes is its own log."""
+    _data_parents(env)
+    before = {p.name for p in env.state.iterdir()}
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
+    )
+    assert r.returncode == 0, r.stdout
+    # The session directory and its worktree are the runner's own doing; the
+    # export contributes no new top-level entry.
+    assert {p.name for p in env.state.iterdir()} - before <= {
+        "cp3-sessions",
+        "measure",
+    }
+    # Its record sits beside the session's other logs, not in the durable set.
+    assert (_long_session_dir(env) / "bars-export.out").exists()
+    assert not (env.state / "cp3-setup-d-long-data" / "bars").exists()
