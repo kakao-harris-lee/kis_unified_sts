@@ -12,6 +12,15 @@ reads no clock, opens no socket and touches no file, so the only thing a
 caller can change about its answer is the frame it hands in. The identity the
 row carries lives here too, because this function is the only writer of it
 into a row.
+
+Declarative since P2-c (plan
+``docs/plans/2026-11-11-tos-p2-declarative-fields.md`` §3). The fifteen values
+come from the tenant's ``fields.yaml``, not from driving the legacy Setup D —
+so what this function needs is the DECLARATION, and the strategy YAML, the
+contract spec and the open anchor are no longer arguments: the declaration
+carries the thresholds, the windows and the session open, and
+``produce_fields.assert_declaration_binds_to_the_run`` is what pins those last
+two to the session the runtime booted.
 """
 
 from __future__ import annotations
@@ -20,9 +29,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from shared.indicators.fields import FieldsDocument
 from tools.tos_cp3 import TOS_CP3_VERSION
-from tools.tos_cp3.legacy_setup_d_driver import produce_bars
-from tools.tos_cp3.produce_fields import OpenAnchor, StrategyInputs
+from tools.tos_cp3.produce_fields import produce_bars_declarative
 
 #: The allowlist prefix added to ``bootproof_guard`` in PR-2, and the full
 #: ``source_id`` every line carries. The delimiter rule there means the prefix
@@ -44,46 +53,38 @@ def build_line(
     frame: Any,
     *,
     symbol: str,
-    strategy: StrategyInputs,
-    contract_spec: Any,
-    anchor: OpenAnchor,
+    document: FieldsDocument,
     bar_minute: datetime,
     received_ms: int,
 ) -> LineOutcome:
     """The pure half: a frozen frame in, at most one journal row out.
 
     ``raw_event_id`` and the fifteen ``FIELD_ORDER`` values come from B1a's own
-    ``produce_bars``, so the same bar's real-time and offline lines join in B3.
-    Two keys differ from B1a here (plan §1): ``source_id`` names this producer
-    and ``received_ms`` records when the REST response arrived.
+    ``produce_bars_declarative``, so the same bar's real-time and offline lines
+    join in B3. Two keys differ from B1a here (plan §1): ``source_id`` names
+    this producer and ``received_ms`` records when the REST response arrived.
 
-    **The row carries no ``as_of_ms``** (review B1). This function runs
-    ``produce_bars`` — measured at ~0.44 s late in a session — so a stamp taken
-    here would already have spent more than the tenant's whole 800 ms budget by
-    the time the line is written. :meth:`~tools.tos_cp3.live_producer.sinks
-    .ObservationJournal.append` takes it immediately before the replace, and
-    refuses a row that arrives with one.
+    **The row carries no ``as_of_ms``** (review B1). This function runs the
+    producer over the whole frame — measured at ~0.44 s late in a session —
+    so a stamp taken here would already have spent more than the tenant's whole
+    800 ms budget by the time the line is written.
+    :meth:`~tools.tos_cp3.live_producer.sinks .ObservationJournal.append` takes
+    it immediately before the replace, and refuses a row that arrives with one.
 
-    A last record that is not *bar_minute* is not a defect: ``produce_bars``
-    omits a bar whose ATR/VWAP inputs cannot carry their published meaning, and
-    B1a omits the same bar, so B3 does not diverge (plan §3.1). It is reported
-    as ``omitted_unusable``.
+    A last record that is not *bar_minute* is not a defect: the producer omits
+    a bar whose ATR/VWAP inputs cannot carry their published meaning, and B1a
+    omits the same bar, so B3 does not diverge (plan §3.1). It is reported as
+    ``omitted_unusable``.
     """
     import pandas as pd
 
-    produced = produce_bars(
-        frame,
-        symbol=symbol,
-        strategy=strategy,
-        contract_spec=contract_spec,
-        anchor=anchor,
-    )
+    produced = produce_bars_declarative(frame, symbol=symbol, document=document)
     last = produced.records[-1]
-    # ``MarketContextReplay`` yields KST-AWARE stamps while the frozen frame and
-    # ``parse_ohlcv`` carry naive KST wall time. Compared as-is, an aware and a
-    # naive Timestamp for the same minute are never equal, so every line would
-    # read as ``omitted_unusable`` and the producer would publish nothing at
-    # all. Dropped the same way B1a's own ``_bar_lookup`` drops it.
+    # ``FieldBar.create`` normalizes to KST-AWARE stamps while the frozen frame
+    # and ``parse_ohlcv`` carry naive KST wall time. Compared as-is, an aware
+    # and a naive Timestamp for the same minute are never equal, so every line
+    # would read as ``omitted_unusable`` and the producer would publish nothing
+    # at all. Dropped the same way B1a's own ``_bar_lookup`` drops it.
     if pd.Timestamp(last.bar_kst).tz_localize(None) != pd.Timestamp(bar_minute):
         return LineOutcome(reason="omitted_unusable", raw_event_id=last.raw_event_id)
     return LineOutcome(

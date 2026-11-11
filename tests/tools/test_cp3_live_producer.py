@@ -34,6 +34,7 @@ import pytest
 import yaml
 
 from shared.collector.historical.ohlcv_parser import parse_ohlcv
+from shared.indicators.fields import load_fields_file
 from tools.tos_cp3 import quote_client
 from tools.tos_cp3.legacy_setup_d_driver import produce_bars  # noqa: E402
 from tools.tos_cp3.live_producer import band_line as band_line_mod
@@ -69,6 +70,13 @@ OPEN_HM = (8, 45)
 #: no weekend), after the 2026-06-28 open-anchor cutover.
 SEED_DAYS = [date(2026, 10, d) for d in (1, 2, 6, 7, 8, 12, 13, 14, 15, 16)]
 TARGET = date(2026, 10, 19)
+
+#: The shipped tenant tree this producer serves. Real, not a fixture: the
+#: producer binds the declaration to the session at boot
+#: (``produce_fields.assert_declaration_binds_to_the_run``), so a stand-in
+#: would have to restate the shipped open anchor and vol window to be accepted
+#: — and then it would stop pinning the shipped ones.
+TENANT_TREE = _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-long"
 
 #: The target session is cut short in the test calendar so the loop walks 36
 #: boundaries instead of 420. Bar 09:00 is the first inside the entry window
@@ -447,6 +455,7 @@ def _build(tmp_path: Path, market: Market, **overrides: Any):
         target=TARGET,
         session_dir=tmp_path / "session",
         journal_path=tmp_path / "session" / "journal.jsonl",
+        tenant_tree=TENANT_TREE,
         clock=producer_mod.Clock(now=clock.now, sleep=clock.sleep),
         quotes_factory=lambda _config, _log: quotes,
     )
@@ -637,28 +646,29 @@ def test_item2_red_the_stamp_is_taken_after_produce_bars_not_before(
 ) -> None:
     """The B1 defect, as a clock that moves DURING the compute.
 
-    ``produce_bars`` was measured at ~0.44 s late in a session, against a
-    tenant budget of ``max_age_ms`` 800 with 300 ms left for the collector. A
-    stamp taken before the compute is therefore stale on arrival. Here the fake
-    clock advances 5 s inside ``produce_bars``, so a pre-compute stamp is 5 s
-    behind the post-compute clock and the assertion below fails — which is
-    exactly what it did before the fix.
+    The producer was measured at ~0.44 s late in a session, against a tenant
+    budget of ``max_age_ms`` 800 with 300 ms left for the collector. A stamp
+    taken before the compute is therefore stale on arrival. Here the fake clock
+    advances 5 s inside the compute, so a pre-compute stamp is 5 s behind the
+    post-compute clock and the assertion below fails — which is exactly what it
+    did before the fix.
     """
     producer, clock, _quotes = _build(tmp_path, market)
     clock.moment = datetime(
         TARGET.year, TARGET.month, TARGET.day, 9, 10, 5, tzinfo=producer_mod.KST
     )
     # patched on `line`, which is where `build_line` reads it from since the
-    # pure half moved there (PR #904 review round 1 item A.5)
-    real_produce_bars = line_mod.produce_bars
+    # pure half moved there (PR #904 review round 1 item A.5). The name is the
+    # DECLARATIVE producer since P2-c.
+    real_produce = line_mod.produce_bars_declarative
     compute_cost_s = 5.0
 
-    def slow_produce_bars(*args, **kwargs):
-        result = real_produce_bars(*args, **kwargs)
+    def slow_produce(*args, **kwargs):
+        result = real_produce(*args, **kwargs)
         clock.sleep(compute_cost_s)  # the compute takes real time
         return result
 
-    monkeypatch.setattr(line_mod, "produce_bars", slow_produce_bars)
+    monkeypatch.setattr(line_mod, "produce_bars_declarative", slow_produce)
     before = clock.now()
     producer.boot()
     producer.finish()
@@ -1627,6 +1637,45 @@ def test_item5_red_an_unfilled_seed_window_refuses_to_start(
 
 
 @pytest.mark.serial
+def test_a_tenant_tree_with_no_declaration_refuses_to_start(
+    tmp_path: Path, market: Market
+) -> None:
+    """P2-c: no ``fields.yaml``, no session — and no quote is fetched.
+
+    The producer computes the fifteen fields from the declaration, so a tree
+    without one has nothing to publish. The refusal is a
+    ``LiveProducerRefused`` rather than a ``FieldSpecError`` because that is the
+    one exception the runner reads as "the producer did not start".
+    """
+    producer, _clock, _quotes = _build(tmp_path, market)
+    producer.tenant_tree = tmp_path / "not-a-tree"
+    with pytest.raises(LiveProducerRefused, match="not usable for this session"):
+        producer.boot()
+    assert not producer.journal_path.exists()
+    producer.finish()
+
+
+@pytest.mark.serial
+def test_a_declaration_bound_to_another_open_refuses_to_start(
+    tmp_path: Path, market: Market
+) -> None:
+    """The stock tree (09:00) under the futures producer config (08:45).
+
+    The concrete wrong output it prevents: ``entry_window`` true from 09:15
+    instead of 09:00, on every bar, published as a bare bool that cannot say
+    which open it was counted from.
+    """
+    producer, _clock, _quotes = _build(tmp_path, market)
+    producer.tenant_tree = (
+        _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-stock-005930"
+    )
+    with pytest.raises(LiveProducerRefused, match="counts minutes from 09:00"):
+        producer.boot()
+    assert not producer.journal_path.exists()
+    producer.finish()
+
+
+@pytest.mark.serial
 def test_item5_red_a_reused_session_directory_refuses_to_start(
     tmp_path: Path, market: Market
 ) -> None:
@@ -1723,6 +1772,7 @@ def test_item5_red_a_second_producer_on_the_same_session_dir_is_refused(
             target=TARGET,
             session_dir=first.session_dir,  # SAME session
             journal_path=first.session_dir / "other-journal.jsonl",  # different journal
+            tenant_tree=TENANT_TREE,
             clock=first.clock,
             quotes_factory=lambda _c, _l: pytest.fail("got past the lock"),
         )
@@ -2266,6 +2316,8 @@ def test_item5_the_dry_run_touches_nothing(
                 str(tmp_path / "session"),
                 "--journal",
                 str(tmp_path / "session" / "journal.jsonl"),
+                "--tenant-tree",
+                str(TENANT_TREE),
                 "--date",
                 TARGET.isoformat(),
             ]
@@ -2277,6 +2329,10 @@ def test_item5_the_dry_run_touches_nothing(
     assert printed["orders"] == 0
     assert printed["method"] == "GET"
     assert printed["source_id"] == line_mod.SOURCE_ID
+    # The dry run names the declaration it WOULD publish from, so a mis-paired
+    # tree is visible without starting a session.
+    assert printed["tenant_tree"] == str(TENANT_TREE)
+    assert printed["fields_yaml"] == str(TENANT_TREE / "fields.yaml")
     assert not (tmp_path / "session").exists()
 
 
@@ -3575,9 +3631,7 @@ def test_item6_the_producer_reproduces_the_committed_fixture(
     outcome = producer_mod.build_line(
         _fixture_frame(market, SEED_DAYS[-4:]),
         symbol=INSTRUMENT,
-        strategy=inputs["strategy"],
-        contract_spec=inputs["contract_spec"],
-        anchor=inputs["anchor"],
+        document=load_fields_file(TENANT_TREE / "fields.yaml"),
         bar_minute=market.target_bars[-1][1],
         received_ms=expected["received_ms"],
     )
@@ -3638,9 +3692,6 @@ def test_item6_the_runtime_side_half_of_the_hinge_exists() -> None:
 
 def _regenerate() -> None:  # pragma: no cover - a maintenance entry point
     """Rewrite the committed fixture. ``python -m pytest`` never calls this."""
-    strategy = load_strategy_inputs(
-        _REPO_ROOT / "config/strategies/futures/setup_d_vwap_reversion.yaml"
-    )
     market = Market(
         sessions={
             day: _session_bars(day, partial(_constant, _seed_scale(index)))
@@ -3651,14 +3702,7 @@ def _regenerate() -> None:  # pragma: no cover - a maintenance entry point
     outcome = producer_mod.build_line(
         _fixture_frame(market, SEED_DAYS[-4:]),
         symbol=INSTRUMENT,
-        strategy=strategy,
-        contract_spec=resolve_contract_spec(
-            INSTRUMENT,
-            ContractSpecRegistry.from_yaml(str(_REPO_ROOT / "config/execution.yaml")),
-        ),
-        anchor=resolve_open_anchor(
-            cli_value="auto", first_session=TARGET, last_session=TARGET
-        ),
+        document=load_fields_file(TENANT_TREE / "fields.yaml"),
         bar_minute=market.target_bars[-1][1],
         received_ms=1792286460001,
     )

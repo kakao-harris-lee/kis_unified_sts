@@ -1028,6 +1028,85 @@ def assert_dsl_refs_are_published(
         )
 
 
+def assert_declaration_binds_to_the_run(
+    document: FieldsDocument,
+    *,
+    strategy: StrategyInputs,
+    anchor: OpenAnchor,
+) -> None:
+    """Refuse a declaration that is not the one this session is set up for.
+
+    Two bindings, each with a concrete failing input, both checked at producer
+    START because both are free there and expensive later.
+
+    **The open anchor.** ``session.minutes_since_open`` carries the open in the
+    declaration, and the entry window is counted from it; the runtime takes its
+    own anchor from the calendar and the producer config
+    (:func:`resolve_open_anchor`). A futures tree's ``fields.yaml`` (08:45)
+    handed to the stock producer config (09:00) would publish an
+    ``entry_window`` shifted by fifteen minutes on every bar, and nothing
+    downstream could tell: the field is a bare ``bool``.
+
+    **The vol window.** ``live_producer/frame.py::build_seed`` walks trading
+    days backwards until the causal vol window is FILLED, and it sizes that
+    requirement from the STRATEGY's ``vol_window_bars`` while the declaration's
+    ``gated_percentile`` is what consumes the samples. A declaration asking for
+    a 1560-bar window against a seed built for 780 would run the whole session
+    with ``vol_ref`` inside its warmup, where the gate is PERMISSIVE — so
+    ``hi_vol`` would be true on every bar, an entry gate held open because two
+    numbers disagreed.
+
+    Args:
+        document: the tenant's parsed ``fields.yaml``.
+        strategy: the strategy YAML the seed is sized from.
+        anchor: the open anchor the runtime resolved for this session.
+
+    Raises:
+        ProduceFieldsError: on either mismatch, naming both values.
+    """
+    opens = [
+        spec for spec in document.fields if spec.op_name == "session.minutes_since_open"
+    ]
+    if len(opens) != 1:
+        raise ProduceFieldsError(
+            f"the declaration has {len(opens)} 'session.minutes_since_open' "
+            "fields; the producer can bind the session open to exactly one"
+        )
+    declared_open = (
+        int(opens[0].params["open_hour"]),
+        int(opens[0].params["open_minute"]),
+    )
+    if declared_open != (anchor.hour, anchor.minute):
+        raise ProduceFieldsError(
+            "fields.yaml counts minutes from "
+            f"{declared_open[0]:02d}:{declared_open[1]:02d} but this session's "
+            f"open anchor is {anchor.kst} (source {anchor.source}) — the entry "
+            "window would be shifted on every bar, and the published field is "
+            "a bare bool that cannot say so"
+        )
+
+    vol = next((spec for spec in document.fields if spec.name == "vol_ref"), None)
+    if vol is None or vol.op_name != "gated_percentile":
+        raise ProduceFieldsError(
+            "the declaration has no 'vol_ref' gated_percentile field, so the "
+            "seed the producer builds cannot be checked against the window "
+            "that consumes it"
+        )
+    config = strategy.entry_config
+    for key, expected, named in (
+        ("window", int(config.vol_window_bars), "vol_window_bars"),
+        ("warmup", int(config.vol_warmup_bars), "vol_warmup_bars"),
+        ("q", float(config.vol_percentile), "vol_percentile"),
+    ):
+        declared = vol.params[key]
+        if declared != expected:
+            raise ProduceFieldsError(
+                f"fields.yaml's vol_ref {key}={declared!r} but the strategy "
+                f"YAML the seed is sized from declares {named}={expected!r} — "
+                "the seed would be built for one window and consumed by another"
+            )
+
+
 def _dsl_resolved_value_refs(path: Path) -> set[str]:
     """Every ``capsule.resolved_values.<name>`` a strategy document reads.
 

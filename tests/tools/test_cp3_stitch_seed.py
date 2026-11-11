@@ -72,6 +72,13 @@ NEW = "A05611"
 #: ``get_front_month_code(product="mini")`` moves to A05611 the next trading
 #: day (2026-10-09 is a holiday, so that is 2026-10-12).
 TARGET = date(2026, 10, 12)
+
+#: The shipped tenant tree this producer serves. Real, not a fixture: the
+#: producer binds the declaration to the session at boot
+#: (``produce_fields.assert_declaration_binds_to_the_run``), so a stand-in
+#: would have to restate the shipped open anchor and vol window to be accepted
+#: — and then it would stop pinning the shipped ones.
+TENANT_TREE = _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-long"
 SPLICE = date(2026, 10, 8)
 #: Walk order is backwards from TARGET; these are the four trading days the
 #: tenant calendar yields before it (2026-10-05 is a substitute holiday and
@@ -855,6 +862,7 @@ def stitched_session(tmp_path_factory: pytest.TempPathFactory) -> StitchedSessio
         target=TARGET,
         session_dir=tmp_path / "session",
         journal_path=tmp_path / "session" / "journal.jsonl",
+        tenant_tree=TENANT_TREE,
         clock=producer_mod.Clock(now=clock.now, sleep=clock.sleep),
         quotes_factory=lambda _config, _log: quotes,
     )
@@ -886,6 +894,7 @@ def unsplit_session(tmp_path_factory: pytest.TempPathFactory) -> StitchedSession
         target=UNSPLIT_TARGET,
         session_dir=tmp_path / "session",
         journal_path=tmp_path / "session" / "journal.jsonl",
+        tenant_tree=TENANT_TREE,
         clock=producer_mod.Clock(now=clock.now, sleep=clock.sleep),
         quotes_factory=lambda _config, _log: quotes,
     )

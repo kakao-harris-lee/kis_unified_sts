@@ -22,6 +22,7 @@ budget (that measurement is on a different contract month — evidence §4.1).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -36,6 +37,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from shared.config.dotenv_guard import read_explicit_dotenv  # noqa: E402
+from shared.indicators.fields import (  # noqa: E402
+    FieldError,
+    FieldsDocument,
+    load_fields_file,
+)
 from tools.broker_probes.common import SafetyViolation  # noqa: E402
 from tools.tos_cp3.live_producer.calendar import (  # noqa: E402
     RuntimeCalendar,
@@ -88,6 +94,8 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     OpenAnchor,
     ProduceFieldsError,
     StrategyInputs,
+    assert_declaration_binds_to_the_run,
+    assert_dsl_refs_are_published,
     derive_raw_event_id,
     load_strategy_inputs,
     resolve_contract_spec,
@@ -119,12 +127,19 @@ class LiveProducer:
     target: date
     session_dir: Path
     journal_path: Path
+    #: The tenant tree this session serves. Its ``fields.yaml`` is what
+    #: computes the published fields (P2-c) and its ``strategies/`` is what the
+    #: publish set is checked against. An ARGUMENT rather than a config key for
+    #: the same reason ``--instrument`` is (plan §3.5): the runner resolves the
+    #: tree once and hands render, data dir and producer the same value.
+    tenant_tree: Path
     clock: Clock
     quotes_factory: Callable[[LiveProducerConfig, EventLog], Any]
 
     calendar: RuntimeCalendar = field(init=False)
     window: SessionWindow = field(init=False)
     strategy: StrategyInputs = field(init=False)
+    document: FieldsDocument = field(init=False)
     anchor: OpenAnchor = field(init=False)
     contract_spec: Any = field(init=False)
     seed: Seed = field(init=False)
@@ -225,6 +240,13 @@ class LiveProducer:
                 f"open_anchor {self.anchor.kst} != the calendar's "
                 f"{self.config.calendar_session_id} start {regular.start}"
             )
+        # The declaration, before a single quote is fetched. Every refusal here
+        # is free at this moment and three layers away later: a missing
+        # published field surfaces as the kernel refusing the WHOLE poll, every
+        # minute from the open, and a declaration bound to another session's
+        # open publishes a shifted entry window that no downstream bool can
+        # report (plan §2.2, `assert_declaration_binds_to_the_run`).
+        self.document = self._load_declaration()
         registry = ContractSpecRegistry.from_yaml(
             str(self.config.execution_yaml), block=self.config.contract_spec_block
         )
@@ -317,6 +339,49 @@ class LiveProducer:
     def market_root(self) -> Path:
         return self.session_dir / "market"
 
+    @property
+    def fields_yaml(self) -> Path:
+        """The declaration this session publishes from."""
+        return self.tenant_tree / "fields.yaml"
+
+    def _load_declaration(self) -> FieldsDocument:
+        """Load and bind the tenant's ``fields.yaml``, or refuse to start.
+
+        Every refusal becomes a :class:`LiveProducerRefused`, because that is
+        the one exception ``main`` turns into "the producer did not start".
+        A ``FieldSpecError`` or a ``ProduceFieldsError`` escaping here would
+        leave the runner reading a traceback instead of a reason.
+        """
+        try:
+            document = load_fields_file(self.fields_yaml)
+            assert_dsl_refs_are_published(
+                document, strategies_dir=self.tenant_tree / "strategies"
+            )
+            assert_declaration_binds_to_the_run(
+                document, strategy=self.strategy, anchor=self.anchor
+            )
+        except (FieldError, ProduceFieldsError, OSError) as exc:
+            raise LiveProducerRefused(
+                f"{self.fields_yaml}: the tenant declaration is not usable for "
+                f"this session — {exc}"
+            ) from exc
+        self.log.event(
+            {
+                "stage": "declaration",
+                "fields_yaml": str(self.fields_yaml),
+                "fields_yaml_sha256": self.fields_yaml_sha256,
+                "schema": document.schema,
+                "catalog": document.catalog,
+                "published": [entry.name for entry in document.publish],
+            }
+        )
+        return document
+
+    @property
+    def fields_yaml_sha256(self) -> str:
+        """Digest of the declaration's BYTES, as the lineage records it."""
+        return hashlib.sha256(self.fields_yaml.read_bytes()).hexdigest()
+
     def _assert_one_anchor(self) -> None:
         """One anchor for the whole frame, or refuse.
 
@@ -350,6 +415,10 @@ class LiveProducer:
             assembler=self.assembler,
             market_root=self.market_root,
             source_id=SOURCE_ID,
+            fields_yaml=self.fields_yaml,
+            fields_yaml_sha256=self.fields_yaml_sha256,
+            fields_schema=self.document.schema,
+            fields_catalog=self.document.catalog,
         )
 
     def _boot_today(self) -> None:
@@ -754,9 +823,7 @@ class LiveProducer:
             outcome = build_line(
                 frame,
                 symbol=self.instrument,
-                strategy=self.strategy,
-                contract_spec=self.contract_spec,
-                anchor=self.anchor,
+                document=self.document,
                 bar_minute=bar[1],
                 received_ms=(
                     self._received_ms() if received_ms is None else received_ms
@@ -906,6 +973,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--session-dir", type=Path, required=True)
     parser.add_argument("--journal", type=Path, required=True)
     parser.add_argument(
+        "--tenant-tree",
+        type=Path,
+        required=True,
+        help=(
+            "the rendered tenant tree this session serves. Its fields.yaml "
+            "computes the published fields (P2-c) and its strategies/ is what "
+            "the publish set is checked against. REQUIRED: without a "
+            "declaration there is nothing to publish, so the producer refuses "
+            "rather than falling back to anything"
+        ),
+    )
+    parser.add_argument(
         "--date",
         type=date.fromisoformat,
         default=None,
@@ -934,6 +1013,8 @@ def main(argv: list[str] | None = None) -> int:
                     "source_id": SOURCE_ID,
                     "journal": str(args.journal),
                     "session_dir": str(args.session_dir),
+                    "tenant_tree": str(args.tenant_tree),
+                    "fields_yaml": str(args.tenant_tree / "fields.yaml"),
                     "first_poll_delay_s": config.first_poll_delay_s,
                     "missing_no_successor_timeout_s": (
                         config.missing_no_successor_timeout_s
@@ -951,6 +1032,7 @@ def main(argv: list[str] | None = None) -> int:
         target=target,
         session_dir=args.session_dir,
         journal_path=args.journal,
+        tenant_tree=args.tenant_tree,
         clock=Clock(now=lambda: datetime.now(KST), sleep=_sleep),
         quotes_factory=real_quotes,
     )

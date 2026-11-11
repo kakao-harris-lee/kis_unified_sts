@@ -40,6 +40,10 @@ def seed_lineage(
     assembler: StitchedSeed,
     market_root: Path,
     source_id: str,
+    fields_yaml: Path,
+    fields_yaml_sha256: str,
+    fields_schema: str,
+    fields_catalog: str,
 ) -> dict[str, Any]:
     """The ``seed`` log record: where this session's frame came from.
 
@@ -49,9 +53,22 @@ def seed_lineage(
     (``tools/tos_cp3/session_inputs.py``'s ``REASON_PUBLISHED_AFTER_CLOSE``).
     It is written as ``"<start>..<end>"`` of two ``datetime.time``
     isoformats, from the tenant calendar the runtime also loads.
+
+    Since P2-c the record also names WHAT COMPUTED the fields. The identity is
+    the declaration's — its path, the sha256 of its bytes, and the two versions
+    it pins — because that is what the producer now runs; the legacy entry type
+    (``setup_d_vwap_reversion``) named a class this session no longer loads, so
+    recording it would be recording a thing that did not happen. ``fields.yaml``
+    is byte-identical across the LONG and SHORT trees on purpose, so the digest
+    identifies the DECLARATION rather than the tenant — the tenant is named by
+    the session directory and ``source_id``.
     """
     return {
         "instrument": instrument,
+        "fields_yaml": str(fields_yaml),
+        "fields_yaml_sha256": fields_yaml_sha256,
+        "fields_schema": fields_schema,
+        "fields_catalog": fields_catalog,
         "calendar_version": calendar.calendar_version,
         "session_window": f"{window.start}..{window.end}",
         "days_used": [str(day) for day in seed.days_used],

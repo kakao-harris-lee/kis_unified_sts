@@ -62,6 +62,13 @@ SYMBOL = "005930"
 #: Real 2026 trading days in the tenant calendar (10-09 is a holiday).
 SEED_DAYS = [date(2026, 10, d) for d in (6, 7, 8, 12, 13, 14, 15, 16)]
 TARGET = date(2026, 10, 19)
+
+#: The shipped tenant tree this producer serves. Real, not a fixture: the
+#: producer binds the declaration to the session at boot
+#: (``produce_fields.assert_declaration_binds_to_the_run``), so a stand-in
+#: would have to restate the shipped open anchor and vol window to be accepted
+#: — and then it would stop pinning the shipped ones.
+TENANT_TREE = _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-stock-005930"
 STOCK_SESSION_BARS = 380  # 09:00 .. 15:19 (15:20-15:30 is the closing auction)
 TARGET_BARS = 40
 TARGET_SESSION_END = "09:40"
@@ -682,6 +689,7 @@ def test_a_stock_session_publishes_b1a_equal_lines_under_the_stock_layout(
         target=TARGET,
         session_dir=tmp_path / "session",
         journal_path=tmp_path / "session" / "journal.jsonl",
+        tenant_tree=TENANT_TREE,
         clock=producer_mod.Clock(now=clock.now, sleep=clock.sleep),
         quotes_factory=lambda _config, _log: quotes,
     )
@@ -754,6 +762,7 @@ def test_an_open_anchor_that_disagrees_with_the_calendar_is_refused(
         target=TARGET,
         session_dir=tmp_path / "session",
         journal_path=tmp_path / "session" / "journal.jsonl",
+        tenant_tree=TENANT_TREE,
         clock=producer_mod.Clock(now=clock.now, sleep=clock.sleep),
         quotes_factory=lambda _c, _l: FakeStockQuotes(market, clock),
     )
@@ -819,6 +828,7 @@ def test_924_a_late_open_day_shifts_the_first_bar_and_the_session_end(
         target=TARGET,
         session_dir=tmp_path / "session",
         journal_path=tmp_path / "session" / "journal.jsonl",
+        tenant_tree=TENANT_TREE,
         clock=producer_mod.Clock(now=clock.now, sleep=clock.sleep),
         quotes_factory=lambda _config, _log: quotes,
     )

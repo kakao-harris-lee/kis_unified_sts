@@ -943,6 +943,55 @@ class TestPublishCoverageRefusal:
                 strategies_dir=strategies,
             )
 
+    def test_the_three_shipped_trees_bind_to_their_own_producer_config(self) -> None:
+        """Each tree's declaration agrees with the anchor its producer resolves.
+
+        The binding check starts green, like the publish-coverage one: it is a
+        guard, not a migration step.
+        """
+        strategy = load_strategy_inputs(STRATEGY_YAML)
+        for tree in TREES:
+            hour, minute = TREE_ANCHORS[tree]
+            pf.assert_declaration_binds_to_the_run(
+                load_fields_file(_fields_yaml(tree)),
+                strategy=strategy,
+                anchor=OpenAnchor(hour, minute, "test"),
+            )
+
+    def test_a_declaration_from_the_other_market_is_refused(self) -> None:
+        """The concrete input: the futures tree under the stock open.
+
+        08:45 against 09:00 shifts ``entry_window`` by fifteen minutes on every
+        bar of the session, and the field is a bare bool — nothing downstream
+        could report it.
+        """
+        strategy = load_strategy_inputs(STRATEGY_YAML)
+        with pytest.raises(pf.ProduceFieldsError, match="counts minutes from 08:45"):
+            pf.assert_declaration_binds_to_the_run(
+                load_fields_file(_fields_yaml("cp3-setup-d-long")),
+                strategy=strategy,
+                anchor=OpenAnchor(9, 0, "config"),
+            )
+
+    def test_a_vol_window_the_seed_is_not_built_for_is_refused(self) -> None:
+        """The seed is sized from the strategy YAML; the window consumes it.
+
+        Doubling the declaration's window leaves ``vol_ref`` inside its warmup
+        all session, where the gate is PERMISSIVE — so ``hi_vol`` would read
+        true on every bar, an entry gate held open because two numbers
+        disagreed.
+        """
+        strategy = load_strategy_inputs(STRATEGY_YAML)
+        raw = yaml.safe_load(_fields_yaml("cp3-setup-d-long").read_text("utf-8"))
+        vol = next(spec for spec in raw["fields"] if spec["name"] == "vol_ref")
+        vol["params"]["window"] = int(strategy.entry_config.vol_window_bars) * 2
+        with pytest.raises(pf.ProduceFieldsError, match="vol_ref window="):
+            pf.assert_declaration_binds_to_the_run(
+                parse_fields_document(raw),
+                strategy=strategy,
+                anchor=OpenAnchor(8, 45, "test"),
+            )
+
     def test_a_commented_out_ref_is_not_a_ref(self, tmp_path: Path) -> None:
         """Walked over the PARSED document, so a comment cannot trip it."""
         strategies = tmp_path / "strategies"
