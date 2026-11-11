@@ -112,6 +112,13 @@ _IDENTICAL_TO_LONG = frozenset(
     {
         "action_flow_policy.yaml",
         "aggregate_risk_policy.yaml",
+        # The declarative field declaration (P2-b,
+        # docs/plans/2026-11-11-tos-p2-declarative-fields.md §2.2). It has NO
+        # direction content: z's sign selects the long/short stall and reversal
+        # conditions, and which side a tree enters is the strategy DSL's
+        # threshold sign (`z_x1000 <= -1800` in LONG). So it belongs here, and a
+        # change to one tree's copy has to be made in the other's same bytes.
+        "fields.yaml",
         "authority.yaml",
         "broker_scopes.yaml",
         "calendar.yaml",
@@ -322,13 +329,15 @@ def test_short_tree_classification_is_exhaustive() -> None:
     )
     assert classified | long_classified == checked
 
-    # MEASURED 2026-10-10 (PR-B added each tree's own RENDER.yaml): the two trees share 23
+    # MEASURED 2026-11-11 (P2-b added each tree's own fields.yaml, byte-identical between them
+    # because the declaration carries no direction content): the two trees share 24
     # byte-identical files; 7 YAML files diverge in declared key paths; README.md diverges as
     # prose; each tree has its own strategy file.
-    assert len(_IDENTICAL_TO_LONG) == 23
+    # Was 23/7/1/32 from 2026-10-10 (PR-B added each tree's own RENDER.yaml).
+    assert len(_IDENTICAL_TO_LONG) == 24
     assert len(_DIFFERS_FROM_LONG) == 7
     assert len(_PROSE_DIFFERS) == 1
-    assert len(short_files) == len(long_files) == 32
+    assert len(short_files) == len(long_files) == 33
 
 
 def test_the_counts_the_short_readme_states_are_read_from_it() -> None:

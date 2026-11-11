@@ -163,6 +163,11 @@ class FieldEvaluator:
             return bar.volume
         if op == "session.token":
             return bar.session_token
+        if op == "const":
+            # A declared literal. Definite on every bar by construction, which
+            # is what lets `ratio_z` use it as a divisor of 1.0 to express a
+            # plain difference bit-identically (x / 1.0 == x in IEEE-754).
+            return float(params["value"])
         if op == "session.minutes_since_open":
             return minutes_since_open(
                 bar,

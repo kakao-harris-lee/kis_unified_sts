@@ -129,7 +129,15 @@ _DIFFERS_FROM_RESIDENT: dict[str, str] = {
 }
 
 #: Present only in a tenant tree.
-_TENANT_ONLY_COMMON = frozenset({"README.md", "strategy_bindings.yaml"})
+#:
+#: ``fields.yaml`` joined this set in P2-b
+#: (``docs/plans/2026-11-11-tos-p2-declarative-fields.md`` §2.2): the declarative
+#: indicator-field declaration is TENANT CONTENT, so the resident tree has no
+#: counterpart for it to be a copy of or to diverge from. It is byte-identical
+#: between LONG and SHORT — direction lives in the strategy DSL's threshold
+#: sign, not in the fields — and differs only in the STOCK tree's open anchor,
+#: which is not one of the trees this module compares.
+_TENANT_ONLY_COMMON = frozenset({"README.md", "strategy_bindings.yaml", "fields.yaml"})
 _TENANT_STRATEGY = {
     "cp3-setup-d-long": "strategies/setup_d_long.strategy.yaml",
     "cp3-setup-d-short": "strategies/setup_d_short.strategy.yaml",
@@ -437,8 +445,16 @@ def test_the_resident_copy_count_the_short_readme_states_is_read_from_it() -> No
     }
     assert identical_to_long == len(same_as_long)
     assert resident_copies == len(also_resident)
-    # The remainder is exactly one file, and the README names it.
+    # The remainder is the LONG-identical files that are NOT resident copies,
+    # and the README has to NAME each one — a count alone would let a new file
+    # join the remainder silently.
+    #
+    # ``engine.yaml`` is here because its comment diverges from the resident
+    # one; ``fields.yaml`` is here because it is tenant content with no
+    # resident original at all (P2-b,
+    # ``docs/plans/2026-11-11-tos-p2-declarative-fields.md`` §2.2).
     remainder = same_as_long - also_resident
     assert len(remainder) == identical_to_long - resident_copies
-    assert remainder == {"engine.yaml"}, remainder
-    assert "`engine.yaml`" in readme
+    assert remainder == {"engine.yaml", "fields.yaml"}, remainder
+    for name in sorted(remainder):
+        assert f"`{name}`" in readme, f"the SHORT README does not name {name}"

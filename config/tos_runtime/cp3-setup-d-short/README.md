@@ -34,13 +34,16 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 
 ## 3. LONG 트리와 무엇이 다른가 (실측 2026-10-09)
 
-**32 파일 = 바이트 동일 23 + YAML 이 다름 7 + 산문이 다름 1(`README.md`) + SHORT 전용 1**
-(LONG 트리도 32 파일이다; LONG 의 `strategies/setup_d_long.strategy.yaml` 은 이 트리에
+**33 파일 = 바이트 동일 24 + YAML 이 다름 7 + 산문이 다름 1(`README.md`) + SHORT 전용 1**
+(LONG 트리도 33 파일이다; LONG 의 `strategies/setup_d_long.strategy.yaml` 은 이 트리에
 **없고** 그 자리를 `strategies/setup_d_short.strategy.yaml` 이 차지한다). 31 → 32 · 다름
-6 → 7 은 2026-10-10 PR-B 가 더한 **`RENDER.yaml`**(렌더 매니페스트) 때문이다.
+6 → 7 은 2026-10-10 PR-B 가 더한 **`RENDER.yaml`**(렌더 매니페스트) 때문이고, 32 → 33 ·
+바이트 동일 23 → 24 는 2026-11-11 P2-b 가 더한 **`fields.yaml`**(선언형 지표 필드,
+`docs/plans/2026-11-11-tos-p2-declarative-fields.md` §2.2) 때문이다 — 방향 내용이 없어
+두 tenant 트리에서 바이트 동일하다.
 
 측정은 작업트리 `cmp` 가 아니라 `tos/runtime/tests/compose/test_tenant_tree_short.py` 다 —
-바이트 동일 23 은 **바이트**로, 다름 7 은 **파싱된 YAML 경로 집합의 등식**으로, `README.md`
+바이트 동일 24 는 **바이트**로, 다름 7 은 **파싱된 YAML 경로 집합의 등식**으로, `README.md`
 는 **자기 트리를 설명하는가**로 각각 검사한다. 그 테스트가 아래 표를 **기계로 읽는 리터럴**로
 들고 있다: 파일을 더하고 분류를 빼먹으면 red 이고, 한 이름이 두 분류에 들어가거나 **어느
 단언도 훑지 않는 분류에 들어가도** red 다(초판이 `README.md` 를 「한 트리에만 있음」으로
@@ -57,16 +60,20 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 | `critical_input_policy.yaml` | `policy_id`·`issuer_principal_id` SHORT 전용 (+ 헤더 제목). **열다섯 필드와 다섯 값은 LONG 과 같다**(`max_age_ms: 800` 포함) |
 | `RENDER.yaml` | 렌더 매니페스트(2026-10-10 PR-B). `tree_id` · `direction.value` **LONG → SHORT** · `slots` 의 **방향 결속 다섯 줄과 전략 파일 이름**. 모드는 둘 다 `declared` + `external` 이다. `slots` 는 리스트라 경로 비교에서 **한 잎으로 접히므로** 전용 좁히기 테스트(`test_the_render_manifest_slot_list_differs_only_in_the_direction_bearing_rows`)가 따로 있다 |
 | `README.md` (이 파일) | **산문이 다름** — 각 트리가 자기 방향의 배포를 설명한다. YAML 이 아니라 경로 비교 대상이 아니므로 테스트가 「자기 트리를 설명하는가」로 검사한다 |
-| 나머지 **23 개** | **바이트 동일** — LONG 트리에서 그대로 복사됐다. 그 중 22 개는 상주 트리의 사본이기도 하다(§3.0) |
+| 나머지 **24 개** | **바이트 동일** — LONG 트리에서 그대로 복사됐다(2026-11-11 P2-b 의 `fields.yaml` 포함). 그 중 22 개는 상주 트리의 사본이기도 하다(§3.0) |
 
 ### 3.0 ⛔ 사본 의무 — 상주 쪽을 바꾸는 PR 은 **같은 PR 에서** 이 트리도 갱신한다
 
-LONG 트리와 **바이트 동일한 23 개** 가운데 **22 개가 상주 `config/tos_runtime/paper/` 파일의
-바이트 사본**이고, 남는 **하나는 `engine.yaml`** 이다(상주와 **주석이 다르다** — 상주 주석이
-상주 전략 `bootproof_band` 를 인용해 이 트리에서 거짓이 되므로 tenant 적용 문단을 덧붙였다.
-두 tenant 트리끼리는 같다). 실측은 blob 재계수다(2026-10-09 리뷰 L2 — 초판은 「위 24 개 중
-22 개」라고 적고 남는 둘을 `README.md`·`strategy_bindings.yaml` 로 지목했는데, **총계와 지목이
-모두 틀렸다**: 그 둘은 LONG 과도 다르므로 애초에 그 23 에 들어 있지 않다).
+LONG 트리와 **바이트 동일한 24 개** 가운데 **22 개가 상주 `config/tos_runtime/paper/` 파일의
+바이트 사본**이고, 남는 **둘은 `engine.yaml` 과 `fields.yaml`** 이다. `engine.yaml` 은 상주와
+**주석이 다르다**(상주 주석이 상주 전략 `bootproof_band` 를 인용해 이 트리에서 거짓이 되므로
+tenant 적용 문단을 덧붙였다. 두 tenant 트리끼리는 같다). `fields.yaml` 은 **상주에 없다** —
+선언형 지표 필드는 tenant 콘텐츠이므로 사본의 원본이 애초에 없다(P2-b,
+`docs/plans/2026-11-11-tos-p2-declarative-fields.md` §2.2. 방향은 전략 DSL 의 임계 부호가
+정하므로 두 tenant 트리끼리는 바이트 동일하다). 실측은 blob 재계수다(2026-10-09 리뷰 L2 —
+초판은 「위 24 개 중 22 개」라고 적고 남는 둘을 `README.md`·`strategy_bindings.yaml` 로
+지목했는데, **총계와 지목이 모두 틀렸다**: 그 둘은 LONG 과도 다르므로 애초에 그 집합에 들어
+있지 않다).
 
 그러므로 상주 파일 하나를 바꾸는 PR 은 **같은 PR 에서** 두 tenant 트리의 사본을 함께
 갱신해야 한다.
