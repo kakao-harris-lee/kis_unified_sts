@@ -281,6 +281,7 @@ def _text(payload: Mapping[str, Any], key: str) -> str | None:
 
 def _evidence_from_window(
     raw_event_id: str,
+    snapshot_id: str,
     tick: _Tick,
     records: Iterable[tuple[int, str, Mapping[str, Any]]],
 ) -> BarEvidence:
@@ -308,6 +309,7 @@ def _evidence_from_window(
             consumed_step = _flow_fingerprint_step(payload)
     return BarEvidence(
         raw_event_id=raw_event_id,
+        snapshot_id=snapshot_id,
         event_id=tick.event_id,
         outcome_type=outcome_type,
         outcome_halt_reason=outcome_halt,
@@ -395,7 +397,7 @@ def read_bar_evidence(
         )
         ticks_by_snapshot = _ticks_by_snapshot(inbox)
 
-    resolved: dict[str, _Tick] = {}
+    resolved: dict[str, tuple[str, _Tick]] = {}
     out: dict[str, BarEvidence] = {}
     for raw_event_id in raw_event_ids:
         outcome = _resolved_tick(
@@ -404,12 +406,12 @@ def read_bar_evidence(
         if isinstance(outcome, BarEvidence):
             out[raw_event_id] = outcome
         else:
-            resolved[raw_event_id] = outcome[1]
+            resolved[raw_event_id] = outcome
     if not resolved:
         return out
 
-    low = min(tick.handling_started_seq for tick in resolved.values())
-    high = max(tick.consumed_seq for tick in resolved.values())
+    low = min(tick.handling_started_seq for _snapshot, tick in resolved.values())
+    high = max(tick.consumed_seq for _snapshot, tick in resolved.values())
     with _read_only(data_dir / EVIDENCE_FILE_NAME) as evidence:
         _pin_schema_version(
             evidence,
@@ -417,11 +419,13 @@ def read_bar_evidence(
             expected=EVIDENCE_SCHEMA_VERSION,
         )
         records = _records_in_window(evidence, low=low, high=high)
-    for raw_event_id, tick in resolved.items():
+    for raw_event_id, (snapshot_id, tick) in resolved.items():
         window = [
             record
             for record in records
             if tick.handling_started_seq < record[0] <= tick.consumed_seq
         ]
-        out[raw_event_id] = _evidence_from_window(raw_event_id, tick, window)
+        out[raw_event_id] = _evidence_from_window(
+            raw_event_id, snapshot_id, tick, window
+        )
     return out

@@ -426,6 +426,12 @@ def test_json_carries_every_comparison_and_the_summary(report: Any) -> None:
     edge = document["bars"][1]
     assert edge["decision_rule_id"] == "R1-ENTRY-LONG"
     assert [compare["passed"] for compare in edge["rules"][0]["compares"]] == [True] * 5
+    # A joined bar names BOTH keys of the chain, so the reading can be
+    # cross-checked against the operator's own stores.
+    assert (edge["evidence"]["snapshot_id"], edge["evidence"]["event_id"]) == (
+        "cis-1",
+        "event-1",
+    )
     assert edge["evidence"]["halt_step"] == "CANDIDATE_COMMAND_CONSTRUCTION"
     assert edge["evidence"]["halt_detail"] == "no held position was observed"
     blocked = document["summary"]["rules"][0]["compares"][4]
