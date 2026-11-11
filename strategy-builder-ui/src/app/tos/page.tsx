@@ -6,6 +6,7 @@ import { RefreshCcw } from 'lucide-react';
 import { isAxiosError } from 'axios';
 import config from '@/config/tos-control-plane.json';
 import { isAcceptedProjection, projectionAge, projectionState, tosApi, type ProjectionState } from '@/lib/dashboard/tos';
+import BarsPanel from './BarsPanel';
 
 const labels: Record<ProjectionState, string> = {
   loading: '상태를 불러오는 중', error: '상태 조회 연결 오류', missing: '아직 상태 파일이 없습니다',
@@ -119,5 +120,10 @@ export default function TosPage() {
         </Card>
       </div>
     </>}
+    {/* Roadmap §P1 second item. Its own query and its own banner: the bar
+        document is a DIFFERENT read model with a different freshness story
+        (one export per session, not a 15 s poll), so folding it into the
+        projection's state above would make one absence look like the other. */}
+    <BarsPanel />
   </div>;
 }

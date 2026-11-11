@@ -8,6 +8,9 @@
   ``docs/plans/2026-11-11-tos-platform-roadmap.md`` §P1). 그 모듈은 방화벽
   (TOS-FW-R)상 ``tos`` 를 import 할 수 없으므로 평가 본체
   ``tos/runtime/cp3/inspect_session.py`` 를 별 프로세스로 돌린다.
+* ``export-bars`` → ``tools/tos_cp3/export_bars.py``. 같은 점검을 ``--json`` 으로
+  받아 대시보드가 이미 읽기 전용으로 bind-mount 한 디렉터리에 원자적으로 쓴다
+  (§P1 둘째 항목의 호스트 측). 컨테이너는 그 파일을 **경로로만** 연다.
 """
 
 from __future__ import annotations
@@ -141,3 +144,47 @@ def tos_inspect(
     click.echo(outcome.stdout, nl=False)
     click.echo(outcome.stderr, nl=False, err=True)
     sys.exit(outcome.exit_code)
+
+
+@tos_cmd.command("export-bars")
+@click.argument("session")
+@click.option(
+    "--out-dir",
+    default=None,
+    help="대상 루트 (기본: $TOS_OPERATOR_PROJECTION_DIR — 컨테이너가 읽는 그 디렉터리)",
+)
+@click.option("--data-dir", default=None, help="tenant durable-set 잎")
+@click.option(
+    "--state-dir",
+    default=None,
+    help="상태 루트 (기본: config/tos_status_board.yaml 의 state_dir)",
+)
+def tos_export_bars(
+    session: str, out_dir: str | None, data_dir: str | None, state_dir: str | None
+) -> None:
+    """기록된 세션의 바별 점검을 대시보드가 읽는 JSON 으로 내보낸다.
+
+    `sts tos inspect --json` 과 같은 문서를 `<dir>/bars/<session>.json` 에
+    원자적으로(tmp + rename) 쓴다. 대시보드 컨테이너는 그 파일을 경로로만 열고
+    `tos`/`tos_runtime` 를 import 하지 않는다 — 컨테이너가 커널 코드도, 0700 상태
+    디렉터리도 볼 수 없기 때문이다(export_bars 모듈 docstring 의 네 가지 벽).
+
+    \b
+    Examples:
+        sts tos export-bars stock-r1-20261110
+        sts tos export-bars stock-r1-20261110 --out-dir /tmp/dry-run
+    """
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    from tools.tos_cp3 import export_bars
+
+    sys.exit(
+        export_bars.main(
+            [
+                session,
+                *(["--out-dir", out_dir] if out_dir else []),
+                *(["--data-dir", data_dir] if data_dir else []),
+                *(["--state-dir", state_dir] if state_dir else []),
+            ]
+        )
+    )
