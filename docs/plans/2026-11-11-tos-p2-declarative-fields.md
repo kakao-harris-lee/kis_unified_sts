@@ -72,7 +72,7 @@ publish:                              # 저널로 나가는 필드와 스케일 
 | op | 뜻 | 상태 |
 | --- | --- | --- |
 | `bar.open/high/low/close/volume` · `session.token` | 분봉 원값 | – |
-| `session.vwap_typical` · `atr` · `session.minutes_since_open` | `MarketContextReplay` 와 같은 정의 — **그 계산을 재사용**하고 다시 쓰지 않는다 | 창 |
+| `session.vwap_typical` · `atr` · `session.minutes_since_open` | `MarketContextReplay` 와 같은 정의 — 다만 `shared.backtest`(증인)와 `shared.decision` 은 방화벽 금지 집합이라 import 할 수 없고 헬퍼 추출은 §4 가 금지한 증인 수정이므로, **다시 구현하고 패리티 테스트가 증인과 비트 동일을 고정**한다(`tests/unit/indicators/fields/test_replay_parity.py`) | 창 |
 | `ratio_z(a,b,c)` | (a−b)/c | – |
 | `abs` · `gt/ge/le/lt(a, b \| const, mult?)` · `between` · `time_ge` | 비교 | – |
 | `all` · `any` · `not` | 불 결합 | – |

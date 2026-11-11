@@ -9,10 +9,12 @@ rule it refused on is not operable.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from shared.indicators.fields import (
     CATALOG_VERSION,
@@ -319,6 +321,63 @@ class TestParams:
             "no right-hand side",
         )
 
+    @pytest.mark.parametrize("literal", [".nan", ".inf", "-.inf"])
+    def test_non_finite_const(self, literal: str) -> None:
+        """``gt const: .nan`` used to LOAD and then be false on every bar.
+
+        Every comparison against NaN is false, so a NaN threshold is a gate that
+        can never pass — exactly the silently dead gate this loader refuses
+        elsewhere (``warmup > window``, ``lo > hi``). YAML spells it ``.nan``,
+        so it arrives as an ordinary float scalar rather than a string.
+        """
+        raw = yaml.safe_load(
+            "schema: tos-fields/1\n"
+            f"catalog: {CATALOG_VERSION}\n"
+            "fields:\n"
+            "  - {name: close, op: bar.close}\n"
+            f"  - {{name: probe, op: gt, inputs: [close], params: {{const: {literal}}}}}\n"
+            "publish:\n"
+            "  - {field: probe}\n"
+        )
+        assert not math.isfinite(raw["fields"][1]["params"]["const"])  # it parsed
+        _refuse(raw, "must be finite")
+
+    @pytest.mark.parametrize("bound", ["lo", "hi"])
+    def test_non_finite_between_bound(self, bound: str) -> None:
+        """``between lo: .nan`` is the same hazard on a window bound."""
+        params = {"lo": 15, "hi": 345}
+        params[bound] = float("nan")
+        _refuse(
+            document(
+                [
+                    _CLOSE,
+                    {
+                        "name": "probe",
+                        "op": "between",
+                        "inputs": ["close"],
+                        "params": params,
+                    },
+                ]
+            ),
+            "must be finite",
+        )
+
+    def test_non_finite_mult(self) -> None:
+        _refuse(
+            document(
+                [
+                    _CLOSE,
+                    {
+                        "name": "probe",
+                        "op": "ge",
+                        "inputs": ["close"],
+                        "params": {"const": 1.0, "mult": float("inf")},
+                    },
+                ]
+            ),
+            "must be finite",
+        )
+
     def test_bad_time_literal(self) -> None:
         _refuse(
             document([{"name": "probe", "op": "time_ge", "params": {"at": "15h40"}}]),
@@ -367,6 +426,122 @@ class TestParams:
             ),
             "must be <= 59",
         )
+
+
+# ---------------------------------------------------------------------------
+# Definite values
+# ---------------------------------------------------------------------------
+
+#: A field that is ``None`` during warmup: the lag has no previous sample on the
+#: first bar, so the comparison that reads it propagates the missing value.
+_MAYBE_MISSING: list[dict[str, Any]] = [
+    _CLOSE,
+    {"name": "t", "op": "gt", "inputs": ["close"], "params": {"const": 0}},
+    {
+        "name": "lag",
+        "op": "gated_lag",
+        "inputs": ["close"],
+        "params": {"sample_when": "t"},
+    },
+    {"name": "raw", "op": "gt", "inputs": ["close", "lag"]},
+]
+
+
+class TestMayBeMissing:
+    """A missing value must be refused at LOAD, not on the first warmup bar.
+
+    ``all: [t, gt(c, gated_lag(c))]`` loaded cleanly and then raised on bar 1.
+    A producer that boots and dies one bar later is worse than one that refuses
+    to boot, so the reachability is decided on the declaration.
+    """
+
+    def test_all_operand_that_may_be_missing(self) -> None:
+        message = _refuse(
+            document(
+                [*_MAYBE_MISSING, {"name": "bad", "op": "all", "inputs": ["t", "raw"]}]
+            ),
+            "may be missing",
+        )
+        assert "'raw'" in message  # the refusal names the culprit, not just the op
+
+    @pytest.mark.parametrize("op", ["all", "any"])
+    def test_any_boolean_combinator(self, op: str) -> None:
+        _refuse(
+            document(
+                [*_MAYBE_MISSING, {"name": "bad", "op": op, "inputs": ["t", "raw"]}]
+            ),
+            "may be missing",
+        )
+
+    def test_not_operand_that_may_be_missing(self) -> None:
+        _refuse(
+            document(
+                [*_MAYBE_MISSING, {"name": "bad", "op": "not", "inputs": ["raw"]}]
+            ),
+            "may be missing",
+        )
+
+    def test_sample_when_that_may_be_missing(self) -> None:
+        _refuse(
+            document(
+                [
+                    *_MAYBE_MISSING,
+                    {
+                        "name": "bad",
+                        "op": "gated_max",
+                        "inputs": ["close"],
+                        "params": {"window": 3, "warmup": 1, "sample_when": "raw"},
+                    },
+                    {"name": "out", "op": "permissive", "inputs": ["raw"]},
+                ]
+            ),
+            "may be missing",
+        )
+
+    def test_missingness_propagates_through_a_chain(self) -> None:
+        """``abs(ratio_z(..., lag))`` is missing too — the check is transitive."""
+        _refuse(
+            document(
+                [
+                    *_MAYBE_MISSING,
+                    {"name": "z", "op": "ratio_z", "inputs": ["close", "lag", "close"]},
+                    {"name": "az", "op": "abs", "inputs": ["z"]},
+                    {
+                        "name": "far",
+                        "op": "gt",
+                        "inputs": ["az"],
+                        "params": {"const": 1},
+                    },
+                    {"name": "bad", "op": "all", "inputs": ["t", "far"]},
+                ]
+            ),
+            "may be missing",
+        )
+
+    def test_permissive_makes_it_definite(self) -> None:
+        """The escape hatch, and the only one: wrap it in ``permissive``."""
+        loaded = parse_fields_document(
+            document(
+                [
+                    *_MAYBE_MISSING,
+                    {"name": "ok", "op": "permissive", "inputs": ["raw"]},
+                    {"name": "good", "op": "all", "inputs": ["t", "ok"]},
+                ]
+            )
+        )
+        assert [spec.name for spec in loaded.fields][-1] == "good"
+
+    def test_a_definite_operand_still_loads(self) -> None:
+        loaded = parse_fields_document(
+            document(
+                [
+                    _CLOSE,
+                    _POSITIVE,
+                    {"name": "good", "op": "not", "inputs": ["positive"]},
+                ]
+            )
+        )
+        assert loaded.fields[-1].name == "good"
 
 
 # ---------------------------------------------------------------------------
