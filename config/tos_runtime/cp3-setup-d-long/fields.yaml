@@ -1,0 +1,187 @@
+# CP-3 LONG tenant — declarative indicator fields (P2-b).
+#
+# 상위: docs/plans/2026-11-11-tos-p2-declarative-fields.md §2.2 · 카탈로그
+# `tos-field-catalog/1` (`shared/indicators/fields/catalog.py`).
+#
+# 이 파일은 **아직 생산자가 읽지 않는다.** P2-b 는 이 선언을 레거시 구동
+# `tools/tos_cp3/produce_fields.py::produce_bars` 와 바 × 필드 바이트 동일로
+# 대조하는 단계이고(하네스 `tools/tos_cp3/fields_equivalence.py`), 생산자 교체는
+# P2-c 다. 그러므로 **이 파일의 값은 레거시 전략 YAML
+# `config/strategies/futures/setup_d_vwap_reversion.yaml` 과 같아야 하며**, 그
+# 일치를 `tests/tools/test_cp3_fields_equivalence.py` 가 고정한다(계획 §6 위험 4 —
+# 정본이 fields.yaml 로 옮겨 가는 것은 P2-c).
+#
+# 세 트리(LONG · SHORT · STOCK)의 이 파일은 **개장 앵커 두 칸만 다르다**:
+# 선물은 08:45(`config/market_schedule.yaml::market_schedule.futures.regular.open`,
+# 2026-06-28 이후), 주식은 09:00(`config/tos_probes/cp3-live-producer-stock-005930.yaml
+# ::open_anchor`). 임계·창은 세 트리가 같은 전략 YAML 을 쓰므로 동일하다.
+#
+# -----------------------------------------------------------------------------
+# 사슬을 그대로 옮긴다 (계획 §2.1 세 번째 원칙)
+# -----------------------------------------------------------------------------
+# 레거시 `check()` 는 조기 반환 사슬이다. 그래서 `hi_vol` 은 «변동성 조건이 참»이
+# 아니라 «앞 관문을 다 지났고 변동성 조건도 참»이고, 뒤쪽 필드일수록 앞 관문을 더
+# 많이 포함한다. 그 포함 관계를 불 연산(`all`·`any`·`not`)으로 그대로 적는다 —
+# 사슬을 푸는 것(독립 필드 + R1 이 결합)은 P3 리플레이 정답이 생긴 뒤의 tenant
+# 변경이다(계획 §4).
+#
+# 상태창 세 개(ATR 백분위 780 · 종가 범위 15 · 직전 종가)는 레거시가 **사슬이
+# `inputs_usable` 까지 온 바에서만** 전진시킨다. 선언형에서는 그것이
+# `sample_when: usable` 이다 — 창 밖 바와 무효 입력 바는 읽히되 표본이 되지
+# 않는다. 이 한 칸이 계획 §6 위험 1 이 지목한 자리다.
+#
+# -----------------------------------------------------------------------------
+# ⚠ 아직 옮기지 못한 필드 하나: `reversal_ok` (P2-b 측정 결과, 운영자 판단 대기)
+# -----------------------------------------------------------------------------
+# 레거시 6단계의 관문 하나가 `tos-field-catalog/1` 로 **표현되지 않는다**:
+#
+#     abs(prev_z) - abs(z) >= reversal_confirm_atr_mult(0.2)
+#
+# 표 2.3 에는 «두 필드의 차를 상수와 비교»하는 모양이 없다. `ratio_z(a,b,c)` 는
+# (a−b)/c 이고 c 는 **필드 이름**이어야 하는데, 값 1.0 을 내는 필드를 선언할
+# 연산(리터럴 상수 op)이 카탈로그에 없다. 비교 op 의 `mult` 는 곱셈이라
+# `ge(abs_prev_z, abs_z, mult: 1.0)` 은 «improvement ≥ 0» 이고 0.2 가 아니다.
+#
+# 이것은 부동소수 차이가 아니라 **표현력 결손**이다. 그래서 이 선언은
+# `reversal_ok` 를 publish 하지 않고, 나머지 14 필드만 대조한다. 최소 해결안은
+# 값을 내는 0-입력 `const` op 하나이고(그러면
+# `ratio_z(abs_prev_z, abs_z, one)` 이 1.0 나눗셈이라 **비트 동일**하게 차가 되고
+# `ge(…, const: 0.2)` 가 관문이 된다), 전략 이름을 갖지 않으며 「a − b 대 임계」
+# 모양 전부에 쓰인다. 카탈로그 추가는 운영자 처분 사항이라 이 PR 은 측정만 싣는다.
+#
+# `confidence >= min_confidence(0.6)` 관문은 **의도적으로 없다** — TOS 결정에 없는
+# 것을 이 계획이 추가하지 않는다(계획 §4).
+# `trend_filter_enabled` 는 전략 YAML 에서 false 이고 생산자는 true 를 거부하므로
+# (`produce_fields.load_strategy_inputs`) 추세 필드도 없다.
+
+schema: tos-fields/1
+catalog: tos-field-catalog/1
+
+fields:
+  # --- 분봉 원값 -------------------------------------------------------------
+  - {name: bar_open, op: bar.open}
+  - {name: bar_high, op: bar.high}
+  - {name: bar_low, op: bar.low}
+  - {name: close, op: bar.close}
+  - {name: bar_volume, op: bar.volume}
+  - {name: token, op: session.token}
+
+  # --- 창 지표 (MarketContextReplay 와 같은 정의) ----------------------------
+  - {name: vwap, op: session.vwap_typical}
+  - {name: atr, op: atr, params: {period: 14}}
+  # 선물 주간 개장 08:45 KST.
+  - {name: mso, op: session.minutes_since_open, params: {open_hour: 8, open_minute: 45}}
+
+  # --- 1단계: 세션 창 --------------------------------------------------------
+  # valid_minutes_min(15) <= mso <= no_entry_after_minutes_since_open(345)
+  - {name: entry_window, op: between, inputs: [mso], params: {lo: 15, hi: 345}}
+
+  # --- 2단계: 입력 유효 ------------------------------------------------------
+  # 레거시는 atr <= 0 과 close <= 0 만 본다. vwap <= 0 은 `check()` 가 아니라
+  # 생산자의 생략 게이트(`_inputs_unusable`)이므로 여기 넣지 않는다.
+  - {name: atr_pos, op: gt, inputs: [atr], params: {const: 0}}
+  - {name: close_pos, op: gt, inputs: [close], params: {const: 0}}
+  - {name: usable, op: all, inputs: [entry_window, atr_pos, close_pos]}
+
+  # --- 3단계: 인과 상태창 (usable 바에서만 표본) -----------------------------
+  # 읽기 순서도 레거시와 같다: prev_close 를 먼저 읽고(= _close_window[-1]),
+  # 그 다음 vol_ref, 그 다음 recent 범위. 세 연산 모두 «읽고 나서 넣는다».
+  - {name: prev_close, op: gated_lag, inputs: [close], params: {sample_when: usable}}
+  - name: vol_ref
+    op: gated_percentile
+    inputs: [atr]
+    params: {q: 90.0, window: 780, warmup: 120, sample_when: usable}
+  - name: recent_high
+    op: gated_max
+    inputs: [close]
+    params: {window: 15, warmup: 5, sample_when: usable}
+  - name: recent_low
+    op: gated_min
+    inputs: [close]
+    params: {window: 15, warmup: 5, sample_when: usable}
+
+  # gate_active = vol_ref is not None and vol_ref > 0
+  - {name: vol_ref_pos, op: gt, inputs: [vol_ref], params: {const: 0}}
+  - {name: vol_gate_on, op: permissive, inputs: [vol_ref_pos], params: {when_missing: false}}
+  - {name: vol_gate_off, op: not, inputs: [vol_gate_on]}
+  # ⚠ 레거시는 vol_ratio = atr / vol_ref 를 만든 뒤 `vol_ratio < min_atr_ratio`
+  # 를 본다. 표 2.3 의 비교 op 은 `a OP (b * mult)` 라 여기서는
+  # `atr >= 0.9 * vol_ref` 가 된다 — 수학적으로 같지만 부동소수 마지막 비트가
+  # 갈릴 수 있다. 하네스가 실제로 갈리는 바를 센다(계획 §6 위험 2).
+  - {name: vol_ok_raw, op: ge, inputs: [atr, vol_ref], params: {mult: 0.9}}
+  - {name: vol_ok, op: permissive, inputs: [vol_ok_raw], params: {when_missing: true}}
+  - {name: vol_pass, op: any, inputs: [vol_gate_off, vol_ok]}
+  - {name: hi_vol, op: all, inputs: [usable, vol_pass]}
+
+  # --- 4단계: VWAP 괴리 극단 -------------------------------------------------
+  - {name: z, op: ratio_z, inputs: [close, vwap, atr]}
+  - {name: abs_z, op: abs, inputs: [z]}
+  # z >= +extreme_atr_mult -> short 쪽, z <= -extreme_atr_mult -> long 쪽.
+  - {name: z_short_side, op: ge, inputs: [z], params: {const: 1.8}}
+  - {name: z_long_side, op: le, inputs: [z], params: {const: -1.8}}
+  - {name: extreme, op: any, inputs: [z_short_side, z_long_side]}
+  # 추세 관문은 꺼져 있으므로(trend_filter_enabled: false) 4.5단계는 통과다.
+  - {name: through_extreme, op: all, inputs: [hi_vol, extreme]}
+
+  # --- 5단계: 정체 확인 ------------------------------------------------------
+  # buffer = stall_buffer_atr_mult(1.5) × atr.
+  #   short: close - recent_high <= buffer
+  #   long : recent_low - close  <= buffer
+  # ⚠ 레거시는 buffer 를 곱으로 만들어 차와 비교한다. 표 2.3 으로는 차를 atr 로
+  # 나눠 상수와 비교하는 꼴이 되고(`ratio_z` + `le`), vol_ok 와 같은 부동소수
+  # 순서 차이가 가능하다 — 하네스가 센다.
+  - {name: stall_short_ratio, op: ratio_z, inputs: [close, recent_high, atr]}
+  - {name: stall_long_ratio, op: ratio_z, inputs: [recent_low, close, atr]}
+  - {name: stall_short_raw, op: le, inputs: [stall_short_ratio], params: {const: 1.5}}
+  - {name: stall_long_raw, op: le, inputs: [stall_long_ratio], params: {const: 1.5}}
+  # recent_range 가 None 인 웜업 동안 레거시는 정체 관문을 **통과**시킨다.
+  - {name: stall_short_ok, op: permissive, inputs: [stall_short_raw], params: {when_missing: true}}
+  - {name: stall_long_ok, op: permissive, inputs: [stall_long_raw], params: {when_missing: true}}
+  # 방향이 아닌 쪽 조건은 보지 않는다: «short 면 short 조건» = any(not short, 조건).
+  - {name: not_short_side, op: not, inputs: [z_short_side]}
+  - {name: not_long_side, op: not, inputs: [z_long_side]}
+  - {name: stall_short_gate, op: any, inputs: [not_short_side, stall_short_ok]}
+  - {name: stall_long_gate, op: any, inputs: [not_long_side, stall_long_ok]}
+  - {name: stall_ok, op: all, inputs: [through_extreme, stall_short_gate, stall_long_gate]}
+
+  # --- 6단계: 역전 확인 (일부만 — 위 ⚠ 참조) --------------------------------
+  # prev_close 가 없으면 레거시는 reversal_ok=False 로 거부한다.
+  - {name: prev_close_pos, op: gt, inputs: [prev_close], params: {const: 0}}
+  - {name: prev_close_known, op: permissive, inputs: [prev_close_pos], params: {when_missing: false}}
+  - {name: prev_z, op: ratio_z, inputs: [prev_close, vwap, atr]}
+  - {name: abs_prev_z, op: abs, inputs: [prev_z]}
+  # 가격 되돌림: long 이면 close > prev_close, short 이면 close < prev_close.
+  - {name: turn_long_raw, op: gt, inputs: [close, prev_close]}
+  - {name: turn_short_raw, op: lt, inputs: [close, prev_close]}
+  - {name: turn_long, op: permissive, inputs: [turn_long_raw], params: {when_missing: false}}
+  - {name: turn_short, op: permissive, inputs: [turn_short_raw], params: {when_missing: false}}
+  - {name: turn_long_gate, op: any, inputs: [not_long_side, turn_long]}
+  - {name: turn_short_gate, op: any, inputs: [not_short_side, turn_short]}
+  # ⚠ `abs_prev_z - abs_z >= 0.2` 가 여기 들어가야 하지만 카탈로그로 표현되지
+  # 않는다(파일 머리의 ⚠ 참조). 그래서 `reversal_ok` 는 publish 하지 않는다.
+
+  # --- 파생 청산 필드 --------------------------------------------------------
+  # vwap_reverted = abs(z) <= vwap_revert_band(0.2). 밴드 값의 출처는 전략
+  # YAML 에 vwap_revert_band_atr_mult 키가 없어 생산자가 폴백으로 쓰는
+  # entry.params.reversal_confirm_atr_mult 다(lineage 의 declared difference).
+  - {name: vwap_reverted, op: le, inputs: [abs_z], params: {const: 0.2}}
+  # eod = 시각 >= exit.params 의 eod_close_hour:eod_close_minute (15:15).
+  - {name: eod, op: time_ge, params: {at: "15:15"}}
+
+# publish 순서는 `produce_fields.FIELD_ORDER` 와 같다 — `reversal_ok` 한 칸만
+# 비어 있다(위 ⚠).
+publish:
+  - {field: bar_open, as: open_x100, scale: {mult: 100, round: half_up}}
+  - {field: bar_high, as: high_x100, scale: {mult: 100, round: half_up}}
+  - {field: bar_low, as: low_x100, scale: {mult: 100, round: half_up}}
+  - {field: close, as: close_x100, scale: {mult: 100, round: half_up}}
+  - {field: bar_volume, as: volume, scale: {mult: 1, round: half_up}}
+  - {field: token, as: session_token}
+  - {field: vwap, as: vwap_x100, scale: {mult: 100, round: half_up}}
+  - {field: atr, as: atr14_x100, scale: {mult: 100, round: half_up}}
+  - {field: z, as: z_x1000, scale: {mult: 1000, round: toward_zero}}
+  - {field: hi_vol, as: hi_vol}
+  - {field: stall_ok, as: stall_ok}
+  - {field: entry_window, as: entry_window}
+  - {field: vwap_reverted, as: vwap_reverted}
+  - {field: eod, as: eod}
