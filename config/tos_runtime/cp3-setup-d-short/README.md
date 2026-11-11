@@ -43,7 +43,7 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 두 tenant 트리에서 바이트 동일하다.
 
 측정은 작업트리 `cmp` 가 아니라 `tos/runtime/tests/compose/test_tenant_tree_short.py` 다 —
-바이트 동일 23 은 **바이트**로, 다름 7 은 **파싱된 YAML 경로 집합의 등식**으로, `README.md`
+바이트 동일 24 는 **바이트**로, 다름 7 은 **파싱된 YAML 경로 집합의 등식**으로, `README.md`
 는 **자기 트리를 설명하는가**로 각각 검사한다. 그 테스트가 아래 표를 **기계로 읽는 리터럴**로
 들고 있다: 파일을 더하고 분류를 빼먹으면 red 이고, 한 이름이 두 분류에 들어가거나 **어느
 단언도 훑지 않는 분류에 들어가도** red 다(초판이 `README.md` 를 「한 트리에만 있음」으로
@@ -60,7 +60,7 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 | `critical_input_policy.yaml` | `policy_id`·`issuer_principal_id` SHORT 전용 (+ 헤더 제목). **열다섯 필드와 다섯 값은 LONG 과 같다**(`max_age_ms: 800` 포함) |
 | `RENDER.yaml` | 렌더 매니페스트(2026-10-10 PR-B). `tree_id` · `direction.value` **LONG → SHORT** · `slots` 의 **방향 결속 다섯 줄과 전략 파일 이름**. 모드는 둘 다 `declared` + `external` 이다. `slots` 는 리스트라 경로 비교에서 **한 잎으로 접히므로** 전용 좁히기 테스트(`test_the_render_manifest_slot_list_differs_only_in_the_direction_bearing_rows`)가 따로 있다 |
 | `README.md` (이 파일) | **산문이 다름** — 각 트리가 자기 방향의 배포를 설명한다. YAML 이 아니라 경로 비교 대상이 아니므로 테스트가 「자기 트리를 설명하는가」로 검사한다 |
-| 나머지 **23 개** | **바이트 동일** — LONG 트리에서 그대로 복사됐다. 그 중 22 개는 상주 트리의 사본이기도 하다(§3.0) |
+| 나머지 **24 개** | **바이트 동일** — LONG 트리에서 그대로 복사됐다(2026-11-11 P2-b 의 `fields.yaml` 포함). 그 중 22 개는 상주 트리의 사본이기도 하다(§3.0) |
 
 ### 3.0 ⛔ 사본 의무 — 상주 쪽을 바꾸는 PR 은 **같은 PR 에서** 이 트리도 갱신한다
 
