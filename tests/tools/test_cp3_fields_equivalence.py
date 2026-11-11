@@ -31,6 +31,7 @@ import yaml
 from shared.indicators.fields import load_fields_file, parse_fields_document
 from shared.instruments.contract_spec import ContractSpec
 from tools.tos_cp3 import fields_equivalence as fe
+from tools.tos_cp3 import produce_fields as pf
 from tools.tos_cp3.produce_fields import (
     FIELD_ORDER,
     OpenAnchor,
@@ -613,4 +614,192 @@ class TestAnchorGuard:
             load_fields_file(_fields_yaml("cp3-setup-d-long")),
             anchor=OpenAnchor(8, 45, "config"),
             fields_yaml=_fields_yaml("cp3-setup-d-long"),
+        )
+
+
+# ---------------------------------------------------------------------------
+# 4. P2-c — the declarative producer and the publish-coverage refusal
+# ---------------------------------------------------------------------------
+
+
+class TestDeclarativeProducer:
+    """``produce_bars_declarative`` emits what the legacy loop emitted.
+
+    The byte-identity claim itself lives in the equivalence harness above; what
+    is pinned here is the PRODUCER's half — the record shape, the emit-day
+    filter, and the omission gate staying with the producer.
+    """
+
+    def test_it_emits_the_same_records_the_legacy_loop_does(
+        self, strategy: Any
+    ) -> None:
+        """Same join keys, same stamps, same fifteen values, same order."""
+        document = load_fields_file(_fields_yaml("cp3-setup-d-long"))
+        inputs = _inputs(document, _frame(), strategy)
+        legacy = pf.produce_bars(
+            inputs.df,
+            symbol=inputs.symbol,
+            strategy=strategy,
+            contract_spec=inputs.contract_spec,
+            anchor=inputs.anchor,
+            emit_days=inputs.emit_days,
+        )
+        declared = pf.produce_bars_declarative(
+            inputs.df,
+            symbol=inputs.symbol,
+            document=document,
+            emit_days=inputs.emit_days,
+        )
+        assert [r.raw_event_id for r in declared.records] == [
+            r.raw_event_id for r in legacy.records
+        ]
+        assert [r.as_of_ms for r in declared.records] == [
+            r.as_of_ms for r in legacy.records
+        ]
+        assert [r.fields for r in declared.records] == [
+            r.fields for r in legacy.records
+        ]
+        # Key ORDER too: the journal's byte stability depends on it.
+        for record in declared.records:
+            assert tuple(record.fields) == FIELD_ORDER
+        assert declared.omitted == legacy.omitted
+
+    def test_a_bar_outside_the_emit_days_advances_the_windows_without_a_key(
+        self, strategy: Any
+    ) -> None:
+        """Plan §3.2a: replayed, then dropped BEFORE a join key is derived.
+
+        The emitted set must be the emit days only, and the dropped bars must
+        be COUNTED rather than listed — naming a previous month's bar after
+        this symbol is the label error the plan forbids.
+        """
+        document = load_fields_file(_fields_yaml("cp3-setup-d-long"))
+        inputs = _inputs(document, _frame(), strategy)
+        declared = pf.produce_bars_declarative(
+            inputs.df,
+            symbol=inputs.symbol,
+            document=document,
+            emit_days=inputs.emit_days,
+        )
+        assert declared.non_target_segment_bars > 0
+        assert declared.bars_replayed == len(inputs.df)
+        emitted_days = {
+            r.bar_kst.date() for r in declared.records  # type: ignore[union-attr]
+        }
+        assert emitted_days <= inputs.emit_days
+
+    def test_the_omission_gate_is_still_the_producer_s(self, strategy: Any) -> None:
+        """A flat run makes ATR 0, and the bar is OMITTED, not published.
+
+        The gate is ``_inputs_unusable`` itself — the same function the legacy
+        loop called — so the two omitted lists are answers to one question
+        rather than two restatements of it.
+        """
+        document = load_fields_file(_fields_yaml("cp3-setup-d-long"))
+        flat = _frame()
+        for index in range(1200, 1260):
+            flat.loc[index, ["open", "high", "low", "close"]] = 350.0
+        inputs = _inputs(document, flat, strategy)
+        declared = pf.produce_bars_declarative(
+            inputs.df,
+            symbol=inputs.symbol,
+            document=document,
+            emit_days=inputs.emit_days,
+        )
+        legacy = pf.produce_bars(
+            inputs.df,
+            symbol=inputs.symbol,
+            strategy=strategy,
+            contract_spec=inputs.contract_spec,
+            anchor=inputs.anchor,
+            emit_days=inputs.emit_days,
+        )
+        assert [bar for bar, _ in declared.omitted] == [
+            bar for bar, _ in legacy.omitted
+        ]
+        published = {r.raw_event_id for r in declared.records}
+        assert not published & {bar for bar, _ in declared.omitted}
+
+
+class TestPublishCoverageRefusal:
+    """Plan §2.2 — a DSL ref the declaration does not publish is refused."""
+
+    def test_the_three_shipped_trees_pass(self) -> None:
+        """The check starts green: it is a guard, not a migration step."""
+        for tree in TREES:
+            pf.assert_dsl_refs_are_published(
+                load_fields_file(_fields_yaml(tree)),
+                strategies_dir=REPO_ROOT
+                / "config"
+                / "tos_runtime"
+                / tree
+                / "strategies",
+            )
+
+    def test_a_ref_that_is_not_published_is_refused_by_name(
+        self, tmp_path: Path
+    ) -> None:
+        """The concrete input: a tenant reading ``rsi14`` from a Setup D
+        declaration that publishes only the fifteen."""
+        strategies = tmp_path / "strategies"
+        strategies.mkdir()
+        (strategies / "x.strategy.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "policy": {
+                        "rules": [
+                            {
+                                "all_of": [
+                                    {
+                                        "left": {
+                                            "ref": [
+                                                "capsule",
+                                                "resolved_values",
+                                                "rsi14",
+                                            ]
+                                        },
+                                        "op": "GE",
+                                        "right": {"const": 1},
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(pf.ProduceFieldsError, match="rsi14"):
+            pf.assert_dsl_refs_are_published(
+                load_fields_file(_fields_yaml("cp3-setup-d-long")),
+                strategies_dir=strategies,
+            )
+
+    def test_a_directory_with_no_strategy_is_refused(self, tmp_path: Path) -> None:
+        """Agreement with nothing is not agreement."""
+        empty = tmp_path / "strategies"
+        empty.mkdir()
+        with pytest.raises(pf.ProduceFieldsError, match="no \\*.yaml strategy"):
+            pf.assert_dsl_refs_are_published(
+                load_fields_file(_fields_yaml("cp3-setup-d-long")),
+                strategies_dir=empty,
+            )
+
+    def test_a_commented_out_ref_is_not_a_ref(self, tmp_path: Path) -> None:
+        """Walked over the PARSED document, so a comment cannot trip it."""
+        strategies = tmp_path / "strategies"
+        strategies.mkdir()
+        (strategies / "x.strategy.yaml").write_text(
+            "policy:\n"
+            "  rules:\n"
+            "    - all_of:\n"
+            "        # - left: {ref: [capsule, resolved_values, rsi14]}\n"
+            "        - left: {ref: [capsule, resolved_values, hi_vol]}\n"
+            "          op: EQ\n"
+            "          right: {const: true}\n",
+            encoding="utf-8",
+        )
+        pf.assert_dsl_refs_are_published(
+            load_fields_file(_fields_yaml("cp3-setup-d-long")),
+            strategies_dir=strategies,
         )

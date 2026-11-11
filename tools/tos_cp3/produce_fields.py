@@ -144,6 +144,12 @@ from shared.decision.setups.vwap_reversion import (  # noqa: E402
     SetupDVWAPReversion,
 )
 from shared.determinism.replay import DEFAULT_WARMUP_BARS  # noqa: E402
+from shared.indicators.fields import (  # noqa: E402
+    FieldBar,
+    FieldEvalError,
+    FieldEvaluator,
+    FieldsDocument,
+)
 from shared.indicators.fields.scaling import (  # noqa: E402
     scaled_int_half_up,
     scaled_int_toward_zero,
@@ -1126,6 +1132,209 @@ def produce_bars(
         omitted=omitted,
         non_target_segment_bars=non_target,
     )
+
+
+def assert_dsl_refs_are_published(
+    document: FieldsDocument, *, strategies_dir: Path
+) -> None:
+    """Refuse a tenant whose DSL reads a field the declaration does not publish.
+
+    Plan §2.2. The kernel resolves a strategy rule's
+    ``ref: [capsule, resolved_values, <name>]`` out of the journal line's
+    ``fields``, and a name the producer never publishes is not a silent
+    ``None`` there — the marketfeed journal refuses the whole poll on a missing
+    required key (``tos_runtime/marketfeed/journal.py``). So the failure is a
+    refused poll at 09:00, every minute, with the cause three layers away from
+    the typo that caused it.
+
+    Checked at producer START, before a single bar is read, because that is the
+    only moment at which the answer is free: both documents are already open
+    and nothing has been published yet.
+
+    Concrete input this refuses: a tenant whose strategy compares
+    ``capsule.resolved_values.rsi14`` while its ``fields.yaml`` publishes only
+    the fifteen Setup D names.
+
+    Args:
+        document: the tenant's parsed ``fields.yaml``.
+        strategies_dir: the tenant tree's ``strategies/`` directory — every
+            ``*.yaml`` in it is read, which is the same set
+            ``tos_runtime.strategy.loader`` admits.
+
+    Raises:
+        ProduceFieldsError: a referenced name is not in ``publish``, or the
+            directory holds no strategy at all (a tenant whose DSL cannot be
+            read is not a tenant whose DSL agrees).
+    """
+    published = {entry.name for entry in document.publish}
+    strategy_files = sorted(
+        path
+        for path in strategies_dir.iterdir()
+        if path.is_file() and path.suffix in {".yaml", ".yml"}
+    )
+    if not strategy_files:
+        raise ProduceFieldsError(
+            f"{strategies_dir}: no *.yaml strategy to check the publish set "
+            "against — refusing rather than reporting agreement with nothing"
+        )
+    missing: list[tuple[str, str]] = []
+    for path in strategy_files:
+        for name in sorted(_dsl_resolved_value_refs(path)):
+            if name not in published:
+                missing.append((path.name, name))
+    if missing:
+        detail = ", ".join(f"{file}: {name!r}" for file, name in missing)
+        raise ProduceFieldsError(
+            f"the strategy DSL reads resolved values this fields.yaml does not "
+            f"publish ({detail}). Published: {sorted(published)}. A kernel poll "
+            "is refused whole on a missing journal key, so this would surface "
+            "as a refused poll every minute rather than as a missing field."
+        )
+
+
+def _dsl_resolved_value_refs(path: Path) -> set[str]:
+    """Every ``capsule.resolved_values.<name>`` a strategy document reads.
+
+    Walked over the PARSED document rather than matched in the text, so a
+    reference is found wherever the DSL puts it (``all_of`` comparisons today,
+    anywhere a ``ref`` is legal tomorrow) and a commented-out one is correctly
+    not a reference.
+    """
+    found: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            ref = node.get("ref")
+            if (
+                isinstance(ref, list)
+                and len(ref) == 3
+                and ref[0] == "capsule"
+                and ref[1] == "resolved_values"
+                and isinstance(ref[2], str)
+            ):
+                found.add(ref[2])
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(yaml.safe_load(path.read_text(encoding="utf-8")))
+    return found
+
+
+def produce_bars_declarative(
+    df: Any,
+    *,
+    symbol: str,
+    document: FieldsDocument,
+    emit_days: frozenset[date] | None = None,
+) -> ProducedBars:
+    """Produce the published fields from a tenant's ``fields.yaml`` (P2-c).
+
+    The declarative replacement for the legacy-driven loop: the evaluator owns
+    every threshold and window, and this function owns only what the PRODUCER
+    owns either way —
+
+    * the emit-day filter (a previous month's bar advances the causal windows
+      and is then dropped before a join key is derived, plan §3.2a);
+    * the omission gate :func:`_inputs_unusable`, unchanged and still here
+      rather than in the catalog. A single-pass declaration has no way to say
+      "stop here and omit this bar", so the producer keeps that decision;
+    * the ``raw_event_id`` / ``as_of_ms`` derivation and the scalar-field
+      assertion, so a declarative line and a legacy line join in B3.
+
+    Every frame bar is EVALUATED, including the ones no day emits: ``atr`` and
+    ``session.vwap_typical`` are defined over the whole frame and the
+    ``gated_*`` windows must advance identically, which is the same reason the
+    legacy loop replayed them.
+
+    A bar the evaluator REFUSES (``FieldEvalError`` — ``ratio_z`` on a zero
+    ATR, by the same contract the legacy's early return took) is omitted with
+    its reason rather than aborting the run: the legacy reached that bar and
+    omitted it too, so an omission is the faithful outcome.
+    """
+    evaluator = FieldEvaluator(document)
+    records: list[FieldRecord] = []
+    omitted: list[tuple[str, str]] = []
+    bars_replayed = 0
+    non_target = 0
+    for row in df.itertuples(index=False):
+        bar = FieldBar.create(
+            row.timestamp,
+            open=float(row.open),
+            high=float(row.high),
+            low=float(row.low),
+            close=float(row.close),
+            volume=float(row.volume),
+        )
+        bars_replayed += 1
+        now = bar.ts_kst
+        on_an_emit_day = emit_days is None or now.date() in emit_days
+        try:
+            evaluated = evaluator.step(bar)
+        except FieldEvalError as exc:
+            if on_an_emit_day:
+                omitted.append(
+                    (
+                        derive_raw_event_id(symbol, now),
+                        f"evaluator refused: {exc}",
+                    )
+                )
+            else:
+                non_target += 1
+            continue
+        if not on_an_emit_day:
+            non_target += 1
+            continue
+        raw_event_id = derive_raw_event_id(symbol, now)
+        values = evaluated.values
+        unusable = _inputs_unusable(
+            *(_declared_number(values, name) for name in ("close", "vwap", "atr"))
+        )
+        if unusable is not None:
+            omitted.append((raw_event_id, unusable))
+            continue
+        ordered = {name: evaluated.published[name] for name in FIELD_ORDER}
+        _assert_scalar_fields(ordered, raw_event_id)
+        records.append(
+            FieldRecord(
+                raw_event_id=raw_event_id,
+                instrument=symbol,
+                as_of_ms=derive_as_of_ms(now),
+                fields=ordered,
+                bar_kst=now,
+            )
+        )
+    if not records:
+        raise ProduceFieldsError(
+            "the declaration yielded no publishable bars: a window shorter "
+            f"than its longest warmup, {len(omitted)} unusable-input bars, or "
+            f"{non_target} bars outside the stitch manifest's target segment"
+        )
+    return ProducedBars(
+        records=records,
+        bars_replayed=bars_replayed,
+        omitted=omitted,
+        non_target_segment_bars=non_target,
+    )
+
+
+def _declared_number(values: Mapping[str, Any], name: str) -> float:
+    """One evaluated field as a float, for the omission gate.
+
+    ``close``/``vwap``/``atr`` are the three UNSCALED field names every shipped
+    declaration carries; a declaration that renamed them would reach the gate
+    with nothing to check, so a missing one is a refusal rather than a zero.
+    """
+    value = values.get(name)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ProduceFieldsError(
+            f"the declaration's {name!r} is {value!r}, not a number — the "
+            "omission gate cannot be evaluated, so the run would publish bars "
+            "whose z may be undefined"
+        )
+    return float(value)
 
 
 def produce_records(
