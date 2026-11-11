@@ -144,6 +144,10 @@ from shared.decision.setups.vwap_reversion import (  # noqa: E402
     SetupDVWAPReversion,
 )
 from shared.determinism.replay import DEFAULT_WARMUP_BARS  # noqa: E402
+from shared.indicators.fields.scaling import (  # noqa: E402
+    scaled_int_half_up,
+    scaled_int_toward_zero,
+)
 from shared.instruments.contract_spec import (  # noqa: E402
     ContractSpec,
     ContractSpecRegistry,
@@ -260,39 +264,17 @@ def _asset_class(raw: object) -> AssetClass:
 # ---------------------------------------------------------------------------
 # Scaling
 # ---------------------------------------------------------------------------
-
-
-def scaled_int_half_up(value: float, scale: int) -> int:
-    """Scale a MAGNITUDE by *scale* and round half-up to an ``int``.
-
-    Used for prices and ATR, where the nearest representable value is what is
-    wanted and no threshold comparison is made on the published integer.
-    Half-up is monotone, so the OHLC relations a ``tos.backtest.Bar`` validates
-    (``high >= low``, ``open``/``close`` inside the range) survive the scaling.
-
-    Half-up rather than :func:`round` because ``round`` is banker's rounding,
-    whose result depends on the parity of the neighbouring integer —
-    deterministic, but not reproducible by a reader who reimplements the scale
-    from the sidecar.
-    """
-    return int(math.floor(value * scale + 0.5))
-
-
-def scaled_int_toward_zero(value: float, scale: int) -> int:
-    """Scale a SIGNED, threshold-compared value and truncate toward zero.
-
-    Used for ``z_x1000``. Two properties half-up does not have:
-
-    * **Symmetric** — ``+1.7995`` and ``-1.7995`` become ``+1799`` and
-      ``-1799``, whereas half-up maps them to ``1800`` and ``-1799``.
-    * **Conservative at the trigger** — truncation toward zero means
-      ``abs(z_x1000) >= scaled_int_toward_zero(extreme_atr_mult, 1000)`` holds
-      only when ``abs(z) >= extreme_atr_mult`` really does, so a policy written
-      on the integer **never fires where the legacy setup did not**. The price
-      is that the published integer understates ``abs(z)`` by up to one unit
-      (0.001 ATR); see declared difference D8.
-    """
-    return int(math.trunc(value * scale))
+#
+# ``scaled_int_half_up`` / ``scaled_int_toward_zero`` were MOVED VERBATIM to
+# ``shared/indicators/fields/scaling.py`` (P2-a,
+# ``docs/plans/2026-11-11-tos-p2-declarative-fields.md`` §3) and are imported
+# above. The declarative field evaluator publishes with the same two rounding
+# modes, and a second copy of them is precisely how the legacy-driven producer
+# and the declarative producer would come to disagree about a bar whose value
+# lands on a half — which is what P2-b compares byte for byte. The names stay
+# re-exported from this module because ``emit_legacy_decisions.py`` (B2) and
+# ``tests/tools/test_cp3_produce_fields.py`` read them from here; the published
+# bytes are unchanged.
 
 
 # ---------------------------------------------------------------------------
