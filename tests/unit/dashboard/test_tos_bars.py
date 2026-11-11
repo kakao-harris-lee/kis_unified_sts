@@ -463,3 +463,69 @@ def test_the_route_is_registered_on_the_app() -> None:
     paths = {route.path for route in create_app().routes}  # type: ignore[attr-defined]
     assert "/api/tos/sessions/{session_id}/bars" in paths
     assert "/api/tos/projection" in paths
+
+
+# ===========================================================================
+# Review LOWs of #1059
+# ===========================================================================
+
+
+def test_the_served_session_is_the_resolved_id_not_the_documents_own(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """``session`` is the id THIS ROUTE resolved, never file content.
+
+    The earlier revision echoed ``document.session``, so a document carrying a
+    hostile name had it reflected into a field the page renders outside the
+    ``document`` block.
+    """
+    hostile = "<img src=x onerror=alert(1)>"
+    _write(bars_dir, SESSION, {**_VALID_DOCUMENT, "session": hostile})
+    body = _get(client)
+    assert body["available"] is True
+    assert body["session"] == SESSION
+    # Inside `document` the file's own value is still mirrored — that is what a
+    # read model does — but the top-level field the page trusts is not it.
+    assert body["document"]["session"] == hostile
+
+
+def test_latest_survives_a_document_vanishing_mid_listing(
+    client: TestClient, bars_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An export replacing a document between ``iterdir`` and ``stat`` is not a 500.
+
+    ``stat`` used to sit in ``max``'s key function, outside the try, so the
+    ``FileNotFoundError`` reached FastAPI — a server error for "the exporter ran
+    while the page was loading".
+    """
+    _write(bars_dir, SESSION, _VALID_DOCUMENT)
+    real_stat = Path.stat
+
+    def vanishing(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+        if self.suffix == ".json":
+            raise FileNotFoundError(2, "vanished", str(self))
+        return real_stat(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "stat", vanishing)
+    response = client.get(f"/api/tos/sessions/{tos_bars.LATEST}/bars")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is False
+    assert body["reason"].startswith("bars document absent")
+
+
+def test_latest_ignores_a_leftover_temp_file(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """A ``SIGKILL``-ed export leaves ``.<name>.<rand>.tmp``; it is not a document.
+
+    Deliberately not swept by the exporter (CLAUDE.md R5), which is only safe
+    because this listing cannot mistake one for a document.
+    """
+    _write(bars_dir, SESSION, _VALID_DOCUMENT)
+    leftover = bars_dir / f".{SESSION}.json.abc123.tmp"
+    leftover.write_text("half a document", encoding="utf-8")
+    os.utime(leftover, (9_000_000, 9_000_000))  # newer than the real one
+    body = _get(client, tos_bars.LATEST)
+    assert body["available"] is True
+    assert body["session"] == SESSION

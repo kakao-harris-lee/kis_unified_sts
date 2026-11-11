@@ -63,6 +63,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import stat
 import sys
 import tempfile
 from collections.abc import Sequence
@@ -109,6 +111,18 @@ PROJECTION_DIR_ENV = "TOS_OPERATOR_PROJECTION_DIR"
 #: the same numeric uid as ``deploy`` — see the module docstring.
 DIR_MODE = 0o700
 DOCUMENT_MODE = 0o600
+
+#: The session names this exporter will write a document under. MIRRORS
+#: ``services/dashboard/routes/tos_bars.py``'s ``_SESSION_ID_PATTERN``, and the
+#: two are asserted equal by
+#: ``tests/tools/test_cp3_export_bars.py::test_the_exported_name_is_one_the_route_will_accept``
+#: — restated rather than imported because this is a stdlib-only host tool and
+#: importing the route would pull FastAPI into a cron step.
+#:
+#: Checked BEFORE the write (not only by the route on the way out): the name is
+#: this document's filename, so a name outside the pattern would either escape
+#: the directory this module chose or produce a file the route refuses to serve.
+SESSION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
 class ExportRefusal(Exception):
@@ -186,7 +200,50 @@ def _inspect_document(
             f"inspection of {session!r} names no session, so the document has "
             "no filename the page could ask for"
         )
+    if not SESSION_NAME_PATTERN.match(name):
+        # Loudly, before anything is written. This name becomes a FILENAME here
+        # and a path segment the route is asked for later; a name outside the
+        # pattern would either land somewhere this function did not choose or
+        # produce a document the route refuses to serve — a file that exists and
+        # can never be read. Refusing beats both.
+        raise ExportRefusal(
+            f"inspection of {session!r} names session {name!r}, which is outside "
+            f"{SESSION_NAME_PATTERN.pattern} — that name is both this document's "
+            "filename and the path segment GET /api/tos/sessions/{id}/bars is "
+            "asked for, so a document written under it could never be served"
+        )
     return name, document
+
+
+def _narrow_directory(directory: Path) -> None:
+    """Ensure ``directory`` exists and carries no bit outside :data:`DIR_MODE`.
+
+    ``mkdir(mode=…)`` is not enough, twice over:
+
+    * it applies the mode only to the leaf it creates, so a parent created on
+      the same call (the projection directory, on a first run) gets the default;
+    * the mode is masked by ``umask``, and it does nothing at all for a
+      directory that already exists — a ``bars/`` left at ``0755`` by an earlier
+      run, a restore, or a hand-made ``mkdir`` would stay world-readable and
+      nothing here would say so.
+
+    So the mode is checked after the fact, every run, for the projection
+    directory AND for ``bars/``.
+
+    **It only ever narrows.** The chmod fires exactly when a bit outside
+    ``0700`` is set; a directory the operator left NARROWER (``0500``, say) is
+    left alone, and the write then fails with the caller's named refusal. A
+    mode-tightening fix that quietly granted itself write access to a
+    deliberately read-only directory would be doing the opposite of its job.
+    A chmod that fails refuses too, through the caller's ``OSError`` handler.
+
+    Raises:
+        OSError: ``mkdir``, ``stat`` or ``chmod`` failed (the caller turns it
+            into an :class:`ExportRefusal` naming the path).
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    if stat.S_IMODE(directory.stat().st_mode) & ~DIR_MODE:
+        os.chmod(directory, DIR_MODE)
 
 
 def _write_atomically(path: Path, payload: str) -> None:
@@ -196,8 +253,17 @@ def _write_atomically(path: Path, payload: str) -> None:
     inode keeps reading a whole document and the next open gets the whole new
     one — never a truncated mix. The temp file is created in the destination
     directory (not ``/tmp``) precisely so the rename cannot cross a filesystem.
+
+    ⚠ A ``SIGKILL`` between ``mkstemp`` and ``os.replace`` leaves one
+    ``.<name>.<rand>.tmp`` behind. Deliberately not swept: the route lists only
+    ``*.json`` (``Path.suffix`` of such a file is ``.tmp``), so a leftover is
+    invisible to the page and to ``latest``, and it cannot be mistaken for a
+    document. One dotfile per kill in a ``0700`` directory does not earn a
+    sweeper (CLAUDE.md R5 — a new guard needs a real incident beside it).
     """
-    path.parent.mkdir(parents=True, exist_ok=True, mode=DIR_MODE)
+    # Both levels, not just the leaf — see `_narrow_directory`.
+    _narrow_directory(path.parent.parent)
+    _narrow_directory(path.parent)
     handle, temp_name = tempfile.mkstemp(
         dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
     )
