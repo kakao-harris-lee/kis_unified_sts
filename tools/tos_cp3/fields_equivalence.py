@@ -41,6 +41,21 @@ frame to Parquet there, next to the ``journal.jsonl`` it actually published, so
 this mode additionally compares the declarative output against the bytes a real
 session emitted.
 
+A cell that was not compared never counts as a cell that agreed
+--------------------------------------------------------------
+Every way this harness can fail to compare something is counted and fails the
+verdict (review 2026-11-11): a journal row with no declarative counterpart, a
+journal row missing a published field, a legacy record missing one, a session
+run whose journal matched nothing at all, and a run whose causal window was not
+yet FILLED before the first compared day. The first three used to be silent
+``continue``s and the last two were printed next to ``VERDICT PASS`` — so the
+one number that mattered, "how many cells actually got compared", could fall
+below the row count without changing the verdict.
+
+The one asymmetry that is reported WITHOUT failing is a frame bar the journal
+never carried (``journal_declared_only_ids``); see :func:`_compare_journal` for
+the two measured causes.
+
 Why the compared days must start after the window is FILLED
 -----------------------------------------------------------
 The legacy's causal windows advance only on bars
@@ -76,6 +91,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -123,6 +140,17 @@ DEFAULT_STRATEGY_YAML = (
 SESSION_MARKET_SUBDIR = "producer/market"
 SESSION_JOURNAL = "journal.jsonl"
 SESSION_STITCH = "stitch.json"
+
+#: The live producer configs, one per market. Session mode resolves a recorded
+#: session's open anchor from the one whose ``market:`` is that session's asset
+#: class, because that file is what the producer that WROTE the session read
+#: (``live_producer/config.py``: ``open_anchor`` 'auto' is the futures era rule,
+#: and a non-futures market must name its open as ``HH:MM``). Deriving it here
+#: instead of requiring ``--market-open`` is the 2026-11-11 review's LOW: a
+#: stock session run without the flag used to resolve to the futures 08:45 and
+#: die in :func:`_assert_anchor_agrees`, which reads as a declaration defect
+#: rather than a missing flag.
+PRODUCER_CONFIG_GLOB = "config/tos_probes/cp3-live-producer*.yaml"
 
 
 class EquivalenceError(RuntimeError):
@@ -184,13 +212,41 @@ class EquivalenceResult:
     declared_only_ids: tuple[str, ...]
     capacity_before_first_compared_day: int
     capacity_required: int
+    legacy_missing_fields: tuple[tuple[str, str], ...] = field(default=())
+    journal_rows: int = 0
     journal_compared: int = 0
     journal_divergences: tuple[Divergence, ...] = field(default=())
+    journal_unmatched_ids: tuple[str, ...] = field(default=())
+    journal_missing_fields: tuple[tuple[str, str], ...] = field(default=())
+    journal_declared_only_ids: tuple[str, ...] = field(default=())
 
     @property
     def cells_compared(self) -> int:
         """Bar × field cells actually compared."""
         return self.bars_compared * len(self.published_fields)
+
+    @property
+    def capacity_satisfied(self) -> bool:
+        """Was the causal vol window FILLED before the first compared day?
+
+        Derived once and read by :attr:`passed`, the payload and the render, so
+        the verdict and the number the record prints cannot disagree. Before
+        2026-11-11 this was computed inline in two places and gated nothing: a
+        run whose seed was SHORT printed ``SHORT`` next to ``VERDICT PASS``,
+        which is the one shape a measurement record must not have.
+        """
+        return self.capacity_before_first_compared_day >= self.capacity_required
+
+    @property
+    def journal_fully_matched(self) -> bool:
+        """Did every journal row find a counterpart, with every field present?
+
+        The journal is the bytes a real session published. A row the
+        declarative side cannot reproduce, or a published field the row does
+        not carry, is the comparison failing to happen — not the comparison
+        passing. Both were silently ``continue``d before 2026-11-11.
+        """
+        return not self.journal_unmatched_ids and not self.journal_missing_fields
 
     @property
     def omitted_lists_agree(self) -> bool:
@@ -212,12 +268,23 @@ class EquivalenceResult:
 
     @property
     def passed(self) -> bool:
+        """Every way this comparison can fail, including failing to compare.
+
+        The last three clauses are the 2026-11-11 review's point: a harness
+        whose verdict ignores "nothing was compared" reports PASS for a run
+        that measured nothing. ``journal_compared > 0`` is required in session
+        mode only — it is the only mode that has a journal.
+        """
         return (
             not self.divergences
             and not self.journal_divergences
             and self.omitted_lists_agree
             and self.bar_sets_agree
             and self.bars_compared > 0
+            and not self.legacy_missing_fields
+            and self.journal_fully_matched
+            and self.capacity_satisfied
+            and (self.mode != "session" or self.journal_compared > 0)
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -258,9 +325,13 @@ class EquivalenceResult:
                 self.capacity_before_first_compared_day
             ),
             "capacity_required": self.capacity_required,
-            "capacity_satisfied": (
-                self.capacity_before_first_compared_day >= self.capacity_required
-            ),
+            "capacity_satisfied": self.capacity_satisfied,
+            "legacy_missing_fields": len(self.legacy_missing_fields),
+            "first_legacy_missing_fields": [
+                {"bar": bar, "field": name}
+                for bar, name in self.legacy_missing_fields[:20]
+            ],
+            "journal_rows": self.journal_rows,
             "journal_compared": self.journal_compared,
             "journal_divergences": len(self.journal_divergences),
             "first_journal_divergences": [
@@ -272,6 +343,18 @@ class EquivalenceResult:
                 }
                 for d in self.journal_divergences[:20]
             ],
+            "journal_unmatched_ids": len(self.journal_unmatched_ids),
+            "first_journal_unmatched_ids": list(self.journal_unmatched_ids[:20]),
+            "journal_missing_fields": len(self.journal_missing_fields),
+            "first_journal_missing_fields": [
+                {"bar": bar, "field": name}
+                for bar, name in self.journal_missing_fields[:20]
+            ],
+            "journal_declared_only_ids": len(self.journal_declared_only_ids),
+            "first_journal_declared_only_ids": list(
+                self.journal_declared_only_ids[:20]
+            ),
+            "journal_fully_matched": self.journal_fully_matched,
             "passed": self.passed,
         }
 
@@ -295,18 +378,34 @@ class EquivalenceResult:
             f"bar sets agree       {self.bar_sets_agree}",
             f"seed capacity        {self.capacity_before_first_compared_day} "
             f"(required {self.capacity_required}, "
-            f"{'OK' if self.capacity_before_first_compared_day >= self.capacity_required else 'SHORT'})",
+            f"{'OK' if self.capacity_satisfied else 'SHORT'})",
         ]
-        if self.journal_compared:
+        if self.mode == "session" or self.journal_rows:
             lines += [
+                f"journal rows         {self.journal_rows}",
                 f"journal bars         {self.journal_compared}",
                 f"journal divergences  {len(self.journal_divergences)}",
+                f"journal unmatched    {len(self.journal_unmatched_ids)}",
+                f"journal missing flds {len(self.journal_missing_fields)}",
+                f"declared-only bars   {len(self.journal_declared_only_ids)} "
+                "(reported, not fatal — frame bars the journal never carried: "
+                "the session's stop, or a publication gap inside it)",
             ]
         lines.append(f"VERDICT              {'PASS' if self.passed else 'FAIL'}")
         for divergence in self.divergences[:20]:
             lines.append(f"  ! {divergence.render()}")
         for divergence in self.journal_divergences[:20]:
             lines.append(f"  !journal {divergence.render()}")
+        for bar, name in self.legacy_missing_fields[:20]:
+            lines.append(
+                f"  ! the legacy record for {bar} carries no published field {name!r}"
+            )
+        for extra in self.journal_unmatched_ids[:20]:
+            lines.append(
+                f"  ! the journal published a bar the declaration did not: {extra}"
+            )
+        for bar, name in self.journal_missing_fields[:20]:
+            lines.append(f"  ! the journal row {bar} carries no field {name!r}")
         for extra in self.legacy_only_ids[:10]:
             lines.append(f"  ! legacy emitted a bar the declaration did not: {extra}")
         for extra in self.declared_only_ids[:10]:
@@ -331,6 +430,42 @@ class Inputs:
     anchor: OpenAnchor
     document: FieldsDocument
     emit_days: frozenset[date]
+
+
+def producer_open_anchor(asset_class: AssetClass) -> str:
+    """The ``open_anchor`` the live producer config for *asset_class* declares.
+
+    Returned as the raw declaration (``'auto'`` or ``HH:MM``) so it feeds
+    :func:`resolve_open_anchor` exactly as the live producer feeds it
+    (``live_producer/producer.py``), keeping the era rule in one place instead
+    of restating a futures/stock split here.
+
+    Raises:
+        EquivalenceError: no config declares this market, or more than one
+            does. Guessing is the failure mode this replaces — a wrong anchor
+            shifts every ``minutes_since_open`` and the comparison then
+            measures the anchor rather than the fields.
+    """
+    matches: list[tuple[Path, str]] = []
+    for path in sorted(REPO_ROOT.glob(PRODUCER_CONFIG_GLOB)):
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or raw.get("market") != asset_class:
+            continue
+        anchor = raw.get("open_anchor")
+        if not isinstance(anchor, str) or not anchor:
+            raise EquivalenceError(
+                f"{path}: market {asset_class!r} declares no usable open_anchor "
+                f"(got {anchor!r})"
+            )
+        matches.append((path, anchor))
+    if len(matches) != 1:
+        raise EquivalenceError(
+            f"expected exactly one {PRODUCER_CONFIG_GLOB} declaring "
+            f"market {asset_class!r}, found {len(matches)} "
+            f"({[str(p) for p, _ in matches]}). Pass --market-open explicitly "
+            "rather than letting the harness pick an anchor."
+        )
+    return matches[0][1]
 
 
 def _contract_spec(
@@ -433,14 +568,8 @@ def load_inputs(
             f"{seed_sessions} were dropped as seed"
         )
 
-    anchor = (
-        resolve_open_anchor(
-            cli_value=market_open, first_session=days[0], last_session=days[-1]
-        )
-        if market_open
-        else resolve_open_anchor(
-            cli_value="auto", first_session=days[0], last_session=days[-1]
-        )
+    anchor = resolve_open_anchor(
+        cli_value=market_open, first_session=days[0], last_session=days[-1]
     )
     _assert_anchor_agrees(document, anchor=anchor, fields_yaml=fields_yaml)
     return Inputs(
@@ -637,12 +766,21 @@ def compare(
     published_fields = tuple(entry.name for entry in inputs.document.publish)
     shared_ids = sorted(set(legacy) & set(declared))
     divergences: list[Divergence] = []
+    legacy_missing_fields: list[tuple[str, str]] = []
     for raw_event_id in shared_ids:
         legacy_fields = legacy[raw_event_id]
         declared_fields = declared[raw_event_id]
         for name in published_fields:
             if name not in legacy_fields:
-                continue  # a field this declaration does not reproduce yet
+                # The legacy record does not carry a field the declaration
+                # publishes, so there is nothing to compare it against. Before
+                # 2026-11-11 this was a bare `continue` reading "a field this
+                # declaration does not reproduce yet" — but P2-b publishes all
+                # fifteen, so the comment described a state that no longer
+                # exists while the skip stayed silent. Now it is counted and it
+                # fails the verdict: an uncompared cell must not look compared.
+                legacy_missing_fields.append((raw_event_id, name))
+                continue
             left = legacy_fields[name]
             right = declared_fields[name]
             if type(left) is not type(right) or left != right:
@@ -659,12 +797,18 @@ def compare(
                 )
 
     first_compared = min(inputs.emit_days)
-    journal_compared = 0
-    journal_divergences: tuple[Divergence, ...] = ()
-    if journal is not None:
-        journal_compared, journal_divergences = _compare_journal(
-            journal, declared=declared, published_fields=published_fields
+    journal_result = (
+        _compare_journal(journal, declared=declared, published_fields=published_fields)
+        if journal is not None
+        else JournalComparison(
+            rows=0,
+            compared=0,
+            divergences=(),
+            unmatched_ids=(),
+            missing_fields=(),
+            declared_only_ids=(),
         )
+    )
 
     return EquivalenceResult(
         mode=mode,
@@ -686,8 +830,13 @@ def compare(
             anchor=inputs.anchor,
         ),
         capacity_required=int(inputs.strategy.entry_config.vol_window_bars),
-        journal_compared=journal_compared,
-        journal_divergences=journal_divergences,
+        legacy_missing_fields=tuple(legacy_missing_fields),
+        journal_rows=journal_result.rows,
+        journal_compared=journal_result.compared,
+        journal_divergences=journal_result.divergences,
+        journal_unmatched_ids=journal_result.unmatched_ids,
+        journal_missing_fields=journal_result.missing_fields,
+        journal_declared_only_ids=journal_result.declared_only_ids,
     )
 
 
@@ -698,12 +847,30 @@ def _trace_for(traces: dict[str, dict[str, Any]], bar_kst: str) -> dict[str, Any
     return {}
 
 
+@dataclass(frozen=True)
+class JournalComparison:
+    """What comparing against one session's published journal measured.
+
+    A record rather than a tuple because the counts that make the comparison
+    HONEST — how many rows were read, how many matched, and which rows and
+    fields did not — are as load-bearing as the divergences themselves, and a
+    six-tuple at the call site would hide which number is which.
+    """
+
+    rows: int
+    compared: int
+    divergences: tuple[Divergence, ...]
+    unmatched_ids: tuple[str, ...]
+    missing_fields: tuple[tuple[str, str], ...]
+    declared_only_ids: tuple[str, ...]
+
+
 def _compare_journal(
     path: Path,
     *,
     declared: dict[str, dict[str, Any]],
     published_fields: Sequence[str],
-) -> tuple[int, tuple[Divergence, ...]]:
+) -> JournalComparison:
     """Compare the declarative output against a session's PUBLISHED journal.
 
     The strongest evidence available for P2-c: these are the bytes a real
@@ -713,21 +880,52 @@ def _compare_journal(
     ``as_of_ms``/``received_ms`` the journal stamps on append
     (``live_producer/sinks.py``: "the journal takes the stamp, not its caller").
     What is compared is ``raw_event_id`` plus every published field value.
+
+    ⚠ **A row that cannot be compared is reported, never skipped** (review
+    2026-11-11, MEDIUM). Until then a journal row with no declarative
+    counterpart and a row missing a published field were both ``continue``d,
+    so the two failures that matter most here — the declaration reproduces
+    FEWER bars than the session published, or the journal is not carrying a
+    field at all — were invisible, and ``compared`` silently fell below the
+    row count while the verdict stayed PASS.
+
+    ``declared_only_ids`` is the opposite direction and is deliberately NOT a
+    failure: it names frame bars the live journal never carried at all, which
+    happens for two reasons neither side's field math controls —
+
+    * the session's own stop, measured 2026-11-11 on ``stock-r1-20261111``:
+      the frozen frame runs to 15:19 and the journal stops at 15:18; and
+    * a publication gap INSIDE the session, measured the same day on
+      ``long-20261111``: the journal carries 15:33 and 15:45 but not 15:34,
+      which the frame has.
+
+    A bar the journal never published cannot be a field disagreement, so
+    failing on it would turn a live polling gap into a declaration defect (it
+    would have made three of the four recorded sessions red). It is counted
+    and printed instead, so the asymmetry is visible rather than assumed.
     """
     divergences: list[Divergence] = []
+    unmatched: list[str] = []
+    missing_fields: list[tuple[str, str]] = []
+    seen_ids: set[str] = set()
+    rows = 0
     compared = 0
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
+        rows += 1
         row = json.loads(line)
         raw_event_id = row["raw_event_id"]
+        seen_ids.add(raw_event_id)
         mine = declared.get(raw_event_id)
         if mine is None:
+            unmatched.append(raw_event_id)
             continue
         compared += 1
         theirs = row["fields"]
         for name in published_fields:
             if name not in theirs:
+                missing_fields.append((raw_event_id, name))
                 continue
             left = theirs[name]
             right = mine[name]
@@ -742,7 +940,14 @@ def _compare_journal(
                         legacy_eval={},
                     )
                 )
-    return compared, tuple(divergences)
+    return JournalComparison(
+        rows=rows,
+        compared=compared,
+        divergences=tuple(divergences),
+        unmatched_ids=tuple(sorted(unmatched)),
+        missing_fields=tuple(missing_fields),
+        declared_only_ids=tuple(sorted(set(declared) - seen_ids)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -839,8 +1044,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--market-open",
-        default="auto",
-        help="HH:MM, or 'auto' for the era rule (produce_fields.resolve_open_anchor)",
+        default=None,
+        help=(
+            "HH:MM, or 'auto' for the era rule "
+            "(produce_fields.resolve_open_anchor). Left out: 'auto' in window "
+            "and stitched mode; in session mode the anchor the live producer "
+            "config for the session's own market declares, so a stock session "
+            "needs no flag"
+        ),
     )
     parser.add_argument(
         "--min-bars-per-day", type=int, default=DEFAULT_MIN_BARS_PER_DAY
@@ -864,7 +1075,11 @@ def main(argv: list[str] | None = None) -> int:
                 fields_yaml=args.fields_yaml,
                 strategy_yaml=args.strategy_yaml,
                 execution_yaml=args.execution_yaml,
-                market_open=args.market_open,
+                market_open=(
+                    args.market_open
+                    if args.market_open is not None
+                    else producer_open_anchor(session.asset_class)
+                ),
                 min_bars_per_day=args.min_bars_per_day,
                 stitch_manifest=session.stitch_manifest,
                 emit_days=[session.target_day],
@@ -883,7 +1098,7 @@ def main(argv: list[str] | None = None) -> int:
                 fields_yaml=args.fields_yaml,
                 strategy_yaml=args.strategy_yaml,
                 execution_yaml=args.execution_yaml,
-                market_open=args.market_open,
+                market_open=args.market_open or "auto",
                 min_bars_per_day=args.min_bars_per_day,
                 start=args.start,
                 end=args.end,
