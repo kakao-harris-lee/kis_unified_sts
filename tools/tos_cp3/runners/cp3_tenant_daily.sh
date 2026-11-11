@@ -761,8 +761,13 @@ log "runner rc=$rc session=$SESSION"
 #
 # It READS the session directory and the tenant durable set — both 0700, both
 # owned by the user this cron runs as — and WRITES only into
-# $TOS_OPERATOR_PROJECTION_DIR, the directory the dashboard already has
-# bind-mounted read-only. Nothing under the state tree is modified.
+# $TOS_OPERATOR_PROJECTION_DIR (the directory the dashboard already has
+# bind-mounted read-only) plus its own log beside the session's others.
+#
+# ⚠ "outside the session and data trees", NOT "outside $STATE": on this host
+# TOS_OPERATOR_PROJECTION_DIR is $STATE/paper-projection, i.e. UNDER the state
+# root. What the hook never touches is any session directory's contents beyond
+# its own log, and any tenant durable set.
 #
 # ⚠ Unset variable = SKIP, logged. That variable is not part of the tenant
 # cron's environment today (it lives in .env.paper, for the resident paper
@@ -772,9 +777,22 @@ log "runner rc=$rc session=$SESSION"
 BARS_CEILING_S=${CP3_BARS_CEILING_S:-120}
 if [ -z "${TOS_OPERATOR_PROJECTION_DIR:-}" ]; then
   log "=== BARS EXPORT SKIPPED — TOS_OPERATOR_PROJECTION_DIR is unset, so there is no directory the dashboard reads; set it for this wrapper to enable the /tos bar panel (this does NOT affect the session)"
-elif [ ! -x "$WT/tools/tos_cp3/export_bars.py" ] && [ ! -f "$WT/tools/tos_cp3/export_bars.py" ]; then
+elif [ ! -f "$WT/tools/tos_cp3/export_bars.py" ]; then
+  # `-f` alone: the file is run as `"$PY" <script>`, so its execute bit is
+  # irrelevant and the earlier `! -x && ! -f` pair could only ever agree with
+  # `! -f`.
   log "=== BARS EXPORT SKIPPED — $WT/tools/tos_cp3/export_bars.py is absent at this origin/main revision (this does NOT affect the session)"
 else
+  # ⚠ The `--kill-after` SIGKILL can land between the exporter's `mkstemp` and
+  # its `os.replace`, leaving one `.<name>.<rand>.tmp` in the bars directory.
+  # DOCUMENTED, not swept (decision, review of #1060): the route lists only
+  # `*.json` and such a file's suffix is `.tmp`, so it is invisible to the page
+  # and to `latest`, and `os.replace` means no half-written document is ever
+  # served. One dotfile per kill in a 0700 directory does not earn a sweeper
+  # (CLAUDE.md R5 — a new guard needs a real incident beside it). Both halves
+  # are pinned on the Python side: `_write_atomically`'s docstring records the
+  # decision and `test_latest_ignores_a_leftover_temp_file` proves the listing
+  # cannot mistake one for a document.
   log "=== BARS EXPORT session=$SESSION -> ${TOS_OPERATOR_PROJECTION_DIR}/bars ceiling ${BARS_CEILING_S}s"
   timeout --kill-after=5s "${BARS_CEILING_S}s" \
     "$PY" "$WT/tools/tos_cp3/export_bars.py" "$SESSION" \
