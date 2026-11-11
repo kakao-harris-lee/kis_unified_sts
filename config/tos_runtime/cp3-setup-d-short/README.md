@@ -34,10 +34,13 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 
 ## 3. LONG 트리와 무엇이 다른가 (실측 2026-10-09)
 
-**32 파일 = 바이트 동일 23 + YAML 이 다름 7 + 산문이 다름 1(`README.md`) + SHORT 전용 1**
-(LONG 트리도 32 파일이다; LONG 의 `strategies/setup_d_long.strategy.yaml` 은 이 트리에
+**33 파일 = 바이트 동일 24 + YAML 이 다름 7 + 산문이 다름 1(`README.md`) + SHORT 전용 1**
+(LONG 트리도 33 파일이다; LONG 의 `strategies/setup_d_long.strategy.yaml` 은 이 트리에
 **없고** 그 자리를 `strategies/setup_d_short.strategy.yaml` 이 차지한다). 31 → 32 · 다름
-6 → 7 은 2026-10-10 PR-B 가 더한 **`RENDER.yaml`**(렌더 매니페스트) 때문이다.
+6 → 7 은 2026-10-10 PR-B 가 더한 **`RENDER.yaml`**(렌더 매니페스트) 때문이고, 32 → 33 ·
+바이트 동일 23 → 24 는 2026-11-11 P2-b 가 더한 **`fields.yaml`**(선언형 지표 필드,
+`docs/plans/2026-11-11-tos-p2-declarative-fields.md` §2.2) 때문이다 — 방향 내용이 없어
+두 tenant 트리에서 바이트 동일하다.
 
 측정은 작업트리 `cmp` 가 아니라 `tos/runtime/tests/compose/test_tenant_tree_short.py` 다 —
 바이트 동일 23 은 **바이트**로, 다름 7 은 **파싱된 YAML 경로 집합의 등식**으로, `README.md`

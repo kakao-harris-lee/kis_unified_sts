@@ -72,6 +72,21 @@ _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 #: file -> the parsed-YAML leaf paths allowed to differ from LONG. ``None`` = prose file.
 _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
     "README.md": None,
+    # The declarative field declaration (P2-b,
+    # docs/plans/2026-11-11-tos-p2-declarative-fields.md §2.2). Stock opens at
+    # 09:00, futures at 08:45, and that open anchor is a PARAMETER of
+    # `session.minutes_since_open` rather than something the producer resolves
+    # per run — so these two leaves are the whole difference between the stock
+    # declaration and the futures one. Everything else, thresholds and windows
+    # included, is byte-identical because all three trees read the same strategy
+    # YAML. Positional (`fields.8`) like every other entry here: if a field is
+    # inserted earlier the index shifts and this test says so, which is the point.
+    "fields.yaml": frozenset(
+        {
+            "fields.8.params.open_hour",
+            "fields.8.params.open_minute",
+        }
+    ),
     "RENDER.yaml": frozenset(
         {
             "tree_id",
