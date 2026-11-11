@@ -21,6 +21,11 @@ Three properties, each pinned by a test:
 
 What this evaluator does NOT decide
 -----------------------------------
+Which bars are *admitted*. A bar that only warms the frame-wide indicators —
+the replay warmup and the frame's first session, which the witness computes ATR
+and VWAP over but never decides on — goes to :meth:`FieldEvaluator.warm`
+instead of :meth:`FieldEvaluator.step`, and the caller decides which is which.
+
 Which bars are *emitted*. The legacy producer drops a bar whose ATR-scaled
 fields cannot carry their published meaning
 (``tools/tos_cp3/produce_fields.py::_inputs_unusable``: ``atr <= 0``,
@@ -131,16 +136,45 @@ class FieldEvaluator:
             FieldEvalError: when a missing value reaches an op that refuses to
                 read it as ``False``, when a sampled value is missing, when a
                 ``ratio_z`` divisor is zero, or when a published field has no
-                value on this bar.
+                value on this bar. The refusal carries the fields that were
+                already evaluated in :attr:`FieldEvalError.values`, so a caller
+                can ask its own gate about them instead of matching on the
+                message.
         """
         values: dict[str, FieldValue] = {}
-        for spec in self._document.fields:
-            values[spec.name] = self._evaluate(spec, bar, values)
-        return EvaluatedBar(
-            bar=bar,
-            values=values,
-            published=self._publish(bar, values),
-        )
+        try:
+            for spec in self._document.fields:
+                values[spec.name] = self._evaluate(spec, bar, values)
+            published = self._publish(bar, values)
+        except FieldEvalError as exc:
+            raise FieldEvalError(str(exc), values=values) from exc
+        return EvaluatedBar(bar=bar, values=values, published=published)
+
+    def warm(self, bar: FieldBar) -> None:
+        """Advance the FRAME-WIDE window indicators and evaluate nothing.
+
+        This is the bar the witness reads but never decides on. ``shared/backtest
+        /market_context_replay.py::MarketContextReplay`` precomputes ``atr`` and
+        the session VWAP over the *whole* frame, and then
+        :meth:`iter_contexts` yields from the 60th bar onward and additionally
+        skips every bar whose session has no previous session — so the legacy
+        setup's ``check()`` is never called on those bars, and its causal
+        ``gated_*`` windows never sample them, while its ATR at the first
+        admitted bar is nonetheless the one computed over the warmup.
+
+        Calling :meth:`step` on such a bar instead would differ in two
+        measurable ways (review of PR #1067, M2): the ``gated_*`` windows would
+        hold samples the legacy never took — 88 ``hi_vol`` cells differed on a
+        7-session frame — and a bar whose ATR window is not yet full would
+        refuse outright, since ``usable`` combines a ``None``.
+
+        Only the frame-wide ops advance here. The ``gated_*`` ops deliberately
+        do not: not sampling them IS the behaviour being reproduced.
+        """
+        for vwap in self._vwap.values():
+            vwap.update(bar)
+        for atr in self._atr.values():
+            atr.update(bar)
 
     # -- per-field dispatch -------------------------------------------------
 
