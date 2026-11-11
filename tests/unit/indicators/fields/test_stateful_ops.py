@@ -256,42 +256,17 @@ class TestDeclaredGate:
         records = FieldEvaluator(parsed(fields)).run(_ladder())
         assert records[0].values["vol_ok"] is True
 
-    def test_a_missing_value_reaching_all_is_refused_not_read_as_false(self) -> None:
-        """Drop the ``permissive`` and the declaration refuses the warmup bar."""
+    def test_dropping_the_permissive_is_refused_at_load(self) -> None:
+        """Without the ``permissive``, ``all`` reads a field that is ``None``
+        during warmup — and the loader refuses it, so it never reaches a bar."""
         fields = [
             spec for spec in _HI_VOL_FIELDS if spec["name"] not in {"vol_ok", "hi_vol"}
         ]
         fields.append(
             {"name": "hi_vol", "op": "all", "inputs": ["usable", "vol_ok_raw"]}
         )
-        evaluator = FieldEvaluator(parsed(fields))
-        with pytest.raises(FieldEvalError, match="is not False"):
-            evaluator.run(_ladder())
-
-    def test_a_missing_sample_when_is_refused(self) -> None:
-        """``sample_when`` must be definite: a propagated ``None`` is a bug."""
-        fields: list[dict[str, Any]] = [
-            {"name": "close", "op": "bar.close"},
-            {"name": "atr", "op": "atr", "params": {"period": 2}},
-            {"name": "always", "op": "gt", "inputs": ["close"], "params": {"const": 0}},
-            {
-                "name": "lagged",
-                "op": "gated_lag",
-                "inputs": ["atr"],
-                "params": {"sample_when": "always"},
-            },
-            {"name": "maybe", "op": "gt", "inputs": ["atr", "lagged"]},
-            {
-                "name": "probe",
-                "op": "gated_max",
-                "inputs": ["atr"],
-                "params": {"window": 3, "warmup": 1, "sample_when": "maybe"},
-            },
-            {"name": "out", "op": "permissive", "inputs": ["maybe"]},
-        ]
-        evaluator = FieldEvaluator(parsed(fields))
-        with pytest.raises(FieldEvalError, match="sample_when has no value"):
-            evaluator.run(_ladder())
+        with pytest.raises(FieldSpecError, match="may be missing"):
+            parsed(fields)
 
     def test_gated_fields_cannot_be_published_directly(self) -> None:
         with pytest.raises(FieldSpecError, match="no value during warmup"):

@@ -15,9 +15,11 @@ from shared.indicators.fields import (
     FieldEvalError,
     FieldEvaluator,
     FieldsDocument,
+    FieldSpec,
     PublishSpec,
     ScaleSpec,
     evaluate_bars,
+    op_spec,
     parse_fields_document,
 )
 
@@ -109,6 +111,30 @@ _PUBLISH: list[dict[str, Any]] = [
     {"field": "armed"},
     {"field": "not_eod"},
 ]
+
+
+def _spec(
+    name: str,
+    op: str,
+    inputs: tuple[str, ...] = (),
+    params: dict[str, Any] | None = None,
+) -> FieldSpec:
+    """Build a :class:`FieldSpec` without going through the loader.
+
+    Only for the runtime-guard tests below: the loader refuses the declarations
+    they need, and a guard that is unreachable through the loader still has to
+    be proved to work.
+    """
+    return FieldSpec(name=name, inputs=inputs, params=params or {}, op=op_spec(op))
+
+
+#: ``raw`` is ``None`` on the first bar — the lag has no earlier sample yet.
+_MISSING_CHAIN: tuple[FieldSpec, ...] = (
+    _spec("close", "bar.close"),
+    _spec("t", "gt", ("close",), {"const": 0.0}),
+    _spec("lag", "gated_lag", ("close",), {"sample_when": "t"}),
+    _spec("raw", "gt", ("close", "lag")),
+)
 
 
 def _bars(count: int, *, day: int = 11) -> list[FieldBar]:
@@ -245,6 +271,39 @@ class TestRefusalsAtRuntime:
                 close=1.0,
                 volume=1.0,
             )
+
+    def test_a_missing_value_reaching_all_is_refused_on_the_bar(self) -> None:
+        """The runtime BACKSTOP behind the loader's "may be missing" refusal.
+
+        The loader now refuses this declaration, so it cannot arrive through
+        ``fields.yaml``; the guard is kept and exercised on a hand-built
+        document because "a missing value is not False" has to hold wherever a
+        ``FieldsDocument`` comes from.
+        """
+        forced = FieldsDocument(
+            fields=(*_MISSING_CHAIN, _spec("bad", "all", ("t", "raw"))),
+            publish=(PublishSpec(field="bad", name="bad", scale=None),),
+        )
+        with pytest.raises(FieldEvalError, match="is not False"):
+            evaluate_bars(forced, [bar(0)])
+
+    def test_a_missing_sample_when_is_refused_on_the_bar(self) -> None:
+        """Same backstop for a ``sample_when`` gate with no value."""
+        forced = FieldsDocument(
+            fields=(
+                *_MISSING_CHAIN,
+                _spec(
+                    "gated",
+                    "gated_max",
+                    ("close",),
+                    {"window": 3, "warmup": 1, "sample_when": "raw"},
+                ),
+                _spec("out", "permissive", ("t",)),
+            ),
+            publish=(PublishSpec(field="out", name="out", scale=None),),
+        )
+        with pytest.raises(FieldEvalError, match="sample_when has no value"):
+            evaluate_bars(forced, [bar(0)])
 
     def test_a_missing_published_value_is_refused(self) -> None:
         """Unreachable through the loader (it refuses a non-definite publish),

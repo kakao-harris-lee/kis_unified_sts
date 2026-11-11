@@ -31,7 +31,12 @@ refusal                     what it catches
 ``unknown reference``       an input naming no field at all
 ``arity``                   the wrong number of inputs for the op
 ``value kind``              a bool field where a number is required (or vv.)
-``bad params``              unknown / missing / out-of-range parameters
+``bad params``              unknown / missing / out-of-range / non-finite
+                            parameters
+``may be missing``          a field that is ``None`` during warmup used where
+                            a definite value is needed: an ``all``/``any``/
+                            ``not`` operand, a ``sample_when`` gate, or a
+                            published field
 ``publish``                 publishing an undeclared field, or the wrong
                             scale for its kind
 =========================== =============================================
@@ -44,6 +49,7 @@ because that is what it is.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import time
@@ -55,6 +61,7 @@ import yaml
 from shared.indicators.fields.catalog import (
     CATALOG,
     CATALOG_VERSION,
+    GATED_OPS,
     NonePolicy,
     OpSpec,
     ValueKind,
@@ -193,7 +200,18 @@ def _as_int(value: Any, *, what: str, minimum: int | None = None) -> int:
 def _as_float(value: Any, *, what: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise FieldSpecError(f"bad params: {what} must be a number, got {value!r}")
-    return float(value)
+    number = float(value)
+    if not math.isfinite(number):
+        # YAML spells these ``.nan`` / ``.inf``, so they arrive as ordinary
+        # scalars. A NaN threshold would LOAD and then make its comparison
+        # false on every bar (every comparison against NaN is false) — a
+        # silently dead gate, which is exactly what this loader exists to
+        # refuse. An infinite one is a gate that can never change state.
+        raise FieldSpecError(
+            f"bad params: {what} must be finite, got {number!r} — a non-finite "
+            "threshold makes its comparison constant on every bar"
+        )
+    return number
 
 
 def _as_bool(value: Any, *, what: str) -> bool:
@@ -244,9 +262,9 @@ def _resolve_reference(
     *,
     field_name: str,
     what: str,
-    declared: Mapping[str, ValueKind],
+    declared: Mapping[str, FieldSpec],
     later: frozenset[str],
-) -> ValueKind:
+) -> FieldSpec:
     """Resolve a reference to an earlier field, naming the reason it cannot be."""
     if name == field_name:
         raise FieldSpecError(f"cycle: field {field_name!r} names itself as {what}")
@@ -263,13 +281,40 @@ def _resolve_reference(
     )
 
 
+def _assert_definite(
+    referenced: FieldSpec,
+    *,
+    field_name: str,
+    op: OpSpec,
+    what: str,
+    declared: Mapping[str, FieldSpec],
+) -> None:
+    """Refuse a reference that can be missing where a definite value is needed.
+
+    ``all``/``any``/``not`` and a ``sample_when`` gate have no sensible reading
+    for "no value yet", so the evaluator raises on one. That raise is a
+    BACKSTOP; this is the refusal that matters, because it fires at boot on the
+    declaration rather than on whichever bar first happens to be inside the
+    warmup. The input that made the difference visible is
+    ``all: [t, gt(c, gated_lag(c))]`` — valid to load, and dead on bar 1.
+    """
+    if not _may_be_missing(referenced, declared):
+        return
+    raise FieldSpecError(
+        f"may be missing: field {field_name!r} (op {op.name!r}) reads "
+        f"{referenced.name!r} as {what}, but that field has no value during "
+        "warmup and this op needs a definite value — resolve it with "
+        "'permissive' first"
+    )
+
+
 def _validate_params(
     *,
     field_name: str,
     op: OpSpec,
     raw_params: Mapping[str, Any],
     inputs: tuple[str, ...],
-    declared: Mapping[str, ValueKind],
+    declared: Mapping[str, FieldSpec],
     later: frozenset[str],
 ) -> dict[str, Any]:
     """Coerce and range-check one field's parameters, or refuse."""
@@ -319,18 +364,25 @@ def _validate_params(
                 raise FieldSpecError(
                     f"bad params: {what} must name a boolean field, got {value!r}"
                 )
-            kind = _resolve_reference(
+            gate = _resolve_reference(
                 value,
                 field_name=field_name,
                 what="sample_when",
                 declared=declared,
                 later=later,
             )
-            if kind is not ValueKind.BOOL:
+            if gate.returns is not ValueKind.BOOL:
                 raise FieldSpecError(
                     f"value kind: {what} names {value!r}, which carries "
-                    f"{kind.value}, not bool"
+                    f"{gate.returns.value}, not bool"
                 )
+            _assert_definite(
+                gate,
+                field_name=field_name,
+                op=op,
+                what="sample_when",
+                declared=declared,
+            )
             out[key] = value
         else:  # pragma: no cover - unreachable while the catalog and this agree
             raise FieldSpecError(
@@ -370,7 +422,7 @@ def _parse_field(
     raw: Any,
     *,
     index: int,
-    declared: Mapping[str, ValueKind],
+    declared: Mapping[str, FieldSpec],
     later: frozenset[str],
 ) -> FieldSpec:
     mapping = _require_mapping(raw, f"fields[{index}]")
@@ -400,18 +452,29 @@ def _parse_field(
             f"input(s), got {len(inputs)}"
         )
     for position, ref in enumerate(inputs):
-        kind = _resolve_reference(
+        referenced = _resolve_reference(
             ref,
             field_name=name,
             what=f"input[{position}]",
             declared=declared,
             later=later,
         )
-        if op.accepts is not None and kind is not op.accepts:
+        if op.accepts is not None and referenced.returns is not op.accepts:
             raise FieldSpecError(
                 f"value kind: field {name!r} (op {op_name!r}) requires "
                 f"{op.accepts.value} inputs, but input[{position}] {ref!r} "
-                f"carries {kind.value}"
+                f"carries {referenced.returns.value}"
+            )
+        if op.none_policy is NonePolicy.REFUSE:
+            # all / any / not: no reading for "no value yet", so the operand
+            # must be definite on every bar — checked here, at boot, not on
+            # whichever bar first lands inside the warmup.
+            _assert_definite(
+                referenced,
+                field_name=name,
+                op=op,
+                what=f"input[{position}]",
+                declared=declared,
             )
 
     raw_params = mapping.get("params")
@@ -456,7 +519,7 @@ def _parse_publish(
     raw: Any,
     *,
     index: int,
-    kinds: Mapping[str, ValueKind],
+    declared: Mapping[str, FieldSpec],
     taken: Mapping[str, str],
 ) -> PublishSpec:
     mapping = _require_mapping(raw, f"publish[{index}]")
@@ -465,7 +528,7 @@ def _parse_publish(
     field = mapping.get("field")
     if not isinstance(field, str) or not field:
         raise FieldSpecError(f"publish[{index}]: field must be a non-empty string")
-    if field not in kinds:
+    if field not in declared:
         raise FieldSpecError(
             f"publish: entry {index} names field {field!r}, which no field " "declares"
         )
@@ -482,7 +545,17 @@ def _parse_publish(
         )
 
     where = f"entry {index} ('{field}')"
-    kind = kinds[field]
+    spec = declared[field]
+    if _may_be_missing(spec, declared):
+        # A published field must be definite on every emitted bar: the kernel's
+        # journal reader refuses the whole poll on a missing key
+        # (``tos/runtime/src/tos_runtime/marketfeed/journal.py``).
+        raise FieldSpecError(
+            f"publish: {where} names a field (op {spec.op_name!r}) which has "
+            "no value during warmup — a published field must be definite on "
+            "every bar; resolve it with 'permissive' first"
+        )
+    kind = spec.returns
     raw_scale = mapping.get("scale")
     if kind is ValueKind.NUMBER:
         if raw_scale is None:
@@ -550,13 +623,13 @@ def parse_fields_document(raw: Any) -> FieldsDocument:
             if isinstance(candidate, str):
                 names_in_order.append(candidate)
 
-    declared: dict[str, ValueKind] = {}
+    declared: dict[str, FieldSpec] = {}
     specs: list[FieldSpec] = []
     for index, entry in enumerate(raw_fields):
         later = frozenset(names_in_order[index + 1 :])
         spec = _parse_field(entry, index=index, declared=declared, later=later)
         specs.append(spec)
-        declared[spec.name] = spec.returns
+        declared[spec.name] = spec
 
     raw_publish = document.get("publish")
     if not isinstance(raw_publish, Sequence) or isinstance(raw_publish, str):
@@ -567,11 +640,12 @@ def parse_fields_document(raw: Any) -> FieldsDocument:
     taken: dict[str, str] = {}
     published: list[PublishSpec] = []
     for index, entry in enumerate(raw_publish):
-        publish_spec = _parse_publish(entry, index=index, kinds=declared, taken=taken)
+        publish_spec = _parse_publish(
+            entry, index=index, declared=declared, taken=taken
+        )
         taken[publish_spec.name] = publish_spec.field
         published.append(publish_spec)
 
-    _assert_published_fields_are_definite(specs, published)
     return FieldsDocument(
         fields=tuple(specs),
         publish=tuple(published),
@@ -580,40 +654,23 @@ def parse_fields_document(raw: Any) -> FieldsDocument:
     )
 
 
-def _assert_published_fields_are_definite(
-    specs: Sequence[FieldSpec], published: Sequence[PublishSpec]
-) -> None:
-    """Refuse publishing a field that can carry no value on some bar.
+def _may_be_missing(spec: FieldSpec, declared: Mapping[str, FieldSpec]) -> bool:
+    """Return whether *spec* can evaluate to ``None`` on some bar.
 
-    A published field must have a value on every emitted bar — the kernel's
-    journal reader refuses the whole poll on a missing key
-    (``tos/runtime/src/tos_runtime/marketfeed/journal.py``). A ``gated_*`` field,
-    or any op that PROPAGATEs a missing value, is ``None`` during warmup, so
-    publishing it directly is a declaration bug: wrap it in ``permissive`` (or
-    publish a comparison that is).
+    ``permissive`` resolves a missing value, so it never can. A ``gated_*`` field
+    is ``None`` until its warmup, so it always can. Everything else inherits the
+    answer from its inputs — which terminates because an input is always an
+    EARLIER field (a forward reference is refused), so the graph is acyclic.
     """
-    by_name = {spec.name: spec for spec in specs}
-    for entry in published:
-        spec = by_name[entry.field]
-        if spec.op.stateful or spec.op.none_policy is NonePolicy.PROPAGATE:
-            if _may_be_missing(spec, by_name):
-                raise FieldSpecError(
-                    f"publish: entry names field {entry.field!r} (op "
-                    f"{spec.op_name!r}), which has no value during warmup — a "
-                    "published field must be definite on every bar; resolve it "
-                    "with 'permissive' first"
-                )
-
-
-def _may_be_missing(spec: FieldSpec, by_name: Mapping[str, FieldSpec]) -> bool:
-    """Return whether *spec* can evaluate to ``None`` on some bar."""
     if spec.op.none_policy is NonePolicy.RESOLVE:
         return False
-    if spec.op.name in {"gated_percentile", "gated_max", "gated_min", "gated_lag"}:
+    if spec.op_name in GATED_OPS:
         return True
     if spec.op.none_policy is NonePolicy.REFUSE:
+        # all / any / not are themselves refused a missing operand, so their
+        # own value is definite whenever they loaded.
         return False
-    return any(_may_be_missing(by_name[ref], by_name) for ref in spec.inputs)
+    return any(_may_be_missing(declared[ref], declared) for ref in spec.inputs)
 
 
 def load_fields_file(path: Path | str) -> FieldsDocument:
