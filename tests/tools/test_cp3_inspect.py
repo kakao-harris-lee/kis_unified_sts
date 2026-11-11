@@ -253,18 +253,22 @@ def test_run_passes_the_argv_and_pythonpath_to_the_injected_runner(
     state = _session_tree(tmp_path)
     seen: dict[str, object] = {}
 
-    def runner(argv: Sequence[str], env: Mapping[str, str]) -> tuple[str, int]:
+    def runner(argv: Sequence[str], env: Mapping[str, str]) -> ins.InspectRun:
         seen["argv"] = list(argv)
         seen["env"] = dict(env)
-        return "rendered table\n", 0
+        return ins.InspectRun(stdout="rendered table\n", stderr="", exit_code=0)
 
-    text, code = ins.run(
+    outcome = ins.run(
         session=SESSION,
         state_dir=str(state),
         window_from="09:00",
         runner=runner,
     )
-    assert (text, code) == ("rendered table\n", 0)
+    assert (outcome.stdout, outcome.stderr, outcome.exit_code) == (
+        "rendered table\n",
+        "",
+        0,
+    )
     argv = seen["argv"]
     assert isinstance(argv, list)
     assert argv[1:4] == ["-P", "-m", "cp3.inspect_session"]
@@ -276,16 +280,42 @@ def test_run_passes_the_argv_and_pythonpath_to_the_injected_runner(
 
 
 def test_run_refuses_before_launching_anything(tmp_path: Path) -> None:
-    """A resolution refusal is exit 2 and the runner is never called."""
+    """A resolution refusal is exit 2, on stderr, and the runner is never called.
 
-    def runner(argv: Sequence[str], env: Mapping[str, str]) -> tuple[str, int]:
+    ``stdout`` stays EMPTY so a ``--json`` caller piping it never reads a
+    refusal sentence where a document should be (review of #1057, LOW-2).
+    """
+
+    def runner(argv: Sequence[str], env: Mapping[str, str]) -> ins.InspectRun:
         raise AssertionError("the child must not be launched on a refusal")
 
-    text, code = ins.run(
+    outcome = ins.run(
         session="no-such-session", state_dir=str(tmp_path / "state"), runner=runner
     )
-    assert code == 2
-    assert text.startswith("inspect refused: ")
+    assert outcome.exit_code == 2
+    assert outcome.stdout == ""
+    assert outcome.stderr.startswith("inspect refused: ")
+
+
+def test_a_childs_stderr_never_lands_in_stdout(tmp_path: Path) -> None:
+    """A successful run's stdout is the document alone, warnings aside.
+
+    Merging the streams (the first cut) made a ``--json`` run unparseable the
+    moment anything in the child wrote a line to stderr.
+    """
+    state = _session_tree(tmp_path)
+
+    def runner(argv: Sequence[str], env: Mapping[str, str]) -> ins.InspectRun:
+        return ins.InspectRun(
+            stdout='{"bars": []}\n', stderr="a dependency warning\n", exit_code=0
+        )
+
+    outcome = ins.run(
+        session=SESSION, state_dir=str(state), as_json=True, runner=runner
+    )
+    assert outcome.stdout == '{"bars": []}\n'
+    assert outcome.stderr == "a dependency warning\n"
+    assert json.loads(outcome.stdout) == {"bars": []}
 
 
 def test_run_reads_the_sessions_subdir_from_the_status_board_config(
@@ -295,12 +325,12 @@ def test_run_reads_the_sessions_subdir_from_the_status_board_config(
     state = _session_tree(tmp_path)
     assert sb.load_config().tenant_sessions_subdir == SESSIONS_SUBDIR
 
-    def runner(argv: Sequence[str], env: Mapping[str, str]) -> tuple[str, int]:
-        return "\n".join(argv), 0
+    def runner(argv: Sequence[str], env: Mapping[str, str]) -> ins.InspectRun:
+        return ins.InspectRun(stdout="\n".join(argv), stderr="", exit_code=0)
 
-    text, code = ins.run(session=SESSION, state_dir=str(state), runner=runner)
-    assert code == 0
-    assert str(state / SESSIONS_SUBDIR / SESSION / "journal.jsonl") in text
+    outcome = ins.run(session=SESSION, state_dir=str(state), runner=runner)
+    assert outcome.exit_code == 0
+    assert str(state / SESSIONS_SUBDIR / SESSION / "journal.jsonl") in outcome.stdout
 
 
 # ===========================================================================

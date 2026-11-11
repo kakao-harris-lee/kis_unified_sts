@@ -126,7 +126,7 @@ def tos_inspect(
         sys.path.insert(0, str(_REPO_ROOT))
     from tools.tos_cp3 import inspect_session, status_board
 
-    text, code = inspect_session.run(
+    outcome = inspect_session.run(
         session=session,
         config_path=config_path or status_board.DEFAULT_CONFIG_PATH,
         state_dir=state_dir,
@@ -136,5 +136,8 @@ def tos_inspect(
         as_json=as_json,
         with_evidence=with_evidence,
     )
-    click.echo(text, nl=False)
-    sys.exit(code)
+    # The two streams stay apart so `--json | jq` gets a document or nothing,
+    # never a document with a diagnostic appended (review of #1057, LOW-2).
+    click.echo(outcome.stdout, nl=False)
+    click.echo(outcome.stderr, nl=False, err=True)
+    sys.exit(outcome.exit_code)

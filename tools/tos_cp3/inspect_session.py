@@ -60,6 +60,7 @@ __all__ = [
     "INSPECT_MODULE",
     "TENANT_DATA_PARENT_SUFFIX",
     "InspectRefusal",
+    "InspectRun",
     "SessionPaths",
     "build_argv",
     "child_pythonpath",
@@ -97,13 +98,31 @@ STRATEGY_BINDINGS_FILE_NAME = "strategy_bindings.yaml"
 RENDERED_MANIFEST_NAME = "RENDERED.json"
 JOURNAL_NAME = "journal.jsonl"
 
-#: ``(argv, env) -> (stdout+stderr, exit code)``. Injected so the resolution and
-#: argv construction above can be tested without starting a process.
-Runner = Callable[[Sequence[str], Mapping[str, str]], "tuple[str, int]"]
-
 
 class InspectRefusal(Exception):
     """A path/resolution refusal raised before the child process is started."""
+
+
+@dataclass(frozen=True)
+class InspectRun:
+    """One inspection's result, with the child's two streams kept apart.
+
+    Merging them was wrong (review of #1057, LOW-2): on a successful ``--json``
+    run, anything the child wrote to stderr — a warning, a deprecation notice
+    from a dependency — ended up glued to the document and made it unparseable.
+    A caller writes :attr:`stdout` to stdout and :attr:`stderr` to stderr, so a
+    machine consumer reading stdout alone always gets a valid document or
+    nothing.
+    """
+
+    stdout: str
+    stderr: str
+    exit_code: int
+
+
+#: ``(argv, env) -> InspectRun``. Injected so the resolution and argv
+#: construction above can be tested without starting a process.
+Runner = Callable[[Sequence[str], Mapping[str, str]], InspectRun]
 
 
 @dataclass(frozen=True)
@@ -293,8 +312,8 @@ def child_pythonpath(repo_root: Path = REPO_ROOT) -> str:
     return os.pathsep.join(str(repo_root / part) for part in CHILD_PYTHONPATH_PARTS)
 
 
-def _subprocess_runner(argv: Sequence[str], env: Mapping[str, str]) -> tuple[str, int]:
-    """Run the child and return its merged output and exit code."""
+def _subprocess_runner(argv: Sequence[str], env: Mapping[str, str]) -> InspectRun:
+    """Run the child and return its two streams and exit code, unmerged."""
     completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
         list(argv),
         capture_output=True,
@@ -302,7 +321,11 @@ def _subprocess_runner(argv: Sequence[str], env: Mapping[str, str]) -> tuple[str
         env=dict(env),
         check=False,
     )
-    return completed.stdout + completed.stderr, completed.returncode
+    return InspectRun(
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        exit_code=completed.returncode,
+    )
 
 
 def run(
@@ -316,7 +339,7 @@ def run(
     as_json: bool = False,
     with_evidence: bool = True,
     runner: Runner = _subprocess_runner,
-) -> tuple[str, int]:
+) -> InspectRun:
     """Resolve ``session`` and render its inspection.
 
     Args:
@@ -331,7 +354,10 @@ def run(
         runner: The process runner (injected for tests).
 
     Returns:
-        ``(text, exit code)`` — ``2`` on any refusal, else the child's code.
+        The :class:`InspectRun` — exit code ``2`` on any refusal raised here
+        (with the message on ``stderr`` and an EMPTY ``stdout``, so a
+        ``--json`` caller never sees a refusal sentence where a document
+        should be), else the child's own streams and code.
     """
     try:
         config = status_board.load_config(config_path)
@@ -348,7 +374,7 @@ def run(
             with_evidence=with_evidence,
         )
     except (InspectRefusal, ValueError, OSError) as exc:
-        return f"inspect refused: {exc}\n", 2
+        return InspectRun(stdout="", stderr=f"inspect refused: {exc}\n", exit_code=2)
     env = dict(os.environ)
     env["PYTHONPATH"] = child_pythonpath()
     env["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -390,9 +416,13 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Render one inspection to stdout."""
+    """Render one inspection, keeping the child's two streams on their own.
+
+    A ``--json`` run's stdout is therefore a valid document or empty, never a
+    document with a diagnostic appended (review of #1057, LOW-2).
+    """
     args = _parser().parse_args(argv)
-    text, code = run(
+    outcome = run(
         session=args.session,
         config_path=args.config,
         state_dir=args.state_dir,
@@ -402,8 +432,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         as_json=args.as_json,
         with_evidence=args.with_evidence,
     )
-    sys.stdout.write(text)
-    return code
+    sys.stdout.write(outcome.stdout)
+    sys.stderr.write(outcome.stderr)
+    return outcome.exit_code
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry
