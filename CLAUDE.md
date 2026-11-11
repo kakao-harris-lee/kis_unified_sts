@@ -234,6 +234,7 @@ black --check .
 mypy shared/ --ignore-missing-imports --no-error-summary
 docker compose up -d              # dashboard + strategy-builder-ui + caddy + redis + prometheus
 sts tos status                    # the one-page operator status board
+sts tos inspect <session>         # per-bar: fields, per-compare pass/fail, decision, halt
 ```
 
 TOS checkers (what CI gates on — see `.github/workflows/tos-{gate,firewall}.yml`):
