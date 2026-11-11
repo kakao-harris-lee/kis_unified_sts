@@ -25,6 +25,13 @@ from typing import Any
 import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.dsl.serialization import parse_strategy
+from tos.dsl.vocabulary import DecisionKind, evaluate_policy
+from tos.engine.admission import (
+    AdmissionVerdict,
+    policy_work_steps,
+    strategy_admissible,
+)
 from tos.engine.vocabulary import CommitmentStep, StageOutcome
 from tos.venue import OrderAdmissibilityResult, OrderShapeFields
 from tos.venue.predicates import order_shape_admissible
@@ -118,6 +125,15 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
             "approved_by.3",
             "approved_by.4",
         }
+    ),
+    # M2 boundary probe (operator directive 2026-11-11, rescope plan §2 sentence 2 / M2):
+    # the stock tree's strategy carries ONE extra rule after LONG's three — R4, a
+    # config-gated entry probe — so every difference is under `policy.rules.3` and the
+    # exits (rules 1-2) keep first-match precedence over it. The toggle is the sibling
+    # bindings key below; `false` makes R4 inert without touching this file.
+    "strategies/setup_d_long.strategy.yaml": frozenset({"policy.rules.3"}),
+    "strategy_bindings.yaml": frozenset(
+        {"strategies.setup_d_long.strategy.bindings.m2_probe_entry_enabled"}
     ),
     "venue_constraint_policy.yaml": frozenset(
         {
@@ -251,9 +267,196 @@ def test_the_stock_tree_carries_the_operator_decisions() -> None:
     render = yaml.safe_load((_STOCK / "RENDER.yaml").read_text("utf-8"))
     assert render["account"] == {"env_key": "KIS_STOCK_ACCOUNT_NO"}
     assert render["direction"] == {"mode": "declared", "value": "LONG"}
-    assert (_STOCK / "strategies/setup_d_long.strategy.yaml").read_bytes() == (
-        _LONG / "strategies/setup_d_long.strategy.yaml"
-    ).read_bytes()
+    # "Setup D LONG as-is" — LONG's three rules and its default, unchanged — PLUS the M2
+    # boundary probe appended last (operator directive 2026-11-11). The file was a byte copy
+    # of LONG's until then; what is pinned now is that nothing in LONG's own rules moved.
+    stock_policy = yaml.safe_load(
+        (_STOCK / "strategies/setup_d_long.strategy.yaml").read_text("utf-8")
+    )
+    long_policy = yaml.safe_load(
+        (_LONG / "strategies/setup_d_long.strategy.yaml").read_text("utf-8")
+    )
+    assert stock_policy["dsl_version"] == long_policy["dsl_version"]
+    assert (
+        stock_policy["config_binding_version"] == long_policy["config_binding_version"]
+    )
+    assert stock_policy["policy"]["default"] == long_policy["policy"]["default"]
+    assert len(long_policy["policy"]["rules"]) == 3
+    assert stock_policy["policy"]["rules"][:3] == long_policy["policy"]["rules"]
+    (probe,) = stock_policy["policy"]["rules"][3:]
+    assert probe["decision"]["rationale"].startswith("R4-M2-PROBE-ENTRY-LONG:")
+
+
+def _stock_strategy_and_config() -> tuple[Any, dict[str, Any]]:
+    """The committed stock strategy (issued + admitted) and its committed bindings.
+
+    ``parse_strategy`` is used directly rather than
+    :func:`~tos_runtime.strategy.loader.load_strategies`, because the committed tree's
+    coordinate leaves are still the named-TBD ``"TBD"`` token, which the loader refuses by
+    design (that refusal is the operator-fill gate). The POLICY is independent of the
+    coordinates, so evaluating the committed file is exactly what the render will dispatch.
+    """
+    raw = yaml.safe_load(
+        (_STOCK / "strategies/setup_d_long.strategy.yaml").read_text("utf-8")
+    )
+    strategy = parse_strategy(raw)
+    entry = yaml.safe_load((_STOCK / "strategy_bindings.yaml").read_text("utf-8"))[
+        "strategies"
+    ]["setup_d_long.strategy"]
+    assert entry["config_binding_version"] == raw["config_binding_version"]
+    return strategy, dict(entry["bindings"])
+
+
+def _decide(strategy: Any, resolved: dict[str, Any], config: dict[str, Any]) -> Any:
+    """Evaluate the policy the way the engine does — the kernel's own pure evaluator."""
+    return evaluate_policy(
+        strategy.policy, {"capsule": {"resolved_values": resolved}, "config": config}
+    )
+
+
+def test_the_committed_stock_strategy_is_admissible_within_its_engine_budget() -> None:
+    """R4 keeps the strategy admissible: every compare still reads a capsule operand.
+
+    Red-before (measured 2026-11-11): the probe's toggle written as a config-only compare
+    (``config.m2_probe_entry_enabled EQ 1``) makes ``strategy_admissible`` INADMISSIBLE —
+    "outcome-gating compare #8 has no capsule-sourced operand" — which is a refused boot
+    (``STRATEGY_REFUSED``) and zero sends, not an inert rule. Hence the capsule-vs-config
+    shape, pinned here.
+    """
+    strategy, _ = _stock_strategy_and_config()
+    result = strategy_admissible(strategy)
+    assert result.verdict is AdmissionVerdict.ADMISSIBLE, result.reasons
+    budget = yaml.safe_load((_STOCK / "engine.yaml").read_text("utf-8"))[
+        "dsl_evaluation_budget_steps"
+    ]
+    assert policy_work_steps(strategy.policy) == 31 <= budget
+
+
+def test_the_m2_probe_proposes_an_entry_only_while_its_binding_is_on() -> None:
+    """R4 fires on the entry window alone — with every other Setup D gate false/absent."""
+    strategy, config = _stock_strategy_and_config()
+    assert config["m2_probe_entry_enabled"] is True  # bool, never int 1 (EQ is typed)
+
+    # Setup D's own gates are false, so R1 cannot fire; R4 does.
+    decision = _decide(
+        strategy,
+        {
+            "entry_window": True,
+            "hi_vol": False,
+            "stall_ok": False,
+            "reversal_ok": False,
+            "z_x1000": 0,
+            "vwap_reverted": False,
+            "eod": False,
+        },
+        config,
+    )
+    assert decision.kind is DecisionKind.ACTION
+    assert decision.rationale.startswith("R4-M2-PROBE-ENTRY-LONG:")
+    assert decision.target is not None
+    assert (decision.target.direction, decision.target.position_effect) == (
+        "LONG",
+        "OPEN",
+    )
+    assert decision.target.quantity_basis == "RISK"
+    # The probe's target coordinates are R1's own anchors — one dispatch scope, not two.
+    r1_target = strategy.policy.rules[0].decision.target
+    assert r1_target is not None
+    assert (decision.target.account, decision.target.instrument) == (
+        r1_target.account,
+        r1_target.instrument,
+    )
+
+    # Outside the entry window the probe is silent even with the binding on.
+    assert (
+        _decide(strategy, {"entry_window": False}, config).kind
+        is DecisionKind.NO_ACTION
+    )
+    # A stale/absent field resolves UNKNOWN, which is restrictive.
+    assert _decide(strategy, {}, config).kind is DecisionKind.NO_ACTION
+
+    # Binding off (the one-line revert once M2 is met): R4 is inert...
+    off = dict(config, m2_probe_entry_enabled=False)
+    assert _decide(strategy, {"entry_window": True}, off).kind is DecisionKind.NO_ACTION
+    # ...and Setup D's own R1 is untouched by the probe being there at all.
+    gates = {
+        "entry_window": True,
+        "hi_vol": True,
+        "stall_ok": True,
+        "reversal_ok": True,
+        "z_x1000": config["z_entry_max_x1000"] - 1,
+    }
+    for cfg in (config, off):
+        r1 = _decide(strategy, gates, cfg)
+        assert r1.kind is DecisionKind.ACTION
+        assert r1.rationale.startswith("R1-ENTRY-LONG:")
+
+
+@pytest.mark.parametrize(
+    ("exit_field", "rationale_prefix"),
+    [("vwap_reverted", "R2-EXIT-VWAP-REVERTED:"), ("eod", "R3-EXIT-EOD:")],
+)
+def test_the_exits_win_over_the_m2_probe(
+    exit_field: str, rationale_prefix: str
+) -> None:
+    """First-match ordering: R4 sits AFTER R2/R3, so a live exit always wins.
+
+    ``evaluate_policy`` returns the FIRST firing rule's decision, so this is what keeps the
+    probe from pinning a position open while the mean-reversion or EOD exit is asserted.
+    """
+    strategy, config = _stock_strategy_and_config()
+    decision = _decide(strategy, {"entry_window": True, exit_field: True}, config)
+    assert decision.kind is DecisionKind.FLAT
+    assert decision.rationale.startswith(rationale_prefix)
+    assert decision.target is not None
+    assert (decision.target.direction, decision.target.position_effect) == (
+        "SHORT",
+        "CLOSE",
+    )
+
+
+def test_the_m2_probe_does_not_widen_the_standing_approvals_action_set() -> None:
+    """The standing approval's derived actions come from the strategy's target pairs.
+
+    ``tos_runtime.authority.standing_cli._actions`` reads every
+    ``(position_effect, direction)`` pair the strategy declares and REFUSES when the CLOSE
+    pairs name more than one direction. R4's target pair is R1's, so the derived entry/exit
+    actions — and therefore each one's ``max_uses`` slot — are exactly what they were.
+    """
+    strategy, _ = _stock_strategy_and_config()
+    pairs = set()
+    stack: list[Any] = [strategy.model_dump(mode="json")]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            effect, direction = node.get("position_effect"), node.get("direction")
+            if isinstance(effect, str) and isinstance(direction, str):
+                pairs.add((effect, direction))
+            stack.extend(node.values())
+        elif isinstance(node, list | tuple):
+            stack.extend(node)
+    assert pairs == {("OPEN", "LONG"), ("CLOSE", "SHORT")}
+
+
+def test_the_render_direction_anchor_still_matches_exactly_once() -> None:
+    """``_apply_rules`` requires EXACTLY ONE match of each RENDER.yaml anchor line.
+
+    R4's target writes ``direction: "LONG"`` (quoted) for this reason: the same parsed value,
+    a different line, so the verify-only direction slot still matches R1's line alone. Red
+    if a later edit unquotes it — and the renderer would then refuse ("matched 2 times"),
+    which is why this is a named test and not a comment.
+    """
+    text = (_STOCK / "strategies/setup_d_long.strategy.yaml").read_text("utf-8")
+    lines = text.split("\n")
+    manifest = yaml.safe_load((_STOCK / "RENDER.yaml").read_text("utf-8"))
+    slots = [
+        s
+        for s in manifest["slots"]
+        if s["file"] == "strategies/setup_d_long.strategy.yaml"
+    ]
+    assert len(slots) == 3
+    for slot in slots:
+        assert lines.count(slot["anchor"]) == 1, slot["key"]
 
 
 def _stock_policy(tmp_path: Path) -> Any:
