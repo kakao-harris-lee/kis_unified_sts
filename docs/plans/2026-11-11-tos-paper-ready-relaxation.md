@@ -23,9 +23,9 @@
 ## 2. 새 판정
 
 **문장 1 — 무인 운용 (완화).** LONG 트리에서 최근 40일 창 안 **깨끗한 거래일 누적 5일**.
-깨끗한 하루 = 그 거래일 세션이 cron(또는 `@reboot` catch-up)으로 기동해 정지 시각까지 돌고 run rc ∈ `clean_run_rcs`.
+깨끗한 하루 = 그 거래일 세션이 정지 시각까지 돌고(ENDED) run rc ∈ `clean_run_rcs`. 기동 방식(cron · `@reboot` catch-up · 손 기동)은 보지 않는다 — 11-06 손 기동을 인정한 운영자 선례와 같다.
 - **연속은 요구하지 않는다.** 깨진 날(LOST·FAILED·세션 없음)은 그날만 세지 않고 앞의 기록을 지우지 않는다.
-- **B3 는 돌았는지만 본다.** `b3/status.json` 이 있으면 된다. unresolved · divergent 는 상태판에 계속 «확인»으로
+- **B3 는 돌았는지만 본다.** `b3/status.json` 이 있고 그 verdict 가 `ok` 이면 된다(`skipped`·`failed` 는 안 센다). unresolved · divergent 는 상태판에 계속 «확인»으로
   나오지만 깨끗함 판정에서 빠진다(B3 는 레거시 증인과의 대조이지 과정의 동작 조건이 아니다).
 - SHORT 는 세지 않는다(운영자가 켠 추가 트리).
 
