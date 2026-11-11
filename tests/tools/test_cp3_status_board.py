@@ -369,12 +369,15 @@ def test_abort_day_with_b3(cfg: sb.BoardConfig):
     assert "paper: 2026-10-15 상주 paper 세션 디렉터리 없음" in _issues(board, sb.WARN)
 
 
-def test_b3_unresolved_blocks(state: Path, cfg: sb.BoardConfig):
+def test_b3_unresolved_is_a_check_not_a_block(state: Path, cfg: sb.BoardConfig):
+    """2026-11-11 완화 §2 문장 1 — 수는 계속 올리지만 막지는 않는다."""
     path = state / "cp3-sessions/long-20261015/b3/report/summary.json"
     data = json.loads(path.read_text())
     data["unresolved"]["count"] = 3
     path.write_text(json.dumps(data))
-    assert "long-20261015: B3 unresolved=3" in _issues(_board(cfg, D1015), sb.BLOCK)
+    board = _board(cfg, D1015)
+    assert "long-20261015: B3 unresolved=3" in _issues(board, sb.WARN)
+    assert "long-20261015: B3 unresolved=3" not in _issues(board, sb.BLOCK)
 
 
 def test_code_digest_mismatch_blocks(state: Path, cfg: sb.BoardConfig):
@@ -675,13 +678,12 @@ def test_n4_b3_summary_of_another_shape_blocks_without_crashing(
 def test_n4_a_v2_divergence_count_is_a_warning_because_it_mixes_declared_ones(
     cfg: sb.BoardConfig,
 ):
-    """A v2 summary's ``divergent`` is NOT roadmap §2-1's number.
+    """A v2 summary's ``divergent`` is NOT the unexplained count.
 
     Concrete input: the 10-15 genesis summary, 26 divergent of 303 — a count
     that mixes the B1b-D1 family in, because that shape had no bucket for it.
-    Reading it as "설명 안 되는 divergence" would report a session as failing
-    §2-1 on bars that are declared, so the board shows the count and keeps the
-    verdict at 확인.
+    Reading it as "설명 안 되는 divergence" would report declared bars as
+    unexplained, so the line says so and the grade stays 확인.
     """
     board = _board(cfg, D1015)
     assert (
@@ -691,16 +693,17 @@ def test_n4_a_v2_divergence_count_is_a_warning_because_it_mixes_declared_ones(
     assert "선언된 차이: 모름" in sb.render_text(board)
 
 
-def test_n4_a_v3_divergence_blocks_and_the_declared_buckets_show_separately(
+def test_n4_a_v3_divergence_is_a_check_and_the_declared_buckets_show_separately(
     state: Path, cfg: sb.BoardConfig
 ):
-    """From v3 on, ``divergent`` IS §2-1's number, so it blocks like unresolved.
+    """From v3 on, ``divergent`` IS the unexplained count — shown, not blocking.
 
     Concrete input: the same session rewritten in the v3 shape — 25 of the 26
     bars attributed to B1b-D1, one bar held out as the boot journal's own, and
     one left unexplained. The declared and held-out counts appear on their own
     line: folded into the divergent line they would be unreadable, and folded
-    into ``divergent`` they would be unfalsifiable.
+    into ``divergent`` they would be unfalsifiable. The grade is 확인 since the
+    2026-11-11 relaxation (§2 sentence 1) took these numbers out of the verdict.
     """
     path = state / "cp3-sessions/long-20261015/b3/report/summary.json"
     data = json.loads(path.read_text())
@@ -716,8 +719,9 @@ def test_n4_a_v3_divergence_blocks_and_the_declared_buckets_show_separately(
     path.write_text(json.dumps(data))
     board = _board(cfg, D1015)
     assert "long-20261015: B3 live divergent 1/302 (선언 B1b-D1 25)" in _issues(
-        board, sb.BLOCK
+        board, sb.WARN
     )
+    assert not any("divergent" in b for b in _issues(board, sb.BLOCK))
     assert "선언된 차이: B1b-D1 25 · 대조 제외: pre_boot_at_boot 1" in sb.render_text(
         board
     )
@@ -757,7 +761,7 @@ def test_b3_that_could_not_run_blocks_and_the_summary_is_not_read(
     board = _board(cfg, D1015)
     blocks = _issues(board, sb.BLOCK)
     assert (
-        "long-20261015: B3 대조가 §2-1 을 재지 못했다 — failed (b1a-fields):"
+        "long-20261015: B3 대조가 돌지 않았다 — failed (b1a-fields):"
         " b1a-fields exited 2 — see /x/b1a-fields.log" in blocks
     )
     # the fixture's own summary says unresolved 0 and divergent 26; neither is
@@ -769,7 +773,7 @@ def test_b3_that_could_not_run_blocks_and_the_summary_is_not_read(
 
 def test_b3_skipped_is_a_warning_not_a_block(state: Path, cfg: sb.BoardConfig):
     """A skip is a decision (the config, or a market B3 does not cover), not a
-    defect — but §2-1 still was not measured, so it is not silent either."""
+    defect — but B3 still did not run, so it is not silent either."""
     _b3_status(
         state,
         "long-20261015",
@@ -820,7 +824,7 @@ def test_b3_running_past_its_budget_blocks(
     }
     _b3_status(state, "long-20261015", verdict="running", started_at=stamps[started])
     blocks = _issues(_board(cfg, D1015), sb.BLOCK)
-    assert any("B3 대조가 §2-1 을 재지 못했다 — running" in b for b in blocks), blocks
+    assert any("B3 대조가 돌지 않았다 — running" in b for b in blocks), blocks
 
 
 def test_b3_ok_reads_the_summary_as_before(state: Path, cfg: sb.BoardConfig):
@@ -1593,10 +1597,10 @@ def test_without_a_step4_halt_a_futures_line_is_unchanged(
     assert sb.STEP4_UNKNOWN_EXPECTED_LABEL not in text
 
 
-# --- 연속 깨끗한 거래일 (로드맵 §2-1 · §3 M4) -------------------------------------
+# --- 깨끗한 거래일 누적 (2026-11-11 완화 §2 문장 1) --------------------------------
 
 #: 2026-10-12(월) 앞의 두 주. 10-09(한글날·금) · 10-05(대체휴일·월) 가 휴장이고 그 양쪽에
-#: 주말이 붙어, 「비거래일은 연속을 깨지도 늘리지도 않는다」를 실제 KRX 캘린더로 시험한다.
+#: 주말이 붙어, 「비거래일은 세지도 깨지도 않는다」를 실제 KRX 캘린더로 시험한다.
 D1012 = dt.date(2026, 10, 12)
 STREAK_CLEAN_DAYS = (
     dt.date(2026, 10, 12),
@@ -1613,19 +1617,23 @@ def _mk_session(
     day: dt.date,
     *,
     run_rc: int | None = 0,
+    booted: bool = False,
     status_fields: dict | None = None,
     summary_fields: dict | None = None,
     write_status: bool = True,
     write_summary: bool = True,
 ) -> Path:
-    """세션 디렉터리 하나 — 연속 판정이 읽는 것만 담는다(러너 로그의 END 줄 + B3 두 파일).
+    """세션 디렉터리 하나 — 누적 판정이 읽는 것만 담는다(러너 로그의 END 줄 + B3 두 파일).
 
-    저장소는 담지 않는다. 연속 판정의 조건에 저장소는 없고, 담으면 이 테스트가 §2-1 이
-    아니라 sqlite 모양을 시험하게 된다.
+    저장소는 담지 않는다. 깨끗함의 조건에 저장소는 없고, 담으면 이 테스트가 판정이 아니라
+    sqlite 모양을 시험하게 된다. ``booted=True`` 에 ``run_rc=None`` 은 11-10 호스트
+    크래시의 모양이다 — 부팅했고 END 줄이 없으니 지난 날짜에서는 ``LOST`` 다.
     """
     path = state / "cp3-sessions" / f"{label}-{day:%Y%m%d}"
     path.mkdir(parents=True)
     lines = [f"{day} 08:38:01 checkout ok: … repo_commit=deadbeef"]
+    if booted:
+        lines.append(f"{day} 08:45:00 === BOOT runtime")
     if run_rc is not None:
         lines += [
             f"{day} 15:50:01 === END run rc={run_rc}",
@@ -1693,17 +1701,17 @@ def _streak(board: dict, label: str) -> dict:
     return next(t for t in board["clean_streak"] if t["label"] == label)
 
 
-def test_committed_streak_config_is_the_roadmap_target():
+def test_committed_clean_day_config_is_the_relaxed_target():
+    """2026-11-11 완화: 목표 5 · 창 40 · LONG 만 센다(SHORT 는 운영자가 켠 추가 트리)."""
     scfg = sb.load_config().clean_streak
-    assert scfg.target_days == 10  # §2-1 «연속 10 거래일»
-    assert scfg.window_days >= scfg.target_days
+    assert scfg.target_days == 5  # «깨끗한 거래일 누적 5일»
+    assert scfg.window_days == 40  # «최근 40일 창»
     assert scfg.clean_run_rcs == frozenset({0})
-    assert [t.label for t in scfg.trees] == ["long", "short"]
+    assert [t.label for t in scfg.trees] == ["long"]
     for tree in scfg.trees:
         assert tree.calendar_yaml.exists(), tree.calendar_yaml
         holidays = sb.load_tree_calendar(tree.calendar_yaml).holidays
-        # §3 M4 의 창(11-30 ~ 12-11)과 예비 창(12-14 ~ 12-30)이 지나는 휴장일.
-        # 거래일이 아니므로 연속을 깨지도 늘리지도 않는다.
+        # 창이 지나는 휴장일. 거래일이 아니므로 세지도 깨지도 않는다.
         for closed in (dt.date(2026, 12, 25), dt.date(2026, 12, 31)):
             assert closed in holidays
             assert sd.is_trading_day(closed, holidays) is False
@@ -1736,7 +1744,7 @@ def test_streak_config_bad_shapes_are_refused(
     mutate: dict, needle: str, tmp_path: Path
 ):
     raw = {
-        "target_days": 10,
+        "target_days": 5,
         "window_days": 40,
         "clean_run_rcs": [0],
         "calendar_covered_years": [2026],
@@ -1747,33 +1755,29 @@ def test_streak_config_bad_shapes_are_refused(
         sb.load_streak_config(raw, path=tmp_path / "c.yaml")
 
 
-def test_streak_crosses_a_weekend_and_a_holiday(streak_cfg: sb.BoardConfig):
-    """비거래일은 연속을 깨지도 늘리지도 않는다 — 실제 KRX 캘린더로.
+def test_clean_days_cross_a_weekend_and_a_holiday(streak_cfg: sb.BoardConfig):
+    """비거래일은 세지도 깨지도 않는다 — 실제 KRX 캘린더로.
 
     구체 입력: 10-12 · 10-08 · 10-07 · 10-06 · 10-02 다섯 세션. 그 사이에 10-09(한글날)와
-    주말, 10-05(대체휴일)와 주말이 있고 세션이 하나도 없다. 그래도 연속은 5 다. 10-01(목)은
-    거래일인데 세션이 없으므로 **거기서** 깨진다.
+    주말, 10-05(대체휴일)와 주말이 있고 세션이 하나도 없다. 그 날들이 거래일로 읽히면
+    「세션 없음」으로 깨진 날에 적히므로, ``broke_on`` 이 비어 있는 것이 그 판정이다.
     """
     board = _board(streak_cfg, D1012)
     long = _streak(board, "long")
-    assert (long["days"], long["start"], long["met"]) == (5, "2026-10-02", False)
-    assert long["broke_on"] == "2026-10-01"
-    assert long["broke_reason"] == "세션 디렉터리 없음"
+    assert (long["days"], long["start"], long["met"]) == (5, "2026-10-02", True)
+    assert (long["broke_on"], long["broke_reason"]) == (None, None)
     assert long["pending"] is None and long["error"] is None
-    # 설정에 선언됐지만 세션이 하나도 없는 트리는 조용히 사라지지 않고 0 으로 나온다.
-    short = _streak(board, "short")
-    assert (short["days"], short["broke_on"], short["broke_reason"]) == (
-        0,
-        "2026-10-12",
-        "세션 디렉터리 없음",
-    )
+    assert long["window_start"] == "2026-10-02"
+    # SHORT 는 세지 않는다(완화 §2 문장 1) — 설정에 없으므로 이 절에 나오지 않는다.
+    assert [t["label"] for t in board["clean_streak"]] == ["long"]
+    assert "✔ 목표 충족" in sb.render_text(board)
 
 
-def test_the_streak_spans_christmas(tmp_path: Path):
-    """12-25 휴장(§3 M4 의 창이 지나는 날)도 연속을 깨지 않는다.
+def test_the_clean_days_span_christmas(tmp_path: Path):
+    """12-25 휴장도 세지 않고 깨뜨리지도 않는다.
 
     구체 입력: 12-30 · 12-29 · 12-28 · 12-24 · 12-23 다섯 세션. 12-25(금·크리스마스)와
-    12-26·27 주말에는 세션이 없다. 연속은 5 이고 12-22(화)에서 깨진다.
+    12-26·27 주말에는 세션이 없다. 누적은 5 이고 깨진 날은 없다.
     """
     state = tmp_path / "december"
     (state / "cp3-sessions").mkdir(parents=True)
@@ -1788,102 +1792,134 @@ def test_the_streak_spans_christmas(tmp_path: Path):
         _mk_session(state, "long", day)
     cfg = replace(sb.load_config(), state_dir=state)
     long = _streak(_board(cfg, dt.date(2026, 12, 30)), "long")
-    assert (long["days"], long["start"]) == (5, "2026-12-23")
-    assert (long["broke_on"], long["broke_reason"]) == (
-        "2026-12-22",
-        "세션 디렉터리 없음",
-    )
+    assert (long["days"], long["start"], long["met"]) == (5, "2026-12-23", True)
+    assert (long["broke_on"], long["broke_reason"]) == (None, None)
 
 
-def test_a_trading_day_without_a_session_breaks_the_streak(
+def test_a_clean_day_a_lost_day_and_a_clean_day_count_two(tmp_path: Path):
+    """**완화의 핵심.** 깨진 하루가 앞의 기록을 지우지 않는다.
+
+    구체 입력: 10-12 깨끗 · 10-08 LOST(11-10 호스트 크래시의 모양 — 부팅했고 END 줄이
+    없다) · 10-07 깨끗. 연속 판정이었다면 10-08 에서 멈춰 1 이었다. 누적은 2 이고,
+    10-08 은 「마지막 깨진 거래일」로 계속 보고된다.
+    """
+    state = tmp_path / "cumulative"
+    (state / "cp3-sessions").mkdir(parents=True)
+    _mk_session(state, "long", dt.date(2026, 10, 12))
+    _mk_session(state, "long", dt.date(2026, 10, 8), run_rc=None, booted=True)
+    _mk_session(state, "long", dt.date(2026, 10, 7))
+    cfg = replace(sb.load_config(), state_dir=state)
+    long = _streak(_board(cfg, D1012), "long")
+    assert (long["days"], long["met"], long["start"]) == (2, False, "2026-10-07")
+    assert (long["broke_on"], long["broke_reason"]) == ("2026-10-08", "세션 상태 LOST")
+
+
+def test_a_trading_day_without_a_session_is_skipped_not_a_reset(
     streak_state: Path, streak_cfg: sb.BoardConfig
 ):
-    """중간의 거래일 하나가 비면 거기서 끊긴다 — 건너뛰지 않는다."""
+    """중간의 거래일 하나가 비면 그 하루만 빠진다 — 5 가 4 가 되고 0 이 되지 않는다."""
     shutil.rmtree(streak_state / "cp3-sessions" / "long-20261007")
-    long = _streak(_board(streak_cfg, D1012), "long")
-    assert (long["days"], long["broke_on"], long["broke_reason"]) == (
-        2,
+    board = _board(streak_cfg, D1012)
+    long = _streak(board, "long")
+    assert (long["days"], long["met"], long["start"]) == (4, False, "2026-10-02")
+    assert (long["broke_on"], long["broke_reason"]) == (
         "2026-10-07",
         "세션 디렉터리 없음",
     )
-
-
-def test_a_v2_summary_breaks_the_streak(streak_state: Path, streak_cfg: sb.BoardConfig):
-    """v2 의 ``divergent`` 는 선언된 차이를 섞어 세므로 §2-1 을 재지 못한다(#1001).
-
-    구체 입력: 10-08 의 summary 만 v2 로. 수는 0 이지만 그 0 은 「설명 안 되는
-    divergence 가 없다」가 아니라서 그 하루는 깨끗으로 세지 않는다.
-    """
-    path = streak_state / "cp3-sessions/long-20261008/b3/report/summary.json"
-    data = json.loads(path.read_text())
-    data["summary_schema_version"] = 2
-    path.write_text(json.dumps(data))
-    long = _streak(_board(streak_cfg, D1012), "long")
-    assert (long["days"], long["broke_on"]) == (1, "2026-10-08")
     assert (
-        long["broke_reason"]
-        == f"B3 summary 모양이 v{sb.B3_DECLARED_BUCKET_SCHEMA_VERSION} 미만 —"
-        " divergent 가 선언된 차이를 섞어 세므로 §2-1 을 재지 못한다"
+        "마지막 깨진 거래일 2026-10-07 — 세션 디렉터리 없음 (누적을 지우지 않는다)"
+        in sb.render_text(board)
     )
 
 
-def test_an_unexplained_divergence_breaks_the_streak(
+def test_the_most_recent_broken_day_is_the_one_reported(
     streak_state: Path, streak_cfg: sb.BoardConfig
 ):
-    """v3 의 ``divergent`` 가 바로 §2-1 의 수다 — 1 이라도 그 하루는 깨끗하지 않다."""
-    path = streak_state / "cp3-sessions/long-20261008/b3/report/summary.json"
-    data = json.loads(path.read_text())
-    data["live_comparison"].update(divergent=3, identical=405)
-    path.write_text(json.dumps(data))
+    """깨진 날이 둘이면 **가장 최근** 것을 보고한다(거꾸로 걸어 처음 만나는 날)."""
+    for day in ("long-20261008", "long-20261006"):
+        shutil.rmtree(streak_state / "cp3-sessions" / day)
     long = _streak(_board(streak_cfg, D1012), "long")
-    assert (long["days"], long["broke_on"]) == (1, "2026-10-08")
-    assert long["broke_reason"] == "B3 설명 안 되는 divergent=3/408"
+    assert (long["days"], long["broke_on"]) == (3, "2026-10-08")
 
 
-def test_unresolved_breaks_the_streak(streak_state: Path, streak_cfg: sb.BoardConfig):
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param({"summary_schema_version": 2}, id="v2-shape"),
+        pytest.param({"live_comparison": {"divergent": 3, "identical": 405}}, id="div"),
+        pytest.param({"unresolved": {"count": 2}}, id="unresolved"),
+        pytest.param(
+            {"live_comparison": {"compared_bars": 0, "identical": 0}}, id="zero-bars"
+        ),
+    ],
+)
+def test_what_b3_saw_no_longer_decides_whether_a_day_counts(
+    streak_state: Path, streak_cfg: sb.BoardConfig, mutate: dict
+):
+    """2026-11-11 완화 §2 문장 1 — B3 는 **돌았는지만** 본다.
+
+    구체 입력: 10-08 의 summary 를 옛 모양 · divergent 3 · unresolved 2 · 대조한 봉 0
+    으로 바꾼다. 전에는 각각이 그 하루를 깨뜨렸다. 이제는 B3 가 돌았으므로(실행 기록의
+    verdict 가 ok) 그 하루가 그대로 세어지고, 그 수들은 상태판의 «확인» 줄로만 나온다
+    (``test_b3_unresolved_is_a_check_not_a_block``).
+    """
     path = streak_state / "cp3-sessions/long-20261008/b3/report/summary.json"
     data = json.loads(path.read_text())
-    data["unresolved"] = {"count": 2}
+    for key, value in mutate.items():
+        if key == "live_comparison":
+            data["live_comparison"].update(value)
+        else:
+            data[key] = value
     path.write_text(json.dumps(data))
     long = _streak(_board(streak_cfg, D1012), "long")
-    assert (long["days"], long["broke_reason"]) == (1, "B3 unresolved=2")
+    assert (long["days"], long["met"], long["broke_on"]) == (5, True, None)
+
+
+def test_a_day_whose_summary_is_missing_still_counts_if_b3_ran(
+    streak_state: Path, streak_cfg: sb.BoardConfig
+):
+    """summary 가 없어도 실행 기록이 ok 면 센다 — 깨끗함의 조건에서 빠졌다."""
+    shutil.rmtree(streak_state / "cp3-sessions" / "long-20261008")
+    _mk_session(streak_state, "long", dt.date(2026, 10, 8), write_summary=False)
+    long = _streak(_board(streak_cfg, D1012), "long")
+    assert (long["days"], long["met"], long["broke_on"]) == (5, True, None)
 
 
 @pytest.mark.parametrize(
     "run_rc, reason",
     [
         (1, "세션 상태 FAILED"),
-        # 143 은 러너가 «정상 정지» 로 보는 코드지만(NORMAL_END_RCS) 연속 판정은 0 만
+        # 143 은 러너가 «정상 정지» 로 보는 코드지만(NORMAL_END_RCS) 누적 판정은 0 만
         # 깨끗으로 본다 — 숨지 않고 그 rc 가 사유로 찍힌다.
         (143, "런타임 종료 rc=143 (깨끗은 [0])"),
         (None, "세션 상태 NOT-BOOTED"),
     ],
 )
-def test_a_session_that_did_not_end_with_a_clean_rc_breaks_the_streak(
+def test_a_session_that_did_not_end_with_a_clean_rc_is_not_counted(
     streak_state: Path, streak_cfg: sb.BoardConfig, run_rc: int | None, reason: str
 ):
     shutil.rmtree(streak_state / "cp3-sessions" / "long-20261008")
     _mk_session(streak_state, "long", dt.date(2026, 10, 8), run_rc=run_rc)
     long = _streak(_board(streak_cfg, D1012), "long")
     assert (long["days"], long["broke_on"], long["broke_reason"]) == (
-        1,
+        4,
         "2026-10-08",
         reason,
     )
 
 
-def test_a_missing_b3_status_breaks_the_streak_and_the_summary_is_not_read(
+def test_a_missing_b3_status_is_not_counted_and_the_summary_is_not_read(
     streak_state: Path, streak_cfg: sb.BoardConfig
 ):
-    """**fail-closed 방향.** 실행 기록이 없으면 옆의 summary 수를 읽지 않는다.
+    """**fail-closed 방향.** 실행 기록이 없으면 B3 가 돌았다는 근거가 없다.
 
-    구체 입력: 10-08 에 ``b3/status.json`` 이 없고 깨끗한 v3 summary 만 있다. 그 수를
-    읽으면 「0 이니 깨끗」이 되지만, 그 summary 가 이 세션의 것이라는 근거가 없다(#1000).
+    구체 입력: 10-08 에 ``b3/status.json`` 이 없고 깨끗한 v3 summary 만 있다. 그 summary
+    가 이 세션의 것이라는 근거는 없으므로(#1000) 그 하루는 세지 않는다.
     """
     shutil.rmtree(streak_state / "cp3-sessions" / "long-20261008")
     _mk_session(streak_state, "long", dt.date(2026, 10, 8), write_status=False)
     long = _streak(_board(streak_cfg, D1012), "long")
-    assert (long["days"], long["broke_on"]) == (1, "2026-10-08")
+    assert (long["days"], long["broke_on"]) == (4, "2026-10-08")
     assert long["broke_reason"] == "B3 실행 기록 없음 (b3/status.json)"
 
 
@@ -1895,52 +1931,38 @@ def test_a_missing_b3_status_breaks_the_streak_and_the_summary_is_not_read(
         ({"status_schema_version": 9}, "B3 실행 기록을 읽을 수 없다"),
     ],
 )
-def test_a_b3_run_that_is_not_ok_breaks_the_streak(
+def test_a_b3_run_that_is_not_ok_is_not_counted(
     streak_state: Path, streak_cfg: sb.BoardConfig, fields: dict, needle: str
 ):
     shutil.rmtree(streak_state / "cp3-sessions" / "long-20261008")
     _mk_session(streak_state, "long", dt.date(2026, 10, 8), status_fields=fields)
     long = _streak(_board(streak_cfg, D1012), "long")
-    assert (long["days"], long["broke_on"]) == (1, "2026-10-08")
+    assert (long["days"], long["broke_on"]) == (4, "2026-10-08")
     assert needle in long["broke_reason"]
 
 
-def test_a_missing_summary_breaks_the_streak(
+def test_reaching_the_target_stops_the_walk(
     streak_state: Path, streak_cfg: sb.BoardConfig
 ):
-    shutil.rmtree(streak_state / "cp3-sessions" / "long-20261008")
-    _mk_session(streak_state, "long", dt.date(2026, 10, 8), write_summary=False)
+    """목표에 닿으면 더 걷지 않는다 — 그 앞의 깨진 날은 판정하지 않는다.
+
+    구체 입력: 깨끗한 다섯 거래일 앞(10-01)에 LOST 세션. 목표가 10-02 에서 채워지므로
+    10-01 은 읽지 않고, 「마지막 깨진 거래일」도 비어 있다.
+    """
+    _mk_session(streak_state, "long", dt.date(2026, 10, 1), run_rc=None, booted=True)
     long = _streak(_board(streak_cfg, D1012), "long")
-    assert long["broke_reason"] == "B3 summary 없음 (b3/report/summary.json)"
-
-
-def test_ten_clean_trading_days_meet_the_target(tmp_path: Path):
-    """목표에 닿으면 더 걷지 않는다 — 그 앞의 날은 판정하지 않는다."""
-    state = tmp_path / "met"
-    (state / "cp3-sessions").mkdir(parents=True)
-    cfg = replace(sb.load_config(), state_dir=state)
-    calendar = sb.load_tree_calendar(cfg.clean_streak.trees[0].calendar_yaml)
-    day, days = D1012, []
-    while len(days) < cfg.clean_streak.target_days:
-        if sd.is_trading_day(day, calendar.holidays):
-            days.append(day)
-        day -= dt.timedelta(days=1)
-    for one in days:
-        _mk_session(state, "long", one)
-    long = _streak(_board(cfg, D1012), "long")
-    assert (long["days"], long["met"]) == (cfg.clean_streak.target_days, True)
-    assert (long["start"], long["broke_on"]) == (days[-1].isoformat(), None)
-    assert "✔ 목표 충족" in sb.render_text(_board(cfg, D1012))
+    assert (long["days"], long["met"], long["broke_on"]) == (5, True, None)
+    assert long["window_start"] == "2026-10-02"
 
 
 def test_the_board_date_is_pending_until_it_settles(
     streak_state: Path, streak_cfg: sb.BoardConfig
 ):
-    """진행 중인 오늘은 깨끗도 아니고 깨짐도 아니다 — 아니면 장중에는 늘 0 이 된다.
+    """진행 중인 오늘은 깨끗도 아니고 깨짐도 아니다 — 아니면 장중에는 늘 오늘이 깨진 날이 된다.
 
     구체 입력: 오늘(10-12) 세션이 END 줄 없이 돌고 있고 그 앞 네 거래일이 깨끗하다.
     오늘은 보류로 두고 10-08 부터 센다 → 4. 보류는 **상태판 날짜에만** 쓰므로 같은 모양이
-    어제의 것이면 그대로 깨진다(위 rc=None 케이스).
+    어제의 것이면 그대로 깨진 날로 적힌다(위 rc=None 케이스).
     """
     shutil.rmtree(streak_state / "cp3-sessions" / "long-20261012")
     _mk_session(streak_state, "long", D1012, run_rc=None, write_status=False)
@@ -1966,23 +1988,28 @@ def test_a_b3_still_running_on_the_board_date_is_pending_not_a_break(
     assert long["days"] == 4
 
 
-def test_a_window_that_runs_out_reports_a_lower_bound(
+def test_only_the_days_inside_the_window_are_counted(
     streak_state: Path, tmp_path: Path
 ):
-    """창을 소진하면 수를 하한으로 말한다 — 「10 중 4」를 조용히 확정하지 않는다."""
+    """창 밖의 깨끗한 날은 세지 않는다 — 누적은 «최근 N 달력일» 안의 수다.
+
+    구체 입력: 창을 11 달력일(10-02 까지)로, 목표를 6 으로 좁히고 10-01 에 깨끗한 세션을
+    하나 더 둔다. 그 하루는 창 밖이므로 6 번째로 세지 않는다.
+    """
+    _mk_session(streak_state, "long", dt.date(2026, 10, 1))
     config = tmp_path / "board.yaml"
     config.write_text(
-        sb.DEFAULT_CONFIG_PATH.read_text(encoding="utf-8").replace(
-            "window_days: 40", "window_days: 11"
-        ),
+        sb.DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
+        .replace("window_days: 40", "window_days: 11")
+        .replace("target_days: 5", "target_days: 6"),
         encoding="utf-8",
     )
     cfg = replace(sb.load_config(config), state_dir=streak_state)
-    long = _streak(_board(cfg, D1012), "long")
-    # 10-12 에서 11 달력일 = 10-02 까지. 그 안의 거래일 다섯이 모두 깨끗하고, 깨진 날
-    # 10-01 은 창 밖이다 — 그래서 5 는 「10 중 5」가 아니라 하한이다.
-    assert (long["days"], long["window_exhausted"], long["broke_on"]) == (5, True, None)
-    assert "이 수는 하한이다" in sb.render_text(_board(cfg, D1012))
+    board = _board(cfg, D1012)
+    long = _streak(board, "long")
+    assert (long["days"], long["met"], long["window_start"]) == (5, False, "2026-10-02")
+    assert (long["broke_on"], long["error"]) == (None, None)
+    assert "센 창 2026-10-02 ~ 2026-10-12" in sb.render_text(board)
 
 
 def test_a_calendar_that_cannot_be_read_is_a_warning_not_a_guess(
@@ -2003,7 +2030,7 @@ def test_a_calendar_that_cannot_be_read_is_a_warning_not_a_guess(
     assert (long["days"], long["broke_on"]) == (0, None)
     assert "FileNotFoundError" in long["error"]
     assert any(
-        "streak/long: 연속 거래일을 셀 수 없다" in i for i in _issues(board, sb.WARN)
+        "streak/long: 깨끗한 거래일을 셀 수 없다" in i for i in _issues(board, sb.WARN)
     )
 
 
@@ -2024,42 +2051,27 @@ def test_a_date_outside_the_declared_years_stops_the_walk_without_guessing(
     assert "covers [2027]; 2026-10-12 is outside it" in long["error"]
 
 
-def test_the_streak_section_is_rendered_with_its_reason(streak_cfg: sb.BoardConfig):
+def test_the_clean_day_section_is_rendered_with_its_window(streak_cfg: sb.BoardConfig):
     text = sb.render_text(_board(streak_cfg, D1012))
     for needle in (
-        "■ 연속 깨끗한 거래일 (§2-1 · 목표 10 거래일",
-        "long       5/10 · 시작 2026-10-02",
-        "마지막 깨짐 2026-10-01 — 세션 디렉터리 없음",
+        "■ 깨끗한 거래일 누적 (창 40일 · 목표 5 거래일 · 끝난 거래일만 · 연속 아님",
+        "long       5/5 ✔ 목표 충족 · 가장 오래된 깨끗한 날 2026-10-02",
+        "센 창 2026-10-02 ~ 2026-10-12",
         "cp3-setup-d-long/calendar.yaml (krx-2026.11)",
     ):
         assert needle in text, needle
 
 
-def test_the_streak_does_not_change_the_board_verdict(streak_cfg: sb.BoardConfig):
-    """10 일을 채우는 동안 수가 10 보다 작은 것은 소견이 아니다 — 종료 코드를 건드리지 않는다."""
+def test_the_clean_day_count_does_not_change_the_board_verdict(
+    streak_state: Path, streak_cfg: sb.BoardConfig
+):
+    """목표를 채우는 동안 수가 작은 것은 소견이 아니다 — 종료 코드를 건드리지 않는다."""
+    shutil.rmtree(streak_state / "cp3-sessions" / "long-20261007")
     board = _board(streak_cfg, D1012)
     assert _streak(board, "long")["met"] is False
     assert not any(i["where"].startswith("streak/") for i in board["issues"]), board[
         "issues"
     ]
-
-
-def test_a_comparison_of_zero_bars_breaks_the_streak(
-    streak_state: Path, streak_cfg: sb.BoardConfig
-):
-    """review-1003 제안: 아무 봉도 대조하지 않은 하루는 깨끗하지 않다.
-
-    구체 입력: 10-08 의 summary 가 `compared_bars 0` · `unresolved 0` ·
-    `divergent 0`. 두 0 은 「설명 안 되는 차이가 없다」가 아니라 「아무것도 재지
-    않았다」이고, 그것을 통과시키면 §2-1 의 10 일 중 하루로 센다.
-    """
-    path = streak_state / "cp3-sessions/long-20261008/b3/report/summary.json"
-    data = json.loads(path.read_text())
-    data["live_comparison"].update(compared_bars=0, identical=0, divergent=0)
-    path.write_text(json.dumps(data))
-    long = _streak(_board(streak_cfg, D1012), "long")
-    assert (long["days"], long["broke_on"]) == (1, "2026-10-08")
-    assert long["broke_reason"] == "B3 대조한 봉이 0 — 재지 못한 것이 0 으로 읽힌다"
 
 
 def test_a_datetime_holiday_in_the_tenant_calendar_is_not_counted_as_a_trading_day(
@@ -2086,5 +2098,5 @@ def test_a_datetime_holiday_in_the_tenant_calendar_is_not_counted_as_a_trading_d
     assert (long["days"], long["broke_on"]) == (0, None)
     assert "2026-10-09 00:00:00" in long["error"]
     assert any(
-        "streak/long: 연속 거래일을 셀 수 없다" in i for i in _issues(board, sb.WARN)
+        "streak/long: 깨끗한 거래일을 셀 수 없다" in i for i in _issues(board, sb.WARN)
     )
