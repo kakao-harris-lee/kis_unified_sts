@@ -46,11 +46,10 @@ tos work so agents do not scan the legacy runtime.
 | Application Runtime + Infrastructure Adapters (ratified by the operator 2026-09-08, design #40 D1) | `tos/runtime/` — SEPARATE distribution `tos-runtime` / `tos_runtime` (own `pyproject.toml`, src-layout `tos/runtime/src/tos_runtime/`), the composition root + I/O adapters for the kernel. `tos_runtime -> tos` allowed; `tos -> tos_runtime` FORBIDDEN (firewall rule (g) + `.importlinter` contract `tos-kernel-must-not-import-runtime`). Application Runtime + Infrastructure Adapters: composition, durable event processing, SQLite evidence/state, custody, market intake, synthetic/KIS mock transport, recovery, and operations CLI are implemented. `compose/cli.py` dispatches `run` through `_run_dispatch.py`; this is no longer a skeleton. Implementation is not live authorization. See `docs/architecture/tos-system-context.md` and `docs/architecture/tos-public-interfaces.md` for layer names, integration surfaces, and remaining gaps. Hermetic tests: `tos/runtime/tests/` (D1.4 — zero external network/ambient env/writes outside `tmp_path`; `127.0.0.1`/`::1` and `tmp_path` sqlite files are the one exception, guarded by an autouse fixture in `tos/runtime/tests/conftest.py`) |
 | Spec (normative, broker-agnostic) | `tos-spec/src/` — RFC/ADR/verification registers |
 | Evidence runs | `tos-evidence/` |
-| Governance tools | `tools/tos_*.py`, `tools/tos_entry_harness.sh`, `tools/u17-verify.sh`, `tools/wfcanon-v222.py` |
-| Governance tests | `tests/tools/test_tos_*.py`, `tests/tools/test_u17_verify.py`, `tests/tos_l3/` |
+| Governance tools | `tools/tos_*.py` |
+| Governance tests | `tests/tools/test_tos_*.py`, `tests/tos_l3/` |
 | Architecture / integration docs | `docs/architecture/tos-*.md`, `docs/migration/legacy-disposition.md`, `docs/PROJECT_STATUS.md` (TOS snapshot) |
-| Design docs / errata | `docs/plans/*tos*`, `docs/reviews/phase0-*` |
-| Completion config | `config/tos_completion.yaml` |
+| Design docs / errata | `docs/plans/*tos*` |
 | CI | `.github/workflows/tos-firewall.yml`, `.github/workflows/tos-gate.yml` |
 
 The runtime must not import any `shared.*` package (including the six kernel
@@ -81,9 +80,8 @@ PYTHONPATH=tos/runtime/src:tos/src .venv/bin/python -m pytest tos/runtime/tests 
 # Firewall + governance checkers — run from the repo root with the root venv
 # (they import the repo `tools` package and read repo-relative paths)
 python tools/tos_firewall_check.py && lint-imports
-python tools/tos_contract_check.py && python tools/tos_contract_check.py --self-test
-python tools/tos_completion_status.py --check
 python tools/tos_spec_status.py --check
+python tools/tos_redigest.py --check   # the `tos-gate` required check
 python tools/tos_size_budget.py --check
 ```
 
@@ -94,10 +92,10 @@ python tools/tos_size_budget.py --check
   `pytest`, `hypothesis`). Adding one is a design-doc PR, not a code change.
 - No stdlib egress in kernel code (`socket`, `subprocess`, `os.environ`
   intake, dynamic import). The AST gate rejects it.
-- The Phase-0 completion contract
-  (`docs/plans/2026-08-12-tos-phase0-completion-contract-design.md`) is frozen
-  and blob-bound. Never edit it as a side effect; locate sections with
-  `python tools/tos_contract_index.py --locate <ID>` and read only that range.
-- `tools/tos_entry_harness.sh` is sha256-pinned in `tos-gate.yml`, and
-  `tos-gate.yml` itself is a contract literal read by `u17-verify.sh`. Changing
-  either is a re-pin round, not a routine edit.
+- The Phase-0 완료 계약과 그 판정 장치(계약서 · `tos_contract_index.py` ·
+  `tos_contract_check.py` · `tos_completion_status.py` · `tos_entry_harness.sh` ·
+  `u17-verify.sh`)는 2026-11-12 에 퇴역했다
+  (`docs/plans/2026-11-12-phase0-retirement-plan.md`). 내용은 git 이력에 있다.
+- `.github/workflows/tos-gate.yml` 은 삭제하거나 잡 이름을 바꾸지 않는다 —
+  룰셋이 `tos-gate` 체크를 필수로 요구하므로, 사라지면 모든 PR 이 오지 않는
+  체크를 기다린다. 내용은 `tools/tos_redigest.py --check` 다.
