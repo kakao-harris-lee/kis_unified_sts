@@ -1028,6 +1028,84 @@ def assert_dsl_refs_are_published(
         )
 
 
+def assert_publish_matches_critical_inputs(
+    document: FieldsDocument, *, policy_path: Path
+) -> None:
+    """Refuse a declaration that publishes a different set than the tenant declares.
+
+    The other half of review #1067 L2. Now that the journal row is built from
+    ``publish`` rather than from :data:`FIELD_ORDER`, the declaration decides
+    which keys the kernel receives — so the question "is that the set this
+    tenant's consumers were configured for?" has to be asked somewhere, and the
+    tenant tree already answers it: ``critical_input_policy.yaml`` lists one
+    ``field_key`` per field, with the freshness bound the marketfeed snapshot
+    applies to it.
+
+    Two concrete inputs this refuses, which are exactly what the old
+    ``FIELD_ORDER`` selection turned into silence:
+
+    * a declaration publishing a SIXTEENTH field. The producer would write it
+      into every row; the policy has no ``max_age_ms`` for it, so the snapshot
+      carries an input nothing declared a freshness bound for.
+    * a declaration that drops one of the fifteen — say ``eod``. The kernel
+      refuses the whole poll on a missing required journal key, every minute
+      from the open, three layers from the edit that caused it.
+
+    Order is NOT compared: the policy is a per-field freshness map, and the
+    order the row is written in is the declaration's alone (the shipped trees
+    keep it equal to :data:`FIELD_ORDER`, which
+    ``test_publishes_every_field_order_field_in_order`` pins).
+
+    Args:
+        document: the tenant's parsed ``fields.yaml``.
+        policy_path: the tenant tree's ``critical_input_policy.yaml``.
+
+    Raises:
+        ProduceFieldsError: the two sets differ, or the policy cannot be read
+            as a list of ``field_key`` entries. An unreadable policy is not
+            agreement, so it refuses rather than skipping the check.
+    """
+    try:
+        raw = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ProduceFieldsError(
+            f"{policy_path}: the tenant's critical-input policy cannot be read, "
+            "so the publish set cannot be checked against the freshness bounds "
+            f"its consumers apply ({exc})"
+        ) from exc
+    except yaml.YAMLError as exc:
+        raise ProduceFieldsError(
+            f"{policy_path}: not parseable as YAML ({exc})"
+        ) from exc
+    entries = (raw or {}).get("fields") if isinstance(raw, dict) else None
+    if not isinstance(entries, list) or not entries:
+        raise ProduceFieldsError(
+            f"{policy_path}: no 'fields' list — refusing rather than reporting "
+            "the publish set agrees with nothing"
+        )
+    declared: set[str] = set()
+    for entry in entries:
+        key = entry.get("field_key") if isinstance(entry, Mapping) else None
+        if not isinstance(key, str) or not key.strip():
+            raise ProduceFieldsError(
+                f"{policy_path}: a 'fields' entry has no 'field_key' string "
+                f"({entry!r}); the publish set cannot be compared to it"
+            )
+        declared.add(key)
+    published = {entry.name for entry in document.publish}
+    extra = sorted(published - declared)
+    missing = sorted(declared - published)
+    if extra or missing:
+        raise ProduceFieldsError(
+            f"the declaration publishes {sorted(published)} but "
+            f"{policy_path} declares {sorted(declared)} — "
+            f"published-but-undeclared {extra}, declared-but-unpublished "
+            f"{missing}. An undeclared field reaches the snapshot with no "
+            "freshness bound; an unpublished one makes the kernel refuse the "
+            "whole poll on a missing journal key, every minute from the open"
+        )
+
+
 def assert_declaration_binds_to_the_run(
     document: FieldsDocument,
     *,
@@ -1179,6 +1257,14 @@ def produce_bars_declarative(
     * the ``raw_event_id`` / ``as_of_ms`` derivation and the scalar-field
       assertion, so a declarative line and a legacy line join in B3.
 
+    WHICH fields the row carries, and in what order, is the DECLARATION's —
+    :attr:`~shared.indicators.fields.EvaluatedBar.published` is taken whole
+    (review #1067 L2). Selecting :data:`FIELD_ORDER` out of it would mean a
+    sixteenth published entry never reached the journal and a missing one
+    surfaced as a bare ``KeyError`` mid-run; whether the publish set is the one
+    the tenant's consumers expect is answered at producer START instead, by
+    :func:`assert_publish_matches_critical_inputs`.
+
     Which bars are REPLAYED is the witness's rule, restated here from the same
     two counts the legacy lineage reconciles with (:func:`_bar_accounting`):
     ``MarketContextReplay.iter_contexts`` yields from the 60th bar onward and
@@ -1263,7 +1349,13 @@ def produce_bars_declarative(
         if unusable is not None:
             omitted.append((raw_event_id, unusable))
             continue
-        ordered = {name: evaluated.published[name] for name in FIELD_ORDER}
+        # The DECLARATION decides which fields the row carries and in which
+        # order, not this module's :data:`FIELD_ORDER` (review #1067 L2).
+        # ``EvaluatedBar.published`` is already built in ``publish`` order, so
+        # taking it whole is the only form in which an added entry reaches the
+        # journal and a removed one is reported by the start-time checks rather
+        # than by a bare ``KeyError`` here.
+        ordered = dict(evaluated.published)
         _assert_scalar_fields(ordered, raw_event_id)
         records.append(
             FieldRecord(

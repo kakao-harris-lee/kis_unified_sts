@@ -96,6 +96,7 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     StrategyInputs,
     assert_declaration_binds_to_the_run,
     assert_dsl_refs_are_published,
+    assert_publish_matches_critical_inputs,
     derive_raw_event_id,
     load_strategy_inputs,
     resolve_contract_spec,
@@ -356,6 +357,10 @@ class LiveProducer:
             document = load_fields_file(self.fields_yaml)
             assert_dsl_refs_are_published(
                 document, strategies_dir=self.tenant_tree / "strategies"
+            )
+            assert_publish_matches_critical_inputs(
+                document,
+                policy_path=self.tenant_tree / "critical_input_policy.yaml",
             )
             assert_declaration_binds_to_the_run(
                 document, strategy=self.strategy, anchor=self.anchor

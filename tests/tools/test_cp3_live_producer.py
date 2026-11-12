@@ -1676,6 +1676,37 @@ def test_a_declaration_bound_to_another_open_refuses_to_start(
 
 
 @pytest.mark.serial
+def test_a_publish_set_the_tenant_policy_does_not_declare_refuses_to_start(
+    tmp_path: Path, market: Market
+) -> None:
+    """Review #1067 L2: the row is the declaration's publish list, so the set
+    is checked against the tenant's ``critical_input_policy.yaml`` at START.
+
+    The concrete input: the LONG tree with one extra published field. The
+    producer would write ``mso_x1`` into every row, and the policy declares no
+    ``max_age_ms`` for it — an input in the snapshot that nothing set a
+    freshness bound on.
+    """
+    import shutil
+
+    tree = tmp_path / "tree"
+    shutil.copytree(_REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-long", tree)
+    fields_yaml = tree / "fields.yaml"
+    raw = yaml.safe_load(fields_yaml.read_text(encoding="utf-8"))
+    raw["publish"].append(
+        {"field": "mso", "as": "mso_x1", "scale": {"mult": 1, "round": "half_up"}}
+    )
+    fields_yaml.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    producer, _clock, _quotes = _build(tmp_path, market)
+    producer.tenant_tree = tree
+    with pytest.raises(LiveProducerRefused, match="mso_x1"):
+        producer.boot()
+    assert not producer.journal_path.exists()
+    producer.finish()
+
+
+@pytest.mark.serial
 def test_item5_red_a_reused_session_directory_refuses_to_start(
     tmp_path: Path, market: Market
 ) -> None:

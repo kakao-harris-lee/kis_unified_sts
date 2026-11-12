@@ -834,6 +834,141 @@ class TestDeclarativeProducer:
                 emit_days=inputs.emit_days,
             )
 
+    def test_the_row_is_the_declaration_s_publish_list_not_field_order(
+        self, strategy: Any
+    ) -> None:
+        """Review #1067 L2 — a SIXTEENTH published field reaches the journal.
+
+        Selecting ``FIELD_ORDER`` out of the evaluated bar made the producer's
+        answer to "what does this tenant publish?" a module constant: a tenant
+        could add a published field and the producer would drop it from every
+        row without a word. Here the declaration publishes ``mso`` as well, and
+        the record carries sixteen keys with the new one in its declared place.
+        """
+        raw = yaml.safe_load(_fields_yaml("cp3-setup-d-long").read_text("utf-8"))
+        raw["publish"].append(
+            {"field": "mso", "as": "mso_x1", "scale": {"mult": 1, "round": "half_up"}}
+        )
+        wider = parse_fields_document(raw)
+        inputs = _inputs(
+            load_fields_file(_fields_yaml("cp3-setup-d-long")), _frame(), strategy
+        )
+        declared = pf.produce_bars_declarative(
+            inputs.df,
+            symbol=inputs.symbol,
+            document=wider,
+            emit_days=inputs.emit_days,
+        )
+        assert tuple(declared.records[0].fields) == FIELD_ORDER + ("mso_x1",)
+
+    def test_a_declaration_short_of_a_field_is_not_a_key_error(
+        self, strategy: Any
+    ) -> None:
+        """The other half of L2: fourteen keys, produced, not a bare ``KeyError``.
+
+        Dropping ``eod`` from ``publish`` used to raise ``KeyError('eod')`` out
+        of the row comprehension — a traceback mid-run, with no name for what
+        was actually wrong. The producer now emits what the declaration says;
+        whether that set is the one this tenant's consumers expect is the
+        start-time question
+        :func:`~tools.tos_cp3.produce_fields.assert_publish_matches_critical_inputs`
+        answers, and :class:`TestPublishMatchesTheCriticalInputPolicy` is where
+        this same declaration is refused.
+        """
+        raw = yaml.safe_load(_fields_yaml("cp3-setup-d-long").read_text("utf-8"))
+        raw["publish"] = [entry for entry in raw["publish"] if entry["field"] != "eod"]
+        narrower = parse_fields_document(raw)
+        inputs = _inputs(
+            load_fields_file(_fields_yaml("cp3-setup-d-long")), _frame(), strategy
+        )
+        declared = pf.produce_bars_declarative(
+            inputs.df,
+            symbol=inputs.symbol,
+            document=narrower,
+            emit_days=inputs.emit_days,
+        )
+        published = tuple(declared.records[0].fields)
+        assert "eod" not in published
+        assert published == tuple(name for name in FIELD_ORDER if name != "eod")
+
+
+class TestPublishMatchesTheCriticalInputPolicy:
+    """Review #1067 L2 — the publish set is checked against the tenant's policy.
+
+    The producer takes the publish list whole, so the set the kernel receives
+    is the declaration's. The tenant tree already states which fields its
+    consumers were configured for, one ``field_key`` per entry with the
+    freshness bound applied to it, and that is what this check compares
+    against — at producer START, where the answer is free.
+    """
+
+    @staticmethod
+    def _policy(tree: str) -> Path:
+        return (
+            REPO_ROOT / "config" / "tos_runtime" / tree / "critical_input_policy.yaml"
+        )
+
+    def test_the_three_shipped_trees_pass(self) -> None:
+        """Green at the start: a guard, not a migration step."""
+        for tree in TREES:
+            pf.assert_publish_matches_critical_inputs(
+                load_fields_file(_fields_yaml(tree)), policy_path=self._policy(tree)
+            )
+
+    def test_a_sixteenth_published_field_is_refused_by_name(self) -> None:
+        """It would reach the snapshot with no ``max_age_ms`` of its own."""
+        raw = yaml.safe_load(_fields_yaml("cp3-setup-d-long").read_text("utf-8"))
+        raw["publish"].append(
+            {"field": "mso", "as": "mso_x1", "scale": {"mult": 1, "round": "half_up"}}
+        )
+        with pytest.raises(pf.ProduceFieldsError, match="mso_x1"):
+            pf.assert_publish_matches_critical_inputs(
+                parse_fields_document(raw),
+                policy_path=self._policy("cp3-setup-d-long"),
+            )
+
+    def test_a_dropped_field_is_refused_by_name(self) -> None:
+        """The kernel refuses the WHOLE poll on a missing journal key, so this
+        would be a refused poll every minute from the open rather than a field
+        reading ``None``."""
+        raw = yaml.safe_load(_fields_yaml("cp3-setup-d-long").read_text("utf-8"))
+        raw["publish"] = [entry for entry in raw["publish"] if entry["field"] != "eod"]
+        with pytest.raises(pf.ProduceFieldsError, match="declared-but-unpublished"):
+            pf.assert_publish_matches_critical_inputs(
+                parse_fields_document(raw),
+                policy_path=self._policy("cp3-setup-d-long"),
+            )
+
+    @pytest.mark.parametrize(
+        ("text", "match"),
+        [
+            ("policy_id: x\n", "no 'fields' list"),
+            ("fields: []\n", "no 'fields' list"),
+            ("fields:\n  - max_age_ms: 800\n", "no 'field_key' string"),
+            ("fields: [unclosed\n", "not parseable as YAML"),
+        ],
+    )
+    def test_a_policy_that_cannot_be_compared_is_refused(
+        self, tmp_path: Path, text: str, match: str
+    ) -> None:
+        """An unreadable policy is not agreement."""
+        policy = tmp_path / "critical_input_policy.yaml"
+        policy.write_text(text, encoding="utf-8")
+        with pytest.raises(pf.ProduceFieldsError, match=match):
+            pf.assert_publish_matches_critical_inputs(
+                load_fields_file(_fields_yaml("cp3-setup-d-long")), policy_path=policy
+            )
+
+    def test_a_missing_policy_file_is_refused_rather_than_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        """A mis-rendered tree must not pass the check by not having one."""
+        with pytest.raises(pf.ProduceFieldsError, match="cannot be read"):
+            pf.assert_publish_matches_critical_inputs(
+                load_fields_file(_fields_yaml("cp3-setup-d-long")),
+                policy_path=tmp_path / "critical_input_policy.yaml",
+            )
+
 
 class TestPublishCoverageRefusal:
     """Plan §2.2 — a DSL ref the declaration does not publish is refused."""
