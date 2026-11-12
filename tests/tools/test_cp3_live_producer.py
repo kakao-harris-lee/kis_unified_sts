@@ -2764,8 +2764,14 @@ def test_red_main_catches_nothing_that_would_swallow_a_gate_refusal() -> None:
     says the handler ``main`` HAS cannot catch it; this says no handler it
     might GROW can either — including the shapes that are easy to add without
     thinking, ``except RuntimeError`` and a bare ``except``.
+
+    Read out of ``cli.py``: P2-c moved the CLI to its own module (the size
+    budget's 1000-line cap on ``producer.py``), and ``producer`` re-exports
+    ``main``. The subject is the function, so this follows it — a structural
+    test that keeps reading the file the function LEFT would pass by finding
+    nothing, which is why the "lost its subject" assertion is here.
     """
-    source = (_REPO_ROOT / "tools/tos_cp3/live_producer/producer.py").read_text(
+    source = (_REPO_ROOT / "tools/tos_cp3/live_producer/cli.py").read_text(
         encoding="utf-8"
     )
     caught = _handler_types(source, "main")

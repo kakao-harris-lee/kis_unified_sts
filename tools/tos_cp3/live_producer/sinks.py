@@ -330,6 +330,46 @@ def append_bar_part(
     return tuple(written)
 
 
+def store_unadjusted_seed(
+    market_root: Path,
+    *,
+    asset_class: str,
+    instrument: str,
+    kept: Sequence[Any],
+    junction_new_bars: Sequence[tuple],
+) -> None:
+    """Write every seed day under ITS OWN contract's partition, unadjusted.
+
+    Plan §3.2a 「라벨은 진실하게」: the previous month's bars are stored as the
+    previous month's, and the splice day's new-contract bars under the new
+    month's — the evidence ``c_x100`` is recomputed from. The back-adjust is
+    applied on READ (``load_window(stitch_manifest=…)``), never on write,
+    because the legacy A05611 Parquet's date-label defect (plan §6.1) is
+    exactly what happens when one instrument's values are stored under
+    another's name.
+
+    Args:
+        kept: the seed's kept segments, each with ``.contract`` and ``.bars``.
+        junction_new_bars: the splice day's bars that already belong to
+            *instrument*, which is why they are stored under it and not under
+            the segment's own contract.
+    """
+    for entry in kept:
+        append_bar_part(
+            market_root,
+            asset_class=asset_class,
+            symbol=entry.contract,
+            bars=entry.bars,
+        )
+    if junction_new_bars:
+        append_bar_part(
+            market_root,
+            asset_class=asset_class,
+            symbol=instrument,
+            bars=junction_new_bars,
+        )
+
+
 def market_digest(market_root: Path) -> dict[str, str]:
     """sha256 of every written part file, keyed by its path under *market_root*.
 
