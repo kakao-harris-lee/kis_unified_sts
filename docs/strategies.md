@@ -61,7 +61,7 @@ strategy:
 ### Trend Pullback (현재 비활성)
 
 **상태 (2026-06-20):** `enabled: false` — 재검증 대기. 과거 검증은 합성 데이터 기반이었음.
-**검증 문서 (historical, archived):** [STOCK_STRATEGY_VALIDATION_SUMMARY.md](archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md)
+**검증 문서 (historical, archived):** `archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md`
 
 일봉 추세 필터와 분봉 풀백 시그널을 결합한 다중 시간프레임 전략
 
@@ -102,7 +102,7 @@ entry:
 ### Momentum Breakout (현재 활성 — paper 관찰)
 
 **상태 (2026-06-20):** `enabled: true` — paper 관찰용 재활성화 (#443). 재튜닝 미해결.
-**검증 문서 (historical, archived):** [STOCK_STRATEGY_VALIDATION_SUMMARY.md](archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md)
+**검증 문서 (historical, archived):** `archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md`
 
 일봉 고가 근접과 거래량 트렌드를 활용한 모멘텀 돌파 전략
 
@@ -580,7 +580,7 @@ position:
 > Live state lives in [PROJECT_STATUS.md](PROJECT_STATUS.md); the phased plan and
 > open reactivation decisions live in [ROADMAP.md](ROADMAP.md). The 2026-03
 > validation summary was synthetic-data-based and is archived
-> ([archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md](archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md)).
+> (`archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md`).
 
 ### 활성 전략 (`enabled: true`)
 
@@ -614,6 +614,6 @@ position:
 
 ## 관련 문서 (Related Documentation)
 
-- [주식 전략 검증 요약 (archived, historical)](archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md) - 2026-03 합성 데이터 백테스트 결과 (보관용)
-- [백테스트 성능 리뷰](archive/BACKTEST_PERFORMANCE_REVIEW.md) - 2026-03 historical snapshot
-- [페이퍼 트레이딩 모니터링 가이드](archive/PAPER_TRADING_MONITORING_GUIDE.md) - 2026-03 historical validation procedure
+- `archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md` - 2026-03 합성 데이터 백테스트 결과 (보관용)
+- `archive/BACKTEST_PERFORMANCE_REVIEW.md` - 2026-03 historical snapshot
+- `archive/PAPER_TRADING_MONITORING_GUIDE.md` - 2026-03 historical validation procedure
