@@ -25,11 +25,26 @@ leaf before this deploys" (runbook ``docs/runbooks/tos-paper-boot.md`` §7.2-f).
 **Why the PARSED contract and not the bytes.** A comment or formatting edit does not change
 what the engine decides and does not diverge a replay, so it must not force a re-genesis — a
 byte pin would cry wolf until someone bumps the token without reading it. The digest folds
-the kernel's OWN canonical digest of each ``strategies/*.strategy.yaml``
-(:func:`tos.dsl.serialization.parse_strategy`, which also refuses an unknown key) and the
-runtime's OWN parsed ``strategy_bindings.yaml``
-(:func:`tos_runtime.strategy.bindings.load_strategy_bindings`) — the same two readers the
-boot path uses, so the pin cannot drift from what actually decides.
+the three inputs the replay core takes, each through the loader the boot path itself uses:
+
+* the kernel's OWN canonical digest of each ``strategies/*.strategy.yaml``
+  (:func:`tos.dsl.serialization.parse_strategy`, which also refuses an unknown key);
+* the runtime's OWN parsed ``strategy_bindings.yaml``
+  (:func:`tos_runtime.strategy.bindings.load_strategy_bindings`); and
+* the runtime's OWN parsed ``engine.yaml``
+  (:func:`tos_runtime.compose._engine_config.load_engine_config`), the two bounds
+  :func:`tos_runtime.compose._finalize_wiring._build_engine_configuration` turns into the
+  kernel's ``EngineConfiguration``. Review finding (2026-11-12, MEDIUM, false negative):
+  without it, lowering this tree's ``dsl_evaluation_budget_steps`` from 64 to 30 kept the
+  pin GREEN while the stock policy needs 31 work steps — every replayed tick would degrade
+  to NoAction and the boot would fail with ``EngineReplayDiverged``, which is the very
+  refusal this file exists to pre-empt. ``max_unresolved_send_per_scope`` is the same class.
+  Pinned by :func:`test_starving_the_dsl_budget_under_an_unbumped_token_is_caught`.
+
+Using those loaders is what keeps the pin close to what actually decides; it is not a proof
+of coverage. A fourth replay input added to the boot path would be outside this digest until
+someone folds it in — the MEDIUM above is exactly that failure, found by review rather than
+by the guard. Widen the payload when the replay core gains an input, and re-pin.
 
 Scope: the three tenants ``tools/tos_cp3/runners/cp3_tenant_daily.sh`` runs, each on its own
 persistent durable set whose first genesis is the operator's call. The resident
@@ -42,6 +57,7 @@ Hermetic (D1.4): the committed files are only READ; the mutation proofs write un
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import re
@@ -51,6 +67,9 @@ from typing import Any
 import pytest
 import yaml
 from tos.dsl.serialization import parse_strategy
+from tos.engine.admission import policy_work_steps
+from tos_runtime.compose._engine_config import load_engine_config
+from tos_runtime.compose._finalize_wiring import _ENGINE_CONFIG_NAME
 from tos_runtime.strategy.bindings import (
     STRATEGY_BINDINGS_FILE_NAME,
     load_strategy_bindings,
@@ -115,8 +134,11 @@ def decision_digest(tree: Path) -> str:
         stem: entry.model_dump(mode="json")
         for stem, entry in sorted(loaded.strategies.items())
     }
+    # ``_ENGINE_CONFIG_NAME`` is imported from the boot path's own module rather than spelled
+    # again here, so renaming the file cannot leave this digest reading nothing.
+    engine = dataclasses.asdict(load_engine_config(tree / _ENGINE_CONFIG_NAME))
     payload = json.dumps(
-        {"strategies": digests, "bindings": bindings},
+        {"strategies": digests, "bindings": bindings, "engine": engine},
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
@@ -225,6 +247,7 @@ def _rewrite_stock_tree(
     *,
     drop_probe_rule: bool = False,
     probe_enabled: bool | None = None,
+    budget_steps: int | None = None,
     comment_header: str = "",
 ) -> Path:
     """A re-serialized copy of the stock tree's decision contract under ``destination``.
@@ -271,6 +294,15 @@ def _rewrite_stock_tree(
         comment_header + yaml.safe_dump(bindings, sort_keys=True, allow_unicode=True),
         encoding="utf-8",
     )
+
+    engine = yaml.safe_load((source / _ENGINE_CONFIG_NAME).read_text(encoding="utf-8"))
+    assert engine["dsl_evaluation_budget_steps"] == 64, engine
+    if budget_steps is not None:
+        engine["dsl_evaluation_budget_steps"] = budget_steps
+    (destination / _ENGINE_CONFIG_NAME).write_text(
+        comment_header + yaml.safe_dump(engine, sort_keys=True, allow_unicode=True),
+        encoding="utf-8",
+    )
     return destination
 
 
@@ -299,6 +331,36 @@ def test_the_1056_change_against_an_unbumped_token_is_caught(tmp_path: Path) -> 
     assert "decision contract changed" in problem
     assert "genesis" in problem and "§7.2-f" in problem
     assert generation_1 in problem and decision_digest(_CONFIG_ROOT / _STOCK) in problem
+
+
+def test_starving_the_dsl_budget_under_an_unbumped_token_is_caught(
+    tmp_path: Path,
+) -> None:
+    """The review finding: ``engine.yaml``'s bounds are replay inputs too.
+
+    Concrete input (2026-11-12 review, MEDIUM): drop this tree's
+    ``dsl_evaluation_budget_steps`` from 64 to 30 and leave the token alone. The stock
+    policy's static work count is 31, so the engine can no longer evaluate it — every
+    replayed tick degrades to NoAction, the recorded outcomes stop reproducing, and the next
+    boot is the same ``EngineReplayDiverged`` refusal this file exists to pre-empt. Before
+    ``engine.yaml`` joined the payload the pin stayed GREEN on exactly this edit.
+    """
+    name = "setup_d_long.strategy.yaml"
+    strategy = parse_strategy(
+        yaml.safe_load(
+            (_CONFIG_ROOT / _STOCK / "strategies" / name).read_text(encoding="utf-8")
+        )
+    )
+    # The premise of the input, measured rather than asserted in prose: 31 > 30.
+    assert strategy.policy is not None
+    assert policy_work_steps(strategy.policy) == 31
+
+    starved = _rewrite_stock_tree(
+        tmp_path / "budget-30", probe_enabled=True, budget_steps=30
+    )
+    problem = _pin_problem(_STOCK, starved, _registry()[_STOCK])
+    assert problem is not None
+    assert "decision contract changed" in problem and "§7.2-f" in problem
 
 
 def test_toggling_the_probe_binding_moves_the_decision_digest(tmp_path: Path) -> None:

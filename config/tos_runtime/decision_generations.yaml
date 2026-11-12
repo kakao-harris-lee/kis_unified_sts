@@ -24,14 +24,25 @@
 # re-genesis'd first»; nothing in CI said it either.
 #
 # **What a token is.** `decision_digest` is a digest of the PARSED decision contract of the
-# tree — the kernel's own canonical digest of each `strategies/*.strategy.yaml`, plus the
-# runtime's own parsed `strategy_bindings.yaml`. It is deliberately NOT a digest of the
-# bytes: a comment or formatting edit does not change what the engine decides, does not
+# tree: the kernel's own canonical digest of each `strategies/*.strategy.yaml`, the runtime's
+# own parsed `strategy_bindings.yaml`, and the runtime's own parsed `engine.yaml` (the two
+# bounds `_build_engine_configuration` hands the kernel). It is deliberately NOT a digest of
+# the bytes: a comment or formatting edit does not change what the engine decides, does not
 # diverge a replay, and must not force a re-genesis.
 #
+# ⚠ **2026-11-12, review MEDIUM — the formula widened, the GENERATIONS did not.** The first
+# cut folded only the strategies and the bindings, so lowering a tree's
+# `dsl_evaluation_budget_steps` from 64 to 30 kept the pin green while the stock policy needs
+# 31 work steps — every replayed tick would degrade to NoAction and the boot would refuse
+# with `EngineReplayDiverged`, the exact failure above. `engine.yaml` is now in the payload,
+# which re-derived all three digests below. **The generation numbers are unchanged on
+# purpose**: the decision contract each leaf was genesis'd under did not change, only how
+# much of it this file measures. No leaf needs re-genesis for this re-pin.
+#
 # **When you have to touch this file.** Change a rule, a target, a rationale, a
-# `dsl_version`/`config_binding_version`, or a decision binding in one of the trees below,
-# and the pin test goes red at PR time. Then, IN THE SAME PR:
+# `dsl_version`/`config_binding_version`, a decision binding, or one of `engine.yaml`'s two
+# bounds in one of the trees below, and the pin test goes red at PR time. Then, IN THE SAME
+# PR:
 #
 #   1. bump that tenant's `generation` by one and paste the digest the failure printed; and
 #   2. archive that tenant's data leaf so the next session genesis-creates a fresh one,
@@ -57,11 +68,11 @@ tenants:
   # leaves were born under; neither has had a decision-contract change since.
   cp3-setup-d-long:
     generation: 1
-    decision_digest: "sha256:460690751e97d3e353b16069ae7ebb9fc9706114cb7dc40789ea34e14ca5ad30"
+    decision_digest: "sha256:8f45700eb42432af37cada175a5a0b508c0b929e1bb08e1b1759c71b5f9511f4"
 
   cp3-setup-d-short:
     generation: 1
-    decision_digest: "sha256:90572200cd51f2c119bc1a575d7d74c0a1f8854956027b65eba3c1ace8a8a1a2"
+    decision_digest: "sha256:503b198c88d2d787608983c20f68e5ba44d923f5aaf58133159943e648841f93"
 
   # The KIS-MOCK stock tenant — the one that DOES send.
   #   generation 1: R1-R3 (Setup D LONG), the contract the 2026-11-06 leaf was born under.
@@ -72,4 +83,4 @@ tenants:
   # binding change like any other: generation 3, and the leaf is re-genesis'd with it.
   cp3-setup-d-stock-005930:
     generation: 2
-    decision_digest: "sha256:ef8120370234873ec221dbe9d386604eb874fe87c3ca834a04f4278f4cdb7d7b"
+    decision_digest: "sha256:1b6efb2efc044b969822ea7fd627c3754b1bf286ed666561394f82bc263eee39"
