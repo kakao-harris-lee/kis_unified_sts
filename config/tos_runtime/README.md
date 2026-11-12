@@ -25,6 +25,16 @@ committed content.) Nothing in it has booted yet.
 `cp3-setup-d-long/`, still `SYNTHETIC_FUTURES_ORDER`, with no band source. Read its
 `README.md`; `tos/runtime/tests/compose/test_tenant_tree_stock.py` pins every
 difference from the LONG tree by file and key path.
+`decision_generations.yaml` sits beside the trees rather than inside one. It is not an
+approved value file: it pins each persistent-leaf tenant's **parsed** decision contract
+(rules + decision bindings) to a committed generation token, so changing a rule or a binding
+goes red in CI until the PR bumps the token — the reviewable act that says the tenant's
+durable data leaf must be re-genesis'd before the change deploys (`docs/runbooks/
+tos-paper-boot.md` §7.2-f). It exists because PR #1056 changed the stock tree's rules under a
+continuing leaf and the 2026-11-12 session was refused at boot with `EngineReplayDiverged`,
+1075 of 1075 events, leaving that leaf permanently un-bootable. Guard:
+`tos/runtime/tests/compose/test_tenant_decision_generation.py`.
+
 Adding a tenant tree changes NO digest the resident session re-derives —
 `release.yaml::expected_code_digest` folds `*.py` bytes under the two installed
 package roots only, and each policy's `canonical_digest` is computed from its
