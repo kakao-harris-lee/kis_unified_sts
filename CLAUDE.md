@@ -81,7 +81,7 @@ What runs is the TOS kernel plus a read-only operator surface.
   (design: `docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md` §3).
 - **tos work starts from `tos/CLAUDE.md`**, which lists the tos working set
   (`tos/`, `tos-spec/`, `tos-evidence/`, `tools/tos_*`, `tests/tools/test_tos_*`,
-  `docs/plans/*tos*`, `config/tos_completion.yaml`). Agents on tos tasks should
+  `docs/plans/*tos*`). Agents on tos tasks should
   search and edit inside that set and treat `shared/`, `services/`, and the
   frontend as out of scope.
 - Repo split is deferred to the live gate (design §6.2) and, when it happens,
@@ -202,27 +202,13 @@ Execution authority today is the TOS kernel, where a strategy is Tenant Content
      Routine fixes, config edits, and doc changes go straight to implementation.
 - **Do not reinvent the wheel.** A bespoke parser/tokenizer/checker is the
   last resort, not the first move; prefer proven tooling and existing modules.
-- **Read the index before the contract (operator directive, 2026-09-01).** Any
-  task touching the Phase-0 completion contract
-  (`docs/plans/2026-08-12-tos-phase0-completion-contract-design.md`, 10k lines /
-  1.3MB) starts with the derived index, not the document:
-
-  ```bash
-  python tools/tos_contract_index.py --locate S-26     # section/identifier -> line range
-  python tools/tos_contract_index.py                   # full derived map
-  ```
-
-  Locate the identifier or section first, then read only that range. Do not scan
-  the whole file, and do not summarize it — this arc failed seven consecutive
-  reviews writing summaries (`dad94fd3`); the disposition that passed was
-  "point at the source, do not paraphrase". The index is a generated artifact:
-  if `--check` reports stale, regenerate it rather than trusting it.
-  The contract body is frozen and blob-bound (`bound_set_digest`) — never edit
-  it as a side effect of other work; any byte change resets the S-26 closure
-  counter and blocks D0-A entry. Since the 2026-10-22 rescope
-  (`docs/plans/2026-10-22-tos-rescope-plan.md`) the contract is a historical
-  record: S-26 closure and the per-row Evidence programme are no longer pursued,
-  and TOS completion is the plan's `TOS_PAPER_READY` (§2).
+- **Phase-0 판정 장치는 퇴역했다 (2026-11-12,
+  `docs/plans/2026-11-12-phase0-retirement-plan.md`).** 완료 계약서, 그 인덱스
+  도구(`tos_contract_index.py`), 완료/계약 검사기(`tos_completion_status.py` ·
+  `tos_contract_check.py`), U-17 예방 통제, 그리고 그들의 CI 단계가 전부
+  삭제됐다 — Phase 0 는 2026-10-22 서명(#920)으로 닫혔고 완료 기준은
+  `TOS_PAPER_READY` 다. 내용은 git 이력에 그대로 있다
+  (`git log --diff-filter=D -- docs/plans/2026-08-12-*`).
 
 ## Development Commands
 
@@ -242,6 +228,8 @@ TOS checkers (what CI gates on — see `.github/workflows/tos-{gate,firewall}.ym
 ```bash
 python tools/tos_spec_status.py --check
 python tools/tos_firewall_check.py
+python tools/tos_redigest.py --check   # the `tos-gate` required check, since 2026-11-12
+python tools/tos_size_budget.py --check
 mypy tools/tos_*.py tools/tos_cp3 --ignore-missing-imports --explicit-package-bases  # tos-firewall-static runs this
 # `lint-imports` as CI runs it (.github/workflows/tos-firewall.yml): plain, after
 # an editable install of the root project and tos/runtime. Without that install
@@ -345,6 +333,7 @@ Agent roster, skill list, directory layout, and execution detail live under
 | 2026-09-11 | **Codex code scope reopened, bounded** — hard-to-reverse paths (live order paths, money movement, risk limits, auth/credentials, DB migrations, data purge) may go to `codex-gate` / `codex-reviewer` once the operator approves scope and cost; every other code diff stays with the Claude-side lane. Supersedes the 2026-09-04 blanket exclusion | CLAUDE.md, codex-gate, codex-reviewer, codex-plan-reviewer | A week with zero cross-model review of code left Claude approving its own code; cost is bounded by scope, not by prohibition |
 | 2026-10-22 | **Review policy R1–R7** — review by risk grade (A/B/C, docs and evidence PRs need no review lane), at most two rounds, only a HIGH with a concrete failing input blocks, plans ≤300 lines, a new guard needs a real incident, no meta-judgment, one-table measurement records · Phase-0 contract becomes a historical record (TOS rescope) | CLAUDE.md | Three months of TOS work moved zero Evidence rows; the Phase-0 contract grew to 10,723 lines over 81 reviews and one docs PR took four rounds — the review process, not the code, was the bottleneck |
 | 2026-08-30 | Doc-only fix to the model-lanes paragraph: it claimed every audit lens runs on Sonnet 5, contradicting the 2026-08-25 row and the actual frontmatter (`architecture-auditor`/`security-auditor` are Opus) | CLAUDE.md | Cost audit found the prose had drifted from the pinned `model:` values; agent files unchanged |
+| 2026-11-12 | **Phase-0 판정 장치 퇴역** — 완료 계약서·인덱스 도구·완료/계약 검사기·U-17 예방 통제와 그 CI 단계를 삭제. 필수 체크 `tos-gate` 는 이름을 유지하고 내용만 `tos_redigest --check`(살아 있는 핀 게이트)로 교체 | CLAUDE.md, tos/CLAUDE.md, `.github/workflows/tos-{gate,firewall,test}.yml`, `tools/`, `tos-spec/`, `docs/` | Phase 0 는 2026-10-22 서명(#920)으로 닫혔고 완료 기준은 `TOS_PAPER_READY` 다. 역사 기록이 된 판정 장치가 PR 마다 수 분의 CI 와 저장소 부피의 큰 몫을 계속 먹었다 (계획: `docs/plans/2026-11-12-phase0-retirement-plan.md`) |
 
 ## Documentation Map
 

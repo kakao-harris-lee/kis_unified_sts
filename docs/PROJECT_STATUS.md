@@ -68,12 +68,11 @@ Static checks rerun on 2026-10-06:
   remain **NOT_AUTHORIZED**. Non-blocking baseline warning: the older completion
   development plan says 163 profile keys while the current profile derives 164
   (16 null in both).
-- `tools/tos_completion_status.py --check`: **GREEN, violations=0**.
-  Completion observations still include `planned_unassigned_pairs=749`,
-  `blank_normative_ref_rows=22` and profile-dependent blocked evidence.
-  Checker success does not certify complete implementation or authorize trading.
-- The 2026-10-04 conversation's RED observation is superseded by this rerun;
-  no change to the frozen completion contract was made.
+- `tools/tos_completion_status.py --check` was rerun GREEN on the same date.
+  That checker, the completion contract it judged and the rest of the Phase-0
+  governance machinery were **retired on 2026-11-12**
+  ([plan](plans/2026-11-12-phase0-retirement-plan.md)); Phase 0 closed with the
+  2026-10-22 signature (#920) and completion is now `TOS_PAPER_READY`.
 
 #861 later received an independent Claude-side post-merge review ([11 findings + 8 notes](https://github.com/kakao-harris-lee/kis_unified_sts/pull/861#issuecomment-6016550580)), disposed by #864, which itself went through two review rounds and an independent verifier before merge; author self-checks and CI still are not independent approval.
 CP-0 documents layers/interfaces/disposition; later stages cover command design,
