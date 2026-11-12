@@ -1174,11 +1174,18 @@ def assert_dsl_refs_are_published(
             ``tos_runtime.strategy.loader`` admits.
 
     Raises:
-        ProduceFieldsError: a referenced name is not in ``publish``, or the
-            directory holds no strategy at all (a tenant whose DSL cannot be
-            read is not a tenant whose DSL agrees).
+        ProduceFieldsError: a referenced name is not in ``publish``; the
+            directory does not exist or holds no strategy at all; or a strategy
+            file cannot be parsed. Every one of those is "the DSL could not be
+            read", and a tenant whose DSL cannot be read is not a tenant whose
+            DSL agrees — so each refuses rather than passing quietly.
     """
     published = {entry.name for entry in document.publish}
+    if not strategies_dir.is_dir():
+        raise ProduceFieldsError(
+            f"{strategies_dir}: not a directory — the publish set cannot be "
+            "checked against a strategy that is not there"
+        )
     strategy_files = sorted(
         path
         for path in strategies_dir.iterdir()
@@ -1211,7 +1218,27 @@ def _dsl_resolved_value_refs(path: Path) -> set[str]:
     reference is found wherever the DSL puts it (``all_of`` comparisons today,
     anywhere a ``ref`` is legal tomorrow) and a commented-out one is correctly
     not a reference.
+
+    A file ``yaml.safe_load`` cannot read — malformed, or a multi-document
+    stream, which it refuses outright — would otherwise leave this function
+    raising a ``yaml`` error the producer's caller does not catch, and a file
+    that parses to anything but a mapping carries no ``ref`` at all and would
+    report agreement it never checked. Both refuse by name.
     """
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ProduceFieldsError(
+            f"{path}: not loadable as a single YAML document ({exc}) — the "
+            "publish set cannot be checked against a DSL that cannot be read"
+        ) from exc
+    if not isinstance(document, dict):
+        raise ProduceFieldsError(
+            f"{path}: parsed as {type(document).__name__}, not a mapping — a "
+            "strategy document that declares no rules cannot be checked, and "
+            "reporting agreement with it would be agreement with nothing"
+        )
+
     found: set[str] = set()
 
     def walk(node: Any) -> None:
@@ -1231,7 +1258,7 @@ def _dsl_resolved_value_refs(path: Path) -> set[str]:
             for value in node:
                 walk(value)
 
-    walk(yaml.safe_load(path.read_text(encoding="utf-8")))
+    walk(document)
     return found
 
 
@@ -1256,54 +1283,87 @@ def produce_bars_declarative(
     * the ``raw_event_id`` / ``as_of_ms`` derivation and the scalar-field
       assertion, so a declarative line and a legacy line join in B3.
 
-    Every frame bar is EVALUATED, including the ones no day emits: ``atr`` and
-    ``session.vwap_typical`` are defined over the whole frame and the
+    Which bars are REPLAYED is the witness's rule, restated here from the same
+    two counts the legacy lineage reconciles with (:func:`_bar_accounting`):
+    ``MarketContextReplay.iter_contexts`` yields from the 60th bar onward and
+    additionally skips every bar whose session has no previous session, so the
+    leading ``warmup + first-session`` bars are read but never decided on.
+    They go to :meth:`~shared.indicators.fields.FieldEvaluator.warm`, which
+    advances ``atr``/``session.vwap_typical`` — defined over the whole frame on
+    both sides — and leaves the ``gated_*`` windows untouched, exactly as the
+    legacy setup's ``check()`` never ran on them. They are not counted as
+    replayed, for the same reason the legacy does not count them.
+
+    Every ADMITTED bar is evaluated, including the ones no day emits: the
     ``gated_*`` windows must advance identically, which is the same reason the
     legacy loop replayed them.
 
     A bar the evaluator REFUSES (``FieldEvalError`` — ``ratio_z`` on a zero
-    ATR, by the same contract the legacy's early return took) is omitted with
-    its reason rather than aborting the run: the legacy reached that bar and
-    omitted it too, so an omission is the faithful outcome.
+    ATR, by the same contract the legacy's early return took) is omitted
+    **with the reason this producer's own gate gives it**, so the legacy and
+    declarative lineages carry the same bytes. A refusal the gate does NOT
+    name is a declaration defect and aborts the run rather than being counted
+    as a quiet bar.
     """
     evaluator = FieldEvaluator(document)
     records: list[FieldRecord] = []
     omitted: list[tuple[str, str]] = []
     bars_replayed = 0
     non_target = 0
-    for row in df.itertuples(index=False):
-        bar = FieldBar.create(
-            row.timestamp,
-            open=float(row.open),
-            high=float(row.high),
-            low=float(row.low),
-            close=float(row.close),
-            volume=float(row.volume),
-        )
+    admitted_from = replay_admission_offset(df)
+    for index, row in enumerate(df.itertuples(index=False)):
+        try:
+            bar = FieldBar.create(
+                row.timestamp,
+                open=float(row.open),
+                high=float(row.high),
+                low=float(row.low),
+                close=float(row.close),
+                volume=float(row.volume),
+            )
+        except FieldEvalError as exc:
+            # Same judgement as `_inputs_unusable` makes on a non-finite input:
+            # NaN/inf is a defect in the Parquet tree, not a legitimately quiet
+            # bar, and counting it as an omission would hide a corrupt dataset.
+            raise ProduceFieldsError(
+                f"{exc} — the Parquet window is corrupt; omitting the bar "
+                "would hide that"
+            ) from exc
+        if index < admitted_from:
+            evaluator.warm(bar)
+            continue
         bars_replayed += 1
         now = bar.ts_kst
         on_an_emit_day = emit_days is None or now.date() in emit_days
+        raw_event_id = derive_raw_event_id(symbol, now)
         try:
             evaluated = evaluator.step(bar)
         except FieldEvalError as exc:
+            unusable = _gate_verdict(exc.values)
+            if unusable is None:
+                raise ProduceFieldsError(
+                    f"{raw_event_id}: the declaration refused this bar for a "
+                    f"reason the omission gate does not name ({exc}) — that is "
+                    "a defect in fields.yaml, not an unpublishable bar, and "
+                    "counting it as one would publish a shorter file quietly"
+                ) from exc
             if on_an_emit_day:
-                omitted.append(
-                    (
-                        derive_raw_event_id(symbol, now),
-                        f"evaluator refused: {exc}",
-                    )
-                )
+                omitted.append((raw_event_id, unusable))
             else:
                 non_target += 1
             continue
         if not on_an_emit_day:
             non_target += 1
             continue
-        raw_event_id = derive_raw_event_id(symbol, now)
         values = evaluated.values
-        unusable = _inputs_unusable(
-            *(_declared_number(values, name) for name in ("close", "vwap", "atr"))
-        )
+        numbers = _gate_numbers(values)
+        if numbers is None:
+            raise ProduceFieldsError(
+                "the declaration does not carry close/vwap/atr as numbers, so "
+                "the omission gate cannot be evaluated and the run would "
+                f"publish bars whose z may be undefined ({raw_event_id})"
+            )
+        unusable = _inputs_unusable(*numbers)
         if unusable is not None:
             omitted.append((raw_event_id, unusable))
             continue
@@ -1320,9 +1380,12 @@ def produce_bars_declarative(
         )
     if not records:
         raise ProduceFieldsError(
-            "the declaration yielded no publishable bars: a window shorter "
-            f"than its longest warmup, {len(omitted)} unusable-input bars, or "
-            f"{non_target} bars outside the stitch manifest's target segment"
+            "the declaration yielded no publishable bars: a window no longer "
+            f"than the {admitted_from} bars dropped before replay (the "
+            "warmup and the frame's first session), a window shorter than the "
+            f"declaration's longest warmup, {len(omitted)} unusable-input "
+            f"bars, or {non_target} bars outside the stitch manifest's target "
+            "segment"
         )
     return ProducedBars(
         records=records,
@@ -1332,21 +1395,63 @@ def produce_bars_declarative(
     )
 
 
-def _declared_number(values: Mapping[str, Any], name: str) -> float:
-    """One evaluated field as a float, for the omission gate.
+def replay_admission_offset(df: Any) -> int:
+    """How many leading frame bars the witness reads but never decides on.
 
-    ``close``/``vwap``/``atr`` are the three UNSCALED field names every shipped
-    declaration carries; a declaration that renamed them would reach the gate
-    with nothing to check, so a missing one is a refusal rather than a zero.
+    ``MarketContextReplay.iter_contexts`` yields from index
+    ``DEFAULT_WARMUP_BARS`` onward and additionally skips every bar whose
+    session has no previous session in the frame — which is the first session
+    date. Both skips land in a leading RUN of bars, so the admitted set is the
+    frame minus a prefix, and that prefix length is exactly the pair
+    :func:`_bar_accounting` reports and ``build_lineage`` reconciles against.
+    Deriving it from that one function is what keeps the declarative producer's
+    ``bars_replayed`` and the lineage cross-check from drifting apart.
+
+    A declarative driver feeds this prefix to
+    :meth:`~shared.indicators.fields.FieldEvaluator.warm` — the frame-wide
+    ``atr``/VWAP advance, the ``gated_*`` windows do not, which is precisely
+    what the witness does by precomputing the former over the whole frame and
+    never calling ``check()`` on the latter.
     """
-    value = values.get(name)
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
-        raise ProduceFieldsError(
-            f"the declaration's {name!r} is {value!r}, not a number — the "
-            "omission gate cannot be evaluated, so the run would publish bars "
-            "whose z may be undefined"
-        )
-    return float(value)
+    warmup_skipped, first_session_dropped = _bar_accounting(df)
+    return warmup_skipped + first_session_dropped
+
+
+def _gate_numbers(values: Mapping[str, Any]) -> tuple[float, float, float] | None:
+    """The three omission-gate inputs, or ``None`` if they are not all there.
+
+    ``close``/``vwap``/``atr`` are the UNSCALED field names every shipped
+    declaration carries; a declaration that renamed them would reach the gate
+    with nothing to check, which is a refusal and never a zero. ``None`` is
+    returned rather than raised because the two callers answer it differently:
+    on an evaluated bar it is a declaration defect, while on a REFUSED bar it
+    only means the gate cannot explain the refusal.
+    """
+    numbers: list[float] = []
+    for name in ("close", "vwap", "atr"):
+        value = values.get(name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        numbers.append(float(value))
+    close, vwap, atr = numbers
+    return close, vwap, atr
+
+
+def _gate_verdict(values: Mapping[str, Any]) -> str | None:
+    """Ask the omission gate to name a REFUSED bar, else ``None``.
+
+    The refusal the gate is expected to name is ``ratio_z`` dividing by a zero
+    ``atr``: the legacy loop reached the same bar, returned early from
+    ``check()`` on ``atr <= 0`` and omitted it as ``atr_14 <= 0 (z is
+    undefined)``. Reusing :func:`_inputs_unusable` rather than restating that
+    sentence is what keeps the two lineages' ``omitted`` reasons byte-identical
+    — the lineage lists ``sorted({reason})``, so one differing word is a
+    differing file.
+    """
+    numbers = _gate_numbers(values)
+    if numbers is None:
+        return None
+    return _inputs_unusable(*numbers)
 
 
 def produce_records(

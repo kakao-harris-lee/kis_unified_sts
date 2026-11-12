@@ -56,19 +56,31 @@ The one asymmetry that is reported WITHOUT failing is a frame bar the journal
 never carried (``journal_declared_only_ids``); see :func:`_compare_journal` for
 the two measured causes.
 
-Why the compared days must start after the window is FILLED
------------------------------------------------------------
+Which bars each side's causal windows sample
+--------------------------------------------
 The legacy's causal windows advance only on bars
 ``MarketContextReplay.iter_contexts`` yields, and that excludes the frame's
 first session entirely (no prior-session close) plus the 60-bar replay warmup.
-The declarative evaluator, by contrast, sees every bar — which is correct for
-``atr``/``session.vwap_typical``, because the witness itself precomputes those
-over the whole frame. So the two sides sample the ``gated_*`` windows from
-different starting points, and they agree only once the ``vol_window_bars``
-window holds nothing but bars both sides sampled.
+The declarative side skips exactly the same prefix
+(``produce_fields.replay_admission_offset``), warming ``atr`` and
+``session.vwap_typical`` over it — which is correct, because the witness itself
+precomputes those over the whole frame — and leaving the ``gated_*`` windows
+untouched, because the witness's ``check()`` never ran on those bars.
 
-That condition is not invented here: it is the live producer's own seed stopping
-rule (``tools/tos_cp3/live_producer/frame.py::build_seed`` — "walk trading days
+Before 2026-11-11 the declarative side here stepped every bar instead, so the
+two sides sampled the ``gated_*`` windows from different starting points and
+agreed only once the ``vol_window_bars`` window held nothing but bars both had
+sampled. That is no longer a precondition of equality: the samples are the same
+samples, from the first admitted bar.
+
+Why the compared days must still start after the window is FILLED
+-----------------------------------------------------------------
+Not for equality any more, but because a ``gated_percentile`` over a
+part-filled window is not the quantity the tenant's threshold was chosen
+against — agreement on a 90th percentile of 200 samples says nothing about the
+780 the live producer runs on. That condition is not invented here: it is the
+live producer's own seed stopping rule
+(``tools/tos_cp3/live_producer/frame.py::build_seed`` — "walk trading days
 backwards until the causal vol window is FILLED", counted by
 ``tools/tos_cp3/minute_probe.py::seed_capacity``). This harness reuses
 ``seed_capacity`` to report the capacity standing before the first compared day,
@@ -123,6 +135,7 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     load_stitched_bars,
     load_strategy_inputs,
     produce_bars,
+    replay_admission_offset,
     resolve_open_anchor,
 )
 from tools.tos_cp3.stitch import load_manifest  # noqa: E402
@@ -634,12 +647,20 @@ def run_declarative(
 ) -> tuple[dict[str, dict[str, Any]], list[tuple[str, str]]]:
     """Evaluate ``fields.yaml`` over the frame and emit the same bars B1a would.
 
-    Every frame bar is EVALUATED — the causal windows must advance identically,
-    and ``atr``/``session.vwap_typical`` are defined over the whole frame — but a
-    bar is emitted only when it falls on an emit day and its inputs can carry
-    their published meaning. That second test is ``produce_fields._inputs_unusable``
-    itself, not a restatement of it, so the two omitted lists are answers to one
-    question.
+    Every ADMITTED frame bar is EVALUATED — the causal windows must advance
+    identically — but a bar is emitted only when it falls on an emit day and its
+    inputs can carry their published meaning. That second test is
+    ``produce_fields._inputs_unusable`` itself, not a restatement of it, so the
+    two omitted lists are answers to one question.
+
+    The leading bars the witness reads but never decides on (the replay warmup
+    and the frame's first session, ``produce_fields.replay_admission_offset``)
+    are WARMED instead: ``atr``/``session.vwap_typical`` advance, because the
+    witness precomputes those over the whole frame, and the ``gated_*`` windows
+    do not, because the witness's ``check()`` never ran on those bars. This is
+    the same driver ``produce_fields.produce_bars_declarative`` runs — it has to
+    be, or this harness would be measuring a declaration under a driver the
+    producer does not use.
 
     Returns:
         ``(records_by_raw_event_id, omitted)``.
@@ -647,7 +668,8 @@ def run_declarative(
     evaluator = FieldEvaluator(inputs.document)
     records: dict[str, dict[str, Any]] = {}
     omitted: list[tuple[str, str]] = []
-    for row in inputs.df.itertuples(index=False):
+    admitted_from = replay_admission_offset(inputs.df)
+    for index, row in enumerate(inputs.df.itertuples(index=False)):
         bar = FieldBar.create(
             row.timestamp,
             open=float(row.open),
@@ -656,6 +678,9 @@ def run_declarative(
             close=float(row.close),
             volume=float(row.volume),
         )
+        if index < admitted_from:
+            evaluator.warm(bar)
+            continue
         raw_event_id = derive_raw_event_id(inputs.symbol, bar.ts_kst)
         try:
             evaluated = evaluator.step(bar)
