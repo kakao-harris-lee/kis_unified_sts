@@ -7,7 +7,7 @@
 This document tracks current runtime performance targets for the KIS Unified STS
 stack. RL/TFT runtime paths and ClickHouse are retired; their old SLA reference
 is archived at
-[`archive/performance_slas-rl-era.md`](archive/performance_slas-rl-era.md).
+`archive/performance_slas-rl-era.md`.
 
 ## Component SLAs
 

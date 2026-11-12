@@ -2,6 +2,10 @@
 
 > **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-09-06 KST.**
 
+> **2026-11-12 — 미참조 과거 문서 정리.** 저장소 어디에서도 참조하지 않는 과거
+> 문서를 삭제했다. 그런 문서를 가리키던 링크는 경로만 코드스팬으로 남겼다 —
+> 내용은 git 이력에 그대로 있다: `git log --diff-filter=D -- docs/`.
+
 This is the single per-asset roadmap. For the live runtime snapshot see
 [PROJECT_STATUS.md](PROJECT_STATUS.md); for the plan catalogue see
 [plans/INDEX.md](plans/INDEX.md). Status legend: **done** ✅ · **in-progress** 🔄 ·
@@ -10,16 +14,16 @@ This is the single per-asset roadmap. For the live runtime snapshot see
 Trusted current sources cited below:
 [PROJECT_STATUS.md](PROJECT_STATUS.md),
 [plans/INDEX.md](plans/INDEX.md),
-[plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md](plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md),
-[plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md),
+`plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md`,
+`plans/2026-06-22-quant-ops-workbench-uiux.md`,
 [runbooks/futures-pipeline-cutover-f9.md](runbooks/futures-pipeline-cutover-f9.md),
 [runbooks/stock-pipeline-cutover-m5d.md](runbooks/stock-pipeline-cutover-m5d.md),
-[superpowers/specs/2026-06-27-signals-decision-trace-design.md](superpowers/specs/2026-06-27-signals-decision-trace-design.md),
-[testing/quant-ops-workbench-2026-06-27.md](testing/quant-ops-workbench-2026-06-27.md),
+`superpowers/specs/2026-06-27-signals-decision-trace-design.md`,
+`testing/quant-ops-workbench-2026-06-27.md`,
 [investigations/2026-06-28-quant-system-gap-research.md](investigations/2026-06-28-quant-system-gap-research.md),
-[plans/2026-07-04-runtime-refactoring-roadmap.md](plans/2026-07-04-runtime-refactoring-roadmap.md),
-[superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md),
-[plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
+`plans/2026-07-04-runtime-refactoring-roadmap.md`,
+`superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md`,
+`plans/2026-07-02-unified-investment-system-roadmap.md`.
 
 All times are KST (Asia/Seoul). Strategy `enabled` flags in
 `config/strategies/{stock,futures}/*.yaml` are the single source of truth for
@@ -39,10 +43,10 @@ RISK_ON / NEUTRAL / RISK_OFF regime, per-track reaction rules (score ≥ 70 →
 no new longs + hedge review), an integrated whole-asset MDD circuit breaker,
 and full dashboard transparency.
 
-Master strategy doc: [통합_투자_시스템_전략_설계서.md](통합_투자_시스템_전략_설계서.md).
+Master strategy doc: `통합_투자_시스템_전략_설계서.md`.
 Implementation roadmap (authoritative for this track, includes design-doc ↔
 codebase reconciliation):
-[plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
+`plans/2026-07-02-unified-investment-system-roadmap.md`.
 
 ### Current operating state (2026-07-03)
 
@@ -127,7 +131,7 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 
 | Phase / Milestone | Status | Gate / Owner |
 |---|---|---|
-| Quant Ops Workbench plan (multi-agent implementation lanes, contracts, gates) | ✅ done | [plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md) |
+| Quant Ops Workbench plan (multi-agent implementation lanes, contracts, gates) | ✅ done | `plans/2026-06-22-quant-ops-workbench-uiux.md` |
 | P0 Ops Cockpit 2.0 | ✅ done | `/api/health/summary` now exposes ops summary DTO with process/data freshness/scheduler/producers/forecasting/pipeline/mode |
 | P0 Signal Decision Trace | ✅ done | `/signals` and `GET /api/signals/{signal_id}/trace` show LLM context, strategy inputs, thresholds, risk/orderability detail, lifecycle lineage, scorecard, and evidence gaps |
 | P0 Risk & Exposure Board | ✅ done | `/risk` shows portfolio totals, strategy exposure, symbol exposure, daily loss, and futures long/short signed exposure |
@@ -136,7 +140,7 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | P1 Strategy Promotion Kanban | ✅ done | `/builder` includes read-only Draft -> Live Gated board with explicit present/missing/not-available evidence |
 | P1 Universe & Data Coverage Explorer | ✅ done | `/coverage` and `/api/coverage` show screener universe, trade targets, daily indicator gaps, and latest experiment coverage |
 | P2 Setup C / Event Context diagnostics | ✅ done | `/event-context` and `/api/event-context/diagnostics` show Setup C latest eval, event-score freshness/sparsity, source timeline, config mismatch warnings, and no-signal root cause |
-| P2 Workbench UI/UX QA pass | ✅ done | Vitest/Testing Library smoke coverage plus Playwright fallback desktop/mobile screenshots cover `/risk`, `/coverage`, `/trades`, `/builder`, `/event-context`, and `/signals`; evidence: [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md), [testing/quant-ops-workbench-2026-06-27.md](testing/quant-ops-workbench-2026-06-27.md) |
+| P2 Workbench UI/UX QA pass | ✅ done | Vitest/Testing Library smoke coverage plus Playwright fallback desktop/mobile screenshots cover `/risk`, `/coverage`, `/trades`, `/builder`, `/event-context`, and `/signals`; evidence: `testing/quant-ops-workbench-2026-06-25.md`, `testing/quant-ops-workbench-2026-06-27.md` |
 
 ### Open next-steps
 
@@ -188,7 +192,7 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
   cooldown behavior and `opening_volume_surge` post-close behavior when no
   explicit cutoff is configured.
 - The active runtime refactoring plan is
-  [plans/2026-07-04-runtime-refactoring-roadmap.md](plans/2026-07-04-runtime-refactoring-roadmap.md):
+  `plans/2026-07-04-runtime-refactoring-roadmap.md`:
   add thin Interface/Decorator/Factory surfaces first, then split high-cost
   modules while preserving stream contracts and runtime behavior.
 - Runtime large-file refactoring priority 3 is merged. The public import
@@ -208,7 +212,7 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | Milestone | Status | Gate / Owner |
 |---|---|---|
 | Dead/stale docs and unused-code cleanup | ✅ done | `b8cec3d`; stale docs archived, dashboard host-port drift audited |
-| Multi-agent code-quality cleanup plan | ✅ done | [superpowers/plans/archive/2026-06-25-code-quality-cleanup-multi-agent.md](superpowers/plans/archive/2026-06-25-code-quality-cleanup-multi-agent.md) |
+| Multi-agent code-quality cleanup plan | ✅ done | `superpowers/plans/archive/2026-06-25-code-quality-cleanup-multi-agent.md` |
 | Shared strategy entry gates + behavior tests | ✅ done | `shared/strategy/entry/gates.py`, `tests/unit/strategy/entry/` |
 | Strategy registry table-driven registration | ✅ done | `tests/unit/strategy/test_registry_builtin_components.py` |
 | Runtime defaults centralization | ✅ done | `shared/config/runtime_defaults.py`, `CLAUDE.md` |
@@ -219,7 +223,7 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | Orchestrator metrics sync helper | ✅ done | `services/trading/metrics_sync.py` |
 | Broker verifier delegation guard | ✅ done | `tests/unit/trading/test_orchestrator_broker_verifier_delegation.py` |
 | Strategy close/cooldown guardrails | ✅ done | `tests/unit/strategy/entry/test_entry_gate_integration_momentum_opening.py` |
-| `/trades` screenshot/interaction QA refresh | ✅ done | [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md) |
+| `/trades` screenshot/interaction QA refresh | ✅ done | `testing/quant-ops-workbench-2026-06-25.md` |
 | LLM YAML loader helper split | ✅ done | `tests/unit/llm/test_config_yaml_loading.py` |
 | Runtime large-file split priority 3 | ✅ done | `83e94681`; `position_tracker`, `indicator_engine`, `data_provider`, `stock_strategy/daemon`, `runtime_ledger` split with targeted pytest/ruff/black/py_compile |
 
@@ -240,17 +244,17 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | Market-data bootstrap split | ✅ done | `services/trading/market_data_bootstrap.py`; orchestrator facades assign KIS client, price feed, data provider, and tick publisher results |
 | Startup sequence extraction | ✅ done | `services/trading/startup_sequence.py`; `_initialize_components` delegates startup ordering behind focused tests |
 | Orchestrator decomposition | 🔄 in-progress | `services/trading/orchestrator.py` remains the compatibility runtime; pure initialization guard helpers, kill-switch request parsing, entry-priority sorting, signals_all row mapping, session wake calculation, and runtime-capital risk alignment now live in owner modules, while the next larger slices are execution/order lifecycle, kill-switch/live guard side effects, universe/market-data runtime, and position transitions |
-| Runtime refactoring next priorities | 🔄 in-progress | [superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md) tracks completed CLI/dashboard/KIS/OHLCV second-wave splits plus remaining P1/P2/P3 lanes, tests, verification commands, and conflict rules |
+| Runtime refactoring next priorities | 🔄 in-progress | `superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md` tracks completed CLI/dashboard/KIS/OHLCV second-wave splits plus remaining P1/P2/P3 lanes, tests, verification commands, and conflict rules |
 | Event-driven futures primary runtime | ⏳ planned | Keep F-9 as the only approved replacement path for the monolithic futures runtime; validate shadow chain and O13 kill-switch coverage before cutover |
 | New-architecture plan P0–P6 (TA-Lib SoT · declarative builder · vectorbt · risk primitives · futures read-models) | 🔄 in-progress | [plans/2026-07-08-new-architecture-refactoring-plan.md](plans/2026-07-08-new-architecture-refactoring-plan.md) — P0/P1/P3 landed, P2 pilots deferred (vocabulary gap), P4 filters landed (margin_gate/leverage enforce on paper since 2026-07-12), P5 read-models advisory-only; open: single risk orchestrator, legacy backtest engine retirement (기본값은 2026-09-07 vectorbt 로 전환됨 · engine.py 는 폴백으로 잔존), `FuturesMarketContextV2` exposure, Hedge v2, KIS facade (after F-9) |
-| Unified-system review follow-ups O11–O17 | 🔄 in-progress | [plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md) §8 — 2026-09-06 code re-check: O15-① resolved; small fixes landed for O14-③/④, O11-② (missing `futs_prdy_ctrt` → None), O11-③ TTL 51h + single-sourced staleness/max-age bound, O17-① history floor, O11-④ KST-now helper; O13/O14-①/O11-③ `night`/O12-② landed 2026-09-06 (PR #646); 2026-09-06 evening: O11-④ float parsers converged where value-preserving; O16 sector pipeline and O12-① premarket score persistence deferred by operator decision (6c/7b) |
+| Unified-system review follow-ups O11–O17 | 🔄 in-progress | `plans/2026-07-02-unified-investment-system-roadmap.md` §8 — 2026-09-06 code re-check: O15-① resolved; small fixes landed for O14-③/④, O11-② (missing `futs_prdy_ctrt` → None), O11-③ TTL 51h + single-sourced staleness/max-age bound, O17-① history floor, O11-④ KST-now helper; O13/O14-①/O11-③ `night`/O12-② landed 2026-09-06 (PR #646); 2026-09-06 evening: O11-④ float parsers converged where value-preserving; O16 sector pipeline and O12-① premarket score persistence deferred by operator decision (6c/7b) |
 
 ### Open next-steps
 
 - Follow the active runtime refactoring plan: the contract/decorator/factory
   surfaces, first orchestrator owner modules, and second-wave CLI/dashboard/KIS
   parser splits are merged. Next work should use
-  [superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md)
+  `superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md`
   to split the remaining execution/order lifecycle, universe/market-data
   helpers, kill-switch side effects/live guard, KIS response mappers, backfill
   planning/sinks, and large tests. Treat universe/market-data helpers as the
@@ -309,7 +313,7 @@ that shortens the design → backtest → paper → feedback loop.
 | HAR-RV log-RV forecast transition | 🔄 in-progress | model JSON preserves RV history after reload; local CSV/Parquet refit and raw-vs-log validation CLIs exist; real-data refit/backtest + ~1wk shadow still required before switching config from `rv_target: raw` |
 | `technical_consensus` reactivation | 🔄 in-progress | strong long-horizon backtest vs recent ~3wk live loss → regime-verify, then small |
 | `momentum_breakout` redesign / retune | 🔄 in-progress | retune still negative (recent Sharpe ≈ −5.24); observe in paper |
-| Strategy Lab Phase 1–7 (visual design → backtest → paper → feedback) | 🔄 in-progress | design done ([plans/2026-05-26-strategy-lab-extension-design.md](plans/2026-05-26-strategy-lab-extension-design.md)); Quant Ops Workbench UI/UX expansion complete ([plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md)); remaining Strategy Lab work is non-Workbench backtest/paper workflow depth |
+| Strategy Lab Phase 1–7 (visual design → backtest → paper → feedback) | 🔄 in-progress | design done (`plans/2026-05-26-strategy-lab-extension-design.md`); Quant Ops Workbench UI/UX expansion complete (`plans/2026-06-22-quant-ops-workbench-uiux.md`); remaining Strategy Lab work is non-Workbench backtest/paper workflow depth |
 | Nextrade/ATS best-execution readiness | ⏳ planned | follow [runbooks/market-structure-policy.md](runbooks/market-structure-policy.md); decide KRX-only v1 vs ATS/SOR track; if SOR, add venue quote ingestion, best-execution audit logs, midpoint/stop-limit policy, schedule guards, and paper simulator calibration |
 | Position-recovery drill + Redis/SQLite E2E smoke | ⏳ planned | after each cutover / process restart |
 | MLflow restart (localhost:5000 down) | ⏳ planned | ops |
@@ -323,7 +327,7 @@ that shortens the design → backtest → paper → feedback loop.
   serialization preserves RV history and the log-RV/refit code path exists, but
   default config remains `rv_target: raw` until the validation gate passes. See
   [runbooks/har-rv-log-rv-validation.md](runbooks/har-rv-log-rv-validation.md) and
-  [plans/2026-06-02-stock-reopt-har-rv-followups.md](plans/2026-06-02-stock-reopt-har-rv-followups.md).
+  `plans/2026-06-02-stock-reopt-har-rv-followups.md`.
 - Decide `technical_consensus` reactivation after regime verification (small size
   first); use `scripts/ops/stock_strategy_readiness.py` with real backtest/paper
   evidence before any YAML change.
@@ -353,10 +357,10 @@ not determine those Critical Input axes. The current Setup A/C tuning and
 `llm_adaptive` implementation still expose direction/threshold/size dependence,
 although the reverified monolithic quantity call does not pass LLM context to
 the sizer. The non-authorizing migration and operator gates are recorded in
-[plans/2026-08-02-futures-llm-determinism-migration-plan.md](plans/2026-08-02-futures-llm-determinism-migration-plan.md).
+`plans/2026-08-02-futures-llm-determinism-migration-plan.md`.
 Thresholds live in YAML; runtime state is Redis DB 1 + the SQLite ledger. RL/TFT
 prediction paths are removed and must not be reintroduced
-([plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md](plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md)).
+(`plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md`).
 
 ### Current operating state
 
@@ -408,7 +412,7 @@ prediction paths are removed and must not be reintroduced
 |---|---|---|
 | Phase 1–4 paradigm shift (data infra, scoring, decision engine, execution) | ✅ done | — |
 | Phase 2 cutover (LLM-primary + Setup A/C; RL shadow → off, 2026-05-11) | ✅ done | — |
-| RL/TFT fully removed (#402, 2026-06-03) | ✅ done | [plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md](plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md) |
+| RL/TFT fully removed (#402, 2026-06-03) | ✅ done | `plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md` |
 | F-1..F-8 decoupled chain implemented + double-trade guard (#424–#431) | ✅ done | — |
 | RegimeGate P2-③ injected (#330) | ✅ done | ClickHouse audit table best-effort → PERMISSIVE on miss (no behavior change) |
 | Over-trading / fast stop-out fixes (#479) | ✅ done | — |

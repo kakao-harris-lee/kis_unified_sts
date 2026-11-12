@@ -3,8 +3,8 @@
 - 작성일: 2026-06-03
 - 상태: ClickHouse 제거 반영 완료
 - 관련 계획:
-  - [plans/2026-06-03-runtime-storage-decoupling-implementation.md](plans/2026-06-03-runtime-storage-decoupling-implementation.md)
-  - [plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md](plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md)
+  - `plans/2026-06-03-runtime-storage-decoupling-implementation.md`
+  - `plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md`
 
 ## 요약
 

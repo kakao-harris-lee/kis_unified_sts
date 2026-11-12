@@ -3,6 +3,11 @@
 **Last updated**: 2026-11-08 (legacy runtime removal L1–L6). Earlier sections
 keep their original dates and are historical records, not current state.
 
+> **2026-11-12 — 미참조 과거 문서 정리.** 저장소 어디에서도 참조하지 않는 과거
+> 문서를 삭제했다. 아래 historical 절에서 그런 문서를 가리키던 링크는 경로만
+> 코드스팬으로 남겼다 — 내용은 git 이력에 그대로 있다:
+> `git log --diff-filter=D -- docs/`.
+
 ## Legacy runtime removed — 2026-11
 
 The legacy KIS trading runtime is gone. The removal plan
@@ -101,7 +106,7 @@ Unlike the snapshot above, this section records a live host inspection.
 - [TOS integration plan](plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md):
   Control Plane, first paper tenant and legacy disposition sequencing.
 - [ROADMAP.md](ROADMAP.md): existing Cross-Asset + Stock + Futures strategy roadmap;
-  [cross-asset detail](plans/2026-07-02-unified-investment-system-roadmap.md).
+  `plans/2026-07-02-unified-investment-system-roadmap.md`.
 - Normative TOS contracts/registers remain authoritative for conformance and
   authorization. These status and planning documents do not replace them.
 
@@ -173,9 +178,9 @@ Unlike the snapshot above, this section records a live host inspection.
   root causes. Workbench UI/UX QA now has committed Vitest smoke coverage plus
   desktop/mobile
   Playwright fallback screenshot evidence for degraded empty-state render paths:
-  [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md).
+  `testing/quant-ops-workbench-2026-06-25.md`.
   `/signals` trace QA was refreshed on 2026-06-27:
-  [testing/quant-ops-workbench-2026-06-27.md](testing/quant-ops-workbench-2026-06-27.md).
+  `testing/quant-ops-workbench-2026-06-27.md`.
 
 <a id="cross-asset-unified-investment-system-phases-06-shadow"></a>
 
@@ -374,7 +379,7 @@ facade, runtime config extraction, re-entry guard helpers, startup sequence,
 execution facade/runtime helpers, market-data bootstrap, and
 `PositionRecoveryService`. Compatibility imports and monkeypatch surfaces are
 kept. The remaining actionable backlog is now grouped by priority in
-[superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md):
+`superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md`:
 P1 orchestrator execution/initialization/kill-switch slices, P2 dashboard
 trades route + CLI + universe/market-data helpers, and P3 KIS/backfill/test
 decomposition.
@@ -402,7 +407,7 @@ stock-strategy, and runtime-ledger tests passed, as did targeted `ruff check`,
 
 **2026-07-02 to 2026-07-03** - Unified investment system Phases 0–6 merged.
 Built the cross-asset track from the master design doc
-([통합_투자_시스템_전략_설계서.md](통합_투자_시스템_전략_설계서.md)) plus a
+(`통합_투자_시스템_전략_설계서.md`) plus a
 market-structure-based Market Risk Score for bear-market response: P0 data
 foundation, P1 risk score + `/market`, P2 track gates, P3 whole-asset MDD
 circuit breaker + `track_id` ledger, P4 mini-KOSPI200 hedge advisor
@@ -414,7 +419,7 @@ market-risk/portfolio) before commit. Remaining work is operator gates only —
 backfill + scheduler rebuild, shadow-to-enforce flips, the circuit-breaker
 `--execute` drill, and Track A holdings registration. Detail and open items
 (O11–O17) in
-[plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
+`plans/2026-07-02-unified-investment-system-roadmap.md`.
 Operationally important: O13 flags that the monolithic futures paper path may
 leave kill-switch conditions unevaluated — decide coverage before F-9 cutover.
 
@@ -454,11 +459,11 @@ Static audit refreshed the exact strategy roster and Workbench QA evidence
 language. Enabled strategies still match config. Disabled stock variants and
 futures `_futures` strategy names are now listed explicitly, and Workbench QA no
 longer claims committed browser/screenshot evidence. Audit note:
-[investigations/2026-06-25-roadmap-codebase-consistency.md](investigations/2026-06-25-roadmap-codebase-consistency.md).
+`investigations/2026-06-25-roadmap-codebase-consistency.md`.
 
 **2026-06-25** - Multi-agent code-quality cleanup completed.
 Implemented the high-priority cleanup plan in
-[superpowers/plans/archive/2026-06-25-code-quality-cleanup-multi-agent.md](superpowers/plans/archive/2026-06-25-code-quality-cleanup-multi-agent.md):
+`superpowers/plans/archive/2026-06-25-code-quality-cleanup-multi-agent.md`:
 shared strategy entry gates, table-driven registry registration, centralized
 runtime defaults, centralized dashboard query intervals, Strategy Builder
 reducer/YAML serializer extraction, `/trades` page componentization, broker
@@ -488,7 +493,7 @@ Playwright fallback verification covered `/risk`, `/coverage`, `/trades`,
 The pass checked route headings, degraded empty states, refresh/tab
 interactions, console errors, visible interactive overlap, and retained
 screenshots under
-[testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md).
+`testing/quant-ops-workbench-2026-06-25.md`.
 
 **2026-06-25** - High-priority roadmap implementation slices.
 F-9 now has a read-only verifier and dry-run-first rollback helper:
@@ -536,7 +541,7 @@ Pre-decoupled stock paper guides, historical backtest-review placeholders,
 host-crontab registration docs, and obsolete RL/ClickHouse-era plans were
 archived or de-indexed. The roadmap now includes a cross-asset Quant Ops
 Workbench track with a multi-agent implementation plan:
-[plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md).
+`plans/2026-06-22-quant-ops-workbench-uiux.md`.
 Current operators should start from [ROADMAP.md](ROADMAP.md), this status page,
 and runbooks.
 
@@ -583,7 +588,7 @@ Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top i
   evidence); `momentum_breakout` redesign (retune still negative);
   non-Workbench Strategy Lab build-out; decide KRX-only stock v1 vs Nextrade/ATS
   SOR readiness before enabling `ats_routing`. See
-  [plans/2026-06-02-stock-reopt-har-rv-followups.md](plans/2026-06-02-stock-reopt-har-rv-followups.md).
+  `plans/2026-06-02-stock-reopt-har-rv-followups.md`.
 - **Futures:** F9 decoupled cutover gates (shadow → Gate 2 → operator-gated
   cutover) before replacing the orchestrator path; Phase 5 Gate 1–3 to small
   live; run the F-9 verifier and evidence-bundle compiler with real Gate 1/Phase
@@ -602,12 +607,12 @@ Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top i
   `portfolio.yaml::circuit_breaker.mode`; register Track A holdings; and decide
   the O13 monolithic kill-switch coverage before F-9 cutover. Full checklist and
   open items O11–O17 in
-  [plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
+  `plans/2026-07-02-unified-investment-system-roadmap.md`.
 - **Both:** Paper/live E2E smoke with Redis + SQLite only after each cutover;
   position-recovery drill after process restart; MLflow restart
   (`localhost:5000` down); refresh Workbench desktop/mobile screenshot/accessibility
   QA artifacts when those routes change; continue runtime refactoring from
-  [superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md)
+  `superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md`
   with one orchestrator lane at a time and the remaining independent
   dashboard/KIS/backfill/test lanes in parallel where possible. Use
   `scripts/ops/ops_readiness_check.py` as the offline checklist; live service

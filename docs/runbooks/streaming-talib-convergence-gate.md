@@ -2,8 +2,8 @@
 
 - 작성일: 2026-07-06
 - 성격: 데이터 서버 실행 런북 (값이 바뀌는 라이브 변경의 승격 게이트)
-- 선행 계획: [../plans/2026-07-06-talib-builder-alignment.md](../plans/2026-07-06-talib-builder-alignment.md) (Phase C/F)
-- 형식 참고: [../plans/2026-07-04-indicator-m2-handoff.md](../plans/2026-07-04-indicator-m2-handoff.md) (ADX/RSI Wilder 게이트)
+- 선행 계획: `../plans/2026-07-06-talib-builder-alignment.md` (Phase C/F)
+- 형식 참고: `../plans/2026-07-04-indicator-m2-handoff.md` (ADX/RSI Wilder 게이트)
 
 ## 배경
 

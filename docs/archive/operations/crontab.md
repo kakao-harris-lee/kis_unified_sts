@@ -4,7 +4,7 @@
 > path. KIS one-shot jobs run through the Compose `scheduler` profile and
 > market-hours producers run through `producers`. Use
 > [cron-to-compose-cutover.md](../../runbooks/cron-to-compose-cutover.md) and
-> [deployment.md](../../deployment.md) for current operations.
+> `../../deployment.md` for current operations.
 
 ## Required crontab entries (deploy user)
 
