@@ -459,7 +459,7 @@ def test_every_module_is_imported() -> None:
     """
     # S2-c (2026-11-13) removed three more: `tos.nontrade`, `tos_runtime.nontrade` and
     # `tos_runtime.compose._nontrade_eval_dispatch`, deleted with the package.
-    assert len(_IMPORTED_MODULES) >= 73
+    assert len(_IMPORTED_MODULES) >= 70
     on_disk = _module_names_on_disk()
     # The two distribution roots are imported by construction — every name in
     # the list is a submodule of one of them — and are not walk seeds

@@ -319,11 +319,22 @@ class EngineEvent(FrozenModel):
     kind: EventKind
     decision_tick: DecisionTickPayload | None = None
     egress_result: EgressResultPayload | None = None
+    #: **Deserialization compatibility only** (S2-c, 2026-11-13). The ``CORPORATE_ACTION``
+    #: kind and its payload type are gone, but every durable inbox row written before that
+    #: carries ``"corporate_action": null`` — and :class:`~tos.canonical.FrozenModel` is
+    #: ``extra="forbid"``, so dropping the key outright makes
+    #: :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.next_unconsumed` refuse every
+    #: pre-existing row (measured 2026-11-13: 125,644/125,644 rows across the three live CP-3
+    #: leaves). Keeping the key ALSO keeps ``model_dump`` byte-identical, which is what makes
+    #: :func:`event_identity` — the inbox's duplicate-admission key — stable across this
+    #: change. Typed ``None``, so a non-null value is unconstructable rather than merely
+    #: unread. Remove once every leaf has been rotated to a genesis written without the key.
+    corporate_action: None = None
 
     @model_validator(mode="after")
     def _payload_matches_kind(self) -> EngineEvent:
         """Reject an event whose payload does not match its kind (fail-closed)."""
-        fields = ("decision_tick", "egress_result")
+        fields = ("decision_tick", "egress_result", "corporate_action")
         expected = {
             EventKind.DECISION_TICK: "decision_tick",
             EventKind.EGRESS_RESULT: "egress_result",
@@ -767,6 +778,13 @@ class EngineEvidenceRecord(FrozenModel):
     #: alongside ``EvidenceKind.RESULT_UNMATCHED`` (non-APPLIED) and ``EGRESS_RESULT_CONSUMED``
     #: (APPLIED) — never inferred from ``halt_reason`` alone.
     result_disposition: ResultDisposition | None = None
+    #: **Deserialization compatibility only** (S2-c, 2026-11-13) — see
+    #: :attr:`EngineEvent.corporate_action` for the full reason. Stored evidence rows written
+    #: before S2-c carry ``"nontrade_disposition": null``, and
+    #: :func:`~tos_runtime.backtest.calibration_report` re-validates stored rows through THIS
+    #: model, so dropping the key would make every such row fail ``extra="forbid"``. Typed
+    #: ``None`` — unconstructable non-null, never read.
+    nontrade_disposition: None = None
     capacity_state: CapacityState | None = None
     knowledge: EgressKnowledge | None = None
     #: The re-injected egress result's own reported magnitudes and broker execution identity
