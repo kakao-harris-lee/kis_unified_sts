@@ -35,7 +35,6 @@ from tos.rcl import (
     ReservationScope,
     TransitionCause,
 )
-from tos.spg import GovernedDimensionLimit, HardSafetyEnvelope
 from tos.venue import ActionClass
 from tos.workload import RuntimeIdentity
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -300,16 +299,6 @@ def _seed_prior_close(
 # ===========================================================================
 
 
-def _hse() -> HardSafetyEnvelope:
-    return HardSafetyEnvelope(
-        governed_dimensions=(
-            GovernedDimensionLimit(
-                dimension=_ARE_DIM_ID, envelope_max=Decimal("100"), unit="CONTRACTS"
-            ),
-        )
-    )
-
-
 def _scenario_set() -> AdverseScenarioSet:
     scenario_set = AdverseScenarioSet.issue(
         scheme=_SCHEME,
@@ -386,7 +375,6 @@ def _service(
         are_policy=are_policy,
         afg_policy=afg_policy,
         scheme=_SCHEME,
-        hse_envelope=_hse(),
         scenario_set=_scenario_set(),
         required_scenario_kinds=are_policy.required_scenario_kinds,
         position_reader=EvidencePositionReader(

@@ -109,6 +109,12 @@ _runtime:
       dimension: "LONG_SHORT_DELTA_DIRECTIONAL"
   effective_limits:
     "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL": 1
+  # `envelope_max` — 6단계 `injected_envelope_max` 상한. 2026-11-13 S2-a 이전까지는
+  # `safety_envelope.yaml::envelope.governed_dimensions[].envelope_max` 에 있었고
+  # 값은 그대로다(안전망 제거 전 실측: 네 트리 모두 "1"). 로더는 `dimension_ids` 의
+  # 모든 id 에 대해 이 값을 요구한다 — 상한 없는 차원은 부팅 거부.
+  envelope_max:
+    "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL": 1
   required_scenario_kinds: ["ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ"]
   required_scopes: ["INSTRUMENT"]
   applicable_risk_scopes: ["INSTRUMENT"]
