@@ -159,6 +159,7 @@ class _TimeConfigKwargs(TypedDict):
     trading_calendar_version: str
     verification_profile_version: str
     safety_profile_version: str
+    time_health_snapshot_heartbeat_ms: int
 
 
 class _TimeConfigKwargsPartial(TypedDict, total=False):
@@ -180,6 +181,7 @@ class _TimeConfigKwargsPartial(TypedDict, total=False):
     trading_calendar_version: str
     verification_profile_version: str
     safety_profile_version: str
+    time_health_snapshot_heartbeat_ms: int
 
 
 def _config(**overrides: Unpack[_TimeConfigKwargsPartial]) -> TrustworthyTimeConfig:
@@ -199,6 +201,7 @@ def _config(**overrides: Unpack[_TimeConfigKwargsPartial]) -> TrustworthyTimeCon
         "trading_calendar_version": "cal-1",
         "verification_profile_version": "vp-0",
         "safety_profile_version": "sp-0",
+        "time_health_snapshot_heartbeat_ms": 60_000,
     }
     base.update(overrides)
     return TrustworthyTimeConfig(**base)
@@ -729,6 +732,195 @@ def test_time_wall_clock_exposed_evidence_appended_exactly_once() -> None:
         r for r in evidence.appended if r.kind == "TIME_WALL_CLOCK_EXPOSED"
     ]
     assert len(exposed_again) == 1
+
+
+# ----------------------------------------------------------------------------
+# TIME_HEALTH_SNAPSHOT evidence cadence: on judged-content change, plus a
+# heartbeat — never once per evaluate() cycle. The evaluate()/snapshot cadence
+# itself is deliberately untouched (see the last assertions of each test).
+# ----------------------------------------------------------------------------
+
+#: One engine pass, as measured on the 2026-10-22 session (~408 ms, p90 411) — the real
+#: cadence this gate exists to stop writing a row for.
+_PASS_MS = 400
+_HEARTBEAT_MS = 60_000
+
+
+def _snapshot_rows(evidence: InMemoryEvidenceDouble) -> list[AppendedRecord]:
+    return [r for r in evidence.appended if r.kind == "TIME_HEALTH_SNAPSHOT"]
+
+
+#: ``_steady_trusted``'s return shape, aliased so the signature stays one line.
+_SteadyTrusted = tuple[
+    TrustworthyTimeService,
+    "InMemoryEvidenceDouble",
+    FakeMonotonicSource,
+    FakeReferenceReader,
+]
+
+
+def _steady_trusted(*, heartbeat_ms: int = _HEARTBEAT_MS) -> _SteadyTrusted:
+    """A started service parked in a steady TRUSTED state — two rows written (the
+    SYNCHRONIZING cycle and the TRUSTED one), both real judged-content changes.
+    """
+    monotonic = FakeMonotonicSource(1000)
+    reader = FakeReferenceReader()
+    service, evidence = _build(
+        monotonic=monotonic,
+        references=[reader],
+        config=_config(time_health_snapshot_heartbeat_ms=heartbeat_ms),
+    )
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING
+    monotonic.value += _PASS_MS
+    service.evaluate()  # -> TRUSTED
+    assert service.health_state is HealthState.TRUSTED
+    assert len(_snapshot_rows(evidence)) == 2
+    return service, evidence, monotonic, reader
+
+
+def test_identical_evaluations_append_one_row_then_one_heartbeat() -> None:
+    """N identical cycles write NO row until the heartbeat falls due, and then exactly one.
+
+    100 passes at the measured 400 ms cadence is 40 s — inside the 60 s heartbeat — and
+    under the per-cycle write this replaced it would have been 100 rows.
+    """
+    service, evidence, monotonic, _ = _steady_trusted()
+    snapshots = []
+    for _ in range(100):
+        monotonic.value += _PASS_MS
+        snapshots.append(service.evaluate())
+
+    assert len(_snapshot_rows(evidence)) == 2  # still only the two transitions
+
+    # The evaluate()/snapshot cadence itself did NOT change: every one of those cycles
+    # issued and exposed its own fresh snapshot, at its own instant.
+    assert len({snap.snapshot_id for snap in snapshots}) == 100
+    assert [snap.issue_monotonic_value for snap in snapshots] == sorted(
+        snap.issue_monotonic_value for snap in snapshots  # type: ignore[type-var]
+    )
+    assert service.current_snapshot() is snapshots[-1]
+
+    # Cross the heartbeat: exactly one more row, and it is a full snapshot payload, not a
+    # reduced "still alive" marker.
+    monotonic.value += _HEARTBEAT_MS
+    beat = service.evaluate()
+    rows = _snapshot_rows(evidence)
+    assert len(rows) == 3
+    assert rows[-1].payload["snapshot_id"] == beat.snapshot_id
+    assert rows[-1].record_class == "TIME_HEALTH_SNAPSHOT"
+
+    # ... and the heartbeat re-arms from the row that was written, not from the cycle count.
+    monotonic.value += _PASS_MS
+    service.evaluate()
+    assert len(_snapshot_rows(evidence)) == 3
+
+
+def test_a_changed_evaluation_appends_immediately_inside_the_heartbeat() -> None:
+    """A judged-content change does not wait for the heartbeat — here the reference
+    source going unreachable, which costs TRUSTED (health_state and reference_sources
+    both move).
+    """
+    service, evidence, monotonic, reader = _steady_trusted()
+    for _ in range(10):
+        monotonic.value += _PASS_MS
+        service.evaluate()
+    assert len(_snapshot_rows(evidence)) == 2
+
+    reader.reachable = False
+    monotonic.value += _PASS_MS
+    service.evaluate()
+
+    rows = _snapshot_rows(evidence)
+    assert len(rows) == 3  # 4 s into a 60 s heartbeat
+    # An unreachable source also supplies no wall clock, so this cycle's suspension is
+    # unknown and the anchor cannot be proven continuous — UNTRUSTED, not holdover.
+    assert service.health_state is HealthState.UNTRUSTED
+    assert rows[-1].payload["health_state"] == HealthState.UNTRUSTED.value
+
+
+def test_a_refusal_reason_alone_is_a_change_worth_a_row() -> None:
+    """``last_transition_reason`` is not carried on the snapshot, so a cycle that newly
+    starts refusing a transition would be invisible to a dump-only comparison.
+
+    Isolated to the reason: ``min_time_independent_reference_count=2`` parks the FSM in
+    SYNCHRONIZING with a reachable source (so the wall clock, and therefore the suspension
+    magnitude, stays known), and a suspension bound well above the injected regression keeps
+    ``suspension_status.suspended`` ``False`` throughout. The regression makes ``anchor_ok``
+    false, which proposes the shape-illegal SYNCHRONIZING -> UNTRUSTED edge the kernel
+    refuses — so health_state, generation, reference_sources and ``suspended`` all hold still
+    and the ONLY thing that moved is the reason.
+    """
+    monotonic = FakeMonotonicSource(1000)
+    service, evidence = _build(
+        monotonic=monotonic,
+        config=_config(
+            min_time_independent_reference_count=2,
+            max_process_suspension_ms=5_000,
+            time_health_snapshot_heartbeat_ms=_HEARTBEAT_MS,
+        ),
+    )
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING (row 1)
+    monotonic.value += _PASS_MS
+    service.evaluate()  # identical: no row
+    assert service.health_state is HealthState.SYNCHRONIZING
+    assert service.last_transition_reason is None
+    assert len(_snapshot_rows(evidence)) == 1
+
+    monotonic.value -= _PASS_MS // 2  # regression: anchor_ok false
+    snapshot = service.evaluate()
+
+    assert service.health_state is HealthState.SYNCHRONIZING
+    assert service.last_transition_reason is not None
+    assert snapshot.suspension_status.suspended is False
+    assert len(_snapshot_rows(evidence)) == 2
+
+
+def test_wall_clock_first_becoming_available_is_a_change_worth_a_row() -> None:
+    """The value of ``wall_clock_observation`` is excluded from the comparison (it moves
+    every cycle and the kernel calls it audit-only), but its PRESENCE is not: the
+    TIME_WALL_CLOCK_EXPOSED announcement cites a snapshot_id and must never cite a row that
+    was never written."""
+    monotonic = FakeMonotonicSource(1000)
+    reader = FakeReferenceReader(wall_clock_unix_ms=None)
+    service, evidence = _build(
+        monotonic=monotonic,
+        references=[reader],
+        config=_config(time_health_snapshot_heartbeat_ms=_HEARTBEAT_MS),
+    )
+    service.start()
+    service.evaluate()
+    monotonic.value += _PASS_MS
+    service.evaluate()
+    assert service.health_state is not HealthState.TRUSTED
+
+    reader.wall_clock_unix_ms = 1_700_000_000_000
+    monotonic.value += _PASS_MS
+    service.evaluate()
+    monotonic.value += _PASS_MS
+    service.evaluate()  # -> TRUSTED, announcement fires
+
+    exposed = [r for r in evidence.appended if r.kind == "TIME_WALL_CLOCK_EXPOSED"]
+    assert len(exposed) == 1
+    written_ids = {r.payload["snapshot_id"] for r in _snapshot_rows(evidence)}
+    assert exposed[0].payload["snapshot_id"] in written_ids
+
+
+def test_a_skipped_row_still_propagates_an_append_failure_when_one_is_due() -> None:
+    """The receipt discipline survives: when a row IS due, a failing append still stops the
+    cycle before any state becomes observable."""
+    service, _, monotonic, reader = _steady_trusted()
+    before = service.current_snapshot()
+
+    service._evidence = RaisingAfterNEvidenceDouble(raise_from_call=1)  # noqa: SLF001
+    reader.reachable = False
+    monotonic.value += _PASS_MS
+    with pytest.raises(RuntimeError):
+        service.evaluate()
+
+    assert service.health_state is HealthState.TRUSTED
+    assert service.current_snapshot() is before
 
 
 def test_time_wall_clock_exposed_never_fires_without_a_reading() -> None:

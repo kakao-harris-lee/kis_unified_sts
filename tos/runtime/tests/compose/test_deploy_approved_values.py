@@ -195,6 +195,9 @@ _VALUE_PINS: dict[str, Any] = {
     "time.yaml::MAX_time_conservative_freshness_age_ms": 1000,
     "time.yaml::MIN_time_independent_reference_count": 1,
     "time.yaml::MAX_send_result_wait_ms": 2000,
+    # Not a VER-002 bound: an operational evidence-volume knob (that key's own YAML comment
+    # carries the 2026-11-13 measurement and the 2026-11-10 disk-full incident, CLAUDE.md R5).
+    "time.yaml::time_health_snapshot_heartbeat_ms": 60000,
     "time.yaml::tz_db_version": "2026c",
     "time.yaml::trading_calendar_version": "krx-2026.11",
     "time.yaml::verification_profile_version": "VERIFICATION-PROFILE-002-v2.1",

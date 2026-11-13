@@ -140,6 +140,7 @@ def config_dir(tmp_path: Path) -> Path:
             "trading_calendar_version": "cal-compose-0",
             "verification_profile_version": "ver-compose-0",
             "safety_profile_version": "safety-compose-0",
+            "time_health_snapshot_heartbeat_ms": 60_000,
         },
     )
     _write_yaml(

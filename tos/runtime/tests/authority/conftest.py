@@ -144,6 +144,7 @@ class _TimeConfigKwargs(TypedDict):
     trading_calendar_version: str
     verification_profile_version: str
     safety_profile_version: str
+    time_health_snapshot_heartbeat_ms: int
 
 
 class _TimeConfigKwargsPartial(TypedDict, total=False):
@@ -165,6 +166,7 @@ class _TimeConfigKwargsPartial(TypedDict, total=False):
     trading_calendar_version: str
     verification_profile_version: str
     safety_profile_version: str
+    time_health_snapshot_heartbeat_ms: int
 
 
 def _time_config(
@@ -186,6 +188,7 @@ def _time_config(
         "trading_calendar_version": "cal-1",
         "verification_profile_version": "vp-0",
         "safety_profile_version": "sp-0",
+        "time_health_snapshot_heartbeat_ms": 60_000,
     }
     base.update(overrides)
     return TrustworthyTimeConfig(**base)

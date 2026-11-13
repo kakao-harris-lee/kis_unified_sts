@@ -43,6 +43,29 @@ MIN_time_independent_reference_count: 1
 # 맞춘다 — 프로세스 정지 한도보다 짧으면 정지 중 전송 결과를 못 기다린다.
 MAX_send_result_wait_ms: 2000
 
+# --- 운영값(비 VER-002 정수) ----------------------------------------------
+
+# TIME_HEALTH_SNAPSHOT 증거 행의 **하트비트 간격**. 판정 내용(trust 상태 · 집계
+# 결과 · 거절 사유 · 소비자가 읽는 그 밖의 필드)이 바뀌면 간격과 무관하게 즉시
+# 쓰고, 바뀌지 않는 동안에는 이 간격마다 한 행만 쓴다.
+# 로더: tos_runtime.time.config._resolve_operational (양의 정수만, 0·null 거부).
+#
+# ⚠ **증거 부피만 제한한다.** 신선도 소비자가 읽는 메모리 안
+# evaluate()/snapshot 주기는 호출자 루프(marketfeed pass, 실측 ~408 ms)이고
+# 이 값은 거기에 전혀 관여하지 않는다.
+#
+# 선택 사유(CLAUDE.md R5 — 새 장치는 그것이 막았을 실제 사고를 옆에 적는다):
+# 2026-11-13 실측, 살아 있는 증거 저장소 전부
+# (~/.local/state/tos/{paper-data,cp3-setup-d-*-data}/*/evidence.sqlite3)에서
+# TIME_HEALTH_SNAPSHOT 이 3.45M 행 중 2.9M(84.4%, 8.3 GB)였다 — 엔진 pass
+# 사이마다 ~400 ms 간격으로 **같은 판정을 다시 적은** 행이다. 2026-11-10
+# 호스트 C: 가 가득 차 돌던 세션들이 LOST 됐다
+# (memory/host-disk-c-full-docker-gc.md).
+#
+# 값 60000(1분): 결정 틱이 1분봉이므로 «그 사이 커널이 계속 돌고 있었다» 를
+# 봉 단위로 증명하면서, 행 수를 세션당 약 57,000 → 약 390(0.7%)으로 줄인다.
+time_health_snapshot_heartbeat_ms: 60000
+
 # --- 비-bound 식별/버전 문자열 -------------------------------------------
 # tos.time.TimeHealthSnapshot 의 _REQUIRED_COVERED 필드. 제안표에 전용 행이
 # 없으므로 아래 각 값의 출처를 개별로 적는다 — 셋 다 **측정/전사**이지 새로

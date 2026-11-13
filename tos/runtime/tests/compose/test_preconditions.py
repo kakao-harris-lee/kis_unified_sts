@@ -484,6 +484,7 @@ def _time_service(tmp_path: Path) -> TrustworthyTimeService:
         trading_calendar_version="cal-1",
         verification_profile_version="vp-0",
         safety_profile_version="sp-0",
+        time_health_snapshot_heartbeat_ms=60_000,
     )
     identity = RuntimeIdentity(cell_id="test-cell", process_nonce="test-nonce-1")
     service = TrustworthyTimeService(

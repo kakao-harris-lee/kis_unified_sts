@@ -105,6 +105,19 @@ _VERSION_KEYS: tuple[str, ...] = (
     "safety_profile_version",
 )
 
+#: Operational (non-VER-002, non-identity) integer keys. Lower-case on purpose: these are NOT
+#: VERIFICATION-PROFILE-002 coordinates and must never be mistaken for one — no Bounds-Approver
+#: row exists for them and none is implied (``git grep`` the name in ``tos-spec/`` returns 0).
+#: They are still configuration rather than a code constant (CLAUDE.md "configuration-driven
+#: only"), and still fail-closed when missing/null, exactly like every key above.
+#:
+#: ``time_health_snapshot_heartbeat_ms`` is the evidence-write cadence
+#: :meth:`tos_runtime.time.service.TrustworthyTimeService.evaluate` applies to its
+#: ``TIME_HEALTH_SNAPSHOT`` row when the judged content did not change. It bounds EVIDENCE
+#: VOLUME only — the in-memory evaluate/snapshot cadence every freshness consumer reads is the
+#: caller's loop and is untouched by it.
+_OPERATIONAL_INT_KEYS: tuple[str, ...] = ("time_health_snapshot_heartbeat_ms",)
+
 #: Bound keys that must be strictly positive rather than merely non-negative (independent review
 #: finding #16, 2026-09-09): ``MAX_send_result_wait_ms`` is the wait bound
 #: :class:`~tos_runtime.engine.driver.EngineDriver`'s ``_TimeoutTracker`` uses before injecting a
@@ -161,6 +174,7 @@ class TrustworthyTimeConfig:
     trading_calendar_version: str
     verification_profile_version: str
     safety_profile_version: str
+    time_health_snapshot_heartbeat_ms: int
 
 
 def _require_mapping(path: Path) -> dict[str, Any]:
@@ -213,6 +227,34 @@ def _resolve_bounds(raw: dict[str, Any]) -> dict[str, Any]:
     return resolved
 
 
+def _resolve_operational(raw: dict[str, Any]) -> dict[str, Any]:
+    """Resolve :data:`_OPERATIONAL_INT_KEYS`, fail-closed on the same three failures the
+    bounds get (missing, still ``null``, wrong type) plus a strict positivity rule.
+
+    Strictly positive, not merely non-negative: a ``0``
+    ``time_health_snapshot_heartbeat_ms`` is not a shorter heartbeat, it is "every cycle is
+    due", i.e. the per-pass write back — the same "a zero is a silently-disabled boundary"
+    reasoning :data:`_STRICTLY_POSITIVE_KEYS` records for ``MAX_send_result_wait_ms``.
+    """
+    missing = [key for key in _OPERATIONAL_INT_KEYS if key not in raw]
+    if missing:
+        raise TimeConfigError(f"time config missing required keys: {missing}")
+    resolved: dict[str, Any] = {}
+    for key in _OPERATIONAL_INT_KEYS:
+        value = raw[key]
+        if value is None:
+            raise TimeConfigError(
+                "time config has unfilled (named-TBD) keys — fail-closed at startup "
+                f"until an operator decision fills them: [{key!r}]"
+            )
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise TimeConfigError(
+                f"time config key {key!r} must be a positive int (got {value!r})"
+            )
+        resolved[key] = value
+    return resolved
+
+
 def _resolve_versions(raw: dict[str, Any]) -> dict[str, Any]:
     missing = [key for key in _VERSION_KEYS if key not in raw]
     if missing:
@@ -249,4 +291,5 @@ def load_time_config(path: Path) -> TrustworthyTimeConfig:
     raw = _require_mapping(path)
     bounds = _resolve_bounds(raw)
     versions = _resolve_versions(raw)
-    return TrustworthyTimeConfig(**bounds, **versions)
+    operational = _resolve_operational(raw)
+    return TrustworthyTimeConfig(**bounds, **versions, **operational)

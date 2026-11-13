@@ -107,6 +107,29 @@ MAX_critical_input_consumer_receipt_age_ms: null
 # (Bounds-Approver)]).
 MAX_time_source_sequence_gap_ms: null
 
+# --- operational (non-VER-002) integers -----------------------------------
+# Lower-case on purpose: these are NOT VERIFICATION-PROFILE-002 coordinates
+# and must not be read as one — no Bounds-Approver row exists for them.
+# Fail-closed all the same: missing, null, non-int or <= 0 is a startup
+# rejection (tos_runtime.time.config._resolve_operational).
+
+# How often tos_runtime.time.service.TrustworthyTimeService.evaluate() may
+# re-append an UNCHANGED TIME_HEALTH_SNAPSHOT evidence row — a heartbeat, on
+# top of the unconditional write whenever the judged content changes.
+#
+# This bounds EVIDENCE VOLUME ONLY. The in-memory evaluate/snapshot cadence
+# every freshness consumer reads is the caller's loop (the marketfeed pass,
+# measured ~408 ms) and is NOT affected by this value.
+#
+# Why the key exists at all (CLAUDE.md R5 — a new knob names the real
+# incident it would have stopped): measured 2026-11-13 across every live
+# evidence store (~/.local/state/tos/{paper-data,cp3-setup-d-*-data}/*/
+# evidence.sqlite3), TIME_HEALTH_SNAPSHOT was 2.9 M of 3.45 M rows (84.4 %,
+# 8.3 GB) — the same judgement re-appended every ~400 ms between engine
+# passes. On 2026-11-10 the host's C: drive filled and the running sessions
+# were LOST (memory/host-disk-c-full-docker-gc.md).
+time_health_snapshot_heartbeat_ms: null
+
 # --- non-bound identity/version strings -----------------------------------
 # Required by tos.time.TimeHealthSnapshot's own _REQUIRED_COVERED fields —
 # an ISSUED snapshot cannot exist without these regardless, so this loader

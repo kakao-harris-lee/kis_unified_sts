@@ -193,9 +193,13 @@ CREATE TABLE IF NOT EXISTS entries (
 #: boot/recovery path (the plan's §7 reader table names each one). Without this index each of
 #: them is a full table scan, so boot cost grows with TOTAL
 #: history even though every one of those readers wants a single kind; ``TIME_HEALTH_SNAPSHOT``
-#: alone is 77 % of the rows and 89 % of the bytes those scans read, and nothing in this
-#: runtime ever reads it back. ``(kind, seq)`` — in that order — makes the filter a range seek
-#: and the ``ORDER BY seq`` free within a kind.
+#: alone was 77 % of the rows and 89 % of the bytes those scans read (84.4 % by the
+#: 2026-11-13 re-measurement over every live store), and nothing in this runtime ever reads it
+#: back. ``(kind, seq)`` — in that order — makes the filter a range seek and the ``ORDER BY
+#: seq`` free within a kind. (Since 2026-11-13 that kind is written on judged-content change
+#: plus a configured heartbeat rather than per engine pass —
+#: ``tos_runtime.time.service``'s module docstring — so the share shrinks; the index earns its
+#: keep on the OTHER kinds' scans regardless, which is what the shape argument above rests on.)
 #:
 #: **This is an auxiliary structure, not a change of stored representation.** No row's bytes,
 #: ``entry_digest`` or ``chain_digest`` move, so the append-only triggers below and
