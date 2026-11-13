@@ -4,36 +4,36 @@
 **The kernel does the judging, this module only observes and folds.** Every fact in
 :class:`~tos_runtime.recovery.inputs.RecoveryInputs` is a structural observation this runtime
 already durably owns (see that module's own docstring for the source of each field). This module
-turns those observations into six :class:`~tos.sbr.records.RecoveryObligation` records — the
+turns those observations into six :class:`~tos_runtime.recovery.readiness.RecoveryObligation` records — the
 runtime is the "owning sibling" that OBSERVES each fact (design #17 §3.5's own division of
 labour: SBR folds, it does not re-derive), never the component that decides what counts as
 closure — and hands the whole set to the kernel's own
-:func:`tos.sbr.predicates.obligation_graph_closed` for the actual judgement (never re-authored
-here). The verdict is the kernel's own :class:`~tos.sbr.vocabulary.ReadinessVerdict` —
+:func:`tos_runtime.recovery.readiness.obligation_graph_closed` for the actual judgement (never re-authored
+here). The verdict is the kernel's own :class:`~tos_runtime.recovery.readiness.ReadinessVerdict` —
 ``READY`` only when the kernel's graph-closure predicate says so, ``NOT_READY`` otherwise; this
 module never invents a third value or a "positive by default" branch.
 
 **Why ``ReadinessVerdict`` and not a runtime-invented ``RESUME_CONSERVATIVE`` literal.** The
 Phase 5 plan (§2 decision 2) names the target state ``RESUME_CONSERVATIVE`` in prose, annotated
-"(커널 sbr 어휘)" — but no such literal exists anywhere in :mod:`tos.sbr` (grepped directly: the
-closest kernel vocabulary is :class:`~tos.sbr.vocabulary.ReadinessVerdict`'s own ``READY``, the
-positive resume value :func:`tos.sbr.predicates.obligation_graph_closed` can actually produce).
+"(커널 sbr 어휘)" — but no such literal exists anywhere in ``tos.sbr`` (retired) (grepped directly: the
+closest kernel vocabulary is :class:`~tos_runtime.recovery.readiness.ReadinessVerdict`'s own ``READY``, the
+positive resume value :func:`tos_runtime.recovery.readiness.obligation_graph_closed` can actually produce).
 Inventing a fifth barrier-state member here would mean authoring a NEW kernel-shaped value
 outside the kernel (exactly what design #17's own truthy-sentinel discipline exists to prevent —
-see :mod:`tos.sbr.vocabulary`'s own module docstring). This module therefore uses
+see :mod:`tos_runtime.recovery.readiness`'s own module docstring). This module therefore uses
 ``ReadinessVerdict.READY`` as that resume value and records the discrepancy here rather than
 silently reinterpreting the plan's prose.
 
-**Truthy-sentinel discipline preserved.** :class:`~tos.sbr.vocabulary.ReadinessVerdict` is
+**Truthy-sentinel discipline preserved.** :class:`~tos_runtime.recovery.readiness.ReadinessVerdict` is
 truthy-untestable (``bool()`` raises) — this module never writes ``if verdict:``; every gate is
 the explicit ``verdict is ReadinessVerdict.READY`` identity check.
 
 **Authority separation, defence in depth.** Every verdict this module produces carries an
-all-false :class:`~tos.sbr.records.RecoveryAuthorityEffect` and is re-checked with
-:func:`tos.sbr.predicates.recovery_authority_separated` before being returned — a validated
+all-false :class:`~tos_runtime.recovery.readiness.RecoveryAuthorityEffect` and is re-checked with
+:func:`tos_runtime.recovery.readiness.recovery_authority_separated` before being returned — a validated
 ``RecoveryAuthorityEffect`` is unconstructable with any ``True`` flag (SBR-INV-003), so this is
 the redundant, load-bearing "never trust an unvalidated block" check that predicate's own
-docstring calls for. :func:`tos.sbr.predicates.recovery_completion_revives_nothing` is also
+docstring calls for. :func:`tos_runtime.recovery.readiness.recovery_completion_revives_nothing` is also
 called (unconditionally ``True``) purely to record, in this module's own call graph, that no
 input here is treated as reviving any prior authority.
 
@@ -45,15 +45,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tos.sbr.predicates import (
+from tos_runtime.recovery.inputs import RecoveryInputs
+from tos_runtime.recovery.readiness import (
+    ObligationResult,
+    ReadinessVerdict,
+    RecoveryAuthorityEffect,
+    RecoveryObligation,
     obligation_graph_closed,
     recovery_authority_separated,
     recovery_completion_revives_nothing,
 )
-from tos.sbr.records import RecoveryAuthorityEffect, RecoveryObligation
-from tos.sbr.vocabulary import ObligationResult, ReadinessVerdict
-
-from tos_runtime.recovery.inputs import RecoveryInputs
 from tos_runtime.recovery.reconciliation import RECON_UNAVAILABLE, ReconciliationOutcome
 
 __all__ = [
@@ -91,7 +92,7 @@ _OBLIGATION_COMPOSITE_STATE_OK = "PHASE5_W1_COMPOSITE_STATE_RESTORE_OK"
 def _satisfied(obligation_id: str, *, ok: bool) -> RecoveryObligation:
     """One flat (no-prerequisite) obligation, SATISFIED iff ``ok`` (module docstring's "the
     runtime observes, the kernel judges" split — this function only stamps the OBSERVED result;
-    :func:`tos.sbr.predicates.obligation_graph_closed` is what actually decides readiness).
+    :func:`tos_runtime.recovery.readiness.obligation_graph_closed` is what actually decides readiness).
     """
     return RecoveryObligation(
         obligation_id=obligation_id,
@@ -210,7 +211,7 @@ class RecoveryVerdict:
     ._recovery_wiring``) needs to durably record it and decide whether to wire a driver at all.
 
     Attributes:
-        readiness_verdict: The kernel's own :class:`~tos.sbr.vocabulary.ReadinessVerdict` —
+        readiness_verdict: The kernel's own :class:`~tos_runtime.recovery.readiness.ReadinessVerdict` —
             truthy-untestable; gate on ``verdict.readiness_verdict is ReadinessVerdict.READY``,
             never ``if verdict.readiness_verdict:``.
         ready: The plain ``bool`` a compose caller actually branches on (the identity-checked
@@ -226,7 +227,7 @@ class RecoveryVerdict:
             .RECONCILED_MATCHED` when cleared, :data:`~tos_runtime.recovery.reconciliation
             .NO_ATTEMPT_ID`, a :class:`~tos_runtime.recon.service.ReconciliationReport`-supplied
             reason, or :data:`RECON_UNAVAILABLE` otherwise).
-        authority_effect: The all-false :class:`~tos.sbr.records.RecoveryAuthorityEffect` this
+        authority_effect: The all-false :class:`~tos_runtime.recovery.readiness.RecoveryAuthorityEffect` this
             verdict carries (SBR-INV-003 — a recovery verdict creates no authority).
     """
 
@@ -249,7 +250,7 @@ class RecoveryBarrier:
 
         Returns:
             The :class:`RecoveryVerdict`. ``READY`` only when
-            :func:`tos.sbr.predicates.obligation_graph_closed` says the six-obligation graph is
+            :func:`tos_runtime.recovery.readiness.obligation_graph_closed` says the six-obligation graph is
             closed; ``NOT_READY`` otherwise (never anything permissive by default).
         """
         obligations = _build_obligations(inputs)
@@ -264,7 +265,7 @@ class RecoveryBarrier:
         # discarding this defence-in-depth re-check exactly when a `-O`-run process would most
         # need it caught — an explicit check raising a typed, never-optimized-away exception
         # survives that mode.
-        if not recovery_authority_separated(effect, forced_ready_requested=False):
+        if not recovery_authority_separated(effect):
             raise RecoveryBarrierInvariantError(
                 "RecoveryAuthorityEffect() must always separate authority — this check "
                 "documents the defence-in-depth re-check design #17 calls for, and should be "

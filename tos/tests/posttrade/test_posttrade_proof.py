@@ -24,28 +24,23 @@ from __future__ import annotations
 
 import inspect
 from decimal import Decimal
-from typing import Any
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from tos.canonical import ArtifactStatus
 from tos.posttrade import (
-    AllFalsePostTradeConsequence,
     FinalityDimensionKind,
     ObligationLegDirection,
     ObligationLegScope,
     PostTradeFinalityProof,
-    PostTradeObligationLifecycleState,
     finality_proof_class_specific,
     finality_proof_current,
     finality_proof_non_transferable,
-    post_trade_consequence_all_false,
 )
 
 from ._posttrade_strategies import (
     clean_finality_proof,
-    clean_obligation_record,
     clean_scope,
 )
 
@@ -380,90 +375,3 @@ def test_currency_is_exactly_generation_equality(bound: int, active: int) -> Non
 
 
 # --- §10 line 312 post_trade_consequence_all_false ---------------------------
-
-
-def test_the_default_consequence_block_passes_the_re_check() -> None:
-    """(defence in depth) A constructible block is all-false."""
-    assert post_trade_consequence_all_false(AllFalsePostTradeConsequence()) is True
-
-
-def test_an_absent_consequence_block_proves_nothing() -> None:
-    """(∅ guard) Nothing to prove is not a proof of nothing."""
-    assert post_trade_consequence_all_false(None) is False
-
-
-@pytest.mark.parametrize("flag", sorted(AllFalsePostTradeConsequence.model_fields))
-@pytest.mark.parametrize("forged", [True, 1, "yes", [1]])
-def test_a_forged_consequence_flag_is_rejected_by_the_re_check(
-    flag: str, forged: object
-) -> None:
-    """(defence in depth) ``model_construct`` skips validators — the predicate does not.
-
-    Every declared flag must be the singleton ``False``, so a truthy non-``bool`` smuggled
-    past the schema is caught here.
-    """
-    forged_values: dict[str, Any] = {flag: forged}
-    forged_block = AllFalsePostTradeConsequence.model_construct(**forged_values)
-    assert post_trade_consequence_all_false(forged_block) is False
-
-
-@pytest.mark.parametrize("flag", sorted(AllFalsePostTradeConsequence.model_fields))
-@pytest.mark.parametrize("falsy", [0, "", [], None, 0.0])
-def test_a_falsy_non_bool_consequence_flag_is_also_rejected(
-    flag: str, falsy: object
-) -> None:
-    """(review MINOR-5) The re-check demands the **singleton** ``False``, not falsiness.
-
-    A ``releases_capacity=0`` block is not a proof that capacity is not released — it is a
-    block whose type discipline was bypassed, and an ``is False`` gate says so while a
-    ``not getattr(...)`` or ``== False`` gate would have waved ``0`` through. This closes the
-    falsy half of the forgery axis; the truthy half is covered above.
-    """
-    falsy_values: dict[str, Any] = {flag: falsy}
-    forged_block = AllFalsePostTradeConsequence.model_construct(**falsy_values)
-    assert post_trade_consequence_all_false(forged_block) is False
-
-
-def test_a_zero_field_consequence_block_proves_nothing() -> None:
-    """(∅ guard; the #21 M26 zero-field lesson) A block declaring no flag proves no absence.
-
-    ``all(...)`` over an empty field set is vacuously ``True``, which would have made an
-    empty block the strongest possible "grants nothing" claim.
-    """
-
-    from tos.posttrade import FrozenModel
-
-    class _NoFlagsAtAll(FrozenModel):
-        """A model whose field set really is empty — the vacuous ``all(...)`` case."""
-
-    class _InheritsTheFive(AllFalsePostTradeConsequence):
-        """A subclass declaring no *new* flag; it still inherits the five, so it passes."""
-
-    assert post_trade_consequence_all_false(_NoFlagsAtAll()) is False  # type: ignore[arg-type]
-    assert post_trade_consequence_all_false(_InheritsTheFive()) is True
-
-
-@pytest.mark.parametrize("state", list(PostTradeObligationLifecycleState))
-def test_no_lifecycle_state_creates_a_consequence(
-    state: PostTradeObligationLifecycleState,
-) -> None:
-    """(§10 line 312) "No lifecycle state creates capacity release, available cash, legal
-    title, or permission" — asserted on **all twelve**, including ``FINALITY_PROVEN``.
-
-    There is deliberately **no positive side** to canary here: no input makes a consequence
-    ``True``, because no consequence is ever granted.
-    """
-    record = clean_obligation_record(lifecycle_state=state)
-    assert post_trade_consequence_all_false(record.consequence) is True
-    assert record.consequence.releases_capacity is False
-    assert record.consequence.makes_cash_available is False
-    assert record.consequence.proves_legal_title is False
-    assert record.consequence.grants_permission is False
-    assert record.consequence.authorizes_transmission is False
-
-
-def test_a_finality_proof_grants_nothing_either() -> None:
-    """(§21 line 492) Finality proves the LEG, not the CONSEQUENCE."""
-    proof = clean_finality_proof()
-    assert finality_proof_class_specific(proof) is True
-    assert post_trade_consequence_all_false(proof.consequence) is True

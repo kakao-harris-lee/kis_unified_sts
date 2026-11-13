@@ -142,18 +142,6 @@ exceptions:
     ``egressgw/venuefacts.py::venue_generation_item_verdict`` 로 이관되고, 이
     모듈에는 ``(attempt, applicability)`` 를 버리고 위임만 하는 얇은 래퍼(약 12줄)만
     남았다(mesh 분리와 동일 패턴) — import 1줄 추가를 감안해도 순감소.
-- target: tos/src/tos/posttrade/predicates.py
-  measured: 1644
-  owner: tos-kernel
-  decomposition_order: 3
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/sci/records.py
-  measured: 1242
-  owner: tos-kernel
-  decomposition_order: 5
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/egressgw/construction.py
   measured: 1239
   owner: tos-kernel
@@ -166,12 +154,6 @@ exceptions:
   measured: 1186
   owner: tos-kernel
   decomposition_order: 7
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/posttrade/vocabulary.py
-  measured: 1002
-  owner: tos-kernel
-  decomposition_order: 11
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/engine/sequencer.py::run_commitment_flow
@@ -243,18 +225,6 @@ exceptions:
     (`session_facts_current`/`tradability_facts_current`/`account_facts_current`)
     로 분할하며 kwargs 선언 1→3줄 + pass-through 배선 1→3줄(순증 4줄) 및 인접
     docstring Args 항목 확장.
-- target: tos/src/tos/posttrade/predicates.py::post_trade_disposition
-  measured: 181
-  owner: tos-kernel
-  decomposition_order: 17
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/sci/predicates.py::admission_admits_only_positive
-  measured: 179
-  owner: tos-kernel
-  decomposition_order: 18
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/engine/pipeline.py::run_decision_pipeline
   measured: 177
   owner: tos-kernel
@@ -286,10 +256,6 @@ exceptions:
   decomposition_order: 26
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/posttrade/predicates.py::obligation_commit_idempotent
-  measured: 103
-  owner: tos-kernel
-  decomposition_order: 28
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/afg/predicates.py::action_flow_decision

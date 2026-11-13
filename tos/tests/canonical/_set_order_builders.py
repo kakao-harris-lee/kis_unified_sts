@@ -37,12 +37,6 @@ from tos.brokercap.records import BrokerCapabilityProfile
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, DigestBoundArtifact, get_scheme
 from tos.cur.records import CurrentnessPolicy, RestrictiveFenceRecord
 from tos.engine.records import EngineEvent, event_identity
-from tos.posttrade.records import StatementCoverageManifest
-from tos.sbr.records import (
-    RecoveryInventoryCut,
-    RecoveryObligation,
-    RecoveryReadinessDecision,
-)
 from tos.venue.records import OrderAdmissibilityDecision, VenueConstraintPolicy
 
 #: Deliberately mixed-length, mixed-case, non-ASCII-carrying set elements.
@@ -59,17 +53,14 @@ MIXED_LENGTH_ELEMENTS: tuple[str, ...] = (
 )
 
 #: The ``DigestBoundArtifact`` subclasses whose covered field tree holds a set
-#: (plan §1.2). Nine of the original 17 are left: two were already deterministic
-#: through a per-model sorter, the other seven were not. The seven safety-mesh
-#: models went with plan S2-a and the two nontrade Trial* models with S2-c.
+#: (plan §1.2). Five of the original 17 are left: two were already deterministic
+#: through a per-model sorter, the other three were not. The seven safety-mesh
+#: models went with plan S2-a, the two nontrade Trial* models with S2-c, and the
+#: sbr trio plus posttrade's StatementCoverageManifest with S2-c's remainder.
 COVERED_SET_MODELS: tuple[type[DigestBoundArtifact], ...] = (
     BrokerCapabilityProfile,
     CurrentnessPolicy,
     RestrictiveFenceRecord,
-    StatementCoverageManifest,
-    RecoveryInventoryCut,
-    RecoveryObligation,
-    RecoveryReadinessDecision,
     OrderAdmissibilityDecision,
     VenueConstraintPolicy,
 )

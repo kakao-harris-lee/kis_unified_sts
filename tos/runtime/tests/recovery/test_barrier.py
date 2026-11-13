@@ -9,7 +9,6 @@ barrier's own decision from :mod:`tos_runtime.recovery.inputs`' assembly (covere
 from __future__ import annotations
 
 import pytest
-from tos.sbr.vocabulary import ReadinessVerdict
 from tos_runtime.recovery import barrier as barrier_module
 from tos_runtime.recovery.barrier import (
     RECON_UNAVAILABLE,
@@ -19,6 +18,7 @@ from tos_runtime.recovery.barrier import (
 from tos_runtime.recovery.inputs import RecoveryInputs
 from tos_runtime.recovery.legacy_receipts import LegacyReceiptFacts
 from tos_runtime.recovery.possibly_live import PossiblyLiveAttempt
+from tos_runtime.recovery.readiness import ReadinessVerdict
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 

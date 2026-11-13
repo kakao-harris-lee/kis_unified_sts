@@ -203,12 +203,6 @@ from tos import (
     recon as k_recon,
 )
 from tos import (
-    sbr as k_sbr,
-)
-from tos import (
-    sci as k_sci,
-)
-from tos import (
     staterestore as k_staterestore,
 )
 from tos import (
@@ -252,8 +246,6 @@ _IMPORTED_MODULES: tuple[ModuleType, ...] = (
     k_posttrade,
     k_rcl,
     k_recon,
-    k_sbr,
-    k_sci,
     k_staterestore,
     k_time,
     k_venue,
@@ -308,10 +300,11 @@ _SRC_ROOTS: dict[str, Path] = {
 #: records, one of them carrying a ``__canonical_set_fields__`` declaration) and
 #: S2-a (the seven safety-mesh model modules) each removed their own models, on top
 #: of the S1-a drop. Deliberate drops, measured against the tree rather than left to
-#: read as a silent import failure.
-_MIN_TREE_SET_MODELS = 22
-_MIN_DIRECT_SET_MODELS = 16
-_MIN_COVERED_SET_MODELS = 9
+#: read as a silent import failure. Re-measured again (22/16/9 -> 15/10/5) after the
+#: S2-c remainder deleted `tos.sci`, `tos.sbr` and the unused part of `tos.posttrade`.
+_MIN_TREE_SET_MODELS = 15
+_MIN_DIRECT_SET_MODELS = 10
+_MIN_COVERED_SET_MODELS = 5
 
 #: Models allowed to hold a set without being a ``FrozenModel``. Empty today;
 #: every entry needs a one-line reason for why its sets never reach a digest.
@@ -432,8 +425,9 @@ def test_every_module_is_imported() -> None:
     """
     # Re-measured 2026-11-13: S2-c removed `tos.nontrade`, `tos_runtime.nontrade` and
     # `tos_runtime.compose._nontrade_eval_dispatch`; S2-a removed the seven safety-mesh
-    # kernel packages and the runtime safety modules that went with them.
-    assert len(_IMPORTED_MODULES) >= 63
+    # kernel packages and the runtime safety modules that went with them; the S2-c
+    # remainder removed `tos.sci` and `tos.sbr` (63 -> 61).
+    assert len(_IMPORTED_MODULES) >= 61
     on_disk = _module_names_on_disk()
     # The two distribution roots are imported by construction — every name in
     # the list is a submodule of one of them — and are not walk seeds

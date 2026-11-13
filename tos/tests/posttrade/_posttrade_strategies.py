@@ -10,12 +10,6 @@ enforce the §7 clean-vs-illegal fixture discipline (the #8 lesson — a "clean"
 * a **clean** :class:`~tos.posttrade.PostTradeFinalityProof` carries a **fully specified**
   six-component scope whose finality class equals the proof's, a present amount, a bound
   generation, and a non-empty ``does_not_prove``;
-* a **clean** :class:`~tos.posttrade.StatementCoverageManifest` is ``FINAL``, has every
-  expected set a subset of its received set with at least one non-empty axis, matching record
-  counts, no missing interval, and a full period / revision / cutoff identity;
-* a **clean** collateral ladder is exclusively free **or** encumbered per unit, pledges within
-  the available magnitude, and reuses a unit only after a positively declared
-  ``CONFIRMED_RELEASE``;
 * the **∅ strategies** deliberately generate empty required-leg sets, empty coverage sets,
   empty dependency sets, empty allocation sequences, and empty proof maps so the ∅-void
   guards are actually exercised (the #10 lesson — a strategy that never emits an empty set
@@ -40,39 +34,19 @@ from typing import Any
 import hypothesis.strategies as st
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.posttrade import (
-    CashKind,
-    CollateralAllocation,
     EconomicObligationRecord,
-    EventObligationLegKind,
     FinalityDimensionKind,
-    MarginCollateralState,
-    MonetaryLeg,
-    ObligationCommitOutcome,
-    ObligationLeg,
     ObligationLegDirection,
     ObligationLegScope,
-    PostTradeBreakRecord,
-    PostTradeDisposition,
     PostTradeFinalityProof,
     PostTradeObligationLifecycleState,
-    StatementClass,
-    StatementCoverageManifest,
 )
-from tos.posttrade.vocabulary import FIELD_CONFIDENCE_CORROBORATED
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 # ---------------------------------------------------------------------------
 # Scalar strategies
 # ---------------------------------------------------------------------------
-
-#: Injected ``bool | None`` flag. ``None`` is UNKNOWN — never a soft pass.
-TRIBOOL = st.sampled_from([True, False, None])
-
-#: A **forged** flag value: the three legitimate ``bool | None`` values plus truthy **and
-#: falsy** non-``bool`` values that a truthiness-based gate would mis-read in either
-#: direction (design #24 §7 — the forgery strategy must carry a falsy axis).
-FORGED_FLAG = st.sampled_from([True, False, None, 1, 0, "", "yes", "", [], [1], "True"])
 
 #: A finite non-negative magnitude (NaN / infinity are unconstructable, §3.1).
 FINITE_NON_NEGATIVE = st.decimals(
@@ -105,9 +79,6 @@ FINITE_NEGATIVE = st.decimals(
 #: the three cases every structural derivation must discriminate.
 MAGNITUDE_SLOT = st.one_of(st.none(), FINITE_NEGATIVE, FINITE_NON_NEGATIVE)
 
-#: The twelve obligation lifecycle states (8 linear + 4 branch).
-LIFECYCLE_STATES = st.sampled_from(list(PostTradeObligationLifecycleState))
-
 #: The ten orthogonal finality dimensions.
 FINALITY_DIMENSIONS = st.sampled_from(list(FinalityDimensionKind))
 
@@ -117,68 +88,6 @@ LEG_DIRECTIONS = st.sampled_from(list(ObligationLegDirection))
 #: Leg-direction subsets **including the empty set** (∅ must be reachable — it is the
 #: structural guard of ``obligation_leg_set_complete``).
 LEG_DIRECTION_SETS = st.frozensets(LEG_DIRECTIONS, min_size=0, max_size=8)
-
-#: The nine event obligation leg kinds.
-EVENT_LEG_KINDS = st.sampled_from(list(EventObligationLegKind))
-
-#: Event-leg subsets **including the empty set**.
-EVENT_LEG_SETS = st.frozensets(EVENT_LEG_KINDS, min_size=0, max_size=9)
-
-#: The six cash kinds.
-CASH_KINDS = st.sampled_from(list(CashKind))
-
-#: The eight margin / collateral states.
-MARGIN_STATES = st.sampled_from(list(MarginCollateralState))
-
-#: The three statement classes **plus** ``None`` (an undeclared classification).
-STATEMENT_CLASSES_OR_NONE = st.sampled_from([*StatementClass, None])
-
-#: The six commit outcomes.
-COMMIT_OUTCOMES = st.sampled_from(list(ObligationCommitOutcome))
-
-#: The five dispositions.
-DISPOSITIONS = st.sampled_from(list(PostTradeDisposition))
-
-#: The three real recon ``FieldConfidenceClass`` tokens this package reads, plus the two it
-#: does not (``SINGLE_SOURCE`` / ``STALE`` are non-empty truthy strings and are **not**
-#: corroboration), plus ``None`` and a forged token.
-FIELD_CONFIDENCE_TOKENS_OR_NONE: list[str | None] = [
-    "CORROBORATED",
-    "UNKNOWN",
-    "CONFLICTED",
-    "SINGLE_SOURCE",
-    "STALE",
-    "",
-    "corroborated",
-    "FORGED",
-    None,
-]
-FIELD_CONFIDENCE_TOKENS = st.sampled_from(FIELD_CONFIDENCE_TOKENS_OR_NONE)
-
-#: Injected nontrade ``NonTradeEventWorkflowState`` tokens plus forged / falsy ones. Every
-#: one of them must leave ``event_state_not_obligation_finality`` unchanged.
-EVENT_STATE_TOKENS = st.sampled_from(
-    [
-        "APPLIED_LOCAL",
-        "RECONCILED",
-        "OBSERVED",
-        "QUARANTINED_UNKNOWN",
-        "",
-        "applied_local",
-        "FINALITY_PROVEN",
-        None,
-    ]
-)
-
-#: Dependency-name sets **including the empty set** (∅ on either side must fail closed).
-DEPENDENCY_SETS = st.frozensets(
-    st.sampled_from(
-        ["book", "parser", "administrator", "transport", "feed", "archive"]
-    ),
-    min_size=0,
-    max_size=4,
-)
-
 
 # ---------------------------------------------------------------------------
 # Per-dimension finality proof maps
@@ -252,42 +161,6 @@ CLEAN_ISSUE_CONTENT: dict[type, dict[str, Any]] = {
         "source_revision": "REV-1",
         "idempotency_key": "IDEM-P1",
     },
-    StatementCoverageManifest: {
-        "manifest_id": "MAN-1",
-        "source_identity": "SOURCE-A",
-        "period_start": "P-START",
-        "period_end": "P-END",
-        "revision": "R1",
-        "issue_id": "ISS-1",
-        "cutoff": "CUTOFF-1",
-        "statement_class": StatementClass.FINAL,
-        "expected_pages": frozenset({"p1", "p2"}),
-        "received_pages": frozenset({"p1", "p2"}),
-        "expected_files": frozenset({"f1"}),
-        "received_files": frozenset({"f1"}),
-        "expected_sections": frozenset({"s1"}),
-        "received_sections": frozenset({"s1"}),
-        "expected_cursors": frozenset({"c1"}),
-        "received_cursors": frozenset({"c1"}),
-        "expected_checksums": frozenset({"h1"}),
-        "received_checksums": frozenset({"h1"}),
-        "expected_record_count": 2,
-        "received_record_count": 2,
-        "missing_intervals": (),
-        "shared_dependencies": frozenset({"book-a", "transport-a"}),
-        "manifest_generation": 1,
-        "idempotency_key": "IDEM-M1",
-    },
-    PostTradeBreakRecord: {
-        "break_id": "BRK-1",
-        "break_scope": "ACCOUNT-A",
-        "source_revision": "REV-1",
-        "old_obligation_version": "V1",
-        "new_obligation_version": "V2",
-        "affected_obligation_refs": ("OBL-1",),
-        "break_generation": 1,
-        "idempotency_key": "IDEM-B1",
-    },
 }
 
 
@@ -344,161 +217,3 @@ def clean_finality_proof(**overrides: Any) -> PostTradeFinalityProof:
     proof = PostTradeFinalityProof.issue(scheme=SCHEME, **content)
     assert isinstance(proof, PostTradeFinalityProof)
     return proof
-
-
-def clean_statement_manifest(**overrides: Any) -> StatementCoverageManifest:
-    """An ISSUED :class:`StatementCoverageManifest` with proven complete coverage.
-
-    Args:
-        **overrides: Covered-content overrides.
-
-    Returns:
-        The issued, digest-verified coverage manifest.
-    """
-    content: dict[str, Any] = dict(CLEAN_ISSUE_CONTENT[StatementCoverageManifest])
-    content.update(overrides)
-    manifest = StatementCoverageManifest.issue(scheme=SCHEME, **content)
-    assert isinstance(manifest, StatementCoverageManifest)
-    return manifest
-
-
-def clean_break_record(**overrides: Any) -> PostTradeBreakRecord:
-    """An ISSUED :class:`PostTradeBreakRecord` (substrate only — no break judgment exists).
-
-    Args:
-        **overrides: Covered-content overrides.
-
-    Returns:
-        The issued, digest-verified break record.
-    """
-    content: dict[str, Any] = dict(CLEAN_ISSUE_CONTENT[PostTradeBreakRecord])
-    content.update(overrides)
-    record = PostTradeBreakRecord.issue(scheme=SCHEME, **content)
-    assert isinstance(record, PostTradeBreakRecord)
-    return record
-
-
-def clean_monetary_leg(**overrides: Any) -> MonetaryLeg:
-    """A conservative :class:`MonetaryLeg` (present, finite, explicitly classified amount).
-
-    Args:
-        **overrides: Field overrides.
-
-    Returns:
-        The monetary leg value model.
-    """
-    fields: dict[str, Any] = {
-        "monetary_type": "FEE",
-        "amount": Decimal("3.50"),
-        "basis": "NOTIONAL",
-        "period": "PERIOD-1",
-        "amount_status": "BROKER_BOOKED",
-        "booked_zero": None,
-        "source_confidence": FIELD_CONFIDENCE_CORROBORATED,
-    }
-    fields.update(overrides)
-    return MonetaryLeg(**fields)
-
-
-def clean_leg(
-    direction: ObligationLegDirection = ObligationLegDirection.CREDIT,
-    magnitude: Decimal | None = Decimal("5.00"),
-    **overrides: Any,
-) -> ObligationLeg:
-    """A gross :class:`ObligationLeg` with a present non-negative magnitude.
-
-    Args:
-        direction: The leg direction.
-        magnitude: The gross magnitude (``None`` builds the UNKNOWN variant).
-        **overrides: Further field overrides.
-
-    Returns:
-        The obligation leg value model.
-    """
-    fields: dict[str, Any] = {
-        "direction": direction,
-        "magnitude": magnitude,
-        "scope": clean_scope(leg=direction),
-    }
-    fields.update(overrides)
-    return ObligationLeg(**fields)
-
-
-def clean_allocation(
-    unit_id: str = "UNIT-1",
-    *,
-    encumbered: bool = False,
-    **overrides: Any,
-) -> CollateralAllocation:
-    """A conserved :class:`CollateralAllocation` — exclusively free or exclusively encumbered.
-
-    Args:
-        unit_id: The collateral unit identity.
-        encumbered: When ``True`` the unit is encumbered against exactly one obligation;
-            otherwise it is free and pledges nothing.
-        **overrides: Further field overrides (used to build the illegal variants).
-
-    Returns:
-        The collateral allocation value model.
-    """
-    if encumbered:
-        fields: dict[str, Any] = {
-            "unit_id": unit_id,
-            "free_magnitude": Decimal("0"),
-            "encumbered_magnitude": Decimal("4.00"),
-            "pledged_magnitude": Decimal("4.00"),
-            "available_magnitude": Decimal("10.00"),
-            "pledged_obligation_ids": ("OBL-1",),
-            "release_state": MarginCollateralState.PLEDGED_COLLATERAL,
-        }
-    else:
-        fields = {
-            "unit_id": unit_id,
-            "free_magnitude": Decimal("10.00"),
-            "encumbered_magnitude": Decimal("0"),
-            "pledged_magnitude": Decimal("0"),
-            "available_magnitude": Decimal("10.00"),
-            "pledged_obligation_ids": (),
-            "release_state": MarginCollateralState.AVAILABLE_EXCESS,
-        }
-    fields.update(overrides)
-    return CollateralAllocation(**fields)
-
-
-def clean_disposition_kwargs(**overrides: Any) -> dict[str, Any]:
-    """The nineteen ``post_trade_disposition`` inputs in their fully proven configuration.
-
-    This is the **only** configuration that reaches ``POST_TRADE_ADMISSIBLE``, and it needs a
-    simulated ``availability_proven=True`` — an L1-only caller always passes ``None`` there
-    and lands on ``POST_TRADE_TRAPPED`` at best (design #24 §5.8 honest disclosure). Every
-    void-table canary is this dict with exactly one entry flipped.
-
-    Args:
-        **overrides: Input overrides.
-
-    Returns:
-        The keyword-argument mapping.
-    """
-    kwargs: dict[str, Any] = {
-        "leg_set_complete": True,
-        "finality_orthogonal": True,
-        "monetary_conservative": True,
-        "netting_proof_ok": True,
-        "counterleg_established": True,
-        "collateral_conserved": True,
-        "margin_states_distinct": True,
-        "cash_kind_ok": True,
-        "event_legs_complete": True,
-        "event_state_not_final_ok": True,
-        "statement_coverage_ok": True,
-        "sources_independent": True,
-        "absence_gate_ok": True,
-        "proof_class_specific": True,
-        "proof_non_transferable": True,
-        "proof_current": True,
-        "commit_outcome": ObligationCommitOutcome.COMMITTED_ONCE,
-        "field_confidence": FIELD_CONFIDENCE_CORROBORATED,
-        "availability_proven": True,
-    }
-    kwargs.update(overrides)
-    return kwargs
