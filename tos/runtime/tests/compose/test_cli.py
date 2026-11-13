@@ -1171,7 +1171,7 @@ def test_rotate_key_real_end_to_end_gen1_then_place_gen2_then_rotate_then_reopen
         reopened.close()
 
 
-# -- rearm / ack-alert / nontrade-eval (runtime operations wiring plan §2 decisions 4/5) -------
+# -- rearm / ack-alert (runtime operations wiring plan §2 decisions 4/5) ----------------------
 
 
 def _write_rearm_files(
@@ -1584,100 +1584,6 @@ def test_ack_alert_refuses_a_bogus_seq(
     )
 
     assert exit_code == 1
-
-
-# -- nontrade-eval ----------------------------------------------------------------------------
-
-
-def test_nontrade_eval_parses_args(tmp_path: Path) -> None:
-    args = cli.parse_args(
-        ["nontrade-eval", "--observation", str(tmp_path / "obs.yaml")]
-    )
-    assert isinstance(args, cli.NontradeEvalArgs)
-
-
-def test_nontrade_eval_prints_disposition_for_a_minimal_observation(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    observation_path = tmp_path / "obs.yaml"
-    observation_path.write_text(
-        yaml.safe_dump(
-            {
-                "observation_id": "obs-1",
-                "event_class": "ADMINISTRATIVE_BROKER",
-                "source_label": "manual-cli-test",
-            }
-        )
-    )
-
-    exit_code = cli.main(["nontrade-eval", "--observation", str(observation_path)])
-
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    assert "disposition=" in captured.out
-    assert "restrictive=" in captured.out
-    assert "predicates:" in captured.out
-    assert "zero evidence was appended to any real store" in captured.out
-
-
-def test_nontrade_eval_refuses_an_unsupported_nested_field(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    observation_path = tmp_path / "obs.yaml"
-    observation_path.write_text(
-        yaml.safe_dump(
-            {
-                "observation_id": "obs-1",
-                "event_class": "ADMINISTRATIVE_BROKER",
-                "source_label": "manual-cli-test",
-                "split_spec": {"pre_quantity": "1"},
-            }
-        )
-    )
-
-    exit_code = cli.main(["nontrade-eval", "--observation", str(observation_path)])
-
-    captured = capsys.readouterr()
-    assert exit_code == 1
-    assert "split_spec" in captured.err
-
-
-def test_nontrade_eval_refuses_a_missing_file(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    exit_code = cli.main(
-        ["nontrade-eval", "--observation", str(tmp_path / "missing.yaml")]
-    )
-
-    captured = capsys.readouterr()
-    assert exit_code == 1
-    assert captured.err
-
-
-def test_nontrade_eval_never_opens_an_evidence_store(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Pins the module docstring's "opens no store, no custody" claim mechanically: if a future
-    edit wired a real store into this subcommand, constructing one here would raise."""
-
-    def _must_not_be_called(*_a: object, **_k: object) -> None:
-        raise AssertionError("nontrade-eval must never construct a SqliteEvidenceStore")
-
-    monkeypatch.setattr(cli, "SqliteEvidenceStore", _must_not_be_called)
-
-    observation_path = tmp_path / "obs.yaml"
-    observation_path.write_text(
-        yaml.safe_dump(
-            {
-                "observation_id": "obs-1",
-                "event_class": "ADMINISTRATIVE_BROKER",
-                "source_label": "manual-cli-test",
-            }
-        )
-    )
-
-    exit_code = cli.main(["nontrade-eval", "--observation", str(observation_path)])
-    assert exit_code == 0
 
 
 # -- _cli_ops.py structural pin (team-lead follow-up: second HAG-gated door) -------------------

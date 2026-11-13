@@ -197,8 +197,8 @@ def build_instance(model_cls: type[_ModelT], depth: int = 0) -> _ModelT:
     return model_cls.model_construct(**values)
 
 
-def corporate_action_event() -> EngineEvent:
-    """A ``CORPORATE_ACTION`` engine event — the non-``covered_content()`` path.
+def decision_tick_event() -> EngineEvent:
+    """A ``DECISION_TICK`` engine event — the non-``covered_content()`` path.
 
     ``event_identity()`` digests ``EngineEvent.model_dump(mode="json")`` directly
     (``tos/src/tos/engine/records.py``), and the runtime's driver recomputes a
@@ -206,7 +206,7 @@ def corporate_action_event() -> EngineEvent:
     ``covered_content()``, which is why the fix has to live in the serializer.
 
     Returns:
-        An engine event whose corporate-action payload carries filled sets.
+        An engine event whose decision-tick payload carries filled sets.
     """
     fields = EngineEvent.model_fields
     kind_annotation = fields["kind"].annotation
@@ -215,7 +215,7 @@ def corporate_action_event() -> EngineEvent:
     values: dict[str, Any] = {
         name: value_for(field.annotation) for name, field in fields.items()
     }
-    values["kind"] = kind_enum["CORPORATE_ACTION"]
+    values["kind"] = kind_enum["DECISION_TICK"]
     return EngineEvent.model_construct(**values)
 
 
@@ -240,7 +240,7 @@ def digest_map() -> dict[str, str]:
         instance = build_instance(model_cls)
         covered = instance.covered_content()
         digests[model_cls.__name__] = scheme.compute_digest(covered)
-    event = corporate_action_event()
+    event = decision_tick_event()
     digests["EngineEvent.event_identity"] = event_identity(event, scheme=scheme)
     # The runtime driver's shape: compute_digest(event.model_dump(mode="json")).
     digests["EngineEvent.payload_digest"] = scheme.compute_digest(

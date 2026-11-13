@@ -111,7 +111,6 @@ from tos_runtime.engine.orthostate_projection import (
 )
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
-from tos_runtime.nontrade.latch import LatchOutcome
 from tos_runtime.posttrade.finality import FinalityProducerPort
 from tos_runtime.time.sources import MonotonicSource
 
@@ -318,10 +317,6 @@ class EngineDriver:
         self._after_turn: Callable[[], None] | None = None
         self._after_turn_failures = 0
         self._after_turn_last_error: str | None = None
-        #: Plan §2 decision 3 — ``latch_restrictive``, bound late (:meth:`bind_nontrade_latch`).
-        self._nontrade_latch: Callable[..., LatchOutcome] | None = None
-        #: Last processed ``CORPORATE_ACTION``'s ``EVENT_CONSUMED`` seq (:meth:`last_nontrade_evidence_seq`).
-        self._last_nontrade_evidence_seq: int | None = None
         #: Re-entrancy guard (re-review finding N3, 2026-09-09): ``True`` for the entire duration
         #: of one :meth:`_process_next` call. ``_send_evidence_exists_after``'s soundness (see its
         #: own docstring) depends on this driver never pulling a second event while the first
@@ -361,16 +356,6 @@ class EngineDriver:
         :meth:`_fire_after_turn`)."""
         self._after_turn = callback
 
-    def bind_nontrade_latch(self, latch: Callable[..., LatchOutcome]) -> None:
-        """Attach :func:`~tos_runtime.nontrade.latch.latch_restrictive` (never imported by type
-        here, mirroring :meth:`bind_gateway`) — called by :meth:`_apply_nontrade_latch` for a
-        restrictive ``CORPORATE_ACTION`` result (plan §2 decision 3)."""
-        self._nontrade_latch = latch
-
-    def last_nontrade_evidence_seq(self) -> int | None:
-        """See :attr:`_last_nontrade_evidence_seq`."""
-        return self._last_nontrade_evidence_seq
-
     def _fire_after_turn(self) -> None:
         """Invoke :attr:`_after_turn` if bound; count and never re-raise a failure."""
         callback = self._after_turn
@@ -399,8 +384,7 @@ class EngineDriver:
 
         Mirrors ``tos.backtest.driver._stamped_tick``/``_stamped_egress``: the caller-supplied
         reference is discarded entirely, because only the driver's own single monotone counter
-        can guarantee "coordinate order == processing order" across every event kind. Kernel
-        round #3 §2 결정 1 added the third (``CORPORATE_ACTION``) branch.
+        can guarantee "coordinate order == processing order" across every event kind.
         """
         reference = self._counter.next_reference()
         if event.kind is EventKind.DECISION_TICK:
@@ -408,22 +392,10 @@ class EngineDriver:
             assert tick_payload is not None
             stamped_tick = tick_payload.model_copy(update={"reference": reference})
             return EngineEvent(kind=EventKind.DECISION_TICK, decision_tick=stamped_tick)
-        if event.kind is EventKind.EGRESS_RESULT:
-            egress_payload = event.egress_result
-            assert egress_payload is not None
-            stamped_egress = egress_payload.model_copy(update={"reference": reference})
-            return EngineEvent(
-                kind=EventKind.EGRESS_RESULT, egress_result=stamped_egress
-            )
-        corporate_action_payload = event.corporate_action
-        assert corporate_action_payload is not None
-        stamped_corporate_action = corporate_action_payload.model_copy(
-            update={"reference": reference}
-        )
-        return EngineEvent(
-            kind=EventKind.CORPORATE_ACTION,
-            corporate_action=stamped_corporate_action,
-        )
+        egress_payload = event.egress_result
+        assert egress_payload is not None
+        stamped_egress = egress_payload.model_copy(update={"reference": reference})
+        return EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=stamped_egress)
 
     # -- crash-window recovery ------------------------------------------------
 
@@ -600,21 +572,15 @@ class EngineDriver:
         outcome_digest: str | None,
         halt_reason: str | None,
         flow_fingerprint: FlowFingerprint | None,
-        nontrade_disposition: str | None = None,
     ) -> tuple[int, int]:
         """Durably append this driver's own ``EVENT_CONSUMED`` receipt.
 
         Args:
             flow_fingerprint: The ``DECISION_TICK`` commitment-flow fingerprint (wave-3 review
-                finding #1(b)) — ``None`` for an ``EGRESS_RESULT``/``CORPORATE_ACTION`` (no
-                ``.flow`` to fingerprint) and for the two crash-window recovery paths above (no
-                fresh ``EventResult`` ever existed for them either — mirrors
-                ``outcome_digest=None``'s own convention there).
-            nontrade_disposition: A ``CORPORATE_ACTION`` event's judged
-                :class:`~tos.nontrade.NonTradeDisposition`, as its own string value (kernel round
-                #3 §2 결정 3) — ``None`` for every other event kind. Replay compares this
-                alongside ``outcome_digest``: a mismatch is a divergence exactly like a digest
-                mismatch (:mod:`tos_runtime.engine.replay`'s own comparison logic).
+                finding #1(b)) — ``None`` for an ``EGRESS_RESULT`` (no ``.flow`` to fingerprint)
+                and for the two crash-window recovery paths above (no fresh ``EventResult`` ever
+                existed for them either — mirrors ``outcome_digest=None``'s own convention
+                there).
 
         Returns:
             ``(evidence_seq, key_generation)`` for :meth:`SqliteEventInbox.mark_consumed`.
@@ -630,7 +596,6 @@ class EngineDriver:
                     if flow_fingerprint is None
                     else flow_fingerprint.model_dump(mode="json")
                 ),
-                "nontrade_disposition": nontrade_disposition,
             },
             kind=_EVENT_CONSUMED_KIND,
             record_class=_EVENT_CONSUMED_RECORD_CLASS,
@@ -642,36 +607,6 @@ class EngineDriver:
         assert receipt.seq is not None
         assert receipt.key_generation is not None
         return receipt.seq, receipt.key_generation
-
-    def _apply_nontrade_latch(
-        self, *, event_id: str, result: EventResult, evidence_seq: int
-    ) -> None:
-        """After ``_record_consumed``: remember a judged ``nontrade_outcome``'s evidence seq
-        and, when restrictive, latch through the bound
-        :func:`~tos_runtime.nontrade.latch.latch_restrictive` (plan §2 decision 3). A no-op for
-        every non-``CORPORATE_ACTION`` event. Raises :class:`EngineDriverInvariantError` if
-        restrictive but :meth:`bind_nontrade_latch` was never called — never silently skipped.
-        """
-        outcome = result.nontrade_outcome
-        if outcome is None:
-            return
-        self._last_nontrade_evidence_seq = evidence_seq
-        if outcome.restrictive is not True:
-            return
-        if self._nontrade_latch is None:
-            raise EngineDriverInvariantError(
-                "EngineDriver processed a restrictive CORPORATE_ACTION result "
-                f"(event_id={event_id!r}) but bind_nontrade_latch was never called"
-            )
-        self._nontrade_latch(
-            inbox=self._inbox,
-            evidence_store=self._evidence_store,
-            disposition=outcome.disposition.value,
-            latch_reason=f"NONTRADE_{outcome.disposition.value}",
-            event_id=event_id,
-            evidence_seq=evidence_seq,
-            source="engine",
-        )
 
     def _new_risk_halted_result(
         self, event: EngineEvent, halted: dict[str, object]
@@ -840,14 +775,6 @@ class EngineDriver:
                     outcome_digest=result.outcome_digest,
                     halt_reason=halt_reason_str,
                     flow_fingerprint=flow_fingerprint_for(result),
-                    nontrade_disposition=(
-                        None
-                        if result.nontrade_outcome is None
-                        else result.nontrade_outcome.disposition.value
-                    ),
-                )
-                self._apply_nontrade_latch(
-                    event_id=event_id, result=result, evidence_seq=evidence_seq
                 )
                 self._inbox.mark_consumed(
                     seq, evidence_seq=evidence_seq, generation=generation

@@ -94,7 +94,7 @@ options:
   `--store rcl`을 명시한다.
 - **주의 — 최상위 `--help`는 서브커맨드 목록을 보여주지 않는다.** `parse_args`는 첫 토큰이
   `_SUBCOMMANDS`(`run`/`backup-set`/`restore-drill`/`migrate`/`rotate-key`/`print-digests`/
-  `print-policy-digests`/`rearm`/`ack-alert`/`nontrade-eval`)에 없으면 그 앞에 `run`을
+  `print-policy-digests`/`rearm`/`ack-alert`)에 없으면 그 앞에 `run`을
   끼워 넣는다(`cli.py:544-545`, "토큰 없음 = run"이라는 모듈독스트링 규칙). `--help`도 그
   분기를 그대로 타므로 `main(["--help"])`는 실제로 `run --help`가 되어 `run`의 옵션만
   보여준다(실측 확인). 서브커맨드 목록을 보려면 `--help` 대신 이 문서의 `_SUBCOMMANDS`

@@ -326,8 +326,8 @@ class TickOutcome(StrEnum):
 
     ⚠ **``TICKED`` answers "was a tick produced", not "was it processed".** When the recovery
     barrier holds, the runtime's driver is detached and a produced tick is durably enqueued
-    instead of run (the shape ``ComposedRuntime.observe_nontrade`` already establishes: enqueue
-    plus an evidence row, never a claim that it was judged). That case is still ``TICKED`` — the
+    instead of run (enqueue plus an evidence row, never a claim that it was judged). That case
+    is still ``TICKED`` — the
     tick exists — and the *processing* state rides alongside it on the scheduler's own richer
     result type, not in this enum. So a caller that switches on this member alone, and reads
     ``TICKED`` as "the engine has decided", is wrong in exactly the situation that matters most.

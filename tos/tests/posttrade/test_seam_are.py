@@ -68,22 +68,17 @@ def test_benefit_kind_netting_token_drift_lock() -> None:
     assert BenefitKind.NETTING.value == BENEFIT_KIND_NETTING
 
 
-def test_the_three_netting_propositions_are_distinct() -> None:
-    """(§3.5 verdict 3) Three axes, three types, one word.
+def test_the_two_netting_propositions_are_distinct() -> None:
+    """(§3.5 verdict 3) Two axes, two types, one word.
 
     are's is a **benefit** on the aggregate-risk axis; ours is the **absence** of an offset on
-    the obligation axis; nontrade's is the coexistence of pre- and post-event exposures on the
-    transition axis. None of the three implies another.
+    the obligation axis. Neither implies the other.
     """
     from tos.are import BenefitKind
-    from tos.nontrade import favorable_netting_absent
 
     assert BenefitKind.NETTING.value == "NETTING"
     # ours is a predicate over two gross legs, not an enum member at all
     assert callable(netting_requires_positive_proof)
-    # nontrade's is a third, separate predicate over a transition envelope
-    assert callable(favorable_netting_absent)
-    assert netting_requires_positive_proof is not favorable_netting_absent
 
 
 def test_our_no_netting_is_structural_gross_coexistence() -> None:

@@ -1,4 +1,4 @@
-"""Phase 5 W5 session/calendar compose wiring (plan §2 decisions 1-5 and 7,
+"""Phase 5 W5 session/calendar compose wiring (plan §2 decisions 1-5,
 ``docs/plans/2026-09-12-tos-phase5-w5-scenarios-plan.md``).
 
 Builds the :class:`~tos_runtime.calendar.owner.SessionFactsOwner` and attaches
@@ -22,49 +22,15 @@ identical reason — :func:`apply_session_wiring`, called immediately after
 ``apply_recovery_barrier``), fills it in and attaches the owner to
 :attr:`~tos_runtime.compose._types.ComposedRuntime.session_facts`.
 
-**Rollover wiring (originally plan §2 decision 7; narrowed and then corrected by the TOS
-runtime operations wiring plan §2 decision 3 and its follow-up; venue facts moved to the
-governed service by the TOS venue constraint service wave, plan §2 decision 9).**
-:func:`build_nontrade_admissibility_provider` builds the ONE honest, single-scope
-venue-admissibility read this compose root has — this compose root has exactly one live scope
-(one ``ConstructionConfig`` plus the ONE governed venue-constraint service composed for it), so
-the provider ignores the observation's own route-identity argument (there is nothing to select
-AMONG) and folds the REAL, currently-observed session phase (the SAME ``session_phase_reader``
-step 3 itself reads) through the kernel's own ``tos.venue.state.session_phase_admits`` against
-the REAL, governed ``venue_service.policy`` and this attempt's own ``venue_service.snapshot()``
-— never a runtime re-derivation of admissibility, and never a fabricated constant. It is built
-ONCE and
-shared by BOTH non-trade lanes: :func:`build_nontrade_processor` wires it into the DRY-RUN
-:class:`~tos_runtime.nontrade.processor.NonTradeEventProcessor` (the ``nontrade-eval`` CLI's
-own preview evaluator — it records nothing and never latches), and
-:func:`apply_nontrade_wiring` attaches the SAME instance directly onto
-:attr:`~tos_runtime.compose._types.ComposedRuntime.nontrade_admissibility_provider` for the
-STATEFUL engine path (:meth:`~tos_runtime.compose._types.ComposedRuntime.observe_nontrade`,
-reached through the engine's own ``CORPORATE_ACTION`` handler) to resolve against each
-observation's own route identity — an earlier revision of this wiring left that engine path at
-a fixed ``admissibility=None``, which was a regression in honesty once this real source
-existed, not a genuine gap; it is corrected here. ``apply_nontrade_wiring`` ALSO, separately,
-binds the shared :func:`~tos_runtime.nontrade.latch.latch_restrictive` onto
-:attr:`~tos_runtime.compose._types.ComposedRuntime.driver` — unconditionally, independent of
-whether ``nontrade.yaml`` exists (:attr:`~tos_runtime.compose._types.ComposedRuntime.nontrade`
-can be ``None``; the admissibility provider and the latch bind cannot).
-``dep_graph_provider``/``time_freshness_provider`` stay ``None`` (no real venue-dependency-graph
-or time-freshness source exists anywhere in this runtime yet — W5 survey; a fabricated one
-would be worse than an honest gap) for BOTH lanes — this remains a genuine, documented absence,
-not merely one this wiring's own engine-path caller forgot to fill in.
-
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib
-(``pathlib``, ``sys``) + ``tos.venue`` (``session_phase_admits`` only) +
-``tos_runtime.*`` only. No ``shared.*``.
+(``pathlib``, ``sys``) + ``tos_runtime.*`` only. No ``shared.*``.
 """
 
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
-
-from tos.venue.state import session_phase_admits
 
 from tos_runtime.calendar.config import CalendarConfig
 from tos_runtime.calendar.owner import SessionFactsOwner
@@ -73,26 +39,19 @@ from tos_runtime.calendar.ports import (
     TrustedWallClockReference,
     WallClockReference,
 )
-from tos_runtime.compose._types import ComposedRuntime, ConstructionConfig
+from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
-from tos_runtime.nontrade.config import NONTRADE_CONFIG_NAME, load_required_legs_config
-from tos_runtime.nontrade.latch import latch_restrictive
-from tos_runtime.nontrade.processor import NonTradeEventProcessor
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.service import TrustworthyTimeService
-from tos_runtime.venue import VenueConstraintService
 
 __all__ = [
     "CALENDAR_CONFIG_NAME",
     "RETIRED_EGRESS_ATTESTATIONS_CONFIG_NAME",
     "RetiredConfigPresent",
     "SessionInboxCell",
-    "apply_nontrade_wiring",
     "apply_session_wiring",
     "build_egress_trading_date_reader",
-    "build_nontrade_admissibility_provider",
-    "build_nontrade_processor",
     "build_session_facts_owner",
 ]
 
@@ -336,131 +295,4 @@ def apply_session_wiring(
     """
     session_inbox_cell.inbox = runtime.inbox
     runtime.session_facts = session_facts_owner
-    return runtime
-
-
-def build_nontrade_admissibility_provider(
-    *,
-    construction: ConstructionConfig,
-    venue_service: VenueConstraintService,
-    session_phase_reader: Callable[[], str | None],
-) -> Callable[[str], str | None]:
-    """The honest, single-scope venue-admissibility read (module docstring) — built ONCE and
-    shared between the dry-run :class:`~tos_runtime.nontrade.processor.NonTradeEventProcessor`
-    (:func:`build_nontrade_processor`) and :meth:`~tos_runtime.compose._types.ComposedRuntime
-    .observe_nontrade`'s engine path (TOS runtime operations wiring plan §2 decision 3
-    follow-up — the operator's own correction: an honest admissibility source already exists
-    for the dry-run lane, so the engine path fixing it at ``None`` was a regression in honesty,
-    not a genuine gap). Never call this twice for one compose root — both callers must close
-    over the SAME instance, never independently re-derive the read.
-
-    Args:
-        construction: This runtime's single ``ConstructionConfig`` scope — the source of
-            ``action_class``, folded through the kernel's own ``session_phase_admits``.
-        venue_service: The SAME governed :class:`~tos_runtime.venue.VenueConstraintService`
-            step 3 folds against (``compose/_venue_wiring.py``'s ``build_venue_service``) — the
-            source of the REAL ``policy`` and this attempt's own ``snapshot()`` (TOS venue
-            constraint service wave, plan §2 decision 9; never a runtime-authored judgement).
-        session_phase_reader: The SAME zero-argument callable step 3 reads (module docstring)
-            — never a second, independently-derived phase read that could disagree with step 3
-            within one attempt.
-
-    Returns:
-        A callable ignoring its own route-identity argument (this compose root has exactly one
-        scope to answer for, never a multi-route lookup) and returning the kernel's own
-        ``OrderAdmissibilityResult`` token for the CURRENT session phase, read fresh on every
-        call.
-    """
-
-    def _venue_admissibility_provider(_route_key: str) -> str | None:
-        result = session_phase_admits(
-            observed_phase=session_phase_reader(),
-            action=construction.action_class,
-            snapshot=venue_service.snapshot(),
-            policy=venue_service.policy,
-        )
-        return result.value
-
-    return _venue_admissibility_provider
-
-
-def build_nontrade_processor(
-    *,
-    config_dir: Path,
-    admissibility_provider: Callable[[str], str | None],
-    dep_graph_provider: Callable[[], Mapping[str, frozenset[str]] | None] | None = None,
-    time_freshness_provider: Callable[[], str | None] | None = None,
-) -> NonTradeEventProcessor:
-    """Load ``nontrade.yaml`` and construct the dry-run
-    :class:`~tos_runtime.nontrade.processor.NonTradeEventProcessor` (plan §2 decision 7;
-    narrowed to dry-run-only by the TOS runtime operations wiring plan §2 decision 3 — it no
-    longer takes an evidence port at all, since :meth:`~tos_runtime.nontrade.processor
-    .NonTradeEventProcessor.evaluate` records nothing).
-
-    Args:
-        config_dir: The SAME directory ``compose_paper_runtime`` was given.
-        admissibility_provider: Built by :func:`build_nontrade_admissibility_provider` — the
-            SAME instance :meth:`~tos_runtime.compose._types.ComposedRuntime.observe_nontrade`'s
-            engine path shares, never rebuilt here.
-        dep_graph_provider: Forwarded to the processor unchanged; ``None``
-            (the honest default — no real dependency-graph source exists yet).
-        time_freshness_provider: Forwarded unchanged; ``None`` (no real time-
-            freshness source exists yet).
-
-    Raises:
-        tos_runtime.nontrade.config.NonTradeConfigError: ``nontrade.yaml`` is
-            missing/malformed/still named-TBD for a present class key.
-    """
-    required_legs = load_required_legs_config(config_dir / NONTRADE_CONFIG_NAME)
-    return NonTradeEventProcessor(
-        required_legs_by_class=required_legs,
-        dep_graph_provider=dep_graph_provider,
-        venue_admissibility_provider=admissibility_provider,
-        time_freshness_provider=time_freshness_provider,
-    )
-
-
-def apply_nontrade_wiring(
-    runtime: ComposedRuntime,
-    *,
-    nontrade_processor: NonTradeEventProcessor | None,
-    admissibility_provider: Callable[[str], str | None],
-) -> ComposedRuntime:
-    """Attach ``nontrade_processor``/``admissibility_provider`` to ``runtime`` and bind the
-    engine driver's shared new-risk latch (TOS runtime operations wiring plan §2 decision 3;
-    originally plan §2 decision 7).
-
-    Args:
-        runtime: The composed runtime — mutated in place and returned (same
-            discipline as :func:`apply_session_wiring`).
-        nontrade_processor: Built by :func:`build_nontrade_processor`, or
-            ``None`` when ``config_dir`` carries no ``nontrade.yaml`` at all —
-            a compose root with no non-trade observation source configured is
-            a legitimate, deliberate "not configured" state (the SAME
-            optionality :func:`~tos_runtime.compose.root.compose_paper_runtime`
-            already gives ``projection_path``/``backup_root``), never a boot
-            refusal for every OTHER existing compose e2e test that predates
-            this wiring.
-        admissibility_provider: Built by :func:`build_nontrade_admissibility_provider` —
-            attached UNCONDITIONALLY (unlike ``nontrade_processor`` above): the engine path
-            (:meth:`~tos_runtime.compose._types.ComposedRuntime.observe_nontrade`) needs it
-            regardless of whether ``nontrade.yaml`` exists, since it never reads
-            :attr:`~tos_runtime.compose._types.ComposedRuntime.nontrade` at all.
-
-    Returns:
-        ``runtime`` itself, with :attr:`~tos_runtime.compose._types.ComposedRuntime
-        .nontrade`/:attr:`~tos_runtime.compose._types.ComposedRuntime
-        .nontrade_admissibility_provider` set and, when :attr:`~tos_runtime.compose._types
-        .ComposedRuntime.driver` is real, its
-        :meth:`~tos_runtime.engine.driver.EngineDriver.bind_nontrade_latch` called with the
-        shared :func:`~tos_runtime.nontrade.latch.latch_restrictive` (this wiring runs BEFORE
-        the TOS Phase 5 W1 recovery barrier — :func:`~tos_runtime.compose._release_wiring
-        .apply_release_wiring`'s own docstring states the identical "still real here" fact for
-        the same reason: attaching to a driver later detached is harmless, since a detached
-        driver's ``core.handle`` is never reachable at all).
-    """
-    runtime.nontrade = nontrade_processor
-    runtime.nontrade_admissibility_provider = admissibility_provider
-    if runtime.driver is not None:
-        runtime.driver.bind_nontrade_latch(latch_restrictive)
     return runtime

@@ -169,14 +169,12 @@ obligation — FORWARD-OBLIGATION-MS1 — is recorded as *new and unratified*
 as a ``Sequence[str]`` (the shape a config file naturally produces) and REFUSES at construction,
 citing that obligation, when it does not name exactly one.
 
-**Held runtime (recovery barrier HOLD) — mirrors ``ComposedRuntime.observe_nontrade``'s own shape,
-does not invent a second one** (module docstring's own "no code path left that could touch
+**Held runtime (recovery barrier HOLD)** (module docstring's own "no code path left that could touch
 capacity" discipline, ``_recovery_wiring.py``). When ``driver is None`` (the TOS Phase 5 W1
 recovery barrier did not resolve to ``READY`` — ``ComposedRuntime.driver``'s own docstring), this
 module never pretends the tick was processed: it enqueues the UNSTAMPED event directly onto the
-durable inbox (to be picked up once a driver eventually exists — the SAME "inbox, not a phantom
-process" idiom :meth:`~tos_runtime.compose._types.ComposedRuntime.observe_nontrade` already uses
-for its own held-runtime branch) and appends an evidence row naming what was queued. **Deviation
+durable inbox (to be picked up once a driver eventually exists — "inbox, not a phantom
+process") and appends an evidence row naming what was queued. **Deviation
 from the committed ``ports.py`` ``TickOutcome`` vocabulary, reported rather than patched around**:
 that enum has no "queued, driver absent" member. Rather than editing a landed contract to add one,
 or silently reusing ``SKIPPED_*`` (which would misreport — a tick genuinely WAS produced and
@@ -623,9 +621,8 @@ class TickScheduler:
         if self._driver is not None:
             self._driver.enqueue_and_run(event)
         else:
-            # Held runtime (module docstring) — mirrors
-            # ComposedRuntime.observe_nontrade's own "enqueue + evidence row, never pretend it
-            # was processed" branch, never a second convention.
+            # Held runtime (module docstring) — "enqueue + evidence row, never pretend it
+            # was processed".
             self._inbox.enqueue(event)
             self._evidence_store.append(
                 {"instrument": self._instrument, "as_of_ms": observation.as_of_ms},

@@ -6,8 +6,8 @@ this wave, and ``cold-backup``'s own wiring alone took it to 995 — one ordinar
 gate, the exact condition the evidence growth plan's §7.1.7 deviation 1 already named for
 ``backup_set.py``). ``backup-set``'s dispatch moved here UNCHANGED, with it, because the two
 belong together and the move is what buys the headroom. No behavioural difference from having
-them inline there — the SAME "split purely for size budget" discipline :mod:`~tos_runtime.compose._nontrade_eval_dispatch` and
-:mod:`~tos_runtime.compose._run_dispatch` already document for themselves.
+them inline there — the SAME "split purely for size budget" discipline
+:mod:`~tos_runtime.compose._run_dispatch` already documents for itself.
 
 ``cold-backup --data-dir --config-dir --custody-root`` is the unattended operator entry point
 for the evidence growth plan's §2 A3 (``docs/plans/2026-09-29-tos-evidence-growth-and-purge-
@@ -60,8 +60,7 @@ from tos_runtime.operations.schema_ledger import SchemaVersionRefused
 
 if TYPE_CHECKING:
     # TYPE_CHECKING-only: `cli.py` imports THIS module, so a top-level import of its
-    # `BackupSetArgs` would be circular — the SAME pattern `_nontrade_eval_dispatch.py`
-    # already uses for `NontradeEvalArgs`.
+    # `BackupSetArgs` would be circular.
     from tos_runtime.compose.cli import BackupSetArgs
 
 __all__ = [

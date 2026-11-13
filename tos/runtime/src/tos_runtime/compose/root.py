@@ -99,11 +99,8 @@ from tos_runtime.compose._riskstate_wiring import build_risk_state_service
 from tos_runtime.compose._session_wiring import (
     CALENDAR_CONFIG_NAME,
     SessionInboxCell,
-    apply_nontrade_wiring,
     apply_session_wiring,
     build_egress_trading_date_reader,
-    build_nontrade_admissibility_provider,
-    build_nontrade_processor,
     build_session_facts_owner,
 )
 from tos_runtime.compose._standing_wiring import build_standing_approval
@@ -128,7 +125,6 @@ from tos_runtime.compose._wiring import (
     _build_realized_stages,
     _build_stage_map,
 )
-from tos_runtime.nontrade.config import NONTRADE_CONFIG_NAME
 from tos_runtime.rcl.log import StaleEpochRead
 from tos_runtime.recon.witness_synthetic_venue import (
     SYNTHETIC_VENUE_LEDGER_PROVENANCE,
@@ -628,32 +624,6 @@ def compose_paper_runtime(
         composed,
         session_inbox_cell=session_inbox_cell,
         session_facts_owner=session_facts_owner,
-    )
-    # TOS runtime operations wiring plan §2 decision 3 + follow-up (originally W5 plan §2
-    # decision 7, rollover) — the ONE honest venue-admissibility provider, built once and
-    # shared by the dry-run non-trade processor AND observe_nontrade's engine path
-    # (build_nontrade_admissibility_provider's own docstring), PLUS the engine driver's shared
-    # new-risk latch bind (apply_nontrade_wiring's own docstring — both independent of whether
-    # a nontrade.yaml exists at all). The dry-run processor itself stays optional: a config_dir
-    # with no nontrade.yaml at all (every compose e2e test that predates this wiring) leaves
-    # composed.nontrade None, exactly like projection_path/backup_root's own optionality —
-    # never a boot refusal for a caller that has not configured this yet.
-    nontrade_admissibility_provider = build_nontrade_admissibility_provider(
-        construction=construction,
-        venue_service=venue_service,
-        session_phase_reader=session_phase_reader,
-    )
-    composed = apply_nontrade_wiring(
-        composed,
-        nontrade_processor=(
-            build_nontrade_processor(
-                config_dir=config_dir,
-                admissibility_provider=nontrade_admissibility_provider,
-            )
-            if (config_dir / NONTRADE_CONFIG_NAME).is_file()
-            else None
-        ),
-        admissibility_provider=nontrade_admissibility_provider,
     )
     # TOS Phase 5 W2-R (plan §10 row ①③) — attach the finality release consumer BEFORE the
     # recovery barrier runs (see apply_release_wiring's own docstring for why running before a

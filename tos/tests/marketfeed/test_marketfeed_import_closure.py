@@ -72,9 +72,6 @@ _ALLOWED_TOS_PACKAGES = frozenset(
         "tos.cur",
         "tos.engine",
         "tos.orthostate",
-        # kernel round #3 §2 결정 1 (2026-09-12): tos.engine now directly realizes
-        # tos.nontrade too (the CORPORATE_ACTION handler) — same widening as tos.orthostate.
-        "tos.nontrade",
         "tos.marketfeed",
     }
 )
@@ -470,11 +467,8 @@ def test_the_engine_allowlist_still_omits_marketfeed() -> None:
 
     The count pin moved from 14 to 15 on 2026-09-09 (Phase 3 wave 2 KW2-C2, plan §2.2):
     ``tos.orthostate`` was added as a directly realized engine edge for
-    ``engine/orthostate_projection.py``. It moved again, 15 to 16, on 2026-09-12 (kernel round
-    #3 §2 결정 1): ``tos.nontrade`` was added the same way for
-    ``engine/_corporate_action.py`` — see ``tos/tests/engine/test_engine_import_closure.py``'s
-    own "Closure widened" note. ``tos.marketfeed`` staying absent is the claim this test actually
-    protects, and that claim is unaffected by either widening.
+    ``engine/orthostate_projection.py``. ``tos.marketfeed`` staying absent is the claim this
+    test actually protects, and that claim is unaffected by that widening.
     """
     engine_canary = (
         Path(__file__).resolve().parents[1] / "engine" / "test_engine_import_closure.py"
@@ -495,7 +489,7 @@ def test_the_engine_allowlist_still_omits_marketfeed() -> None:
         declared
     ), "could not read the engine canary's allowlist — the anti-phantom read failed"
     assert "tos.marketfeed" not in declared
-    assert len(declared) == 16
+    assert len(declared) == 15
 
 
 # ---------------------------------------------------------------------------

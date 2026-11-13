@@ -21,8 +21,8 @@ instance under ``config/tos_runtime/paper/``; the other 24 ship only as ``*.exam
 (:func:`~tos_runtime.strategy.bindings` reports ``present=False`` rather than refusing),
 ``marketfeed.yaml``/``critical_input_policy.yaml`` TOGETHER (absent ⇒
 ``composed.marketfeed is None``, refused separately by THIS module, not by a config loader —
-see :func:`_dispatch_run`), ``nontrade.yaml``, and ``kis_mock_transport.yaml`` (unreached at
-the default ``--transport synthetic``).
+see :func:`_dispatch_run`), and ``kis_mock_transport.yaml`` (unreached at the default
+``--transport synthetic``).
 
 **The five operations subcommands DO real work directly from bare flags** (plan §2 decision 10),
 because none of them need a ``ConstructionConfig``/risk-input-provider: ``backup-set``,
@@ -43,8 +43,8 @@ idiom: loads the governed policy YAMLs under ``--config-dir`` and prints each on
 them into ``safety_activation.yaml``'s ``members:`` list (:func:`_dispatch_print_policy_digests`
 names which policies).
 
-**Three MORE operations subcommands, added by the runtime operations wiring plan
-(2026-09-13) §2 decisions 4/5/7: ``rearm``, ``ack-alert``, ``nontrade-eval``.** All three follow
+**Two MORE operations subcommands, added by the runtime operations wiring plan
+(2026-09-13) §2 decisions 4/5: ``rearm``, ``ack-alert``.** Both follow
 the SAME idiom as ``rotate-key`` above — open the evidence store / inbox / time service directly
 (the ``rotate-key`` "no driver, no engine" pattern), never a full
 :func:`~tos_runtime.compose.root.compose_paper_runtime` call, because none of the three need a
@@ -72,15 +72,6 @@ the SAME idiom as ``rotate-key`` above — open the evidence store / inbox / tim
   ``approvals_dir/alerts/<seq>.yaml`` file. Needs only the evidence store (no inbox, no time
   service) — see that module's own docstring for why an acknowledgement is not a resolution,
   containment, or re-arm.
-* ``nontrade-eval --observation <path>`` is a pure, stateless dry run: it loads a
-  :class:`~tos_runtime.nontrade.observations.NonTradeObservation` from a YAML file (a small,
-  scalar-fields-only loader local to this module — the nested kernel records
-  ``transition_envelope``/``split_spec``/``correction``/``prior_correction`` are refused rather
-  than silently dropped if present, a future wave's own loader) and folds it through
-  :meth:`~tos_runtime.nontrade.processor.NonTradeEventProcessor.evaluate` (that method's own
-  docstring: "a DRY RUN: records no evidence and touches no durable state"), printing the
-  disposition + per-predicate result table. Opens no store, no custody, no inbox — genuinely
-  zero evidence reaches any real durable store.
 
 **Canonical blocker list — CODE-PATH blockers, all now resolved (plan §7.2 "웨이브 착지" of the
 ``run`` 구동 아크 plan carries the SAME (a′)/(b′)/(c) resolution labels as this W1 landing entry
@@ -129,8 +120,7 @@ build one without a custody directory. Both of these are reported to the team le
 Phase B scope decision, not a silent narrowing.
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``argparse``, ``os``,
-``secrets``, ``sys``) + ``tos_runtime.*`` only. No ``shared.*``. (``decimal``/``pyyaml`` moved
-with the ``nontrade-eval`` loader into :mod:`~tos_runtime.compose._nontrade_eval_dispatch`.)
+``secrets``, ``sys``) + ``tos_runtime.*`` only. No ``shared.*``.
 """
 
 from __future__ import annotations
@@ -167,9 +157,6 @@ from tos_runtime.compose._cli_ops import (
     risk_state_policy_digest_lines,
 )
 from tos_runtime.compose._migrate_paths import migrate_path_for
-from tos_runtime.compose._nontrade_eval_dispatch import (
-    dispatch_nontrade_eval as _dispatch_nontrade_eval,
-)
 from tos_runtime.compose._run_dispatch import dispatch_run as _dispatch_run
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.custody.key_provider import FileKeyProvider
@@ -211,7 +198,6 @@ __all__ = [
     "BackupSetArgs",
     "ColdBackupArgs",
     "MigrateArgs",
-    "NontradeEvalArgs",
     "PrintDigestsArgs",
     "PrintPolicyDigestsArgs",
     "RearmArgs",
@@ -234,7 +220,6 @@ _SUBCOMMANDS = (
     "print-policy-digests",
     "rearm",
     "ack-alert",
-    "nontrade-eval",
     _STANDING_COMMAND,
 )
 
@@ -351,13 +336,6 @@ class AckAlertArgs:
     approvals_dir: Path
     environment_label: str
     seq: int
-
-
-@dataclass(frozen=True)
-class NontradeEvalArgs:
-    """``nontrade-eval`` subcommand args — a pure dry run, no store/custody at all."""
-
-    observation: Path
 
 
 def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
@@ -516,15 +494,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_cold_backup_subparser(subparsers)
     add_standing_approval_subparser(subparsers)
-    _add_rearm_ack_nontrade_subparsers(subparsers)
+    _add_rearm_ack_subparsers(subparsers)
 
     return parser
 
 
-def _add_rearm_ack_nontrade_subparsers(
+def _add_rearm_ack_subparsers(
     subparsers: argparse._SubParsersAction,
 ) -> None:
-    """The three runtime operations wiring plan (2026-09-13) subcommands — split out of
+    """The two runtime operations wiring plan (2026-09-13) subcommands — split out of
     :func:`build_parser` purely for the 100-line function budget (no behaviour difference from
     inlining it there)."""
     rearm_parser = subparsers.add_parser(
@@ -560,15 +538,6 @@ def _add_rearm_ack_nontrade_subparsers(
     ack_parser.add_argument("--environment-label", required=True, type=str)
     ack_parser.add_argument("--seq", required=True, type=int)
 
-    nontrade_parser = subparsers.add_parser(
-        "nontrade-eval",
-        help=(
-            "Dry-run a NonTradeObservation YAML file through NonTradeEventProcessor and "
-            "print its disposition (module docstring — zero evidence, no store opened)."
-        ),
-    )
-    nontrade_parser.add_argument("--observation", required=True, type=Path)
-
 
 def parse_args(
     argv: list[str] | None = None,
@@ -583,7 +552,6 @@ def parse_args(
     | PrintPolicyDigestsArgs
     | RearmArgs
     | AckAlertArgs
-    | NontradeEvalArgs
     | StandingApprovalArgs
 ):
     """Parse ``argv`` (defaults to ``sys.argv[1:]``) into the args object for whichever
@@ -663,8 +631,6 @@ def parse_args(
             environment_label=namespace.environment_label,
             seq=namespace.seq,
         )
-    if command == "nontrade-eval":
-        return NontradeEvalArgs(observation=namespace.observation)
     if command == "print-policy-digests":
         return PrintPolicyDigestsArgs(config_dir=namespace.config_dir)
     # command == "print-digests" — argparse itself refuses any token outside _SUBCOMMANDS,
@@ -953,9 +919,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if isinstance(args, AckAlertArgs):
         return _dispatch_ack_alert(args)
-
-    if isinstance(args, NontradeEvalArgs):
-        return _dispatch_nontrade_eval(args)
 
     # isinstance(args, PrintDigestsArgs) — the only remaining case.
     observation = observe_runtime_artifact()

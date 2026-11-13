@@ -7,20 +7,12 @@ its closure is a *superset* of theirs. That is the nature of an integrator, not 
 loudly as it does everywhere else::
 
     {tos, tos.canonical, tos.ordering, tos.dsl, tos.capsule, tos.time, tos.evidence,
-     tos.ioc, tos.venue, tos.rcl, tos.are, tos.afg, tos.cur, tos.engine, tos.orthostate,
-     tos.nontrade}
+     tos.ioc, tos.venue, tos.rcl, tos.are, tos.afg, tos.cur, tos.engine, tos.orthostate}
 
 ``tos.orthostate`` was added 2026-09-09 (Phase 3 wave 2 KW2-C2, plan §2.2 — the
 ``engine/orthostate_projection.py`` adapter). It is safe in the direction that matters:
 ``tos.orthostate`` does not, and structurally cannot without breaking its own ratified
 closure, import ``tos.engine`` back.
-
-``tos.nontrade`` was added 2026-09-12 (kernel round #3 §2 결정 1 — the
-``EventKind.CORPORATE_ACTION`` handler, ``engine/_corporate_action.py``), the SAME one-way
-widening argument as ``tos.orthostate``: ``tos.nontrade`` holds "sibling edge 0" by its own
-design (§0.4b/§0.4c) and cannot, and structurally cannot without breaking its own ratified
-closure, import ``tos.engine`` back. It moves from ``_FORBIDDEN_SIBLINGS`` to this allowlist —
-never both.
 
 The two packages the design puts **outside** the closure carry the most weight: ``tos.brokercap``
 and ``tos.egress`` live beyond the D-E4 send-boundary injection point, and ``tos.egress`` (the QCC
@@ -56,7 +48,6 @@ from pathlib import Path
 
 import tos.engine
 import tos.engine._base
-import tos.engine._corporate_action
 import tos.engine.adapters
 import tos.engine.admission
 import tos.engine.core
@@ -92,7 +83,6 @@ _ALLOWED_TOS_PACKAGES = frozenset(
         "tos.cur",
         "tos.engine",
         "tos.orthostate",
-        "tos.nontrade",
     }
 )
 
@@ -208,7 +198,6 @@ _FORBIDDEN_BUILTIN_CALLS = frozenset({"hash", "id"})
 _ENGINE_SUBMODULES = (
     "tos.engine",
     "tos.engine._base",
-    "tos.engine._corporate_action",
     "tos.engine.adapters",
     "tos.engine.admission",
     "tos.engine.core",
@@ -229,7 +218,6 @@ _ENGINE_SUBMODULES = (
 _LOADED_SUBMODULES = {
     "tos.engine": tos.engine,
     "tos.engine._base": tos.engine._base,
-    "tos.engine._corporate_action": tos.engine._corporate_action,
     "tos.engine.adapters": tos.engine.adapters,
     "tos.engine.admission": tos.engine.admission,
     "tos.engine.core": tos.engine.core,
@@ -272,7 +260,6 @@ def _closure_child(queue: mp.Queue) -> None:
 
     import tos.engine  # noqa: F401
     import tos.engine._base  # noqa: F401
-    import tos.engine._corporate_action  # noqa: F401
     import tos.engine.adapters  # noqa: F401
     import tos.engine.admission  # noqa: F401
     import tos.engine.core  # noqa: F401

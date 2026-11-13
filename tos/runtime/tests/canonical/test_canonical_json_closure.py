@@ -71,9 +71,6 @@ from tos_runtime import (
     marketfeed as r_marketfeed,
 )
 from tos_runtime import (
-    nontrade as r_nontrade,
-)
-from tos_runtime import (
     operations as r_operations,
 )
 from tos_runtime import (
@@ -121,9 +118,6 @@ from tos_runtime import (
 from tos_runtime.compose import _cli_ops as r_compose_cli_ops
 from tos_runtime.compose import _construction_config as r_compose_construction_config
 from tos_runtime.compose import _migrate_paths as r_compose_migrate_paths
-from tos_runtime.compose import (
-    _nontrade_eval_dispatch as r_compose_nontrade_eval_dispatch,
-)
 from tos_runtime.compose import _run_dispatch as r_compose_run_dispatch
 from tos_runtime.compose import cli as r_compose_cli
 
@@ -195,9 +189,6 @@ from tos import (
 )
 from tos import (
     marketfeed as k_marketfeed,
-)
-from tos import (
-    nontrade as k_nontrade,
 )
 from tos import (
     ordering as k_ordering,
@@ -278,7 +269,6 @@ _IMPORTED_MODULES: tuple[ModuleType, ...] = (
     k_ioc,
     k_liveauth,
     k_marketfeed,
-    k_nontrade,
     k_ordering,
     k_orthostate,
     k_position,
@@ -307,7 +297,6 @@ _IMPORTED_MODULES: tuple[ModuleType, ...] = (
     r_engine,
     r_evidence,
     r_marketfeed,
-    r_nontrade,
     r_operations,
     r_operator,
     r_posttrade,
@@ -327,7 +316,6 @@ _IMPORTED_MODULES: tuple[ModuleType, ...] = (
     r_compose_cli_ops,
     r_compose_construction_config,
     r_compose_migrate_paths,
-    r_compose_nontrade_eval_dispatch,
     r_compose_run_dispatch,
     r_compose_cli,
     r_recon_witness_synthetic_venue,
@@ -344,8 +332,12 @@ _SRC_ROOTS: dict[str, Path] = {
 #: Lower bounds measured on this branch (2026-09-24). Asserted as bounds, not
 #: equalities, so adding a model is not a spurious RED — but an import that
 #: silently fails and leaves the enumeration near zero still goes RED.
-_MIN_TREE_SET_MODELS = 51
-_MIN_DIRECT_SET_MODELS = 34
+#: Re-measured 2026-11-13 (S2-c, ``docs/plans/2026-11-13-tos-code-halving-plan.md``):
+#: the two set-bearing ``tos.nontrade`` records went with the package (one of them carried
+#: a ``__canonical_set_fields__`` declaration), on top of the S1-a drop. A deliberate drop,
+#: re-measured rather than left to read as a silent import failure.
+_MIN_TREE_SET_MODELS = 49
+_MIN_DIRECT_SET_MODELS = 33
 _MIN_COVERED_SET_MODELS = 17
 
 #: Models allowed to hold a set without being a ``FrozenModel``. Empty today;
@@ -465,7 +457,9 @@ def test_every_module_is_imported() -> None:
     only check that would catch a module reached through a path the walk cannot
     see at all.
     """
-    assert len(_IMPORTED_MODULES) >= 73
+    # S2-c (2026-11-13) removed three more: `tos.nontrade`, `tos_runtime.nontrade` and
+    # `tos_runtime.compose._nontrade_eval_dispatch`, deleted with the package.
+    assert len(_IMPORTED_MODULES) >= 70
     on_disk = _module_names_on_disk()
     # The two distribution roots are imported by construction — every name in
     # the list is a submodule of one of them — and are not walk seeds

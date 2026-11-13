@@ -383,7 +383,11 @@ def test_main_check_flag_exits_zero_when_clean(tmp_path: Path, capsys) -> None:
 #: for the mutation this floor is proven against).
 #: Re-measured 2026-10-24 (standing session approval, PR #955 — a new YAML loader,
 #: ``tos_runtime/authority/standing.py``): real tree 50, weakened-signature count 46.
-_REAL_TREE_CANDIDATE_FLOOR = 50
+#: Re-measured 2026-11-13 (S2-c, ``docs/plans/2026-11-13-tos-code-halving-plan.md`` —
+#: two loaders DELETED with the nontrade package: ``tos_runtime/nontrade/config.py``
+#: and ``compose/_nontrade_eval_dispatch.py``): real tree 48, weakened-signature 44.
+#: A deliberate drop, re-measured here rather than left to fail as a silent weakening.
+_REAL_TREE_CANDIDATE_FLOOR = 48
 
 
 def test_check_real_config_and_scope_smoke() -> None:
