@@ -119,7 +119,7 @@ class RiskStateConfigError(RuntimeError):
 class RecoveryBarrierHeld(RuntimeError):
     """Raised by :meth:`ComposedRuntime.run_once` when the TOS Phase 5 W1 recovery barrier
     (:mod:`tos_runtime.recovery.barrier`, wired by :mod:`tos_runtime.compose._recovery_wiring`)
-    did not resolve to :attr:`~tos.sbr.vocabulary.ReadinessVerdict.READY`.
+    did not resolve to :attr:`~tos_runtime.recovery.readiness.ReadinessVerdict.READY`.
 
     A typed refusal, never a silent no-op (plan §2 decision 2): a caller that tries to drive an
     event through a held runtime learns exactly why, via :attr:`ComposedRuntime.recovery`,

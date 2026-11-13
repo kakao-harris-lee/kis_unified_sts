@@ -18,7 +18,6 @@ import pytest
 from tos.engine import NullEvidenceSink
 from tos.engine.records import event_identity
 from tos.engine.vocabulary import HaltReason
-from tos.sbr.vocabulary import ReadinessVerdict
 from tos_runtime.compose._preconditions import _ReplayPreconditions
 from tos_runtime.compose._types import ComposedRuntime, RecoveryBarrierHeld
 from tos_runtime.engine.replay_stage import EventCorrelatingCore, RecordedStage
@@ -33,6 +32,7 @@ from tos_runtime.operations.backup_set import (
     restore_set,
 )
 from tos_runtime.operations.schema_ledger import SchemaVersionRefused
+from tos_runtime.recovery.readiness import ReadinessVerdict
 
 from .conftest import SCHEME, _compose, _reach_trusted, fx, write_approval_file
 
@@ -275,13 +275,13 @@ def test_mutation_ignore_possibly_live_would_flip_to_ready(
     instead of NOT_READY -- proving that assertion actually depends on the possibly-live
     obligation, not on an unrelated always-failing check."""
     from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-    from tos.sbr.predicates import obligation_graph_closed
     from tos_runtime.compose._engine_wiring import (
         ENGINE_DRIVER_CONFIG_NAME,
         load_engine_driver_config,
     )
     from tos_runtime.recovery.barrier import _build_obligations
     from tos_runtime.recovery.inputs import assemble_recovery_inputs
+    from tos_runtime.recovery.readiness import obligation_graph_closed
 
     runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
     _reach_trusted(runtime)
@@ -393,7 +393,6 @@ def test_mutation_treat_legacy_receipts_as_fingerprinted_would_be_red(
     :func:`test_legacy_receipt_in_window_holds_with_the_correct_reason` exercises would resolve
     READY instead of NOT_READY."""
     from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-    from tos.sbr.predicates import obligation_graph_closed
     from tos_runtime.compose._engine_wiring import (
         ENGINE_DRIVER_CONFIG_NAME,
         load_engine_driver_config,
@@ -401,6 +400,7 @@ def test_mutation_treat_legacy_receipts_as_fingerprinted_would_be_red(
     from tos_runtime.recovery.barrier import _build_obligations
     from tos_runtime.recovery.inputs import assemble_recovery_inputs
     from tos_runtime.recovery.legacy_receipts import LegacyReceiptFacts
+    from tos_runtime.recovery.readiness import obligation_graph_closed
 
     runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
     _reach_trusted(runtime)

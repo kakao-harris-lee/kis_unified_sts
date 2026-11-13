@@ -1,7 +1,8 @@
 """``tos_runtime.recovery`` — the Phase 5 W1 boot-time recovery barrier.
 
 Plan: ``docs/plans/2026-09-10-tos-phase5-recovery-governance-plan.md`` §2 decision 2, wave W1.
-Design: ``docs/plans/2026-07-26-tos-startup-recovery-design.md``. Kernel: :mod:`tos.sbr`
+Design: ``docs/plans/2026-07-26-tos-startup-recovery-design.md``. Vocabulary:
+:mod:`tos_runtime.recovery.readiness` (formerly kernel ``tos.sbr``)
 (Safe-Startup / Recovery-Barrier / Conservative-Resume).
 
 Public surface:
@@ -21,8 +22,8 @@ Public surface:
   compose root's scope-level RCL reservation ids); only a positively-established confidence
   clears an attempt.
 * :mod:`tos_runtime.recovery.barrier` — :class:`~tos_runtime.recovery.barrier.RecoveryBarrier`,
-  folding the above into the kernel's own :class:`~tos.sbr.vocabulary.ReadinessVerdict` via
-  :func:`tos.sbr.predicates.obligation_graph_closed` (never re-authoring that judgement here).
+  folding the above into the kernel's own :class:`~tos_runtime.recovery.readiness.ReadinessVerdict` via
+  :func:`tos_runtime.recovery.readiness.obligation_graph_closed` (never re-authoring that judgement here).
 
 Compose wiring lives in :mod:`tos_runtime.compose._recovery_wiring` (a separate module, not
 this package — the package boundary here is kernel-shaped, decision-and-observation logic only;
@@ -35,46 +36,15 @@ Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos.*``
 
 from __future__ import annotations
 
-from tos_runtime.recovery.barrier import (
-    RECON_UNAVAILABLE,
-    RecoveryBarrier,
-    RecoveryVerdict,
-)
-from tos_runtime.recovery.inputs import (
-    OpenReservation,
-    RecoveryInputs,
-    assemble_recovery_inputs,
-)
-from tos_runtime.recovery.legacy_receipts import (
-    LegacyReceiptFacts,
-    legacy_receipts_in_window,
-)
-from tos_runtime.recovery.possibly_live import (
-    PossiblyLiveAttempt,
-    reconstruct_possibly_live_attempts,
-)
-from tos_runtime.recovery.reconciliation import (
-    NO_ATTEMPT_ID,
-    RECONCILED_MATCHED,
-    ReconciliationOutcome,
-    reconcile_possibly_live_attempts,
-    send_handed_off_attempt_id,
-)
+from tos_runtime.recovery.barrier import RecoveryBarrier
+from tos_runtime.recovery.inputs import RecoveryInputs, assemble_recovery_inputs
+from tos_runtime.recovery.legacy_receipts import LegacyReceiptFacts
+from tos_runtime.recovery.possibly_live import PossiblyLiveAttempt
 
 __all__ = [
-    "NO_ATTEMPT_ID",
-    "RECONCILED_MATCHED",
-    "RECON_UNAVAILABLE",
     "LegacyReceiptFacts",
-    "OpenReservation",
     "PossiblyLiveAttempt",
-    "ReconciliationOutcome",
     "RecoveryBarrier",
     "RecoveryInputs",
-    "RecoveryVerdict",
     "assemble_recovery_inputs",
-    "legacy_receipts_in_window",
-    "reconcile_possibly_live_attempts",
-    "reconstruct_possibly_live_attempts",
-    "send_handed_off_attempt_id",
 ]

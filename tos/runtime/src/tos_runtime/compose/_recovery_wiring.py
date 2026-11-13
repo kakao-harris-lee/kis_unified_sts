@@ -40,7 +40,6 @@ import json
 from pathlib import Path
 
 from tos.canonical import CanonicalizationScheme
-from tos.sbr.vocabulary import ReadinessVerdict
 
 from tos_runtime.compose._engine_wiring import (
     ENGINE_DRIVER_CONFIG_NAME,
@@ -55,6 +54,7 @@ from tos_runtime.recovery import (
     assemble_recovery_inputs,
 )
 from tos_runtime.recovery.composite_state_writer import COMPOSITE_STATE_STORE_FILE_NAME
+from tos_runtime.recovery.readiness import ReadinessVerdict
 
 __all__ = ["COMPOSITE_STATE_STORE_FILE_NAME", "apply_recovery_barrier"]
 
@@ -125,7 +125,7 @@ def apply_recovery_barrier(
         ``runtime`` itself: :attr:`~tos_runtime.compose._types.ComposedRuntime.recovery` is
         always set; :attr:`~tos_runtime.compose._types.ComposedRuntime.driver` is set to
         ``None`` (never released, never re-armed — module docstring) whenever the verdict is not
-        :attr:`~tos.sbr.vocabulary.ReadinessVerdict.READY`.
+        :attr:`~tos_runtime.recovery.readiness.ReadinessVerdict.READY`.
     """
     engine_driver_config = load_engine_driver_config(
         config_dir / ENGINE_DRIVER_CONFIG_NAME

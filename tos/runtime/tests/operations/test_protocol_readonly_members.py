@@ -33,7 +33,6 @@ from dataclasses import dataclass
 
 import pytest
 from tos.egressgw import CandidateConstruction, OrderConstructionStage
-from tos.sbr.vocabulary import ReadinessVerdict
 from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.compose._venue_wiring import (
     _ConstructionStageReader as _ConstructionStageReaderVW,
@@ -44,6 +43,7 @@ from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.operations.backup_set import _ComposedForDrill, _RecoveryVerdictLike
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recovery.barrier import RecoveryVerdict
+from tos_runtime.recovery.readiness import ReadinessVerdict
 
 # ===========================================================================
 # (i) mypy conformance functions — real implementers

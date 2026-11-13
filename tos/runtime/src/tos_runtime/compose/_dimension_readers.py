@@ -27,7 +27,6 @@ from tos.cur import (
     DimensionKey,
     policy_covers_mandated_dimensions,
 )
-from tos.sbr import ReadinessVerdict
 
 from tos_runtime.authority.epoch import SafetyAuthorityEpochService
 from tos_runtime.brokercap.scopes import BrokerScope, transport_nature
@@ -35,6 +34,7 @@ from tos_runtime.compose._monitor_wiring import _MonitorOwners
 from tos_runtime.currentness.vector import DimensionReport
 from tos_runtime.posttrade.release_consumer import ReleaseConflictReader
 from tos_runtime.recovery.barrier import RecoveryVerdict
+from tos_runtime.recovery.readiness import ReadinessVerdict
 
 __all__ = [
     "_DimensionStates",
@@ -363,7 +363,7 @@ def _release_dimension_reader_for(
 
     The owner is boot's own STAGE B release probe
     (:func:`~tos_runtime.compose._wiring._stage_b_release_probe`), which already calls
-    the kernel's ``tos.sci.predicates.software_deployment_ok_verdict`` and either admits
+    ``tos_runtime.release.verdict.software_deployment_ok_verdict`` and either admits
     (returning ``True``) or raises :class:`~tos_runtime.compose._wiring
     .ReleaseAdmissionRefused` — a composition that reaches THIS reader at all has, by
     construction, already survived that refusal, so :attr:`_ReleaseDimensionState
