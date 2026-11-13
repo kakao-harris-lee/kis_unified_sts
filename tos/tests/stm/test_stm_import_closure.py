@@ -334,11 +334,11 @@ def test_reauthored_predicates_are_absent_from_stm_authorship() -> None:
     An ``hasattr(tos.stm, name)`` check only locks the 87-symbol export surface, while the package
     *authors* several hundred names; ten of these sixteen could have been re-authored inside a module
     — never exported — and the whole suite would still have been green. The lock therefore runs against
-    :func:`~tos.tests.stm.test_stm_anchor_resolution._authored_names`, which is the union of every
+    :func:`~tos.tests.stm._authorship.authored_names`, which is the union of every
     module namespace **and** an AST sweep of every source, so a symbol nested in a class body or left
     out of ``__all__`` is caught too.
     """
-    from .test_stm_anchor_resolution import _authored_names
+    from ._authorship import authored_names as _authored_names
 
     authored = _authored_names()
     offenders = sorted(name for name in _REAUTHORED_NOT_IMPORTED if name in authored)
@@ -354,7 +354,7 @@ def test_reauthored_predicates_are_absent_from_stm_authorship() -> None:
 
 def test_the_authorship_lock_is_strictly_stronger_than_the_export_lock() -> None:
     """(canary) The authorship sweep really sees more than ``__all__`` — otherwise the fix is a no-op."""
-    from .test_stm_anchor_resolution import _authored_names
+    from ._authorship import authored_names as _authored_names
 
     authored = _authored_names()
     exported = set(tos.stm.__all__)
