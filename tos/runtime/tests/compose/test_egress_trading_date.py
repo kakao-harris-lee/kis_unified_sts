@@ -164,8 +164,13 @@ class _FixedKeyProvider:
 
 
 class _CountingEvidence:
-    """The time service's own append port — counts snapshots and can be told to start
-    raising, so a test can prove an unevaluable clock stamps nothing."""
+    """The time service's own append port — records what it was handed and can be told to
+    start raising, so a test can prove an unevaluable clock stamps nothing.
+
+    No test asserts on the NUMBER of rows: whether a cycle writes one is the time service's
+    own evidence policy (on-change plus heartbeat, from #1075), while "did a cycle run" is
+    what these tests mean — they read the exposed snapshot's identity instead.
+    """
 
     def __init__(self) -> None:
         self.kinds: list[str] = []
@@ -184,9 +189,6 @@ class _CountingEvidence:
             chain_digest=f"digest-{len(self.kinds)}",
             key_generation=0,
         )
-
-    def snapshots(self) -> int:
-        return sum(1 for kind in self.kinds if kind == "TIME_HEALTH_SNAPSHOT")
 
 
 def _time_config() -> TrustworthyTimeConfig:
@@ -294,10 +296,13 @@ def _key_provider() -> KeyProvider:
 def test_a_fresh_pass_stamps_the_date_without_evaluating_again(stack) -> None:
     """The common case: the pass's own evaluation is still inside the bound, so the egress
     reader answers from it and costs the time service nothing."""
-    before = stack.time_evidence.snapshots()
+    before = stack.time_service.current_snapshot().snapshot_id
     assert stack.plain_reader() == _TRADING_DATE
     assert stack.egress_reader() == _TRADING_DATE
-    assert stack.time_evidence.snapshots() == before
+    # The exposed snapshot is the SAME one — no cycle ran. Asserted on the snapshot's own
+    # identity rather than on a count of evidence rows, so this says "no evaluation" and not
+    # "no row", which is a different thing and the time service's own policy to change.
+    assert stack.time_service.current_snapshot().snapshot_id == before
 
 
 def test_the_pre_send_work_of_one_pass_ages_the_reading_out(stack) -> None:
@@ -314,11 +319,12 @@ def test_the_egress_stamp_re_establishes_freshness_and_keeps_the_date(stack) -> 
     reads again. The date is a genuinely fresh trusted reading, not a carried-forward one.
     """
     stack.monotonic.advance(_INCIDENT_PRE_SEND_MS)
-    before = stack.time_evidence.snapshots()
+    before = stack.time_service.current_snapshot().snapshot_id
 
     assert stack.egress_reader() == _TRADING_DATE
 
-    assert stack.time_evidence.snapshots() == before + 1
+    # A new cycle really ran (a new exposed snapshot), not a re-read of the stale one.
+    assert stack.time_service.current_snapshot().snapshot_id != before
     assert stack.time_service.health_state is HealthState.TRUSTED
     # And the plain reader now answers too — the re-evaluation is the runtime's one clock
     # moving forward, never a second, private one.

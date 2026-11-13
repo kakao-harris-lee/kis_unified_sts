@@ -268,7 +268,7 @@ def build_egress_trading_date_reader(
     this changes neither way). (2) The two readers cannot disagree about which day it is: a
     stale plain reader abstains (``None``), it never answers a different date.
 
-    **Side effects of the extra cycle, and where it lands.** ``evaluate()`` appends one
+    **Side effects of the extra cycle, and where it lands.** ``evaluate()`` may append a
     ``TIME_HEALTH_SNAPSHOT`` row, may move the health state (an honest judgement, a pass
     earlier than the next scheduler pass would make it), and re-bases the
     ``wall_clock_at_monotonic`` mapping's domain onto this cycle. All three are reached only at
