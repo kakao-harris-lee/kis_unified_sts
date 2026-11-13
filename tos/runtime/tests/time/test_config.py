@@ -28,6 +28,7 @@ _FULLY_VALUED: dict[str, object] = {
     "trading_calendar_version": "cal-1",
     "verification_profile_version": "vp-0",
     "safety_profile_version": "sp-0",
+    "time_health_snapshot_heartbeat_ms": 60_000,
 }
 
 
@@ -121,6 +122,35 @@ def test_negative_send_result_wait_bound_is_also_rejected(tmp_path: Path) -> Non
         load_time_config(path)
 
 
+@pytest.mark.parametrize("value", [0, -1, "soon", True])
+def test_bad_snapshot_heartbeat_is_rejected(tmp_path: Path, value: object) -> None:
+    """``time_health_snapshot_heartbeat_ms`` is an operational key, not a VER-002 bound, and
+    takes a strictly-positive int: ``0`` is not a shorter heartbeat, it is "every cycle is
+    due" — the per-pass write this key exists to stop. ``True`` is rejected for the same
+    reason every other int key rejects a bool."""
+    content = dict(_FULLY_VALUED)
+    content["time_health_snapshot_heartbeat_ms"] = value
+    path = _write_yaml(tmp_path / "time.yaml", content)
+    with pytest.raises(TimeConfigError, match="positive int"):
+        load_time_config(path)
+
+
+def test_missing_snapshot_heartbeat_is_rejected(tmp_path: Path) -> None:
+    content = dict(_FULLY_VALUED)
+    del content["time_health_snapshot_heartbeat_ms"]
+    path = _write_yaml(tmp_path / "time.yaml", content)
+    with pytest.raises(TimeConfigError, match="missing required keys"):
+        load_time_config(path)
+
+
+def test_null_snapshot_heartbeat_is_rejected(tmp_path: Path) -> None:
+    content = dict(_FULLY_VALUED)
+    content["time_health_snapshot_heartbeat_ms"] = None
+    path = _write_yaml(tmp_path / "time.yaml", content)
+    with pytest.raises(TimeConfigError, match="unfilled"):
+        load_time_config(path)
+
+
 def test_non_int_bound_is_rejected(tmp_path: Path) -> None:
     content = dict(_FULLY_VALUED)
     content["MAX_process_suspension_ms"] = "soon"
@@ -143,6 +173,7 @@ def test_fully_valued_config_loads(tmp_path: Path) -> None:
     assert config.trading_calendar_version == "cal-1"
     assert config.verification_profile_version == "vp-0"
     assert config.safety_profile_version == "sp-0"
+    assert config.time_health_snapshot_heartbeat_ms == 60_000
 
 
 def test_example_yaml_shape_matches_loader_keys() -> None:

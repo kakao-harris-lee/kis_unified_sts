@@ -179,21 +179,31 @@ sqlite3 "$DATA/evidence.sqlite3"   'SELECT COUNT(*) FROM entries;'
 
 `snapshots` 가 0 이면 틱이 소비되지 않은 것이다. 이유는 §5 ④ 를 본다.
 
-**시각이 도는지**는 `TIME_HEALTH_SNAPSHOT` 행 수로 본다 — `run` 은 세션이 열려 있으면 **매 패스**,
-닫혀 있으면 `marketfeed.yaml::time_evaluate_closed_interval_ms`(paper 60000)마다 시간 건강을 평가한다
-(`marketfeed/time_pacer.py`). 닫힌 시각에 2분 넘게 돌렸는데 부팅 2행에서 늘지 않으면 결함이다:
+**시각이 도는지**는 `TIME_HEALTH_SNAPSHOT` 행 수로 본다. `run` 은 세션이 열려 있으면 **매 패스**,
+닫혀 있으면 `marketfeed.yaml::time_evaluate_closed_interval_ms`(paper 60000)마다 시간 건강을
+**평가**한다(`marketfeed/time_pacer.py`) — 그 평가 주기는 그대로다. 다만 **증거 행은 평가마다
+쓰지 않는다**(2026-11-13 이후): 판정 내용이 바뀔 때 즉시, 그 밖에는
+`time.yaml::time_health_snapshot_heartbeat_ms`(paper **55000**)마다 한 행이다
+(`tos_runtime/time/service.py` 모듈 docstring).
 
 ```bash
 sqlite3 "$DATA/evidence.sqlite3" "SELECT COUNT(*) FROM entries WHERE kind='TIME_HEALTH_SNAPSHOT';"
 ```
 
-**장중(세션 열림) 기대치는 「패스마다 1행」이고, `poll_interval_ms: 400` 기준 ≈ 2.4 행/초** 다
-(주기 = poll + 패스 소요 ≈ 410 ms). 그 값은 운영자 처분 2026-09-27 §6.1 ·
-`docs/plans/2026-09-27-tos-poll-interval-freshness-budget-plan.md` 에서 1000 → 400 으로 내려왔다.
-실측(같은 계획 §7.3, 개장 시각 주입 + 실 `run_forever` 90 s, 2회): **216 행(2.39/s) · 220 행(2.43/s)**.
-장중 7 h 면 ≈ **61 k 행**이다 — 증거 디스크를 볼 때 이 값이 기준선이다. 초당 1 행 근처면 poll 이
-1000 으로 되돌아간 것이고(그 조합은 이제 부팅이 거부한다 — `journal_pass_allowance_ms` 가드),
-아예 늘지 않으면 §5 ④ 의 「평가가 멈춘」 결함 형태다.
+**기대치는 열림·닫힘 모두 ≥ 1 행/분** 이다. 하트비트 55 s 가 닫힌 세션의 평가 주기 60 s 보다
+**짧기 때문에** 닫힘에서는 평가마다 한 행(=1 행/분)이고, 열림에서는 55 s 마다 한 행이다.
+두 값이 같으면(둘 다 60000) 하트비트가 한 번씩 빗나가 건강한 세션에도 약 120 초 구멍이
+생기므로, 그 부등식은 `tests/compose/test_deploy_approved_values.py` 가 고정한다.
+
+따라서 **2분 넘게 돌렸는데 전혀 늘지 않으면** §5 ④ 의 「평가가 멈춘」 결함 형태다 — 이 문턱은
+위 부등식 덕분에 이제 거짓 양성이 없다(건강한 세션은 2분 안에 반드시 1행 이상 늘린다).
+반대로 **분당 수백 행이면** 판정이 계속 흔들리고 있다는 뜻이니(열림/닫힘 플래핑, 참조 원천
+단속, 앵커 거절) 그 행들의 `health_state` 를 본다.
+
+⚠ **이 수를 「패스가 도는지」로 읽으면 안 된다.** 틱 소비는 위의 `marketfeed.sqlite3::snapshots`
+(또는 `EVENT_CONSUMED`)로 본다. 2026-11-13 이전의 「패스마다 1행 · `poll_interval_ms: 400`
+기준 ≈ 2.4 행/초 · 장중 7 h ≈ 61 k 행」(실측: 2026-09-27 계획 §7.3, 216 행 2.39/s · 220 행
+2.43/s)은 **그 시점의 사실**이고, 아래 세션 표의 옛 행 수도 그 규칙으로 읽는다.
 
 ## 4-A. 스키마 마이그레이션 — 증거 저장소 v1 → v2 (`entries_kind_seq`)
 

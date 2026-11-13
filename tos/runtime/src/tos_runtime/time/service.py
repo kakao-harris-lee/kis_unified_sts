@@ -28,12 +28,51 @@ single injected regression followed by an unrelated later high reading could
 look "valid again" by accident. Recovery out of ``UNTRUSTED`` deliberately
 resets this high-water mark at the recovery instant (a fresh anchor, not a
 revival of the old one).
+
+Evidence cadence is NOT evaluation cadence
+------------------------------------------
+:meth:`TrustworthyTimeService.evaluate` runs, and exposes a fresh snapshot,
+exactly as often as its caller calls it (the marketfeed pass loop: measured
+~408 ms, p90 411). That cadence is what every freshness consumer reads
+(:meth:`~TrustworthyTimeService.wall_clock_now_if_fresh`,
+``FreshTrustedWallClockReference``) and this module does not touch it.
+
+What IS bounded is how often the ``TIME_HEALTH_SNAPSHOT`` evidence ROW is
+appended: on a change of judged content, and otherwise no more often than
+``time_health_snapshot_heartbeat_ms`` — a key whose YAML comment carries both
+the incident and why it must stay strictly under the closed-session evaluate
+interval. Measured 2026-11-13 over every live evidence store: 2.9 M of 3.45 M
+rows (84.4 %, 8.3 GB) were this one kind, re-appending the same judgement
+every ~400 ms, and on 2026-11-10 the host disk filled and sessions were LOST.
+
+**The receipt discipline is unchanged where it means something.** Every
+*judgement* still reaches a durable receipt before it is observable: the
+fingerprint below covers ``health_state``, ``generation``, the refusal
+``reason``, the reference sources, the bounds, the versions, the continuity
+identity and the ``suspended`` verdict, so no state/generation/anchor-identity
+move can be skipped. What a skipped cycle leaves un-evidenced is only this
+cycle's monotonic bookkeeping — the ratcheted high-water mark, the snapshot's
+own id/instant, and the previous-reading pair. None of those is a judgement,
+none is read back out of evidence by anything in this runtime, and none
+survives a restart anyway (``tos.time.recovery_generation_revives_nothing``:
+a fresh process mints a brand-new anchor and generation regardless).
+
+**Said plainly about the wall clock.** The exact ``wall_clock_observation`` is
+one more thing a skipped cycle does not record, and that reading is NOT inert:
+this runtime serves it to the calendar session phase, the marketfeed
+``source_age`` anchor, the egress trading-date stamp and the KIS quote-request
+anchor. All of them read the LIVE in-memory snapshot, still re-issued every
+cycle, so what they see is unchanged — but **the exact reading reaches
+evidence only on a judged-content change or at the heartbeat**, a sample of
+the series rather than every value. Whether a reading exists at all stays in
+the fingerprint, so acquiring or losing one always writes a row. Details and
+every consumer named: :mod:`tos_runtime.time.judged_content`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Protocol
+from collections.abc import Mapping, Sequence
+from typing import Any, Protocol
 
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.time import (
@@ -58,6 +97,7 @@ from tos.workload import RuntimeIdentity
 from tos_runtime.evidence.ports import EvidenceAppendPort
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.generation import GenerationCounter
+from tos_runtime.time.judged_content import judged_content
 from tos_runtime.time.sources import MonotonicSource, ReferenceSourceReader
 
 __all__ = [
@@ -199,6 +239,14 @@ class TrustworthyTimeService:
         #: recovered from the snapshot afterwards. ``None`` until a cycle supplies them.
         self._cycle_previous_monotonic_ms: int | None = None
         self._cycle_suspension_ms: int | None = None
+        #: The judged content (:func:`~tos_runtime.time.judged_content.judged_content`) of the
+        #: last cycle whose
+        #: ``TIME_HEALTH_SNAPSHOT`` row actually got a receipt, and the monotonic reading that
+        #: cycle took. ``None`` until the first ``evaluate()`` commits one — which is why the
+        #: first cycle of every process always writes. Updated only inside the post-receipt
+        #: block of :meth:`evaluate`, with every other mutation there.
+        self._evidenced_content: dict[str, Any] | None = None
+        self._evidenced_monotonic_ms: int | None = None
 
     @property
     def health_state(self) -> HealthState:
@@ -607,10 +655,101 @@ class TrustworthyTimeService:
         )
         return snapshot
 
+    def _re_establishes_freshness(self, now_ms: int) -> bool:
+        """Whether this cycle is the one that makes an AGED-OUT exposed reading fresh again.
+
+        Freshness is itself consumed as a judgement, not just as bookkeeping:
+        :meth:`wall_clock_now_if_fresh` serves a reading only while the snapshot it came from
+        is within ``max_time_conservative_freshness_age_ms``, and the egress trading-date
+        stamp (``compose/_session_wiring.py``, bound to that same config value) calls exactly
+        that. A cycle that flips the answer from "too old to use" to "usable now" therefore
+        changes what a consumer may do, even when the health state and every source verdict
+        are identical to the last evidenced cycle — so it is due, and if its append fails the
+        whole cycle fails and nothing is exposed.
+
+        Without this, a stale-clock cycle whose durable append would have raised instead
+        SUCCEEDS (nothing is appended, so nothing can fail), re-establishes freshness and lets
+        an egress stamp go out on a clock the runtime could not evidence — the exact
+        fail-closed property ``tests/compose/test_egress_trading_date.py::
+        test_an_unevaluable_clock_stamps_nothing_and_never_the_stale_date`` pins (PR #1074).
+
+        Costs nothing in the open session (passes are ~410 ms apart against a 1000 ms bound,
+        so the exposed reading is never stale); in the closed session every 60 s cycle is
+        stale by that bound and writes, which is the one row per minute the heartbeat already
+        produced there.
+        """
+        previous = self._snapshot
+        if previous is None:
+            return False
+        issued = previous.issue_monotonic_value
+        if issued is None:
+            return True
+        age_ms = now_ms - issued
+        return (
+            age_ms < 0 or age_ms > self._config.max_time_conservative_freshness_age_ms
+        )
+
+    def _snapshot_evidence_due(self, judged: Mapping[str, Any], now_ms: int) -> bool:
+        """Whether this cycle's ``TIME_HEALTH_SNAPSHOT`` row must be appended: the judged
+        content moved, this cycle re-establishes freshness
+        (:meth:`_re_establishes_freshness`), or the heartbeat interval has elapsed since the
+        last row that got a receipt.
+
+        Fails toward writing. The first cycle of a process has nothing to compare against and
+        writes; a monotonic reading that went BACKWARD since the last written row is exactly
+        the regression the anchor predicate exists for and writes rather than silently
+        deferring on a negative age.
+        """
+        if self._evidenced_content is None or judged != self._evidenced_content:
+            return True
+        if self._re_establishes_freshness(now_ms):
+            return True
+        last_ms = self._evidenced_monotonic_ms
+        if last_ms is None or now_ms < last_ms:
+            return True
+        return now_ms - last_ms >= self._config.time_health_snapshot_heartbeat_ms
+
+    def _announce_wall_clock_exposed(
+        self, snapshot: TimeHealthSnapshot, wall_clock_observation: int
+    ) -> None:
+        """G-1 taking-effect announcement (runtime operations wiring plan §2 decision 8):
+        exactly once per service instance, the first time a TRUSTED snapshot carries a real
+        wall-clock observation.
+
+        A SEPARATE evidence append from the snapshot's own row — ordered after it, per the
+        same "receipt before observable state" discipline (if THIS append raises, the snapshot
+        itself was already durably committed and IS exposed; only the exposure flag below
+        would not yet be set, so a retry-from-caller would correctly re-attempt this
+        announcement on the next ``evaluate()`` rather than silently losing it).
+
+        The cited ``snapshot_id`` always names a row that exists: the cycle that satisfies
+        this condition is by construction one :meth:`evaluate` forces due (``announce_ms is
+        not None or ...``), so the snapshot row above was appended on this very cycle.
+        """
+        self._evidence.append(
+            {
+                "event": _WALL_CLOCK_EXPOSED_KIND,
+                "snapshot_id": snapshot.snapshot_id,
+                "wall_clock_observation": wall_clock_observation,
+                "unit": "unix_ms",
+                "source_label": "LOCAL_SYSTEM_CLOCK",
+            },
+            kind=_WALL_CLOCK_EXPOSED_KIND,
+            record_class=_WALL_CLOCK_EXPOSED_RECORD_CLASS,
+        )
+        self._wall_clock_exposed = True
+
     def evaluate(self) -> TimeHealthSnapshot:
         """Run one health-check cycle: read sources, call kernel predicates,
-        derive the next state, issue + durably evidence a snapshot, and only
-        then expose it.
+        derive the next state, issue a snapshot, durably evidence it when it is
+        due, and only then expose it.
+
+        The cycle itself is unconditional — every call reads the clock, calls
+        every predicate and exposes a fresh snapshot, which is what the
+        freshness consumers read. The ``TIME_HEALTH_SNAPSHOT`` evidence ROW is
+        written on a change of judged content or once per
+        ``time_health_snapshot_heartbeat_ms``, never per cycle (module
+        docstring "Evidence cadence is NOT evaluation cadence").
 
         Returns:
             The freshly issued, digest-verified :class:`TimeHealthSnapshot`.
@@ -655,43 +794,32 @@ class TrustworthyTimeService:
             ),
         )
 
+        payload = snapshot.model_dump(mode="json")
+        judged = judged_content(payload, reason)
+        # The reading to announce (G-1 decision 8), or None when this is not that cycle.
+        announce_ms: int | None = (
+            wall_clock_observation
+            if applied_state is HealthState.TRUSTED and not self._wall_clock_exposed
+            else None
+        )
         # "영수증 없으면 일어나지 않았다" — durable commit BEFORE any of the
         # state below becomes observable. If this raises, nothing past this
         # point executes: no state/anchor/generation mutation, no snapshot
-        # exposed via current_snapshot().
-        self._evidence.append(
-            snapshot.model_dump(mode="json"),
-            kind=_SNAPSHOT_KIND,
-            record_class=_SNAPSHOT_RECORD_CLASS,
-        )
-
-        # G-1 taking-effect announcement (runtime operations wiring plan §2
-        # decision 8): exactly once per service instance, the first time a
-        # TRUSTED snapshot carries a real wall-clock observation. A SEPARATE
-        # evidence append from the snapshot's own row above — ordered after
-        # it, per the same "receipt before observable state" discipline (if
-        # THIS append raises, the snapshot itself was already durably
-        # committed and IS exposed; only the exposure flag below would not
-        # yet be set, so a retry-from-caller would correctly re-attempt this
-        # announcement on the next evaluate() rather than silently losing it).
-        if (
-            applied_state is HealthState.TRUSTED
-            and wall_clock_observation is not None
-            and not self._wall_clock_exposed
-        ):
+        # exposed via current_snapshot(). A cycle that is NOT due appends no
+        # row and therefore has no receipt to wait on — see the module
+        # docstring for exactly which mutations that leaves un-evidenced and
+        # why none of them is a judgement.
+        due = announce_ms is not None or self._snapshot_evidence_due(judged, now_ms)
+        if due:
             self._evidence.append(
-                {
-                    "event": _WALL_CLOCK_EXPOSED_KIND,
-                    "snapshot_id": snapshot.snapshot_id,
-                    "wall_clock_observation": wall_clock_observation,
-                    "unit": "unix_ms",
-                    "source_label": "LOCAL_SYSTEM_CLOCK",
-                },
-                kind=_WALL_CLOCK_EXPOSED_KIND,
-                record_class=_WALL_CLOCK_EXPOSED_RECORD_CLASS,
+                payload, kind=_SNAPSHOT_KIND, record_class=_SNAPSHOT_RECORD_CLASS
             )
-            self._wall_clock_exposed = True
+        if announce_ms is not None:
+            self._announce_wall_clock_exposed(snapshot, announce_ms)
 
+        if due:
+            self._evidenced_content = judged
+            self._evidenced_monotonic_ms = now_ms
         if commit_generation != generation.current:
             generation.next()
         self._anchor = next_anchor

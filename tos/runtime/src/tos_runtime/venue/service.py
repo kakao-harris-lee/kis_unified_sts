@@ -99,6 +99,12 @@ statements govern it, and each one is a test in plan §8:
   snapshots are only reached from inside the runner's cycle and that cycle
   evaluates the time service every pass (measured 2026-10-22: a
   ``TIME_HEALTH_SNAPSHOT`` every ~408 ms, p90 411, inside the 1000 ms bound).
+  **That measurement counted evidence ROWS, and since 2026-11-13 those are
+  written on judged-content change plus a configured heartbeat, not per pass**
+  (``tos_runtime.time.service`` module docstring). The CADENCE it stood for is
+  unchanged — the runner still calls ``evaluate()`` every pass and the exposed
+  snapshot is still re-issued every pass — but re-deriving the number from row
+  timestamps would now measure the heartbeat, not the loop.
   Fail-closed either way: until a band is read AND validated,
   :attr:`~VenueConstraintService.shape_constraints` stays the policy's own
   bounds, which for the band-declaring tenant are ``None`` — ``UNKNOWN``

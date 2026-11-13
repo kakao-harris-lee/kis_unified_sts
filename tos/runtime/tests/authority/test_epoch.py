@@ -215,6 +215,7 @@ def test_witness_present_false_before_time_service_started(
             trading_calendar_version="cal-1",
             verification_profile_version="vp-0",
             safety_profile_version="sp-0",
+            time_health_snapshot_heartbeat_ms=60_000,
         ),
         identity=identity,
         evidence=evidence_port,

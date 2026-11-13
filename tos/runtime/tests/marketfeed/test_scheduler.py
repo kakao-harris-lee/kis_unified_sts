@@ -953,6 +953,7 @@ def _read_order_time_config() -> TrustworthyTimeConfig:
         trading_calendar_version="krx-2026.09.1",
         verification_profile_version="VERIFICATION-PROFILE-002-v2.1",
         safety_profile_version="tos-paper-profile-g1",
+        time_health_snapshot_heartbeat_ms=60_000,
     )
 
 

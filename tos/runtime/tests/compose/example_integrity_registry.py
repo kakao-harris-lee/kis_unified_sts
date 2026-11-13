@@ -441,6 +441,7 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
         ("MAX_send_result_wait_ms",),
         ("MAX_critical_input_consumer_receipt_age_ms",),
         ("MAX_time_source_sequence_gap_ms",),
+        ("time_health_snapshot_heartbeat_ms",),
         ("tz_db_version",),
         ("trading_calendar_version",),
         ("verification_profile_version",),
