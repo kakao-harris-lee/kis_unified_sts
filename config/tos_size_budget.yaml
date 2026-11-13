@@ -59,12 +59,12 @@ scope:
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
 exceptions:
 - target: tos/src/tos/egressgw/gateway.py
-  measured: 1511
+  measured: 1516
   owner: tos-kernel
   decomposition_order: 1
   expires_on: '2026-12-31'
   note: >-
-    **2026-11-13 S2-b 재등재 1804→1511(-293)**: verify 항목 여섯을 앞 단계로 접고(`_check_identities` · `_check_commitment_epoch` · `_check_venue` · `_check_approval` · `_check_action_flow` 삭제) `_check_construction` 을 명령 존재 + mutation fence 로 줄였다.
+    **2026-11-13 S2-b 재등재 1804→1516(-288)**: `_bound_context` 도크스트링에 Mapping 형식은 테스트 접합부라는 문단(리뷰 L1)을 더하고, verify 항목 여섯을 앞 단계로 접고(`_check_identities` · `_check_commitment_epoch` · `_check_venue` · `_check_approval` · `_check_action_flow` 삭제) `_check_construction` 을 명령 존재 + mutation fence 로 줄였다.
     **2026-11-13 S2-a 리뷰 LOW(3) 재등재 1802→1804(+2)**: 모듈 도크스트링의 "17 항목 중
     여섯" · "여섯은 유보" 문언을 실제 13 항목 · 유보 2 로 고치고, `verify_send_boundary`
     도크스트링과 step 15 주석에서 "17-item" 을 걷어내며 줄바꿈 2줄. 문언만 바뀌었고

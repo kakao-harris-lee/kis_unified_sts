@@ -1049,6 +1049,11 @@ class BrokerEgressGateway:
         ``CONTEXT_MISSING`` stop an absent mapping entry has always been. There is no branch in
         which an unrecognised ``contexts`` argument admits a send.
 
+        The ``Mapping`` form takes a caller-built context and is a test seam: since plan S2-b
+        the gateway no longer re-checks the ``reservation_*`` identities against the attempt,
+        because the production resolver builds them from the attempt itself
+        (:func:`~tos.egressgw.records.send_boundary_context`).
+
         Args:
             attempt: The Coordinator's step-12 attempt request.
 

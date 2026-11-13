@@ -723,7 +723,10 @@ class ComposeContextResolver:
         authored here.
 
         Items 7/8/9/10 went with plan S2-a, along with the four safety-mesh services
-        whose ``clear().clear`` supplied them.
+        whose ``clear().clear`` supplied them. Plan S2-b folded item 4 into the
+        Coordinator precondition and the SAFETY_AUTHORITY dimension: the field is still
+        supplied (as are items 3/11/14/15's inputs in :meth:`__call__`) but no verify
+        item reads it — :data:`tos.egressgw.FOLDED_VERIFY_ITEMS`.
 
         Item 5 (``live_scope_valid``) is derived per attempt by
         :func:`~tos_runtime.brokercap.live_scope.live_scope_valid` (PR-3 option (a),
