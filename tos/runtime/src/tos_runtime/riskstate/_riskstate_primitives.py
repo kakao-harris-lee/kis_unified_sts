@@ -38,9 +38,13 @@ __all__ = [
 
 #: Both templates carry a ``hard_safety_envelope``/``runtime_safety_profile`` top-level
 #: mapping block (``{envelope_id|profile_id, generation, canonical_digest}``, all null/TBD in
-#: the template) alongside ``authority``/``evidence`` — same presence-only discipline (neither
-#: loader interprets their content; the actual HSE cross-check is a lane b wiring-time
-#: concern, :mod:`tos_runtime.compose._riskstate_wiring`).
+#: the template) alongside ``authority``/``evidence`` — same presence-only discipline: neither
+#: loader interprets their content, and since plan S2-a (2026-11-13) there is nothing left to
+#: interpret it against — the Hard Safety Envelope document and the wiring-time cross-check
+#: against it are gone, and the ARE ceiling is the policy's own ``_runtime.envelope_max``
+#: (required for every governed dimension by :func:`load_aggregate_risk_policy`). The two
+#: blocks stay because both policy records still declare them and this presence check is what
+#: keeps a truncated document from loading.
 RISK_TEMPLATE_MAPPING_KEYS: tuple[str, ...] = (
     *TEMPLATE_MAPPING_KEYS,
     "hard_safety_envelope",

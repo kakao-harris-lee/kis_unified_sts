@@ -31,13 +31,16 @@ Order Construction Policy (those two blocks are NOT part of the tos-spec templat
 itself; they are a runtime config-authoring convention, as :mod:`tests.venue._documents`'s
 own module docstring confirms for the venue pair).
 
-**What neither loader does (lane a boundary, plan §4.1).** Neither issues its policy against
-a Hard Safety Envelope — the ARE ``injected_envelope_max``/HSE dimension cross-check
-(plan §2.1 row "ARE ``injected_envelope_max``") is a LANE B wiring-time responsibility
-(:mod:`tos_runtime.compose._riskstate_wiring`), run once both the policy AND the HSE are
-loaded; neither loader has an HSE input and performs no such check. Neither activates its
-policy (``tos_runtime.venue.activation.require_member_activated`` is lane b's job, called
-with the ``AGGREGATE_RISK_POLICY``/``ACTION_FLOW_POLICY`` member kinds).
+**What neither loader does (lane a boundary, plan §4.1), as plan S2-a left it.** Neither
+issues its policy against a Hard Safety Envelope, because there is no longer an HSE to issue
+it against: plan S2-a (2026-11-13) deleted the document, the kernel ``tos.spg`` package and
+the lane-b wiring-time ``injected_envelope_max``/HSE dimension cross-check
+(:mod:`tos_runtime.compose._riskstate_wiring`) that used to run once both were loaded. The
+ARE ceiling is now the policy's OWN ``_runtime.envelope_max``, and the completeness refusal
+moved with it into :func:`load_aggregate_risk_policy` — so that one check is lane a's now,
+and is the only place it exists. Neither loader activates its policy either; the activation
+document and ``tos_runtime.venue.activation`` went with the same plan (the policy digest is
+still recorded in the ``*_POLICY_BOUND`` evidence at boot).
 
 **Dimension-id convention (plan §0 survey "픽스처 관용구", reused not invented).** ARE
 dimension ids are ``f"{scope}::{dimension}"`` (matching

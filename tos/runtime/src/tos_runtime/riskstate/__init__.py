@@ -7,9 +7,12 @@ owners" split):
 * :mod:`tos_runtime.riskstate.policies` — loads the Aggregate Risk Policy / Action Flow Policy
   INSTANCE documents and issues ``AggregateRiskPolicy``/``ActionFlowPolicy`` through the
   kernel's own ``.issue()`` constructors (DR-0003 §2.1: "follow DR-0002 §2.1 and §2.2
-  verbatim"). No admissibility judgement; no activation (that stays
-  :mod:`tos_runtime.venue.activation`'s job, called by lane b with the new
-  ``AGGREGATE_RISK_POLICY``/``ACTION_FLOW_POLICY`` member kinds).
+  verbatim"). No admissibility judgement; no activation — and since plan S2-a (2026-11-13)
+  there is no activation step at all: the activation document and
+  ``tos_runtime.venue.activation`` went with the safety mesh, so a policy's digest is
+  recorded in the ``*_POLICY_BOUND`` evidence at boot and compared against nothing. This
+  module does own one refusal lane b used to hold, the ARE ceiling's completeness — see
+  :mod:`tos_runtime.riskstate.policies`'s own docstring.
 * :mod:`tos_runtime.riskstate.position` — folds the durable evidence store into a
   single-source, conservative position observation (DR-0003 §2.2). Pure aggregation, never a
   risk judgement, never a broker read.
