@@ -260,12 +260,12 @@ def build_egress_trading_date_reader(
 
     **Why only the egress stamp.** :func:`~tos_runtime.compose.root.compose_paper_runtime`
     keeps every other consumer (band source, venue service, standing approval, post-trade
-    witness, held-position bridge) on the plain reader, for two reasons. (1)
-    :class:`~tos_runtime.time.service.TrustworthyTimeService` is not thread-safe, and some of
-    those consumers read a date off the fill observer's FETCH thread
-    (:mod:`tos_runtime.posttrade.fill_fetch`); the egress stamp runs on the loop thread, inside
-    :meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.tick_once`'s own
-    ``driver.enqueue_and_run``. (2) The two readers cannot disagree about which day it is: a
+    witness, held-position bridge) on the plain reader, for two reasons. (1) This wrapper WRITES
+    to the time service, and the egress stamp is on the loop thread — the one the pass's own
+    evaluation already runs on; some other consumers read a date from the fill observer's FETCH
+    thread (:mod:`tos_runtime.posttrade.fill_fetch`), and wrapping those would put a second
+    writer on the service (their plain READS already overlap the loop's evaluation today, which
+    this changes neither way). (2) The two readers cannot disagree about which day it is: a
     stale plain reader abstains (``None``), it never answers a different date.
 
     **Side effects of the extra cycle, and where it lands.** ``evaluate()`` appends one

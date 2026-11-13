@@ -29,9 +29,15 @@ The fix re-establishes freshness at the stamp instead of widening the bound: one
 ``evaluate()``, then one re-read. Nothing is extrapolated and nothing is guessed — an untrusted
 or unevaluable clock still yields ``None``.
 
+The unit tests below build that reader directly; :func:`test_the_egress_stamp_of_a_composed_runtime_recovers_a_date_the_pass_aged_out`
+boots a FULL composed runtime instead and reads the reader the transport actually holds — the
+one thing a direct build can never pin is WHICH reader
+:func:`~tos_runtime.compose.root.compose_paper_runtime` hands the egress seam (review of
+PR #1074, MEDIUM).
+
 Hermetic (D1.4): a real :class:`~tos_runtime.evidence.store.SqliteEvidenceStore` and a real
 calendar file under ``tmp_path``, a real :class:`~tos_runtime.time.service.TrustworthyTimeService`
-driven by this file's own fake monotonic/reference doubles. No network, no compose stack.
+driven by this file's own fake monotonic/reference doubles. No network.
 """
 
 from __future__ import annotations
@@ -51,10 +57,24 @@ from tos_runtime.compose._session_wiring import (
     build_egress_trading_date_reader,
     build_session_facts_owner,
 )
+from tos_runtime.compose._transport_wiring import TransportKind
+from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.service import TrustworthyTimeService
 from tos_runtime.time.sources import ReferenceObservation
+from tos_runtime.venue_ledger.synthetic import RecordingSyntheticTransport
+
+from . import _fixtures as fx
+from .test_compose_root import (
+    FakeMonotonicSource,
+    _action_flow_inputs_for,
+    _aggregate_inputs,
+    _LiveRuntimeFacts,
+)
+from .test_venue_ledger_wiring import turn_the_venue_ledger_on
+
+pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
 _KST = zoneinfo.ZoneInfo("Asia/Seoul")
 
@@ -332,3 +352,76 @@ def test_the_date_is_read_from_the_one_calendar_not_derived_here(stack) -> None:
     stack.monotonic.advance(5 * 3_600_000 + 31 * 60_000)
     assert stack.egress_reader() is None
     assert stack.time_service.health_state is HealthState.TRUSTED
+
+
+# ============================================================================
+# The wiring itself: WHICH reader the composed runtime hands the egress seam
+# ============================================================================
+
+
+def test_the_egress_stamp_of_a_composed_runtime_recovers_a_date_the_pass_aged_out(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every test above builds the reader directly, so all of them stay green if
+    ``compose/root.py`` hands ``_finalize`` the PLAIN ``trading_date_reader`` again (review of
+    PR #1074, MEDIUM). This one boots the real composition root and reads the reader the egress
+    transport actually holds.
+
+    ``finality.yaml::witness`` is turned on so the synthetic transport is wrapped in a
+    :class:`~tos_runtime.venue_ledger.synthetic.RecordingSyntheticTransport` — the one egress
+    transport a synthetic tree can give this test, and it keeps the injected reader as an
+    attribute, which is exactly what is under test here. ``wall_clock`` is deliberately NOT
+    injected (``_compose`` would supply a :class:`~tos_runtime.calendar.ports
+    .FixedWallClockReference`, which is never stale and would make this assertion vacuous): the
+    production-default :class:`~tos_runtime.calendar.ports.FreshTrustedWallClockReference` is the
+    whole subject, with the OS clock pinned the same way the two production-default tests in
+    ``test_session_wiring.py`` pin it.
+
+    Concrete input: 61 s of monotonic time inside one pass, against this fixture's
+    ``time.yaml::MAX_time_conservative_freshness_age_ms`` of 60 s — the 2026-11-13 incident's
+    4287 ms against the production tree's 1000 ms, at this fixture's scale. Concrete result
+    before the fix (and after a revert of the ``root.py`` wiring): the egress reader answers
+    ``None`` exactly like the plain one, and the ACK goes out undated.
+    """
+    config_dir = config_dir_with_risk_state
+    fx.pin_system_clock(monkeypatch, fx.LAST_MINUTE_OF_DAY_UNIX_MS)
+    turn_the_venue_ledger_on(config_dir)
+    fx.write_band_strategy_file(config_dir)
+    clock = FakeMonotonicSource()
+    facts = _LiveRuntimeFacts()
+    runtime = compose_paper_runtime(
+        config_dir,
+        data_dir,
+        custody_root,
+        "non-live-test",
+        construction=fx.construction_config(),
+        aggregate_risk_inputs_provider=_aggregate_inputs,
+        action_flow_inputs_provider=_action_flow_inputs_for(facts),
+        monotonic_source=clock,
+        transport_kind=TransportKind.SYNTHETIC,
+        # wall_clock intentionally omitted — the production default (docstring).
+    )
+    facts.runtime = runtime
+    try:
+        transport = runtime.transport
+        assert isinstance(transport, RecordingSyntheticTransport)
+        assert runtime.session_facts is not None
+        # Right after boot both readers answer, from the same calendar and clock.
+        at_boot = runtime.session_facts.trading_date_now(fx.INSTRUMENT_CLASS)
+        assert at_boot is not None
+        assert transport._trading_date_now() == at_boot
+
+        # The pass spends more than the freshness bound before the send (the incident).
+        clock.next_value += 61_000
+
+        # The plain reader — every other consumer's — is honestly out of date,
+        assert runtime.session_facts.trading_date_now(fx.INSTRUMENT_CLASS) is None
+        # and the one the composition root gave the egress seam re-establishes it.
+        assert transport._trading_date_now() is not None
+    finally:
+        runtime.venue_ledger.close()
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
