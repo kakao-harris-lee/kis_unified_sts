@@ -133,6 +133,7 @@ from tos.cur.state import (
 from tos.cur.vocabulary import (
     CONDITIONAL_DIMENSION_KEYS,
     MANDATED_DIMENSION_FLOOR,
+    RETIRED_DIMENSION_KEYS,
     CurrentnessAdmission,
     DimensionKey,
     ProofResult,
@@ -153,6 +154,7 @@ __all__ = [
     "DimensionKey",
     "CONDITIONAL_DIMENSION_KEYS",
     "MANDATED_DIMENSION_FLOOR",
+    "RETIRED_DIMENSION_KEYS",
     # records — the four digest-bound artifacts
     "SafetyCurrentnessVector",
     "EgressCurrentnessProof",

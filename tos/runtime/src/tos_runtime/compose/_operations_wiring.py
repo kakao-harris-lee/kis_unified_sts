@@ -63,7 +63,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from tos_runtime.compose._pending_dimensions import PENDING_DIMENSION_KEYS
 from tos_runtime.compose._types import ComposedRuntime, OperationsFacts
 from tos_runtime.operations.backup_set import (
     MANIFEST_SUFFIX,
@@ -212,7 +211,9 @@ def _read_time(composed: ComposedRuntime) -> dict[str, object]:
 
 def _read_currentness(composed: ComposedRuntime) -> dict[str, object]:
     return {
-        "pending_dimensions": [key.name for key in PENDING_DIMENSION_KEYS],
+        # Plan S2-b retired the three operator-attested pending dimensions; the key stays
+        # (an empty list) so the projection's shape does not change for its readers.
+        "pending_dimensions": [],
         "last_assemble_complete": composed.currentness_assembler.last_assemble_complete,
     }
 

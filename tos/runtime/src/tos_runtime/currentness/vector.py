@@ -77,9 +77,7 @@ SAFETY_AUTHORITY/ACTION_FLOW, which are simply two more map entries now
 (:mod:`tos_runtime.compose._currentness_wiring`'s own construction call).
 A caller registering the SAME key twice is a caller bug the ``dict`` literal
 itself would silently last-write-wins on; this class does not additionally
-guard against it (compose-time key-collision refusal, if ever needed, is
-:mod:`tos_runtime.compose._pending_dimensions`'s job — see its own
-"owned/pending-duplicated key" boot refusal).
+guard against it.
 """
 
 from __future__ import annotations

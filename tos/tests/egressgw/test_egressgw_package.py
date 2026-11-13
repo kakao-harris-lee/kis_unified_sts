@@ -59,45 +59,18 @@ def test_the_package_declares_its_honest_scope_in_its_own_docstring() -> None:
         ), f"the package docstring lost its honest-scope phrase: {phrase!r}"
 
 
-def test_the_package_states_the_six_five_two_split() -> None:
-    """(§4.1) The 6 / 5 / 2 honesty table is stated where a reader of the code will see it.
+def test_the_package_states_the_four_two_one_split() -> None:
+    """(§4.1) The 4 / 2 / 1 honesty table is stated where a reader of the code will see it.
 
-    It was 6 / 5 / 6 until plan S2-a removed the RFC's items 7/8/9/10 with the safety-mesh
-    services that supplied their flags, leaving thirteen carried items and two deferred ones.
-    The counts are pinned here because the docstring is the only place a reader of the code
-    meets them, and a stale count reads as a stronger claim than the gate makes.
+    It was 6 / 5 / 6 until plan S2-a removed the RFC's items 7/8/9/10, and 6 / 5 / 2 until plan
+    S2-b folded six more into the earlier stage that already stops the same input. A stale
+    count reads as a stronger claim than the gate makes, so it is pinned.
     """
     doc = " ".join((tos.egressgw.__doc__ or "").split())
-    assert "carries thirteen" in doc
-    assert "six are verified by shipped predicates" in doc
-    assert "five are non-authoritative provisional stand-ins" in doc
-    assert (
-        "two — what is left of the live safety-governance mesh (4, 5) — are deferred"
-        in doc
-    )
-
-
-def test_the_package_recounts_the_actual_remaining_attestations() -> None:
-    """(kernel round #3 §2 decision 6, superseding round #2 §2 decision 4) The 6/5/6 split is the
-    kernel's own static disposition table (design #34 §4.1) — it does not shrink just because a
-    runtime later derives some of the five provisional items structurally. This test locks the
-    honest amendment: the docstring also names the actual remaining count in the reference
-    runtime composition, not just the kernel-level classification.
-
-    Round #2 landed the docstring recount at "three fields ... remaining ... attestations" when
-    only items 3, 6, 14, and 15 were structurally derived. Round #3 lands the last two owners
-    (item 12's ``venue_session_account_facts_current`` via ``SessionFactsOwner`` — W5; item 16's
-    ``restrictive_latch_state`` / ``worst_credible_capacity`` via ``tos_runtime.safety.latch`` —
-    W3), so the honest count is now zero remaining operator attestations. The old "three fields"
-    pin is false today: it would silently mask a regression if a future owner were retired without
-    updating this count.
-    """
-    doc = " ".join((tos.egressgw.__doc__ or "").split())
-    assert "zero remaining" in doc
-    assert "non-authoritative operator attestations" in doc
-    assert "venue_session_account_facts_current" in doc
-    assert "restrictive_latch_state" in doc
-    assert "worst_credible_capacity" in doc
+    assert "this gateway judges seven" in doc
+    assert "Four are verified by shipped predicates" in doc
+    assert "two read owner-supplied flags" in doc
+    assert "live scope (5) — is deferred" in doc
     assert "three fields as the only remaining" not in doc
 
 

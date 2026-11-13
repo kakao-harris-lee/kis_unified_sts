@@ -10,12 +10,12 @@ a named closed set — never ``is not DENY`` (design #34 §7).
 Three seals live in this module:
 
 1. **The verify list is the contract** (:data:`SEND_VERIFY_ITEMS`, taken from
-   RFC-002 §10.8:741-759 in the ADR's own order, less the four plan-S2-a removals —
-   :class:`SendVerifyItem`). Its per-item disposition
-   (:data:`REALIZED_ITEMS` / :data:`PROVISIONAL_ITEMS` / :data:`DEFERRED_ITEMS`) is the design
-   §4.1 table, and an import-time anchor proves the three sets **partition** it exactly —
-   6 + 5 + 2 = 13, disjoint, exhaustive. A future item that lands in no set, or in two, is an
-   immediate :class:`~tos.canonical.ArtifactIntegrityError` rather than a silently skipped
+   RFC-002 §10.8:741-759 in the ADR's own order, less the four plan-S2-a removals and the six
+   plan-S2-b folds — :class:`SendVerifyItem`, :data:`FOLDED_VERIFY_ITEMS`). Its per-item
+   disposition (:data:`REALIZED_ITEMS` / :data:`PROVISIONAL_ITEMS` / :data:`DEFERRED_ITEMS`) is
+   the design §4.1 table, and an import-time anchor proves the three sets **partition** it
+   exactly — 4 + 2 + 1 = 7, disjoint, exhaustive. A future item that lands in no set, or in two,
+   is an immediate :class:`~tos.canonical.ArtifactIntegrityError` rather than a silently skipped
    verify item (the #23 CUR enum-drift-anchor lesson applied to a verify list).
 2. **Admission is a positive closed set, not a negation** (:data:`ADMITTING_VERIFY_OUTCOMES`).
    ``NOT_APPLICABLE`` is a *recorded positive judgement* reachable only under a positively
@@ -37,6 +37,7 @@ from tos.canonical import ArtifactIntegrityError
 __all__ = [
     "ADMITTING_VERIFY_OUTCOMES",
     "DEFERRED_ITEMS",
+    "FOLDED_VERIFY_ITEMS",
     "PROVISIONAL_ITEMS",
     "REALIZED_ITEMS",
     "SEND_VERIFY_ITEMS",
@@ -76,7 +77,8 @@ class _NonTruthyStrEnum(StrEnum):
 class SendVerifyItem(StrEnum):
     """The things the Broker Egress Gateway verifies before a send (RFC-002 §10.8:741-759).
 
-    The RFC's list is 17 items; this enum carries 13 of them. Items 7/8/9/10 (Hard Safety
+    The RFC's list is 17 items; this enum carries 13 of them, and the gateway judges seven
+    (:data:`SEND_VERIFY_ITEMS`; the six plan-S2-b folds are :data:`FOLDED_VERIFY_ITEMS`). Items 7/8/9/10 (Hard Safety
     Envelope versions, safety deviation, safety incident, safety monitoring) went with plan
     S2-a: the safety-mesh services that supplied their flags were removed because their inputs
     were constant in every shipped tenant tree, and monitoring is carried by the MONITORING
@@ -125,20 +127,46 @@ class SendVerifyItem(StrEnum):
     ACTUAL_OUTBOUND_CONFORMANCE = "ACTUAL_OUTBOUND_CONFORMANCE"
 
 
-#: The normative item order (RFC-002 §10.8:741-759, less the four plan-S2-a removals — see
-#: :class:`SendVerifyItem`). Tuple order **is** the contract.
+#: **Plan S2-b folds** — members kept (a ``VERIFY_ITEM`` evidence row carries its item as a
+#: plain string, and the persisted-bytes rule keeps every enum member a stored row may name),
+#: but no longer judged at the send boundary, because the earlier stage named beside each one
+#: already stops the same input in the same synchronous flow (and no verify item ever denied in
+#: the 3.45M evidence rows measured on 2026-11-13). Removal condition: none — keep them.
+#:
+#: * ``MATCHING_INTENT_AND_RESERVATION_IDENTITIES`` — constant: :func:`~tos.egressgw.records.
+#:   send_boundary_context` (the only ``SendBoundaryContext`` builder) copies the three
+#:   ``reservation_*`` fields from the attempt they were compared against.
+#: * ``CURRENT_COMMITMENT_EPOCH`` — currentness: a fenced writer epoch makes the RCL
+#:   ``read_linearizable`` the proof issuer runs raise (or the vector absent), so the send stops
+#:   at proof issuance / item CURRENTNESS before this item could read it.
+#: * ``CURRENT_SAFETY_AUTHORITY_EPOCH`` — the Coordinator precondition (same predicate over the
+#:   same epoch service, refusing the tick before step 1) and the SAFETY_AUTHORITY currentness
+#:   dimension re-read per send.
+#: * ``VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION`` — step 3, which folded the same retained
+#:   snapshot / decision and halts on anything but ADMISSIBLE.
+#: * ``TRADING_APPROVAL`` — step 4 (independent approval): the consumed flag *is* step 4's ADMIT,
+#:   and the intent-binding digest is copied from the same construction it was compared to.
+#: * ``ACTION_FLOW`` — step 9 (atomic commit): the commitment flag *is* step 9's ADMIT, and the
+#:   permit identity the attempt binds is step 9's own ``bound_identity``.
+FOLDED_VERIFY_ITEMS: frozenset[SendVerifyItem] = frozenset(
+    {
+        SendVerifyItem.MATCHING_INTENT_AND_RESERVATION_IDENTITIES,
+        SendVerifyItem.CURRENT_COMMITMENT_EPOCH,
+        SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH,
+        SendVerifyItem.VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION,
+        SendVerifyItem.TRADING_APPROVAL,
+        SendVerifyItem.ACTION_FLOW,
+    }
+)
+
+#: The normative item order (RFC-002 §10.8:741-759, less the four plan-S2-a removals and the
+#: six plan-S2-b folds). Tuple order **is** the contract.
 SEND_VERIFY_ITEMS: tuple[SendVerifyItem, ...] = (
     SendVerifyItem.VALID_UNUSED_TRANSMISSION_CAPABILITY,
-    SendVerifyItem.MATCHING_INTENT_AND_RESERVATION_IDENTITIES,
-    SendVerifyItem.CURRENT_COMMITMENT_EPOCH,
-    SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH,
     SendVerifyItem.VALID_LIVE_SCOPE,
     SendVerifyItem.ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY,
-    SendVerifyItem.VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION,
     SendVerifyItem.VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION,
     SendVerifyItem.ORDER_CONSTRUCTION,
-    SendVerifyItem.TRADING_APPROVAL,
-    SendVerifyItem.ACTION_FLOW,
     SendVerifyItem.CURRENTNESS,
     SendVerifyItem.ACTUAL_OUTBOUND_CONFORMANCE,
 )
@@ -163,33 +191,27 @@ class VerifyDisposition(StrEnum):
     DEFERRED_APPLICABILITY = "DEFERRED_APPLICABILITY"
 
 
-#: Design §4.1 — the six items slice #1 verifies with real shipped predicates.
+#: Design §4.1 — the items verified with real shipped predicates.
 REALIZED_ITEMS: frozenset[SendVerifyItem] = frozenset(
     {
         SendVerifyItem.VALID_UNUSED_TRANSMISSION_CAPABILITY,
-        SendVerifyItem.MATCHING_INTENT_AND_RESERVATION_IDENTITIES,
-        SendVerifyItem.VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION,
         SendVerifyItem.ORDER_CONSTRUCTION,
         SendVerifyItem.CURRENTNESS,
         SendVerifyItem.ACTUAL_OUTBOUND_CONFORMANCE,
     }
 )
 
-#: Design §4.1 — the five items answered by a non-authoritative provisional stand-in.
+#: Design §4.1 — the items answered by an injected owner-supplied flag.
 PROVISIONAL_ITEMS: frozenset[SendVerifyItem] = frozenset(
     {
-        SendVerifyItem.CURRENT_COMMITMENT_EPOCH,
         SendVerifyItem.ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY,
         SendVerifyItem.VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION,
-        SendVerifyItem.TRADING_APPROVAL,
-        SendVerifyItem.ACTION_FLOW,
     }
 )
 
-#: Design §4.1 — the live safety-governance mesh items whose runtimes have not landed.
+#: Design §4.1 — the broker-applicability-conditional item (N/A only for a synthetic send).
 DEFERRED_ITEMS: frozenset[SendVerifyItem] = frozenset(
     {
-        SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH,
         SendVerifyItem.VALID_LIVE_SCOPE,
     }
 )
@@ -326,9 +348,9 @@ _ITEM_NUMBERS: dict[SendVerifyItem, int] = {
 def verify_item_number(item: SendVerifyItem) -> int:
     """Return this gateway's 1-based verify-list number for ``item``.
 
-    Derived structurally from :data:`SEND_VERIFY_ITEMS`, so it renumbers with the tuple.
-    Items 1-6 keep their RFC-002 §10.8:741-759 numbers; everything after the four plan-S2-a
-    removals (items 7/8/9/10) shifts down by four.
+    Derived structurally from :data:`SEND_VERIFY_ITEMS`, so it renumbers with the tuple (plan
+    S2-a removed four items and S2-b folded six; old rows keep the numbers they were written
+    with).
 
     Args:
         item: The verify item.
@@ -361,10 +383,10 @@ def _verify_disposition_partition_anchor() -> None:
         ArtifactIntegrityError: If the sets are not disjoint, not exhaustive, or the wrong sizes.
     """
     declared = set(SEND_VERIFY_ITEMS)
-    if declared != set(SendVerifyItem):
+    if declared != set(SendVerifyItem) - FOLDED_VERIFY_ITEMS:
         raise ArtifactIntegrityError(
-            "SEND_VERIFY_ITEMS is not exactly the SendVerifyItem membership — the normative "
-            "order must enumerate every item exactly once (RFC-002 §10.8:741-759)"
+            "SEND_VERIFY_ITEMS is not exactly the unfolded SendVerifyItem membership — the "
+            "normative order must enumerate every item exactly once (RFC-002 §10.8:741-759)"
         )
     if len(SEND_VERIFY_ITEMS) != len(declared):
         raise ArtifactIntegrityError("SEND_VERIFY_ITEMS repeats an item")
@@ -385,9 +407,9 @@ def _verify_disposition_partition_anchor() -> None:
             "would be skipped by the gateway loop (design #34 §4.1)"
         )
     sizes = (len(REALIZED_ITEMS), len(PROVISIONAL_ITEMS), len(DEFERRED_ITEMS))
-    if sizes != (6, 5, 2):
+    if sizes != (4, 2, 1):
         raise ArtifactIntegrityError(
-            f"verify-item disposition counts drifted from the design §4.1 table 6/5/2: {sizes}"
+            f"verify-item disposition counts drifted from the design §4.1 table 4/2/1: {sizes}"
         )
 
 

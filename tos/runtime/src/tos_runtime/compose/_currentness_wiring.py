@@ -22,22 +22,13 @@ from tos.cur import CurrentnessPolicy, DimensionKey
 
 from tos_runtime.authority.epoch import SafetyAuthorityEpochService
 from tos_runtime.compose._dimension_readers import (
-    _ActionFlowDimensionState,
     _build_dimension_readers,
-    _ConstraintDimensionState,
-    _ConstructionDimensionState,
-    _DecisionProofIntentDimensionState,
     _EnvironmentScopeDimensionState,
     _PostTradeDimensionState,
     _RecoveryDimensionState,
     _ReleaseDimensionState,
-    _TradingApprovalDimensionState,
 )
 from tos_runtime.compose._monitor_wiring import _MonitorOwners
-from tos_runtime.compose._pending_dimensions import (
-    PendingDimensionSpec,
-    load_pending_currentness_dimensions,
-)
 from tos_runtime.compose._risk_attestations import (
     RiskAttestations,
     load_risk_attestations,
@@ -66,11 +57,9 @@ __all__ = [
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 #: Same config file name ``_wiring.py`` uses for the risk/currentness configs
-#: (``tos/runtime/config/risk.example.yaml`` / ``currentness.example.yaml``
-#: / ``currentness_dimensions.example.yaml``).
+#: (``tos/runtime/config/risk.example.yaml`` / ``currentness.example.yaml``).
 _RISK_CONFIG_NAME = "risk.yaml"
 _CURRENTNESS_CONFIG_NAME = "currentness.yaml"
-_CURRENTNESS_DIMENSIONS_CONFIG_NAME = "currentness_dimensions.yaml"
 _RISK_ATTESTATIONS_CONFIG_NAME = "risk_attestations.yaml"
 
 
@@ -82,27 +71,14 @@ class _RiskAndCurrentness:
     required_scenario_kinds: frozenset
     currentness_assembler: CurrentnessAssembler
     proof_issuer: EgressCurrentnessProofIssuer
-    #: The 17 operator-attested pending currentness dimensions (team-lead
-    #: follow-up guidance) — see
-    #: :mod:`tos_runtime.compose._pending_dimensions`'s own module docstring.
-    pending_dimension_specs: tuple[PendingDimensionSpec, ...]
     #: The 6 operator-attested step 6/7 admission witnesses (re-review
     #: finding F4) — see
     #: :mod:`tos_runtime.compose._risk_attestations`'s own module docstring.
     risk_attestations: RiskAttestations
-    #: The late-bound cell the ACTION_FLOW dimension reader closes over —
-    #: filled in with step 9's ``VerdictRecorder`` once
-    #: ``_build_realized_stages`` creates it (see
-    #: ``_ActionFlowDimensionState``'s own docstring for why).
-    action_flow_dimension_state: _ActionFlowDimensionState
     #: Late-bound cell the RECOVERY dimension reader closes over — filled in with the
     #: W1 recovery barrier's own verdict once ``apply_recovery_barrier`` runs (see
     #: ``_RecoveryDimensionState``'s own docstring for why).
     recovery_dimension_state: _RecoveryDimensionState
-    #: Late-bound cell the TRADING_APPROVAL dimension reader closes over — filled in
-    #: with step 4's own ``VerdictRecorder`` once ``_build_realized_stages`` creates it
-    #: (see ``_TradingApprovalDimensionState``'s own docstring for why).
-    trading_approval_dimension_state: _TradingApprovalDimensionState
     #: Late-bound cell the ENVIRONMENT_SCOPE dimension reader closes over — filled in
     #: with the resolved active :class:`~tos_runtime.brokercap.scopes.BrokerScope` once
     #: ``_resolve_strategies_and_attested_inputs`` returns (see
@@ -111,13 +87,8 @@ class _RiskAndCurrentness:
     #: The slim monitor + item-16 latch owner — see
     #: :mod:`tos_runtime.compose._monitor_wiring`'s own module docstring.
     monitor_owners: _MonitorOwners
-    #: Phase 5 W3.2's five late-bound cells (plan §2 decisions 2-6; AGGREGATE_RISK needs
-    #: none — its reader closes over :attr:`risk_service` directly, already constructed
-    #: by the time :func:`_build_dimension_readers` runs) — see each cell's own docstring
-    #: in :mod:`tos_runtime.compose._dimension_readers`.
-    construction_dimension_state: _ConstructionDimensionState
-    constraint_dimension_state: _ConstraintDimensionState
-    decision_proof_intent_dimension_state: _DecisionProofIntentDimensionState
+    #: Late-bound cells — see each cell's own docstring in
+    #: :mod:`tos_runtime.compose._dimension_readers`.
     post_trade_dimension_state: _PostTradeDimensionState
     release_dimension_state: _ReleaseDimensionState
 
@@ -238,13 +209,10 @@ def _build_risk_and_currentness(
     currentness_policy = _build_currentness_policy(config_dir)
 
     dimension_readers, dimension_states = _build_dimension_readers(
-        rcl_log=rcl_log,
-        writer_epoch=writer_epoch,
         authority_epoch_service=authority_epoch_service,
         currentness_policy=currentness_policy,
         environment_label=environment_label,
         monitor_owners=monitor_owners,
-        risk_service=risk_service,
     )
     currentness_assembler = CurrentnessAssembler(
         rcl_log,
@@ -263,9 +231,6 @@ def _build_risk_and_currentness(
         writer_epoch=writer_epoch,
         is_complete=currentness_assembler.is_complete,
     )
-    pending_dimension_specs = load_pending_currentness_dimensions(
-        config_dir / _CURRENTNESS_DIMENSIONS_CONFIG_NAME
-    )
     risk_attestations = load_risk_attestations(
         config_dir / _RISK_ATTESTATIONS_CONFIG_NAME
     )
@@ -276,15 +241,9 @@ def _build_risk_and_currentness(
         flow_governor=flow_governor,
         required_scenario_kinds=required_scenario_kinds,
         currentness_assembler=currentness_assembler,
-        pending_dimension_specs=pending_dimension_specs,
         risk_attestations=risk_attestations,
-        action_flow_dimension_state=dimension_states.action_flow,
         recovery_dimension_state=dimension_states.recovery,
-        trading_approval_dimension_state=dimension_states.trading_approval,
         environment_scope_dimension_state=dimension_states.environment_scope,
-        construction_dimension_state=dimension_states.construction,
-        constraint_dimension_state=dimension_states.constraint,
-        decision_proof_intent_dimension_state=dimension_states.decision_proof_intent,
         post_trade_dimension_state=dimension_states.post_trade,
         release_dimension_state=dimension_states.release,
         monitor_owners=monitor_owners,

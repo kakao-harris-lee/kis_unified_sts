@@ -416,16 +416,6 @@ def compose_paper_runtime(
         loaded_ocp=loaded_ocp,
         entry_close_bound_reader=entry_close_bound_reader,
     )
-    # Late-bind the CONSTRAINT dimension reader's cell now step 3's own VerdictRecorder
-    # exists (Phase 5 W3.2, plan §2 decision 2).
-    boot.risk.constraint_dimension_state.venue_recorder = (
-        construction_stages.venue_recorder
-    )
-    # Late-bind the CONSTRUCTION dimension reader's cell now step 2's own stage exists
-    # (Phase 5 W3.2, plan §2 decision 3).
-    boot.risk.construction_dimension_state.construction_stage = (
-        construction_stages.construction_stage
-    )
     # The real service is created later, once `_finalize` has built the durable inbox
     # required by `InboxFlowReader`. These providers share one late-bound cell until then.
     risk_providers = build_risk_state_providers(
@@ -457,15 +447,6 @@ def compose_paper_runtime(
             uid=uid,
         ),
     )
-    # Late-bind the ACTION_FLOW / TRADING_APPROVAL dimension readers' cells now steps
-    # 9/4's VerdictRecorders exist (Phase 5 W3-b, plan §2 decision 3).
-    boot.risk.action_flow_dimension_state.step9_recorder = realized.step9_recorder
-    boot.risk.trading_approval_dimension_state.step4_recorder = realized.step4_recorder
-    # Late-bind the DECISION_PROOF_INTENT dimension reader's cell now step 13's own
-    # VerdictRecorder exists (Phase 5 W3.2, plan §2 decision 2).
-    boot.risk.decision_proof_intent_dimension_state.step13_recorder = (
-        realized.step13_recorder
-    )
     stages = _build_stage_map(construction_stages, realized)
 
     # T2 lane C: a kis-mock boot binds the genuine KIS wire-codec digest into the context
@@ -486,7 +467,6 @@ def compose_paper_runtime(
         flow_governor=boot.risk.flow_governor,
         currentness_assembler=boot.risk.currentness_assembler,
         proof_issuer=boot.risk.proof_issuer,
-        pending_dimension_specs=boot.risk.pending_dimension_specs,
         session_facts_current_reader=lambda: session_facts_owner.session_facts_current(
             construction.instrument_class,
         ),

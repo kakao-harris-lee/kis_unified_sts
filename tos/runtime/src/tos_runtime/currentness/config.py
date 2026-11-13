@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from tos.cur import DimensionKey
+from tos.cur import RETIRED_DIMENSION_KEYS, DimensionKey
 
 __all__ = ["CurrentnessConfig", "CurrentnessConfigError", "load_currentness_config"]
 
@@ -166,12 +166,20 @@ def _load_required_dimensions(
                 f"string DimensionKey name (got {entry!r}) in {path}"
             )
         try:
-            dimensions.append(DimensionKey(entry))
+            key = DimensionKey(entry)
         except ValueError as exc:
             raise CurrentnessConfigError(
                 f"currentness config key {_REQUIRED_DIMENSIONS_KEY!r} names an unknown "
                 f"DimensionKey: {entry!r} in {path}"
             ) from exc
+        if key in RETIRED_DIMENSION_KEYS:
+            # Plan S2-b: no reader produces a retired dimension, so requiring one would deny
+            # every send — refuse at load instead of failing every attempt later.
+            raise CurrentnessConfigError(
+                f"currentness config key {_REQUIRED_DIMENSIONS_KEY!r} names a retired "
+                f"DimensionKey (plan S2-b): {entry!r} in {path} — remove it"
+            )
+        dimensions.append(key)
     if len(set(dimensions)) != len(dimensions):
         raise CurrentnessConfigError(
             f"currentness config key {_REQUIRED_DIMENSIONS_KEY!r} carries a duplicate "

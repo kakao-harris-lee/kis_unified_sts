@@ -47,21 +47,8 @@ requires the governing ``CurrentnessPolicy.required_dimensions`` to cover
 ``MANDATED_DIMENSION_FLOOR`` — every non-conditional
 :class:`~tos.cur.DimensionKey` member — and then requires **every** one of
 those required dimensions to be positively established in the assembled
-vector. This compose root's own live services structurally establish
-exactly four of them (``COMMIT_LOG``/``TRUSTWORTHY_TIME``/
-``SAFETY_AUTHORITY``/``ACTION_FLOW``); no Phase 2 lane (P/Q/R/S) wires a
-real runtime owner for the remaining 17. Per team-lead's explicit follow-up
-guidance (2026-09-08), this composition supplies those 17 from **composition
-config as explicit, named, operator-attested revisions**
-(:mod:`tos_runtime.compose._pending_dimensions` — never a kernel-derived
-judgement, and never fabricated silently: a still-null field refuses
-composition at startup) so the vector genuinely completes and ``is_complete``
-returns ``True`` — see the compose end-to-end test's
-``TestPendingDimensionAttestationGatesCompleteness`` for the mechanical
-proof that flipping one attestation to ``False`` makes the vector honestly
-incomplete again, and ``tos_runtime.compose._pending_dimensions``'s own
-module docstring for why supplying these 17 this way (rather than
-fabricating them as kernel-derived) is the honest, fail-closed choice.
+vector — each one by its owning runtime reader (plan S2-b retired the three
+operator-attested "pending" dimensions that used to be stamped in from YAML).
 Reaching an actual transport hand-off ALSO requires step 4
 (``INDEPENDENT_APPROVAL``) to admit, which it currently cannot (see
 ``_wiring.py``'s ``_decision_current_provider`` docstring and the compose
@@ -118,10 +105,6 @@ from tos_runtime.brokercap import (
 )
 from tos_runtime.brokercap.live_scope import live_scope_valid
 from tos_runtime.compose._attempt_arm import attempt_action_class, attempt_side
-from tos_runtime.compose._pending_dimensions import (
-    PendingDimensionSpec,
-    stamp_pending_dimensions,
-)
 from tos_runtime.compose._request_digest import RequestBytesDigestSource
 from tos_runtime.currentness.proof import EgressCurrentnessProofIssuer
 from tos_runtime.currentness.stages import TransmissionCapabilityStage
@@ -170,8 +153,8 @@ def record_egress_identity_observation(
     inventory: tuple[CredentialRouteInventoryEntry, ...],
 ) -> None:
     """W3.1 independent review MEDIUM-4 disposition: EGRESS_IDENTITY is reverted to
-    pending (:mod:`tos_runtime.compose._pending_dimensions` — no dimension verdict is
-    authored from partial predicate coverage). The ONE kernel predicate this
+    pending (no dimension verdict is authored from partial predicate coverage; plan S2-b
+    then retired the dimension, :data:`tos.cur.RETIRED_DIMENSION_KEYS`). The ONE kernel predicate this
     composition CAN honestly evaluate —
     :func:`~tos.egress.predicates.credential_route_authority_disjoint`, over the
     composed (boot-time-static) credential-route inventory — is still worth recording,
@@ -357,12 +340,6 @@ class ComposeContextResolver:
     flow_governor: RecordingActionFlowGovernor
     currentness_assembler: CurrentnessAssembler
     proof_issuer: EgressCurrentnessProofIssuer
-    #: The 17 operator-attested pending currentness dimensions (team-lead
-    #: follow-up guidance, 2026-09-08) — see
-    #: :mod:`tos_runtime.compose._pending_dimensions`'s own module docstring
-    #: for why these exist and what they honestly are (an interim operator
-    #: sign-off, never a fabricated kernel-derived verdict).
-    pending_dimension_specs: tuple[PendingDimensionSpec, ...]
     #: Item 12's three venue-half sub-facts (kernel round #3 §2 decision 4,
     #: replacing the single ``venue_session_account_facts_reader`` this
     #: resolver used to carry) — three zero-argument reads off the composed
@@ -641,8 +618,8 @@ class ComposeContextResolver:
     def _issue_egress_currentness_proof(
         self, attempt: AttemptRequest
     ) -> EgressCurrentnessProof | None:
-        """Item 16 (Realize, lane R item 2): two-pass currentness vector
-        assembly + honest proof issuance.
+        """Item 16 (Realize, lane R item 2): currentness vector assembly +
+        honest proof issuance.
 
         HIGH-2 fix (independent review of 39dd3993): the issuer itself
         derives ``result`` from its own injected ``is_complete`` (== this
@@ -651,30 +628,15 @@ class ComposeContextResolver:
         ``vector_complete``/``currentness_result`` itself, so it cannot
         drift from what the issuer actually checks.
 
-        Two-pass assemble (team-lead follow-up guidance, 2026-09-08): the
-        first pass gets a REAL ``CurrentnessRevision`` this process's own
-        owned dimensions actually sit at (never re-derived from the RCL
-        log's own internal revision formula, which stays private to
-        ``CurrentnessAssembler.assemble``); the pending dimensions are then
-        stamped with that SAME revision (``single_revision_consistent``
-        requires every dimension to share exactly one) and the second pass
-        folds them in via the shipped ``extra_dimensions`` seam.
+        One pass since plan S2-b: the second pass only existed to stamp the
+        operator-attested pending dimensions at the first pass's revision.
 
-        Returns ``None`` only when the base vector itself is not yet
-        assemblable (no owned dimension has produced a revision yet) —
-        never a fabricated proof.
+        Returns ``None`` only when the vector itself is not yet assemblable
+        (no owned dimension has produced a revision yet) — never a fabricated
+        proof.
         """
-        base_vector = self.currentness_assembler.assemble()
-        if base_vector is None or base_vector.currentness_revision is None:
-            return None
-        pending_dimensions = stamp_pending_dimensions(
-            self.pending_dimension_specs,
-            at_revision=base_vector.currentness_revision,
-        )
-        vector = self.currentness_assembler.assemble(
-            extra_dimensions=pending_dimensions
-        )
-        if vector is None:
+        vector = self.currentness_assembler.assemble()
+        if vector is None or vector.currentness_revision is None:
             return None
         # §12 line 307-313 (tos.cur.predicates.proof_structurally_complete):
         # bound_generations must be non-empty -- structurally derived from

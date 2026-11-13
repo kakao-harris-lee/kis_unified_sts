@@ -125,7 +125,6 @@ _IDENTICAL_TO_LONG = frozenset(
         "calendar.yaml",
         "coordinator_preconditions.yaml",
         "currentness.yaml",
-        "currentness_dimensions.yaml",
         "egress_coordinates.yaml",
         "engine.yaml",
         "engine_driver.yaml",
@@ -326,14 +325,15 @@ def test_short_tree_classification_is_exhaustive() -> None:
     assert classified | long_classified == checked
 
     # MEASURED 2026-11-13 (plan S2-a deleted the five safety-mesh configs, which were
-    # byte-identical between the trees): the two trees share 19 byte-identical files; 7 YAML
+    # byte-identical between the trees; plan S2-b then deleted currentness_dimensions.yaml): the
+    # two trees share 18 byte-identical files; 7 YAML
     # files diverge in declared key paths; README.md diverges as prose; each tree has its own
     # strategy file.
     # Was 24/7/1/33 from 2026-11-11 (P2-b added each tree'''s own fields.yaml).
-    assert len(_IDENTICAL_TO_LONG) == 19
+    assert len(_IDENTICAL_TO_LONG) == 18
     assert len(_DIFFERS_FROM_LONG) == 7
     assert len(_PROSE_DIFFERS) == 1
-    assert len(short_files) == len(long_files) == 28
+    assert len(short_files) == len(long_files) == 27
 
 
 def test_the_counts_the_short_readme_states_are_read_from_it() -> None:

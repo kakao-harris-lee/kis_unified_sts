@@ -158,7 +158,7 @@ def test_paper_long_and_short_keep_1000(tree: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_stock_boot_at_0855_signal_at_0905_is_13_of_13(
+def test_stock_boot_at_0855_signal_at_0905_is_7_of_7(
     tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
 ) -> None:
     runtime, clock = _boot(
@@ -168,7 +168,7 @@ def test_stock_boot_at_0855_signal_at_0905_is_13_of_13(
 
     _drive_crossing_tick(runtime, custody_root)
     outcomes = _outcomes(runtime)
-    assert len(outcomes) == 13
+    assert len(outcomes) == 7
     assert set(outcomes.values()) == {"SATISFIED"}, outcomes
     assert _evidence_kind_count(runtime, "SEND_SEALED") == 1
     assert _evidence_kind_count(runtime, "TRANSPORT_DRY_RUN") == 1
