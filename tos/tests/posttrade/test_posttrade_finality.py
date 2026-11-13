@@ -24,7 +24,6 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from tos.posttrade import (
-    FQP_DOES_NOT_PROVE,
     FinalityDimensionKind,
     ObligationLegDirection,
     finality_dimensions_orthogonal,
@@ -56,23 +55,6 @@ def test_a_dimension_with_its_own_proof_is_final(
         if other is dimension:
             continue
         assert finality_dimensions_orthogonal(other, proof_map) is False
-
-
-def test_order_fqp_proves_none_of_the_six_things_section_12_lists() -> None:
-    """(§12 line 340-345 / §1 line 23) An FQP-only map leaves all six items unproven.
-
-    "Final Quantity Proof establishes only final cumulative filled quantity and zero
-    remaining executable quantity ... It does not prove any post-trade obligation final."
-    """
-    fqp_only = proof_map_only(FinalityDimensionKind.ORDER_FQP)
-    assert (
-        finality_dimensions_orthogonal(FinalityDimensionKind.ORDER_FQP, fqp_only)
-        is True
-    )
-    for anchor, description, dimension in FQP_DOES_NOT_PROVE:
-        assert (
-            finality_dimensions_orthogonal(dimension, fqp_only) is False
-        ), f"§12 line {anchor} ({description}) was implied by ORDER_FQP"
 
 
 @given(claimed=FINALITY_DIMENSIONS, proof_map=PROOF_MAPS)

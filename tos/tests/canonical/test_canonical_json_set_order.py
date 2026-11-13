@@ -434,10 +434,11 @@ def test_digest_map_covers_every_pinned_surface() -> None:
         CONTROL_KEY,
     }
     assert set(digests) == expected
-    # Nine: the original 17 less the seven safety-mesh models (plan S2-a) and the
-    # two nontrade Trial* models (plan S2-c). Measured against the tuple, not
-    # hand-counted -- a removal that forgets this line is what the number catches.
-    assert len(COVERED_SET_MODELS) == 9
+    # Five: the original 17 less the seven safety-mesh models (plan S2-a), the two
+    # nontrade Trial* models, and the sbr trio + StatementCoverageManifest (plan
+    # S2-c). Measured against the tuple, not hand-counted -- a removal that forgets
+    # this line is what the number catches.
+    assert len(COVERED_SET_MODELS) == 5
 
 
 # --------------------------------------------------------------------------

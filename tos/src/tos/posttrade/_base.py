@@ -55,16 +55,13 @@ from pydantic import model_validator
 from tos.canonical import (
     ArtifactIntegrityError,
     ArtifactStatus,
-    DigestBoundArtifact,
     FrozenModel,
     IndependentIdArtifact,
 )
 
 __all__ = [
     "AllFalsePostTradeConsequence",
-    "ArtifactIntegrityError",
     "ArtifactStatus",
-    "DigestBoundArtifact",
     "FrozenModel",
     "IndependentIdArtifact",
 ]
