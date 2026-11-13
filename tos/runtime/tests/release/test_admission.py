@@ -4,7 +4,6 @@ source-tree digest admission)."""
 
 from __future__ import annotations
 
-from tos.sci import AdmissionResult
 from tos.workload import RuntimeIdentity
 from tos_runtime.operations.dependency_admission import RuntimeArtifactObservation
 from tos_runtime.release.admission import (
@@ -13,6 +12,7 @@ from tos_runtime.release.admission import (
     release_admission,
 )
 from tos_runtime.release.config import ReleaseAdmissionConfig
+from tos_runtime.release.verdict import AdmissionResult, ReleaseRestriction
 
 
 def test_admits_when_every_clause_holds(
@@ -146,16 +146,7 @@ def test_refuses_when_restriction_lookup_is_unresolved(
 def test_refuses_when_a_restriction_is_present(
     identity: RuntimeIdentity, observation: RuntimeArtifactObservation
 ) -> None:
-    from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-    from tos.sci import ReleaseRestriction, SupplyChainScope
-
-    scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
-    active = ReleaseRestriction.issue(
-        scheme=scheme,
-        restriction_id="r-1",
-        restriction_generation=1,
-        restricted_scope=SupplyChainScope(),
-    )
+    active = ReleaseRestriction(restriction_id="r-1", restriction_generation=1)
     restriction = ReleaseRestrictionLookup(resolved=True, active=active)
     admitted = release_admission(
         identity,

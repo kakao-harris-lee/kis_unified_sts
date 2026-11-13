@@ -18,18 +18,15 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.sci import AdmissionResult, ReleaseRestriction, SupplyChainScope
 
 from tos_runtime._named_tbd import reject_named_tbd
+from tos_runtime.release.verdict import AdmissionResult, ReleaseRestriction
 
 __all__ = [
     "ReleaseAdmissionConfig",
     "ReleaseAdmissionConfigError",
     "load_release_config",
 ]
-
-_SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 _ADMISSION_RESULT_BY_NAME: dict[str, AdmissionResult] = {
     member.value: member for member in AdmissionResult
@@ -47,7 +44,7 @@ class ReleaseAdmissionConfig:
 
     ``restriction`` is populated only when ``restriction_present`` is
     ``True``; ``restriction_present``/``restriction_state_resolved`` feed
-    :func:`~tos.sci.predicates.software_deployment_ok_verdict`'s own
+    :func:`~tos_runtime.release.verdict.software_deployment_ok_verdict`'s own
     negative/positive-polarity gates directly.
     """
 
@@ -158,15 +155,22 @@ def _resolve_restriction(
             "'restriction.restriction_id'/'restriction_generation' is "
             "unfilled (named-TBD) — fail-closed"
         )
-    issued = ReleaseRestriction.issue(
-        scheme=_SCHEME,
-        restriction_id=restriction_id,
-        restriction_generation=restriction_generation,
-        restricted_scope=SupplyChainScope(),
-        trigger_class=trigger_class,
+    reject_named_tbd(
+        restriction_id,
+        field="restriction.restriction_id",
+        context="release-admission config",
+        error_cls=ReleaseAdmissionConfigError,
     )
-    assert isinstance(issued, ReleaseRestriction)
-    return issued
+    try:
+        return ReleaseRestriction(
+            restriction_id=restriction_id,
+            restriction_generation=restriction_generation,
+            trigger_class=trigger_class,
+        )
+    except ValueError as exc:
+        raise ReleaseAdmissionConfigError(
+            f"release-admission config: 'restriction' is malformed — fail-closed ({exc})"
+        ) from exc
 
 
 def load_release_config(path: Path) -> ReleaseAdmissionConfig:

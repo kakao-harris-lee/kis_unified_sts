@@ -47,15 +47,16 @@ _SEEDS: tuple[str, ...] = ("0", "1", "2", "3", "7", "11")
 #: The negative control key produced by the worker.
 _CONTROL_KEY = "CONTROL.raw_frozenset_order"
 
-#: The 9 ``covered_content()`` models plus the two non-``covered_content()``
+#: The 5 ``covered_content()`` models plus the two non-``covered_content()``
 #: call shapes the worker measures. Asserted as a floor so adding a model is not
 #: a spurious RED, while a worker that measured nothing still fails. It was 21
 #: (19 models) until plan S1-a deleted the unused kernel packages (`tos.rlp`'s
 #: ``TrialEvidencePackage``/``TrialPolicy`` left the covered tree with them),
-#: plan S2-a the seven safety-mesh models and plan S2-c the nontrade pair; the
-#: exact count lives in ``tos/tests/canonical/test_canonical_json_set_order.py``
-#: (``len(COVERED_SET_MODELS) == 9``), so this stays a floor.
-_MIN_MEASURED_KEYS = 11
+#: plan S2-a the seven safety-mesh models and plan S2-c the nontrade pair, the
+#: sbr trio and StatementCoverageManifest; the exact count lives in
+#: ``tos/tests/canonical/test_canonical_json_set_order.py``
+#: (``len(COVERED_SET_MODELS) == 5``), so this stays a floor.
+_MIN_MEASURED_KEYS = 7
 
 
 def _run_worker(seed: str) -> dict[str, str]:

@@ -70,7 +70,7 @@ the structural surface :class:`_ComposedForDrill` names — verified directly ag
 attribute this Protocol names), never against the concrete class itself.
 
 Firewall: stdlib (``hashlib``, ``json``, ``sqlite3``, ``time``) + ``pydantic`` + ``tos.canonical``
-+ ``tos.sbr.vocabulary`` + ``tos_runtime.evidence`` + ``tos_runtime.engine`` +
++ ``tos_runtime.recovery.readiness`` + ``tos_runtime.evidence`` + ``tos_runtime.engine`` +
 ``tos_runtime.marketfeed.store`` (``MARKETFEED_FILE_NAME`` only — a name, not the store class)
 only (R1 allowlist). No ``tos_runtime.compose``, no ``tos_runtime.custody``, no
 ``tos.staterestore``.
@@ -87,13 +87,13 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 from tos.canonical import CanonicalizationScheme
-from tos.sbr.vocabulary import ReadinessVerdict
 
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.replay import ReplayableCore, ReplayVerdict, replay_engine
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
 from tos_runtime.marketfeed.store import MARKETFEED_FILE_NAME
+from tos_runtime.recovery.readiness import ReadinessVerdict
 from tos_runtime.venue_ledger.synthetic import VENUE_LEDGER_FILE_NAME
 
 __all__ = [
@@ -881,7 +881,7 @@ def restore_drill(
     (a) :func:`~tos_runtime.engine.replay.replay_engine` reports ``ok=True`` AND
         ``total_compared`` equals the manifest's own recorded ``EVENT_CONSUMED`` count.
     (b) The recomposed runtime's ``recovery.readiness_verdict`` is the SAME
-        :class:`~tos.sbr.vocabulary.ReadinessVerdict` member (identity comparison, never string
+        :class:`~tos_runtime.recovery.readiness.ReadinessVerdict` member (identity comparison, never string
         equality, never truthiness) as ``restored.manifest.readiness_verdict_at_backup``.
     (c) A ``RESTORE_DRILL_VERDICT`` evidence record — result, mismatched fields, the manifest's
         own digest — is durably appended into the restored (non-live) evidence store.

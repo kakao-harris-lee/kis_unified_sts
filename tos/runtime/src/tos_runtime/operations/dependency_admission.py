@@ -9,7 +9,7 @@ measured M6 vacuous pattern the survey names) with a REAL measurement of the
 installed source tree, and adds a second, previously-absent measurement of
 the installed dependency set. Every function here is pure observation: no
 admission decision is made in this module — that stays
-:func:`~tos.sci.predicates.software_deployment_ok_verdict`, called from
+:func:`~tos_runtime.release.verdict.software_deployment_ok_verdict`, called from
 :mod:`tos_runtime.release.admission`.
 
 Firewall: stdlib (``hashlib``, ``importlib.metadata``, ``pathlib``,

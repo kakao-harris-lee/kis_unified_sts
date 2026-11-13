@@ -26,7 +26,6 @@ from tos.brokercap import (
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.cur import MANDATED_DIMENSION_FLOOR, CurrentnessPolicy, DimensionKey
 from tos.egressgw import TransportNature
-from tos.sbr import ReadinessVerdict, RecoveryAuthorityEffect
 from tos_runtime.brokercap.scopes import (
     BrokerScope,
     EndpointClass,
@@ -46,6 +45,7 @@ from tos_runtime.compose._dimension_readers import (
     _ReleaseDimensionState,
 )
 from tos_runtime.recovery.barrier import RecoveryVerdict
+from tos_runtime.recovery.readiness import ReadinessVerdict, RecoveryAuthorityEffect
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 

@@ -164,7 +164,6 @@ def _closure_child(queue: mp.Queue) -> None:
     import tos.posttrade._base  # noqa: F401
     import tos.posttrade.predicates  # noqa: F401
     import tos.posttrade.records  # noqa: F401
-    import tos.posttrade.state  # noqa: F401
     import tos.posttrade.vocabulary  # noqa: F401
 
     tos_tops = sorted(
@@ -226,15 +225,15 @@ def test_posttrade_tos_closure_is_within_the_allowlist() -> None:
     )
 
 
-def test_posttrade_closure_includes_the_two_core_packages() -> None:
-    """(§3.1/§3.2) tos.canonical AND tos.ordering are both genuinely REUSED.
+def test_posttrade_closure_includes_the_core_package() -> None:
+    """(§3.1) tos.canonical is genuinely REUSED (tos.ordering left with state.py, plan S2-c).
 
     A package that merely *declared* the ordering REUSE without importing it would pass the
     allowlist trivially; this asserts the REUSE is real.
     """
     result = _run_child(_closure_child)
     tops = set(result["tos_tops"])
-    for expected in ("tos.canonical", "tos.ordering", "tos.posttrade"):
+    for expected in ("tos.canonical", "tos.posttrade"):
         assert expected in tops, f"{expected} missing from the tos.posttrade closure"
 
 
@@ -418,27 +417,6 @@ def test_no_hardcoded_numeric_bound_in_posttrade_source() -> None:
                     f"{path.name}:{node.lineno} numeric literal {node.value!r}"
                 )
     assert offenders == [], f"hardcoded numeric bound in posttrade source: {offenders}"
-
-
-def test_adr_line_anchors_are_strings_never_numbers() -> None:
-    """(§8.0) A citation coordinate is not a quantity.
-
-    Keeping the ADR line anchors non-numeric leaves the numeric-literal scan above at full
-    strength: a scanner that had to whitelist citation numbers could be talked into
-    whitelisting a policy bound.
-    """
-    from tos.posttrade import (
-        FQP_DOES_NOT_PROVE,
-        OBLIGATION_RECORD_FIELD_GROUPS,
-        VOID_TABLE_ROWS,
-    )
-
-    for anchor, _fields in OBLIGATION_RECORD_FIELD_GROUPS:
-        assert isinstance(anchor, str)
-    for anchor, _description, _dimension in FQP_DOES_NOT_PROVE:
-        assert isinstance(anchor, str)
-    for row_number, _input_name, _expected in VOID_TABLE_ROWS:
-        assert isinstance(row_number, str)
 
 
 def test_no_broker_is_named_in_the_posttrade_source() -> None:
