@@ -33,19 +33,22 @@ and order router are deleted, and `config/futures_live.yaml` survives only
 because `tools/broker_probes/common.py` reads its `enabled` flag to refuse order
 probes. The real futures account is still never funded.
 
-Two things were deliberately **kept** against the closure measurement, each with
-its reason recorded in the PR: `shared/execution/executor.py` (and its three
-imports), because `docs/broker-profiles/BROKER-TRANSPORT-SYMBOLS.csv` binds the
-`ORDER_SENDER` symbol to that file and `tools/tos_spec_status.py --check`
-requires the class to exist; and `shared/decision/setups/vwap_reversion.py` with
-its dependencies, which is the CP-3 **B3 witness** and stays byte-identical
-until `TOS_PAPER_READY`. B3 byte-identity was measured across the removal: the
+One thing was deliberately **kept** against the closure measurement, with its
+reason recorded in the PR: `shared/decision/setups/vwap_reversion.py` with its
+dependencies, which is the CP-3 **B3 witness** and stays byte-identical until
+`TOS_PAPER_READY`. B3 byte-identity was measured across the removal: the
 2026-11-06 LONG window's `decisions.jsonl` is identical before and after
-(sha256 `8c8093e6…`).
+(sha256 `8c8093e6…`). The other keep, `shared/execution/executor.py` (and its
+imports), existed only because `BROKER-TRANSPORT-SYMBOLS.csv` bound the
+`ORDER_SENDER` symbol to it and `tos_spec_status --check` required the class;
+all of that was retired on 2026-11-13
+(`docs/plans/2026-11-13-tos-code-halving-plan.md` §S3) and the file went with it,
+together with `shared/kis/client.py`, `shared/http/`, `shared/observability/`
+and `services/monitoring/`.
 
-Register rows for deleted routes keep their IDs and carry
-`RETIRED_SOURCE_REMOVED@6fc17c0f8d25`
-(`tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.csv`).
+Register rows for deleted routes kept their IDs and carried
+`RETIRED_SOURCE_REMOVED@6fc17c0f8d25` in the migration-conformance register,
+which was retired with the spec corpus on 2026-11-13; it is in git history.
 
 ## Current TOS snapshot — 2026-10-06
 
@@ -64,10 +67,6 @@ inspection. Historical legacy observations below retain their original dates.
 
 Static checks rerun on 2026-10-06:
 
-- `tools/tos_spec_status.py --check`: **PASS**; restricted-live and production
-  remain **NOT_AUTHORIZED**. Non-blocking baseline warning: the older completion
-  development plan says 163 profile keys while the current profile derives 164
-  (16 null in both).
 - `tools/tos_completion_status.py --check` was rerun GREEN on the same date.
   That checker, the completion contract it judged and the rest of the Phase-0
   governance machinery were **retired on 2026-11-12**

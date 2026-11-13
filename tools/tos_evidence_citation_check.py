@@ -34,11 +34,10 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-#: READMEs checked when no path is given — every evidence campaign README plus the tos one.
-DEFAULT_GLOBS: tuple[str, ...] = (
-    "docs/broker-profiles/evidence/*/README.md",
-    "tos-evidence/**/README.md",
-)
+#: READMEs checked when no path is given — every evidence campaign README.
+#: A second glob, ``tos-evidence/**/README.md``, stood here until the spec/evidence
+#: corpora were retired (docs/plans/2026-11-13-tos-code-halving-plan.md §S3).
+DEFAULT_GLOBS: tuple[str, ...] = ("docs/broker-profiles/evidence/*/README.md",)
 
 #: `` `<artifact>.json:<path>=<value>` `` — a single inline-code token. The artifact is a bare
 #: file name (resolved next to the README, never a path that could leave its directory).

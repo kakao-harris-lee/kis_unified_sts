@@ -136,7 +136,6 @@ black --check .
 mypy shared/ --ignore-missing-imports --no-error-summary
 
 # TOS checkers (what CI gates on)
-python tools/tos_spec_status.py --check
 python tools/tos_firewall_check.py
 # `lint-imports` as CI runs it (.github/workflows/tos-firewall.yml): plain, after
 # an editable install of the root project and tos/runtime. Without that install
@@ -159,13 +158,11 @@ npm test
 
 ```text
 tos/                 TOS kernel + tos_runtime shell (see tos/CLAUDE.md)
-tos-spec/            TOS spec corpus; tos-evidence/ its evidence
-tools/tos_*          CP-3 producer, B3 witness, spec/firewall/status checkers
+tools/tos_*          CP-3 producer, B3 witness, firewall/digest/size checkers
 tools/broker_probes/ KIS capability probes (GET reads; order probes interlocked)
 shared/              what the surviving roots import — replay/decision/indicators,
-                     KIS auth+client, config, storage, risk primitives, LLM
+                     KIS auth, config, storage, risk primitives, LLM
 services/dashboard/  FastAPI app: /api/tos/*, /health, OpenAPI docs
-services/monitoring/ metrics/health helpers shared/kis imports lazily
 strategy-builder-ui/ Next.js frontend: the /tos operator page and the /api proxy
 config/              tos_runtime tenant trees, tos_* gates, KIS/execution/risk/
                      storage/streaming settings, one Setup D strategy YAML

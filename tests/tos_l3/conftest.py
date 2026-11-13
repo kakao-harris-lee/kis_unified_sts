@@ -6,12 +6,14 @@ EV-L3 integrated crash/restart stage per the ratified design contract
 artifact VER-002-001 §9.1 requires ("test identity, baseline, seed, and fault schedule
 SHALL be append-only").
 
-Why a pytest option and not an environment variable: the option is how the evidence
-harness (``tools/tos_evidence_run.py``) hands the run-scoped sink path to the suite,
-exactly as ``--l2-fault-timeline`` already does. When the option is absent (a plain
-developer ``pytest tests/tos_l3``) **no file is written and nothing is skipped** — the
-crash assertions still execute. The timeline is an evidence artifact, never a
-precondition of the tests.
+Why a pytest option and not an environment variable: the option is how an outside
+evidence harness hands the run-scoped sink path to the suite, exactly as
+``--l2-fault-timeline`` already does. When the option is absent — which is every run
+today, including CI's ``pytest tests/tos_l3`` and a plain developer one, since the
+harness ``tools/tos_evidence_run.py`` was retired with the evidence corpus
+(docs/plans/2026-11-13-tos-code-halving-plan.md §S3) — **no file is written and nothing
+is skipped**: the crash assertions still execute. The timeline is an evidence artifact,
+never a precondition of the tests.
 
 ⚠ This directory is **outside** ``tos/``. The firewall's forward rules (allowlist /
 forbidden stdlib / ``os.environ``) do not apply here — ``subprocess`` is legitimate —

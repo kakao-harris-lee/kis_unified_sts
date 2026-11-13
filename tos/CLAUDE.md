@@ -44,8 +44,6 @@ tos work so agents do not scan the legacy runtime.
 | Kernel code | `tos/src/tos/` (one package per RFC component: `rcl`, `authority`, `egressgw`, `engine`, `marketfeed`, `capsule`, `evidence`, `staterestore`, …) |
 | Hermetic tests | `tos/tests/` (no `.env`, no network, no Redis; pytest rootdir is `tos/`) |
 | Application Runtime + Infrastructure Adapters (ratified by the operator 2026-09-08, design #40 D1) | `tos/runtime/` — SEPARATE distribution `tos-runtime` / `tos_runtime` (own `pyproject.toml`, src-layout `tos/runtime/src/tos_runtime/`), the composition root + I/O adapters for the kernel. `tos_runtime -> tos` allowed; `tos -> tos_runtime` FORBIDDEN (firewall rule (g) + `.importlinter` contract `tos-kernel-must-not-import-runtime`). Application Runtime + Infrastructure Adapters: composition, durable event processing, SQLite evidence/state, custody, market intake, synthetic/KIS mock transport, recovery, and operations CLI are implemented. `compose/cli.py` dispatches `run` through `_run_dispatch.py`; this is no longer a skeleton. Implementation is not live authorization. See `docs/architecture/tos-system-context.md` and `docs/architecture/tos-public-interfaces.md` for layer names, integration surfaces, and remaining gaps. Hermetic tests: `tos/runtime/tests/` (D1.4 — zero external network/ambient env/writes outside `tmp_path`; `127.0.0.1`/`::1` and `tmp_path` sqlite files are the one exception, guarded by an autouse fixture in `tos/runtime/tests/conftest.py`) |
-| Spec (normative, broker-agnostic) | `tos-spec/src/` — RFC/ADR/verification registers |
-| Evidence runs | `tos-evidence/` |
 | Governance tools | `tools/tos_*.py` |
 | Governance tests | `tests/tools/test_tos_*.py`, `tests/tos_l3/` |
 | Architecture / integration docs | `docs/architecture/tos-*.md`, `docs/migration/legacy-disposition.md`, `docs/PROJECT_STATUS.md` (TOS snapshot) |
@@ -80,7 +78,6 @@ PYTHONPATH=tos/runtime/src:tos/src .venv/bin/python -m pytest tos/runtime/tests 
 # Firewall + governance checkers — run from the repo root with the root venv
 # (they import the repo `tools` package and read repo-relative paths)
 python tools/tos_firewall_check.py && lint-imports
-python tools/tos_spec_status.py --check
 python tools/tos_redigest.py --check   # the `tos-gate` required check
 python tools/tos_size_budget.py --check
 ```
@@ -96,6 +93,13 @@ python tools/tos_size_budget.py --check
   `tos_contract_check.py` · `tos_completion_status.py` · `tos_entry_harness.sh` ·
   `u17-verify.sh`)는 2026-11-12 에 퇴역했다
   (`docs/plans/2026-11-12-phase0-retirement-plan.md`). 내용은 git 이력에 있다.
+- 명세 코퍼스 `tos-spec/`(66k 줄) 와 증거 `tos-evidence/`(25k) 는 2026-11-13 에
+  은퇴했다 (`docs/plans/2026-11-13-tos-code-halving-plan.md` §S3). 그들만 읽던
+  `tos_spec_status.py` · `tos_evidence_run.py` · `tos_profile_census.py` 와 그
+  테스트, mdBook CI 단계, 명세 앵커 커널 테스트(`sci/test_sci_anchor_drift.py` ·
+  `sci/test_sci_authority.py` · `stm/test_stm_adr_enumeration_closure.py` ·
+  `stm/test_stm_anchor_resolution.py`)도 함께 지웠다. 커널·런타임 docstring 에
+  남은 `tos-spec/src/...` 인용은 git 이력을 가리키는 주석이며 읽는 코드는 없다.
 - `.github/workflows/tos-gate.yml` 은 삭제하거나 잡 이름을 바꾸지 않는다 —
   룰셋이 `tos-gate` 체크를 필수로 요구하므로, 사라지면 모든 PR 이 오지 않는
   체크를 기다린다. 내용은 `tools/tos_redigest.py --check` 다.

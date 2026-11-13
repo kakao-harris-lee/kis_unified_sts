@@ -188,40 +188,13 @@ jobs:
         # config/tos_size_budget.yaml exceptions register — Phase 1 작업 6.
         run: python tools/tos_size_budget.py --check
 
-      # tos-spec/book.toml is a byte-empty file (0 bytes) — mdbook defaults apply
-      # and the build was verified locally to succeed with them (homebrew mdbook
-      # v0.5.4, same tag as pinned below): rc=0, two "unclosed HTML tag" warnings
-      # + one "search index is very large" warning, none of which fail the build.
-      # rust-lang/mdbook publishes no separate .sha256 asset for this release, so
-      # the digest below is a locally-computed pin against the official GitHub
-      # release tarball (same pattern as the yq pin in the tests job — download
-      # once, verify forever), not an independently-published checksum.
-      - name: Pin mdBook v0.5.4 (tos-spec build)
-        run: |
-          set -euo pipefail
-          curl -sSL --fail --retry 3 --retry-all-errors -o /tmp/mdbook.tar.gz \
-            https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz
-          echo "3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7  /tmp/mdbook.tar.gz" | sha256sum -c -
-          tar -xzf /tmp/mdbook.tar.gz -C /tmp
-          sudo install -m 0755 /tmp/mdbook /usr/local/bin/mdbook
-          mdbook --version
-
-      - name: mdBook build (tos-spec)
-        run: mdbook build tos-spec --dest-dir /tmp/tos-spec-book
-
-      # 코퍼스 무결성 검사기. `tos_spec_status` 는 `git ls-files` 로 «무시되지
-      # 않는 파일» 우주를 잡을 뿐 이력을 파생하지 않으므로 체크아웃 깊이와
-      # 무관하다.
-      #
-      # 2026-11-12 (docs/plans/2026-11-12-phase0-retirement-plan.md §2): three
-      # steps stood here — `tos_completion_status --check`, the Layer 4
-      # self-reference gate (`tos_contract_check`) and its mutation self-test.
-      # All three judged the Phase-0 완료 계약, which closed on 2026-10-22 (#920)
-      # and was retired with that plan; the completion criterion is now
-      # `TOS_PAPER_READY`. The self-test was this job's longest step (131s
-      # measured) and its floor.
-      - name: tos-spec corpus integrity (tos_spec_status --check)
-        run: python tools/tos_spec_status.py --check
+      # 2026-11-13 (docs/plans/2026-11-13-tos-code-halving-plan.md §S3): four
+      # steps stood here — an mdBook v0.5.4 pin, `mdbook build tos-spec`, and
+      # before them `tos_completion_status --check` / `tos_contract_check`
+      # (retired 2026-11-12). The corpus they built and judged, `tos-spec/`
+      # (66k lines) and `tos-evidence/` (25k), is retired: no runtime, cron or
+      # deploy path read either, and `tos_spec_status.py` went with them. The
+      # content stays in git history.
 
   # ===========================================================================
   # Every pytest suite this workflow owns, all four under pytest-xdist.
@@ -286,8 +259,8 @@ jobs:
         run: pytest tos/runtime/cp3/tests
 
       # tos governance test batteries — these test the checker scripts run as
-      # steps in the `tos-firewall-gates` job (tools/tos_spec_status.py,
-      # tools/tos_firewall_check.py, tools/tos_redigest.py,
+      # steps in the `tos-firewall-gates` job (tools/tos_firewall_check.py,
+      # tools/tos_redigest.py,
       # tools/tos_size_budget.py) and the EV-L3 crash/restart battery under
       # tests/tos_l3/. They
       # need no runtime stack (imports are stdlib + pytest + pyyaml only —
@@ -698,7 +671,7 @@ jobs:
           --disable-error-code=no-untyped-def
 
       # The tos GOVERNANCE TOOLING under `tools/` — the checkers this very job
-      # runs as steps (`tos_firewall_check` / `tos_spec_status` /
+      # runs as steps (`tos_firewall_check` /
       # `tos_redigest` / `tos_size_budget`) plus the CP-3 producer package
       # `tools/tos_cp3/`.
       # Until now NOTHING type-checked them: the five steps above cover

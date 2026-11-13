@@ -6,7 +6,7 @@ name: Tests
 # tests/tos_l3/) moved to .github/workflows/tos-firewall.yml, which already
 # runs on every PR/push with no path gating. This job carries the heavy
 # runtime stack (Redis service, full `.[dev]` install, ~25min) and gates
-# nothing tos-specific, so a PR that only touches tos/tos-spec/docs/config
+# nothing tos-specific, so a PR that only touches tos/docs/config
 # no longer needs to pay for it.
 #
 # Why `paths` with `!` and not `paths-ignore`: one directory inside an
@@ -49,8 +49,6 @@ on:
       - '**'
       # The former paths-ignore set, carried over verbatim as negations.
       - '!tos/**'
-      - '!tos-spec/**'
-      - '!tos-evidence/**'
       - '!docs/**'
       - '!**.md'
       - '!.claude/**'

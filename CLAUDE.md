@@ -45,18 +45,22 @@ The legacy trading runtime is **gone** (removal plan
 `docs/plans/2026-11-07-legacy-removal-plan.md`, steps L1–L6, merged 2026-11).
 What runs is the TOS kernel plus a read-only operator surface.
 
-- `tos/`, `tos-spec/`, `tos-evidence/`, `tools/tos_*`: the TOS kernel, its spec
-  corpus, its evidence, and the CP-3 measurement tools. See `tos/CLAUDE.md`.
+- `tos/`, `tools/tos_*`: the TOS kernel and the CP-3 measurement tools. See
+  `tos/CLAUDE.md`. The spec corpus `tos-spec/` and its evidence `tos-evidence/`
+  were retired on 2026-11-13 (`docs/plans/2026-11-13-tos-code-halving-plan.md`
+  §S3); they are in git history.
 - `tools/broker_probes/`: KIS capability probes (mock-account GET reads; order
   probes are interlocked by `config/futures_live.yaml::enabled`).
 - `shared/`: what the surviving roots import — the CP-3 producer and B3 witness
   path (backtest replay, Setup D decision, instruments, determinism, market-data
-  store), KIS auth/client, indicators, config, storage, risk primitives, LLM
-  analysis. Packages reachable only through `__init__` fan-out are still being
-  measured away (removal plan L7).
+  store), KIS auth, indicators, config, storage, risk primitives, LLM
+  analysis. `shared/execution/executor.py`, `shared/kis/client.py` and the
+  packages only they pulled in (`shared/http`, `shared/observability`,
+  `services/monitoring`) went on 2026-11-13 with the checker that was their only
+  remaining reason to exist; `shared/execution/{tr_ids,contract_spec}.py` stay
+  because the broker probes and the Setup D walk-forward script import them.
 - `services/dashboard`: the FastAPI app behind Caddy. Its whole surface is
   `/api/tos/*`, `/health` and the OpenAPI docs.
-- `services/monitoring`: metrics/health helpers `shared/kis` imports lazily.
 - `strategy-builder-ui/`: the only frontend. It serves the `/tos` operator page,
   a `/` redirect to it, and the `/api` proxy.
 - `config/`: YAML config for what remains — `config/tos_runtime/` tenant trees,
@@ -80,7 +84,7 @@ What runs is the TOS kernel plus a read-only operator surface.
   `shared.config.secrets`, `services`, `cli`)
   (design: `docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md` §3).
 - **tos work starts from `tos/CLAUDE.md`**, which lists the tos working set
-  (`tos/`, `tos-spec/`, `tos-evidence/`, `tools/tos_*`, `tests/tools/test_tos_*`,
+  (`tos/`, `tools/tos_*`, `tests/tools/test_tos_*`,
   `docs/plans/*tos*`). Agents on tos tasks should
   search and edit inside that set and treat `shared/`, `services/`, and the
   frontend as out of scope.
@@ -226,7 +230,6 @@ sts tos inspect <session>         # per-bar: fields, per-compare pass/fail, deci
 TOS checkers (what CI gates on — see `.github/workflows/tos-{gate,firewall}.yml`):
 
 ```bash
-python tools/tos_spec_status.py --check
 python tools/tos_firewall_check.py
 python tools/tos_redigest.py --check   # the `tos-gate` required check, since 2026-11-12
 python tools/tos_size_budget.py --check
@@ -334,6 +337,7 @@ Agent roster, skill list, directory layout, and execution detail live under
 | 2026-10-22 | **Review policy R1–R7** — review by risk grade (A/B/C, docs and evidence PRs need no review lane), at most two rounds, only a HIGH with a concrete failing input blocks, plans ≤300 lines, a new guard needs a real incident, no meta-judgment, one-table measurement records · Phase-0 contract becomes a historical record (TOS rescope) | CLAUDE.md | Three months of TOS work moved zero Evidence rows; the Phase-0 contract grew to 10,723 lines over 81 reviews and one docs PR took four rounds — the review process, not the code, was the bottleneck |
 | 2026-08-30 | Doc-only fix to the model-lanes paragraph: it claimed every audit lens runs on Sonnet 5, contradicting the 2026-08-25 row and the actual frontmatter (`architecture-auditor`/`security-auditor` are Opus) | CLAUDE.md | Cost audit found the prose had drifted from the pinned `model:` values; agent files unchanged |
 | 2026-11-12 | **Phase-0 판정 장치 퇴역** — 완료 계약서·인덱스 도구·완료/계약 검사기·U-17 예방 통제와 그 CI 단계를 삭제. 필수 체크 `tos-gate` 는 이름을 유지하고 내용만 `tos_redigest --check`(살아 있는 핀 게이트)로 교체 | CLAUDE.md, tos/CLAUDE.md, `.github/workflows/tos-{gate,firewall,test}.yml`, `tools/`, `tos-spec/`, `docs/` | Phase 0 는 2026-10-22 서명(#920)으로 닫혔고 완료 기준은 `TOS_PAPER_READY` 다. 역사 기록이 된 판정 장치가 PR 마다 수 분의 CI 와 저장소 부피의 큰 몫을 계속 먹었다 (계획: `docs/plans/2026-11-12-phase0-retirement-plan.md`) |
+| 2026-11-13 | **명세·증거 코퍼스 은퇴 (S3)** — `tos-spec/`(66k 줄) · `tos-evidence/`(25k) 전체와 그들만 읽던 도구(`tos_spec_status` · `tos_evidence_run` · `tos_profile_census`)·테스트·CI 단계(mdBook 빌드, 코퍼스 무결성), `BROKER-TRANSPORT-SYMBOLS.{csv,md}`, 명세 앵커 커널 테스트를 삭제. 그 검사기가 유일한 존속 이유였던 `shared/execution/executor.py` · `shared/kis/client.py` 와 그 폐쇄(`shared/http` · `shared/observability` · `services/monitoring`)도 함께 삭제 | CLAUDE.md, tos/CLAUDE.md, `.github/workflows/tos-{firewall,test}.yml`, `tools/`, `tos-spec/`, `tos-evidence/`, `shared/`, `services/`, `docs/` | 운영자 지시: 코드·문서 부피 절반화 (계획: `docs/plans/2026-11-13-tos-code-halving-plan.md` §S3) |
 
 ## Documentation Map
 
