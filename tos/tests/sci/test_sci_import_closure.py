@@ -60,7 +60,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.dsl",  # AdmissibilityResult is a different proposition, not a seam (§3.5)
         "tos.egress",  # §19 final-egress owner — re-authored not at all
         "tos.evidence",  # §24 custody owner
-        "tos.failuredomain",  # RFC-002 §24.1 supply-chain *coordinates* (§0.4d)
         "tos.hag",  # §9 effective-principal collapse owner (§0.4e)
         "tos.iap",
         "tos.ioc",
@@ -71,8 +70,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.protective",
         "tos.rcl",  # §7 line 235 capacity owner — rcl edge 0 (§0.4g)
         "tos.recon",
-        "tos.replacement",
-        "tos.rlp",  # §17 production-promotion owner
         "tos.sbr",  # §24 recovery owner
         "tos.sir",  # ADR-002-027 — landed mid-implementation; still edge 0 (§0.4f, test_seam_sir)
         "tos.spg",  # §8/§13 activation owner + the software_deployment_ok consumer (§3.5-1)
@@ -208,7 +205,6 @@ def _leak_canary_child(queue: mp.Queue) -> None:
         "tos.cur",  # the floor-advance owner (§3.5 M4)
         "tos.hag",
         "tos.rcl",
-        "tos.failuredomain",
         "tos.posttrade",
         "tos.sir",  # landed mid-implementation; still edge 0 (§0.4f)
         "tos.future_sibling",  # a *future* sibling the allowlist catches
@@ -277,7 +273,6 @@ def test_leak_canary_is_detected() -> None:
         "tos.cur",
         "tos.hag",
         "tos.rcl",
-        "tos.failuredomain",
         "tos.posttrade",
         "tos.sir",
         "tos.future_sibling",

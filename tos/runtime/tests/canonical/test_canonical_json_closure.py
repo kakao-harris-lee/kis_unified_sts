@@ -182,9 +182,6 @@ from tos import (
     evidence as k_evidence,
 )
 from tos import (
-    failuredomain as k_failuredomain,
-)
-from tos import (
     hag as k_hag,
 )
 from tos import (
@@ -222,12 +219,6 @@ from tos import (
 )
 from tos import (
     recon as k_recon,
-)
-from tos import (
-    replacement as k_replacement,
-)
-from tos import (
-    rlp as k_rlp,
 )
 from tos import (
     sbr as k_sbr,
@@ -282,7 +273,6 @@ _IMPORTED_MODULES: tuple[ModuleType, ...] = (
     k_egressgw,
     k_engine,
     k_evidence,
-    k_failuredomain,
     k_hag,
     k_iap,
     k_ioc,
@@ -296,8 +286,6 @@ _IMPORTED_MODULES: tuple[ModuleType, ...] = (
     k_protective,
     k_rcl,
     k_recon,
-    k_replacement,
-    k_rlp,
     k_sbr,
     k_sci,
     k_sir,
@@ -356,9 +344,9 @@ _SRC_ROOTS: dict[str, Path] = {
 #: Lower bounds measured on this branch (2026-09-24). Asserted as bounds, not
 #: equalities, so adding a model is not a spurious RED — but an import that
 #: silently fails and leaves the enumeration near zero still goes RED.
-_MIN_TREE_SET_MODELS = 59
-_MIN_DIRECT_SET_MODELS = 41
-_MIN_COVERED_SET_MODELS = 19
+_MIN_TREE_SET_MODELS = 51
+_MIN_DIRECT_SET_MODELS = 34
+_MIN_COVERED_SET_MODELS = 17
 
 #: Models allowed to hold a set without being a ``FrozenModel``. Empty today;
 #: every entry needs a one-line reason for why its sets never reach a digest.
@@ -477,7 +465,7 @@ def test_every_module_is_imported() -> None:
     only check that would catch a module reached through a path the walk cannot
     see at all.
     """
-    assert len(_IMPORTED_MODULES) >= 76
+    assert len(_IMPORTED_MODULES) >= 73
     on_disk = _module_names_on_disk()
     # The two distribution roots are imported by construction — every name in
     # the list is a submodule of one of them — and are not walk seeds

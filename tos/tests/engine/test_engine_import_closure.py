@@ -102,15 +102,12 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.authority",
         "tos.brokercap",  # D-E4 edge — beyond the send-boundary injection point (§4.5)
         "tos.egress",  # the QCC kernel — never encroached upon (§5.4)
-        "tos.failuredomain",
         "tos.hag",
         "tos.iap",
         "tos.liveauth",
         "tos.posttrade",
         "tos.protective",
         "tos.recon",
-        "tos.replacement",
-        "tos.rlp",
         "tos.sbr",
         "tos.sci",
         "tos.sir",

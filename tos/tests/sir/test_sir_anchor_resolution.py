@@ -164,13 +164,13 @@ def test_iap_single_use_consumption_shape_is_the_reused_precedent() -> None:
 
 
 def test_firewall_exclusion_lists_still_name_this_package() -> None:
-    """(§0.4a weak soft load-bearing) The three firewall exclusion comments still enumerate ``tos.sir``.
+    """(§0.4a weak soft load-bearing) The two firewall exclusion comments still enumerate ``tos.sir``.
 
-    The package name is fixed only by three *comment* references. They are weak load-bearing — a
+    The package name is fixed only by two *comment* references. They are weak load-bearing — a
     different name would orphan no functional reference — but the citation is an existence claim, so it
     is locked like every other.
     """
-    for relative in ("wdr/__init__.py", "rlp/__init__.py", "cur/__init__.py"):
+    for relative in ("wdr/__init__.py", "cur/__init__.py"):
         text = (_TOS_SRC / relative).read_text(encoding="utf-8")
         assert "tos.sir" in text, (
             f"{relative} no longer enumerates ``tos.sir`` — the design #28 §0.4a naming citation "

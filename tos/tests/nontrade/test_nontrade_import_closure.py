@@ -161,7 +161,6 @@ def _leak_canary_child(queue: mp.Queue) -> None:
         "tos.iap",  # the phantom idempotency edge (design #21 §0.4e)
         "tos.venue",
         "tos.recon",
-        "tos.replacement",
         "tos.orthostate",
         "tos.some_future_sibling",  # the allowlist catches names no denylist knew
     ):
@@ -236,7 +235,6 @@ def test_nontrade_closure_contains_no_sibling_at_all() -> None:
         "tos.recon",
         "tos.orthostate",
         "tos.brokercap",
-        "tos.replacement",
         "tos.authority",
         "tos.liveauth",
         "tos.sbr",
@@ -271,7 +269,6 @@ def test_leak_canary_is_detected() -> None:
         "tos.iap",
         "tos.venue",
         "tos.recon",
-        "tos.replacement",
         "tos.orthostate",
         "tos.some_future_sibling",
     ):
@@ -299,7 +296,6 @@ def test_allowlist_classifier_canaries() -> None:
         "tos.recon",
         "tos.orthostate",
         "tos.brokercap",
-        "tos.replacement",
         "tos.protective",
         "tos.afg",
         "tos.spg",

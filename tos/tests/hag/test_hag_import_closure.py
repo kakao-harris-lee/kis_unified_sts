@@ -62,7 +62,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.protective",
         "tos.rcl",
         "tos.recon",
-        "tos.replacement",
         "tos.sbr",
         "tos.spg",
         "tos.time",

@@ -1,9 +1,9 @@
-"""Forward-seam consistency — stm produces, four committed siblings consume (design #30 §3.6).
+"""Forward-seam consistency — stm produces, three committed siblings consume (design #30 §3.6).
 
 STM is a **greenfield content owner with no inbound deferee** but the richest committed forward seam in
-the series: four landed siblings already consume coordinates stm produces, and every one of those
+the series: three landed siblings already consume coordinates stm produces, and every one of those
 consumptions is **anonymous** — a dimension name, a string token, an all-false authority block, an
-opaque generation. This file re-resolves each of the four clades against the real sibling source, so a
+opaque generation. This file re-resolves each of the three clades against the real sibling source, so a
 rename or removal fails here rather than leaving a citation quietly wrong, and asserts the seam stays
 **forward**: polarity and naming consistency only, **never a value wiring**.
 
@@ -98,37 +98,7 @@ def test_spg_owns_the_governed_artifact_kind_tokens() -> None:
         assert model.__module__.startswith("tos.stm")
 
 
-# --- clade 3: rlp EV-L6 monitor-result concept seam ------------------------
-
-
-def test_rlp_consumes_the_non_authorizing_monitor_result_concept() -> None:
-    """(§0.4b-4 / §3.6) rlp's own docstring names the injected -028 coordinate — verbatim, still there."""
-    from tos.rlp import monitoring_not_preventive
-
-    assert callable(monitoring_not_preventive)
-    source = (_TOS_SRC / "rlp" / "predicates.py").read_text(encoding="utf-8")
-    assert "def monitoring_not_preventive(" in source
-    assert "injected -028 (STM) coordinate, not landed" in source
-    # the consumption is an anonymous all-false authority block, never a tos.stm type
-    assert "tos.stm" not in source
-
-
-def test_the_rlp_polarity_matches_what_stm_produces() -> None:
-    """(§3.6 polarity consistency) Both sides clear only on a genuinely all-false authority block.
-
-    rlp clears ``monitoring_not_preventive`` only when the injected authority block is all-false; stm's
-    :func:`~tos.stm.predicates.handoff_is_non_authorizing` produces exactly that shape. The two are
-    checked for **polarity agreement** — no value is wired between them (sibling edge 0).
-    """
-    from tos.rlp import AllFalseTrialAuthority, monitoring_not_preventive
-
-    assert monitoring_not_preventive(AllFalseTrialAuthority()) is True
-    assert monitoring_not_preventive(None) is False
-    assert s.all_false_monitoring_authority(s.AllFalseMonitoringAuthority()) is True
-    assert s.all_false_monitoring_authority(None) is False
-
-
-# --- clade 4: sir -028 handoff anticipation --------------------------------
+# --- clade 3: sir -028 handoff anticipation --------------------------------
 
 
 def test_sir_anticipates_the_028_handoff_as_an_injected_coordinate() -> None:
@@ -171,15 +141,14 @@ def test_sir_retains_the_incident_authority_stm_never_takes() -> None:
 
 
 def test_firewall_exclusion_lists_still_name_this_package() -> None:
-    """(§0.4a weak soft load-bearing) The four firewall exclusion comments still enumerate ``tos.stm``.
+    """(§0.4a weak soft load-bearing) The three firewall exclusion comments still enumerate ``tos.stm``.
 
-    The package name is fixed only by four *comment* references. They are weak load-bearing — a
+    The package name is fixed only by three *comment* references. They are weak load-bearing — a
     different name would orphan no functional reference — but the citation is an existence claim, so it
     is locked like every other.
     """
     for relative in (
         "wdr/__init__.py",
-        "rlp/__init__.py",
         "cur/__init__.py",
         "sir/__init__.py",
     ):
@@ -283,14 +252,13 @@ def test_the_sealed_collision_really_carries_two_different_propositions() -> Non
 
 
 def test_the_seam_is_forward_only_no_value_is_wired() -> None:
-    """(§3.6) stm imports none of the four consumers, and none of them references a ``tos.stm`` type."""
-    for sibling in ("cur", "spg", "rlp", "sir"):
+    """(§3.6) stm imports none of the three consumers, and none of them references a ``tos.stm`` type."""
+    for sibling in ("cur", "spg", "sir"):
         assert not hasattr(s, sibling)
     stm_sources = " ".join(path.read_text(encoding="utf-8") for path in _stm_sources())
     for forbidden in (
         "import tos.cur",
         "import tos.spg",
-        "import tos.rlp",
         "import tos.sir",
     ):
         assert forbidden not in stm_sources
