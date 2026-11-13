@@ -31,12 +31,10 @@ def test_shutdown_proves_every_step_with_zero_transport_calls(
     outcome = runtime.shutdown(reason="compose-e2e-nominal-shutdown")
 
     assert outcome.all_steps_proven is True
-    assert len(outcome.procedure.ordered_steps) == 6
-    assert all(step.completed is True for step in outcome.procedure.ordered_steps)
-    assert outcome.not_broker_finality is True
-    assert outcome.obligations_survive_shutdown_called is False
-    # honest at shutdown time — no Recovery Session has accepted anything yet.
-    assert outcome.handoff_accepted is False
+    assert len(outcome.steps) == 5
+    assert all(step.completed is True for step in outcome.steps)
+    # the one ordering property this procedure exists to hold.
+    assert outcome.latched_before_close is True
     assert len(runtime.transport.requests) == 0
 
 
@@ -51,7 +49,7 @@ def test_reboot_after_shutdown_sees_the_durable_new_risk_halt_latch(
     describes."""
     runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
     first_outcome = runtime.shutdown(reason="compose-e2e-reboot-first-boot")
-    assert first_outcome.procedure.deny_before_stop is True
+    assert first_outcome.latched_before_close is True
 
     runtime2 = _compose(tmp_path, config_dir, data_dir, custody_root)
     try:
@@ -72,7 +70,7 @@ def test_shutdown_evidence_and_latch_are_durable_after_the_instance_is_closed(
     "record the package for the barrier to consume, do not fake acceptance")."""
     runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
     outcome = runtime.shutdown(reason="compose-e2e-handoff-evidence")
-    assert outcome.handoff_package.unresolved_obligations == outcome.obligations
+    assert outcome.handoff_id is not None
 
     reopened_evidence = SqliteEvidenceStore(
         data_dir / "evidence.sqlite3", key_provider=runtime.key_provider

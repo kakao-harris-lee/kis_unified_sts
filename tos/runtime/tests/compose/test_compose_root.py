@@ -564,15 +564,11 @@ class TestComposeRootWiring:
             # allowed/broker_constraint_generation_current (TOS Phase 4 plan §2
             # decision 4) and restrictive_latch_state/worst_credible_capacity (TOS
             # Phase 5 W3 plan §2 decision 6) were already derived/owned before this.
-            # Phase 5 W3 safety-mesh policy documents (extra_config_files,
-            # tos_runtime.compose._safety_wiring.SAFETY_MESH_CONFIG_FILE_NAMES) —
-            # named-config-document rows, not attestations, but folded into the
-            # SAME OPERATOR_ATTESTED_INPUTS evidence record by name
-            "safety_envelope.yaml",
-            "safety_profile.yaml",
-            "safety_activation.yaml",
-            "safety_deviations.yaml",
-            "safety_incidents.yaml",
+            # The slim monitor's policy document (extra_config_files,
+            # tos_runtime.compose._monitor_wiring.MONITOR_CONFIG_FILE_NAMES) — a
+            # named-config-document row, not an attestation, but folded into the
+            # SAME OPERATOR_ATTESTED_INPUTS evidence record by name. The five
+            # safety-mesh documents beside it went with plan S2-a.
             "monitor_coverage.yaml",
             # broker_scopes.yaml (1) — the active scope's own name
             "SYNTHETIC_FUTURES_ORDER",
@@ -604,11 +600,6 @@ class TestComposeRootWiring:
                 "risk_attestations.yaml",
                 "egress_coordinates.yaml",
                 "broker_scopes.yaml",
-                "safety_envelope.yaml",
-                "safety_profile.yaml",
-                "safety_activation.yaml",
-                "safety_deviations.yaml",
-                "safety_incidents.yaml",
                 "monitor_coverage.yaml",
                 fx.BAND_STRATEGY_FILE_NAME,
             )
@@ -785,44 +776,6 @@ class TestSyntheticEventDrivesTheChain:
             ), f"step {step_name}: {verdict_by_step[step_name].reason}"
 
         assert len(runtime.transport.requests) == 1
-
-        runtime.rcl_log.close()
-        runtime.evidence_store.close()
-
-    def test_action_flow_decision_carries_a_real_protective_classification_digest(
-        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
-    ) -> None:
-        """Phase 5 W3.2 plan §2 decision 8, lane d2/d1 cross-lane follow-up: the
-        Action Flow Governor is wired with ``ProtectiveActionService
-        .protective_classification_digest`` as its ``protective_classification_digest_
-        provider`` (``_currentness_wiring._build_risk_and_currentness``), so every
-        genuinely-admitted ACTION_FLOW_DECISION now carries a REAL digest — never the
-        ``None`` default a caller-supplied input would otherwise leave permanently
-        unfed (``tos_runtime.risk.flow`` module history)."""
-        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
-        _reach_trusted(runtime)
-
-        event = fx.crossing_event()
-        results = runtime.run_once((event,))
-        proposal_digest = results[0].pipeline.proposal.canonical_digest
-        construction = runtime.construction_stage.construction
-        assert construction is not None and construction.intent is not None
-        write_approval_file(
-            custody_root,
-            proposal_digest=proposal_digest,
-            environment_label="non-live-test",
-            approved_intent_envelope_digest=construction.intent.canonical_digest,
-        )
-
-        results2 = runtime.run_once((event,))
-        flow = results2[0].flow
-        assert flow is not None
-        verdict_by_step = {v.step.value: v for v in flow.verdicts}
-        assert verdict_by_step["ACTION_FLOW_DECISION"].outcome.value == "ADMIT"
-
-        decision = runtime.flow_governor.last_decision
-        assert decision is not None
-        assert decision.protective_classification_digest is not None
 
         runtime.rcl_log.close()
         runtime.evidence_store.close()

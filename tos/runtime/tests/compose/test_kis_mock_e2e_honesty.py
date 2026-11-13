@@ -452,7 +452,7 @@ def test_dry_run_reaches_the_adapter_with_every_verify_item_satisfied(
     assert result.flow.handoff.accepted_for_transmission is True
 
     outcomes = _outcomes(runtime)
-    assert len(outcomes) == 17
+    assert len(outcomes) == 13
     assert set(outcomes.values()) == {"SATISFIED"}, outcomes
 
     sealed = _evidence_row_order(runtime, "SEND_SEALED")

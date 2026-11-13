@@ -1180,13 +1180,15 @@ def _write_rearm_files(
     seq: int,
     approvals: list[dict[str, str]] | None = None,
     environment_label: str = "non-live-test",
-    write_roster: bool = True,
 ) -> None:
+    """Write one ``approvals/rearm/<seq>.yaml`` operator decision file.
+
+    Defaults to a genuinely satisfying SINGLE ``APPROVE`` (plan S2-a replaced the ``tos.hag``
+    two-person quorum with one custody-gated principal); the roster this used to write went
+    with it.
+    """
     if approvals is None:
-        approvals = [
-            {"principal_id": "alice", "decision": "APPROVE"},
-            {"principal_id": "bob", "decision": "APPROVE"},
-        ]
+        approvals = [{"principal_id": "alice", "decision": "APPROVE"}]
     rearm_dir = approvals_dir / "rearm"
     rearm_dir.mkdir(parents=True, exist_ok=True)
     decision_path = rearm_dir / f"{seq}.yaml"
@@ -1201,22 +1203,6 @@ def _write_rearm_files(
         )
     )
     os.chmod(decision_path, 0o600)
-    if write_roster:
-        roster_path = rearm_dir / "roster.yaml"
-        roster_path.write_text(
-            yaml.safe_dump(
-                {
-                    "environment_label": environment_label,
-                    "principals": [
-                        {"id": entry["principal_id"]} for entry in approvals
-                    ],
-                    "control_edges": [],
-                    "unresolved_control": False,
-                },
-                sort_keys=False,
-            )
-        )
-        os.chmod(roster_path, 0o600)
 
 
 def test_rearm_parses_args(tmp_path: Path) -> None:
@@ -1242,16 +1228,17 @@ def test_rearm_parses_args(tmp_path: Path) -> None:
     assert args.environment_label == "non-live-test"
 
 
-def test_rearm_real_end_to_end_two_person_quorum_clears_the_latch(
+def test_rearm_real_end_to_end_operator_approval_clears_the_latch(
     tmp_path: Path,
     config_dir: Path,
     data_dir: Path,
     custody_root: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Team-lead follow-up: ``rearm`` is a complete operator door — an APPROVED HAG quorum must
-    actually clear the storage-layer latch (``compose/_cli_ops.rearm_and_clear``), not merely
-    report that a live runtime would."""
+    """Team-lead follow-up: ``rearm`` is a complete operator door — an APPROVED operator
+    decision must actually clear the storage-layer latch
+    (``compose/_cli_ops.rearm_and_clear``), not merely report that a live runtime would.
+    """
     approvals_dir = tmp_path / "approvals"
     seq = 7
 
@@ -1315,7 +1302,7 @@ def test_rearm_refused_quorum_never_calls_the_storage_clear_and_exits_nonzero(
     custody_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mutation-shaped pin (team-lead follow-up): a refused HAG quorum must never reach the
+    """Mutation-shaped pin (team-lead follow-up): a refused operator approval must never reach the
     storage-layer clear at all — spies on ``SqliteEventInbox.clear_new_risk_halt`` itself, and
     monkeypatches ``prepare_new_risk_halt_clear`` (via ``tos_runtime.compose._cli_ops``, the
     module ``rearm_and_clear`` calls it from) to force a refusal deterministically."""
@@ -1418,12 +1405,16 @@ def test_rearm_refuses_when_no_approval_file_exists(
     assert exit_code == 1
 
 
-def test_rearm_refuses_a_single_approver_mutation_m5_surfaced_through_the_cli(
+def test_rearm_refuses_two_approvers_surfaced_through_the_cli(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """Mutation M5 (a two-person quorum weakened to one approver must refuse) is pinned at the
-    predicate level by ``tests/safety/test_rearm.py::test_mutation_m5_a_single_approver_is_refused``
-    — this test proves the SAME refusal surfaces through the CLI end to end."""
+    """An approval file naming TWO principals is refused rather than quietly reduced to one
+    — pinned at the predicate level by
+    ``tests/safety/test_rearm.py::test_two_entries_are_refused_rather_than_reduced_to_one``;
+    this test proves the SAME refusal surfaces through the CLI end to end.
+
+    (Before plan S2-a this was the mirror case — one approver refused against a two-person
+    ``tos.hag`` quorum.)"""
     approvals_dir = tmp_path / "approvals"
     seq = 7
     inbox = SqliteEventInbox(
@@ -1437,7 +1428,10 @@ def test_rearm_refuses_a_single_approver_mutation_m5_surfaced_through_the_cli(
     _write_rearm_files(
         approvals_dir,
         seq=seq,
-        approvals=[{"principal_id": "alice", "decision": "APPROVE"}],
+        approvals=[
+            {"principal_id": "alice", "decision": "APPROVE"},
+            {"principal_id": "bob", "decision": "APPROVE"},
+        ],
     )
 
     exit_code = cli.main(
@@ -1586,7 +1580,7 @@ def test_ack_alert_refuses_a_bogus_seq(
     assert exit_code == 1
 
 
-# -- _cli_ops.py structural pin (team-lead follow-up: second HAG-gated door) -------------------
+# -- _cli_ops.py structural pin (team-lead follow-up: second approval-gated door) ----------------
 
 _CLI_OPS_PATH = (
     Path(__file__).resolve().parents[2]

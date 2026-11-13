@@ -115,16 +115,9 @@ def _set_effective_limit(config_dir: Path, limit: Decimal) -> str:
     raw["canonical_digest"] = "TBD"
     are_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
 
-    loaded = load_aggregate_risk_policy(are_path, scheme=_SCHEME)
-    activation_path = config_dir / "safety_activation.yaml"
-    activation = yaml.safe_load(activation_path.read_text(encoding="utf-8"))
-    members = activation["members"]
-    are_members = [m for m in members if m["kind"] == "AGGREGATE_RISK_POLICY"]
-    assert len(are_members) == 1
-    are_members[0]["digest"] = loaded.policy.canonical_digest
-    activation_path.write_text(
-        yaml.safe_dump(activation, sort_keys=False), encoding="utf-8"
-    )
+    # Load it back so a malformed rewrite fails here rather than at boot. The activation
+    # digest re-sync this used to do went with plan S2-a along with safety_activation.yaml.
+    load_aggregate_risk_policy(are_path, scheme=_SCHEME)
     return dimension_id
 
 

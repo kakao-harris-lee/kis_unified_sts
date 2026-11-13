@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 from tos_runtime.calendar.ports import FixedWallClockReference
 from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.operations.backup_set import (
@@ -43,13 +45,11 @@ _TOP_LEVEL_KEYS = frozenset(
         "recovery",
         "driver",
         "time",
-        "safety_mesh",
         "currentness",
         "rcl",
         "inbox",
         "evidence",
         "release",
-        "protective",
         "operations",
         "alerts",
         "export",
@@ -99,7 +99,7 @@ def _reach_admitted_send(runtime, custody_root: Path) -> None:
     ACTION_FLOW_DECISION to an actual send attempt (mirrors ``test_compose_root.py``'s own
     ``test_engine_steps_admit_for_real_and_reach_the_transport``). Needed because a single
     pass halts at INDEPENDENT_APPROVAL (UNKNOWN, no approval file yet) — never reaching the
-    protective/currentness-proof code paths a bare ``run_once`` call does not exercise.
+    currentness-proof code paths a bare ``run_once`` call does not exercise.
     """
     event = fx.crossing_event()
     results = runtime.run_once((event,))
@@ -321,85 +321,6 @@ def test_release_admitted_and_software_deployment_ok_are_the_same_fact(
     assert document["release"]["software_deployment_ok"] is runtime.release_admitted
 
 
-# -- disclosed gaps: safety_mesh.services / protective.last_verdict stay None ---
-
-
-def test_safety_mesh_is_reported_null_before_the_coordinator_s_first_refresh(
-    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
-) -> None:
-    """Boot itself never drives a tick through the Coordinator (``build_safety_mesh``'s own
-    warm-up ``monitoring_service.clear()`` call bypasses the tick cell entirely) — so
-    ``safety_mesh_peek()`` genuinely has nothing to report yet. This is the honest
-    "nothing observed yet" case, not the disclosed-gap case (see the sibling test below for
-    the real, populated case after a tick)."""
-    projection_path = tmp_path / "operator_projection.json"
-    _compose(config_dir, data_dir, custody_root, projection_path=projection_path)
-
-    document = json.loads(projection_path.read_text())
-    safety_mesh = document["safety_mesh"]
-    assert safety_mesh["snapshot_generation"] is None
-    assert set(safety_mesh["services"]) == {"spg", "wdr", "sir", "stm"}
-    for service in safety_mesh["services"].values():
-        assert service["clear"] is None
-        assert service["reasons"] == []
-
-
-def test_safety_mesh_reports_the_real_snapshot_after_a_processed_tick(
-    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
-) -> None:
-    projection_path = tmp_path / "operator_projection.json"
-    runtime = _compose(
-        config_dir, data_dir, custody_root, projection_path=projection_path
-    )
-
-    _reach_admitted_send(runtime, custody_root)
-
-    document = json.loads(projection_path.read_text())
-    safety_mesh = document["safety_mesh"]
-    assert safety_mesh["snapshot_generation"] is not None
-    assert set(safety_mesh["services"]) == {"spg", "wdr", "sir", "stm"}
-    for service in safety_mesh["services"].values():
-        assert service["clear"] is not None
-        assert isinstance(service["reasons"], list)
-
-
-def test_protective_last_verdict_is_reported_null_before_any_real_evaluation(
-    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
-) -> None:
-    """``ProtectiveActionService.verdict()`` is never called during boot (only a real tick's
-    ``ActionFlowGovernor`` reaches it, via ``protective_classification_digest``) — the honest
-    "no evaluation happened yet" case, not the disclosed-gap case (see the sibling test below
-    for the real, populated case after a tick)."""
-    projection_path = tmp_path / "operator_projection.json"
-    _compose(config_dir, data_dir, custody_root, projection_path=projection_path)
-
-    document = json.loads(projection_path.read_text())
-    assert document["protective"]["last_verdict"] is None
-
-
-def test_protective_last_verdict_reports_the_real_verdict_after_a_processed_tick(
-    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
-) -> None:
-    projection_path = tmp_path / "operator_projection.json"
-    runtime = _compose(
-        config_dir, data_dir, custody_root, projection_path=projection_path
-    )
-
-    _reach_admitted_send(runtime, custody_root)
-
-    document = json.loads(projection_path.read_text())
-    last_verdict = document["protective"]["last_verdict"]
-    assert last_verdict is not None
-    assert set(last_verdict) == {
-        "derestriction_admissible",
-        "capacity_exhausted",
-        "classification",
-        "unevaluated",
-        "reasons",
-        "protective_classification_digest",
-    }
-
-
 # -- backup-set observation ---------------------------------------------------
 
 
@@ -536,11 +457,16 @@ def test_operations_key_continuity_reports_the_real_boot_time_verdict(
 def test_alerts_delivery_owner_and_unresolved_seq_list_shape(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """Boot itself emits ONE genuine ``STM_ALERT`` (``_safety_wiring.build_safety_mesh``'s own
-    "boot-time warm-up" — the monitoring service's FIRST-ever observation is honestly
-    ``source_continuity_present=None``/UNKNOWN, which alerts) — so a freshly-composed runtime's
-    ``unresolved_stm_alert_seqs`` is NOT empty; this test pins the shape (a list of ints, matching
-    real evidence rows), never a specific count coupled to this service's own internal policy.
+    """A freshly-composed runtime emits NO ``STM_ALERT`` at boot any more.
+
+    Before plan S2-a the ``tos.stm`` service's boot warm-up alerted on its own FIRST-ever
+    observation (``source_continuity_present`` honestly UNKNOWN, with no prior pair to
+    compare against) — that artefact is what made all 60 recorded alerts boot noise. The
+    slim monitor observes only the evidence tip and the inbox backlog, and at boot both are
+    genuinely within bounds, so there is nothing to report.
+
+    This test pins the SHAPE (a list of ints, matching real evidence rows) against whatever
+    the monitor actually recorded — never a specific count coupled to its internal policy.
     """
     projection_path = tmp_path / "operator_projection.json"
     runtime = _compose(
@@ -566,25 +492,59 @@ def test_acknowledging_an_alert_removes_it_from_the_unresolved_list(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
     """Runtime operations wiring plan (2026-09-13) §2 decision 4/8:
-    :func:`tos_runtime.safety.ack.acknowledge_alert` is the resolved-seq reader's real source
-    now. Acknowledging one of boot's own genuine ``STM_ALERT`` rows must remove exactly that
-    seq from the exported ``unresolved_stm_alert_seqs`` — and must NOT clear/latch/re-arm
-    anything else (the safety-mesh/new-risk-halt state this compose otherwise exercises stays
-    untouched by this call, per :mod:`tos_runtime.safety.ack`'s own structural pin).
+    :func:`tos_runtime.safety.ack.acknowledge_alert` is the resolved-seq reader's real source.
+    Acknowledging a genuine ``STM_ALERT`` row must remove exactly that seq from the exported
+    ``unresolved_stm_alert_seqs`` — and must NOT clear/latch/re-arm anything else (the
+    new-risk-halt state this compose otherwise exercises stays untouched by this call, per
+    :mod:`tos_runtime.safety.ack`'s own structural pin).
+
+    The alert is driven out of the REAL monitor rather than taken from boot: since plan S2-a
+    boot emits none (see the sibling test above), so the inbox-backlog bound is pushed below
+    the runtime's own unconsumed count and :meth:`MonitoringService.healthy` is called — the
+    same path a stalled deployment takes. Writing an ``STM_ALERT`` row by hand would test the
+    acknowledger against a shape nothing produces.
     """
+    from tos_runtime.compose._monitor_wiring import build_monitor_owners
     from tos_runtime.safety.ack import acknowledge_alert
+    from tos_runtime.time.sources import ProcessMonotonicSource
 
     projection_path = tmp_path / "operator_projection.json"
     runtime = _compose(
         config_dir, data_dir, custody_root, projection_path=projection_path
     )
 
+    # Drive a genuine alert through the REAL monitor wiring over this runtime's own evidence
+    # store, with an inbox-backlog bound of 0 and one unconsumed row — the same code path a
+    # stalled deployment takes. `build_monitor_owners` is what compose itself calls, so the
+    # recorder, the self-perturbation-excluding tip observer and the payload shape are all
+    # the production ones; only the bound is this test's.
+    monitor_config = tmp_path / "monitor-config"
+    monitor_config.mkdir()
+    shutil.copy(
+        config_dir / "monitor_coverage.yaml", monitor_config / "monitor_coverage.yaml"
+    )
+    raw = yaml.safe_load(
+        (monitor_config / "monitor_coverage.yaml").read_text(encoding="utf-8")
+    )
+    raw["coverage"]["bounds"]["max_inbox_unconsumed"] = 0
+    (monitor_config / "monitor_coverage.yaml").write_text(
+        yaml.safe_dump(raw, sort_keys=False), encoding="utf-8"
+    )
+    owners = build_monitor_owners(
+        monitor_config,
+        evidence_store=runtime.evidence_store,
+        monotonic_source=ProcessMonotonicSource(),
+    )
+    owners.inbox_cell.inbox = runtime.inbox
+    runtime.inbox.enqueue(fx.crossing_event())
+    assert owners.monitoring.healthy() is False
+
     real_stm_alert_seqs = [
         entry.seq
         for entry in runtime.evidence_store.iter_entry_meta()
         if entry.kind == "STM_ALERT"
     ]
-    assert real_stm_alert_seqs, "boot must have emitted at least one real STM_ALERT"
+    assert real_stm_alert_seqs, "the monitor must have emitted a real STM_ALERT"
     target_seq = real_stm_alert_seqs[0]
 
     approvals_dir = tmp_path / "approvals"
