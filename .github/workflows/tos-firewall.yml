@@ -400,7 +400,7 @@ jobs:
       # the original nine that flag a real mismatch rather than a missing annotation
       # (measured to 0 in both trees by the commit that added this step), plus four
       # more added by the test-tree mypy ratchet plan's stage 1
-      # (`docs/plans/2026-09-18-tos-test-tree-mypy-ratchet-plan.md` §3.1) — `misc`,
+      # (test-tree mypy ratchet plan §3.1, retired 2026-11-13) — `misc`,
       # `index`, `operator`, `union-attr` — fixed by adding real None-checks/type
       # narrowing at each call site, never by loosening a type or an assertion.
       #

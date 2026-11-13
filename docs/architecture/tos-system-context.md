@@ -42,7 +42,7 @@ Control Plane→Runtime 명령 ingress는 현재 미구현이다.
 - repo 분리는 기존 live-gate 재검토 조건을 따른다. TOS를 새 repo로 이동하지 않는다.
 
 정본: [boundary design §3·§6](../plans/2026-07-20-tos-boundary-and-import-firewall-design.md),
-[runtime D1](../plans/2026-09-07-tos-phase2-runtime-shell-preliminary-decisions.md),
+`runtime D1`,
 [실제 검사기](../../tools/tos_firewall_check.py), [import-linter](../../.importlinter).
 이 문서와 규범이 충돌하면 기존 규범을 따르고 이 문서를 정정한다.
 
@@ -65,7 +65,7 @@ end-to-end 증거와 명령 ingress는 후속 범위다. 공개/내부 경계는
 - [Legacy disposition](../migration/legacy-disposition.md): 기존 규범 레지스터를 참조하는 기능별 처분·전환 작업표.
 - [Control Plane / first tenant 계획](../plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md): 새 개발 순서와 완료 조건.
 - [Project status](../PROJECT_STATUS.md): 현재 구현·검사·미확인 운영 상태.
-- [ROADMAP](../ROADMAP.md): 기존 Cross-Asset/Stock/Futures 전략 로드맵. 새 계획은 TOS 통합 범위에 한정한다.
+- `ROADMAP`: 기존 Cross-Asset/Stock/Futures 전략 로드맵. 새 계획은 TOS 통합 범위에 한정한다.
 
 실전 선물 주문과 증거금 투입은 정책상 금지다. 이 문서의 cutover는 우선
 paper scope에 한정하며 live 승격을 완료 조건으로 삼지 않는다.
