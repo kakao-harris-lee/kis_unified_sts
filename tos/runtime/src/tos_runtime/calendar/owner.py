@@ -234,8 +234,11 @@ class SessionFactsOwner:
         # Keyed on the wall-clock reading too (plan 2026-09-26 periodic time eval): while a
         # session is closed no tick advances the generation, so a generation-only key would
         # serve "closed" forever even after a fresh time-health evaluation — the open would
-        # never be seen. Within one attempt the reading does not change (evaluation happens
-        # only between scheduler passes), so the step-3 fold and the send boundary still agree.
+        # never be seen. Within one attempt the reading does not change where it would matter:
+        # evaluation happens between scheduler passes, and (incident 2026-11-13) once more at
+        # the EGRESS STAMP — which is strictly after step 3's fold and after the send-boundary
+        # context is built — so those two still agree
+        # (`compose/_session_wiring.build_egress_trading_date_reader`).
         if (
             generation != self._cache_generation
             or wall_clock_ms != self._cache_wall_clock_ms

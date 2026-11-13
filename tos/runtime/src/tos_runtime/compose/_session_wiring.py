@@ -54,12 +54,13 @@ would be worse than an honest gap) for BOTH lanes — this remains a genuine, do
 not merely one this wiring's own engine-path caller forgot to fill in.
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib
-(``pathlib``) + ``tos.venue`` (``session_phase_admits`` only) + ``tos_runtime.*``
-only. No ``shared.*``.
+(``pathlib``, ``sys``) + ``tos.venue`` (``session_phase_admits`` only) +
+``tos_runtime.*`` only. No ``shared.*``.
 """
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -89,6 +90,7 @@ __all__ = [
     "SessionInboxCell",
     "apply_nontrade_wiring",
     "apply_session_wiring",
+    "build_egress_trading_date_reader",
     "build_nontrade_admissibility_provider",
     "build_nontrade_processor",
     "build_session_facts_owner",
@@ -213,6 +215,99 @@ def build_session_facts_owner(
         time_tz_db_version=time_config.tz_db_version,
         time_trading_calendar_version=time_config.trading_calendar_version,
     )
+
+
+def build_egress_trading_date_reader(
+    trading_date_reader: Callable[[], str | None],
+    *,
+    time_service: TrustworthyTimeService,
+) -> Callable[[], str | None]:
+    """The EGRESS stamp's trading-date reader: ``trading_date_reader``, with the trusted
+    reading re-established at the stamp when this pass's own earlier work aged it out.
+
+    ⛔ **Incident 2026-11-13** (CP-3 stock MOCK ``cp3-setup-d-stock-005930``). An entry order
+    was acknowledged and the fill observer recorded ``FILL_OBSERVER_ACK_UNTRACKABLE`` reason
+    ``no_trading_date``: an undated ACK cannot be joined to a broker row by ODNO (a per-day
+    sequence), so the fill went unobserved. Measured, in ms since that pass's
+    ``EVENT_HANDLING_STARTED``: the pre-send GETs took two app-key pacer slots (2161, 4161),
+    ``SEND_STARTED`` was at 4287, the ACK at 7107. A pass evaluates time ONCE
+    (:class:`~tos_runtime.marketfeed.time_pacer.TimeEvaluationPacer`, plan 2026-09-26), so by
+    send start that evaluation was ~4.2 s old against ``time.yaml::
+    max_time_conservative_freshness_age_ms`` (1000) and
+    :class:`~tos_runtime.calendar.ports.FreshTrustedWallClockReference` answered ``None``.
+    #1033 had already moved the read to send start — which stops the transport's OWN wait from
+    staling a reading, and can do nothing about the pass's work BEFORE it.
+
+    **What this does.** ``None`` from the reader means "no trusted reading of now" (stale, not
+    TRUSTED, or no date at this instant at all). This asks the time service for ONE fresh
+    health-check cycle — the same ``evaluate()`` the pass's own pacer runs, nothing weaker —
+    and reads the date again. The reading is therefore genuinely re-derived at the stamp,
+    through the SAME calendar and the SAME wall clock as every other date in the runtime.
+
+    **What this refuses to do.** It never extrapolates "now" from a cached reading plus elapsed
+    monotonic time (rejected by design — :meth:`~tos_runtime.time.service
+    .TrustworthyTimeService.wall_clock_at_monotonic`'s own docstring, plan 2026-09-26 §3), it
+    never widens or re-states the freshness bound (the bound stays
+    ``max_time_conservative_freshness_age_ms``, read once in
+    :func:`build_session_facts_owner`), and it never guesses a date: an untrusted clock, a
+    failed evaluation, and an instant outside every declared session window all still answer
+    ``None``. The alternative of capturing the date earlier in the pass (at attempt creation,
+    where the snapshot is provably fresh) and carrying it to the stamp was rejected: showing
+    the date cannot have changed in between needs an upper bound on elapsed WALL time, and the
+    only bound available without a clock is elapsed monotonic time, which a process suspension
+    makes smaller than the wall interval — the one case a date boundary would be crossed is
+    exactly the case that bound fails to cover.
+
+    **Why only the egress stamp.** :func:`~tos_runtime.compose.root.compose_paper_runtime`
+    keeps every other consumer (band source, venue service, standing approval, post-trade
+    witness, held-position bridge) on the plain reader, for two reasons. (1)
+    :class:`~tos_runtime.time.service.TrustworthyTimeService` is not thread-safe, and some of
+    those consumers read a date off the fill observer's FETCH thread
+    (:mod:`tos_runtime.posttrade.fill_fetch`); the egress stamp runs on the loop thread, inside
+    :meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.tick_once`'s own
+    ``driver.enqueue_and_run``. (2) The two readers cannot disagree about which day it is: a
+    stale plain reader abstains (``None``), it never answers a different date.
+
+    **Side effects of the extra cycle, and where it lands.** ``evaluate()`` appends one
+    ``TIME_HEALTH_SNAPSHOT`` row, may move the health state (an honest judgement, a pass
+    earlier than the next scheduler pass would make it), and re-bases the
+    ``wall_clock_at_monotonic`` mapping's domain onto this cycle. All three are reached only at
+    a send, which happens after that pass's ``_anchor_polled`` and after step 3's own session
+    fold and the send-boundary context are built — so no observation this pass already mapped,
+    and no judgement this attempt already made, is disturbed.
+
+    Args:
+        trading_date_reader: The runtime's ONE trading-date reading
+            (:meth:`~tos_runtime.calendar.owner.SessionFactsOwner.trading_date_now` bound to
+            this boot's instrument class) — wrapped, never replaced, so the egress stamp and
+            the rest of the runtime read the same calendar through the same wall clock.
+        time_service: The SAME :class:`~tos_runtime.time.service.TrustworthyTimeService` that
+            reader's own :class:`~tos_runtime.calendar.ports.FreshTrustedWallClockReference`
+            is bound to.
+
+    Returns:
+        A zero-argument reader answering the KST trading date (``YYYYMMDD``) or ``None``.
+    """
+
+    def _egress_trading_date_now() -> str | None:
+        trading_date = trading_date_reader()
+        if trading_date is not None:
+            return trading_date
+        try:
+            time_service.evaluate()
+        except Exception as exc:  # noqa: BLE001 - an unevaluable clock is "no date"
+            # Reported, never raised: the same convention TimeEvaluationPacer uses for a failed
+            # evaluation. The send's own disposition for an absent date is unchanged (the KIS
+            # ACK goes out undated and says so; the synthetic venue row refuses to be written).
+            print(
+                "egress trading date: time evaluation failed, stamping no date — "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return None
+        return trading_date_reader()
+
+    return _egress_trading_date_now
 
 
 def apply_session_wiring(
