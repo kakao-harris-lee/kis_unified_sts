@@ -307,43 +307,17 @@ def _write_rearm_approval(
     approvals: list[dict[str, str]] | None = None,
     mode: int = 0o600,
 ) -> Path:
-    """Write one ``approvals/rearm/<latched_evidence_seq>.yaml`` two-person
-    decision file (:mod:`tos_runtime.safety.rearm` module docstring) — the
-    TOS Phase 5 W3 replacement for the old free-text ``operator_attestation``
-    string this suite used to pass directly to ``clear_new_risk_halt``.
-    Defaults to a genuinely satisfying two-distinct-principal ``APPROVE`` pair.
+    """Write one ``approvals/rearm/<latched_evidence_seq>.yaml`` operator decision file
+    (:mod:`tos_runtime.safety.rearm` module docstring).
 
-    Also writes a matching ``approvals/rearm/roster.yaml`` (independent-review
-    HIGH-3 disposition: the effective-principal graph is loaded from an
-    operator-authored roster, never a constant identity graph — see
-    :mod:`tos_runtime.safety.rearm`'s own module docstring), derived from
-    ``approvals`` — two genuinely distinct, unconnected principals, exactly
-    what this suite's happy-path re-arm scenarios need.
+    Defaults to a genuinely satisfying SINGLE ``APPROVE``. Plan S2-a replaced the
+    ``tos.hag`` two-person quorum with one custody-gated principal, so the effective-
+    principal roster this used to write beside the decision went with it.
     """
     import os
 
     if approvals is None:
-        approvals = [
-            {"principal_id": "alice", "decision": "APPROVE"},
-            {"principal_id": "bob", "decision": "APPROVE"},
-        ]
-    roster_path = custody_root / "approvals" / "rearm" / "roster.yaml"
-    roster_path.parent.mkdir(parents=True, exist_ok=True)
-    roster_path.write_text(
-        yaml.safe_dump(
-            {
-                "environment_label": environment_label,
-                "principals": [
-                    {"id": entry["principal_id"]}
-                    for entry in sorted(approvals, key=lambda e: e["principal_id"])
-                ],
-                "control_edges": [],
-                "unresolved_control": False,
-            },
-            sort_keys=False,
-        )
-    )
-    os.chmod(roster_path, mode)
+        approvals = [{"principal_id": "alice", "decision": "APPROVE"}]
     path = custody_root / "approvals" / "rearm" / f"{latched_evidence_seq}.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
