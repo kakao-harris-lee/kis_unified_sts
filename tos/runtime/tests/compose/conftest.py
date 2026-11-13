@@ -21,14 +21,6 @@ from tos_runtime.operations.dependency_admission import (
     observe_dependency_set_digest,
     observe_source_tree_digest,
 )
-from tos_runtime.riskstate.policies import (
-    load_action_flow_policy,
-    load_aggregate_risk_policy,
-)
-from tos_runtime.venue import (
-    load_order_construction_policy,
-    load_venue_constraint_policy,
-)
 
 from ..riskstate._documents import action_flow_policy_yaml, aggregate_risk_policy_yaml
 from ..venue._documents import ocp_yaml, venue_policy_yaml
@@ -309,189 +301,17 @@ def config_dir(tmp_path: Path) -> Path:
         ),
         encoding="utf-8",
     )
-    loaded_venue_policy = load_venue_constraint_policy(
-        directory / "venue_constraint_policy.yaml", scheme=_SCHEME
-    )
-    loaded_ocp_policy = load_order_construction_policy(
-        directory / "order_construction_policy.yaml", scheme=_SCHEME
-    )
-    # Phase 5 W3 safety-mesh policy documents (tos_runtime.compose._safety_wiring) — a
-    # minimal NOMINAL "everything clear" fixture (one governed dimension, no active
-    # deviations/incidents, all three MONITORING obligations closed) so every compose
-    # e2e test's happy path exercises a genuinely CLEAR mesh, not a fabricated one.
-    _write_yaml(
-        directory / "safety_envelope.yaml",
-        {
-            "envelope": {
-                "envelope_id": "env-compose-1",
-                "envelope_generation": 1,
-                "envelope_version": {
-                    "version": "v1",
-                    "effective_date": "2026-09-01",
-                    "evidence_package_version": None,
-                    "approver_identity": "operator-compose",
-                    "expiration_or_revalidation_date": None,
-                    "superseded_version_link": None,
-                    "change_classification": None,
-                },
-                "governed_dimensions": [
-                    {
-                        "dimension": "max_notional",
-                        "envelope_max": "100",
-                        "unit": "KRW",
-                        "multiplier": "1",
-                        "sign": "POSITIVE",
-                        "precision": "0",
-                        "rounding": "NEAREST",
-                        "boundary": "INCLUSIVE",
-                    }
-                ],
-                "permitted_scope": ["default"],
-                "prohibited_fallbacks": [],
-                "residual_risk_ceiling": None,
-                "evidence_package_ref": None,
-            }
-        },
-    )
-    _write_yaml(
-        directory / "safety_profile.yaml",
-        {
-            "profile": {
-                "profile_id": "prof-compose-1",
-                "profile_generation": 1,
-                "profile_version": {
-                    "version": "v1",
-                    "effective_date": "2026-09-01",
-                    "evidence_package_version": None,
-                    "approver_identity": "operator-compose",
-                    "expiration_or_revalidation_date": None,
-                    "superseded_version_link": None,
-                    "change_classification": None,
-                },
-                "target_envelope_id": "env-compose-1",
-                "target_envelope_generation": 1,
-                "governed_dimensions": [
-                    {
-                        "dimension": "max_notional",
-                        "profile_value": "50",
-                        "unit": "KRW",
-                        "multiplier": "1",
-                        "sign": "POSITIVE",
-                        "precision": "0",
-                        "rounding": "NEAREST",
-                        "boundary": "INCLUSIVE",
-                    }
-                ],
-                "scope": ["default"],
-                "permitted_behaviors": [],
-                "fallback_rules": [],
-                "evidence_package_ref": None,
-            }
-        },
-    )
-    _write_yaml(
-        directory / "safety_activation.yaml",
-        {
-            "activation": {
-                "activation_id": "act-compose-1",
-                "profile_generation": 1,
-                "envelope_digest": None,
-                "profile_digest": None,
-                "bundle_digest": None,
-                "scope": [],
-                "approval_ids": ["appr-compose-1"],
-                "compatibility_attestation_refs": ["attest-compose-1"],
-                "predecessor_generation": None,
-                "restrictive_generation_effects": [],
-            },
-            "not_expired": True,
-            # TOS venue constraint service wave (plan §2 decision 7) — a SEPARATE top-level
-            # key `tos_runtime.safety.profile` never reads; `tos_runtime.venue.activation`
-            # exact-matches against it. Digests are the REAL, freshly kernel-computed values
-            # from the two loads just above — never hardcoded (plan §5 discipline).
-            "members": [
-                {
-                    "kind": "VENUE_CONSTRAINT_POLICY",
-                    "member_id": loaded_venue_policy.policy.policy_id,
-                    "generation": loaded_venue_policy.policy.policy_generation,
-                    "digest": loaded_venue_policy.policy.canonical_digest,
-                    "resolved": True,
-                    "immutable": True,
-                },
-                {
-                    "kind": "ORDER_CONSTRUCTION_POLICY",
-                    "member_id": loaded_ocp_policy.policy.policy_id,
-                    "generation": loaded_ocp_policy.policy.policy_generation,
-                    "digest": loaded_ocp_policy.policy.canonical_digest,
-                    "resolved": True,
-                    "immutable": True,
-                },
-            ],
-        },
-    )
-    _write_yaml(
-        directory / "safety_deviations.yaml",
-        {
-            "deviations": {
-                "active_set": {
-                    "active_set_id": "dev-set-compose-1",
-                    "active_set_generation": 1,
-                    "deviation_generation": 1,
-                    "is_complete": True,
-                    "combined_within_envelope": True,
-                },
-                "applicable_decision_ids": [],
-                "members": [],
-            }
-        },
-    )
-    _write_yaml(
-        directory / "safety_incidents.yaml",
-        {
-            "incidents": {
-                "active_set": {
-                    "active_set_id": "inc-set-compose-1",
-                    "active_set_generation": 1,
-                    "incident_generation": 1,
-                    "safety_cell": "compose-cell-1",
-                    "shared_dependencies": [],
-                    "is_complete": True,
-                    "is_current": True,
-                },
-                "applicable_incident_ids": [],
-                "members": [],
-            }
-        },
-    )
+    # The slim monitor's own bounds (tos_runtime.compose._monitor_wiring) — a minimal
+    # fixture so every compose e2e test's happy path exercises a genuinely healthy
+    # monitor, not a fabricated one. The four safety-mesh policy documents that used to
+    # sit here went with plan S2-a along with the services that read them.
     _write_yaml(
         directory / "monitor_coverage.yaml",
         {
             "coverage": {
-                "manifest": {
-                    "coverage_manifest_id": "cov-compose-1",
-                    "coverage_generation": 1,
-                    "coverage_manifest_digest": "cov-digest-compose-1",
-                    "policy_digest": "cov-policy-digest-compose-1",
-                    "is_complete": True,
-                },
-                "items": {
-                    obligation: {
-                        "restrictive_response_present": True,
-                        "alert_path_present": True,
-                        "evidence_path_present": True,
-                        "currentness_rule_present": True,
-                        "closure_1_to_12_complete": True,
-                        "criticality": "CRITICAL",
-                    }
-                    for obligation in (
-                        "evidence-tip-currency",
-                        "time-service-health",
-                        "inbox-backlog",
-                    )
-                },
+                "coverage_generation": 1,
                 "bounds": {
                     "max_evidence_tip_stall_ms": 60_000,
-                    "healthy_time_states": ["TRUSTED"],
                     "max_inbox_unconsumed": 100,
                 },
             }
@@ -627,26 +447,11 @@ def mismatched_release_config_dir(config_dir: Path) -> Path:
     return config_dir
 
 
-#: The TOS risk state service wave's own governed dimension id (an ADDITIVE new HSE/profile
-#: dimension, alongside the existing "max_notional" pair — never replacing it, so every OTHER
-#: compose e2e test reusing the base ``config_dir`` fixture's own envelope/profile is
-#: untouched) — see :func:`config_dir_with_risk_state`'s own docstring for why this lives on
-#: a SEPARATE, opt-in fixture rather than mutating ``config_dir`` itself.
+#: The TOS risk state service wave's own governed dimension id — see
+#: :func:`config_dir_with_risk_state`'s own docstring for why this lives on a SEPARATE,
+#: opt-in fixture rather than mutating ``config_dir`` itself.
 _RISK_STATE_DIMENSION_ID = "ACCOUNT::GROSS_NOTIONAL"
 _RISK_STATE_ENVELOPE_MAX = "100000"
-
-
-def _governed_dimension_entry(*, magnitude_key: str, value: str) -> dict:
-    return {
-        "dimension": _RISK_STATE_DIMENSION_ID,
-        magnitude_key: value,
-        "unit": "CONTRACTS",
-        "multiplier": "1",
-        "sign": "POSITIVE",
-        "precision": "0",
-        "rounding": "NEAREST",
-        "boundary": "INCLUSIVE",
-    }
 
 
 @pytest.fixture()
@@ -661,11 +466,6 @@ def config_dir_with_risk_state(config_dir: Path) -> Path:
 
     Adds, on top of the base fixture:
 
-    * A new ``ACCOUNT::GROSS_NOTIONAL`` governed dimension to BOTH ``safety_envelope.yaml``
-      and ``safety_profile.yaml`` (alongside the existing ``max_notional`` pair, never
-      replacing it) — ``profile_within_envelope``'s own "profile covers every envelope
-      dimension" requirement stays satisfied for every OTHER test's own happy path, since
-      this dimension is additive to both files together.
     * ``aggregate_risk_policy.yaml`` / ``action_flow_policy.yaml`` scoped to this suite's own
       ``fx.ACCOUNT``/``fx.INSTRUMENT``, covering both ``NEW_LONG``/``NEW_SHORT`` action
       classes (plan §5 실증 (7) NEW_SHORT mirror), with generous limits
@@ -674,29 +474,7 @@ def config_dir_with_risk_state(config_dir: Path) -> Path:
       ``concurrent_consumers_share_one_envelope: true`` — REQUIRED (not the lane a fixture
       builder's own ``false`` default) for ``tos.afg.amplification_bounded`` to ever GRANT
       (§11 line 294's own positive-``True`` requirement).
-    * Two new ``safety_activation.yaml`` ``members:`` entries (additive to the existing
-      VENUE_CONSTRAINT_POLICY/ORDER_CONSTRUCTION_POLICY pair).
     """
-    envelope_raw = yaml.safe_load(
-        (config_dir / "safety_envelope.yaml").read_text(encoding="utf-8")
-    )
-    envelope_raw["envelope"]["governed_dimensions"].append(
-        _governed_dimension_entry(
-            magnitude_key="envelope_max", value=_RISK_STATE_ENVELOPE_MAX
-        )
-    )
-    _write_yaml(config_dir / "safety_envelope.yaml", envelope_raw)
-
-    profile_raw = yaml.safe_load(
-        (config_dir / "safety_profile.yaml").read_text(encoding="utf-8")
-    )
-    profile_raw["profile"]["governed_dimensions"].append(
-        _governed_dimension_entry(
-            magnitude_key="profile_value", value=_RISK_STATE_ENVELOPE_MAX
-        )
-    )
-    _write_yaml(config_dir / "safety_profile.yaml", profile_raw)
-
     are_path = config_dir / "aggregate_risk_policy.yaml"
     are_path.write_text(
         aggregate_risk_policy_yaml(
@@ -726,33 +504,6 @@ def config_dir_with_risk_state(config_dir: Path) -> Path:
         ),
         encoding="utf-8",
     )
-    are_loaded = load_aggregate_risk_policy(are_path, scheme=_SCHEME)
-    afg_loaded = load_action_flow_policy(afg_path, scheme=_SCHEME)
-
-    activation_raw = yaml.safe_load(
-        (config_dir / "safety_activation.yaml").read_text(encoding="utf-8")
-    )
-    activation_raw["members"].extend(
-        [
-            {
-                "kind": "AGGREGATE_RISK_POLICY",
-                "member_id": are_loaded.policy.policy_id,
-                "generation": are_loaded.policy.policy_generation,
-                "digest": are_loaded.policy.canonical_digest,
-                "resolved": True,
-                "immutable": True,
-            },
-            {
-                "kind": "ACTION_FLOW_POLICY",
-                "member_id": afg_loaded.policy.policy_id,
-                "generation": afg_loaded.policy.policy_generation,
-                "digest": afg_loaded.policy.canonical_digest,
-                "resolved": True,
-                "immutable": True,
-            },
-        ]
-    )
-    _write_yaml(config_dir / "safety_activation.yaml", activation_raw)
     return config_dir
 
 

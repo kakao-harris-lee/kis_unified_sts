@@ -20,13 +20,11 @@ _GROUP_NAMES = (
     "recovery",
     "driver",
     "time",
-    "safety_mesh",
     "currentness",
     "rcl",
     "inbox",
     "evidence",
     "release",
-    "protective",
     "operations",
 )
 

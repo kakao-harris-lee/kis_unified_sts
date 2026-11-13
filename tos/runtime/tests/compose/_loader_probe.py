@@ -159,45 +159,16 @@ def _finality(d: Path) -> object:
     return load_finality_config(d / "finality.yaml")
 
 
-def _safety_mesh_documents(d: Path) -> object:
-    from tos_runtime.safety.profile import SafetyProfileService
-
-    return SafetyProfileService(
-        envelope_path=d / "safety_envelope.yaml",
-        profile_path=d / "safety_profile.yaml",
-        activation_path=d / "safety_activation.yaml",
-    )
-
-
-def _deviations(d: Path) -> object:
-    from tos_runtime.safety.deviation import DeviationService
-
-    return DeviationService(deviations_path=d / "safety_deviations.yaml")
-
-
-def _incidents(d: Path) -> object:
-    from tos_runtime.safety.incident import IncidentService
-
-    return IncidentService(config_path=d / "safety_incidents.yaml")
-
-
 def _monitoring(d: Path) -> object:
     from tos_runtime.safety.monitoring import MonitoringService
 
     return MonitoringService(
         config_path=d / "monitor_coverage.yaml",
         evidence_tip_observer=lambda: _unreachable_observer(),
-        time_health_observer=lambda: _unreachable_observer(),
         inbox_unconsumed_observer=lambda: _unreachable_observer(),
         monotonic_ns=lambda: _unreachable_observer(),
         evidence_recorder=lambda *_a, **_k: _unreachable_observer(),
     )
-
-
-def _activation_members(d: Path) -> object:
-    from tos_runtime.venue.activation import load_activation_members
-
-    return load_activation_members(d / "safety_activation.yaml")
 
 
 def _venue_policy(d: Path) -> object:
@@ -304,11 +275,7 @@ PROBES: tuple[ProbeSpec, ...] = (
     ProbeSpec("engine_driver.yaml", _engine_driver),
     ProbeSpec("coordinator_preconditions.yaml", _preconditions),
     ProbeSpec("finality.yaml", _finality),
-    ProbeSpec("safety_envelope+profile+activation", _safety_mesh_documents),
-    ProbeSpec("safety_deviations.yaml", _deviations),
-    ProbeSpec("safety_incidents.yaml", _incidents),
     ProbeSpec("monitor_coverage.yaml", _monitoring),
-    ProbeSpec("safety_activation.yaml::members", _activation_members),
     ProbeSpec("venue_constraint_policy.yaml", _venue_policy),
     ProbeSpec("order_construction_policy.yaml", _ocp),
     ProbeSpec("aggregate_risk_policy.yaml", _aggregate_risk),

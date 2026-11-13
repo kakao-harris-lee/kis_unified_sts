@@ -68,7 +68,7 @@ from .conftest import (
 )
 from .test_compose_root import _compose, _reach_trusted
 from .test_deploy_config import _install_real_calendar, _kst_unix_ms
-from .test_venue_wiring import _kind_count, _rewrite_activation, _rows
+from .test_venue_wiring import _kind_count, _rows
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -473,9 +473,9 @@ def _filled(
 
 
 def _install_real_policies(config_dir: Path) -> tuple[str, str]:
-    """Install the filled real policies over the fixture ones and rewrite the
-    activation ``members:`` with their freshly computed digests (the
-    ``print-policy-digests`` step, done in-process). Returns both digests."""
+    """Install the filled real policies over the fixture ones. Returns both freshly
+    computed canonical digests — the ``print-policy-digests`` step, done in-process.
+    (The activation ``members:`` rewrite that used to follow went with plan S2-a.)"""
     for source, target in (
         (_REAL_VENUE_POLICY, "venue_constraint_policy.yaml"),
         (_REAL_OCP, "order_construction_policy.yaml"),
@@ -497,27 +497,6 @@ def _install_real_policies(config_dir: Path) -> tuple[str, str]:
     )
     assert venue.policy.canonical_digest is not None
     assert ocp.policy.canonical_digest is not None
-    _rewrite_activation(
-        config_dir,
-        [
-            {
-                "kind": "VENUE_CONSTRAINT_POLICY",
-                "member_id": venue.policy.policy_id,
-                "generation": venue.policy.policy_generation,
-                "digest": venue.policy.canonical_digest,
-                "resolved": True,
-                "immutable": True,
-            },
-            {
-                "kind": "ORDER_CONSTRUCTION_POLICY",
-                "member_id": ocp.policy.policy_id,
-                "generation": ocp.policy.policy_generation,
-                "digest": ocp.policy.canonical_digest,
-                "resolved": True,
-                "immutable": True,
-            },
-        ],
-    )
     return venue.policy.canonical_digest, ocp.policy.canonical_digest
 
 

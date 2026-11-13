@@ -33,13 +33,13 @@ Owns three things:
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib
 (``pathlib``, ``yaml``) + ``tos.canonical``/``tos.egressgw``/``tos.engine``/
-``tos.liveauth`` (transitively, via ``_preconditions``) + ``tos_runtime.*``
+``tos_runtime.*``
 only. No ``shared.*``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -75,7 +75,6 @@ from tos_runtime.compose._preconditions import (
     RuntimeCoordinatorPreconditions,
     _ReplayPreconditions,
 )
-from tos_runtime.compose._safety_wiring import SafetyMeshSnapshot
 from tos_runtime.compose._transport_wiring import (
     SealRegistry,
     TransportKind,
@@ -104,7 +103,6 @@ from tos_runtime.recovery.composite_state_writer import (
     COMPOSITE_STATE_STORE_FILE_NAME,
     CompositeStateWriter,
 )
-from tos_runtime.safety.ports import SafetyMeshService
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
@@ -453,23 +451,6 @@ class WiredEngine:
     driver: EngineDriver
 
 
-def _mesh_held_evidence_recorder_for(
-    evidence_store: SqliteEvidenceStore,
-) -> Callable[[Mapping[str, Any]], None]:
-    """The Coordinator's ``COORDINATOR_MESH_HELD`` evidence sink (Phase 5 W3-b, plan §2
-    decision 5) — over this runtime's real evidence store, mirroring every other
-    boot-time/tick evidence append in this module's own call sites."""
-
-    def _recorder(fields: Mapping[str, Any]) -> None:
-        evidence_store.append(
-            dict(fields),
-            kind="COORDINATOR_MESH_HELD",
-            record_class="COORDINATOR_MESH_HELD",
-        )
-
-    return _recorder
-
-
 def _build_preconditions(
     authority_epoch_service: SafetyAuthorityEpochService,
     live_authorization_state: str,
@@ -477,15 +458,12 @@ def _build_preconditions(
     nonlive_admitted: bool,
     active_scope: BrokerScope,
     instance_document: InstanceDocument | None,
-    safety_mesh: Sequence[SafetyMeshService] = (),
-    evidence_store: SqliteEvidenceStore | None = None,
-    mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None,
 ) -> RuntimeCoordinatorPreconditions:
     """The live core's RFC-002 §10.7 Coordinator positive gates (design #31 §9-10; plan §2.1).
 
-    Read fresh on every ``DECISION_TICK`` — never a runtime-authored currentness/authorization
-    comparison; both delegate to the kernel's own ``tos.authority``/``tos.liveauth`` predicates
-    (see :class:`RuntimeCoordinatorPreconditions`'s own docstring).
+    Read fresh on every ``DECISION_TICK`` — never a runtime-authored currentness comparison;
+    the epoch question delegates to the kernel's own ``tos.authority`` predicate (see
+    :class:`RuntimeCoordinatorPreconditions`'s own docstring).
 
     Args:
         authority_epoch_service: The already-composed
@@ -497,15 +475,6 @@ def _build_preconditions(
             straight through to :class:`RuntimeCoordinatorPreconditions`.
         active_scope: This runtime's active :class:`~tos_runtime.brokercap.scopes.BrokerScope`.
         instance_document: The bound Broker Capability Profile INSTANCE document, or ``None``.
-        safety_mesh: The Phase 5 W3 safety-mesh services (plan §2 decision 5) — the
-            Coordinator's third question. Empty (default) when not wired.
-        evidence_store: Builds the ``COORDINATOR_MESH_HELD`` recorder when given; ``None``
-            (default) wires no evidence recorder (the refusal itself is unaffected).
-        mesh_snapshot_refresher: Forwarded straight through to
-            :class:`RuntimeCoordinatorPreconditions` — the once-per-tick
-            :class:`~tos_runtime.compose._safety_wiring.SafetyMeshSnapshot` refresher
-            (team-lead disposition following the HIGH-1/HIGH-2 statefulness fix). ``None``
-            (default) falls back to per-service ``clear()`` calls, unaffected.
     """
     return RuntimeCoordinatorPreconditions(
         epoch_service=authority_epoch_service,
@@ -513,13 +482,6 @@ def _build_preconditions(
         nonlive_admitted=nonlive_admitted,
         active_scope=active_scope,
         instance_document=instance_document,
-        safety_mesh=safety_mesh,
-        mesh_evidence_recorder=(
-            _mesh_held_evidence_recorder_for(evidence_store)
-            if evidence_store is not None
-            else None
-        ),
-        mesh_snapshot_refresher=mesh_snapshot_refresher,
     )
 
 
@@ -548,8 +510,6 @@ def wire_engine_and_driver(
     transport_kind: TransportKind,
     transport_config: KisMockTransportConfig | None,
     credential_sessions: KisCredentialSessions,
-    safety_mesh: Sequence[SafetyMeshService] = (),
-    mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None,
     trading_date_now: Callable[[], str | None] | None = None,
     venue_ledger: SyntheticVenueLedger | None = None,
 ) -> WiredEngine:
@@ -583,8 +543,6 @@ def wire_engine_and_driver(
         transport_config: The loaded KIS MOCK transport config, or ``None`` for ``synthetic``.
         credential_sessions: This boot's KIS credential registry, forwarded to
             :func:`~tos_runtime.compose._transport_wiring.build_transport` (C-2 decision (C)).
-        mesh_snapshot_refresher: Forwarded to :func:`_build_preconditions` — see its own
-            docstring.
         venue_ledger: Forwarded to
             :func:`~tos_runtime.compose._transport_wiring.build_transport` (#1011 P2) — ``None``
             on every boot whose ``finality.yaml`` does not select the venue-ledger witness.
@@ -654,9 +612,6 @@ def wire_engine_and_driver(
         nonlive_admitted=nonlive_admitted,
         active_scope=active_scope,
         instance_document=instance_document,
-        safety_mesh=safety_mesh,
-        evidence_store=evidence_store,
-        mesh_snapshot_refresher=mesh_snapshot_refresher,
     )
     core = EngineCore(
         registry=resolved_registry,

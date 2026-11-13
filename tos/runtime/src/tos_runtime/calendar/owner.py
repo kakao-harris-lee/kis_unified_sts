@@ -37,7 +37,7 @@ phase/maturity/session-context. ``SESSION_FACTS_SOURCE_ABSENT`` is recorded
 once, at construction, when that is the case.
 
 **Tick-generation caching.** Mirrors the ``_current_tick_generation``/
-``_InboxCell`` idiom :mod:`tos_runtime.compose._safety_wiring` already uses:
+``_InboxCell`` idiom :mod:`tos_runtime.compose._monitor_wiring` already uses:
 ``tick_generation_reader`` is a zero-argument callable (typically closing over
 a late-bound cell over the durable inbox's own ``count``, since the inbox does
 not exist yet when this owner is constructed — see

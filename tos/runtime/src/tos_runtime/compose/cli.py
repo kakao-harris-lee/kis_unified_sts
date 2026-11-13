@@ -39,9 +39,9 @@ size budget).
 
 **``print-policy-digests --config-dir`` (plan §2 decision 7)** follows the SAME bare-flags
 idiom: loads the governed policy YAMLs under ``--config-dir`` and prints each one's
-``policy_id``/``policy_generation``/``canonical_digest`` to stdout, so an operator can copy
-them into ``safety_activation.yaml``'s ``members:`` list (:func:`_dispatch_print_policy_digests`
-names which policies).
+``policy_id``/``policy_generation``/``canonical_digest`` to stdout, so an operator (and the
+tenant-tree renderer) can prove every governed policy document loads
+(:func:`_dispatch_print_policy_digests` names which policies).
 
 **Two MORE operations subcommands, added by the runtime operations wiring plan
 (2026-09-13) §2 decisions 4/5: ``rearm``, ``ack-alert``.** Both follow
@@ -51,7 +51,7 @@ the SAME idiom as ``rotate-key`` above — open the evidence store / inbox / tim
 ``ConstructionConfig`` or the risk-input providers either:
 
 * ``rearm --data-dir --custody-root --approvals-dir --config-dir --environment-label --seq``
-  evaluates the HAG two-person re-arm quorum
+  evaluates the operator re-arm approval
   (:func:`~tos_runtime.safety.rearm.prepare_new_risk_halt_clear`) against an operator-authored
   ``approvals_dir/rearm/<seq>.yaml`` decision file + ``approvals_dir/rearm/roster.yaml``, and —
   only on an ``APPROVED`` outcome — clears the storage-layer latch via
@@ -63,7 +63,7 @@ the SAME idiom as ``rotate-key`` above — open the evidence store / inbox / tim
   started time service, never a live ``EngineCore`` —
   ``ComposedRuntime.clear_new_risk_halt`` alone would leave this subcommand unable to ever
   complete a re-arm; the machine pin, ``tests/engine/test_no_direct_latch_clear.py``, now allows
-  exactly these two callers, both gated by the SAME HAG quorum evaluation). ``rearm`` exits ``0``
+  exactly these two callers, both gated by the SAME approval evaluation). ``rearm`` exits ``0``
   only when the latch was actually cleared and non-zero on any refusal (quorum refused, or the
   disclosed storage-layer TOCTOU window); it prints which outcome occurred, never silently claims
   a clear that did not happen.
@@ -181,9 +181,6 @@ from tos_runtime.operations.schema_migrations import (
 )
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.safety.ack import acknowledge_alert
-from tos_runtime.time.config import load_time_config
-from tos_runtime.time.service import TrustworthyTimeService
-from tos_runtime.time.sources import LocalSystemClockReader, ProcessMonotonicSource
 from tos_runtime.venue import (
     ORDER_CONSTRUCTION_POLICY_CONFIG_NAME,
     VENUE_POLICY_CONFIG_NAME,
@@ -508,7 +505,7 @@ def _add_rearm_ack_subparsers(
     rearm_parser = subparsers.add_parser(
         "rearm",
         help=(
-            "Evaluate the HAG two-person re-arm quorum for a latched new-risk halt "
+            "Evaluate the operator re-arm approval for a latched new-risk halt "
             "(module docstring — durably evidences APPROVED/REFUSED; does not itself "
             "clear the halt)."
         ),
@@ -706,8 +703,8 @@ def _dispatch_print_policy_digests(args: PrintPolicyDigestsArgs) -> int:
     ``canonical_digest``, plus AGGREGATE_RISK_POLICY/ACTION_FLOW_POLICY/CRITICAL_INPUT_POLICY
     lines for whichever of those OPTIONAL files exist (:mod:`tos_runtime.compose._cli_ops`'s
     ``risk_state_policy_digest_lines``/``marketfeed_policy_digest_lines``). Opens no evidence
-    store, reads no ``safety_activation.yaml`` — a refused load (PRESENT but malformed; not
-    required to be activated) is printed and reported via a non-zero exit code."""
+    store — a refused load (PRESENT but malformed) is printed and reported via a non-zero
+    exit code."""
     scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
     try:
         loaded_venue = load_venue_constraint_policy(
@@ -738,18 +735,14 @@ def _dispatch_print_policy_digests(args: PrintPolicyDigestsArgs) -> int:
 
 
 def _dispatch_rearm(args: RearmArgs) -> int:
-    """The ``rearm`` subcommand's own dispatch — evaluates the HAG two-person quorum and, only
+    """The ``rearm`` subcommand's own dispatch — evaluates the operator approval and, only
     on an ``APPROVED`` outcome, clears the storage-layer latch (:func:`~tos_runtime.compose
     ._cli_ops.rearm_and_clear` — the second sanctioned door onto
     :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`, for exactly this
     CLI-only, no-live-``ComposedRuntime`` case; see that module's own docstring).
 
-    Opens the evidence store + inbox + a started :class:`~tos_runtime.time.service
-    .TrustworthyTimeService` directly (the ``rotate-key`` idiom — no driver, no engine, no full
-    ``compose_paper_runtime``); :class:`~tos_runtime.safety.rearm.ReArmWorkflow` never actually
-    consults the time service (its own docstring — hag reads no clock), so it is carried here only
-    for interface symmetry with :func:`~tos_runtime.safety.rearm.prepare_new_risk_halt_clear`'s
-    signature.
+    Opens the evidence store + inbox directly (the ``rotate-key`` idiom — no driver, no engine,
+    no full ``compose_paper_runtime``).
     """
     paths = DurableSetPaths.from_data_dir(args.data_dir)
     key_provider = FileKeyProvider(args.custody_root, expected_owner_uid=os.getuid())
@@ -759,23 +752,9 @@ def _dispatch_rearm(args: RearmArgs) -> int:
             paths.inbox, scheme=get_scheme(EV_L1_PROVISIONAL_VERSION)
         )
         try:
-            time_config = load_time_config(args.config_dir / _TIME_CONFIG_NAME)
-            identity = _build_cli_identity(args.environment_label)
-            time_service = TrustworthyTimeService(
-                monotonic=ProcessMonotonicSource(),
-                references=(LocalSystemClockReader(),),
-                config=time_config,
-                identity=identity,
-                evidence=evidence_store,
-            )
-            time_service.start()
-            time_service.evaluate()
-            time_service.evaluate()
-
             result = rearm_and_clear(
                 inbox=inbox,
                 evidence_store=evidence_store,
-                time_service=time_service,
                 approvals_dir=args.approvals_dir,
                 environment_label=args.environment_label,
                 expected_owner_uid=os.getuid(),
@@ -789,7 +768,7 @@ def _dispatch_rearm(args: RearmArgs) -> int:
     if not result.cleared:
         print(f"rearm: {result.reason}", file=sys.stderr)
         return 1
-    print(f"rearm: cleared evidence_seq={args.seq} (HAG two-person quorum APPROVED).")
+    print(f"rearm: cleared evidence_seq={args.seq} (operator approval APPROVED).")
     return 0
 
 

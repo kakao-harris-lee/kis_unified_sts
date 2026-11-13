@@ -53,7 +53,7 @@ SAME tree, before ``parse`` ever sees the file. :func:`~tos_runtime._named_tbd
 .first_named_tbd_leaf` itself now lives in the shared ``_named_tbd`` module (promoted
 there, W-A A-0 round 2) — re-imported here so this module's own name and
 :mod:`tos_runtime.strategy.bindings`'s existing import both keep working unchanged;
-:mod:`tos_runtime.safety.profile` reuses the SAME walker for its own three
+Other policy loaders reuse the SAME walker for their own
 raw-dict-to-pydantic policy documents, which have no per-field extraction of their own
 for :func:`~tos_runtime._named_tbd.reject_named_tbd` to wrap.
 

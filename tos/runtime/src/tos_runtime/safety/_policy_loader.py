@@ -1,5 +1,5 @@
 """Shared YAML-policy loading helpers for the W3-a1 safety-mesh services
-(:mod:`tos_runtime.safety.profile`, :mod:`tos_runtime.safety.deviation`).
+(:mod:`tos_runtime.safety.monitoring`).
 
 Both services load an operator policy document and fail closed at
 construction — never a lazily-discovered ``None`` deep inside ``clear()`` —

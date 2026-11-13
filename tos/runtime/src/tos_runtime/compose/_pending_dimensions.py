@@ -113,12 +113,11 @@ _READER_OWNED_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
         #: (``grep -rn ActiveEgressPrincipalSet tos/runtime/src`` — empty); the one real
         #: predicate is recorded as an evidence-only observation, never a dimension
         #: verdict (``_wiring.py``'s ``_record_egress_identity_observation``).
-        #: The four Phase 5 W3-a1/a2 safety-mesh services (plan §2 decision 2) —
-        #: ``tos_runtime.compose._safety_wiring.build_safety_mesh``'s own
-        #: ``dimension_readers``, folded in by ``_build_dimension_readers``.
-        DimensionKey.SAFETY_ENVELOPE_PROFILE,
-        DimensionKey.DEVIATION,
-        DimensionKey.INCIDENT,
+        #: The slim monitor —
+        #: ``tos_runtime.compose._monitor_wiring.build_monitor_owners``'s own
+        #: ``dimension_readers``, folded in by ``_build_dimension_readers``. (Its three
+        #: former safety-mesh siblings — SAFETY_ENVELOPE_PROFILE / DEVIATION / INCIDENT —
+        #: went with plan S2-a, enum members and all.)
         DimensionKey.MONITORING,
         #: Phase 5 W3.2 (plan §2 decisions 2-6) — the six remaining currentness dimension
         #: owners: ``_aggregate_risk_dimension_reader_for`` (step 6's already-computed

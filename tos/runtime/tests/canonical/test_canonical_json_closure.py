@@ -176,16 +176,10 @@ from tos import (
     evidence as k_evidence,
 )
 from tos import (
-    hag as k_hag,
-)
-from tos import (
     iap as k_iap,
 )
 from tos import (
     ioc as k_ioc,
-)
-from tos import (
-    liveauth as k_liveauth,
 )
 from tos import (
     marketfeed as k_marketfeed,
@@ -203,9 +197,6 @@ from tos import (
     posttrade as k_posttrade,
 )
 from tos import (
-    protective as k_protective,
-)
-from tos import (
     rcl as k_rcl,
 )
 from tos import (
@@ -218,25 +209,13 @@ from tos import (
     sci as k_sci,
 )
 from tos import (
-    sir as k_sir,
-)
-from tos import (
-    spg as k_spg,
-)
-from tos import (
     staterestore as k_staterestore,
-)
-from tos import (
-    stm as k_stm,
 )
 from tos import (
     time as k_time,
 )
 from tos import (
     venue as k_venue,
-)
-from tos import (
-    wdr as k_wdr,
 )
 from tos import (
     workload as k_workload,
@@ -264,27 +243,20 @@ _IMPORTED_MODULES: tuple[ModuleType, ...] = (
     k_egressgw,
     k_engine,
     k_evidence,
-    k_hag,
     k_iap,
     k_ioc,
-    k_liveauth,
     k_marketfeed,
     k_ordering,
     k_orthostate,
     k_position,
     k_posttrade,
-    k_protective,
     k_rcl,
     k_recon,
     k_sbr,
     k_sci,
-    k_sir,
-    k_spg,
     k_staterestore,
-    k_stm,
     k_time,
     k_venue,
-    k_wdr,
     k_workload,
     r_named_tbd,
     r_authority,
@@ -332,13 +304,14 @@ _SRC_ROOTS: dict[str, Path] = {
 #: Lower bounds measured on this branch (2026-09-24). Asserted as bounds, not
 #: equalities, so adding a model is not a spurious RED — but an import that
 #: silently fails and leaves the enumeration near zero still goes RED.
-#: Re-measured 2026-11-13 (S2-c, ``docs/plans/2026-11-13-tos-code-halving-plan.md``):
-#: the two set-bearing ``tos.nontrade`` records went with the package (one of them carried
-#: a ``__canonical_set_fields__`` declaration), on top of the S1-a drop. A deliberate drop,
-#: re-measured rather than left to read as a silent import failure.
-_MIN_TREE_SET_MODELS = 49
-_MIN_DIRECT_SET_MODELS = 33
-_MIN_COVERED_SET_MODELS = 17
+#: Re-measured 2026-11-13 after plans S2-c (the two set-bearing ``tos.nontrade``
+#: records, one of them carrying a ``__canonical_set_fields__`` declaration) and
+#: S2-a (the seven safety-mesh model modules) each removed their own models, on top
+#: of the S1-a drop. Deliberate drops, measured against the tree rather than left to
+#: read as a silent import failure.
+_MIN_TREE_SET_MODELS = 22
+_MIN_DIRECT_SET_MODELS = 16
+_MIN_COVERED_SET_MODELS = 9
 
 #: Models allowed to hold a set without being a ``FrozenModel``. Empty today;
 #: every entry needs a one-line reason for why its sets never reach a digest.
@@ -457,9 +430,10 @@ def test_every_module_is_imported() -> None:
     only check that would catch a module reached through a path the walk cannot
     see at all.
     """
-    # S2-c (2026-11-13) removed three more: `tos.nontrade`, `tos_runtime.nontrade` and
-    # `tos_runtime.compose._nontrade_eval_dispatch`, deleted with the package.
-    assert len(_IMPORTED_MODULES) >= 70
+    # Re-measured 2026-11-13: S2-c removed `tos.nontrade`, `tos_runtime.nontrade` and
+    # `tos_runtime.compose._nontrade_eval_dispatch`; S2-a removed the seven safety-mesh
+    # kernel packages and the runtime safety modules that went with them.
+    assert len(_IMPORTED_MODULES) >= 63
     on_disk = _module_names_on_disk()
     # The two distribution roots are imported by construction — every name in
     # the list is a submodule of one of them — and are not walk seeds

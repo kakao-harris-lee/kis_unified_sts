@@ -21,9 +21,7 @@ so they agree by construction (plan §2 decision 4; pinned by
 ``tos/runtime/tests/compose/test_venue_wiring.py``).
 
 **Boot-time wiring (``build_venue_service``).** Loads the two governed policy YAMLs
-(:mod:`tos_runtime.venue.config`), requires BOTH be positively activated
-(:mod:`tos_runtime.venue.activation` — ``safety_activation.yaml``'s own ``members:`` list;
-``PolicyNotActivated`` propagates as a boot refusal), cross-checks the venue policy's own
+(:mod:`tos_runtime.venue.config`), cross-checks the venue policy's own
 ``scope`` against this compose root's configured coordinates and its ``admitting_phase_rules``
 phase tokens against what ``calendar.yaml`` can actually produce for that instrument class
 (:class:`VenuePolicyScopeMismatch` on any mismatch — a policy that scopes or admits outside what
@@ -36,9 +34,9 @@ environment, and the egress route identity; ``contract_month``/``expiration``/``
 ``settlement_method`` have no runtime source yet (plan §5 "정직 상태") and stay at their
 ``InstrumentRouteFields`` ``None`` default, never invented.
 
-**Order of boot refusals.** The two ``require_member_activated`` calls (and the scope/calendar/
-wire-codec cross-checks that follow them) all run BEFORE :class:`~tos_runtime.venue
-.VenueConstraintService` is ever constructed — so an activation or scope refusal here surfaces
+**Order of boot refusals.** The scope/calendar/wire-codec cross-checks all run BEFORE
+:class:`~tos_runtime.venue.VenueConstraintService` is ever constructed — so a scope refusal
+here surfaces
 before this function writes ANY evidence of its own (the only evidence that could already exist
 at this point in ``compose_paper_runtime`` is whatever ``_boot_services`` itself wrote, earlier).
 ``VENUE_POLICY_BOUND`` (service construction) and ``ORDER_CONSTRUCTION_POLICY_BOUND``
@@ -74,7 +72,6 @@ from tos.canonical import CanonicalizationScheme
 from tos.egressgw import CandidateConstruction, VenueConstraintStage
 from tos.engine import StageRequest, StageVerdict
 from tos.ioc import AxisBinding, CanonicalBrokerCommand, ConformanceAxis
-from tos.spg import BundleMemberKind, BundleMemberRef
 from tos.venue import (
     ActionClass,
     InstrumentRouteFields,
@@ -128,11 +125,9 @@ from tos_runtime.venue import (
     ProducerJournalBandSource,
     VenueConstraintService,
     build_band_client,
-    load_activation_members,
     load_order_construction_policy,
     load_venue_constraint_policy,
     record_order_construction_policy_bound,
-    require_member_activated,
 )
 from tos_runtime.venue.construction_rules import ConstructionRules
 
@@ -157,12 +152,6 @@ __all__ = [
 BandReaderFactory = Callable[
     [BandSourceConfig, int | None, tuple[PriceBandTick, ...] | None], BandReader
 ]
-
-#: Duplicated from ``tos_runtime.compose._safety_wiring``'s own private
-#: ``_SAFETY_ACTIVATION_CONFIG_NAME`` (module-private there, not exported) — the SAME
-#: "duplicate the literal, do not reach into another module's private surface" discipline
-#: ``compose/cli.py`` already applies to its own duplicated constants.
-_SAFETY_ACTIVATION_CONFIG_NAME = "safety_activation.yaml"
 
 #: The KIS wire-codec kind the Order Construction Policy's ``_runtime.wire_codec.kind`` must
 #: name for a ``kis-mock`` transport (``tos_runtime.transport.kis_mock.codec`` names the codec
@@ -337,10 +326,8 @@ def _load_and_activate_policies(
     environment_label: str,
     calendar_config: CalendarConfig,
     transport_kind: TransportKind,
-) -> tuple[
-    LoadedVenuePolicy, LoadedOrderConstructionPolicy, BundleMemberRef, BundleMemberRef
-]:
-    """Load both governed policy YAMLs, require both be activated, and run every boot-time
+) -> tuple[LoadedVenuePolicy, LoadedOrderConstructionPolicy, str, str]:
+    """Load both governed policy YAMLs and run every boot-time
     cross-check (module docstring "Order of boot refusals") — split out of
     :func:`build_venue_service` purely for the function-length budget (no behavioural
     difference from having this inline there)."""
@@ -367,27 +354,6 @@ def _load_and_activate_policies(
     assert p.policy_id is not None and p.policy_generation is not None
     assert p.canonical_digest is not None and o.canonical_digest is not None
     assert o.policy_id is not None and o.policy_generation is not None
-    members = load_activation_members(config_dir / _SAFETY_ACTIVATION_CONFIG_NAME)
-    # Activation refusal (PolicyNotActivated) surfaces here, before any evidence this
-    # module itself writes (module docstring "Order of boot refusals").
-    venue_member = require_member_activated(
-        members,
-        kind=BundleMemberKind.VENUE_CONSTRAINT_POLICY,
-        member_id=p.policy_id,
-        generation=p.policy_generation,
-        digest=p.canonical_digest,
-    )
-    ocp_member = require_member_activated(
-        members,
-        kind=BundleMemberKind.ORDER_CONSTRUCTION_POLICY,
-        member_id=o.policy_id,
-        generation=o.policy_generation,
-        digest=o.canonical_digest,
-    )
-    # require_member_activated only returns a ref whose digest matched the exact
-    # (non-None) canonical_digest passed above — non-None here by construction.
-    assert venue_member.digest is not None
-    assert ocp_member.digest is not None
     _cross_check_scope(
         loaded_policy, construction=construction, environment_label=environment_label
     )
@@ -397,7 +363,11 @@ def _load_and_activate_policies(
         instrument_class=loaded_policy.scope.instrument_class,
     )
     _cross_check_wire_codec(loaded_ocp, transport_kind=transport_kind)
-    return loaded_policy, loaded_ocp, venue_member, ocp_member
+    # The two ``*_POLICY_BOUND`` evidence rows record WHICH policy document this boot
+    # bound. Before plan S2-a that digest came back from the activation document, which
+    # only ever matched when it equalled the policy's own ``canonical_digest``; reading it
+    # straight off the policy is the same value with no second document to keep in sync.
+    return loaded_policy, loaded_ocp, p.canonical_digest, o.canonical_digest
 
 
 def build_kis_band_reader_factory(
@@ -600,17 +570,13 @@ def build_venue_service(
 
     Raises:
         tos_runtime.venue.VenuePolicyConfigError: either policy YAML is missing/malformed.
-        tos_runtime.venue.ActivationMembersConfigError: ``safety_activation.yaml`` carries no
-            explicit ``members:`` list.
-        tos_runtime.venue.PolicyNotActivated: either policy has no exactly-one, positively
-            resolved+immutable activation member.
         VenuePolicyScopeMismatch: the venue policy's scope/admitting-phase tokens, the OCP's
             wire-codec declaration, or the transport's ``price_scale``
             (:func:`_cross_check_price_scale`) disagree with this root's configured facts.
         VenueBandSourceUnwired: the policy declares a ``_runtime.band_source`` and
             ``band_reader_factory`` is ``None``.
     """
-    loaded_policy, loaded_ocp, venue_member, ocp_member = _load_and_activate_policies(
+    loaded_policy, loaded_ocp, venue_digest, ocp_digest = _load_and_activate_policies(
         config_dir=config_dir,
         scheme=scheme,
         construction=construction,
@@ -623,9 +589,6 @@ def build_venue_service(
         transport_kind=transport_kind,
         transport_config=transport_config,
     )
-    # Re-narrowed at this function boundary (the assert inside _load_and_activate_policies
-    # does not carry across a function return) — both members matched a non-None digest.
-    assert venue_member.digest is not None and ocp_member.digest is not None
     profile_version, profile_digest = _broker_capability_profile_facts(
         instance_document
     )
@@ -668,15 +631,13 @@ def build_venue_service(
         route_fields=route_fields,
         broker_capability_profile_version=profile_version,
         broker_capability_profile_digest=profile_digest,
-        activated_member_digest=venue_member.digest,
+        activated_member_digest=venue_digest,
         band_reader=band_reader,
         trading_date_reader=(
             None if loaded_policy.band_source is None else trading_date_reader
         ),
     )
-    record_order_construction_policy_bound(
-        evidence_store, loaded_ocp, ocp_member.digest
-    )
+    record_order_construction_policy_bound(evidence_store, loaded_ocp, ocp_digest)
     return service, loaded_ocp
 
 

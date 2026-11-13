@@ -284,8 +284,8 @@ def compose_paper_runtime(
 
     # TOS Phase 5 W5 (plan §2 decisions 1-5): the KST session/venue-facts owner. Built here,
     # before `_build_construction_stages`, because step 3 needs a phase reader at construction
-    # time; its tick-generation reader is a late-bound cell (mirrors `_SafetyMesh`'s own inbox
-    # cell, `_safety_wiring.py`) since the durable inbox does not exist until `_finalize` --
+    # time; its tick-generation reader is a late-bound cell (mirrors `_MonitorOwners`'s own inbox
+    # cell, `_monitor_wiring.py`) since the durable inbox does not exist until `_finalize` --
     # `apply_session_wiring` below fills it in once it does.
     # TOS venue constraint service wave (plan §2 decision 9): `calendar.yaml` is loaded EXACTLY
     # ONCE here and the SAME `CalendarConfig` is threaded into both `build_session_facts_owner`
@@ -509,7 +509,7 @@ def compose_paper_runtime(
         environment_label=environment_label,
         continuity_id=continuity_id,
         authority_epoch_service=boot.rcl.authority_epoch_service,
-        safety_mesh=boot.risk.safety_mesh,
+        monitor_owners=boot.risk.monitor_owners,
         projection=boot.risk.projection,
         evidence_store=boot.infra.evidence_store,
         request_bytes_digest_source=request_bytes_digest_source,
@@ -552,10 +552,10 @@ def compose_paper_runtime(
     # `_build_construction_stages`; this just publishes it on `ComposedRuntime.venue`, mirroring
     # `apply_session_wiring`'s own "attach the already-built owner" idiom below).
     composed.venue = venue_service
-    # Late-bind the safety-mesh inbox cell now the durable inbox exists (Phase 5 W3-b,
+    # Late-bind the monitor/latch inbox cell now the durable inbox exists (Phase 5 W3-b,
     # plan §2 decision 6/8) — RestrictiveLatchOwner's new-risk-halt reader and
-    # MonitoringService's inbox-backlog observer both close over this cell.
-    boot.risk.safety_mesh.inbox_cell.inbox = composed.inbox
+    # the slim monitor.s inbox-backlog observer both close over this cell.
+    boot.risk.monitor_owners.inbox_cell.inbox = composed.inbox
     # TOS risk state service wave (plan §2.4) — build the real RiskStateService now the
     # durable inbox exists (`InboxFlowReader` needs it), fill the late-bound cell the two
     # thunks above already close over, and attach it to the composed runtime. Only when the
@@ -581,7 +581,6 @@ def compose_paper_runtime(
             evidence_store=boot.infra.evidence_store,
             inbox=composed.inbox,
             rcl_log=boot.rcl.rcl_log,
-            hse_envelope=boot.risk.safety_mesh.profile_service.envelope,
             scenario_set=boot.risk.risk_service.scenario_set,
             required_scenario_kinds=boot.risk.required_scenario_kinds,
             rcl_tip_reader=_rcl_tip_reader,

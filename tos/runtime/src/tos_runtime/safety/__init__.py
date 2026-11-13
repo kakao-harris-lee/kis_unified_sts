@@ -1,20 +1,16 @@
-"""``tos_runtime.safety`` — Phase 5 W3 safety-mesh runtime owners (plan
-``docs/plans/2026-09-11-tos-phase5-w3-safety-mesh-plan.md``).
+"""``tos_runtime.safety`` — the runtime safety modules that survived plan S2-a
+(``docs/plans/2026-11-13-tos-code-halving-plan.md``).
 
-Sub-modules (one file per lane, plan §4):
+* :mod:`.monitoring` — the slim monitor (evidence-tip stall + inbox backlog) that owns
+  the MONITORING currentness dimension and emits ``STM_ALERT``.
+* :mod:`.ack` — operator acknowledgement of one ``STM_ALERT`` row.
+* :mod:`.latch` — the restrictive-latch / capacity owners (egress item 16).
+* :mod:`.rearm` — the new-risk-halt clear door (one custody-gated operator approval).
+* :mod:`.shutdown` — controlled shutdown: latch first, then close, then record.
 
-* :mod:`.ports` — the shared :class:`~tos_runtime.safety.ports.SafetyMeshService`
-  Protocol + :class:`~tos_runtime.safety.ports.MeshClearance` (team-lead authored; the
-  one contract every lane codes against).
-* :mod:`.profile` (spg · item 7), :mod:`.deviation` (wdr · item 8) — lane W3-a1.
-* :mod:`.incident` (sir · item 9), :mod:`.monitoring` (stm · item 10) — lane W3-a2.
-* :mod:`.latch`, :mod:`.rearm` — lane W3-c (restrictive-latch / capacity owners and the
-  HAG two-person re-arm workflow).
-
-Only the shared port is re-exported here; lanes import their siblings by full path so
-this package's import graph stays a DAG.
+The safety-mesh services (spg profile, wdr deviation, sir incident, the ``tos.stm``
+coverage manifest, ``tos.protective``, ``tos.liveauth``, ``tos.hag``) were removed with
+their kernel packages: their judgement inputs were static YAML constants in every shipped
+tenant tree. Modules import their siblings by full path so this package's import graph
+stays a DAG; nothing is re-exported here.
 """
-
-from tos_runtime.safety.ports import MeshClearance, SafetyMeshService
-
-__all__ = ["MeshClearance", "SafetyMeshService"]

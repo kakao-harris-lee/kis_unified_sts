@@ -135,11 +135,6 @@ _IDENTICAL_TO_LONG = frozenset(
         "release.yaml",
         "risk.yaml",
         "risk_attestations.yaml",
-        "safety_activation.yaml",
-        "safety_deviations.yaml",
-        "safety_envelope.yaml",
-        "safety_incidents.yaml",
-        "safety_profile.yaml",
         "time.yaml",
     }
 )
@@ -330,15 +325,15 @@ def test_short_tree_classification_is_exhaustive() -> None:
     )
     assert classified | long_classified == checked
 
-    # MEASURED 2026-11-11 (P2-b added each tree's own fields.yaml, byte-identical between them
-    # because the declaration carries no direction content): the two trees share 24
-    # byte-identical files; 7 YAML files diverge in declared key paths; README.md diverges as
-    # prose; each tree has its own strategy file.
-    # Was 23/7/1/32 from 2026-10-10 (PR-B added each tree's own RENDER.yaml).
-    assert len(_IDENTICAL_TO_LONG) == 24
+    # MEASURED 2026-11-13 (plan S2-a deleted the five safety-mesh configs, which were
+    # byte-identical between the trees): the two trees share 19 byte-identical files; 7 YAML
+    # files diverge in declared key paths; README.md diverges as prose; each tree has its own
+    # strategy file.
+    # Was 24/7/1/33 from 2026-11-11 (P2-b added each tree'''s own fields.yaml).
+    assert len(_IDENTICAL_TO_LONG) == 19
     assert len(_DIFFERS_FROM_LONG) == 7
     assert len(_PROSE_DIFFERS) == 1
-    assert len(short_files) == len(long_files) == 33
+    assert len(short_files) == len(long_files) == 28
 
 
 def test_the_counts_the_short_readme_states_are_read_from_it() -> None:

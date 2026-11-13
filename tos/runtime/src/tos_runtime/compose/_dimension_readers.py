@@ -36,7 +36,7 @@ from tos.sbr import ReadinessVerdict
 
 from tos_runtime.authority.epoch import SafetyAuthorityEpochService
 from tos_runtime.brokercap.scopes import BrokerScope, transport_nature
-from tos_runtime.compose._safety_wiring import _SafetyMesh
+from tos_runtime.compose._monitor_wiring import _MonitorOwners
 from tos_runtime.compose.context import RecordingAggregateRiskService, VerdictRecorder
 from tos_runtime.currentness.vector import DimensionReport
 from tos_runtime.posttrade.release_consumer import ReleaseConflictReader
@@ -836,7 +836,7 @@ def _build_dimension_readers(
     authority_epoch_service: SafetyAuthorityEpochService,
     currentness_policy: CurrentnessPolicy,
     environment_label: str,
-    safety_mesh: _SafetyMesh,
+    monitor_owners: _MonitorOwners,
     risk_service: RecordingAggregateRiskService,
 ) -> tuple[
     dict[DimensionKey, tuple[str, Callable[[], DimensionReport | None]]],
@@ -914,6 +914,6 @@ def _build_dimension_readers(
             "tos_runtime.release",
             _release_dimension_reader_for(dimension_states.release),
         ),
-        **safety_mesh.dimension_readers,
+        **monitor_owners.dimension_readers,
     }
     return dimension_readers, dimension_states

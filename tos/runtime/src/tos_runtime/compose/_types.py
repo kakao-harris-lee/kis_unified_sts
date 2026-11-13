@@ -37,7 +37,6 @@ from tos_runtime.authority.iap import (
 )
 from tos_runtime.brokercap import BrokerScopesConfig
 from tos_runtime.calendar.owner import SessionFactsOwner
-from tos_runtime.compose._safety_wiring import SafetyMeshSnapshot
 from tos_runtime.compose._venue_ledger_wiring import SyntheticVenueLedgerParts
 from tos_runtime.compose.context import (
     ComposeContextResolver,
@@ -61,7 +60,6 @@ from tos_runtime.posttrade.unsent_release import UnsentReleasePass
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recovery.barrier import RecoveryVerdict
 from tos_runtime.riskstate.service import RiskStateService
-from tos_runtime.safety.protective import ProtectiveVerdict
 from tos_runtime.safety.rearm import prepare_new_risk_halt_clear
 from tos_runtime.safety.shutdown import ControlledShutdown, ShutdownOutcome
 from tos_runtime.time.service import TrustworthyTimeService
@@ -311,18 +309,6 @@ class ComposedRuntime:
     #: observable on a runtime a caller actually receives (mirrors :attr:`recovery`'s own
     #: docstring).
     operations: OperationsFacts | None = None
-    #: TOS Phase 5 W4 §2 decision 7 — a read-only peek at the safety mesh's own per-tick
-    #: :class:`~tos_runtime.compose._safety_wiring.SafetyMeshSnapshot`
-    #: (:meth:`~tos_runtime.compose._safety_wiring._SafetyMeshTickCell.peek`'s own
-    #: docstring on why this never triggers a service ``.clear()``) — set directly at
-    #: ``_finalize`` construction time (the mesh already fully exists by then; never
-    #: transiently ``None`` on a runtime a caller receives, unlike :attr:`recovery`).
-    safety_mesh_peek: Callable[[], SafetyMeshSnapshot | None] | None = None
-    #: TOS Phase 5 W4 §2 decision 7 — reads
-    #: :attr:`~tos_runtime.safety.protective.ProtectiveActionService.last_verdict` (that
-    #: property's own docstring on why this is a pure read, never a second evaluation).
-    #: Set directly at ``_finalize`` construction time, same as :attr:`safety_mesh_peek`.
-    protective_last_verdict: Callable[[], ProtectiveVerdict | None] | None = None
     #: TOS Phase 5 W5 plan §2 decision 3 — the KST session/venue-facts owner, set by
     #: :func:`~tos_runtime.compose._session_wiring.apply_session_wiring` (called from
     #: :func:`~tos_runtime.compose.root.compose_paper_runtime`, right after ``_finalize``).
@@ -408,12 +394,11 @@ class ComposedRuntime:
         return tuple(self.driver.enqueue_and_run(event) for event in events)
 
     def shutdown(self, *, reason: str) -> ShutdownOutcome:
-        """Run the TOS Phase 5 W3.2 controlled-shutdown procedure once (lane d3;
-        :mod:`tos_runtime.safety.shutdown`'s own module docstring has the full honesty
-        discipline — what each step proves, what it deliberately does not, and why).
+        """Run the controlled-shutdown procedure once
+        (:mod:`tos_runtime.safety.shutdown`'s own module docstring has the ordering it
+        holds and the fail-closed halt policy).
 
-        A thin sequencing wrapper ONLY: the actual step bodies, the kernel-predicate calls,
-        and the recovery-handoff package construction all live in
+        A thin sequencing wrapper ONLY: the actual step bodies live in
         :class:`~tos_runtime.safety.shutdown.ControlledShutdown`, kept out of this dataclass
         purely for the ``tools/tos_size_budget.py`` function-length budget (no behavioural
         difference from inlining it here).
@@ -458,13 +443,12 @@ class ComposedRuntime:
         :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`'s for why a direct
         call on the storage layer is refused by a mechanical pin (re-review finding RR2).
 
-        **TOS Phase 5 W3 plan §2 decision 7.** The single free-text operator attestation this
-        method used to accept is replaced by a HAG two-person quorum, evaluated by
+        **The approval gate.** The free-text operator attestation this method used to accept
+        is a custody-gated, single-principal approval file, evaluated by
         :func:`~tos_runtime.safety.rearm.prepare_new_risk_halt_clear` (which owns the
         NO_LATCH/SEQ_MISMATCH pre-checks plus the
-        :class:`~tos_runtime.safety.rearm.ReArmWorkflow` quorum evaluation, including its own
-        ``REARM_APPROVED``/``REARM_REFUSED`` evidence — split out purely for the
-        ``tools/tos_size_budget.py`` function-length budget, no behavioural change). THIS method
+        :class:`~tos_runtime.safety.rearm.ReArmWorkflow` evaluation, including its own
+        ``REARM_APPROVED``/``REARM_REFUSED`` evidence). THIS method
         still owns the actual storage-layer clear call — the machine pin
         ``tests/engine/test_no_direct_latch_clear.py`` allows only this file to call
         :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt` — plus the
@@ -497,7 +481,6 @@ class ComposedRuntime:
             approvals_dir=approvals_dir,
             evidence_store=self.evidence_store,
             inbox=self.inbox,
-            time_service=self.time_service,
             environment_label=self.identity.cell_id or "",
             expected_owner_uid=os.getuid(),
             refused_kind=self._NEW_RISK_HALT_CLEAR_REFUSED_KIND,
