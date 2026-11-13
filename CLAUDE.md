@@ -51,8 +51,8 @@ What runs is the TOS kernel plus a read-only operator surface.
   §S3); they are in git history.
 - `tools/broker_probes/`: KIS capability probes (mock-account GET reads; order
   probes are interlocked by `config/futures_live.yaml::enabled`).
-- `shared/`: what the surviving roots import — the CP-3 producer and B3 witness
-  path (backtest replay, Setup D decision, instruments, determinism, market-data
+- `shared/`: what the surviving roots import — the CP-3 producer and Setup D
+  witness path (backtest replay, Setup D decision, instruments, determinism, market-data
   store), KIS auth, indicators, config, storage, risk primitives, LLM
   analysis. `shared/execution/executor.py`, `shared/kis/client.py` and the
   packages only they pulled in (`shared/http`, `shared/observability`,
@@ -66,10 +66,10 @@ What runs is the TOS kernel plus a read-only operator surface.
 - `config/`: YAML config for what remains — `config/tos_runtime/` tenant trees,
   `config/tos_*.yaml` gates, KIS/execution/risk/storage/streaming settings, and
   one strategy file (`config/strategies/futures/setup_d_vwap_reversion.yaml`,
-  the B3 witness's).
+  the legacy Setup D witness's).
 - `cli/main.py`: `sts` entrypoint; the only command group is `sts tos`.
 - `scripts/`: `scripts/tos/` tenant-tree rendering and the Setup D walk-forward
-  script the B3 witness loads by path.
+  script the legacy Setup D path loads by path.
 
 ## tos Kernel Boundary (two projects in one repo)
 
@@ -150,10 +150,14 @@ What is still true and still enforced:
   it. (The stock runtime that drove it was removed in L1–L6, and
   `shared/strategy/exit/three_stage.py` itself went in L7; the rule is kept for
   future work.)
-- `shared/decision/setups/vwap_reversion.py` and its dependencies are the **B3
-  witness**: the CP-3 post-session comparison reads this legacy Setup D
-  implementation. Keep it byte-identical until `TOS_PAPER_READY`
-  (`docs/plans/2026-11-07-legacy-removal-plan.md` §2, operator decision 3).
+- `shared/decision/setups/vwap_reversion.py` and its dependencies are the
+  **legacy Setup D witness**: `tools/tos_cp3/produce_fields.py` still drives this
+  implementation bar by bar to produce the CP-3 field stream, until the P2-c
+  producer switch lands. Keep it byte-identical until `TOS_PAPER_READY`
+  (`docs/plans/2026-11-07-legacy-removal-plan.md` §2, operator decision 3). The
+  post-session **B3 대조** that also read it retired on 2026-11-13
+  (`docs/plans/2026-11-11-tos-platform-roadmap.md` §7 결정 3), its condition —
+  P2-b 동등성(626,745 셀 0 불일치, #1065 · #1066) — being met.
 - The retired cutover runbooks (`stock-pipeline-cutover-m5d.md`,
   `futures-pipeline-cutover-f9.md`, `paper-live-code-separation.md`) were deleted
   on 2026-11-13 with the rest of the legacy-runtime docs; they are history, not
@@ -183,8 +187,8 @@ exits and sizers — all of them outside the surviving import closure
 (`docs/plans/2026-11-07-legacy-removal-plan.md` §3).
 
 What is left of `shared/strategy/` is `base.py` (the abstract classes),
-`market_data.py`, `market_time.py`, and `exit/setup_target_exit.py` — the CP-3
-B3 witness's exit and the helpers it reaches. The only strategy YAML left is
+`market_data.py`, `market_time.py`, and `exit/setup_target_exit.py` — the legacy
+Setup D witness's exit and the helpers it reaches. The only strategy YAML left is
 `config/strategies/futures/setup_d_vwap_reversion.yaml`, that witness's input.
 
 Execution authority today is the TOS kernel, where a strategy is Tenant Content

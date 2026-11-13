@@ -7,14 +7,13 @@ one by a Panama **difference** back-adjust. This module owns the one artifact
 that makes that join reproducible — ``stitch.json`` — and the one alignment
 function every reader uses.
 
-**Why a manifest and not a flag.** B3 (``tools/tos_cp3/diff_decisions.py``)
-refuses a (B1a, B2) pair whose input digests, line counts or ``raw_event_id``
-order differ. B2 reads its frame through
-``produce_fields.load_window``, so an alignment that lived only in a B1a flag
-would make every stitched session an automatic B3 refusal (plan §9 HIGH-1).
-The manifest is therefore the input to ``load_window`` itself, and the producer,
-B1a and B2 all align through :func:`segment_offsets_x100` — one implementation,
-no equivalence proof needed between three of them.
+**Why a manifest and not a flag.** The retired B3 comparison (2026-11-13)
+refused a (B1a, B2) pair whose input digests, line counts or ``raw_event_id``
+order differed, and an alignment that lived only in a B1a flag would have made
+every stitched session an automatic refusal (plan §9 HIGH-1). The reason
+outlives that comparison: the manifest is the input to ``load_window`` itself,
+so the producer and B1a align through :func:`segment_offsets_x100` — one
+implementation, no equivalence proof needed between them.
 
 **What the manifest says, and what it deliberately does not.**
 

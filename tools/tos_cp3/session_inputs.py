@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""CP-3 §3.6 — the two session-derived inputs B3 did not have.
+"""CP-3 §3.6 — the two session-derived inputs read from the durable stores.
 
 Plan ``docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md`` §3.6, PR-3
-row. Before this module B3 (:mod:`tools.tos_cp3.diff_decisions`) read three
-offline artifacts — B1a's fields, B2's legacy outcomes, B1b's offline trace —
+row. It was written for the B3 comparison, which read three offline artifacts
 and therefore answered only "did the offline replay agree with the legacy
-rule". It could not see the live session at all: not which bars the runtime
-actually consumed, and not what the runtime decided on them. This module reads
-the session's own durable stores and produces those two inputs:
+rule" — it could not see the live session at all. That comparison retired on
+2026-11-13 (``docs/plans/2026-11-11-tos-platform-roadmap.md`` §7 결정 3); these
+two readings of the session's own durable stores did not, because
+``tools/tos_cp3/status_board.py`` is built on them:
 
 ``consumed-ids``
     The ``raw_event_id`` set the runtime really consumed, from the session
@@ -129,7 +129,7 @@ SOURCE_ID = f"tos-cp3-session-inputs/{TOS_CP3_VERSION}"
 #: refuses without a boot snapshot; the live ``lineage.json``'s ``join``
 #: renamed its positional fallback to the ``evidence_seq_range`` key
 #: (``attributed_by`` values changed with it). Both
-#: documents are read by B3 (:mod:`tools.tos_cp3.diff_decisions`) only through
+#: documents were read by the retired B3 comparison only through
 #: keys that did not move, so a 1-shaped document still compares — the bump is
 #: so a reader of an old artifact knows which shape it is.
 #:

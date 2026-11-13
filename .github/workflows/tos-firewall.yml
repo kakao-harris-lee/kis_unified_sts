@@ -81,15 +81,15 @@ jobs:
         name: Checkout code
         uses: actions/checkout@v4
         with:
-          # **전체 이력(+태그)이 필요하다.**  2026-11-12 퇴역
-          # (docs/plans/2026-11-12-phase0-retirement-plan.md §2) 이전의 이유는
-          # Layer 4 검사기의 `C2UP` 측정 출처 검증이었고 그 검사기는 사라졌다.
-          # 남은 소비자는 `tests/tools/test_cp3_emit_legacy_decisions.py` 로,
-          # L6 이 지운 Setup D 어댑터·오케스트레이터를 **태그 `legacy-final` 의
-          # blob** 에서 읽어 B3 declared difference 의 인용이 실재 코드를
-          # 가리키는지 본다.  얕은(또는 태그 없는) 체크아웃에서 그 부분 검사는
-          # **조용히 건너뛴다** — red 가 아니라 약화다.  그래서 깊이를 기본값으로
-          # 되돌리지 않는다.
+          # **전체 이력(+태그).**  소비자는 둘 다 사라졌다: Layer 4 검사기의
+          # `C2UP` 측정 출처 검증은 2026-11-12 퇴역
+          # (docs/plans/2026-11-12-phase0-retirement-plan.md §2) 에, 태그
+          # `legacy-final` 의 blob 을 `git cat-file` 로 읽던
+          # `tests/tools/test_cp3_emit_legacy_decisions.py` 는 2026-11-13 B3
+          # 은퇴에 지워졌다.  남은 체커들은 `ls-files`/`rev-parse` 만 쓰므로
+          # 이력 깊이를 요구하지 않는다.  그래도 여기서 얕게 바꾸지 않는 것은
+          # CI 체크아웃 동작 변경이 이 PR 의 범위가 아니기 때문이다 — 줄이려면
+          # 따로 재어 보고 바꾼다.
           #
           # The static job costs ~1s extra for it — so all three share this
           # anchor rather than each deciding for itself.

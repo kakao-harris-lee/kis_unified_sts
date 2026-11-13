@@ -67,8 +67,9 @@ _LEGACY_STRATEGY_YAML = (
 #: Paths this file reads that the legacy removal deletes
 #: (``docs/plans/2026-11-07-legacy-removal-plan.md``; L6 for the Setup D entry adapter). The
 #: source last existed at tag ``legacy-final``.
-#: ``tests/tools/test_cp3_emit_legacy_decisions.py`` reads that blob with ``git cat-file``;
-#: this file cannot, because ``subprocess`` is firewall-forbidden inside ``tos/`` (TOS-FW-B,
+#: ``tests/tools/test_cp3_emit_legacy_decisions.py`` used to read that blob with
+#: ``git cat-file``; it went with the 2026-11-13 B3 retirement, and this file could never do
+#: it anyway, because ``subprocess`` is firewall-forbidden inside ``tos/`` (TOS-FW-B,
 #: ``tools/tos_firewall_check.py``). So the sub-assertion that needs the source is skipped once
 #: the path is retired, and this listing is what keeps a path that is simply GONE -- and not
 #: recorded as retired -- from passing silently.
