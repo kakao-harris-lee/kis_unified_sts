@@ -23,6 +23,7 @@
 - [TOS P2 declarative fields (2026-11-11)](2026-11-11-tos-p2-declarative-fields.md): `fields.yaml` + catalog `tos-field-catalog/1` in `shared/indicators/fields/`; P2-a catalog/evaluator, P2-b byte-identical equivalence vs the legacy-driven producer on 20 days × 3 trees, P2-c producer switch after `TOS_PAPER_READY`, P2-d second strategy config-only. The early-return chain is reproduced first, untangled into DSL only after P3 goldens.
 - [Phase-0 판정 장치 퇴역 (2026-11-12)](2026-11-12-phase0-retirement-plan.md): Phase 0 는 2026-10-22 서명(#920)으로 닫혔고 완료 기준은 `TOS_PAPER_READY` 다. P1 — 완료 계약서·인덱스 도구·완료/계약 검사기·U-17 예방 통제와 그 CI 단계를 지운다(`tos-gate` 체크 이름은 유지하고 내용만 `tos_redigest --check` 로 교체). P2(이력 합치기)는 운영자 실행.
 - [TOS 효용성·활용성과 활용 방안 (2026-11-13)](2026-11-13-tos-utility-and-usage.md): 평가 문서(일정 변경 없음) — 안전 집행·관측 기반으로는 쓸 만하나 체결 확인 0건·전략 1개라 전략 플랫폼 증거는 아직 없다. 11-13 주식 MOCK 진입은 ACK 까지 갔으나 `FILL_OBSERVER_ACK_UNTRACKABLE`(no_trading_date)로 문장 2 미달. 쓰임 셋(선물 신호 관측기 · 12월 주식 전략 실험대 · 2027-Q1 성과 증명), 전략 추가 표준 절차, 매일 운영 루틴, 중단 기준 넷.
+- [TOS 코드 절반 이하 (2026-11-13)](2026-11-13-tos-code-halving-plan.md): 운영자 지시 — S1 안 쓰는 커널 패키지·B3·시간 스냅샷 부피, S2 안 터진 판정 장치(안전망 wdr/sir/spg/protective/liveauth/hag/stm, verify 17→8, currentness 21→12) 합치기·제거, S3 tos-spec·tos-evidence·역사 문서 은퇴, S4 docstring 첫 줄·주석 제거. 지킬 것: 중복 주문 방지·#998·리스크 한도·GET 전용.
 - Current implementation/check snapshot: [PROJECT_STATUS](../PROJECT_STATUS.md).
 - The dated update paragraphs below are historical observations, not current entry-gate verdicts. Consult the current checkers and normative sources for authorization.
 
