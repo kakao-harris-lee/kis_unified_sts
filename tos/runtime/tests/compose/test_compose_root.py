@@ -18,10 +18,6 @@ import yaml
 from tos.engine.vocabulary import CommitmentStep, StageAuthorityClass
 from tos_runtime.calendar.ports import FixedWallClockReference, WallClockReference
 from tos_runtime.compose._attempt_arm import attempt_position_effect
-from tos_runtime.compose._pending_dimensions import (
-    load_pending_currentness_dimensions,
-    stamp_pending_dimensions,
-)
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.compose.root import (
     ReleaseAdmissionRefused,
@@ -687,9 +683,8 @@ class TestSyntheticEventDrivesTheChain:
         are driven by REAL runtime services — every step admits, and the
         flow reaches an :class:`~tos.engine.records.AttemptRequest`. The
         send is THEN admitted at the gateway boundary too, because the
-        Safety Currentness Vector is complete (4 structurally-owned
-        dimensions + 17 operator-attested pending dimensions, see
-        ``tos_runtime.compose._pending_dimensions``) and item 6/12/16's
+        Safety Currentness Vector is complete (every mandated dimension has
+        a runtime reader) and item 6/12/16's
         egress-gate stand-ins are all real runtime owners now (item 12 —
         ``tos_runtime.calendar.owner.SessionFactsOwner``, TOS Phase 5 W5;
         item 16 — ``tos_runtime.safety.latch``, TOS Phase 5 W3) except item 6,
@@ -816,10 +811,7 @@ class TestSyntheticEventDrivesTheChain:
     ) -> None:
         """Scenario 1's literal acceptance criterion: exactly one synthetic
         transport hand-off, reached once every mandated currentness
-        dimension is supplied (4 structurally-owned + 17 operator-attested
-        pending — see ``tos_runtime.compose._pending_dimensions``'s own
-        module docstring for why the 17 are honest interim attestations,
-        never a fabricated kernel-derived verdict)."""
+        dimension is supplied by its runtime reader."""
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
         event = fx.crossing_event()
@@ -1225,51 +1217,6 @@ class TestRecomposeReplay:
         runtime3 = _compose(tmp_path, config_dir, data_dir, custody_root)
         runtime3.rcl_log.close()
         runtime3.evidence_store.close()
-
-
-class TestPendingDimensionAttestationGatesCompleteness:
-    """A pending currentness dimension's operator attestation is what makes
-    the Safety Currentness Vector complete — flipping one dimension's
-    ``positively_established`` to ``false`` (never removing/nulling a field,
-    which is a LOAD-time refusal per
-    ``_pending_dimensions.load_pending_currentness_dimensions``'s own
-    fail-closed contract) must make the assembled vector incomplete again,
-    never silently patched over by the other 16 attestations."""
-
-    def test_one_false_attestation_makes_the_vector_incomplete(
-        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
-    ) -> None:
-        # RELEASE used to be the dimension flipped here; Phase 5 W3.2 gave it a real
-        # dimension_readers entry (_release_dimension_reader_for), so this test now
-        # flips CONTEXT instead — one of the three dimensions still genuinely pending
-        # (tos_runtime.compose._pending_dimensions.PENDING_DIMENSION_KEYS).
-        dims_path = config_dir / "currentness_dimensions.yaml"
-        raw = yaml.safe_load(dims_path.read_text(encoding="utf-8"))
-        raw["CONTEXT"]["positively_established"] = False
-        dims_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
-
-        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
-        _reach_trusted(runtime)
-
-        # Re-run the SAME two-pass assembly _issue_egress_currentness_proof
-        # performs (tos_runtime.compose.context), directly against the
-        # runtime's own live assembler -- this isolates the currentness-
-        # vector completeness property from the full engine flow (which
-        # would ALSO need an approval file + step 4 to admit, tested
-        # separately by TestSyntheticEventDrivesTheChain).
-        specs = load_pending_currentness_dimensions(dims_path)
-        base_vector = runtime.currentness_assembler.assemble()
-        assert base_vector is not None
-        assert base_vector.currentness_revision is not None
-        pending = stamp_pending_dimensions(
-            specs, at_revision=base_vector.currentness_revision
-        )
-        vector = runtime.currentness_assembler.assemble(extra_dimensions=pending)
-        assert vector is not None
-        assert runtime.currentness_assembler.is_complete(vector) is False
-
-        runtime.rcl_log.close()
-        runtime.evidence_store.close()
 
 
 class TestNonTrustedTimeBlocksNewRisk:

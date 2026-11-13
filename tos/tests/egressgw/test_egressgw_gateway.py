@@ -41,17 +41,17 @@ from tos.egressgw import (
     send_boundary_context,
     verify_send_boundary,
 )
-from tos.egressgw.gateway import _check_construction
+from tos.egressgw.construction import candidate_command_verdict
 from tos.engine import (
     AttemptRequest,
     CommitmentStep,
     EgressResultKind,
     EgressResultPayload,
     InstrumentKey,
+    StageOutcome,
 )
 from tos.ioc import ConformanceResult
 from tos.ordering import OrderingEvent
-from tos.venue import OrderAdmissibilityResult
 
 from ._egressgw_fixtures import (
     CAPABILITY_NONCE,
@@ -67,7 +67,6 @@ from ._egressgw_fixtures import (
     happy_context,
     ordering,
     quorum_certificate,
-    venue_decision,
 )
 
 
@@ -155,7 +154,7 @@ def test_the_baseline_send_is_accepted_and_records_every_step_in_order() -> None
         "NETWORK_CALL_ENTERED",
         "EGRESS_RESULT_RECORDED",
     )
-    assert sink.kinds[:13] == ("VERIFY_ITEM",) * 13
+    assert sink.kinds[:7] == ("VERIFY_ITEM",) * 7
 
 
 def test_the_baseline_send_records_the_commitment_step_sequence_exactly() -> None:
@@ -507,21 +506,6 @@ _CASES: list[tuple[str, SendVerifyItem, dict[str, Any]]] = [
         },
     ),
     (
-        "attempt identity mismatch",
-        SendVerifyItem.MATCHING_INTENT_AND_RESERVATION_IDENTITIES,
-        {"reservation_attempt_id": "attempt-other"},
-    ),
-    (
-        "no reservation identity",
-        SendVerifyItem.MATCHING_INTENT_AND_RESERVATION_IDENTITIES,
-        {"reservation_attempt_id": None},
-    ),
-    (
-        "stale commitment epoch",
-        SendVerifyItem.CURRENT_COMMITMENT_EPOCH,
-        {"commitment_epoch_current": None},
-    ),
-    (
         "allowance withheld",
         SendVerifyItem.ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY,
         {"account_instrument_action_allowed": False},
@@ -530,21 +514,6 @@ _CASES: list[tuple[str, SendVerifyItem, dict[str, Any]]] = [
         "max quantity allowance withheld",
         SendVerifyItem.ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY,
         {"max_quantity_within_allowance": None},
-    ),
-    (
-        "non-admitting session phase",
-        SendVerifyItem.VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION,
-        {"observed_session_phase": "AUCTION"},
-    ),
-    (
-        "no venue decision",
-        SendVerifyItem.VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION,
-        {"venue_decision": None},
-    ),
-    (
-        "decision disagrees with the current snapshot",
-        SendVerifyItem.VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION,
-        {"venue_decision": venue_decision(OrderAdmissibilityResult.UNKNOWN)},
     ),
     (
         "stale broker constraint generation",
@@ -561,26 +530,6 @@ _CASES: list[tuple[str, SendVerifyItem, dict[str, Any]]] = [
         "unfenced conformance proof",
         SendVerifyItem.ORDER_CONSTRUCTION,
         {"conformance_proof": None},
-    ),
-    (
-        "approval bound to another intent",
-        SendVerifyItem.TRADING_APPROVAL,
-        {"approval_intent_binding_digest": "someone-elses-intent"},
-    ),
-    (
-        "no approval consumption",
-        SendVerifyItem.TRADING_APPROVAL,
-        {"approval_consumed_for_this_intent": None},
-    ),
-    (
-        "permit is not the attempt's",
-        SendVerifyItem.ACTION_FLOW,
-        {"action_flow_permit_identity": "permit-other"},
-    ),
-    (
-        "action flow commitment stale",
-        SendVerifyItem.ACTION_FLOW,
-        {"action_flow_commitment_current": None},
     ),
     (
         "restrictive latch is denied",
@@ -641,6 +590,33 @@ def test_one_restrictive_fact_stops_the_send_at_that_item(
     assert (refusal.detail or "").strip(), "a restrictive stop must record its reason"
 
 
+#: Plan S2-b — inputs only a folded item used to read. Each one is stopped by the earlier stage
+#: named in ``tos.egressgw.vocabulary.FOLDED_VERIFY_ITEMS``, so the send boundary no longer
+#: re-judges it: the same override now passes the verify list.
+_FOLDED_OVERRIDES: list[tuple[str, dict[str, Any]]] = [
+    ("attempt identity mismatch", {"reservation_attempt_id": "attempt-other"}),
+    ("stale commitment epoch", {"commitment_epoch_current": None}),
+    ("non-admitting session phase", {"observed_session_phase": "AUCTION"}),
+    ("no venue decision", {"venue_decision": None}),
+    ("no approval consumption", {"approval_consumed_for_this_intent": None}),
+    ("action flow commitment stale", {"action_flow_commitment_current": None}),
+]
+
+
+@pytest.mark.parametrize(
+    "override",
+    [override for _, override in _FOLDED_OVERRIDES],
+    ids=[label for label, _ in _FOLDED_OVERRIDES],
+)
+def test_a_folded_items_input_is_no_longer_judged_at_the_boundary(
+    override: dict[str, Any],
+) -> None:
+    """(plan S2-b) The fold is deliberate: the earlier stage owns this input now."""
+    attempt, context = happy_context(**override)
+    gateway, _ = build_gateway(attempt=attempt, context=context)
+    assert gateway(attempt).accepted_for_transmission is True
+
+
 def test_the_deferred_mesh_stops_a_broker_reaching_send_before_any_transport_call() -> (
     None
 ):
@@ -654,7 +630,7 @@ def test_the_deferred_mesh_stops_a_broker_reaching_send_before_any_transport_cal
     gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
     assert gateway(attempt).accepted_for_transmission is None
     assert transport.requests == ()
-    assert sink.records[-1].item is SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH
+    assert sink.records[-1].item is SendVerifyItem.VALID_LIVE_SCOPE
 
 
 def test_a_missing_context_is_a_stop_never_a_skip() -> None:
@@ -1293,15 +1269,16 @@ def test_a_rejection_is_recorded_without_a_fill_magnitude() -> None:
 
 def test_the_verification_is_retained_for_evidence_even_when_it_refuses() -> None:
     """(§4.2 "중단 사유 기록") The refused verification stays inspectable."""
-    attempt, context = happy_context(commitment_epoch_current=None)
+    attempt, context = happy_context(broker_constraint_generation_current=None)
     gateway, _ = build_gateway(attempt=attempt, context=context)
     gateway(attempt)
     (verification,) = gateway.verifications
     assert verification.admitted is not True
-    assert verification.halt_item is SendVerifyItem.CURRENT_COMMITMENT_EPOCH
+    item = SendVerifyItem.VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION
+    assert verification.halt_item is item
     outcomes = {v.item: v.outcome for v in verification.verdicts}
-    assert outcomes[SendVerifyItem.CURRENT_COMMITMENT_EPOCH] is VerifyOutcome.UNKNOWN
-    assert len(verification.verdicts) == 13
+    assert outcomes[item] is VerifyOutcome.UNKNOWN
+    assert len(verification.verdicts) == 7
 
 
 def test_a_denied_construction_never_reaches_the_send_boundary() -> None:
@@ -1335,30 +1312,15 @@ def _built_construction() -> Any:
 )
 def test_a_native_unknown_ioc_verdict_is_unknown_never_a_pass(field: str) -> None:
     """(TOS-GAP-001 / ADR-002-020 §14:374) A native ``UNKNOWN`` ioc verdict on an otherwise
-    complete command must stop the send at item 13 with ``VerifyOutcome.UNKNOWN`` and a
-    ``SEND_REFUSED`` evidence record — never ``SATISFIED``, never an exception.
-
-    ``UNKNOWN`` is a decided (non-``None``) :class:`~tos.ioc.ConformanceResult` member, so this
-    bundle is still a *sanctioned* shape under the ``CandidateConstruction`` validator
-    (``records.py``) — the validator only demands presence, not a particular decided value.
+    complete command is ``UNKNOWN`` at step 2 — never ``ADMIT``, never an exception. Plan S2-b
+    folded the gateway's re-judgment of the same verdict into step 2, the only path to a send.
     """
     malformed = _built_construction().model_copy(
         update={field: ConformanceResult.UNKNOWN}
     )
-    attempt, context = happy_context(construction=malformed)
-    transport = full_fill_transport()
-    gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
-    handoff = gateway(attempt)
-    assert handoff.accepted_for_transmission is None
-    assert transport.requests == ()
-    (verification,) = gateway.verifications
-    outcomes = {v.item: v.outcome for v in verification.verdicts}
-    assert outcomes[SendVerifyItem.ORDER_CONSTRUCTION] is VerifyOutcome.UNKNOWN
-    refusal = sink.records[-1]
-    assert refusal.kind == "SEND_REFUSED"
-    assert refusal.item is SendVerifyItem.ORDER_CONSTRUCTION
-    assert refusal.halt_reason is SendHaltReason.VERIFY_ITEM_UNKNOWN
-    assert (refusal.detail or "").strip(), "a restrictive stop must record its reason"
+    verdict = candidate_command_verdict(malformed)
+    assert verdict.outcome is StageOutcome.UNKNOWN
+    assert (verdict.reason or "").strip(), "a restrictive stop must record its reason"
 
 
 @pytest.mark.parametrize(
@@ -1413,25 +1375,18 @@ def _model_construct_malformed_construction(**overrides: Any) -> CandidateConstr
     ],
     ids=["conformance-none", "numerical-none"],
 )
-def test_check_construction_model_construct_bypass_none_verdict_is_unknown_not_a_crash(
+def test_step2_model_construct_bypass_none_verdict_never_admits(
     overrides: dict[str, Any],
 ) -> None:
     """(M1, TOS-GAP-001) The exact ``None`` ioc-verdict shape the constructor and
-    ``model_copy``-into-context both make unreachable (the two tests above) is reverting either
-    guard's live target: this calls ``_check_construction`` (gateway.py ~:941 / ~:971) directly
-    against a ``model_construct``-bypassed bundle, so a reverted guard is caught here even though
-    the malformed shape can never arrive through the public construction path. Regression for the
-    independent reviewer's M1 finding on PR #655 — the prior suite proved the shape
-    *unreachable*, never proved the guard itself live.
+    ``model_copy``-into-context both make unreachable (the two tests above), fed straight to
+    step 2's own verdict through a ``model_construct``-bypassed bundle: a reverted guard is caught
+    here even though the shape cannot arrive through the public construction path. Step 2 owns
+    this judgement since plan S2-b folded the gateway's copy of it.
     """
     malformed = _model_construct_malformed_construction(**overrides)
-    # ``SendBoundaryContext.model_construct`` likewise skips validation, so the malformed
-    # ``construction`` survives embedding unchanged — ``_check_construction`` only reads
-    # ``context.construction``; ``attempt``/``applicability`` are unused (``del``'d immediately).
-    context = SendBoundaryContext.model_construct(construction=malformed)
-    verdict = _check_construction(None, context, None)  # type: ignore[arg-type]
-    assert verdict.outcome is VerifyOutcome.UNKNOWN
-    assert verdict.native_verdict_value is None
+    verdict = candidate_command_verdict(malformed)
+    assert verdict.outcome is not StageOutcome.ADMIT
     assert (verdict.reason or "").strip(), "a restrictive stop must record its reason"
 
 
@@ -1467,7 +1422,7 @@ def test_the_mapping_and_the_resolver_paths_produce_the_identical_verification()
     (resolved_verification,) = resolved_gateway.verifications
     assert resolved_verification == mapped_verification
     assert resolved_gateway.results == mapped_gateway.results
-    assert mapped_sink.kinds == ("VERIFY_ITEM",) * 13 + (
+    assert mapped_sink.kinds == ("VERIFY_ITEM",) * 7 + (
         "SEND_SEALED",
         "SEND_STARTED",
         "POTENTIALLY_LIVE_OBSERVED",

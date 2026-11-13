@@ -18,9 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
 
-from tos.are import AggregateRiskDecision, RiskDecisionResult
 from tos.authority import currentness_admissible
 from tos.brokercap import environment_binding_ok
 from tos.cur import (
@@ -29,44 +27,28 @@ from tos.cur import (
     DimensionKey,
     policy_covers_mandated_dimensions,
 )
-from tos.egressgw import CandidateConstruction
-from tos.engine.vocabulary import StageOutcome
-from tos.ioc import ConformanceResult
 from tos.sbr import ReadinessVerdict
 
 from tos_runtime.authority.epoch import SafetyAuthorityEpochService
 from tos_runtime.brokercap.scopes import BrokerScope, transport_nature
 from tos_runtime.compose._monitor_wiring import _MonitorOwners
-from tos_runtime.compose.context import RecordingAggregateRiskService, VerdictRecorder
 from tos_runtime.currentness.vector import DimensionReport
 from tos_runtime.posttrade.release_consumer import ReleaseConflictReader
-from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recovery.barrier import RecoveryVerdict
 
 __all__ = [
-    "_ActionFlowDimensionState",
-    "_ConstraintDimensionState",
-    "_ConstructionDimensionState",
-    "_DecisionProofIntentDimensionState",
     "_DimensionStates",
     "_EnvironmentScopeDimensionState",
     "_PostTradeDimensionState",
     "_RecoveryDimensionState",
     "_ReleaseDimensionState",
-    "_TradingApprovalDimensionState",
-    "_action_flow_dimension_reader_for",
-    "_aggregate_risk_dimension_reader_for",
     "_authority_dimension_reader_for",
     "_build_dimension_readers",
-    "_constraint_dimension_reader_for",
-    "_construction_dimension_reader_for",
     "_currentness_policy_dimension_reader_for",
-    "_decision_proof_intent_dimension_reader_for",
     "_environment_scope_dimension_reader_for",
     "_post_trade_dimension_reader_for",
     "_recovery_dimension_reader_for",
     "_release_dimension_reader_for",
-    "_trading_approval_dimension_reader_for",
 ]
 
 
@@ -81,57 +63,6 @@ def _authority_dimension_reader_for(
         return DimensionReport(
             bound_generation=state.current_epoch_floor,
             positively_established=currentness_admissible(witness),
-            restrictive_floor=0,
-        )
-
-    return _reader
-
-
-@dataclass
-class _ActionFlowDimensionState:
-    """A late-bound cell for the ACTION_FLOW dimension reader (below).
-
-    ``CurrentnessAssembler`` is constructed before ``_build_realized_stages``
-    creates step 9's ``VerdictRecorder`` (the currentness/risk wiring order,
-    design #40 §5, runs before the engine Stage wiring) — so the reader
-    closes over this mutable cell, and :func:`compose_paper_runtime` fills
-    in ``step9_recorder`` right after ``_build_realized_stages`` returns.
-    """
-
-    step9_recorder: VerdictRecorder | None = None
-
-
-def _action_flow_dimension_reader_for(
-    rcl_log: SqliteCommitLog,
-    writer_epoch: int,
-    state: _ActionFlowDimensionState,
-) -> Callable[[], DimensionReport | None]:
-    """The ACTION_FLOW currentness dimension, derived from step 9's own
-    ``AtomicCommitStage`` outcome (team-lead follow-up guidance, 2026-09-08:
-    "derive it from AtomicCommitStage's own AppendReceipt seq, not from Q's
-    standalone issue_permit").
-
-    ``ActionFlowPermit.rcl_commitment_ref`` itself stays ``None``
-    (``tos_runtime.risk.flow.ActionFlowGovernor.build_permit``'s own
-    docstring — the durable commit lives in step 9's single
-    ``apply_reservation_transition`` entry instead), so this reader does
-    NOT read that field; it independently re-reads the RCL log's own
-    CURRENT tip (never step 9's self-reported claim) and reports
-    ``positively_established`` only when step 9 itself last recorded
-    ``ADMIT`` — the same "구조 파생, never a caller-supplied claim"
-    discipline every other reader in this module already follows.
-    """
-
-    def _reader() -> DimensionReport | None:
-        verdict = state.step9_recorder.last_verdict if state.step9_recorder else None
-        if verdict is None or verdict.outcome is not StageOutcome.ADMIT:
-            return None
-        view = rcl_log.read_linearizable(writer_epoch=writer_epoch)
-        if view.last_seq is None:
-            return None
-        return DimensionReport(
-            bound_generation=view.last_seq,
-            positively_established=True,
             restrictive_floor=0,
         )
 
@@ -236,55 +167,6 @@ def _recovery_dimension_reader_for(
 
 
 @dataclass
-class _TradingApprovalDimensionState:
-    """A late-bound cell for the TRADING_APPROVAL dimension reader (below) — the SAME
-    "constructed before the recorder exists" ordering :class:`_ActionFlowDimensionState`
-    already documents, for step 4's own :class:`~tos_runtime.compose.context
-    .VerdictRecorder` instead of step 9's."""
-
-    step4_recorder: VerdictRecorder | None = None
-
-
-def _trading_approval_dimension_reader_for(
-    state: _TradingApprovalDimensionState,
-) -> Callable[[], DimensionReport | None]:
-    """The TRADING_APPROVAL currentness dimension (Phase 5 W3-b, plan §2 decision 3 —
-    dimension-owner replacement 3/9).
-
-    Derived from step 4's own ``IndependentApprovalStage`` outcome — the SAME
-    structural-derivation discipline :func:`_action_flow_dimension_reader_for` already
-    applies to step 9 (``positively_established`` only when step 4 itself last recorded
-    ``ADMIT``, never a second comparison against the decision this reader would have to
-    re-fetch via :meth:`~tos_runtime.authority.iap.IntentRegistry.decision_current`
-    itself — that call needs a SPECIFIC per-attempt
-    ``IndependentApprovalDecision``/``LoadedApproval`` this parameterless reader has no
-    way to obtain; step 4's own recorded verdict is this attempt's actual, already-
-    decided answer to exactly that question).
-
-    ``bound_generation=0``: step 4's :class:`~tos.engine.records.StageVerdict` carries
-    no generation counter of its own to report (an explicit, deliberate 0, not an
-    invented default — same discipline as :func:`_recovery_dimension_reader_for`).
-
-    Returns ``None`` (dimension absent) whenever step 4 has not yet recorded ANY verdict
-    for this attempt, or its own recorder has not yet been late-bound into ``state``
-    (composition-time window, mirrors :func:`_action_flow_dimension_reader_for`).
-    """
-
-    def _reader() -> DimensionReport | None:
-        recorder = state.step4_recorder
-        verdict = recorder.last_verdict if recorder is not None else None
-        if verdict is None:
-            return None
-        return DimensionReport(
-            bound_generation=0,
-            positively_established=verdict.outcome is StageOutcome.ADMIT,
-            restrictive_floor=0,
-        )
-
-    return _reader
-
-
-@dataclass
 class _EnvironmentScopeDimensionState:
     """A late-bound cell for the ENVIRONMENT_SCOPE dimension reader (below).
 
@@ -377,292 +259,6 @@ def _environment_scope_dimension_reader_for(
                 scope_environment=scope_environment,
                 inherited=inherited,
             ),
-            restrictive_floor=0,
-        )
-
-    return _reader
-
-
-class _AggregateRiskDecisionReader(Protocol):
-    """The narrow read surface :func:`_aggregate_risk_dimension_reader_for` needs off a
-    :class:`~tos_runtime.compose.context.RecordingAggregateRiskService` (mypy stage 3 §1.3
-    rule 3 port introduction) — only :attr:`last_decision`, never :meth:`decide` or any other
-    member of the real service.
-
-    Declared as a read-only property (not a plain attribute) so frozen
-    implementations (dataclass ``frozen=True`` / pydantic frozen models)
-    satisfy this Protocol structurally, not just today's mutable service
-    (docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md).
-    """
-
-    @property
-    def last_decision(self) -> AggregateRiskDecision | None: ...
-
-
-def _aggregate_risk_dimension_reader_for(
-    risk_service: _AggregateRiskDecisionReader,
-) -> Callable[[], DimensionReport | None]:
-    """The AGGREGATE_RISK currentness dimension (Phase 5 W3.2, plan §2 decision 4 —
-    dimension-owner replacement 1/6 of this wave's six).
-
-    The owner is step 6's own :class:`~tos_runtime.compose.context
-    .RecordingAggregateRiskService` — this reader copies its already-decided
-    :attr:`~tos.are.AggregateRiskDecision.result` verbatim via the mandated positive-
-    identity check (``is tos.are.RiskDecisionResult.GRANT``, never truthiness — the
-    SAME "구조 파생 > 자기신고" discipline every other reader in this module already
-    applies), and :attr:`~tos.are.AggregateRiskDecision.decision_generation` as a REAL,
-    non-invented generation (unlike :func:`_recovery_dimension_reader_for`'s explicit
-    ``0``, this owner actually has one to report).
-
-    **Disclosed partial ownership (plan §2 decision 4).** ``risk_service.decide``'s own
-    kernel predicates (``snapshot_scope_complete`` / ``adverse_increment`` /
-    ``envelope_bound_not_enlarged``) already consumed three step 6/7 admission witnesses
-    — ``numerically_safe`` / ``valuation_ok`` / ``all_fields_attributed`` — that this
-    composition still supplies from :mod:`tos_runtime.compose._risk_attestations` as
-    operator-attested config, not a runtime-derived fact (re-review finding F4,
-    ``_wiring.py``'s ``wrap_aggregate_risk_inputs_provider``). This dimension is
-    therefore a **verdict owner**, not an **input owner**: it honestly reports the
-    kernel's own already-computed GRANT/DENY/UNKNOWN result, but that result's own
-    inputs are still attestations underneath it — a future Phase 6 owner for those three
-    keys does not change what this reader reports, only what feeds it.
-
-    Returns ``None`` (dimension absent, never a fabricated verdict) until step 6 has
-    recorded its first decision for this process — the same "no attempt yet" absence
-    every recorder-backed reader in this module already returns.
-    """
-
-    def _reader() -> DimensionReport | None:
-        decision = risk_service.last_decision
-        if decision is None:
-            return None
-        return DimensionReport(
-            bound_generation=decision.decision_generation,
-            positively_established=decision.result is RiskDecisionResult.GRANT,
-            restrictive_floor=0,
-        )
-
-    return _reader
-
-
-class _ConstructionStageReader(Protocol):
-    """The narrow read surface :func:`_construction_dimension_reader_for` needs off a
-    :class:`~tos.egressgw.OrderConstructionStage` (mypy stage 3 §1.3 rule 3 port
-    introduction) — only :attr:`construction`, never :meth:`__call__` or any other member of
-    the real stage.
-
-    Declared as a read-only property (not a plain attribute) so frozen
-    implementations (dataclass ``frozen=True`` / pydantic frozen models)
-    satisfy this Protocol structurally, not just today's mutable stage
-    (docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md).
-    """
-
-    @property
-    def construction(self) -> CandidateConstruction | None: ...
-
-
-@dataclass
-class _ConstructionDimensionState:
-    """A late-bound cell for the CONSTRUCTION dimension reader (below).
-
-    ``CurrentnessAssembler`` is constructed (in
-    :func:`~tos_runtime.compose._currentness_wiring._build_risk_and_currentness`,
-    design #40 §5 order 6) strictly BEFORE :func:`~tos_runtime.compose._wiring
-    ._build_construction_stages` builds step 2's own ``OrderConstructionStage`` — the
-    same "constructed before its dependency exists" ordering :class:`_RecoveryDimensionState`
-    already documents.
-    """
-
-    construction_stage: _ConstructionStageReader | None = None
-
-
-def _construction_dimension_reader_for(
-    state: _ConstructionDimensionState,
-) -> Callable[[], DimensionReport | None]:
-    """The CONSTRUCTION currentness dimension (Phase 5 W3.2, plan §2 decision 3 —
-    dimension-owner replacement 2/6 of this wave's six).
-
-    The owner is step 2's own :class:`~tos.egressgw.OrderConstructionStage` —
-    ``.construction`` is a :class:`~tos.egressgw.CandidateConstruction`, which its OWN
-    kernel validator (``records.py``'s ``_shape_is_one_of_the_sanctioned_bundles``)
-    already guarantees carries either NO ioc verdict (denied) or ALL THREE (built) —
-    never a partially-formed mix. This reader reads exactly those three already-computed
-    verdicts, never re-deriving them: :attr:`~tos.egressgw.CandidateConstruction
-    .conformance_result` / ``.numerical_result`` (both :class:`~tos.ioc.ConformanceResult`
-    — the mandated positive-identity check, ``is ConformanceResult.CONFORMANT``, never
-    truthiness; the type's own ``__bool__`` raises for exactly this reason) and
-    ``.no_silent_widening_ok`` (already a plain ``bool``).
-
-    ``bound_generation=0``: step 2 is wired with a compose-literal ``generation=1``
-    (``_wiring.py``'s ``_build_construction_stages``), never a real per-attempt counter,
-    so there is no honest generation-COUNTER fact to report — the same "an owner
-    reporting 0 is that owner's own deliberate choice, not an invented default"
-    discipline :func:`_recovery_dimension_reader_for`'s own ``bound_generation=0``
-    already documents for the SAME kind of gap. (The kernel's own
-    :func:`~tos.cur.predicates.dimension_positively_established` requires a CONCRETE
-    ``bound_generation`` — ``None`` is treated as a missing coordinate, never as "no
-    generation exists", so ``0`` is the only honest choice here, not ``None``.)
-
-    Returns ``None`` (dimension absent) until the cell is filled in, or while step 2 has
-    not yet produced a candidate for this attempt (``stage.construction is None``) —
-    never a fabricated verdict for either case.
-    """
-
-    def _reader() -> DimensionReport | None:
-        stage = state.construction_stage
-        if stage is None:
-            return None
-        artifact = stage.construction
-        if artifact is None:
-            return None
-        established = (
-            artifact.conformance_result is ConformanceResult.CONFORMANT
-            and artifact.numerical_result is ConformanceResult.CONFORMANT
-            and artifact.no_silent_widening_ok is True
-        )
-        return DimensionReport(
-            bound_generation=0,
-            positively_established=established,
-            restrictive_floor=0,
-        )
-
-    return _reader
-
-
-@dataclass
-class _ConstraintDimensionState:
-    """A late-bound cell for the CONSTRAINT dimension reader (below).
-
-    Step 3's own ``VenueConstraintStage`` is built alongside step 2 in
-    :func:`~tos_runtime.compose._wiring._build_construction_stages`, strictly AFTER this
-    module's :func:`~tos_runtime.compose._currentness_wiring._build_risk_and_currentness`
-    runs — the same ordering :class:`_ConstructionDimensionState` already documents.
-    Unlike CONSTRUCTION, the cell holds a :class:`~tos_runtime.compose.context
-    .VerdictRecorder` WRAPPING the stage (never the bare stage itself): the raw
-    ``VenueConstraintStage`` instance stays the one :class:`~tos_runtime.compose.context
-    .ComposeContextResolver` reads ``.resolved_shape``/``.shape_constraints`` off
-    directly (unchanged by this wave), and the recorder is a SEPARATE wrapper around the
-    SAME instance, registered as the actual ``CommitmentStep.VENUE_ADMISSIBILITY_DECISION``
-    callable in the engine's stage map — mirroring exactly how step 4/9's recorders
-    coexist with their own raw stage/service objects elsewhere in this codebase.
-    """
-
-    venue_recorder: VerdictRecorder | None = None
-
-
-def _constraint_dimension_reader_for(
-    state: _ConstraintDimensionState,
-) -> Callable[[], DimensionReport | None]:
-    """The CONSTRAINT currentness dimension (Phase 5 W3.2, plan §2 decision 2/3 —
-    dimension-owner replacement 3/6 of this wave's six).
-
-    Derived from step 3's own ``VenueConstraintStage`` outcome — the SAME structural-
-    derivation discipline :func:`_trading_approval_dimension_reader_for` already applies
-    to step 4 (``positively_established`` only when step 3 itself last recorded
-    ``StageOutcome.ADMIT`` via the kernel's own ``order_shape_admissible``, which
-    ``VenueConstraintStage.__call__`` already evaluates — never a second call to it here).
-
-    **Disclosed partial coverage (plan §2 decision 2, survey §1 CONSTRAINT row).** The
-    kernel's OWN :func:`~tos.venue.predicates.account_constraint_conservative` is a
-    SEPARATE CONSTRAINT-axis predicate this composition has no caller for anywhere (no
-    lane ever builds the ``AccountConstraintInputs`` it needs) — this reader reports only
-    what step 3's stage ALREADY evaluates (``order_shape_admissible``), never inventing
-    inputs to reach the uncalled predicate too. The same partial-coverage honesty
-    :func:`_environment_scope_dimension_reader_for`'s own module history already
-    established (W3.1 independent review MEDIUM-4's EGRESS_IDENTITY reversion) — this
-    reader reports its own real, if partial, coverage rather than over-claiming full
-    CONSTRAINT-axis establishment.
-
-    ``bound_generation=0``: step 3's :class:`~tos.engine.records.StageVerdict` carries no
-    generation counter of its own — the same explicit-``0`` discipline
-    :func:`_construction_dimension_reader_for` documents.
-
-    Returns ``None`` (dimension absent) until the cell is filled in, or while step 3 has
-    not yet recorded any verdict for this attempt.
-    """
-
-    def _reader() -> DimensionReport | None:
-        recorder = state.venue_recorder
-        verdict = recorder.last_verdict if recorder is not None else None
-        if verdict is None:
-            return None
-        return DimensionReport(
-            bound_generation=0,
-            positively_established=verdict.outcome is StageOutcome.ADMIT,
-            restrictive_floor=0,
-        )
-
-    return _reader
-
-
-@dataclass
-class _DecisionProofIntentDimensionState:
-    """A late-bound cell for the DECISION_PROOF_INTENT dimension reader (below).
-
-    Step 13's own ``AttemptBindVerificationStage`` is built in
-    :func:`~tos_runtime.compose._wiring._build_currentness_stages`, strictly AFTER this
-    module's :func:`~tos_runtime.compose._currentness_wiring._build_risk_and_currentness`
-    runs — the same ordering :class:`_ConstraintDimensionState` already documents. The
-    cell holds a :class:`~tos_runtime.compose.context.VerdictRecorder` wrapping step 13
-    (nothing else reads the raw stage directly today, so this wave replaces it outright
-    rather than keeping a parallel raw reference, unlike CONSTRAINT's venue stage).
-    """
-
-    step13_recorder: VerdictRecorder | None = None
-
-
-def _decision_proof_intent_dimension_reader_for(
-    state: _DecisionProofIntentDimensionState,
-) -> Callable[[], DimensionReport | None]:
-    """The DECISION_PROOF_INTENT currentness dimension (Phase 5 W3.2, plan §2 decision 2 —
-    dimension-owner replacement 4/6 of this wave's six).
-
-    Derived from step 13's own ``AttemptBindVerificationStage`` outcome —
-    ``positively_established`` only when step 13 itself last recorded
-    ``StageOutcome.ADMIT`` via the kernel's own ``tos.iap.exact_binding_holds``, which
-    that stage already evaluates every attempt (never a second call to it here). This
-    axis is deliberately DISJOINT from TRADING_APPROVAL (step 4,
-    :func:`_trading_approval_dimension_reader_for`): step 4 answers "was this decision
-    independently approved", step 13 answers "does the reservation/permit/approval
-    digest chain THIS attempt actually carries still match what was bound" — two
-    different kernel predicates over two different Stages, never the same fact read
-    twice under two names.
-
-    **Considered and rejected: sourcing from the item-16 egress currentness proof
-    instead (survey §0 DECISION_PROOF_INTENT row's "또는 proof.result" alternative).**
-    :meth:`~tos_runtime.currentness.proof.EgressCurrentnessProofIssuer.item16_fields`
-    would seem to offer both a verdict (``egress_currentness_result``) and a real
-    generation (``committed_revision.commit_index``) for this SAME attempt — but
-    :meth:`~tos_runtime.compose.context.ComposeContextResolver
-    ._issue_egress_currentness_proof` assembles the FULL currentness vector (which would
-    have to invoke THIS very reader) strictly BEFORE it ever calls
-    ``proof_issuer.issue(...)`` for that attempt (two-pass assemble, then issue — module
-    docstring, "Two-pass assemble"). A reader that read this attempt's own proof would
-    therefore always observe "no proof issued yet" during the ONLY assemble() calls that
-    happen before issuance — a genuine circular dependency (this dimension gates whether
-    the vector is complete enough to issue a ``CURRENT`` proof; the proof cannot supply
-    the fact that gates its own issuance), not merely an ordering inconvenience. This
-    reader therefore sources ONLY from step 13's own recorder, never from the proof
-    issuer, and ``bound_generation=0`` (no independent, non-circular generation fact
-    exists at step 13's own :class:`~tos.engine.records.StageVerdict` — the same
-    explicit-``0`` discipline :func:`_recovery_dimension_reader_for` documents, never
-    ``None``: the kernel's own :func:`~tos.cur.predicates.dimension_positively_established`
-    treats a ``None`` ``bound_generation`` as a missing coordinate, so ``0`` is the only
-    honest choice) — a considered deviation from treating ``committed_revision.commit_index``
-    as available, documented here rather than silently reaching for a value this module
-    cannot actually supply without contradiction.
-
-    Returns ``None`` (dimension absent) until the cell is filled in, or while step 13 has
-    not yet recorded any verdict for this attempt.
-    """
-
-    def _reader() -> DimensionReport | None:
-        recorder = state.step13_recorder
-        verdict = recorder.last_verdict if recorder is not None else None
-        if verdict is None:
-            return None
-        return DimensionReport(
-            bound_generation=0,
-            positively_established=verdict.outcome is StageOutcome.ADMIT,
             restrictive_floor=0,
         )
 
@@ -816,44 +412,31 @@ class _DimensionStates:
     ._RiskAndCurrentness` in one field, and :func:`~tos_runtime.compose.root
     .compose_paper_runtime` can late-bind each once its own recorder/verdict exists."""
 
-    action_flow: _ActionFlowDimensionState
     recovery: _RecoveryDimensionState
-    trading_approval: _TradingApprovalDimensionState
     environment_scope: _EnvironmentScopeDimensionState
-    #: Phase 5 W3.2's five late-bound cells (plan §2 decisions 2-6) — see each cell's own
-    #: docstring above.
-    construction: _ConstructionDimensionState
-    constraint: _ConstraintDimensionState
-    decision_proof_intent: _DecisionProofIntentDimensionState
     post_trade: _PostTradeDimensionState
     release: _ReleaseDimensionState
 
 
 def _build_dimension_readers(
     *,
-    rcl_log: SqliteCommitLog,
-    writer_epoch: int,
     authority_epoch_service: SafetyAuthorityEpochService,
     currentness_policy: CurrentnessPolicy,
     environment_label: str,
     monitor_owners: _MonitorOwners,
-    risk_service: RecordingAggregateRiskService,
 ) -> tuple[
     dict[DimensionKey, tuple[str, Callable[[], DimensionReport | None]]],
     _DimensionStates,
 ]:
     """The full ``dimension_readers`` map (module docstring, "Reader map") — split out
     of :func:`~tos_runtime.compose._currentness_wiring._build_risk_and_currentness`
-    purely for the size budget; no behavioural difference from having this inline
-    there."""
+    purely for the size budget. Plan S2-b dropped the six readers that re-read an
+    earlier flow step's own verdict (ACTION_FLOW, TRADING_APPROVAL, AGGREGATE_RISK,
+    CONSTRUCTION, CONSTRAINT, DECISION_PROOF_INTENT — :data:`tos.cur.RETIRED_DIMENSION_KEYS`).
+    """
     dimension_states = _DimensionStates(
-        action_flow=_ActionFlowDimensionState(),
         recovery=_RecoveryDimensionState(),
-        trading_approval=_TradingApprovalDimensionState(),
         environment_scope=_EnvironmentScopeDimensionState(),
-        construction=_ConstructionDimensionState(),
-        constraint=_ConstraintDimensionState(),
-        decision_proof_intent=_DecisionProofIntentDimensionState(),
         post_trade=_PostTradeDimensionState(),
         release=_ReleaseDimensionState(),
     )
@@ -864,12 +447,6 @@ def _build_dimension_readers(
             "tos_runtime.authority",
             _authority_dimension_reader_for(authority_epoch_service),
         ),
-        DimensionKey.ACTION_FLOW: (
-            "tos_runtime.risk",
-            _action_flow_dimension_reader_for(
-                rcl_log, writer_epoch, dimension_states.action_flow
-            ),
-        ),
         DimensionKey.CURRENTNESS_POLICY: (
             "tos_runtime.currentness",
             _currentness_policy_dimension_reader_for(currentness_policy),
@@ -878,32 +455,10 @@ def _build_dimension_readers(
             "tos_runtime.recovery",
             _recovery_dimension_reader_for(dimension_states.recovery),
         ),
-        DimensionKey.TRADING_APPROVAL: (
-            "tos_runtime.authority.iap",
-            _trading_approval_dimension_reader_for(dimension_states.trading_approval),
-        ),
         DimensionKey.ENVIRONMENT_SCOPE: (
             "tos_runtime.brokercap",
             _environment_scope_dimension_reader_for(
                 environment_label, dimension_states.environment_scope
-            ),
-        ),
-        DimensionKey.AGGREGATE_RISK: (
-            "tos_runtime.risk",
-            _aggregate_risk_dimension_reader_for(risk_service),
-        ),
-        DimensionKey.CONSTRUCTION: (
-            "tos_runtime.compose",
-            _construction_dimension_reader_for(dimension_states.construction),
-        ),
-        DimensionKey.CONSTRAINT: (
-            "tos_runtime.compose",
-            _constraint_dimension_reader_for(dimension_states.constraint),
-        ),
-        DimensionKey.DECISION_PROOF_INTENT: (
-            "tos_runtime.currentness",
-            _decision_proof_intent_dimension_reader_for(
-                dimension_states.decision_proof_intent
             ),
         ),
         DimensionKey.POST_TRADE: (

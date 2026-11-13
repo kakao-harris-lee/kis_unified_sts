@@ -44,7 +44,7 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 
 ## 3. LONG 트리와 무엇이 다른가 (실측 2026-10-09)
 
-**28 파일 = 바이트 동일 19 + YAML 이 다름 7 + 산문이 다름 1(`README.md`) + SHORT 전용 1**
+**27 파일 = 바이트 동일 18 + YAML 이 다름 7 + 산문이 다름 1(`README.md`) + SHORT 전용 1**
 (2026-11-13 S2-a 실측 — 33 → 28 · 바이트 동일 24 → 17 은 지워진 안전망 설정 다섯 개와
 축소된 `monitor_coverage.yaml` 이다.)
 (LONG 트리도 33 파일이다; LONG 의 `strategies/setup_d_long.strategy.yaml` 은 이 트리에
@@ -76,7 +76,7 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 
 ### 3.0 ⛔ 사본 의무 — 상주 쪽을 바꾸는 PR 은 **같은 PR 에서** 이 트리도 갱신한다
 
-LONG 트리와 **바이트 동일한 19 개** 가운데 **17 개가 상주 `config/tos_runtime/paper/` 파일의
+LONG 트리와 **바이트 동일한 18 개** 가운데 **16 개가 상주 `config/tos_runtime/paper/` 파일의
 바이트 사본**이고, 남는 **둘은 `engine.yaml` 과 `fields.yaml`** 이다. `engine.yaml` 은 상주와
 **주석이 다르다**(상주 주석이 상주 전략 `bootproof_band` 를 인용해 이 트리에서 거짓이 되므로
 tenant 적용 문단을 덧붙였다. 두 tenant 트리끼리는 같다). `fields.yaml` 은 **상주에 없다** —

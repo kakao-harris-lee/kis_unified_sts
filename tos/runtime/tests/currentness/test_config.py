@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from tos.cur import DimensionKey
+from tos.cur import RETIRED_DIMENSION_KEYS, DimensionKey
 from tos_runtime.currentness.config import (
     CurrentnessConfigError,
     load_currentness_config,
@@ -123,4 +123,17 @@ def test_required_dimensions_duplicate_member_refuses(tmp_path: Path) -> None:
         "required_dimensions: [COMMIT_LOG, COMMIT_LOG]\n",
     )
     with pytest.raises(CurrentnessConfigError):
+        load_currentness_config(path)
+
+
+@pytest.mark.parametrize("retired", sorted(k.value for k in RETIRED_DIMENSION_KEYS))
+def test_required_dimensions_retired_member_refuses(
+    tmp_path: Path, retired: str
+) -> None:
+    """(plan S2-b) No reader produces a retired dimension — requiring one is a load refusal."""
+    path = _write(
+        tmp_path,
+        f"B_capability_claim_to_send: 500\nrequired_dimensions: [COMMIT_LOG, {retired}]\n",
+    )
+    with pytest.raises(CurrentnessConfigError, match="retired"):
         load_currentness_config(path)

@@ -56,21 +56,12 @@ B_capability_claim_to_send: 500
 #   여전히 열린 설계 판단이다.
 # ==========================================================================
 required_dimensions:
-  - ACTION_FLOW
-  - AGGREGATE_RISK
   - COMMIT_LOG
-  - CONSTRAINT
-  - CONSTRUCTION
-  - CONTEXT
-  - CRITICAL_INPUT
   - CURRENTNESS_POLICY
-  - DECISION_PROOF_INTENT
-  - EGRESS_IDENTITY
   - ENVIRONMENT_SCOPE
   - MONITORING
   - POST_TRADE
   - RECOVERY
   - RELEASE
   - SAFETY_AUTHORITY
-  - TRADING_APPROVAL
   - TRUSTWORTHY_TIME

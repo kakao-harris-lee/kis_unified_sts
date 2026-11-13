@@ -14,18 +14,14 @@ from __future__ import annotations
 
 import tos.cur as cur
 from tos.cur import (
-    MANDATED_DIMENSION_FLOOR,
     DimensionKey,
     dimension_positively_established,
-    vector_complete,
 )
 from tos.iap.predicates import active_egress_currentness
 
 from ._cur_strategies import (
     clean_dimension,
-    clean_policy,
     clean_revision,
-    clean_vector,
 )
 
 
@@ -83,15 +79,3 @@ def test_cur_consumes_the_iap_leaf_verdict_as_one_dimension() -> None:
         positively_established=iap_verdict,
     )
     assert dimension_positively_established(approval_dim) is True
-
-
-def test_absent_approval_dimension_makes_vector_incomplete() -> None:
-    """(§0.4b) A vector missing the TRADING_APPROVAL dimension is incomplete (aggregate-only axis)."""
-    rev = clean_revision()
-    without_approval = tuple(
-        clean_dimension(dimension_key=key, revision=rev)
-        for key in sorted(MANDATED_DIMENSION_FLOOR)
-        if key is not DimensionKey.TRADING_APPROVAL
-    )
-    vec = clean_vector(revision=rev, dimensions=without_approval)
-    assert vector_complete(vec, clean_policy(), MANDATED_DIMENSION_FLOOR) is False

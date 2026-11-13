@@ -28,7 +28,6 @@ from tos.egressgw import (
     DEFERRED_ITEMS,
     SEND_VERIFY_ITEMS,
     BrokerApplicability,
-    SendVerifyItem,
     VerifyDisposition,
     VerifyOutcome,
 )
@@ -213,10 +212,8 @@ def test_b_a_bar_inside_the_band_is_a_no_action_and_starts_no_flow() -> None:
 # -- (c) the verify list -----------------------------------------------------
 
 
-def test_c_the_thirteen_item_verify_list_admitted_with_a_positive_synthetic_na() -> (
-    None
-):
-    """(c) All thirteen items judged; the two deferred ones are positively N/A."""
+def test_c_the_seven_item_verify_list_admitted_with_a_positive_synthetic_na() -> None:
+    """(c) All seven items judged; the deferred one is positively N/A."""
     sliced = run_slice()
     assert len(sliced.gateway.verifications) == 1
     verification = sliced.gateway.verifications[0]
@@ -226,7 +223,7 @@ def test_c_the_thirteen_item_verify_list_admitted_with_a_positive_synthetic_na()
     assert verification.halt_reason is None
     assert verification.applicability is BrokerApplicability.NON_BROKER_SYNTHETIC
 
-    assert len(verification.verdicts) == len(SEND_VERIFY_ITEMS) == 13
+    assert len(verification.verdicts) == len(SEND_VERIFY_ITEMS) == 7
     assert tuple(verdict.item for verdict in verification.verdicts) == SEND_VERIFY_ITEMS
     assert all(
         verdict.outcome in ADMITTING_VERIFY_OUTCOMES
@@ -253,7 +250,7 @@ def test_c_the_thirteen_item_verify_list_admitted_with_a_positive_synthetic_na()
 
     # the gateway's own record order: 17 verify items, then claim/SEND_STARTED, then the call.
     kinds = sliced.gateway_sink.kinds
-    assert kinds.count("VERIFY_ITEM") == 13
+    assert kinds.count("VERIFY_ITEM") == 7
     assert kinds.index("SEND_STARTED") > max(
         index for index, kind in enumerate(kinds) if kind == "VERIFY_ITEM"
     )
@@ -322,14 +319,10 @@ def test_the_venue_shape_price_is_value_sourced_and_converged() -> None:
     assert bound.construction is not None
     assert Decimal(bound.order_shape.price) == bound.construction.derivation.price
 
-    # ★ …and item 11 is still SATISFIED — the re-sourced price is venue-admissible.
+    # ★ …and the send was admitted — the re-sourced price is venue-admissible at step 3 (plan
+    #   S2-b folded the gateway's re-judgment of the same snapshot / decision into step 3).
     verification = sliced.gateway.verifications[0]
-    item11 = next(
-        verdict
-        for verdict in verification.verdicts
-        if verdict.item is SendVerifyItem.VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION
-    )
-    assert item11.outcome is VerifyOutcome.SATISFIED
+    assert verification.admitted is True
 
 
 def test_the_synthetic_transport_was_called_exactly_once_with_the_bound_scalars() -> (

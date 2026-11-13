@@ -245,11 +245,8 @@ def test_currentness_last_assemble_complete_is_null_before_any_assemble_call(
 
     document = json.loads(projection_path.read_text())
     assert document["currentness"]["last_assemble_complete"] is None
-    assert document["currentness"]["pending_dimensions"] == [
-        "CONTEXT",
-        "CRITICAL_INPUT",
-        "EGRESS_IDENTITY",
-    ]
+    # Plan S2-b retired the pending dimensions; the key stays, empty.
+    assert document["currentness"]["pending_dimensions"] == []
 
 
 def test_currentness_last_assemble_complete_reports_a_real_bool_after_a_processed_tick(

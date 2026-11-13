@@ -43,6 +43,7 @@ __all__ = [
     "DimensionKey",
     "CONDITIONAL_DIMENSION_KEYS",
     "MANDATED_DIMENSION_FLOOR",
+    "RETIRED_DIMENSION_KEYS",
 ]
 
 
@@ -125,13 +126,10 @@ class DimensionKey(StrEnum):
     threshold / bound — enumerating it is **not** a numeric hardcode (design #23 §2.2/§8; the ioc /
     spg field-enumeration precedent).
 
-    ``CONTEXT`` (capsule CII) is a **separate** dimension from ``CRITICAL_INPUT`` (ADR §9:259 /
-    §26:617 — v1.1 MAJOR-2: without this member a CONTEXT-absent vector would vacuously pass
-    :func:`~tos.cur.predicates.vector_complete`, defeating the unrepresented-dimension seal the
-    yolk predicate exists to enforce). ``RESTRICTED_LIVE_TRIAL`` is the **conditional** dimension
-    (§9:258; RLP-deferred content — design #23 §0.4f) and is the **only** member outside the
-    :data:`MANDATED_DIMENSION_FLOOR`. The set is closed ("at least" floor — a policy may require
-    *more*, never fewer; §5.5).
+    ``RESTRICTED_LIVE_TRIAL`` is the **conditional** dimension (§9:258; RLP-deferred content —
+    design #23 §0.4f); it and the plan-S2-b :data:`RETIRED_DIMENSION_KEYS` are the members outside
+    the :data:`MANDATED_DIMENSION_FLOOR`. The set is closed ("at least" floor — a policy may
+    require *more*, never fewer; §5.5).
     """
 
     #: **Removal condition for a member, measured before the plan-S2-a cut** (which took
@@ -174,11 +172,37 @@ CONDITIONAL_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
     {DimensionKey.RESTRICTED_LIVE_TRIAL}
 )
 
-#: The §9 mandated floor: every **non-conditional** ``DimensionKey`` member (CONTEXT included).
+#: **Plan S2-b retirements** — members kept (a stored currentness vector names them as plain
+#: strings and the persisted-bytes rule keeps every member a stored row may name), but outside
+#: the mandated floor. Removal condition: none — keep them. Each one either re-read an earlier
+#: flow step's own verdict, which already halts the flow on anything but ADMIT before the send
+#: boundary is reached, or was a YAML constant:
+#:
+#: * ``CONSTRUCTION`` (step 2) · ``CONSTRAINT`` (step 3) · ``TRADING_APPROVAL`` (step 4) ·
+#:   ``AGGREGATE_RISK`` (step 6) · ``ACTION_FLOW`` (step 9) · ``DECISION_PROOF_INTENT``
+#:   (step 13 / verify ACTUAL_OUTBOUND_CONFORMANCE's ``exact_binding_holds``);
+#: * ``CONTEXT`` · ``CRITICAL_INPUT`` · ``EGRESS_IDENTITY`` — operator-attested
+#:   ``positively_established: true`` in every shipped ``currentness_dimensions.yaml``.
+#:
+#: A ``currentness.yaml`` that still lists one is refused at load
+#: (``tos_runtime.currentness.config``).
+RETIRED_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
+    {
+        DimensionKey.CONSTRUCTION,
+        DimensionKey.CONSTRAINT,
+        DimensionKey.TRADING_APPROVAL,
+        DimensionKey.AGGREGATE_RISK,
+        DimensionKey.ACTION_FLOW,
+        DimensionKey.DECISION_PROOF_INTENT,
+        DimensionKey.CONTEXT,
+        DimensionKey.CRITICAL_INPUT,
+        DimensionKey.EGRESS_IDENTITY,
+    }
+)
+
+#: The §9 mandated floor: every non-conditional, non-retired ``DimensionKey`` member.
 #: :func:`~tos.cur.predicates.vector_complete` floors its ``mandated`` argument to at least this
-#: set — a caller can require *more* but **never fewer** (design #23 §5.1 v1.1 MINOR-1). Derived
-#: from the enum so it can never drift below the catalogue (the §7.2 enum-drift property asserts
-#: the derivation equals the ADR §9-derived reference set, CONTEXT included).
+#: set — a caller can require *more* but **never fewer** (design #23 §5.1 v1.1 MINOR-1).
 MANDATED_DIMENSION_FLOOR: frozenset[DimensionKey] = (
-    frozenset(DimensionKey) - CONDITIONAL_DIMENSION_KEYS
+    frozenset(DimensionKey) - CONDITIONAL_DIMENSION_KEYS - RETIRED_DIMENSION_KEYS
 )

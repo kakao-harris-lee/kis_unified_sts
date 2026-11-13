@@ -51,7 +51,6 @@ _IDENTICAL_BOTH = frozenset(
         "calendar.yaml",
         "coordinator_preconditions.yaml",
         "currentness.yaml",
-        "currentness_dimensions.yaml",
         "egress_coordinates.yaml",
         "engine_driver.yaml",
         "evidence_cold_backup.yaml",

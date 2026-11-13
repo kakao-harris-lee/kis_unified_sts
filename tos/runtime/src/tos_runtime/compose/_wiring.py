@@ -83,7 +83,6 @@ from tos_runtime.compose._monitor_wiring import (
     build_capacity_owner,
     build_monitor_owners,
 )
-from tos_runtime.compose._pending_dimensions import PendingDimensionSpec
 from tos_runtime.compose._request_digest import (
     RequestBytesDigestSource,
     default_request_bytes_digest_source,
@@ -164,7 +163,6 @@ _TIME_CONFIG_NAME = "time.yaml"
 _AUTHORITY_CONFIG_NAME = "authority.yaml"
 _RISK_CONFIG_NAME = "risk.yaml"
 _CURRENTNESS_CONFIG_NAME = "currentness.yaml"
-_CURRENTNESS_DIMENSIONS_CONFIG_NAME = "currentness_dimensions.yaml"
 _RELEASE_CONFIG_NAME = "release.yaml"
 _EGRESS_COORDINATES_CONFIG_NAME = "egress_coordinates.yaml"
 #: TOS Phase 4 plan §2 decisions 1-2 (G-4) — the runtime-configured Broker
@@ -498,9 +496,7 @@ def _stage_b_release_probe(
     ``currentness_current`` here is deliberately NOT
     ``tos.cur.predicates.vector_complete`` over the full per-attempt Safety
     Currentness Vector — even though that vector now genuinely reaches
-    complete for a well-formed attempt (4 structurally-owned dimensions +
-    17 operator-attested pending dimensions, see
-    :mod:`tos_runtime.compose._pending_dimensions`), it is answering a
+    complete for a well-formed attempt), it is answering a
     DIFFERENT question here anyway (is THIS attempt's currentness current,
     not is the deployed software's own operating posture current — what
     ``tos.sci``'s release gate actually asks). The boot-time proxy
@@ -535,7 +531,7 @@ def _stage_b_release_probe(
 class _ConstructionStages:
     construction_stage: OrderConstructionStage
     venue_stage: VenueServiceStage
-    venue_recorder: VerdictRecorder  #: wraps venue_stage for CONSTRAINT's reader
+    venue_recorder: VerdictRecorder  #: wraps venue_stage (step 3 in the stage map)
     economic_stage: EconomicEffectStage
     proof_stage: ConformanceProofStage
 
@@ -868,7 +864,6 @@ def _build_context_resolver(
     flow_governor: RecordingActionFlowGovernor,
     currentness_assembler: CurrentnessAssembler,
     proof_issuer: EgressCurrentnessProofIssuer,
-    pending_dimension_specs: tuple[PendingDimensionSpec, ...],
     session_facts_current_reader: Callable[[], bool | None],
     tradability_facts_current_reader: Callable[[], bool | None],
     account_facts_current_reader: Callable[[], bool | None],
@@ -927,7 +922,6 @@ def _build_context_resolver(
         flow_governor=flow_governor,
         currentness_assembler=currentness_assembler,
         proof_issuer=proof_issuer,
-        pending_dimension_specs=pending_dimension_specs,
         session_facts_current_reader=session_facts_current_reader,
         tradability_facts_current_reader=tradability_facts_current_reader,
         account_facts_current_reader=account_facts_current_reader,

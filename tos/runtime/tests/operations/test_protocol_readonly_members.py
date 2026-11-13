@@ -32,18 +32,12 @@ import inspect
 from dataclasses import dataclass
 
 import pytest
-from tos.are import AggregateRiskDecision
 from tos.egressgw import CandidateConstruction, OrderConstructionStage
 from tos.sbr.vocabulary import ReadinessVerdict
-from tos_runtime.compose._dimension_readers import _AggregateRiskDecisionReader
-from tos_runtime.compose._dimension_readers import (
-    _ConstructionStageReader as _ConstructionStageReaderDR,
-)
 from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.compose._venue_wiring import (
     _ConstructionStageReader as _ConstructionStageReaderVW,
 )
-from tos_runtime.compose.context import RecordingAggregateRiskService
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -54,16 +48,6 @@ from tos_runtime.recovery.barrier import RecoveryVerdict
 # ===========================================================================
 # (i) mypy conformance functions — real implementers
 # ===========================================================================
-
-
-def _real_aggregate_risk(
-    x: RecordingAggregateRiskService,
-) -> _AggregateRiskDecisionReader:
-    return x
-
-
-def _real_construction_dr(x: OrderConstructionStage) -> _ConstructionStageReaderDR:
-    return x
 
 
 def _real_construction_vw(x: OrderConstructionStage) -> _ConstructionStageReaderVW:
@@ -84,33 +68,10 @@ def _real_composed_for_drill(x: ComposedRuntime) -> _ComposedForDrill:
 
 
 @dataclass(frozen=True)
-class _FrozenAggregateRiskDecisionReader:
-    """A frozen double for :class:`_AggregateRiskDecisionReader` — the real
-    :class:`RecordingAggregateRiskService` is mutable, so only this double would have
-    caught a regression to a plain attribute for this member."""
-
-    last_decision: AggregateRiskDecision | None
-
-
-def _frozen_aggregate_risk(
-    x: _FrozenAggregateRiskDecisionReader,
-) -> _AggregateRiskDecisionReader:
-    return x
-
-
-@dataclass(frozen=True)
 class _FrozenConstructionStageReader:
-    """A frozen double satisfying both ``_ConstructionStageReader`` definitions
-    (``_dimension_readers`` and ``_venue_wiring``) — same real attribute, same shape,
-    per the plan's own note that they mirror each other."""
+    """A frozen double satisfying ``_venue_wiring._ConstructionStageReader``."""
 
     construction: CandidateConstruction | None
-
-
-def _frozen_construction_dr(
-    x: _FrozenConstructionStageReader,
-) -> _ConstructionStageReaderDR:
-    return x
 
 
 def _frozen_construction_vw(
@@ -146,12 +107,11 @@ def _frozen_composed_for_drill(x: _FrozenComposedForDrill) -> _ComposedForDrill:
 # ===========================================================================
 
 #: The plan §1 inventory of runtime Protocol / member pairs converted to read-only
-#: properties (5 Protocols, 8 members — the kernel's 2 Protocols / 2 members are
+#: properties (5 Protocols, 8 members; plan S2-b deleted the two ``_dimension_readers``
+#: Protocols with their readers, leaving 3 Protocols / 6 members — the kernel's 2 Protocols / 2 members are
 #: pinned separately in ``tos/tests/canonical/test_protocol_readonly_members.py``,
 #: which must not import ``tos_runtime``, per the firewall).
 _PROPERTY_MEMBERS = (
-    (_AggregateRiskDecisionReader, "last_decision"),
-    (_ConstructionStageReaderDR, "construction"),
     (_ConstructionStageReaderVW, "construction"),
     (_RecoveryVerdictLike, "readiness_verdict"),
     (_ComposedForDrill, "evidence_store"),

@@ -17,18 +17,14 @@ from __future__ import annotations
 
 import tos.cur as cur
 from tos.cur import (
-    MANDATED_DIMENSION_FLOOR,
     DimensionKey,
     dimension_positively_established,
-    vector_complete,
 )
 from tos.venue.predicates import egress_currentness_active
 
 from ._cur_strategies import (
     clean_dimension,
-    clean_policy,
     clean_revision,
-    clean_vector,
 )
 
 
@@ -69,27 +65,3 @@ def test_cur_consumes_the_venue_leaf_verdict_as_one_dimension() -> None:
         positively_established=venue_verdict,
     )
     assert dimension_positively_established(constraint_dim) is True
-
-
-def test_completeness_is_the_aggregate_axis_no_leaf_can_detect() -> None:
-    """(§0.4b — the airtight rebuttal) A vector missing the CONSTRAINT dimension is incomplete.
-
-    No per-decision leaf (venue / iap / capsule) can detect an unrepresented dimension — only the
-    aggregator can. A vector whose CONSTRAINT dimension is simply absent is incomplete even though
-    every present leaf might individually be "current".
-    """
-    rev = clean_revision()
-    without_constraint = tuple(
-        clean_dimension(dimension_key=key, revision=rev)
-        for key in sorted(MANDATED_DIMENSION_FLOOR)
-        if key is not DimensionKey.CONSTRAINT
-    )
-    vec = clean_vector(revision=rev, dimensions=without_constraint)
-    assert vector_complete(vec, clean_policy(), MANDATED_DIMENSION_FLOOR) is False
-    # …but a full vector (CONSTRAINT present) is complete (both-ways).
-    assert (
-        vector_complete(
-            clean_vector(revision=rev), clean_policy(), MANDATED_DIMENSION_FLOOR
-        )
-        is True
-    )

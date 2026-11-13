@@ -20,6 +20,7 @@ from hypothesis import given
 from tos.cur import (
     CONDITIONAL_DIMENSION_KEYS,
     MANDATED_DIMENSION_FLOOR,
+    RETIRED_DIMENSION_KEYS,
     CurrentnessRevision,
     DimensionKey,
     dimension_positively_established,
@@ -71,6 +72,20 @@ _ADR_S9_NON_CONDITIONAL = frozenset(
     }
 )
 _ADR_S9_CONDITIONAL = frozenset({"RESTRICTED_LIVE_TRIAL"})
+#: Plan S2-b — kept as members, outside the mandated floor (vocabulary RETIRED_DIMENSION_KEYS).
+_S2B_RETIRED = frozenset(
+    {
+        "CRITICAL_INPUT",
+        "CONTEXT",
+        "CONSTRAINT",
+        "CONSTRUCTION",
+        "TRADING_APPROVAL",
+        "AGGREGATE_RISK",
+        "ACTION_FLOW",
+        "DECISION_PROOF_INTENT",
+        "EGRESS_IDENTITY",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -84,16 +99,18 @@ def test_dimension_key_matches_the_adr_s9_derived_set() -> None:
     assert members == _ADR_S9_NON_CONDITIONAL | _ADR_S9_CONDITIONAL
 
 
-def test_context_is_a_separate_mandated_dimension_from_critical_input() -> None:
-    """(§7.2 / v1.1 MAJOR-2) CONTEXT and CRITICAL_INPUT are BOTH separate mandated dimensions."""
-    assert DimensionKey.CONTEXT in MANDATED_DIMENSION_FLOOR
-    assert DimensionKey.CRITICAL_INPUT in MANDATED_DIMENSION_FLOOR
-    assert DimensionKey.CONTEXT is not DimensionKey.CRITICAL_INPUT
+def test_retired_dimensions_are_members_outside_the_floor() -> None:
+    """(plan S2-b) The nine retired keys stay enum members but leave the mandated floor."""
+    assert {k.value for k in RETIRED_DIMENSION_KEYS} == _S2B_RETIRED
+    assert MANDATED_DIMENSION_FLOOR.isdisjoint(RETIRED_DIMENSION_KEYS)
+    assert len(MANDATED_DIMENSION_FLOOR) == 9
 
 
-def test_mandated_floor_is_every_non_conditional_member() -> None:
-    """(§5.1) The mandated floor == all non-conditional members; the only exclusion is conditional."""
-    assert {k.value for k in MANDATED_DIMENSION_FLOOR} == _ADR_S9_NON_CONDITIONAL
+def test_mandated_floor_is_every_non_conditional_non_retired_member() -> None:
+    """(§5.1) The mandated floor == all non-conditional, non-retired members."""
+    assert {
+        k.value for k in MANDATED_DIMENSION_FLOOR
+    } == _ADR_S9_NON_CONDITIONAL - _S2B_RETIRED
     assert {DimensionKey.RESTRICTED_LIVE_TRIAL} == CONDITIONAL_DIMENSION_KEYS
     assert MANDATED_DIMENSION_FLOOR.isdisjoint(CONDITIONAL_DIMENSION_KEYS)
 
@@ -137,8 +154,7 @@ def test_unrepresented_dimension_is_incomplete() -> None:
     missing_one = tuple(
         clean_dimension(dimension_key=key, revision=rev)
         for key in sorted(MANDATED_DIMENSION_FLOOR)
-        if key
-        is not DimensionKey.CONTEXT  # drop CONTEXT specifically (the MAJOR-2 case)
+        if key is not DimensionKey.RECOVERY  # drop one mandated dimension
     )
     vec = clean_vector(revision=rev, dimensions=missing_one)
     assert vector_complete(vec, clean_policy(), MANDATED_DIMENSION_FLOOR) is False
@@ -183,7 +199,7 @@ def test_forbidden_placeholder_is_incomplete() -> None:
 
 def test_policy_under_declaration_is_incomplete() -> None:
     """(§5.5 / §0.4b) A policy that omits a mandated dimension ⇒ incomplete (aggregate-only axis)."""
-    under = MANDATED_DIMENSION_FLOOR - {DimensionKey.CONTEXT}
+    under = MANDATED_DIMENSION_FLOOR - {DimensionKey.RECOVERY}
     under_policy = clean_policy(required_dimensions=under)
     assert (
         vector_complete(clean_vector(), under_policy, MANDATED_DIMENSION_FLOOR) is False
@@ -196,9 +212,9 @@ def test_caller_cannot_narrow_the_mandated_floor() -> None:
     Even if the caller passes an empty / narrow ``mandated``, the floor is applied — a policy that
     under-declares the full §9 floor is still rejected (the caller-narrowing attack is neutralized).
     """
-    under = MANDATED_DIMENSION_FLOOR - {DimensionKey.CONTEXT}
+    under = MANDATED_DIMENSION_FLOOR - {DimensionKey.RECOVERY}
     under_policy = clean_policy(required_dimensions=under)
-    # Caller tries to narrow the mandate to nothing — the floor still requires CONTEXT.
+    # Caller tries to narrow the mandate to nothing — the floor still requires RECOVERY.
     assert vector_complete(clean_vector(), under_policy, frozenset()) is False
     # A complete vector + full policy still passes even with a narrow caller mandate (both-ways).
     assert vector_complete(clean_vector(), clean_policy(), frozenset()) is True
@@ -257,7 +273,7 @@ def test_policy_covers_mandated_dimensions_both_ways() -> None:
     assert policy_covers_mandated_dimensions(None, MANDATED_DIMENSION_FLOOR) is False
     assert policy_covers_mandated_dimensions(clean_policy(), frozenset()) is False
     under = clean_policy(
-        required_dimensions=MANDATED_DIMENSION_FLOOR - {DimensionKey.CONTEXT}
+        required_dimensions=MANDATED_DIMENSION_FLOOR - {DimensionKey.RECOVERY}
     )
     assert policy_covers_mandated_dimensions(under, MANDATED_DIMENSION_FLOOR) is False
 
