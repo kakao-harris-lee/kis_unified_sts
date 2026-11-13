@@ -31,7 +31,7 @@ Hypothesis' shared example DB is isolated per worker via
 `tests/performance/` is excluded from both passes and runs in its own
 `performance` job, which measures each benchmark over several rounds and
 compares medians. That job, its thresholds, and how to regenerate its baseline
-are documented in ``performance_slas.md``.
+are documented in ``docs/performance_slas.md`` (2026-11-13 은퇴 — `git log --diff-filter=D -- docs/`).
 
 Validated: full suite at `-n auto` (16 workers, the worst-case contention,
 ≥ CI's 2–4) — parallel pass 0 failures, serial pass 0 failures.

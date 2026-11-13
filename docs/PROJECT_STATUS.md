@@ -89,7 +89,8 @@ Unlike the snapshot above, this section records a live host inspection.
   437 s with the generation frozen after the 15:45 KST stop. The UI's own stale
   rendering was not screenshot-verified, only the API age that drives it.
   Numbers and caveats: the 2026-10-07 observation section of the
-  `CP-1 implementation and verification record`.
+  CP-1 implementation and verification record,
+  `docs/testing/2026-10-06-tos-control-plane.md` (2026-11-13 은퇴 — `git log --diff-filter=D -- docs/`).
 - Same-day manual restart (17:32-17:34 KST, operator-authorized, same leaf):
   `process_nonce` changed, `projection_generation` returned to 1 and the
   authenticated API served the new identity; `runtime_generation` stayed 0 on
@@ -103,8 +104,10 @@ Unlike the snapshot above, this section records a live host inspection.
 
 - [TOS integration plan](plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md):
   Control Plane, first paper tenant and legacy disposition sequencing.
-- `ROADMAP.md`: existing Cross-Asset + Stock + Futures strategy roadmap;
-  `plans/2026-07-02-unified-investment-system-roadmap.md`.
+- The legacy Cross-Asset + Stock + Futures strategy roadmap (`ROADMAP.md`) was
+  retired on 2026-11-13 with the runtime it described
+  (`git log --diff-filter=D -- docs/`). The live one is
+  [plans/2026-11-11-tos-platform-roadmap.md](plans/2026-11-11-tos-platform-roadmap.md).
 - Normative TOS contracts/registers remain authoritative for conformance and
   authorization. These status and planning documents do not replace them.
 
@@ -540,8 +543,8 @@ host-crontab registration docs, and obsolete RL/ClickHouse-era plans were
 archived or de-indexed. The roadmap now includes a cross-asset Quant Ops
 Workbench track with a multi-agent implementation plan:
 `plans/2026-06-22-quant-ops-workbench-uiux.md`.
-Current operators should start from `ROADMAP.md`, this status page,
-and runbooks.
+Current operators should start from this status page and the runbooks (the
+`ROADMAP.md` this 2026-06 entry names was retired on 2026-11-13).
 
 **2026-06-20** - Documentation cleanup (this PR). Superseded RL/paradigm plans
 and the synthetic-data stock validation summary were archived with SUPERSEDED

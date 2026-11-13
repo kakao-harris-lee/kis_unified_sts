@@ -42,7 +42,7 @@ Control Plane→Runtime 명령 ingress는 현재 미구현이다.
 - repo 분리는 기존 live-gate 재검토 조건을 따른다. TOS를 새 repo로 이동하지 않는다.
 
 정본: [boundary design §3·§6](../plans/2026-07-20-tos-boundary-and-import-firewall-design.md),
-`runtime D1`,
+`docs/plans/2026-09-07-tos-phase2-runtime-shell-preliminary-decisions.md` (2026-11-13 은퇴 — `git log --diff-filter=D -- docs/`) 의 runtime D1,
 [실제 검사기](../../tools/tos_firewall_check.py), [import-linter](../../.importlinter).
 이 문서와 규범이 충돌하면 기존 규범을 따르고 이 문서를 정정한다.
 
