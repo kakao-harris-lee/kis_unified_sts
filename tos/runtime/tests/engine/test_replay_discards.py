@@ -31,7 +31,6 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.replay import replay_engine
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
-from tos_runtime.nontrade.latch import latch_restrictive
 
 from . import _fixtures as fx
 from .conftest import FakeMonotonicSource
@@ -73,7 +72,6 @@ def _driver(
         ),
         finality_producer=fx.finality_producer(),
     )
-    driver.bind_nontrade_latch(latch_restrictive)
     return driver
 
 

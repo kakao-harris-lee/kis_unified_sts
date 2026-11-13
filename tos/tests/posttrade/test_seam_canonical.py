@@ -143,22 +143,20 @@ def test_the_two_forgery_axes_are_distinguished_by_the_primitive() -> None:
     )
 
 
-def test_the_four_downstreams_are_different_types_on_different_axes() -> None:
-    """(§0.4e phantom-edge block) Same token, four propositions, four types.
+def test_the_three_downstreams_are_different_types_on_different_axes() -> None:
+    """(§0.4e phantom-edge block) Same token, three propositions, three types.
 
-    Imported **in the test only**; none of the four packages imports another.
+    Imported **in the test only**; none of the three packages imports another.
     """
     from tos.iap import ConsumptionOutcome
-    from tos.nontrade import CorrectionReversalOutcome
     from tos.rcl import ApplyReason
 
     ours = ObligationCommitOutcome.IDEMPOTENT_REPLAY
     theirs = (
         ConsumptionOutcome.IDEMPOTENT_REPLAY,
         ApplyReason.IDEMPOTENT_REPLAY,
-        CorrectionReversalOutcome.IDEMPOTENT_REPLAY,
     )
-    assert len(theirs) == 3, "four independent downstreams: ours plus these three"
+    assert len(theirs) == 2, "three independent downstreams: ours plus these two"
     for sibling_member in theirs:
         assert sibling_member.value == ours.value  # the token overlaps ...
         assert type(sibling_member) is not type(ours)  # ... the type never does

@@ -24,6 +24,8 @@ from tos.posttrade import (
     EVENT_OBLIGATION_LEG_MINIMUM_SET,
     FRESHNESS_VERDICT_FRESH,
     INJECTED_SIBLING_TOKENS,
+    NONTRADE_EVENT_STATE_APPLIED_LOCAL,
+    NONTRADE_EVENT_STATE_RECONCILED,
     EventObligationLegKind,
     obligation_legs_from_event_complete,
 )
@@ -36,7 +38,10 @@ _TOKEN_OWNER_TO_SEAM_MODULE = {
     "are": "test_seam_are",
     "recon": "test_seam_recon",
     "brokercap": "test_seam_brokercap",
-    "nontrade": "test_seam_nontrade",
+    # S2-c (2026-11-13) deleted `tos.nontrade`; its two carried tokens have no kernel
+    # producer to lock against any more, so they are locked here as literals (see
+    # `test_nontrade_event_state_tokens_are_carried_literals`), the same way `time` is.
+    "nontrade": "test_seam_vocab",
     "egress": "test_seam_egress",
     "cur": "test_seam_cur",
     "time": "test_seam_vocab",  # the one coordinate locked here (see below)
@@ -141,6 +146,22 @@ def test_the_per_owner_counts_sum_to_nineteen() -> None:
         "cur": 2,
     }
     assert sum(counts.values()) == 19
+
+
+def test_nontrade_event_state_tokens_are_carried_literals() -> None:
+    """(tokens 13-14 of 19) The two ADR-002-010 event-state tokens, after S2-c.
+
+    ``tos.nontrade`` was deleted on 2026-11-13 (no shipped tree carried a ``nontrade.yaml``
+    and no source fed the package — ``docs/plans/2026-11-13-tos-code-halving-plan.md`` S2-c).
+    The tokens stay because ``post_trade_disposition`` still ACCEPTS a
+    ``nontrade_event_state`` coordinate so a consuming runtime can carry one, and §17 line 418
+    is still the reason it is structurally unread. With the producer gone there is no enum to
+    drift against, so what is locked here is the literal value each token carries.
+    """
+    assert NONTRADE_EVENT_STATE_APPLIED_LOCAL == "APPLIED_LOCAL"
+    assert NONTRADE_EVENT_STATE_RECONCILED == "RECONCILED"
+    assert ("nontrade", NONTRADE_EVENT_STATE_APPLIED_LOCAL) in INJECTED_SIBLING_TOKENS
+    assert ("nontrade", NONTRADE_EVENT_STATE_RECONCILED) in INJECTED_SIBLING_TOKENS
 
 
 def test_freshness_verdict_token_drift_lock() -> None:

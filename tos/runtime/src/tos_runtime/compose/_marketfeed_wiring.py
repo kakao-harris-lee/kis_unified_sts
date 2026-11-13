@@ -7,9 +7,8 @@ Loads ``marketfeed.yaml`` (fail-closed, the SAME named-TBD idiom
 **Two distinct absent-file cases — do not conflate them (2026-09-17 correction; an earlier
 revision of this paragraph claimed both were the same "returns None" case, which the code never
 did).** ``marketfeed.yaml`` ABSENT is the ONLY case that makes :func:`build_tick_scheduler` return
-``None`` — the SAME "files exist" idiom :func:`~tos_runtime.compose._session_wiring
-.build_nontrade_processor`'s own call site uses for its single optional ``nontrade.yaml``: an
-operator who has not yet adopted this wave at all keeps composing exactly as before (module
+``None``: an operator who has not yet adopted this wave at all keeps composing exactly as
+before (module
 docstring of ``ComposedRuntime.marketfeed`` — a legitimate state, never a boot refusal). But once
 ``marketfeed.yaml`` EXISTS, ``critical_input_policy.yaml`` is no longer optional: this module
 checks only ``marketfeed.yaml``'s existence before proceeding, then calls
@@ -93,8 +92,7 @@ coupling the two would make one unavailable without the other for no structural 
 
 **Why this is called AFTER ``apply_recovery_barrier``, unlike ``venue`` (attached right after
 ``_finalize``).** :class:`~tos_runtime.marketfeed.scheduler.TickScheduler` captures ``driver`` at
-CONSTRUCTION time and holds it for the rest of the process's life — unlike
-:meth:`~tos_runtime.compose._types.ComposedRuntime.observe_nontrade`, which re-reads
+CONSTRUCTION time and holds it for the rest of the process's life, rather than re-reading
 ``self.driver`` fresh on every call. A HOLD verdict detaches ``composed.driver`` (sets it to
 ``None`` — see that field's own docstring); building the scheduler before the barrier runs would
 freeze the PRE-barrier driver reference, so a HOLD would go unnoticed by every subsequent tick.

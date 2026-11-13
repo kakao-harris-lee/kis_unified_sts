@@ -48,7 +48,6 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.sinks import EngineEvidenceSinkAdapter
 from tos_runtime.evidence.store import SqliteEvidenceStore
-from tos_runtime.nontrade.latch import latch_restrictive
 from tos_runtime.posttrade import unsent_release
 from tos_runtime.posttrade.close_history import (
     _UNSENT_RELEASE_CAUSE,
@@ -223,7 +222,6 @@ def _write_halted_flow(
                     if fingerprint
                     else None
                 ),
-                "nontrade_disposition": None,
             },
             kind="EVENT_CONSUMED",
             record_class="EVENT_CONSUMED",
@@ -514,7 +512,6 @@ def _driver(
         ),
         finality_producer=fx.finality_producer(),
     )
-    driver.bind_nontrade_latch(latch_restrictive)
     return driver
 
 

@@ -62,7 +62,6 @@ from tos_runtime.currentness.config import load_currentness_config
 from tos_runtime.custody.file_custody import CustodyManifest
 from tos_runtime.evidence.retention import RetentionPolicy
 from tos_runtime.marketfeed.policy import load_critical_input_policy
-from tos_runtime.nontrade.config import load_required_legs_config
 from tos_runtime.operations.cold_backup import load_cold_backup_config
 from tos_runtime.posttrade.config import load_finality_config
 from tos_runtime.recon.witness_kis_config import load_kis_witness_config
@@ -304,10 +303,6 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
         ("coverage", "bounds", "healthy_time_states"),
         ("coverage", "bounds", "max_inbox_unconsumed"),
     ],
-    "nontrade": [
-        ("required_legs_by_class",),
-        ("required_legs_by_class", "CORPORATE_ACTION"),
-    ],
     "release": [
         ("expected_code_digest",),
         ("expected_dependency_set_digest",),
@@ -522,7 +517,6 @@ EXAMPLE_TOUCHPOINTS: dict[str, frozenset[str]] = {
     "kis_witness": frozenset(),
     "marketfeed": frozenset({"tos_runtime/compose/_marketfeed_wiring.py"}),
     "monitor_coverage": frozenset({"tos_runtime/compose/_safety_wiring.py"}),
-    "nontrade": frozenset({"tos_runtime/nontrade/config.py"}),
     "release": frozenset(
         {
             "tos_runtime/compose/_types.py",
@@ -662,7 +656,6 @@ EXAMPLE_LOADERS: dict[str, LoaderSpec] = {
     ),
     "marketfeed": (load_marketfeed_config, {}),
     "monitor_coverage": (_load_coverage, {}),
-    "nontrade": (load_required_legs_config, {}),
     "release": (load_release_config, {}),
     "risk_attestations": (load_risk_attestations, {}),
     "safety_deviations": (_load_deviations, {}),

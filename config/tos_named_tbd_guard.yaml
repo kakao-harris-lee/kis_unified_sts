@@ -52,12 +52,6 @@ exempt_files:
       load_engine_driver_config 이 읽는 유일한 필드 replay_window_events 가 int —
       문자열 리프 없음. (동일 파일의 CoordinatorPreconditionsConfig 는
       _preconditions.py 소관 — 아래 별도 항목.)
-  - path: tos/runtime/src/tos_runtime/compose/_nontrade_eval_dispatch.py
-    reason: >-
-      nontrade-eval CLI 의 순수 dry-run 로더 — 결과는 표준출력에만 찍히고 어떤
-      다이제스트에도 봉인되지 않는다(모듈 독스트링: "opens no store, no custody,
-      appends zero evidence anywhere real"). 이 작업이 닫는 부류("TBD 가 조용히
-      승인/봉인됨")의 대상이 아니다.
   - path: tos/runtime/src/tos_runtime/compose/_preconditions.py
     reason: >-
       CoordinatorPreconditionsConfig.live_authorization_state 는 문자열이지만
@@ -76,10 +70,6 @@ exempt_files:
       부류(문자열 자리에 조용히 승인)가 아니라 별개의 타입 불일치로 하류에서 실패한다.
       RetentionVerdict.record_class/reason 은 설정에서 읽은 값이 아니라 이 모듈이
       계산해 내보내는 출력 필드.
-  - path: tos/runtime/src/tos_runtime/nontrade/config.py
-    reason: >-
-      키(NonTradeEventClass[name])와 리프(CredibleTransitionLegKind[name]) 모두
-      커널 enum 조회로 게이트 — "TBD" 는 애초에 유효 멤버명이 아니다.
   - path: tos/runtime/src/tos_runtime/riskstate/_riskstate_primitives.py
     reason: >-
       require_explicit_list_str 는 venue._policy_primitives.require_str_list 로

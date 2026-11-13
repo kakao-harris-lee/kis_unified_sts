@@ -178,9 +178,6 @@ class _RecordedReceipt:
     outcome_digest: str | None
     halt_reason: str | None
     flow_fingerprint: FlowFingerprint | None
-    #: A ``CORPORATE_ACTION`` event's recorded :class:`~tos.nontrade.NonTradeDisposition` string
-    #: (kernel round #3 §2 결정 3) — ``None`` for every other event kind.
-    nontrade_disposition: str | None = None
 
 
 def _recorded_receipts(
@@ -209,7 +206,6 @@ def _recorded_receipts(
                     if fingerprint_payload is None
                     else FlowFingerprint.model_validate(fingerprint_payload)
                 ),
-                nontrade_disposition=payload.get("nontrade_disposition"),
             )
     return recorded
 
@@ -250,23 +246,6 @@ def _check_fingerprint(
     )
 
 
-def _check_disposition_mismatch(
-    event: EngineEvent, result: EventResult, receipt: _RecordedReceipt
-) -> bool:
-    """Kernel round #3 §2 결정 3: a ``CORPORATE_ACTION``'s recorded ``nontrade_disposition`` is
-    compared alongside its outcome_digest, exactly the way a ``DECISION_TICK``'s flow_fingerprint
-    is compared alongside ITS digest — a second, independent signal over the same event, not
-    folded into the digest comparison itself (a digest collision across two different
-    dispositions is not claimed impossible; this is defence in depth, mirroring the fingerprint's
-    own role). Factored out of :func:`_compare_one_event` for size-budget discipline."""
-    return bool(
-        event.kind is EventKind.CORPORATE_ACTION
-        and result.nontrade_outcome is not None
-        and receipt.nontrade_disposition is not None
-        and receipt.nontrade_disposition != result.nontrade_outcome.disposition.value
-    )
-
-
 def _record_divergence_halt(
     *,
     event_id: str,
@@ -274,8 +253,6 @@ def _record_divergence_halt(
     actual_digest: str | None,
     state: ReplayResultState,
     fingerprint_mismatch: str | None,
-    receipt: _RecordedReceipt,
-    result: EventResult,
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
 ) -> None:
@@ -290,12 +267,6 @@ def _record_divergence_halt(
             "actual_outcome_digest": actual_digest,
             "replay_result_state": state.value,
             "fingerprint_mismatch_field": fingerprint_mismatch,
-            "expected_nontrade_disposition": receipt.nontrade_disposition,
-            "actual_nontrade_disposition": (
-                None
-                if result.nontrade_outcome is None
-                else result.nontrade_outcome.disposition.value
-            ),
         },
         kind=_REPLAY_DIVERGED_KIND,
         record_class=_REPLAY_DIVERGED_RECORD_CLASS,
@@ -336,18 +307,12 @@ def _compare_one_event(
     if expected_digest is None and actual_digest is None:
         # Wave-3 review finding #2: since kernel lane KW3-RD, reachable ONLY by a Coordinator-
         # gate refusal (or equivalent) with no recorded halt_reason at all — never an
-        # EGRESS_RESULT (module docstring's "comparison surface" section), and (kernel round #3
-        # §2 결정 3) never a CORPORATE_ACTION either — the handler always sets
-        # EventResult.nontrade_outcome, so outcome_digest is real for every CORPORATE_ACTION the
-        # same way it has been for every EGRESS_RESULT since KW3-RD.
-        assert event.kind not in (
-            EventKind.EGRESS_RESULT,
-            EventKind.CORPORATE_ACTION,
-        ), (
-            "an EGRESS_RESULT or CORPORATE_ACTION reached the None/None skip branch — "
-            "outcome_digest must be real for both since kernel lane KW3-RD (783fadf0) / kernel "
-            "round #3 §2 결정 1-3; this would silently reopen the exact comparison gap those "
-            "changes closed"
+        # EGRESS_RESULT (module docstring's "comparison surface" section), whose outcome_digest
+        # has been real since KW3-RD.
+        assert event.kind is not EventKind.EGRESS_RESULT, (
+            "an EGRESS_RESULT reached the None/None skip branch — outcome_digest must be real "
+            "since kernel lane KW3-RD (783fadf0); this would silently reopen the exact "
+            "comparison gap that change closed"
         )
         return _EventOutcome(uncompared=True, diverged=False)
 
@@ -359,7 +324,6 @@ def _compare_one_event(
     fingerprint_mismatch, fingerprint_uncompared = _check_fingerprint(
         event, result, receipt
     )
-    disposition_mismatch = _check_disposition_mismatch(event, result, receipt)
 
     state = replay_result_for(
         expected_outcome_digest=expected_digest,
@@ -367,11 +331,7 @@ def _compare_one_event(
         baseline_supported=True,
         input_complete=True,
     )
-    diverged = (
-        state is not ReplayResultState.MATCH
-        or fingerprint_mismatch is not None
-        or disposition_mismatch
-    )
+    diverged = state is not ReplayResultState.MATCH or fingerprint_mismatch is not None
     if diverged:
         _record_divergence_halt(
             event_id=event_id,
@@ -379,8 +339,6 @@ def _compare_one_event(
             actual_digest=actual_digest,
             state=state,
             fingerprint_mismatch=fingerprint_mismatch,
-            receipt=receipt,
-            result=result,
             evidence_store=evidence_store,
             emergency_log=emergency_log,
         )

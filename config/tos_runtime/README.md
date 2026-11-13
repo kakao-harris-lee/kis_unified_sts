@@ -204,7 +204,13 @@ missing file) and 5 are genuine opt-in features that boot cleanly without
 them at the `compose_paper_runtime` level (`strategy_bindings.yaml`,
 `marketfeed.yaml` + `critical_input_policy.yaml` together, `nontrade.yaml`,
 `kis_mock_transport.yaml` — the last only matters for `--transport
-kis-mock`, not the default synthetic transport). Two of those five —
+kis-mock`, not the default synthetic transport). One of those five,
+`nontrade.yaml`, no longer exists at all: S2-c deleted the nontrade kernel
+and runtime packages on 2026-11-13
+(`docs/plans/2026-11-13-tos-code-halving-plan.md`), so
+`compose_paper_runtime` now reads 29 fixed names, not 30. The 2026-09-17
+counts above are left as measured, per this section's own rule. Two of
+those five —
 `marketfeed.yaml` + `critical_input_policy.yaml` — are opt-in at the
 `compose_paper_runtime` level but de facto required to run `run` at all,
 since `dispatch_run` itself refuses when they leave `composed.marketfeed`
