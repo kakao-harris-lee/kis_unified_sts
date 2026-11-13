@@ -49,10 +49,10 @@ __all__ = [
 #: The closed item -> ``SendBoundaryContext`` field mapping the deferred mesh judges (kernel
 #: round #2 §2 decision 2). Exactly the :data:`~tos.egressgw.vocabulary.DEFERRED_ITEMS`
 #: members — an item outside this table is a structural error (mutation M6), never a silent
-#: ``UNKNOWN``. (Items 7/8/9/10 went with plan S2-a, which removed the safety mesh whose
-#: services supplied them; items 4 and 5 are the two that remain.)
+#: ``UNKNOWN``. (Items 7/8/9/10 went with plan S2-a; plan S2-b folded the Safety Authority
+#: epoch into the Coordinator precondition and the SAFETY_AUTHORITY currentness dimension, so
+#: live scope is the one that remains.)
 _DEFERRED_ITEM_FIELDS: dict[SendVerifyItem, str] = {
-    SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH: "safety_authority_epoch_current",
     SendVerifyItem.VALID_LIVE_SCOPE: "live_scope_valid",
 }
 
@@ -151,7 +151,7 @@ def resolve_broker_applicability(
 
 
 # ===========================================================================
-# §4.2 — the deferred live safety-governance mesh (items 4, 5 — 7/8/9/10 went with S2-a)
+# §4.2 — the deferred live-scope item (4 folded by S2-b; 7/8/9/10 went with S2-a)
 # ===========================================================================
 
 
@@ -208,7 +208,7 @@ def deferred_item_verdict(
         raise ArtifactIntegrityError(
             f"{item!r} is not one of the deferred safety-governance mesh items "
             f"{sorted(f.value for f in _DEFERRED_ITEM_FIELDS)} — deferred_item_verdict judges "
-            "only the closed CURRENT_SAFETY_AUTHORITY_EPOCH / VALID_LIVE_SCOPE set "
+            "only the closed VALID_LIVE_SCOPE set "
             "(design #34 §4.2; kernel round #2 §2 decision 2) — an item "
             "outside it is a structural error, never a silent UNKNOWN"
         )

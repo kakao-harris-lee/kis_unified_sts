@@ -16,7 +16,6 @@ import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.cur import MANDATED_DIMENSION_FLOOR
-from tos_runtime.compose._pending_dimensions import PENDING_DIMENSION_KEYS
 from tos_runtime.operations.dependency_admission import (
     observe_dependency_set_digest,
     observe_source_tree_digest,
@@ -178,18 +177,6 @@ def config_dir(tmp_path: Path) -> Path:
             "required_dimensions": sorted(
                 key.value for key in MANDATED_DIMENSION_FLOOR
             ),
-        },
-    )
-    _write_yaml(
-        directory / "currentness_dimensions.yaml",
-        {
-            key.value: {
-                "bound_generation": 1,
-                "bound_digest": f"operator-attested-{key.value.lower()}-digest",
-                "restrictive_floor": 0,
-                "positively_established": True,
-            }
-            for key in PENDING_DIMENSION_KEYS
         },
     )
     # TOS Phase 5 W5 (plan §2 decisions 1-4): egress_attestations.yaml is retired to

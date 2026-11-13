@@ -2,8 +2,8 @@
 
 The design's central over-claim risk is reading "the gate ran" as "the send is safe". These tests
 lock the *honesty structure*: the list is exactly :data:`SEND_VERIFY_ITEMS`, the three
-dispositions partition it 6 / 5 / 2 (it was 6 / 5 / 6 until plan S2-a removed the RFC's items
-7/8/9/10), every non-deferred item has a named check, and the only admitting outcomes are the two
+dispositions partition it 4 / 2 / 1 (6 / 5 / 6 before plan S2-a removed the RFC's items
+7/8/9/10, and 6 / 5 / 2 before plan S2-b folded six more into earlier stages), every non-deferred item has a named check, and the only admitting outcomes are the two
 enumerated positive ones.
 
 Design #34 §12.1-1 target: "verify 항목 임의 하나가 deny/None/UNKNOWN 반환 시 SendHandoff
@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from tos.egressgw import (
     ADMITTING_VERIFY_OUTCOMES,
     DEFERRED_ITEMS,
+    FOLDED_VERIFY_ITEMS,
     PROVISIONAL_ITEMS,
     REALIZED_ITEMS,
     SEND_VERIFY_ITEMS,
@@ -37,20 +38,13 @@ from ._egressgw_fixtures import happy_context
 #: The design §4.1 table, transcribed. A drift between this and the shipped constants is the
 #: defect this file exists to catch — so it is written out item by item, not derived from them.
 _DESIGN_TABLE: dict[int, VerifyDisposition] = {
-    1: VerifyDisposition.REALIZED_STRUCTURAL,
-    2: VerifyDisposition.REALIZED_STRUCTURAL,
-    3: VerifyDisposition.PROVISIONAL_STAND_IN,
-    4: VerifyDisposition.DEFERRED_APPLICABILITY,
-    5: VerifyDisposition.DEFERRED_APPLICABILITY,
-    6: VerifyDisposition.PROVISIONAL_STAND_IN,
-    # RFC items 7/8/9/10 went with plan S2-a; everything after them shifts down by four.
-    7: VerifyDisposition.REALIZED_STRUCTURAL,
-    8: VerifyDisposition.PROVISIONAL_STAND_IN,
-    9: VerifyDisposition.REALIZED_STRUCTURAL,
-    10: VerifyDisposition.PROVISIONAL_STAND_IN,
-    11: VerifyDisposition.PROVISIONAL_STAND_IN,
-    12: VerifyDisposition.REALIZED_STRUCTURAL,
-    13: VerifyDisposition.REALIZED_STRUCTURAL,
+    1: VerifyDisposition.REALIZED_STRUCTURAL,  # capability
+    2: VerifyDisposition.DEFERRED_APPLICABILITY,  # live scope
+    3: VerifyDisposition.PROVISIONAL_STAND_IN,  # account / instrument / action allowance
+    4: VerifyDisposition.PROVISIONAL_STAND_IN,  # venue / session / broker generation
+    5: VerifyDisposition.REALIZED_STRUCTURAL,  # order construction (mutation fence)
+    6: VerifyDisposition.REALIZED_STRUCTURAL,  # currentness
+    7: VerifyDisposition.REALIZED_STRUCTURAL,  # actual outbound conformance
 }
 
 
@@ -63,18 +57,28 @@ def _disposition(item: SendVerifyItem) -> VerifyDisposition:
     return VerifyDisposition.DEFERRED_APPLICABILITY
 
 
-def test_the_verify_list_is_exactly_thirteen_items() -> None:
-    """(§10.8:741-759, less the four plan-S2-a removals) Thirteen, no more and no fewer."""
-    assert len(SEND_VERIFY_ITEMS) == 13
-    assert len(set(SEND_VERIFY_ITEMS)) == 13
-    assert set(SEND_VERIFY_ITEMS) == set(SendVerifyItem)
+def test_the_verify_list_is_exactly_seven_items() -> None:
+    """(§10.8:741-759, less the S2-a removals and S2-b folds) Seven, no more and no fewer."""
+    assert len(SEND_VERIFY_ITEMS) == 7
+    assert len(set(SEND_VERIFY_ITEMS)) == 7
+    assert set(SEND_VERIFY_ITEMS) == set(SendVerifyItem) - FOLDED_VERIFY_ITEMS
+    assert len(FOLDED_VERIFY_ITEMS) == 6
 
 
-def test_the_dispositions_partition_the_list_six_five_two() -> None:
-    """(§4.1) 6 Realize + 5 Provisional + 2 Deferred = 13, disjoint and exhaustive."""
-    assert len(REALIZED_ITEMS) == 6
-    assert len(PROVISIONAL_ITEMS) == 5
-    assert len(DEFERRED_ITEMS) == 2
+def test_a_folded_item_cannot_be_given_a_verdict() -> None:
+    """(plan S2-b) A folded item is judged by its earlier stage, never at the boundary."""
+    from tos.egressgw.records import _verdict
+
+    for item in FOLDED_VERIFY_ITEMS:
+        with pytest.raises(ArtifactIntegrityError, match="plan S2-b fold"):
+            _verdict(item, VerifyOutcome.SATISFIED)
+
+
+def test_the_dispositions_partition_the_list_four_two_one() -> None:
+    """(§4.1) 4 Realize + 2 Provisional + 1 Deferred = 7, disjoint and exhaustive."""
+    assert len(REALIZED_ITEMS) == 4
+    assert len(PROVISIONAL_ITEMS) == 2
+    assert len(DEFERRED_ITEMS) == 1
     assert set(SEND_VERIFY_ITEMS) == REALIZED_ITEMS | PROVISIONAL_ITEMS | DEFERRED_ITEMS
     assert not (REALIZED_ITEMS & PROVISIONAL_ITEMS)
     assert not (REALIZED_ITEMS & DEFERRED_ITEMS)
@@ -89,12 +93,9 @@ def test_each_item_carries_the_design_table_disposition(number: int) -> None:
     assert _disposition(item) is _DESIGN_TABLE[number]
 
 
-def test_the_deferred_items_are_the_live_safety_governance_mesh() -> None:
-    """(§4.1) Safety Authority / Live Scope — the two the mesh removal left."""
-    assert {
-        SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH,
-        SendVerifyItem.VALID_LIVE_SCOPE,
-    } == DEFERRED_ITEMS
+def test_the_deferred_item_is_live_scope() -> None:
+    """(§4.1) Live Scope — the one the mesh removal and the S2-b fold left."""
+    assert {SendVerifyItem.VALID_LIVE_SCOPE} == DEFERRED_ITEMS
 
 
 def test_item_numbers_are_derived_from_the_normative_order() -> None:
@@ -173,7 +174,7 @@ def test_the_baseline_run_judges_every_item_in_the_normative_order() -> None:
     assert tuple(v.item for v in verification.verdicts) == SEND_VERIFY_ITEMS
 
 
-def test_the_baseline_run_is_six_satisfied_realize_and_two_not_applicable() -> None:
+def test_the_baseline_run_is_four_satisfied_realize_and_one_not_applicable() -> None:
     """(§4.1 정직 귀결) The honest shape of a synthetic slice run, asserted numerically."""
     attempt, context = happy_context()
     verification = verify_send_boundary(attempt=attempt, context=context)
@@ -182,15 +183,15 @@ def test_the_baseline_run_is_six_satisfied_realize_and_two_not_applicable() -> N
         by_disposition.setdefault(verdict.disposition, []).append(verdict.outcome)
     assert (
         by_disposition[VerifyDisposition.REALIZED_STRUCTURAL]
-        == [VerifyOutcome.SATISFIED] * 6
+        == [VerifyOutcome.SATISFIED] * 4
     )
     assert (
         by_disposition[VerifyDisposition.PROVISIONAL_STAND_IN]
-        == [VerifyOutcome.SATISFIED] * 5
+        == [VerifyOutcome.SATISFIED] * 2
     )
     assert (
         by_disposition[VerifyDisposition.DEFERRED_APPLICABILITY]
-        == [VerifyOutcome.NOT_APPLICABLE] * 2
+        == [VerifyOutcome.NOT_APPLICABLE] * 1
     )
 
 

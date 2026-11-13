@@ -103,14 +103,6 @@ def _currentness(d: Path) -> object:
     return load_currentness_config(d / "currentness.yaml")
 
 
-def _pending_dimensions(d: Path) -> object:
-    from tos_runtime.compose._pending_dimensions import (
-        load_pending_currentness_dimensions,
-    )
-
-    return load_pending_currentness_dimensions(d / "currentness_dimensions.yaml")
-
-
 def _risk_attestations(d: Path) -> object:
     from tos_runtime.compose._risk_attestations import load_risk_attestations
 
@@ -267,7 +259,6 @@ PROBES: tuple[ProbeSpec, ...] = (
     ProbeSpec("calendar.yaml", _calendar),
     ProbeSpec("risk.yaml", _risk),
     ProbeSpec("currentness.yaml", _currentness),
-    ProbeSpec("currentness_dimensions.yaml", _pending_dimensions),
     ProbeSpec("risk_attestations.yaml", _risk_attestations),
     ProbeSpec("egress_coordinates.yaml", _egress_coordinates),
     ProbeSpec("broker_scopes.yaml", _broker_scopes),

@@ -31,21 +31,13 @@ honesty of everything here:
    ``capability_admissible`` is structurally ``PROHIBITED`` for every action class: this gateway
    **admits no live send**, by construction rather than by policy.
 
-Of the RFC's seventeen verify items this gateway carries thirteen — items 7/8/9/10 went with
-plan S2-a (see :class:`~tos.egressgw.vocabulary.SendVerifyItem`); the numbers in this
-paragraph are the RFC's own, not :func:`~tos.egressgw.vocabulary.verify_item_number`'s, which
-renumbers from the shipped tuple. Of those thirteen, six are verified by shipped predicates over
-structure and coordinates (1, 2, 11, 13, 16, 17), five are non-authoritative provisional stand-ins (3, 6, 12,
-14, 15) at the kernel's own disposition-table level (design #34 §4.1; :data:`PROVISIONAL_ITEMS`)
-— the static disposition-table split is unchanged by what a later runtime derives structurally —
-though the reference runtime composition (``tos_runtime.compose``) now structurally derives all
-five of those items (never a bare literal), leaving **zero remaining non-authoritative operator
-attestations with no owning runtime producer** (item 12's ``venue_session_account_facts_current``
-is now owned by ``tos_runtime.calendar.owner.SessionFactsOwner`` — Phase 5 W5; item 16's
-``restrictive_latch_state`` and ``worst_credible_capacity`` are now owned by
-``tos_runtime.safety.latch`` — Phase 5 W3; kernel round #3 §2 decision 6 recount, superseding
-round #2 §2 decision 4's "three fields" count) —
-and two — what is left of the live safety-governance mesh (4, 5) — are deferred and gated on
+Of the RFC's seventeen verify items this gateway judges seven — items 7/8/9/10 went with plan
+S2-a and six more were folded into the earlier stage that already stops the same input by plan
+S2-b (see :data:`~tos.egressgw.vocabulary.FOLDED_VERIFY_ITEMS`); the numbers in this paragraph
+are the RFC's own, not :func:`~tos.egressgw.vocabulary.verify_item_number`'s, which renumbers
+from the shipped tuple. Four are verified by shipped predicates over structure and coordinates
+(1, 13, 16, 17), two read owner-supplied flags (6, 12; :data:`PROVISIONAL_ITEMS`), and one —
+live scope (5) — is deferred and gated on
 broker-applicability. Tag for any claim: "send-boundary structural / coordinate wiring only;
 no currentness, QCC, single-use, credential-isolation, or capacity acceptance; **no ADR
 acceptance, restricted-live, or production is authorized**."
@@ -139,6 +131,7 @@ from tos.egressgw.seal import (
 from tos.egressgw.vocabulary import (
     ADMITTING_VERIFY_OUTCOMES,
     DEFERRED_ITEMS,
+    FOLDED_VERIFY_ITEMS,
     PROVISIONAL_ITEMS,
     REALIZED_ITEMS,
     SEND_VERIFY_ITEMS,
@@ -164,6 +157,7 @@ __all__ = [
     # vocabulary
     "ADMITTING_VERIFY_OUTCOMES",
     "DEFERRED_ITEMS",
+    "FOLDED_VERIFY_ITEMS",
     "PROVISIONAL_ITEMS",
     "REALIZED_ITEMS",
     "SEND_VERIFY_ITEMS",

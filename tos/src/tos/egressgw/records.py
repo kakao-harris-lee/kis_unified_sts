@@ -63,6 +63,7 @@ from tos.egressgw._base import (
 )
 from tos.egressgw.seal import SendSeal
 from tos.egressgw.vocabulary import (
+    DEFERRED_ITEMS,
     PROVISIONAL_ITEMS,
     REALIZED_ITEMS,
     BrokerApplicability,
@@ -550,7 +551,7 @@ def _verdict(
 ) -> VerifyItemVerdict:
     """Assemble one item verdict, deriving its disposition from the design §4.1 partition.
 
-    Shared by ``gateway.py``'s eleven non-deferred item checks and ``mesh.py``'s deferred-item
+    Shared by ``gateway.py``'s non-deferred item checks and ``mesh.py``'s deferred-item
     judgement (kernel round #2 §2 decision 1) — a single definition, never duplicated. Lives
     here (next to :class:`VerifyItemVerdict` itself) rather than in ``_base.py``: this module
     already imports :data:`~tos.egressgw.vocabulary.REALIZED_ITEMS` /
@@ -564,8 +565,12 @@ def _verdict(
         disposition = VerifyDisposition.REALIZED_STRUCTURAL
     elif item in PROVISIONAL_ITEMS:
         disposition = VerifyDisposition.PROVISIONAL_STAND_IN
-    else:
+    elif item in DEFERRED_ITEMS:
         disposition = VerifyDisposition.DEFERRED_APPLICABILITY
+    else:
+        raise ArtifactIntegrityError(
+            f"{item!r} is not judged at the send boundary (plan S2-b fold) — no verdict for it"
+        )
     return VerifyItemVerdict(
         item=item,
         disposition=disposition,
@@ -718,6 +723,14 @@ class SendBoundaryContext(FrozenModel):
     ⚠ Fields are labelled by the design's §4.1 disposition. The provisional ones stand in for
     runtimes that do not exist (RCL atomic claim / commitment epoch, independent approval, the
     Action Flow Governor) and close no EV (design #34 §1.1 / §4.4).
+
+    Plan S2-b: the ``reservation_*``, ``safety_authority_epoch_current``,
+    ``commitment_epoch_current``, ``venue_snapshot`` / ``venue_policy`` / ``venue_decision`` /
+    ``observed_session_phase`` / ``order_shape`` / ``venue_shape_constraints``,
+    ``approval_*`` and ``action_flow_permit_identity`` / ``action_flow_commitment_current``
+    fields fed the six :data:`~tos.egressgw.vocabulary.FOLDED_VERIFY_ITEMS` and are read by no
+    verify item any more. They stay (``extra="forbid"`` model; removing a field changes what
+    validates) — removal condition: no caller passes them.
     """
 
     instrument_key: InstrumentKey | None = None

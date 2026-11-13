@@ -12,11 +12,7 @@ whole runtime suite green.
 
 from __future__ import annotations
 
-import types
-from typing import Any
-
 import pytest
-from tos.are import RiskDecisionResult
 from tos.brokercap import (
     Admissibility,
     AssetScope,
@@ -30,9 +26,6 @@ from tos.brokercap import (
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.cur import MANDATED_DIMENSION_FLOOR, CurrentnessPolicy, DimensionKey
 from tos.egressgw import TransportNature
-from tos.engine import StageVerdict
-from tos.engine.vocabulary import CommitmentStep, StageAuthorityClass, StageOutcome
-from tos.ioc import ConformanceResult
 from tos.sbr import ReadinessVerdict, RecoveryAuthorityEffect
 from tos_runtime.brokercap.scopes import (
     BrokerScope,
@@ -42,14 +35,7 @@ from tos_runtime.brokercap.scopes import (
 )
 from tos_runtime.compose import _dimension_readers
 from tos_runtime.compose._dimension_readers import (
-    _aggregate_risk_dimension_reader_for,
-    _constraint_dimension_reader_for,
-    _ConstraintDimensionState,
-    _construction_dimension_reader_for,
-    _ConstructionDimensionState,
     _currentness_policy_dimension_reader_for,
-    _decision_proof_intent_dimension_reader_for,
-    _DecisionProofIntentDimensionState,
     _environment_scope_dimension_reader_for,
     _EnvironmentScopeDimensionState,
     _post_trade_dimension_reader_for,
@@ -58,71 +44,10 @@ from tos_runtime.compose._dimension_readers import (
     _RecoveryDimensionState,
     _release_dimension_reader_for,
     _ReleaseDimensionState,
-    _trading_approval_dimension_reader_for,
-    _TradingApprovalDimensionState,
 )
-from tos_runtime.compose.context import VerdictRecorder
 from tos_runtime.recovery.barrier import RecoveryVerdict
 
-from . import _fixtures as fx
-
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
-
-
-def _bind_verification_verdict(outcome: StageOutcome) -> StageVerdict:
-    return StageVerdict(
-        step=CommitmentStep.ATTEMPT_BIND_VERIFICATION,
-        outcome=outcome,
-        authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
-    )
-
-
-def _venue_verdict(outcome: StageOutcome) -> StageVerdict:
-    return StageVerdict(
-        step=CommitmentStep.VENUE_ADMISSIBILITY_DECISION,
-        outcome=outcome,
-        authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
-    )
-
-
-class _FakeRiskService:
-    """Duck-typed double for ``RecordingAggregateRiskService`` — the reader only ever
-    reads ``.last_decision``, so this stub carries nothing else (mirrors this test
-    module's own ``_stage_verdict``/``VerdictRecorder`` doubles above)."""
-
-    def __init__(self) -> None:
-        self.last_decision: Any = None
-
-
-def _aggregate_risk_decision(
-    *, result: RiskDecisionResult, decision_generation: int
-) -> types.SimpleNamespace:
-    """A minimal stand-in for ``tos.are.AggregateRiskDecision`` carrying only the two
-    fields :func:`_aggregate_risk_dimension_reader_for` reads."""
-    return types.SimpleNamespace(result=result, decision_generation=decision_generation)
-
-
-def _candidate_construction(
-    *,
-    conformance_result: ConformanceResult | None,
-    numerical_result: ConformanceResult | None,
-    no_silent_widening_ok: bool | None,
-) -> types.SimpleNamespace:
-    """A minimal stand-in for ``tos.egressgw.CandidateConstruction`` carrying only the
-    three fields :func:`_construction_dimension_reader_for` reads."""
-    return types.SimpleNamespace(
-        conformance_result=conformance_result,
-        numerical_result=numerical_result,
-        no_silent_widening_ok=no_silent_widening_ok,
-    )
-
-
-class _FakeConstructionStage:
-    """Duck-typed double for ``tos.egressgw.OrderConstructionStage`` — the reader only
-    ever reads ``.construction``."""
-
-    def __init__(self, construction: Any = None) -> None:
-        self.construction = construction
 
 
 class _FakePostTradeConsumer:
@@ -145,14 +70,6 @@ def _recovery_verdict(*, ready: bool) -> RecoveryVerdict:
         reason="test",
         possibly_live_reconciliation={},
         authority_effect=RecoveryAuthorityEffect(),
-    )
-
-
-def _stage_verdict(outcome: StageOutcome) -> StageVerdict:
-    return StageVerdict(
-        step=CommitmentStep.INDEPENDENT_APPROVAL,
-        outcome=outcome,
-        authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
     )
 
 
@@ -189,46 +106,6 @@ def test_recovery_reader_reports_false_once_filled_with_a_not_ready_verdict() ->
 # ============================================================================
 # TRADING_APPROVAL
 # ============================================================================
-
-
-def test_trading_approval_reader_is_none_before_the_cell_is_filled() -> None:
-    """MEDIUM-5 / mutation M9: the honest pre-fill contract."""
-    state = _TradingApprovalDimensionState()
-    reader = _trading_approval_dimension_reader_for(state)
-    assert reader() is None
-
-
-def test_trading_approval_reader_is_none_when_the_recorder_has_no_verdict_yet() -> None:
-    """Filled with a real recorder, but that recorder has not yet recorded anything —
-    still honestly absent, not a fabricated positive."""
-    state = _TradingApprovalDimensionState()
-    reader = _trading_approval_dimension_reader_for(state)
-    state.step4_recorder = VerdictRecorder(
-        lambda _request: _stage_verdict(StageOutcome.ADMIT)
-    )
-    assert reader() is None
-
-
-def test_trading_approval_reader_reports_true_after_an_admit_verdict() -> None:
-    state = _TradingApprovalDimensionState()
-    reader = _trading_approval_dimension_reader_for(state)
-    recorder = VerdictRecorder(lambda _request: _stage_verdict(StageOutcome.ADMIT))
-    recorder(fx.stage_request())  # populate .last_verdict
-    state.step4_recorder = recorder
-    report = reader()
-    assert report is not None
-    assert report.positively_established is True
-
-
-def test_trading_approval_reader_reports_false_after_a_deny_verdict() -> None:
-    state = _TradingApprovalDimensionState()
-    reader = _trading_approval_dimension_reader_for(state)
-    recorder = VerdictRecorder(lambda _request: _stage_verdict(StageOutcome.DENY))
-    recorder(fx.stage_request())
-    state.step4_recorder = recorder
-    report = reader()
-    assert report is not None
-    assert report.positively_established is False
 
 
 # ============================================================================
@@ -442,106 +319,9 @@ def test_currentness_policy_reader_is_true_when_the_operator_config_covers_the_f
 # ============================================================================
 
 
-def test_aggregate_risk_reader_is_none_before_any_decision() -> None:
-    """Mutation M9 discipline (module docstring): no decision recorded yet is honestly
-    absent, never a fabricated positive."""
-    reader = _aggregate_risk_dimension_reader_for(_FakeRiskService())
-    assert reader() is None
-
-
-def test_aggregate_risk_reader_reports_true_and_a_real_generation_after_grant() -> None:
-    service = _FakeRiskService()
-    reader = _aggregate_risk_dimension_reader_for(service)
-    service.last_decision = _aggregate_risk_decision(
-        result=RiskDecisionResult.GRANT, decision_generation=7
-    )
-    report = reader()
-    assert report is not None
-    assert report.positively_established is True
-    assert report.bound_generation == 7
-
-
-@pytest.mark.parametrize(
-    "result", [RiskDecisionResult.DENY, RiskDecisionResult.UNKNOWN]
-)
-def test_aggregate_risk_reader_reports_false_for_non_grant_results(
-    result: RiskDecisionResult,
-) -> None:
-    """Positive-identity check (``is GRANT``), never truthiness -- DENY and UNKNOWN both
-    deny."""
-    service = _FakeRiskService()
-    reader = _aggregate_risk_dimension_reader_for(service)
-    service.last_decision = _aggregate_risk_decision(
-        result=result, decision_generation=1
-    )
-    report = reader()
-    assert report is not None
-    assert report.positively_established is False
-
-
 # ============================================================================
 # CONSTRUCTION (Phase 5 W3.2, plan §2 decision 3)
 # ============================================================================
-
-
-def test_construction_reader_is_none_before_the_cell_is_filled() -> None:
-    state = _ConstructionDimensionState()
-    reader = _construction_dimension_reader_for(state)
-    assert reader() is None
-
-
-def test_construction_reader_is_none_before_step_2_has_a_candidate() -> None:
-    state = _ConstructionDimensionState(construction_stage=_FakeConstructionStage())
-    reader = _construction_dimension_reader_for(state)
-    assert reader() is None
-
-
-def test_construction_reader_reports_true_when_all_three_ioc_verdicts_are_positive() -> (
-    None
-):
-    stage = _FakeConstructionStage(
-        _candidate_construction(
-            conformance_result=ConformanceResult.CONFORMANT,
-            numerical_result=ConformanceResult.CONFORMANT,
-            no_silent_widening_ok=True,
-        )
-    )
-    state = _ConstructionDimensionState(construction_stage=stage)
-    reader = _construction_dimension_reader_for(state)
-    report = reader()
-    assert report is not None
-    assert report.positively_established is True
-    # M1 discipline (plan §5): a real, disclosed 0 -- never an invented per-attempt
-    # counter this reader has no honest source for.
-    assert report.bound_generation == 0
-
-
-@pytest.mark.parametrize(
-    ("conformance_result", "numerical_result", "no_silent_widening_ok"),
-    [
-        (ConformanceResult.NON_CONFORMANT, ConformanceResult.CONFORMANT, True),
-        (ConformanceResult.CONFORMANT, ConformanceResult.UNKNOWN, True),
-        (ConformanceResult.CONFORMANT, ConformanceResult.CONFORMANT, False),
-        (None, None, None),
-    ],
-)
-def test_construction_reader_reports_false_unless_all_three_verdicts_are_positive(
-    conformance_result: ConformanceResult | None,
-    numerical_result: ConformanceResult | None,
-    no_silent_widening_ok: bool | None,
-) -> None:
-    stage = _FakeConstructionStage(
-        _candidate_construction(
-            conformance_result=conformance_result,
-            numerical_result=numerical_result,
-            no_silent_widening_ok=no_silent_widening_ok,
-        )
-    )
-    state = _ConstructionDimensionState(construction_stage=stage)
-    reader = _construction_dimension_reader_for(state)
-    report = reader()
-    assert report is not None
-    assert report.positively_established is False
 
 
 # ============================================================================
@@ -549,85 +329,9 @@ def test_construction_reader_reports_false_unless_all_three_verdicts_are_positiv
 # ============================================================================
 
 
-def test_constraint_reader_is_none_before_the_cell_is_filled() -> None:
-    state = _ConstraintDimensionState()
-    reader = _constraint_dimension_reader_for(state)
-    assert reader() is None
-
-
-def test_constraint_reader_is_none_when_the_recorder_has_no_verdict_yet() -> None:
-    state = _ConstraintDimensionState(
-        venue_recorder=VerdictRecorder(lambda _r: _venue_verdict(StageOutcome.ADMIT))
-    )
-    reader = _constraint_dimension_reader_for(state)
-    assert reader() is None
-
-
-def test_constraint_reader_reports_true_after_an_admit_verdict() -> None:
-    recorder = VerdictRecorder(lambda _r: _venue_verdict(StageOutcome.ADMIT))
-    recorder(fx.stage_request())
-    state = _ConstraintDimensionState(venue_recorder=recorder)
-    reader = _constraint_dimension_reader_for(state)
-    report = reader()
-    assert report is not None
-    assert report.positively_established is True
-    assert report.bound_generation == 0
-
-
-def test_constraint_reader_reports_false_after_a_deny_verdict() -> None:
-    recorder = VerdictRecorder(lambda _r: _venue_verdict(StageOutcome.DENY))
-    recorder(fx.stage_request())
-    state = _ConstraintDimensionState(venue_recorder=recorder)
-    reader = _constraint_dimension_reader_for(state)
-    report = reader()
-    assert report is not None
-    assert report.positively_established is False
-
-
 # ============================================================================
 # DECISION_PROOF_INTENT (Phase 5 W3.2, plan §2 decision 2)
 # ============================================================================
-
-
-def test_decision_proof_intent_reader_is_none_before_the_cell_is_filled() -> None:
-    state = _DecisionProofIntentDimensionState()
-    reader = _decision_proof_intent_dimension_reader_for(state)
-    assert reader() is None
-
-
-def test_decision_proof_intent_reader_is_none_when_the_recorder_has_no_verdict_yet() -> (
-    None
-):
-    state = _DecisionProofIntentDimensionState(
-        step13_recorder=VerdictRecorder(
-            lambda _r: _bind_verification_verdict(StageOutcome.ADMIT)
-        )
-    )
-    reader = _decision_proof_intent_dimension_reader_for(state)
-    assert reader() is None
-
-
-def test_decision_proof_intent_reader_reports_true_after_an_admit_verdict() -> None:
-    recorder = VerdictRecorder(
-        lambda _r: _bind_verification_verdict(StageOutcome.ADMIT)
-    )
-    recorder(fx.stage_request())
-    state = _DecisionProofIntentDimensionState(step13_recorder=recorder)
-    reader = _decision_proof_intent_dimension_reader_for(state)
-    report = reader()
-    assert report is not None
-    assert report.positively_established is True
-    assert report.bound_generation == 0
-
-
-def test_decision_proof_intent_reader_reports_false_after_a_deny_verdict() -> None:
-    recorder = VerdictRecorder(lambda _r: _bind_verification_verdict(StageOutcome.DENY))
-    recorder(fx.stage_request())
-    state = _DecisionProofIntentDimensionState(step13_recorder=recorder)
-    reader = _decision_proof_intent_dimension_reader_for(state)
-    report = reader()
-    assert report is not None
-    assert report.positively_established is False
 
 
 # ============================================================================

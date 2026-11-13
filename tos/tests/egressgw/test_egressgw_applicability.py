@@ -268,7 +268,7 @@ def test_a_real_paper_broker_call_is_denied_even_though_it_is_non_live() -> None
     assert verification.applicability is BrokerApplicability.BROKER_RESOURCE_CONSUMING
     assert verification.admitted is not True
     assert verification.halt_reason is SendHaltReason.VERIFY_ITEM_UNKNOWN
-    assert verification.halt_item is SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH
+    assert verification.halt_item is SendVerifyItem.VALID_LIVE_SCOPE
     assert "unverifiable" in (verification.detail or "")
 
 
@@ -296,7 +296,6 @@ def test_a_broker_consuming_send_also_loses_the_brokercap_allowance_item() -> No
 #: item -> the SendBoundaryContext field it reads (mirrors mesh._DEFERRED_ITEM_FIELDS —
 #: transcribed independently here, not imported, so a drift between the two is caught).
 _DEFERRED_FIELD_BY_ITEM = {
-    SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH: "safety_authority_epoch_current",
     SendVerifyItem.VALID_LIVE_SCOPE: "live_scope_valid",
 }
 

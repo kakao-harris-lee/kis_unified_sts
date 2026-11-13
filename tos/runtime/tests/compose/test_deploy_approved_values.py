@@ -86,10 +86,6 @@ from tos_runtime.compose._engine_wiring import (
     EngineDriverConfigError,
     load_engine_driver_config,
 )
-from tos_runtime.compose._pending_dimensions import (
-    PendingDimensionConfigError,
-    load_pending_currentness_dimensions,
-)
 from tos_runtime.compose._preconditions import (
     CoordinatorPreconditionsConfigError,
     load_coordinator_preconditions_config,
@@ -147,7 +143,6 @@ _ADOPTED_BY_THIS_WAVE: tuple[str, ...] = (
     "authority.yaml",
     "release.yaml",
     "currentness.yaml",
-    "currentness_dimensions.yaml",
     "risk_attestations.yaml",
     "egress_coordinates.yaml",
     "broker_scopes.yaml",
@@ -211,38 +206,16 @@ _VALUE_PINS: dict[str, Any] = {
     # --- currentness.yaml ------------------------------------------------
     "currentness.yaml::B_capability_claim_to_send": 500,
     "currentness.yaml::required_dimensions": [
-        "ACTION_FLOW",
-        "AGGREGATE_RISK",
         "COMMIT_LOG",
-        "CONSTRAINT",
-        "CONSTRUCTION",
-        "CONTEXT",
-        "CRITICAL_INPUT",
         "CURRENTNESS_POLICY",
-        "DECISION_PROOF_INTENT",
-        "EGRESS_IDENTITY",
         "ENVIRONMENT_SCOPE",
         "MONITORING",
         "POST_TRADE",
         "RECOVERY",
         "RELEASE",
         "SAFETY_AUTHORITY",
-        "TRADING_APPROVAL",
         "TRUSTWORTHY_TIME",
     ],
-    # --- currentness_dimensions.yaml -------------------------------------
-    "currentness_dimensions.yaml::CONTEXT.bound_generation": 1,
-    "currentness_dimensions.yaml::CONTEXT.bound_digest": "tos-paper-context-bound-g1",
-    "currentness_dimensions.yaml::CONTEXT.restrictive_floor": 0,
-    "currentness_dimensions.yaml::CONTEXT.positively_established": True,
-    "currentness_dimensions.yaml::CRITICAL_INPUT.bound_generation": 1,
-    "currentness_dimensions.yaml::CRITICAL_INPUT.bound_digest": "tos-paper-critical-input-bound-g1",
-    "currentness_dimensions.yaml::CRITICAL_INPUT.restrictive_floor": 0,
-    "currentness_dimensions.yaml::CRITICAL_INPUT.positively_established": True,
-    "currentness_dimensions.yaml::EGRESS_IDENTITY.bound_generation": 1,
-    "currentness_dimensions.yaml::EGRESS_IDENTITY.bound_digest": "tos-paper-egress-identity-bound-g1",
-    "currentness_dimensions.yaml::EGRESS_IDENTITY.restrictive_floor": 0,
-    "currentness_dimensions.yaml::EGRESS_IDENTITY.positively_established": True,
     # --- risk_attestations.yaml ------------------------------------------
     "risk_attestations.yaml::numerically_safe.attested": True,
     "risk_attestations.yaml::valuation_ok.attested": True,
@@ -562,7 +535,6 @@ def test_approved_value_is_unchanged(ref: str) -> None:
         ("time.yaml", "tz_db_version", '"1999a"'),
         ("engine.yaml", "max_unresolved_send_per_scope", "50"),
         ("authority.yaml", "containment_bound_ms", "99999"),
-        ("currentness_dimensions.yaml", "CONTEXT.positively_established", "false"),
         ("monitor_coverage.yaml", "coverage.bounds.max_inbox_unconsumed", "999999"),
     ],
 )
@@ -573,8 +545,7 @@ def test_a_value_pin_actually_fires(
     structurally-valid-but-unapproved one in a scratch copy and the pin check must name that
     leaf. Without this, :data:`_VALUE_PINS` could drift into a decorative registry.
 
-    ``currentness_dimensions.yaml``'s ``positively_established`` and the two safety-mesh
-    booleans are deliberately in this list: they are the PR's own disclosed deviations, and
+    The safety booleans are deliberately in this list: they are the PR's own disclosed deviations, and
     flipping one is the exact "positive safety assertion silently becomes false" edit.
     """
     config_dir = _deploy_copy(tmp_path)
@@ -635,15 +606,6 @@ _LOADABLE: tuple[_LoadablePin, ...] = (
         load=lambda d: load_currentness_config(d / "currentness.yaml"),
         error=CurrentnessConfigError,
         mutate=("currentness.yaml", "B_capability_claim_to_send"),
-    ),
-    _LoadablePin(
-        label="currentness_dimensions.yaml",
-        files=("currentness_dimensions.yaml",),
-        load=lambda d: load_pending_currentness_dimensions(
-            d / "currentness_dimensions.yaml"
-        ),
-        error=PendingDimensionConfigError,
-        mutate=("currentness_dimensions.yaml", "CONTEXT.bound_digest"),
     ),
     _LoadablePin(
         label="risk_attestations.yaml",
@@ -763,7 +725,7 @@ def test_loader_probe_partition_is_as_recorded() -> None:
         outcomes
     )
     passed = sum(1 for outcome in outcomes if outcome.passed)
-    assert (passed, len(outcomes)) == (15, 23), format_table(outcomes)
+    assert (passed, len(outcomes)) == (14, 22), format_table(outcomes)
 
 
 # ============================================================================
@@ -1031,7 +993,7 @@ def test_required_dimensions_is_the_whole_mandated_floor() -> None:
 
     declared = _mapping("currentness.yaml")["required_dimensions"]
     assert declared == sorted(key.value for key in MANDATED_DIMENSION_FLOOR)
-    assert len(declared) == 18
+    assert len(declared) == 9
 
 
 def test_monitor_coverage_bounds_use_the_earlier_recommended_values() -> None:

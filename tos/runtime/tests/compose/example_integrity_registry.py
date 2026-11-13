@@ -49,9 +49,6 @@ from tos_runtime.compose._egress_coordinates import load_egress_coordinates
 from tos_runtime.compose._engine_config import load_engine_config
 from tos_runtime.compose._engine_wiring import load_engine_driver_config
 from tos_runtime.compose._marketfeed_wiring import load_marketfeed_config
-from tos_runtime.compose._pending_dimensions import (
-    load_pending_currentness_dimensions,
-)
 from tos_runtime.compose._preconditions import load_coordinator_preconditions_config
 from tos_runtime.compose._risk_attestations import load_risk_attestations
 from tos_runtime.currentness.config import load_currentness_config
@@ -137,16 +134,6 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
     "currentness": [
         ("B_capability_claim_to_send",),
         ("required_dimensions",),
-    ],
-    "currentness_dimensions": [
-        (dim, field)
-        for dim in ("CONTEXT", "CRITICAL_INPUT", "EGRESS_IDENTITY")
-        for field in (
-            "bound_generation",
-            "bound_digest",
-            "restrictive_floor",
-            "positively_established",
-        )
     ],
     "custody.manifest": [
         ("environment_label",),
@@ -379,12 +366,6 @@ EXAMPLE_TOUCHPOINTS: dict[str, frozenset[str]] = {
             "tos_runtime/compose/root.py",
         }
     ),
-    "currentness_dimensions": frozenset(
-        {
-            "tos_runtime/compose/_currentness_wiring.py",
-            "tos_runtime/compose/_wiring.py",
-        }
-    ),
     "custody.manifest": frozenset({"tos_runtime/custody/file_custody.py"}),
     "egress_coordinates": frozenset(
         {"tos_runtime/compose/_boot_integrity.py", "tos_runtime/compose/_wiring.py"}
@@ -504,7 +485,6 @@ EXAMPLE_LOADERS: dict[str, LoaderSpec] = {
         {"scheme": None},
     ),
     "currentness": (load_currentness_config, {}),
-    "currentness_dimensions": (load_pending_currentness_dimensions, {}),
     "egress_coordinates": (
         load_egress_coordinates,
         {"environment_label": "BROKER_SIMULATION"},

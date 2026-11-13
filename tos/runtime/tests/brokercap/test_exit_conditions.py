@@ -524,11 +524,9 @@ class TestEC5HonestyNotAPass:
         assert item12.outcome is VerifyOutcome.DENIED
         assert "broker-constraint generation" in (item12.reason or "")
 
-        # Items 7/8/9/10 went with plan S2-a; these two are the deferred set now.
-        deferred_items = (
-            SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH,
-            SendVerifyItem.VALID_LIVE_SCOPE,
-        )
+        # Items 7/8/9/10 went with plan S2-a and S2-b folded the authority epoch; live
+        # scope is the deferred set now.
+        deferred_items = (SendVerifyItem.VALID_LIVE_SCOPE,)
         for item in deferred_items:
             assert by_item[item].outcome is VerifyOutcome.UNKNOWN
             assert by_item[item].outcome is not VerifyOutcome.NOT_APPLICABLE

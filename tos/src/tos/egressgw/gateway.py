@@ -119,7 +119,6 @@ from tos.egressgw._base import (
     _positive,
     get_scheme,
 )
-from tos.egressgw.construction import fold_venue_admissibility
 from tos.egressgw.mesh import deferred_item_verdict, resolve_broker_applicability
 from tos.egressgw.records import (
     GatewayEvidenceRecord,
@@ -155,9 +154,8 @@ from tos.engine import (
     egress_currentness_verdict,
     transmission_capability_verdict,
 )
-from tos.ioc import ConformanceAxis, ConformanceResult, mutation_fence_holds
+from tos.ioc import ConformanceAxis, mutation_fence_holds
 from tos.ordering import OrderingEvent
-from tos.venue import OrderAdmissibilityResult
 
 __all__ = [
     "OUTBOUND_COORDINATE_NAMES",
@@ -494,78 +492,6 @@ def _check_capability(
     )
 
 
-def _check_identities(
-    attempt: AttemptRequest,
-    context: SendBoundaryContext,
-    applicability: BrokerApplicability,
-) -> VerifyItemVerdict:
-    """Item 2 — matching intent and reservation identities (Realize; §10.8:744)."""
-    del applicability
-    item = SendVerifyItem.MATCHING_INTENT_AND_RESERVATION_IDENTITIES
-    pairs = (
-        ("attempt identity", attempt.attempt_id, context.reservation_attempt_id),
-        (
-            "conformance proof digest",
-            attempt.conformance_proof_digest,
-            context.reservation_conformance_proof_digest,
-        ),
-        (
-            "Action Flow Permit identity",
-            attempt.action_flow_permit_identity,
-            context.reservation_action_flow_permit_identity,
-        ),
-    )
-    for label, left, right in pairs:
-        if left is None or right is None or not str(right).strip():
-            return _verdict(
-                item,
-                VerifyOutcome.UNKNOWN,
-                reason=f"the reservation carries no {label} to match against",
-            )
-        if left != right:
-            return _verdict(
-                item,
-                VerifyOutcome.DENIED,
-                reason=(
-                    f"{label} mismatch between the attempt and the reservation — a result may "
-                    "only ever be applied to the exact attempt it names (design #31 §2.1(ii))"
-                ),
-            )
-    return _verdict(
-        item,
-        VerifyOutcome.SATISFIED,
-        reason="attempt, proof, and permit identities match the reservation exactly",
-    )
-
-
-def _check_commitment_epoch(
-    attempt: AttemptRequest,
-    context: SendBoundaryContext,
-    applicability: BrokerApplicability,
-) -> VerifyItemVerdict:
-    """Item 3 — a current commitment epoch (⚠ **provisional** RCL stand-in; §10.8:745)."""
-    del attempt, applicability
-    item = SendVerifyItem.CURRENT_COMMITMENT_EPOCH
-    if not _positive(context.commitment_epoch_current):
-        return _verdict(
-            item,
-            VerifyOutcome.UNKNOWN,
-            reason=(
-                "the commitment epoch is not positively current — ⚠ this is a NON-AUTHORITATIVE "
-                "provisional stand-in; real epoch fencing is RCL's and is deferred "
-                "(design #34 §4.1 item 3)"
-            ),
-        )
-    return _verdict(
-        item,
-        VerifyOutcome.SATISFIED,
-        reason=(
-            "⚠ provisional stand-in: the commitment epoch is reported current. No linearizable "
-            "ledger, fencing epoch, or CAS is claimed (design #34 §4.6)"
-        ),
-    )
-
-
 def _mock_class_bound_to_profile(context: SendBoundaryContext) -> bool:
     """Option (a)'s profile-check skip, bound to the attached profile's OWN class.
 
@@ -692,73 +618,6 @@ def _check_allowance(
     )
 
 
-def _check_venue(
-    attempt: AttemptRequest,
-    context: SendBoundaryContext,
-    applicability: BrokerApplicability,
-) -> VerifyItemVerdict:
-    """Item 11 — Venue Constraint Snapshot + Order Admissibility Decision binding (Realize; :753).
-
-    RFC-002 §9.1:554 splits the roles: step 3 *produces* the non-authorizing decision, and the
-    gateway *enforces* "the exact current result" here. This check therefore re-evaluates venue's
-    own predicates against the current snapshot and additionally requires the issued decision to
-    carry the same ``ADMISSIBLE`` result — a decision that disagrees with the current snapshot is
-    stale, and staleness is a rejection (§10.8:761).
-    """
-    del attempt, applicability
-    item = SendVerifyItem.VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION
-    if context.venue_decision is None:
-        return _verdict(
-            item,
-            VerifyOutcome.UNKNOWN,
-            reason="no Order Admissibility Decision is bound to this send",
-        )
-    current = fold_venue_admissibility(
-        observed_session_phase=context.observed_session_phase,
-        action_class=context.action_class,
-        snapshot=context.venue_snapshot,
-        policy=context.venue_policy,
-        shape=context.order_shape,
-        constraints=context.venue_shape_constraints,
-    )
-    if current is OrderAdmissibilityResult.UNKNOWN:
-        return _verdict(
-            item,
-            VerifyOutcome.UNKNOWN,
-            reason="venue admissibility is UNKNOWN — restrictive (ADR-002-019 §8:245)",
-            native=current,
-            native_value=current.value,
-        )
-    if current is not OrderAdmissibilityResult.ADMISSIBLE:
-        return _verdict(
-            item,
-            VerifyOutcome.DENIED,
-            reason=(
-                f"the current venue result is {current.value}; a RESTRICTED_PROTECTIVE_ONLY "
-                "path proceeds only through venue's own protective_label_no_bypass and this "
-                "gate self-classifies nothing as protective (RFC-005 §12:371)"
-            ),
-            native=current,
-            native_value=current.value,
-        )
-    if context.venue_decision.result is not OrderAdmissibilityResult.ADMISSIBLE:
-        return _verdict(
-            item,
-            VerifyOutcome.DENIED,
-            reason=(
-                "the bound Order Admissibility Decision does not itself admit — the gateway "
-                "enforces the exact current result and unions nothing (RFC-002 §9.1:554)"
-            ),
-        )
-    return _verdict(
-        item,
-        VerifyOutcome.SATISFIED,
-        reason="the current venue result and the bound decision both admit exactly",
-        native=current,
-        native_value=current.value,
-    )
-
-
 def _check_venue_generations(
     attempt: AttemptRequest,
     context: SendBoundaryContext,
@@ -782,7 +641,15 @@ def _check_construction(
     context: SendBoundaryContext,
     applicability: BrokerApplicability,
 ) -> VerifyItemVerdict:
-    """Item 13 — Order Construction policy / envelope / command / proof / effect (Realize; :755)."""
+    """Order Construction — the bound command exists and the proof fences its exact digest.
+
+    Conformance, numerical safety and no-silent-widening are step 2's own verdict
+    (:func:`~tos.egressgw.construction.candidate_command_verdict` admits only when all three
+    hold, over the same retained :class:`~tos.egressgw.records.CandidateConstruction` this
+    context carries), so plan S2-b folded those re-judgments into step 2. What only the send
+    boundary can see is a post-proof mutation, which :func:`~tos.ioc.mutation_fence_holds`
+    refuses here (ADR-002-020 §6.2 / §16:429).
+    """
     del attempt, applicability
     item = SendVerifyItem.ORDER_CONSTRUCTION
     construction = context.construction
@@ -791,80 +658,6 @@ def _check_construction(
             item,
             VerifyOutcome.UNKNOWN,
             reason="no candidate Canonical Broker Command is bound to this send",
-        )
-    # ★ TOS-GAP-001: ``conformance_result`` is ``ConformanceResult | None`` — the
-    # CandidateConstruction shape validator (records.py) now denies a *constructed* bundle from
-    # carrying ``command is not None`` alongside a ``None`` verdict, but this verify item stays
-    # defense-in-depth against any bundle that reaches the gateway some other way. An
-    # unestablished (``None``) result is treated exactly like the native ``UNKNOWN`` value —
-    # never a pass, never an ``AttributeError`` from a bare ``.value`` on ``None`` — so both
-    # collapse to the same restrictive ``UNKNOWN`` outcome the design already assigns to a
-    # native ``UNKNOWN`` (ADR-002-020 §14:374).
-    if construction.conformance_result is None or (
-        construction.conformance_result is ConformanceResult.UNKNOWN
-    ):
-        return _verdict(
-            item,
-            VerifyOutcome.UNKNOWN,
-            reason=(
-                "order conformance is UNKNOWN — denial (ADR-002-020 §14:374)"
-                if construction.conformance_result is not None
-                else "order conformance was never established — an absent result is UNKNOWN, "
-                "never a pass (TOS-GAP-001)"
-            ),
-            native=construction.conformance_result,
-            native_value=(
-                None
-                if construction.conformance_result is None
-                else str(construction.conformance_result.value)
-            ),
-        )
-    if construction.conformance_result is not ConformanceResult.CONFORMANT:
-        return _verdict(
-            item,
-            VerifyOutcome.DENIED,
-            reason="the bound command is NON_CONFORMANT to its approved intent",
-            native=construction.conformance_result,
-            native_value=str(construction.conformance_result.value),
-        )
-    # Same None/UNKNOWN-collapses-to-UNKNOWN discipline for the numerical-safety verdict — the
-    # positive-admit polarity is "only CONFORMANT passes; UNKNOWN (native or absent) is UNKNOWN;
-    # anything else (NON_CONFORMANT) is DENIED", matching the conformance_result branch above.
-    if construction.numerical_result is None or (
-        construction.numerical_result is ConformanceResult.UNKNOWN
-    ):
-        return _verdict(
-            item,
-            VerifyOutcome.UNKNOWN,
-            reason=(
-                "numerical safety is UNKNOWN — denial (ADR-002-020 §14:423)"
-                if construction.numerical_result is not None
-                else "numerical safety was never established — an absent result is UNKNOWN, "
-                "never a pass (TOS-GAP-001)"
-            ),
-            native=construction.numerical_result,
-            native_value=(
-                None
-                if construction.numerical_result is None
-                else str(construction.numerical_result.value)
-            ),
-        )
-    if construction.numerical_result is not ConformanceResult.CONFORMANT:
-        return _verdict(
-            item,
-            VerifyOutcome.DENIED,
-            reason="numerical safety is not CONFORMANT (ADR-002-020 §14:423)",
-            native=construction.numerical_result,
-            native_value=str(construction.numerical_result.value),
-        )
-    if construction.no_silent_widening_ok is not True:
-        return _verdict(
-            item,
-            VerifyOutcome.DENIED,
-            reason=(
-                "the construction did not positively witness no-silent-widening "
-                "(IOC-INV-006:177)"
-            ),
         )
     if not mutation_fence_holds(construction.command, context.conformance_proof):
         return _verdict(
@@ -879,88 +672,7 @@ def _check_construction(
     return _verdict(
         item,
         VerifyOutcome.SATISFIED,
-        reason="policy / envelope / command / proof / effect are bound and CONFORMANT",
-        native=construction.conformance_result,
-        native_value=str(construction.conformance_result.value),
-    )
-
-
-def _check_approval(
-    attempt: AttemptRequest,
-    context: SendBoundaryContext,
-    applicability: BrokerApplicability,
-) -> VerifyItemVerdict:
-    """Item 14 — Trading Approval consumption + Intent binding (⚠ provisional iap stand-in)."""
-    del attempt, applicability
-    item = SendVerifyItem.TRADING_APPROVAL
-    if not _positive(context.approval_consumed_for_this_intent):
-        return _verdict(
-            item,
-            VerifyOutcome.UNKNOWN,
-            reason=(
-                "no approval consumption is positively recorded for this intent — ⚠ provisional "
-                "stand-in; no independent approver runtime exists (design #34 §4.1 item 14)"
-            ),
-        )
-    intent = None if context.construction is None else context.construction.intent
-    intent_digest = None if intent is None else intent.canonical_digest
-    if (
-        intent_digest is None
-        or context.approval_intent_binding_digest is None
-        or context.approval_intent_binding_digest != intent_digest
-    ):
-        return _verdict(
-            item,
-            VerifyOutcome.DENIED,
-            reason=(
-                "the approval does not bind the exact Approved Intent Contract digest — an "
-                "approval of a different intent is not an approval of this one"
-            ),
-        )
-    return _verdict(
-        item,
-        VerifyOutcome.SATISFIED,
-        reason="⚠ provisional stand-in: approval consumed and bound to this exact intent digest",
-    )
-
-
-def _check_action_flow(
-    attempt: AttemptRequest,
-    context: SendBoundaryContext,
-    applicability: BrokerApplicability,
-) -> VerifyItemVerdict:
-    """Item 15 — Action Flow decision / RCL commitment / Permit (⚠ provisional afg stand-in)."""
-    del applicability
-    item = SendVerifyItem.ACTION_FLOW
-    permit = context.action_flow_permit_identity
-    if permit is None or not permit.strip():
-        return _verdict(
-            item,
-            VerifyOutcome.UNKNOWN,
-            reason=(
-                "no Action Flow Permit identity is bound — ⚠ provisional stand-in; no Action "
-                "Flow Governor runtime exists (design #34 §4.1 item 15)"
-            ),
-        )
-    if permit != attempt.action_flow_permit_identity:
-        return _verdict(
-            item,
-            VerifyOutcome.DENIED,
-            reason=(
-                "the bound Action Flow Permit is not the one the attempt request binds "
-                "(ADR-002-002 §11.3:599)"
-            ),
-        )
-    if not _positive(context.action_flow_commitment_current):
-        return _verdict(
-            item,
-            VerifyOutcome.UNKNOWN,
-            reason="the Action Flow RCL commitment is not positively current — ⚠ provisional",
-        )
-    return _verdict(
-        item,
-        VerifyOutcome.SATISFIED,
-        reason="⚠ provisional stand-in: Action Flow Permit bound to this exact attempt",
+        reason="the bound command is present and the conformance proof fences its digest",
     )
 
 
@@ -1111,16 +823,11 @@ def _check_actual_outbound(
 #: is a ``KeyError`` at the call site rather than a silently skipped verification.
 _ITEM_CHECKS = {
     SendVerifyItem.VALID_UNUSED_TRANSMISSION_CAPABILITY: _check_capability,
-    SendVerifyItem.MATCHING_INTENT_AND_RESERVATION_IDENTITIES: _check_identities,
-    SendVerifyItem.CURRENT_COMMITMENT_EPOCH: _check_commitment_epoch,
     SendVerifyItem.ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY: _check_allowance,
-    SendVerifyItem.VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION: _check_venue,
     SendVerifyItem.VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION: (
         _check_venue_generations
     ),
     SendVerifyItem.ORDER_CONSTRUCTION: _check_construction,
-    SendVerifyItem.TRADING_APPROVAL: _check_approval,
-    SendVerifyItem.ACTION_FLOW: _check_action_flow,
     SendVerifyItem.CURRENTNESS: _check_currentness,
     SendVerifyItem.ACTUAL_OUTBOUND_CONFORMANCE: _check_actual_outbound,
 }
@@ -1341,6 +1048,11 @@ class BrokerEgressGateway:
         anything that is neither resolves to ``None`` — which is the same recorded
         ``CONTEXT_MISSING`` stop an absent mapping entry has always been. There is no branch in
         which an unrecognised ``contexts`` argument admits a send.
+
+        The ``Mapping`` form takes a caller-built context and is a test seam: since plan S2-b
+        the gateway no longer re-checks the ``reservation_*`` identities against the attempt,
+        because the production resolver builds them from the attempt itself
+        (:func:`~tos.egressgw.records.send_boundary_context`).
 
         Args:
             attempt: The Coordinator's step-12 attempt request.
