@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from tos.sci import AdmissionResult
 from tos_runtime.release.config import ReleaseAdmissionConfigError, load_release_config
+from tos_runtime.release.verdict import AdmissionResult
 
 _VALID = """
 expected_code_digest: "digest-abc"
@@ -136,7 +136,7 @@ def test_restriction_present_true_with_filled_restriction_loads(tmp_path: Path) 
     assert config.restriction_present is True
     assert config.restriction is not None
     assert config.restriction.restriction_id == "r-1"
-    assert config.restriction.canonical_digest is not None
+    assert config.restriction.restriction_generation == 1
 
 
 def test_example_file_is_all_named_tbd() -> None:

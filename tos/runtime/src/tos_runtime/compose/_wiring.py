@@ -314,7 +314,7 @@ def _stage_a_release_probe(
     literal listed order — see :func:`compose_paper_runtime`'s own module
     docstring "Release admission is moved ahead of custody/evidence/RCL").
 
-    ``tos.sci.software_deployment_ok_verdict`` hard-requires
+    ``tos_runtime.release.verdict.software_deployment_ok_verdict`` hard-requires
     ``active_currentness_current is True`` — a genuinely per-attempt,
     post-currentness-wiring fact that cannot exist before the RCL/time/
     currentness stack is up. But the compose e2e test's scenario 7 requires

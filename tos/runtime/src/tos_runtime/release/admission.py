@@ -3,7 +3,7 @@
 `docs/plans/2026-09-08-tos-phase2-runtime-slice3-authority-risk-currentness-
 compose-plan.md` §3 item 4).
 
-Calls the kernel's :func:`~tos.sci.predicates.software_deployment_ok_verdict`
+Calls :func:`~tos_runtime.release.verdict.software_deployment_ok_verdict`
 **only** — this module makes no admission decision of its own. The THREE
 comparisons it performs itself are ``observation.source_tree_digest ==
 config.expected_code_digest``, ``observation.dependency_set_digest ==
@@ -24,21 +24,17 @@ plain fallback the slice plan itself names when no kernel predicate exists
 
 from __future__ import annotations
 
-from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.sci import (
-    AdmissionResult,
-    ReleaseRestriction,
-    RuntimeArtifactAttestation,
-    software_deployment_ok_verdict,
-)
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.operations.dependency_admission import RuntimeArtifactObservation
 from tos_runtime.release.config import ReleaseAdmissionConfig
+from tos_runtime.release.verdict import (
+    AdmissionResult,
+    ReleaseRestriction,
+    software_deployment_ok_verdict,
+)
 
 __all__ = ["ReleaseAdmissionService", "ReleaseRestrictionLookup", "release_admission"]
-
-_SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 
 class ReleaseRestrictionLookup:
@@ -74,9 +70,8 @@ def _runtime_attestation_matches(
     expected_code_digest: str,
     expected_dependency_set_digest: str,
 ) -> bool:
-    """Build the :class:`~tos.sci.RuntimeArtifactAttestation` and derive its
-    ``runtime_artifact_match`` — the module docstring's "runtime input
-    collection: equality" fallback (no kernel predicate computes this).
+    """Whether the running artifact matches the operator-approved release —
+    the module docstring's "runtime input collection: equality" fallback.
 
     ``runtime_artifact_match`` is ``True`` only when the observed
     source-tree digest and the observed dependency-set digest BOTH match
@@ -106,20 +101,7 @@ def _runtime_attestation_matches(
         identity.code_digest is not None
         and identity.code_digest == observation.source_tree_digest
     )
-    match = source_matches and dependency_matches and identity_matches
-    attestation = RuntimeArtifactAttestation.issue(
-        scheme=_SCHEME,
-        attestation_id=f"attest-{identity.process_nonce}",
-        runtime_continuity_generation=identity.runtime_generation,
-        workload_identity=identity.cell_id,
-        actual_executable_and_image_digest=observation.source_tree_digest,
-        actual_library_dependency_set_digest=observation.dependency_set_digest,
-        observed_runtime_artifact_set_digest=observation.source_tree_digest,
-        expected_runtime_artifact_set_digest=expected_code_digest,
-        runtime_artifact_match=match,
-    )
-    assert isinstance(attestation, RuntimeArtifactAttestation)
-    return attestation.runtime_artifact_match is True
+    return source_matches and dependency_matches and identity_matches
 
 
 def release_admission(
@@ -136,7 +118,7 @@ def release_admission(
 
     Args:
         identity: This process's :class:`~tos.workload.RuntimeIdentity`.
-        admission: The exact :class:`~tos.sci.AdmissionResult` for the
+        admission: The exact :class:`~tos_runtime.release.verdict.AdmissionResult` for the
             deployed artifact (Phase 2: an operator-approved static value,
             never computed here — see :mod:`tos_runtime.release.config`).
         restriction: The :class:`ReleaseRestrictionLookup` result.
@@ -153,7 +135,7 @@ def release_admission(
             dependency-set digest this release must match.
 
     Returns:
-        ``True`` iff :func:`~tos.sci.predicates.software_deployment_ok_verdict`
+        ``True`` iff :func:`~tos_runtime.release.verdict.software_deployment_ok_verdict`
         holds. Even a ``True`` here is a negative gate only — it supplies no
         capacity, authority, protection, approval, or admissibility (§1
         line 27).
