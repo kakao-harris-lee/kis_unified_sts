@@ -144,3 +144,12 @@ def test_example_file_is_all_named_tbd() -> None:
     example = Path(__file__).resolve().parents[2] / "config" / "release.example.yaml"
     with pytest.raises(ReleaseAdmissionConfigError):
         load_release_config(example)
+
+
+def test_restriction_id_named_tbd_refuses_at_load(tmp_path: Path) -> None:
+    """A placeholder `TBD` restriction id is refused at load, not later at admission."""
+    text = _VALID.replace("restriction_present: false", "restriction_present: true")
+    text = text.replace("restriction_id: null", 'restriction_id: "TBD"')
+    text = text.replace("restriction_generation: null", "restriction_generation: 1")
+    with pytest.raises(ReleaseAdmissionConfigError):
+        load_release_config(_write(tmp_path, text))

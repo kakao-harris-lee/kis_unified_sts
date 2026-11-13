@@ -155,6 +155,12 @@ def _resolve_restriction(
             "'restriction.restriction_id'/'restriction_generation' is "
             "unfilled (named-TBD) — fail-closed"
         )
+    reject_named_tbd(
+        restriction_id,
+        field="restriction.restriction_id",
+        context="release-admission config",
+        error_cls=ReleaseAdmissionConfigError,
+    )
     try:
         return ReleaseRestriction(
             restriction_id=restriction_id,
