@@ -38,7 +38,9 @@ from ._cur_strategies import (
     dimension_key,
 )
 
-#: The ADR §9-derived reference dimension catalogue (design #23 §2.2 verbatim; CONTEXT included as a
+#: The ADR §9-derived reference dimension catalogue, less the three the plan-S2-a safety-mesh
+#: removal took with it (SAFETY_ENVELOPE_PROFILE / DEVIATION / INCIDENT — no owner remains, and
+#: an ownerless mandated dimension would deny every send). CONTEXT is included as a
 #: SEPARATE dimension from CRITICAL_INPUT — the v1.1 MAJOR-2 anchor). Any enum drift below / away
 #: from this fixed set fails the property, so the enum can never silently regress off the ADR.
 # HONESTY NOTE (code-review MINOR-1): this is a MANUALLY-TRANSCRIBED regression anchor,
@@ -52,9 +54,6 @@ _ADR_S9_NON_CONDITIONAL = frozenset(
         "CURRENTNESS_POLICY",
         "COMMIT_LOG",
         "SAFETY_AUTHORITY",
-        "SAFETY_ENVELOPE_PROFILE",
-        "DEVIATION",
-        "INCIDENT",
         "MONITORING",
         "RELEASE",
         "POST_TRADE",

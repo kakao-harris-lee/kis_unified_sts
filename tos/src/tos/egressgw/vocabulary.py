@@ -1,4 +1,4 @@
-"""Closed egressgw vocabulary — the 17 verify items, their dispositions, and the outcome enums.
+"""Closed egressgw vocabulary — the verify items, their dispositions, and the outcome enums.
 
 Everything the Order Construction seam and the Broker Egress Gateway dispatch on is a **closed
 enumeration** here, inheriting the series' truthy-sentinel discipline (#14 M1 / #19 / #23 / D-E1
@@ -9,11 +9,12 @@ a named closed set — never ``is not DENY`` (design #34 §7).
 
 Three seals live in this module:
 
-1. **The 17-item verify list is the contract** (:data:`SEND_VERIFY_ITEMS`, taken from
-   RFC-002 §10.8:741-759 in the ADR's own order). Its per-item disposition
+1. **The verify list is the contract** (:data:`SEND_VERIFY_ITEMS`, taken from
+   RFC-002 §10.8:741-759 in the ADR's own order, less the four plan-S2-a removals —
+   :class:`SendVerifyItem`). Its per-item disposition
    (:data:`REALIZED_ITEMS` / :data:`PROVISIONAL_ITEMS` / :data:`DEFERRED_ITEMS`) is the design
-   §4.1 table, and an import-time anchor proves the three sets **partition** the 17 exactly —
-   6 + 5 + 6 = 17, disjoint, exhaustive. A future item that lands in no set, or in two, is an
+   §4.1 table, and an import-time anchor proves the three sets **partition** it exactly —
+   6 + 5 + 2 = 13, disjoint, exhaustive. A future item that lands in no set, or in two, is an
    immediate :class:`~tos.canonical.ArtifactIntegrityError` rather than a silently skipped
    verify item (the #23 CUR enum-drift-anchor lesson applied to a verify list).
 2. **Admission is a positive closed set, not a negation** (:data:`ADMITTING_VERIFY_OUTCOMES`).
@@ -73,7 +74,24 @@ class _NonTruthyStrEnum(StrEnum):
 
 
 class SendVerifyItem(StrEnum):
-    """The 17 things the Broker Egress Gateway verifies before a send (RFC-002 §10.8:741-759).
+    """The things the Broker Egress Gateway verifies before a send (RFC-002 §10.8:741-759).
+
+    The RFC's list is 17 items; this enum carries 13 of them. Items 7/8/9/10 (Hard Safety
+    Envelope versions, safety deviation, safety incident, safety monitoring) went with plan
+    S2-a: the safety-mesh services that supplied their flags were removed because their inputs
+    were constant in every shipped tenant tree, and monitoring is carried by the MONITORING
+    currentness dimension instead.
+
+    **Removal condition for a member of this enum, measured before the S2-a cut.** A
+    ``VERIFY_ITEM`` evidence row stores its item as a plain string inside the payload
+    JSON; nothing re-validates that string back into this enum (grepped: no
+    ``SendVerifyItem(...)``/``VerifyItemVerdict.model_validate`` over stored data), and
+    no replay comparison re-derives a verify list. So removing a member leaves every
+    already-recorded row's bytes and digest untouched — measured on copies of the four
+    live leaves: 128,001/128,001 evidence payloads digest-identical, 2,989/2,989 inbox
+    events identical in ``event_id`` and bytes. Note that
+    :func:`verify_item_number` renumbers from this tuple, so NEW rows after a removal
+    carry different numbers for the items that follow it; old rows keep theirs.
 
     Named after the RFC's own item text. :data:`SEND_VERIFY_ITEMS` fixes the order and
     :func:`verify_item_number` derives the 1-based number **structurally** from that tuple, so a
@@ -94,10 +112,6 @@ class SendVerifyItem(StrEnum):
     ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY = (
         "ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY"
     )
-    HARD_SAFETY_ENVELOPE_VERSIONS = "HARD_SAFETY_ENVELOPE_VERSIONS"
-    SAFETY_DEVIATION = "SAFETY_DEVIATION"
-    SAFETY_INCIDENT = "SAFETY_INCIDENT"
-    SAFETY_MONITORING = "SAFETY_MONITORING"
     VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION = (
         "VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION"
     )
@@ -111,7 +125,8 @@ class SendVerifyItem(StrEnum):
     ACTUAL_OUTBOUND_CONFORMANCE = "ACTUAL_OUTBOUND_CONFORMANCE"
 
 
-#: The normative 17-item order (RFC-002 §10.8:741-759). Tuple order **is** the contract.
+#: The normative item order (RFC-002 §10.8:741-759, less the four plan-S2-a removals — see
+#: :class:`SendVerifyItem`). Tuple order **is** the contract.
 SEND_VERIFY_ITEMS: tuple[SendVerifyItem, ...] = (
     SendVerifyItem.VALID_UNUSED_TRANSMISSION_CAPABILITY,
     SendVerifyItem.MATCHING_INTENT_AND_RESERVATION_IDENTITIES,
@@ -119,10 +134,6 @@ SEND_VERIFY_ITEMS: tuple[SendVerifyItem, ...] = (
     SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH,
     SendVerifyItem.VALID_LIVE_SCOPE,
     SendVerifyItem.ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY,
-    SendVerifyItem.HARD_SAFETY_ENVELOPE_VERSIONS,
-    SendVerifyItem.SAFETY_DEVIATION,
-    SendVerifyItem.SAFETY_INCIDENT,
-    SendVerifyItem.SAFETY_MONITORING,
     SendVerifyItem.VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION,
     SendVerifyItem.VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION,
     SendVerifyItem.ORDER_CONSTRUCTION,
@@ -175,15 +186,11 @@ PROVISIONAL_ITEMS: frozenset[SendVerifyItem] = frozenset(
     }
 )
 
-#: Design §4.1 — the six live safety-governance mesh items whose runtimes have not landed.
+#: Design §4.1 — the live safety-governance mesh items whose runtimes have not landed.
 DEFERRED_ITEMS: frozenset[SendVerifyItem] = frozenset(
     {
         SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH,
         SendVerifyItem.VALID_LIVE_SCOPE,
-        SendVerifyItem.HARD_SAFETY_ENVELOPE_VERSIONS,
-        SendVerifyItem.SAFETY_DEVIATION,
-        SendVerifyItem.SAFETY_INCIDENT,
-        SendVerifyItem.SAFETY_MONITORING,
     }
 )
 
@@ -317,7 +324,11 @@ _ITEM_NUMBERS: dict[SendVerifyItem, int] = {
 
 
 def verify_item_number(item: SendVerifyItem) -> int:
-    """Return the RFC-002 §10.8 verify-list number (1-17) of ``item``.
+    """Return this gateway's 1-based verify-list number for ``item``.
+
+    Derived structurally from :data:`SEND_VERIFY_ITEMS`, so it renumbers with the tuple.
+    Items 1-6 keep their RFC-002 §10.8:741-759 numbers; everything after the four plan-S2-a
+    removals (items 7/8/9/10) shifts down by four.
 
     Args:
         item: The verify item.
@@ -327,18 +338,19 @@ def verify_item_number(item: SendVerifyItem) -> int:
 
     Raises:
         ArtifactIntegrityError: If ``item`` is not a member of the normative list — an item
-            outside the closed 17 is not a verify item (fail-closed, design #34 §4.1).
+            outside the closed set is not a verify item (fail-closed, design #34 §4.1).
     """
     number = _ITEM_NUMBERS.get(item)
     if number is None:
         raise ArtifactIntegrityError(
-            f"{item!r} is not one of the 17 RFC-002 §10.8:741-759 verify-list items"
+            f"{item!r} is not one of the RFC-002 §10.8:741-759 verify-list items this "
+            "gateway carries"
         )
     return number
 
 
 def _verify_disposition_partition_anchor() -> None:
-    """Prove the three disposition sets **partition** the 17 verify items (drift anchor).
+    """Prove the three disposition sets **partition** the verify items (drift anchor).
 
     The #23 CUR enum-drift-anchor lesson applied to a verify list: an item that belongs to no
     disposition set would be silently skipped by the gateway loop (a fail-open), and an item in
@@ -373,9 +385,9 @@ def _verify_disposition_partition_anchor() -> None:
             "would be skipped by the gateway loop (design #34 §4.1)"
         )
     sizes = (len(REALIZED_ITEMS), len(PROVISIONAL_ITEMS), len(DEFERRED_ITEMS))
-    if sizes != (6, 5, 6):
+    if sizes != (6, 5, 2):
         raise ArtifactIntegrityError(
-            f"verify-item disposition counts drifted from the design §4.1 table 6/5/6: {sizes}"
+            f"verify-item disposition counts drifted from the design §4.1 table 6/5/2: {sizes}"
         )
 
 

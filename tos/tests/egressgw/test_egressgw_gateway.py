@@ -155,13 +155,13 @@ def test_the_baseline_send_is_accepted_and_records_every_step_in_order() -> None
         "NETWORK_CALL_ENTERED",
         "EGRESS_RESULT_RECORDED",
     )
-    assert sink.kinds[:17] == ("VERIFY_ITEM",) * 17
+    assert sink.kinds[:13] == ("VERIFY_ITEM",) * 13
 
 
 def test_the_baseline_send_records_the_commitment_step_sequence_exactly() -> None:
     """(Phase 3 wave 3 KW3-GW) The stamped CommitmentStep sequence is exactly [15,15,16,17,18,19].
 
-    Every ``VERIFY_ITEM`` record collapses to one representative step-15 entry (there are 17 of
+    Every ``VERIFY_ITEM`` record collapses to one representative step-15 entry (there are 13 of
     them, all the same step); ``SEND_SEALED`` is its own separate step-15 entry — the seal is
     step 15's own output (design §1.2), not a "step 15½" the closed 19-step enum has no member
     for; then 16 (the claim), 17 (potentially live), 18 (the network-call write-ahead mark), 19
@@ -183,7 +183,7 @@ def test_the_baseline_send_records_the_commitment_step_sequence_exactly() -> Non
         previous_kind = record.kind
 
     assert collapsed == [
-        CommitmentStep.SEND_BOUNDARY_VERIFICATION,  # VERIFY_ITEM x17, collapsed to one entry
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,  # VERIFY_ITEM x13, collapsed to one entry
         CommitmentStep.SEND_BOUNDARY_VERIFICATION,  # SEND_SEALED
         CommitmentStep.SEND_STARTED_DURABLE,  # SEND_STARTED
         CommitmentStep.POTENTIALLY_LIVE_TRANSITION,  # POTENTIALLY_LIVE_OBSERVED
@@ -1301,7 +1301,7 @@ def test_the_verification_is_retained_for_evidence_even_when_it_refuses() -> Non
     assert verification.halt_item is SendVerifyItem.CURRENT_COMMITMENT_EPOCH
     outcomes = {v.item: v.outcome for v in verification.verdicts}
     assert outcomes[SendVerifyItem.CURRENT_COMMITMENT_EPOCH] is VerifyOutcome.UNKNOWN
-    assert len(verification.verdicts) == 17
+    assert len(verification.verdicts) == 13
 
 
 def test_a_denied_construction_never_reaches_the_send_boundary() -> None:
@@ -1467,7 +1467,7 @@ def test_the_mapping_and_the_resolver_paths_produce_the_identical_verification()
     (resolved_verification,) = resolved_gateway.verifications
     assert resolved_verification == mapped_verification
     assert resolved_gateway.results == mapped_gateway.results
-    assert mapped_sink.kinds == ("VERIFY_ITEM",) * 17 + (
+    assert mapped_sink.kinds == ("VERIFY_ITEM",) * 13 + (
         "SEND_SEALED",
         "SEND_STARTED",
         "POTENTIALLY_LIVE_OBSERVED",

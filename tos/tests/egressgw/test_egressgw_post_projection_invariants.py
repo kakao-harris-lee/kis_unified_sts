@@ -213,7 +213,7 @@ def test_the_happy_path_still_records_the_exact_step_order() -> None:
         "NETWORK_CALL_ENTERED",
         "EGRESS_RESULT_RECORDED",
     )
-    assert sink.kinds[:17] == ("VERIFY_ITEM",) * 17
+    assert sink.kinds[:13] == ("VERIFY_ITEM",) * 13
     assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True
 
 

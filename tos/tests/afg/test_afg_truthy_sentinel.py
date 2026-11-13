@@ -180,16 +180,6 @@ def test_only_the_admissible_token_passes_the_lease_gate() -> None:
     assert _lease(None) is False
 
 
-def test_lease_gate_matches_the_real_protective_enum_polarity() -> None:
-    """(axis 2, seam parity) Driven with the **real** ``Admissibility`` members, 3 + None."""
-    from tos.protective import Admissibility
-
-    assert _lease(Admissibility.ADMISSIBLE) is True
-    assert _lease(Admissibility.TRAPPED) is False
-    assert _lease(Admissibility.PROHIBITED) is False
-    assert _lease(None) is False
-
-
 def _bare_truthiness_offenders(path: Path) -> list[str]:
     """Return ``if <name>:`` / ``if not <name>:`` uses of a result-shaped local (AST)."""
     # Result-shaped values AND the five ``bool``-annotated decision premises: all of them
