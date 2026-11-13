@@ -189,13 +189,14 @@ def test_guard_code_lines_are_measured_not_phantom(fault_id: str) -> None:
     timeline into fabricated provenance. The line is measured from the token, so moving
     the guard is not drift — deleting or rewriting it is, and that is what fails here.
     """
+    citation = _guard(fault_id)
     for path, token in _GUARD_SITES[fault_id]:
-        line = _guard_line(path, token)
         lines = (_REPO_ROOT / path).read_text(encoding="utf-8").splitlines()
-        assert 1 <= line <= len(lines), f"{fault_id}: {path}:{line} is past EOF"
-        assert token in lines[line - 1], (
-            f"{fault_id}: guard citation drifted — {path}:{line} no longer contains "
-            f"{token!r} (found {lines[line - 1].strip()!r})"
+        hits = [number for number, line in enumerate(lines, 1) if token in line]
+        assert hits, f"{fault_id}: {path} no longer holds {token!r}"
+        assert f"{path}:{hits[0]}" in citation, (
+            f"{fault_id}: the written injection_point {citation!r} does not carry the "
+            f"measured line {path}:{hits[0]} for {token!r}"
         )
 
 
