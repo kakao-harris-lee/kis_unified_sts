@@ -230,9 +230,7 @@ def reboot(root: Path, result_path: Path) -> int:
         "reservations_at_boot": reservations_at_boot,
         "reservations_after_refusals": _reservations(runtime),
         "authority_effect": (
-            None
-            if recovery is None
-            else dataclasses.asdict(recovery.authority_effect)
+            None if recovery is None else dataclasses.asdict(recovery.authority_effect)
         ),
     }
     runtime.rcl_log.close()
