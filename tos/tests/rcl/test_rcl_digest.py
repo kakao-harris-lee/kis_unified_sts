@@ -1,13 +1,4 @@
-"""Digest-level Decimal normalization canaries (canonical §3.1a; RCL D1 fix).
-
-Regression lock for the shared :data:`tos.rcl.vector.CanonicalDecimal` normalizer:
-every covered Decimal field (magnitude AND the record quantity bounds) must yield an
-EQUAL canonical digest for numerically-equal values (``1.0`` == ``1.00``; ``100`` ==
-``1E+2``) and a DIFFERENT digest for distinct values. Without normalization,
-``model_dump(mode="json")`` stringifies the Decimal and equal values would diverge
-=> spurious CRITICAL_CONFLICT on idempotent re-emission + spurious grant
-non-authorization.
-"""
+"""Digest-level Decimal normalization canaries (canonical §3.1a; RCL D1 fix)."""
 
 from __future__ import annotations
 
@@ -25,9 +16,6 @@ def _reservation_with_magnitude(magnitude: Decimal):
         )
     )
     return issue_reservation(reservation_id="x", adverse_increment_vector=vector)
-
-
-# ---- magnitude (CapacityComponent.magnitude) -------------------------------
 
 
 def test_magnitude_scale_equal_values_share_digest() -> None:
@@ -52,9 +40,6 @@ def test_magnitude_distinct_values_differ_in_digest() -> None:
         _reservation_with_magnitude(Decimal("100")).canonical_digest
         != _reservation_with_magnitude(Decimal("200")).canonical_digest
     )
-
-
-# ---- a newly-normalized record quantity field ------------------------------
 
 
 def test_approved_quantity_bound_equal_values_share_digest() -> None:
@@ -91,5 +76,4 @@ def test_normalized_field_value_is_canonical_on_the_model() -> None:
     reservation = issue_reservation(
         reservation_id="x", approved_quantity_upper_bound=Decimal("1E+2")
     )
-    # Decimal("100") == Decimal("1E+2") by value; both normalize to the same object.
     assert reservation.approved_quantity_upper_bound == Decimal("100")

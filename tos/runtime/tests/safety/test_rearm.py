@@ -1,10 +1,4 @@
-"""``tos_runtime.safety.rearm`` — the new-risk-halt clear door.
-
-Replaces the ``tos.hag`` two-person quorum test module (plan S2-a). What is asserted here
-is every property the door still holds: the latch's own identity first, the custody gate,
-cross-environment isolation, exactly one positively-APPROVE principal, and a durable
-evidence row on both outcomes.
-"""
+"""``tos_runtime.safety.rearm`` — the new-risk-halt clear door."""
 
 from __future__ import annotations
 
@@ -48,11 +42,6 @@ def _kinds(evidence_store: SqliteEvidenceStore) -> list[str]:
     return [row.kind for row in evidence_store.iter_entry_meta()]
 
 
-# ---------------------------------------------------------------------------
-# the happy path
-# ---------------------------------------------------------------------------
-
-
 def test_one_named_approver_clears(
     tmp_path: Path, evidence_store: SqliteEvidenceStore
 ) -> None:
@@ -68,13 +57,7 @@ def test_one_named_approver_clears(
 def test_a_seq_whose_approval_was_already_used_is_refused(
     tmp_path: Path, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """One approval, one use (grade-A review LOW 2). ``tos.hag``'s
-    ``approval_set_single_use`` is gone, so the workflow reads its own durable
-    ``REARM_APPROVED`` history back instead.
-
-    Failing input without the guard: a violation re-latches at the SAME ``evidence_seq``
-    and the leftover approval file clears it a second time with nobody deciding again.
-    """
+    """One approval, one use (grade-A review LOW 2). ``tos.hag``'s"""
     write_rearm_approval_file(tmp_path, latched_evidence_seq=_SEQ)
     first = _workflow(tmp_path, evidence_store).approve_and_clear(_SEQ)
     assert first.status is ReArmStatus.APPROVED
@@ -89,9 +72,7 @@ def test_a_seq_whose_approval_was_already_used_is_refused(
 def test_the_single_use_check_reads_the_store_not_an_in_process_cache(
     tmp_path: Path, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """A FRESH workflow object over the same store refuses identically — the guard is
-    log-enforced, not memory-enforced, so restarting the process does not re-open the
-    door (the same discipline ``safety.ack._already_acknowledged`` applies)."""
+    """A FRESH workflow object over the same store refuses identically — the guard is"""
     write_rearm_approval_file(tmp_path, latched_evidence_seq=_SEQ)
     assert (
         _workflow(tmp_path, evidence_store).approve_and_clear(_SEQ).status
@@ -110,8 +91,7 @@ def test_the_single_use_check_reads_the_store_not_an_in_process_cache(
 def test_a_different_seq_is_unaffected_by_an_earlier_use(
     tmp_path: Path, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """The guard is per-seq, not a global latch: a genuinely new violation at a NEW seq
-    still clears with its own approval."""
+    """The guard is per-seq, not a global latch: a genuinely new violation at a NEW seq"""
     write_rearm_approval_file(tmp_path, latched_evidence_seq=_SEQ)
     assert (
         _workflow(tmp_path, evidence_store).approve_and_clear(_SEQ).status
@@ -122,11 +102,6 @@ def test_a_different_seq_is_unaffected_by_an_earlier_use(
         _workflow(tmp_path, evidence_store).approve_and_clear(_SEQ + 1).status
         is ReArmStatus.APPROVED
     )
-
-
-# ---------------------------------------------------------------------------
-# the approval file itself
-# ---------------------------------------------------------------------------
 
 
 def test_no_approval_file_is_refused_and_evidenced(
@@ -267,16 +242,10 @@ def test_a_malformed_yaml_file_is_refused(
     )
 
 
-# ---------------------------------------------------------------------------
-# prepare_new_risk_halt_clear — the latch's own identity first
-# ---------------------------------------------------------------------------
-
-
 def test_no_latch_is_refused_before_the_approval_file_is_read(
     tmp_path: Path, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """``NO_LATCH`` is decided without ever reading the approval file — so no approval
-    file is written here, and the refusal is still the latch's, not the file's."""
+    """``NO_LATCH`` is decided without ever reading the approval file — so no approval"""
     decision = prepare_new_risk_halt_clear(
         current=None,
         latched_evidence_seq=_SEQ,
@@ -346,11 +315,6 @@ def test_an_approved_file_hands_back_the_attestation_and_no_refusal(
     )
     assert decision.refusal is None
     assert decision.attestation_text == "operator-rearm-approved:alice"
-
-
-# ---------------------------------------------------------------------------
-# secret hygiene
-# ---------------------------------------------------------------------------
 
 
 def test_no_evidence_row_carries_a_credential_shaped_kind(

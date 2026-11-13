@@ -1,13 +1,4 @@
-"""Composite + transition records — representability, completeness, swap, conflict (§2/§4).
-
-The five §14 composites are all constructible and digest-deterministic (STATE-EV-001
-representability slice); the five dimension fields are required non-Optional with no
-default (missing => ValidationError; NONE != None); a dimension-swap fails StrEnum
-coercion (global string distinctness); dropping any required covered path fails issuance;
-identity is independent of the digest so a same-id / different-bytes pair is a
-CRITICAL_CONFLICT; and the records are frozen with no dimension-mutation method
-(representation != effect). [STATE-EV-001 slice — /2 durable persistence deferred]
-"""
+"""Composite + transition records — representability, completeness, swap, conflict (§2/§4)."""
 
 from __future__ import annotations
 
@@ -52,18 +43,9 @@ _ARTIFACTS: list[tuple[type[DigestBoundArtifact], Callable[..., dict[str, Any]]]
 ]
 
 
-# ---------------------------------------------------------------------------
-# §14 representability + digest determinism (STATE-EV-001 slice)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("fixture", ALL_14_FIXTURES, ids=lambda c: c.composite_state_id)
 def test_all_14_fixtures_are_representable(fixture: CompositeState) -> None:
-    """(STATE-EV-001) Every §14 composite is a constructible, issued frozen product.
-
-    Representability is a SEPARATE claim from coupling-cleanliness (design #8 §5.0): all
-    five construct; only three are coupling-clean (see test_orthostate_coupling).
-    """
+    """(STATE-EV-001) Every §14 composite is a constructible, issued frozen product."""
     assert fixture.status is ArtifactStatus.ISSUED
     assert fixture.canonical_digest is not None
     assert fixture.composite_state_id is not None
@@ -95,11 +77,6 @@ def test_distinct_dimensions_change_the_digest() -> None:
     assert a.canonical_digest != b.canonical_digest
 
 
-# ---------------------------------------------------------------------------
-# Completeness — required non-Optional dimensions; NONE != None (§4.4)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("field", _DIMENSION_FIELDS)
 def test_missing_dimension_field_is_unconstructable(field: str) -> None:
     """(canary §4.4) Omitting any of the five dimension fields fails construction (no default)."""
@@ -127,10 +104,6 @@ def test_issued_composite_requires_all_five_concrete() -> None:
     assert c.missing_required_fields() == []
 
 
-# ---------------------------------------------------------------------------
-# Dimension-swap structural canary (§4.2)
-# ---------------------------------------------------------------------------
-
 _SWAP_CASES = [
     ("broker_order_state", IntentState.PROPOSED),
     ("knowledge_state", BrokerOrderState.UNKNOWN),
@@ -148,11 +121,6 @@ def test_dimension_swap_is_rejected(field: str, foreign_value: object) -> None:
     kwargs[field] = foreign_value
     with pytest.raises(ValidationError):
         CompositeState.issue(scheme=SCHEME, **kwargs)
-
-
-# ---------------------------------------------------------------------------
-# Required-covered drop-one (both records) (§2.3/§2.4)
-# ---------------------------------------------------------------------------
 
 
 def _required_cases() -> list[Any]:
@@ -191,11 +159,6 @@ def test_issued_record_requires_independent_id(bad_id: object) -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# Same-id / different-bytes conflict — fresh-id-per-observation (§2.3/§4.5)
-# ---------------------------------------------------------------------------
-
-
 def _classify_composites(a: CompositeState, b: CompositeState) -> RecordPairKind:
     return classify_record_pair(
         a.composite_state_id,
@@ -206,11 +169,7 @@ def _classify_composites(a: CompositeState, b: CompositeState) -> RecordPairKind
 
 
 def test_same_id_diff_bytes_is_critical_conflict() -> None:
-    """(canary §4.5) A same-composite-id / different-dimension pair is a CRITICAL_CONFLICT.
-
-    A legitimate transition must be a NEW observation (new id); a same-id byte change is
-    a forgery / replay, detectable only because id ⊥ digest (§3.1).
-    """
+    """(canary §4.5) A same-composite-id / different-dimension pair is a CRITICAL_CONFLICT."""
     a = issue_composite(
         composite_state_id="cs-x", broker_order_state=BrokerOrderState.WORKING
     )
@@ -250,11 +209,6 @@ def test_transition_record_same_id_diff_bytes_conflicts() -> None:
     assert kind is RecordPairKind.CRITICAL_CONFLICT
 
 
-# ---------------------------------------------------------------------------
-# Frozen + no mutation surface (§4.6 representation != effect)
-# ---------------------------------------------------------------------------
-
-
 def test_composite_is_frozen() -> None:
     """An issued composite cannot be mutated in place (frozen; append-only §2.0)."""
     c = issue_composite()
@@ -263,11 +217,7 @@ def test_composite_is_frozen() -> None:
 
 
 def test_no_dimension_mutation_method_on_records() -> None:
-    """(canary §4.6) No record exposes a method that mutates another dimension / normalizes.
-
-    Representation != effect: state changes occur only through an owning authority's
-    committed transition, never by a method on the record (ADR-002-005 §12 line 191).
-    """
+    """(canary §4.6) No record exposes a method that mutates another dimension / normalizes."""
     for record in (issue_composite(), issue_transition_record()):
         forbidden = [
             name

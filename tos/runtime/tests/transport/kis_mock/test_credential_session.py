@@ -1,12 +1,4 @@
-"""Hermetic tests for ``tos_runtime.transport.kis_mock.credential_session`` — the C-2 decision
-(C) pins (``docs/plans/2026-09-23-tos-kis-credential-ownership-decision-c2.md`` §4.3):
-
-1. Two consumers of one app key share one session, so their first calls in the same
-   millisecond issue exactly ONE token (each building its own lifecycle issued two — the
-   collision KIS answers with HTTP 403).
-2. No module under ``tos_runtime`` other than the session and its lifecycle loads from custody.
-3. The key/secret handed out by ``request_credentials()`` are unreadable once the block exits.
-"""
+"""Hermetic tests for ``tos_runtime.transport.kis_mock.credential_session`` — the C-2 decision"""
 
 from __future__ import annotations
 
@@ -35,8 +27,6 @@ _KEY_SCOPE = "kis_mock.app_key"
 _SECRET_SCOPE = "kis_mock.app_secret"
 _BASE = "https://openapivts.koreainvestment.com:29443"
 _TOKEN_PATH = "/oauth2/tokenP"
-#: The pacer's spacing kept at 1 ms: these pins are about custody and the token lifecycle, and the
-#: fake clock never advances on its own (pacing has its own suite, ``test_pacer.py``).
 _PACING = KisPacing(min_interval_ms=1, wait_budget_ms=60_000)
 
 
@@ -88,13 +78,8 @@ def _session_for(
     return registry.session_for(client=client, **terms)
 
 
-# -- pin 1: one app key, one token lifecycle -------------------------------------------------
-
-
 def test_two_consumers_of_one_app_key_issue_exactly_one_token() -> None:
-    """Order transport and quote intake ask in the same millisecond (the fake clock never
-    moves). Mutation: make ``session_for`` build a fresh session each call -> 2 issues and a
-    ``TokenStale`` for nobody, but a real broker 403 for the second -> red."""
+    """Order transport and quote intake ask in the same millisecond (the fake clock never"""
     registry = _registry()
     order_client, quote_client = _CountingTokenClient(), _CountingTokenClient()
     order_session = _session_for(registry, order_client)
@@ -137,8 +122,6 @@ def test_a_different_app_key_gets_its_own_session() -> None:
     assert first is not other
 
 
-# -- pin 2: custody is loaded only by the session and its lifecycle --------------------------
-
 _RUNTIME_SRC = Path(__file__).resolve().parents[3] / "src" / "tos_runtime"
 _ALLOWED_LOADERS = {
     _RUNTIME_SRC / "transport" / "kis_mock" / "credential_session.py",
@@ -175,11 +158,7 @@ def test_only_the_credential_session_and_its_lifecycle_load_from_custody() -> No
         if path not in _ALLOWED_LOADERS and (lines := _custody_load_calls(path))
     }
     assert offenders == {}
-    # The scan itself is live: the session module is found by the same predicate.
     assert _custody_load_calls(next(iter(sorted(_ALLOWED_LOADERS))))
-
-
-# -- pin 3: handles die with the block ---------------------------------------------------------
 
 
 def test_credentials_are_unreadable_after_the_block_exits() -> None:
@@ -203,8 +182,7 @@ def test_app_credentials_are_unreadable_after_the_block_exits() -> None:
 
 
 def test_a_stale_token_refuses_before_any_key_is_loaded() -> None:
-    """``request_credentials`` asks for the token first — inside the reissue cooldown with an
-    expired token nothing is loaded from custody."""
+    """``request_credentials`` asks for the token first — inside the reissue cooldown with an"""
     custody = _custody()
     monotonic = FakeMonotonicSource(start_ms=1_000)
     session = _session_for(
@@ -213,19 +191,14 @@ def test_a_stale_token_refuses_before_any_key_is_loaded() -> None:
     with session.request_credentials():
         pass
     loads_after_first = len(custody.load_calls)
-    monotonic.advance(2_000)  # token expired, cooldown (61 s) not elapsed
+    monotonic.advance(2_000)
     with pytest.raises(TokenStale), session.request_credentials():
         pass
     assert len(custody.load_calls) == loads_after_first
 
 
-# -- issue #950: the session is shared across threads ----------------------------------------
-
-
 class _SlowTokenClient:
-    """A token POST that holds the issuing thread until released — so a second thread asks
-    while the first is mid-issue, the exact race a FETCH thread and the loop thread make.
-    """
+    """A token POST that holds the issuing thread until released — so a second thread asks"""
 
     def __init__(self) -> None:
         self.issued = 0
@@ -243,11 +216,7 @@ class _SlowTokenClient:
 
 
 def test_concurrent_token_refresh_from_two_threads_issues_exactly_one_post() -> None:
-    """Issue #950 acceptance: two threads ask for the token at once (fill observer FETCH thread
-    and the loop's order send) -> exactly one POST, both get the same token, and the state is
-    consistent afterwards. Mutation: drop the lifecycle's lock -> the second thread sees no
-    token and POSTs again (KIS answers a second issue inside a minute with 403) -> red.
-    """
+    """Issue #950 acceptance: two threads ask for the token at once (fill observer FETCH thread"""
     client = _SlowTokenClient()
     session = _session_for(_registry(), client)  # type: ignore[arg-type]
     tokens: list[str] = []
@@ -277,8 +246,7 @@ def test_concurrent_token_refresh_from_two_threads_issues_exactly_one_post() -> 
 
 
 def test_concurrent_stale_refusals_record_whole_rows() -> None:
-    """Two threads refused inside the cooldown each record one complete
-    ``TRANSPORT_TOKEN_STALE`` row — no lost or half-built record."""
+    """Two threads refused inside the cooldown each record one complete"""
     custody = _custody()
     monotonic = FakeMonotonicSource(start_ms=1_000)
     sink = RecordingEvidenceSink()

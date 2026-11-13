@@ -1,22 +1,4 @@
-"""§7.2-4 — the single VALID gate, its ∅ floor, and its polarity (design #32 §2.2/§6, MINOR-4).
-
-One definition, three sources, positive membership::
-
-    worst( admitted_field_state(admission), observation.field_state, ⋃ matching evaluations ) == VALID
-
-Two properties carry the weight and each has its own mutation canary here:
-
-* **the ∅ floor.** ``tos.capsule.worst`` aggregates an *empty* iterable to ``VALID`` — the lattice
-  identity (``field_state.py:70-87``, whose own docstring says callers must supply an explicit
-  ``UNKNOWN`` floor). Without the floor, a field with **no** evaluation would pass the gate
-  vacuously. The floor is what makes silence restrictive.
-* **the polarity.** The gate admits on ``is VALID``, never on ``!= INVALID``. Under a ``!= INVALID``
-  reading, ``UNKNOWN`` / ``STALE`` / ``CONFLICTED`` would all admit — the negative-gate regression
-  this series has met repeatedly (#18/#22/#23). The parametrized sweep below fails under that
-  mutation for three of the four non-VALID states.
-
-Regime tag: authoring evidence only; closes no EV (design #32 §1.1).
-"""
+"""§7.2-4 — the single VALID gate, its ∅ floor, and its polarity (design #32 §2.2/§6, MINOR-4)."""
 
 from __future__ import annotations
 
@@ -58,11 +40,6 @@ def _observation(**kwargs):
     )
 
 
-# ---------------------------------------------------------------------------
-# The gate as a function (design #32 §2.2)
-# ---------------------------------------------------------------------------
-
-
 def test_the_gate_is_valid_only_when_all_three_sources_are_valid() -> None:
     """(§2.2) Admission VALID + observation VALID + a VALID evaluation naming the key."""
     _, obs = _observation()
@@ -70,11 +47,7 @@ def test_the_gate_is_valid_only_when_all_three_sources_are_valid() -> None:
 
 
 def test_an_unevaluated_field_is_unknown_not_vacuously_valid() -> None:
-    """(§2.2 ★ ∅ floor) No evaluation names the key ⇒ explicit UNKNOWN, never the empty identity.
-
-    Removing the floor makes ``worst`` return ``VALID`` here (its documented empty-set behaviour),
-    which is the vacuous-validity fail-open. This assertion is that mutation's canary.
-    """
+    """(§2.2 ★ ∅ floor) No evaluation names the key ⇒ explicit UNKNOWN, never the empty identity."""
     _, obs = _observation()
     assert value_field_state(obs, "close", ()) is FieldState.UNKNOWN
     assert (
@@ -127,11 +100,6 @@ def test_the_worst_of_several_matching_evaluations_wins() -> None:
         ),
     )
     assert state is FieldState.CONFLICTED
-
-
-# ---------------------------------------------------------------------------
-# The gate as a publication decision — polarity (design #32 §6)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("state", _NON_VALID_STATES)

@@ -1,27 +1,4 @@
-"""Representative instances for the canonical set-ordering pins (plan §3).
-
-Every pin in ``test_canonical_json_set_order.py`` (single process) and in
-``tests/tools/test_tos_canonical_set_order.py`` (many processes, many
-``PYTHONHASHSEED`` values) measures the *same* instances, built here.
-
-Two properties the builders must have, both of them review findings:
-
-* **Mixed-length set elements.** Sorting by a length-first key and sorting
-  lexicographically agree on same-length elements, so a golden built from
-  ``{"aa", "bb", "cc"}`` cannot tell the two apart and the "sort key" mutation
-  passes (review-798 2차 M-3(a)). :data:`MIXED_LENGTH_ELEMENTS` therefore mixes
-  one-, two- and three-character strings, upper and lower case, digits and a
-  non-ASCII letter.
-* **At least six elements per set.** With ``n`` elements, two processes draw the
-  same iteration order with probability ≈ ``1/n!``; at ``n = 3`` a seed-divergence
-  pin passes by luck ~3% of the time (review-798 1차 MEDIUM-2(a)). Six is the
-  floor, and the enum-valued sets use **every** member of their vocabulary.
-
-Instances are built with ``model_construct`` on purpose: the pins measure the
-serialization of the covered content, not artifact admissibility, and hand-
-building an admissible ``issue()`` call per model would make the pins expensive without
-measuring anything more (review-798 1차 MEDIUM-2(c)).
-"""
+"""Representative instances for the canonical set-ordering pins (plan §3)."""
 
 from __future__ import annotations
 
@@ -39,7 +16,6 @@ from tos.cur.records import CurrentnessPolicy, RestrictiveFenceRecord
 from tos.engine.records import EngineEvent, event_identity
 from tos.venue.records import OrderAdmissibilityDecision, VenueConstraintPolicy
 
-#: Deliberately mixed-length, mixed-case, non-ASCII-carrying set elements.
 MIXED_LENGTH_ELEMENTS: tuple[str, ...] = (
     "b",
     "aa",
@@ -52,11 +28,6 @@ MIXED_LENGTH_ELEMENTS: tuple[str, ...] = (
     "9",
 )
 
-#: The ``DigestBoundArtifact`` subclasses whose covered field tree holds a set
-#: (plan §1.2). Five of the original 17 are left: two were already deterministic
-#: through a per-model sorter, the other three were not. The seven safety-mesh
-#: models went with plan S2-a, the two nontrade Trial* models with S2-c, and the
-#: sbr trio plus posttrade's StatementCoverageManifest with S2-c's remainder.
 COVERED_SET_MODELS: tuple[type[DigestBoundArtifact], ...] = (
     BrokerCapabilityProfile,
     CurrentnessPolicy,
@@ -65,9 +36,6 @@ COVERED_SET_MODELS: tuple[type[DigestBoundArtifact], ...] = (
     VenueConstraintPolicy,
 )
 
-#: The two surviving models that carried their own ``sorted()`` before this
-#: change (it was six until S2-a/S2-c removed the rest); their
-#: digests must be bit-identical after it (plan §2.3).
 PREVIOUSLY_SORTED_MODELS: tuple[type[DigestBoundArtifact], ...] = (
     CurrentnessPolicy,
     RestrictiveFenceRecord,
@@ -75,7 +43,6 @@ PREVIOUSLY_SORTED_MODELS: tuple[type[DigestBoundArtifact], ...] = (
 
 _MAX_DEPTH = 8
 
-#: Preserves the concrete model type through :func:`build_instance`.
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 
@@ -100,15 +67,7 @@ def _set_elements(element_annotation: Any) -> tuple[Any, ...]:
 
 
 def value_for(annotation: Any, depth: int = 0) -> Any:
-    """Build one representative value for a pydantic field annotation.
-
-    Args:
-        annotation: The field annotation.
-        depth: Current recursion depth (nested models stop at ``_MAX_DEPTH``).
-
-    Returns:
-        A value of the annotated shape, with every set filled per the module doc.
-    """
+    """Build one representative value for a pydantic field annotation."""
     if depth > _MAX_DEPTH:
         return None
     origin = typing.get_origin(annotation)
@@ -153,15 +112,7 @@ def value_for(annotation: Any, depth: int = 0) -> Any:
 
 
 def build_instance(model_cls: type[_ModelT], depth: int = 0) -> _ModelT:
-    """Build one representative instance of ``model_cls`` (no validation).
-
-    Args:
-        model_cls: The pydantic model to build.
-        depth: Current recursion depth.
-
-    Returns:
-        A ``model_construct``-built instance with every field populated.
-    """
+    """Build one representative instance of ``model_cls`` (no validation)."""
     values = {
         name: value_for(field.annotation, depth)
         for name, field in model_cls.model_fields.items()
@@ -170,16 +121,7 @@ def build_instance(model_cls: type[_ModelT], depth: int = 0) -> _ModelT:
 
 
 def decision_tick_event() -> EngineEvent:
-    """A ``DECISION_TICK`` engine event — the non-``covered_content()`` path.
-
-    ``event_identity()`` digests ``EngineEvent.model_dump(mode="json")`` directly
-    (``tos/src/tos/engine/records.py``), and the runtime's driver recomputes a
-    digest of the same dump on the crash-recovery path. Neither goes through
-    ``covered_content()``, which is why the fix has to live in the serializer.
-
-    Returns:
-        An engine event whose decision-tick payload carries filled sets.
-    """
+    """A ``DECISION_TICK`` engine event — the non-``covered_content()`` path."""
     fields = EngineEvent.model_fields
     kind_annotation = fields["kind"].annotation
     kind_enum = kind_annotation if isinstance(kind_annotation, type) else None
@@ -191,21 +133,11 @@ def decision_tick_event() -> EngineEvent:
     return EngineEvent.model_construct(**values)
 
 
-#: The negative control: a raw ``frozenset`` iteration order, digested without
-#: going through any model. It MUST differ between two ``PYTHONHASHSEED`` values.
-#: Without it, a seed sweep where the seed never actually took effect would report
-#: "every digest is stable" for the wrong reason.
 CONTROL_KEY = "CONTROL.raw_frozenset_order"
 
 
 def digest_map() -> dict[str, str]:
-    """Every digest the set-ordering pins compare, keyed by a stable name.
-
-    Returns:
-        A mapping of pin key to canonical digest, covering every
-        :data:`COVERED_SET_MODELS` model (9 since plans S1-a/S2-a/S2-c; it was 19),
-        the two non-covered call shapes, and the :data:`CONTROL_KEY` negative control.
-    """
+    """Every digest the set-ordering pins compare, keyed by a stable name."""
     scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
     digests: dict[str, str] = {}
     for model_cls in COVERED_SET_MODELS:
@@ -214,7 +146,6 @@ def digest_map() -> dict[str, str]:
         digests[model_cls.__name__] = scheme.compute_digest(covered)
     event = decision_tick_event()
     digests["EngineEvent.event_identity"] = event_identity(event, scheme=scheme)
-    # The runtime driver's shape: compute_digest(event.model_dump(mode="json")).
     digests["EngineEvent.payload_digest"] = scheme.compute_digest(
         event.model_dump(mode="json")
     )

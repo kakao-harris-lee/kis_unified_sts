@@ -1,5 +1,4 @@
-"""``SyntheticLedgerWitness`` tests — reconstructs orders from the real durable
-evidence store (no separate ledger exists; see module docstring)."""
+"""``SyntheticLedgerWitness`` tests — reconstructs orders from the real durable"""
 
 from __future__ import annotations
 
@@ -40,9 +39,7 @@ def _append_result(
 def test_observe_reconstructs_ack_and_unknown_orders_from_the_evidence_store(
     store,
 ) -> None:
-    """One ACK + one UNKNOWN result, durably appended to a real evidence store (the
-    'tiny evidence store' fixture the task brief asks for) — the witness must derive
-    both orders from those rows, never from an invented ledger."""
+    """One ACK + one UNKNOWN result, durably appended to a real evidence store (the"""
     _append_result(
         store,
         attempt_id="a1",
@@ -125,8 +122,7 @@ def test_observe_returns_empty_orders_when_nothing_recorded(store) -> None:
 
 
 def test_observe_preserves_attempt_id_none_for_orphan_detection(store) -> None:
-    """An order with no attempt_id at all must survive as attempt_id=None — the
-    service layer relies on this to detect orphan broker orders."""
+    """An order with no attempt_id at all must survive as attempt_id=None — the"""
     _append_result(store, attempt_id=None, egress_result_kind="ACK")
     witness = SyntheticLedgerWitness(store)
     snapshot = witness.observe(WitnessScope(account="acct-1"))
@@ -141,9 +137,7 @@ def test_observe_raises_witness_unavailable_when_store_is_unreachable(store) -> 
 
 
 def test_module_never_writes_to_the_evidence_store() -> None:
-    """Negative-grep: this witness is read-only — it must never call ``store.append``
-    (a plain ``list.append`` used to build the returned payload list is fine; only the
-    evidence-store WRITE call is forbidden)."""
+    """Negative-grep: this witness is read-only — it must never call ``store.append``"""
     source = inspect.getsource(witness_synthetic)
     assert "_store.append(" not in source
     assert "store.append(" not in source

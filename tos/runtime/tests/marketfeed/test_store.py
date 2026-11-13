@@ -1,10 +1,4 @@
-"""Hermetic tests for :class:`tos_runtime.marketfeed.store.SqliteSnapshotStore`.
-
-Mutation coverage (plan ``docs/plans/2026-09-16-tos-tick-source-plan.md`` §5, this store's own
-scope): M3 (digest re-check on ``__call__``) and M4 (preimage durability across a restart, proven
-through the REAL kernel publication gate). Every sqlite file lives under ``tmp_path`` — no network,
-no ambient env (the ``tos/runtime/tests/conftest.py`` autouse hermetic guard covers both).
-"""
+"""Hermetic tests for :class:`tos_runtime.marketfeed.store.SqliteSnapshotStore`."""
 
 from __future__ import annotations
 
@@ -170,7 +164,7 @@ def test_put_is_idempotent_for_a_retried_identical_snapshot(tmp_path: Path) -> N
     capsule, snapshot, payload = one_bar()
     store = SqliteSnapshotStore(tmp_path / "store.sqlite3")
     store.put(snapshot, {"raw-1": payload})
-    store.put(snapshot, {"raw-1": payload})  # retry — must not raise a UNIQUE violation
+    store.put(snapshot, {"raw-1": payload})
 
     assert store.latest_as_of(instrument=INSTRUMENT) == AS_OF_MS
     assert len(store.candidates(snapshot, instrument_key=INSTRUMENT_KEY)) == 1
@@ -180,9 +174,7 @@ def test_put_is_idempotent_for_a_retried_identical_snapshot(tmp_path: Path) -> N
 def test_put_is_atomic_a_crash_before_commit_leaves_no_partial_rows(
     tmp_path: Path,
 ) -> None:
-    """Mutation-style proof of the atomicity contract: an injected failure before COMMIT must
-    leave BOTH tables exactly as they were — never a snapshot row with only some (or none) of
-    its preimages durably recorded."""
+    """Mutation-style proof of the atomicity contract: an injected failure before COMMIT must"""
     path = tmp_path / "store.sqlite3"
     capsule, snapshot, payload = one_bar()
 
@@ -208,17 +200,14 @@ def test_put_is_atomic_a_crash_before_commit_leaves_no_partial_rows(
 
 
 def test_restart_durability_real_resolver_still_admits(tmp_path: Path) -> None:
-    """Mutation M4: preimages held only in memory could not survive a restart. This proves the
-    durability is real by constructing a FRESH store over the SAME file after the producing store
-    is discarded, and publishing a view through it via the REAL kernel resolver — not a fixture
-    double."""
+    """Mutation M4: preimages held only in memory could not survive a restart. This proves the"""
     path = tmp_path / "store.sqlite3"
     capsule, snapshot, payload = one_bar()
 
     producer = SqliteSnapshotStore(path)
     producer.put(snapshot, {"raw-1": payload})
     producer.close()
-    del producer  # the producing process/object is gone — only the file remains
+    del producer
 
     reopened = SqliteSnapshotStore(path)
     resolver = MarketFeedContextResolver(

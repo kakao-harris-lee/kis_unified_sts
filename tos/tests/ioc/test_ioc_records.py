@@ -1,11 +1,4 @@
-"""Digest-bound artifact invariants (design #14 §2/§3.1; IOC-EV-001..006 substrate).
-
-id ⊥ digest => a same-id / different-bytes contradictory command / proof is a detectable
-``CRITICAL_CONFLICT``; ISSUED is reachable under Phase-1 null bounds; every artifact is frozen
-(append-only, no mutate); ``extra="forbid"`` rejects unknown / duplicate fields (§14 line 406);
-the ``EconomicEffectEnvelope`` is the rcl ``CapacityVector`` type; ``required_authority_scope`` is
-restrictive (never zero / wildcard); the authority effect is all-false.
-"""
+"""Digest-bound artifact invariants (design #14 §2/§3.1; IOC-EV-001..006 substrate)."""
 
 from __future__ import annotations
 
@@ -30,10 +23,6 @@ from ._ioc_strategies import (
     issue_policy,
     issue_proof,
 )
-
-# ---------------------------------------------------------------------------
-# digest binding — issuance is reachable under Phase-1 null bounds
-# ---------------------------------------------------------------------------
 
 
 def test_all_five_artifacts_issue_under_null_bounds() -> None:
@@ -61,11 +50,6 @@ def test_issued_intent_requires_concrete_generation_and_version() -> None:
     """(§5.1 required-covered) An issued intent missing its generation is unconstructable."""
     with pytest.raises((ArtifactIntegrityError, ValidationError)):
         ApprovedIntentContract.issue(scheme=SCHEME, intent_id="i", intent_version="v")
-
-
-# ---------------------------------------------------------------------------
-# id ⊥ digest — same-id / different-bytes is CRITICAL_CONFLICT (forgery / re-issue)
-# ---------------------------------------------------------------------------
 
 
 def test_contradictory_same_id_command_is_critical_conflict() -> None:
@@ -109,11 +93,6 @@ def test_distinct_generation_ids_are_distinct() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# EconomicEffectEnvelope is the rcl CapacityVector type (§0.4c / §5.5)
-# ---------------------------------------------------------------------------
-
-
 def test_economic_effect_envelope_is_rcl_capacity_vector() -> None:
     """(§0.4c type-seal) EconomicEffectEnvelope IS the rcl CapacityVector type — no self vector."""
     assert EconomicEffectEnvelope is CapacityVector
@@ -131,16 +110,9 @@ def test_ioc_defines_no_own_capacity_vector_type() -> None:
             ), f"tos.ioc unexpectedly defines its own vector type: {name}"
 
 
-# ---------------------------------------------------------------------------
-# required-authority-scope restrictive (§14 line 374) — never zero / wildcard
-# ---------------------------------------------------------------------------
-
-
 def test_proof_required_authority_scope_defaults_empty_restrictive() -> None:
     """(§14 line 374 / §4.7) The default required-authority-scope is empty — never a wildcard."""
     proof = issue_proof()
-    # An empty scope is the ∅ case a consumer treats as UNKNOWN / NON_CONFORMANT, never zero /
-    # wildcard / unconstrained authority — it is a plain empty tuple, not a "*" grant.
     assert proof.required_authority_scope == ()
     assert "*" not in proof.required_authority_scope
 
@@ -149,11 +121,6 @@ def test_proof_carries_exact_bounded_scope_when_present() -> None:
     """(§14 line 374) A present required-authority-scope is an exact bounded tuple."""
     proof = issue_proof(required_authority_scope=("send:ACCT-1:INSTR-1",))
     assert proof.required_authority_scope == ("send:ACCT-1:INSTR-1",)
-
-
-# ---------------------------------------------------------------------------
-# all-false authority + MaterialCommandChange (§7 / §5.8)
-# ---------------------------------------------------------------------------
 
 
 def test_command_and_proof_authority_effect_is_all_false() -> None:
@@ -188,11 +155,6 @@ def test_unknown_materiality_is_material() -> None:
     assert MaterialCommandChange(is_material=False).resolved_material() is False
 
 
-# ---------------------------------------------------------------------------
-# frozen / append-only + extra=forbid (§14 line 406)
-# ---------------------------------------------------------------------------
-
-
 def test_command_is_frozen_no_mutate() -> None:
     """(§2.0 / §6.2) A command is frozen — post-proof mutation is construction-impossible."""
     command = issue_command()
@@ -201,11 +163,6 @@ def test_command_is_frozen_no_mutate() -> None:
 
 
 def test_extra_field_is_forbidden() -> None:
-    """(extra=forbid) An unknown top-level model field is rejected.
-
-    NB: ``extra="forbid"`` covers only unknown *model fields*. A duplicate / surplus semantic
-    *axis* inside ``axis_bindings`` is NOT caught here — it is the ``command_conforms`` structural
-    guard's job (§5.1 / §14 line 406), regression-tested in ``test_ioc_conformance.py``.
-    """
+    """(extra=forbid) An unknown top-level model field is rejected."""
     with pytest.raises(ValidationError):
         OrderConformanceProof(proof_id="p", unknown_field=1)  # type: ignore[call-arg]

@@ -1,10 +1,4 @@
-"""§3 Order Construction — the G5 derivation's determinism, boundedness, and no-repair rule.
-
-Design #34 §12.1-5 targets: "동일 입력→동일 command/digest·미지 가격→denial(no default)·envelope
-밖→denial(no repair)·Q-MIC-3 조용한 폴백 뮤테이션 KILLED."
-
-Regime tag: authoring evidence only; closes no EV (design #34 §1.1).
-"""
+"""§3 Order Construction — the G5 derivation's determinism, boundedness, and no-repair rule."""
 
 from __future__ import annotations
 
@@ -82,11 +76,6 @@ def _derive(**overrides):
     )
 
 
-# ---------------------------------------------------------------------------
-# determinism (IOC-INV-002; design #34 §3.1 / §12.1-5)
-# ---------------------------------------------------------------------------
-
-
 def test_the_baseline_derivation_produces_the_authored_bounded_size() -> None:
     """(§3.1) risk_budget / per_unit_risk floored to the authored lot — 1000/50 = 20."""
     result = _derive()
@@ -144,11 +133,6 @@ def test_a_derived_size_is_always_an_exact_lot_multiple_inside_the_envelope(
         assert result.quantity is not None
         assert result.quantity % LOT_SIZE == 0
         assert result.quantity >= sizing_bound().min_quantity
-
-
-# ---------------------------------------------------------------------------
-# no invent / default / normalize / round / repair (RFC-005 §7:211-213)
-# ---------------------------------------------------------------------------
 
 
 def test_an_unknown_price_is_a_no_send_not_a_last_known_default() -> None:
@@ -244,21 +228,6 @@ def test_a_notional_ceiling_breach_is_denied_never_reduced() -> None:
     assert result.outcome is DerivationOutcome.DENIED
     assert "notional" in (result.denial_reason or "")
 
-
-# ---------------------------------------------------------------------------
-# exact bound boundaries (adversarial review MINOR-1 / surviving mutant N5)
-# ---------------------------------------------------------------------------
-#
-# The mutation N5 (`> bound.max_quantity` → `> bound.max_quantity + 1`) SURVIVED the first
-# suite: every ceiling test used a value far above the bound, so an off-by-one relaxation was
-# invisible. The reviewer's non-equivalence witness — risk_budget 1100 / per_unit 100 / max 10 ⇒
-# derived 11, which the shipped code denies and the mutant admits — is reproduced below, and the
-# same class is pinned symmetrically on the envelope floor and on both venue bounds, which had
-# the identical gap.
-#
-# ``lot_size`` is 1 for these cases on purpose: it makes "one lot above the ceiling" and "one
-# unit above the ceiling" the same value, which is the tightest boundary an off-by-one can hide
-# behind.
 
 _BOUNDARY_PER_UNIT = Decimal("100")
 _BOUNDARY_LOT = Decimal("1")
@@ -361,23 +330,8 @@ def test_a_notional_exactly_at_the_ceiling_is_derived() -> None:
     assert _derive(envelope=over).outcome is DerivationOutcome.DENIED
 
 
-# ---------------------------------------------------------------------------
-# pinned arithmetic context (adversarial review NIT-1)
-# ---------------------------------------------------------------------------
-
-
 def test_the_derivation_ignores_a_hostile_ambient_decimal_context() -> None:
-    """(NIT-1) ``decimal`` reads a per-thread context; the derivation must not.
-
-    A caller who had set a one-digit precision would otherwise change the derived size, or make
-    the venue lot remainder raise ``DivisionImpossible`` — ambient inputs the determinism claim
-    (IOC-INV-002; design #34 §3.1) does not admit.
-
-    The **inputs are built once, outside** the hostile context: a ``CanonicalDecimal`` field
-    normalizes at validation time, so constructing the bound under ``prec=1`` would corrupt the
-    injected values themselves and the test would be measuring the fixture rather than the
-    derivation. Only the call is made under the hostile context.
-    """
+    """(NIT-1) ``decimal`` reads a per-thread context; the derivation must not."""
     envelope = proposed_envelope(
         sizing_bound=sizing_bound(
             risk_budget=Decimal("1100"),
@@ -423,18 +377,8 @@ def test_the_synthetic_fill_band_ignores_a_hostile_ambient_decimal_context() -> 
     assert hostile == baseline
 
 
-# ---------------------------------------------------------------------------
-# the envelope encloses the bound (design #34 §3.1 MINOR-3)
-# ---------------------------------------------------------------------------
-
-
 def test_there_is_no_quantity_input_anywhere_on_the_construction_surface() -> None:
-    """(§3.1 MINOR-3) The author has no field through which to inject a size.
-
-    The structural block: neither the proposed envelope, the price observation, nor the venue
-    constraint carries a quantity *value* field — the only producer of a size is the derivation
-    over the governance-supplied bound.
-    """
+    """(§3.1 MINOR-3) The author has no field through which to inject a size."""
     surfaces = (proposed_envelope(), admitted_price(), venue_quantity_constraint())
     for surface in surfaces:
         for name in type(surface).model_fields:
@@ -488,11 +432,6 @@ def test_a_basis_outside_the_admitted_set_is_a_silent_widening() -> None:
     assert "not in the envelope's admitted set" in (result.denial_reason or "")
 
 
-# ---------------------------------------------------------------------------
-# the ioc declare-and-verify seal (design #34 §3.2)
-# ---------------------------------------------------------------------------
-
-
 def test_a_denied_derivation_compiles_no_command_at_all() -> None:
     """(§3.1) There is no partially-constructed artifact for a later stage to consume."""
     built = construction(price=admitted_price(value=None))
@@ -532,11 +471,6 @@ def test_no_silent_widening_is_witnessed_structurally_not_declared() -> None:
     assert denied.no_silent_widening_ok is None
 
 
-# ---------------------------------------------------------------------------
-# step 5 — the Economic Effect Envelope (∅ both-ways)
-# ---------------------------------------------------------------------------
-
-
 def test_the_effect_envelope_magnitudes_are_computed_from_the_derived_size() -> None:
     """(§3.2 step 5) Notional = quantity × price; units = quantity. Never self-reported."""
     built = construction()
@@ -562,11 +496,6 @@ def test_a_denied_derivation_yields_unknown_magnitudes() -> None:
         built.derivation, proposed_envelope().effect_dimensions
     )
     assert all(component.magnitude is None for component in envelope.components)
-
-
-# ---------------------------------------------------------------------------
-# step 3 — the non-authorizing venue fold (design #34 §3.2 MINOR-4)
-# ---------------------------------------------------------------------------
 
 
 def _fold(**overrides):
@@ -619,11 +548,6 @@ def test_an_absent_action_class_is_unknown() -> None:
     assert _fold(action_class=None) is OrderAdmissibilityResult.UNKNOWN
 
 
-# ---------------------------------------------------------------------------
-# the four injected stages
-# ---------------------------------------------------------------------------
-
-
 def _construction_stage(**overrides) -> OrderConstructionStage:
     """Build the step-2 stage over the suite's baseline inputs."""
     return OrderConstructionStage(
@@ -647,13 +571,7 @@ def _stage_request(
     *,
     value_view: ContextValueView | None = None,
 ) -> StageRequest:
-    """A minimal, real :class:`~tos.engine.records.StageRequest` (mypy stage 3 §1.3 rule 2 —
-    the request the stage actually reads, not a stand-in with an untyped ``proposal``
-    attribute). The stage reads ``step`` / ``proposal`` plus the one observation these
-    construction tests exercise: the tick's resolved value surface (design #35 §4.2).
-    ``held_position_magnitude`` stays at its real default (``None`` — nothing outstanding),
-    matching every call site below, none of which sets it.
-    """
+    """A minimal, real :class:`~tos.engine.records.StageRequest` (mypy stage 3 §1.3 rule 2 —"""
     proposal = build_proposal(
         scheme=SCHEME,
         proposer=Proposer(strategy_id="strat-fixture", strategy_version="v1"),
@@ -771,11 +689,6 @@ def test_a_quantity_above_the_venue_ceiling_never_reaches_a_command() -> None:
     assert result.outcome is DerivationOutcome.DENIED
 
 
-# ---------------------------------------------------------------------------
-# design #35 §4.2 — the value-surface price projection's exact-int admission
-# ---------------------------------------------------------------------------
-
-
 def _single_value_view(value: ScalarValue) -> ContextValueView:
     """A resolved value view carrying exactly one admitted ``"close"`` value."""
     return ContextValueView(
@@ -798,37 +711,15 @@ def _single_value_view(value: ScalarValue) -> ContextValueView:
 @settings(max_examples=25, deadline=None)
 @given(flag=st.booleans())
 def test_a_bool_valued_context_value_is_never_projected_as_a_price(flag: bool) -> None:
-    """(design #35 §4.2; adversarial review MINOR-1) ``True`` is not the price ``1``.
-
-    ``ScalarValue`` is ``bool | int | float | str`` (``dsl/vocabulary.py:93``), so a
-    ``bool``-valued :class:`~tos.dsl.ContextValue` is **reachable**, not hypothetical — and
-    ``bool`` is an ``int`` subclass in Python. :func:`admitted_price_from_view` therefore admits a
-    magnitude by **exact type** rather than by ``isinstance`` — and since design #36 §3.2 shared
-    that one check, the line is ``type(magnitude) is not int`` inside ``_exact_admitted_int_value``
-    (``construction.py:189``) and it now governs **both** projections; the docstring at
-    ``construction.py:164-166`` states the claim explicitly, and this is the canary that makes it
-    load-bearing.
-
-    Regressing that one check to ``isinstance`` would let ``True`` become ``Decimal(1)`` and be
-    sized against as a price, silently. The review's mutation of exactly that line survived the
-    whole suite before this test existed.
-
-    Both polarities are covered: ``False`` would project to ``Decimal(0)`` and then die at the
-    positive-magnitude guard, but ``True`` would sail through it — so refusing the *type*, not the
-    value, is what closes the hole for both.
-    """
+    """(design #35 §4.2; adversarial review MINOR-1) ``True`` is not the price ``1``."""
     view = _single_value_view(flag)
     projected = admitted_price_from_view(view, field_key="close")
 
-    # no magnitude, and no lineage pointer to a magnitude that was never carried
     assert projected.value is None
     assert projected.value_payload_digest is None
-    # …while the lineage the view genuinely has is still recorded honestly (∅ both ways: the
-    # view resolved, it simply carries nothing this projection may render as a price)
     assert projected.source == CAPSULE_CONTEXT_SOURCE
     assert projected.snapshot_digest == view.snapshot_canonical_digest
 
-    # and the consequence at the boundary that matters: no send is sized against it
     denied = derive_order_size(
         quantity_basis="RISK",
         envelope=proposed_envelope(),
@@ -838,20 +729,11 @@ def test_a_bool_valued_context_value_is_never_projected_as_a_price(flag: bool) -
     assert denied.outcome is DerivationOutcome.DENIED
     assert denied.quantity is None
 
-    # ★ canary of the canary: the very same view shape with an exact integer *does* project, so
-    #   the denial above is attributable to the bool and not to a broken fixture.
     admitted = admitted_price_from_view(_single_value_view(1), field_key="close")
     assert admitted.value == Decimal(1)
     assert admitted.value_payload_digest == "payload-digest-projection"
 
 
-# ---------------------------------------------------------------------------
-# design #36 §7.2 — the venue-shape price projection and the step-3 value surface
-# ---------------------------------------------------------------------------
-
-
-#: Every ``ScalarValue`` inhabitant, with the two forms ``FrozenModel``'s
-#: ``allow_inf_nan=False`` pin makes unconstructable held out (``canonical/_base.py:87``).
 _SCALAR_VALUES = (
     st.booleans()
     | st.integers()
@@ -876,19 +758,13 @@ def _venue_stage(**overrides: object) -> VenueConstraintStage:
 
 
 def test_admitted_shape_price_from_view_projects_an_exact_integer() -> None:
-    """(design #36 §4) The shape price is an exact int→int projection, not a Decimal.
-
-    ``OrderShapeFields.price`` is ``int`` (``venue/records.py:153``) and D-E2 exposes numeric
-    order-comparison values as integer minor / tick units (design #32 §2.5), so this projection
-    stays in int space: no Decimal round-trip, and therefore no truncation to invent.
-    """
+    """(design #36 §4) The shape price is an exact int→int projection, not a Decimal."""
     projected = admitted_shape_price_from_view(
         _single_value_view(4_499_000), field_key="close"
     )
 
     assert projected == 4_499_000
     assert type(projected) is int
-    # …and it is *not* the number the fixture injects, which is the whole point of the seam.
     assert projected != 4200
 
 
@@ -897,13 +773,7 @@ def test_admitted_shape_price_from_view_projects_an_exact_integer() -> None:
 def test_admitted_shape_price_from_view_refuses_a_bool_or_float(
     value: bool | float,
 ) -> None:
-    """(design #36 §4; #32 §2.5) ``True`` is not the shape price ``1``, and no float projects.
-
-    The polarity that matters is ``True``: ``bool`` is an ``int`` subclass, so an ``isinstance``
-    admission would silently price a shape at ``1``. ``False`` would project to ``0`` and be
-    caught downstream, but ``True`` would sail through — refusing the *type* closes both. Floats
-    stay fail-closed until the deterministic-float projection rule is ratified.
-    """
+    """(design #36 §4; #32 §2.5) ``True`` is not the shape price ``1``, and no float projects."""
     projected = admitted_shape_price_from_view(
         _single_value_view(value),
         field_key="close",
@@ -917,12 +787,7 @@ def test_admitted_shape_price_from_view_refuses_a_bool_or_float(
 def test_the_two_projections_admit_and_refuse_the_same_values(
     value: ScalarValue,
 ) -> None:
-    """(design #36 §3.2) One shared core, so the two projections cannot drift in what they admit.
-
-    The alternative the design rejected (P1) re-implemented the match + exact-int rule beside the
-    price projection, which would let a future relaxation reach one projection and not the other.
-    This is the canary that makes the shared core load-bearing rather than merely tidy.
-    """
+    """(design #36 §3.2) One shared core, so the two projections cannot drift in what they admit."""
     view = _single_value_view(value)
 
     shape_admits = admitted_shape_price_from_view(view, field_key="close") is not None
@@ -945,7 +810,6 @@ def test_the_step3_stage_prefers_the_value_surface_price() -> None:
     assert stage.resolved_shape is not None
     assert stage.resolved_shape.price == 4_499_000
     assert stage.resolved_shape.price != 4200
-    # only the price is re-sourced; every other injected field survives untouched.
     injected = venue_shape()
     assert stage.resolved_shape.quantity == injected.quantity
     assert stage.resolved_shape.order_type == injected.order_type
@@ -953,11 +817,7 @@ def test_the_step3_stage_prefers_the_value_surface_price() -> None:
 
 
 def test_the_step3_stage_falls_back_to_the_injected_shape_without_a_field_key() -> None:
-    """(design #36 §3.3) A value-free tick is *missing*, not "no price": the injection stands in.
-
-    Two ways to be value-free, both the injected shape unchanged — the same object, not a copy:
-    the stage was never wired to a governed field key, or the tick published no view.
-    """
+    """(design #36 §3.3) A value-free tick is *missing*, not "no price": the injection stands in."""
     injected = venue_shape()
 
     ungoverned = _venue_stage(shape=injected)
@@ -975,12 +835,7 @@ def test_the_step3_stage_falls_back_to_the_injected_shape_without_a_field_key() 
 
 
 def test_the_step3_stage_is_fail_closed_when_the_shape_price_is_unprojectable() -> None:
-    """(design #36 §4/§8) An unknown shape price is a structural UNKNOWN, never the stale 4,200.
-
-    Governed-but-unprojectable is the case that separates this seam from a default: the injected
-    price is *not* reinstated, so venue's own ``order_shape_admissible`` reaches its missing-bound
-    rule and the verdict is restrictive.
-    """
+    """(design #36 §4/§8) An unknown shape price is a structural UNKNOWN, never the stale 4,200."""
     non_integer = _venue_stage(shape_price_field_key="close")
     verdict = non_integer(
         _stage_request(

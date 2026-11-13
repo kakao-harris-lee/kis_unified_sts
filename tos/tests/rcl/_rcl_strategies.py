@@ -1,11 +1,4 @@
-"""Shared valid-artifact builders + strategies for the RCL property tests.
-
-Firewall-clean: imports only ``hypothesis`` and ``tos.*`` (RCL design §0.3). The
-``issue_*`` / ``*_required_kwargs`` builders populate every safety-load-bearing
-covered field each artifact's issuance guard demands, so a "valid" fixture is
-genuinely valid (never the all-null coverage illusion). The reserved ``"TBD"``
-placeholder is excluded from required-field text (a past flaky-test lesson).
-"""
+"""Shared valid-artifact builders + strategies for the RCL property tests."""
 
 from __future__ import annotations
 
@@ -33,20 +26,13 @@ from tos.rcl import (
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Text bound to a required-covered field must be concrete (never the reserved
-#: ``"TBD"`` placeholder the issuance guard rejects — design §3.2).
 REQUIRED_FIELD_TEXT = st.text(max_size=8).filter(lambda s: s != "TBD")
 
-#: A magnitude strategy over non-negative Decimals (no float; §0.3).
 MAGNITUDE = st.integers(min_value=0, max_value=1000).map(Decimal)
 
 
 def vec(**dims: Decimal | int | None) -> CapacityVector:
-    """Build a Capacity Vector from ``dimension_id=magnitude`` kwargs.
-
-    A ``None`` value is an UNKNOWN (unbounded) dimension; an int is coerced to
-    ``Decimal``.
-    """
+    """Build a Capacity Vector from ``dimension_id=magnitude`` kwargs."""
     components = tuple(
         CapacityComponent(
             dimension_id=name,
@@ -55,11 +41,6 @@ def vec(**dims: Decimal | int | None) -> CapacityVector:
         for name, value in dims.items()
     )
     return CapacityVector(components=components)
-
-
-# ---------------------------------------------------------------------------
-# Reservation / Commitment Record
-# ---------------------------------------------------------------------------
 
 
 def reservation_required_kwargs(**overrides: Any) -> dict[str, Any]:
@@ -86,11 +67,6 @@ def issue_reservation(**overrides: Any) -> ReservationRecord:
     return ReservationRecord.issue(
         scheme=SCHEME, **reservation_required_kwargs(**overrides)
     )
-
-
-# ---------------------------------------------------------------------------
-# Ledger Command Record
-# ---------------------------------------------------------------------------
 
 
 def command_required_kwargs(**overrides: Any) -> dict[str, Any]:
@@ -137,11 +113,6 @@ def commit_reservation_command(
     )
 
 
-# ---------------------------------------------------------------------------
-# RCL Transition Record
-# ---------------------------------------------------------------------------
-
-
 def transition_required_kwargs(**overrides: Any) -> dict[str, Any]:
     """Transition issuance kwargs with every required covered field concrete."""
     base: dict[str, Any] = {
@@ -159,11 +130,6 @@ def issue_transition(**overrides: Any) -> RclTransitionRecord:
     return RclTransitionRecord.issue(
         scheme=SCHEME, **transition_required_kwargs(**overrides)
     )
-
-
-# ---------------------------------------------------------------------------
-# Transmission Capability
-# ---------------------------------------------------------------------------
 
 
 def capability_required_kwargs(**overrides: Any) -> dict[str, Any]:
@@ -187,11 +153,6 @@ def issue_capability(**overrides: Any) -> TransmissionCapability:
     return TransmissionCapability.issue(
         scheme=SCHEME, **capability_required_kwargs(**overrides)
     )
-
-
-# ---------------------------------------------------------------------------
-# Protective Pool / Lease
-# ---------------------------------------------------------------------------
 
 
 def pool_required_kwargs(**overrides: Any) -> dict[str, Any]:
@@ -231,11 +192,6 @@ def issue_lease(**overrides: Any) -> ProtectiveLease:
     return ProtectiveLease.issue(scheme=SCHEME, **lease_required_kwargs(**overrides))
 
 
-# ---------------------------------------------------------------------------
-# Authoritative Snapshot
-# ---------------------------------------------------------------------------
-
-
 def complete_completeness(**overrides: Any) -> SnapshotCompleteness:
     """A snapshot completeness block with every element present (admissible)."""
     base: dict[str, Any] = {
@@ -273,11 +229,6 @@ def issue_snapshot(**overrides: Any) -> AuthoritativeSnapshot:
     return AuthoritativeSnapshot.issue(
         scheme=SCHEME, **snapshot_required_kwargs(**overrides)
     )
-
-
-# ---------------------------------------------------------------------------
-# Committed reservation view (reducer / binding predicate input)
-# ---------------------------------------------------------------------------
 
 
 def committed_reservation(

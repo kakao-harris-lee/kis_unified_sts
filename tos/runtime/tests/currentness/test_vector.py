@@ -1,9 +1,4 @@
-"""``CurrentnessAssembler`` tests (design #40 §5 order 6, lane R item 1).
-
-Covers the independent review fix of 39dd3993 (MEDIUM-A: owner verdicts are
-copied via ``DimensionReport``, never authored by this assembler; MEDIUM-B:
-an empty log is honestly not-established, never a ``-1`` placeholder).
-"""
+"""``CurrentnessAssembler`` tests (design #40 §5 order 6, lane R item 1)."""
 
 from __future__ import annotations
 
@@ -29,10 +24,6 @@ def _assembler(
     authority_dimension_reader=lambda: None,
     action_flow_dimension_reader=lambda: None,
 ) -> CurrentnessAssembler:
-    # Reader-map generalization (plan §2 decision 3) — this helper still
-    # exposes the two original named kwargs so every existing test below is
-    # unchanged; only the plumbing into CurrentnessAssembler's own
-    # constructor (now a single dimension_readers map) is adapted here.
     return CurrentnessAssembler(
         log,
         time_service,
@@ -53,8 +44,7 @@ def _assembler(
 
 
 def _seed_one_entry(log: SqliteCommitLog, writer_epoch: int) -> None:
-    """Durably commit one arbitrary entry so the log is no longer empty —
-    used by tests that need COMMIT_LOG genuinely established (MEDIUM-B)."""
+    """Durably commit one arbitrary entry so the log is no longer empty —"""
     from tos.rcl import CommandType, CommitEntry
 
     receipt = log.append_cas(
@@ -69,11 +59,6 @@ def _seed_one_entry(log: SqliteCommitLog, writer_epoch: int) -> None:
     from tos.rcl import AppendReceipt
 
     assert isinstance(receipt, AppendReceipt)
-
-
-# ============================================================================
-# fault contract: non-TRUSTED time snapshot refuses vector assembly
-# ============================================================================
 
 
 def test_assemble_refuses_when_time_not_started(
@@ -116,11 +101,6 @@ def test_assemble_refuses_when_no_epoch_acquired(
         unacquired_log.close()
 
 
-# ============================================================================
-# successful assembly + kernel-predicate-judged completeness
-# ============================================================================
-
-
 def test_assemble_issues_a_digest_verified_vector(
     log: SqliteCommitLog,
     trusted_time_service: FakeTimeService,
@@ -144,15 +124,7 @@ def test_narrow_mandate_is_floored_up_by_the_kernel_and_still_fails(
     writer_epoch: int,
     complete_policy,
 ) -> None:
-    """``vector_complete`` floors its ``mandated`` argument to at least
-    ``MANDATED_DIMENSION_FLOOR`` regardless of what the caller asks for (§5.1
-    v1.1 MINOR-1: "a caller may require more but never fewer") — so even a
-    policy that declares only the two dimensions this lane can supply, and a
-    mandate that asks for only those two, still fails, because the kernel
-    silently widens the mandate to the full ~21-member floor. This is the
-    correct, honest behavior — ``is_complete`` is a thin call-through and
-    must agree with the kernel exactly, never a local override that appears
-    to "achieve" completeness the kernel itself would refuse."""
+    """``vector_complete`` floors its ``mandated`` argument to at least"""
     assembler = _assembler(
         log, trusted_time_service, writer_epoch=writer_epoch, policy=complete_policy
     )
@@ -175,9 +147,7 @@ def test_vector_is_honestly_incomplete_under_the_full_mandated_floor(
     writer_epoch: int,
     full_floor_policy,
 ) -> None:
-    """This lane owns only a few of the ~20 §9 dimensions — the assembled
-    vector legitimately fails ``vector_complete`` against the real mandated
-    floor until the owning lanes are composed in (module docstring)."""
+    """This lane owns only a few of the ~20 §9 dimensions — the assembled"""
     assembler = _assembler(
         log, trusted_time_service, writer_epoch=writer_epoch, policy=full_floor_policy
     )
@@ -209,11 +179,6 @@ def test_extra_dimensions_are_included_in_the_assembled_vector(
     vector = assembler.assemble(extra_dimensions=(extra,))
     assert vector is not None
     assert DimensionKey.EGRESS_IDENTITY in {d.dimension_key for d in vector.dimensions}
-
-
-# ============================================================================
-# MEDIUM-B: an empty log is honestly not-established, never a -1 placeholder
-# ============================================================================
 
 
 def test_commit_log_dimension_is_not_established_on_an_empty_log(
@@ -259,10 +224,7 @@ def test_an_empty_log_never_yields_a_complete_vector_even_with_every_other_dimen
     writer_epoch: int,
     full_floor_policy,
 ) -> None:
-    """Synthesizes every other mandated dimension (as the "reachability"
-    test in test_proof.py does) but does NOT seed the log — COMMIT_LOG alone
-    must keep the vector incomplete, proving the empty-log fix is not a
-    no-op next to the other 20 dimensions."""
+    'Synthesizes every other mandated dimension (as the "reachability"'
     from tos.cur import CurrentnessDimension
 
     assembler = _assembler(
@@ -293,11 +255,6 @@ def test_an_empty_log_never_yields_a_complete_vector_even_with_every_other_dimen
     assert assembler.is_complete(vector) is False
 
 
-# ============================================================================
-# item3_fields — commitment_epoch_current via the kernel predicate only
-# ============================================================================
-
-
 def test_item3_fields_reports_current_when_epoch_matches(
     log: SqliteCommitLog,
     trusted_time_service: FakeTimeService,
@@ -319,17 +276,12 @@ def test_item3_fields_reports_not_current_after_a_newer_epoch_is_acquired(
     complete_policy,
 ) -> None:
     stale_epoch = writer_epoch
-    log.acquire_epoch(identity)  # advances current_epoch() past stale_epoch
+    log.acquire_epoch(identity)
     assembler = _assembler(
         log, trusted_time_service, writer_epoch=stale_epoch, policy=complete_policy
     )
     fields = assembler.item3_fields()
     assert fields.commitment_epoch_current is False
-
-
-# ============================================================================
-# commit_certificate — never a QuorumCommitCertificate
-# ============================================================================
 
 
 def test_commit_certificate_is_a_single_node_certificate_never_a_quorum_one(
@@ -347,11 +299,6 @@ def test_commit_certificate_is_a_single_node_certificate_never_a_quorum_one(
     assert type(certificate).__name__ != "QuorumCommitCertificate"
     assert certificate.writer_epoch == writer_epoch
     assert certificate.digest is not None
-
-
-# ============================================================================
-# MEDIUM-A: injected DimensionReport readers are copied, never authored
-# ============================================================================
 
 
 def test_authority_dimension_reader_report_is_copied_verbatim(
@@ -375,7 +322,6 @@ def test_authority_dimension_reader_report_is_copied_verbatim(
     dim = next(
         d for d in vector.dimensions if d.dimension_key is DimensionKey.SAFETY_AUTHORITY
     )
-    # every field is the OWNER's own report, never re-derived/defaulted here.
     assert dim.bound_generation == 3
     assert dim.positively_established is True
     assert dim.restrictive_floor == 2
@@ -387,9 +333,7 @@ def test_authority_dimension_reader_false_verdict_is_honored_not_overridden(
     writer_epoch: int,
     complete_policy,
 ) -> None:
-    """The whole point of MEDIUM-A: an owner reporting NOT established must
-    stay NOT established — this assembler must never force it True because
-    a bound_generation happens to be present."""
+    """The whole point of MEDIUM-A: an owner reporting NOT established must"""
     report = DimensionReport(
         bound_generation=3, positively_established=False, restrictive_floor=0
     )
@@ -450,11 +394,6 @@ def test_action_flow_dimension_reader_report_is_copied_verbatim(
     )
     assert dim.bound_generation == 7
     assert dim.positively_established is True
-
-
-# ============================================================================
-# last_assemble_complete (TOS Phase 5 W4 §2 decision 7 — operator projection)
-# ============================================================================
 
 
 def test_last_assemble_complete_is_none_before_the_first_call(
@@ -518,7 +457,6 @@ def test_reading_last_assemble_complete_does_not_itself_call_assemble(
         _counting_current_snapshot
     )
 
-    # Reading the property several times must never re-invoke assemble()'s own logic.
     for _ in range(3):
         _ = assembler.last_assemble_complete
     assert calls["n"] == 0

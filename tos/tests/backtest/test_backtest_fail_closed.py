@@ -1,19 +1,4 @@
-"""§8-3 / §8-10 — UNKNOWN conservatism and the fail-closed halt paths (design #33 §4.2/§5.1).
-
-RFC-010 §8:256-259 — "Negative tests are required" — and §6 원칙 4:193-196 makes failure paths
-first-class. The wiring's *only* safety value is that it stops, with its reason recorded, whenever a
-required fact is missing, denied, unknown, or unverifiable (RFC-002 §10.8:761).
-
-The UNKNOWN half is the subtler one. ``UNKNOWN`` and ``TIMEOUT`` are neither a rejection nor
-safe-to-retry (RFC-005 §11:325-327): the capacity projection is forced into quarantine —
-``QUARANTINED_UNKNOWN`` (Phase 3 wave 2 review finding #2 / kernel disposition KW2b-#2;
-ADR-002-005 §7 "until resolved") — nothing is released, and nothing is resubmitted (ADR-002-002
-INV-005:168 / INV-006:174). A harness that quietly retried, or that read a timeout as "not sent",
-would be manufacturing the double-send the whole design exists to prevent — so every one of those
-readings is asserted absent here.
-
-Regime tag: orchestration authoring evidence only; closes no EV (design #33 §1.1).
-"""
+"""§8-3 / §8-10 — UNKNOWN conservatism and the fail-closed halt paths (design #33 §4.2/§5.1)."""
 
 from __future__ import annotations
 
@@ -43,10 +28,6 @@ from ._backtest_fixtures import (
     run_scenario,
     stages_for,
 )
-
-# ---------------------------------------------------------------------------
-# §8-3 — UNKNOWN / TIMEOUT conservatism
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -78,7 +59,7 @@ def test_no_result_kind_whatsoever_frees_the_scope() -> None:
 
     for spec in MANDATED_SCENARIOS:
         if spec.scenario_id is ScenarioId.FAIL_CLOSED_HALT:
-            continue  # nothing was ever committed, so there is no reservation to retain
+            continue
         _run, core, _fill_model, _sink = run_scenario(spec)
         assert core.ledger.admits_new_exposure(instrument_key()) is False, (
             f"{spec.scenario_id.value} freed the scope — no egress result releases capacity "
@@ -94,11 +75,6 @@ def test_the_harness_never_retries_a_hand_off() -> None:
         assert not hasattr(BacktestDriver, forbidden)
         assert not hasattr(DeterministicFillModel, forbidden)
     assert "creates_aggregate_exposure_via_retry" in COORDINATOR_SHALL_NOT_FLAGS
-
-
-# ---------------------------------------------------------------------------
-# §8-10 — the fail-closed halt paths, in full
-# ---------------------------------------------------------------------------
 
 
 def test_a_stage_that_produces_no_decision_halts_as_stage_unknown() -> None:
@@ -157,12 +133,7 @@ def test_an_absent_send_boundary_is_a_stop_never_a_skip() -> None:
 
 
 def test_a_raising_band_leaves_the_projection_conservatively_potentially_live() -> None:
-    """(ADR-002-002 INV-005:168) A failed hand-off is never read as "not sent".
-
-    Exercised through the band's own fail-closed path: a hand-off with no bound settlement context
-    raises, and the projection — already advanced *before* the call (``sequencer.py:531``) — stays
-    ``POTENTIALLY_LIVE`` with nothing resubmitted.
-    """
+    """(ADR-002-002 INV-005:168) A failed hand-off is never read as "not sent"."""
     fill_model = build_fill_model(
         FillParameters(mode=FillMode.ACKNOWLEDGE, side=FillSide.BUY)
     )
@@ -171,7 +142,6 @@ def test_a_raising_band_leaves_the_projection_conservatively_potentially_live() 
 
     converter = build_converter()
     (tick,) = list(converter.stream(reference_bars(1)))
-    # The context is deliberately *not* bound — the driver would have bound it.
     from tos.engine import EngineEvent, EventKind
 
     result = core.handle(

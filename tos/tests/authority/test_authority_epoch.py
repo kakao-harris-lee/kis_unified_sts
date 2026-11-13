@@ -1,10 +1,4 @@
-"""Authority epoch currentness / fence + coordinate non-collapse (§5.1; §4.3/§4.7).
-
-Any-None coordinate or domain mismatch or stale epoch FENCES (fail-closed); and — the
-central §4.7 canary — a value from a *different* generation coordinate (Writer Epoch)
-placed in the Safety Authority epoch slot never satisfies the fence, because the two
-coordinates carry distinct floors (SA-EV-001/002/014 substrate; SA-INV-002).
-"""
+"""Authority epoch currentness / fence + coordinate non-collapse (§5.1; §4.3/§4.7)."""
 
 from __future__ import annotations
 
@@ -72,22 +66,13 @@ def test_guard_fires_both_ways() -> None:
 
 
 def test_coordinate_non_collapse_writer_epoch_cannot_satisfy_sa_fence() -> None:
-    """(canary §4.3/§4.7) A Writer-Epoch value in the SA-epoch slot never satisfies the fence.
-
-    The generation coordinates have DISTINCT floors: the Safety Authority epoch floor is
-    10 while the Writer Epoch is 3. Substituting the Writer-Epoch coordinate's value as a
-    claimed Safety Authority epoch (coordinate collapse) is fenced (3 < 10), whereas the
-    genuine Safety Authority epoch (11) is current — proving the two coordinates are not
-    interchangeable (§27 OQ2 "without collapsing authority separation").
-    """
+    """(canary §4.3/§4.7) A Writer-Epoch value in the SA-epoch slot never satisfies the fence."""
     gv = GenerationVector(safety_authority_epoch=11, writer_epoch=3)
     sa_state = epoch_state(authority_domain="acct-1", current_epoch_floor=10)
 
-    # The genuine Safety Authority epoch coordinate is current.
     assert (
         authority_epoch_current(gv.safety_authority_epoch, "acct-1", sa_state) is True
     )
-    # Collapsing the Writer Epoch coordinate into the SA-epoch slot is FENCED.
     assert authority_epoch_current(gv.writer_epoch, "acct-1", sa_state) is False
 
 

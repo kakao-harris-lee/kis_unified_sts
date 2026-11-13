@@ -1,41 +1,4 @@
-"""STATE-EV-001 EV-L2 component-fault suite — ``CompositeState`` (de)serialization.
-
-**Stage**: EV-L2 (VER-002-001 §5 line 146-148 verbatim — "A component is tested with
-controlled failure injection and authoritative state inspection"). Catalog: EV-L2 pilot
-design ``docs/plans/2026-07-29-tos-ev-l2-pilot-design.md`` §3, **11 faults**
-(``ST-01..ST-09``, ``ST-11``, ``ST-12``; ``ST-10`` is merged into ``ST-01`` per design
-§3 M6). One ``@pytest.mark.l2_fault`` test per catalog row.
-
-**Covered axis — read this before reading any result as coverage.** This suite covers the
-**storage-independent** axis of STATE-EV-001 only: representability, **no silent
-derivation** (VER-002-001 line 1024), and structural integrity. The Expected's *durable*
-limb — "remains representable and **durable**" (VER:1024), ADR-002-005 §13 line 197 "SHALL
-be durable and reconstructable after crash", AC-005-1 line 237 "representable **and
-persisted**" — designates a **real persisted authoritative record surviving a real fault**.
-That referent does not exist in an in-memory model, is EV-L3 (VER:150-152), and its
-persistence technology is undecided (ADR-002-005 §4 line 61). It is therefore **not
-evidenced here** and is carried as a §378 residual (design §2.2 / §2.3 alternative C, §9).
-Nothing in this file may be read as covering it.
-
-**Component** (the single component under injection): ``tos.orthostate.records.CompositeState``
-plus the digest-binding base it inherits (``tos.canonical._base.DigestBoundArtifact``).
-**Authoritative state inspected**: the reconstructed composite, or the construction-time
-verdict (``ValidationError`` / its ``ArtifactIntegrityError`` cause) — the component's own
-authoritative refusal, observed **structurally** and never self-reported (design §0.5-3).
-
-**Both-ways canary** (design §8.4): every fault first constructs the *unmutated* witness
-and asserts it is valid, so a rejection is attributable to the single injected mutation and
-can never be a vacuous refusal of everything.
-
-**Non-duplication** (design §8.3): ``ST-01/02/03/04/08/11`` re-frame guards that adjacent
-EV-L1 nodes already exercise (``test_orthostate_composite.py`` / ``test_orthostate_vocabulary.py``)
-as fault-schedule rows with a single mutation on an otherwise-valid witness; they are **not**
-a second acceptance of those guards. ``ST-05/06/07/09/12`` are L2-new.
-
-``ST-07`` additionally depends on the design §5 **H-4** hardening (canonicalization-scheme
-lookup failure wrapped as ``ArtifactIntegrityError``); before it the same injection escaped
-as a raw ``KeyError`` and would have been recorded as a ``DEVIATION`` (design §3 M4 / §5).
-"""
+"""STATE-EV-001 EV-L2 component-fault suite — ``CompositeState`` (de)serialization."""
 
 from __future__ import annotations
 
@@ -70,15 +33,6 @@ _BASE = "tos/src/tos/canonical/_base.py"
 _CANONICALIZATION = "tos/src/tos/canonical/canonicalization.py"
 _RECORD_PAIR = "tos/src/tos/canonical/record_pair.py"
 
-#: fault id -> the guard sites, each ``(path, token-identifying-the-guard-line)``.
-#:
-#: design §3 line 163 (v1.2 N3) makes measuring the *real* guard line an implementation
-#: obligation: the design table's own "가드 코드 라인" column is a docstring anchor for
-#: five rows and is deliberately NOT reused here. The line number is **measured at run
-#: time** from the token (:func:`_guard_line`) rather than recorded beside it, so the
-#: citation cannot go stale when unrelated lines above the guard move; the token itself
-#: is the anti-phantom seal — :func:`_guard_line` RAISES when the guard code is gone, so
-#: a later edit cannot leave the fault timeline citing code that no longer exists.
 _GUARD_SITES: dict[str, tuple[tuple[str, str], ...]] = {
     "ST-01": ((_RECORDS, "intent_state: IntentState"),),
     "ST-02": (
@@ -102,8 +56,6 @@ _GUARD_SITES: dict[str, tuple[tuple[str, str], ...]] = {
     ),
 }
 
-#: The design §3 catalog, in table order. ``ST-10`` is absent by design (merged into
-#: ``ST-01``, §3 M6) and its absence is asserted, not assumed.
 _CATALOG: tuple[str, ...] = (
     "ST-01",
     "ST-02",
@@ -120,11 +72,7 @@ _CATALOG: tuple[str, ...] = (
 
 
 def _guard_line(path: str, token: str) -> int:
-    """The 1-based line of the first line in ``path`` holding ``token``.
-
-    Raises ``AssertionError`` when the guard code is gone — an extractor that finds
-    nothing must fail rather than report an empty citation.
-    """
+    """The 1-based line of the first line in ``path`` holding ``token``."""
     lines = (_REPO_ROOT / path).read_text(encoding="utf-8").splitlines()
     for number, line in enumerate(lines, start=1):
         if token in line:
@@ -147,12 +95,7 @@ def _witness_ref(composite: CompositeState) -> str:
 
 
 def _error_disposition(exc: ValidationError) -> str:
-    """Structural disposition of a rejection: sorted ``<error-type>@<field path>``.
-
-    Derived from the component's own error surface, so a mutant that stops raising, or
-    raises for a *different* field, changes the observed string and turns the fault row
-    into a ``DEVIATION`` rather than silently staying ``MET``.
-    """
+    """Structural disposition of a rejection: sorted ``<error-type>@<field path>``."""
     parts = sorted(
         f"{err['type']}@{'.'.join(str(part) for part in err['loc'])}"
         for err in exc.errors()
@@ -161,12 +104,7 @@ def _error_disposition(exc: ValidationError) -> str:
 
 
 def _integrity_disposition(exc: ValidationError) -> str:
-    """Structural disposition naming the wrapped **cause** class (design §3 M3).
-
-    The design §3 Expected column is literally ``ValidationError(cause=ArtifactIntegrityError)``:
-    a bare ``ValidationError`` check would also pass for an ordinary type / missing-field
-    rejection, so the cause class is read out of pydantic's ``ctx["error"]`` and compared.
-    """
+    """Structural disposition naming the wrapped **cause** class (design §3 M3)."""
     causes = sorted(
         type(err["ctx"]["error"]).__name__
         for err in exc.errors()
@@ -175,20 +113,9 @@ def _integrity_disposition(exc: ValidationError) -> str:
     return f"ValidationError(cause={','.join(causes) or '<none>'})"
 
 
-# ---------------------------------------------------------------------------
-# anti-phantom: the recorded guard lines are measured, not asserted
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("fault_id", sorted(_GUARD_SITES))
 def test_guard_code_lines_are_measured_not_phantom(fault_id: str) -> None:
-    """Every ``injection_point`` this suite writes still names the real guard line.
-
-    Anti-phantom drift lock (design §0.5-1): a citation is only evidence while the cited
-    code is still there. Without this, a refactor silently converts the whole fault
-    timeline into fabricated provenance. The line is measured from the token, so moving
-    the guard is not drift — deleting or rewriting it is, and that is what fails here.
-    """
+    """Every ``injection_point`` this suite writes still names the real guard line."""
     citation = _guard(fault_id)
     for path, token in _GUARD_SITES[fault_id]:
         lines = (_REPO_ROOT / path).read_text(encoding="utf-8").splitlines()
@@ -207,23 +134,11 @@ def test_catalog_is_the_design_section_3_table() -> None:
     assert "ST-10" not in _CATALOG, "ST-10 is merged into ST-01 (design §3 M6)"
 
 
-# ---------------------------------------------------------------------------
-# ST-01..ST-04, ST-11 — construction-surface faults (L1-adjacent, re-framed)
-# ---------------------------------------------------------------------------
-
-
 def test_st_01_dropped_dimension_is_not_derived_from_its_neighbours(
     l2_fault_timeline,
 ) -> None:
-    """ST-01 — drop a mandatory dimension + **silent-derivation probe** (§3 M6, ST-10 merged).
-
-    VER-002-001 line 1024: "no dimension is silently derived from another except through an
-    explicit CPL invariant and owned transition". The four surviving dimensions of the §14
-    row-1 witness are exactly the ones that would *imply* a Broker state under any derivation
-    rule, so a component that derived it would construct successfully. The refusal names the
-    dropped dimension and **only** it — no default, no neighbour-derived value.
-    """
-    witness = issue_composite()  # both-ways (b): the unmutated witness is valid
+    """ST-01 — drop a mandatory dimension + **silent-derivation probe** (§3 M6, ST-10 merged)."""
+    witness = issue_composite()
     assert witness.broker_order_state is BrokerOrderState.NONE_OBSERVED
 
     kwargs = composite_required_kwargs()
@@ -232,8 +147,6 @@ def test_st_01_dropped_dimension_is_not_derived_from_its_neighbours(
         CompositeState.issue(scheme=SCHEME, **kwargs)
 
     observed = _error_disposition(caught.value)
-    # the silent-derivation probe: refusal is the ONLY outcome, and it is attributed to
-    # the dropped dimension alone (a derived default would have produced no error at all).
     assert {err["type"] for err in caught.value.errors()} == {"missing"}
 
     l2_fault_timeline.record(
@@ -250,15 +163,8 @@ def test_st_01_dropped_dimension_is_not_derived_from_its_neighbours(
 
 
 def test_st_02_none_is_not_the_none_state(l2_fault_timeline) -> None:
-    """ST-02 — substitute ``None`` for the ``NONE`` state (``NONE != None``).
-
-    ``TransmissionAttemptState.NONE`` ("no attempt yet") is a legitimate, load-bearing
-    value; a missing / ``None`` field is the absence of knowledge. Collapsing the two would
-    let "we never attempted" and "we do not know" share one representation.
-    """
-    witness = issue_composite(
-        transmission_attempt_state=TransmissionAttemptState.NONE
-    )  # both-ways (b): the NONE *state* is constructible
+    """ST-02 — substitute ``None`` for the ``NONE`` state (``NONE != None``)."""
+    witness = issue_composite(transmission_attempt_state=TransmissionAttemptState.NONE)
     assert witness.transmission_attempt_state.value == "NONE"
 
     with pytest.raises(ValidationError) as caught:
@@ -279,12 +185,7 @@ def test_st_02_none_is_not_the_none_state(l2_fault_timeline) -> None:
 
 
 def test_st_03_dimension_swap_is_unconstructable(l2_fault_timeline) -> None:
-    """ST-03 — put one dimension's value into another dimension's field.
-
-    Global string-value distinctness across the five dimension enums makes a swap fail
-    ``StrEnum`` coercion, so a five-coordinate composite cannot be silently collapsed into
-    a single order-status enumeration.
-    """
+    """ST-03 — put one dimension's value into another dimension's field."""
     witness = issue_composite()
     with pytest.raises(ValidationError) as caught:
         issue_composite(broker_order_state=IntentState.APPROVED)
@@ -324,11 +225,7 @@ def test_st_04_out_of_vocabulary_token_is_rejected(l2_fault_timeline) -> None:
 
 
 def test_st_11_scalar_meta_type_contamination(l2_fault_timeline) -> None:
-    """ST-11 — a non-numeric token in the ledger-placement scalar ``observation_revision``.
-
-    The self-excluded meta field is still schema-checked: a corrupted serial form cannot
-    smuggle a non-integer revision past reconstruction.
-    """
+    """ST-11 — a non-numeric token in the ledger-placement scalar ``observation_revision``."""
     witness = issue_composite(observation_revision=3)
     with pytest.raises(ValidationError) as caught:
         issue_composite(observation_revision="two")
@@ -347,20 +244,10 @@ def test_st_11_scalar_meta_type_contamination(l2_fault_timeline) -> None:
     assert observed == "ValidationError[int_parsing@observation_revision]"
 
 
-# ---------------------------------------------------------------------------
-# ST-05, ST-06, ST-07, ST-09, ST-12 — L2-new reconstruction faults
-# ---------------------------------------------------------------------------
-
-
 def test_st_05_covered_content_tampered_with_a_retained_digest(
     l2_fault_timeline,
 ) -> None:
-    """ST-05 — mutate covered content while retaining the original digest (**L2-new**).
-
-    The serial form of an already-issued observation is edited in one dimension and
-    re-presented with its old digest — the classic "same record, quietly changed" forgery.
-    Reconstruction recomputes the digest over the covered content and refuses.
-    """
+    """ST-05 — mutate covered content while retaining the original digest (**L2-new**)."""
     witness = issue_composite()
     with pytest.raises(ValidationError) as caught:
         CompositeState(
@@ -387,11 +274,7 @@ def test_st_05_covered_content_tampered_with_a_retained_digest(
 def test_st_06_digest_substituted_with_covered_content_retained(
     l2_fault_timeline,
 ) -> None:
-    """ST-06 — substitute the digest while retaining covered content (**L2-new**).
-
-    The symmetric counterpart of ST-05: an attacker who cannot change the content instead
-    re-labels it with another record's digest.
-    """
+    """ST-06 — substitute the digest while retaining covered content (**L2-new**)."""
     witness = issue_composite()
     other = issue_composite(intent_state=IntentState.ACTIVE)
     assert other.canonical_digest != witness.canonical_digest
@@ -419,14 +302,7 @@ def test_st_06_digest_substituted_with_covered_content_retained(
 
 
 def test_st_07_unregistered_canonicalization_version(l2_fault_timeline) -> None:
-    """ST-07 — an unregistered ``canonicalization_version`` (**L2-new; §5 H-4 dependent**).
-
-    A record whose scheme cannot be resolved has an *unverifiable* digest. Before the §5
-    H-4 hardening the lookup escaped as a raw ``KeyError`` — an unhandled lookup error, not
-    a fail-closed refusal — and this row would have been recorded as a ``DEVIATION``
-    (design §3 M4). Post-hardening the failure is an ``ArtifactIntegrityError``, so the
-    record is *unconstructable*.
-    """
+    """ST-07 — an unregistered ``canonicalization_version`` (**L2-new; §5 H-4 dependent**)."""
     witness = issue_composite()
     with pytest.raises(ValidationError) as caught:
         CompositeState(
@@ -451,12 +327,7 @@ def test_st_07_unregistered_canonicalization_version(l2_fault_timeline) -> None:
 
 
 def test_st_09_issued_status_with_a_null_digest(l2_fault_timeline) -> None:
-    """ST-09 — a lifecycle contradiction: ``ISSUED`` status carrying a null digest (**L2-new**).
-
-    ``DRAFT`` is the only state in which the digest is legitimately absent. An ``ISSUED``
-    record with no digest is a ledger citizen whose identity can never be verified, so the
-    contradiction is refused at construction rather than represented.
-    """
+    """ST-09 — a lifecycle contradiction: ``ISSUED`` status carrying a null digest (**L2-new**)."""
     witness = issue_composite()
     assert witness.status is ArtifactStatus.ISSUED and witness.canonical_digest
 
@@ -483,14 +354,7 @@ def test_st_09_issued_status_with_a_null_digest(l2_fault_timeline) -> None:
 
 
 def test_st_12_self_excluded_field_round_trip_is_stable(l2_fault_timeline) -> None:
-    """ST-12 — **positive canary**: a self-excluded field change leaves the record identical.
-
-    The both-ways companion of ST-05/ST-06 (design §2.3 / §8.4): the integrity guard must
-    refuse tampering **and** admit a legitimate ledger-placement change. If ``observation_revision``
-    leaked into the digest preimage, the same observation committed at two ledger positions
-    would produce two different digests — a false ``CRITICAL_CONFLICT`` on every replay.
-    A suite that only ever asserts refusals cannot tell a working guard from a broken one.
-    """
+    """ST-12 — **positive canary**: a self-excluded field change leaves the record identical."""
     witness = issue_composite()
     replaced = issue_composite(observation_revision=7)
 
@@ -514,20 +378,10 @@ def test_st_12_self_excluded_field_round_trip_is_stable(l2_fault_timeline) -> No
     assert observed == "DIGEST_STABLE_RECONSTRUCTION_IDENTICAL"
 
 
-# ---------------------------------------------------------------------------
-# ST-08 — same identity, different bytes
-# ---------------------------------------------------------------------------
-
-
 def test_st_08_same_id_different_bytes_is_a_critical_conflict(
     l2_fault_timeline,
 ) -> None:
-    """ST-08 — re-publish the same ``composite_state_id`` with different content.
-
-    Identity is *independent* of the digest, so the append-only log can represent the
-    conflict instead of silently letting the later write win. The authoritative state
-    inspected here is the classification verdict itself.
-    """
+    """ST-08 — re-publish the same ``composite_state_id`` with different content."""
     witness = issue_composite()
     forged = issue_composite(intent_state=IntentState.ACTIVE)
     assert forged.composite_state_id == witness.composite_state_id
@@ -539,7 +393,6 @@ def test_st_08_same_id_different_bytes_is_a_critical_conflict(
         forged.composite_state_id,
         forged.canonical_digest,
     )
-    # both-ways (b): an identical re-presentation is a duplicate, not a conflict.
     assert (
         classify_record_pair(
             witness.composite_state_id,

@@ -1,25 +1,4 @@
-"""§0.3 import-closure + **network-absence** canary for ``tos.brokeradapter``.
-
-This is the package where the closure canary is not merely hygiene but the mechanical evidence for
-the design's largest judgement (§2 / §2.2-①): the real broker path **cannot** be a ``tos/``
-artifact, because ``tos/`` forbids network stdlib and a real transport needs it. If a socket, an
-HTTP client, or a credential ever appeared here, the judgement would be false — so it is asserted
-directly, and the assertion is itself canaried against a planted violation.
-
-The declared closure is the series' narrowest::
-
-    {tos, tos.canonical, tos.ordering, tos.engine, tos.brokercap, tos.brokeradapter}
-
-Two claims, proven separately (see the egressgw twin for the reasoning): the **static** claim
-that no source imports a ``tos.*`` module off the list, and the **runtime** claim that the closure
-is bounded by ``declared ∪ closure(tos.engine)`` — ``tos.engine`` is a declared edge and an
-integrator whose own §0.3-locked closure legitimately rides along.
-
-``tos.egressgw`` is asserted absent: the gateway injects itself into this boundary through a
-structural port, never the reverse.
-
-Regime tag: authoring evidence only; closes no EV (design #34 §1.1).
-"""
+"""§0.3 import-closure + **network-absence** canary for ``tos.brokeradapter``."""
 
 from __future__ import annotations
 
@@ -42,14 +21,6 @@ _ALLOWED_TOS_PACKAGES = frozenset(
     }
 )
 
-#: ``tos.orthostate`` and (kernel round #3 §2 결정 1, 2026-09-12) ``tos.nontrade`` are
-#: deliberately absent from this list: ``tos.engine`` itself now directly realizes both
-#: (``engine/orthostate_projection.py``; ``engine/_corporate_action.py``; see
-#: ``tos/tests/engine/test_engine_import_closure.py``), so each reaches every ``tos.engine``
-#: consumer, this package included, through the already ratified ``tos.engine`` edge —
-#: ``test_runtime_closure_is_bounded_by_the_declared_set_plus_the_engine_edge`` below is
-#: exactly the test that accounts for it (its bound already includes the measured
-#: ``tos.engine`` closure, so it stays green unedited).
 _FORBIDDEN_SIBLINGS = frozenset(
     {
         "tos.egressgw",
@@ -109,8 +80,6 @@ _FORBIDDEN_PREFIXES = (
 
 _SRC = Path(__file__).resolve().parents[2] / "src" / "tos" / "brokeradapter"
 
-#: The network / transport stdlib and third-party clients a *real* broker adapter would need —
-#: and which this package may never contain (design #34 §2.2-① / §5.1).
 _NETWORK_MODULES = frozenset(
     {
         "socket",
@@ -132,7 +101,6 @@ _NETWORK_MODULES = frozenset(
         "grpc",
     }
 )
-#: Credential-shaped identifiers a real transport would carry; none may appear here (§4.5).
 _CREDENTIAL_FRAGMENTS = (
     "app_key",
     "app_secret",
@@ -269,11 +237,6 @@ def _run_child(target) -> dict:
     return result
 
 
-# ---------------------------------------------------------------------------
-# the load-bearing canary: no network anywhere in this package
-# ---------------------------------------------------------------------------
-
-
 def _network_offenders(path: Path) -> list[str]:
     """Every network / credential / clock / RNG / escape offender in one source."""
     offenders: list[str] = []
@@ -394,11 +357,6 @@ def test_the_network_canary_detects_a_planted_violation(tmp_path: Path) -> None:
         assert expected in joined, f"the network canary missed a planted {expected}"
 
 
-# ---------------------------------------------------------------------------
-# the closure itself
-# ---------------------------------------------------------------------------
-
-
 def test_source_imports_no_tos_module_outside_the_declared_allowlist() -> None:
     """(§0.3, the strict claim) The narrowest closure in the series, asserted statically."""
     offenders: list[str] = []
@@ -467,7 +425,7 @@ def test_allowlist_classifier_canaries() -> None:
         assert _is_allowed_tos_module(sibling) is False
     assert _is_forbidden_non_tos("shared.kis") is True
     assert _is_forbidden_non_tos("pydantic") is False
-    assert _is_forbidden_non_tos("click") is False  # must not false-match "cli"
+    assert _is_forbidden_non_tos("click") is False
 
 
 def test_every_submodule_is_covered_by_the_closure_child() -> None:

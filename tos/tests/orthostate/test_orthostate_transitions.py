@@ -1,12 +1,4 @@
-"""Per-dimension transition legality — arrow tables + positive-proof guards (§6; §5/§6/§8).
-
-Only the exact ADR §5 / §6 / §8 arrows are allowed; PROPOSED -> DENIED is NOT (DENIED
-branches from APPROVED); CLOSED / WITHDRAWN entry needs the no-potentially-live proof;
-SEND_FAILED_PROVEN is unreachable via timeout / absence (positive evidence only);
-RECONCILED is unreachable without corroboration + FQP; terminals have no outgoing arrow;
-None on either side fails closed. Broker Order is a state set (no arrow predicate).
-[STATE-EV-003 slice, per-dimension direction substrate]
-"""
+"""Per-dimension transition legality — arrow tables + positive-proof guards (§6; §5/§6/§8)."""
 
 from __future__ import annotations
 
@@ -30,11 +22,6 @@ _A = TransmissionAttemptState
 _K = KnowledgeState
 
 
-# ---------------------------------------------------------------------------
-# Intent (ADR §5) — DENIED branch, proof-gated terminals, non-outgoing terminals
-# ---------------------------------------------------------------------------
-
-
 def test_intent_proposed_to_denied_not_allowed() -> None:
     """(canary §2.2 regression-lock) PROPOSED -> DENIED is NOT allowed (DENIED branches APPROVED)."""
     assert intent_transition_allowed(_I.PROPOSED, _I.DENIED) is False
@@ -55,7 +42,7 @@ def test_intent_forward_progression_allowed() -> None:
 @pytest.mark.parametrize("terminal_to", [_I.CLOSED, _I.WITHDRAWN])
 def test_intent_closed_withdrawn_require_proof(terminal_to: IntentState) -> None:
     """(canary §5 line 77) CLOSED / WITHDRAWN entry requires no-potentially-live proof True."""
-    assert intent_transition_allowed(_I.ACTIVE, terminal_to) is False  # None => reject
+    assert intent_transition_allowed(_I.ACTIVE, terminal_to) is False
     assert (
         intent_transition_allowed(
             _I.ACTIVE, terminal_to, no_potentially_live_proof=False
@@ -86,11 +73,6 @@ def test_intent_none_either_side_rejected() -> None:
     """(canary) None on either side fails closed."""
     assert intent_transition_allowed(None, _I.APPROVED) is False
     assert intent_transition_allowed(_I.PROPOSED, None) is False
-
-
-# ---------------------------------------------------------------------------
-# Transmission Attempt (ADR §6) — SEND_FAILED_PROVEN needs positive evidence
-# ---------------------------------------------------------------------------
 
 
 def test_attempt_chain_allowed() -> None:
@@ -139,11 +121,6 @@ def test_attempt_none_either_side_rejected() -> None:
 def test_attempt_backward_transition_rejected() -> None:
     """(canary) A backward attempt transition is not a §6 arrow."""
     assert attempt_transition_allowed(_A.SEND_STARTED, _A.PREPARED) is False
-
-
-# ---------------------------------------------------------------------------
-# Knowledge (ADR §8) — RECONCILED needs corroboration + FQP; STALE / quarantine-exit
-# ---------------------------------------------------------------------------
 
 
 def test_knowledge_reconciled_unreachable_without_corroboration() -> None:
@@ -211,11 +188,6 @@ def test_knowledge_none_either_side_rejected() -> None:
     """(canary) None on either side fails closed."""
     assert knowledge_transition_allowed(None, _K.CONSISTENT) is False
     assert knowledge_transition_allowed(_K.CONFLICTED, None) is False
-
-
-# ---------------------------------------------------------------------------
-# Exhaustive arrow-table sweeps (neither too permissive nor too restrictive)
-# ---------------------------------------------------------------------------
 
 
 def test_intent_sweep_matches_arrow_table() -> None:

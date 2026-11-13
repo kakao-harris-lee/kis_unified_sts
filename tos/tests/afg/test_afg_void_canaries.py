@@ -1,20 +1,4 @@
-"""§4.7 ∅-void fail-closed regression — the nine-row table, **both ways**, 1:1 with §7.
-
-Design #16 §4.7 tabulates nine empty-input cases with an explicit *forbidden* direction
-(the vacuous-permissive reading that must be blocked) and an explicit *permitted* direction
-(the complete input that must still pass). §7 lists the same nine as property targets, and
-m10 requires the two lists to correspond **1:1**. This file is that correspondence: one
-test pair per row, named for the row, so a future edit that drops a row is visible.
-
-Both directions are load-bearing: a vacuous grant is a **safety** defect, and a vacuous
-block (refusing a legitimate, fully-proven admission) is an **availability** defect
-(the #12 both-ways lesson).
-
-It also carries the §4.7 **forbidden-verb** canary sweep, asserting that each named verb
-has a predicate that positively refuses it.
-
-Closes **no** AFG-EV: predicate / coordinate substrate only (design #16 §1).
-"""
+"""§4.7 ∅-void fail-closed regression — the nine-row table, **both ways**, 1:1 with §7."""
 
 from __future__ import annotations
 
@@ -67,11 +51,6 @@ _CREDIBLE = frozenset(
 )
 
 
-# ---------------------------------------------------------------------------
-# §4.7 row 1 — empty scope set
-# ---------------------------------------------------------------------------
-
-
 def test_row1_empty_scope_set_forbidden_direction() -> None:
     """(row 1 -) An empty evaluation scope is NOT "no shared limit" => restrictive."""
     assert (
@@ -104,11 +83,6 @@ def test_row1_empty_scope_set_permitted_direction() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# §4.7 row 2 — empty dimension set
-# ---------------------------------------------------------------------------
-
-
 def test_row2_empty_dimension_set_forbidden_direction() -> None:
     """(row 2 -) An empty governed dimension set is NOT "no resource use" => restrictive."""
     assert (
@@ -125,11 +99,6 @@ def test_row2_empty_dimension_set_permitted_direction() -> None:
         )
         is ActionFlowResult.GRANT
     )
-
-
-# ---------------------------------------------------------------------------
-# §4.7 row 3 — empty required scope (the consumer specified none)
-# ---------------------------------------------------------------------------
 
 
 def _decision(**overrides: object) -> ActionFlowResult:
@@ -159,11 +128,6 @@ def test_row3_empty_required_scope_permitted_direction() -> None:
     assert _decision() is ActionFlowResult.GRANT
 
 
-# ---------------------------------------------------------------------------
-# §4.7 row 4 — empty amplification envelope
-# ---------------------------------------------------------------------------
-
-
 def test_row4_empty_amplification_envelope_forbidden_direction() -> None:
     """(row 4 -) No declared bound means *unbounded* => denial (§5.8 line 141)."""
     assert (
@@ -177,11 +141,6 @@ def test_row4_empty_amplification_envelope_permitted_direction() -> None:
     assert amplification_bounded(full_envelope(), within_observation()) is True
 
 
-# ---------------------------------------------------------------------------
-# §4.7 row 5 — empty lineage
-# ---------------------------------------------------------------------------
-
-
 def test_row5_empty_lineage_forbidden_direction() -> None:
     """(row 5 -) A missing root / empty parent lineage => contained, never complete."""
     assert cause_lineage_complete(ActionCause()) is False
@@ -192,11 +151,6 @@ def test_row5_empty_lineage_forbidden_direction() -> None:
 def test_row5_empty_lineage_permitted_direction() -> None:
     """(row 5 +) A root plus a complete attested parent lineage is evaluable."""
     assert cause_lineage_complete(clean_cause()) is True
-
-
-# ---------------------------------------------------------------------------
-# §4.7 row 6 — None magnitude / limit
-# ---------------------------------------------------------------------------
 
 
 def test_row6_none_magnitude_or_limit_forbidden_direction() -> None:
@@ -233,11 +187,6 @@ def test_row6_none_magnitude_or_limit_permitted_direction() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# §4.7 row 7 — empty flow vector (m10)
-# ---------------------------------------------------------------------------
-
-
 def test_row7_empty_flow_vector_forbidden_direction() -> None:
     """(row 7 -) An absent / empty flow vector cannot prove atomic coverage => no GRANT."""
     for vector in (None, ActionFlowVector()):
@@ -269,11 +218,6 @@ def test_row7_empty_flow_vector_permitted_direction() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# §4.7 row 8 — empty permits (m10 / M8)
-# ---------------------------------------------------------------------------
-
-
 def test_row8_empty_permits_forbidden_direction() -> None:
     """(row 8 -) No permit, and no identified queue item, are both restrictive."""
     assert permit_not_merged([]) is False
@@ -303,11 +247,6 @@ def test_row8_empty_permits_permitted_direction() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# §4.7 row 9 — empty credible containing scopes (m10 / C1)
-# ---------------------------------------------------------------------------
-
-
 def test_row9_empty_credible_containing_scopes_forbidden_direction() -> None:
     """(row 9 -) No credible containing scope => UNKNOWN (no "largest" is establishable)."""
     assert (
@@ -332,11 +271,6 @@ def test_row9_empty_credible_containing_scopes_permitted_direction() -> None:
         )
         is ActionFlowScopeKind.GLOBAL
     )
-
-
-# ---------------------------------------------------------------------------
-# §4.7 forbidden-verb sweep (Gap-4) — each verb has a predicate that refuses it
-# ---------------------------------------------------------------------------
 
 
 def test_forbidden_verb_narrower_scope_select() -> None:

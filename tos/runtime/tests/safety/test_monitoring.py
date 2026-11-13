@@ -1,17 +1,4 @@
-"""The slim monitor: chain continuity, tip stall, inbox backlog, MONITORING.
-
-Replaces the ``tos.stm`` safety-mesh service's test module (plan S2-a). What is asserted
-here is what the monitor still decides: the three facts it judges, the honest UNKNOWN on a
-never-observed tip and on an unestablished continuity baseline, the alert emission on every
-non-healthy reading, the delivery-failure memory, and the self-perturbation contract the
-compose wiring must honour.
-
-**Every happy-path builder warms the baseline first** (``_service(..., warm=True)``, the
-default) because the FIRST observation any instance makes is honestly UNKNOWN — continuity
-has no prior ``(seq, chain_digest)`` to compare against. That is exactly what
-``tos_runtime.compose._monitor_wiring.build_monitor_owners`` does at boot, so a warmed
-service is the state a real tick actually meets.
-"""
+"""The slim monitor: chain continuity, tip stall, inbox backlog, MONITORING."""
 
 from __future__ import annotations
 
@@ -62,13 +49,7 @@ def _service(
     recorder: _Recorder | None = None,
     warm: bool = True,
 ) -> tuple[MonitoringService, _Clock, _Recorder, dict[str, Any]]:
-    """Build a monitor over mutable observation cells the caller can drive.
-
-    ``warm`` performs the one baseline-establishing call the compose wiring makes at boot
-    and then forgets the alert it produced, so a test that wants the STEADY state does not
-    have to re-state the first-observation UNKNOWN every time. Pass ``warm=False`` to
-    observe that first call itself.
-    """
+    """Build a monitor over mutable observation cells the caller can drive."""
     cells: dict[str, Any] = {
         "tip_seq": tip_seq,
         "tip_digest": tip_digest,
@@ -89,11 +70,6 @@ def _service(
     return service, the_clock, the_recorder, cells
 
 
-# ---------------------------------------------------------------------------
-# config loading — fail-closed
-# ---------------------------------------------------------------------------
-
-
 def test_a_missing_config_file_refuses_at_construction(tmp_path: Path) -> None:
     with pytest.raises(MonitoringConfigError):
         _service(tmp_path / "nope.yaml", warm=False)
@@ -104,8 +80,7 @@ def test_a_missing_config_file_refuses_at_construction(tmp_path: Path) -> None:
     ["coverage_generation", "max_evidence_tip_stall_ms", "max_inbox_unconsumed"],
 )
 def test_a_named_tbd_field_refuses_at_construction(tmp_path: Path, field: str) -> None:
-    """Every required field is refused while still ``null`` — never a lazily-discovered
-    ``None`` inside :meth:`MonitoringService.healthy`."""
+    """Every required field is refused while still ``null`` — never a lazily-discovered"""
     nulled: dict[str, int | None] = {field: None}
     with pytest.raises(MonitoringConfigError, match=field):
         _service(
@@ -114,32 +89,21 @@ def test_a_named_tbd_field_refuses_at_construction(tmp_path: Path, field: str) -
         )
 
 
-# ---------------------------------------------------------------------------
-# evidence-chain continuity (grade-A review 2026-11-13, MEDIUM)
-# ---------------------------------------------------------------------------
-
-
 def test_the_first_observation_is_unknown_because_continuity_has_no_baseline(
     tmp_path: Path,
 ) -> None:
-    """The very first observation any instance makes cannot judge continuity — there is no
-    prior ``(seq, chain_digest)`` pair. It must report UNKNOWN (which denies), never a
-    fabricated pass. This is the pre-S2-a behaviour, kept deliberately."""
+    """The very first observation any instance makes cannot judge continuity — there is no"""
     service, _clock, recorder, _cells = _service(
         write_monitor_coverage_file(tmp_path), warm=False
     )
     assert service.healthy() is None
     assert recorder.calls[-1][1]["reasons"] == ("source_continuity_unestablished",)
     assert recorder.calls[-1][1]["source_continuity_present"] is None
-    # ...and the SAME instance is healthy on the next call: the first one established the
-    # baseline, which is why the compose wiring warms it at boot.
     assert service.healthy() is True
 
 
 def test_a_regressing_sequence_is_a_broken_chain(tmp_path: Path) -> None:
-    """Failing input from the review: ``(seq=10, digest=A)`` then ``(seq=9, digest=B)``. A
-    tip that moves BACKWARD is a torn or rewritten chain — always a break, whatever the
-    digest did. Without this check the reading is healthy and the send proceeds."""
+    """Failing input from the review: ``(seq=10, digest=A)`` then ``(seq=9, digest=B)``. A"""
     service, _clock, recorder, cells = _service(
         write_monitor_coverage_file(tmp_path), tip_seq=10, tip_digest="A"
     )
@@ -154,9 +118,7 @@ def test_a_regressing_sequence_is_a_broken_chain(tmp_path: Path) -> None:
 def test_a_sequence_that_advances_with_a_stuck_digest_is_a_broken_chain(
     tmp_path: Path,
 ) -> None:
-    """Failing input from the review: ``(seq=10, digest=A)`` then ``(seq=11, digest=A)``.
-    An append must move the chain digest; a seq that advances while the digest stands still
-    is exactly a chain that was not actually extended."""
+    """Failing input from the review: ``(seq=10, digest=A)`` then ``(seq=11, digest=A)``."""
     service, _clock, recorder, cells = _service(
         write_monitor_coverage_file(tmp_path), tip_seq=10, tip_digest="A"
     )
@@ -169,8 +131,7 @@ def test_a_sequence_that_advances_with_a_stuck_digest_is_a_broken_chain(
 def test_a_digest_that_moves_without_an_append_is_a_broken_chain(
     tmp_path: Path,
 ) -> None:
-    """The mirror of the stuck digest: the chain digest changed while ``seq`` stood still,
-    i.e. a row was rewritten in place rather than appended."""
+    """The mirror of the stuck digest: the chain digest changed while ``seq`` stood still,"""
     service, _clock, recorder, cells = _service(
         write_monitor_coverage_file(tmp_path), tip_seq=10, tip_digest="A"
     )
@@ -183,8 +144,7 @@ def test_a_digest_that_moves_without_an_append_is_a_broken_chain(
 def test_an_idle_tick_moves_neither_coordinate_and_stays_healthy(
     tmp_path: Path,
 ) -> None:
-    """Both coordinates standing still is an ordinary idle tick, not a break — the check
-    requires AGREEMENT between seq advance and digest movement, not movement."""
+    """Both coordinates standing still is an ordinary idle tick, not a break — the check"""
     service, _clock, recorder, _cells = _service(
         write_monitor_coverage_file(tmp_path), tip_seq=10, tip_digest="A"
     )
@@ -206,8 +166,7 @@ def test_an_ordinary_append_moves_both_coordinates_and_stays_healthy(
 
 
 def test_a_broken_chain_denies_the_monitoring_dimension(tmp_path: Path) -> None:
-    """The whole point of keeping this check: a torn chain must make MONITORING
-    not-established, which is what denies the send."""
+    """The whole point of keeping this check: a torn chain must make MONITORING"""
     service, _clock, _recorder, cells = _service(
         write_monitor_coverage_file(tmp_path), tip_seq=10, tip_digest="A"
     )
@@ -217,11 +176,6 @@ def test_a_broken_chain_denies_the_monitoring_dimension(tmp_path: Path) -> None:
     assert report.positively_established is False
 
 
-# ---------------------------------------------------------------------------
-# the two bounded self-observations
-# ---------------------------------------------------------------------------
-
-
 def test_a_fresh_advancing_tip_with_an_empty_inbox_is_healthy(tmp_path: Path) -> None:
     service, _clock, recorder, _cells = _service(write_monitor_coverage_file(tmp_path))
     assert service.healthy() is True
@@ -229,9 +183,7 @@ def test_a_fresh_advancing_tip_with_an_empty_inbox_is_healthy(tmp_path: Path) ->
 
 
 def test_a_never_observed_evidence_tip_is_unknown_not_false(tmp_path: Path) -> None:
-    """``None`` is the honest answer for "no tip has ever been observed" — distinguishable
-    from ``False`` ("observed, and out of bounds"). Continuity is left unjudged there: the
-    gap already covers the call."""
+    """``None`` is the honest answer for "no tip has ever been observed" — distinguishable"""
     service, _clock, recorder, _cells = _service(
         write_monitor_coverage_file(tmp_path), tip_seq=None, warm=False
     )
@@ -260,7 +212,6 @@ def test_an_advancing_tip_resets_the_stall_clock(tmp_path: Path) -> None:
     )
     assert service.healthy() is True
     clock.advance_ms(900)
-    # An append moves BOTH coordinates — continuity stays satisfied.
     cells["tip_seq"] = 2
     cells["tip_digest"] = "digest-2"
     assert service.healthy() is True
@@ -279,8 +230,7 @@ def test_an_inbox_backlog_over_the_bound_is_not_healthy(tmp_path: Path) -> None:
 
 
 def test_a_violation_beside_an_unestablished_fact_is_a_denial(tmp_path: Path) -> None:
-    """A positively-breached bound wins over a merely-unestablished fact: the verdict is
-    ``False``, never softened to ``None``, and the violations are listed first."""
+    """A positively-breached bound wins over a merely-unestablished fact: the verdict is"""
     service, _clock, recorder, _cells = _service(
         write_monitor_coverage_file(tmp_path, max_inbox_unconsumed=0),
         tip_seq=None,
@@ -292,11 +242,6 @@ def test_a_violation_beside_an_unestablished_fact_is_a_denial(tmp_path: Path) ->
         "inbox_unconsumed_over_bound",
         "evidence_tip_never_observed",
     )
-
-
-# ---------------------------------------------------------------------------
-# alert emission and delivery-failure memory
-# ---------------------------------------------------------------------------
 
 
 def test_an_alert_carries_the_observed_values_and_no_secret(tmp_path: Path) -> None:
@@ -314,8 +259,7 @@ def test_an_alert_carries_the_observed_values_and_no_secret(tmp_path: Path) -> N
 
 
 def test_a_recorder_failure_propagates_and_is_remembered(tmp_path: Path) -> None:
-    """A delivery failure can never be silently treated as healthy: it propagates now and
-    keeps the NEXT call from reporting ``True`` even once the observation recovers."""
+    """A delivery failure can never be silently treated as healthy: it propagates now and"""
     recorder = _Recorder(fail=True)
     service, _clock, _rec, cells = _service(
         write_monitor_coverage_file(tmp_path, max_inbox_unconsumed=0),
@@ -323,7 +267,6 @@ def test_a_recorder_failure_propagates_and_is_remembered(tmp_path: Path) -> None
         recorder=recorder,
         warm=False,
     )
-    # The warm-up call itself is the first delivery, and it raises.
     with pytest.raises(RuntimeError, match="evidence sink refused"):
         service.healthy()
     recorder.fail = False
@@ -331,11 +274,6 @@ def test_a_recorder_failure_propagates_and_is_remembered(tmp_path: Path) -> None
     assert service.healthy() is False
     assert "stm_alert_delivery_failed" in recorder.calls[-1][1]["reasons"]
     assert service.healthy() is True, "the failure is remembered once, not forever"
-
-
-# ---------------------------------------------------------------------------
-# the MONITORING currentness dimension
-# ---------------------------------------------------------------------------
 
 
 def test_the_dimension_report_is_monitorings_and_carries_the_coverage_generation(

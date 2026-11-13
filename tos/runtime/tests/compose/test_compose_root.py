@@ -1,8 +1,4 @@
-"""Runtime end-to-end tests for :mod:`tos_runtime.compose` (slice plan §4
-item 3). Hermetic (real sqlite files under ``tmp_path``, real custody files
-the test itself creates with 0600 + uid, fully-valued config copies —
-``tos/runtime/tests/conftest.py``'s autouse guards enforce this).
-"""
+"""Runtime end-to-end tests for :mod:`tos_runtime.compose` (slice plan §4"""
 
 from __future__ import annotations
 
@@ -38,13 +34,7 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 
 class FakeMonotonicSource:
-    """A controllable monotonic-clock double (test-only). Compose's own
-    boot-time ``evaluate()`` x2 read strictly increasing values by default;
-    a test can then force a regression on a LATER ``evaluate()`` call
-    (scenario 4) by lowering :attr:`next_value` below the highest value
-    already observed — real hardware never does this, so this is the only
-    way to exercise ``tos.time.anchor_valid``'s regression path
-    deterministically."""
+    """A controllable monotonic-clock double (test-only). Compose's own"""
 
     def __init__(self, start: int = 1_000_000) -> None:
         self.next_value = start
@@ -62,17 +52,6 @@ class FakeMonotonicSource:
 def _aggregate_inputs(request) -> AggregateRiskDecisionInputs | None:
     from tos.are import RiskScopeKind
 
-    # all_fields_attributed / limit_source_is_injected_envelope are
-    # deliberately None (no caller opinion) here: compose's own
-    # wrap_aggregate_risk_inputs_provider (tos_runtime.compose._risk_attestations,
-    # re-review finding F4) restrictive-merges them with
-    # risk_attestations.yaml's operator attestation -- the e2e hand-off still
-    # ADMITting proves the attestation genuinely governs when this test has
-    # no opinion. numerically_safe/valuation_ok have no None variant on this
-    # kernel dataclass, so they stay True here (a caller's own True claim is
-    # NEVER a stronger fact than the attestation -- see
-    # test_risk_attestations.py's dedicated restrictive-merge tests, incl. a
-    # caller's own False/UNKNOWN claim that must NOT be overridden upward).
     return AggregateRiskDecisionInputs(
         cells=fx.adverse_scenario_cells(),
         required_scenario_kinds=frozenset(
@@ -90,21 +69,7 @@ def _aggregate_inputs(request) -> AggregateRiskDecisionInputs | None:
 
 
 class _LiveRuntimeFacts:
-    """Late-bound handle to the two LIVE facts this suite's step-7 inputs provider needs.
-
-    Both only exist after ``compose_paper_runtime`` returns, yet the provider must be passed
-    IN to it — the same ordering production solves with a late-bound cell (see
-    ``tos_runtime.compose._wiring``'s own ``risk_state_cell``). ``_compose`` fills this in
-    immediately after composing.
-
-    #966: before this, the provider handed step 7 a FROZEN ``decision_generation=1`` while
-    compose derives ``generation_current = generation_fenced(decision_generation, rcl tip)``.
-    The tip advances past 1 with the first flow's own commits, so EVERY second flow in one
-    process — OPEN or CLOSE — came back ``UNKNOWN`` from step 7 and halted there. That is why
-    an entry and an exit could not be driven in one process even before step 8 was reached,
-    and why #965's e2e had to make the CLOSE the first commit. Production never had this
-    defect: ``tos_runtime.riskstate.service`` sets both generations from the live tip.
-    """
+    """Late-bound handle to the two LIVE facts this suite's step-7 inputs provider needs."""
 
     def __init__(self) -> None:
         self.runtime: Any = None
@@ -145,9 +110,6 @@ def _action_flow_inputs(
 
     facts = _LiveRuntimeFacts() if facts is None else facts
     rcl_tip = facts.rcl_tip()
-    # #966: the action class follows the attempt's own arm, the way the deployed
-    # order_construction_policy.yaml's action_class_map does (CLOSE -> ORDINARY_REDUCE_OR_EXIT),
-    # instead of labelling every attempt NORMAL_NEW_RISK.
     action_class = (
         ActionClassKind.ORDINARY_REDUCE_OR_EXIT
         if facts.position_effect() == "CLOSE"
@@ -197,17 +159,6 @@ def _action_flow_inputs(
         envelope_reset_on_duplicate=False,
         concurrent_consumers_share_one_envelope=True,
     )
-    # limit_source_is_injected_envelope / economic_commitment_exclusive /
-    # flow_commitment_exclusive are deliberately None (no caller opinion)
-    # here: compose's own wrap_action_flow_inputs_provider
-    # (tos_runtime.compose._risk_attestations, re-review finding F4)
-    # restrictive-merges them with risk_attestations.yaml's operator
-    # attestation -- never an unconditional override (a caller's own
-    # restrictive False/UNKNOWN claim would otherwise survive; see
-    # test_risk_attestations.py's dedicated tests for that case).
-    # generation_current is deliberately the WRONG value: it is always
-    # DERIVED (tos.afg.generation_fenced against the RCL log's own current
-    # tip), never attested, never a caller literal at all.
     return ActionFlowDecisionInputs(
         cause=cause,
         snapshot=snapshot,
@@ -242,29 +193,7 @@ def _compose(
     transport_kind: TransportKind = TransportKind.SYNTHETIC,
     wall_clock: WallClockReference | None = None,
 ):
-    """Composes via the FILE strategy source (TOS Phase 3 슬라이스 D-R
-    ``[D-R-2]``) — writes the band-reversion strategy into
-    ``config_dir/strategies/`` rather than injecting a
-    :class:`~tos.engine.StrategyRegistry`, so this suite exercises the same
-    production path ``tos_runtime.strategy.resolve.resolve_strategy_registry``
-    wires. ``registry=fx.registry_with_band_strategy()[0]`` moved to
-    :func:`test_both_a_strategies_directory_and_an_injected_registry_refuses`,
-    the ONE remaining both-present-refusal test (brief item 4).
-
-    ``transport_kind`` (T2 lane C) defaults to ``synthetic`` — every existing
-    e2e test's active scope is SYNTHETIC (``reaches_broker=False``), which
-    :func:`~tos_runtime.compose._transport_wiring.refuse_transport_scope_mismatch`
-    requires to pair with ``synthetic``.
-
-    ``wall_clock`` (TOS Phase 5 W5 plan §2 decision 2) defaults to a
-    :class:`~tos_runtime.calendar.ports.FixedWallClockReference` at
-    :data:`~._fixtures.DEFAULT_WALL_CLOCK_UNIX_MS` — NOT the production-honest
-    ``AbsentWallClockReference`` default ``compose_paper_runtime`` itself uses,
-    because dozens of existing happy-path e2e tests in this suite need step 3
-    ADMISSIBLE / item 12 SATISFIED to reach the transport at all. A test that
-    wants to exercise the absent/holiday/mismatch paths passes its own
-    ``wall_clock`` (or a ``config_dir`` with its own ``calendar.yaml``) — see
-    ``tests/compose/test_session_wiring.py``."""
+    """Composes via the FILE strategy source (TOS Phase 3 슬라이스 D-R"""
     fx.write_band_strategy_file(config_dir)
     facts = _LiveRuntimeFacts()
     runtime = compose_paper_runtime(
@@ -288,10 +217,7 @@ def _compose(
 
 
 def _reach_trusted(runtime) -> None:
-    """Compose itself already runs two ``evaluate()`` cycles at boot
-    (UNINITIALIZED->SYNCHRONIZING->TRUSTED) so its own Stage B release-
-    admission check has a real currentness fact — this just asserts that
-    held."""
+    """Compose itself already runs two ``evaluate()`` cycles at boot"""
     assert runtime.time_service.health_state.value == "TRUSTED"
 
 
@@ -303,13 +229,7 @@ def _write_rearm_approval(
     approvals: list[dict[str, str]] | None = None,
     mode: int = 0o600,
 ) -> Path:
-    """Write one ``approvals/rearm/<latched_evidence_seq>.yaml`` operator decision file
-    (:mod:`tos_runtime.safety.rearm` module docstring).
-
-    Defaults to a genuinely satisfying SINGLE ``APPROVE``. Plan S2-a replaced the
-    ``tos.hag`` two-person quorum with one custody-gated principal, so the effective-
-    principal roster this used to write beside the decision went with it.
-    """
+    """Write one ``approvals/rearm/<latched_evidence_seq>.yaml`` operator decision file"""
     import os
 
     if approvals is None:
@@ -331,11 +251,7 @@ def _write_rearm_approval(
 
 
 def _reach_new_risk_halt_via_cancel_crossing_fill(runtime, custody_root: Path) -> int:
-    """Drive the SAME cancel-crossing-fill scenario as ``TestRecomposeReplay
-    .test_recompose_after_a_new_risk_latch_does_not_diverge`` (re-review finding R1) to reach a
-    latched new-risk-halt state (independent review finding #3 / #8), and return the latch's own
-    ``evidence_seq`` — the caller's handle for the R3 operator re-arm tests.
-    """
+    """Drive the SAME cancel-crossing-fill scenario as ``TestRecomposeReplay"""
     from decimal import Decimal
 
     from tos.engine.records import EgressResultPayload, EngineEvent
@@ -397,19 +313,12 @@ def _reach_new_risk_halt_via_cancel_crossing_fill(runtime, custody_root: Path) -
 def _write_approval_for_crossing(custody_root: Path) -> None:
     strategy_registry, strategy = fx.registry_with_band_strategy()
     del strategy_registry
-    # The proposal digest is only known once the DSL policy actually
-    # evaluates the crossing tick, so approvals are written per-flow using
-    # the digest recorded on the returned EventResult (see the tests below).
 
 
 def test_both_a_strategies_directory_and_an_injected_registry_refuses(
     config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """TOS Phase 3 슬라이스 D-R ``[D-R-2]`` brief item 4: keep ONE refusal
-    test proving ``compose_paper_runtime`` still refuses when a caller
-    supplies BOTH a populated ``config_dir/strategies/`` directory AND an
-    injected :class:`~tos.engine.StrategyRegistry` — exactly one strategy
-    source is admissible (:mod:`tos_runtime.strategy.resolve`)."""
+    """TOS Phase 3 슬라이스 D-R ``[D-R-2]`` brief item 4: keep ONE refusal"""
     fx.write_band_strategy_file(config_dir)
     injected_registry = fx.registry_with_band_strategy()[0]
     with pytest.raises(StrategyRegistryResolutionRefused):
@@ -428,12 +337,7 @@ def test_both_a_strategies_directory_and_an_injected_registry_refuses(
 def test_neither_strategy_source_refuses_by_default(
     config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """2026-09-09 independent-review finding #8, threaded end-to-end:
-    ``compose_paper_runtime`` itself now refuses (rather than silently
-    booting an empty registry) when NEITHER a populated
-    ``config_dir/strategies/`` directory NOR an injected registry is
-    supplied and the caller does not opt in via ``allow_no_strategies=True``
-    (see :func:`test_neither_strategy_source_with_allow_no_strategies_boots_empty`)."""
+    """2026-09-09 independent-review finding #8, threaded end-to-end:"""
     with pytest.raises(StrategyRegistryResolutionRefused):
         compose_paper_runtime(
             config_dir,
@@ -449,11 +353,7 @@ def test_neither_strategy_source_refuses_by_default(
 def test_neither_strategy_source_with_allow_no_strategies_boots_empty(
     config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """The stated-choice opt-out: ``allow_no_strategies=True`` boots
-    successfully with an empty, declares-nothing registry — this is the
-    exact shape every OTHER test in this module deliberately avoids by
-    always writing a strategy file or injecting a registry via ``_compose``
-    (that helper's own docstring)."""
+    """The stated-choice opt-out: ``allow_no_strategies=True`` boots"""
     runtime = compose_paper_runtime(
         config_dir,
         data_dir,
@@ -470,8 +370,7 @@ def test_neither_strategy_source_with_allow_no_strategies_boots_empty(
 
 
 class TestComposeRootWiring:
-    """Scenario-adjacent smoke coverage: composition succeeds, and every
-    lane's durable artifacts land where the design says they should."""
+    """Scenario-adjacent smoke coverage: composition succeeds, and every"""
 
     def test_compose_succeeds_and_wires_every_lane(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -487,21 +386,7 @@ class TestComposeRootWiring:
     def test_intent_registry_is_wired_with_the_runtime_time_service(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """Kernel round #1 §2.2 re-review finding #3 (MEDIUM): before this
-        fix, ``IntentRegistry(...)`` was constructed in ``_build_rcl_and_
-        authority`` with no ``time=``/``time_config=`` at all, so decision-
-        expiry composition (``_expiry_verdict``) could never even reach the
-        time service — ANY approval file setting ``max_decision_age_ms``
-        would fail closed with no receipt EVER consulted, not merely an
-        incomplete one.
-
-        Wiring proof via the registry's own injected collaborators (``_time``
-        / ``_time_config``), matching this test module's own established
-        pattern of reaching into a wired collaborator to prove composition
-        (e.g. ``runtime.gateway._sink`` elsewhere in this file) — never a
-        re-constructed duplicate, the SAME instances this runtime already
-        exposes publicly.
-        """
+        """Kernel round #1 §2.2 re-review finding #3 (MEDIUM): before this"""
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         # noqa: SLF001 -- wiring proof, see this test's own docstring
         assert runtime.intent_registry._time is runtime.time_service
@@ -512,10 +397,7 @@ class TestComposeRootWiring:
     def test_operator_attested_inputs_record_lists_exactly_the_attested_set(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """Re-review reviewer Q3 / finding F4 (2026-09-08): compose must
-        durably evidence, once at boot, every config-attested coordinate
-        name so an auditor can separate attested from derived downstream —
-        the field values themselves carry no marker of their own origin."""
+        """Re-review reviewer Q3 / finding F4 (2026-09-08): compose must"""
         import json
 
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
@@ -527,29 +409,14 @@ class TestComposeRootWiring:
         stored = json.loads(rows[0][0])
         names = {c["name"] for c in stored["payload"]["attested_coordinates"]}
         assert names == {
-            # egress_attestations.yaml retired to zero (TOS Phase 5 W5 plan §2
-            # decision 4): venue_session_account_facts_current (item 12) is now a
-            # real runtime owner read (tos_runtime.calendar.owner.SessionFactsOwner),
-            # never an attested coordinate here any more; account_instrument_action_
-            # allowed/broker_constraint_generation_current (TOS Phase 4 plan §2
-            # decision 4) and restrictive_latch_state/worst_credible_capacity (TOS
-            # Phase 5 W3 plan §2 decision 6) were already derived/owned before this.
-            # The slim monitor's policy document (extra_config_files,
-            # tos_runtime.compose._monitor_wiring.MONITOR_CONFIG_FILE_NAMES) — a
-            # named-config-document row, not an attestation, but folded into the
-            # SAME OPERATOR_ATTESTED_INPUTS evidence record by name. The five
-            # safety-mesh documents beside it went with plan S2-a.
             "monitor_coverage.yaml",
-            # broker_scopes.yaml (1) — the active scope's own name
             "SYNTHETIC_FUTURES_ORDER",
-            # risk_attestations.yaml (6)
             "numerically_safe",
             "valuation_ok",
             "all_fields_attributed",
             "limit_source_is_injected_envelope",
             "economic_commitment_exclusive",
             "flow_commitment_exclusive",
-            # egress_coordinates.yaml (9, TOS Phase 4 작업 6 §2.1 + review #2)
             "endpoint",
             "action",
             "method",
@@ -559,10 +426,6 @@ class TestComposeRootWiring:
             "egress_generation",
             "active_principal",
             "capsule_terminus_fields",
-            # strategies/band.strategy.yaml (1, TOS Phase 3 슬라이스 D-R
-            # [D-R-2], plan §1.2 item 3 — one row per admitted strategy
-            # file; _compose() now writes the band strategy into
-            # config_dir/strategies/ instead of injecting a registry)
             fx.BAND_STRATEGY_FILE_NAME,
         }
         for coordinate in stored["payload"]["attested_coordinates"]:
@@ -573,7 +436,7 @@ class TestComposeRootWiring:
                 "monitor_coverage.yaml",
                 fx.BAND_STRATEGY_FILE_NAME,
             )
-            assert len(coordinate["source_file_digest"]) == 64  # sha256 hex
+            assert len(coordinate["source_file_digest"]) == 64
 
         runtime.rcl_log.close()
         runtime.evidence_store.close()
@@ -581,14 +444,7 @@ class TestComposeRootWiring:
     def test_operator_attested_inputs_record_includes_bindings_file_when_present(
         self, config_dir: Path, data_dir: Path, custody_root: Path
     ) -> None:
-        """TOS Phase 3 슬라이스 D-R ``[D-R-3c]``: when ``config_dir/
-        strategy_bindings.yaml`` exists, its own digest folds into the SAME
-        ``OPERATOR_ATTESTED_INPUTS`` record as the strategy file's — a
-        compose-level proof of the wiring, not just ``resolve.py``'s own
-        unit tests. The band strategy has zero config-sourced refs, so an
-        empty-``bindings`` entry (version-matched) is a valid, minimal
-        bindings file (finding #9 disposition rule 4: an empty-refs
-        strategy's entry must have empty bindings)."""
+        """TOS Phase 3 슬라이스 D-R ``[D-R-3c]``: when ``config_dir/"""
         import json
 
         fx.write_band_strategy_file(config_dir)
@@ -626,7 +482,7 @@ class TestComposeRootWiring:
             c for c in coordinates if c["source_file"] == STRATEGY_BINDINGS_FILE_NAME
         ]
         assert len(bindings_rows) == 1
-        assert len(bindings_rows[0]["source_file_digest"]) == 64  # sha256 hex
+        assert len(bindings_rows[0]["source_file_digest"]) == 64
         assert (
             bindings_rows[0]["source_file_digest"]
             == hashlib.sha256(bindings_path.read_bytes()).hexdigest()
@@ -642,14 +498,7 @@ class TestSyntheticEventDrivesTheChain:
     def test_steps_one_to_three_admit_for_real(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """Steps 1-3 (registry dispatch through venue construction) are
-        driven by REAL runtime/kernel services — a proposal is genuinely
-        evaluated and a commitment flow is genuinely attempted, reaching as
-        far as step 4 (``INDEPENDENT_APPROVAL``), which legitimately
-        UNKNOWNs with no approval file present yet (never an assumed
-        grant). See ``test_engine_steps_admit_for_real_and_reach_the_transport``
-        for the full picture once an approval file exists.
-        """
+        """Steps 1-3 (registry dispatch through venue construction) are"""
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
 
@@ -658,15 +507,11 @@ class TestSyntheticEventDrivesTheChain:
         assert len(results) == 1
         result = results[0]
 
-        # The proposal was evaluated and a commitment flow was attempted.
         assert result.pipeline is not None
         assert result.pipeline.proposal is not None
         assert result.flow is not None
 
         verdict_by_step = {v.step.value: v for v in result.flow.verdicts}
-        # Step 4 is reached (a real StageVerdict exists for it) but with no
-        # approval file present it is legitimately UNKNOWN (no decision
-        # available) -- never an assumed grant.
         assert "INDEPENDENT_APPROVAL" in verdict_by_step
         assert verdict_by_step["INDEPENDENT_APPROVAL"].outcome.value == "UNKNOWN"
         assert runtime.transport.requests == ()
@@ -677,30 +522,7 @@ class TestSyntheticEventDrivesTheChain:
     def test_engine_steps_admit_for_real_and_reach_the_transport(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """The full picture behind scenario 1's acceptance criterion.
-
-        Steps 1-14 (registry dispatch through the Transmission Capability)
-        are driven by REAL runtime services — every step admits, and the
-        flow reaches an :class:`~tos.engine.records.AttemptRequest`. The
-        send is THEN admitted at the gateway boundary too, because the
-        Safety Currentness Vector is complete (every mandated dimension has
-        a runtime reader) and item 6/12/16's
-        egress-gate stand-ins are all real runtime owners now (item 12 —
-        ``tos_runtime.calendar.owner.SessionFactsOwner``, TOS Phase 5 W5;
-        item 16 — ``tos_runtime.safety.latch``, TOS Phase 5 W3) except item 6,
-        which is structurally derived (``tos_runtime.brokercap.derive_item6_item12``).
-
-        Step 4 (``INDEPENDENT_APPROVAL``) genuinely admits: ``decision_current``
-        is derived by lane P's ``IntentRegistry.decision_current`` (policy-
-        generation equality + log-derived supersession check), and
-        ``approved_intent_envelope_equivalent`` is derived by comparing the
-        approval file's own digest against step 2's real
-        ``ApprovedIntentContract.canonical_digest`` via
-        ``tos.iap.exact_binding_holds`` (see ``_wiring.py``'s
-        ``_build_step4_recorder``) — the approval file this test writes
-        must therefore carry the REAL digest, not a placeholder (see
-        ``write_approval_file``'s own docstring).
-        """
+        """The full picture behind scenario 1's acceptance criterion."""
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
 
@@ -752,25 +574,7 @@ class TestSyntheticEventDrivesTheChain:
     def test_admitted_consumption_evidence_carries_a_real_receipt_anchor(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """Kernel round #1 §2.2 re-review finding #3 (MEDIUM): before this
-        fix, ``_decision_provider`` resolved a bare
-        ``IndependentApprovalDecision`` via ``load_operator_approval_file``,
-        and the stage's default ``decision_current_provider`` called
-        ``registry.decision_current(decision)`` with NO ``receipt`` at all —
-        so ``IntentRegistry.consume``'s own ``receipt`` parameter was also
-        never supplied, and the IAP_CONSUMPTION evidence's
-        ``receipt_anchor`` field was unconditionally ``None`` no matter how
-        the decision resolved.
-
-        After the fix, ``_decision_provider`` uses
-        ``load_operator_approval_with_receipt`` and the stage threads that
-        SAME ``LoadedApproval`` into both ``decision_current`` and
-        ``consume(..., receipt=...)`` — so even this ordinary
-        ``max_decision_age_ms=None`` admit path now carries a real
-        ``receipt_anchor`` (derived from the started ``TrustworthyTimeService``'s
-        own continuity, which is available regardless of G-1's separate
-        wall-clock-population gap — see ``load_operator_approval_with_
-        receipt``'s own "honest gap" docstring note)."""
+        """Kernel round #1 §2.2 re-review finding #3 (MEDIUM): before this"""
         import json
 
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
@@ -809,9 +613,7 @@ class TestSyntheticEventDrivesTheChain:
     def test_one_synthetic_transport_handoff(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """Scenario 1's literal acceptance criterion: exactly one synthetic
-        transport hand-off, reached once every mandated currentness
-        dimension is supplied by its runtime reader."""
+        """Scenario 1's literal acceptance criterion: exactly one synthetic"""
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
         event = fx.crossing_event()
@@ -825,16 +627,12 @@ class TestSyntheticEventDrivesTheChain:
             environment_label="non-live-test",
             approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
-        # Re-run the SAME event -- a differently-seq'd event carries a
-        # different capsule and therefore a different proposal digest that
-        # would not match the approval file just written.
         runtime.run_once((event,))
         assert len(runtime.transport.requests) == 1
 
 
 class TestStandInZero:
-    """Scenario 2: no ``NON_AUTHORITATIVE_PROVISIONAL`` verdict for steps
-    4, 6-10, 13, 14 anywhere in the engine evidence."""
+    """Scenario 2: no ``NON_AUTHORITATIVE_PROVISIONAL`` verdict for steps"""
 
     def test_no_provisional_stand_in_verdicts_for_the_realized_steps(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -881,8 +679,6 @@ class TestRecomposeReplay:
         runtime.evidence_store.close()
 
         runtime2 = _compose(tmp_path, config_dir, data_dir, custody_root)
-        # No new epoch-advancing writes yet: verify_replay reproduces the
-        # SAME reservations-state digest the pre-restart process held.
         runtime2.rcl_log.verify_replay()
         post_reservations = dict(runtime2.risk_service._projection.all_reservations())
         assert post_reservations == pre_reservations
@@ -896,32 +692,7 @@ class TestRecomposeReplay:
     def test_recompose_after_a_real_hand_off_does_not_diverge(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """Independent review finding #1 (2026-09-09), RED before the fix.
-
-        Reproduces the reviewer's exact compose probe: one crossing tick that halts at step 4
-        (no approval yet), then a SECOND run of the same event once the approval file names the
-        real proposal digest — reaching a real hand-off and a real synthetic ``FULL_FILL``
-        ``EGRESS_RESULT`` reinjected through the SAME ``enqueue_and_run`` call (mirroring
-        ``test_one_synthetic_transport_handoff``). The inbox now holds
-        ``[DECISION_TICK, DECISION_TICK, EGRESS_RESULT(FULL_FILL)]`` — at the time of the ORIGINAL
-        finding, recorded outcome digests ``[True, True, False]`` (i.e. the ``EGRESS_RESULT``'s
-        own digest was honestly ``None``), exactly the reviewer's own measurement THEN.
-
-        Before the fix, boot-time replay treated that honestly-``None`` outcome digest as a
-        divergence, so :func:`~tos_runtime.compose.root.compose_paper_runtime` raised
-        ``EngineReplayDiverged`` on every subsequent boot over this ``data_dir`` — the runtime
-        became PERMANENTLY un-bootable after the first real send. Both a second AND a third
-        recompose must now succeed (not merely "the second boot is special" — a boot-time check
-        that runs once and is never exercised again would not prove the fix).
-
-        **Wave-3 review finding #2 (2026-09-09), tense update.** Kernel lane KW3-RD
-        (``783fadf0``) landed AFTER this test was first written and gave ``EGRESS_RESULT``
-        events a real, non-``None`` ``outcome_digest`` — the third recorded digest above is no
-        longer honestly ``None`` today; it is a real digest that must (and does) match on replay.
-        This test's own assertions never depended on which of the two shapes was true, so it
-        needed no logic change — only this docstring's claim about the THEN-current digest shape
-        was stale.
-        """
+        """Independent review finding #1 (2026-09-09), RED before the fix."""
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
         event = fx.crossing_event()
@@ -942,12 +713,10 @@ class TestRecomposeReplay:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
-        # Second boot over the SAME data_dir: must NOT raise EngineReplayDiverged.
         runtime2 = _compose(tmp_path, config_dir, data_dir, custody_root)
         runtime2.rcl_log.close()
         runtime2.evidence_store.close()
 
-        # Third boot: must ALSO succeed — not just "the second time happens to work".
         runtime3 = _compose(tmp_path, config_dir, data_dir, custody_root)
         runtime3.rcl_log.close()
         runtime3.evidence_store.close()
@@ -955,31 +724,7 @@ class TestRecomposeReplay:
     def test_replay_does_not_re_execute_real_stages_across_a_reboot(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """Independent review finding #2 (2026-09-09), RED before the fix — the #2 claim
-        verification the task disposition asked for: "replay digest equals the recorded one while
-        IAP_CONSUMPTION/ARE_DECISION/AFG_DECISION/ARE_SNAPSHOT/RCL_APPEND evidence counts are
-        byte-identical before/after a reboot".
-
-        Before the fix, the boot-time replay core received the REAL ``stages`` dict, and each
-        real stage carries its OWN evidence sink bound to the real durable store (independent of
-        the replay ``EngineCore``'s own ``NullEvidenceSink``) — so replaying two ``DECISION_TICK``
-        events on every reboot RE-WROTE a second (then third, ...) round of ``IAP_CONSUMPTION``,
-        ``ARE_DECISION``, ``AFG_DECISION``, and ``ARE_SNAPSHOT`` evidence, and re-consumed the
-        single-use Independent Approval. After the fix
-        (``tos_runtime.compose._engine_wiring._ReplayStage``), a reboot's replay halts at the
-        very first injected stage (right after the already-emitted proposal) and touches none of
-        those sinks — the four kinds' row counts must be identical before and after the reboot.
-
-        ``RCL_APPEND`` is measured SEPARATELY, not asserted byte-identical: an idle reboot with
-        ZERO events ever processed still increases it by exactly 1 (measured directly — the RCL
-        log's own per-process writer-epoch bookkeeping, unrelated to engine replay), so
-        "unchanged" is the wrong invariant for it. The invariant this test actually checks for
-        ``RCL_APPEND`` is that a reboot AFTER a real hand-off increases it by that SAME baseline
-        1, never more — the review's own before-fix measurement (``RCL_APPEND 4->5``, a bare
-        ``+1``) already showed this kind was not doubled by stage replay even under the bug (the
-        RCL log's own compare-and-set fence refuses a stale-``expected_seq`` re-append rather than
-        duplicating it); this assertion guards against that CAS protection ever regressing.
-        """
+        """Independent review finding #2 (2026-09-09), RED before the fix — the #2 claim"""
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
         event = fx.crossing_event()
@@ -1039,47 +784,12 @@ class TestRecomposeReplay:
     def test_recompose_after_a_coordinator_gate_refusal_does_not_diverge(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """Independent review finding #1, WAVE 2 (2026-09-09, lane C-R2), RED before the fix.
-
-        A DIFFERENT half of finding #1 from ``test_recompose_after_a_real_hand_off_does_not_
-        diverge`` above (that one is the wave-1 EGRESS_RESULT ``None``/``None`` case, already
-        fixed): here the recorded ``EVENT_CONSUMED`` receipt carries a genuine Coordinator-gate
-        refusal (``HaltReason.AUTHORITY_NOT_CURRENT``), not an honest EGRESS_RESULT ``None``.
-
-        Reproduces the reviewer's own P1 compose probe ("fence the epoch service ... one tick
-        ... re-compose over the same data_dir") using the SAME mechanism
-        ``TestStaleGenerationProviderYieldsUnknown`` above already uses to fence the RCL tip
-        generation provider: a second :class:`~tos_runtime.rcl.log.SqliteCommitLog` handle on
-        the SAME ``rcl.sqlite3`` file acquires a competing Writer Epoch, so the runtime's own
-        ``authority_epoch_service`` (bound to its ORIGINAL, now-stale ``writer_epoch``) reads
-        ``StaleEpochRead`` on its next ``read_linearizable`` —
-        ``SafetyAuthorityEpochService.current_state()``'s own documented fenced-``None``
-        treatment (``tos_runtime/authority/epoch.py``), exactly the ``StaleEpochRead`` /
-        ``sqlite3.Error`` reachability finding #1 itself names. One tick run while fenced is
-        refused by the Coordinator gate and records ``outcome_digest=None`` +
-        ``halt_reason=AUTHORITY_NOT_CURRENT``.
-
-        The boot-time replay core's own ``CoordinatorPreconditions`` stand-in
-        (``_ReplayPreconditions``) is unconditionally ``True``/``True`` — a re-compose over the
-        SAME ``data_dir`` runs the FULL pipeline for that same tick during replay and derives a
-        REAL, non-``None`` digest, an asymmetric ``None``/non-``None`` pair the replay
-        comparison used to treat as a divergence, raising
-        :class:`~tos_runtime.compose._boot_integrity.EngineReplayDiverged` on every subsequent
-        boot — permanently un-bootable. After the fix, a receipt whose own ``halt_reason`` is a
-        structurally-pre-pipeline one is never compared at all (counted ``uncompared``, the
-        reason preserved) — the recompose must succeed, and not merely once (a THIRD boot must
-        also succeed, mirroring the wave-1 sibling test's own "not just the second time happens
-        to work" discipline).
-        """
+        """Independent review finding #1, WAVE 2 (2026-09-09, lane C-R2), RED before the fix."""
         from tos_runtime.rcl.log import SqliteCommitLog
 
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
 
-        # Usurp the runtime's own Writer Epoch on the SAME rcl.sqlite3 file — its
-        # authority_epoch_service reads with the STALE writer_epoch it captured at boot, so
-        # current_state() (StaleEpochRead) fences to current_epoch_floor=None and the
-        # Coordinator gate refuses the next DECISION_TICK.
         usurper = SqliteCommitLog(
             runtime.rcl_log.path, evidence_port=runtime.evidence_store
         )
@@ -1095,14 +805,10 @@ class TestRecomposeReplay:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
-        # Second boot over the SAME data_dir: must NOT raise EngineReplayDiverged. A fresh boot
-        # acquires its own new (current) Writer Epoch, so this is not "still fenced" — it is
-        # exactly the ordinary reboot the reviewer's probe performed.
         runtime2 = _compose(tmp_path, config_dir, data_dir, custody_root)
         runtime2.rcl_log.close()
         runtime2.evidence_store.close()
 
-        # Third boot: must ALSO succeed — not just "the second time happens to work".
         runtime3 = _compose(tmp_path, config_dir, data_dir, custody_root)
         runtime3.rcl_log.close()
         runtime3.evidence_store.close()
@@ -1110,31 +816,7 @@ class TestRecomposeReplay:
     def test_recompose_after_a_new_risk_latch_does_not_diverge(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """Re-review finding R1 (2026-09-09), RED before the fix.
-
-        The independent-review finding #3 new-risk latch's own reason
-        (``NEW_RISK_HALTED_BY_COUPLING_VIOLATION``) is a RUNTIME halt reason, not a kernel
-        ``HaltReason`` member, and was absent from the replay module's closed pre-pipeline set —
-        re-opening finding #1 verbatim, reachable through finding #8's own cancel-crossing-fill
-        correction (a scenario ADR-002-005 §7 / ADR-002-002 §15.2 call routine, not an edge case).
-
-        Reproduces the reviewer's exact compose probe: a real hand-off (the default synthetic
-        fill policy auto-fills 100%, so the attempt is already ``FULL_FILL``-applied by the time
-        the hand-off tick returns — ``test_recompose_after_a_real_hand_off_does_not_diverge``
-        above), then a manually-injected ``CANCEL_ACK`` for the SAME attempt (capacity moves
-        FORWARD from ``POSITION_CONSUMED`` to ``RELEASE_PENDING_PROOF`` — an increase in
-        conservatism, so ``APPLIED``), then a manually-injected LATE ``FULL_FILL`` for the SAME
-        attempt (capacity would move BACKWARD to ``POSITION_CONSUMED`` — a regression, so
-        ``NON_MONOTONIC_PROJECTION``, which finding #8's own correction path picks up and, per
-        its own measurement, correctly trips CPL-3/CPL-5 and latches new risk).
-
-        Before this fix, the latch-refused ``DECISION_TICK`` that follows records an
-        ``EVENT_CONSUMED`` receipt with ``outcome_digest=None`` and a halt reason replay's closed
-        set did not recognise, so replay ran the FULL pipeline for it, manufactured a real digest,
-        and reached the exact ``None``-recorded / non-``None``-replayed asymmetry finding #1 was
-        fixed to eliminate — permanently un-bootable, on a scenario the spec calls routine. Both a
-        second AND a third recompose must now succeed.
-        """
+        """Re-review finding R1 (2026-09-09), RED before the fix."""
         from decimal import Decimal
 
         from tos.engine.records import EgressResultPayload, EngineEvent
@@ -1208,20 +890,17 @@ class TestRecomposeReplay:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
-        # Second boot over the SAME data_dir: must NOT raise EngineReplayDiverged.
         runtime2 = _compose(tmp_path, config_dir, data_dir, custody_root)
         runtime2.rcl_log.close()
         runtime2.evidence_store.close()
 
-        # Third boot: must ALSO succeed — not just "the second time happens to work".
         runtime3 = _compose(tmp_path, config_dir, data_dir, custody_root)
         runtime3.rcl_log.close()
         runtime3.evidence_store.close()
 
 
 class TestNonTrustedTimeBlocksNewRisk:
-    """Scenario 4: forcing the time snapshot non-TRUSTED => zero transport
-    calls (steps 6/7/9's own injected time gate refuses)."""
+    """Scenario 4: forcing the time snapshot non-TRUSTED => zero transport"""
 
     def test_untrusted_time_yields_zero_transport_calls(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -1230,12 +909,8 @@ class TestNonTrustedTimeBlocksNewRisk:
         runtime = _compose(
             tmp_path, config_dir, data_dir, custody_root, monotonic_source=clock
         )
-        _reach_trusted(runtime)  # compose's own boot evaluate() x2 reached TRUSTED
+        _reach_trusted(runtime)
 
-        # Reach step 4 (INDEPENDENT_APPROVAL) once, while still TRUSTED, so an
-        # approval file can be written for THIS exact proposal digest --
-        # otherwise the flow would halt at step 4 (no approval available) and
-        # never reach steps 6/7, which is what this scenario is about.
         event = fx.crossing_event()
         first = runtime.run_once((event,))[0]
         assert first.pipeline is not None and first.pipeline.proposal is not None
@@ -1248,10 +923,6 @@ class TestNonTrustedTimeBlocksNewRisk:
             approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
 
-        # Force a monotonic regression, then re-evaluate: tos.time.anchor_valid
-        # can only route the FSM toward UNTRUSTED on a regression (never hold
-        # TRUSTED) -- tos.time.state_permits_new_normal_risk is False for
-        # every non-TRUSTED state.
         clock.force_regression()
         runtime.time_service.evaluate()
         assert runtime.time_service.health_state.value != "TRUSTED"
@@ -1260,10 +931,6 @@ class TestNonTrustedTimeBlocksNewRisk:
         flow = results[0].flow
         assert flow is not None
         verdict_by_step = {v.step.value: v for v in flow.verdicts}
-        # The sequencer halts at the FIRST non-ADMIT step (design #31 §4.2
-        # rule 1) -- step 6's own injected time gate refuses first, so step 7
-        # is never even reached (no verdict at all for it, not a second
-        # UNKNOWN verdict).
         assert verdict_by_step["AGGREGATE_RISK_DECISION"].outcome.value == "UNKNOWN"
         assert "ACTION_FLOW_DECISION" not in verdict_by_step
         assert (
@@ -1276,14 +943,7 @@ class TestNonTrustedTimeBlocksNewRisk:
 
 
 class TestStaleGenerationProviderYieldsUnknown:
-    """Re-review finding F2 (2026-09-08): step 6 (``AggregateRiskDecisionStage``)
-    over a stale RCL Writer Epoch must yield UNKNOWN, never a decision
-    silently computed at a fabricated ``generation=0`` (the previous bare
-    ``except Exception: return 0`` bug). Calls the real, composed Stage
-    directly (rather than through the full engine sequencer) so this test
-    isolates step 6's own fault contract from step 4's separate, unrelated
-    RCL read (``IntentRegistry.decision_current``, lane P's file, out of
-    this lane's scope)."""
+    """Re-review finding F2 (2026-09-08): step 6 (``AggregateRiskDecisionStage``)"""
 
     def test_stale_writer_epoch_yields_unknown_not_a_decision_at_generation_zero(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -1300,8 +960,6 @@ class TestStaleGenerationProviderYieldsUnknown:
         first = runtime.run_once((event,))[0]
         assert first.pipeline is not None and first.pipeline.proposal is not None
 
-        # A second handle acquiring a NEW Writer Epoch on the SAME rcl.sqlite3
-        # file invalidates the composed runtime's own epoch.
         second = SqliteCommitLog(
             runtime.rcl_log.path, evidence_port=runtime.evidence_store
         )
@@ -1333,14 +991,7 @@ class TestStaleGenerationProviderYieldsUnknown:
 
 
 class TestPermitPathStaleGenerationProviderYieldsUnknown:
-    """Addendum A to the re-review (2026-09-08): a stale/unreachable RCL log
-    on the step 9 PERMIT path (``context.make_permit_provider``'s own
-    ``except (StaleEpochRead, sqlite3.Error, OSError): return None``) must
-    yield ``UNKNOWN`` at ``AtomicCommitStage`` — permit ``None``, zero RCL
-    appends, never a permit built at a fabricated ``generation=0``. Calls
-    the real, composed ``AtomicCommitStage`` directly (isolating it from
-    step 4's separate, unrelated RCL read, same rationale as
-    ``TestStaleGenerationProviderYieldsUnknown`` above)."""
+    """Addendum A to the re-review (2026-09-08): a stale/unreachable RCL log"""
 
     def test_stale_writer_epoch_on_permit_path_yields_unknown_zero_appends(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -1369,8 +1020,6 @@ class TestPermitPathStaleGenerationProviderYieldsUnknown:
             environment_label="non-live-test",
             approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
-        # Re-run the SAME event so steps 1-7 admit for real, giving
-        # flow_governor a real GRANT last_decision to build a permit from.
         runtime.run_once((event,))
         assert runtime.flow_governor.last_decision is not None
         assert runtime.flow_governor.last_decision.result is ActionFlowResult.GRANT
@@ -1381,8 +1030,6 @@ class TestPermitPathStaleGenerationProviderYieldsUnknown:
             .fetchone()[0]
         )
 
-        # A second handle acquiring a NEW Writer Epoch on the SAME
-        # rcl.sqlite3 file invalidates the composed runtime's own epoch.
         second = SqliteCommitLog(
             runtime.rcl_log.path, evidence_port=runtime.evidence_store
         )
@@ -1402,15 +1049,12 @@ class TestPermitPathStaleGenerationProviderYieldsUnknown:
                 runtime.rcl_log,
                 writer_epoch=runtime.writer_epoch,
                 permit_provider=permit_provider,
-                # #966: the production derivation — the id is named by the permit this
-                # commit binds, not by the scope alone.
                 reservation_id_provider=lambda request, permit: permit_reservation_id(
                     request.instrument_key.account,
                     request.instrument_key.instrument,
                     permit.permit_id or "",
                 ),
                 time_permits_new_risk=lambda: True,
-                # #972: a real envelope, so the UNKNOWN below is the stale epoch's alone.
                 effect_envelope_reader=lambda: CapacityVector(
                     components=(
                         CapacityComponent(
@@ -1443,12 +1087,7 @@ class TestPermitPathStaleGenerationProviderYieldsUnknown:
 
 
 class TestActionFlowWrapperStaleGenerationProviderYieldsUnknown:
-    """Addendum A, step 7 half (2026-09-08): a stale/unreachable RCL log
-    inside ``_risk_attestations.wrap_action_flow_inputs_provider``'s own
-    ``except (StaleEpochRead, sqlite3.Error, OSError): return None`` must
-    yield ``UNKNOWN`` at ``ActionFlowDecisionStage`` — never a fabricated
-    ``generation_current``. Calls the real, composed Stage directly
-    (isolated from step 4's separate, unrelated RCL read)."""
+    """Addendum A, step 7 half (2026-09-08): a stale/unreachable RCL log"""
 
     def test_stale_writer_epoch_yields_unknown_at_step_7(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -1509,8 +1148,7 @@ class TestActionFlowWrapperStaleGenerationProviderYieldsUnknown:
 
 
 class TestRclLogUnavailableBlocksNewRisk:
-    """Scenario 5: removing/locking the RCL log file => zero new risk
-    (steps 8-10 UNKNOWN) and no hand-off."""
+    """Scenario 5: removing/locking the RCL log file => zero new risk"""
 
     def test_rcl_log_removed_yields_unknown_and_zero_transport_calls(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -1520,10 +1158,6 @@ class TestRclLogUnavailableBlocksNewRisk:
         rcl_path = runtime.rcl_log.path
         runtime.rcl_log.close()
         rcl_path.unlink()
-        # A closed-then-removed connection: further calls hit sqlite3.Error
-        # ("no such table" on a fresh empty file created implicitly, or
-        # OSError on some platforms) -- both are mapped to UNKNOWN by
-        # ledger_stages' own fault contract, never a denial by omission.
         rcl_path.touch()
         with contextlib.suppress(Exception):
             results = runtime.run_once((fx.crossing_event(),))
@@ -1540,9 +1174,7 @@ class TestRclLogUnavailableBlocksNewRisk:
 
 
 class TestProjectionAuthorityMismatchHalts:
-    """Scenario 6: injecting a projection/authority mismatch => the next
-    compose/verify raises CommitLogCorruption and an alert evidence record
-    is appended (via ``record_halt``)."""
+    """Scenario 6: injecting a projection/authority mismatch => the next"""
 
     def test_tampered_reservations_row_raises_commit_log_corruption(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -1583,16 +1215,9 @@ class TestProjectionAuthorityMismatchHalts:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
-        # compose_paper_runtime itself must verify the RCL log's replay at
-        # boot and refuse to hand back a runtime over a corrupt log -- (c)
-        # no Stage/service is ever constructed: the function raises instead
-        # of returning a ComposedRuntime, so there is no `runtime2` at all.
         with pytest.raises(CommitLogCorruption):
             _compose(tmp_path, config_dir, data_dir, custody_root)
 
-        # (b) the evidence store contains exactly one RCL_CORRUPTION_ALERT
-        # record (compose's own halt path, never this test's) -- reopened
-        # independently since compose raised before returning any handle.
         import json
         import os
 
@@ -1616,9 +1241,7 @@ class TestProjectionAuthorityMismatchHalts:
 
 
 class TestReleaseAdmissionRefusalBlocksBoot:
-    """Scenario 7: release admission refusal (code_digest mismatch) =>
-    compose raises before any service starts (assert no sqlite files
-    created)."""
+    """Scenario 7: release admission refusal (code_digest mismatch) =>"""
 
     def test_mismatched_code_digest_refuses_before_any_sqlite_file_exists(
         self,
@@ -1645,15 +1268,7 @@ class TestReleaseAdmissionRefusalBlocksBoot:
 
 
 class TestIdentityCodeDigestBoundToObservation:
-    """Re-review disposition (HIGH, 2026-09-12) — ``release/admission.py``'s
-    ``_runtime_attestation_matches`` never actually read ``identity.code_digest``;
-    only ``observation``'s own digests were compared against config, so a
-    caller building ``identity`` from a constant instead of the real observation
-    went undetected by every prior test. ``_runtime_attestation_matches`` now
-    also requires ``identity.code_digest == observation.source_tree_digest``.
-    This pins that the M2-shaped mutation — ``_build_identity`` returning a
-    constant ``code_digest`` disconnected from the observation it was handed —
-    goes red: compose must refuse at STAGE A, before any sqlite file exists."""
+    """Re-review disposition (HIGH, 2026-09-12) — ``release/admission.py``'s"""
 
     def test_constant_identity_code_digest_refuses_at_stage_a(
         self,
@@ -1683,21 +1298,7 @@ class TestIdentityCodeDigestBoundToObservation:
 
 
 class TestStageBReleaseProbeRunsBeforeTheMonitorOwners:
-    """``_stage_b_release_probe`` runs right after the RCL log is verified, BEFORE
-    ``build_monitor_owners``, and its real verdict (never a literal ``True``) is what
-    ``ComposedRuntime.release_admitted`` and the RELEASE currentness dimension report.
-
-    ``TestReleaseAdmissionRefusalBlocksBoot`` above already proves release admission gates
-    the WHOLE boot on a digest mismatch, but that refusal is a STAGE A rejection (pure digest
-    comparison, no I/O) — ``_stage_b_release_probe`` is never reached in that scenario, so it
-    does not by itself pin the STAGE B -> ``build_monitor_owners`` ORDER. The two tests below
-    do: one over a normal boot, one mutation-style (forcing ``decide()`` to refuse proves the
-    owners are never built at all).
-
-    The SAFETY_ENVELOPE_PROFILE service this verdict used to be threaded into went with plan
-    S2-a (``docs/plans/2026-11-13-tos-code-halving-plan.md``), so what is asserted here is the
-    boot ORDER and the surviving consumer, not that service's own input.
-    """
+    """``_stage_b_release_probe`` runs right after the RCL log is verified, BEFORE"""
 
     def test_normal_boot_reports_the_real_admitted_verdict(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -1713,18 +1314,13 @@ class TestStageBReleaseProbeRunsBeforeTheMonitorOwners:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """M2-style guard: forcing ``ReleaseAdmissionService.decide`` to refuse must raise
-        BEFORE ``build_monitor_owners`` is ever called — a boot that built its monitor and
-        latch owners first would have done I/O on a deployment it then refused."""
+        """M2-style guard: forcing ``ReleaseAdmissionService.decide`` to refuse must raise"""
         import tos_runtime.compose._wiring as wiring_module
         from tos_runtime.release.admission import ReleaseAdmissionService
 
         calls: list[object] = []
         real_build_monitor_owners = wiring_module.build_monitor_owners
 
-        # `Any`, not `object`: this spy stands in for `build_monitor_owners`'s own signature
-        # and must forward every call unchanged — narrowing it would require duplicating that
-        # signature here just to satisfy the splat below (plan §1.1 A-rt boundary use of `Any`).
         def _spy_build_monitor_owners(*args: Any, **kwargs: Any) -> object:
             calls.append(kwargs.get("evidence_store"))
             return real_build_monitor_owners(*args, **kwargs)
@@ -1743,56 +1339,7 @@ class TestStageBReleaseProbeRunsBeforeTheMonitorOwners:
 
 
 class TestCapacityObligationRecording:
-    """Kernel round #1 §3 (lane B) — the compose root wires a REAL
-    ``CapacityObligationRecorder`` onto the REAL gateway sink, resolving the
-    SAME reservation id the real ``AtomicCommitStage`` just committed.
-
-    **Deviation from the plan (reported).** No pre-existing "denied-egress-
-    attestation" e2e scenario existed in this file to reuse (surveyed: no
-    ``SEND_REFUSED`` assertion anywhere in this module before this class).
-    Worse, the plan's assumed alternative — flip one pending currentness
-    dimension's ``positively_established`` to ``False``
-    (``TestPendingDimensionAttestationGatesCompleteness``'s own technique)
-    and drive the real engine to a genuine item-16 ``SEND_REFUSED`` carrying
-    a preserved-capacity obligation — is not reachable through this compose
-    root's CURRENT wiring at all: measured directly (a temporary print of
-    the resulting ``SEND_REFUSED`` payload), an incomplete Safety Currentness
-    Vector makes ``EgressCurrentnessProofIssuer.issue()`` (module docstring:
-    "returns ``None`` ... when the candidate fails its own
-    ``proof_admissible`` self-check") refuse to issue a proof at ALL, so
-    ``context.egress_currentness_proof`` is ``None`` and the gateway halts at
-    the EARLIER ``proof_structurally_complete(None)`` check
-    (``tos.egressgw.gateway._check_currentness``) — never reaching the LATER
-    ``egress_currentness_verdict(...)`` branch that calls
-    ``unknown_preserves_capacity`` and sets
-    ``preserved_worst_credible_capacity``. Because ``proof_admissible``
-    requires ``result is CURRENT`` and ``issue()`` self-checks that SAME
-    predicate on the SAME object before ever returning it, a structurally-
-    complete-but-non-ADMIT proof cannot currently reach the gateway through
-    this issuer at all — reaching the plan's assumed scenario for real would
-    need a currentness-proof-issuer change, which is out of lane B's scope
-    this round (no kernel or lane-R runtime edits authorized here).
-
-    So this class proves the WIRING is correct — real store, real
-    projection, real resolver referencing the real committed reservation —
-    by driving the real admitted engine flow
-    (``TestSyntheticEventDrivesTheChain.test_engine_steps_admit_for_real_and_reach_the_transport``'s
-    own approval-file dance, unmodified) up to a genuine committed
-    reservation and a genuine attempt id, then invoking the REAL wired sink
-    directly with a ``SEND_REFUSED``/item-16 record for that SAME attempt —
-    exactly the shape ``BrokerEgressGateway._halt`` itself would construct,
-    had the currentness issuer been able to produce one. The recorder's own
-    verdict/halt LOGIC for every reachable non-ADMIT combination is already
-    exhaustively covered by real components in
-    ``tos/runtime/tests/rcl/test_obligation.py`` — this class is the
-    wiring proof only, not a second copy of that behavioral coverage.
-
-    Independent review finding #6, restated plainly: production
-    reachability of the obligation branch is currently ZERO (the issuer
-    emits a proof only when its own result is already ``CURRENT``, i.e.
-    only on the ADMIT path) — this test class proves the wiring, not the
-    trigger.
-    """
+    """Kernel round #1 §3 (lane B) — the compose root wires a REAL"""
 
     def test_wired_sink_records_the_obligation_against_the_real_committed_reservation(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -1818,9 +1365,6 @@ class TestCapacityObligationRecording:
         assert flow is not None
         verdict_by_step = {v.step.value: v for v in flow.verdicts}
         assert verdict_by_step["ATOMIC_COMMIT"].outcome.value == "ADMIT"
-        # The real send genuinely admitted (fx's own acceptance criterion) --
-        # a real reservation is now COMMITTED_UNBOUND under this account/
-        # instrument (tos_runtime.compose._fixtures.ACCOUNT/INSTRUMENT).
         assert len(runtime.transport.requests) == 1
         contexts = runtime.context_resolver.contexts
         assert contexts, "no SendBoundaryContext was ever resolved"
@@ -1830,11 +1374,6 @@ class TestCapacityObligationRecording:
         from tos.egressgw import SendVerifyItem
         from tos.egressgw.records import GatewayEvidenceRecord
 
-        # The shape BrokerEgressGateway._halt itself constructs for an
-        # item-16 SEND_REFUSED (gateway.py __call__'s halt_item ==
-        # CURRENTNESS branch) -- injected directly at the wired sink
-        # because the real issuer cannot currently reach this combination
-        # (this class's own docstring).
         refusal = GatewayEvidenceRecord(
             kind="SEND_REFUSED",
             step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
@@ -1847,12 +1386,6 @@ class TestCapacityObligationRecording:
 
         kinds = [m.kind for m in runtime.evidence_store.iter_entry_meta()]
         assert kinds.count("CAPACITY_OBLIGATION_PRESERVED") == 1
-        # No halt: the resolver mapped attempt_id -> the SAME identity AtomicCommitStage just
-        # committed, and the projection genuinely reads it back as COMMITTED_UNBOUND (a live,
-        # capacity-consuming state). #966: that identity is now this attempt's own
-        # permit-named reservation, resolved through the durable evidence join
-        # (tos_runtime.rcl.reservation_lookup), not one id shared by the whole scope — so this
-        # assertion also pins that the join actually resolves for a live attempt.
         assert "CAPACITY_OBLIGATION_VIOLATION_ALERT" not in kinds
 
         row = next(
@@ -1877,12 +1410,7 @@ class TestCapacityObligationRecording:
     def test_removing_the_on_refusal_wiring_yields_no_obligation_evidence(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """Mutation M-B1: with ``_finalize``'s ``on_refusal`` wiring absent
-        (simulated here by swapping in a sink built the way ``_finalize``
-        used to before this round), the SAME injected item-16
-        ``SEND_REFUSED`` record produces NO ``CAPACITY_OBLIGATION_PRESERVED``
-        evidence — proving the recorder is genuinely load-bearing, not
-        vacuously always green."""
+        """Mutation M-B1: with ``_finalize``'s ``on_refusal`` wiring absent"""
         from tos.egressgw import SendVerifyItem
         from tos.egressgw.records import GatewayEvidenceRecord
         from tos_runtime.evidence.sinks import GatewayEvidenceSinkAdapter
@@ -1890,8 +1418,6 @@ class TestCapacityObligationRecording:
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
 
-        # Mutate: replace the wired sink with the pre-this-round shape --
-        # same store, same identity, NO on_refusal observer.
         runtime.gateway._sink = GatewayEvidenceSinkAdapter(  # noqa: SLF001
             runtime.evidence_store, runtime_identity=runtime.identity
         )
@@ -1915,20 +1441,12 @@ class TestCapacityObligationRecording:
 
 
 class TestOrthostateAndFinalityProjectionWiring:
-    """Team-lead CR-4 dispatch (plan §2.2): the driver-level orthostate + SYNTHETIC finality
-    wiring (``tos_runtime.engine.driver.EngineDriver._process_next``'s own orthostate-projection
-    call plus ``EngineDriver._project_finality`` — TOS Phase 5 W1 GAP 2 split the two apart and
-    reordered the former ahead of the ``EVENT_CONSUMED`` receipt; see that method's own module
-    docstring) is reachable end to end through the composed runtime, not merely unit-tested in
-    isolation.
-    """
+    """Team-lead CR-4 dispatch (plan §2.2): the driver-level orthostate + SYNTHETIC finality"""
 
     def test_full_fill_hand_off_records_finality_proof_and_composite(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """After a real synthetic ``FULL_FILL`` hand-off: exactly one
-        ``POSTTRADE_FINALITY_PROOF`` evidence row, the handed-off attempt's orthostate composite
-        is durably persisted, and no ``COUPLING_VIOLATION`` was recorded."""
+        """After a real synthetic ``FULL_FILL`` hand-off: exactly one"""
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
         event = fx.crossing_event()
@@ -1976,17 +1494,7 @@ class TestOrthostateAndFinalityProjectionWiring:
     def test_full_fill_hand_off_never_releases_rcl_capacity_end_to_end(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """TOS Phase 5 W2-R (plan §10 row ①): the finality release consumer
-        (:mod:`tos_runtime.posttrade.release_consumer`) is live through
-        :func:`~tos_runtime.compose.root.compose_paper_runtime`, but this compose root's ONE
-        concrete broker witness (:class:`~tos_runtime.recon.witness_synthetic
-        .SyntheticLedgerWitness`) is store-derived, never independent of the evidence-receipt
-        path it corroborates (plan §10's own "정직 상태" — see
-        ``tos_runtime.recon.service.ReconciliationService``'s own module docstring). So even
-        after a genuine, real ``FULL_FILL`` hand-off, the RCL reservation must show ZERO
-        ``RELEASED``/``POSITION_CONSUMED`` rows — capacity release stays structurally absent
-        until a genuinely independent (real broker) witness replaces the synthetic one.
-        """
+        """TOS Phase 5 W2-R (plan §10 row ①): the finality release consumer"""
         import json
 
         from tos.rcl import CapacityState
@@ -2025,19 +1533,10 @@ class TestOrthostateAndFinalityProjectionWiring:
         ).fetchall()
         assert len(held_payload_rows) == 1
         held_payload = json.loads(held_payload_rows[0][0])["payload"]
-        # Independent-review finding M5 (2026-09-10): assert *why* it held, not merely that it
-        # held -- a hold for a trivial upstream reason would otherwise pass this test
-        # identically. Also pins the reservation id itself (finding M5's own measured mutation:
-        # a total `_reservation_id` drift left the prior assertions passing unchanged).
-        # #966: the id is this ATTEMPT's own reservation, named by the permit its attempt
-        # request carries — not one shared by every attempt in the scope.
         instrument_key = runtime.context_resolver.instrument_key
         assert held_payload["reservation_id"] == attempt_request_reservation_id(
             instrument_key, flow.attempt
         )
-        # #1011 §3.5: the store-derived witness's hold carries its OWN reason. `detail` is
-        # the report's raw reason, so the two now read the same — which is the point: the
-        # evidence row no longer spells this "a reconciliation conflict".
         assert held_payload["reason"] == "WITNESS_NOT_INDEPENDENT"
         assert held_payload["detail"] == "WITNESS_NOT_INDEPENDENT"
         intent_rows = runtime.evidence_store.connection.execute(
@@ -2050,11 +1549,7 @@ class TestOrthostateAndFinalityProjectionWiring:
 
 
 class TestNewRiskHaltOperatorReArm:
-    """Re-review finding R3 (2026-09-09): the operator re-arm path for the independent-review
-    finding #3 new-risk halt latch — R3's own decision keeps the latch (a genuine ledger/broker
-    disagreement IS unknown exposure) but lands the clear mechanism now rather than deferring it
-    to Phase 5, since a spec-routine cancel-crossing fill (finding #8) trips it with no other
-    path back."""
+    """Re-review finding R3 (2026-09-09): the operator re-arm path for the independent-review"""
 
     def test_clear_with_the_right_seq_lets_the_next_decision_tick_proceed(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -2085,29 +1580,21 @@ class TestNewRiskHaltOperatorReArm:
         assert payload["latched_evidence_seq"] == evidence_seq
         assert payload["latched_reason"] == "NEW_RISK_HALTED_BY_COUPLING_VIOLATION"
         assert "operator_attestation_sha256" in payload
-        assert (
-            len(payload["operator_attestation_sha256"]) == 64
-        )  # sha256 hex digest length
+        assert len(payload["operator_attestation_sha256"]) == 64
 
-        # TOS Phase 5 W3 plan §2 decision 7: the HAG two-person re-arm quorum
-        # (tos_runtime.safety.rearm.ReArmWorkflow) records its own APPROVED evidence
-        # before this wrapper's own CLEARED row above.
         rearm_rows = runtime.evidence_store.connection.execute(
             "SELECT COUNT(*) FROM entries WHERE kind = 'REARM_APPROVED'"
         ).fetchone()[0]
         assert rearm_rows == 1
 
-        # The success path writes no refusal evidence (re-review finding RR3).
         refused_rows = runtime.evidence_store.connection.execute(
             "SELECT COUNT(*) FROM entries WHERE kind = 'NEW_RISK_HALT_CLEAR_REFUSED'"
         ).fetchone()[0]
         assert refused_rows == 0
 
-        # The next DECISION_TICK now proceeds through the REAL kernel — never the synthetic
-        # latch-refusal result.
         next_tick = runtime.driver.enqueue_and_run(fx.crossing_event(seq=99))
         assert "NEW_RISK_HALTED_BY_COUPLING_VIOLATION" not in (next_tick.detail or "")
-        assert next_tick.pipeline is not None  # core.handle genuinely ran
+        assert next_tick.pipeline is not None
 
         runtime.rcl_log.close()
         runtime.evidence_store.close()
@@ -2125,11 +1612,8 @@ class TestNewRiskHaltOperatorReArm:
             runtime, custody_root
         )
 
-        # No approval file needed here: the seq-mismatch pre-check in
-        # ``ComposedRuntime.clear_new_risk_halt`` runs BEFORE the HAG re-arm
-        # workflow is ever consulted (TOS Phase 5 W3 plan §2 decision 7).
         outcome = runtime.clear_new_risk_halt(
-            latched_evidence_seq=evidence_seq - 1,  # a stale/wrong seq
+            latched_evidence_seq=evidence_seq - 1,
             approvals_dir=custody_root / "approvals",
         )
         assert outcome is NewRiskHaltClearOutcome.SEQ_MISMATCH
@@ -2139,10 +1623,8 @@ class TestNewRiskHaltOperatorReArm:
         cleared_rows = runtime.evidence_store.connection.execute(
             "SELECT COUNT(*) FROM entries WHERE kind = 'NEW_RISK_HALT_CLEARED_BY_OPERATOR'"
         ).fetchone()[0]
-        assert cleared_rows == 0  # a refused clear never appends the SUCCESS evidence
+        assert cleared_rows == 0
 
-        # re-review finding RR3: a refused clear must now leave a durable trace of its own —
-        # exactly the "operator is looking at a stale violation" case this control exists for.
         refused_rows = runtime.evidence_store.connection.execute(
             "SELECT payload_json FROM entries WHERE kind = 'NEW_RISK_HALT_CLEAR_REFUSED'"
         ).fetchall()
@@ -2161,10 +1643,7 @@ class TestNewRiskHaltOperatorReArm:
     def test_no_approval_file_is_refused_and_latch_stays_intact(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """TOS Phase 5 W3 plan §2 decision 7 (mutation M6): with NO
-        ``approvals/rearm/<seq>.yaml`` file present at all, the HAG re-arm
-        workflow refuses before it ever reaches a kernel predicate — replaces
-        the old free-text-attestation refusal this test used to exercise."""
+        """TOS Phase 5 W3 plan §2 decision 7 (mutation M6): with NO"""
         from tos_runtime.engine.inbox import NewRiskHaltClearOutcome
 
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
@@ -2185,9 +1664,6 @@ class TestNewRiskHaltOperatorReArm:
         ).fetchone()[0]
         assert cleared_rows == 0
 
-        # The HAG workflow's own refusal evidence (tos_runtime.safety.rearm), PLUS this
-        # wrapper's own NEW_RISK_HALT_CLEAR_REFUSED row (re-review finding RR3) — both
-        # are durably recorded for one refused attempt.
         rearm_refused_rows = runtime.evidence_store.connection.execute(
             "SELECT COUNT(*) FROM entries WHERE kind = 'REARM_REFUSED'"
         ).fetchone()[0]
@@ -2203,18 +1679,7 @@ class TestNewRiskHaltOperatorReArm:
     def test_a_second_violation_after_clear_latches_again_with_a_new_seq(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """After a clear, a FRESH violation must latch again with a NEW ``evidence_seq`` — the
-        old (now-cleared) seq must not clear it.
-
-        A second REAL hand-off on the same attempt/instrument is not reachable here (the compose
-        root wires a single ``InstrumentKey``, and the first attempt's own outstanding exposure
-        blocks a second one — re-review finding R4's own residual note); a SECOND, differently
-        -shaped late fill (``PARTIAL_FILL`` this time, distinct magnitudes) for the SAME attempt
-        is a genuinely different event (content-addressed, so not an inbox duplicate) that
-        reaches the SAME cancel-crossing correction path and re-latches — the property under
-        test (a fresh violation gets a fresh seq, and the old seq cannot clear it) does not
-        depend on which attempt or instrument the second violation belongs to.
-        """
+        """After a clear, a FRESH violation must latch again with a NEW ``evidence_seq`` — the"""
         from decimal import Decimal
 
         from tos.engine.records import EgressResultPayload, EngineEvent
@@ -2236,8 +1701,6 @@ class TestNewRiskHaltOperatorReArm:
         )
         assert runtime.inbox.new_risk_halt() is None
 
-        # A second, differently-shaped late fill for the SAME attempt (distinct magnitudes ⇒ a
-        # distinct content-addressed event, never an inbox duplicate of the first).
         halt_before = runtime.inbox.new_risk_halt()
         assert halt_before is None
         attempt_id_row = runtime.evidence_store.connection.execute(
@@ -2265,8 +1728,6 @@ class TestNewRiskHaltOperatorReArm:
         assert second_evidence_seq != first_evidence_seq
         assert second_evidence_seq > first_evidence_seq
 
-        # The OLD (now-cleared, superseded) seq no longer clears the NEW latch — the
-        # seq-mismatch pre-check refuses before any approval file is even consulted.
         assert (
             runtime.clear_new_risk_halt(
                 latched_evidence_seq=first_evidence_seq,

@@ -40,10 +40,7 @@ def _write_bindings_yaml(config_dir: Path, mapping: dict[str, Any]) -> Path:
 
 
 def _config_ref_strategy_mapping(**overrides: Any) -> dict[str, Any]:
-    """``admissible_strategy_mapping`` with its outcome-gating compare's
-    RIGHT operand swapped for a ``config``-sourced ref — the shape every
-    positive-resolution test in this module needs (one capsule operand, one
-    config operand, matching the D1<->D4 admission rule)."""
+    """``admissible_strategy_mapping`` with its outcome-gating compare's"""
     mapping = admissible_strategy_mapping(**overrides)
     mapping["policy"]["rules"][0]["all_of"][0]["right"] = {
         "ref": ["config", "lower_band_threshold"]
@@ -91,14 +88,7 @@ def _refusal_evidence_kinds(store: SqliteEvidenceStore) -> list[str]:
 def test_neither_present_refuses_by_default(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """Neither a strategies
-    directory nor an injected registry is no longer a silent empty-registry
-    fallback — it refuses, matching the loader's own "an engine with zero
-    admitted strategies... does not start" rule one layer down. An operator
-    who genuinely wants no strategies must say so via
-    ``allow_no_strategies=True`` (see
-    ``test_neither_present_with_allow_no_strategies_returns_empty_registry_with_evidence``).
-    """
+    """Neither a strategies"""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     with pytest.raises(StrategyRegistryResolutionRefused):
@@ -115,10 +105,7 @@ def test_neither_present_refuses_by_default(
 def test_neither_present_with_allow_no_strategies_returns_empty_registry_with_evidence(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """The stated-choice opt-out:
-    ``allow_no_strategies=True`` permits the empty registry, and records a
-    non-halt ``STRATEGY_SOURCE_ABSENT_BY_OPERATOR_CHOICE`` evidence entry —
-    never the silent, unevidenced fallback the old default was."""
+    """The stated-choice opt-out:"""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     resolved = resolve_strategy_registry(
@@ -256,14 +243,7 @@ def test_load_strategies_error_is_the_underlying_cause(
 def test_config_sourced_ref_without_bindings_refuses_naming_the_ref(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """A config-sourced ref without a bindings file is refused at load:
-    a compare of ``capsule.resolved_values.close LT
-    config.lower_band_threshold`` parses and is ADMISSIBLE (``config`` is an
-    ``ADMISSIBLE_CONTEXT_SOURCES`` member and only ONE operand needs to be
-    capsule-sourced), but no ``strategy_bindings.yaml`` exists at all in
-    this test's ``config_dir`` — rule 1 ("a strategy carries >= 1
-    config-sourced ref and the bindings file has no entry for its stem")
-    refuses it at load, naming both the file and the ref path."""
+    """A config-sourced ref without a bindings file is refused at load:"""
     config_dir = tmp_path / "config"
     strategies_dir = config_dir / "strategies"
     strategies_dir.mkdir(parents=True)
@@ -289,11 +269,7 @@ def test_config_sourced_ref_without_bindings_refuses_naming_the_ref(
 def test_escape_ref_source_is_refused_at_load(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """A YAML strategy carrying an escape ``ref`` source
-    (``("ambient", "now")`` — outside :data:`~tos.dsl.vocabulary.
-    ADMISSIBLE_CONTEXT_SOURCES`) is refused at load. The refusal may come from
-    the escape checker or from parsing, but both paths must surface as
-    ``StrategyRegistryResolutionRefused``."""
+    """A YAML strategy carrying an escape ``ref`` source"""
     config_dir = tmp_path / "config"
     strategies_dir = config_dir / "strategies"
     strategies_dir.mkdir(parents=True)
@@ -312,16 +288,10 @@ def test_escape_ref_source_is_refused_at_load(
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
 
 
-# ============================================================================
-# Positive bindings resolution rules.
-# ============================================================================
-
-
 def test_version_mismatch_refuses_naming_both_values(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """Rule 2: an entry's ``config_binding_version`` must equal the target
-    strategy file's own."""
+    """Rule 2: an entry's ``config_binding_version`` must equal the target"""
     config_dir = tmp_path / "config"
     strategies_dir = config_dir / "strategies"
     strategies_dir.mkdir(parents=True)
@@ -355,12 +325,7 @@ def test_version_mismatch_refuses_naming_both_values(
 def test_unresolvable_ref_path_refuses_naming_the_path(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """A config-sourced ref longer than ``("config", <key>)`` can
-    never resolve against the flat ``bindings`` mapping. The BARE
-    ``("config",)`` ref case also matters: a length-1 ref never enters the
-    ``ref[1:]`` walk loop at all, so
-    its refusal depends entirely on the leaf-type check rejecting the
-    ``bindings`` dict itself."""
+    """A config-sourced ref longer than ``("config", <key>)`` can"""
     config_dir = tmp_path / "config"
     strategies_dir = config_dir / "strategies"
     strategies_dir.mkdir(parents=True)
@@ -391,7 +356,6 @@ def test_unresolvable_ref_path_refuses_naming_the_path(
     assert "config.lower_band_threshold.nested" in str(excinfo.value)
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
 
-    # A BARE ("config",) ref is refused the same way, never silently UNKNOWN.
     bare_config_dir = tmp_path / "config-bare"
     bare_strategies_dir = bare_config_dir / "strategies"
     bare_strategies_dir.mkdir(parents=True)
@@ -490,11 +454,7 @@ def test_orphan_bindings_stem_refuses(
 def test_happy_path_registers_bindings_and_the_rule_actually_fires(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """A config-sourced ref is no longer
-    inert. The registered ``EvaluationConfig.bindings`` carries the exact
-    values, and evaluating the policy over an environment where
-    ``capsule.resolved_values.close < config.lower_band_threshold`` holds
-    actually SELECTS the ACTION decision — not silently UNKNOWN/default."""
+    """A config-sourced ref is no longer"""
     config_dir = tmp_path / "config"
     strategies_dir = config_dir / "strategies"
     strategies_dir.mkdir(parents=True)
@@ -529,11 +489,8 @@ def test_happy_path_registers_bindings_and_the_rule_actually_fires(
     assert dispatch.resolution is DispatchResolution.DISPATCHED
     registered = dispatch.entries[0]
     assert registered.config.bindings == {"lower_band_threshold": 500}
-    assert (
-        registered.strategy.policy is not None
-    )  # a registered strategy is REQUIRED_COVERED
+    assert registered.strategy.policy is not None
 
-    # The rule fires: close(100) < config.lower_band_threshold(500).
     env = {
         "capsule": {"resolved_values": {"close": 100}},
         "config": dict(registered.config.bindings),
@@ -541,7 +498,6 @@ def test_happy_path_registers_bindings_and_the_rule_actually_fires(
     decision = evaluate_policy(registered.strategy.policy, env)
     assert decision.kind is DecisionKind.ACTION
 
-    # Control: close(999) is NOT below the threshold -> default NO_ACTION.
     env_no_fire = {
         "capsule": {"resolved_values": {"close": 999}},
         "config": dict(registered.config.bindings),
@@ -553,9 +509,7 @@ def test_happy_path_registers_bindings_and_the_rule_actually_fires(
 def test_zero_config_refs_with_matching_empty_entry_is_fine(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """A strategy with zero config-sourced refs may still have a bindings
-    entry, as long as it version-matches and declares zero bindings (rule 4
-    forces this: every key would otherwise be "unused")."""
+    """A strategy with zero config-sourced refs may still have a bindings"""
     config_dir = tmp_path / "config"
     strategies_dir = config_dir / "strategies"
     strategies_dir.mkdir(parents=True)
@@ -589,8 +543,7 @@ def test_zero_config_refs_with_matching_empty_entry_is_fine(
 def test_no_bindings_file_and_zero_config_refs_is_fine(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """No ``strategy_bindings.yaml`` at all, and no strategy needs one —
-    the file's absence is not itself a refusal (module docstring)."""
+    """No ``strategy_bindings.yaml`` at all, and no strategy needs one —"""
     config_dir = tmp_path / "config"
     strategies_dir = config_dir / "strategies"
     strategies_dir.mkdir(parents=True)
@@ -609,23 +562,10 @@ def test_no_bindings_file_and_zero_config_refs_is_fine(
     assert resolved.loaded_bindings.present is False
 
 
-# ============================================================================
-# Additional bindings-source refusal cases.
-# ============================================================================
-
-
 def test_malformed_bindings_file_refuses_with_evidence(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """A malformed
-    :class:`~tos_runtime.strategy.bindings.StrategyBindingsLoadError` (a
-    SIBLING of ``StrategyLoadError``, not a subclass of it) is caught by
-    ``resolve_strategy_registry``'s own ``except`` clause and converted to
-    ``StrategyRegistryResolutionRefused`` with BOTH evidence paths written
-    — narrowing that ``except`` to ``StrategyLoadError`` alone would let a
-    malformed-bindings failure escape uncaught, with no
-    ``STRATEGY_REFUSED`` entry and no emergency-log line (the "never a
-    silent halt" contract this module's own docstring states)."""
+    """A malformed"""
     config_dir = tmp_path / "config"
     strategies_dir = config_dir / "strategies"
     strategies_dir.mkdir(parents=True)
@@ -652,10 +592,7 @@ def test_malformed_bindings_file_refuses_with_evidence(
 def test_duplicate_stem_across_yaml_and_yml_refuses(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """``band.strategy.yaml`` and ``band.strategy.yml``
-    are two distinct admitted strategies (the loader admits both suffixes)
-    sharing one bindings stem — refused before any bindings rule runs,
-    naming both files."""
+    """``band.strategy.yaml`` and ``band.strategy.yml``"""
     config_dir = tmp_path / "config"
     strategies_dir = config_dir / "strategies"
     strategies_dir.mkdir(parents=True)
@@ -682,9 +619,7 @@ def test_duplicate_stem_across_yaml_and_yml_refuses(
 def test_bindings_file_present_with_injected_registry_refuses(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """The injected-registry path: bindings apply only to
-    the file strategy source — a present ``strategy_bindings.yaml`` next
-    to an injected registry is refused rather than silently ignored."""
+    """The injected-registry path: bindings apply only to"""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     _write_bindings_yaml(
@@ -706,9 +641,7 @@ def test_bindings_file_present_with_injected_registry_refuses(
 def test_bindings_file_present_with_allow_no_strategies_refuses(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """With ``allow_no_strategies=True`` and zero
-    admitted strategies, every bindings entry would be an orphan (rule 5)
-    — refused rather than silently ignored."""
+    """With ``allow_no_strategies=True`` and zero"""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     _write_bindings_yaml(
@@ -730,8 +663,7 @@ def test_bindings_file_present_with_allow_no_strategies_refuses(
 def test_absent_bindings_file_is_fine_on_injected_and_allow_no_strategies_paths(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """An ABSENT bindings file is unaffected on both
-    non-file-source paths — nothing to refuse."""
+    """An ABSENT bindings file is unaffected on both"""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     injected = StrategyRegistry()

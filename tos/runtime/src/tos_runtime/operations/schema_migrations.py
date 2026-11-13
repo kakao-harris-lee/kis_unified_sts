@@ -1,99 +1,4 @@
-"""Per-store baseline ``SchemaMigration`` definitions + the operator-facing ``apply_migrations``
-(TOS Phase 5 W4 plan §2 decision 3; ``marketfeed`` entry added by the tick-source wave, plan
-``docs/plans/2026-09-16-tos-tick-source-plan.md`` §2 decision 3).
-
-**Baseline v1, per store.** Each runtime-owned durable store (evidence, RCL, inbox,
-marketfeed, venue ledger)
-gets exactly one registered migration: version 1, "baseline — current DDL as of the store's own
-introduction". A future wave that actually changes a table's shape adds a SECOND
-``SchemaMigration`` per affected store; this module does not invent placeholder future versions.
-
-**First v2 (kernel round #4 K-4).** ``RCL_MIGRATIONS`` now carries a genuine second entry —
-``reservations`` gains ``committed_vector_json`` — the first store in this module to move past
-baseline. It is the worked example for the pattern above: a NEW ``SchemaMigration`` appended,
-never an edit to the v1 entry's own statements/expected shape.
-``EVIDENCE_MIGRATIONS`` follows it (evidence growth plan §2 A2).
-
-**Rollback, per migration.** A migration's rollback is stated where the migration is, because
-it is not uniform. ``RCL`` v2 added a nullable column: sqlite has no ``DROP COLUMN`` on that
-shape, so rolling it back means restoring the durable set from a backup taken before the
-migration (``operations.backup_set``) — the reason that migration is one-way in practice.
-
-``EVIDENCE`` v2 is the easy case: it adds only an INDEX, an auxiliary structure that stores no
-row content, so rolling it back leaves every row's bytes, ``entry_digest`` and ``chain_digest``
-exactly as they were, and ``SqliteEvidenceStore.verify()`` unchanged either way. No backup
-restore is needed. There is exactly ONE supported procedure, and both halves are required::
-
-    DROP INDEX IF EXISTS entries_kind_seq;
-    PRAGMA user_version = 1;
-
-Dropping the index while LEAVING ``user_version`` at 2 is not a rollback: v2 code boots happily
-and silently runs every by-kind read as a full scan again, and nothing detects it —
-``compute_schema_shape_digest`` reads ``PRAGMA table_info``, which does not see indexes at all.
-Rolling forward again is always ``apply_migrations`` (the ``migrate`` CLI), never a hand-written
-``CREATE INDEX``; it re-applies the step from either half-state and, at an already-current
-version, rebuilds a dropped index through the repair pass
-(:attr:`SchemaMigration.repair_statements`).
-
-**A re-applied step is not re-recorded.** ``schema_ledger.version`` is a PRIMARY KEY on an
-append-only table, so the v2 row survives the rollback above and a second ``migrate`` cannot
-insert it again. :func:`apply_migrations` therefore skips the INSERT when the row already
-exists, while still running the DDL and stamping ``user_version``. The ledger is a record of
-"this version was first applied here", not a count of how many times it ran. Before this
-(review HIGH-1), the duplicate INSERT raised ``IntegrityError``, rolled the whole transaction
-back, and left the file stuck at v1 with no index — unbootable by v2 code and unreachable by
-``migrate``.
-
-**Rollout order (round #4 review LOW — first genuine v1->v2 bump, so this module carried no
-prior worked example of the deploy-time ordering it requires).**
-:func:`~tos_runtime.operations.schema_ledger.open_or_create_schema` refuses BOTH directions on
-open (that module's docstring points 3/4: behind OR ahead of the running code's expected version), so
-a `RCL_SCHEMA_VERSION` bump is not safe to roll out in an arbitrary order against a running store.
-The required sequence: (1) fully stop every process still running the OLD (v1-expecting) code
-against this store file — a still-live v1 process would itself get refused the instant
-``apply_migrations`` stamps the file at v2 out from under it; (2) run
-``apply_migrations(path, "rcl")`` to bring the file to v2; (3) start the NEW (v2-expecting) code.
-Running ``apply_migrations`` first, while a v1 process is still up, does not corrupt anything —
-the v1 process simply gets ``SchemaVersionRefused`` on its next open/reopen — but it does turn a
-planned migration into an unplanned outage of that still-live process.
-
-**Deliberately self-contained (duplicated DDL, not imported).** The literal ``CREATE
-TABLE``/trigger strings below mirror — and must be kept in sync with — each store's own DDL
-(:mod:`tos_runtime.evidence.store`, :mod:`tos_runtime.rcl.schema`, :mod:`tos_runtime.engine.inbox`,
-:mod:`tos_runtime.marketfeed.store`, including the inbox's own ``_ADDED_COLUMNS`` idiom, folded
-into ``events`` directly here since baseline v1 IS "the current DDL, added columns included" per
-the plan). This is intentional, not an oversight: :func:`apply_migrations` must be able to bring a
-PRE-EXISTING file (real tables, ``user_version == 0``, never ledgered) up to baseline WITHOUT
-constructing the real store class first — that class's own constructor now calls
-:func:`~tos_runtime.operations.schema_ledger.open_or_create_schema`, which would immediately
-refuse a non-fresh, sub-baseline file with :class:`~tos_runtime.operations.schema_ledger
-.SchemaVersionRefused` — precisely the refusal this function exists to resolve. Importing the
-store classes here to reuse their DDL would recreate that exact bootstrapping problem.
-
-**Shape verification before stamping (plan §2 decision 3: "PRAGMA table_info 로 현 형상 일치 검증
-후 스탬프(불일치 = 거부)").** For a pre-existing file (``user_version == 0``, tables already
-present), :func:`apply_migrations` compares each table's REAL, on-disk column set against this
-module's own expected column set before running anything — a mismatch refuses
-(:class:`SchemaMigrationRefused`) rather than silently running ``CREATE TABLE IF NOT EXISTS``
-over a table whose shape this code does not actually recognize.
-
-**The ledger this function creates is append-only, which it was not.** ``apply_migrations`` has
-to be able to create a ``schema_ledger`` itself (a pre-ledger file has none), and it used to do
-that with that module's ``CREATE TABLE`` constant alone (now private, and reachable only
-through the helper named below) — the
-table, without the two ``BEFORE UPDATE``/``BEFORE DELETE`` triggers the genesis path creates
-beside it. Every pre-ledger file brought up by ``migrate`` therefore ended with a ledger whose
-rows could be rewritten or deleted, PERMANENTLY: the version stamp and the table both exist, so
-:func:`~tos_runtime.operations.schema_ledger.open_or_create_schema`'s steady-state fast path
-returns before any DDL runs and no later boot repairs them. Both paths now go through
-:func:`~tos_runtime.operations.schema_ledger.create_schema_ledger_objects`, so a genesis-created
-and a migrated file of the same version converge on one ``sqlite_master`` — asserted, not
-argued, by ``test_a_migrated_file_converges_on_the_genesis_schema``. A ``migrate`` that has to
-rebuild a missing trigger names it in :attr:`MigrationOutcome.repaired` rather than fixing it
-silently, the same discipline the dropped-index repair follows.
-
-Firewall: stdlib (``sqlite3``, ``hashlib``, ``time``) only.
-"""
+"""Per-store baseline ``SchemaMigration`` definitions + the operator-facing ``apply_migrations``"""
 
 from __future__ import annotations
 
@@ -126,32 +31,12 @@ __all__ = [
 
 
 class SchemaMigrationRefused(RuntimeError):
-    """Raised by :func:`apply_migrations` — a pre-existing file's real shape disagrees with the
-    migration's expected shape, or the file is already ahead of every known migration.
-    """
+    """Raised by :func:`apply_migrations` — a pre-existing file's real shape disagrees with the"""
 
 
 @dataclass(frozen=True)
 class MigrationOutcome:
-    """What one :func:`apply_migrations` call actually did — the operator-facing report.
-
-    ``migrate`` used to print "is current" for three materially different outcomes: nothing to
-    do, versions applied, and an auxiliary structure rebuilt. Returning this lets the CLI say
-    which (review L3).
-
-    Args:
-        store_name: The store this ran against.
-        from_version: ``PRAGMA user_version`` on entry.
-        to_version: ``PRAGMA user_version`` on exit.
-        applied: Versions whose statements ran, in order.
-        ledgered: The subset of :attr:`applied` that also wrote a ``schema_ledger`` row. A
-            version can be applied WITHOUT being ledgered when its row already survived from an
-            earlier run (the ledger is append-only, so a re-applied step is never re-recorded).
-        repaired: Names of auxiliary structures this call had to rebuild — a dropped index at an
-            already-current version, and/or a missing ``schema_ledger`` append-only trigger. The
-            trigger half is reported at ANY version, not only at the current one, because a
-            ledger without its triggers is unprotected whatever version it is stamped at.
-    """
+    """What one :func:`apply_migrations` call actually did — the operator-facing report."""
 
     store_name: str
     from_version: int
@@ -168,28 +53,7 @@ class MigrationOutcome:
 
 @dataclass(frozen=True)
 class SchemaMigration:
-    """One registered schema migration for one store.
-
-    Args:
-        version: The ``PRAGMA user_version`` this migration brings a store TO — migrations for a
-            store are applied strictly in ascending, gapless order starting from
-            ``current_version + 1``.
-        description: Free-text, operator-facing.
-        statements: The DDL statements applied, in order, inside one transaction.
-        expected_tables: ``{table_name: (column_name, ...)}`` — the shape this migration
-            produces (or, for a pre-existing file already holding these tables under
-            ``user_version == 0``, the shape :func:`apply_migrations` verifies BEFORE stamping).
-            Column order matters (matches ``PRAGMA table_info`` order); empty for a migration
-            that adds no new table shape to verify (none in this wave).
-        repair_statements: The subset of :attr:`statements` that is safe to re-run against a
-            file ALREADY stamped at :attr:`version`, to rebuild an auxiliary structure that was
-            dropped out from under it (:func:`apply_migrations`'s repair pass). Only genuinely
-            idempotent DDL belongs here: ``CREATE INDEX IF NOT EXISTS`` qualifies, ``ALTER TABLE
-            ... ADD COLUMN`` does NOT (it raises "duplicate column name" on the second run), so
-            this is stated per migration rather than inferred. Empty means "this version has
-            nothing repairable" — the default, and the honest answer for every migration that
-            changes column shape.
-    """
+    """One registered schema migration for one store."""
 
     version: int
     description: str
@@ -199,13 +63,10 @@ class SchemaMigration:
 
     @property
     def statements_digest(self) -> str:
-        """sha256 over the canonical join of :attr:`statements` — the ledger's own
-        ``migration_digest`` value for this migration."""
+        """sha256 over the canonical join of :attr:`statements` — the ledger's own"""
         canonical = "\n".join(self.statements)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-
-# -- evidence store baseline (mirrors tos_runtime.evidence.store + .outbox) -------------------
 
 _EVIDENCE_BASELINE_STATEMENTS: tuple[str, ...] = (
     """
@@ -278,14 +139,6 @@ EVIDENCE_MIGRATIONS: tuple[SchemaMigration, ...] = (
             ),
         },
     ),
-    # Evidence growth plan §2 A2 (docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md):
-    # `entries` gains the `entries_kind_seq` covering index, mirroring
-    # `tos_runtime.evidence.store`'s own `_CREATE_KIND_SEQ_INDEX_SQL` (which a FRESH file gets
-    # at genesis — this migration is the pre-existing-file half). Like RCL's v2 above it only
-    # ever runs against an already-v1-ledgered store, so `expected_tables` is empty; and unlike
-    # every other migration in this module it changes NO column shape at all, which is exactly
-    # why it is safe: an index is an auxiliary structure, so no row's bytes, `entry_digest` or
-    # `chain_digest` move and `SqliteEvidenceStore.verify()` is unaffected.
     SchemaMigration(
         version=2,
         description=(
@@ -294,15 +147,10 @@ EVIDENCE_MIGRATIONS: tuple[SchemaMigration, ...] = (
             "modules that read this store at all (evidence growth plan §2 A2)"
         ),
         statements=_EVIDENCE_V2_STATEMENTS,
-        # The whole migration is one `CREATE INDEX IF NOT EXISTS`, so re-running it against an
-        # already-v2 file is a no-op when the index is there and a rebuild when it is not —
-        # which is exactly the repair `migrate` needs to be able to perform (review HIGH-1: a
-        # dropped index is otherwise invisible to every check and unreachable by every tool).
         repair_statements=_EVIDENCE_V2_STATEMENTS,
     ),
 )
 
-# -- RCL commit log baseline (mirrors tos_runtime.rcl.schema) ---------------------------------
 
 _RCL_BASELINE_STATEMENTS: tuple[str, ...] = (
     """
@@ -409,12 +257,6 @@ RCL_MIGRATIONS: tuple[SchemaMigration, ...] = (
             ),
         },
     ),
-    # Kernel round #4 K-4: `reservations` gains `committed_vector_json` (the durable form of
-    # `CapacityReservationTransition.committed_vector`, tos/src/tos/rcl/commitlog.py). This
-    # migration only ever runs against an already-v1-ledgered store (current_version == 1 by
-    # the time apply_migrations reaches it), so `expected_tables` is empty — the pre-shape
-    # verification in `_verify_expected_shape_or_refuse` only fires for `current_version == 0`,
-    # which v1's own entry above already claimed for a totally fresh/untracked file.
     SchemaMigration(
         version=2,
         description=(
@@ -425,7 +267,6 @@ RCL_MIGRATIONS: tuple[SchemaMigration, ...] = (
     ),
 )
 
-# -- event inbox baseline (mirrors tos_runtime.engine.inbox, _ADDED_COLUMNS folded in) --------
 
 _INBOX_BASELINE_STATEMENTS: tuple[str, ...] = (
     """
@@ -505,7 +346,6 @@ INBOX_MIGRATIONS: tuple[SchemaMigration, ...] = (
     ),
 )
 
-# -- marketfeed snapshot store baseline (mirrors tos_runtime.marketfeed.store) ----------------
 
 _MARKETFEED_BASELINE_STATEMENTS: tuple[str, ...] = (
     """
@@ -556,16 +396,6 @@ MARKETFEED_MIGRATIONS: tuple[SchemaMigration, ...] = (
     ),
 )
 
-# -- synthetic venue ledger baseline (mirrors tos_runtime.venue_ledger.synthetic) --------------
-#
-# #1011 P2 (review-1017 N2). The store landed in P1 with its own `schema_ledger` genesis but
-# NO entry here, so `migrate` had no path to a pre-existing file and `test_cli.py`'s
-# `set(MIGRATE_PATH_BY_STORE) == set(STORE_MIGRATIONS)` pin covered nothing about it. Both are
-# registered together, in this commit, for exactly that reason.
-#
-# Duplicated, not imported — the whole-module discipline above ("Deliberately self-contained"):
-# `apply_migrations` must bring a PRE-EXISTING file up to baseline without constructing
-# `SyntheticVenueLedger`, whose own constructor would refuse that file first.
 
 _VENUE_LEDGER_BASELINE_STATEMENTS: tuple[str, ...] = (
     """
@@ -636,12 +466,7 @@ STORE_MIGRATIONS: Mapping[str, tuple[SchemaMigration, ...]] = {
 
 
 def schema_version(path: Path) -> int:
-    """Read-only: the ``PRAGMA user_version`` currently stamped on the sqlite file at ``path``.
-
-    Opens and closes its own connection — never assumes the store at ``path`` is open or closed
-    elsewhere in this process (a read-only ``PRAGMA`` is safe against a concurrently open WAL
-    file either way).
-    """
+    """Read-only: the ``PRAGMA user_version`` currently stamped on the sqlite file at ``path``."""
     conn = sqlite3.connect(str(path))
     try:
         return read_schema_version(conn)
@@ -650,13 +475,7 @@ def schema_version(path: Path) -> int:
 
 
 def _ledger_has_version(conn: sqlite3.Connection, version: int) -> bool:
-    """Whether ``schema_ledger`` already carries a row for ``version``.
-
-    ``schema_ledger.version`` is a PRIMARY KEY on an append-only table, so a re-applied step
-    cannot insert a second row and cannot delete the first — it can only skip the insert
-    (review HIGH-1: before this check, a step whose ledger row survived a rollback aborted the
-    whole transaction with ``IntegrityError`` and stranded the file).
-    """
+    """Whether ``schema_ledger`` already carries a row for ``version``."""
     row = conn.execute(
         "SELECT 1 FROM schema_ledger WHERE version = ?", (version,)
     ).fetchone()
@@ -666,20 +485,7 @@ def _ledger_has_version(conn: sqlite3.Connection, version: int) -> bool:
 def _repair_at_current_version(
     conn: sqlite3.Connection, head: SchemaMigration
 ) -> tuple[str, ...]:
-    """Re-run ``head``'s :attr:`~SchemaMigration.repair_statements` against an already-current
-    file, and report which auxiliary structures were actually rebuilt.
-
-    Exists because an auxiliary structure — an index — can be dropped out from under a stamped
-    version and leave NOTHING that notices: ``PRAGMA user_version`` still reads latest, the
-    schema-ledger boot check passes, and ``compute_schema_shape_digest`` reads
-    ``PRAGMA table_info``, which is blind to indexes. Before this pass the only tool that could
-    have rebuilt it (``migrate``) no-op'd, because its loop skips every version ``<=
-    current_version``.
-
-    The statements are idempotent by declaration (see :attr:`SchemaMigration.repair_statements`),
-    so this is a no-op on a healthy file. The return value names what was missing, which is what
-    lets the CLI say "repaired" instead of the misleading "is current".
-    """
+    """Re-run ``head``'s :attr:`~SchemaMigration.repair_statements` against an already-current"""
     if not head.repair_statements:
         return ()
     before = _index_names(conn)
@@ -699,11 +505,7 @@ def _index_names(conn: sqlite3.Connection) -> frozenset[str]:
 def _verify_expected_shape_or_refuse(
     conn: sqlite3.Connection, *, store_name: str, migration: SchemaMigration
 ) -> None:
-    """Refuse if any of ``migration.expected_tables`` ALREADY EXISTS with a different column set.
-
-    A table that does not exist yet is not a mismatch (the migration's own ``CREATE TABLE IF NOT
-    EXISTS`` will create it) — only an EXISTING table with the WRONG shape refuses.
-    """
+    """Refuse if any of ``migration.expected_tables`` ALREADY EXISTS with a different column set."""
     for table_name, expected_columns in migration.expected_tables.items():
         rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
         if not rows:
@@ -724,39 +526,14 @@ def apply_migrations(
     *,
     monotonic_ns: Callable[[], int] = time.monotonic_ns,
 ) -> MigrationOutcome:
-    """Bring the CLOSED store file at ``path`` up to ``store_name``'s latest known migration.
-
-    Operates on its own, fresh ``sqlite3.connect`` — the caller is responsible for the store
-    being closed everywhere else in this process first (this function does not itself detect a
-    concurrently open handle; matches :mod:`tos_runtime.operations.backup_set`'s own documented
-    precondition).
-
-    Args:
-        path: The sqlite file to migrate in place.
-        store_name: One of :data:`STORE_MIGRATIONS`'s keys (``"evidence"`` / ``"rcl"`` /
-            ``"inbox"`` / ``"marketfeed"`` / ``"venue_ledger"``).
-        monotonic_ns: Injected monotonic-clock callable for the ledger row's
-            ``applied_at_monotonic_ns``.
-
-    Returns:
-        A :class:`MigrationOutcome` naming what ran — versions applied, ledger rows written,
-        and auxiliary structures repaired at an already-current version.
-
-    Raises:
-        ValueError: ``store_name`` is not registered.
-        SchemaMigrationRefused: The file is already ahead of every known migration for this
-            store, or a pre-existing table's real shape disagrees with what a migration expects.
-    """
+    """Bring the CLOSED store file at ``path`` up to ``store_name``'s latest known migration."""
     migrations = STORE_MIGRATIONS.get(store_name)
     if migrations is None:
         raise ValueError(f"apply_migrations: unknown store_name {store_name!r}")
 
     conn = sqlite3.connect(str(path))
     try:
-        # Version FIRST, DDL second (Codex review MEDIUM-1). `read_schema_version` is a bare
         # PRAGMA and needs no ledger table, so the AHEAD refusal happens before this function
-        # writes anything: a file from a FUTURE release comes back byte-identical instead of
-        # quietly acquiring objects from an older tool that just said it refused to touch it.
         current_version = read_schema_version(conn)
         target_version = migrations[-1].version
         if current_version > target_version:

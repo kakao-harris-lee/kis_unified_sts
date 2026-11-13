@@ -1,35 +1,4 @@
-"""Child process for the kill -9 recovery drill (TOS rescope plan §2 sentence 3, M3).
-
-Started only by ``tools/tos_recovery_drill.py`` (never collected by pytest: no ``test_`` prefix).
-Two modes, each a separate OS process against the SAME drill root:
-
-``crash <root> <point>``
-    Builds the compose fixtures under ``<root>`` (the same ``config_dir``/``data_dir``/
-    ``custody_root`` writers the e2e suite uses), composes a SYNTHETIC-transport paper runtime,
-    drives one crossing event to the transport, and parks at ``<point>``: it prints
-    ``AT <point>`` on stdout and blocks on stdin until the parent sends ``SIGKILL``.
-
-``reboot <root> <result.json>``
-    Composes the runtime again from the same ``<root>`` (a real restart: new process, files
-    only), tries to drive the same event and a fresh one, and writes what it saw to
-    ``<result.json>``.
-
-The three points are the order path's three crash windows:
-
-* ``BEFORE_SEND`` — inside ``send_once``, before the venue sees anything.
-* ``AFTER_SEND`` — the venue has the order (one durable line in the venue ledger), but
-  ``send_once`` has not returned its result yet.
-* ``AFTER_RESULT`` — the result came back and ``EGRESS_RESULT_RECORDED`` is durable, but the
-  flow has not reached ``SEND_HANDED_OFF``/``EVENT_CONSUMED``.
-
-The venue ledger (``<root>/venue_ledger.jsonl``, one fsync'ed line per order the synthetic
-venue received) is the drill's broker-side witness: it lives outside every runtime store, so a
-duplicate send shows up there whichever process made it.
-
-No network: both modes refuse any transport other than
-:class:`~tos.brokeradapter.synthetic.SyntheticPaperTransport` and install the suite's own
-loopback-only socket guard before composing.
-"""
+"""Child process for the kill -9 recovery drill (TOS rescope plan §2 sentence 3, M3)."""
 
 from __future__ import annotations
 
@@ -58,17 +27,14 @@ from ..engine.conftest import SCHEME
 
 POINTS = ("BEFORE_SEND", "AFTER_SEND", "AFTER_RESULT")
 VENUE_LEDGER_NAME = "venue_ledger.jsonl"
-#: Written (fsync'ed) by the crash child at the park point, before the parent may kill it.
 PARK_SNAPSHOT_NAME = "park_snapshot.json"
 _RESULT_RECORDED_KIND = "EGRESS_RESULT_RECORDED"
-#: The first event the crash child drives; the reboot child re-offers it and one fresh event.
 _DRILL_EVENT_SEQ = 1
 _FRESH_EVENT_SEQ = 999
 
 
 def _install_network_guard() -> None:
-    """The suite's own loopback-only guard (``tests/conftest.py``), installed for the whole
-    child process instead of per test."""
+    """The suite's own loopback-only guard (``tests/conftest.py``), installed for the whole"""
     for name, guard in (
         ("connect", _guarded_connect),
         ("connect_ex", _guarded_connect_ex),
@@ -106,16 +72,12 @@ def _reservations(runtime: Any) -> dict[str, str]:
 
 
 def _wrap_transport(runtime: Any, root: Path, park_at: str | None) -> None:
-    """Put the venue ledger (and, in crash mode, the park points) around ``send_once``.
-
-    The gateway holds the same transport object, so an instance attribute reaches every send.
-    """
+    """Put the venue ledger (and, in crash mode, the park points) around ``send_once``."""
     ledger = root / VENUE_LEDGER_NAME
     if type(runtime.transport) is not SyntheticPaperTransport:
         raise SystemExit(
             f"drill refuses a non-synthetic transport: {type(runtime.transport)!r}"
         )
-    # `Any`, not the narrowed class: the instance attribute below shadows the method.
     transport: Any = runtime.transport
     real_send_once = transport.send_once
 
@@ -159,7 +121,7 @@ def _park(runtime: Any, root: Path, point: str) -> None:
         os.close(fd)
     sys.stdout.write(f"AT {point}\n")
     sys.stdout.flush()
-    sys.stdin.readline()  # the parent answers with SIGKILL, never with a line
+    sys.stdin.readline()
     raise SystemExit(f"parked at {point} but was not killed")
 
 
@@ -170,7 +132,6 @@ def crash(root: Path, point: str) -> int:
     cfg, data, custody = _build_fixtures(root)
     runtime = _compose(root, cfg, data, custody)
     event = fx.crossing_event(seq=_DRILL_EVENT_SEQ)
-    # First pass has no approval yet: it stops at step 4 and yields the digests to approve.
     first = runtime.run_once((event,))
     proposal_digest = first[0].pipeline.proposal.canonical_digest
     construction = runtime.construction_stage.construction
@@ -184,7 +145,7 @@ def crash(root: Path, point: str) -> int:
     if point == "AFTER_RESULT":
         _wrap_result_recorded(runtime, root)
     runtime.run_once((event,))
-    sys.stdout.write("NO_PARK\n")  # the flow finished without reaching the park point
+    sys.stdout.write("NO_PARK\n")
     sys.stdout.flush()
     return 3
 
@@ -198,8 +159,6 @@ def reboot(root: Path, result_path: Path) -> int:
     _wrap_transport(runtime, root, None)
     recovery = runtime.recovery
     reservations_at_boot = _reservations(runtime)
-    # Every admitted event whose handling started but never finished — what the barrier must
-    # treat as possibly live.
     interrupted = sorted(
         event_identity(event, scheme=SCHEME)
         for seq, event in runtime.inbox.replay()

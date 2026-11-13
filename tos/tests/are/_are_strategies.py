@@ -1,18 +1,4 @@
-"""Shared valid-artifact builders + strategies for the are property tests.
-
-Firewall-clean: imports only ``hypothesis`` and ``tos.*`` (design #13 §0.3). The builders
-enforce the §7 clean-vs-illegal fixture discipline (the #8 REJECT lesson):
-
-* a "clean" projection cell declares concrete, finite, within-headroom magnitudes so a GRANT
-  fixture is genuinely admissible, never a permissive shortcut;
-* an **over-headroom** cell carries a real requested increment strictly greater than headroom;
-* an **UNKNOWN** cell drops one magnitude to ``None`` (a genuine missing input);
-* a **full** benefit proof has all seven premises positively ``True``; a partial one flips one;
-* a **conservative** valuation input tuple has every flag ``True``;
-* a min-coverage scenario set genuinely covers the injected floor.
-
-The reserved ``"TBD"`` placeholder is excluded from required-field text.
-"""
+"""Shared valid-artifact builders + strategies for the are property tests."""
 
 from __future__ import annotations
 
@@ -41,11 +27,8 @@ from tos.rcl import CapacityComponent, CapacityVector
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Text bound to a required-covered field must be concrete (never the reserved ``"TBD"``).
 REQUIRED_FIELD_TEXT = st.text(max_size=8).filter(lambda s: s != "TBD")
-#: Injected ``bool | None`` flag (fail-closed on ``None`` / ``False``).
 TRIBOOL = st.sampled_from([True, False, None])
-#: A finite decimal magnitude (never NaN / infinity — those are unconstructable, §14).
 FINITE_MAGNITUDE = st.decimals(
     min_value=Decimal("0"),
     max_value=Decimal("1000"),
@@ -54,18 +37,12 @@ FINITE_MAGNITUDE = st.decimals(
     places=2,
 )
 
-#: The injected min-coverage floor used across the projection tests (two credible kinds).
 COVERAGE_FLOOR: frozenset[AdverseScenarioKind] = frozenset(
     {
         AdverseScenarioKind.FILL_PREFIX_ORDERING,
         AdverseScenarioKind.OVERLAP_RETRY,
     }
 )
-
-
-# ---------------------------------------------------------------------------
-# Digest-bound artifact builders
-# ---------------------------------------------------------------------------
 
 
 def issue_policy(**overrides: Any) -> AggregateRiskPolicy:
@@ -114,11 +91,6 @@ def issue_decision(**overrides: Any) -> AggregateRiskDecision:
     }
     base.update(overrides)
     return AggregateRiskDecision.issue(scheme=SCHEME, **base)
-
-
-# ---------------------------------------------------------------------------
-# Value-model builders
-# ---------------------------------------------------------------------------
 
 
 def clean_cell(

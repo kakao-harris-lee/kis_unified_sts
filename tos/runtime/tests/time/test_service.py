@@ -1,11 +1,4 @@
-"""Hermetic tests for ``tos_runtime.time.service.TrustworthyTimeService``.
-
-Every kernel predicate the service calls is exercised only through the
-service's own public surface (``start``/``evaluate``/``current_snapshot``/
-``health_state``) — these tests never reach into the kernel directly except to
-build the one cross-check assertion (fault contract ⑤,
-``snapshot_consumer_binding_ok``) and the digest-binding reconstruction check.
-"""
+"""Hermetic tests for ``tos_runtime.time.service.TrustworthyTimeService``."""
 
 from __future__ import annotations
 
@@ -28,10 +21,6 @@ from tos_runtime.time.service import (
 )
 from tos_runtime.time.sources import ReferenceObservation, ReferenceSourceReader
 
-# ----------------------------------------------------------------------------
-# fakes
-# ----------------------------------------------------------------------------
-
 
 class FakeMonotonicSource:
     """A monotonic source whose next reading is set explicitly by the test."""
@@ -43,16 +32,6 @@ class FakeMonotonicSource:
         return self.value
 
 
-#: A fixed, non-None default wall
-#: reading for :class:`FakeReferenceReader` — since anchor validity now needs
-#: a REAL Δwall-Δmono observation (:meth:`~tos_runtime.time.service
-#: .TrustworthyTimeService._observed_suspension_ms`), a reader that never
-#: supplies a wall value can no longer reach TRUSTED at all (no comparison is
-#: possible). Every test in this file that does not care about wall-clock
-#: semantics gets this STATIC value by default — held constant across every
-#: read() unless a test explicitly varies ``.wall_clock_unix_ms`` between
-#: calls, so ``Δwall == 0`` and the observed suspension is always exactly
-#: ``0`` (never a source of flakiness for tests that aren't about this).
 _DEFAULT_TEST_WALL_CLOCK_UNIX_MS = 1_700_000_000_000
 
 
@@ -64,10 +43,6 @@ class FakeReferenceReader:
     healthy: bool = True
     quality: str | None = "FAKE"
     common_mode_group: str | None = None
-    #: fixed static default (see :data:`_DEFAULT_TEST_WALL_CLOCK_UNIX_MS`'s
-    #: own docstring);
-    #: a test proving the "no wall clock at all" gap sets this to ``None``
-    #: explicitly.
     wall_clock_unix_ms: int | None = _DEFAULT_TEST_WALL_CLOCK_UNIX_MS
 
     def read(self) -> ReferenceObservation:
@@ -89,9 +64,7 @@ class AppendedRecord:
 
 @dataclass
 class InMemoryEvidenceDouble:
-    """An in-memory ``EvidenceAppendPort`` double — records every append call
-    and returns a real receipt, never touching a real store (lane L's
-    ``SqliteEvidenceStore`` is not needed for these unit tests)."""
+    """An in-memory ``EvidenceAppendPort`` double — records every append call"""
 
     appended: list[AppendedRecord] = field(default_factory=list)
     _seq: int = 0
@@ -110,9 +83,7 @@ class InMemoryEvidenceDouble:
 
 
 class RaisingAfterNEvidenceDouble:
-    """An ``EvidenceAppendPort`` double that raises starting from the Nth call
-    (1-indexed) — lets a test let ``start()`` succeed while a later
-    ``evaluate()`` append fails, or vice versa."""
+    """An ``EvidenceAppendPort`` double that raises starting from the Nth call"""
 
     def __init__(self, raise_from_call: int) -> None:
         self._raise_from_call = raise_from_call
@@ -134,15 +105,8 @@ class RaisingAfterNEvidenceDouble:
         )
 
 
-# ----------------------------------------------------------------------------
-# fixtures
-# ----------------------------------------------------------------------------
-
-
 class _TimeConfigKwargs(TypedDict):
-    """1:1 with :class:`TrustworthyTimeConfig`'s dataclass fields (plan §1.1 A-rt) — a runtime
-    ``@dataclass``, not a pydantic model, so ``**base``/``**overrides`` are checked key-by-key
-    and type-by-type instead of swallowed by a ``**dict[str, object]`` splat."""
+    """1:1 with :class:`TrustworthyTimeConfig`'s dataclass fields (plan §1.1 A-rt) — a runtime"""
 
     max_time_source_precision_ms: int
     max_time_transport_and_queue_uncertainty_ms: int
@@ -163,8 +127,7 @@ class _TimeConfigKwargs(TypedDict):
 
 
 class _TimeConfigKwargsPartial(TypedDict, total=False):
-    """Same fields as :class:`_TimeConfigKwargs`, all optional — the override-kwargs shape
-    for :func:`_config`."""
+    """Same fields as :class:`_TimeConfigKwargs`, all optional — the override-kwargs shape"""
 
     max_time_source_precision_ms: int
     max_time_transport_and_queue_uncertainty_ms: int
@@ -234,11 +197,6 @@ def _build(
     return service, evidence_double  # type: ignore[return-value]
 
 
-# ----------------------------------------------------------------------------
-# start() + evidence-before-snapshot ordering
-# ----------------------------------------------------------------------------
-
-
 def test_start_appends_exactly_one_evidence_record_before_any_snapshot() -> None:
     service, evidence = _build(monotonic=FakeMonotonicSource(1000))
     assert evidence.appended == []
@@ -264,11 +222,6 @@ def test_double_start_raises() -> None:
         service.start()
 
 
-# ----------------------------------------------------------------------------
-# FSM shape: UNINITIALIZED -> SYNCHRONIZING -> TRUSTED
-# ----------------------------------------------------------------------------
-
-
 def test_first_evaluate_moves_uninitialized_to_synchronizing_never_straight_to_trusted() -> (
     None
 ):
@@ -276,7 +229,7 @@ def test_first_evaluate_moves_uninitialized_to_synchronizing_never_straight_to_t
     service.start()
     service.evaluate()
     assert service.health_state is HealthState.SYNCHRONIZING
-    assert len(evidence.appended) == 2  # startup + this snapshot
+    assert len(evidence.appended) == 2
     assert evidence.appended[1].kind == "TIME_HEALTH_SNAPSHOT"
 
 
@@ -286,29 +239,24 @@ def test_reaching_required_conditions_transitions_to_trusted_with_new_generation
     monotonic = FakeMonotonicSource(1000)
     service, _ = _build(monotonic=monotonic)
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     monotonic.value = 1010
-    snap = service.evaluate()  # -> TRUSTED
+    snap = service.evaluate()
     assert service.health_state is HealthState.TRUSTED
     assert snap.health_state is HealthState.TRUSTED
-    assert snap.generation == 1  # bumped from the start() baseline of 0
-
-
-# ----------------------------------------------------------------------------
-# fault contract ⑥ — clock regression never yields TRUSTED
-# ----------------------------------------------------------------------------
+    assert snap.generation == 1
 
 
 def test_monotonic_regression_prevents_trusted_and_forces_untrusted() -> None:
     monotonic = FakeMonotonicSource(1000)
     service, _ = _build(monotonic=monotonic)
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     monotonic.value = 1010
-    service.evaluate()  # -> TRUSTED
+    service.evaluate()
     assert service.health_state is HealthState.TRUSTED
 
-    monotonic.value = 500  # regression: below the ratcheted anchor (1010)
+    monotonic.value = 500
     snap = service.evaluate()
 
     assert service.health_state is not HealthState.TRUSTED
@@ -316,46 +264,34 @@ def test_monotonic_regression_prevents_trusted_and_forces_untrusted() -> None:
     assert service.health_state is HealthState.UNTRUSTED
 
 
-# ----------------------------------------------------------------------------
-# fault contract ⑤ — a new generation never revives an old snapshot's binding
-# ----------------------------------------------------------------------------
-
-
 def test_new_generation_after_recovery_makes_old_snapshot_binding_fail() -> None:
     monotonic = FakeMonotonicSource(1000)
     service, _ = _build(monotonic=monotonic)
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     monotonic.value = 1010
-    old_snapshot = service.evaluate()  # -> TRUSTED, generation 1
+    old_snapshot = service.evaluate()
     assert old_snapshot.generation == 1
 
-    monotonic.value = 500  # regression -> UNTRUSTED
+    monotonic.value = 500
     service.evaluate()
     assert service.health_state is HealthState.UNTRUSTED
 
-    # recovery: UNTRUSTED -> SYNCHRONIZING (re-anchors AND mints generation 2 —
-    # Recovery itself must strictly advance the
-    # generation past whatever the last exposed [UNTRUSTED] snapshot carried).
     monotonic.value = 2000
     recovery_snapshot = service.evaluate()
     assert service.health_state is HealthState.SYNCHRONIZING
     assert recovery_snapshot.generation == 2
 
-    monotonic.value = 2010  # SYNCHRONIZING -> TRUSTED, generation 3
+    monotonic.value = 2010
     new_snapshot = service.evaluate()
     assert new_snapshot.generation == 3
 
-    # The OLD snapshot's binding fails against the NEW generation — the new
-    # generation does not revive the old snapshot's authority.
     assert not snapshot_consumer_binding_ok(
         old_snapshot,
         expected_snapshot_id=old_snapshot.snapshot_id,
         expected_canonical_digest=old_snapshot.canonical_digest,
         expected_generation=new_snapshot.generation,
     )
-    # ...but it still matches its OWN (old) generation — the mismatch is
-    # specifically about generation drift, not a corrupted fixture.
     assert snapshot_consumer_binding_ok(
         old_snapshot,
         expected_snapshot_id=old_snapshot.snapshot_id,
@@ -364,47 +300,31 @@ def test_new_generation_after_recovery_makes_old_snapshot_binding_fail() -> None
     )
 
 
-# ----------------------------------------------------------------------------
-# The recovery generation-advance guard must be a runtime check, not an assert.
-# ----------------------------------------------------------------------------
-
-
 def test_recovery_raises_when_generation_would_not_strictly_advance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A stale snapshot must not become current after recovery without a
-    strictly-new generation: forcing GenerationCounter.peek_next() to NOT
-    advance (simulating a corrupted/non-monotonic counter) must make the
-    recovery step raise, leaving the stale snapshot as the exposed one."""
+    """A stale snapshot must not become current after recovery without a"""
     monotonic = FakeMonotonicSource(1000)
     service, _ = _build(monotonic=monotonic)
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     monotonic.value = 1010
-    service.evaluate()  # -> TRUSTED, generation 1
+    service.evaluate()
 
-    monotonic.value = 500  # regression -> UNTRUSTED
+    monotonic.value = 500
     stale_snapshot = service.evaluate()
     assert service.health_state is HealthState.UNTRUSTED
     assert stale_snapshot.generation == 1
 
-    # Force the recovery step's generation candidate to NOT advance.
     monkeypatch.setattr(GenerationCounter, "peek_next", lambda self: self.current)
 
     monotonic.value = 2000
     with pytest.raises(RecoveryGenerationNotAdvanced):
         service.evaluate()
 
-    # No snapshot was silently re-exposed or advanced past the stale one, and
-    # health state did not move — the failed recovery attempt left no trace.
     assert service.current_snapshot().generation == stale_snapshot.generation
     assert service.current_snapshot() is stale_snapshot
     assert service.health_state is HealthState.UNTRUSTED
-
-
-# ----------------------------------------------------------------------------
-# snapshot digest binding (DigestBoundArtifact)
-# ----------------------------------------------------------------------------
 
 
 def test_snapshot_digest_binding_holds() -> None:
@@ -417,11 +337,6 @@ def test_snapshot_digest_binding_holds() -> None:
     assert TimeHealthSnapshot(**snap.model_dump()) == snap
 
 
-# ----------------------------------------------------------------------------
-# single reference source honestly reported; a 2-source profile stays DEGRADED
-# ----------------------------------------------------------------------------
-
-
 def test_single_reference_source_with_two_required_never_reaches_trusted() -> None:
     monotonic = FakeMonotonicSource(1000)
     service, _ = _build(
@@ -429,9 +344,9 @@ def test_single_reference_source_with_two_required_never_reaches_trusted() -> No
         config=_config(min_time_independent_reference_count=2),
     )
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     monotonic.value = 1010
-    snap = service.evaluate()  # required_ok False (1 < 2) -> stays SYNCHRONIZING
+    snap = service.evaluate()
 
     assert service.health_state is HealthState.SYNCHRONIZING
     assert len(snap.reference_sources) == 1
@@ -440,29 +355,21 @@ def test_single_reference_source_with_two_required_never_reaches_trusted() -> No
     assert independent_reference_count(snap.reference_sources) == 1
 
 
-# ----------------------------------------------------------------------------
-# Same-clock instances must not count as independent, and unmeasured
-# disagreement must not be asserted as agreement.
-# ----------------------------------------------------------------------------
-
-
 def test_single_reader_reaches_trusted_unchanged_control() -> None:
     """A single reader reaches ``TRUSTED`` with the normal configuration."""
     monotonic = FakeMonotonicSource(1000)
-    service, _ = _build(monotonic=monotonic)  # default: one FakeReferenceReader
+    service, _ = _build(monotonic=monotonic)
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     monotonic.value = 1010
-    snap = service.evaluate()  # -> TRUSTED, same as before the fix
+    snap = service.evaluate()
 
     assert service.health_state is HealthState.TRUSTED
     assert snap.health_state is HealthState.TRUSTED
 
 
 def test_two_same_clock_readers_never_reach_trusted_with_min_two_required() -> None:
-    """Two readers sharing ONE common_mode_group
-    (the real LocalSystemClockReader case) must collapse to 1 independent
-    reference, never satisfying a profile requiring 2."""
+    """Two readers sharing ONE common_mode_group"""
     monotonic = FakeMonotonicSource(1000)
     same_group_readers: list[ReferenceSourceReader] = [
         FakeReferenceReader(common_mode_group="LOCAL_SYSTEM_CLOCK"),
@@ -474,22 +381,18 @@ def test_two_same_clock_readers_never_reach_trusted_with_min_two_required() -> N
         config=_config(min_time_independent_reference_count=2),
     )
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     monotonic.value = 1010
     snap = service.evaluate()
 
-    assert service.health_state is HealthState.SYNCHRONIZING  # never TRUSTED
+    assert service.health_state is HealthState.SYNCHRONIZING
     from tos.time import independent_reference_count
 
     assert independent_reference_count(snap.reference_sources) == 1
 
 
 def test_two_distinct_group_readers_with_no_comparison_never_reach_trusted() -> None:
-    """Two readers with genuinely DISTINCT common_mode_group values
-    satisfy the independent-count requirement (2 >= 2), but this service performs
-    no pairwise disagreement comparison — disagreement must be reported
-    UNKNOWN, not silently asserted as 0/agreeing, so TRUSTED still must not
-    be reached."""
+    """Two readers with genuinely DISTINCT common_mode_group values"""
     monotonic = FakeMonotonicSource(1000)
     distinct_group_readers: list[ReferenceSourceReader] = [
         FakeReferenceReader(common_mode_group="SOURCE_A"),
@@ -501,22 +404,14 @@ def test_two_distinct_group_readers_with_no_comparison_never_reach_trusted() -> 
         config=_config(min_time_independent_reference_count=2),
     )
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     monotonic.value = 1010
     snap = service.evaluate()
 
     from tos.time import independent_reference_count
 
-    # The independent-count gate alone WOULD pass (2 distinct groups)...
     assert independent_reference_count(snap.reference_sources) == 2
-    # ...but un-measured disagreement still fails closed, so TRUSTED is
-    # correctly refused anyway.
-    assert service.health_state is HealthState.SYNCHRONIZING  # never TRUSTED
-
-
-# ----------------------------------------------------------------------------
-# fault contract ⑦ — source unavailable never yields FRESH/TRUSTED
-# ----------------------------------------------------------------------------
+    assert service.health_state is HealthState.SYNCHRONIZING
 
 
 def test_unreachable_reference_source_never_reaches_trusted() -> None:
@@ -524,16 +419,11 @@ def test_unreachable_reference_source_never_reaches_trusted() -> None:
     reader = FakeReferenceReader(reachable=False, healthy=False)
     service, _ = _build(monotonic=monotonic, references=[reader])
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     monotonic.value = 1010
     service.evaluate()
 
-    assert service.health_state is HealthState.SYNCHRONIZING  # never TRUSTED
-
-
-# ----------------------------------------------------------------------------
-# refused transition leaves state unchanged and records why
-# ----------------------------------------------------------------------------
+    assert service.health_state is HealthState.SYNCHRONIZING
 
 
 def test_evaluate_with_refused_transition_leaves_state_unchanged_and_records_reason(
@@ -545,19 +435,12 @@ def test_evaluate_with_refused_transition_leaves_state_unchanged_and_records_rea
 
     service.evaluate()
 
-    assert service.health_state is HealthState.UNINITIALIZED  # unchanged
+    assert service.health_state is HealthState.UNINITIALIZED
     assert service.last_transition_reason is not None
     assert "refused" in service.last_transition_reason
 
 
-# ----------------------------------------------------------------------------
-# a snapshot is exposed only after its evidence append returned a receipt
-# ----------------------------------------------------------------------------
-
-
 def test_snapshot_exposed_only_after_evidence_append_succeeds() -> None:
-    # raise_from_call=2: the startup append (call 1) succeeds, the first
-    # evaluate()'s snapshot append (call 2) raises.
     evidence = RaisingAfterNEvidenceDouble(raise_from_call=2)
     service, _ = _build(monotonic=FakeMonotonicSource(1000), evidence=evidence)
     service.start()
@@ -565,28 +448,20 @@ def test_snapshot_exposed_only_after_evidence_append_succeeds() -> None:
     with pytest.raises(RuntimeError, match="simulated durable-append failure"):
         service.evaluate()
 
-    # No snapshot was ever committed/exposed, and health state did not move.
     with pytest.raises(TimeServiceNotStarted):
         service.current_snapshot()
     assert service.health_state is HealthState.UNINITIALIZED
 
 
-# ----------------------------------------------------------------------------
-# Wall-clock exposure
-# ----------------------------------------------------------------------------
-
-
 def test_wall_clock_now_is_none_before_trusted() -> None:
-    """A SYNCHRONIZING snapshot — even one
-    carrying a real wall-clock observation — must never be surfaced through
-    ``wall_clock_now()``."""
+    """A SYNCHRONIZING snapshot — even one"""
     monotonic = FakeMonotonicSource(1000)
     service, _ = _build(
         monotonic=monotonic,
         references=[FakeReferenceReader(wall_clock_unix_ms=1_700_000_000_000)],
     )
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING only
+    service.evaluate()
     assert service.health_state is HealthState.SYNCHRONIZING
     assert service.wall_clock_now() is None
 
@@ -604,9 +479,9 @@ def test_wall_clock_now_returns_the_reading_once_trusted() -> None:
         references=[FakeReferenceReader(wall_clock_unix_ms=1_700_000_000_000)],
     )
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     monotonic.value = 1010
-    snap = service.evaluate()  # -> TRUSTED
+    snap = service.evaluate()
     assert service.health_state is HealthState.TRUSTED
     assert snap.wall_clock_observation == 1_700_000_000_000
     assert service.wall_clock_now() == 1_700_000_000_000
@@ -619,9 +494,9 @@ def _trusted_at_1010() -> tuple[TrustworthyTimeService, FakeMonotonicSource]:
         references=[FakeReferenceReader(wall_clock_unix_ms=1_700_000_000_000)],
     )
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     monotonic.value = 1010
-    service.evaluate()  # -> TRUSTED, snapshot issued at monotonic 1010
+    service.evaluate()
     assert service.health_state is HealthState.TRUSTED
     return service, monotonic
 
@@ -633,13 +508,11 @@ def test_wall_clock_now_if_fresh_serves_a_fresh_snapshot() -> None:
 
 
 def test_wall_clock_now_if_fresh_refuses_a_stale_snapshot() -> None:
-    """With no further ``evaluate()`` —
-    the composed runtime only evaluates at boot — the plain trusted read keeps serving the boot
-    instant a day later; the fresh read must not."""
+    """With no further ``evaluate()`` —"""
     service, monotonic = _trusted_at_1010()
     monotonic.value = 1010 + 24 * 60 * 60 * 1000
     assert service.health_state is HealthState.TRUSTED
-    assert service.wall_clock_now() == 1_700_000_000_000  # the staleness being guarded
+    assert service.wall_clock_now() == 1_700_000_000_000
     assert service.wall_clock_now_if_fresh(1000) is None
     monotonic.value = 1010 + 1001
     assert service.wall_clock_now_if_fresh(1000) is None
@@ -655,27 +528,24 @@ def test_wall_clock_now_if_fresh_is_none_while_untrusted() -> None:
     monotonic = FakeMonotonicSource(1000)
     service, _ = _build(monotonic=monotonic)
     service.start()
-    service.evaluate()  # SYNCHRONIZING
+    service.evaluate()
     assert service.wall_clock_now_if_fresh(10_000) is None
 
 
 def test_wall_clock_now_reverts_to_none_after_untrusted_regression() -> None:
-    """Reaching TRUSTED once does not latch wall_clock_now() permanently —
-    a later regression to UNTRUSTED must re-gate it, same as HealthState
-    itself (mirrors test_monotonic_regression_prevents_trusted_and_forces_
-    untrusted's own FSM shape)."""
+    """Reaching TRUSTED once does not latch wall_clock_now() permanently —"""
     monotonic = FakeMonotonicSource(1000)
     service, _ = _build(
         monotonic=monotonic,
         references=[FakeReferenceReader(wall_clock_unix_ms=1_700_000_000_000)],
     )
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     monotonic.value = 1010
-    service.evaluate()  # -> TRUSTED
+    service.evaluate()
     assert service.wall_clock_now() == 1_700_000_000_000
 
-    monotonic.value = 500  # regression -> UNTRUSTED
+    monotonic.value = 500
     service.evaluate()
     assert service.health_state is HealthState.UNTRUSTED
     assert service.wall_clock_now() is None
@@ -684,22 +554,16 @@ def test_wall_clock_now_reverts_to_none_after_untrusted_regression() -> None:
 def test_reader_without_a_wall_clock_value_never_fabricates_one_and_keeps_trusted_unreachable() -> (
     None
 ):
-    """A reference reader that never supplies wall_clock_unix_ms must never
-    see one invented on its behalf — AND, since anchor validity now needs a
-    real Δwall-Δmono comparison, a service
-    with no wall-observing reader at all can no longer reach TRUSTED: there
-    is never a comparison to make (:meth:`TrustworthyTimeService
-    ._observed_suspension_ms` returns ``None`` forever, which the kernel's
-    own ``anchor_valid`` treats as invalid)."""
+    """A reference reader that never supplies wall_clock_unix_ms must never"""
     monotonic = FakeMonotonicSource(1000)
     service, _ = _build(
         monotonic=monotonic,
         references=[FakeReferenceReader(wall_clock_unix_ms=None)],
     )
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     monotonic.value = 1010
-    snap = service.evaluate()  # still SYNCHRONIZING -- no wall observation ever
+    snap = service.evaluate()
     assert service.health_state is not HealthState.TRUSTED
     assert snap.wall_clock_observation is None
     assert snap.suspension_status.suspension_ms is None
@@ -707,45 +571,33 @@ def test_reader_without_a_wall_clock_value_never_fabricates_one_and_keeps_truste
 
 
 def test_time_wall_clock_exposed_evidence_appended_exactly_once() -> None:
-    """Decision 8: TIME_WALL_CLOCK_EXPOSED fires exactly once per service
-    instance, the first TRUSTED cycle that carries a wall-clock reading —
-    never again on subsequent TRUSTED cycles, and never before TRUSTED."""
+    """Decision 8: TIME_WALL_CLOCK_EXPOSED fires exactly once per service"""
     monotonic = FakeMonotonicSource(1000)
     service, evidence = _build(
         monotonic=monotonic,
         references=[FakeReferenceReader(wall_clock_unix_ms=1_700_000_000_000)],
     )
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING: no TIME_WALL_CLOCK_EXPOSED yet
+    service.evaluate()
     assert not any(r.kind == "TIME_WALL_CLOCK_EXPOSED" for r in evidence.appended)
 
     monotonic.value = 1010
-    service.evaluate()  # -> TRUSTED: fires exactly once
+    service.evaluate()
     exposed = [r for r in evidence.appended if r.kind == "TIME_WALL_CLOCK_EXPOSED"]
     assert len(exposed) == 1
     assert exposed[0].payload["wall_clock_observation"] == 1_700_000_000_000
     assert exposed[0].payload["unit"] == "unix_ms"
 
     monotonic.value = 1020
-    service.evaluate()  # still TRUSTED: no second announcement
+    service.evaluate()
     exposed_again = [
         r for r in evidence.appended if r.kind == "TIME_WALL_CLOCK_EXPOSED"
     ]
     assert len(exposed_again) == 1
 
 
-# ----------------------------------------------------------------------------
-# TIME_HEALTH_SNAPSHOT evidence cadence: on judged-content change, plus a
-# heartbeat — never once per evaluate() cycle. The evaluate()/snapshot cadence
-# itself is deliberately untouched (see the last assertions of each test).
-# ----------------------------------------------------------------------------
-
-#: One engine pass, as measured on the 2026-10-22 session (~408 ms, p90 411) — the real
-#: cadence this gate exists to stop writing a row for.
 _PASS_MS = 400
 _HEARTBEAT_MS = 55_000
-#: ``_config()``'s own ``max_time_conservative_freshness_age_ms`` — the bound
-#: ``wall_clock_now_if_fresh`` and the egress trading-date stamp both use.
 _FRESHNESS_AGE_MS = 1000
 
 
@@ -753,7 +605,6 @@ def _snapshot_rows(evidence: InMemoryEvidenceDouble) -> list[AppendedRecord]:
     return [r for r in evidence.appended if r.kind == "TIME_HEALTH_SNAPSHOT"]
 
 
-#: ``_steady_trusted``'s return shape, aliased so the signature stays one line.
 _SteadyTrusted = tuple[
     TrustworthyTimeService,
     "InMemoryEvidenceDouble",
@@ -763,9 +614,7 @@ _SteadyTrusted = tuple[
 
 
 def _steady_trusted(*, heartbeat_ms: int = _HEARTBEAT_MS) -> _SteadyTrusted:
-    """A started service parked in a steady TRUSTED state — two rows written (the
-    SYNCHRONIZING cycle and the TRUSTED one), both real judged-content changes.
-    """
+    """A started service parked in a steady TRUSTED state — two rows written (the"""
     monotonic = FakeMonotonicSource(1000)
     reader = FakeReferenceReader()
     service, evidence = _build(
@@ -774,38 +623,30 @@ def _steady_trusted(*, heartbeat_ms: int = _HEARTBEAT_MS) -> _SteadyTrusted:
         config=_config(time_health_snapshot_heartbeat_ms=heartbeat_ms),
     )
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     monotonic.value += _PASS_MS
-    service.evaluate()  # -> TRUSTED
+    service.evaluate()
     assert service.health_state is HealthState.TRUSTED
     assert len(_snapshot_rows(evidence)) == 2
     return service, evidence, monotonic, reader
 
 
 def test_identical_evaluations_append_one_row_then_one_heartbeat() -> None:
-    """N identical cycles write NO row until the heartbeat falls due, and then exactly one.
-
-    100 passes at the measured 400 ms cadence is 40 s — inside the 55 s heartbeat — and
-    under the per-cycle write this replaced it would have been 100 rows.
-    """
+    """N identical cycles write NO row until the heartbeat falls due, and then exactly one."""
     service, evidence, monotonic, _ = _steady_trusted()
     snapshots = []
     for _ in range(100):
         monotonic.value += _PASS_MS
         snapshots.append(service.evaluate())
 
-    assert len(_snapshot_rows(evidence)) == 2  # still only the two transitions
+    assert len(_snapshot_rows(evidence)) == 2
 
-    # The evaluate()/snapshot cadence itself did NOT change: every one of those cycles
-    # issued and exposed its own fresh snapshot, at its own instant.
     assert len({snap.snapshot_id for snap in snapshots}) == 100
     assert [snap.issue_monotonic_value for snap in snapshots] == sorted(
         snap.issue_monotonic_value for snap in snapshots  # type: ignore[type-var]
     )
     assert service.current_snapshot() is snapshots[-1]
 
-    # Cross the heartbeat: exactly one more row, and it is a full snapshot payload, not a
-    # reduced "still alive" marker.
     monotonic.value += _HEARTBEAT_MS
     beat = service.evaluate()
     rows = _snapshot_rows(evidence)
@@ -813,17 +654,13 @@ def test_identical_evaluations_append_one_row_then_one_heartbeat() -> None:
     assert rows[-1].payload["snapshot_id"] == beat.snapshot_id
     assert rows[-1].record_class == "TIME_HEALTH_SNAPSHOT"
 
-    # ... and the heartbeat re-arms from the row that was written, not from the cycle count.
     monotonic.value += _PASS_MS
     service.evaluate()
     assert len(_snapshot_rows(evidence)) == 3
 
 
 def test_a_changed_evaluation_appends_immediately_inside_the_heartbeat() -> None:
-    """A judged-content change does not wait for the heartbeat — here the reference
-    source going unreachable, which costs TRUSTED (health_state and reference_sources
-    both move).
-    """
+    """A judged-content change does not wait for the heartbeat — here the reference"""
     service, evidence, monotonic, reader = _steady_trusted()
     for _ in range(10):
         monotonic.value += _PASS_MS
@@ -835,25 +672,13 @@ def test_a_changed_evaluation_appends_immediately_inside_the_heartbeat() -> None
     service.evaluate()
 
     rows = _snapshot_rows(evidence)
-    assert len(rows) == 3  # 4 s into a 55 s heartbeat
-    # An unreachable source also supplies no wall clock, so this cycle's suspension is
-    # unknown and the anchor cannot be proven continuous — UNTRUSTED, not holdover.
+    assert len(rows) == 3
     assert service.health_state is HealthState.UNTRUSTED
     assert rows[-1].payload["health_state"] == HealthState.UNTRUSTED.value
 
 
 def test_a_refusal_reason_alone_is_a_change_worth_a_row() -> None:
-    """``last_transition_reason`` is not carried on the snapshot, so a cycle that newly
-    starts refusing a transition would be invisible to a dump-only comparison.
-
-    Isolated to the reason: ``min_time_independent_reference_count=2`` parks the FSM in
-    SYNCHRONIZING with a reachable source (so the wall clock, and therefore the suspension
-    magnitude, stays known), and a suspension bound well above the injected regression keeps
-    ``suspension_status.suspended`` ``False`` throughout. The regression makes ``anchor_ok``
-    false, which proposes the shape-illegal SYNCHRONIZING -> UNTRUSTED edge the kernel
-    refuses — so health_state, generation, reference_sources and ``suspended`` all hold still
-    and the ONLY thing that moved is the reason.
-    """
+    """``last_transition_reason`` is not carried on the snapshot, so a cycle that newly"""
     monotonic = FakeMonotonicSource(1000)
     service, evidence = _build(
         monotonic=monotonic,
@@ -864,14 +689,14 @@ def test_a_refusal_reason_alone_is_a_change_worth_a_row() -> None:
         ),
     )
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING (row 1)
+    service.evaluate()
     monotonic.value += _PASS_MS
-    service.evaluate()  # identical: no row
+    service.evaluate()
     assert service.health_state is HealthState.SYNCHRONIZING
     assert service.last_transition_reason is None
     assert len(_snapshot_rows(evidence)) == 1
 
-    monotonic.value -= _PASS_MS // 2  # regression: anchor_ok false
+    monotonic.value -= _PASS_MS // 2
     snapshot = service.evaluate()
 
     assert service.health_state is HealthState.SYNCHRONIZING
@@ -881,10 +706,7 @@ def test_a_refusal_reason_alone_is_a_change_worth_a_row() -> None:
 
 
 def test_wall_clock_first_becoming_available_is_a_change_worth_a_row() -> None:
-    """The value of ``wall_clock_observation`` is excluded from the comparison (it moves
-    every cycle and the kernel calls it audit-only), but its PRESENCE is not: the
-    TIME_WALL_CLOCK_EXPOSED announcement cites a snapshot_id and must never cite a row that
-    was never written."""
+    """The value of ``wall_clock_observation`` is excluded from the comparison (it moves"""
     monotonic = FakeMonotonicSource(1000)
     reader = FakeReferenceReader(wall_clock_unix_ms=None)
     service, evidence = _build(
@@ -902,7 +724,7 @@ def test_wall_clock_first_becoming_available_is_a_change_worth_a_row() -> None:
     monotonic.value += _PASS_MS
     service.evaluate()
     monotonic.value += _PASS_MS
-    service.evaluate()  # -> TRUSTED, announcement fires
+    service.evaluate()
 
     exposed = [r for r in evidence.appended if r.kind == "TIME_WALL_CLOCK_EXPOSED"]
     assert len(exposed) == 1
@@ -911,20 +733,11 @@ def test_wall_clock_first_becoming_available_is_a_change_worth_a_row() -> None:
 
 
 def test_a_cycle_that_re_establishes_freshness_is_always_due() -> None:
-    """Freshness is consumed as a judgement, so the cycle that restores it must be evidenced.
-
-    Nothing about the verdict changes here — same TRUSTED state, same source, well inside the
-    heartbeat — but the exposed reading has aged past
-    ``max_time_conservative_freshness_age_ms``, so ``wall_clock_now_if_fresh`` went from
-    ``None`` back to a value. That flip is what the egress trading-date stamp acts on
-    (PR #1074), so it gets a row.
-    """
+    """Freshness is consumed as a judgement, so the cycle that restores it must be evidenced."""
     service, evidence, monotonic, _ = _steady_trusted()
     rows_before = len(_snapshot_rows(evidence))
     assert service.wall_clock_now_if_fresh(_FRESHNESS_AGE_MS) is not None
 
-    # Age the exposed reading out of the 1000 ms freshness bound (4287 ms is the measured
-    # pre-send gap from the 2026-11-13 incident), still 4 s inside the 55 s heartbeat.
     monotonic.value += 4_287
     assert service.wall_clock_now_if_fresh(_FRESHNESS_AGE_MS) is None
 
@@ -935,9 +748,7 @@ def test_a_cycle_that_re_establishes_freshness_is_always_due() -> None:
 
 
 def test_a_stale_clock_cycle_whose_append_fails_exposes_nothing() -> None:
-    """The fail-closed consequence of the test above: when the evaluation that would restore
-    freshness cannot be evidenced, it raises and the stale reading stays stale — never a
-    stamp on a clock the runtime could not evidence."""
+    """The fail-closed consequence of the test above: when the evaluation that would restore"""
     service, _, monotonic, _ = _steady_trusted()
     before = service.current_snapshot()
     monotonic.value += 4_287
@@ -951,8 +762,7 @@ def test_a_stale_clock_cycle_whose_append_fails_exposes_nothing() -> None:
 
 
 def test_a_skipped_row_still_propagates_an_append_failure_when_one_is_due() -> None:
-    """The receipt discipline survives: when a row IS due, a failing append still stops the
-    cycle before any state becomes observable."""
+    """The receipt discipline survives: when a row IS due, a failing append still stops the"""
     service, _, monotonic, reader = _steady_trusted()
     before = service.current_snapshot()
 
@@ -975,26 +785,13 @@ def test_time_wall_clock_exposed_never_fires_without_a_reading() -> None:
     service.start()
     service.evaluate()
     monotonic.value = 1010
-    service.evaluate()  # never TRUSTED -- no wall reader to observe suspension from
+    service.evaluate()
     assert service.health_state is not HealthState.TRUSTED
     assert not any(r.kind == "TIME_WALL_CLOCK_EXPOSED" for r in evidence.appended)
 
 
-# ----------------------------------------------------------------------------
-# ``observed_suspension_ms`` =
-# max(0, Δwall_clock_ms - Δmonotonic_ms) between consecutive evaluate() cycles,
-# fed into BOTH the kernel anchor_valid call and the issued snapshot's
-# suspension_status.
-# ----------------------------------------------------------------------------
-
-
 def test_two_real_evaluate_cycles_with_the_real_local_reader_reach_trusted() -> None:
-    """(a) The REAL local wall-clock reader (not a fake) paired with a
-    controllable monotonic source: two evaluate() cycles reach TRUSTED, and
-    the issued snapshot's suspension_status.suspension_ms is a real,
-    computed, small non-negative int -- never None (a comparison WAS made)
-    and never a large/fabricated value (real wall time barely moves between
-    two in-process calls)."""
+    """(a) The REAL local wall-clock reader (not a fake) paired with a"""
     from tos_runtime.time.sources import LocalSystemClockReader
 
     monotonic = FakeMonotonicSource(1000)
@@ -1004,9 +801,9 @@ def test_two_real_evaluate_cycles_with_the_real_local_reader_reach_trusted() -> 
         config=_config(max_process_suspension_ms=5000),
     )
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING (first cycle: no previous reading yet)
+    service.evaluate()
     monotonic.value = 1010
-    snap = service.evaluate()  # -> TRUSTED
+    snap = service.evaluate()
     assert service.health_state is HealthState.TRUSTED
     assert snap.suspension_status.suspension_ms is not None
     assert 0 <= snap.suspension_status.suspension_ms < 5000
@@ -1014,12 +811,7 @@ def test_two_real_evaluate_cycles_with_the_real_local_reader_reach_trusted() -> 
 
 
 def test_a_wall_clock_jump_far_beyond_the_bound_is_observed_as_suspended() -> None:
-    """(b) M7 replacement: a reference reader whose SECOND reading jumps by
-    `max_process_suspension_ms + 1000` while the monotonic clock advances
-    only 10ms -- an honest signal of a real suspend/sleep (or an NTP step).
-    `suspended` must be True and TRUSTED must not be reached. Mutation
-    companion: reverting `_anchor_ok` to the old `suspension_ms=0` literal
-    makes this go red (the jump would be silently ignored)."""
+    """(b) M7 replacement: a reference reader whose SECOND reading jumps by"""
     monotonic = FakeMonotonicSource(1000)
     reader = FakeReferenceReader(wall_clock_unix_ms=1_700_000_000_000)
     service, _ = _build(
@@ -1028,22 +820,20 @@ def test_a_wall_clock_jump_far_beyond_the_bound_is_observed_as_suspended() -> No
         config=_config(max_process_suspension_ms=100),
     )
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING (baseline reading captured)
+    service.evaluate()
 
-    monotonic.value = 1010  # Δmono = 10ms
-    assert reader.wall_clock_unix_ms is not None  # this test sets it explicitly above
-    reader.wall_clock_unix_ms += 100 + 1000  # Δwall = 1100ms >> Δmono
+    monotonic.value = 1010
+    assert reader.wall_clock_unix_ms is not None
+    reader.wall_clock_unix_ms += 100 + 1000
     snap = service.evaluate()
 
     assert service.health_state is not HealthState.TRUSTED
     assert snap.suspension_status.suspended is True
-    assert snap.suspension_status.suspension_ms == 1090  # max(0, 1100 - 10)
+    assert snap.suspension_status.suspension_ms == 1090
 
 
 def test_first_evaluate_cycle_has_no_previous_reading_to_compare() -> None:
-    """(c) The very first evaluate() cycle can never observe a suspension —
-    there is no previous cycle to diff against. Harmless: this cycle's own
-    UNINITIALIZED -> SYNCHRONIZING transition never consults anchor_ok."""
+    """(c) The very first evaluate() cycle can never observe a suspension —"""
     monotonic = FakeMonotonicSource(1000)
     service, _ = _build(
         monotonic=monotonic,
@@ -1056,16 +846,7 @@ def test_first_evaluate_cycle_has_no_previous_reading_to_compare() -> None:
     assert snap.suspension_status.suspended is False
 
 
-# ----------------------------------------------------------------------------
-# #810 (plan docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md §2.2) —
-# wall_clock_at_monotonic(): map a PAST monotonic instant of this cycle onto the
-# freshly evaluated, trusted wall-clock reading. Backward only, conservative,
-# and domain-limited to the cycle the exposed snapshot covers.
-# ----------------------------------------------------------------------------
-
-#: The wall-clock reading both mapping fixtures below start from.
 _MAPPING_WALL_MS = 1_700_000_000_000
-#: The monotonic readings of the two evaluate() cycles: the domain's floor and its ceiling.
 _MAPPING_FIRST_MONO_MS = 1_000
 _MAPPING_SECOND_MONO_MS = 1_010
 
@@ -1073,15 +854,7 @@ _MAPPING_SECOND_MONO_MS = 1_010
 def _trusted_for_mapping(
     *, wall_jump_ms: int = 0, max_process_suspension_ms: int = 2_000
 ) -> TrustworthyTimeService:
-    """A service driven to TRUSTED over exactly two evaluate() cycles.
-
-    ``wall_jump_ms`` is how far the reference reader's wall clock moves between them while
-    the monotonic clock moves ``_MAPPING_SECOND_MONO_MS - _MAPPING_FIRST_MONO_MS`` (10 ms), so
-    the observed suspension is ``max(0, wall_jump_ms - 10)``. ``max_process_suspension_ms``
-    defaults to the APPROVED paper value (``config/tos_runtime/paper/time.yaml``: 2000), not
-    this module's own ``_config`` default of 0 — at 0 any jump at all loses TRUSTED and the
-    mapping would return ``None`` for a reason that has nothing to do with the domain.
-    """
+    """A service driven to TRUSTED over exactly two evaluate() cycles."""
     monotonic = FakeMonotonicSource(_MAPPING_FIRST_MONO_MS)
     reader = FakeReferenceReader(wall_clock_unix_ms=_MAPPING_WALL_MS)
     service, _ = _build(
@@ -1090,18 +863,17 @@ def _trusted_for_mapping(
         config=_config(max_process_suspension_ms=max_process_suspension_ms),
     )
     service.start()
-    service.evaluate()  # -> SYNCHRONIZING (this cycle's reading becomes the domain floor)
+    service.evaluate()
     monotonic.value = _MAPPING_SECOND_MONO_MS
     assert reader.wall_clock_unix_ms is not None
     reader.wall_clock_unix_ms += wall_jump_ms
-    service.evaluate()  # -> TRUSTED
+    service.evaluate()
     assert service.health_state is HealthState.TRUSTED
     return service
 
 
 def test_mapping_at_the_domain_ceiling_is_the_evaluated_reading_itself() -> None:
-    """The upper domain edge — the instant the evaluation itself was taken. Nothing is
-    subtracted there, so the answer is exactly the reading the snapshot carries."""
+    """The upper domain edge — the instant the evaluation itself was taken. Nothing is"""
     service = _trusted_for_mapping()
 
     assert service.wall_clock_at_monotonic(_MAPPING_SECOND_MONO_MS) == _MAPPING_WALL_MS
@@ -1109,8 +881,7 @@ def test_mapping_at_the_domain_ceiling_is_the_evaluated_reading_itself() -> None
 
 
 def test_mapping_at_the_domain_floor_subtracts_the_whole_cycle() -> None:
-    """The lower domain edge — the PREVIOUS evaluation's own monotonic reading. 10 ms of
-    monotonic time separates the two cycles, so the floor maps 10 ms earlier."""
+    """The lower domain edge — the PREVIOUS evaluation's own monotonic reading. 10 ms of"""
     service = _trusted_for_mapping()
 
     assert service.wall_clock_at_monotonic(_MAPPING_FIRST_MONO_MS) == (
@@ -1119,32 +890,21 @@ def test_mapping_at_the_domain_floor_subtracts_the_whole_cycle() -> None:
 
 
 def test_mapping_refuses_one_millisecond_below_the_domain_floor() -> None:
-    """Mutation: drop the lower-bound check -> this returns
-    ``_MAPPING_WALL_MS - 11`` instead of ``None`` -> red. An instant before the previous
-    evaluation is not covered by the suspension this cycle measured, so mapping it would be an
-    extrapolation past what was evaluated."""
+    """Mutation: drop the lower-bound check -> this returns"""
     service = _trusted_for_mapping()
 
     assert service.wall_clock_at_monotonic(_MAPPING_FIRST_MONO_MS - 1) is None
 
 
 def test_mapping_refuses_one_millisecond_above_the_evaluated_instant() -> None:
-    """The other edge — the "extrapolate now" direction the 2026-09-26 plan §3 rejected.
-    Mutation: drop the upper-bound check -> this returns a manufactured FUTURE instant no
-    reference source ever attested -> red."""
+    """The other edge — the "extrapolate now" direction the 2026-09-26 plan §3 rejected."""
     service = _trusted_for_mapping()
 
     assert service.wall_clock_at_monotonic(_MAPPING_SECOND_MONO_MS + 1) is None
 
 
 def test_mapping_subtracts_the_suspension_this_cycle_observed() -> None:
-    """A 500 ms wall jump against a 10 ms monotonic advance is an observed suspension of 490
-    (``max(0, Δwall - Δmono)``), and the mapping charges the whole of it to the interval —
-    placing the floor EARLIER, i.e. making anything aged from it OLDER.
-
-    Mutation: drop ``- suspension_ms`` from the mapping -> this comes out 490 ms later
-    (``_MAPPING_WALL_MS + 490``) -> red, in the fail-OPEN direction.
-    """
+    """A 500 ms wall jump against a 10 ms monotonic advance is an observed suspension of 490"""
     service = _trusted_for_mapping(wall_jump_ms=500)
     observed_suspension_ms = 500 - (_MAPPING_SECOND_MONO_MS - _MAPPING_FIRST_MONO_MS)
     assert (
@@ -1161,26 +921,22 @@ def test_mapping_subtracts_the_suspension_this_cycle_observed() -> None:
 
 
 def test_mapping_returns_none_while_not_trusted() -> None:
-    """Same ``TRUSTED`` gate ``wall_clock_now`` applies — a SYNCHRONIZING cycle has a reading
-    in its snapshot, and this method still refuses to serve it."""
+    """Same ``TRUSTED`` gate ``wall_clock_now`` applies — a SYNCHRONIZING cycle has a reading"""
     monotonic = FakeMonotonicSource(_MAPPING_FIRST_MONO_MS)
     service, _ = _build(
         monotonic=monotonic,
         references=[FakeReferenceReader(wall_clock_unix_ms=_MAPPING_WALL_MS)],
     )
     service.start()
-    snapshot = service.evaluate()  # -> SYNCHRONIZING
+    snapshot = service.evaluate()
 
     assert service.health_state is HealthState.SYNCHRONIZING
-    assert snapshot.wall_clock_observation == _MAPPING_WALL_MS  # it IS there...
-    assert (
-        service.wall_clock_at_monotonic(_MAPPING_FIRST_MONO_MS) is None
-    )  # ...and refused
+    assert snapshot.wall_clock_observation == _MAPPING_WALL_MS
+    assert service.wall_clock_at_monotonic(_MAPPING_FIRST_MONO_MS) is None
 
 
 def test_mapping_returns_none_after_trust_is_lost() -> None:
-    """Trust lost after a mapping was available: a monotonic regression forces UNTRUSTED, and
-    the mapping stops answering with it — never keeps serving the last good cycle."""
+    """Trust lost after a mapping was available: a monotonic regression forces UNTRUSTED, and"""
     monotonic = FakeMonotonicSource(_MAPPING_FIRST_MONO_MS)
     service, _ = _build(
         monotonic=monotonic,
@@ -1193,7 +949,7 @@ def test_mapping_returns_none_after_trust_is_lost() -> None:
     service.evaluate()
     assert service.wall_clock_at_monotonic(_MAPPING_SECOND_MONO_MS) is not None
 
-    monotonic.value = 500  # regression -> UNTRUSTED
+    monotonic.value = 500
     service.evaluate()
 
     assert service.health_state is HealthState.UNTRUSTED
@@ -1203,10 +959,7 @@ def test_mapping_returns_none_after_trust_is_lost() -> None:
 def test_mapping_returns_none_on_the_first_cycle_that_can_observe_no_suspension() -> (
     None
 ):
-    """An unknown suspension term is not a zero. The first ``evaluate()`` has no previous
-    reading to diff against, so even if that cycle somehow reached TRUSTED there is no
-    measured suspension covering the interval — and the mapping says ``None`` rather than
-    quietly assuming 0."""
+    """An unknown suspension term is not a zero. The first ``evaluate()`` has no previous"""
     monotonic = FakeMonotonicSource(_MAPPING_FIRST_MONO_MS)
     service, _ = _build(
         monotonic=monotonic,
@@ -1220,19 +973,7 @@ def test_mapping_returns_none_on_the_first_cycle_that_can_observe_no_suspension(
 
 
 def test_mapping_refuses_a_trusted_cycle_whose_suspension_is_unknown() -> None:
-    """The ``suspension_ms is None`` branch, pinned as the defense in depth it is (PR #812
-    review, LOW). :meth:`~tos_runtime.time.service.TrustworthyTimeService
-    .wall_clock_at_monotonic`'s own docstring records why no ``TRUSTED`` path in a real run
-    reaches it: the only cycle with no previous reading is still ``SYNCHRONIZING``, and the one
-    wired reader kind always carries a wall-clock value. So this drives a genuinely ``TRUSTED``
-    service — real ``evaluate()`` cycles, real snapshot, real domain floor, and the mapping
-    verified working first — then clears the ONE captured field, the smallest honest way in.
-    The method under test is never patched.
-
-    Mutation: fold the unknown to a zero (guard dropped, ``- (suspension_ms or 0)``) -> this
-    answers ``_MAPPING_WALL_MS`` instead of ``None`` -> red, in the fail-OPEN direction (an
-    un-aged instant).
-    """
+    """The ``suspension_ms is None`` branch, pinned as the defense in depth it is (PR #812"""
     service = _trusted_for_mapping()
     assert service.wall_clock_at_monotonic(_MAPPING_SECOND_MONO_MS) == _MAPPING_WALL_MS
 
@@ -1242,9 +983,7 @@ def test_mapping_refuses_a_trusted_cycle_whose_suspension_is_unknown() -> None:
 
 
 def test_the_domain_floor_advances_with_each_cycle() -> None:
-    """The domain is THIS cycle, not "everything since boot": a third evaluation moves the
-    floor up to the second cycle's reading, and the first cycle's instant — mappable a moment
-    ago — stops being mappable."""
+    """The domain is THIS cycle, not "everything since boot": a third evaluation moves the"""
     monotonic = FakeMonotonicSource(_MAPPING_FIRST_MONO_MS)
     service, _ = _build(
         monotonic=monotonic,

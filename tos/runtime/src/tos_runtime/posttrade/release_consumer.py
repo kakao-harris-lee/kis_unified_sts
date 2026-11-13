@@ -1,33 +1,4 @@
-"""Consume durable finality evidence and release the RCL reservation.
-
-This is the runtime's production path to ``RELEASED`` or
-``POSITION_CONSUMED``. It runs after the driver has written finality evidence,
-then independently reloads the proof, economic obligation, reservation scope,
-and reconciliation result. Every release gate is conjunctive; a non-positive
-gate records ``CAPACITY_RELEASE_HELD`` and performs no RCL transition.
-
-A confirmed non-execution result (``CANCEL_ACK``, ``EXPIRED``, or ``REJECT``)
-requires a fresh non-execution proof and targets ``RELEASED``. Positive intent
-is evidenced before the RCL mutation, and the returned :class:`ReleaseOutcome`
-lets the caller update its in-memory projection only after the durable
-transition commits.
-
-A ``FULL_FILL``'s destination depends on what the fill left behind (#966): an
-**entry** fill (no other outstanding reservation in its scope) targets
-``POSITION_CONSUMED``, while a **close** fill (exactly one other, at
-``POSITION_CONSUMED``) targets ``RELEASED`` for its own reservation and then
-discharges that entry's — :mod:`tos_runtime.posttrade.entry_discharge` holds
-the reads and gates. Any other shape holds (:attr:`ReleaseHoldReason
-.AMBIGUOUS_SCOPE_RESERVATIONS`). Which of the two a fill is comes off the
-ledger's own rows, never a re-reported attribute of the attempt: step 8's
-admission table is what makes the shapes distinguishable
-(``tos_runtime.risk.ledger_stages``).
-
-Obligation-expiry observations are record-only and deduplicated per
-reservation occupancy. Their wait clock is process-local monotonic time; it
-is never persisted or compared across restarts. The consumer does not import
-or mutate the engine's reservation projection.
-"""
+"""Consume durable finality evidence and release the RCL reservation."""
 
 from __future__ import annotations
 
@@ -95,11 +66,6 @@ from tos_runtime.recon.service import (
     ReconciliationReport,
     ReconciliationService,
 )
-
-# TOS Phase 5 W1 factory reuse (team-lead directive, plan §10 row ①③): the EXACT same
-# freshness derivation W1's recovery-barrier reconciliation already uses, never a second,
-# possibly-diverging construction. Module-private because this consumer is its only cross-lane
-# reuse site so far.
 from tos_runtime.recovery.reconciliation import (  # noqa: SLF001
     FreshnessTimeReader,
     _build_freshness_marker,
@@ -123,34 +89,17 @@ __all__ = [
     "ReleaseOutcomeLike",
 ]
 
-#: The obligation-record evidence kind this consumer appends for a freshly-produced
-#: non-execution proof — the SAME literal value :mod:`tos_runtime.engine.finality_projection`
-#: uses for the driver's own ``FULL_FILL`` path, redeclared here (not imported) to avoid a
-#: circular import (:mod:`tos_runtime.engine.finality_projection` imports
-#: :class:`FinalityReleaseConsumer` FROM this module) — the two literal strings are kept in
-#: lockstep by ``tests/posttrade/test_release_consumer.py`` and the compose e2e suite, which
-#: both query these exact kind strings against a real, shared evidence store.
 _ECONOMIC_OBLIGATION_KIND = "ECONOMIC_OBLIGATION"
-#: The finality-proof evidence kind — same literal-value convention as above.
 _POSTTRADE_FINALITY_PROOF_KIND = "POSTTRADE_FINALITY_PROOF"
 
-#: Evidence kind appended BEFORE every RCL release attempt (module docstring).
 CAPACITY_RELEASE_INTENT_KIND = "CAPACITY_RELEASE_INTENT"
-#: Evidence kind appended for every non-positive gate — no RCL transition follows it.
 CAPACITY_RELEASE_HELD_KIND = "CAPACITY_RELEASE_HELD"
-#: Evidence kind for the record-only obligation-expiry observation (plan §10 row ④).
 RELEASE_PROOF_OVERDUE_KIND = "RELEASE_PROOF_OVERDUE"
 
-#: The two :class:`~tos.rcl.CapacityState` members :meth:`FinalityReleaseConsumer
-#: ._check_obligation_expiry` ever considers overdue-eligible (plan §10 row ④).
 _OVERDUE_ELIGIBLE_STATES: frozenset[CapacityState] = frozenset(
     {CapacityState.RELEASE_PENDING_PROOF, CapacityState.QUARANTINED_UNKNOWN}
 )
 
-#: Result kinds :meth:`FinalityReleaseConsumer.consume` ever attempts a release for — mirrors
-#: :mod:`tos_runtime.posttrade.finality`'s own ``_NON_EXECUTION_KINDS``, imported nowhere here to
-#: avoid a private cross-module import; the two are kept in lockstep by
-#: ``tests/posttrade/test_release_consumer.py``.
 _NON_EXECUTION_KINDS: frozenset[EgressResultKind] = frozenset(
     {
         EgressResultKind.CANCEL_ACK,
@@ -161,8 +110,7 @@ _NON_EXECUTION_KINDS: frozenset[EgressResultKind] = frozenset(
 
 
 def release_command_id(attempt_id: str) -> str:
-    """The RCL idempotency key of ``attempt_id``'s release transition — the ONE spelling, so the
-    fill observer (PR-3b) can ask the RCL whether that release actually committed."""
+    """The RCL idempotency key of ``attempt_id``'s release transition — the ONE spelling, so the"""
     return f"release-{attempt_id}"
 
 
@@ -183,11 +131,7 @@ class ReleaseOutcomeLike(Protocol):
 
 @dataclass(frozen=True)
 class ReleaseOutcome:
-    """Data-only result of one consume call; the engine maps committed releases into its state.
-
-    ``released`` is true only after the RCL transition commits. Proof digest, intent sequence,
-    and resolution generation are absent unless that release committed.
-    """
+    """Data-only result of one consume call; the engine maps committed releases into its state."""
 
     released: bool
     attempt_id: str
@@ -197,22 +141,15 @@ class ReleaseOutcome:
 
 
 class FinalityConsumerPort(Protocol):
-    """The narrow read surface :func:`~tos_runtime.engine.finality_projection._project_release`
-    needs off a :class:`FinalityReleaseConsumer` (mypy stage 3 §1.3 rule 3 port introduction) —
-    only :meth:`consume`, never the class's own construction-time gates/state."""
+    """The narrow read surface :func:`~tos_runtime.engine.finality_projection._project_release`"""
 
     def consume(self, payload: EgressResultPayload) -> ReleaseOutcomeLike:
-        """Consume one genuinely-applied ``EGRESS_RESULT`` payload; see
-        :meth:`FinalityReleaseConsumer.consume`'s own docstring for the gate sequence.
-        """
+        """Consume one genuinely-applied ``EGRESS_RESULT`` payload; see"""
         ...
 
 
 class ReleaseConflictReader(Protocol):
-    """The narrow read surface :mod:`tos_runtime.compose._dimension_readers`'s POST_TRADE
-    dimension reader needs off a :class:`FinalityReleaseConsumer` (mypy stage 3 §1.3 rule 3 port
-    introduction) — only :meth:`latest_release_is_conflict_free`, never :meth:`consume` or any
-    construction-time state."""
+    """The narrow read surface :mod:`tos_runtime.compose._dimension_readers`'s POST_TRADE"""
 
     def latest_release_is_conflict_free(self) -> bool:
         """See :meth:`FinalityReleaseConsumer.latest_release_is_conflict_free`'s own docstring."""
@@ -225,44 +162,7 @@ class FinalityConsumerTimeReader(TimeHealthReader, FreshnessTimeReader, Protocol
 
 @dataclass(frozen=True)
 class FinalityReleaseConsumer:
-    """Bind this consumer to every collaborator :meth:`consume` needs (module docstring).
-
-    Attributes:
-        rcl_log: The durable RCL commit log — the ONE writable handle this consumer holds.
-        projection: A read-only reservation-projection reader over the SAME ``rcl_log`` (never a
-            second, independently-opened log — the caller wires both from one instance).
-        evidence_store: The durable evidence store this consumer both reads (re-loading proofs)
-            and appends to (every evidence kind this module defines).
-        inbox: The durable event inbox — read for the ``attempt_finality_witness`` row.
-        recon_service: The already-composed :class:`~tos_runtime.recon.service
-            .ReconciliationService` (module docstring: built via the SAME factory
-            :mod:`tos_runtime.recovery.reconciliation` uses for W1).
-        time_service: This runtime's own :class:`~tos_runtime.time.service.TrustworthyTimeService`
-            (typed as the narrower :class:`FinalityConsumerTimeReader` — mypy stage 3 §1.3 rule 3
-            — since this consumer only ever reads two of its members) — freshness for every
-            :meth:`~tos_runtime.recon.service.ReconciliationService.reconcile` call is derived
-            FRESH from this on every :meth:`consume` call (never a marker captured once at wiring
-            time, since :meth:`consume` runs on every applied result for the life of the
-            process). Also gates :meth:`_check_obligation_expiry` (module docstring's H2 fix):
-            the health check runs ONLY while ``time_service.health_state is
-            HealthState.TRUSTED``.
-        finality_producer: The boot's producer — :class:`~tos_runtime.posttrade.finality
-            .SyntheticFinalityProducer`, or :class:`~tos_runtime.posttrade.broker_finality
-            .BrokerFinalityProducer` for a stock MOCK boot (PR-3b). Its four id prefixes are the
-            rows this consumer re-loads, so a broker proof is never looked up under a SYNTHETIC
-            key (or the reverse). Otherwise used ONLY for :meth:`~tos_runtime.posttrade.finality.SyntheticFinalityProducer
-            .produce_non_execution` here (the driver's own instance already produced any
-            ``FULL_FILL`` proof before this consumer runs) — a second, functionally-identical
-            instance of a stateless, pure-function dataclass; never shared mutable state.
-        scheme: The canonicalization scheme for command digests.
-        monotonic_source: The injected monotonic clock for the obligation-expiry check (never a
-            direct ``time.monotonic()`` read — design #40 D1.1). Its readings are held only in
-            :attr:`_wait_start_ms`, an in-memory mapping never durably persisted (module
-            docstring's H2 fix).
-        account: The single scope account this compose root is bound to.
-        instrument: The single scope instrument this compose root is bound to.
-        release_proof_wait_ms: The obligation-expiry bound (module docstring's row ④).
-    """
+    """Bind this consumer to every collaborator :meth:`consume` needs (module docstring)."""
 
     rcl_log: SqliteCommitLog
     projection: SqliteReservationProjectionReader
@@ -276,41 +176,17 @@ class FinalityReleaseConsumer:
     account: str
     instrument: str
     release_proof_wait_ms: int
-    #: In-memory-only occupancy -> first-observed-``now_ms`` map (module docstring's H2 fix).
-    #: Keyed by ``(reservation_id, occupancy_seq)`` (module docstring's M1 fix). Never read from
-    #: or written to durable evidence — a fresh process starts this empty, which is the whole
-    #: point (a monotonic reading is never meaningful across a restart).
     _wait_start_ms: dict[tuple[str, int | None], int] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
-    #: In-memory-only RCL transition snapshot reused across loop passes that committed
-    #: nothing (#1008, :mod:`tos_runtime.posttrade.rcl_history_cache`). Same in-memory
-    #: discipline as :attr:`_wait_start_ms`: never persisted, empty in a fresh process.
     _history_cache: ReservationHistoryCache = field(
         default_factory=ReservationHistoryCache, init=False, repr=False, compare=False
     )
 
-    # -- entry point -----------------------------------------------------------------
-
     def consume(self, payload: EgressResultPayload) -> ReleaseOutcome:
-        """Attempt a release for one genuinely-``APPLIED`` ``EGRESS_RESULT`` payload.
-
-        Args:
-            payload: The re-injected ``EGRESS_RESULT`` payload the driver just applied — the
-                SAME payload :mod:`tos_runtime.engine.finality_projection` passed its own
-                finality producer.
-
-        Returns:
-            The :class:`ReleaseOutcome` (kernel round #3 §2 decision 5 W2-K wiring) — the
-            caller's own signal for whether the kernel's in-memory projection may now be
-            released too.
-        """
+        """Attempt a release for one genuinely-``APPLIED`` ``EGRESS_RESULT`` payload."""
         reservation_id = self._reservation_id(payload.attempt_id)
         if reservation_id is None:
-            # #966: no reservation row can be attributed to this attempt — the durable permit
-            # join is empty/ambiguous and the ledger holds no pre-#966 scope row either. A
-            # release-eligible result is HELD (fail-closed, on record); a result with no release
-            # destination at all records nothing, exactly as below.
             if (
                 payload.kind is EgressResultKind.FULL_FILL
                 or payload.kind in _NON_EXECUTION_KINDS
@@ -323,8 +199,6 @@ class FinalityReleaseConsumer:
             return self._consume_full_fill(payload, reservation_id=reservation_id)
         if payload.kind in _NON_EXECUTION_KINDS:
             return self._consume_non_execution(payload, reservation_id=reservation_id)
-        # ACK / PARTIAL_FILL / UNKNOWN / TIMEOUT -- no release destination at all (module
-        # docstring); nothing recorded, since no release was ever attempted.
         return ReleaseOutcome(released=False, attempt_id=payload.attempt_id)
 
     def pending_recovery_attempt_ids(self) -> tuple[str, ...]:
@@ -344,15 +218,7 @@ class FinalityReleaseConsumer:
         return ReleaseHoldReason(reason)
 
     def _reservation_id(self, attempt_id: str) -> str | None:
-        """THIS attempt's own RCL reservation id, or ``None`` when none can be attributed.
-
-        #966: a reservation is per attempt now (:mod:`tos_runtime.rcl.reservation_identity`),
-        so a scope-level answer would release a DIFFERENT attempt's reservation once a scope
-        holds two rows at once. :func:`~tos_runtime.rcl.reservation_lookup
-        .reservation_id_for_attempt` resolves it from durable evidence — never from the live
-        flow, which is another attempt's by the time a recovered result is re-projected — and
-        only ever returns an id the log holds a row for (a pre-#966 scope row included).
-        """
+        """THIS attempt's own RCL reservation id, or ``None`` when none can be attributed."""
         return reservation_id_for_attempt(
             self.evidence_store,
             self.projection,
@@ -361,22 +227,11 @@ class FinalityReleaseConsumer:
             attempt_id=attempt_id,
         )
 
-    # -- currentness (Phase 5 W3.2 POST_TRADE dimension reader) -----------------------
-
     def latest_release_is_conflict_free(self) -> bool:
-        """Whether this scope's MOST RECENT recorded post-trade release evidence is free of a
-        reconciliation conflict — the read :mod:`tos_runtime.compose._currentness_wiring`'s
-        POST_TRADE dimension reader uses, never a second judgement authored there.
-
-        Delegates to :func:`~tos_runtime.posttrade.release_currentness
-        .latest_release_is_conflict_free`, which holds the scan and the one hold reason that
-        structurally means "conflict" (size-budget decomposition; no behaviour change).
-        """
+        """Whether this scope's MOST RECENT recorded post-trade release evidence is free of a"""
         return latest_release_is_conflict_free(
             self.evidence_store, account=self.account, instrument=self.instrument
         )
-
-    # -- FULL_FILL -> POSITION_CONSUMED (entry) / RELEASED (close) ---------------------
 
     def _consume_full_fill(
         self, payload: EgressResultPayload, *, reservation_id: str
@@ -407,15 +262,6 @@ class FinalityReleaseConsumer:
                 uncorroborated_hold_reason(report),
                 detail=report.reason,
             )
-        # #966: an entry's fill CONSUMES capacity (it leaves a position behind); a close's fill
-        # RELEASES it (it leaves none). Which of the two this attempt is, is derived from the
-        # ledger itself — the other outstanding reservations of its scope — not from a
-        # re-reported attribute of the attempt: step 8's admission table (see
-        # tos_runtime.risk.ledger_stages.LedgerVerificationStage) only ever admits an OPEN over
-        # ZERO outstanding reservations and a CLOSE over EXACTLY ONE at POSITION_CONSUMED, and
-        # no third commit can land on the scope in between, so the two shapes are
-        # distinguishable by construction and stay so across a restart (the rows are durable,
-        # the live arm is not).
         others = other_outstanding(
             self.projection,
             account=self.account,
@@ -469,17 +315,9 @@ class FinalityReleaseConsumer:
             self._discharge_entry(payload, others[0], proof=proof, report=report)
         return outcome
 
-    # -- CANCEL_ACK / EXPIRED / REJECT -> RELEASED ------------------------------------
-
     def _consume_non_execution(
         self, payload: EgressResultPayload, *, reservation_id: str
     ) -> ReleaseOutcome:
-        # review-973 M3: a cancel/expire/reject of the REMAINDER of a partially-filled order
-        # ends the order, not the position. ``RELEASED`` here would report zero outstanding
-        # capacity while the filled part is still held — which #966's step-8 table then reads
-        # as "fresh scope", admitting an OPEN over a live position and leaving no reservation
-        # for a CLOSE to discharge. Checked BEFORE reconciliation: a corroborated cancel is
-        # exactly the input that used to release.
         if any_quantity_filled(
             self.evidence_store,
             account=self.account,
@@ -518,8 +356,6 @@ class FinalityReleaseConsumer:
             kind=_POSTTRADE_FINALITY_PROOF_KIND,
             record_class=_POSTTRADE_FINALITY_PROOF_KIND,
         )
-        # Re-load rather than trust `produced` directly (module docstring's "never an
-        # in-memory proof object" discipline, applied uniformly to both release paths).
         proof = self._reload_proof(
             payload.attempt_id,
             id_prefix=self.finality_producer.non_execution_proof_prefix,
@@ -541,10 +377,6 @@ class FinalityReleaseConsumer:
             to_state=CapacityState.RELEASED,
         )
 
-    # -- #966: the scope's other reservations, and discharging the entry ----------------
-    # The reads and the pure gates live in tos_runtime.posttrade.entry_discharge (size-budget
-    # decomposition); what stays here is the one RCL mutation and the evidence it records.
-
     def _discharge_entry(
         self,
         payload: EgressResultPayload,
@@ -563,29 +395,16 @@ class FinalityReleaseConsumer:
             hold_reasons=_DISCHARGE_HOLD_REASONS,
         )
 
-    # -- gate 3 (reconciliation) --------------------------------------------------------
-
     def _reconcile(
         self, payload: EgressResultPayload
     ) -> tuple[ReconciliationReport | None, bool]:
-        """Gate 3 (module docstring): a fresh :class:`~tos_runtime.recon.service
-        .ReconciliationReport` plus whether it positively corroborates ``attempt_id``.
-
-        Returns:
-            ``(report, corroborated)`` — ``report`` is ``None`` only when ``.reconcile()``
-            itself raised (fail-closed, never propagated out of this consumer).
-        """
+        """Gate 3 (module docstring): a fresh :class:`~tos_runtime.recon.service"""
         attempt_id = payload.attempt_id
         instrument_key = InstrumentKey(account=self.account, instrument=self.instrument)
         scope = WitnessScope(
             account=self.account,
             instrument_keys=(instrument_key,),
             attempt_ids=(attempt_id,),
-            # PR-3b r2 claim 3: the report folds EVERY receipt in this scope (the service never
-            # narrows to one attempt), so every trading date those receipts carry is inquired —
-            # an earlier day's attempt is then matched under its own date instead of reading as
-            # a stale reservation that blocks today's release. VTTC0081R serves three months; an
-            # older date makes the read unavailable, a hold with that reason, never a skip.
             order_dates=self._scope_receipt_dates(payload),
         )
         freshness = _build_freshness_marker(self.time_service)
@@ -618,8 +437,6 @@ class FinalityReleaseConsumer:
         if payload.trading_date is not None:
             dates.add(payload.trading_date)
         return tuple(sorted(dates))
-
-    # -- gate 4 (non-transferable/current, from independent inputs — H1 fix) + release --
 
     def _apply_gate4_and_release(
         self,
@@ -672,10 +489,7 @@ class FinalityReleaseConsumer:
         )
 
     def _reservation_scope(self, reservation_id: str) -> ReservationScope | None:
-        """The RCL log's OWN persisted :class:`~tos.rcl.ReservationScope` for ``reservation_id``
-        (module docstring's H1 fix) — a fresh scan of :meth:`~tos_runtime.rcl.log.SqliteCommitLog
-        .reservation_rows`, independent of whatever scope the proof under test claims.
-        """
+        """The RCL log's OWN persisted :class:`~tos.rcl.ReservationScope` for ``reservation_id``"""
         for (
             row_reservation_id,
             _state,
@@ -687,10 +501,7 @@ class FinalityReleaseConsumer:
         return None
 
     def _active_generation(self, *, account: str, instrument: str) -> int | None:
-        """The newest ``obligation_generation`` durably recorded across every
-        ``ECONOMIC_OBLIGATION`` evidence row sharing ``(account, instrument)`` (module
-        docstring's H1 fix) — an independent evidence-store scan, never
-        ``proof.bound_generation`` read off the artifact under test."""
+        """The newest ``obligation_generation`` durably recorded across every"""
         rows = self.evidence_store.connection.execute(
             "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
             (_ECONOMIC_OBLIGATION_KIND,),
@@ -707,8 +518,6 @@ class FinalityReleaseConsumer:
             if isinstance(generation, int) and (newest is None or generation > newest):
                 newest = generation
         return newest
-
-    # -- the RCL mutation itself -------------------------------------------------------
 
     def _release(
         self,
@@ -737,10 +546,6 @@ class FinalityReleaseConsumer:
             return ReleaseOutcome(released=False, attempt_id=payload.attempt_id)
         current_state, view = snapshot
         expected_seq = -1 if view.last_seq is None else view.last_seq
-        # ★ kernel round #3 §2 decision 5 (ⓖ): SyntheticFinalityProducer hardcodes
-        # obligation_generation=0 for every proof it mints (module docstring's own note); the
-        # honest floor for the kernel's own resolution_generation axis is therefore 0, never a
-        # fabricated None, once gate 4 has already validated currentness against it.
         generation = 0 if resolution_generation is None else resolution_generation
         intent_receipt = self.evidence_store.append(
             {
@@ -785,8 +590,6 @@ class FinalityReleaseConsumer:
                 detail=str(exc),
             )
         if isinstance(receipt, AppendRefusal):
-            # PR-3b: a CAS/duplicate/from-state refusal is RETURNED, not raised — before this the
-            # consumer reported released=True for a transition the log never committed.
             return self._hold(
                 payload,
                 reservation_id,
@@ -860,8 +663,6 @@ class FinalityReleaseConsumer:
         )
         return None
 
-    # -- HELD ---------------------------------------------------------------------------
-
     def _hold(
         self,
         payload: EgressResultPayload,
@@ -881,8 +682,6 @@ class FinalityReleaseConsumer:
             record_class=CAPACITY_RELEASE_HELD_KIND,
         )
         return ReleaseOutcome(released=False, attempt_id=payload.attempt_id)
-
-    # -- durable re-loads (module docstring's "never an in-memory proof object") -------
 
     def _reload_proof(
         self, attempt_id: str, *, id_prefix: str
@@ -912,11 +711,8 @@ class FinalityReleaseConsumer:
                 return EconomicObligationRecord.model_validate(decoded)
         return None
 
-    # -- obligation expiry (plan §10 row ④, record-only) --------------------------------
-
     def _check_obligation_expiry(self, *, reservation_id: str) -> None:
         if self.time_service.health_state is not HealthState.TRUSTED:
-            # H2 fix: evaluate and record nothing without a TRUSTED time reading.
             return
         state = self.projection.reservation_state(reservation_id)
         if state not in _OVERDUE_ELIGIBLE_STATES:

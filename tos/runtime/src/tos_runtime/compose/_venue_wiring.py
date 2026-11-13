@@ -1,65 +1,4 @@
-"""``tos_runtime.compose._venue_wiring`` — boots the governed venue-constraint service and
-step 3's real, per-attempt fold (TOS venue constraint service wave, plan §2 decisions 4/5/6/7,
-``docs/plans/2026-09-15-tos-venue-constraint-service-plan.md``).
-
-**Replaces ``compose/_venue_phase.py::VenuePhaseStage``.** The old stage folded venue facts the
-caller had already hand-issued onto ``ConstructionConfig`` (``venue_snapshot``/``venue_policy``/
-``venue_decision`` — a test fixture literally calling ``.issue()``, plan §0 "발행 아티팩트 3").
-:class:`VenueServiceStage` instead reads a live :class:`~tos_runtime.venue.VenueConstraintService`
-— the governed policy loader plus the runtime's own snapshot/decision issuance
-(:mod:`tos_runtime.venue`) — so step 3 folds against a real per-tick snapshot and issues a real
-per-attempt decision, never a test-authored stand-in.
-
-**Two folds, deliberately.** :meth:`VenueServiceStage.__call__` builds a kernel
-``tos.egressgw.VenueConstraintStage`` TWICE: once with ``decision=None`` purely to obtain
-``resolved_shape`` (the kernel's own value-view projection of the injected order shape — this
-module never re-derives that projection itself), and once more with the REAL
-``OrderAdmissibilityDecision`` :meth:`~tos_runtime.venue.VenueConstraintService.decide` issues
-from that same resolved shape, so the returned :class:`~tos.engine.records.StageVerdict` binds
-the real decision's digest/identity. Both folds are pure and deterministic over the same inputs,
-so they agree by construction (plan §2 decision 4; pinned by
-``tos/runtime/tests/compose/test_venue_wiring.py``).
-
-**Boot-time wiring (``build_venue_service``).** Loads the two governed policy YAMLs
-(:mod:`tos_runtime.venue.config`), cross-checks the venue policy's own
-``scope`` against this compose root's configured coordinates and its ``admitting_phase_rules``
-phase tokens against what ``calendar.yaml`` can actually produce for that instrument class
-(:class:`VenuePolicyScopeMismatch` on any mismatch — a policy that scopes or admits outside what
-this deployment can ever observe is a governance-authoring bug, refused at boot, never silently
-narrowed), and cross-checks the Order Construction Policy's own ``wire_codec`` declaration against
-the active transport (plan §2 decision 6). Builds the
-:class:`~tos.venue.InstrumentRouteFields` this service's every decision binds from real sources
-only — the venue policy's own scope coordinates, this compose root's account/instrument/
-environment, and the egress route identity; ``contract_month``/``expiration``/``multiplier``/
-``settlement_method`` have no runtime source yet (plan §5 "정직 상태") and stay at their
-``InstrumentRouteFields`` ``None`` default, never invented.
-
-**Order of boot refusals.** The scope/calendar/wire-codec cross-checks all run BEFORE
-:class:`~tos_runtime.venue.VenueConstraintService` is ever constructed — so a scope refusal
-here surfaces
-before this function writes ANY evidence of its own (the only evidence that could already exist
-at this point in ``compose_paper_runtime`` is whatever ``_boot_services`` itself wrote, earlier).
-``VENUE_POLICY_BOUND`` (service construction) and ``ORDER_CONSTRUCTION_POLICY_BOUND``
-(:func:`~tos_runtime.venue.record_order_construction_policy_bound`, called last) are this
-function's own first two evidence rows, and both only ever get written past every refusal check
-above.
-
-**The declared band source** (CP-3 band 원천 웨이브,
-``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4). Two things happen here and
-nowhere else. (1) The venue policy loader is handed a THUNK that reads the ``kis_quote``
-document's own ``instrument``, which it calls only once it has parsed a non-null
-``band_source`` — so a deployment with the source off never opens that file at all, and an
-absent one answers ``None``, which is a refusal only for a policy that declares a source
-(plan §4.1/§4.4b). (2) A band
-reader is built ONLY when the loaded policy declares a source; a declaration with no
-:data:`BandReaderFactory` behind it is :class:`VenueBandSourceUnwired`, never a silent "band
-always ``None``". Every tree shipped today declares none (plan §5), so on every real boot path
-in this wave the factory is constructed and never called — which is the point: turning the
-source on is then a config edit, not a code change.
-
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos.*`` +
-``tos_runtime.*`` only. No ``shared.*``.
-"""
+"""``tos_runtime.compose._venue_wiring`` — boots the governed venue-constraint service and"""
 
 from __future__ import annotations
 
@@ -145,39 +84,19 @@ __all__ = [
     "build_venue_service",
 ]
 
-#: What :func:`build_venue_service` calls — exactly once, and ONLY when the loaded policy
-#: declares a ``_runtime.band_source`` — to obtain the service's band reader. Takes the
-#: declared source and the policy's own ``tick_size`` (the grid the reader validates both
-#: bounds against, plan §4.2).
 BandReaderFactory = Callable[
     [BandSourceConfig, int | None, tuple[PriceBandTick, ...] | None], BandReader
 ]
 
-#: The KIS wire-codec kind the Order Construction Policy's ``_runtime.wire_codec.kind`` must
-#: name for a ``kis-mock`` transport (``tos_runtime.transport.kis_mock.codec`` names the codec
-#: itself this way nowhere as a string constant, so this module owns the one literal).
 _KIS_ORDER_CASH_WIRE_CODEC_KIND = "kis-order-cash-v1"
 
 
 class VenueBandSourceUnwired(RuntimeError):
-    """The loaded Venue Constraint Policy declares a ``_runtime.band_source`` but this compose
-    root supplied no :data:`BandReaderFactory` (or the factory's own dependencies were not
-    ready) — a boot refusal, never a silent "declared but never read".
-
-    Plan §4.6: the worst outcome of this wave is supposed to be "exactly today's behaviour"
-    (band ``None`` ⇒ kernel ``UNKNOWN``). A policy that DECLARES a source and silently gets no
-    reader would produce that same ``None`` for a completely different reason, and nothing
-    downstream could tell the two apart — so it is refused at boot instead.
-    """
+    """The loaded Venue Constraint Policy declares a ``_runtime.band_source`` but this compose"""
 
 
 class VenuePolicyScopeMismatch(RuntimeError):
-    """The loaded Venue Constraint Policy's own ``scope`` does not match this compose root's
-    configured coordinates, one of its ``admitting_phase_rules`` names a phase token
-    ``calendar.yaml`` cannot produce for that instrument class, or the loaded Order Construction
-    Policy's own ``wire_codec`` declaration does not match the active transport — a
-    governance-authoring bug, refused at boot (module docstring), never silently narrowed or
-    worked around."""
+    """The loaded Venue Constraint Policy's own ``scope`` does not match this compose root's"""
 
 
 def _cross_check_scope(
@@ -212,10 +131,7 @@ def _cross_check_scope(
 def _calendar_phase_tokens(
     calendar_config: CalendarConfig, instrument_class: str
 ) -> frozenset[str]:
-    """Every session-phase token ``calendar_config`` can produce for ``instrument_class`` —
-    its own session windows' ``phase``, the calendar-wide ``closed_phase`` (always reachable,
-    every instrument class can be observed closed), and its own futures-expiry
-    ``expired_phase`` when one is declared for that class."""
+    """Every session-phase token ``calendar_config`` can produce for ``instrument_class`` —"""
     tokens = {calendar_config.closed_phase}
     tokens.update(
         window.phase for window in calendar_config.sessions.get(instrument_class, ())
@@ -275,15 +191,7 @@ def _cross_check_price_scale(
     transport_kind: TransportKind,
     transport_config: KisMockTransportConfig | None,
 ) -> None:
-    """A kis-mock boot sends ``ORD_UNPR = price / price_scale`` — ONE scale, the tree's.
-
-    The codec's ``kis_mock_transport.yaml::price_scale`` is a deployment value; the scale the
-    sealed price is actually IN is the tree's (``venue_constraint_policy.yaml``
-    ``_runtime.price_scale`` — the ×100 of ``close_x100``). Two independent numbers are how a
-    1000 beside ×100 prices sends 27,000원 for a 270,000원 close with no refusal (PR #927
-    review M1). So a kis-mock boot requires the policy to state its scale and the transport
-    to carry the same one; a synthetic boot sends no wire price and is not checked.
-    """
+    """A kis-mock boot sends ``ORD_UNPR = price / price_scale`` — ONE scale, the tree's."""
     if transport_kind is TransportKind.SYNTHETIC:
         return
     transport_price_scale = (
@@ -303,13 +211,7 @@ def _cross_check_price_scale(
 def _broker_capability_profile_facts(
     instance_document: InstanceDocument | None,
 ) -> tuple[str | None, str | None]:
-    """``(broker_capability_profile_version, broker_capability_profile_digest)`` — real values
-    only, never invented (plan §2 decision 3): ``None``/``None`` when no INSTANCE document is
-    bound to the active scope at all (e.g. the SYNTHETIC scope), the version string off the
-    document's own ``profile.profile_version.profile_version`` when a version block is present,
-    and the digest off the document's own ``profile.canonical_digest`` — ``None`` while that
-    profile is still DRAFT (:mod:`tos_runtime.brokercap.instance`'s own module docstring).
-    """
+    """``(broker_capability_profile_version, broker_capability_profile_digest)`` — real values"""
     if instance_document is None:
         return None, None
     profile_version = instance_document.profile.profile_version
@@ -327,19 +229,10 @@ def _load_and_activate_policies(
     calendar_config: CalendarConfig,
     transport_kind: TransportKind,
 ) -> tuple[LoadedVenuePolicy, LoadedOrderConstructionPolicy, str, str]:
-    """Load both governed policy YAMLs and run every boot-time
-    cross-check (module docstring "Order of boot refusals") — split out of
-    :func:`build_venue_service` purely for the function-length budget (no behavioural
-    difference from having this inline there)."""
+    """Load both governed policy YAMLs and run every boot-time"""
     loaded_policy = load_venue_constraint_policy(
         config_dir / VENUE_POLICY_CONFIG_NAME,
         scheme=scheme,
-        # The band source's config-consistency rule (plan §4.4b) needs the ``kis_quote``
-        # document's own ``instrument``, and needs it BEFORE the two INSTANCE host-seal facts
-        # a full ``load_kis_quote_transport_config`` requires have been resolved. Passed as a
-        # THUNK (independent review L1): the loader calls it only once it has parsed a
-        # non-null `band_source`, so a deployment with the source off never touches
-        # `kis_quote.yaml` and a broken one beside it cannot turn into a boot refusal.
         band_transport_instrument_reader=lambda: read_declared_instrument(
             config_dir / KIS_QUOTE_TRANSPORT_CONFIG_NAME
         ),
@@ -347,9 +240,6 @@ def _load_and_activate_policies(
     loaded_ocp = load_order_construction_policy(
         config_dir / ORDER_CONSTRUCTION_POLICY_CONFIG_NAME, scheme=scheme
     )
-    # Narrows the kernel model's Optional field types for mypy — both loaders always fill
-    # these (require_filled_str/require_int at load, check_canonical_digest at issue) — never
-    # a real absence past a successful load.
     p, o = loaded_policy.policy, loaded_ocp.policy
     assert p.policy_id is not None and p.policy_generation is not None
     assert p.canonical_digest is not None and o.canonical_digest is not None
@@ -363,10 +253,6 @@ def _load_and_activate_policies(
         instrument_class=loaded_policy.scope.instrument_class,
     )
     _cross_check_wire_codec(loaded_ocp, transport_kind=transport_kind)
-    # The two ``*_POLICY_BOUND`` evidence rows record WHICH policy document this boot
-    # bound. Before plan S2-a that digest came back from the activation document, which
-    # only ever matched when it equalled the policy's own ``canonical_digest``; reading it
-    # straight off the policy is the same value with no second document to keep in sync.
     return loaded_policy, loaded_ocp, p.canonical_digest, o.canonical_digest
 
 
@@ -379,37 +265,13 @@ def build_kis_band_reader_factory(
     credential_sessions_cell: KisCredentialSessionsCell,
     trading_date_reader: Callable[[], str | None],
 ) -> BandReaderFactory:
-    """The production :data:`BandReaderFactory` — a KIS band reader on the ``kis_quote``
-    document's EXISTING host seal and the boot's ONE credential session (plan §4.2).
-
-    **Every refusal this factory can produce is a BOOT refusal.** The host seal
-    (:func:`~tos_runtime.compose._marketfeed_wiring.resolve_kis_instance_rest_bases` plus
-    :func:`~tos_runtime.transport.kis_quote.config.load_kis_quote_transport_config`) resolves
-    inside this call. The one thing that cannot — this boot's
-    :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSessions`
-    registry, which ``_finalize`` builds after :func:`build_venue_service` has already run —
-    is acquired through
-    :meth:`~tos_runtime.compose._kis_credential_wiring.KisCredentialSessionsCell.on_ready`,
-    so the acquisition still happens *during* compose. Building a PRIVATE registry here
-    instead would hand this app key a second token lifecycle, exactly what C-2 decision (C)
-    forbids.
-
-    Independent review M1: an earlier cut built the reader on its first READ, which pushed a
-    :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSessionConflict`
-    (two consumers of one app key disagreeing about token endpoint or cooldown) out of boot
-    and into the first decision — contradicting this very docstring.
-    ⚠ Since rescope plan M1 made the boot read ``VenueConstraintService.__init__``,
-    :class:`VenueBandSourceUnwired` IS reachable — no loader rule forbids its reaching input
-    (review LOW-4); the raise below names it. No shipped tree declares that kind.
-    """
+    """The production :data:`BandReaderFactory` — a KIS band reader on the ``kis_quote``"""
 
     def _factory(
         band_source: BandSourceConfig,
         tick_size: int | None,
         price_band_ticks: tuple[PriceBandTick, ...] | None,
     ) -> BandReader:
-        # `build_band_reader_factory` dispatches on `kind` before reaching this, and the
-        # loader admits no third kind — so this is a type narrowing, not a branch.
         assert isinstance(band_source, KisQuoteGetBandSource)
         mock_rest_base, real_rest_base = resolve_kis_instance_rest_bases(broker_scopes)
         transport_config = load_kis_quote_transport_config(
@@ -442,8 +304,6 @@ def build_kis_band_reader_factory(
                 price_band_ticks=price_band_ticks,
             )
 
-        # Runs inside `_finalize` (or immediately, if the cell is already filled), so a
-        # session-terms conflict refuses the BOOT — docstring above.
         credential_sessions_cell.on_ready(_build)
 
         def _read() -> BandObservation | None:
@@ -469,21 +329,7 @@ def build_producer_journal_band_reader_factory(
     evidence_sink: EvidenceRecorder,
     trading_date_reader: Callable[[], str | None],
 ) -> BandReaderFactory:
-    """The production :data:`BandReaderFactory` for ``kind: "producer_journal"`` (CP-3 band
-    원천 경로 변경, ``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §3.3).
-
-    **Notice what it does NOT take**: no ``config_dir``, no ``broker_scopes``, no credential
-    cell. This kind opens one file whose path the policy itself carries, so there is no host
-    seal to resolve, no token lifecycle to share, and nothing for
-    :class:`VenueBandSourceUnwired` to be late for. That absence is the whole point of the
-    path (plan §3.5 — the runtime keeps 소켓 0 · 자격증명 0), and it is why the factory for
-    this kind can be handed out unconditionally at compose time.
-
-    The file is NOT opened here. A missing or unusable journal is band ``None`` plus a reason
-    at READ time (plan §3.3), not a boot refusal: the runner may still be waiting for the band
-    probe's line when the runtime boots, and a boot that refused over an absent band would
-    lose the whole session's price collection for a fact whose absence is already conservative.
-    """
+    """The production :data:`BandReaderFactory` for ``kind: "producer_journal"`` (CP-3 band"""
 
     def _factory(
         band_source: BandSourceConfig,
@@ -513,15 +359,7 @@ def build_band_reader_factory(
     credential_sessions_cell: KisCredentialSessionsCell,
     trading_date_reader: Callable[[], str | None],
 ) -> BandReaderFactory:
-    """The one :data:`BandReaderFactory` the compose root passes in — it dispatches on the
-    declared ``band_source.kind``.
-
-    Both per-kind factories are constructed eagerly and neither touches I/O until it is
-    CALLED, which happens only for the kind the policy actually declares. So a
-    ``producer_journal`` deployment never resolves a host seal (it has no INSTANCE binding to
-    resolve — 2026-10-15 plan §1 B1) and a ``kis_quote_get`` one never looks for a band
-    journal.
-    """
+    """The one :data:`BandReaderFactory` the compose root passes in — it dispatches on the"""
     kis_factory = build_kis_band_reader_factory(
         config_dir=config_dir,
         broker_scopes=broker_scopes,
@@ -565,17 +403,7 @@ def build_venue_service(
     trading_date_reader: Callable[[], str | None] | None = None,
     transport_config: KisMockTransportConfig | None,
 ) -> tuple[VenueConstraintService, LoadedOrderConstructionPolicy]:
-    """Load, activate, cross-check, and construct the governed venue-constraint service
-    (module docstring).
-
-    Raises:
-        tos_runtime.venue.VenuePolicyConfigError: either policy YAML is missing/malformed.
-        VenuePolicyScopeMismatch: the venue policy's scope/admitting-phase tokens, the OCP's
-            wire-codec declaration, or the transport's ``price_scale``
-            (:func:`_cross_check_price_scale`) disagree with this root's configured facts.
-        VenueBandSourceUnwired: the policy declares a ``_runtime.band_source`` and
-            ``band_reader_factory`` is ``None``.
-    """
+    """Load, activate, cross-check, and construct the governed venue-constraint service"""
     loaded_policy, loaded_ocp, venue_digest, ocp_digest = _load_and_activate_policies(
         config_dir=config_dir,
         scheme=scheme,
@@ -596,18 +424,12 @@ def build_venue_service(
         canonical_instrument_id=construction.instrument,
         venue_listing=loaded_policy.scope.venue,
         market_segment=loaded_policy.scope.market_segment,
-        # contract_month / product_type / multiplier / expiration / settlement_method: no
-        # runtime source exists yet (module docstring) — left at their InstrumentRouteFields
-        # None default, never invented.
         currency=loaded_policy.scope.currency,
         account_mapping=construction.account,
         environment=environment_label,
         broker=loaded_policy.scope.broker,
         route=egress_coordinates.route_identity,
     )
-    # Plan §4: the reader is built ONLY when the policy declares a source, so a tree that
-    # declares none (today: every shipped tree, plan §5) gets a service whose behaviour — and
-    # whose evidence rows — are byte-identical to before this wave.
     band_reader: BandReader | None = None
     if loaded_policy.band_source is not None:
         if band_reader_factory is None:
@@ -644,22 +466,7 @@ def build_venue_service(
 def _derived_shape_quantity(
     candidate_command: CanonicalBrokerCommand | None,
 ) -> int | None:
-    """The QUANTITY axis value ``construct_candidate_command`` already bound onto the command
-    (``_derived_axis_bindings``, ``egressgw/construction.py:544-553``), parsed to the ``int``
-    :class:`~tos.venue.OrderShapeFields.quantity` needs.
-
-    (a′) wave (``construction_rules.py`` module docstring "the asymmetry this wave also
-    closes"): the kernel refuses an envelope that re-declares a ``DERIVED_AXES`` member as
-    ambiguous, but nothing reconciled the derived quantity against ``OrderShapeFields.quantity``
-    — a caller-declared literal — before this. This function is the ONE place that reads the
-    derived value back out; it never re-derives a quantity itself (``derive_order_size`` stays
-    the sole source) and never falls back to the caller's literal.
-
-    A denied attempt (``candidate_command is None``), an absent QUANTITY axis binding, or a
-    bound value that does not parse as an exact whole number all fail closed to ``None`` — the
-    same structural UNKNOWN ``_shape_for`` already returns for an unprojectable price
-    (``egressgw/construction.py:1074-1098``), never a guess and never the injected literal.
-    """
+    """The QUANTITY axis value ``construct_candidate_command`` already bound onto the command"""
     if candidate_command is None:
         return None
     raw = candidate_command.axis_value(ConformanceAxis.QUANTITY)
@@ -677,10 +484,7 @@ def _derived_shape_quantity(
 def _authorized_axis_value(
     authorized_axes: tuple[AxisBinding, ...], axis: ConformanceAxis
 ) -> str | None:
-    """The single bound value for ``axis`` in ``authorized_axes`` — ``None`` if absent. The one
-    place both :func:`_shape_order_type_and_tif` and :func:`_shape_side_and_position_effect`
-    read a governed axis value, so "absent is a refusal, never a default" is not a rule
-    duplicated across call sites."""
+    """The single bound value for ``axis`` in ``authorized_axes`` — ``None`` if absent. The one"""
     for binding in authorized_axes:
         if binding.axis == axis:
             return binding.value
@@ -691,29 +495,7 @@ def _shape_side_and_position_effect(
     construction_rules: ConstructionRules,
     action_class: ActionClass | None,
 ) -> tuple[str | None, str | None]:
-    """``(side, position_effect)`` for ``action_class``, sourced from the OCP's own
-    ``ConstructionRules.action_class_shape`` mapping — never ``ConstructionConfig``'s
-    caller-declared literal.
-
-    Keyed by ``(ActionClass, direction)`` (contract amended 2026-09-16, commit ``7e79f00c``):
-    ``ActionClass`` has a single ``CLOSE`` member, so a long-close and a short-close arm would
-    otherwise collapse onto one key. ``direction`` is resolved through
-    :func:`~tos_runtime.compose._envelope_wiring.resolve_construction_direction` — the ONE
-    place direction is resolved (that function's own docstring), never a second, independent
-    read of ``construction_rules.authorized_axes`` here: a direction-NAMED action class
-    (``NEW_LONG``/``NEW_SHORT``) resolves from the class itself, never the policy's own
-    ``DIRECTION`` axis alone — reading the axis unconditionally, as an earlier version of this
-    function did, gave every action class the SAME answer regardless of which one actually
-    fired, silently wrong for whichever side the axis did not name (the same
-    per-composition-constant defect :func:`build_construction_envelope` already fixed for the
-    envelope's own SIDE derivation).
-
-    No direction resolvable (a direction-agnostic class with no ``DIRECTION`` axis binding), an
-    ``(action_class, direction)`` pair absent from the mapping, or ``action_class is None``
-    outright are all the SAME refusal — ``(None, None)`` — never a default
-    (``ConstructionRules.action_class_shape`` docstring: "absent from this mapping is
-    unauthorized for this generation, not defaulted"; the "no derivation ⇒ None" discipline
-    this wave already applies to quantity, applied here to direction)."""
+    """``(side, position_effect)`` for ``action_class``, sourced from the OCP's own"""
     if action_class is None:
         return None, None
     try:
@@ -731,9 +513,7 @@ def _shape_side_and_position_effect(
 def _shape_order_type_and_tif(
     construction_rules: ConstructionRules,
 ) -> tuple[str | None, str | None]:
-    """``(order_type, tif)`` sourced from ``ConstructionRules.authorized_axes`` (a′) wave
-    decision 3) — never a caller literal. An axis this generation does not authorize is
-    ``None`` (fail-closed), never a default."""
+    """``(order_type, tif)`` sourced from ``ConstructionRules.authorized_axes`` (a′) wave"""
     return (
         _authorized_axis_value(
             construction_rules.authorized_axes, ConformanceAxis.ORDER_TYPE
@@ -743,96 +523,19 @@ def _shape_order_type_and_tif(
 
 
 def _observed_silently_rounded() -> bool:
-    """``False``, always — an observation of the RUNTIME's own behaviour, not a relayed
-    caller claim, and (round 3 correction, team-lead review, PR #718, 2026-09-16) not a
-    re-derivation of the kernel's own grid verdict.
-
-    ``OrderShapeFields.silently_rounded`` does not ask "is this shape off the tick/lot grid" —
-    ``order_shape_admissible`` already judges exactly that, completely, itself, from the SAME
-    injected :class:`~tos.venue.VenueShapeConstraints` a first and second cut of this function
-    tried to re-check (price band + tick divisibility at
-    ``tos/src/tos/venue/predicates.py:281-284``, quantity range + lot divisibility at
-    ``:286-291``). The field is a question about PROVENANCE, not grid membership — the
-    kernel's own comment at ``predicates.py:252``: "a silently-rounded / normalized shape is a
-    NEW shape — never admissible here". It asks whether whoever handed this exact shape over
-    quietly normalized it FIRST, after it was decided, before it reached the gate.
-
-    Two rounds of review each found this function's grid re-derivation missing one more of
-    ``order_shape_admissible``'s own precondition fields (round 1: ``shape.price``/
-    ``shape.quantity``/``constraints`` absent; round 2: ``price_max``/``min_quantity``/
-    ``max_quantity`` absent) — because re-deriving a verdict the kernel owns means predicting
-    every precondition it will ever check, and nothing bounds that list. That approach is
-    DELETED here, not patched a fourth time — the grid arithmetic that lived in this function
-    (a second, unpinned copy of ``predicates.py:281-291``) is gone.
-
-    **The structural answer: this runtime never rounds a shape after it has been decided.**
-    :meth:`VenueServiceStage._sourced_shape` takes ``derive_order_size``'s own output quantity
-    AS-IS (:func:`_derived_shape_quantity` parses the bound axis value back to ``int`` and
-    REFUSES — returns ``None`` — a value that is not already an exact whole number, rather
-    than rounding it). ``derive_order_size`` itself, under
-    :attr:`~tos.egressgw.vocabulary.LotRoundingPolicy.EXACT_MULTIPLE_REQUIRED`, DENIES a raw
-    size that is not already an exact lot multiple rather than rounding it — never reaches
-    ``DERIVED``, never reaches this runtime at all. Under ``FLOOR_TO_LOT`` the derivation DOES
-    floor the raw size to a lot multiple — but that floor IS the authored policy computing the
-    decision, not a caller normalizing an already-decided shape: the floored quantity is the
-    ONE value that ever exists in this runtime's path (the axis binding, the command, this
-    shape), so there is no second, differently-valued "decided" shape for a later step to have
-    quietly altered. Nothing between ``derive_order_size`` and the judged shape (this module)
-    rounds, clamps, or widens a value. So the honest answer is ``False`` — always, structurally
-    true rather than computed per attempt.
-
-    This is true only for as long as it stays true. ``tos/runtime/tests/compose
-    /test_venue_wiring.py::TestSilentlyRoundedIsNeverIntroduced`` pins the underlying
-    INVARIANT this constant relies on — that the sourced shape's quantity always equals
-    ``derive_order_size``'s own output exactly, unaltered, including under a genuine
-    ``FLOOR_TO_LOT`` floor — never this constant itself (asserting ``is False`` on a hardcoded
-    ``False`` would be exactly the tautology this project has been bitten by before). If this
-    runtime ever grows a normalization step, that test goes red and THIS field must be
-    revisited then, never left at ``False`` by inertia.
-    """
+    """``False``, always — an observation of the RUNTIME's own behaviour, not a relayed"""
     return False
 
 
 class _ConstructionStageReader(Protocol):
-    """The narrow read surface :class:`VenueServiceStage` needs off a
-    :class:`~tos.egressgw.OrderConstructionStage` (mypy stage 3 §1.3 rule 3 port
-    introduction) — only :attr:`construction`, never :meth:`__call__` or any other member of
-    the real stage (mirrors :mod:`tos_runtime.compose._dimension_readers`'s own
-    ``_ConstructionStageReader`` for the SAME real attribute, defined separately here per
-    this codebase's own "one method, not the whole service" per-module Protocol convention —
-    see ``tos_runtime.calendar.ports._WallClockNowSource``).
-
-    Declared as a read-only property (not a plain attribute) so frozen
-    implementations (dataclass ``frozen=True`` / pydantic frozen models)
-    satisfy this Protocol structurally, not just today's mutable stage
-    (docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md).
-    """
+    """The narrow read surface :class:`VenueServiceStage` needs off a"""
 
     @property
     def construction(self) -> CandidateConstruction | None: ...
 
 
 class VenueServiceStage:
-    """Step 3, folded against a live :class:`~tos_runtime.venue.VenueConstraintService`
-    (module docstring — replaces ``compose/_venue_phase.py::VenuePhaseStage``).
-
-    Exposes the same read surface :class:`~tos_runtime.compose.context.ComposeContextResolver`
-    (item 11) and :class:`~tos_runtime.compose._types.ComposedRuntime` already read off the old
-    stage — ``resolved_shape``/``shape_constraints``/``policy``/``last_snapshot``/
-    ``last_decision`` — so those call sites change only what they read FROM, not how.
-
-    **(a′) wave — order-shape field sourcing.** ``shape`` (keyword-only; an empty
-    :class:`~tos.venue.OrderShapeFields` when omitted — the real call site passes none) is never
-    folded unchanged: ``quantity`` is ALWAYS the derivation's own (:func:`_derived_shape_quantity`)
-    and ``silently_rounded`` ALWAYS the structural ``False`` (:func:`_observed_silently_rounded`).
-    ``side``/``position_effect``/``order_type``/``tif`` come from ``construction_rules`` when
-    supplied (production: ``_build_construction_stages`` passes the SAME loaded OCP step 2 used);
-    a unit test may omit it, and then those four keep the injected literal.
-
-    **#960 — per-attempt action class.** With ``attempt_reader`` (production), the action class
-    and ``side``/``position_effect`` are step 2's selected arm for THIS attempt, so a CLOSE is
-    judged and shaped as a CLOSE; ``None`` from the reader leaves the boot ``action_class``.
-    """
+    """Step 3, folded against a live :class:`~tos_runtime.venue.VenueConstraintService`"""
 
     def __init__(
         self,
@@ -846,24 +549,18 @@ class VenueServiceStage:
         attempt_reader: Callable[[], AttemptArm | None] | None = None,
     ) -> None:
         self._service = service
-        # Step 2's arm for THIS attempt (#960); `None` -> the boot action class applies.
         self._attempt_reader = attempt_reader or (lambda: None)
         self._construction_stage = construction_stage
         self._action_class = action_class
-        # `None` is "no literal supplied", never "fold nothing" (module docstring).
         self._shape = shape if shape is not None else OrderShapeFields()
         self._shape_price_field_key = shape_price_field_key
         self._construction_rules = construction_rules
-        #: The last decision-bound kernel stage — read only by the properties below.
         self._last_stage: VenueConstraintStage | None = None
 
     def __call__(self, request: StageRequest) -> StageVerdict:
         snapshot = self._service.snapshot()
         arm = self._attempt_reader()
         action_class = self._action_class if arm is None else arm.action_class
-        # Fold #1 (decision=None): purely to obtain the kernel's own resolved_shape (its
-        # value-view price projection) — this module never re-derives that projection itself
-        # (module docstring "Two folds, deliberately").
         stage0 = VenueConstraintStage(
             observed_session_phase=snapshot.observed_session_phase,
             action_class=action_class,
@@ -878,24 +575,12 @@ class VenueServiceStage:
         resolved = stage0.resolved_shape
         construction = self._construction_stage.construction
         candidate_command = None if construction is None else construction.command
-        # (a′) wave: the quantity judged here is the DERIVED one — never the caller-declared
-        # literal on ``self._shape`` — the same discipline the kernel already applies to the
-        # other two DERIVED_AXES members (module docstring; ``_derived_shape_quantity``).
-        # ``silently_rounded`` is likewise always the OBSERVED grid fact, never the injected
-        # attestation. ``resolved is None`` (no shape was ever injected) leaves nothing to
-        # source any field onto — stays ``None``, not a stand-in.
         shape_for_decision = self._sourced_shape(resolved, candidate_command)
         decision = self._service.decide(
             action_class=action_class,
             shape=shape_for_decision,
             candidate_command=candidate_command,
         )
-        # Fold #2: the real per-attempt decision now bound onto the returned StageVerdict
-        # (venue_admissibility_verdict records decision.canonical_digest/decision_id). Folded
-        # against the SAME ``shape_for_decision`` ``decide()`` just judged — not ``self._shape``
-        # — so the returned StageVerdict's outcome (computed locally by this fold, module
-        # docstring "Two folds, deliberately") agrees with ``decision.result`` on the quantity
-        # that was actually judged, not a stale literal.
         stage = VenueConstraintStage(
             observed_session_phase=snapshot.observed_session_phase,
             action_class=action_class,
@@ -914,10 +599,7 @@ class VenueServiceStage:
         resolved: OrderShapeFields | None,
         candidate_command: CanonicalBrokerCommand | None,
     ) -> OrderShapeFields | None:
-        """Build the exact shape both folds judge — ``resolved`` (fold #1's price-projected
-        shape) with every (a′)-owned field replaced (class docstring "order-shape field
-        sourcing"). ``None`` in, ``None`` out — no shape at all means no field to source
-        anything onto."""
+        """Build the exact shape both folds judge — ``resolved`` (fold #1's price-projected"""
         if resolved is None:
             return None
         updates: dict[str, object] = {

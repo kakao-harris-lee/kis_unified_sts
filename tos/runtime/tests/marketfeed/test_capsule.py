@@ -1,8 +1,4 @@
-"""``tos_runtime.marketfeed.capsule`` — ``CapsuleIssuer`` binding + refusals (TOS tick-source
-wave, plan §2 decision 1; lane A).
-
-Hermetic (D1.4): every case writes its own policy YAML under ``tmp_path``; no network, no clock.
-"""
+"""``tos_runtime.marketfeed.capsule`` — ``CapsuleIssuer`` binding + refusals (TOS tick-source"""
 
 from __future__ import annotations
 
@@ -66,9 +62,7 @@ def test_issue_binds_snapshot_ref_exactly(tmp_path: Path) -> None:
 
 
 def test_refuses_snapshot_with_null_id_and_digest(tmp_path: Path) -> None:
-    """A DRAFT snapshot (never issued) has ``snapshot_id=None``/``canonical_digest=None`` — a
-    real deployment can never construct one this way, but a caller passing one in error must be
-    refused with a typed error, not a silent null-bound ``SnapshotRef``."""
+    """A DRAFT snapshot (never issued) has ``snapshot_id=None``/``canonical_digest=None`` — a"""
     draft = CriticalInputSnapshot()
     assert draft.snapshot_id is None
     assert draft.canonical_digest is None
@@ -81,8 +75,7 @@ def test_refuses_snapshot_with_null_id_and_digest(tmp_path: Path) -> None:
 def test_two_snapshots_of_distinct_observations_bind_distinct_capsules(
     tmp_path: Path,
 ) -> None:
-    """Distinct as-of -> distinct snapshot digest -> distinct capsule digest (design #32 §4, the
-    D-E1 Gap-1 residue this wave discharges)."""
+    """Distinct as-of -> distinct snapshot digest -> distinct capsule digest (design #32 §4, the"""
     policy = loaded_policy(tmp_path)
     snap_issuer = SnapshotIssuer(policy=policy, scheme=SCHEME, account=ACCOUNT)
     issued_one = snap_issuer.issue(

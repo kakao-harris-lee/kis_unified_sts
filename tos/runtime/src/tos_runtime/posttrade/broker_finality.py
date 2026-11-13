@@ -1,25 +1,4 @@
-"""``BrokerFinalityProducer`` — the post-trade finality proof producer for a fill the broker
-reported (PR-3b, rescope plan §3 M2).
-
-**What is different from the SYNTHETIC producer, and what is not.** The proof is the same
-``ORDER_FQP`` artifact (:func:`~tos_runtime.posttrade.finality.build_order_fqp_result`, shared):
-quantity only, one ``RECEIPT`` leg, every other finality dimension in ``does_not_prove``. What
-changes is where the ``FULL_FILL`` came from — the KIS 모의투자 주식일별주문체결조회 (``VTTC0081R``)
-row the post-ACK fill observer (:mod:`tos_runtime.posttrade.fill_observer`) attributed to this
-attempt's ODNO — and so the artifact says so: ``obligation_type = "BROKER_ORDER_FQP"`` and the
-``broker-fqp-*`` id/idempotency prefixes. Nothing here is labelled ``SYNTHETIC``.
-
-**One extra precondition for a fill proof.** A broker-sourced ``FULL_FILL`` must name the
-broker's order (``broker_execution_id``, the ODNO) and its trading date — the pair the
-reconciliation join (:mod:`tos_runtime.recon.service`) identifies a KIS order by. A payload
-without both is not a broker fill this producer can vouch for, so it yields no proof.
-
-**This does not decide release.** Producing the artifact is all it does; the release consumer
-(:mod:`tos_runtime.posttrade.release_consumer`) still requires the reconciliation against the
-real KIS witness to say ``MATCHED`` before any RCL transition.
-
-Firewall: stdlib + ``tos.canonical``/``tos.engine`` + ``tos_runtime.posttrade`` only.
-"""
+"""``BrokerFinalityProducer`` — the post-trade finality proof producer for a fill the broker"""
 
 from __future__ import annotations
 
@@ -47,8 +26,6 @@ BROKER_FULL_FILL_PROOF_ID_PREFIX = "broker-fqp-proof"
 BROKER_NON_EXECUTION_OBLIGATION_ID_PREFIX = "broker-fqp-nonexec-obligation"
 BROKER_NON_EXECUTION_PROOF_ID_PREFIX = "broker-fqp-nonexec-proof"
 
-#: Same three kinds as the SYNTHETIC producer's non-execution path — the release consumer only
-#: calls it after reconciliation corroborates that nothing executed.
 _NON_EXECUTION_KINDS: frozenset[EgressResultKind] = frozenset(
     {EgressResultKind.CANCEL_ACK, EgressResultKind.EXPIRED, EgressResultKind.REJECT}
 )
@@ -70,13 +47,7 @@ class BrokerFinalityProducer:
     obligation_type: ClassVar[str] = "BROKER_ORDER_FQP"
 
     def produce(self, payload: EgressResultPayload) -> FinalityResult | None:
-        """The proof for a broker ``FULL_FILL``, or ``None``.
-
-        ``None`` unless the kind is ``FULL_FILL``, ``filled_quantity`` is positive,
-        ``remaining_quantity`` is exactly zero (the ``ORDER_FQP`` claim, checked on the payload
-        rather than inferred from the kind), and the payload names the broker order
-        (``broker_execution_id``) and its ``trading_date``.
-        """
+        """The proof for a broker ``FULL_FILL``, or ``None``."""
         if payload.kind is not EgressResultKind.FULL_FILL:
             return None
         filled = payload.filled_quantity
@@ -91,8 +62,7 @@ class BrokerFinalityProducer:
     def produce_non_execution(
         self, payload: EgressResultPayload
     ) -> FinalityResult | None:
-        """The zero-executed proof for ``CANCEL_ACK``/``EXPIRED``/``REJECT`` — built only; the
-        release consumer calls this after reconciliation corroborates non-execution."""
+        """The zero-executed proof for ``CANCEL_ACK``/``EXPIRED``/``REJECT`` — built only; the"""
         if payload.kind not in _NON_EXECUTION_KINDS:
             return None
         return self._build(payload, quantity=Decimal("0"), full_fill=False)

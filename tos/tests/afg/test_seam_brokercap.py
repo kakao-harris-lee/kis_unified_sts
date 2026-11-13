@@ -1,30 +1,4 @@
-"""MANDATED test-only seam cross-check: afg <-> brokercap (design #16 §3.4(d), M7).
-
-design #16 **M7** promoted brokercap from "coordinate-dependent" to a **dedicated
-produced-bool slot**: two brokercap predicates produce exactly the booleans afg's
-predicates consume by injection —
-
-* ``same_order_retry_allowed`` (``predicates.py:377``) -> afg ``no_blind_retry``'s
-  ``idempotency_proven`` argument (capability axis ``SUBMISSION_IDEMPOTENCY``,
-  ``vocabulary.py:71``);
-* ``rate_admission_ok`` (``predicates.py:437``) -> afg's shared-limit / admission gating
-  (capability axis ``RATE_LIMITS``).
-
-afg does **not** import ``tos.brokercap`` at runtime (the §7.1 allowlist closure test
-asserts its absence) and does **not** judge broker capability: ADR-002-022 §21 line 447
-"Broker documentation ... are evidence inputs, not permission", and brokercap's own
-``_base.py:19`` records that a capability "creates no action-flow [capacity]". This file
-imports both as a **test** to lock the produced-bool polarity and the fail-closed parity.
-
-Broker-agnostic: no concrete broker is named anywhere (project memory
-``tos-spec-broker-agnostic``); the profile below is a structural fixture, and the per-broker
-rate / burst / queue **numbers** are a Broker Capability Profile INSTANCE, not a
-Verification-Profile key (design #16 §8.1, M4).
-
-Causal isolation: each polarity assertion fixes a valid baseline and flips one input.
-
-A test-only cross-import is **not** a runtime package edge (design #16 §3.4(d)/§7.1).
-"""
+"""MANDATED test-only seam cross-check: afg <-> brokercap (design #16 §3.4(d), M7)."""
 
 from __future__ import annotations
 
@@ -74,11 +48,6 @@ def _retry(idempotency_proven: bool | None) -> bool:
         complete_evidence_capability_coverage_authority=True,
         blind_failover_attempted=False,
     )
-
-
-# ---------------------------------------------------------------------------
-# same_order_retry_allowed -> no_blind_retry (idempotency produced-bool slot)
-# ---------------------------------------------------------------------------
 
 
 def test_verified_idempotency_plus_identity_window_proof_permits_retry() -> None:
@@ -138,11 +107,6 @@ def test_afg_normalizes_a_none_idempotency_flag_closed() -> None:
     assert _retry(None) is False
 
 
-# ---------------------------------------------------------------------------
-# rate_admission_ok -> shared-limit conservatism (rate produced-bool slot)
-# ---------------------------------------------------------------------------
-
-
 def test_rate_admission_ok_polarity() -> None:
     """(seam §17.2:926-933) Only ordinary-below-ceiling + reserved headroom produces ``True``."""
     assert rate_admission_ok(True, True) is True
@@ -153,16 +117,9 @@ def test_rate_admission_ok_polarity() -> None:
 def test_rate_evidence_feeds_shared_limit_conservatism_without_creating_permission() -> (
     None
 ):
-    """(§21:447) Broker rate evidence is an *input*: it never narrows the conservative scope.
-
-    ``rate_admission_ok`` produces the independence-shaped bool afg injects; when it is
-    ``False`` / ``None`` the shared limit expands to the smallest containing scope, and
-    when the broker's documented scope is not verified-complete the limit widens to the
-    largest credible containing scope regardless of how favourable the rate evidence is.
-    """
+    """(§21:447) Broker rate evidence is an *input*: it never narrows the conservative scope."""
     favourable = rate_admission_ok(True, True)
     assert favourable is True
-    # Documented scope verified + favourable evidence => the narrow claim may stand.
     assert (
         shared_limit_conservative(
             DocumentedScopeStatus.VERIFIED_COMPLETE,
@@ -172,7 +129,6 @@ def test_rate_evidence_feeds_shared_limit_conservatism_without_creating_permissi
         )
         is ActionFlowScopeKind.ACCOUNT
     )
-    # Causal isolation: flip ONLY the documented-scope status => widen to the largest.
     assert (
         shared_limit_conservative(
             DocumentedScopeStatus.INCOMPLETE,
@@ -182,7 +138,6 @@ def test_rate_evidence_feeds_shared_limit_conservatism_without_creating_permissi
         )
         is ActionFlowScopeKind.GLOBAL
     )
-    # Causal isolation: flip ONLY the rate evidence => expand to the smallest containing.
     unfavourable = rate_admission_ok(False, True)
     assert unfavourable is False
     assert (

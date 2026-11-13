@@ -1,12 +1,4 @@
-"""Evidence required-covered + fail-closed issuance guards (design #4 §3.2/§6).
-
-This is the evidence analogue of the capsule ``test_required_covered.py`` — the
-negative suite the review found missing (MAJOR-3): the ``issue_*`` fixtures always
-fill the required covered set, so the issuance guard was never exercised and a
-degenerate ReplayCapsule slipped through (MAJOR-1). Each test drops a required
-binding and asserts that issuance is **rejected**, and covers the ReplayCapsule
-fail-closed cross-field invariants (MAJOR-1 empty capsule, MAJOR-2 false MATCH).
-"""
+"""Evidence required-covered + fail-closed issuance guards (design #4 §3.2/§6)."""
 
 from __future__ import annotations
 
@@ -88,9 +80,6 @@ def test_every_artifact_has_non_vacuous_required_covered() -> None:
         assert cls._REQUIRED_COVERED, f"{cls.__name__} has a vacuous _REQUIRED_COVERED"
 
 
-# ---- MAJOR-1: degenerate empty capsules are rejected -----------------------
-
-
 def test_degenerate_empty_replay_capsule_rejected() -> None:
     """An empty ReplayCapsule (no baseline/inputs/expected) cannot be ISSUED (§6.2/§15)."""
     with pytest.raises(ValidationError):
@@ -99,7 +88,7 @@ def test_degenerate_empty_replay_capsule_rejected() -> None:
 
 def test_replay_missing_input_binding_rejected() -> None:
     """A capsule with baseline+expected but no bound raw evidence digest is rejected."""
-    kwargs = {**replay_required_kwargs(), "inputs": ReplayInputs()}  # no digests
+    kwargs = {**replay_required_kwargs(), "inputs": ReplayInputs()}
     with pytest.raises(ValidationError):
         ReplayCapsule.issue(scheme=SCHEME, **kwargs)
 
@@ -108,9 +97,6 @@ def test_degenerate_empty_eip_rejected() -> None:
     """An empty EIP (no integrity serialization identifiers) cannot be ISSUED (§3.5)."""
     with pytest.raises(ValidationError):
         EvidenceIntegrityPolicy.issue(scheme=SCHEME, policy_id="eip-empty")
-
-
-# ---- MAJOR-2: a stored false MATCH is unconstructable ----------------------
 
 
 def test_false_match_with_unbounded_nondeterminism_rejected() -> None:

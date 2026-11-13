@@ -1,8 +1,4 @@
-"""Conservative projection — within_limits + apply_benefit (RCL design §5.1).
-
-The three fail-closed rules: missing-dimension = restrictive (empty-set fail-open
-canary), benefit = 0 unless positively proven, and no dimension is treated as ``0``.
-"""
+"""Conservative projection — within_limits + apply_benefit (RCL design §5.1)."""
 
 from __future__ import annotations
 
@@ -23,9 +19,6 @@ from ._rcl_strategies import MAGNITUDE, vec
 DIMS = ["gross_notional"]
 
 
-# ---- within_limits: missing-dimension = restrictive (§5.1 rule 3) ----------
-
-
 def test_empty_dimension_set_is_false_never_vacuous_true() -> None:
     """(canary) An empty applicable-dimension set => False, never a vacuous True."""
     assert within_limits(vec(gross_notional=1), vec(gross_notional=10), []) is False
@@ -33,11 +26,9 @@ def test_empty_dimension_set_is_false_never_vacuous_true() -> None:
 
 def test_none_dimension_not_treated_as_zero() -> None:
     """(canary) A None (UNKNOWN) magnitude on either side => False, not 0."""
-    # Effect UNKNOWN on the applicable dimension.
     assert (
         within_limits(vec(gross_notional=None), vec(gross_notional=10), DIMS) is False
     )
-    # Limit UNKNOWN on the applicable dimension.
     assert within_limits(vec(gross_notional=1), vec(gross_notional=None), DIMS) is False
 
 
@@ -57,12 +48,9 @@ def test_within_limits_iff_effect_le_limit(effect: Decimal, limit: Decimal) -> N
 def test_all_applicable_dimensions_must_hold() -> None:
     """Every applicable dimension must be present and within limit."""
     effect = vec(a=1, b=5)
-    limits = vec(a=10, b=3)  # b exceeds
+    limits = vec(a=10, b=3)
     assert within_limits(effect, limits, ["a", "b"]) is False
     assert within_limits(effect, vec(a=10, b=10), ["a", "b"]) is True
-
-
-# ---- apply_benefit: 0 unless positively proven (§5.1 rule 2) ---------------
 
 
 def test_benefit_none_returns_base_unchanged() -> None:
@@ -108,12 +96,7 @@ def test_benefit_leaves_unknown_dimension_unknown() -> None:
 
 @given(uncertainty=st.integers(min_value=0, max_value=100))
 def test_aggregate_usage_monotone_in_uncertainty(uncertainty: int) -> None:
-    """Adding a non-negative uncertainty term never lowers aggregate usage (§5.1 r1).
-
-    Drives the production projection surface (:func:`aggregate_usage`): a larger
-    injected uncertainty component aggregates to a >= usage vector (monotone
-    non-decreasing; no negative-clamp shortcut).
-    """
+    """Adding a non-negative uncertainty term never lowers aggregate usage (§5.1 r1)."""
     base = aggregate_usage([vec(gross_notional=5)])
     higher = aggregate_usage([vec(gross_notional=5), vec(gross_notional=uncertainty)])
     base_mag = base.magnitude("gross_notional")

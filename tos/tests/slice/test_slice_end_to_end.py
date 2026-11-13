@@ -1,21 +1,4 @@
-"""Vertical slice #1 end to end — value surface → capsule → DSL → sequencer → send boundary.
-
-The completion condition of the slice
-(``docs/plans/2026-07-29-tos-engine-completion-path-assessment.md`` §3-1): **one DSL strategy →
-an event-driven backtest → one paper order**, running through the four landed lanes' *public
-APIs only*.
-
-The file is organised as the data flows, one section per segment, so a failure names the seam
-that broke rather than "the slice". Every assertion reads an artifact the shipped packages
-produced — the engine's own ``EventResult``, the gateway's own
-:class:`~tos.egressgw.SendBoundaryVerification`, the transport's own request log — never a
-restatement the harness kept beside them (RFC-010 §6 원칙 1:183-185).
-
-⚠ **Authoring evidence; closes no EV.** Four independent reasons, one per lane, are on the
-package docstrings: the canonicalization scheme is ``ev-l1-provisional-0``, the authority
-runtimes are ``NON_AUTHORITATIVE_PROVISIONAL`` stand-ins, no broker is contacted, and a
-single-run backtest is an ADR-DEV-010 §8:191-192 disqualifier. This demonstrates **wiring**.
-"""
+"""Vertical slice #1 end to end — value surface → capsule → DSL → sequencer → send boundary."""
 
 from __future__ import annotations
 
@@ -60,10 +43,6 @@ from ._slice_fixtures import (
     run_slice,
 )
 
-# ---------------------------------------------------------------------------
-# segment 1 — the market number reaches an admitted, digest-bound value surface
-# ---------------------------------------------------------------------------
-
 
 def test_every_bar_publishes_a_resolved_value_view_bound_to_its_own_snapshot() -> None:
     """(design #32 §3.3) The real marketfeed resolver admits all three band values per bar."""
@@ -82,7 +61,6 @@ def test_every_bar_publishes_a_resolved_value_view_bound_to_its_own_snapshot() -
             "lower_band": LOWER_BAND,
             "upper_band": UPPER_BAND,
         }
-        # ★ the view's recorded digest really is the digest of its own content.
         assert view_digest_matches(view, SCHEME)
 
 
@@ -103,22 +81,12 @@ def test_distinct_bars_produce_distinct_snapshot_capsule_and_view_digests() -> N
     assert len(views) == len(book.contexts)
 
 
-# ---------------------------------------------------------------------------
-# segment 2 — the DSL strategy is admissible on capsule-sourced operands
-# ---------------------------------------------------------------------------
-
-
 def test_the_band_strategy_is_admissible_and_keys_itself() -> None:
     """(design #31 §3.3/§3.5) Typed admission passes and derives the key from the artifact."""
     admission = strategy_admissible(band_reversion_strategy())
     assert admission.verdict is AdmissionVerdict.ADMISSIBLE
     assert admission.reasons == ()
     assert admission.instrument_key == instrument_key()
-
-
-# ---------------------------------------------------------------------------
-# segment 3 — the run: one core, one sequencer, one send boundary
-# ---------------------------------------------------------------------------
 
 
 def test_the_run_yields_one_event_per_bar_plus_the_single_re_injected_result() -> None:
@@ -129,7 +97,6 @@ def test_the_run_yields_one_event_per_bar_plus_the_single_re_injected_result() -
     assert kinds.count(EventKind.DECISION_TICK) == len(sliced.book.contexts)
     assert kinds.count(EventKind.EGRESS_RESULT) == 1
     assert sliced.run.events_yielded == len(kinds)
-    # coordinate order ≡ processing order, and nothing was refused as out of order.
     assert [entry.yield_sequence for entry in sliced.run.trace.entries] == list(
         range(1, len(kinds) + 1)
     )
@@ -144,14 +111,9 @@ def test_a_single_core_drives_the_whole_run() -> None:
     sliced = run_slice()
     assert sliced.run.trace.continuity_id == "slice-1-stream"
     assert sliced.core is not None
-    # The ledger is the *same* projection across every bar — that is what makes the
-    # at-most-one seal observable at all.
     outstanding = sliced.core.ledger.outstanding(instrument_key())
     assert outstanding is not None
     assert outstanding.capacity_state is CapacityState.POSITION_CONSUMED
-
-
-# -- (a) exactly one paper-order hand-off ------------------------------------
 
 
 def test_a_exactly_one_paper_order_is_handed_off_and_the_second_signal_is_denied() -> (
@@ -167,7 +129,6 @@ def test_a_exactly_one_paper_order_is_handed_off_and_the_second_signal_is_denied
     assert crossing.flow.attempt is not None
     assert crossing.flow.handoff is not None
     assert crossing.flow.handoff.accepted_for_transmission is True
-    # every step 1-14 admitted positively — no step was skipped into a pass.
     assert len(crossing.flow.verdicts) == 14
     assert all(
         verdict.outcome is StageOutcome.ADMIT for verdict in crossing.flow.verdicts
@@ -183,7 +144,6 @@ def test_a_exactly_one_paper_order_is_handed_off_and_the_second_signal_is_denied
     assert denied.flow.halt_step is CommitmentStep.LEDGER_VERIFICATION
     assert denied.halt_reason is HaltReason.AT_MOST_ONE_EXPOSURE_HELD
 
-    # at-most-one, measured at every layer that could have leaked a second order.
     assert len(sliced.resolver.attempts) == 1
     assert len(sliced.gateway.results) == 1
     assert len(sliced.transport.requests) == 1
@@ -192,9 +152,6 @@ def test_a_exactly_one_paper_order_is_handed_off_and_the_second_signal_is_denied
     handed = [entry for entry in sliced.run.trace.entries if entry.handed_off]
     assert len(handed) == 1
     assert handed[0].bar_index == CROSSING_BAR_INDEX
-
-
-# -- (b) non-crossing bars are No-Action -------------------------------------
 
 
 def test_b_a_bar_inside_the_band_is_a_no_action_and_starts_no_flow() -> None:
@@ -207,9 +164,6 @@ def test_b_a_bar_inside_the_band_is_a_no_action_and_starts_no_flow() -> None:
         assert result.pipeline.proposal is None
         assert type(result.pipeline.outcome).__name__ == "NoActionOutcome"
         assert result.flow is None, "a no-action must start no commitment flow"
-
-
-# -- (c) the verify list -----------------------------------------------------
 
 
 def test_c_the_seven_item_verify_list_admitted_with_a_positive_synthetic_na() -> None:
@@ -230,8 +184,6 @@ def test_c_the_seven_item_verify_list_admitted_with_a_positive_synthetic_na() ->
         for verdict in verification.verdicts
     )
 
-    # ★ the N/A is a recorded positive judgement about a synthetic non-broker send, never a
-    #   silent skip: exactly the deferred mesh items, and only those, are NOT_APPLICABLE.
     not_applicable = {
         verdict.item
         for verdict in verification.verdicts
@@ -248,7 +200,6 @@ def test_c_the_seven_item_verify_list_admitted_with_a_positive_synthetic_na() ->
         else:
             assert verdict.outcome is VerifyOutcome.SATISFIED
 
-    # the gateway's own record order: 17 verify items, then claim/SEND_STARTED, then the call.
     kinds = sliced.gateway_sink.kinds
     assert kinds.count("VERIFY_ITEM") == 7
     assert kinds.index("SEND_STARTED") > max(
@@ -261,45 +212,22 @@ def test_c_the_seven_item_verify_list_admitted_with_a_positive_synthetic_na() ->
 
 
 def test_the_venue_shape_price_is_value_sourced_and_converged() -> None:
-    """(design #36 §7.3) The shape venue admits carries the number the strategy decided on.
-
-    Slice #1's last internal inconsistency, as design #35 §4.4 recorded it: venue admitted a
-    4,200-shape while the command carried the value-surface 4,499,000, and no verify path
-    compared the two — harmless, and *only* harmless because nothing looked. Both halves close
-    here. The shape price is re-sourced from the same admitted value the command was priced on,
-    and the item-11 context reads the **same object** step 3 folded rather than rebuilding a
-    look-alike, so the two can no longer disagree without something failing loudly.
-
-    The convergence is over the price-comparison pair only — the shape and the constraints
-    ``order_shape_admissible`` compares. The snapshot / policy / decision inputs are still built
-    twice; they are deterministic and carry no runtime value, and folding them in would reach
-    past this seam (design #36 §2.2).
-    """
+    """(design #36 §7.3) The shape venue admits carries the number the strategy decided on."""
     sliced = run_slice()
     crossing_close = sliced.book.context_for(CROSSING_BAR_INDEX).close
     (bound,) = sliced.resolver.contexts
 
-    # ★ value-sourced: the shape price is the crossing close, not the injected stand-in.
     assert bound.order_shape is not None
     assert bound.order_shape.price == crossing_close
     assert bound.order_shape.price != 4200
 
-    # ★ one source: the item-11 context reads step 3's retained pair, object-identically.
-    #   The constraints are fixed for the run, so their identity is readable at the end of it.
     assert bound.venue_shape_constraints is sliced.venue_stage.shape_constraints
-    #   The shape is not: ``resolved_shape`` is **single-retention**, inherited from
-    #   ``OrderConstructionStage.construction`` (design #36 §10-4 — per-attempt keying is #37's),
-    #   so after a multi-bar run it holds the *last* fold, which is the flat bar's close and not
-    #   the crossing's. That is a real property of the retention model, so it is asserted rather
-    #   than worked around — and the shape identity is then read where it is live, below.
     assert sliced.venue_stage.resolved_shape is not None
     assert (
         sliced.venue_stage.resolved_shape.price
         == sliced.book.context_for(FLAT_BAR_INDEX).close
     )
 
-    # ★ …so the object identity is taken on a run that ends at the crossing: same shipped wiring,
-    #   one fold, and the context the resolver produced carries **that object**, not a rebuild.
     at_crossing = run_slice(profile=BAND_PROFILE[: CROSSING_BAR_INDEX + 1])
     (bound_at_crossing,) = at_crossing.resolver.contexts
     assert bound_at_crossing.order_shape is at_crossing.venue_stage.resolved_shape
@@ -309,18 +237,9 @@ def test_the_venue_shape_price_is_value_sourced_and_converged() -> None:
     assert bound_at_crossing.order_shape is not None
     assert bound_at_crossing.order_shape.price == crossing_close
 
-    # ★ the inconsistency this closes: the admitted shape and the command now agree.
-    #   Compared **exactly**, not through ``int(...)``: the venue shape price is an ``int``
-    #   (``venue/records.py:153``) while the derivation carries a ``CanonicalDecimal``, so
-    #   truncating the derivation would let a future fractional price (e.g. ``100`` vs
-    #   ``100.5``) pass this agreement check while the two really disagree. Widening the int to
-    #   ``Decimal`` compares the values themselves and keeps the assertion honest under a price
-    #   grid finer than 1.
     assert bound.construction is not None
     assert Decimal(bound.order_shape.price) == bound.construction.derivation.price
 
-    # ★ …and the send was admitted — the re-sourced price is venue-admissible at step 3 (plan
-    #   S2-b folded the gateway's re-judgment of the same snapshot / decision into step 3).
     verification = sliced.gateway.verifications[0]
     assert verification.admitted is True
 
@@ -369,12 +288,8 @@ def test_the_send_boundary_ran_only_the_steps_the_engine_refuses_to_host() -> No
     assert CommitmentStep.SEND_BOUNDARY_VERIFICATION not in sequenced
     assert CommitmentStep.NETWORK_CALL not in sequenced
     assert CommitmentStep.EVIDENCE_RECORD not in sequenced
-    # …and the gateway is what produced the step 15-19 evidence.
     assert "SEND_STARTED" in sliced.gateway_sink.kinds
     assert "EGRESS_RESULT_RECORDED" in sliced.gateway_sink.kinds
-
-
-# -- (d) replay reproducibility ----------------------------------------------
 
 
 def test_d_two_runs_over_the_same_inputs_reproduce_every_identity() -> None:
@@ -414,21 +329,16 @@ def test_d_the_value_view_digest_joins_the_recorded_input_signature() -> None:
         signature = sliced.result_for(index).pipeline.signature
         assert signature is not None
         assert view.canonical_digest in signature.captured_external_value_refs
-        # the snapshot pointer is there too, and the view digest is *appended* to it.
         assert signature.captured_external_value_refs == (
             context.snapshot.canonical_digest,
             view.canonical_digest,
         )
 
-    # distinct bars ⇒ distinct signatures (the property the append exists for).
     signatures = {
         sliced.result_for(index).pipeline.signature.captured_external_value_refs
         for index in range(len(book.contexts))
     }
     assert len(signatures) == len(book.contexts)
-
-
-# -- (e) the trace document --------------------------------------------------
 
 
 def test_e_the_run_emits_the_out_of_tree_oracle_trace_document() -> None:
@@ -443,43 +353,23 @@ def test_e_the_run_emits_the_out_of_tree_oracle_trace_document() -> None:
     assert document["events_yielded"] == len(sliced.run.trace.entries)
     assert len(document["trace"]["entries"]) == len(sliced.run.trace.entries)
 
-    # the fail-closed halts are recorded with their reasons — a stop is never silent.
     halts = {(halt["bar_index"], halt["halt_reason"]) for halt in document["halts"]}
     assert (DENIED_BAR_INDEX, HaltReason.AT_MOST_ONE_EXPOSURE_HELD.value) in halts
     for bar_index in INSIDE_BAR_INDEXES:
         assert (bar_index, HaltReason.NO_ACTION_OUTCOME.value) in halts
-    # Every *flow* halt names its reason in prose. A no-action halt carries no detail — it is
-    # not a stop but the policy's own default Decision, whose rationale lives on the emitted
-    # NoActionOutcome instead; conflating the two would be the ∅ defect in reverse.
     flow_halts = [halt for halt in document["halts"] if halt["halt_step"] is not None]
     assert flow_halts
     assert all(halt["detail"] for halt in flow_halts)
 
-    # and there is nowhere in the artifact to put a performance claim.
     serialized = repr(document)
     for token in ("sharpe", "pnl", "total_return", "admissibility_verdict"):
         assert token not in serialized.lower()
 
 
-# ---------------------------------------------------------------------------
-# the Explicit-Flat branch (recorded honestly — see test_slice_gaps.py)
-# ---------------------------------------------------------------------------
-
-
 def test_the_upper_band_cross_emits_a_flat_proposal_that_now_stops_at_the_capacity_seal() -> (
     None
 ):
-    """The exit branch is constructable, and the halt has **moved** (design #35 §5.3).
-
-    Before GAP-4 the flat stopped at step 2 because ``derive_order_size`` had no
-    position-closing rule; it now derives its magnitude from the observed held position, so step 2
-    admits and the flow runs on until the at-most-one exposure retention denies it at step 8.
-
-    That move *is* the closure's content. Sizing a flat is not capacity admission: the scope is
-    still occupied by the entry (no release path exists — ``state.py:22``), so the exit is still
-    refused. What changed is that the recorded reason for the refusal is now the capacity seal
-    rather than the sizing rule, and the two were never the same fact.
-    """
+    """The exit branch is constructable, and the halt has **moved** (design #35 §5.3)."""
     sliced = run_slice()
     result = sliced.result_for(FLAT_BAR_INDEX)
     assert result.pipeline is not None
@@ -490,18 +380,14 @@ def test_the_upper_band_cross_emits_a_flat_proposal_that_now_stops_at_the_capaci
     assert result.flow is not None
     assert result.flow.handed_off is False
 
-    # ★ step 2 now admits: the flat was sized, from the position the entry actually took.
     outcomes = {verdict.step: verdict.outcome for verdict in result.flow.verdicts}
     assert outcomes[CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION] is StageOutcome.ADMIT
 
-    # ★ …and the stop is the capacity seal, named as such.
     assert result.halt_reason is HaltReason.AT_MOST_ONE_EXPOSURE_HELD
     assert result.flow.halt_step is CommitmentStep.LEDGER_VERIFICATION
     assert result.detail is not None
     assert "at-most-one" in result.detail or "capacity stage" in result.detail
 
-    # the magnitude the flat was sized from is the projection's own recorded fill — an
-    # observation, never a release (design #35 §5.2).
     held = sliced.core.ledger.outstanding_consumed_magnitude(instrument_key())
     assert held is not None
     entry_context = sliced.resolver.contexts[0]

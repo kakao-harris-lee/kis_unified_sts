@@ -1,7 +1,4 @@
-"""``tos_runtime.compose`` shared dataclasses/exceptions — split out of
-root.py purely for the size budget (tools/tos_size_budget.py file-level
-limit); no behavioural difference from having them inline in root.py.
-"""
+"""``tos_runtime.compose`` shared dataclasses/exceptions — split out of"""
 
 from __future__ import annotations
 
@@ -67,10 +64,6 @@ from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessi
 from tos_runtime.venue import VenueConstraintService
 
 if TYPE_CHECKING:
-    # TYPE_CHECKING-only: _venue_wiring.py imports ConstructionConfig FROM this
-    # module, so a top-level import here would be circular. Postponed
-    # annotations (module docstring's own `from __future__ import annotations`)
-    # mean the string form below is all mypy needs.
     from tos_runtime.compose._venue_wiring import VenueServiceStage
     from tos_runtime.posttrade.fill_observer import KisMockFillObserver
 
@@ -85,91 +78,35 @@ __all__ = [
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Config file names expected directly under ``config_dir`` (each shaped like
-#: its ``tos/runtime/config/*.example.yaml`` counterpart).
 _TIME_CONFIG_NAME = "time.yaml"
 _AUTHORITY_CONFIG_NAME = "authority.yaml"
 _RISK_CONFIG_NAME = "risk.yaml"
 _CURRENTNESS_CONFIG_NAME = "currentness.yaml"
 _RELEASE_CONFIG_NAME = "release.yaml"
 
-#: Where operator-authored Independent Approval decisions live, keyed by
-#: proposal digest (``tos_runtime.authority.iap`` module docstring:
-#: "approvals/<proposal_digest>.yaml").
 _APPROVALS_DIRNAME = "approvals"
 
 
 class ReleaseAdmissionRefused(RuntimeError):
-    """Raised by :func:`compose_paper_runtime` when release admission denies
-    (slice plan §4 item 1: "release admission(거부 시 기동 중단)") — nothing
-    past custody/evidence/RCL is constructed when this is raised."""
+    """Raised by :func:`compose_paper_runtime` when release admission denies"""
 
 
 class RiskStateConfigError(RuntimeError):
-    """Raised by :func:`compose_paper_runtime` (TOS risk state service wave, plan §3 "run
-    차단 목록") when ``aggregate_risk_policy.yaml``/``action_flow_policy.yaml`` are absent
-    under ``config_dir`` AND no explicit ``aggregate_risk_inputs_provider``/
-    ``action_flow_inputs_provider`` was injected — a production boot must never silently fall
-    back to a caller supplying ``None`` for both step 6/7 inputs (that would make every
-    attempt UNKNOWN forever with no boot-time signal at all). Supplying explicit providers
-    (the existing test seam) or the two policy files (the production path) both avoid this.
-    """
+    """Raised by :func:`compose_paper_runtime` (TOS risk state service wave, plan §3 "run"""
 
 
 class RecoveryBarrierHeld(RuntimeError):
-    """Raised by :meth:`ComposedRuntime.run_once` when the TOS Phase 5 W1 recovery barrier
-    (:mod:`tos_runtime.recovery.barrier`, wired by :mod:`tos_runtime.compose._recovery_wiring`)
-    did not resolve to :attr:`~tos_runtime.recovery.readiness.ReadinessVerdict.READY`.
-
-    A typed refusal, never a silent no-op (plan §2 decision 2): a caller that tries to drive an
-    event through a held runtime learns exactly why, via :attr:`ComposedRuntime.recovery`,
-    rather than getting an ``AttributeError`` on a ``None`` driver or — worse — a call that
-    quietly does nothing.
-    """
+    """Raised by :meth:`ComposedRuntime.run_once` when the TOS Phase 5 W1 recovery barrier"""
 
 
 @dataclass(frozen=True)
 class ConstructionConfig:
-    """The per-strategy Order Construction facts steps 2/3/5/11 need (module
-    docstring). Every field mirrors ``tests/slice/_slice_fixtures.py``'s own
-    injected constants — genuine per-deployment configuration, not a bound
-    this compose root could derive itself.
-
-    **Venue facts are no longer carried here** (TOS venue constraint service wave, plan §2
-    decision 5, ``docs/plans/2026-09-15-tos-venue-constraint-service-plan.md``) — the former
-    ``venue_snapshot``/``venue_policy``/``venue_decision``/``venue_shape_constraints``/
-    ``venue_constraint`` fields were a test fixture hand-issuing the very kernel artifacts a
-    real venue-constraint SERVICE is supposed to issue (plan §0 "발행 아티팩트 3"). They now
-    come exclusively from the governed, activated Venue Constraint Policy plus the runtime's
-    own :class:`~tos_runtime.venue.VenueConstraintService` (``compose/_venue_wiring.py``'s
-    ``build_venue_service``) — this compose root authors no admissibility judgement itself.
-
-    **``envelope`` and ``order_shape`` are gone** ((a′) wave lane D,
-    ``docs/plans/2026-09-16-tos-aprime-envelope-order-shape-plan.md`` §4.2/§4.7) — both used to
-    be an injected literal a test fixture hand-authored, the very authorization/shape content
-    the governed Order Construction Policy is supposed to supply. ``envelope`` is now built by
-    :func:`~tos_runtime.compose._envelope_wiring.build_construction_envelope` from the loaded
-    OCP's own ``construction_rules``; ``order_shape``'s seven fields are all sourced downstream
-    of :class:`~tos_runtime.compose._venue_wiring.VenueServiceStage` (price from the per-tick
-    value view, quantity/``silently_rounded`` from the derivation, side/position_effect/
-    order_type/tif from the OCP's ``action_class_shape``/``authorized_axes``) — never a caller
-    literal. Leaving either field in place after its consumer stopped reading it would make a
-    test that customizes it pass silently while testing nothing (§4.7's own dynamic evidence:
-    three merged tests, plus a fourth found in ``_symmetry_fixtures.py``, did exactly that).
-    """
+    """The per-strategy Order Construction facts steps 2/3/5/11 need (module"""
 
     account: str
     instrument: str
     price: AdmittedPriceObservation | None
     action_class: ActionClass
-    #: TOS Phase 5 W5 plan §2 decision 5 — replaces the former
-    #: ``observed_session_phase: str`` literal. Keys
-    #: :mod:`tos_runtime.calendar`'s session windows/futures-expiry rules for
-    #: this deployment (e.g. ``"krx-stock"``/``"krx-index-futures"``); step
-    #: 3's actual ``observed_session_phase`` is now a late-bound read off
-    #: :class:`~tos_runtime.calendar.owner.SessionFactsOwner`
-    #: (:mod:`tos_runtime.compose._session_wiring`), never a caller-supplied
-    #: phase string.
     instrument_class: str
     outbound_side: str
     price_field_key: str | None = None
@@ -178,56 +115,18 @@ class ConstructionConfig:
 
 @dataclass(frozen=True)
 class OperationsFacts:
-    """Read callables :func:`~tos_runtime.compose._operations_wiring.apply_operations_wiring`
-    exposes on :attr:`ComposedRuntime.operations` (TOS Phase 5 W4 plan §2 decision 11) — the
-    ``operations`` field group of the operator projection (plan §2.7). Defined here, not in
-    ``_operations_wiring.py``, purely to avoid that module importing THIS one for
-    :class:`ComposedRuntime`'s own type while this one imports it back for the field's type (a
-    two-file cycle) — the same "shared dataclass lives in ``_types.py``" placement
-    :class:`ConstructionConfig` already uses.
+    """Read callables :func:`~tos_runtime.compose._operations_wiring.apply_operations_wiring`"""
 
-    Every field is a zero-argument read callable, never a stored value — the SAME "read
-    callable, not a snapshot" discipline :mod:`tos_runtime.operator.projection` requires of its
-    own constructor arguments, so ``apply_operations_wiring`` can hand these straight through.
-    """
-
-    #: ``{"evidence": int | None, "rcl": int | None, "inbox": int | None}`` — each store's own
     #: on-disk ``PRAGMA user_version`` (:func:`~tos_runtime.operations.schema_migrations
-    #: .schema_version`), read fresh on every call (never cached — a ``migrate`` CLI run between
-    #: two projection exports must be visible on the very next one).
     schema_versions: Callable[[], dict[str, int | None]]
-    #: ``{"generation": int, "age_monotonic_ns": None, "manifest_digest": str}`` for the highest
-    #: ``gen*`` manifest under the composed ``backup_root``, or ``None`` when no ``backup_root``
-    #: was given or no manifest exists yet. ``age_monotonic_ns`` is always ``None`` — a backup
-    #: manifest's ``created_at_monotonic_ns`` was stamped by a DIFFERENT process's monotonic
-    #: clock, and monotonic clocks are not comparable across processes (module docstring of
-    #: ``_operations_wiring.py`` has the full reasoning); no trusted wall-clock source exists
-    #: either (plan §2.7's own "벽시계 값 비노출" decision), so this fact stays honestly absent
-    #: until a cross-process-comparable time source exists.
     last_backup: Callable[[], dict[str, object] | None]
-    #: The STAGE B dependency-admission verdict (``composed.release_admitted`` — the SAME fact
-    #: :attr:`~ComposedRuntime.release_admitted` already carries; plan §2 decision 5).
     dependency_admission: Callable[[], bool | None]
-    #: The evidence store's own boot-time
-    #: :class:`~tos_runtime.operations.key_rotation.KeyContinuityCheck` verdict string (one of
-    #: :class:`~tos_runtime.operations.key_rotation.KeyContinuityVerdict`'s three constants),
-    #: read from :attr:`~tos_runtime.evidence.store.SqliteEvidenceStore.key_continuity` — a fact
-    #: this constructor already computed and refuses to open on anything but
-    #: ``CONTINUOUS`` (that same module's own docstring). Consequence, disclosed rather than
-    #: hidden: this can only ever read as ``CONTINUOUS`` for the lifetime of a runtime this
-    #: projection is attached to (any other verdict means the store never finished opening,
-    #: so no ``ComposedRuntime`` — and no projection — exists to read it from). Still an
-    #: honest, informative fact, not a constant: it is genuinely SOURCED from the boot-time
-    #: check, and the SAME projection is exported from ``restore-drill``'s own recompose too,
-    #: where a reader benefits from seeing "yes, a store opened here and passed its continuity
-    #: check" rather than a value with no source at all.
     key_continuity: Callable[[], str | None]
 
 
 @dataclass
 class ComposedRuntime:
-    """Every live composed service, plus the wired ``EngineCore``/gateway/
-    transport (slice plan §4 item 1's own ordered list)."""
+    """Every live composed service, plus the wired ``EngineCore``/gateway/"""
 
     custody: FileCustody
     key_provider: FileKeyProvider
@@ -252,140 +151,30 @@ class ComposedRuntime:
     context_resolver: ComposeContextResolver
     core: EngineCore
     gateway: BrokerEgressGateway
-    #: T2 lane C — widened from ``SyntheticPaperTransport`` to the kernel's own ``Transport``
-    #: Protocol: either the synthetic transport or a fully-wired ``KisMockTransport`` satisfies
-    #: it structurally.
     transport: Transport
     registry: StrategyRegistry
     release_admitted: bool
-    #: The loaded coverage floor (``risk.yaml``'s ``required_scenario_kinds``)
-    #: — exposed so a caller building ``AggregateRiskDecisionInputs`` reuses
-    #: the SAME floor the config declared, never a re-typed duplicate.
     required_scenario_kinds: frozenset
-    #: The durable event admission queue (TOS Phase 3 Wave 1 Lane A-R, plan
-    #: §1.1) — its own sqlite file, separate from ``evidence_store``'s.
     inbox: SqliteEventInbox
-    #: The single driver over ``core``/``gateway`` (plan §1.1) — the ONLY
-    #: caller of ``core.handle``/``run`` in this composed runtime; see
-    #: ``tos/runtime/tests/engine/test_no_direct_core_calls.py``. ``None`` iff the TOS Phase 5
-    #: W1 recovery barrier (:attr:`recovery`) did not resolve to ``READY`` — see
-    #: :meth:`run_once`'s own ``RecoveryBarrierHeld`` refusal.
     driver: EngineDriver | None
-    #: The loaded Broker Scope table (TOS Phase 4 plan §2 decisions 1-2, G-4)
-    #: — the SAME config :attr:`context_resolver`'s ``transport_nature`` /
-    #: ``credential_route_inventory`` were derived from, exposed so a caller
-    #: can inspect the active scope without re-loading the config file.
     scopes: BrokerScopesConfig
-    #: The TOS Phase 5 W1 recovery-barrier verdict (:mod:`tos_runtime.recovery.barrier`),
-    #: stamped by :func:`tos_runtime.compose._recovery_wiring.apply_recovery_barrier`
-    #: immediately after this runtime is otherwise fully composed. ``None`` only transiently,
-    #: before that wiring runs inside :func:`~tos_runtime.compose.root.compose_paper_runtime` —
-    #: never observable on a runtime a caller actually receives.
     recovery: RecoveryVerdict | None = None
-    #: TOS venue constraint service wave (plan §2 decisions 1-9) — the governed venue-constraint
-    #: service :func:`~tos_runtime.compose._venue_wiring.build_venue_service` constructs, the
-    #: SAME instance :attr:`venue_stage` folds against every attempt. Set by
-    #: :func:`~tos_runtime.compose.root.compose_paper_runtime` immediately after ``_finalize``
-    #: returns (the service itself is built earlier, before ``_build_construction_stages`` —
-    #: this field just attaches the already-live instance to the composed runtime, mirroring
-    #: :attr:`session_facts`'s own "``None`` only transiently, never observable on a runtime a
-    #: caller actually receives" discipline).
     venue: VenueConstraintService | None = None
-    #: TOS risk state service wave (plan §2.4/§3) — the production step 6/7 decision-inputs
-    #: source :func:`~tos_runtime.compose._riskstate_wiring.build_risk_state_service`
-    #: constructs whenever ``aggregate_risk_policy.yaml``/``action_flow_policy.yaml`` both
-    #: exist under ``config_dir`` (regardless of whether an explicit
-    #: ``aggregate_risk_inputs_provider``/``action_flow_inputs_provider`` was ALSO injected —
-    #: see :func:`~tos_runtime.compose.root.compose_paper_runtime`'s own docstring for the
-    #: exact boot rule). ``None`` when those two files are absent AND explicit providers were
-    #: injected (the existing test seam); a production boot with neither raises
-    #: :class:`~tos_runtime.compose._riskstate_wiring.RiskPolicyScopeMismatch` or
-    #: ``RiskStateConfigError`` instead of silently returning a ``None`` here.
     risk_state: RiskStateService | None = None
-    #: TOS Phase 5 W4 §2 decision 11 — set by
-    #: :func:`~tos_runtime.compose._operations_wiring.apply_operations_wiring` (called from
-    #: :func:`~tos_runtime.compose.root.compose_paper_runtime`, right after
-    #: ``apply_recovery_barrier``). ``None`` only transiently before that wiring runs — never
-    #: observable on a runtime a caller actually receives (mirrors :attr:`recovery`'s own
-    #: docstring).
     operations: OperationsFacts | None = None
-    #: TOS Phase 5 W5 plan §2 decision 3 — the KST session/venue-facts owner, set by
-    #: :func:`~tos_runtime.compose._session_wiring.apply_session_wiring` (called from
-    #: :func:`~tos_runtime.compose.root.compose_paper_runtime`, right after ``_finalize``).
-    #: ``None`` only transiently before that wiring runs — never observable on a runtime a
-    #: caller actually receives (mirrors :attr:`recovery`'s own docstring).
     session_facts: SessionFactsOwner | None = None
-    #: TOS tick-source wave (plan §2 decisions 1-9) — the governed tick scheduler
-    #: :func:`~tos_runtime.compose._marketfeed_wiring.build_tick_scheduler` constructs whenever
-    #: ``marketfeed.yaml``/``critical_input_policy.yaml`` both exist under ``config_dir``.
-    #: ``None`` when either is absent — a legitimate, unconfigured state, never a boot
-    #: refusal. Attached
-    #: AFTER :func:`~tos_runtime.compose._recovery_wiring.apply_recovery_barrier`, UNLIKE
-    #: :attr:`venue` — the scheduler captures :attr:`driver` at construction and holds it for
-    #: the rest of the process's life, so it must read the FINAL post-barrier value, never a
-    #: stale pre-barrier one a HOLD verdict later detaches (see :attr:`driver`'s own docstring;
-    #: :mod:`tos_runtime.compose._marketfeed_wiring`'s own module docstring has the full
-    #: reasoning).
     marketfeed: TickScheduler | None = None
-    #: C-2 decision (C) — this boot's one-session-per-KIS-app-key registry. The order transport
-    #: took its session from it during :func:`~tos_runtime.compose._finalize_wiring._finalize`;
-    #: :func:`~tos_runtime.compose._marketfeed_wiring.build_tick_scheduler` hands the SAME
-    #: registry to a ``kis_quote`` intake so the two share one token lifecycle.
     kis_credential_sessions: KisCredentialSessions | None = None
-    #: PR-3b — the post-ACK fill observer of a stock MOCK boot
-    #: (:mod:`tos_runtime.posttrade.fill_observer`); ``None`` on every other boot, and when the
-    #: recovery barrier held. The session loop polls it once per pass through
-    #: :attr:`marketfeed`'s ``after_pass`` hook
-    #: (:func:`~tos_runtime.compose._broker_posttrade_wiring.fill_observer_pass`, wired in
-    #: :func:`~tos_runtime.compose.root.compose_paper_runtime`); a caller that drives neither
-    #: :meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.run_forever` nor its own poll
-    #: observes no fills.
     fill_observer: KisMockFillObserver | None = None
-    #: PR-3b — provenance of the broker witness release and recovery reconcile against:
-    #: ``"kis-mock-stock"`` on a stock MOCK boot, ``"synthetic-ledger"`` otherwise.
     broker_witness_provenance: str = "synthetic-ledger"
-    #: #974 Q2 — the never-sent reservation release pass
-    #: (:class:`~tos_runtime.posttrade.unsent_release.UnsentReleasePass`), built and run once at
-    #: boot by :func:`~tos_runtime.compose._release_wiring.apply_release_wiring`. Published
-    #: rather than bound there because the driver holds exactly ONE
-    #: :meth:`~tos_runtime.engine.driver.EngineDriver.bind_after_turn` slot:
-    #: :func:`~tos_runtime.compose._operations_wiring.apply_operations_wiring` runs last and is
-    #: the single binding site, composing this pass with the operator projection exporter when
-    #: that one is enabled too. ``None`` when ``driver`` was already ``None`` at release wiring
-    #: time (nothing to run it after).
     unsent_release: UnsentReleasePass | None = None
 
-    #: #1011 P2 — this boot's synthetic venue ledger parts, or an all-``None``
-    #: :class:`~tos_runtime.compose._venue_ledger_wiring.SyntheticVenueLedgerParts`
-    #: when ``finality.yaml::witness`` selected none (every shipped tree today).
-    #: Published so a caller that owns this runtime's lifetime can close the
-    #: writer's sqlite connection alongside ``rcl_log``/``evidence_store``.
     venue_ledger: SyntheticVenueLedgerParts = field(
         default_factory=SyntheticVenueLedgerParts
     )
 
     def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
-        """Drive ``events`` through :attr:`driver` to completion, one at a time.
-
-        Kept for existing call-site compatibility (every compose end-to-end test calls
-        ``runtime.run_once((event,))``); the body no longer touches ``self.core`` directly —
-        :attr:`driver` is now the only caller of ``core.handle``/``run`` (TOS Phase 3 Wave 1
-        Lane A-R, plan §1.1: "테스트가 코어를 직접 호출하는 경로 제거").
-
-        Args:
-            events: An iterable of :class:`~tos.engine.records.EngineEvent`
-                (a single synthetic tick, a short replay — never a daemon
-                loop, which is Phase 5, ``cli.py``'s own module docstring).
-
-        Returns:
-            One :class:`~tos.engine.core.EventResult` per event, in order — the result for EACH
-            enqueued event specifically; any re-injected follow-on ``EGRESS_RESULT`` events are
-            processed too (as a side effect, durably recorded) but are not included here.
-
-        Raises:
-            RecoveryBarrierHeld: If :attr:`driver` is ``None`` (the TOS Phase 5 W1 recovery
-                barrier did not resolve to ``READY``) — a typed refusal, never a silent no-op.
-        """
+        """Drive ``events`` through :attr:`driver` to completion, one at a time."""
         if self.driver is None:
             raise RecoveryBarrierHeld(
                 "recovery barrier is not READY -- the engine driver is not wired "
@@ -394,27 +183,8 @@ class ComposedRuntime:
         return tuple(self.driver.enqueue_and_run(event) for event in events)
 
     def shutdown(self, *, reason: str) -> ShutdownOutcome:
-        """Run the controlled-shutdown procedure once
-        (:mod:`tos_runtime.safety.shutdown`'s own module docstring has the ordering it
-        holds and the fail-closed halt policy).
-
-        A thin sequencing wrapper ONLY: the actual step bodies live in
-        :class:`~tos_runtime.safety.shutdown.ControlledShutdown`, kept out of this dataclass
-        purely for the ``tools/tos_size_budget.py`` function-length budget (no behavioural
-        difference from inlining it here).
-
-        Args:
-            reason: A free-text operator/runtime reason for the shutdown — recorded on the
-                ``CONTROLLED_SHUTDOWN_STARTED`` evidence row and as the new-risk-halt
-                latch's own reason.
-
-        Returns:
-            The :class:`~tos_runtime.safety.shutdown.ShutdownOutcome`. Closes
-            :attr:`inbox`, :attr:`rcl_log`, and :attr:`evidence_store` as part of the
-            procedure — this runtime is not usable for further calls afterward.
-        """
+        """Run the controlled-shutdown procedure once"""
         if self.fill_observer is not None:
-            # Issue #950: stop the FETCH worker before the stores it reports into close.
             self.fill_observer.close()
         return ControlledShutdown(
             inbox=self.inbox,
@@ -424,56 +194,13 @@ class ComposedRuntime:
             key_provider=self.key_provider,
         ).run(reason=reason)
 
-    #: The evidence kind recorded by :meth:`clear_new_risk_halt` on success — a runtime-level
-    #: record, not a kernel ``EvidenceKind`` member (re-review finding R3, 2026-09-09).
     _NEW_RISK_HALT_CLEARED_KIND = "NEW_RISK_HALT_CLEARED_BY_OPERATOR"
-    #: The evidence kind recorded by :meth:`clear_new_risk_halt` on EVERY refusal (re-review
-    #: finding RR3, 2026-09-09) — a refused clear (most of all a stale/wrong ``evidence_seq``,
-    #: "the operator is looking at a violation that is not the current one") must leave a trace
-    #: too, not just a silently-returned enum member a careless caller can ignore.
     _NEW_RISK_HALT_CLEAR_REFUSED_KIND = "NEW_RISK_HALT_CLEAR_REFUSED"
 
     def clear_new_risk_halt(
         self, *, latched_evidence_seq: int, approvals_dir: Path
     ) -> NewRiskHaltClearOutcome:
-        """Operator re-arm for the independent-review finding #3 new-risk halt latch
-        (re-review finding R3, 2026-09-09 — see :mod:`tos_runtime.engine.inbox`'s own module
-        docstring "Operator re-arm" section for why this exists now rather than in a later
-        phase). THE sanctioned door — see that module's own updated docstring and
-        :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`'s for why a direct
-        call on the storage layer is refused by a mechanical pin (re-review finding RR2).
-
-        **The approval gate.** The free-text operator attestation this method used to accept
-        is a custody-gated, single-principal approval file, evaluated by
-        :func:`~tos_runtime.safety.rearm.prepare_new_risk_halt_clear` (which owns the
-        NO_LATCH/SEQ_MISMATCH pre-checks plus the
-        :class:`~tos_runtime.safety.rearm.ReArmWorkflow` evaluation, including its own
-        ``REARM_APPROVED``/``REARM_REFUSED`` evidence). THIS method
-        still owns the actual storage-layer clear call — the machine pin
-        ``tests/engine/test_no_direct_latch_clear.py`` allows only this file to call
-        :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt` — plus the
-        ``NEW_RISK_HALT_CLEARED_BY_OPERATOR`` evidence (BEFORE that call) and the
-        ``NEW_RISK_HALT_CLEAR_REFUSED`` row for the one refusal only IT can observe: the
-        storage-layer TOCTOU (a concurrent relatch changing the seq between the pre-check and the
-        clear — a narrow, honestly-disclosed window this single-threaded runtime does not
-        currently reach, since :class:`~tos_runtime.engine.driver.EngineDriver` is itself
-        single-threaded).
-
-        Args:
-            latched_evidence_seq: The ``evidence_seq`` of the violation the operator reviewed.
-                Must equal the CURRENTLY-latched row's own seq — a stale value is refused (with a
-                ``NEW_RISK_HALT_CLEAR_REFUSED`` evidence row, per RR3).
-            approvals_dir: The directory
-                ``approvals_dir/rearm/<latched_evidence_seq>.yaml`` is resolved under (the same
-                root :mod:`tos_runtime.authority.iap` uses for
-                ``approvals/<proposal_digest>.yaml``).
-
-        Returns:
-            :class:`~tos_runtime.engine.inbox.NewRiskHaltClearOutcome` — :attr:`~tos_runtime
-            .engine.inbox.NewRiskHaltClearOutcome.CLEARED` on success; ``NO_LATCH`` /
-            ``SEQ_MISMATCH`` / ``QUORUM_REFUSED`` / ``STORAGE_REFUSED`` on refusal (the latch,
-            if any, is left completely untouched in every refusal case).
-        """
+        """Operator re-arm for the independent-review finding #3 new-risk halt latch"""
         current = self.inbox.new_risk_halt()
         decision = prepare_new_risk_halt_clear(
             current=current,
@@ -488,11 +215,9 @@ class ComposedRuntime:
         if decision.refusal is not None:
             return decision.refusal
 
-        assert (
-            current is not None
-        )  # decision.refusal is None only past the NO_LATCH check
+        assert current is not None
         attestation_text = decision.attestation_text
-        assert attestation_text is not None  # non-None exactly when refusal is None
+        assert attestation_text is not None
         attestation_sha256 = hashlib.sha256(
             attestation_text.encode("utf-8")
         ).hexdigest()

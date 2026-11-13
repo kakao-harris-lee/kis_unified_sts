@@ -1,41 +1,4 @@
-"""``tos_runtime.compose`` engine-driver wiring — TOS Phase 3 Wave 1 Lane A-R.
-
-Split out of ``_wiring.py``/``root.py`` for the size budget
-(``tools/tos_size_budget.py`` — ``_wiring.py`` was already registered at 1116
-lines before this wave; see ``config/tos_size_budget.yaml``), not for any
-behavioural reason: :func:`build_engine_driver` is called from
-``_wiring.py``'s own ``_finalize`` exactly once, in the design #40 §5 order
-this compose root already documents (engine core wired first, driver last —
-the driver needs the composed core AND gateway to exist).
-
-Owns three things:
-
-1. :func:`load_engine_driver_config` — the ``replay_window_events`` boot-time
-   cost bound (plan §1.1; see ``tos/runtime/config/engine_driver.example.yaml``).
-2. :func:`build_engine_driver` — constructs the durable
-   :class:`~tos_runtime.engine.inbox.SqliteEventInbox` (its own sqlite file,
-   SEPARATE from the evidence store — D3 failure-domain separation, operator-
-   confirmed item 2) and the :class:`~tos_runtime.engine.driver.EngineDriver`
-   bound to the already-composed core and gateway.
-3. :func:`wire_engine_and_driver` — since TOS Phase 3 Wave 2 Lane B-R, also
-   constructs the kernel's REQUIRED ``EngineCore(preconditions=...)`` argument
-   (design #31 §9-10; plan §2.1): a
-   :class:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions`
-   for the live core, over the already-composed
-   :class:`~tos_runtime.authority.epoch.SafetyAuthorityEpochService` and the
-   caller-resolved restricted-live governance posture (``config_dir``'s
-   ``coordinator_preconditions.yaml`` — loaded by the caller, ``_wiring.py``'s
-   ``_finalize``, the same pattern ``engine_driver.yaml`` already follows), and
-   a side-effect-free
-   :class:`~tos_runtime.compose._preconditions._ReplayPreconditions` for the
-   boot-time replay core (see :class:`~tos_runtime.engine.replay_stage.RecordedStage`'s own
-   docstring for why the replay core needs its OWN stand-ins throughout, not the real ones).
-
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib
-(``pathlib``, ``yaml``) + ``tos.canonical``/``tos.egressgw``/``tos.engine``/
-``tos_runtime.*``
-only. No ``shared.*``.
-"""
+"""``tos_runtime.compose`` engine-driver wiring — TOS Phase 3 Wave 1 Lane A-R."""
 
 from __future__ import annotations
 
@@ -123,26 +86,15 @@ __all__ = [
 
 ENGINE_DRIVER_CONFIG_NAME = "engine_driver.yaml"
 
-#: The durable event inbox's own sqlite file name — a SEPARATE file from
-#: ``evidence.sqlite3`` (module docstring item 2 / D3 failure-domain
-#: separation).
 INBOX_FILE_NAME = "inbox.sqlite3"
 
-#: Independent-review finding F5 (2026-09-10): the durable evidence kind recorded by
-#: :func:`verify_replay_or_halt` for a genuinely clean (non-diverged) replay result — see that
-#: function's own inline comment for why this did not already exist. Read by
-#: :mod:`tos_runtime.recovery.inputs` for the recovery barrier's obligation 1.
 REPLAY_VERDICT_IDENTICAL_KIND = "REPLAY_VERDICT_IDENTICAL"
 
-#: #944: the dual-path halt recorded when the live core's ledger already holds a reservation
-#: before the boot replay rebuilds it — the replay would add to a projection it did not derive.
 ENGINE_LEDGER_NOT_PRISTINE_KIND = "ENGINE_LEDGER_NOT_PRISTINE"
 
 
 class EngineDriverConfigError(Exception):
-    """Raised when the engine-driver config is missing, malformed, or
-    carries an unfilled (named-TBD) field — fail-closed at load, never a
-    silent default."""
+    """Raised when the engine-driver config is missing, malformed, or"""
 
 
 @dataclass(frozen=True)
@@ -170,13 +122,7 @@ def _require_positive_int(raw: Any, field: str, path: Path) -> int:
 
 
 def load_engine_driver_config(path: Path) -> EngineDriverConfig:
-    """Load + fail-closed-validate the engine-driver config from ``path``.
-
-    Raises:
-        EngineDriverConfigError: The file is missing/unreadable/not valid
-            YAML/not a mapping, the key is absent, still ``null``, not an
-            int, or not a positive int.
-    """
+    """Load + fail-closed-validate the engine-driver config from ``path``."""
     if not path.is_file():
         raise EngineDriverConfigError(f"engine-driver config file not found: {path}")
     try:
@@ -215,54 +161,7 @@ def build_engine_driver(
     authority_epoch_current: Callable[[], bool | None],
     broker_sourced: bool = False,
 ) -> tuple[SqliteEventInbox, EngineDriver]:
-    """Construct the durable inbox and the engine driver, bound to ``gateway``.
-
-    Args:
-        data_dir: Directory for the inbox's own sqlite file (SEPARATE from
-            the evidence store's — module docstring item 2).
-        core: The already-composed :class:`~tos.engine.EngineCore`.
-        gateway: The already-composed send boundary whose retained
-            ``.results`` the driver drains.
-        evidence_store: The durable evidence store the driver appends
-            ``EVENT_HANDLING_STARTED``/``EVENT_CONSUMED`` receipts into.
-        emergency_log: The sqlite-independent dual-path HALT log (independent review finding #3
-            — the driver's "possibly live" crash-window case).
-        scheme: The canonicalization scheme for event identity and the
-            outcome-digest stand-in.
-        continuity_id: The single stream continuity every coordinate this
-            driver issues carries.
-        monotonic_source: The injected monotonic clock for timeout
-            injection.
-        max_send_result_wait_ms: The injected wait bound before a SENT_UNCONFIRMED hand-off is
-            timed out (independent review finding #14 — always a concrete positive int; compose
-            already supplies one via ``TrustworthyTimeConfig``, itself non-optional).
-        finality_config: ``finality.yaml`` as ``_finalize`` loaded it
-            (:mod:`tos_runtime.posttrade.config`) — feeds this driver's finality producer
-            (team-lead CR-4, plan §2.2). REQUIRED: an unfilled value refuses boot.
-        authority_epoch_current: The SAME Safety-Authority-epoch check
-            :class:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions` performs
-            for the kernel's own Coordinator gate (``preconditions.authority_epoch_current``,
-            forwarded by the caller) — feeds
-            :class:`~tos_runtime.engine.orthostate_projection.OrthostateProjector`'s CPL-6 side
-            condition (its own module docstring: "CPL-6 needs a LIVE authority-epoch reading",
-            bug found wiring this driver reachable end to end). **What this callable actually
-            means, precisely (2026-09-09 wave-2 review finding #7 fix):** whether the epoch this
-            runtime was BOUND TO at composition time (``RuntimeCoordinatorPreconditions``'s own
-            ``_bound_epoch``, captured once when it was constructed, never re-read per tick) is
-            still ``>=`` the CURRENT epoch floor — i.e. whether the Safety Authority epoch this
-            runtime composed under is still current, not merely whether the epoch log is
-            readable right now. An earlier version of this callable re-derived the claim from the
-            SAME just-read floor it then compared against (a ``floor >= floor`` tautology), which
-            could only ever detect an unreadable log — never a genuinely stale epoch (e.g. a
-            failover after this runtime booted). A caller reading this docstring should take
-            "CPL-6 side condition is ``True``" to mean "this runtime's own bound epoch has not
-            been superseded", not merely "the log is up".
-        broker_sourced: PR-3b — the producer is the broker one (stock MOCK boot), not
-            SYNTHETIC (:func:`~tos_runtime.compose._posttrade_source.finality_producer_for`).
-
-    Returns:
-        ``(inbox, driver)`` — the driver is already bound to ``gateway``.
-    """
+    """Construct the durable inbox and the engine driver, bound to ``gateway``."""
     inbox = SqliteEventInbox(data_dir / INBOX_FILE_NAME, scheme=scheme)
     orthostate_projector = OrthostateProjector(
         inbox=inbox,
@@ -271,12 +170,6 @@ def build_engine_driver(
         authority_epoch_current=authority_epoch_current,
     )
     finality_producer = finality_producer_for(broker_sourced, finality_config, scheme)
-    # TOS Phase 5 W1 GAP 2: the real staterestore composite-state writer -- the ONE concrete
-    # implementation this compose root wires (tests construct EngineDriver without one, which
-    # degrades to the documented pre-GAP-2 no-op; see EngineDriver's own constructor docstring).
-    # ⚠ Its `write` can block for ~3 sqlite busy timeouts (~15 s) per write since #823, with
-    # nothing logged; size any deadline around it against that. CompositeStateWriter's own
-    # class docstring carries the number and why no timeout is injected here (round-3 F5).
     recovery_composite_writer = CompositeStateWriter(
         data_dir / COMPOSITE_STATE_STORE_FILE_NAME
     )
@@ -303,16 +196,7 @@ def _require_pristine_ledger(
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
 ) -> ProvisionalReservationLedger:
-    """The live core's ledger, for the boot replay to rebuild in place (#944).
-
-    The replay core is built over this same instance, not a copy, so after a clean replay the live
-    engine holds exactly the projection the next boot's replay re-derives: one object, the same
-    kernel code, the same events. Before #944 a restarted engine held nothing, so a result for a
-    pre-restart attempt was an orphan live and ``APPLIED`` on the next replay — and that boot was
-    refused. Both preconditions fail closed: the live core must not hold a reservation yet
-    (otherwise a dual-path ``ENGINE_LEDGER_NOT_PRISTINE`` halt and :class:`EngineReplayDiverged`),
-    and a diverged replay raises before the half-built projection reaches any runtime.
-    """
+    """The live core's ledger, for the boot replay to rebuild in place (#944)."""
     ledger = live_core.ledger
     if ledger.outstanding_count(instrument_key) == 0:
         return ledger
@@ -348,24 +232,7 @@ def verify_replay_or_halt(
     instrument_key: InstrumentKey,
     rcl_committed: RclCommitted | None = None,
 ) -> ReplayVerdict:
-    """Build the side-effect-free replay core factory and run the boot-time replay check, which
-    also rebuilds the live core's reservation projection (#944, :func:`_require_pristine_ledger`).
-
-    Split out of ``_wiring.py``'s ``_finalize`` purely for the size budget (its own function-size
-    limit) — the replay core factory closes over ``registry``/``configuration`` the SAME way
-    ``_finalize`` builds its real ``core``, but with a genuinely side-effect-free
-    :class:`~tos_runtime.engine.replay_stage.RecordedStage` standing in for every real injected
-    stage (dispatch CR5-3, 2026-09-09 — replacing the unconditional-``UNKNOWN`` ``_ReplayStage``
-    this module used to define; see :class:`~tos_runtime.engine.replay_stage.RecordedStage`'s own
-    module docstring for why re-running the deterministic core against RECORDED stage verdicts,
-    rather than a stand-in that halts unconditionally, is what design #31 §9 record/replay
-    actually calls for), and a
-    :class:`~tos_runtime.engine.replay_transmit.RecordedTransmit` for the send boundary IFF the
-    live run ever recorded a hand-off at all (``any_recorded_hand_off`` — CR5, 2026-09-09; see
-    that module's own docstring for why installing it unconditionally would itself be a
-    divergence source). Never the real ``stages``/``transmit``, which would re-run every real
-    stage's own bound evidence sink, ledger mutation, and transport call on every boot.
-    """
+    """Build the side-effect-free replay core factory and run the boot-time replay check, which"""
     ledger = _require_pristine_ledger(
         live_core, instrument_key, evidence_store, emergency_log
     )
@@ -376,15 +243,7 @@ def verify_replay_or_halt(
             registry=registry,
             stages=dict.fromkeys(stages, recorded_stage),
             configuration=configuration,
-            # #944: the live core's own ledger — the replay rebuilds it (docstring above).
             ledger=ledger,
-            # TOS Phase 3 Wave 2 Lane B-R: the replay core gets its OWN
-            # side-effect-free preconditions stand-in — never the real
-            # RuntimeCoordinatorPreconditions, which would re-evaluate TODAY's
-            # epoch/authorization state instead of reproducing the live run's
-            # already-recorded admission (see _ReplayPreconditions's own
-            # docstring). transport_nature is omitted (None) — the stand-in
-            # ignores it unconditionally.
             preconditions=_ReplayPreconditions(),
             transmit=(
                 RecordedTransmit(evidence_store)
@@ -394,13 +253,6 @@ def verify_replay_or_halt(
             sink=NullEvidenceSink(),
             scheme=scheme,
         )
-        # CR5-5, 2026-09-09: RecordedStage now correlates by event_id (kernel [KW3-EV]) rather
-        # than encounter order — it must be told which event is about to be handled before each
-        # call. EventCorrelatingCore is the seam (see its own docstring): it computes event_id
-        # and calls recorded_stage.set_current_event_id BEFORE delegating to the real core.
-        # Wave-3 review finding #5 (2026-09-09): verify_engine_replay_or_halt and replay_engine
-        # both declare their build_core parameter as tos_runtime.engine.replay.ReplayableCore (a
-        # Protocol EventCorrelatingCore satisfies structurally) — no cast needed at this boundary.
         return EventCorrelatingCore(
             core=core, recorded_stage=recorded_stage, scheme=scheme
         )
@@ -414,14 +266,6 @@ def verify_replay_or_halt(
         window_events=window_events,
         rcl_committed=rcl_committed,
     )
-    # Independent-review finding F5 (2026-09-10): verify_engine_replay_or_halt records evidence
-    # ONLY on divergence (REPLAY_DIVERGED, inside replay_engine) or unverifiable receipts
-    # (REPLAY_RECEIPTS_UNVERIFIABLE) -- the ordinary "everything matched cleanly" case left NO
-    # durable trace at all. tos_runtime.recovery.barrier's own obligation 1 used to hardcode
-    # ok=True for this ("guaranteed by construction, this barrier only runs after replay already
-    # passed"), which is true for the boot that just ran but gives a LATER read of this evidence
-    # store (or a mutation removing this call entirely) nothing durable to verify against. This
-    # is that durable record.
     evidence_store.append(
         {
             "total_compared": verdict.total_compared,
@@ -436,14 +280,9 @@ def verify_replay_or_halt(
 
 @dataclass
 class WiredEngine:
-    """Every artifact :func:`wire_engine_and_driver` assembles — handed straight into
-    :class:`~tos_runtime.compose._types.ComposedRuntime`'s matching fields by ``_finalize``.
-    """
+    """Every artifact :func:`wire_engine_and_driver` assembles — handed straight into"""
 
     gateway: BrokerEgressGateway
-    #: T2 lane C — widened from ``SyntheticPaperTransport`` to the kernel's own
-    #: ``Transport`` Protocol: either the synthetic transport or a fully-wired
-    #: ``KisMockTransport`` satisfies it structurally (module docstring).
     transport: Transport
     core: EngineCore
     resolved_registry: StrategyRegistry
@@ -459,23 +298,7 @@ def _build_preconditions(
     active_scope: BrokerScope,
     instance_document: InstanceDocument | None,
 ) -> RuntimeCoordinatorPreconditions:
-    """The live core's RFC-002 §10.7 Coordinator positive gates (design #31 §9-10; plan §2.1).
-
-    Read fresh on every ``DECISION_TICK`` — never a runtime-authored currentness comparison;
-    the epoch question delegates to the kernel's own ``tos.authority`` predicate (see
-    :class:`RuntimeCoordinatorPreconditions`'s own docstring).
-
-    Args:
-        authority_epoch_service: The already-composed
-            :class:`~tos_runtime.authority.epoch.SafetyAuthorityEpochService` for this runtime's
-            authority domain.
-        live_authorization_state: The caller-resolved, already-validated restricted-live
-            governance posture (``CoordinatorPreconditionsConfig.live_authorization_state``).
-        nonlive_admitted: T2 lane B's ``nonlive_broker_consuming_admitted`` posture, forwarded
-            straight through to :class:`RuntimeCoordinatorPreconditions`.
-        active_scope: This runtime's active :class:`~tos_runtime.brokercap.scopes.BrokerScope`.
-        instance_document: The bound Broker Capability Profile INSTANCE document, or ``None``.
-    """
+    """The live core's RFC-002 §10.7 Coordinator positive gates (design #31 §9-10; plan §2.1)."""
     return RuntimeCoordinatorPreconditions(
         epoch_service=authority_epoch_service,
         live_authorization_state=live_authorization_state,
@@ -513,48 +336,7 @@ def wire_engine_and_driver(
     trading_date_now: Callable[[], str | None] | None = None,
     venue_ledger: SyntheticVenueLedger | None = None,
 ) -> WiredEngine:
-    """The gateway + ``EngineCore`` + durable inbox/driver wiring — split out of ``_wiring.py``'s
-    ``_finalize`` purely for the size budget; no behavioural difference from having this inline
-    there. Builds, in order: the ``SealRegistry`` + obligation recorder + gateway evidence sink
-    (T2 lane C: the registry's ``capture`` is wired as ``on_record`` ONLY for ``kis-mock`` —
-    independent review HIGH-1) -> the selected
-    transport (:func:`~tos_runtime.compose._transport_wiring.build_transport` — synthetic or
-    KIS MOCK) + ``BrokerEgressGateway`` -> the resolved registry + engine evidence sink -> the
-    ``RuntimeCoordinatorPreconditions`` (design #31 §9-10; plan §2.1, via
-    :func:`_build_preconditions`, now also carrying T2 lane B's non-live broker-consuming
-    admission ports) -> ``EngineCore`` (steps 2-11/13/14 + this gateway as ``transmit`` + the
-    Coordinator gate) -> the durable inbox + :class:`~tos_runtime.engine.driver.EngineDriver`,
-    bound to both (TOS Phase 3 Wave 1 Lane A-R, plan §1.1: "engine core wired first, driver
-    last").
-
-    Args:
-        authority_epoch_service: Forwarded to :func:`_build_preconditions` — see its own
-            docstring.
-        live_authorization_state: Forwarded to :func:`_build_preconditions` — see its own
-            docstring.
-        finality_config: Forwarded to :func:`build_engine_driver` — see its own docstring
-            (team-lead CR-4 dispatch, plan §2.2).
-        nonlive_admitted: Forwarded to :func:`_build_preconditions` (T2 lane B).
-        active_scope: Forwarded to :func:`_build_preconditions` (T2 lane B).
-        instance_document: Forwarded to :func:`_build_preconditions` (T2 lane B).
-        custody: Forwarded to :func:`~tos_runtime.compose._transport_wiring.build_transport` — the
-            credential port a ``kis-mock`` transport loads its app key/secret through.
-        transport_kind: The selected transport kind (T2 lane C).
-        transport_config: The loaded KIS MOCK transport config, or ``None`` for ``synthetic``.
-        credential_sessions: This boot's KIS credential registry, forwarded to
-            :func:`~tos_runtime.compose._transport_wiring.build_transport` (C-2 decision (C)).
-        venue_ledger: Forwarded to
-            :func:`~tos_runtime.compose._transport_wiring.build_transport` (#1011 P2) — ``None``
-            on every boot whose ``finality.yaml`` does not select the venue-ledger witness.
-    """
-    # #966: a SEND_REFUSED names an attempt, and since #966 each attempt holds its own
-    # reservation (tos_runtime.rcl.reservation_identity), so the resolver can no longer answer
-    # with the scope's single id — that would read back a DIFFERENT attempt's current capacity
-    # state as if it were this refusal's. It resolves through the durable permit join instead
-    # (tos_runtime.rcl.reservation_lookup), which returns None for an attempt it cannot place;
-    # the recorder's own resolver contract already admits None (see its docstring) and fails
-    # closed on it. This compose root still wires exactly one InstrumentKey
-    # (context_resolver.instrument_key) for its whole process lifetime.
+    """The gateway + ``EngineCore`` + durable inbox/driver wiring — split out of ``_wiring.py``'s"""
     instrument_key = context_resolver.instrument_key
     obligation_recorder = CapacityObligationRecorder(
         store=evidence_store,
@@ -568,18 +350,7 @@ def wire_engine_and_driver(
             attempt_id=attempt_id,
         ),
     )
-    # T2 lane C: the SendSeal capture/lookup seam between the gateway's own SEND_SEALED record
-    # and a kis-mock transport's injected SealLookup port. Independent review HIGH-1: on_record
-    # is wired ONLY for kis-mock, which is this registry's only consumer (SealRegistry's own
-    # docstring) — SyntheticPaperTransport never calls the lookup, so wiring the observer
-    # unconditionally (the pre-fix behaviour) retained every SendSeal on the DEFAULT synthetic
-    # path forever, for the whole process lifetime.
     seal_registry = SealRegistry()
-    # Independent review finding #8: wiring on_refusal here means a SEND_REFUSED whose
-    # obligation this recorder cannot verify (e.g. the rcl projection's sqlite read fails) now
-    # raises out of GatewayEvidenceSinkAdapter.record and transitively out of
-    # BrokerEgressGateway.__call__ — deliberate, fail-closed (sinks.py's own module + record()
-    # docstrings carry the full rationale).
     gateway_sink = GatewayEvidenceSinkAdapter(
         evidence_store,
         runtime_identity=identity,

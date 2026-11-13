@@ -1,13 +1,4 @@
-"""Degraded lease exclusivity / validity / invalidation / reassignment (§6.1-§6.4).
-
-The v1.1 seams closed here: (M1) ``lease_scope_exclusive`` requires the claimant to be
-present and the UNIQUE owner of its (scope, capacity) key — empty / absent / duplicate =>
-False (the ``0 <= 1`` vacuous-True fail-open is gone), and ``degraded_lease_valid``
-composes it internally instead of trusting an injected ``exclusivity_ok`` bool; the
-lease-validity time terms compose ``tos.time`` so the negative-injected-term fail-closed
-guard (Time v1.2 REJECT) is inherited (regression-locked). SA-EV-004/005/006/007/011
-substrate.
-"""
+"""Degraded lease exclusivity / validity / invalidation / reassignment (§6.1-§6.4)."""
 
 from __future__ import annotations
 
@@ -24,8 +15,6 @@ from tos.authority import (
 from tos.time import HealthState, TimeContinuityIdentity
 
 from ._authority_strategies import anchor, issue_lease, valid_lease_kwargs
-
-# ---- §6.1 exclusivity (claimant-present + unique; M1) ----------------------
 
 
 def test_exclusivity_empty_set_is_false() -> None:
@@ -58,7 +47,6 @@ def test_exclusivity_two_owners_same_key_is_false() -> None:
         referenced_capacity_lease_id="L",
     )
     assert lease_scope_exclusive("lo-1", [a, b]) is False
-    # Overlapping ownership is representable (both records preserved) so it is DETECTED.
     assert a is not b
 
 
@@ -87,11 +75,7 @@ def test_exclusivity_distinct_keys_each_unique() -> None:
 
 
 def test_exclusivity_unestablished_key_coordinate_is_false() -> None:
-    """(canary M1) A claimant whose scope / capacity key is unestablished => False.
-
-    ``referenced_capacity_lease_id`` is required-covered, so a null one keeps the record
-    DRAFT; a DRAFT claimant (never a ledger citizen) cannot prove exclusivity.
-    """
+    """(canary M1) A claimant whose scope / capacity key is unestablished => False."""
     from tos.authority import DegradedLeaseOwnershipRecord
 
     draft = DegradedLeaseOwnershipRecord(
@@ -100,9 +84,6 @@ def test_exclusivity_unestablished_key_coordinate_is_false() -> None:
         referenced_capacity_lease_id=None,
     )
     assert lease_scope_exclusive("lo-1", [draft]) is False
-
-
-# ---- §6.3 degraded lease validity (time + exclusivity composed) ------------
 
 
 def test_degraded_lease_valid_positive_path() -> None:
@@ -173,15 +154,8 @@ def test_degraded_lease_invalid_on_anchor_restart() -> None:
     assert degraded_lease_valid(lease, [lease], **kwargs) is False
 
 
-# ---- negative-injected-term regression lock (Time v1.2 REJECT inherited) ----
-
-
 def test_negative_time_term_cannot_extend_lease() -> None:
-    """(canary regression) A negative injected time term => lifetime None => invalid (Time v1.2).
-
-    A negative elapsed / drift / transport / suspension / margin must never *extend* a
-    lease; composition inherits ``conservative_usable_lifetime``'s fail-closed guard.
-    """
+    """(canary regression) A negative injected time term => lifetime None => invalid (Time v1.2)."""
     lease = issue_lease()
     for term in (
         "elapsed_monotonic",
@@ -197,23 +171,14 @@ def test_negative_time_term_cannot_extend_lease() -> None:
 
 
 def test_monotonic_exceeded_invalidates_even_if_wall_looks_valid() -> None:
-    """(canary SA-EV-005) elapsed beyond issued lifetime => non-positive => invalid.
-
-    The strongest substrate: a signed wall deadline that appears valid does not matter —
-    once monotonic usable lifetime is non-positive the lease is invalid.
-    """
+    """(canary SA-EV-005) elapsed beyond issued lifetime => non-positive => invalid."""
     lease = issue_lease()
     kwargs = valid_lease_kwargs(issued_lifetime=100, elapsed_monotonic=100)
     assert degraded_lease_valid(lease, [lease], **kwargs) is False
 
 
-# ---- §6.4 invalidating events ---------------------------------------------
-
-
 class _InvalidationKwargs(TypedDict):
-    """1:1 with :func:`degraded_lease_invalidated`'s keyword-only signature (plan §1.1
-    A-fn) — a ``**_invalidation_kwargs(...)`` splat is checked key-by-key and
-    type-by-type, not swallowed by a ``**dict[str, object]`` splat."""
+    """1:1 with :func:`degraded_lease_invalidated`'s keyword-only signature (plan §1.1"""
 
     continuity_now: TimeContinuityIdentity
     suspension_ms: int | None
@@ -231,8 +196,7 @@ class _InvalidationKwargs(TypedDict):
 
 
 class _InvalidationKwargsPartial(TypedDict, total=False):
-    """Same fields as :class:`_InvalidationKwargs`, all optional — the override-kwargs
-    shape for :func:`_invalidation_kwargs`."""
+    """Same fields as :class:`_InvalidationKwargs`, all optional — the override-kwargs"""
 
     continuity_now: TimeContinuityIdentity
     suspension_ms: int | None
@@ -324,9 +288,6 @@ def test_injected_event_flags_invalidate_on_true_or_none() -> None:
     """(canary) capacity-exhausted / envelope-incompat / profile-revoked True OR None => invalidated."""
     lease = issue_lease()
     for bad in (True, None):
-        # Dynamic ``{field: bad}`` splats don't type-check against ``Unpack[TypedDict]``
-        # (the key isn't a literal) — each field gets its own explicit-keyword call
-        # instead (plan §1.1 A-fn item 2: "그래도 안 되면 그 헬퍼만 명시 키워드").
         cases: tuple[tuple[str, _InvalidationKwargs], ...] = (
             (
                 "protective_capacity_exhausted",
@@ -353,9 +314,6 @@ def test_dominating_safer_state_invalidates() -> None:
     for state in (AuthorityState.CONTAINED, AuthorityState.HALTED):
         kwargs = _invalidation_kwargs(dominating_state=state)
         assert degraded_lease_invalidated(lease, [lease], **kwargs) is True
-
-
-# ---- §6.2 overlapping reassignment forbidden ------------------------------
 
 
 def test_reassignment_forbidden_when_both_fences_unknown() -> None:
@@ -387,12 +345,7 @@ def test_reassignment_allowed_with_expiry_fence() -> None:
 
 
 def test_epoch_advance_alone_cannot_unlock_reassignment() -> None:
-    """(canary §14.5) The predicate reads no epoch — advancing one changes nothing.
-
-    ``LeaseReassignmentInputs`` has no epoch field; only a proven hard fence or an elapsed
-    expiry fence unlocks reassignment. Constructing inputs with both fences absent stays
-    forbidden regardless of any epoch state elsewhere.
-    """
+    """(canary §14.5) The predicate reads no epoch — advancing one changes nothing."""
     assert "epoch" not in " ".join(LeaseReassignmentInputs.model_fields)
     inputs = LeaseReassignmentInputs(prior_owner_scope="S")
     assert overlapping_reassignment_forbidden(inputs) is True

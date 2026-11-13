@@ -1,13 +1,4 @@
-"""session_phase_admits — the central fail-closed predicate (design #19 §5.1; VTG-EV-001 substrate).
-
-The VTG-EV-001 yolk: an unenumerated / unknown / calendar-only phase is never admissible;
-an empty admitting set admits nothing; only a policy-declared admitting phase for the exact
-action passes (both-ways). SessionPhase is an injected opaque token judged by membership, never
-truthiness (§2.2(3)).
-
-Regime tag: predicate / model substrate only; VTG-EV-001 NOT_IMPLEMENTED (`/3` + Broker
-residue); EV-L1-complete claim forbidden.
-"""
+"""session_phase_admits — the central fail-closed predicate (design #19 §5.1; VTG-EV-001 substrate)."""
 
 from __future__ import annotations
 
@@ -58,7 +49,6 @@ def test_unenumerated_action_is_inadmissible() -> None:
     """(§8 line 245) An action with no declared admitting set is INADMISSIBLE (fail-closed)."""
     policy = clean_policy(action=ActionClass.NEW_LONG)
     snapshot = clean_snapshot()
-    # NEW_SHORT was never declared in the policy.
     assert (
         session_phase_admits(
             "continuous_trading", ActionClass.NEW_SHORT, snapshot, policy
@@ -71,7 +61,6 @@ def test_empty_admitting_set_admits_nothing_both_ways() -> None:
     """(§4.7 ∅ both-ways) An empty admitting set admits NO phase (vacuous admit is not an admit)."""
     policy = clean_policy(action=ActionClass.NEW_LONG, admitting_phases=frozenset())
     snapshot = clean_snapshot()
-    # Even the "usual" continuous_trading phase is denied when the set is empty.
     assert (
         session_phase_admits(
             "continuous_trading", ActionClass.NEW_LONG, snapshot, policy
@@ -90,7 +79,6 @@ def test_phase_a_decision_not_reusable_in_phase_b() -> None:
         action=ActionClass.NEW_LONG, admitting_phases=frozenset({"continuous_trading"})
     )
     snapshot = clean_snapshot()
-    # continuous_trading admits; opening_auction (phase B) does not.
     assert (
         session_phase_admits(
             "continuous_trading", ActionClass.NEW_LONG, snapshot, policy

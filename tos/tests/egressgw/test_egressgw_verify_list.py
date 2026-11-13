@@ -1,16 +1,4 @@
-"""§4.1 — the RFC-002 §10.8:741-759 verify list and its honest disposition table.
-
-The design's central over-claim risk is reading "the gate ran" as "the send is safe". These tests
-lock the *honesty structure*: the list is exactly :data:`SEND_VERIFY_ITEMS`, the three
-dispositions partition it 4 / 2 / 1 (6 / 5 / 6 before plan S2-a removed the RFC's items
-7/8/9/10, and 6 / 5 / 2 before plan S2-b folded six more into earlier stages), every non-deferred item has a named check, and the only admitting outcomes are the two
-enumerated positive ones.
-
-Design #34 §12.1-1 target: "verify 항목 임의 하나가 deny/None/UNKNOWN 반환 시 SendHandoff
-(accepted_for_transmission=None)·transmit 미발생·중단 사유 기록."
-
-Regime tag: authoring evidence only; closes no EV (design #34 §1.1).
-"""
+"""§4.1 — the RFC-002 §10.8:741-759 verify list and its honest disposition table."""
 
 from __future__ import annotations
 
@@ -35,16 +23,14 @@ from tos.egressgw import (
 
 from ._egressgw_fixtures import happy_context
 
-#: The design §4.1 table, transcribed. A drift between this and the shipped constants is the
-#: defect this file exists to catch — so it is written out item by item, not derived from them.
 _DESIGN_TABLE: dict[int, VerifyDisposition] = {
-    1: VerifyDisposition.REALIZED_STRUCTURAL,  # capability
-    2: VerifyDisposition.DEFERRED_APPLICABILITY,  # live scope
-    3: VerifyDisposition.PROVISIONAL_STAND_IN,  # account / instrument / action allowance
-    4: VerifyDisposition.PROVISIONAL_STAND_IN,  # venue / session / broker generation
-    5: VerifyDisposition.REALIZED_STRUCTURAL,  # order construction (mutation fence)
-    6: VerifyDisposition.REALIZED_STRUCTURAL,  # currentness
-    7: VerifyDisposition.REALIZED_STRUCTURAL,  # actual outbound conformance
+    1: VerifyDisposition.REALIZED_STRUCTURAL,
+    2: VerifyDisposition.DEFERRED_APPLICABILITY,
+    3: VerifyDisposition.PROVISIONAL_STAND_IN,
+    4: VerifyDisposition.PROVISIONAL_STAND_IN,
+    5: VerifyDisposition.REALIZED_STRUCTURAL,
+    6: VerifyDisposition.REALIZED_STRUCTURAL,
+    7: VerifyDisposition.REALIZED_STRUCTURAL,
 }
 
 
@@ -110,11 +96,6 @@ def test_a_non_member_has_no_verify_item_number() -> None:
         verify_item_number("NOT_AN_ITEM")  # type: ignore[arg-type]
 
 
-# ---------------------------------------------------------------------------
-# admission is a positive closed set, and N/A is confined to the deferred mesh
-# ---------------------------------------------------------------------------
-
-
 def test_only_two_outcomes_admit_and_they_are_enumerated_positively() -> None:
     """(§4.2 / §7) The gate is positive membership, never ``is not DENIED``."""
     assert {
@@ -159,11 +140,6 @@ def test_a_deferred_item_may_be_not_applicable() -> None:
         outcome=VerifyOutcome.NOT_APPLICABLE,
     )
     assert verdict.outcome is VerifyOutcome.NOT_APPLICABLE
-
-
-# ---------------------------------------------------------------------------
-# the list actually runs, in order, over every item
-# ---------------------------------------------------------------------------
 
 
 def test_the_baseline_run_judges_every_item_in_the_normative_order() -> None:

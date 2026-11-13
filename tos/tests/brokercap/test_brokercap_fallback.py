@@ -1,8 +1,4 @@
-"""Fallback monotone-restrictive + REDUCED path (design #10 §5.3; BC-EV-002/009/010).
-
-A fallback never increases capability: a widening fallback is rejected; a legitimate
-conservative one enables a REDUCED (restricted-live) scope; no fallback => PROHIBITED.
-"""
+"""Fallback monotone-restrictive + REDUCED path (design #10 §5.3; BC-EV-002/009/010)."""
 
 from __future__ import annotations
 
@@ -25,11 +21,6 @@ from ._brokercap_strategies import (
 
 _OID = CapabilityDimension.ORDER_IDENTITY
 _CANCEL = CapabilityDimension.CANCELLATION
-
-
-# ---------------------------------------------------------------------------
-# fallback_admissible both-ways
-# ---------------------------------------------------------------------------
 
 
 def test_conservative_fallback_admissible() -> None:
@@ -80,11 +71,6 @@ def test_any_non_positive_flag_fails_closed(
     assert fallback_admissible(spec) is False
 
 
-# ---------------------------------------------------------------------------
-# REDUCED vs PROHIBITED at the central predicate
-# ---------------------------------------------------------------------------
-
-
 def test_deficient_with_approved_fallback_is_reduced() -> None:
     """(§5.1 REDUCED) A deficient dimension with an approved fallback => REDUCED."""
     profile = issue_profile(declarations=(verified_declaration(dimension=_OID),))
@@ -113,7 +99,7 @@ def test_reduced_requires_all_deficient_covered() -> None:
     profile = issue_profile(declarations=(verified_declaration(dimension=_OID),))
     req = required_set(
         dimensions=frozenset({_OID, _CANCEL, CapabilityDimension.REPLACE_OR_AMEND}),
-        approved_fallback_dimensions=frozenset({_CANCEL}),  # REPLACE_OR_AMEND uncovered
+        approved_fallback_dimensions=frozenset({_CANCEL}),
     )
     assert (
         capability_admissible(profile, "entry", req, version_current=True)

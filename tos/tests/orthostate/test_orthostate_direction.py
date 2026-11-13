@@ -1,11 +1,4 @@
-"""Conservative-direction rule — weak can't reduce, increase never blocked (§6.1).
-
-Each of the five local weak bases individually fails to reduce conservatism; a strong
-basis succeeds; increasing conservatism is never blocked (even under a None basis); the
-local WEAK_BASES is wider than rcl's (LOCAL_CACHE / RECOVERY_RECONNECT cannot reduce);
-and the Capacity dimension delegates to rcl.transition_allowed. Off-dimension coordinates
-fail closed. [STATE-EV-002 substrate — EV not claimed; EV-L2/L3 fault injection deferred]
-"""
+"""Conservative-direction rule — weak can't reduce, increase never blocked (§6.1)."""
 
 from __future__ import annotations
 
@@ -26,7 +19,6 @@ from tos.rcl import CapacityState, TransitionCause
 
 _STRONG_BASES = sorted(set(ConservatismBasis) - WEAK_BASES)
 
-# A clear conservatism reduction per local dimension (from more- to less-conservative).
 _REDUCTIONS = [
     (
         StateDimension.BROKER_ORDER,
@@ -42,7 +34,6 @@ _REDUCTIONS = [
     (StateDimension.INTENT, IntentState.PROPOSED, IntentState.APPROVED),
 ]
 
-# A clear conservatism increase per local dimension (from less- to more-conservative).
 _INCREASES = [
     (
         StateDimension.BROKER_ORDER,
@@ -135,11 +126,6 @@ def test_collapse_unknown_to_none_observed_blocked_under_weak() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Capacity delegates to rcl.transition_allowed
-# ---------------------------------------------------------------------------
-
-
 def test_capacity_delegates_to_rcl_transition_allowed() -> None:
     """(§6.1b) Capacity conservatism is the rcl lattice: RELEASED only under FINAL_QUANTITY_PROOF."""
     assert (
@@ -189,7 +175,7 @@ def test_off_dimension_coordinate_fails_closed() -> None:
     assert (
         conservative_direction_ok(
             StateDimension.BROKER_ORDER,
-            IntentState.PROPOSED,  # wrong dimension's value
+            IntentState.PROPOSED,
             BrokerOrderState.UNKNOWN,
             ConservatismBasis.BROKER_EVIDENCE_UNDER_PROFILE,
         )

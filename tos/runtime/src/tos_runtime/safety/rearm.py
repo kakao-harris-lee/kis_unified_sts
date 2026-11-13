@@ -1,52 +1,4 @@
-"""The new-risk-halt clear door: one operator confirmation, custody-gated.
-
-**What plan S2-a changed.** This used to drive the kernel ``tos.hag`` two-person
-dual-control quorum: an effective-principal roster, delegation/conflict edges, a
-quorum-independence predicate and a single-use approval set. In the real evidence that
-machinery recorded **zero** re-arms and zero halt clears — it was never exercised — and
-``tos.hag`` is gone. What stays is the simplest honest gate, and every property that
-actually fenced the latch:
-
-1. **The latch's own identity is checked first.** A clear names an exact
-   ``latched_evidence_seq``; an absent latch (``NO_LATCH``) or a different currently-
-   latched seq (``SEQ_MISMATCH``) is refused before the approval file is even read, so a
-   stale approval can never clear a newer halt.
-2. **One approval, one use.** An approval for a seq that ALREADY has a
-   ``REARM_APPROVED`` row is refused. The ``tos.hag`` ``approval_set_single_use``
-   predicate that used to enforce this is gone, so the check is made here against the
-   store's own durable history (never an in-process cache — a freshly re-opened process
-   over the same store refuses identically, the same log-enforced discipline
-   :func:`tos_runtime.safety.ack._already_acknowledged` applies to alerts). Without it
-   one approval file could clear the SAME ``evidence_seq`` twice: nothing stops a
-   violation from re-latching at a seq a leftover file still names.
-3. **The approval file is custody-gated.** 0600 mode and owner uid
-   (:func:`~tos_runtime.custody.file_custody.verify_file_mode_and_owner`), the same rule
-   every other operator file in this runtime obeys.
-4. **Cross-environment isolation.** The file's own ``environment_label`` must equal this
-   runtime's byte-exact.
-5. **One named principal, positively APPROVE.** Exactly one approval entry, a non-blank
-   ``principal_id`` that is not still the ``TBD`` template placeholder, and a
-   ``decision`` of exactly ``APPROVE``. ``DENY``/``ABSTAIN``/anything else refuses.
-6. **Every outcome is durably evidenced** — ``REARM_APPROVED`` before the caller's own
-   storage clear, ``REARM_REFUSED`` on every refusal including an unreadable file. That
-   ``REARM_APPROVED`` row is what item 2 reads back.
-
-**What plan S2-a removed and did NOT replace** (grade-A review disclosure): the
-two-person quorum itself, roster membership and its effective-principal/conflict graph
-(``quorum_independence_satisfied`` / ``dual_control_effective_distinct``), and the
-request-digest binding (``approval_binding_exact``) that tied an approval to one exact
-constructed request record. Item 2 above restores single use; the other three are
-deliberately gone, having recorded zero re-arms in the live evidence.
-
-**Machine pin.** ``tests/engine/test_no_direct_latch_clear.py`` allows exactly two files
-to call :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt` directly:
-``compose/_types.py`` (the live-runtime door) and ``compose/_cli_ops.py`` (the CLI-only
-door). Both stop here first; neither bypasses this gate. This module itself never clears
-the latch — it hands back :class:`NewRiskHaltDoorDecision`.
-
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``pyyaml`` +
-``tos_runtime.*`` only. No ``shared.*``.
-"""
+"""The new-risk-halt clear door: one operator confirmation, custody-gated."""
 
 from __future__ import annotations
 
@@ -76,22 +28,15 @@ __all__ = [
     "prepare_new_risk_halt_clear",
 ]
 
-#: Evidence kind for an approved clear, recorded BEFORE the caller's storage clear.
 _REARM_APPROVED_KIND = "REARM_APPROVED"
-#: Evidence kind for EVERY refusal — a missing file, a custody failure, or a
-#: non-``APPROVE`` decision.
 _REARM_REFUSED_KIND = "REARM_REFUSED"
 
-#: The decision tokens an approval entry may carry. Only the first one clears.
 _APPROVE = "APPROVE"
 _DECISIONS = frozenset({_APPROVE, "DENY", "ABSTAIN"})
 
 
 class ReArmApprovalFileError(Exception):
-    """Raised internally for any refusal reading/validating the on-disk approval file,
-    or for a seq whose approval was already used — always caught by
-    :meth:`ReArmWorkflow.approve_and_clear` and turned into a ``REFUSED``
-    :class:`ReArmOutcome`, never propagated to the caller."""
+    """Raised internally for any refusal reading/validating the on-disk approval file,"""
 
 
 class ReArmStatus(StrEnum):
@@ -103,18 +48,7 @@ class ReArmStatus(StrEnum):
 
 @dataclass(frozen=True)
 class ReArmOutcome:
-    """One :meth:`ReArmWorkflow.approve_and_clear` result.
-
-    Attributes:
-        status: :attr:`ReArmStatus.APPROVED` iff every check in the module docstring
-            positively held.
-        reasons: The failed check names (empty exactly when ``status is
-            ReArmStatus.APPROVED``) — never a secret, never file content.
-        attestation_text: A non-secret marker string
-            (``"operator-rearm-approved:<principal_id>"``) the caller passes on as the
-            storage layer's own (non-empty, free-text) ``operator_attestation``
-            argument — ``None`` on refusal.
-    """
+    """One :meth:`ReArmWorkflow.approve_and_clear` result."""
 
     status: ReArmStatus
     reasons: tuple[str, ...]
@@ -124,8 +58,7 @@ class ReArmOutcome:
 def _load_raw_rearm_file(
     path: Path, *, expected_owner_uid: int, getuid: Callable[[], int]
 ) -> dict[str, Any]:
-    """Custody-gated read + parse of the on-disk approval file (module docstring item 2 —
-    the same 0600-mode + owner-uid rule ``tos_runtime.authority.iap`` applies)."""
+    """Custody-gated read + parse of the on-disk approval file (module docstring item 2 —"""
     if not path.is_file():
         raise ReArmApprovalFileError(f"rearm approval file not found: {path}")
     try:
@@ -152,12 +85,7 @@ def _load_raw_rearm_file(
 
 
 def _already_approved(evidence_store: SqliteEvidenceStore, seq: int) -> bool:
-    """Whether a prior ``REARM_APPROVED`` row already names ``seq`` (module docstring
-    item 2).
-
-    Read from the store's own durable history, never an in-process cache, so a freshly
-    re-opened process over the same store refuses a second use identically.
-    """
+    """Whether a prior ``REARM_APPROVED`` row already names ``seq`` (module docstring"""
     rows = evidence_store.connection.execute(
         "SELECT payload_json FROM entries WHERE kind = ?",
         (_REARM_APPROVED_KIND,),
@@ -185,13 +113,7 @@ def _verify_environment_label(
 def _verify_approval(
     raw: Mapping[str, Any], path: Path, latched_evidence_seq: int
 ) -> str:
-    """Module docstring items 1 (file half) and 4 — return the approving principal id.
-
-    The file must name the exact ``latched_evidence_seq`` the caller is clearing, and
-    carry EXACTLY ONE approval entry whose ``decision`` is ``APPROVE``. Two entries are
-    refused rather than quietly reduced to one: an approval file is a record of who
-    decided, and an ambiguous one is not a decision.
-    """
+    """Module docstring items 1 (file half) and 4 — return the approving principal id."""
     file_seq = raw.get("latched_evidence_seq")
     if file_seq != latched_evidence_seq:
         raise ReArmApprovalFileError(
@@ -230,11 +152,7 @@ def _verify_approval(
 
 
 class ReArmWorkflow:
-    """Evaluates one operator approval file for one latched evidence seq.
-
-    This class never clears the latch (module docstring "Machine pin"); it reports an
-    :class:`ReArmOutcome` and records the matching evidence row.
-    """
+    """Evaluates one operator approval file for one latched evidence seq."""
 
     def __init__(
         self,
@@ -246,24 +164,7 @@ class ReArmWorkflow:
         expected_owner_uid: int,
         getuid: Callable[[], int] = os.getuid,
     ) -> None:
-        """Bind the approval directory, the evidence sink, and the custody expectations.
-
-        Args:
-            approvals_dir: The directory ``rearm/<latched_evidence_seq>.yaml`` resolves
-                under.
-            evidence_store: Where ``REARM_APPROVED``/``REARM_REFUSED`` rows land.
-            inbox: The new-risk-halt latch reader
-                (:class:`~tos_runtime.safety.latch.NewRiskHaltReader`, which
-                ``SqliteEventInbox`` satisfies structurally). Held for interface
-                symmetry with the caller's own resources; this class reads the latch
-                through the ``current`` reading its caller passes to
-                :func:`prepare_new_risk_halt_clear`, never independently — so the
-                read-only port is the honest annotation, not the concrete store.
-            environment_label: This runtime's own boot-argument environment label.
-            expected_owner_uid: The uid both the approval file's owner and the calling
-                process itself are expected to be (file custody's 0600 rule).
-            getuid: Injected for tests; defaults to :func:`os.getuid`.
-        """
+        """Bind the approval directory, the evidence sink, and the custody expectations."""
         self._approvals_dir = approvals_dir
         self._evidence_store = evidence_store
         self._inbox = inbox
@@ -272,13 +173,7 @@ class ReArmWorkflow:
         self._getuid = getuid
 
     def approve_and_clear(self, latched_evidence_seq: int) -> ReArmOutcome:
-        """Evaluate the approval file for ``latched_evidence_seq`` and record evidence.
-
-        Returns:
-            The :class:`ReArmOutcome`. ``APPROVED`` only when every module-docstring
-            check positively held; every other path is ``REFUSED`` with a non-secret
-            reason, and both paths leave a durable evidence row.
-        """
+        """Evaluate the approval file for ``latched_evidence_seq`` and record evidence."""
         path = self._approvals_dir / "rearm" / f"{latched_evidence_seq}.yaml"
         try:
             if _already_approved(self._evidence_store, latched_evidence_seq):
@@ -329,17 +224,7 @@ class ReArmWorkflow:
 
 @dataclass(frozen=True)
 class NewRiskHaltDoorDecision:
-    """The result of :func:`prepare_new_risk_halt_clear` — either a terminal,
-    already-evidenced refusal, or the go-ahead for the caller's OWN storage-layer clear.
-
-    Attributes:
-        refusal: A terminal :class:`~tos_runtime.engine.inbox.NewRiskHaltClearOutcome`
-            (``NO_LATCH`` / ``SEQ_MISMATCH`` / ``QUORUM_REFUSED``), already durably
-            evidenced by this function — ``None`` means "proceed to the storage clear".
-        attestation_text: Non-``None`` exactly when ``refusal is None`` — the approval's
-            non-secret attestation marker text for the caller's own
-            ``operator_attestation`` argument.
-    """
+    """The result of :func:`prepare_new_risk_halt_clear` — either a terminal,"""
 
     refusal: NewRiskHaltClearOutcome | None
     attestation_text: str | None
@@ -356,26 +241,7 @@ def prepare_new_risk_halt_clear(
     expected_owner_uid: int,
     refused_kind: str,
 ) -> NewRiskHaltDoorDecision:
-    """Every check a caller needs BEFORE its own storage-layer clear call — the seq
-    pre-checks plus the operator approval (:class:`ReArmWorkflow`).
-
-    Args:
-        current: The caller's own ``inbox.new_risk_halt()`` reading (read once by the
-            caller and passed in here, rather than re-read).
-        latched_evidence_seq: The seq the operator is attempting to clear.
-        approvals_dir: See :class:`ReArmWorkflow`.
-        evidence_store: See :class:`ReArmWorkflow`; also where this function's own
-            refusal rows are appended for the ``NO_LATCH``/``SEQ_MISMATCH`` paths.
-        inbox: See :class:`ReArmWorkflow`.
-        environment_label: See :class:`ReArmWorkflow`.
-        expected_owner_uid: See :class:`ReArmWorkflow`.
-        refused_kind: The evidence ``kind``/``record_class`` string for a refusal
-            recorded here (the caller's own ``_NEW_RISK_HALT_CLEAR_REFUSED_KIND`` — a
-            runtime-level record kind, passed in rather than duplicated here).
-
-    Returns:
-        The :class:`NewRiskHaltDoorDecision`.
-    """
+    """Every check a caller needs BEFORE its own storage-layer clear call — the seq"""
 
     def _refuse(outcome: NewRiskHaltClearOutcome) -> NewRiskHaltDoorDecision:
         evidence_store.append(

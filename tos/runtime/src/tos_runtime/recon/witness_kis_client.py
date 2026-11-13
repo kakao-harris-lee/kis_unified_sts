@@ -1,32 +1,4 @@
-"""``KisWitnessHttpClient`` — a single-request-per-call stdlib GET-only HTTP shim over
-KIS's REST API (W3 lane).
-
-**stdlib only**, mirroring :mod:`tos_runtime.transport.kis_mock.client`'s own construction
-exactly (``http.client`` + ``ssl.create_default_context()`` — no ``requests``/``httpx``):
-this module is that client's read-only sibling, GET instead of POST, with one addition the
-order client does not need — **response headers are returned**, because the KIS
-continuation protocol's ``tr_cont`` signal travels in a response header on at least one
-balance TR (measured:
-``docs/broker-profiles/evidence/2026-09-11-p02-t3-campaign/P-BAL-20260911T002427Z.json``
-``observations[].tr_cont_response`` / ``tools/broker_probes/probes_balance.py``'s own
-``_get()``, which this method's shape mirrors).
-
-**Exactly one request per method call — no loop, no retry, anywhere in this module.** The
-continuation WALK (multiple GETs) lives one layer up, in
-:mod:`tos_runtime.recon.witness_kis` — this client only ever issues the one HTTP round trip
-it is asked for, same discipline as
-:meth:`tos_runtime.transport.kis_mock.client.KisMockHttpClient._do_request`.
-
-**Fault mapping.** A connection failure raises :class:`KisWitnessConnectionError`; a socket
-timeout raises :class:`KisWitnessTimeoutError`. Neither is caught here — the caller
-(:mod:`tos_runtime.recon.witness_kis`) maps both to :class:`~tos_runtime.recon.ports
-.WitnessUnavailable` (an unanswerable witness, never a silently empty snapshot — ports.py's
-own contract).
-
-Firewall (RUNTIME scope R1): stdlib (``http.client``, ``json``, ``ssl``, ``urllib.parse``)
-+ this package's own sibling :mod:`~tos_runtime.recon.witness_kis_config` — no ``tos``
-import, no ``os.environ``.
-"""
+"""``KisWitnessHttpClient`` — a single-request-per-call stdlib GET-only HTTP shim over"""
 
 from __future__ import annotations
 
@@ -51,8 +23,7 @@ __all__ = [
 
 
 class KisWitnessClientError(Exception):
-    """Base class for every error this client itself raises (not a connection/timeout
-    fault — see the two subclasses below)."""
+    """Base class for every error this client itself raises (not a connection/timeout"""
 
 
 class KisWitnessConnectionError(KisWitnessClientError):
@@ -65,14 +36,7 @@ class KisWitnessTimeoutError(KisWitnessClientError):
 
 @dataclass(frozen=True)
 class RawGetResponse:
-    """One HTTP GET response, exactly as received — no KIS-specific interpretation.
-
-    ``headers`` is included (unlike a plain balance/order interpretation would need)
-    because the ``tr_cont`` continuation signal travels there on at least one TR (module
-    docstring) — dropping headers, the way
-    :meth:`tos_runtime.transport.kis_mock.client.KisMockHttpClient` does not need to avoid,
-    would make a broker-signalled continuation invisible to the caller.
-    """
+    """One HTTP GET response, exactly as received — no KIS-specific interpretation."""
 
     status: int
     json: dict[str, Any] | None
@@ -81,8 +45,7 @@ class RawGetResponse:
 
 
 class KisWitnessHttpClient:
-    """Issues exactly one read-only HTTP GET per method call against one configured KIS
-    REST base (module docstring)."""
+    """Issues exactly one read-only HTTP GET per method call against one configured KIS"""
 
     def __init__(
         self,
@@ -91,12 +54,7 @@ class KisWitnessHttpClient:
         request_timeout_s: float,
         allow_plaintext_for_tests: bool,
     ) -> None:
-        """Parse and pin the target host/port/scheme once, at construction.
-
-        Raises:
-            KisWitnessClientError: The scheme is neither ``http`` nor ``https``, or is
-                ``http`` without ``allow_plaintext_for_tests``, or the host is missing.
-        """
+        """Parse and pin the target host/port/scheme once, at construction."""
         parts = urlsplit(rest_base)
         if parts.scheme not in ("http", "https"):
             raise KisWitnessClientError(
@@ -118,8 +76,7 @@ class KisWitnessHttpClient:
         self._timeout_s = request_timeout_s
 
     def _connection(self) -> http.client.HTTPConnection:
-        """A fresh connection for exactly one request — never reused across calls (mirrors
-        ``kis_mock/client.py``'s own ``_connection``)."""
+        """A fresh connection for exactly one request — never reused across calls (mirrors"""
         if self._scheme == "https":
             context = ssl.create_default_context()
             return http.client.HTTPSConnection(
@@ -136,24 +93,7 @@ class KisWitnessHttpClient:
         headers: Mapping[str, str],
         params: Mapping[str, str],
     ) -> RawGetResponse:
-        """Perform exactly one GET round trip. No loop, no resend, anywhere in this method.
-
-        Args:
-            path: The URL path (``KisWitnessConfig.balance_path`` /
-                ``order_inquiry_path``).
-            headers: Request headers — the caller sets ``authorization``/``appkey``/
-                ``appsecret``/``tr_id``/``tr_cont``/``custtype``, this method adds none of
-                its own (mirrors ``kis_mock/client.py``'s own separation of concerns: this
-                client interprets nothing, it only transports).
-            params: Query parameters, url-encoded onto ``path``.
-
-        Returns:
-            The raw response, headers included (module docstring).
-
-        Raises:
-            KisWitnessConnectionError: The connection failed or was reset.
-            KisWitnessTimeoutError: The request timed out.
-        """
+        """Perform exactly one GET round trip. No loop, no resend, anywhere in this method."""
         query = urlencode(params)
         full_path = f"{path}?{query}" if query else path
         connection = self._connection()
@@ -188,14 +128,7 @@ class KisWitnessHttpClient:
 
 
 def build_witness_client(config: KisWitnessConfig) -> KisWitnessHttpClient:
-    """The one sanctioned way to build a :class:`KisWitnessHttpClient` for real use
-    (mirrors ``kis_mock/client.py``'s ``build_client`` — review disposition F3's
-    "one sanctioned construction path" pattern).
-
-    Every argument comes from ``config`` — never a caller-supplied URL — so a client can
-    never be pointed anywhere ``load_kis_witness_config``'s own host-seal check did not
-    already validate.
-    """
+    """The one sanctioned way to build a :class:`KisWitnessHttpClient` for real use"""
     return KisWitnessHttpClient(
         rest_base=config.endpoint_rest_base,
         request_timeout_s=config.request_timeout_s,

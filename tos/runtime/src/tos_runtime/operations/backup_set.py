@@ -1,80 +1,4 @@
-"""Durable-set backup / restore / restore-drill (TOS Phase 5 W4 plan §2 decisions 1-2; the
-marketfeed snapshot store joined the set in the tick-source wave, plan
-``docs/plans/2026-09-16-tos-tick-source-plan.md`` §6 ④, operator decision 2026-09-16).
-
-**The durable set is five separate sqlite files, not one.** Design #40 D3.1's own
-failure-domain separation means the evidence store, the RCL commit log, the event inbox, the
-kernel-owned composite-state store, and the marketfeed snapshot/preimage store each live in their
-own file — there is no single connection whose ``Connection.backup`` could snapshot all five
-atomically. A "backup" here is therefore: (1) every store CLOSED (documented precondition — see
-:func:`backup_set`'s own docstring for why this module cannot mechanically detect a handle open in
-another process), (2) one ``sqlite3.Connection.backup`` per file (the same
-byte-consistent-online-snapshot idiom :mod:`tos_runtime.evidence.backup` already uses — never a
-raw file copy), (3) one JSON :class:`BackupSetManifest` recording every file's digest plus a few
-store-specific tail facts, so a LATER divergence between "the files as copied" and "the files as
-they were" is detectable even though nothing enforced their mutual consistency at copy time.
-
-**The composite-state store is touched only by path.** ``tos.staterestore.CompositeStateStore``
-is kernel-owned; this module never imports it, never opens it as a table, and never reads its
-``last_seq`` (recorded as ``None`` in every manifest, always) — it is backed up/restored as an
-opaque file, exactly like the other four, because ``sqlite3.Connection.backup`` needs no
-knowledge of a database's own schema to snapshot it byte-consistently.
-
-**The marketfeed store joined the backup set to close a restore-path failure mode, not for
-symmetry.** The kernel's value ⟺ digest check recomputes a value's digest from the STORED preimage
-and compares it against what the snapshot-covered observation attests
-(``tos/src/tos/marketfeed/value.py:514-523``); ``tos_runtime.marketfeed.store``'s own module
-docstring proves, with a restart test, that losing preimages silently takes every value operand to
-``UNKNOWN`` while a perfectly valid-looking snapshot id is still in hand. Leaving
-``marketfeed.sqlite3`` out of the backup set did not remove that failure mode, it moved it to the
-restore path: a deployment restored from a backup could not re-publish a view for any snapshot
-issued before the restore. Like ``composite_state``, this module never imports
-:class:`~tos_runtime.marketfeed.store.SqliteSnapshotStore` — it is backed up/restored as an opaque
-file, and is optional for the same reason ``composite_state`` is: a runtime that never ticked never
-creates it (:data:`_OPTIONAL_FILES`).
-
-**Manifest compatibility is two-directional, and only one direction is executed.** A NEW
-:func:`restore_set` reading an OLD manifest (written before ``marketfeed`` joined the set) is a
-real, exercised path — that manifest has no ``"marketfeed"`` key in ``files`` at all, and
-:func:`restore_set`'s own docstring/code handle it explicitly (proven by
-``test_restore_set_handles_a_manifest_written_before_marketfeed_joined_the_set``). The REVERSE
-direction — an OLD ``restore_set`` (from a checkout predating this change) reading a NEW manifest —
-cannot be exercised by this suite, since that would require running old code; the following is a
-STATIC TRACE, not a test result. Old code's own restore loop iterates ``manifest.files.items()``
-generically, so it would harmlessly restore ``marketfeed.sqlite3`` to disk — but its own
-``DurableSetPaths(...)`` construction is hardcoded to four fields (this module's shape before this
-change) and would silently drop the restored path from the object it returns. No crash, no
-refusal: a rollback to pre-wave code operating on a post-wave backup restores the marketfeed file
-but loses its path from the returned set without any error.
-
-**The synthetic venue ledger joined for the same reason (#1011 P2).** On a SYNTHETIC tree
-the venue ledger IS the venue's record: it is what
-:class:`~tos_runtime.recon.witness_synthetic_venue.SyntheticVenueLedgerWitness` reads, and
-therefore what decides whether a filled entry's capacity is ever released. A restored set
-without it is not a smaller set — every reconciliation on it answers
-:class:`~tos_runtime.recon.ports.WitnessUnavailable` (fail-closed, so nothing is released on a
-false flat) and the restored deployment can never close the entry it restored. It is OPTIONAL
-for the same reason ``composite_state`` and ``marketfeed`` are (:data:`_OPTIONAL_FILES`): a
-boot with the witness key absent never creates the file, which is every shipped tree today.
-
-**Restore is always non-live** (mirrors :func:`tos_runtime.evidence.backup.restore`'s own
-ADR-002-016 discipline) and refuses a destination that resolves inside, or equal to, the live
-source data directory the manifest itself recorded — a restore can never silently land back on
-top of (or nested inside) the still-live runtime it was taken from.
-
-**``restore_drill`` never imports :mod:`tos_runtime.compose`.** That package will (lane e4) import
-THIS one (``compose/_operations_wiring.py``); the reverse edge would be a cycle. Instead,
-``restore_drill`` accepts an already-partially-applied ``compose`` callable and only ever touches
-the structural surface :class:`_ComposedForDrill` names — verified directly against
-``tos_runtime.compose._types.ComposedRuntime``'s own real shape (that class already carries every
-attribute this Protocol names), never against the concrete class itself.
-
-Firewall: stdlib (``hashlib``, ``json``, ``sqlite3``, ``time``) + ``pydantic`` + ``tos.canonical``
-+ ``tos_runtime.recovery.readiness`` + ``tos_runtime.evidence`` + ``tos_runtime.engine`` +
-``tos_runtime.marketfeed.store`` (``MARKETFEED_FILE_NAME`` only — a name, not the store class)
-only (R1 allowlist). No ``tos_runtime.compose``, no ``tos_runtime.custody``, no
-``tos.staterestore``.
-"""
+"""Durable-set backup / restore / restore-drill (TOS Phase 5 W4 plan §2 decisions 1-2; the"""
 
 from __future__ import annotations
 
@@ -117,45 +41,21 @@ __all__ = [
     "restore_set",
 ]
 
-#: Filenames :mod:`tos_runtime.compose._wiring` / ``_engine_wiring`` /
-#: ``tos_runtime.recovery.composite_state_writer`` already fix for a data_dir (duplicated here,
-#: not imported, to keep this package's own firewall scope out of ``tos_runtime.compose`` and
-#: ``tos_runtime.recovery`` — a restored set's directory happens to be a valid ``data_dir`` for a
-#: recompose precisely BECAUSE these match). ``MARKETFEED_FILE_NAME`` is the one exception: it is
-#: imported, not duplicated, because :mod:`tos_runtime.marketfeed.store` already owns that
-#: constant as its own public name.
 EVIDENCE_FILE_NAME = "evidence.sqlite3"
 RCL_FILE_NAME = "rcl.sqlite3"
 INBOX_FILE_NAME = "inbox.sqlite3"
 COMPOSITE_STATE_FILE_NAME = "composite_state.sqlite3"
 
-#: Matches :mod:`tos_runtime.evidence.store`'s own private genesis constant — the chain digest of
-#: an empty evidence store.
 _CHAIN_GENESIS = ""
 
-#: Backup-set members that MAY be absent from a live directory because the store that owns them
-#: opens its file lazily, on first write, rather than preemptively at boot — a runtime that never
-#: reached that first write never creates the file. ``backup_set`` records absence honestly as
-#: ``None`` rather than fabricating an empty backup, and ``_last_seq_for`` never queries either
-#: (``composite_state`` is kernel-owned/opaque; ``marketfeed`` has no ``seq`` column at all — see
-#: that function's own docstring). Every site that special-cased ``"composite_state"`` on its own
-#: reads this set instead, so a future optional member is added in ONE place, not N.
 _OPTIONAL_FILES: frozenset[str] = frozenset(
     {"composite_state", "marketfeed", "venue_ledger"}
 )
 
-#: The manifest filename suffix :func:`backup_set` writes. PUBLIC because
-#: :mod:`tos_runtime.compose._operations_wiring` SCANS for manifests rather than building one
-#: path, so :func:`manifest_path_for` cannot serve it — before this was exported, that module
-#: duplicated the literal and a suffix change would have drifted between the writer and the
-#: boot-time observer that reads what it wrote.
 MANIFEST_SUFFIX = ".set.manifest.json"
 
-#: Pre-existing private alias, kept so the long-standing uses below read unchanged.
 _MANIFEST_SUFFIX = MANIFEST_SUFFIX
 
-#: What every generation-scoped artifact name starts with, in this module and in the two
-#: that scan alongside it (:func:`generation_number`).
 _GEN_PREFIX = "gen"
 
 _LIVE_ENVIRONMENT_LABELS = frozenset({"paper", "restricted-live", "production"})
@@ -175,13 +75,11 @@ class BackupSetRefused(RuntimeError):
 
 
 class RestoreRefused(RuntimeError):
-    """Raised by :func:`restore_set` / :func:`restore_drill` — an unsafe destination, a digest
-    mismatch (mutation M1), or a live ``environment_label``."""
+    """Raised by :func:`restore_set` / :func:`restore_drill` — an unsafe destination, a digest"""
 
 
 class DurableSetPaths(BaseModel):
-    """The six files one durable set is made of (``marketfeed`` joined in the tick-source
-    wave, ``venue_ledger`` in #1011 P2 — module docstring)."""
+    """The six files one durable set is made of (``marketfeed`` joined in the tick-source"""
 
     model_config = ConfigDict(frozen=True)
 
@@ -194,9 +92,7 @@ class DurableSetPaths(BaseModel):
 
     @classmethod
     def from_data_dir(cls, data_dir: Path) -> DurableSetPaths:
-        """The paths a real :func:`~tos_runtime.compose.root.compose_paper_runtime` boot over
-        ``data_dir`` already uses — the convenience constructor an operator CLI calls.
-        """
+        """The paths a real :func:`~tos_runtime.compose.root.compose_paper_runtime` boot over"""
         return cls(
             evidence=data_dir / EVIDENCE_FILE_NAME,
             rcl=data_dir / RCL_FILE_NAME,
@@ -247,36 +143,17 @@ class BackupSetManifest(BaseModel):
 
     generation: int
     created_at_monotonic_ns: int
-    #: A key in :data:`_OPTIONAL_FILES` (``composite_state``, ``marketfeed``) is ``None`` when
-    #: that file did not exist at backup time — ``composite_state`` because a runtime that never
-    #: processed an ``EGRESS_RESULT`` all the way to a composite write never creates it
-    #: (:mod:`tos_runtime.recovery.composite_state_writer`'s own module docstring), ``marketfeed``
-    #: because a runtime that never ticked never issues a snapshot. Absence is never fabricated
-    #: into a fake empty backup — it is recorded honestly as ``None``. The other three keys
-    #: (``evidence``/``rcl``/``inbox``) are always present (a constructed store always creates its
-    #: own file).
     files: dict[str, FileBackupEntry | None]
-    #: The LIVE source paths at backup time (never the backup-copy paths) — :func:`restore_set`
-    #: refuses a destination that resolves equal to, or inside, any of these directories. Always
-    #: has all five keys, even when an optional member was absent (its recorded path is where it
-    #: WOULD have lived).
     source_paths: dict[str, str]
     evidence: EvidenceBackupFacts
     rcl: RclBackupFacts
     inbox: InboxBackupFacts
-    #: Caller-supplied — never derived (five closed sqlite files carry no runtime identity of
-    #: their own). ``None`` when the caller has none to attest.
     runtime_identity: str | None = None
-    #: Caller-supplied (e.g. the live runtime's own ``recovery.readiness_verdict.value``
-    #: immediately before shutdown) — ``None`` when unavailable. :func:`restore_drill` compares
-    #: the restored runtime's OWN readiness verdict against this by enum IDENTITY, never string
-    #: equality, never truthiness.
     readiness_verdict_at_backup: str | None = None
 
 
 def _backup_one_file(source_path: Path, dest_path: Path) -> None:
-    """Byte-consistent online snapshot via ``Connection.backup`` — never a raw file copy (mirrors
-    :func:`tos_runtime.evidence.backup.backup`'s own idiom)."""
+    """Byte-consistent online snapshot via ``Connection.backup`` — never a raw file copy (mirrors"""
     source_conn = sqlite3.connect(str(source_path))
     try:
         dest_conn = sqlite3.connect(str(dest_path))
@@ -298,9 +175,6 @@ def _read_optional_int(conn: sqlite3.Connection, query: str) -> int | None:
     return int(row[0])
 
 
-#: Table holding a ``seq`` column, per store name — the only stores :func:`_last_seq_for`
-#: actually queries. A name absent from BOTH this mapping and :data:`_OPTIONAL_FILES` is a bug,
-#: not a silent ``None``: see :func:`_last_seq_for`'s own docstring.
 _SEQ_TABLE_BY_NAME: dict[str, str] = {
     "evidence": "entries",
     "rcl": "entries",
@@ -309,23 +183,7 @@ _SEQ_TABLE_BY_NAME: dict[str, str] = {
 
 
 def _last_seq_for(name: str, backup_path: Path) -> int | None:
-    """The newest ``seq`` a store's own backup file carries, or ``None`` when the store has no
-    such column (``_OPTIONAL_FILES``: ``composite_state`` is kernel-owned/opaque, ``marketfeed``
-    is content-addressed with no ``seq`` column at all).
-
-    Every :class:`DurableSetPaths` member must resolve here one way or the other — via
-    :data:`_SEQ_TABLE_BY_NAME` or via :data:`_OPTIONAL_FILES` — never fall through. This is the
-    fourth instance, in this one wave, of a registry paired with a hand-maintained satellite that
-    nothing pinned together: the first was ``STORE_MIGRATIONS`` vs ``cli.py``'s hardcoded path
-    dict (fixed by extracting ``compose/_migrate_paths.py``), the second/third were
-    ``MARKETFEED_SCHEMA_VERSION`` vs ``MARKETFEED_MIGRATIONS[-1].version``. An unrecognized name
-    fails LOUDLY and BY NAME here — never a bare ``KeyError`` from inside a dict literal — so the
-    next new member cannot silently fall through either branch.
-
-    Raises:
-        RuntimeError: ``name`` is in neither :data:`_SEQ_TABLE_BY_NAME` nor
-            :data:`_OPTIONAL_FILES`.
-    """
+    """The newest ``seq`` a store's own backup file carries, or ``None`` when the store has no"""
     if name in _OPTIONAL_FILES:
         return None
     table = _SEQ_TABLE_BY_NAME.get(name)
@@ -388,24 +246,7 @@ def _read_inbox_facts(inbox_backup_path: Path) -> InboxBackupFacts:
 
 
 def generation_number(name: str, suffix: str) -> int | None:
-    """``N`` from a ``gen{N}{suffix}`` filename, or ``None`` if ``name`` is not one.
-
-    PUBLIC and shared, because this prefix is now parsed in four places — the two scans
-    below, :func:`tos_runtime.compose._operations_wiring._highest_generation_manifest`, and
-    :mod:`tos_runtime.operations.cold_backup`'s scan of cold storage. Exporting
-    :data:`MANIFEST_SUFFIX` stopped the SUFFIX drifting between them; a fourth hand-rolled
-    copy of the ``gen``-prefix parse would have left the naming itself free to drift, and the
-    failure would be silent: a scan that recognizes nothing simply reports no generations and
-    the allocator hands back ``1`` forever.
-
-    Args:
-        name: A directory or file name (not a path).
-        suffix: What follows the number — :data:`MANIFEST_SUFFIX`, ``".set.tar.xz"``, or
-            ``""`` for a bare ``gen{N}`` directory.
-
-    Returns:
-        The generation, or ``None`` when the prefix, the suffix, or the digits do not match.
-    """
+    """``N`` from a ``gen{N}{suffix}`` filename, or ``None`` if ``name`` is not one."""
     if not name.startswith(_GEN_PREFIX) or not name.endswith(suffix):
         return None
     middle = (
@@ -430,19 +271,7 @@ def _highest_existing_generation(dest_dir: Path) -> int | None:
 
 
 def _create_generation_dir(dest_dir: Path, generation: int) -> Path:
-    """Create ``dest_dir/gen{generation}/``, refusing by name if it is already there.
-
-    Split out of :func:`backup_set` for the 100-line function budget
-    (``tools/tos_size_budget.py``); no behaviour difference from having it inline.
-
-    Still a refusal, never an overwrite — but a NAMED one. The bare ``FileExistsError`` that
-    ``mkdir(exist_ok=False)`` used to raise reached an unattended caller as a traceback with
-    no statement of what to do, and the shape it reports is a real one: :func:`backup_set`
-    writes the manifest LAST, so a run that died in between leaves a manifest-less
-    ``gen{N}/``. :func:`next_generation` counts directories as well as manifests, so an
-    unattended caller steps PAST such a leftover instead of re-picking its number forever;
-    this message is for the caller that passes the number by hand.
-    """
+    """Create ``dest_dir/gen{generation}/``, refusing by name if it is already there."""
     dest_dir.mkdir(parents=True, exist_ok=True)
     gen_dir = dest_dir / f"gen{generation}"
     if gen_dir.exists():
@@ -458,25 +287,12 @@ def _create_generation_dir(dest_dir: Path, generation: int) -> Path:
 
 
 def manifest_path_for(dest_dir: Path, generation: int) -> Path:
-    """The manifest path :func:`backup_set` writes for ``generation`` under ``dest_dir``.
-
-    Public so a caller composes the filename from this module rather than re-spelling
-    ``f"gen{N}.set.manifest.json"`` — :mod:`tos_runtime.compose.cli` and
-    :mod:`tos_runtime.compose._operations_wiring` had each already spelled it out separately
-    before an unattended caller (:mod:`tos_runtime.operations.cold_backup`) needed it too.
-    """
+    """The manifest path :func:`backup_set` writes for ``generation`` under ``dest_dir``."""
     return dest_dir / f"gen{generation}{_MANIFEST_SUFFIX}"
 
 
 def _highest_attempted_generation(dest_dir: Path) -> int | None:
-    """The highest ``gen{N}`` **directory** under ``dest_dir``, or ``None``.
-
-    Counterpart to :func:`_highest_existing_generation`, which counts MANIFESTS. The two
-    answer different questions and :func:`next_generation` needs both: a manifest means a
-    generation COMPLETED, a directory means one was ATTEMPTED. A run that died between
-    :func:`backup_set`'s ``gen_dir.mkdir`` and its manifest write leaves the second without
-    the first.
-    """
+    """The highest ``gen{N}`` **directory** under ``dest_dir``, or ``None``."""
     if not dest_dir.is_dir():
         return None
     generations = [
@@ -490,29 +306,7 @@ def _highest_attempted_generation(dest_dir: Path) -> int | None:
 
 
 def next_generation(dest_dir: Path) -> int:
-    """The lowest generation :func:`backup_set` would accept for ``dest_dir``.
-
-    ``1`` for an empty (or absent) directory, otherwise one past the highest generation
-    already **attempted** there — the higher of the highest manifest and the highest
-    ``gen{N}`` directory.
-
-    **Counting directories too is what keeps an unattended caller from wedging.** The manifest
-    is written LAST, so a run that died part-way (the runtime still holding a sqlite handle,
-    the disk full mid-copy) leaves a ``gen{N}/`` with no manifest beside it. Counting
-    manifests alone would return that same ``N`` the next night, and every night after, and
-    :func:`backup_set` would refuse each time — a single transient fault becoming a permanent
-    outage of the backup itself. Stepping past the leftover costs one skipped generation
-    number and **deletes nothing**: the partial directory stays exactly where it fell, for an
-    operator to inspect.
-
-    **This allocates nothing and reserves nothing.** Decision 1 of the TOS Phase 5 W4 plan
-    ("세대는 호출자 지정") stands: :func:`backup_set` still takes the generation as an
-    argument and still refuses a non-increasing one, so if two callers race on the same
-    ``dest_dir`` they both read the same answer here and the SECOND :func:`backup_set` is what
-    refuses. That refusal is the interlock; this function is only the arithmetic an unattended
-    caller would otherwise do by hand (and, before
-    :mod:`tos_runtime.operations.cold_backup`, an operator typed into ``--generation``).
-    """
+    """The lowest generation :func:`backup_set` would accept for ``dest_dir``."""
     candidates = [
         found
         for found in (
@@ -533,38 +327,7 @@ def backup_set(
     readiness_verdict_at_backup: str | None = None,
     monotonic_ns: Callable[[], int] = time.monotonic_ns,
 ) -> BackupSetManifest:
-    """Snapshot the durable set into ``dest_dir/gen{generation}/`` + one set manifest.
-
-    **Precondition (documented, not mechanically enforced across processes): every store in
-    ``paths`` is closed.** This function opens its OWN, independent read connections — it cannot
-    detect a handle held open by a DIFFERENT process; the caller (an operator CLI, run against a
-    stopped or not-yet-started runtime) is responsible for that.
-
-    Args:
-        paths: The six source files. ``evidence``/``rcl``/``inbox`` must already exist (refused
-            otherwise — never silently backs up an absent store as a fresh empty file, which
-            ``sqlite3.connect`` would do by default). ``composite_state``, ``marketfeed`` and
-            ``venue_ledger`` MAY be absent (:data:`_OPTIONAL_FILES` — a runtime that never wrote
-            a composite, never ticked, or booted without the venue-ledger witness key never
-            creates that file) — recorded honestly as ``None`` in the manifest rather than
-            fabricated.
-        dest_dir: Where ``gen{generation}/`` and the manifest are written. Never deleted, never
-            overwritten.
-        generation: Must be strictly greater than the highest existing ``gen*`` manifest already
-            under ``dest_dir`` — never allocated by this function (decision 1: "세대는 호출자
-            지정").
-        runtime_identity: Caller-supplied; ``None`` when unavailable.
-        readiness_verdict_at_backup: Caller-supplied (e.g. the live runtime's own
-            ``recovery.readiness_verdict.value``); ``None`` when unavailable.
-        monotonic_ns: Injected monotonic-clock callable for ``created_at_monotonic_ns``.
-
-    Returns:
-        The :class:`BackupSetManifest` just written.
-
-    Raises:
-        BackupSetRefused: A non-increasing ``generation``, or ``evidence``/``rcl``/``inbox`` does
-            not exist.
-    """
+    """Snapshot the durable set into ``dest_dir/gen{generation}/`` + one set manifest."""
     existing = _highest_existing_generation(dest_dir)
     if existing is not None and generation <= existing:
         raise BackupSetRefused(
@@ -582,7 +345,7 @@ def backup_set(
     }
     for name, source_path in file_specs.items():
         if name in _OPTIONAL_FILES:
-            continue  # optional — see this function's own docstring / _OPTIONAL_FILES
+            continue
         if not source_path.is_file():
             raise BackupSetRefused(
                 f"backup_set: source file for {name!r} does not exist at {source_path} — "
@@ -622,10 +385,6 @@ def backup_set(
 
 
 def _resolves_inside_or_equal(dest_dir: Path, source_dir: Path) -> bool:
-    # `Path.is_relative_to` IS this predicate (stdlib, 3.9+); the hand-rolled
-    # `child == parent or parent in child.parents` it used to spell lived in three places
-    # across this package by the time the cold-backup wave added its own, which is one
-    # symlink/edge fix away from drifting apart (review round 2, F5).
     return dest_dir.resolve().is_relative_to(source_dir.resolve())
 
 
@@ -642,17 +401,7 @@ class RestoredSet(BaseModel):
 def _fill_pre_membership_paths(
     restored_file_paths: dict[str, Path], dest_dir: Path
 ) -> None:
-    """Give a manifest written before a member joined the set that member's path anyway.
-
-    A manifest written before ``marketfeed`` joined (plan §6 ④), or before ``venue_ledger`` did
-    (#1011 P2), has no such key in its own ``files`` at all — not even a ``None`` entry, because
-    the key did not exist yet. That is a real, different fact from "this store existed and was
-    empty at backup time": the old manifest legitimately PREDATES the store, so the restored
-    directory simply has no such file. Never fabricate one, and never raise a bare ``KeyError``
-    that hides which shape of manifest this is.
-
-    Mutates ``restored_file_paths`` in place, adding only keys it does not already carry.
-    """
+    """Give a manifest written before a member joined the set that member's path anyway."""
     for name, file_name in (
         ("marketfeed", MARKETFEED_FILE_NAME),
         ("venue_ledger", VENUE_LEDGER_FILE_NAME),
@@ -666,40 +415,7 @@ def restore_set(
     *,
     key_provider: KeyProvider,
 ) -> RestoredSet:
-    """Restore one durable-set backup into a fresh, non-live directory.
-
-    Verifies EVERY restored file's digest against the manifest (mismatch refuses — mutation M1)
-    and, for the evidence store specifically, re-verifies its HMAC chain via
-    :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.verify_or_raise` — the same check
-    :mod:`tos_runtime.evidence.backup`'s own ``restore()`` performs.
-
-    **Backward compatibility with a pre-marketfeed (or pre-venue-ledger) manifest.** A manifest
-    written before ``marketfeed`` joined the backup set (plan §6 ④) — or before ``venue_ledger``
-    did (#1011 P2) — has no such key in ``files`` at
-    all — not even a ``None`` entry. That legitimately means "this manifest predates this store",
-    the same fact ``composite_state=None`` records for a runtime that never wrote one; the
-    restored set is given a ``marketfeed`` path with no file behind it rather than a
-    fabricated one or a raised ``KeyError``. This is the NEW-code/OLD-manifest direction, and it is
-    exercised by a real test; the reverse direction (an OLD ``restore_set`` reading a NEW manifest)
-    is only a static trace — see this module's own docstring, "Manifest compatibility is
-    two-directional" paragraph.
-
-    Args:
-        manifest_path: The ``*.set.manifest.json`` :func:`backup_set` wrote.
-        dest_dir: Where the restored files are copied. Refused if it resolves equal to, or
-            inside, ANY of the manifest's own recorded LIVE source directories.
-        key_provider: The evidence store's key source for the post-restore chain
-            re-verification.
-
-    Returns:
-        The :class:`RestoredSet` — always ``non_live=True``.
-
-    Raises:
-        RestoreRefused: An unsafe destination, or a restored file's digest disagrees with the
-            manifest.
-        tos_runtime.evidence.store.EvidenceCorruption: The restored evidence chain fails
-            re-verification.
-    """
+    """Restore one durable-set backup into a fresh, non-live directory."""
     manifest = BackupSetManifest.model_validate_json(manifest_path.read_text())
 
     for name, source_path_str in manifest.source_paths.items():
@@ -715,9 +431,6 @@ def restore_set(
     for name, entry in manifest.files.items():
         dest_path = dest_dir / f"{name}.sqlite3"
         if entry is None:
-            # composite_state/marketfeed was absent at backup time (module docstring) — the
-            # restored directory simply has no such file either; a recompose creates it lazily
-            # on first write, exactly like a runtime that never wrote one.
             restored_file_paths[name] = dest_path
             continue
         _backup_one_file(Path(entry.path), dest_path)
@@ -753,39 +466,20 @@ def restore_set(
 
 
 class _RecoveryVerdictLike(Protocol):
-    """The narrow read surface :class:`_ComposedForDrill` needs off whatever ``recovery``
-    a real compose result carries — only :attr:`readiness_verdict`, never any other member.
-
-    Declared as a read-only property (not a plain attribute) so frozen
-    implementations (dataclass ``frozen=True`` / pydantic frozen models) — including the
-    real :class:`~tos_runtime.recovery.barrier.RecoveryVerdict`, which is
-    ``@dataclass(frozen=True)`` — satisfy this Protocol structurally
-    (docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md).
-    """
+    """The narrow read surface :class:`_ComposedForDrill` needs off whatever ``recovery``"""
 
     @property
     def readiness_verdict(self) -> ReadinessVerdict: ...
 
 
 class _CommittedCommandReader(Protocol):
-    """The one RCL read :func:`restore_drill` needs (PR-3b — ``SqliteCommitLog
-    .committed_command``): the committed ``(seq, command_digest)`` of a command, or ``None``.
-    The boot replay checks every recorded engine-projection release against it; a drill that
-    withheld it would report a good stock-MOCK backup as diverged."""
+    """The one RCL read :func:`restore_drill` needs (PR-3b — ``SqliteCommitLog"""
 
     def committed_command(self, command_id: str) -> tuple[int, str | None] | None: ...
 
 
 class _ComposedForDrill(Protocol):
-    """The exact surface :func:`restore_drill` uses off whatever ``compose`` returns — verified
-    directly against ``tos_runtime.compose._types.ComposedRuntime``'s own real attributes, never
-    imported from it (see this module's own docstring on why).
-
-    Declared as read-only properties (not plain attributes) so frozen
-    implementations (dataclass ``frozen=True`` / pydantic frozen models) satisfy this
-    Protocol structurally, not just today's mutable ``ComposedRuntime``
-    (docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md).
-    """
+    """The exact surface :func:`restore_drill` uses off whatever ``compose`` returns — verified"""
 
     @property
     def evidence_store(self) -> SqliteEvidenceStore: ...
@@ -804,15 +498,13 @@ class _ComposedForDrill(Protocol):
 
 
 class ComposeForDrill(Protocol):
-    """An already-partially-applied recompose callable — everything ``compose_paper_runtime``
-    needs besides ``data_dir``/``environment_label`` is the CALLER's own closure."""
+    """An already-partially-applied recompose callable — everything ``compose_paper_runtime``"""
 
     def __call__(self, data_dir: Path, environment_label: str) -> _ComposedForDrill: ...
 
 
 class RestoreDrillVerdict(BaseModel):
-    """The result of one :func:`restore_drill` call — also durably appended as a
-    ``RESTORE_DRILL_VERDICT`` evidence record into the restored (non-live) store."""
+    """The result of one :func:`restore_drill` call — also durably appended as a"""
 
     model_config = ConfigDict(frozen=True)
 
@@ -830,9 +522,7 @@ def _evaluate_restore_drill(
     manifest: BackupSetManifest,
     verdict: ReplayVerdict,
 ) -> tuple[Literal["PASSED", "FAILED", "UNKNOWN"], list[str], str | None]:
-    """The mismatch/result computation half of :func:`restore_drill` (split out for the 100-line
-    function size budget — no behavior change: still exactly the same three checks, in the same
-    order, over the same inputs)."""
+    """The mismatch/result computation half of :func:`restore_drill` (split out for the 100-line"""
     mismatched: list[str] = []
 
     if not verdict.ok:
@@ -874,39 +564,7 @@ def restore_drill(
     environment_label: str,
     window_events: int | None = None,
 ) -> RestoreDrillVerdict:
-    """Recompose over ``restored`` and independently verify replay + readiness (decision 2).
-
-    Three checks, each individually "unavailable ⇒ UNKNOWN, never a false PASSED":
-
-    (a) :func:`~tos_runtime.engine.replay.replay_engine` reports ``ok=True`` AND
-        ``total_compared`` equals the manifest's own recorded ``EVENT_CONSUMED`` count.
-    (b) The recomposed runtime's ``recovery.readiness_verdict`` is the SAME
-        :class:`~tos_runtime.recovery.readiness.ReadinessVerdict` member (identity comparison, never string
-        equality, never truthiness) as ``restored.manifest.readiness_verdict_at_backup``.
-    (c) A ``RESTORE_DRILL_VERDICT`` evidence record — result, mismatched fields, the manifest's
-        own digest — is durably appended into the restored (non-live) evidence store.
-
-    A definite mismatch in (a)/(b) reports ``"FAILED"`` even if some OTHER input was also
-    unavailable (a confirmed failure is never masked by an unrelated unknown); ``"UNKNOWN"`` is
-    reported only when nothing was definitely wrong but at least one input could not be checked
-    at all.
-
-    Args:
-        restored: The :class:`RestoredSet` from :func:`restore_set`.
-        compose: Recomposes a runtime over ``restored``'s own directory (all five restored files
-            share one directory — see :func:`restore_set`) under ``environment_label``.
-        build_core: A fresh-core factory for :func:`~tos_runtime.engine.replay.replay_engine`.
-        scheme: The canonicalization scheme the replay digest comparison uses.
-        environment_label: MUST NOT be a live label (:data:`_LIVE_ENVIRONMENT_LABELS`) — refused
-            otherwise.
-        window_events: Forwarded to :func:`~tos_runtime.engine.replay.replay_engine`.
-
-    Returns:
-        The :class:`RestoreDrillVerdict`.
-
-    Raises:
-        RestoreRefused: ``environment_label`` is a live label.
-    """
+    """Recompose over ``restored`` and independently verify replay + readiness (decision 2)."""
     if environment_label in _LIVE_ENVIRONMENT_LABELS:
         raise RestoreRefused(
             f"restore_drill: environment_label={environment_label!r} is a live label — drills "
@@ -926,8 +584,6 @@ def restore_drill(
         build_core,
         scheme=scheme,
         window_events=window_events,
-        # The restored RCL's own committed state — the authority recorded engine-projection
-        # releases are checked against (PR-3b final review LOW; tos_runtime.engine.replay_releases).
         rcl_committed=runtime.rcl_log.committed_command,
     )
     result, mismatched, readiness_at_drill = _evaluate_restore_drill(

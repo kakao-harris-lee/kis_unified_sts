@@ -1,15 +1,4 @@
-"""Release-admission runtime config loader (design #40 §5 order 6, lane R item 4).
-
-Loads ``tos/runtime/config/release.example.yaml`` (or an operator-approved
-copy). Phase 2 has no live SCI (ADR-002-029) admission-decision runtime —
-no real source/build/dependency/signer/registry scanning exists yet — so
-every fact :func:`~tos_runtime.release.admission.release_admission` needs
-beyond the runtime's own :class:`~tos.workload.RuntimeIdentity` is an
-**operator-approved static snapshot**, not a computed one. A ``null`` value
-here is named-TBD and refuses service construction (fail-closed), matching
-the slice plan §3 item 4's own instruction: "config YAML with
-null=named-TBD ⇒ refuse to start".
-"""
+"""Release-admission runtime config loader (design #40 §5 order 6, lane R item 4)."""
 
 from __future__ import annotations
 
@@ -34,19 +23,12 @@ _ADMISSION_RESULT_BY_NAME: dict[str, AdmissionResult] = {
 
 
 class ReleaseAdmissionConfigError(Exception):
-    """Raised when the release-admission config is missing, malformed, or
-    carries an unfilled (missing/null) required key — fail-closed at load."""
+    """Raised when the release-admission config is missing, malformed, or"""
 
 
 @dataclass(frozen=True)
 class ReleaseAdmissionConfig:
-    """Fully-valued release-admission runtime configuration.
-
-    ``restriction`` is populated only when ``restriction_present`` is
-    ``True``; ``restriction_present``/``restriction_state_resolved`` feed
-    :func:`~tos_runtime.release.verdict.software_deployment_ok_verdict`'s own
-    negative/positive-polarity gates directly.
-    """
+    """Fully-valued release-admission runtime configuration."""
 
     expected_code_digest: str
     expected_dependency_set_digest: str
@@ -174,20 +156,7 @@ def _resolve_restriction(
 
 
 def load_release_config(path: Path) -> ReleaseAdmissionConfig:
-    """Load + validate the release-admission config file, fail-closed.
-
-    Args:
-        path: Path to a YAML file shaped like
-            ``tos/runtime/config/release.example.yaml``.
-
-    Returns:
-        A fully-valued :class:`ReleaseAdmissionConfig`.
-
-    Raises:
-        ReleaseAdmissionConfigError: The file is missing/unreadable/not
-            valid YAML/not a mapping, a required key is missing or still
-            ``null`` (named-TBD), or a value fails its type/enum check.
-    """
+    """Load + validate the release-admission config file, fail-closed."""
     raw = _require_mapping(path)
     expected_code_digest = _require_str(raw, "expected_code_digest")
     expected_dependency_set_digest = _require_str(raw, "expected_dependency_set_digest")

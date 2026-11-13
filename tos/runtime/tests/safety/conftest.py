@@ -1,13 +1,4 @@
-"""Shared fixtures for the surviving ``tos_runtime.safety`` tests.
-
-Every fixture writes REAL (non-null) YAML documents to ``tmp_path`` — the checked-in
-``tos/runtime/config/*.example.yaml`` files stay all-null (named-TBD) on purpose; only test
-fixtures carry concrete values (project convention — see
-``tos/runtime/tests/compose/conftest.py``'s own fixtures for the precedent this mirrors).
-
-The safety-mesh fixtures (the envelope/profile/activation triple, the deviation sets, the
-time-health doubles) went with plan S2-a along with the services that read them.
-"""
+"""Shared fixtures for the surviving ``tos_runtime.safety`` tests."""
 
 from __future__ import annotations
 
@@ -21,8 +12,7 @@ from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
 
 
 class FixedKeyProvider:
-    """A :class:`~tos_runtime.evidence.store.KeyProvider` test double — fixed bytes
-    (mirrors ``tos/runtime/tests/evidence/conftest.py``'s own double)."""
+    """A :class:`~tos_runtime.evidence.store.KeyProvider` test double — fixed bytes"""
 
     def __init__(
         self, key_generation: int = 1, key: bytes = b"safety-test-fixed-key-bytes"
@@ -66,9 +56,7 @@ def expected_owner_uid() -> int:
 
 
 class FakeNewRiskHaltInbox:
-    """A :class:`~tos_runtime.safety.latch.NewRiskHaltReader`-shaped, and
-    ``SqliteEventInbox.new_risk_halt``-shaped, double: a settable ``current`` row
-    (or ``None``)."""
+    """A :class:`~tos_runtime.safety.latch.NewRiskHaltReader`-shaped, and"""
 
     def __init__(self, current: dict[str, object] | None = None) -> None:
         self.current = current
@@ -86,12 +74,7 @@ def write_rearm_approval_file(
     approvals: list[dict[str, str]] | None = None,
     mode: int = 0o600,
 ) -> Path:
-    """Write one ``approvals/rearm/<latched_evidence_seq>.yaml`` decision file
-    (:mod:`tos_runtime.safety.rearm` module docstring).
-
-    Defaults to a genuinely satisfying single-principal ``APPROVE``; a caller mutates
-    ``approvals`` to exercise a refusal (two entries, a ``DENY``, a ``TBD`` principal, …).
-    """
+    """Write one ``approvals/rearm/<latched_evidence_seq>.yaml`` decision file"""
     if approvals is None:
         approvals = [{"principal_id": "alice", "decision": "APPROVE"}]
     path = approvals_dir / "rearm" / f"{latched_evidence_seq}.yaml"
@@ -118,8 +101,7 @@ def write_monitor_coverage_file(
     max_inbox_unconsumed: int | None = 100,
     name: str = "monitor_coverage.yaml",
 ) -> Path:
-    """Write one ``monitor_coverage.yaml`` for the slim monitor. A ``None`` for any field
-    writes it as an explicit ``null`` — the named-TBD state the loader must refuse."""
+    """Write one ``monitor_coverage.yaml`` for the slim monitor. A ``None`` for any field"""
     path = tmp_path / name
     path.write_text(
         yaml.safe_dump(

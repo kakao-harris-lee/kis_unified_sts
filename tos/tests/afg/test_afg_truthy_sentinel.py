@@ -1,22 +1,4 @@
-"""Truthy-sentinel property — both axes (design #16 §2.2-1 / §7; the #13 ARE lesson).
-
-Two StrEnums cross the afg surface and **every** member of each is *truthy*:
-
-1. :class:`~tos.afg.vocabulary.ActionFlowResult` (``GRANT`` / ``DENY`` / ``UNKNOWN``) — a
-   bare ``if result:`` would let ``DENY`` and ``UNKNOWN`` through, so every consuming gate
-   must use ``result is ActionFlowResult.GRANT``;
-2. the injected protective ``Admissibility`` verdict (``ADMISSIBLE`` / ``TRAPPED`` /
-   ``PROHIBITED``, design #16 M2 — **not** ``bool | None``) — only the ``ADMISSIBLE`` token
-   may pass.
-
-``bool | None`` flags are normalized with ``is True`` / ``is not True`` (the orthostate
-``predicates.py:461`` precedent): a ``None`` is UNKNOWN, never a soft pass.
-
-The properties here are **behavioural**: they drive the real predicates with every truthy
-member and assert the non-``GRANT`` / non-``ADMISSIBLE`` members never produce a permissive
-outcome. A source-level scan additionally proves no afg module contains a bare truthiness
-test on a result value.
-"""
+"""Truthy-sentinel property — both axes (design #16 §2.2-1 / §7; the #13 ARE lesson)."""
 
 from __future__ import annotations
 
@@ -98,13 +80,7 @@ def _decide(**overrides: object) -> ActionFlowResult:
 
 @given(coverage=ACTION_FLOW_RESULT_OR_FORGERY)
 def test_only_the_grant_member_itself_can_produce_a_grant(coverage: object) -> None:
-    """(C1 regression) ``GRANT`` requires the **member**, never a fall-through residue.
-
-    A gate that only tests for the ``UNKNOWN`` / ``DENY`` members and lets everything else
-    fall through makes ``GRANT`` the *residual* outcome: a raw ``"GRANT"`` / ``"BANANA"``
-    string, ``None``, ``0``, ``""``, or ``[1]`` would all be granted. Only the singleton
-    member may pass.
-    """
+    """(C1 regression) ``GRANT`` requires the **member**, never a fall-through residue."""
     verdict = _decide(coverage=coverage)
     if coverage is ActionFlowResult.GRANT:
         assert verdict is ActionFlowResult.GRANT
@@ -122,12 +98,7 @@ def test_raw_result_strings_are_not_the_members() -> None:
 
 @given(forged=st.sampled_from(TRUTHY_NON_BOOL))
 def test_truthy_non_bool_premise_can_never_reach_a_grant(forged: object) -> None:
-    """(M2 regression) Each of the five premises rejects a truthy non-``bool``.
-
-    The premises are ``bool``-annotated only; Python enforces nothing at runtime. A
-    ``if not X:`` gate would pass ``"UNKNOWN"``, ``1``, ``[1]``, even the string
-    ``"False"`` — so every premise must be gated with ``is not True``.
-    """
+    """(M2 regression) Each of the five premises rejects a truthy non-``bool``."""
     for premise in (
         "scope_complete",
         "lineage_complete",
@@ -182,8 +153,6 @@ def test_only_the_admissible_token_passes_the_lease_gate() -> None:
 
 def _bare_truthiness_offenders(path: Path) -> list[str]:
     """Return ``if <name>:`` / ``if not <name>:`` uses of a result-shaped local (AST)."""
-    # Result-shaped values AND the five ``bool``-annotated decision premises: all of them
-    # must be gated by identity / ``is not True``, never by bare truthiness (NIT-1).
     suspicious = {
         "result",
         "coverage",

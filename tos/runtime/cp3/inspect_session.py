@@ -1,79 +1,4 @@
-"""``sts tos inspect`` core — «왜 이 바에서 이 결정이었나», per recorded bar.
-
-Roadmap ``docs/plans/2026-11-11-tos-platform-roadmap.md`` §P1. The operator
-question this answers is the one §1's 관측 row says nobody could see: M2 에서
-진입이 0 건이었는데 **어느 비교식이 몇 % 의 바에서 막았나**. The tool reads a
-recorded CP-3 tenant session and prints, per bar, the values the engine
-evaluated, every authored rule's firing with **each comparison's own
-pass/fail**, the first-match decision, and the engine's own recorded outcome /
-halt beside it.
-
-**Nothing is re-authored.** The comparison semantics are
-:func:`tos.dsl.vocabulary.eval_compare` and the first-match order is
-:func:`tos.dsl.vocabulary.evaluate_policy`, called verbatim — a second
-implementation of either would make this screen's answer a property of the
-inspector rather than of the strategy (and ``EQ`` is type-strict, which a
-hand-rolled comparison gets wrong on the first ``1`` vs ``True``). The strategy
-file is loaded, admitted and bound through :func:`cp3.strategy.load_strategy_content`,
-i.e. the PRODUCTION loader and the production five bindings rules; the journal is
-read by the shipped :class:`~tos_runtime.marketfeed.journal.JsonLinesObservationJournal`,
-the one reader of that wire shape; the evidence join and the value-view
-projection are :mod:`cp3.inspect_evidence`; the result shape and both
-renderings are :mod:`cp3.inspect_report`.
-
-**The environment is the ENGINE's, not the producer's** (review of #1057,
-MEDIUM-1). A production evaluation reads
-``env["capsule"]["resolved_values"]`` built from the
-:class:`~tos.dsl.ContextValueView` ``tos.engine.pipeline`` handed it — the view
-recorded on that bar's own inbox tick — and ``env["config"][key]`` from the
-resolved bindings. This module builds exactly those two namespaces, and for a
-joined bar it takes the values from **that recorded view**. The producer's
-``journal.jsonl`` line is still read (it is what names the bar and what the
-``close/vwap/z`` columns print) but it is not what the rules are evaluated on:
-where the two disagree, the journal is the wrong answer, and the disagreement is
-reported per bar (``V``) and counted per field key in the summary.
-
-Three populations follow from that, and only the first carries the percentages
-(the reasoning is in :mod:`cp3.inspect_report`'s module docstring):
-
-* **counted** — joined, non-empty engine view. The per-comparison denominators.
-* **withheld** (``W``) — the engine published an *explicit-empty* view, which is
-  a defined outcome (``tos.dsl.context_value`` "design #32 §6 ∅ 양방향") and the
-  shape a ``DECISION_WITHHELD`` tick has. Rules are not evaluated at all; the
-  bar is reported on its own summary line.
-* **unjoined** (``U``) — the chain broke; the rules are evaluated on the journal
-  line so the bar is still readable, marked, and left out of the denominators.
-
-This module does NOT mint a per-bar
-:class:`~tos.capsule.DecisionContextCapsule`: a recorded paper session's
-Capsules already exist in its own stores, and re-issuing look-alikes under a
-replay label would be a second, differently-labelled identity for the same bar.
-The cost of the narrower environment is stated as a **refusal, not a silent
-UNKNOWN**: a policy naming any operand ref other than
-``capsule.resolved_values.<key>`` or ``config.<key>`` refuses by name
-(:func:`_refuse_unsupported_refs`), because ``UNKNOWN`` is indistinguishable
-from "the field was legitimately false" and an inspector that cannot tell those
-apart is worse than one that says so.
-
-**Read-only.** The journal, the strategy tree and the three sqlite stores are
-opened for reading only (the stores as ``file:…?mode=ro`` URIs), and this module
-writes nothing anywhere. It reads no clock: the window is operator-supplied and
-every timestamp printed comes from the bar's own identity.
-
-CLI (the legacy-side ``sts tos inspect`` wrapper invokes exactly this)::
-
-    PYTHONPATH=tos/src:tos/runtime/src:tos/runtime \\
-      .venv/bin/python -m cp3.inspect_session \\
-        --journal  <session>/journal.jsonl \\
-        --strategy <session>/render/strategies/<name>.strategy.yaml \\
-        --bindings <session>/render/strategy_bindings.yaml \\
-        --data-dir <tenant durable leaf> \\
-        [--from HH:MM] [--to HH:MM] [--json]
-
-Firewall: ``tos.*`` + ``tos_runtime.*`` + stdlib + ``pyyaml``(transitively, via
-the loaders) only. No ``shared.*``, no RNG, no ``subprocess``, no network.
-Intra-package imports are RELATIVE (see :mod:`cp3._base`).
-"""
+"""``sts tos inspect`` core — «왜 이 바에서 이 결정이었나», per recorded bar."""
 
 from __future__ import annotations
 
@@ -116,60 +41,20 @@ __all__ = [
     "main",
 ]
 
-#: The display timezone. Session and trading logic in this repo is KST-native
-#: (root ``CLAUDE.md`` 비협상 규칙 «Timezone»), and this package already fixes
-#: the same id for the same reason (``cp3.replay`` 178행), so the one printed
-#: clock is KST and there is no knob to point it elsewhere.
 DISPLAY_TZ_ID = "Asia/Seoul"
 
-#: The two operand ref shapes a recorded-session environment can resolve: the
-#: per-bar published values, and the resolved config bindings.
 _CAPSULE_VALUE_PREFIX: tuple[str, ...] = ("capsule", VALUE_NAMESPACE)
 _CONFIG_PREFIX: tuple[str, ...] = ("config",)
 
-#: The timestamp format inside a producer join key
-#: (``tools/tos_cp3/produce_fields.py::derive_raw_event_id`` —
-#: ``<symbol>:1m:<YYYYmmddTHHMMSS±HHMM>``). It is restated rather than imported
-#: for the same reason :mod:`cp3.contract` restates the journal key set: the
-#: firewall forbids importing ``tools`` from inside ``tos/``, and the two sides
-#: meet through the file.
-#:
-#: **Why the key and not ``as_of_ms``.** On the OFFLINE path B1a stamps
-#: ``as_of_ms`` with the bar's labelled minute
-#: (``produce_fields.derive_raw_event_id``'s sibling ``derive_as_of_ms``), but on
-#: the LIVE path the producer does not set it at all — the journal sink stamps it
-#: immediately before the write (``tools/tos_cp3/live_producer/line.py``), so a
-#: 2026-11-10 09:00 bar carries an ``as_of_ms`` of 09:01:02. ``as_of_ms`` is that
-#: path's freshness anchor, not the bar's identity; the join key is the identity.
-#: A key this does not parse is NOT a refusal — the printed minute is a display
-#: convenience — but it is marked (``~HH:MM`` and ``time_source=as_of_ms``) so a
-#: reader is never shown a derived time as if it were the labelled one.
 _BAR_KEY_STAMP_FORMAT = "%Y%m%dT%H%M%S%z"
 
-#: The timeframe separator inside that key. Splitting on it rather than on the
-#: last ``:`` is what makes a key for some other timeframe fall into the marked
-#: fallback instead of being mis-read as a one-minute bar (the legacy side splits
-#: on the same token — ``tools/tos_cp3/session_inputs.py``
-#: ``_RAW_EVENT_ID_SEPARATOR``).
 _BAR_KEY_SEPARATOR = ":1m:"
 
-#: The decision shape a ``NO_ACTION`` policy outcome has, for the comparison
-#: against the engine's recorded ``outcome_type`` (:data:`ENGINE_OUTCOME_SHAPES`).
 _NO_ACTION_KIND = "NO_ACTION"
 
 
-# ===========================================================================
-# Operand rendering
-# ===========================================================================
-
-
 def _operand_text(operand: Operand) -> str:
-    """The authored operand, as the legend prints it.
-
-    ``capsule.resolved_values.hi_vol`` prints as ``hi_vol`` (the field key is
-    what an operator recognizes); a ``config`` ref keeps its namespace so a
-    threshold is never mistaken for a market value.
-    """
+    """The authored operand, as the legend prints it."""
     if operand.ref is None:
         return value_text(operand.const)
     path = tuple(operand.ref)
@@ -183,21 +68,8 @@ def _compare_expression(left: Operand, op: str, right: Operand) -> str:
     return f"{_operand_text(left)} {op} {_operand_text(right)}"
 
 
-# ===========================================================================
-# Environment + refusals
-# ===========================================================================
-
-
 def _refuse_unsupported_refs(policy: DecisionPolicy, *, strategy_path: Path) -> None:
-    """Refuse a policy whose operands this environment shape cannot resolve.
-
-    Raises:
-        Cp3RunnerRefusal: An operand names a ref outside
-            ``capsule.resolved_values.<key>`` / ``config.<key>``. Resolving it
-            to ``UNKNOWN`` instead would print "this comparison was false" for a
-            value the inspector simply did not build, which is the one reading
-            an operator must never be handed.
-    """
+    """Refuse a policy whose operands this environment shape cannot resolve."""
     for position, rule in enumerate(policy.rules, start=1):
         for index, compare in enumerate(rule.all_of, start=1):
             for operand in (compare.left, compare.right):
@@ -231,12 +103,7 @@ def _environment(
 def _view_diff(
     view: Mapping[str, ScalarValue], fields: Mapping[str, ScalarValue]
 ) -> dict[str, tuple[str, str]]:
-    """``field_key -> (view, journal)`` for every key the two disagree on.
-
-    The comparison is type-aware on purpose: the DSL's ``EQ`` is type-strict
-    (``vocabulary.eval_compare``), so a ``1`` where the engine saw ``True`` is a
-    real difference even though ``1 == True`` in Python.
-    """
+    """``field_key -> (view, journal)`` for every key the two disagree on."""
     diff: dict[str, tuple[str, str]] = {}
     for key in sorted(set(view) | set(fields)):
         left, right = view.get(key), fields.get(key)
@@ -246,11 +113,6 @@ def _view_diff(
             continue
         diff[key] = (value_text(left), value_text(right))
     return diff
-
-
-# ===========================================================================
-# Per-bar evaluation
-# ===========================================================================
 
 
 def _evaluate_rules(
@@ -289,13 +151,7 @@ def _evaluate_rules(
 
 
 def _bar_clock(raw_event_id: str, as_of_ms: int) -> tuple[str, str, int]:
-    """One bar's ``(HH:MM, time source, minutes since KST midnight)``.
-
-    The labelled minute comes from the join key (see
-    :data:`_BAR_KEY_STAMP_FORMAT`). A key whose stamp does not parse falls back
-    to ``as_of_ms``, marked with a leading ``~`` so the reader can see that the
-    printed minute is derived rather than labelled.
-    """
+    """One bar's ``(HH:MM, time source, minutes since KST midnight)``."""
     parts = raw_event_id.split(_BAR_KEY_SEPARATOR, 1)
     try:
         labelled = datetime.strptime(parts[1], _BAR_KEY_STAMP_FORMAT)
@@ -307,11 +163,7 @@ def _bar_clock(raw_event_id: str, as_of_ms: int) -> tuple[str, str, int]:
 
 
 def _parse_window(value: str | None, *, flag: str) -> int | None:
-    """``HH:MM`` as minutes since KST midnight, or ``None``.
-
-    Raises:
-        Cp3RunnerRefusal: The value is not ``HH:MM`` in range.
-    """
+    """``HH:MM`` as minutes since KST midnight, or ``None``."""
     if value is None:
         return None
     parts = value.split(":")
@@ -344,12 +196,7 @@ class _JournalBar:
 def _read_bars(
     journal_path: Path, instrument: str, low: int | None, high: int | None
 ) -> tuple[_JournalBar, ...]:
-    """The in-window journal bars, oldest first.
-
-    Raises:
-        Cp3RunnerRefusal: The journal is missing, unreadable, or malformed, or
-            the window selected no bar at all.
-    """
+    """The in-window journal bars, oldest first."""
     try:
         observations = JsonLinesObservationJournal(journal_path).poll(
             instrument=instrument, after_as_of_ms=None
@@ -381,13 +228,7 @@ def _read_bars(
 
 
 def _engine_shape(evidence: BarEvidence | None) -> str | None:
-    """``"no_action"`` / ``"proposal"`` from the recorded outcome, or ``None``.
-
-    ``None`` is "nothing comparable here" — no outcome was emitted, or its
-    ``outcome_type`` is one :data:`ENGINE_OUTCOME_SHAPES` has never been
-    measured against. Guessing a shape for an unmeasured outcome type would
-    manufacture a ``D`` marker out of this inspector's own ignorance.
-    """
+    """``"no_action"`` / ``"proposal"`` from the recorded outcome, or ``None``."""
     if evidence is None or not evidence.joined or evidence.outcome_type is None:
         return None
     return ENGINE_OUTCOME_SHAPES.get(evidence.outcome_type)
@@ -396,19 +237,7 @@ def _engine_shape(evidence: BarEvidence | None) -> str | None:
 def _evaluation_source(
     bar: _JournalBar, evidence: BarEvidence | None, *, evidence_asked: bool
 ) -> tuple[str, dict[str, ScalarValue]]:
-    """``(evaluation source, the values the rules are evaluated on)`` for one bar.
-
-    The order matters, and **withheld is tried first**
-    (:attr:`~cp3.inspect_evidence.BarEvidence.withheld`, LOW-B of the round-2
-    review of #1058). A tick can publish a view carrying values and still have
-    been withheld; evaluating that view would print a decision the engine never
-    made, so "the engine declined to decide" outranks "here are its inputs".
-
-    After that: a readable, non-empty engine view is what the engine evaluated.
-    Everything else falls back to the journal line, and whether that counts
-    depends on whether an engine view was ever asked for (see
-    :data:`~cp3.inspect_report.EVALUATION_JOURNAL_ONLY`).
-    """
+    """``(evaluation source, the values the rules are evaluated on)`` for one bar."""
     if evidence is not None and evidence.withheld:
         return EVALUATION_WITHHELD, {}
     if evidence is not None and evidence.joined and evidence.value_view:
@@ -484,15 +313,7 @@ def _summarize(
     rows: Sequence[BarRow],
     rule_index: Mapping[str, tuple[str, object]],
 ) -> tuple[RuleSummary, ...]:
-    """Per-rule firing and per-comparison failure counts over the COUNTED rows.
-
-    A withheld or unjoined bar is not in ``counted``, so it is in no
-    denominator: the percentages answer "of the bars the engine actually
-    evaluated, how often did this comparison block the rule". The rule id and
-    the comparison text come from the authored policy and its ``rule_index``,
-    not from a row, so they are right even for a window where every bar was
-    withheld and no row carries a view.
-    """
+    """Per-rule firing and per-comparison failure counts over the COUNTED rows."""
     counted = [row for row in rows if row.counted]
     bars = len(counted)
     summaries: list[RuleSummary] = []
@@ -589,11 +410,7 @@ def _build_report(
     window_to: str | None,
     session_name: str | None,
 ) -> InspectReport:
-    """Fold the evaluated rows into the report, counting each population once.
-
-    Split from :func:`inspect_session` for the 100-line function cap
-    ``config/tos_size_budget.yaml`` enforces over this tree.
-    """
+    """Fold the evaluated rows into the report, counting each population once."""
     tallies = _tallies(rows)
     default_rule_id, _default_kind = content.rule_index[policy.default.rationale]
     return InspectReport(
@@ -641,33 +458,7 @@ def inspect_session(
     window_to: str | None = None,
     session_name: str | None = None,
 ) -> InspectReport:
-    """Inspect one recorded session's bars against its own authored policy.
-
-    Args:
-        journal_path: The session's ``journal.jsonl`` (the producer's output).
-        strategy_path: The strategy file the session was rendered with, inside
-            its ``strategies/`` directory.
-        bindings_path: The ``strategy_bindings.yaml`` beside that directory.
-        data_dir: The tenant durable-set leaf to read the engine's value views
-            and decision records from, or ``None`` to evaluate the producer's
-            journal line alone. ``None`` makes every bar
-            :data:`~cp3.inspect_report.EVALUATION_JOURNAL_ONLY`, which **is**
-            counted: only withheld and journal-substituted bars leave the
-            denominators, and both need a view to have been asked for
-            (:func:`_evaluation_source`).
-        window_from: Inclusive KST ``HH:MM`` lower bound, or ``None``.
-        window_to: Inclusive KST ``HH:MM`` upper bound, or ``None``.
-        session_name: A label for the header; defaults to the journal's parent
-            directory name.
-
-    Returns:
-        The :class:`~cp3.inspect_report.InspectReport`.
-
-    Raises:
-        Cp3RunnerRefusal: Any loader/bindings/journal/store refusal, an operand
-            ref this environment shape cannot resolve, a malformed window, or a
-            window selecting no bar.
-    """
+    """Inspect one recorded session's bars against its own authored policy."""
     content = load_strategy_content(
         strategy_path=strategy_path, bindings_path=bindings_path
     )
@@ -710,11 +501,6 @@ def inspect_session(
     )
 
 
-# ===========================================================================
-# CLI
-# ===========================================================================
-
-
 def _parser() -> argparse.ArgumentParser:
     """The CLI the legacy-side wrapper builds an argv for."""
     parser = argparse.ArgumentParser(
@@ -738,13 +524,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Render one inspection to stdout. ``0`` on success, ``2`` on any refusal.
-
-    Refusals go to stderr and nothing else does, so a ``--json`` run's stdout is
-    a valid document or empty — never a document with a warning glued to it
-    (review of #1057, LOW-2; the legacy-side driver keeps the two streams apart
-    for the same reason).
-    """
+    """Render one inspection to stdout. ``0`` on success, ``2`` on any refusal."""
     args = _parser().parse_args(argv)
     try:
         report = inspect_session(

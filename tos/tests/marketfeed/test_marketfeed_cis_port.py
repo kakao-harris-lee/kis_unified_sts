@@ -1,36 +1,4 @@
-"""§4 (design #38) — the admitted-snapshot injection port: its surface, its requirement, its seal.
-
-Design #38 creates no runtime type. :class:`~tos.marketfeed.SnapshotStore` and
-:class:`~tos.marketfeed.ValueCandidateSource` were shipped by design #32, a fake CIS already drives
-the real resolver (``tos/tests/slice/_slice_fixtures.py:335-422``), and the exclusivity *behaviour*
-is already committed (``test_slice_conformant_path.py:233-257``). None of that is re-authored here.
-What was **not** locked is the port's own shape, and that is the whole of this file (design #38
-§11-1 (ii)):
-
-* **P1 — the Protocol surface itself.** Adding ``session_token=`` to ``SnapshotStore.__call__``
-  breaks no committed canary today: the record-level fetch-surface seal reads pydantic
-  ``model_fields``, the namespace sweep reads ``vars()``, and the import-closure canary reads
-  imports — a Protocol parameter is the target of none of them. So the call-only shape, the exact
-  parameter sets, the ambient-name exclusion, and the closure "exactly two CIS injections" are
-  locked here. D-E4's ``test_brokeradapter_transport.py:69-96`` is the isomorph.
-* **P2 / P5 — required injection.** Before this file the marketfeed suite used ``inspect`` nowhere,
-  so "a resolver cannot be built without a CIS-issued source" was a structural fact that nothing
-  read. One predicate reads it, and the three ways to bypass it — moved out of ``__init__``, made
-  positional, given a default — are run against that same predicate and must all be caught.
-* **P4 — the gates, restated at the port boundary.** The four publication gates are asserted
-  through a fake CIS pair rather than against the gate function, which is the form of
-  "the most a dishonest source achieves is a rejection record" (``resolver.py:89``).
-
-**What this file does not claim.** The port does not make the upstream producer honest (design #38
-§3.3). A producer that stamps two bars with one as-of still collapses the chain, and the test below
-asserts that collapse as a *limit* rather than pretending the gate catches it — complete enforcement
-of per-bar distinctness is upstream, in the Context Integrity Service. A fabricated-but-plausible
-lineage is not tested at all: from this layer's inputs a forged self-consistent lineage is
-byte-indistinguishable from a true one, so no discriminator exists and inventing one would be the
-over-claim this file seals against (design #38 §4.2 N2).
-
-Regime tag: authoring evidence only; closes no EV (design #32 §1.1; design #38 provisional).
-"""
+"""§4 (design #38) — the admitted-snapshot injection port: its surface, its requirement, its seal."""
 
 from __future__ import annotations
 
@@ -73,13 +41,7 @@ from ._marketfeed_fixtures import (
 
 KEY = InstrumentKey(account=ACCOUNT, instrument=INSTRUMENT)
 
-#: The band a derived-value bar exposes (the lineage suite's magnitude, reused as a plain number).
 _BAND = 4_500_000
-
-
-# ===========================================================================
-# The fake CIS: the port's upstream, in this file's own shapes
-# ===========================================================================
 
 
 def _store_for(snapshot: CriticalInputSnapshot | None) -> SnapshotStore:
@@ -126,10 +88,6 @@ def _reasons(resolved: ResolvedTick) -> set[ValueRejectionReason]:
     return {entry.reason for entry in resolved.resolution.rejected}
 
 
-# ===========================================================================
-# P1 — the Protocol surface itself (design #38 §4-P1; D-E4 :69-96 isomorph)
-# ===========================================================================
-
 _PORT_PROTOCOLS = (SnapshotStore, ValueCandidateSource)
 
 
@@ -145,11 +103,7 @@ def _public_names(protocol: type) -> list[str]:
 
 @pytest.mark.parametrize("protocol", _PORT_PROTOCOLS, ids=_protocol_id)
 def test_each_port_protocol_is_call_only(protocol: type) -> None:
-    """(§4-P1.1 ★) One anonymous call surface — a named ``fetch`` / ``subscribe`` has nowhere to go.
-
-    D-E4 locks ``vars(Transport) == ["send_once"]``; the ingress form of the same lock is the empty
-    list plus a ``__call__`` the Protocol really declares itself (design #34 §5.1 isomorph).
-    """
+    """(§4-P1.1 ★) One anonymous call surface — a named ``fetch`` / ``subscribe`` has nowhere to go."""
     assert _public_names(protocol) == []
     assert "__call__" in vars(
         protocol
@@ -187,10 +141,6 @@ def test_the_candidate_source_call_takes_exactly_the_snapshot_and_the_scope() ->
     }
 
 
-#: Names that would turn an injection port into an ambient one: a live-transport surface, a
-#: credential, or a clock. Matched **token-wise** (``split("_")`` plus the whole name) — the
-#: ``_base.py:17-19`` discipline. An exact-name rule would miss ``session_token``; a bare substring
-#: rule would over-reject, which is its own defect class (the #26 WDR MAJOR-1 lesson).
 _AMBIENT_TOKENS = frozenset(
     {
         "clock",
@@ -228,8 +178,7 @@ def test_no_port_call_admits_an_ambient_or_transport_parameter(protocol: type) -
 
 
 def test_the_ambient_rule_is_token_wise_and_does_not_over_reject() -> None:
-    """(§4-P1.3 both ways) Token-wise is why ``session_token`` is caught; whole-name is why
-    ``canonical_digest`` is not."""
+    """(§4-P1.3 both ways) Token-wise is why ``session_token`` is caught; whole-name is why"""
     assert _ambient_offenders(["session_token"]) == ("session_token",)
     assert _ambient_offenders(["fetch_url", "clock", "credential_ref"]) == (
         "fetch_url",
@@ -245,13 +194,7 @@ def test_the_ambient_rule_is_token_wise_and_does_not_over_reject() -> None:
 
 
 def test_exactly_two_constructor_injections_are_cis_product_surfaces() -> None:
-    """(§4-P1.4 ★) The port is a pair, and the time projection is not a third member of it.
-
-    ``resolver.py:39`` carries ``from __future__ import annotations``, so the raw annotations are
-    *strings* and an identity comparison against them would be meaningless — ``get_type_hints``
-    resolves them first (design #38 §12 ③). The string-ness is asserted, so this reasoning cannot
-    quietly become stale.
-    """
+    """(§4-P1.4 ★) The port is a pair, and the time projection is not a third member of it."""
     raw = MarketFeedContextResolver.__init__.__annotations__
     assert isinstance(
         raw["snapshot_store"], str
@@ -267,31 +210,15 @@ def test_exactly_two_constructor_injections_are_cis_product_surfaces() -> None:
     assert hints["snapshot_store"] is SnapshotStore
     assert hints["candidate_source"] is ValueCandidateSource
 
-    # The time authority is a separate, optional injection — a "now" reading is not admitted
-    # snapshot content, and absorbing it into the port would be scope creep (design #38 §2.3).
     assert hints["time_projection"] is not TimeCoordinateProjection
     assert get_args(hints["time_projection"]) == (TimeCoordinateProjection, type(None))
 
-
-# ===========================================================================
-# P2 / P5 — required injection, and the three ways to bypass it
-# ===========================================================================
 
 _PORT_INJECTIONS = ("snapshot_store", "candidate_source")
 
 
 def _bypass_offenders(target: type) -> tuple[str, ...]:
-    """Ways ``target`` would let a resolver be built without a CIS-issued source.
-
-    Empty means both port halves are required, keyword-only constructor arguments — the structural
-    form of "no snapshot body and no candidate value enters except through the port".
-
-    Args:
-        target: The class whose ``__init__`` is read.
-
-    Returns:
-        One complaint per bypass found, empty when the port is required.
-    """
+    """Ways ``target`` would let a resolver be built without a CIS-issued source."""
     parameters = inspect.signature(target.__init__).parameters  # type: ignore[misc]
     offenders: list[str] = []
     for name in _PORT_INJECTIONS:
@@ -403,17 +330,8 @@ def test_every_port_bypass_mutation_is_killed(mutant: type, complaint: str) -> N
     assert all(complaint in offender for offender in offenders), offenders
 
 
-# ===========================================================================
-# P4 — the four gates, restated at the port boundary (design #38 §4-P4)
-# ===========================================================================
-
-
 def test_a_body_that_is_not_the_referenced_one_is_refused_at_the_port() -> None:
-    """(§4-P4 a / G1) A store answering with another snapshot publishes nothing.
-
-    The gate-level form of this is committed at ``test_marketfeed_resolver.py:93-102`` (K11); this
-    restates it as the port's own obligation, which is the framing the other three reuse.
-    """
+    """(§4-P4 a / G1) A store answering with another snapshot publishes nothing."""
     capsule, _, candidates = one_bar()
     impostor = issue_snapshot(intended_use="something-else")
     resolved = _resolve(capsule=capsule, snapshot=impostor, candidates=candidates)
@@ -484,11 +402,6 @@ def test_an_unevaluated_field_is_refused_at_the_port() -> None:
     assert _reasons(resolved) == {ValueRejectionReason.FIELD_STATE_NOT_VALID}
     assert resolved.payload.value_view is not None
     assert resolved.payload.value_view.values == ()
-
-
-# ===========================================================================
-# §4.2 — source parity in three structural shapes, and its KILL mutation
-# ===========================================================================
 
 
 class _MethodBook:
@@ -580,11 +493,7 @@ def _view_digest(
 
 
 def test_the_port_does_not_discriminate_between_upstream_shapes() -> None:
-    """(§4.2 parity ★) Function, bound method, callable object / partial — one digest.
-
-    This is the structural form of ``resolver.py:16-18`` "the resolver cannot tell them apart": the
-    three shapes are different *kinds of Python object*, not three names for one function.
-    """
+    """(§4.2 parity ★) Function, bound method, callable object / partial — one digest."""
     capsule, snapshot, candidates = one_bar()
     digests = {
         shape: _view_digest(store, source, capsule)
@@ -609,20 +518,8 @@ def test_a_store_that_branches_on_its_own_kind_breaks_the_parity_claim() -> None
     assert peeking.payload.value_view is None
 
 
-# ===========================================================================
-# The non-guarantee, stated as a non-guarantee (design #38 §3.3 N1 / §4.2)
-# ===========================================================================
-
-
 def test_the_port_does_not_make_the_producer_honest_about_as_of() -> None:
-    """(§3.3 N1 ★ limit, not a guarantee) Two bars stamped with one as-of collapse the chain.
-
-    Nothing here is asserted to be *caught*. The port admits both, their digests coincide, and
-    complete enforcement of per-bar distinctness stays upstream, in the Context Integrity Service —
-    which is what K1 (``test_marketfeed_distinctness.py:236-247``) says at the gate and what this
-    says at the port. Adding an as-of reuse rejection would be deferral ②(b) work and the invention
-    design #38 §0.4 (f) forbids, so it is not done.
-    """
+    """(§3.3 N1 ★ limit, not a guarantee) Two bars stamped with one as-of collapse the chain."""
     capsule_one, snapshot_one, candidates_one = one_bar(
         as_of=BAR_ONE_AS_OF, close=CLOSE_BAR_ONE
     )

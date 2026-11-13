@@ -1,22 +1,4 @@
-"""Package-surface canaries for ``tos.marketfeed`` — the seals that are structural, not promised.
-
-Four families:
-
-* **the fetch-surface seal** (design #32 §0.3/§7.1). The package's name says "feed"; its contract
-  says it never fetches. A docstring saying so is a self-report, so every marketfeed record's field
-  names run through a closed token check at construction — a record carrying ``url`` / ``socket`` /
-  ``token`` is unconstructable. The over-rejection direction is checked too: ``endpoint`` is
-  deliberately admitted, because ``tos.capsule``'s shipped ``SourceIdentity.endpoint`` is an opaque
-  provenance scalar this package legitimately reads.
-* **immutability** — every record is frozen and rejects unknown fields, so a value surface cannot be
-  edited after publication (ADR-002-018 §12).
-* **the report is internally consistent** — a ``ValueResolution`` cannot claim a disposition its view
-  presence contradicts, so the ∅ distinction stays readable rather than inferred from a nullable.
-* **the honest scope** — the package announces provisional status and closes no EV, in the module
-  docstring, where a reader of the code will meet it.
-
-Regime tag: authoring evidence only; closes no EV (design #32 §1.1).
-"""
+"""Package-surface canaries for ``tos.marketfeed`` — the seals that are structural, not promised."""
 
 from __future__ import annotations
 
@@ -38,10 +20,6 @@ from tos.marketfeed import (
 )
 
 from ._marketfeed_fixtures import INTEGRITY_ERRORS, SCHEME, one_bar, preimage
-
-# ---------------------------------------------------------------------------
-# The fetch-surface seal (design #32 §0.3)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -107,11 +85,6 @@ def test_the_seal_runs_at_construction_not_only_in_a_test() -> None:
     seal_fetch_surface("AdmittedValue", AdmittedValue.model_fields)
 
 
-# ---------------------------------------------------------------------------
-# Immutability + strict schema (ADR-002-018 §12)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "model, kwargs",
     [
@@ -163,11 +136,6 @@ def test_a_duplicated_preimage_key_is_unconstructable() -> None:
                 PreimageEntry(key="close", value=2),
             )
         )
-
-
-# ---------------------------------------------------------------------------
-# The report cannot contradict itself (design #32 §6)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

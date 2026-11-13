@@ -1,42 +1,4 @@
-"""The cross-contract (month-stitch) seed manifest — plan §3.2a.
-
-A roll leaves the new front month with too few dense sessions to fill Setup D's
-causal ``vol_window_bars`` (measured: 0 / 780 on 2026-10-12, plan §6.2), so the
-seed's older sessions come from the PREVIOUS contract and are joined to the new
-one by a Panama **difference** back-adjust. This module owns the one artifact
-that makes that join reproducible — ``stitch.json`` — and the one alignment
-function every reader uses.
-
-**Why a manifest and not a flag.** The retired B3 comparison (2026-11-13)
-refused a (B1a, B2) pair whose input digests, line counts or ``raw_event_id``
-order differed, and an alignment that lived only in a B1a flag would have made
-every stitched session an automatic refusal (plan §9 HIGH-1). The reason
-outlives that comparison: the manifest is the input to ``load_window`` itself,
-so the producer and B1a align through :func:`segment_offsets_x100` — one
-implementation, no equivalence proof needed between them.
-
-**What the manifest says, and what it deliberately does not.**
-
-* Segments: ``(contract, [trading days])``, oldest first. A reader loads
-  EXACTLY those pairs — never a date-range glob — so a sibling ``code=``
-  partition in the same tree can never leak into the frame.
-* Junctions: at most one (plan §3.2a 「접합 지점은 **최대 하나**」), carrying the
-  splice day, the last common PARSED minute, both unadjusted closes and the
-  integer ``c_x100 = P_new - P_old``.
-* ``c`` is an integer in 1/100 units because the mini contract's tick is 0.02
-  (PR #881) and a float difference does not land on that grid (plan §9 LOW-2).
-* The splice day's NEW-contract bars are stored under their own contract's
-  partition and are read back ONLY to recompute ``c_x100``. They are not part
-  of the frame: two contracts' bars for one minute would hit B1a's duplicate
-  timestamp refusal (plan §3.2a, re-review N-3).
-
-Nothing here names a contract, a date or a price: every value comes from the
-manifest the producer wrote, and the producer got them from
-``shared/instruments/futures.py::get_front_month_code`` and the broker's own
-rows.
-
-Firewall: legacy side (``tools/``). No ``tos`` / ``tos_runtime`` import.
-"""
+"""The cross-contract (month-stitch) seed manifest — plan §3.2a."""
 
 from __future__ import annotations
 
@@ -50,24 +12,12 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-#: The file name, and the place it sits: directly under the ``--data-root``
-#: B1a and B2 are given, i.e. ``<session dir>/market/`` (plan §3.6's layout,
-#: re-review N-2 — an earlier draft put it one level up, where B1a's own
-#: ``--data-root`` check could never see it).
 STITCH_FILENAME = "stitch.json"
 
-#: Bumped when the on-disk shape changes. A reader refuses an unknown version
-#: rather than guessing which keys it still understands.
 STITCH_SCHEMA_VERSION = 1
 
-#: The only alignment this manifest can declare. A ratio back-adjust would not
-#: leave Setup D's state invariant (its windows are price DIFFERENCES), so the
-#: value is pinned rather than offered as a choice.
 STITCH_METHOD = "difference"
 
-#: Price scale of ``c_x100`` and the two stored closes. Mirrors
-#: ``produce_fields.PRICE_SCALE``; restated here so this module does not import
-#: B1a (B1a imports this one).
 PRICE_SCALE = 100
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -117,12 +67,7 @@ class StitchJunction:
 
 @dataclass(frozen=True)
 class StitchManifest:
-    """``stitch.json``'s content, plus the digest of the bytes it came from.
-
-    ``sha256`` is the digest of the rendered file, which is what B3 compares
-    through the window identity. It is ``None`` only for a manifest that has
-    been built but not yet rendered.
-    """
+    """``stitch.json``'s content, plus the digest of the bytes it came from."""
 
     symbol: str
     segments: tuple[StitchSegment, ...]
@@ -135,13 +80,7 @@ class StitchManifest:
 
     @property
     def target_days(self) -> frozenset[date]:
-        """Days whose bars carry the TARGET contract's own identity.
-
-        B1a and B2 emit records only for these (plan §3.2a 「대상 종목이 아닌
-        구간의 레코드를 출력하지 않는다」): stamping a previous-month bar with a
-        ``raw_event_id`` naming this symbol is the very label error §3.2a's
-        "라벨은 진실하게" rule exists to prevent.
-        """
+        """Days whose bars carry the TARGET contract's own identity."""
         return frozenset(
             day
             for segment in self.segments
@@ -165,14 +104,7 @@ class StitchManifest:
 
 
 def segment_offsets_x100(manifest: StitchManifest) -> dict[str, int]:
-    """``contract -> the constant added to its OHLC``, in 1/100 price units.
-
-    The newest segment — the target contract — is the reference and gets 0;
-    every older segment gets the cumulative ``c_x100`` of the junctions between
-    it and the target. With the at-most-one-junction rule this is simply
-    ``{old: c_x100, new: 0}``, but the loop is written generally so that a
-    future two-junction allowance cannot silently produce a wrong constant.
-    """
+    """``contract -> the constant added to its OHLC``, in 1/100 price units."""
     offsets: dict[str, int] = {manifest.segments[-1].contract: 0}
     running = 0
     for index in range(len(manifest.segments) - 2, -1, -1):
@@ -182,23 +114,7 @@ def segment_offsets_x100(manifest: StitchManifest) -> dict[str, int]:
 
 
 def shift_price_x100(value: float, offset_x100: int) -> float:
-    """Add *offset_x100* to a price, on the 1/100 grid rather than in floats.
-
-    Quantise first, add integers, divide once — so the result is exactly the
-    grid point ``produce_fields.scaled_int_half_up`` would name for it.
-
-    ⚠ **What this is and is not worth** (measured in
-    ``tests/tools/test_cp3_stitch_seed.py::test_shift_price_x100_lands_on_the_
-    grid_half_up_names``). On a price that is already on the 1/100 grid — every
-    price this repo's ``parse_ohlcv`` produces from a KIS response — the naive
-    ``value + offset_x100 / 100`` gives the SAME published integer, so the
-    claim is NOT "this prevents an off-by-one on broker data". It prevents one
-    on a value BETWEEN grid points: ``400.025`` shifted by one mini tick
-    (``offset_x100 = 2``) publishes 40005 here and 40004 naively. Keeping the
-    arithmetic exact costs nothing and means the shift never has to be
-    re-reasoned about if a future input is not already quantised; it is not
-    load-bearing for the current data.
-    """
+    """Add *offset_x100* to a price, on the 1/100 grid rather than in floats."""
     if offset_x100 == 0:
         return float(value)
     return (int(math.floor(float(value) * PRICE_SCALE + 0.5)) + offset_x100) / float(
@@ -207,13 +123,7 @@ def shift_price_x100(value: float, offset_x100: int) -> float:
 
 
 def close_x100_by_minute(bars: Iterable[Sequence[Any]]) -> dict[datetime, int]:
-    """``minute -> close_x100`` for ``parse_ohlcv`` tuples.
-
-    PARSED bars, never raw rows: the producer and the offline recomputation
-    must pick the same minute, and a raw-row rule picks a different one
-    whenever the last shared minute traded below ``KIS_MINUTE_BAR_MIN_VOLUME``
-    on one leg only (plan §3.2a re-review N-3).
-    """
+    """``minute -> close_x100`` for ``parse_ohlcv`` tuples."""
     return {bar[1]: int(math.floor(float(bar[5]) * PRICE_SCALE + 0.5)) for bar in bars}
 
 
@@ -225,18 +135,7 @@ def derive_junction(
     old_bars: Iterable[Sequence[Any]],
     new_bars: Iterable[Sequence[Any]],
 ) -> StitchJunction:
-    """``c_x100`` from the LAST minute both contracts have a parsed bar for.
-
-    Not each leg's own last close: the expiring month stops trading before the
-    successor does (measured 2026-10-08 — 15:19 against 15:45, evidence
-    ``docs/broker-profiles/evidence/2026-10-14-cp3-pr2b-expired-contract``
-    §4), so "each leg's last bar" would difference two different instants and
-    fold a 26-minute price move into the constant.
-
-    Raises:
-        StitchError: the two contracts share no parsed minute on *day*. The
-            constant is not invented — the producer refuses to start.
-    """
+    """``c_x100`` from the LAST minute both contracts have a parsed bar for."""
     old = close_x100_by_minute(old_bars)
     new = close_x100_by_minute(new_bars)
     common = sorted(set(old) & set(new))
@@ -328,12 +227,7 @@ def load_manifest(path: Path) -> StitchManifest:
 
 
 def rows_digest(rows: Sequence[Mapping[str, Any]]) -> str:
-    """sha256 over a broker response's rows, canonicalised.
-
-    What ``source_sha256`` records: the bytes the seed day's bars were parsed
-    from. The raw responses themselves are too large to commit (PR-1's one
-    session was 14 MB), so the manifest carries their fingerprint instead.
-    """
+    """sha256 over a broker response's rows, canonicalised."""
     canonical = json.dumps(
         [dict(sorted(row.items())) for row in rows],
         ensure_ascii=False,
@@ -341,11 +235,6 @@ def rows_digest(rows: Sequence[Mapping[str, Any]]) -> str:
         sort_keys=True,
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-# ---------------------------------------------------------------------------
-# Validation and parsing helpers
-# ---------------------------------------------------------------------------
 
 
 def _require_str(data: dict[str, Any], key: str, path: Path) -> str:
@@ -512,14 +401,7 @@ def _validate_junctions(manifest: StitchManifest, where: Any) -> None:
 def assert_recomputed(
     manifest: StitchManifest, recomputed: Sequence[StitchJunction]
 ) -> None:
-    """Refuse when a re-derived junction disagrees with the manifest.
-
-    Plan §3.2a MEDIUM-3: without this, a producer that computed the wrong
-    ``c`` has its mistake reproduced byte for byte by the offline run reading
-    the same manifest, and the pair passes B3 while describing a frame nobody
-    would accept. The offline side therefore re-reads the splice day's two
-    UNADJUSTED partitions and recomputes rather than trusting the number.
-    """
+    """Refuse when a re-derived junction disagrees with the manifest."""
     if len(recomputed) != len(manifest.junctions):
         raise StitchError(
             f"recomputed {len(recomputed)} junction(s) from the partitions but "

@@ -1,36 +1,4 @@
-"""The mandated single-order scenario contract (design #33 §5.1) + a reference bar profile.
-
-Design #33 §5.1 fixes a scenario set, and every row is **NIT-3 consistent**: at most one order per
-scope for the lifetime of the run. That constraint is structural, not stylistic —
-``ProvisionalReservationLedger`` has no ``release`` / ``free`` / ``clear`` method at all
-(``state.py:22``), ``RELEASED`` is absent from the projection order (``state.py:57``), and a
-``REJECT`` maps to ``RELEASE_PENDING_PROOF`` while still occupying the scope (``state.py:83``). So a
-slice-1 scope stays occupied for the lifetime of the projection (``state.py:28-29``).
-
-What the set therefore demonstrates, honestly split (design #33 §2.2):
-
-* **demonstrated now** — one entry order end-to-end (proposal → 19-step → hand-off → each of the
-  six re-injected result kinds), the fail-closed halt paths, and the at-most-one seal **firing**;
-* **deferred to the real RCL** — round-trip (entry → exit on the same scope) and repeated sending,
-  because releasing capacity is the RCL's act (RFC-002 §9.1:557) and the runtime does not exist.
-
-:data:`ScenarioId.AT_MOST_ONE_FIRING` is the reframing the design insists on (§2.3): the seal firing
-is not a limitation to be apologised for, it is a **positive safety demonstration**. A multi-bar run
-honestly produces one realized entry plus N−1 exact capacity denials, all recorded.
-
-⚠ **Every number here is provisional** (design #33 §10). The cost apparatus that would own the
-slippage / participation / cost semantics is RFC-005 §9 / RFC-006 §11's and is not yet defined
-(ADR-DEV-010 §9.5:211); the register carries no backtest, cost, or oracle bound. These are injected
-scenario values so the mandated set is runnable and byte-reproducible — the package hardcodes no
-bound *into the model*, which is what §10 protects: :class:`~tos.backtest.fills.FillParameters`
-defaults nothing and raises on a missing parameter.
-
-:func:`reference_bars` is a **synthetic** profile, not market data. Real bars are injected from
-out-of-tree loading (design #33 §3.1/§7.4 (b)); this profile exists so the mandated scenarios are
-self-contained and reproducible without a loader.
-
-Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #33 §0.3). No clock, no RNG, no I/O.
-"""
+"""The mandated single-order scenario contract (design #33 §5.1) + a reference bar profile."""
 
 from __future__ import annotations
 
@@ -65,48 +33,22 @@ __all__ = [
     "scenario_for",
 ]
 
-#: The synthetic reference profile's base close price (bar *i* closes at base + *i*).
 REFERENCE_BASE_PRICE = Decimal(100)
-#: The synthetic reference profile's per-bar traded volume.
 REFERENCE_VOLUME = Decimal(1000)
-#: The synthetic reference profile's per-bar time-coordinate step (opaque; never a clock read).
 _REFERENCE_COORDINATE_STEP = 60
-#: The synthetic reference profile's opaque session token (broker-agnostic — no market hours).
 _REFERENCE_SESSION_TOKEN = "reference-session"
 
-#: Provisional injected participation cap (owner: RFC-005 §9 cost apparatus — undefined; §10).
 _PROVISIONAL_PARTICIPATION_CAP = Decimal("0.5")
-#: Provisional injected slippage, in basis points, always applied against the taker (§10).
 _PROVISIONAL_SLIPPAGE_BPS = Decimal(5)
-#: Provisional injected per-unit cost (§10).
 _PROVISIONAL_COST_PER_UNIT = Decimal("0.02")
-#: Provisional injected acceptable fractional deviation from the reference price (§10).
 _PROVISIONAL_PRICE_BAND_FRACTION = Decimal("0.05")
-#: Provisional injected scenario magnitude that stays inside the participation cap (⇒ FULL_FILL).
 _PROVISIONAL_FULL_QUANTITY = Decimal(10)
-#: Provisional injected scenario magnitude that exceeds the participation cap (⇒ PARTIAL_FILL).
 _PROVISIONAL_PARTIAL_QUANTITY = Decimal(800)
-#: Provisional injected reference price far outside the band (⇒ deterministic REJECT).
 _PROVISIONAL_OUT_OF_BAND_REFERENCE = Decimal(50)
 
 
 def reference_bars(count: int) -> BarStream:
-    """Build ``count`` bars of the synthetic reference profile (design #33 §3.1).
-
-    ⚠ **Synthetic, not market data.** Real bars arrive from out-of-tree loading (parquet / duckdb →
-    ``tuple[Bar, ...]``); this profile makes the mandated scenario contract self-contained and
-    byte-reproducible without dragging a loader — and therefore ``pandas`` — inside the firewall.
-
-    Args:
-        count: How many bars to build (``0`` yields the defined empty stream — ∅ both ways).
-
-    Returns:
-        The validated :data:`~tos.backtest.bars.BarStream`.
-
-    Raises:
-        BacktestIntegrityError: If ``count`` is negative — a negative bar count is not an empty
-            stream, and conflating the two is the ∅ defect in its permissive direction.
-    """
+    """Build ``count`` bars of the synthetic reference profile (design #33 §3.1)."""
     if count < 0:
         raise BacktestIntegrityError(
             f"reference_bars(count={count}) — a negative count is not an empty stream; ∅ is "
@@ -129,26 +71,14 @@ def reference_bars(count: int) -> BarStream:
 
 
 class ScenarioSpec(FrozenModel):
-    """One mandated scenario's **inputs** (design #33 §5.1) — never its expected verdict.
-
-    The spec describes what is injected: how many bars, which proposal shape the authored strategy
-    emits, the deterministic fill parameters, and which stages deny or produce no decision. It
-    deliberately carries **no expected outcome field**: an expectation stored beside the input and
-    then compared against itself proves nothing, so every terminal shape is asserted against the
-    engine's own :class:`~tos.engine.EventResult` in the property suite (RFC-010 §6 원칙 1:183-185 —
-    tests are evidence, not authority).
-    """
+    """One mandated scenario's **inputs** (design #33 §5.1) — never its expected verdict."""
 
     scenario_id: ScenarioId
-    #: The design's own §5.1 row text, kept verbatim so the contract and the document cannot drift.
     intent: str
     bar_count: int
-    #: The proposal shape the scenario's authored strategy emits (``FLAT`` only for row 7, §2.5).
     target_kind: TargetKind
     fill_parameters: FillParameters
-    #: Steps that explicitly deny, mapped by position to :attr:`denial_reason`.
     denied_steps: tuple[CommitmentStep, ...] = ()
-    #: Steps that produce **no** decision — restrictive ``UNKNOWN``, never an assumed grant.
     unknown_steps: tuple[CommitmentStep, ...] = ()
     denial_reason: str | None = None
 
@@ -206,8 +136,6 @@ def _bare_parameters(mode: FillMode) -> FillParameters:
     return FillParameters(mode=mode, side=FillSide.BUY)
 
 
-#: The mandated scenario set, in the design's §5.1 table order (rows A and 1-7). Tuple order **is**
-#: the contract, mirroring ``COMMITMENT_FLOW_ORDER``'s discipline.
 MANDATED_SCENARIOS: tuple[ScenarioSpec, ...] = (
     ScenarioSpec(
         scenario_id=ScenarioId.ENTRY_ACK,
@@ -307,19 +235,7 @@ MANDATED_SCENARIOS: tuple[ScenarioSpec, ...] = (
 
 
 def scenario_for(scenario_id: ScenarioId) -> ScenarioSpec:
-    """Return the mandated scenario spec for ``scenario_id`` — positive membership (design #33 §5.1).
-
-    Args:
-        scenario_id: The mandated scenario id.
-
-    Returns:
-        The :class:`ScenarioSpec`.
-
-    Raises:
-        BacktestIntegrityError: If no spec is declared for the id. An id in the closed vocabulary
-            with no spec is an unrealized mandated scenario, which is a fail-closed error rather
-            than a silently missing test.
-    """
+    """Return the mandated scenario spec for ``scenario_id`` — positive membership (design #33 §5.1)."""
     for spec in MANDATED_SCENARIOS:
         if spec.scenario_id is scenario_id:
             return spec

@@ -1,22 +1,4 @@
-"""Phase 3 wave 2 KW2-B — the RFC-002 §10.7 Coordinator positive gates (design #31 §9-10; plan §2.1).
-
-RFC-002 §10.7 names, among the Execution Coordinator's responsibilities, "verify current
-Safety Authority" and "verify live authorization" — both *before* anything from the 19-step
-Normal Commitment Flow runs. Slice #1 had no hosting point for either; this is that hosting
-point: :class:`~tos.engine.CoordinatorPreconditions`, checked at the very top of every
-``DECISION_TICK``.
-
-Three properties, each named explicitly in the plan:
-
-* an epoch that is not verifiably current refuses the tick before step 1 — no registry
-  dispatch, no decision pipeline, no ``DECISION_PROPOSAL`` evidence, no ledger mutation;
-* a transport that reaches a broker (``reaches_broker=True``) refuses the tick the same way,
-  regardless of the authority verdict;
-* both gates reading ``True`` leaves every pre-existing behaviour completely unchanged — the
-  entire rest of the suite (built on ``AllTruePreconditions``) is that regression control.
-
-Regime tag: orchestration authoring evidence only; closes no EV.
-"""
+"""Phase 3 wave 2 KW2-B — the RFC-002 §10.7 Coordinator positive gates (design #31 §9-10; plan §2.1)."""
 
 from __future__ import annotations
 
@@ -55,8 +37,6 @@ def test_authority_not_current_refuses_the_tick_before_step_one() -> None:
     assert result.halt_reason is HaltReason.AUTHORITY_NOT_CURRENT
     assert result.pipeline is None
     assert result.flow is None
-    # no DECISION_PROPOSAL (step 1) evidence, and no registry-dispatch evidence either — the
-    # gate runs before the registry is even consulted
     kinds = {record.kind for record in sink.records}
     assert EvidenceKind.DECISION_OUTCOME_EMITTED not in kinds
     assert EvidenceKind.DECISION_WITHHELD not in kinds
@@ -105,14 +85,7 @@ def test_a_broker_reaching_transport_refuses_the_tick() -> None:
 def test_the_transport_nature_the_core_was_constructed_with_is_what_the_gate_sees() -> (
     None
 ):
-    """(survey finding — constructor argument on the core) ``transport_nature`` flows through.
-
-    A :class:`~tos.engine.CoordinatorPreconditions` stand-in that inspects
-    ``transport_nature`` directly proves the exact object passed to ``EngineCore(...,
-    transport_nature=...)`` at construction is what reaches
-    :meth:`~tos.engine.CoordinatorPreconditions.live_scope_authorized` on every tick —
-    unchanged, not re-derived.
-    """
+    """(survey finding — constructor argument on the core) ``transport_nature`` flows through."""
 
     seen: list[object] = []
 
@@ -154,13 +127,7 @@ def test_both_gates_true_leaves_the_flow_completely_unchanged() -> None:
 
 
 def test_mutation_removing_the_gate_would_hand_off_on_a_refused_authority() -> None:
-    """Mutation guard (plan §2.1 "뮤테이션: 게이트 제거 red").
-
-    Simulates the mutation directly: a core built with a refusing ``preconditions`` object
-    must **never** reach the send boundary. If the gate were removed from
-    ``_handle_decision_tick``, this test goes red because ``transmit.attempts`` would be
-    non-empty.
-    """
+    """Mutation guard (plan §2.1 "뮤테이션: 게이트 제거 red")."""
     transmit = RecordingTransmit()
     core, _ = build_core(
         transmit=transmit,

@@ -1,17 +1,4 @@
-"""MANDATED test-only seam cross-check: iap <-> dsl (design #15 §3.4; §9 line 242; IAP-INV-001).
-
-iap binds the dsl ``Proposal`` (the immutable proposal identity being approved) by ``proposal_id``
-+ ``proposal_digest`` **scalar** (§9 line 242) — it does NOT import ``tos.dsl`` at runtime, nor
-redefine the content-addressed ``Proposal`` (the PROPOSAL-APPROVAL-REQUEST vocabulary is a shared
--020/-023 anchor, ``proposal.py:7-8``). This file imports the real dsl ``Proposal`` builder
-(``proposal.py:68``) as a **test** to lock the digest-binding polarity: a ``ProposalApprovalRequest``
-that binds the exact ``(proposal_id, canonical_digest)`` of a proposal references that proposal,
-and a tampered digest does not.
-
-A test-only cross-import is NOT a runtime package edge (design #15 §3.4/§7.1); dsl is one of the
-fifteen siblings iap never imports at runtime (the §7.1 closure test asserts its absence — sibling
-edge 0).
-"""
+"""MANDATED test-only seam cross-check: iap <-> dsl (design #15 §3.4; §9 line 242; IAP-INV-001)."""
 
 from __future__ import annotations
 
@@ -60,8 +47,6 @@ def test_proposal_is_content_addressed_id_equals_f_digest() -> None:
     proposal = _real_proposal()
     assert proposal.proposal_id is not None
     assert proposal.canonical_digest is not None
-    # content-addressed: the id derives from the digest (a distinct polarity from the iap
-    # IndependentIdArtifact request, which keeps id ⊥ digest for substitution detection).
     assert proposal.canonical_digest in proposal.proposal_id
 
 
@@ -81,6 +66,5 @@ def test_request_id_is_independent_not_derived() -> None:
     request = complete_request()
     assert request.request_id is not None
     assert request.canonical_digest is not None
-    # id is NOT f(digest) — the digest is not a substring of the injected governance id.
     assert request.canonical_digest not in request.request_id
     assert issubclass(ProposalApprovalRequest, IndependentIdArtifact)

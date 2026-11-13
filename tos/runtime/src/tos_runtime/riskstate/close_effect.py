@@ -1,15 +1,4 @@
-"""The CLOSE risk-credit vocabulary both close authorities share — pure, store-free helpers.
-
-Split out of :mod:`tos_runtime.riskstate.service` to keep that module under the repo's
-1000-line module size budget (``tools/tos_size_budget.py``), the same pure decomposition
-:mod:`tos_runtime.posttrade.entry_discharge` was split out of ``release_consumer.py`` under.
-Nothing here reads a store, consumes a proof, or decides anything: these are the predicate and
-the audit-row shape the service calls once it already holds this attempt's facts.
-
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos.engine.records`` +
-``tos_runtime.{recon.ports, riskstate.close_bound, riskstate.held_position}`` only. No
-``shared.*``, no write call.
-"""
+"""The CLOSE risk-credit vocabulary both close authorities share — pure, store-free helpers."""
 
 from __future__ import annotations
 
@@ -38,11 +27,6 @@ __all__ = [
     "tightest_cap",
 ]
 
-#: The ``close_effect.proof_status`` values that mean "a bound was actually evaluated against a
-#: concrete quantity" — as opposed to one of the earlier refusals (no arm, no provider, no
-#: proof), where the input the bound needed never arrived at all. Used for two things: which
-#: statuses may carry proof metadata in the audit row, and whether step 6's absent-field list
-#: names the bound input as missing.
 PROOF_BEARING_STATUSES: frozenset[str] = frozenset(
     {
         "PROOF_ACCEPTED",
@@ -52,7 +36,6 @@ PROOF_BEARING_STATUSES: frozenset[str] = frozenset(
     }
 )
 
-#: The absent-field name each close authority reports when its own bound input never arrived.
 ABSENT_BOUND_FIELD: dict[CloseAuthoritySource, str] = {
     CloseAuthoritySource.BROKER_HELD_PROOF: "held_position_proof",
     CloseAuthoritySource.DURABLE_EVIDENCE: "durable_entry_close_bound",
@@ -75,13 +58,7 @@ def refused_bound(reason: CloseBoundRefusal) -> EntryCloseBound:
 
 
 def tightest_cap(*caps: Decimal | None) -> Decimal | None:
-    """The smallest cap, or ``None`` if ANY of them is unknown — unknown is not absent.
-
-    ``min(held, entry - proven closes)`` (#1012 L3), written so a missing input can never be
-    silently dropped out of the minimum: an unknown holding or an unprovable entry remainder
-    makes the whole bound unknown, which
-    :func:`~tos_runtime.risk.close_quantity.close_within_entry` turns into UNKNOWN.
-    """
+    """The smallest cap, or ``None`` if ANY of them is unknown — unknown is not absent."""
     if any(cap is None for cap in caps):
         return None
     return min(cap for cap in caps if cap is not None)
@@ -164,12 +141,7 @@ def close_effect_audit(
     *,
     bound: EntryCloseBound | None = None,
 ) -> dict[str, object]:
-    """Return bounded proof/bound metadata for the durable risk observation row.
-
-    ``bound`` carries the durable entry cap both authorities now read (#1011/#1012 L3), so a
-    refused CLOSE says WHICH cap refused it — the broker holding, or what remains of the TOS
-    entry — rather than leaving the reader to guess from the status alone.
-    """
+    """Return bounded proof/bound metadata for the durable risk observation row."""
     accepted_proof = (
         proof
         if status in PROOF_BEARING_STATUSES and type(proof) is HeldPositionProof

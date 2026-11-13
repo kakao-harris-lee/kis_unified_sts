@@ -1,29 +1,4 @@
-"""§7.1 import-closure verification for ``tos.rcl`` (RCL design §7.1).
-
-Isomorphic to the capsule / evidence / dsl closure tests, extended to the RCL
-package. It imports every ``tos.rcl`` submodule in a **fresh, spawned interpreter**
-(``subprocess``/``os`` are firewall-forbidden even in tests) and asserts:
-
-  1. No design §2.3 operational package is in the closure (``shared.execution`` /
-     ``kis`` / ``streaming`` / ``llm`` / ``storage`` / ``backtest``, ``services.*``,
-     ``cli.*``).
-  2. Neither ``shared.config`` nor ``shared.config.secrets`` is present (C1 — the
-     transitive ambient-credential intake), nor ``shared.determinism``.
-  3. ``numpy`` / ``pandas`` / ``yaml`` are absent (bounds are injected; YAML parsing
-     is the harness's concern — RCL design §0.3/§7.1).
-  4. **``tos.capsule`` AND ``tos.evidence`` are absent** (§0.3/§3.1 layering — RCL is
-     the *upstream* Safety Commit Log and evidence is a downstream projection, so RCL
-     imports neither; ordering comes only from the core ``tos.ordering``).
-  5. No ``tos.rcl`` source references ``os.environ`` / ``os.getenv`` or a dynamic
-     escape (``exec`` / ``eval`` / ``__import__`` / ``importlib``).
-
-A planted-leak canary proves the spawn+scan pipeline actually catches a leak, so
-"green" is evidence the checker works — not that it has been neutered.
-
-Network stdlib (``socket`` / ``ssl`` / …) is intentionally NOT asserted absent:
-``pydantic`` transitively loads it into every tos closure; design #1 §4 accepts that
-as residual risk, and the direct-import ban is the firewall gate (TOS-FW-B) alone.
-"""
+"""§7.1 import-closure verification for ``tos.rcl`` (RCL design §7.1)."""
 
 from __future__ import annotations
 
@@ -175,13 +150,12 @@ def test_is_forbidden_classifier_canaries() -> None:
     assert _is_forbidden("tos.capsule._base") is True
     assert _is_forbidden("tos.evidence") is True
     assert _is_forbidden("tos.evidence.ledger") is True
-    # Allowed: self, the core substrate, third-party.
     assert _is_forbidden("tos.rcl") is False
     assert _is_forbidden("tos.canonical") is False
     assert _is_forbidden("tos.ordering") is False
     assert _is_forbidden("pydantic") is False
     assert _is_forbidden("decimal") is False
-    assert _is_forbidden("click") is False  # must not false-match the "cli" prefix
+    assert _is_forbidden("click") is False
 
 
 def _ast_escape_offenders(path: Path) -> list[str]:

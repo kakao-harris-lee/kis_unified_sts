@@ -1,26 +1,4 @@
-"""§7.1 import-closure verification for ``tos.workload`` (design #40 D4 kernel side).
-
-Isomorphic to the authority / evidence closure tests. It imports every
-``tos.workload`` submodule in a **fresh, spawned interpreter** (``subprocess`` /
-``os`` are firewall-forbidden even in tests) and asserts:
-
-  1. No design §2.3 operational package is in the closure.
-  2. Neither ``shared.config`` nor ``shared.config.secrets`` is present (C1).
-  3. ``numpy`` / ``pandas`` / ``yaml`` are absent.
-  4. **No other ``tos`` sibling package is present** — ``tos.rcl`` / ``tos.evidence``
-     / ``tos.authority`` / ``tos.egress`` / ``tos.capsule`` are all absent
-     (``tos.workload``'s own module docstring "package placement" note: the
-     ``key_generation`` / epoch / principal identity axes are reported as
-     distinct, never silently coupled by an import edge).
-  5. ``tos.canonical`` IS present (the digest-binding substrate this package's
-     ``FrozenModel``/``ArtifactIntegrityError`` come from).
-  6. No ``tos.workload`` source references ``os.environ`` / ``os.getenv``, a
-     dynamic escape, or a real clock/RNG module (``time`` / ``datetime`` /
-     ``random`` / ``secrets`` / ``uuid`` — this package issues no nonce itself).
-
-A planted-leak canary proves the spawn+scan pipeline actually catches a leak, so
-"green" is evidence the checker works — not that it has been neutered.
-"""
+"""§7.1 import-closure verification for ``tos.workload`` (design #40 D4 kernel side)."""
 
 from __future__ import annotations
 
@@ -80,8 +58,6 @@ _WORKLOAD_SRC = (
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
-#: Real-clock / RNG modules forbidden in a clock-free, nonce-issuing-elsewhere
-#: package (§0.2-style convention shared by every ``tos`` kernel package).
 _CLOCK_AND_RNG_MODULES = frozenset({"time", "datetime", "random", "secrets", "uuid"})
 
 
@@ -166,11 +142,10 @@ def test_is_forbidden_classifier_canaries() -> None:
     assert _is_forbidden("tos.egress") is True
     assert _is_forbidden("numpy") is True
     assert _is_forbidden("yaml") is True
-    # Allowed: self, the core substrate, third-party.
     assert _is_forbidden("tos.workload") is False
     assert _is_forbidden("tos.canonical") is False
     assert _is_forbidden("pydantic") is False
-    assert _is_forbidden("click") is False  # must not false-match the "cli" prefix
+    assert _is_forbidden("click") is False
 
 
 def _ast_escape_offenders(path: Path) -> list[str]:

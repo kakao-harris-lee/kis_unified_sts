@@ -1,9 +1,4 @@
-"""Re-arm gate — non-authorizing conjunctive checklist + SoD (§6.6; SA-EV-010).
-
-All 14 prerequisites must be positively True AND the two dual-control principals must
-differ for ``armable``; any False / None / shared-principal => not armable; and even an
-armable verdict grants no authority (its authority_effect is all-false). SA-INV-013/014.
-"""
+"""Re-arm gate — non-authorizing conjunctive checklist + SoD (§6.6; SA-EV-010)."""
 
 from __future__ import annotations
 
@@ -66,11 +61,7 @@ def test_default_checklist_is_not_armable() -> None:
 
 
 def test_armable_verdict_is_non_authorizing() -> None:
-    """(canary SA-INV-013) An armable verdict grants NO authority (authority_effect all-false).
-
-    ``armable=True`` reports only that prerequisites are met; it does not re-arm — re-arm
-    then issues new capabilities under the current epoch (§17.3), which re-run §5.2.
-    """
+    """(canary SA-INV-013) An armable verdict grants NO authority (authority_effect all-false)."""
     verdict = rearm_gate(armable_checklist())
     assert verdict.armable is True
     effect = verdict.authority_effect

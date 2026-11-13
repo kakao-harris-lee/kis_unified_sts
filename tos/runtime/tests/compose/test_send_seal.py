@@ -1,13 +1,4 @@
-"""``SendSeal`` compose e2e assertions (TOS Phase 4 작업 6 §2.2, plan doc
-``docs/plans/2026-09-08-tos-phase4-send-seal-plan.md``). Hermetic — a real
-composed runtime, a real ``SqliteEvidenceStore``, real durable evidence rows
-read directly off sqlite (never a mock of the gateway's own sink), so these
-tests fail if the compose-root wiring ever regresses the durable
-``SEND_SEALED`` -> ``SEND_STARTED`` order, the seal-digest agreement across
-the seal / ``SEND_STARTED`` / transport / result, or if
-``GatewayEvidenceSinkAdapter`` ever starts dropping the nested ``send_seal``
-payload on the way into the durable store.
-"""
+"""``SendSeal`` compose e2e assertions (TOS Phase 4 작업 6 §2.2, plan doc"""
 
 from __future__ import annotations
 
@@ -22,13 +13,6 @@ from .test_compose_root import _compose, _reach_trusted
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
-#: Every field :class:`tos.egressgw.seal.SendSeal` declares (module docstring
-#: reproduces the list rather than importing the kernel class purely for
-#: field introspection — a plain fixed tuple keeps this test's own firewall
-#: posture unchanged; drifting from the kernel's real field set would only
-#: ever make this assertion under-check, never mask a real bug, since a
-#: missing/renamed field on the kernel side fails the readback assertion
-#: below with a KeyError either way).
 _SEND_SEAL_FIELD_NAMES = (
     "attempt_id",
     "instrument_key",
@@ -62,10 +46,7 @@ _SEND_SEAL_FIELD_NAMES = (
 def _run_to_send_boundary(
     config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
 ):
-    """Compose + run once + write the matching approval file + re-run — the
-    same two-pass pattern ``test_compose_root.py::test_one_synthetic_transport_handoff``
-    and ``test_egress_attestations.py::_run_to_send_boundary`` both use,
-    reaching a real synthetic transport hand-off."""
+    """Compose + run once + write the matching approval file + re-run — the"""
     runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
     _reach_trusted(runtime)
     event = fx.crossing_event()
@@ -84,10 +65,7 @@ def _run_to_send_boundary(
 
 
 def _durable_rows_in_order(runtime) -> list[tuple[str, dict]]:
-    """Every durable evidence row, in the store's own append (``seq``)
-    order — ``(kind, payload)`` pairs, ``payload`` already unwrapped from
-    the store's own ``{"payload": ..., "masked_keys": [...]}`` envelope
-    (``SqliteEvidenceStore._append_with_scheme``'s own module docstring)."""
+    """Every durable evidence row, in the store's own append (``seq``)"""
     rows = runtime.evidence_store.connection.execute(
         "SELECT kind, payload_json FROM entries ORDER BY seq ASC"
     ).fetchall()
@@ -95,9 +73,7 @@ def _durable_rows_in_order(runtime) -> list[tuple[str, dict]]:
 
 
 class TestSendSealDurableOrderAndDigestAgreement:
-    """§2.2 (i): ``SEND_SEALED`` durably precedes ``SEND_STARTED``, and the
-    seal digest agrees, unmodified, across the seal / ``SEND_STARTED`` /
-    transport / result."""
+    """§2.2 (i): ``SEND_SEALED`` durably precedes ``SEND_STARTED``, and the"""
 
     def test_send_sealed_precedes_send_started_durably(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -154,10 +130,7 @@ class TestSendSealDurableOrderAndDigestAgreement:
 
 
 class TestGatewayEvidenceSinkPersistsTheWholeSeal:
-    """§2.2 (ii): ``GatewayEvidenceSinkAdapter`` must persist the NESTED
-    ``send_seal`` payload whole — never dropped, truncated, or flattened to
-    only ``seal_digest`` — readable back from the durable sqlite store with
-    no kernel-object round-trip."""
+    """§2.2 (ii): ``GatewayEvidenceSinkAdapter`` must persist the NESTED"""
 
     def test_send_sealed_row_carries_every_seal_field_read_back_from_sqlite(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -175,10 +148,6 @@ class TestGatewayEvidenceSinkPersistsTheWholeSeal:
         )
         missing = [name for name in _SEND_SEAL_FIELD_NAMES if name not in seal]
         assert missing == [], f"send_seal payload dropped field(s): {missing}"
-        # None of a SendSeal's own fields are ever None (design §1.1
-        # "covered 전부 필수 · None 불허" — construction itself is refused
-        # otherwise), so a readback null is itself evidence of a lossy
-        # serialization path, not a legitimate value.
         null_fields = [name for name in _SEND_SEAL_FIELD_NAMES if seal[name] is None]
         assert null_fields == [], f"send_seal payload nulled field(s): {null_fields}"
 

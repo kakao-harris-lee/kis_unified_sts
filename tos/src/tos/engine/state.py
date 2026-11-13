@@ -1,64 +1,4 @@
-"""Provisional, **non-authoritative** reservation projection (design #31 §2.4 / §4.4).
-
-⚠ **NON-AUTHORITATIVE PROVISIONAL.** This module is not the Risk Capacity Ledger. The real RCL is
-a single-writer, fencing-epoch, CAS-linearizable ledger (ADR-002-002 §8.1:403 / §8.3:434 /
-§8.4:449) and is the **sole** serialization and mutation authority (RFC-002 §9.1:557). What lives
-here is an in-memory *projection* of the ADR-002-002 §10.1 capacity-state vocabulary onto one
-(account, instrument) scope, held so the single event core can observe an outstanding exposure. It
-asserts no linearizability, no fencing epoch, no crash recovery, and no atomicity, and it closes
-**no** capacity or approval EV (design #31 §1.1/§4.4).
-
-Two structural properties carry the design's weight:
-
-* **At-most-one exposure retention (design #31 §4.4, MAJOR-1).** An unresolved outstanding
-  reservation for a scope makes the *next* overlapping economic-effect request for that scope
-  deny at the capacity stage. That closes the re-entrancy window a synchronous core still has
-  **between events**: a second ``DECISION_TICK`` arriving between the send hand-off and the
-  ``EGRESS_RESULT`` cannot create an overlapping exposure (§2.1(iv); the provisional mirror of
-  SAFE-021 At-Most-One Exposure Effect, RFC-005 §11:319-343 / §12 item 7 :364-365; ADR-002-002
-  INV-006:174). The bound is the **injected** ``MAX_unresolved_send_per_scope`` (register §3:90),
-  never a literal.
-
-* **No release path via ordinary results — release only via finality proof (kernel round #3 §2
-  decision 5).** No egress result — not an acknowledgement, not a full fill, not a rejection —
-  ever frees a scope through :meth:`ProvisionalReservationLedger.apply_egress_result`. The
-  projection only advances forward along a conservatism-ordered rank there; an ``UNKNOWN`` /
-  timeout forces the capacity projection into ``QUARANTINED_UNKNOWN`` (Phase 3 wave 2 KW2b-#2;
-  ADR-002-005 §7 "``UNKNOWN`` here forces ``QUARANTINED_UNKNOWN`` in the Capacity dimension until
-  resolved") and re-submits nothing (design #31 §4.2 rule 3; ADR-002-002 INV-005:168 — a crash
-  after ``SEND_STARTED`` must not release capacity). Escaping the quarantine happens only through
-  the closed :data:`QUARANTINE_RESOLUTION_EDGES` table — positive broker evidence for the exact
-  attempt, never a bare repeated ``UNKNOWN`` / ``TIMEOUT`` (ADR-002-002 §18.6 "escaping quarantine
-  requires evidence, never assertion"). The one exception is
-  :meth:`ProvisionalReservationLedger.release`: gated on a typed
-  :class:`FinalityProofRef` token — never a response kind or a bare string — and called only by
-  the runtime's finality-release consumer, only AFTER the RCL-owned ledger has already recorded
-  the release there first (Phase 5 W2-K; RCL remains the sole capacity-mutation authority,
-  RFC-002 §9.1:557 — this projection's own ``release`` mirrors an RCL fact already established
-  elsewhere, it does not originate one).
-
-* **RELEASED returns the projected capacity; it revives nothing (kernel round #3 §2 decision
-  5b).** Phase 5 §10:114 names the very gap this closes: "엔진 in-memory 투영은 W2-K 전까지 프로세스
-  수명 동안 점유 유지" — before this, a released scope stayed unresolved-and-outstanding forever, so
-  no fresh attempt could ever be admitted for it again, defeating the whole point of a release.
-  :meth:`ProvisionalReservationLedger.outstanding` / :meth:`outstanding_count` /
-  :meth:`outstanding_consumed_magnitude` now treat a ``RELEASED`` reservation as **not**
-  outstanding, so :meth:`admits_new_exposure` reopens the scope for a brand-new attempt the
-  moment the released one is the only occupant. This is **not** revival: the released attempt
-  itself stays terminal forever (its own ``attempt_id`` is remembered and permanently refused by
-  any later :meth:`_store` call, whether or not the scope has since moved on to a new attempt) —
-  only the *scope* reopens, for a genuinely fresh attempt, never the same one.
-
-* **A never-sent reservation is discarded, not released (2026-11-01 plan §3.2; issue #974).**
-  :meth:`ProvisionalReservationLedger.discard_unsent` is the one way out for a reservation whose
-  flow halted between step 9's atomic commit and the Send Boundary: it is ``NOT_SENT``, so no
-  egress result will ever arrive for it and the release path above structurally cannot take it.
-  It *removes* the entry rather than reaching ``RELEASED`` — nothing was ever an economic effect
-  — and it is gated on its own typed :class:`~tos.engine.records.UnsentDiscardRef` token plus a
-  positively-``NOT_SENT``, pre-``POTENTIALLY_LIVE`` projection. See that method for the gates.
-
-Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #31 §0.3). No clock, no RNG.
-"""
+"""Provisional, **non-authoritative** reservation projection (design #31 §2.4 / §4.4)."""
 
 from __future__ import annotations
 
@@ -91,25 +31,6 @@ __all__ = [
 ]
 
 
-#: The conservatism-forward order of the capacity states this projection uses (design #31 §2.4),
-#: least-settled first. A transition may only move to an equal-or-later position — non-revival, the
-#: series discipline. ``RELEASE_PENDING_PROOF`` sits before ``QUARANTINED_UNKNOWN`` because a
-#: proven rejection still awaits the RCL-owned release proof, which is a *lesser* claim than "the
-#: broker state cannot currently be determined at all"; ``QUARANTINED_UNKNOWN`` sits last —
-#: strictly the most conservative member this projection ever reaches (Phase 3 wave 2 KW2b-#2) —
-#: mirroring its position as the single highest entry of ``tos.rcl.predicates._CONSERVATISM_RANK``
-#: (rank 8 of 9, RELEASED lowest at 0; report to the reviewer: this projection's own local rank has
-#: no ``TRAPPED_CONSUMED`` member to sit below, so relative to every member it does carry,
-#: ``QUARANTINED_UNKNOWN`` is placed strictly above ``RELEASE_PENDING_PROOF`` exactly as the RCL's
-#: full order has it). ``RELEASED`` sits **last** here — the opposite end from the RCL's own full
-#: order, where it is rank 0 — deliberately: this local rank is not "how conservative a state is"
-#: in the abstract, it is "how far an ordinary, ungated result can advance the projection", and no
-#: ordinary result (:data:`_RESULT_TRANSITIONS`) ever targets ``RELEASED`` at all. Placing it last
-#: means (a) the non-revival guard in :meth:`ProvisionalReservationLedger._store` never treats an
-#: already-``RELEASED`` reservation as revivable by anything, and (b) reaching it is possible only
-#: through the dedicated, token-gated :meth:`ProvisionalReservationLedger.release` — never through
-#: this ordinary rank-advance path (kernel round #3 §2 decision 5; releases only via finality
-#: proof).
 PROJECTION_ORDER: tuple[CapacityState, ...] = (
     CapacityState.COMMITTED_UNBOUND,
     CapacityState.ATTEMPT_BOUND,
@@ -121,19 +42,10 @@ PROJECTION_ORDER: tuple[CapacityState, ...] = (
     CapacityState.RELEASED,
 )
 
-#: The rank, derived structurally from :data:`PROJECTION_ORDER` so the two can never drift.
 PROJECTION_RANK: dict[CapacityState, int] = {
     state: rank for rank, state in enumerate(PROJECTION_ORDER)
 }
 
-#: How an egress result maps onto the two orthogonal axes (RFC-002 §12 Orthogonal Trading State).
-#: The capacity projection is the *conservative* axis: only a definite settlement advances it in
-#: the ordinary case, and ``UNKNOWN`` / ``TIMEOUT`` force it into quarantine — ``QUARANTINED_UNKNOWN``
-#: — rather than leaving it at the last-observed rank (Phase 3 wave 2 KW2b-#2; design #31 §4.2
-#: rule 3; ADR-002-002 INV-005:168 / INV-006:174; ADR-002-005 §7/§9). Before this fix both mapped
-#: to ``None`` ("leave capacity untouched"), which under-claimed: a broker state that "cannot
-#: currently be determined" (§7) is a materially different, *more* conservative fact than "still
-#: whatever it last was", and CPL-5 (ADR-002-005 §10) requires the exact value.
 _RESULT_TRANSITIONS: dict[
     EgressResultKind, tuple[EgressKnowledge, CapacityState | None]
 ] = {
@@ -158,15 +70,6 @@ _RESULT_TRANSITIONS: dict[
         EgressKnowledge.UNKNOWN,
         CapacityState.QUARANTINED_UNKNOWN,
     ),
-    # ★ [KW2-C1] CANCEL_ACK / EXPIRED (Phase 3 wave 2 §2.2): both are broker-observed, but
-    # neither is a release. ADR-002-002 §16.2 "Cancel Acknowledgement moves the reservation to
-    # RELEASE_PENDING_PROOF unless the broker capability profile proves ... Final Quantity
-    # Proof" and CPL-4 "cancel is not release" (ADR-002-005 §10) apply identically to EXPIRED
-    # per the plan's explicit instruction — the projection may advance only as far as
-    # ``RELEASE_PENDING_PROOF``, never to a released state (which this projection cannot reach
-    # at all — see the module docstring "no release path"). A late/duplicate/reordered
-    # cancel-or-expiry is handled by the same rank/quantity non-revival machinery below as
-    # every other result kind — no special-casing required here.
     EgressResultKind.CANCEL_ACK: (
         EgressKnowledge.CANCEL_ACKNOWLEDGED,
         CapacityState.RELEASE_PENDING_PROOF,
@@ -177,41 +80,6 @@ _RESULT_TRANSITIONS: dict[
     ),
 }
 
-#: The closed, frozen set of egress results whose positive broker evidence may pull the
-#: projection back **out** of ``QUARANTINED_UNKNOWN`` (Phase 3 wave 2 KW2b-#2). Consulted in
-#: :meth:`ProvisionalReservationLedger.apply_egress_result` *before* the generic rank-regression
-#: guard — resolution is deliberately the one exception to "a transition may only move to an
-#: equal-or-later position", because ``QUARANTINED_UNKNOWN`` is the single most-conservative
-#: member of :data:`PROJECTION_ORDER`: left to the generic guard alone, quarantine would be
-#: terminal and nothing could ever exit it.
-#:
-#: ADR-002-002 §18.6 "escaping quarantine requires evidence, never assertion" is why ``UNKNOWN``
-#: and ``TIMEOUT`` are deliberately **absent** here: neither carries positive evidence about the
-#: attempt, so a repeat of either while already quarantined is handled by the ordinary rank check
-#: below (equal rank, ``QUARANTINED_UNKNOWN`` -> ``QUARANTINED_UNKNOWN``) and the duplicate-
-#: signature machinery — never this table. Every other member of the closed
-#: :class:`~tos.engine.vocabulary.EgressResultKind` vocabulary *is* positive evidence about this
-#: exact attempt (a broker acknowledgement, a fill, a proven rejection, a cancel/expiry
-#: acknowledgement).
-#:
-#: ⚠ [KW2c-R2] Every value here is a **minimum**, not a destination. ``_resolve_capacity_target``
-#: floors the actual resolution target at ``current.pre_quarantine_capacity`` (the rank held
-#: immediately before quarantine), because "escaping quarantine requires evidence" licenses
-#: *leaving* ``QUARANTINED_UNKNOWN``, never unwinding a settlement the projection had already
-#: proven before it entered quarantine. ``ACK``'s entry is the one that matters most here: its
-#: ordinary (non-quarantined) mapping in :data:`_RESULT_TRANSITIONS` is ``None`` ("leave capacity
-#: where it is") precisely because a bare acknowledgement proves nothing about settlement — that
-#: same weakness means it must never be read as a *destination* once a stronger settlement
-#: (``POSITION_CONSUMED``, ``PARTIALLY_CONSUMED``, ``RELEASE_PENDING_PROOF``) already existed
-#: before the quarantine (Phase 3 wave 2 re-review finding R2: a bare ``ACK`` was silently
-#: reverting a proven ``FULL_FILL`` back to ``POTENTIALLY_LIVE``).
-#:
-#: ⚠ Still the provisional, non-authoritative projection (module docstring). The real resolution
-#: of a Risk Capacity Ledger quarantine is an RCL act gated on Final Quantity Proof (ADR-002-002
-#: §15.2 / §18.6) — a runtime capability this slice does not have (deferred to Phase 5). This
-#: table only stops the **local mirror** from over-reporting a definite settlement as an
-#: unresolved unknown once positive evidence for that exact attempt actually arrives; it asserts
-#: no RCL-authoritative release and creates no headroom (RFC-002 §9.1:558).
 QUARANTINE_RESOLUTION_EDGES: dict[EgressResultKind, CapacityState] = {
     EgressResultKind.ACK: CapacityState.POTENTIALLY_LIVE,
     EgressResultKind.PARTIAL_FILL: CapacityState.PARTIALLY_CONSUMED,
@@ -222,46 +90,13 @@ QUARANTINE_RESOLUTION_EDGES: dict[EgressResultKind, CapacityState] = {
 }
 
 
-#: The four "settled to positive evidence" knowledge states that make a reservation eligible for
-#: release via a finality-proof token (kernel round #3 §2 decision 5) — exactly the terminal
-#: ``EgressResultKind`` vocabulary the plan names (``FULL_FILL``/``CANCEL_ACK``/``EXPIRED``/
-#: ``REJECT``, i.e. :data:`~tos.engine.vocabulary.TERMINAL_RESULT_KINDS`, mapped here via
-#: :data:`_RESULT_TRANSITIONS`'s knowledge axis — derived, so the two cannot drift).
-#: ``PARTIALLY_FILLED`` is deliberately **absent**: a partial fill may still receive more fills,
-#: so it is not yet terminal. ``UNKNOWN`` is absent too — an unresolved quarantine carries no
-#: positive evidence to release from (ADR-002-002 §18.6 "escaping quarantine requires evidence,
-#: never assertion" — the same rule :data:`QUARANTINE_RESOLUTION_EDGES` already enforces for the
-#: ordinary rank-advance path).
 _RELEASABLE_KNOWLEDGE: frozenset[EgressKnowledge] = frozenset(
     _RESULT_TRANSITIONS[kind][0] for kind in TERMINAL_RESULT_KINDS
 )
 
 
 class FinalityProofRef(FrozenModel):
-    """The finality-proof token gating :meth:`ProvisionalReservationLedger.release` (kernel round
-    #3 §2 decision 5).
-
-    Release happens **only** through this typed token — never through an ``EgressResultKind``,
-    a response kind, or a bare string — because a response kind alone re-derives no evidence that
-    the RCL-owned finality-release consumer actually recorded the release first (Phase 5 W2-K).
-    The module's own no-headroom rule (RFC-002 §9.1:558) applies to release exactly as it does to
-    every other transition here: this projection does not originate a release, it mirrors one the
-    RCL has already made.
-
-    Attributes:
-        attempt_id: The exact attempt this proof resolves. :meth:`ProvisionalReservationLedger
-            .release` matches on this alone — never on a caller-supplied scope/key — so a caller
-            can release "by token" without re-deriving which scope holds the attempt.
-        proof_digest: The RCL-owned finality proof's own content-addressed digest. Opaque here:
-            this projection does not verify it, only carries it through for evidence.
-        evidence_seq: The evidence sequence number the runtime's finality-release consumer bound
-            this proof to (e.g. the ``CAPACITY_RELEASE_INTENT`` seq) — carried through for audit,
-            not interpreted by this projection.
-        resolution_generation: The witness generation this proof resolves at — the same
-            generation axis :attr:`~tos.engine.records.EgressResultPayload.resolution_generation`
-            feeds into the duplicate-detection signature (ⓖ), so a release is itself
-            generation-stamped the same way a re-arriving TIMEOUT-resolution result is.
-    """
+    """The finality-proof token gating :meth:`ProvisionalReservationLedger.release` (kernel round"""
 
     attempt_id: str
     proof_digest: str
@@ -269,34 +104,13 @@ class FinalityProofRef(FrozenModel):
     resolution_generation: int
 
 
-#: The only two capacity states a never-sent reservation is ever projected in: step 9's atomic
-#: commit (:meth:`ProvisionalReservationLedger.commit_unbound`) and step 14's attempt binding
-#: (:meth:`ProvisionalReservationLedger.bind_attempt`). ``POTENTIALLY_LIVE`` and every later rank
-#: has passed :meth:`ProvisionalReservationLedger.mark_potentially_live`, which the sequencer
-#: calls *before* the external call precisely so a crash can never be read as "not sent"
-#: (ADR-002-002 INV-005:168) — so none of them is discardable, ever (plan §3.4: "may have been
-#: sent" is broker-proof territory, not this method's).
 _DISCARDABLE_CAPACITY: frozenset[CapacityState] = frozenset(
     {CapacityState.COMMITTED_UNBOUND, CapacityState.ATTEMPT_BOUND}
 )
 
 
 def knowledge_for_result(kind: EgressResultKind) -> EgressKnowledge:
-    """The knowledge axis an egress result establishes (design #31 §2.4).
-
-    Args:
-        kind: The re-injected egress result kind.
-
-    Returns:
-        The :class:`~tos.engine.vocabulary.EgressKnowledge` member. ``UNKNOWN`` and ``TIMEOUT``
-        both map to the explicit ``UNKNOWN`` member — never to a missing value, and never to
-        ``REJECTED`` (RFC-005 §11:325-327 "UNKNOWN is not a rejection"). ``CANCEL_ACK`` /
-        ``EXPIRED`` each map to their own dedicated member (Phase 3 KW2-C1) — neither collapses
-        into ``REJECTED``, which would misrepresent a cancel/expiry as a broker rejection.
-
-    Raises:
-        ArtifactIntegrityError: If the kind is outside the closed mapping (fail-closed).
-    """
+    """The knowledge axis an egress result establishes (design #31 §2.4)."""
     mapped = _RESULT_TRANSITIONS.get(kind)
     if mapped is None:
         raise ArtifactIntegrityError(
@@ -307,22 +121,7 @@ def knowledge_for_result(kind: EgressResultKind) -> EgressKnowledge:
 
 @dataclass(frozen=True)
 class ResultApplication:
-    """The recorded, conservative outcome of one ``apply_egress_result`` call (Phase 3 A-K-2).
-
-    A late, orphaned, duplicated, or attempt-mismatched egress result is not a crash: the design
-    plan (2026-09-09 §1.1 "크래시는 이벤트가 아니다") requires the engine to hand the caller a
-    **recorded conservative outcome** instead of raising. ``applied`` is ``True`` **iff**
-    ``disposition is ResultDisposition.APPLIED``; the two are kept as separate fields (rather than
-    deriving one from the other at every call site) so a caller can gate on the boolean without
-    importing the enum, while the enum still carries which of the three non-APPLIED reasons held.
-
-    ``projection`` is:
-
-    * the *newly stored* projection when ``disposition is APPLIED``;
-    * the *unchanged* outstanding projection when ``disposition`` is ``MISMATCHED_ATTEMPT`` or
-      ``DUPLICATE`` (a reservation exists, but this result did not move it);
-    * ``None`` when ``disposition is ORPHAN_NO_RESERVATION`` (no reservation exists to report).
-    """
+    """The recorded, conservative outcome of one ``apply_egress_result`` call (Phase 3 A-K-2)."""
 
     applied: bool
     disposition: ResultDisposition
@@ -330,23 +129,10 @@ class ResultApplication:
 
 
 class ProvisionalReservationLedger:
-    """The engine's in-memory, non-authoritative reservation projection (design #31 §4.4).
-
-    ⚠ **NON-AUTHORITATIVE PROVISIONAL** — see the module docstring. It exposes no release method,
-    no capacity arithmetic, and no capability issuance; it can only observe restrictively.
-    """
+    """The engine's in-memory, non-authoritative reservation projection (design #31 §4.4)."""
 
     def __init__(self, *, max_unresolved_send_per_scope: int) -> None:
-        """Create an empty projection.
-
-        Args:
-            max_unresolved_send_per_scope: The injected ``MAX_unresolved_send_per_scope`` bound
-                (register §3:90; design #31 §8). Never defaulted here — an unbounded projection
-                would be a producer-local headroom source, which RFC-002 §9.1:558 forbids.
-
-        Raises:
-            ArtifactIntegrityError: If the injected bound is negative.
-        """
+        """Create an empty projection."""
         if max_unresolved_send_per_scope < 0:
             raise ArtifactIntegrityError(
                 "max_unresolved_send_per_scope must be non-negative — a negative bound is not a "
@@ -354,32 +140,9 @@ class ProvisionalReservationLedger:
             )
         self._max_unresolved = max_unresolved_send_per_scope
         self._reservations: dict[tuple[str, str], ProvisionalReservation] = {}
-        #: Per-scope signatures of every egress result already applied (Phase 3 A-K-2 DUPLICATE
-        #: detection, keying tightened in K2-p3-#6, extended to 6 in kernel round #3 §2 decision
-        #: 5 ⓖ): ``(attempt_id, kind, filled_quantity, remaining_quantity, broker_execution_id,
-        #: resolution_generation)`` — **not** ``reference``, which the driver re-stamps on every
-        #: re-enqueue and so can never identify a genuine broker resend (ADR-002-002 §15.3:725).
-        #: With ``broker_execution_id is None`` (a result that never reached a broker, e.g. a
-        #: synthetic ``TIMEOUT``) this is a runtime-local replay guard against re-processing a
-        #: byte-identical resend, not §15.3 broker idempotency. ``resolution_generation`` (ⓖ) is
-        #: the axis that lets a repeated TIMEOUT-resolution arrival escape being folded into
-        #: DUPLICATE: two results that are otherwise byte-identical in the first five elements but
-        #: carry a *different* ``resolution_generation`` are two distinct results, not one resent
-        #: twice — the default ``None`` (no generation tracked) behaves exactly as the old 5-tuple
-        #: did (two ``None``s compare equal, so ordinary results are unaffected). A scope goes
-        #: through at most one reservation lifecycle here for ordinary results (no release path
-        #: exists via them — see the module docstring), so this never needs resetting across
-        #: attempts within a scope.
         self._applied_result_signatures: dict[
             tuple[str, str], tuple[tuple[object, ...], ...]
         ] = {}
-        #: Every ``attempt_id`` that has ever reached ``RELEASED`` for a scope, kept **after** a
-        #: fresh ``commit_unbound`` replaces the scope's stored reservation (kernel round #3 §2
-        #: decision 5b). :meth:`_store`'s reopening exception lets a brand-new reservation
-        #: overwrite an already-``RELEASED`` entry (see that method), which means the released
-        #: entry itself is no longer sitting in ``self._reservations`` to protect against a stray
-        #: attempt to revive it — this remembers it instead, so the SAME attempt_id can never
-        #: transition again even after the scope has moved on to a new attempt.
         self._released_attempt_ids: dict[tuple[str, str], set[str]] = {}
 
     @staticmethod
@@ -387,20 +150,8 @@ class ProvisionalReservationLedger:
         """The hashable form of an :class:`~tos.engine.records.InstrumentKey`."""
         return (key.account, key.instrument)
 
-    # -- observation ---------------------------------------------------------
-
     def outstanding(self, key: InstrumentKey) -> ProvisionalReservation | None:
-        """The unresolved reservation projected for ``key``, if any.
-
-        A ``RELEASED`` reservation is **never** returned here (kernel round #3 §2 decision 5b):
-        ``RELEASED`` returns the projected capacity, so it is no longer "outstanding" in the sense
-        that blocks a fresh attempt — the released reservation is not revived by this exclusion,
-        it simply stops counting against the at-most-one retention. Every mutator that reads
-        through this accessor first (:meth:`bind_attempt`, :meth:`mark_potentially_live`,
-        :meth:`apply_egress_result`) therefore sees "nothing projected" for a released scope and
-        refuses or reports a conservative disposition exactly as it would for a genuinely empty
-        scope — none of them can ever transition an already-``RELEASED`` entry.
-        """
+        """The unresolved reservation projected for ``key``, if any."""
         reservation = self._reservations.get(self._key_tuple(key))
         if (
             reservation is not None
@@ -410,13 +161,7 @@ class ProvisionalReservationLedger:
         return reservation
 
     def outstanding_count(self, key: InstrumentKey) -> int:
-        """How many unresolved (never ``RELEASED``) reservations the projection holds for ``key``.
-
-        Slice #1 projects at most one per scope, so this is 0 or 1; it is expressed as a count so
-        the comparison against the injected ``MAX_unresolved_send_per_scope`` bound stays explicit
-        rather than hidden in a boolean. A ``RELEASED`` reservation contributes 0 (kernel round #3
-        §2 decision 5b — see :meth:`outstanding`).
-        """
+        """How many unresolved (never ``RELEASED``) reservations the projection holds for ``key``."""
         return len(
             [
                 reservation
@@ -426,84 +171,16 @@ class ProvisionalReservationLedger:
         )
 
     def outstanding_consumed_magnitude(self, key: InstrumentKey) -> Decimal | None:
-        """The already-recorded consumed magnitude of ``key``'s outstanding reservation (§35 §5.2).
-
-        A **read**, and nothing else. It returns the ``filled_quantity`` a re-injected egress
-        result already wrote onto the projection, so a position-closing derivation can be sized
-        from the position that actually exists instead of from a risk budget. Reading is neither
-        serialization nor mutation, so RFC-002 §9.1:557 (the RCL is the sole such authority) is
-        untouched, and it creates no headroom for anyone (§9.1:558) — the at-most-one retention is
-        computed exactly as before and still denies an overlapping effect at the capacity stage.
-
-        Deliberately **not** named ``release`` / ``free`` / ``clear`` / ``reset``: those paths do
-        not exist here and this is not one of them (design #35 §5.2 / §5.3).
-
-        ⚠ The honest scope is one entry. What is returned is the outstanding reservation's
-        capacity-consumed magnitude, which coincides with the held position only while a scope
-        holds at most one attempt. A full net-position ledger — multi-leg, averaged — is **not**
-        this: the engine is a capacity / commitment machine, not a position ledger, and that
-        generalization is deferred (design #35 §5.3).
-
-        Args:
-            key: The (account, instrument) scope.
-
-        Returns:
-            The recorded ``filled_quantity``, or ``None`` when no reservation is outstanding for
-            the scope or none has been filled — an absent observation, never a zero standing in
-            for one (∅ both ways).
-        """
+        """The already-recorded consumed magnitude of ``key``'s outstanding reservation (§35 §5.2)."""
         outstanding = self.outstanding(key)
         return None if outstanding is None else outstanding.filled_quantity
 
     def admits_new_exposure(self, key: InstrumentKey) -> bool:
-        """Whether a **new** overlapping economic effect may be requested for ``key``.
-
-        The at-most-one retention observation (design #31 §4.4). ``True`` only when the projected
-        unresolved count is strictly below the injected bound. This is a *restrictive-only*
-        observation of the projection — it creates no headroom for anyone (RFC-002 §9.1:558) and
-        it grants nothing; only the real RCL commits capacity.
-
-        Since a ``RELEASED`` reservation never counts toward :meth:`outstanding_count` (kernel
-        round #3 §2 decision 5b), a scope whose only occupant has been released is admitted again
-        here — the released *scope* reopens for a fresh attempt; the released *attempt* itself
-        never does (:meth:`_store`'s own non-revival memory refuses it by ``attempt_id``
-        regardless of what this method reports).
-
-        Args:
-            key: The (account, instrument) scope.
-
-        Returns:
-            ``True`` iff the scope has room under the injected bound.
-        """
+        """Whether a **new** overlapping economic effect may be requested for ``key``."""
         return self.outstanding_count(key) < self._max_unresolved
 
     def release(self, ref: FinalityProofRef) -> bool:
-        """Release the reservation ``ref.attempt_id`` names — the **only** release path (kernel
-        round #3 §2 decision 5). :meth:`apply_egress_result` still never releases anything for an
-        ordinary result; this method is the sole, additional, token-gated exception RFC-002
-        §9.1:557-558 anticipates by name — the RCL is the one authority that may actually confirm
-        a release, and this method's caller (the runtime's finality-release consumer) calls it
-        only after the RCL-owned ledger has already recorded the release there first.
-
-        Matches purely on ``ref.attempt_id`` across every scope this ledger holds — the caller
-        does not need to independently know which (account, instrument) scope holds the attempt
-        ("release by token only").
-
-        Args:
-            ref: The finality-proof token (:class:`FinalityProofRef`).
-
-        Returns:
-            ``True`` iff a reservation matching ``ref.attempt_id`` was found, was one of the
-            :data:`_RELEASABLE_KNOWLEDGE` terminal knowledge states, and was not already
-            ``RELEASED`` — the transition then actually happened. ``False`` in every other case
-            (idempotent repeat, no matching attempt, or not yet terminal) — none of those is an
-            error condition here, mirroring :meth:`apply_egress_result`'s own "conservative
-            recorded outcome, never a crash" discipline.
-
-        Raises:
-            TypeError: ``ref`` is not a :class:`FinalityProofRef` — release is gated on the typed
-                token alone; no response-kind/string path exists to reach ``RELEASED``.
-        """
+        """Release the reservation ``ref.attempt_id`` names — the **only** release path (kernel"""
         if not isinstance(ref, FinalityProofRef):
             raise TypeError(
                 "ProvisionalReservationLedger.release requires a FinalityProofRef — got "
@@ -522,8 +199,6 @@ class ProvisionalReservationLedger:
                     update={"capacity_state": CapacityState.RELEASED}
                 )
             )
-            # Kernel round #3 §2 decision 5b: remembered even after a later fresh commit_unbound
-            # replaces this scope's stored entry — see the non-revival guard in _store.
             self._released_attempt_ids.setdefault(
                 self._key_tuple(reservation.instrument_key), set()
             ).add(ref.attempt_id)
@@ -531,53 +206,7 @@ class ProvisionalReservationLedger:
         return False
 
     def discard_unsent(self, ref: UnsentDiscardRef) -> bool:
-        """Drop a reservation that was committed but **never sent** (plan §3.2; issue #974).
-
-        The gap this closes: step 9's ``ATOMIC_COMMIT`` occupies the scope, but steps 10-14 can
-        still halt the flow before the Send Boundary. What is left behind is ``NOT_SENT``, and
-        :meth:`release` structurally cannot take it — its :data:`_RELEASABLE_KNOWLEDGE` gate admits
-        only the four *settled* knowledge states, none of which a never-sent reservation can ever
-        reach, because no egress result will ever arrive for an attempt that never left the core.
-        Without this method the scope stays occupied for the life of the process AND across every
-        boot (the replay rebuilds the same projection), so :meth:`admits_new_exposure` keeps
-        denying at the sequencer's step-8 capacity pre-check and an open position can no longer be
-        closed through the engine at all.
-
-        **Not a second release path.** Nothing here reaches ``RELEASED`` and no proof is asserted:
-        the entry is *removed*, which is the honest projection of "this reservation never became an
-        economic effect", where :meth:`release` mirrors an RCL-recorded release of an effect that
-        really existed. The removed attempt is deliberately **not** remembered in
-        ``_released_attempt_ids``: that memory stops a broker-settled attempt from transitioning
-        again, and a never-sent attempt reached no broker, so refusing it later would raise
-        :class:`~tos.engine._base.ArtifactIntegrityError` over a fact that never happened.
-
-        Three fail-closed gates, none of them the reason string:
-
-        1. ``knowledge is NOT_SENT`` — the positive statement that nothing was handed off. Every
-           other member is reached only via :meth:`mark_potentially_live` or an applied result.
-        2. ``capacity_state`` in :data:`_DISCARDABLE_CAPACITY` — ``POTENTIALLY_LIVE`` or later is
-           refused outright (see that constant).
-        3. No egress result has been applied to this reservation's own attempt. Redundant with (1)
-           today — every :data:`_RESULT_TRANSITIONS` entry moves ``knowledge`` off ``NOT_SENT`` —
-           and kept as the defence in depth the sequencer's own step-9 re-check models: a future
-           result kind leaving ``knowledge`` untouched would otherwise silently open the discard to
-           an attempt the broker has already answered. Keyed by ``attempt_id``, so a scope that
-           legitimately reopened after a release is never refused by its predecessor's signatures.
-
-        Args:
-            ref: The typed :class:`UnsentDiscardRef` token.
-
-        Returns:
-            ``True`` iff a reservation for ``ref.proposal_id`` was found, passed all three gates,
-            and was removed — the scope then admits a new exposure again. ``False`` in every other
-            case (unknown proposal, a repeat discard, or any gate refusing), never an exception:
-            the "conservative recorded outcome, never a crash" discipline :meth:`release` and
-            :meth:`apply_egress_result` already follow.
-
-        Raises:
-            TypeError: ``ref`` is not an :class:`UnsentDiscardRef` — a :class:`FinalityProofRef`
-                included, since it gates the other, unrelated path.
-        """
+        """Drop a reservation that was committed but **never sent** (plan §3.2; issue #974)."""
         if not isinstance(ref, UnsentDiscardRef):
             raise TypeError(
                 "ProvisionalReservationLedger.discard_unsent requires an UnsentDiscardRef — got "
@@ -600,35 +229,13 @@ class ProvisionalReservationLedger:
             return True
         return False
 
-    # -- projection advance (no ordinary-result release path exists) ---------
-
     def _store(
         self,
         reservation: ProvisionalReservation,
         *,
         allow_quarantine_resolution: bool = False,
     ) -> ProvisionalReservation:
-        """Store a reservation projection, enforcing forward-only (non-revival) advance.
-
-        Args:
-            reservation: The reservation to store.
-            allow_quarantine_resolution: ``True`` only when the caller
-                (:meth:`apply_egress_result`) has already independently verified this exact rank
-                decrease is a licensed :data:`QUARANTINE_RESOLUTION_EDGES` exit from
-                ``QUARANTINED_UNKNOWN`` (Phase 3 wave 2 KW2b-#2; ADR-002-002 §18.6). Every other
-                call site (``commit_unbound`` / ``bind_attempt`` / ``mark_potentially_live``) never
-                passes this, so the non-revival guard stays absolute for them — none of the three
-                is ever legitimately reachable while quarantined in the first place (the at-most-
-                one exposure retention denies a new attempt for an occupied, quarantined scope).
-
-        Raises:
-            ArtifactIntegrityError: The generic rank-regression guard fires, OR ``reservation``
-                names an ``attempt_id`` that has already reached ``RELEASED`` for this scope
-                (kernel round #3 §2 decision 5b) — checked FIRST, unconditionally, so a released
-                attempt can never transition again even after a later fresh ``commit_unbound`` has
-                already replaced its scope entry (at which point the generic rank check below no
-                longer sees it at all).
-        """
+        """Store a reservation projection, enforcing forward-only (non-revival) advance."""
         key_tuple = self._key_tuple(reservation.instrument_key)
         if (
             reservation.attempt_id is not None
@@ -642,12 +249,6 @@ class ProvisionalReservationLedger:
             )
         current = self._reservations.get(key_tuple)
         if current is not None:
-            # Kernel round #3 §2 decision 5b: a scope whose only occupant is already RELEASED is
-            # reopening for a genuinely fresh attempt (the ONLY way to reach this branch is a new
-            # commit_unbound, admitted because outstanding_count now excludes RELEASED) — not a
-            # revival of the released entry itself, which the attempt_id check above already
-            # guards independently of rank. The generic rank-regression guard below would
-            # otherwise refuse this unconditionally, since RELEASED sits at the highest local rank.
             reopening_a_released_scope = (
                 current.capacity_state is CapacityState.RELEASED
             )
@@ -670,22 +271,7 @@ class ProvisionalReservationLedger:
     def commit_unbound(
         self, key: InstrumentKey, *, proposal_id: str | None
     ) -> ProvisionalReservation:
-        """Project the ADR-002-002 §11 step-9 atomic commit as ``COMMITTED_UNBOUND``.
-
-        ⚠ This is a projection, not a commit: no ledger row is written, no epoch is fenced, and no
-        competing actor is actually excluded (design #31 §4.4).
-
-        Args:
-            key: The (account, instrument) scope.
-            proposal_id: The proposal identity the projection is bound to.
-
-        Returns:
-            The stored projection.
-
-        Raises:
-            ArtifactIntegrityError: If the scope already holds an unresolved reservation — the
-                at-most-one retention (design #31 §4.4).
-        """
+        """Project the ADR-002-002 §11 step-9 atomic commit as ``COMMITTED_UNBOUND``."""
         if not self.admits_new_exposure(key):
             raise ArtifactIntegrityError(
                 f"scope {self._key_tuple(key)} already holds an unresolved reservation — the "
@@ -704,18 +290,7 @@ class ProvisionalReservationLedger:
     def bind_attempt(
         self, key: InstrumentKey, *, attempt_id: str
     ) -> ProvisionalReservation:
-        """Project ADR-002-002 §11 step 14 as ``ATTEMPT_BOUND`` (issuing no capability).
-
-        Args:
-            key: The (account, instrument) scope.
-            attempt_id: The content-addressed attempt identity.
-
-        Returns:
-            The stored projection.
-
-        Raises:
-            ArtifactIntegrityError: If no reservation is projected for the scope.
-        """
+        """Project ADR-002-002 §11 step 14 as ``ATTEMPT_BOUND`` (issuing no capability)."""
         current = self.outstanding(key)
         if current is None:
             raise ArtifactIntegrityError(
@@ -732,23 +307,7 @@ class ProvisionalReservationLedger:
         )
 
     def mark_potentially_live(self, key: InstrumentKey) -> ProvisionalReservation:
-        """Conservatively project ``POTENTIALLY_LIVE`` **before** the attempt leaves the core.
-
-        ADR-002-002 §11.4 step 16 durably records ``SEND_STARTED`` *before* the external call, and
-        INV-005:168 forbids releasing capacity after it; the local write and the broker call cannot
-        be globally atomic (§11 closing note). So the projection advances first and stays advanced
-        even if the injected transmit raises — the engine never infers "not sent" from a failure to
-        hand off (design #31 §4.2 rule 3; RFC-002 §10.7:722).
-
-        Args:
-            key: The (account, instrument) scope.
-
-        Returns:
-            The stored projection.
-
-        Raises:
-            ArtifactIntegrityError: If no reservation is projected for the scope.
-        """
+        """Conservatively project ``POTENTIALLY_LIVE`` **before** the attempt leaves the core."""
         current = self.outstanding(key)
         if current is None:
             raise ArtifactIntegrityError(
@@ -768,55 +327,15 @@ class ProvisionalReservationLedger:
     def _quantity_regressed(
         current: ProvisionalReservation, payload: EgressResultPayload
     ) -> bool:
-        """Whether ``payload`` would regress the quantity axis of ``current`` (§35 K2-p3-#5 / N2;
-        Phase 3 wave 2 review finding #10 / kernel disposition KW2b-#10).
-
-        Factored out of :meth:`apply_egress_result` (size-budget discipline). Four independent,
-        non-revival directions are checked, all folded into the same
-        :class:`~tos.engine.vocabulary.ResultDisposition.QUANTITY_REGRESSION` disposition (see
-        that member's own docstring for why a fourth is not a separate disposition):
-
-        1. ``filled_quantity`` strictly below the already-recorded value (ADR-002-002
-           §15.1:710 "reduced by no more than the amount proven filled");
-        2. ``remaining_quantity`` growing at all versus the already-recorded value (implies the
-           authorized quantity itself grew — unrepresentable for one attempt);
-        3. ``remaining_quantity`` shrinking by more than ``filled_quantity`` grew (quantity
-           vanishing unaccounted — CPL-2/CPL-4 forbid an evidence-free implicit release);
-        4. [KW2b-#10] the *mirror* of (3): ``filled_quantity`` growing by more than
-           ``remaining_quantity`` shrank, which inflates rather than shrinks the attempt's
-           authorized total (``filled_quantity + remaining_quantity``) — e.g. ``4/6`` ->
-           ``6/5`` (total ``10`` -> ``11``). Directions 1-3 alone did not catch this: they admit
-           any ``filled`` growth and only refuse a ``remaining`` shrink that *exceeds* it, never
-           one that falls short of it. The first fill-bearing result for an attempt fixes
-           ``authorized_total``; every later one must keep that exact sum, not merely avoid
-           exceeding it — an attempt's authorized quantity can no more grow after the fact than
-           it can shrink without proof.
-
-        Only ``FULL_FILL`` / ``PARTIAL_FILL`` carry magnitudes at all; every other kind returns
-        ``False`` immediately (nothing to regress). ``EgressResultPayload``'s own shape validator
-        guarantees both magnitudes are present (non-``None``) for those two kinds, so once
-        ``current`` also carries an established baseline, every comparison below is over concrete
-        values — never a silent ``None`` short-circuit.
-
-        Args:
-            current: The outstanding projection before this result.
-            payload: The re-injected egress result payload.
-
-        Returns:
-            ``True`` iff any of the four directions above regressed.
-        """
+        """Whether ``payload`` would regress the quantity axis of ``current`` (§35 K2-p3-#5 / N2;"""
         if payload.kind not in (
             EgressResultKind.FULL_FILL,
             EgressResultKind.PARTIAL_FILL,
         ):
             return False
         if current.filled_quantity is None or current.remaining_quantity is None:
-            # No fill-bearing result has landed for this attempt yet — there is no established
-            # authorized-total baseline to regress against. The first one sets it.
             return False
-        assert (
-            payload.filled_quantity is not None
-        )  # validator-guaranteed for fill kinds
+        assert payload.filled_quantity is not None
         assert payload.remaining_quantity is not None
         if payload.filled_quantity < current.filled_quantity:
             return True
@@ -829,28 +348,7 @@ class ProvisionalReservationLedger:
     def _resolve_capacity_target(
         current: ProvisionalReservation, payload: EgressResultPayload
     ) -> tuple[CapacityState | None, bool] | ResultDisposition:
-        """The capacity target for ``payload`` against ``current``, or the rank-guard refusal.
-
-        Factored out of :meth:`apply_egress_result` (size-budget discipline). Returns either:
-
-        * ``(capacity_state, resolving_quarantine)`` — the target to store (``None`` means "no
-          explicit target, leave unchanged") and whether this is a licensed
-          :data:`QUARANTINE_RESOLUTION_EDGES` exit from ``QUARANTINED_UNKNOWN`` (Phase 3 wave 2
-          KW2b-#2; ADR-002-002 §18.6 "escaping quarantine requires evidence, never assertion" —
-          the one deliberate exception to the rank-regression guard, checked first: left to that
-          guard alone, quarantine would be terminal, since ``QUARANTINED_UNKNOWN`` is the single
-          highest rank in :data:`PROJECTION_ORDER` and nothing could ever rank above it to exit).
-          [KW2c-R2] The resolution target is **floored** at ``current.pre_quarantine_capacity``
-          (the rank held immediately before quarantine, if any) — the table's own value is a
-          minimum, never a destination (see :data:`QUARANTINE_RESOLUTION_EDGES`'s docstring for
-          why: re-review finding R2, a bare ``ACK`` was silently reverting a proven settlement
-          such as ``POSITION_CONSUMED`` back to ``POTENTIALLY_LIVE`` with no signal anywhere);
-        * ``ResultDisposition.NON_MONOTONIC_PROJECTION`` when the target would otherwise regress
-          the rank and is *not* a licensed resolution (Phase 3 K2-p3-#4) — refused before
-          :meth:`_store` is ever reached, so its own non-revival guard never has to fire on this
-          path; a late/reordered result is a recorded conservative outcome, not a crash (design
-          plan 2026-09-09 §1.1).
-        """
+        """The capacity target for ``payload`` against ``current``, or the rank-guard refusal."""
         _, capacity_state = _RESULT_TRANSITIONS[payload.kind]
         resolving_quarantine = (
             current.capacity_state is CapacityState.QUARANTINED_UNKNOWN
@@ -878,22 +376,7 @@ class ProvisionalReservationLedger:
         capacity_state: CapacityState,
         resolving_quarantine: bool,
     ) -> CapacityState | None:
-        """The next ``pre_quarantine_capacity`` value to store (Phase 3 wave 2 KW2c-R2).
-
-        Maintains the invariant declared on the field itself — non-``None`` **iff**
-        ``capacity_state is CapacityState.QUARANTINED_UNKNOWN``:
-
-        * entering quarantine for the first time (target is ``QUARANTINED_UNKNOWN`` and
-          ``current`` was not already quarantined) records ``current.capacity_state`` as the new
-          floor;
-        * a repeated ``UNKNOWN`` / ``TIMEOUT`` while already quarantined leaves the existing
-          floor untouched — it must never be re-derived from ``QUARANTINED_UNKNOWN`` itself,
-          which would erase the very floor it exists to remember;
-        * resolving out of quarantine (``resolving_quarantine`` is ``True``) clears the floor back
-          to ``None`` — it no longer applies once the projection has left ``QUARANTINED_UNKNOWN``;
-        * every other transition (never quarantined at all) leaves the field at its current value
-          (``None``, since it is never non-``None`` outside quarantine).
-        """
+        """The next ``pre_quarantine_capacity`` value to store (Phase 3 wave 2 KW2c-R2)."""
         if capacity_state is CapacityState.QUARANTINED_UNKNOWN:
             if current.capacity_state is CapacityState.QUARANTINED_UNKNOWN:
                 return current.pre_quarantine_capacity
@@ -903,27 +386,7 @@ class ProvisionalReservationLedger:
         return current.pre_quarantine_capacity
 
     def apply_egress_result(self, payload: EgressResultPayload) -> ResultApplication:
-        """Apply — or conservatively record — a re-injected egress result (Phase 3 A-K-2).
-
-        A late, orphaned, duplicated, attempt-mismatched, rank-regressing, or quantity-regressing
-        result is **not** raised as a crash: it is returned as a :class:`ResultApplication` naming
-        the exact :class:`~tos.engine.vocabulary.ResultDisposition`, leaving the projection
-        untouched on every non-``APPLIED`` outcome. See :class:`~tos.engine.vocabulary.
-        ResultDisposition` for what each of the six members means and the spec citation behind it
-        — this method is the single place all six are decided, in the order the class's own
-        docstring lists them, so that is the canonical reference rather than a second copy here.
-        Only ``APPLIED`` transitions the reservation (design #31 §2.2/§4.2 rule 3). The two
-        regressing dispositions (``NON_MONOTONIC_PROJECTION``, ``QUANTITY_REGRESSION``) exist
-        because letting :meth:`_store`'s non-revival guard raise straight out of this method was
-        itself the crash Phase 3 review finding #4 named — this method must never let it fire.
-
-        Args:
-            payload: The egress result payload.
-
-        Returns:
-            The :class:`ResultApplication` naming the disposition and the resulting (or unchanged)
-            projection.
-        """
+        """Apply — or conservatively record — a re-injected egress result (Phase 3 A-K-2)."""
         key = payload.instrument_key
         key_tuple = self._key_tuple(key)
         current = self.outstanding(key)
@@ -963,11 +426,6 @@ class ProvisionalReservationLedger:
                 projection=current,
             )
         capacity_state, resolving_quarantine = target
-        # ★ [K2-p3-#5 / Phase 3 wave 2 N2] The quantity axis has its own, independent
-        # non-revival rule (ADR-002-002 §15.1:710), covering both ``filled_quantity`` shrinking
-        # and ``remaining_quantity`` growing or shrinking unmatched by a filled increase (wave 1
-        # review finding N2). See :meth:`_quantity_regressed` for the full citation of each of
-        # the three directions checked.
         if self._quantity_regressed(current, payload):
             return ResultApplication(
                 applied=False,

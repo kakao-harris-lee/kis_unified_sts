@@ -1,18 +1,4 @@
-"""Every tunable of ③, read from one YAML file. Nothing below is hardcoded.
-
-CLAUDE.md's non-negotiable rule: thresholds, schedules and feature gates belong
-in YAML, not in branches. δ (1.8 s) and G (10 s) are **operator-confirmed,
-2026-10-14**; the PR-1 run (evidence
-``docs/broker-profiles/evidence/2026-10-12-cp3-pr1-minute-probe/README.md``
-§1.4) only proposed them and explicitly refused to let them be written into
-code ("PR-2 가 이 값을 config 로 받아야 하며, 이 문서는 코드에 박는 것을 승인하지
-않는다"). Confirmation does not change where they live: the YAML carries both
-values with their evidence basis, and nothing here defaults them.
-
-An UNKNOWN key is refused rather than ignored. A silently-ignored key is how a
-typo in ``missing_no_successor_timeout_s`` becomes "G is whatever the default
-was" with nothing saying so.
-"""
+"""Every tunable of ③, read from one YAML file. Nothing below is hardcoded."""
 
 from __future__ import annotations
 
@@ -27,8 +13,6 @@ import yaml
 
 from tools.tos_cp3.produce_fields import DEFAULT_MIN_BARS_PER_DAY
 
-#: ``quote_initial_cursor`` token: "the close of the day being fetched", from
-#: the tenant calendar (:func:`tools.tos_cp3.live_producer.real_quotes.resolve_initial_cursor`).
 QUOTE_CURSOR_SESSION_END = "session_end"
 
 
@@ -36,8 +20,6 @@ class LiveProducerRefused(RuntimeError):
     """The producer refused to start, or refused to write. Never routed around."""
 
 
-#: Keys the YAML must carry, with the Python type each is read as. There is no
-#: default for any of them: a default here is a value nobody reviewed.
 _REQUIRED: tuple[tuple[str, type], ...] = (
     ("env_file", str),
     ("token_cache_dir", str),
@@ -65,47 +47,24 @@ _REQUIRED: tuple[tuple[str, type], ...] = (
     ("band_max_response_bytes", int),
 )
 
-#: Keys read as a list of ints rather than a scalar.
 _REQUIRED_INT_LISTS: tuple[str, ...] = ("calendar_covered_years",)
 
-#: Keys that must be PRESENT but whose value may be ``null``. Present-and-null
-#: is a statement ("this market has no front month"); an absent key is not.
 _REQUIRED_NULLABLE_STR: tuple[str, ...] = ("front_month_product",)
 
-#: Present for exactly the markets whose :attr:`MarketProfile.tick_ladder` is True,
-#: absent for the rest (#929 review MEDIUM). The stock band probe compares the
-#: broker's ``aspr_unit`` with the tick this file's ``price_band_ticks`` gives the
-#: quoted price; futures has a flat tick and no such field to compare.
 _MARKET_PATH_KEY = "venue_policy_yaml"
 
 
 @dataclass(frozen=True)
 class MarketProfile:
-    """What the ``market`` key selects — protocol facts, not thresholds.
+    """What the ``market`` key selects — protocol facts, not thresholds."""
 
-    The quotation TR / path / market-division code for each market live in
-    :mod:`tools.tos_cp3.quote_client` next to the allowlist that gates them;
-    this table holds only what the CONFIG layer must check or hand on.
-    """
-
-    #: The Parquet ``<root>/<asset_class>/minute/`` segment, and the
-    #: ``tools.broker_probes.common.resolve_credentials`` asset name.
     asset_class: str
-    #: The two REAL query secrets this market reads from ``env_file``.
     credential_keys: tuple[str, str]
-    #: ``parser_env`` pins this market must carry.
     required_pins: tuple[str, ...]
-    #: Whether the instrument rolls (a futures front month) — decides whether
-    #: ``front_month_product`` must be set or must be ``null``.
     rolls: bool
-    #: Whether the venue tick is a per-price ladder the band probe must check
-    #: against the broker's ``aspr_unit`` — decides whether ``venue_policy_yaml``
-    #: must be present.
     tick_ladder: bool = False
 
 
-#: The two markets this producer serves. A stock symbol does not roll, reads
-#: the STOCK query keys and has no futures hour-class parameter to pin.
 MARKETS: dict[str, MarketProfile] = {
     "futures": MarketProfile(
         asset_class="futures",
@@ -122,17 +81,8 @@ MARKETS: dict[str, MarketProfile] = {
     ),
 }
 
-#: The floor on ``request_timeout_s``. One second, because that is already
-#: below any real KIS round trip (PR-1 measured the minute GET in the hundreds
-#: of ms at best) and the band GET divides this number by four for its
-#: per-phase inactivity guards. Checked here rather than clamped at the call
-#: site: a clamp that raises a too-small value loosens the bound (review round
-#: 2 item A).
 MIN_REQUEST_TIMEOUT_S = 1.0
 
-#: Floor on ``band_max_response_bytes``. 1 KiB: a real ``FHMIF10000000`` body
-#: is a few hundred bytes, so anything under this refuses the normal response
-#: and turns the cap into a permanent band outage.
 MIN_BAND_RESPONSE_BYTES = 1024
 
 
@@ -149,34 +99,12 @@ class LiveProducerConfig:
     execution_yaml: Path
     calendar_session_id: str
     calendar_session_phase: str
-    #: ``futures`` or ``stock`` — selects the quotation TR, the credential pair,
-    #: the Parquet asset class and whether the instrument rolls (:data:`MARKETS`).
     market: str
-    #: ``auto`` (the futures era rule of ``produce_fields.resolve_open_anchor``)
-    #: or ``HH:MM``. A stock session opens at 09:00 and has no era cutover, so
-    #: the stock config names its open; boot asserts it equals the calendar's
-    #: session start.
     open_anchor: str
-    #: The top-level block of ``execution_yaml`` the contract spec is read from
-    #: (``futures_contract_spec`` / ``stock_contract_spec``).
     contract_spec_block: str
-    #: ``FID_INPUT_HOUR_1`` of the first page of a day. Futures sends ``""``
-    #: (latest); the stock TR requires a time, so the stock config names the
-    #: session close — as :data:`QUOTE_CURSOR_SESSION_END`, which the real
-    #: transport resolves per fetched day from the calendar's window on that
-    #: day (issue #924: an exam day closes at a different time, and a literal
-    #: ``153000`` would cut its last hour off a seed day and the target day).
     quote_initial_cursor: str
-    #: The ``product`` argument of
-    #: ``shared.instruments.futures.get_front_month_code``. It names each seed
-    #: day's contract in the cross-contract seed (plan §3.2a) and is checked
-    #: against ``--instrument`` at startup, so it is a setting rather than a
-    #: literal: a producer pointed at the standard contract while the runner
-    #: trades mini would otherwise splice against the wrong month.
     front_month_product: str | None
-    #: δ — the first poll happens at ``bar boundary + first_poll_delay_s``.
     first_poll_delay_s: float
-    #: G — re-poll until ``boundary + G`` before calling the minute late.
     missing_no_successor_timeout_s: float
     repoll_pace_s: float
     request_timeout_s: float
@@ -187,41 +115,10 @@ class LiveProducerConfig:
     min_bars_per_day: int
     max_seed_calendar_days: int
     max_consecutive_produce_errors: int
-    #: Plan §3.5's second give-up, added after PR #904 review round 1 measured
-    #: that the first one could not see a dead FEED at all:
-    #: ``consecutive_produce_errors`` counts only ``ProduceFieldsError``, so a
-    #: revoked token failed every poll of every minute and the session still
-    #: ended rc 0 (measured: ``fetch_error`` 324, ``published`` 0, rc 0).
-    #:
-    #: Counted in MINUTES — boundaries at which no poll succeeded — and not in
-    #: failed polls, for two reasons. A poll count is a function of
-    #: :attr:`repoll_pace_s`: halving the pace would halve the wall-clock time
-    #: to trip, with no operator intent anywhere. And "the feed gave us nothing
-    #: for N minutes" is the question an operator actually has.
-    #:
-    #: ⚠ It counts FETCH failures only, never "the poll worked and had no row
-    #: for that minute" (``no_raw_row_for_minute``). The genesis session is the
-    #: concrete input for that distinction: 12:39-13:08 was 30 consecutive
-    #: minutes of exactly that shape — a real lunch lull, ``fetch_error: 0``
-    #: all day — so a counter that folded the two would abort a clean session
-    #: every day the market goes quiet for half an hour.
     max_consecutive_fetch_error_minutes: int
-    #: Years the tenant calendar is declared to cover. Not inferred from its
-    #: holiday dates (review L4) and cross-checked against the file at load.
     calendar_covered_years: tuple[int, ...]
-    #: Hard cap on the band response the producer-side transport will read
-    #: before giving up (band plan v3, 2026-10-16). Codex's round-4 F2
-    #: measurement is the reason: a 48 MiB body was hashed and parsed inside a
-    #: 0.2 s budget, so the TIME bound alone never saw it. The band GET streams
-    #: and stops at this many bytes. A real ``FHMIF10000000`` body is a few
-    #: hundred bytes, so this is an "obviously wrong" line, not a tuning knob.
     band_max_response_bytes: int
-    #: The tenant tree's ``venue_constraint_policy.yaml`` — its
-    #: ``price_band_ticks`` ladder and ``_runtime.price_scale`` — for markets whose
-    #: tick is a ladder (``stock``); ``None`` for the rest (:data:`_MARKET_PATH_KEY`).
     venue_policy_yaml: Path | None
-    #: The two parser env values the producer PINS (plan §3.3 L9). Bar size and
-    #: the drop rule must not change quietly with the environment.
     parser_env: tuple[tuple[str, str], ...]
 
     @property
@@ -258,13 +155,7 @@ def _resolve(repo_root: Path, value: str) -> Path:
 
 
 def _assert_market(path: Path, values: dict[str, Any]) -> None:
-    """The ``market`` key and the keys whose meaning depends on it.
-
-    Each refusal names an input that would otherwise run WRONG rather than
-    fail: a stock config with a ``front_month_product`` would have the seed
-    walk rename every past day's contract; a futures config without one has
-    no rule for naming the month at all.
-    """
+    """The ``market`` key and the keys whose meaning depends on it."""
     market = values["market"]
     if market not in MARKETS:
         raise LiveProducerRefused(
@@ -298,15 +189,7 @@ def _assert_market(path: Path, values: dict[str, Any]) -> None:
 
 
 def _assert_coherent(path: Path, values: dict[str, Any]) -> None:
-    """Every refusal that reads MORE THAN ONE value, or a value against a
-    constant this repo owns elsewhere.
-
-    Split out of :func:`load_config` when the ``request_timeout_s`` floor
-    took that function past ``config/tos_size_budget.yaml``'s 100-line
-    function cap (PR #906 review round 2). The seam is one the function
-    already had: everything above it reads and types ONE key at a time,
-    and everything here is a relationship between keys.
-    """
+    """Every refusal that reads MORE THAN ONE value, or a value against a"""
     if values["missing_no_successor_timeout_s"] <= values["first_poll_delay_s"]:
         raise LiveProducerRefused(
             f"{path}: G={values['missing_no_successor_timeout_s']} must exceed "
@@ -459,14 +342,7 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
 def assert_env_pins(
     config: LiveProducerConfig, environ: MutableMapping[str, str]
 ) -> None:
-    """Refuse to start when the environment contradicts a pin, then apply it.
-
-    An already-set, DIFFERENT value is the failure this guards: a shell with
-    ``KIS_MINUTE_BAR_MIN_VOLUME=0`` would make ``parse_ohlcv`` keep the
-    zero-volume rows the pinned run drops, so the producer's frame and B1a's
-    would silently disagree bar for bar. Unset is fine — the pin is then simply
-    applied (the same rule PR-1's probe used).
-    """
+    """Refuse to start when the environment contradicts a pin, then apply it."""
     for key, expected in config.parser_env:
         actual = environ.get(key)
         if actual is not None and actual != expected:
@@ -483,16 +359,7 @@ def read_query_credentials(
     reader: Any,
     environ: MutableMapping[str, str],
 ) -> tuple[str, ...]:
-    """Pull ONLY the market's two query secrets from the explicitly named file.
-
-    Futures reads ``KIS_FUTURES_APP_KEY/SECRET``, stock reads
-    ``KIS_STOCK_APP_KEY/SECRET`` (:data:`MARKETS`) — never both.
-    Plan §3.4: nothing else from ``.env.real`` crosses into this process, and
-    the runner/runtime environments never receive these two at all (PR-3 pins
-    that). ``reader`` is
-    :func:`shared.config.dotenv_guard.read_explicit_dotenv`, which refuses a
-    relative path and does nothing at all in hermetic mode.
-    """
+    """Pull ONLY the market's two query secrets from the explicitly named file."""
     keys = config.profile.credential_keys
     values: Mapping[str, str] = reader(config.env_file, keys=keys)
     for key in keys:

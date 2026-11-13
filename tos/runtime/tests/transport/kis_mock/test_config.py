@@ -72,10 +72,6 @@ def test_a_fully_valued_config_loads(tmp_path: Path) -> None:
     assert config.tr_id_buy == "VTTC0012U"
     assert config.field_map == _valid_raw()["field_map"]
     assert config.static_body_fields == STATIC_BODY_FIELDS
-    # The config's own combined coverage must equal the codec's own required field set — this
-    # is the one test that would catch the two frozensets (config.py's local copy and codec.py's
-    # own) drifting apart (config.py deliberately does not import codec.py — see config.py's
-    # own module docstring on why it stays stdlib-only).
     combined = set(config.field_map.values()) | set(config.static_body_fields.keys())
     assert combined == KIS_ORDER_CASH_WIRE_FIELDS
 
@@ -155,10 +151,7 @@ def test_mode_outside_the_two_valid_values_refuses(tmp_path: Path) -> None:
 
 
 def test_mode_live_refuses_by_default(tmp_path: Path) -> None:
-    """(review F1/F6, T2 lane A) ``live`` is refused by default (``codec_bound`` defaults to
-    ``False``) — see ``codec.py``'s and this module's own docstrings for exactly why a real
-    send would otherwise hit a digest mismatch under the DEFAULT (non-codec-bound) compose
-    wiring."""
+    """(review F1/F6, T2 lane A) ``live`` is refused by default (``codec_bound`` defaults to"""
     raw = _valid_raw()
     raw["mode"] = "live"
     path = _write(tmp_path, raw)
@@ -167,8 +160,7 @@ def test_mode_live_refuses_by_default(tmp_path: Path) -> None:
 
 
 def test_mode_live_refuses_with_codec_bound_explicitly_false(tmp_path: Path) -> None:
-    """(T2 lane A) An explicit ``codec_bound=False`` refuses exactly like the default — the
-    attestation must be a positive ``True``, never inferred."""
+    """(T2 lane A) An explicit ``codec_bound=False`` refuses exactly like the default — the"""
     raw = _valid_raw()
     raw["mode"] = "live"
     path = _write(tmp_path, raw)
@@ -177,9 +169,7 @@ def test_mode_live_refuses_with_codec_bound_explicitly_false(tmp_path: Path) -> 
 
 
 def test_mode_live_loads_when_codec_bound_is_true(tmp_path: Path) -> None:
-    """(T2 lane A) ``live`` is admitted once the caller attests ``codec_bound=True`` — the
-    compose root's own claim that it wired ``KisWireCodecDigest`` (never inferred by this
-    loader, which has no visibility into compose wiring)."""
+    """(T2 lane A) ``live`` is admitted once the caller attests ``codec_bound=True`` — the"""
     raw = _valid_raw()
     raw["mode"] = "live"
     path = _write(tmp_path, raw)
@@ -201,17 +191,12 @@ def test_endpoint_matching_the_real_instance_refuses_even_if_named_mock(
     raw = _valid_raw()
     raw["endpoint_rest_base"] = REAL_REST_BASE
     path = _write(tmp_path, raw)
-    # instance_mock_rest_base deliberately set to a THIRD host (not equal to instance_real_
-    # rest_base — that combination is refused separately, see
-    # test_instance_mock_and_real_rest_base_must_differ) to isolate the real-host refusal from
-    # the "does not match mock" refusal.
     with pytest.raises(KisMockTransportConfigError, match="REAL_PROD"):
         _load(path, instance_mock_rest_base="https://a-third-host.example:1")
 
 
 def test_instance_real_rest_base_none_refuses(tmp_path: Path) -> None:
-    """(review F3) ``instance_real_rest_base`` is now REQUIRED — ``None`` must not vacuously
-    admit a real-looking host by disabling the check."""
+    """(review F3) ``instance_real_rest_base`` is now REQUIRED — ``None`` must not vacuously"""
     path = _write(tmp_path, _valid_raw())
     with pytest.raises(
         KisMockTransportConfigError, match="REAL rest_base must be known"
@@ -220,8 +205,7 @@ def test_instance_real_rest_base_none_refuses(tmp_path: Path) -> None:
 
 
 def test_instance_mock_and_real_rest_base_must_differ(tmp_path: Path) -> None:
-    """(review F3) A caller passing the same value for both instance facts can never be
-    honestly excluding the real host — refuse rather than silently accepting."""
+    """(review F3) A caller passing the same value for both instance facts can never be"""
     path = _write(tmp_path, _valid_raw())
     with pytest.raises(KisMockTransportConfigError, match="must differ"):
         _load(
@@ -268,14 +252,6 @@ def test_unsupported_scheme_refuses(tmp_path: Path) -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# TR id shape (review F7) — 'V' + 3 letters + 4 digits + 1 letter, e.g. VTTC0012U.
-# Verified against the official SDK oracle: order_cash.py's own tr_id assignments
-# (VTTC0011U/VTTC0012U mock, TTTC0011U/TTTC0012U real) plus the N-17 memo's further-observed
-# real-order/real-night TR ids (STTN1101U, CTFO6118R) — all nine characters, 1+3+4+1 shape.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("field", ["tr_id_buy", "tr_id_sell"])
 @pytest.mark.parametrize(
     ("value", "match"),
@@ -284,11 +260,11 @@ def test_unsupported_scheme_refuses(tmp_path: Path) -> None:
         ("STTN1101U", "real-order"),
         ("CTFO6118R", "real-order"),
         ("XTTC0012U", "TR id shape"),
-        ("VTTTC0012U", "TR id shape"),  # one extra letter -> 10 chars, shape violation
-        ("VTC0012U", "TR id shape"),  # one too few letters -> 8 chars, shape violation
-        ("VTTC00012U", "TR id shape"),  # one extra digit -> 10 chars, shape violation
-        ("VTTC00121", "TR id shape"),  # trailing digit instead of a letter
-        ("vttc0012u", "TR id shape"),  # lowercase — refused, not case-normalized
+        ("VTTTC0012U", "TR id shape"),
+        ("VTC0012U", "TR id shape"),
+        ("VTTC00012U", "TR id shape"),
+        ("VTTC00121", "TR id shape"),
+        ("vttc0012u", "TR id shape"),
     ],
 )
 def test_a_malformed_tr_id_refuses(
@@ -338,9 +314,7 @@ def test_field_map_colliding_wire_names_refuses(tmp_path: Path) -> None:
 
 
 def test_named_tbd_placeholder_order_path_refuses(tmp_path: Path) -> None:
-    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): this file's own stdlib-only
-    firewall discipline means it duplicates the ``"TBD"`` literal locally rather than
-    importing ``tos_runtime._named_tbd`` — pin that the local check actually fires."""
+    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): this file's own stdlib-only"""
     raw = _valid_raw()
     raw["order_path"] = "TBD"
     path = _write(tmp_path, raw)
@@ -368,8 +342,7 @@ def test_static_body_fields_with_a_null_value_refuses(tmp_path: Path) -> None:
 def test_static_body_fields_missing_a_required_kis_field_refuses(
     tmp_path: Path,
 ) -> None:
-    """(review F1) The combined field_map + static_body_fields coverage must equal exactly the
-    nine KIS order_cash fields — a missing field refuses at boot, before any network."""
+    """(review F1) The combined field_map + static_body_fields coverage must equal exactly the"""
     raw = _valid_raw()
     incomplete = dict(STATIC_BODY_FIELDS)
     del incomplete["CNDT_PRIC"]
@@ -436,10 +409,7 @@ def test_a_non_bool_allow_plaintext_refuses(tmp_path: Path) -> None:
 
 
 def test_the_example_config_file_matches_this_loaders_shape() -> None:
-    """The shipped example config (deliverable B) must parse with every field present and
-    named-TBD null (except mode/allow_plaintext_for_tests/field_map's and static_body_fields'
-    keys) — this is the one test that would catch the example config and this loader drifting
-    apart."""
+    """The shipped example config (deliverable B) must parse with every field present and"""
     example_path = (
         Path(__file__).resolve().parents[3]
         / "config"

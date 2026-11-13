@@ -144,12 +144,40 @@ def _first_line(text: str) -> str:
 
 
 def _literal(first: str) -> str:
-    """A one-line string literal holding ``first``, stable under a second pass."""
+    """A one-line string literal holding ``first``, stable under a second pass AND under black.
+
+    A first line that starts or ends with a double quote goes to ``repr``. Ending with one
+    would close the literal early. STARTING with one parses fine, but black then inserts a
+    space after the opening delimiter to keep the quotes readable -- which adds a leading
+    space to the docstring's VALUE, so the next strip takes it out again and the two tools
+    oscillate forever (measured on 7 files, 2026-11-13).
+    """
     if not first:
-        return repr("")
-    if '"""' in first or "\\" in first or first.endswith('"'):
-        return repr(first)
-    return f'"""{first}"""'
+        return '""'
+    if (
+        '"""' not in first
+        and "\\" not in first
+        and not first.startswith('"')
+        and not first.endswith('"')
+    ):
+        return f'"""{first}"""'
+    # Pick the quote black would pick, or the two tools rewrite each other forever: black
+    # prefers `"` and switches to `'` only when `"` would need strictly more escapes. A content
+    # ending in a quote takes the other one so no escape lands against the closing delimiter.
+    if first.endswith('"'):
+        quote = "'"
+    elif first.endswith("'"):
+        quote = '"'
+    else:
+        quote = '"' if first.count('"') <= first.count("'") else "'"
+    escaped = (
+        first.replace("\\", "\\\\")
+        .replace(quote, "\\" + quote)
+        .replace("\t", "\\t")
+        .replace("\r", "\\r")
+    )
+    candidate = f"{quote}{escaped}{quote}"
+    return candidate if ast.literal_eval(candidate) == first else repr(first)
 
 
 def _runtime_doc_targets(tree: ast.Module) -> tuple[bool, set[str]]:

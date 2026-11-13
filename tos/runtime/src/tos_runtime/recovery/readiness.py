@@ -1,10 +1,4 @@
-"""Recovery readiness vocabulary, the obligation record, and the three predicates the boot
-barrier calls — what remained in use of the retired kernel ``tos.sbr`` package (plan
-``docs/plans/2026-11-13-tos-code-halving-plan.md`` §S2-c).
-
-``ReadinessVerdict.value`` is persisted (recovery evidence rows and the backup manifest's
-``readiness_verdict_at_backup``), so its member values must not change.
-"""
+"""Recovery readiness vocabulary, the obligation record, and the three predicates the boot"""
 
 from __future__ import annotations
 
@@ -23,8 +17,7 @@ __all__ = [
 
 
 class _NonTruthyStrEnum(StrEnum):
-    """Not truthy-testable: a denial member is a non-empty string, so ``if verdict:`` would
-    fail open. Compare by identity (``verdict is ReadinessVerdict.READY``)."""
+    """Not truthy-testable: a denial member is a non-empty string, so ``if verdict:`` would"""
 
     def __bool__(self) -> bool:
         raise TypeError(
@@ -87,9 +80,7 @@ class RecoveryObligation:
 
 
 def obligation_graph_closed(obligations: frozenset[RecoveryObligation]) -> bool:
-    """Whether the obligation graph is non-empty, uniquely identified, has no dangling
-    prerequisite, is acyclic, and every obligation is ``SATISFIED`` within its acceptable
-    set (and independently reviewed where that is required). Empty fails closed."""
+    """Whether the obligation graph is non-empty, uniquely identified, has no dangling"""
     if not obligations:
         return False
 
@@ -141,10 +132,7 @@ def recovery_completion_revives_nothing() -> bool:
 
 
 def recovery_authority_separated(effect: RecoveryAuthorityEffect | None) -> bool:
-    """``True`` only when the effect exists and every authority flag is ``False``.
-
-    There is no operator ready-override input at all: the barrier's verdict comes only
-    from :func:`obligation_graph_closed`."""
+    """``True`` only when the effect exists and every authority flag is ``False``."""
     if effect is None:
         return False
     return not any(getattr(effect, field.name) for field in fields(effect))

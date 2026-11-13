@@ -1,35 +1,4 @@
-"""§7.1 import-closure verification for ``tos.staterestore`` (design #39 §7.4 / §8).
-
-Isomorphic to the orthostate / rcl / evidence closure tests, extended to the first tos
-package that performs real I/O. It imports every ``tos.staterestore`` submodule in a
-**fresh, spawned interpreter** (``multiprocessing`` spawn — ``subprocess`` is
-firewall-forbidden inside ``tos/``) and asserts:
-
-  1. No design #1 §2.3 operational package is in the closure (``shared.execution`` /
-     ``kis`` / ``streaming`` / ``llm`` / ``storage`` / ``backtest``, ``services.*``,
-     ``cli.*``), nor ``shared.config`` / ``shared.config.secrets`` / ``shared.determinism``.
-  2. ``numpy`` / ``pandas`` / ``yaml`` are absent.
-  3. The orthostate layering is inherited: ``tos.evidence`` / ``tos.capsule`` /
-     ``tos.dsl`` / ``tos.authority`` / ``tos.liveauth`` / ``tos.time`` are absent.
-     Persistence sits *beside* the decision-side state model, not above the evidence
-     ledger.
-  4. ``tos.orthostate`` AND ``tos.rcl`` ARE present — the declared, bounded edges.
-  5. ``sqlite3`` IS present. Asserted **positively**: this package's whole reason to
-     exist is a real durable substrate, and a closure that no longer reached ``sqlite3``
-     would mean the store had quietly become something else.
-  6. No ``tos.staterestore`` source references ``os.environ`` / ``os.getenv`` (TOS-FW-C
-     — S-4 is parametrized by argv alone) or a dynamic escape (``exec`` / ``eval`` /
-     ``__import__`` / ``importlib``), and none imports a forbidden egress / process /
-     FFI stdlib module (TOS-FW-B).
-
-A planted-leak canary proves the spawn+scan pipeline actually catches a leak, and a
-planted-AST-escape canary proves the static scan catches an escape, so "green" is
-evidence the checker works — not that it has been neutered.
-
-Network stdlib (``socket`` / ``ssl`` / …) is intentionally NOT asserted absent from the
-closure: ``pydantic`` transitively loads it into every tos closure; design #1 §4 accepts
-that as residual risk, and the direct-import ban (TOS-FW-B, item 6 above) is the gate.
-"""
+"""§7.1 import-closure verification for ``tos.staterestore`` (design #39 §7.4 / §8)."""
 
 from __future__ import annotations
 
@@ -89,9 +58,6 @@ _STATERESTORE_SRC = (
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
-#: TOS-FW-B (design #1 §3.2) — the egress / process / FFI primitives no tos source may
-#: import directly. Restated here so the package carries its own executable copy of the
-#: obligation rather than relying on a gate that lives elsewhere.
 _FORBIDDEN_STDLIB = frozenset(
     {
         "socket",
@@ -199,11 +165,6 @@ def test_leak_canary_is_detected() -> None:
     assert "tos.evidence" in leaked, "planted tos.evidence leak was NOT detected"
     assert "tos.liveauth" in leaked, "planted tos.liveauth leak was NOT detected"
     assert "numpy" in leaked, "planted numpy leak was NOT detected"
-
-
-# --------------------------------------------------------------------------
-# item 6 — static source scan (TOS-FW-B / TOS-FW-C / TOS-FW-D)
-# --------------------------------------------------------------------------
 
 
 def _scan_source(tree: ast.AST) -> dict[str, list[str]]:

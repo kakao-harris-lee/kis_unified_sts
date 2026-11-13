@@ -1,15 +1,4 @@
-"""``tos_runtime.compose`` currentness/risk phase-wiring helpers — split out
-of ``_wiring.py`` purely for the size budget (tools/tos_size_budget.py file-
-level limit); no behavioural difference from having them inline there.
-:func:`~tos_runtime.compose._wiring._boot_services` calls
-:func:`_build_risk_and_currentness`, in the design #40 §5 order 5-6.
-
-The individual dimension-reader factories + their late-bound state cells live in
-:mod:`tos_runtime.compose._dimension_readers` (moved there for the size budget,
-2026-09-12) — this module keeps only the assembly point
-(:func:`_build_risk_and_currentness`), the risk/currentness services it
-constructs, and the :class:`_RiskAndCurrentness` bundle it returns.
-"""
+"""``tos_runtime.compose`` currentness/risk phase-wiring helpers — split out"""
 
 from __future__ import annotations
 
@@ -56,8 +45,6 @@ __all__ = [
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Same config file name ``_wiring.py`` uses for the risk/currentness configs
-#: (``tos/runtime/config/risk.example.yaml`` / ``currentness.example.yaml``).
 _RISK_CONFIG_NAME = "risk.yaml"
 _CURRENTNESS_CONFIG_NAME = "currentness.yaml"
 _RISK_ATTESTATIONS_CONFIG_NAME = "risk_attestations.yaml"
@@ -71,33 +58,16 @@ class _RiskAndCurrentness:
     required_scenario_kinds: frozenset
     currentness_assembler: CurrentnessAssembler
     proof_issuer: EgressCurrentnessProofIssuer
-    #: The 6 operator-attested step 6/7 admission witnesses (re-review
-    #: finding F4) — see
-    #: :mod:`tos_runtime.compose._risk_attestations`'s own module docstring.
     risk_attestations: RiskAttestations
-    #: Late-bound cell the RECOVERY dimension reader closes over — filled in with the
-    #: W1 recovery barrier's own verdict once ``apply_recovery_barrier`` runs (see
-    #: ``_RecoveryDimensionState``'s own docstring for why).
     recovery_dimension_state: _RecoveryDimensionState
-    #: Late-bound cell the ENVIRONMENT_SCOPE dimension reader closes over — filled in
-    #: with the resolved active :class:`~tos_runtime.brokercap.scopes.BrokerScope` once
-    #: ``_resolve_strategies_and_attested_inputs`` returns (see
-    #: ``_EnvironmentScopeDimensionState``'s own docstring for why).
     environment_scope_dimension_state: _EnvironmentScopeDimensionState
-    #: The slim monitor + item-16 latch owner — see
-    #: :mod:`tos_runtime.compose._monitor_wiring`'s own module docstring.
     monitor_owners: _MonitorOwners
-    #: Late-bound cells — see each cell's own docstring in
-    #: :mod:`tos_runtime.compose._dimension_readers`.
     post_trade_dimension_state: _PostTradeDimensionState
     release_dimension_state: _ReleaseDimensionState
 
 
 def _load_action_flow_envelope(path: Path) -> ActionAmplificationEnvelope:
-    """Build the Action Flow Governor's ``ActionAmplificationEnvelope`` from
-    the ``risk.yaml`` block (``tos_runtime.risk`` has no dedicated loader for
-    this — see ``tos/runtime/config/risk.example.yaml``'s own comment: "is
-    constructed directly by the composition root")."""
+    """Build the Action Flow Governor's ``ActionAmplificationEnvelope`` from"""
     import yaml
 
     from tos_runtime.risk.aggregate import AggregateRiskConfigError
@@ -137,13 +107,7 @@ def _build_flow_governor(
     *,
     writer_epoch: int,
 ) -> RecordingActionFlowGovernor:
-    """Step 7's Action Flow Governor — split out of
-    :func:`_build_risk_and_currentness` purely for the size budget.
-
-    ``protective_classification_digest_provider`` is left at its ``None`` default: the
-    ``tos.protective`` service that supplied it went with plan S2-a. It classified, it
-    never blocked, and every shipped tenant tree fed it the same constant inputs.
-    """
+    """Step 7's Action Flow Governor — split out of"""
     return RecordingActionFlowGovernor(
         rcl_log,
         evidence_store,
@@ -153,19 +117,7 @@ def _build_flow_governor(
 
 
 def _build_currentness_policy(config_dir: Path) -> CurrentnessPolicy:
-    """The governing ``CurrentnessPolicy`` — split out of
-    :func:`_build_risk_and_currentness` purely for the size budget.
-
-    W3.1 independent review MEDIUM-3: ``required_dimensions`` used to be built by
-    sorting ``MANDATED_DIMENSION_FLOOR`` itself, at construction — which made the
-    CURRENTNESS_POLICY dimension reader's own ``policy_covers_mandated_dimensions``
-    check a tautology (a policy built FROM the floor trivially "covers" that same
-    floor; no operator config value could ever change the answer). Now genuinely
-    read from the operator-declared ``required_dimensions`` key
-    (``tos_runtime.currentness.config``'s own module docstring) — an independently-
-    editable declaration the reader compares against the kernel's own floor, never a
-    copy of it.
-    """
+    """The governing ``CurrentnessPolicy`` — split out of"""
     currentness_config = load_currentness_config(config_dir / _CURRENTNESS_CONFIG_NAME)
     currentness_policy = CurrentnessPolicy.issue(
         scheme=_SCHEME,
@@ -187,9 +139,7 @@ def _build_risk_and_currentness(
     environment_label: str,
     monitor_owners: _MonitorOwners,
 ) -> _RiskAndCurrentness:
-    """Aggregate Risk Authority + Action Flow Governor (order 5), currentness assembler +
-    Egress Currentness Proof issuer (order 6); forwards to
-    :func:`~tos_runtime.compose._dimension_readers._build_dimension_readers`."""
+    """Aggregate Risk Authority + Action Flow Governor (order 5), currentness assembler +"""
     projection = SqliteReservationProjectionReader(rcl_log)
     scenario_set = load_adverse_scenario_set(config_dir / _RISK_CONFIG_NAME)
     required_scenario_kinds = load_required_scenario_kinds(
@@ -222,10 +172,6 @@ def _build_risk_and_currentness(
         mandated=frozenset({DimensionKey.COMMIT_LOG, DimensionKey.TRUSTWORTHY_TIME}),
         dimension_readers=dimension_readers,
     )
-    # `is_complete` is the SAME currentness_assembler.is_complete callable
-    # every other consumer uses (== tos.cur.predicates.vector_complete,
-    # never re-derived) — the issuer derives `result` from it per issuance,
-    # never from a caller-supplied claim.
     proof_issuer = EgressCurrentnessProofIssuer(
         rcl_log,
         writer_epoch=writer_epoch,

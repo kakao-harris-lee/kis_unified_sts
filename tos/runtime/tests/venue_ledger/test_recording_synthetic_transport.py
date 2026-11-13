@@ -1,14 +1,4 @@
-"""``RecordingSyntheticTransport`` + the venue ledger store (plan 2026-10-31 §5 ①).
-
-Three clauses, each pinned mechanically rather than by reading the code:
-
-1. the row is durably committed BEFORE the result is returned — a spy ledger opens a SECOND,
-   independent read-only connection from inside ``record`` and sees the committed row there,
-   and an AST pin keeps the ``record`` call ahead of the ``return``;
-2. a write that fails returns no result at all — the exception leaves ``send_once`` and the
-   inner transport is never asked a second time;
-3. re-sending the same attempt leaves ONE row and creates no second fill.
-"""
+"""``RecordingSyntheticTransport`` + the venue ledger store (plan 2026-10-31 §5 ①)."""
 
 from __future__ import annotations
 
@@ -103,11 +93,6 @@ def _send(
     )
 
 
-# ============================================================================
-# Protocol conformance + the file itself
-# ============================================================================
-
-
 def test_the_wrapper_still_satisfies_the_kernel_transport_protocol(ledger) -> None:
     transport = RecordingSyntheticTransport(
         _full_fill_transport(), ledger, trading_date_now=lambda: TODAY
@@ -116,8 +101,7 @@ def test_the_wrapper_still_satisfies_the_kernel_transport_protocol(ledger) -> No
 
 
 def test_the_wrapper_signature_matches_the_kernel_transport_signature(ledger) -> None:
-    """A wrapper that quietly grew a retry count or an idempotency key would be a different
-    contract from the single-shot one the kernel Protocol seals (design #34 §5.4)."""
+    """A wrapper that quietly grew a retry count or an idempotency key would be a different"""
     assert inspect.signature(
         RecordingSyntheticTransport.send_once
     ) == inspect.signature(Transport.send_once)
@@ -158,17 +142,8 @@ def test_the_venue_results_table_rejects_update_and_delete(ledger, ledger_path) 
         conn.close()
 
 
-# ============================================================================
-# ① clause 1 — the row is committed before the result is returned
-# ============================================================================
-
-
 class _ObservingLedger(SyntheticVenueLedger):
-    """Reads the ledger file back through an INDEPENDENT connection inside ``record``.
-
-    Whatever this sees was already committed at the instant ``record`` returned — which is
-    strictly before ``send_once`` can return, since ``send_once`` has not resumed yet.
-    """
+    """Reads the ledger file back through an INDEPENDENT connection inside ``record``."""
 
     def __init__(self, path: Path) -> None:
         super().__init__(path)
@@ -209,11 +184,7 @@ def test_the_row_is_committed_before_the_result_is_returned(ledger_path: Path) -
 
 
 def test_send_once_records_before_it_returns_the_result() -> None:
-    """AST pin: the ledger write statement precedes the ``return`` in ``send_once``'s body.
-
-    An ordering a reader has to infer from indentation is exactly the kind that regresses
-    silently; this fails the instant the write moves after the return.
-    """
+    """AST pin: the ledger write statement precedes the ``return`` in ``send_once``'s body."""
     source = textwrap.dedent(inspect.getsource(RecordingSyntheticTransport.send_once))
     tree = ast.parse(source)
     (function,) = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
@@ -228,11 +199,6 @@ def test_send_once_records_before_it_returns_the_result() -> None:
     assert record_line < return_line
 
 
-# ============================================================================
-# ① clause 2 — a write that fails returns no result
-# ============================================================================
-
-
 def test_a_refused_ledger_write_returns_no_result(ledger, ledger_path: Path) -> None:
     """A real sqlite failure (the store's connection is gone), not a stubbed exception."""
     inner = _full_fill_transport()
@@ -245,14 +211,11 @@ def test_a_refused_ledger_write_returns_no_result(ledger, ledger_path: Path) -> 
         _send(transport)
 
     assert VenueLedgerReader(ledger_path).fills() == ()
-    # The send itself happened exactly once — a failed record is never a reason to resend.
     assert len(inner.requests) == 1
 
 
 def test_an_unestablished_trading_date_is_a_write_failure(ledger, ledger_path) -> None:
-    """Unlike ``KisMockTransport._stamp_trading_date``, which degrades to ``None``: there the
-    broker is the independent record, here the row IS the record and an undated one has no
-    identity and no join key."""
+    """Unlike ``KisMockTransport._stamp_trading_date``, which degrades to ``None``: there the"""
     transport = RecordingSyntheticTransport(
         _full_fill_transport(), ledger, trading_date_now=lambda: None
     )
@@ -283,17 +246,10 @@ def test_a_raising_trading_date_source_is_a_write_failure(ledger, ledger_path) -
 
 
 def test_the_write_failure_reaches_the_gateways_transport_raised_path(ledger) -> None:
-    """``VenueLedgerWriteFailed`` is an ordinary ``Exception``, which is what the egress
-    gateway catches to record ``SendHaltReason.TRANSPORT_RAISED`` — this module invents no new
-    halt reason, it raises into the existing "venue may have acted, no response" one."""
+    """``VenueLedgerWriteFailed`` is an ordinary ``Exception``, which is what the egress"""
     assert issubclass(VenueLedgerWriteFailed, Exception)
     gateway_source = inspect.getsource(gateway_module)
     assert "SendHaltReason.TRANSPORT_RAISED" in gateway_source
-
-
-# ============================================================================
-# ① clause 3 — a re-send leaves one row and no second fill
-# ============================================================================
 
 
 def test_resending_the_same_attempt_leaves_one_row_and_returns_the_same_result(
@@ -311,9 +267,6 @@ def test_resending_the_same_attempt_leaves_one_row_and_returns_the_same_result(
     rows = VenueLedgerReader(ledger_path).fills()
     assert len(rows) == 1, "the venue holds ONE execution for one deterministic attempt"
     assert second == first
-    # The byte-identical result is what the kernel's own DUPLICATE detection keys on
-    # (ProvisionalReservationLedger.apply_egress_result), so the engine refuses to apply it a
-    # second time. Returning a DIFFERENT result here would escape that guard.
     assert second.broker_execution_id == first.broker_execution_id
     assert second.filled_quantity == first.filled_quantity
 
@@ -332,11 +285,7 @@ def test_a_second_attempt_gets_its_own_row(ledger, ledger_path: Path) -> None:
 
 
 def test_a_different_result_under_the_same_identity_is_refused(ledger) -> None:
-    """A UNIQUE hit means "already at the venue" only when the recorded row is the same row.
-
-    A different magnitude under an identity the venue already used is not a re-send — this is
-    §3.4's "driver re-injected a wrong result", caught at the venue boundary.
-    """
+    """A UNIQUE hit means "already at the venue" only when the recorded row is the same row."""
     common = {
         "attempt_id": "a1",
         "broker_execution_id": "syn-exec:a1:FULL_FILL",
@@ -357,14 +306,7 @@ def test_a_different_result_under_the_same_identity_is_refused(ledger) -> None:
 def test_resending_the_same_attempt_on_another_trading_date_is_still_one_row(
     ledger, ledger_path: Path
 ) -> None:
-    """Regression, review-1017 L1 (measured on the original key).
-
-    With ``UNIQUE (trading_date, broker_execution_id)``, sending attempt ``a`` on 20261030 and
-    re-sending the SAME attempt on 20261031 wrote a SECOND row for one execution, and the
-    witness netted the fill twice — a position of 2 where the venue holds 1. The id
-    ``syn-exec:{attempt}:{kind}`` already carries the attempt and the kind, so the date never
-    belonged in the key: unlike a KIS ODNO it is not a per-day sequence.
-    """
+    """Regression, review-1017 L1 (measured on the original key)."""
     inner = _full_fill_transport()
     today = ["20261030"]
     transport = RecordingSyntheticTransport(
@@ -378,7 +320,6 @@ def test_resending_the_same_attempt_on_another_trading_date_is_still_one_row(
 
     rows = VenueLedgerReader(ledger_path).fills()
     assert len(rows) == 1, "one execution, one row, whatever day it is re-sent on"
-    # Append-only: the recorded date stays the day the venue actually executed.
     assert rows[0].trading_date == "20261030"
     assert second == first, "the kernel result is returned unchanged on the re-send"
 
@@ -395,9 +336,7 @@ def test_resending_the_same_attempt_on_another_trading_date_is_still_one_row(
 def test_a_different_execution_under_the_same_id_is_refused_on_any_date(
     ledger,
 ) -> None:
-    """The "different stored row -> refuse" rule survives the key change: only
-    ``trading_date`` is excluded from the comparison, so a magnitude that disagrees is still a
-    refusal even when the dates differ."""
+    """The "different stored row -> refuse" rule survives the key change: only"""
     common = {
         "attempt_id": "a1",
         "broker_execution_id": "syn-exec:a1:FULL_FILL",
@@ -416,15 +355,8 @@ def test_a_different_execution_under_the_same_id_is_refused_on_any_date(
         ledger.record(filled_quantity=Decimal("2"), trading_date=TODAY, **common)
 
 
-# ============================================================================
-# Row-level refusals
-# ============================================================================
-
-
 def test_a_result_without_an_execution_id_is_not_recordable(ledger) -> None:
-    """The kernel's synthetic transport stamps one on every result, so this never fires in
-    practice — but a row without an identity could be neither deduplicated nor joined.
-    """
+    """The kernel's synthetic transport stamps one on every result, so this never fires in"""
     with pytest.raises(VenueLedgerWriteFailed, match="broker_execution_id"):
         ledger.record(
             attempt_id="a1",
@@ -455,8 +387,7 @@ def test_a_non_fill_result_is_recorded_too(ledger, ledger_path: Path) -> None:
 
 
 def test_a_symlinked_ledger_path_is_refused(tmp_path: Path) -> None:
-    """``O_NOFOLLOW``: the ledger is a file this process owns at 0600, never a pointer
-    somewhere else."""
+    """``O_NOFOLLOW``: the ledger is a file this process owns at 0600, never a pointer"""
     real = tmp_path / "elsewhere.sqlite3"
     real.touch()
     link = tmp_path / "venue_ledger.sqlite3"

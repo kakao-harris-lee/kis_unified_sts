@@ -1,29 +1,4 @@
-"""Compose e2e tests for the REAL deployed risk-state files
-(``config/tos_runtime/paper/{risk,aggregate_risk_policy,action_flow_policy}.yaml``
--- TOS risk state service plan §6 ②, adopted by the operator 2026-09-16;
-placement per DR-0002 §2.1 / DR-0003 §2.1).
-
-Pins, in the same spirit as ``test_deploy_policies.py``:
-
-1. Operator-fill gate: as committed, ``account_scope``/``instrument_scope``
-   are ``"TBD"`` and both policy loaders REFUSE the files as-is.
-2. With those coordinates filled, the files carry exactly the adopted values.
-3. ``risk.yaml`` loads through the SAME loaders the compose root uses and
-   carries exactly the proposal-table values.
-4. The real calendar + the four real policies + the real ``risk.yaml`` boot
-   the compose root WITHOUT explicit risk providers: all four
-   ``*_POLICY_BOUND`` rows land, and the attempt still stops fail-closed at
-   step 2 (the venue policy's null ``max_quantity`` -- pinned by
-   ``test_deploy_policies.py``), so no ``RISK_STATE_OBSERVED`` row is ever
-   produced. That is the adopted deploy state.
-
-The fixture Hard Safety Envelope / Runtime Safety Profile gain the policy's
-governed dimension for this test only -- no paper HSE instance is committed
-yet, which the real
-policy file's header records.
-
-Hermetic (D1.4): every write lands under ``tmp_path``.
-"""
+"""Compose e2e tests for the REAL deployed risk-state files"""
 
 from __future__ import annotations
 
@@ -65,9 +40,6 @@ _REAL_RISK = _DEPLOY_DIR / "risk.yaml"
 _REAL_ARE = _DEPLOY_DIR / "aggregate_risk_policy.yaml"
 _REAL_AFG = _DEPLOY_DIR / "action_flow_policy.yaml"
 
-#: The adopted values (plan §6 ②; proposal table
-#: ``2026-09-12-tos-operator-value-proposals.md`` §3) -- pinned so a silent
-#: edit of a deploy file cannot pass as "still the approved value".
 _ADOPTED_DIMENSION_ID = "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"
 _ADOPTED_ARE_LIMIT = Decimal("1")
 _ADOPTED_FLOW_DIMENSION_ID = "afg.ORDER"
@@ -100,12 +72,7 @@ def _filled_risk_policy(path: Path, *, account: str, instrument: str | None) -> 
 
 
 def _install_real_risk_files(config_dir: Path) -> tuple[str, str]:
-    """Install the real ``risk.yaml`` verbatim and the two filled real policies over the
-    fixture ones. Returns both policy digests.
-
-    The fixture HSE/profile dimension append and the activation ``members:`` extension
-    this used to do went with plan S2-a: the ARE ceiling now lives in the policy's own
-    ``_runtime.envelope_max`` and there is no activation document."""
+    """Install the real ``risk.yaml`` verbatim and the two filled real policies over the"""
     (config_dir / "risk.yaml").write_text(
         _REAL_RISK.read_text(encoding="utf-8"), encoding="utf-8"
     )

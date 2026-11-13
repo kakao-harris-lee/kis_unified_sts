@@ -1,9 +1,4 @@
-"""Field release proof rule: all-must-pass conjunction + single-source ceiling (§6.1/§6.2).
-
-RECON-EV-005 predicate substrate. The §8 generic contract is a four-conjunct all-must-
-pass rule; every weaker evidence path fails closed. The ADR §2 hazard property: no
-aggregate of strong fields can rescue one dangerously-wrong field (design #9 §4.1).
-"""
+"""Field release proof rule: all-must-pass conjunction + single-source ceiling (§6.1/§6.2)."""
 
 from __future__ import annotations
 
@@ -33,17 +28,10 @@ _NONCAP = SafetyRelevantField.ORDER_EXISTENCE
 
 
 def _field(fc: FieldConfidence) -> SafetyRelevantField:
-    """``fc.field``, asserted present — every :func:`field_confidence` fixture below sets it
-    explicitly (the field is ``| None`` only for a genuinely unattributed reading, never for
-    one this module's own builder produces)."""
+    """``fc.field``, asserted present — every :func:`field_confidence` fixture below sets it"""
     field = fc.field
     assert field is not None
     return field
-
-
-# ---------------------------------------------------------------------------
-# field_reconciled_proof_ok — positive path + fail-closed conjuncts
-# ---------------------------------------------------------------------------
 
 
 def test_reconciled_ok_positive_capacity_field() -> None:
@@ -55,7 +43,7 @@ def test_reconciled_ok_positive_capacity_field() -> None:
 def test_reconciled_ok_non_capacity_field_needs_no_fqp() -> None:
     """A non-capacity-releasing field reconciles on CORROBORATED + fresh (no FQP required)."""
     conf = field_confidence(field=_NONCAP, confidence_class=_C.CORROBORATED)
-    inputs = release_inputs(final_quantity_proof_token=None)  # no FQP
+    inputs = release_inputs(final_quantity_proof_token=None)
     assert field_reconciled_proof_ok(_NONCAP, conf, inputs) is True
 
 
@@ -97,10 +85,6 @@ def test_reconciled_fails_when_not_fresh() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Drop-one sweep over the proof-rule conjuncts (capacity-releasing field)
-# ---------------------------------------------------------------------------
-
 _CONJUNCT_DROPS = [
     pytest.param({"confidence_class": _C.SINGLE_SOURCE}, {}, id="drop-corroborated"),
     pytest.param({}, {"final_quantity_proof_token": None}, id="drop-fqp"),
@@ -113,11 +97,8 @@ def test_release_proof_drop_one_conjunct_fails(
     conf_override: dict, input_override: dict
 ) -> None:
     """(drop-one) Dropping ANY one of {CORROBORATED, FQP, fresh} fails the release proof."""
-    conf = field_confidence(
-        field=_CAP, **conf_override
-    )  # builder default class = CORROBORATED
+    conf = field_confidence(field=_CAP, **conf_override)
     inputs = release_inputs(**input_override)
-    # The full positive holds; dropping one conjunct breaks it.
     assert (
         field_specific_release_proof_ok(
             _CAP, field_confidence(field=_CAP), release_inputs()
@@ -125,11 +106,6 @@ def test_release_proof_drop_one_conjunct_fails(
         is True
     )
     assert field_specific_release_proof_ok(_CAP, conf, inputs) is False
-
-
-# ---------------------------------------------------------------------------
-# field_specific_release_proof_ok — capacity-releasing only + weaker-evidence table
-# ---------------------------------------------------------------------------
 
 
 def test_release_only_for_capacity_releasing_fields() -> None:
@@ -158,16 +134,9 @@ def test_weaker_evidence_never_releases(
     label: str, conf_override: dict, input_override: dict
 ) -> None:
     """(§6.2 weaker-evidence table) Every weaker evidence path preserves the conservative commitment."""
-    conf = field_confidence(
-        field=_CAP, **conf_override
-    )  # builder default class = CORROBORATED
+    conf = field_confidence(field=_CAP, **conf_override)
     inputs = release_inputs(**input_override)
     assert field_specific_release_proof_ok(_CAP, conf, inputs) is False, label
-
-
-# ---------------------------------------------------------------------------
-# Single-source ceiling — no input combination lifts SINGLE_SOURCE to release
-# ---------------------------------------------------------------------------
 
 
 @given(
@@ -184,11 +153,6 @@ def test_single_source_never_releases(
     assert field_reconciled_proof_ok(field, conf, inputs) is False
 
 
-# ---------------------------------------------------------------------------
-# No-blended aggregate hazard (ADR §2) — a weak field is never masked by strong ones
-# ---------------------------------------------------------------------------
-
-
 def test_one_weak_field_blocks_release_regardless_of_others() -> None:
     """(ADR §2 hazard) A dangerously-wrong field fails release even when every other is strong."""
     weak = field_confidence(field=_CAP, confidence_class=_C.CONFLICTED)
@@ -197,8 +161,6 @@ def test_one_weak_field_blocks_release_regardless_of_others() -> None:
         for f in SafetyRelevantField
         if f is not _CAP
     ]
-    # An all-must-pass conjunction over the scope: the weak capacity field is False,
-    # so the conjunction is False no matter how strong every other field is.
     per_field = [
         field_specific_release_proof_ok(fc.field, fc, release_inputs())
         for fc in [weak, *strong_others]
@@ -225,12 +187,7 @@ def test_release_requires_corroborated_property(
 
 
 def test_field_confidence_mismatch_fails_closed() -> None:
-    """(canary) A confidence object belonging to ANOTHER field cannot prove this field.
-
-    Code-review MINOR-1 defense-in-depth: an incoherent ``(field, confidence)`` pairing
-    — e.g. asking about CUMULATIVE_FILLED_QUANTITY with a fully-CORROBORATED confidence
-    that belongs to POSITION_QUANTITY — fails closed even with FQP + freshness all strong.
-    """
+    """(canary) A confidence object belonging to ANOTHER field cannot prove this field."""
     other = field_confidence(
         field=SafetyRelevantField.POSITION_QUANTITY,
         confidence_class=_C.CORROBORATED,
@@ -238,6 +195,5 @@ def test_field_confidence_mismatch_fails_closed() -> None:
     inputs = release_inputs(final_quantity_proof_token=True)
     assert field_reconciled_proof_ok(_CAP, other, inputs) is False
     assert field_specific_release_proof_ok(_CAP, other, inputs) is False
-    # Coherent pairing (guard fires both ways): the same strength on the RIGHT field passes.
     own = field_confidence(field=_CAP, confidence_class=_C.CORROBORATED)
     assert field_reconciled_proof_ok(_CAP, own, inputs) is True

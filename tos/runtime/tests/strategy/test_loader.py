@@ -59,16 +59,9 @@ def test_unknown_key_refuses_naming_the_path(strategies_dir, parse, admit):
 
 
 def test_inadmissible_strategy_refuses_naming_the_path(strategies_dir, parse, admit):
-    """This test exercises the typed D1<->D4 admission refusal
-    (``compare_has_capsule_operand``) — one of the several checks
-    ``strategy_admissible`` runs (the D-K lane's escape-checker gate is
-    another, exercised by ``tos/tests`` directly). ``load_strategies``
-    refuses on ANY ``AdmissionVerdict`` that is not ``ADMISSIBLE`` — it is
-    agnostic to which admission rule fired, so it needs no change
-    regardless of which gate inside ``strategy_admissible`` rejects."""
+    """This test exercises the typed D1<->D4 admission refusal"""
     mapping = inadmissible_strategy_mapping()
 
-    # sanity: confirm the fixture is genuinely inadmissible via the real gate
     parsed = parse(mapping)
     assert admit(parsed).verdict is AdmissionVerdict.INADMISSIBLE
 
@@ -81,13 +74,7 @@ def test_inadmissible_strategy_refuses_naming_the_path(strategies_dir, parse, ad
 def test_yaml_and_in_process_typed_paths_admit_identically(
     strategies_dir, parse, admit
 ):
-    """Design #31 §1.2 "두 경로 동형" ("the two paths are isomorphic"): a
-    strategy authored as serialized YAML and the SAME strategy built
-    in-process via typed construction must converge on the identical
-    artifact (same digest/id) and admit identically. This is the concrete
-    proof that ``tos_runtime.strategy.loader``'s injected ``parse`` (wired
-    to the real kernel ``tos.dsl.serialization.parse_strategy`` in
-    production) does not create a second, divergent authoring surface."""
+    """Design #31 §1.2 "두 경로 동형" ("the two paths are isomorphic"): a"""
     mapping = admissible_strategy_mapping()
     path = write_strategy_yaml(strategies_dir, "band.strategy.yaml", mapping)
 
@@ -129,10 +116,7 @@ def test_top_level_null_leaf_refuses(strategies_dir, parse, admit):
 def test_named_tbd_placeholder_leaf_anywhere_refuses_naming_the_field(
     strategies_dir, parse, admit
 ):
-    """The null-only leaf walk must also catch an operator typing the literal
-    placeholder string ``"TBD"`` in place of a real value anywhere in a strategy
-    file — an unbounded ``AuthoredStrategy`` mapping has no enum/allow-list to fall
-    back on the way a fixed-shape config loader's fields do."""
+    """The null-only leaf walk must also catch an operator typing the literal"""
     mapping = admissible_strategy_mapping()
     mapping["policy"]["rules"][0]["decision"]["rationale"] = "TBD"
     path = write_strategy_yaml(strategies_dir, "tbd-leaf.strategy.yaml", mapping)
@@ -184,9 +168,7 @@ def test_digest_is_deterministic_across_loads(strategies_dir, parse, admit):
 def test_one_bad_file_refuses_the_whole_directory_not_a_partial_admit(
     strategies_dir, parse, admit
 ):
-    """A directory with one good file and one bad file must refuse
-    entirely — never silently admit the good one and skip the bad one
-    (the whole load is refused, not filtered)."""
+    """A directory with one good file and one bad file must refuse"""
     write_strategy_yaml(
         strategies_dir, "a-good.strategy.yaml", admissible_strategy_mapping()
     )
@@ -198,10 +180,7 @@ def test_one_bad_file_refuses_the_whole_directory_not_a_partial_admit(
 
 
 def test_example_strategy_yaml_is_refused_as_shipped(parse, admit, tmp_path: Path):
-    """``tos/runtime/config/strategies/example.strategy.yaml`` documents the
-    shape with every value left as a named-TBD ``null`` — it must be refused
-    exactly like any other still-null strategy file, never silently
-    admitted."""
+    """``tos/runtime/config/strategies/example.strategy.yaml`` documents the"""
     example_path = (
         Path(__file__).resolve().parents[2]
         / "config"
@@ -217,11 +196,7 @@ def test_example_strategy_yaml_is_refused_as_shipped(parse, admit, tmp_path: Pat
 
 
 def test_null_leaf_on_optional_only_field_refuses(strategies_dir, parse, admit):
-    """A null on a field that pydantic types as Optional (e.g.
-    ``quantity_basis``) is never caught by type validation or by the
-    admission gate's wildcard-scope check — ONLY the loader's own explicit
-    null-leaf walk catches it. This is the case that makes the null-leaf
-    check load-bearing rather than redundant with downstream validation."""
+    """A null on a field that pydantic types as Optional (e.g."""
     mapping = admissible_strategy_mapping()
     mapping["policy"]["rules"][0]["decision"]["target"]["quantity_basis"] = None
     path = write_strategy_yaml(strategies_dir, "optional-null.strategy.yaml", mapping)
@@ -244,10 +219,7 @@ def test_yml_suffix_is_loaded_like_yaml(strategies_dir, parse, admit):
 
 
 def test_stray_non_strategy_file_refuses_naming_it(strategies_dir, parse, admit):
-    """A stray file that is
-    neither ``*.yaml`` nor ``*.yml`` (e.g. a renamed-away bad strategy, an
-    editor backup) refuses the WHOLE directory rather than being silently
-    ignored by the glob."""
+    """A stray file that is"""
     write_strategy_yaml(
         strategies_dir, "a-good.strategy.yaml", admissible_strategy_mapping()
     )
@@ -259,11 +231,7 @@ def test_stray_non_strategy_file_refuses_naming_it(strategies_dir, parse, admit)
 
 
 def test_unknown_top_level_key_refuses_naming_the_path(strategies_dir, parse, admit):
-    """An unknown key alongside the top-level strategy fields must be refused by
-    the real injected parser. ``_StrategyAuthoringContent`` (the kernel's top-level
-    parsing model, ``tos.dsl.serialization``) is ``extra='forbid'``. This differs
-    from the nested-unknown-key test, which exercises ``TargetSpec`` rather than
-    the top-level authoring content."""
+    """An unknown key alongside the top-level strategy fields must be refused by"""
     mapping = admissible_strategy_mapping()
     mapping["not_a_real_top_level_field"] = "x"
     path = write_strategy_yaml(strategies_dir, "bad-top-level.strategy.yaml", mapping)
@@ -275,10 +243,7 @@ def test_unknown_top_level_key_refuses_naming_the_path(strategies_dir, parse, ad
 def test_dropping_a_rule_changes_the_loaded_strategy_digest(
     strategies_dir, parse, admit
 ):
-    """A strategy's identity (``canonical_digest``) must be sensitive to its rule
-    count. Two strategy files differing ONLY by one extra rule must
-    load to two DIFFERENT digests — if a rule were silently dropped
-    somewhere on this path, the two artifacts could otherwise collide."""
+    """A strategy's identity (``canonical_digest``) must be sensitive to its rule"""
     one_rule = admissible_strategy_mapping()
     two_rules = admissible_strategy_mapping()
     two_rules["policy"]["rules"] = list(two_rules["policy"]["rules"]) + [

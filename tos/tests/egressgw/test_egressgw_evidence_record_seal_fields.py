@@ -1,14 +1,4 @@
-"""``GatewayEvidenceRecord.send_seal`` / ``send_seal_digest`` kind pairing (independent review
-finding #9).
-
-Before ``_seal_fields_match_their_kind`` (``tos/src/tos/egressgw/records.py``), ``kind`` was a
-free-form ``str`` and nothing enforced which kinds may legitimately carry the whole seal or its
-digest — only a field comment asserted it. The reviewer's own probe,
-``GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a", send_seal_digest="deadbeef")``,
-constructed without error.
-
-Regime tag: authoring evidence only; closes no EV (design #34 §1.1).
-"""
+"""``GatewayEvidenceRecord.send_seal`` / ``send_seal_digest`` kind pairing (independent review"""
 
 from __future__ import annotations
 
@@ -90,8 +80,7 @@ def test_send_seal_is_accepted_on_send_sealed() -> None:
 
 
 def test_send_seal_digest_is_rejected_on_send_sealed_itself() -> None:
-    """(design §1.2) ``SEND_SEALED`` carries the whole seal, not its digest — the digest belongs
-    to the later ``SEND_STARTED`` / ``EGRESS_RESULT_RECORDED`` records only."""
+    """(design §1.2) ``SEND_SEALED`` carries the whole seal, not its digest — the digest belongs"""
     seal = _a_seal()
     with pytest.raises(ValidationError, match="send_seal_digest"):
         GatewayEvidenceRecord(
@@ -103,8 +92,6 @@ def test_send_seal_digest_is_rejected_on_send_sealed_itself() -> None:
 
 
 def test_step_is_a_required_field() -> None:
-    """(kernel round #2 §2 decision 3 — mutation M4) A record built without ``step`` is
-    unconstructable — the Phase 3 wave 3 KW3-GW auditability gap this field closes cannot be
-    silently reopened by a call site that simply omits it."""
+    """(kernel round #2 §2 decision 3 — mutation M4) A record built without ``step`` is"""
     with pytest.raises(ValidationError, match="step"):
         GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a")  # type: ignore[call-arg]

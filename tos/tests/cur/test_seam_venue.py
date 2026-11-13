@@ -1,17 +1,4 @@
-"""MANDATED test-only seam cross-check: venue per-decision egress-currentness leaf -> cur (design #23 §0.4b/§3.5).
-
-venue (ADR-002-019) owns a **per-decision** egress-currentness leaf ``egress_currentness_active``
-(``venue/predicates.py:493``, VTG-EV-007) over a **single Constraint Generation** — venue
-``__init__.py:17`` verbatim: "active currentness is ADR-002-024-owned". cur **consumes** that leaf
-verdict as **one** :class:`~tos.cur.state.CurrentnessDimension` coordinate (the CONSTRAINT dimension)
-and re-authors it **not at all**: the aggregate axis (every dimension present + single revision +
-policy complete) is cur's own, and a per-decision leaf structurally **cannot** detect an unrepresented
-dimension, a mixed revision, or a policy under-declaration (§0.4b). This file imports the real venue
-predicate as a **test**; the import-closure test proves ``tos.venue`` is **absent** from the cur
-runtime closure.
-
-Regime tag: completeness predicate substrate only; CUR-EV-001 substrate; EV-L1-complete claim forbidden.
-"""
+"""MANDATED test-only seam cross-check: venue per-decision egress-currentness leaf -> cur (design #23 §0.4b/§3.5)."""
 
 from __future__ import annotations
 
@@ -29,19 +16,10 @@ from ._cur_strategies import (
 
 
 def test_venue_owns_the_per_decision_currentness_leaf() -> None:
-    """(§3.5 venue predicates.py:493) venue owns egress_currentness_active — a single-generation leaf.
-
-    The venue leaf admits only when currentness is actively established AND the request references
-    EXACTLY the current Constraint Generation (a stale / future / None generation fails closed).
-    cur consumes this verdict; it does not re-author the leaf.
-    """
-    assert (
-        egress_currentness_active(True, 5, 5) is True
-    )  # actively established, exact generation
-    assert egress_currentness_active(True, 4, 5) is False  # stale generation
-    assert (
-        egress_currentness_active(None, 5, 5) is False
-    )  # not actively established (absence)
+    """(§3.5 venue predicates.py:493) venue owns egress_currentness_active — a single-generation leaf."""
+    assert egress_currentness_active(True, 5, 5) is True
+    assert egress_currentness_active(True, 4, 5) is False
+    assert egress_currentness_active(None, 5, 5) is False
 
 
 def test_cur_reauthors_no_venue_leaf() -> None:
@@ -50,14 +28,8 @@ def test_cur_reauthors_no_venue_leaf() -> None:
 
 
 def test_cur_consumes_the_venue_leaf_verdict_as_one_dimension() -> None:
-    """(§0.4b) The venue leaf verdict is injected as ONE CurrentnessDimension (CONSTRAINT) coordinate.
-
-    The per-decision leaf's ``positively_established`` verdict becomes one dimension coordinate; cur
-    judges only that the coordinate is present + established, not the venue business logic.
-    """
-    venue_verdict = egress_currentness_active(
-        True, 5, 5
-    )  # the injected per-decision leaf result
+    """(§0.4b) The venue leaf verdict is injected as ONE CurrentnessDimension (CONSTRAINT) coordinate."""
+    venue_verdict = egress_currentness_active(True, 5, 5)
     rev = clean_revision()
     constraint_dim = clean_dimension(
         dimension_key=DimensionKey.CONSTRAINT,

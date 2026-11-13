@@ -1,6 +1,4 @@
-"""``tos_runtime.safety.latch`` tests (Phase 5 W3 plan §2 decision 6) — the
-restrictive-latch and worst-credible-capacity runtime owners.
-"""
+"""``tos_runtime.safety.latch`` tests (Phase 5 W3 plan §2 decision 6) — the"""
 
 from __future__ import annotations
 
@@ -20,11 +18,6 @@ from .conftest import FakeNewRiskHaltInbox
 _SCOPE = InstrumentKey(account="acct-1", instrument="005930")
 
 
-# ============================================================================
-# RestrictiveLatchOwner
-# ============================================================================
-
-
 def test_clear_when_the_new_risk_halt_is_absent() -> None:
     owner = RestrictiveLatchOwner(FakeNewRiskHaltInbox(None))
     assert owner.state() is RestrictiveLatchState.CLEAR
@@ -38,9 +31,7 @@ def test_deny_latched_when_the_new_risk_halt_is_held() -> None:
 
 
 def test_mutation_m7_latch_owner_must_not_ignore_the_inbox() -> None:
-    """M7: an owner that ignored the inbox latch (always reporting CLEAR) would wrongly
-    clear a held new-risk halt — this must be RED under that mutation, i.e. the real
-    owner must actually consult the inbox and return DENY_LATCHED here."""
+    """M7: an owner that ignored the inbox latch (always reporting CLEAR) would wrongly"""
     owner = RestrictiveLatchOwner(
         FakeNewRiskHaltInbox({"reason": "held", "evidence_seq": 7})
     )
@@ -52,11 +43,6 @@ def test_describe_reports_no_secrets_and_the_resolved_state() -> None:
     description = owner.describe()
     assert description["state"] == "CLEAR"
     assert description["new_risk_halt_latched"] is False
-
-
-# ============================================================================
-# CapacityOwner
-# ============================================================================
 
 
 class _FakeProjectionReader:
@@ -110,11 +96,6 @@ def test_capacity_describe_reports_scope_and_count() -> None:
     assert description["worst_credible_capacity"] == 1
 
 
-# ============================================================================
-# egress_owner_fields
-# ============================================================================
-
-
 def test_egress_owner_fields_bundles_both_owners_fresh() -> None:
     latch = RestrictiveLatchOwner(FakeNewRiskHaltInbox(None))
     capacity = CapacityOwner(_FakeProjectionReader(CapacityState.RELEASED), _SCOPE)
@@ -132,11 +113,7 @@ def test_egress_owner_fields_bundles_both_owners_fresh() -> None:
 
 
 def test_capacity_counts_two_held_reservations_while_an_exit_closes_an_entry() -> None:
-    """#966: a scope holds two reservations at once while an exit closes a filled entry.
-
-    The pre-#966 owner returned ``1`` for this input (it read the scope's first row and
-    reported 0-or-1), understating exposure by one whole reservation.
-    """
+    """#966: a scope holds two reservations at once while an exit closes a filled entry."""
     owner = CapacityOwner(
         _FakeProjectionReader(
             CapacityState.POSITION_CONSUMED, CapacityState.COMMITTED_UNBOUND

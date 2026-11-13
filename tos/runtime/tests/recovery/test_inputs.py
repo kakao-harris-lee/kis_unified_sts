@@ -31,11 +31,7 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 
 class _NeverStartedTimeService:
-    """A minimal :class:`~tos_runtime.time.service.TrustworthyTimeService` double for these
-    unit tests, which do not boot a full compose chain: raises the SAME
-    ``TimeServiceNotStarted`` a genuinely never-started real service raises, so
-    :mod:`tos_runtime.recovery.reconciliation`'s own fail-closed freshness path is exercised
-    exactly as it would be against a real one."""
+    """A minimal :class:`~tos_runtime.time.service.TrustworthyTimeService` double for these"""
 
     def current_snapshot(self) -> NoReturn:
         raise TimeServiceNotStarted("never started (test double)")
@@ -53,10 +49,7 @@ def rcl_log(
 def _mark_handling_started(
     inbox: SqliteEventInbox, seq: int, marker: EvidenceAppendReceipt
 ) -> None:
-    """``inbox.mark_handling_started(...)``, narrowing ``marker``'s ``seq``/
-    ``key_generation`` — a successful evidence ``append()`` never returns either
-    as ``None`` (``EvidenceAppendReceipt``'s own docstring: "a failed or partial
-    append never returns this type")."""
+    """``inbox.mark_handling_started(...)``, narrowing ``marker``'s ``seq``/"""
     assert marker.seq is not None
     assert marker.key_generation is not None
     inbox.mark_handling_started(
@@ -104,7 +97,6 @@ def test_genesis_boot_has_no_possibly_live_or_legacy_facts(
     assert inputs.legacy_receipts.count == 0
     assert inputs.inbox_unconsumed_count == 0
     assert inputs.composite_state_incomplete_attempt_ids == ()
-    # A genuinely empty RCL log has never acquired an epoch — current_epoch() reports 0.
     assert inputs.rcl_writer_epoch == 0
     assert inputs.rcl_runtime_generation is None
     assert inputs.evidence_tip_seq is None
@@ -127,7 +119,7 @@ def test_custody_identity_is_read_from_the_real_manifest(
     )
     assert inputs.custody_environment_label == "non-live-test"
     assert inputs.custody_manifest_digest is not None
-    assert len(inputs.custody_manifest_digest) == 64  # sha256 hex digest
+    assert len(inputs.custody_manifest_digest) == 64
 
 
 def test_unconsumed_event_is_counted_but_not_possibly_live(
@@ -156,13 +148,7 @@ def test_possibly_live_attempt_is_also_composite_state_incomplete(
     tmp_path: Path,
     custody_root: Path,
 ) -> None:
-    """This possibly-live attempt has a durable ``EVENT_HANDLING_STARTED`` marker but NO
-    ``SEND_HANDED_OFF`` row at all (crash window 1 — the flow never reached the send boundary),
-    so :func:`~tos_runtime.recovery.reconciliation.send_handed_off_attempt_id` cannot resolve an
-    ``attempt_id`` to reload a composite for — independent-review finding F3's own ``NO_ATTEMPT_ID``
-    path, conservatively incomplete for a genuinely different reason than "nothing writes to the
-    store" (see ``test_composite_state_is_complete_after_a_clean_hand_off`` below for the case
-    where a composite genuinely WAS written)."""
+    """This possibly-live attempt has a durable ``EVENT_HANDLING_STARTED`` marker but NO"""
     event = fx.crossing_event(seq=1)
     receipt = inbox.enqueue(event)
     event_id = event_identity(event, scheme=SCHEME)
@@ -202,11 +188,7 @@ def test_composite_state_is_complete_after_a_clean_hand_off(
     tmp_path: Path,
     custody_root: Path,
 ) -> None:
-    """Independent-review finding F3 (2026-09-10): a possibly-live attempt whose ``event_id``
-    DOES durably resolve to an ``attempt_id`` (via ``SEND_HANDED_OFF``), and whose composite was
-    ALREADY written under that ``attempt_id`` (:class:`~tos_runtime.recovery
-    .composite_state_writer.CompositeStateWriter`'s own new keying), is reported COMPLETE — the
-    write and read sides finally agree on the same identity."""
+    """Independent-review finding F3 (2026-09-10): a possibly-live attempt whose ``event_id``"""
     event = fx.crossing_event(seq=1)
     receipt = inbox.enqueue(event)
     event_id = event_identity(event, scheme=SCHEME)
@@ -243,12 +225,7 @@ def test_forged_divergent_replay_row_holds_the_barrier(
     tmp_path: Path,
     custody_root: Path,
 ) -> None:
-    """Independent-review finding F5 (2026-09-10) — obligation 1's mutation guard: a
-    ``REPLAY_DIVERGED`` row present (forged directly here, mirroring how
-    ``tos_runtime.engine.replay`` itself would record a genuine divergence) with NO
-    ``REPLAY_VERDICT_IDENTICAL`` row makes ``replay_verdict_ok`` ``False`` — obligation 1 is no
-    longer a hardcoded ``ok=True`` a mutation removing the real check could pass silently.
-    """
+    """Independent-review finding F5 (2026-09-10) — obligation 1's mutation guard: a"""
     evidence_store.append(
         {"event_id": "forged-divergent-event", "detail": "forged for this test"},
         kind="REPLAY_DIVERGED",
@@ -275,10 +252,7 @@ def test_real_replay_verdict_row_satisfies_obligation_one(
     tmp_path: Path,
     custody_root: Path,
 ) -> None:
-    """The positive half: a durable ``REPLAY_VERDICT_IDENTICAL`` row with no
-    ``REPLAY_DIVERGED`` row makes ``replay_verdict_ok`` ``True`` — the SAME row
-    ``tos_runtime.compose._engine_wiring.verify_replay_or_halt`` appends on every clean boot.
-    """
+    """The positive half: a durable ``REPLAY_VERDICT_IDENTICAL`` row with no"""
     evidence_store.append(
         {"total_compared": 0, "uncompared": 0, "has_unverifiable_receipts": False},
         kind="REPLAY_VERDICT_IDENTICAL",
@@ -302,11 +276,8 @@ def test_malformed_inbox_row_fails_obligation_five_gracefully(
     tmp_path: Path,
     custody_root: Path,
 ) -> None:
-    """Independent-review finding F5 (2026-09-10) — obligation 5's mutation guard: a row whose
-    ``payload_json`` cannot parse through the kernel ``EngineEvent`` model must resolve to a
-    graceful ``inbox_events_parseable=False`` (HOLD), never an unhandled exception escaping
-    :func:`assemble_recovery_inputs`."""
-    inbox._conn.execute(  # no public seam for a raw malformed insert -- direct access
+    """Independent-review finding F5 (2026-09-10) — obligation 5's mutation guard: a row whose"""
+    inbox._conn.execute(
         "INSERT INTO events (seq, event_id, kind, account, instrument, reference_json, "
         "payload_json, payload_digest, consumed_evidence_seq, consumed_generation) "
         "VALUES (1, 'malformed-event', 'DECISION_TICK', 'acct-1', '005930', '{}', "

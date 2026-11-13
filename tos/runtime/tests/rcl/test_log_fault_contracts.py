@@ -1,9 +1,4 @@
-"""``SqliteCommitLog`` tests — fault contracts ①②③④⑤⑥⑦ (slice plan §1).
-
-Test names are grouped by the fault-contract number they exercise, matching
-the table in ``log.py``'s own module docstring, plus the extra coverage the
-slice plan calls out by name ("plus: evidence-append failure ...").
-"""
+"""``SqliteCommitLog`` tests — fault contracts ①②③④⑤⑥⑦ (slice plan §1)."""
 
 from __future__ import annotations
 
@@ -29,24 +24,13 @@ from tos_runtime.rcl.log import CommitLogCorruption, InjectedCrash, SqliteCommit
 
 from .conftest import FakeEvidenceAppendPort, FakeMonotonicClock
 
-#: A fixed scope for tests that exercise fault-contract mechanics, not scope
-#: semantics themselves (laneO port-fix round, design #40 runtime slice #2
-#: §5, 2026-09-08 — ``scope`` is now a required binding on every committed
-#: reservation-lifecycle transition).
 DEFAULT_SCOPE = ReservationScope(account="acct-1", instrument="101S06")
 
 
 def _seq(receipt: AppendReceipt) -> int:
-    """``receipt.seq``, asserted present — a successful ``append_cas`` never
-    returns a ``None`` seq. This file's fault-contract tests immediately
-    reuse one commit's tip as the next commit's ``expected_seq``."""
+    """``receipt.seq``, asserted present — a successful ``append_cas`` never"""
     assert receipt.seq is not None
     return receipt.seq
-
-
-# ============================================================================
-# ① stale epoch writer
-# ============================================================================
 
 
 def test_fault_1_stale_writer_epoch_is_refused(
@@ -56,7 +40,7 @@ def test_fault_1_stale_writer_epoch_is_refused(
     second = SqliteCommitLog(log_path, evidence_port=evidence_port)
     try:
         stale_epoch = first.acquire_epoch(identity)
-        current_epoch = second.acquire_epoch(identity)  # invalidates `first`'s epoch
+        current_epoch = second.acquire_epoch(identity)
         assert current_epoch > stale_epoch
 
         entry = CommitEntry(
@@ -88,11 +72,6 @@ def test_fault_1_stale_writer_epoch_also_refuses_reads(
     finally:
         first.close()
         second.close()
-
-
-# ============================================================================
-# ② duplicate command / bytes mismatch
-# ============================================================================
 
 
 def test_fault_2_duplicate_command_id_same_bytes_is_idempotent_refusal(
@@ -130,19 +109,6 @@ def test_fault_2_duplicate_command_id_different_bytes_is_contained_conflict(
     )
     assert isinstance(second, AppendRefusal)
     assert second.reason == AppendRefusalReason.COMMAND_BYTES_MISMATCH
-
-
-# ============================================================================
-# MEDIUM-3 (independent review, 2026-09-08) — a NULL command_digest on an
-# EXISTING row must not collapse into "no prior entry" and reach the
-# entries.command_id UNIQUE constraint unclassified.
-#
-# Red-before proof (empirically verified against the pre-fix code in a
-# scratch worktree at the commit under review, 2026-09-08): the exact repro
-# below returned ``AppendRefusal(reason=PARTIAL_COMMIT_SUSPECTED,
-# detail="IntegrityError('UNIQUE constraint failed: entries.command_id')")``
-# before this fix — the fix makes it ``DUPLICATE_COMMAND_ID`` instead.
-# ============================================================================
 
 
 def test_null_digest_duplicate_command_is_classified_as_duplicate_not_partial_commit(
@@ -207,19 +173,9 @@ def test_non_null_digest_then_null_digest_is_command_bytes_mismatch(
     assert second.reason == AppendRefusalReason.COMMAND_BYTES_MISMATCH
 
 
-# ============================================================================
-# ③ file access unavailable (locked file)
-# ============================================================================
-
-
 def test_fault_3_locked_file_prevents_opening_a_second_handle(
     log_path: Path, evidence_port: FakeEvidenceAppendPort
 ) -> None:
-    # Hold an unreleased write reservation on the same file from a raw connection —
-    # a second handle cannot even complete its own WAL-mode setup while the file is
-    # exclusively locked (a real "storage unavailable" condition, not a refusal this
-    # module's own API can convert — there is no open ``SqliteCommitLog`` yet to
-    # return an ``AppendRefusal`` from).
     blocker = sqlite3.connect(str(log_path), isolation_level=None, timeout=0.0)
     blocker.execute("BEGIN IMMEDIATE")
     try:
@@ -253,11 +209,6 @@ def test_fault_3_locked_file_refuses_append_with_store_unavailable(
         blocker.execute("ROLLBACK")
         blocker.close()
         log_under_test.close()
-
-
-# ============================================================================
-# ④ durable commit crash injection (before/after commit)
-# ============================================================================
 
 
 def test_fault_4_crash_before_commit_leaves_no_entry(
@@ -313,24 +264,11 @@ def test_fault_4_crash_after_commit_before_receipt_leaves_entry_durable(
         reopened.close()
 
 
-# ============================================================================
-# LOW (independent review, 2026-09-08) — evidence append durably commits to
-# its own file before this log's own COMMIT; a failure AFTER that append but
-# still inside this transaction rolls back only the RCL side. Evidence may
-# therefore over-record an entry this log itself never holds — but the log
-# can never hold an entry without a prior successful evidence append.
-# ============================================================================
-
-
 def test_evidence_over_records_but_never_under_records_on_post_evidence_rollback(
     log_path: Path, evidence_port: FakeEvidenceAppendPort, identity: RuntimeIdentity
 ) -> None:
     def crash_after_evidence_before_commit(point: str) -> None:
         if point == "before_commit":
-            # By this point the evidence_port.append() call has already
-            # returned successfully (it happens earlier in _commit_entry,
-            # before this hook is called) — this simulates a crash in the
-            # narrow window between that success and this log's own COMMIT.
             raise InjectedCrash(
                 "simulated crash after evidence append, before RCL commit"
             )
@@ -348,24 +286,15 @@ def test_evidence_over_records_but_never_under_records_on_post_evidence_rollback
         crashing_log.append_cas(entry, expected_seq=-1, writer_epoch=epoch)
     crashing_log.close()
 
-    # Evidence store holds the record — it over-recorded an attempt that was
-    # then abandoned.
     assert len(evidence_port.calls) == 1
     recorded_payload, _kind, _record_class = evidence_port.calls[0]
     assert recorded_payload["command_id"] == "cmd-1"
 
-    # But the RCL log itself holds NO entry — it never under-records the
-    # reverse (an entry can never exist here without a prior evidence record).
     reopened = SqliteCommitLog(log_path, evidence_port=evidence_port)
     try:
         assert list(reopened.replay()) == []
     finally:
         reopened.close()
-
-
-# ============================================================================
-# ⑤ replay does not reproduce held state -> CommitLogCorruption
-# ============================================================================
 
 
 def test_fault_5_replay_mismatch_raises_commit_log_corruption(
@@ -389,11 +318,8 @@ def test_fault_5_replay_mismatch_raises_commit_log_corruption(
     )
     assert isinstance(result, AppendReceipt)
 
-    # A legitimate log passes verify_replay before any tampering.
     log.verify_replay()
 
-    # Tamper directly with the held projection (bypassing the log's own API) so
-    # the independently re-folded state disagrees with what is held.
     log._conn.execute(
         "UPDATE reservations SET state = ? WHERE reservation_id = ?",
         (CapacityState.QUARANTINED_UNKNOWN.value, "res-1"),
@@ -404,17 +330,13 @@ def test_fault_5_replay_mismatch_raises_commit_log_corruption(
 
 
 def test_fault_5_verify_replay_passes_on_empty_log(log: SqliteCommitLog) -> None:
-    log.verify_replay()  # no reservations at all — trivially consistent
+    log.verify_replay()
 
 
 def test_fault_5_scope_tamper_raises_commit_log_corruption(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """(laneO port-fix round, design #40 runtime slice #2 §5, 2026-09-08) A
-    directly-tampered ``scope_account``/``scope_instrument`` column must be
-    caught by ``verify_replay`` exactly like a tampered ``state`` column —
-    the fault ⑤ digest now covers the kernel's scope binding, not state
-    alone."""
+    """(laneO port-fix round, design #40 runtime slice #2 §5, 2026-09-08) A"""
     epoch = log.acquire_epoch(identity)
     transition = CapacityReservationTransition(
         reservation_id="res-1",
@@ -433,12 +355,8 @@ def test_fault_5_scope_tamper_raises_commit_log_corruption(
     )
     assert isinstance(result, AppendReceipt)
 
-    # A legitimate log passes verify_replay before any tampering.
     log.verify_replay()
 
-    # Tamper directly with the held projection's SCOPE (state untouched) —
-    # bypassing the log's own API — so the independently re-folded scope
-    # disagrees with what is held.
     log._conn.execute(
         "UPDATE reservations SET scope_account = ? WHERE reservation_id = ?",
         ("acct-tampered", "res-1"),
@@ -448,22 +366,10 @@ def test_fault_5_scope_tamper_raises_commit_log_corruption(
         log.verify_replay()
 
 
-# ============================================================================
-# MEDIUM-4 (independent review, 2026-09-08) — the replay fold must not be
-# forgeable via a plain append_cas call's public payload_json argument.
-# ============================================================================
-
-
 def test_ghost_reservation_payload_via_append_cas_does_not_forge_corruption(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """A plain ``append_cas`` call whose ``payload_json`` happens to decode to
-    ``{"reservation_id": ..., "to_state": ...}`` must NOT be folded into
-    ``verify_replay``'s reservation-state reconstruction — before the fix
-    this forged a ``CommitLogCorruption`` on an otherwise healthy, untouched
-    log (the entry's ``is_reservation_transition`` column, never
-    caller-settable, is what now excludes it).
-    """
+    """A plain ``append_cas`` call whose ``payload_json`` happens to decode to"""
     epoch = log.acquire_epoch(identity)
     ghost_payload_json = json.dumps(
         {"reservation_id": "GHOST", "to_state": CapacityState.RELEASED.value}
@@ -477,20 +383,14 @@ def test_ghost_reservation_payload_via_append_cas_does_not_forge_corruption(
     )
 
     assert isinstance(result, AppendReceipt)
-    # No reservation was ever actually created (nothing went through
-    # apply_reservation_transition), and verify_replay must not disagree.
     assert {rid: state for rid, state, _seq, _scope in log.reservation_rows()} == {}
-    log.verify_replay()  # must NOT raise
+    log.verify_replay()
 
 
 def test_genuine_reservations_row_tamper_still_raises_after_medium_4_fix(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """Regression guard: a REAL disagreement (the held ``reservations`` row
-    tampered directly, bypassing this log's own API) must still be detected
-    — the MEDIUM-4 fix narrows what is folded IN, it must not also silence a
-    genuine mismatch.
-    """
+    """Regression guard: a REAL disagreement (the held ``reservations`` row"""
     epoch = log.acquire_epoch(identity)
     transition = CapacityReservationTransition(
         reservation_id="res-1",
@@ -508,7 +408,7 @@ def test_genuine_reservations_row_tamper_still_raises_after_medium_4_fix(
         expected_seq=-1,
     )
     assert isinstance(result, AppendReceipt)
-    log.verify_replay()  # legitimate — passes
+    log.verify_replay()
 
     log._conn.execute(
         "UPDATE reservations SET state = ? WHERE reservation_id = ?",
@@ -517,11 +417,6 @@ def test_genuine_reservations_row_tamper_still_raises_after_medium_4_fix(
 
     with pytest.raises(CommitLogCorruption):
         log.verify_replay()
-
-
-# ============================================================================
-# ⑥ clock regression does not affect seq/epoch order
-# ============================================================================
 
 
 def test_fault_6_regressing_monotonic_source_does_not_affect_seq_order(
@@ -541,9 +436,9 @@ def test_fault_6_regressing_monotonic_source_does_not_affect_seq_order(
         receipt_a = instance.append_cas(entry_a, expected_seq=-1, writer_epoch=epoch_1)
         assert isinstance(receipt_a, AppendReceipt)
 
-        clock.value = 0  # the monotonic source regresses
+        clock.value = 0
         epoch_2 = instance.acquire_epoch(identity)
-        assert epoch_2 > epoch_1  # epoch still strictly increases
+        assert epoch_2 > epoch_1
 
         entry_b = CommitEntry(
             command_id="cmd-b",
@@ -555,23 +450,14 @@ def test_fault_6_regressing_monotonic_source_does_not_affect_seq_order(
         )
         assert isinstance(receipt_b, AppendReceipt)
         assert receipt_a.seq is not None
-        assert receipt_b.seq == receipt_a.seq + 1  # seq still strictly increases
+        assert receipt_b.seq == receipt_a.seq + 1
     finally:
         instance.close()
-
-
-# ============================================================================
-# ⑦ simulated sqlite failure mid-transaction (partial commit)
-# ============================================================================
 
 
 def test_fault_7_simulated_mid_transaction_failure_refuses_and_rolls_back(
     log_path: Path, evidence_port: FakeEvidenceAppendPort, identity: RuntimeIdentity
 ) -> None:
-    # A real disk-full/IO-error can surface at flush time, right before COMMIT —
-    # reused via the same crash_hook injection point as fault ④, but raising a
-    # genuine sqlite3.Error (not InjectedCrash) to model contract ⑦ specifically:
-    # this must be caught, rolled back, and refused, never propagated raw.
     def simulate_sqlite_failure(point: str) -> None:
         if point == "before_commit":
             raise sqlite3.OperationalError("simulated mid-transaction failure")
@@ -590,15 +476,10 @@ def test_fault_7_simulated_mid_transaction_failure_refuses_and_rolls_back(
 
         assert isinstance(result, AppendRefusal)
         assert result.reason == AppendRefusalReason.PARTIAL_COMMIT_SUSPECTED
-        assert instance._current_seq_tip() == -1  # rolled back — nothing committed
+        assert instance._current_seq_tip() == -1
         assert list(instance.replay()) == []
     finally:
         instance.close()
-
-
-# ============================================================================
-# extra coverage the slice plan names explicitly
-# ============================================================================
 
 
 def test_evidence_append_failure_rolls_back_with_no_receipt_and_no_entry(
@@ -635,7 +516,7 @@ def test_seq_mismatch_is_refused(
     entry = CommitEntry(
         command_id="cmd-1", command_digest="dig-1", kind=CommandType.COMMIT_RESERVATION
     )
-    result = log.append_cas(entry, expected_seq=5, writer_epoch=epoch)  # wrong tip
+    result = log.append_cas(entry, expected_seq=5, writer_epoch=epoch)
     assert isinstance(result, AppendRefusal)
     assert result.reason == AppendRefusalReason.SEQ_MISMATCH
 

@@ -1,9 +1,4 @@
-"""Ledger verification, atomic commit and unavailability stage wiring.
-
-These steps were split from ``compose._wiring`` for the module size budget.
-The composition root passes scenario-specific readers through unchanged;
-in particular, the close-proof fence reader stays bound to step 9.
-"""
+"""Ledger verification, atomic commit and unavailability stage wiring."""
 
 from __future__ import annotations
 
@@ -44,19 +39,11 @@ def _build_ledger_stages(
         [StageRequest], CloseProofCommitFence | SyntheticCloseEntryFence | None
     ],
 ) -> tuple[LedgerVerificationStage, VerdictRecorder, CommitmentUnavailabilityStage]:
-    """Wire steps 8 (Ledger Verification), 9 (Atomic Commit) and 10
-    (Commitment Unavailability).
-
-    The three share the #966 reservation identity: step 9 mints the id from
-    the permit it binds, and steps 8/10 read the same scope/row back — see
-    :mod:`tos_runtime.rcl.reservation_identity`.
-    """
+    """Wire steps 8 (Ledger Verification), 9 (Atomic Commit) and 10"""
     step8_stage = LedgerVerificationStage(
         rcl_log,
         projection,
         writer_epoch=writer_epoch,
-        # #966: admission depends on whether this attempt opens or closes a position (the
-        # stage's own docstring table), read off the arm step 2 selected.
         position_effect_reader=lambda: attempt_position_effect(construction_stage),
     )
     step9_recorder = VerdictRecorder(

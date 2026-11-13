@@ -1,14 +1,4 @@
-"""material_change_closure — §18 invalidation reachability both-ways + property (design #19 §5.4/§0.4d).
-
-The shared reachability kernel backs the §18 material-change closure. Axioms: trigger ∈ closure;
-an uncertain / unproven edge is EXPANDED (never narrows); a proven-disconnected node is excluded;
-a cycle terminates; ∅ change_triggers => ∅ (availability side); ∅ graph + trigger => {trigger}.
-The iap ``invalidation_closure`` / sbr ``_reachability_closure`` third/fourth legs live in
-``test_seam_iap.py`` / ``test_seam_sbr.py`` (real sibling imports as tests).
-
-Regime tag: predicate / model substrate only; VTG-EV-006/008 NOT_IMPLEMENTED (`/3` residue);
-EV-L1-complete claim forbidden.
-"""
+"""material_change_closure — §18 invalidation reachability both-ways + property (design #19 §5.4/§0.4d)."""
 
 from __future__ import annotations
 

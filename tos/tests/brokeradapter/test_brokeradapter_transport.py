@@ -1,13 +1,4 @@
-"""§5 — the Transport boundary and the synthetic paper transport.
-
-Design #34 §5.2/§5.4/§13 targets: a single-shot port against which ``Q-IDEMP-1`` (three-attempt
-resend) and ``Q-IDEMP-2`` (token-expiry resend wrapper) are **unrepresentable**; a deterministic
-fill band; a partial fill represented as a partial fill; and an outcome kind **derived from the
-magnitudes** rather than declared.
-
-Regime tag: authoring evidence only; closes no EV (design #34 §1.1). A synthetic result is not
-evidence that any broker accepted anything — no broker was contacted.
-"""
+"""§5 — the Transport boundary and the synthetic paper transport."""
 
 from __future__ import annotations
 
@@ -65,11 +56,6 @@ def _send(
     )
 
 
-# ---------------------------------------------------------------------------
-# the single-shot seal (§5.4 / Q-IDEMP-1 / Q-IDEMP-2)
-# ---------------------------------------------------------------------------
-
-
 def test_the_transport_protocol_has_exactly_one_method() -> None:
     """(§5.4) One method, one attempt, one result — a retry loop has nothing to iterate."""
     methods = [name for name in vars(Transport) if not name.startswith("_")]
@@ -88,12 +74,6 @@ def test_the_send_signature_admits_no_retry_or_idempotency_parameter() -> None:
         "price",
         "side",
         "reference",
-        # Phase 4 작업 6 (design #34 phase 4 작업 6 §1.3) — the one deliberate addition
-        # to this signature since the set below was pinned: the sealed
-        # ``SendSeal.seal_digest`` an adapter may echo on its own evidence. It is
-        # explicitly NOT a retry/idempotency parameter (this test) and NOT a
-        # credential/session parameter (the sibling test below) — both forbidden-name
-        # lists are unchanged; only this exact-set membership widened to admit it.
         "seal_digest",
     }
     for forbidden in (
@@ -179,11 +159,6 @@ def test_the_declared_nature_flags_are_all_explicit_false() -> None:
     assert all(value is False for value in fields.values())
 
 
-# ---------------------------------------------------------------------------
-# determinism (§5.2)
-# ---------------------------------------------------------------------------
-
-
 def test_two_runs_over_the_same_inputs_agree_exactly() -> None:
     """(§5.2) No clock, no RNG, no ambient state — the band is a pure function."""
     policy = SyntheticFillPolicy(fill_numerator=1, fill_denominator=3, lot_size=LOT)
@@ -210,11 +185,6 @@ def test_the_fill_never_exceeds_the_authorized_quantity(
         assert result.filled_quantity % LOT == 0
         assert result.remaining_quantity is not None
         assert result.filled_quantity + result.remaining_quantity == Decimal(quantity)
-
-
-# ---------------------------------------------------------------------------
-# structural derivation of the outcome kind (구조 파생 > 자기신고)
-# ---------------------------------------------------------------------------
 
 
 def test_a_full_band_derives_a_full_fill() -> None:
@@ -261,11 +231,6 @@ def test_a_non_fill_outcome_may_be_declared(kind: EgressResultKind) -> None:
     assert result.filled_quantity is None
 
 
-# ---------------------------------------------------------------------------
-# fail-closed policy shapes
-# ---------------------------------------------------------------------------
-
-
 def test_a_policy_with_neither_mode_is_unconstructable() -> None:
     """(fail-closed) An undetermined transport is not a transport."""
     with pytest.raises(
@@ -304,11 +269,6 @@ def test_an_absent_quantity_is_unknown_never_a_rejection() -> None:
     assert result.kind is EgressResultKind.UNKNOWN
 
 
-# ---------------------------------------------------------------------------
-# synthetic broker execution identity ([K2-p3-#6b]; ADR-002-002 §15.3:725, paper-only)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("policy", "quantity"),
     [
@@ -344,12 +304,7 @@ def test_an_absent_quantity_is_unknown_never_a_rejection() -> None:
 def test_every_result_carries_a_non_none_synthetic_execution_id(
     policy: SyntheticFillPolicy, quantity: Decimal | None
 ) -> None:
-    """([K2-p3-#6b]) Every one of ``send_once``'s four ``EgressResultPayload`` construction sites
-    (declared-kind, absent-quantity UNKNOWN, zero-fill ACK, and the derived FULL_FILL/PARTIAL_FILL
-    path) stamps a non-``None`` ``broker_execution_id`` — the K2-p3-#6 DUPLICATE signature is keyed
-    on this field, and with it always ``None`` (the pre-#6b state) two paper resends of the same
-    attempt with different reference coordinates never dedup.
-    """
+    """([K2-p3-#6b]) Every one of ``send_once``'s four ``EgressResultPayload`` construction sites"""
     result = _send(SyntheticPaperTransport(policy), quantity)
     assert result.broker_execution_id is not None
 
@@ -357,9 +312,7 @@ def test_every_result_carries_a_non_none_synthetic_execution_id(
 def test_the_synthetic_execution_id_is_deterministic_across_transport_instances() -> (
     None
 ):
-    """([K2-p3-#6b]; design #34 §5.2 "deterministic by construction") No clock, no RNG: the same
-    attempt and the same resulting kind produce the *same* id from two independent transports.
-    """
+    """([K2-p3-#6b]; design #34 §5.2 "deterministic by construction") No clock, no RNG: the same"""
     policy = SyntheticFillPolicy(fill_numerator=1, fill_denominator=1, lot_size=LOT)
     attempt = _attempt(11)
     first = SyntheticPaperTransport(policy).send_once(
@@ -382,9 +335,7 @@ def test_the_synthetic_execution_id_is_deterministic_across_transport_instances(
 
 
 def test_the_synthetic_execution_id_differs_by_kind_for_the_same_attempt() -> None:
-    """([K2-p3-#6b]) The id is derived from (attempt, kind) — a different kind, same attempt,
-    is a different fact and must not collide onto the same id.
-    """
+    """([K2-p3-#6b]) The id is derived from (attempt, kind) — a different kind, same attempt,"""
     attempt = _attempt(12)
     ack = SyntheticPaperTransport(
         SyntheticFillPolicy(declared_kind=EgressResultKind.ACK)
@@ -400,9 +351,7 @@ def test_the_synthetic_execution_id_differs_by_kind_for_the_same_attempt() -> No
 
 
 def test_the_synthetic_execution_id_differs_by_attempt_for_the_same_kind() -> None:
-    """([K2-p3-#6b]) The id is also attempt-scoped — two different attempts with the identical
-    declared outcome must not collide onto the same id either.
-    """
+    """([K2-p3-#6b]) The id is also attempt-scoped — two different attempts with the identical"""
     policy = SyntheticFillPolicy(declared_kind=EgressResultKind.ACK)
     first = SyntheticPaperTransport(policy).send_once(
         _attempt(13), instrument_key=_key(), coordinates=(), quantity=None, price=None
@@ -411,11 +360,6 @@ def test_the_synthetic_execution_id_differs_by_attempt_for_the_same_kind() -> No
         _attempt(14), instrument_key=_key(), coordinates=(), quantity=None, price=None
     )
     assert first.broker_execution_id != second.broker_execution_id
-
-
-# ---------------------------------------------------------------------------
-# attempt identity (design #31 §2.1(ii))
-# ---------------------------------------------------------------------------
 
 
 def test_the_result_always_names_the_attempt_it_was_handed() -> None:
@@ -458,22 +402,8 @@ def test_every_call_is_recorded_so_a_second_send_would_be_visible() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# 작업 7 — adapter 1 outbound -> 1 result contract lock (slice plan §5-A)
-#
-# The stronger "same attempt sent twice is refused" invariant is already pinned at the
-# *gateway* layer, not here: ``tos/tests/egressgw/test_egressgw_gateway.py::
-# test_the_same_attempt_is_never_sent_twice`` (the single-use claim, gateway.py step 16,
-# ``ATTEMPT_ALREADY_CONSUMED``). This package's ``Transport`` is deliberately a dumb
-# single-shot port with no dedup state of its own — the negative-grep below fixes that
-# absence at the *implementation* level (no retry primitive can be written against it),
-# which is this package's part of the contract.
-# ---------------------------------------------------------------------------
-
-
 def _retry_primitive_offenders(source: str) -> list[str]:
-    """Return every ``sleep()`` call, retry-named identifier, ``for ... in range(...)``
-    loop, or self-recursive ``send_once`` call found in ``source`` (AST scan)."""
+    """Return every ``sleep()`` call, retry-named identifier, ``for ... in range(...)``"""
     import ast
 
     tree = ast.parse(source)
@@ -503,10 +433,7 @@ def _retry_primitive_offenders(source: str) -> list[str]:
 
 
 def test_the_transport_implementation_source_has_no_retry_primitive() -> None:
-    """(negative-grep, slice plan §5-A task 7b) No ``sleep()``, no retry-named identifier,
-    no ``for _ in range`` resend loop, and no second (self-recursive) ``send_once`` call
-    anywhere in the synthetic paper transport's implementation source — the mechanical
-    evidence that Q-IDEMP-1 (three-attempt resend) cannot be reintroduced here."""
+    """(negative-grep, slice plan §5-A task 7b) No ``sleep()``, no retry-named identifier,"""
     from pathlib import Path
 
     import tos.brokeradapter.synthetic as synthetic
@@ -519,8 +446,7 @@ def test_the_transport_implementation_source_has_no_retry_primitive() -> None:
 
 
 def test_retry_primitive_scan_detects_a_planted_violation() -> None:
-    """The negative-grep above is not vacuously green: a planted sleep/retry/range-loop/
-    self-recursive send_once source is actually flagged."""
+    """The negative-grep above is not vacuously green: a planted sleep/retry/range-loop/"""
     planted = (
         "import time\n"
         "def send_once(self, attempt):\n"
@@ -539,16 +465,8 @@ def test_retry_primitive_scan_detects_a_planted_violation() -> None:
     assert "send_once() call" in joined
 
 
-# ---------------------------------------------------------------------------
-# Phase 3 wave 2 KW2-C1 — CANCEL_ACK / EXPIRED (new kinds; transport never emits them)
-# ---------------------------------------------------------------------------
-
-
 def test_synthetic_execution_id_accepts_the_two_new_kinds_without_crashing() -> None:
-    """(plan §2.2 "`_synthetic_execution_id` 는 새 kind 를 수용해야 함") No behaviour change:
-    the helper is a pure function of ``(attempt_id, kind)`` and already reads only
-    ``kind.value``, so it never needed a per-kind branch to begin with — this pins that fact
-    for the two kinds this wave adds to the vocabulary."""
+    """(plan §2.2 "`_synthetic_execution_id` 는 새 kind 를 수용해야 함") No behaviour change:"""
     import tos.brokeradapter.synthetic as synthetic
 
     for kind in (EgressResultKind.CANCEL_ACK, EgressResultKind.EXPIRED):
@@ -558,9 +476,7 @@ def test_synthetic_execution_id_accepts_the_two_new_kinds_without_crashing() -> 
 
 
 def test_neither_cancel_ack_nor_expired_is_declarable_by_this_transport() -> None:
-    """(module NON_FILL_DECLARABLE_KINDS docstring) This single-shot transport has no
-    cancel-request or expiry-observation entry point, so declaring either is refused —
-    distinctly from the "is a fill kind" refusal FULL_FILL/PARTIAL_FILL get."""
+    """(module NON_FILL_DECLARABLE_KINDS docstring) This single-shot transport has no"""
     for kind in (EgressResultKind.CANCEL_ACK, EgressResultKind.EXPIRED):
         assert kind not in NON_FILL_DECLARABLE_KINDS
         with pytest.raises(
@@ -570,7 +486,6 @@ def test_neither_cancel_ack_nor_expired_is_declarable_by_this_transport() -> Non
 
 
 def test_declaring_a_fill_kind_still_gets_the_original_fill_kind_message() -> None:
-    """(regression control) The pre-existing FULL_FILL/PARTIAL_FILL refusal message is
-    unchanged by the new branch added for CANCEL_ACK/EXPIRED."""
+    """(regression control) The pre-existing FULL_FILL/PARTIAL_FILL refusal message is"""
     with pytest.raises(ValidationError, match="is a fill kind"):
         SyntheticFillPolicy(declared_kind=EgressResultKind.FULL_FILL)

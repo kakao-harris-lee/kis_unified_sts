@@ -1,34 +1,4 @@
-"""The producer-side records D-E2 consumes and the resolution it reports (design #32 §2.3/§6).
-
-Three shapes, each carrying a structural decision:
-
-* :class:`RawPayloadPreimage` — the canonical preimage the attributed observation's
-  ``raw.payload_digest`` addresses. This is where the values actually live: ``tos.capsule``'s
-  ``Observation`` is a *provenance* record with **no** numeric leaf at all (``observation.py``;
-  ADR-002-018 §9:249-261 lists raw event identity, payload digest, and unit/scale/multiplier/sign
-  metadata — never the observed magnitude), so a value is exposed by naming the payload behind the
-  digest, not by inventing a field on the Capsule (design #32 §2.1/§2.3, capsule 무변경).
-
-* :class:`AdmittedValue` — one producer-supplied *candidate*: "the value under ``field_key`` in the
-  payload behind observation ``observation_ref``". Note what it does **not** carry: the value
-  itself, the as-of, the payload digest, or a field state. Every one of those is derived — the
-  value from the preimage, the as-of and digest from the attributed observation, the state from the
-  snapshot's own governance (구조 파생 > 자기신고). A producer therefore cannot declare a value that
-  disagrees with its provenance: changing the value changes the preimage, which changes its digest,
-  which no longer matches the observation the snapshot covers (design #32 §2.3).
-
-* :class:`ValueResolution` — the terminal report. It carries the published view *or* the named
-  reason there is none, plus a per-candidate rejection list. The ∅ distinction (explicit-empty vs
-  no view) is a recorded member, not an inference from ``view is None`` (design #32 §6).
-
-⚠ **Preimage form is provisional** (design #32 §2.3, 미결-3). A flat, scalar-keyed preimage is the
-EV-L1 shape; the production preimage (whole native event vs extracted fields) is fixed only once the
-G2 production canonicalization is approved. What this contract fixes is the **binding property**
-(value ⟺ covered digest), not the preimage bytes.
-
-Firewall: ``pydantic`` + stdlib + ``tos.*`` only. No ``tos.engine`` edge — this module is part of
-the pure layer (design #32 §3.4).
-"""
+"""The producer-side records D-E2 consumes and the resolution it reports (design #32 §2.3/§6)."""
 
 from __future__ import annotations
 
@@ -59,17 +29,7 @@ __all__ = [
 
 
 class PreimageEntry(FrozenModel):
-    """One key/value entry of a raw payload preimage (design #32 §2.3).
-
-    ``value`` is the payload field **as the digest preimage carries it**. It is typed
-    :data:`~tos.dsl.ScalarValue` (``bool | int | float | str``) and a :class:`~decimal.Decimal` is
-    **rejected outright** rather than coerced: pydantic's lax union would happily turn a
-    ``Decimal("1.5")`` into a float, and that silent Decimal → float coercion is exactly what
-    design #32 §2.5 forbids ("Decimal 직접 노출 금지·silent 강제변환 금지"). A producer holding a
-    Decimal magnitude must decide explicitly — integer minor units (exposed) or a fractional
-    magnitude (fail-closed until the deterministic-float rule is fixed) — and record that decision
-    in the observation's ``mapping`` unit/scale/multiplier provenance.
-    """
+    """One key/value entry of a raw payload preimage (design #32 §2.3)."""
 
     key: str
     value: ScalarValue
@@ -98,15 +58,7 @@ class PreimageEntry(FrozenModel):
 
 
 class RawPayloadPreimage(FrozenModel):
-    """The canonical preimage one ``raw.payload_digest`` addresses (design #32 §2.3).
-
-    Entries are carried as a tuple (frozen, order-preserving) and projected to a mapping only when
-    the digest is computed; the shipped canonicalizer key-sorts mappings, so entry order does not
-    affect the digest (``canonicalization.py`` ``_encode``: mappings are key-sorted).
-
-    A duplicated key is rejected: a preimage with two entries under one name has no single value to
-    attribute, and picking one would be an arbitrary fold.
-    """
+    """The canonical preimage one ``raw.payload_digest`` addresses (design #32 §2.3)."""
 
     entries: tuple[PreimageEntry, ...] = ()
 
@@ -124,23 +76,11 @@ class RawPayloadPreimage(FrozenModel):
         return self
 
     def as_mapping(self) -> dict[str, ScalarValue]:
-        """Project the preimage to the mapping the canonicalizer digests.
-
-        Returns:
-            The ``{key: value}`` mapping.
-        """
+        """Project the preimage to the mapping the canonicalizer digests."""
         return {entry.key: entry.value for entry in self.entries}
 
     def lookup(self, key: str) -> ScalarValue | None:
-        """Return the value under ``key``, or ``None`` when the payload carries no such field.
-
-        Args:
-            key: The payload field name.
-
-        Returns:
-            The value, or ``None`` if absent. ``None`` is unambiguous here because
-            :class:`PreimageEntry` cannot carry a ``None`` value.
-        """
+        """Return the value under ``key``, or ``None`` when the payload carries no such field."""
         for entry in self.entries:
             if entry.key == key:
                 return entry.value
@@ -148,14 +88,7 @@ class RawPayloadPreimage(FrozenModel):
 
 
 class AdmittedValue(FrozenModel):
-    """One producer-supplied candidate value + the provenance it claims (design #32 §2.3).
-
-    ``field_key`` is the DSL-visible leaf name; ``observation_ref`` is the attributed observation's
-    ``raw.raw_event_id``; ``preimage`` is the payload that observation's ``payload_digest`` claims
-    to address. Publication verifies all three against the snapshot before anything is exposed —
-    this record is a *claim*, never an admission (the name refers to the admitted **observation**
-    the value is attributed to, which the gate then confirms).
-    """
+    """One producer-supplied candidate value + the provenance it claims (design #32 §2.3)."""
 
     field_key: str
     observation_ref: str
@@ -190,16 +123,7 @@ class RejectedValue(FrozenModel):
 
 
 class ValueResolution(FrozenModel):
-    """The terminal report of one value-view resolution (design #32 §3.3/§6).
-
-    ``disposition`` is the authority on what happened; ``view`` is present **iff** the disposition
-    is an admitting one. The two are cross-checked at construction so a caller can never observe a
-    view under ``BINDING_MISMATCH``, nor a missing view under ``RESOLVED`` — the ∅ distinction stays
-    a recorded fact rather than something inferred from a nullable field.
-
-    ``rejected`` lists every candidate that was refused and why, so a decision that starved of
-    values can say which ones and for what reason (design #32 §6).
-    """
+    """The terminal report of one value-view resolution (design #32 §3.3/§6)."""
 
     disposition: ValueViewDisposition
     view: ContextValueView | None = None

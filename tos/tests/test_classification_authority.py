@@ -1,11 +1,4 @@
-"""CII-EV-001 classification completeness + CII-EV-011 authority absence.
-
-* CII-EV-001 (design §5.8): every *material* input must be classified critical;
-  unknown materiality is conservatively treated as material.
-* CII-EV-011 (design §4.4): every authority flag is forced ``false`` — a ``True``
-  value makes the artifact unconstructable (the full "no authority path anywhere"
-  proof is EV-L2/L3; L1 verifies only the invariant).
-"""
+"""CII-EV-001 classification completeness + CII-EV-011 authority absence."""
 
 from __future__ import annotations
 
@@ -32,9 +25,6 @@ _classifications = st.lists(
     ),
     max_size=6,
 )
-
-
-# ---- CII-EV-001 ------------------------------------------------------------
 
 
 @given(inputs=_classifications)
@@ -65,9 +55,6 @@ def test_immaterial_input_need_not_be_classified() -> None:
         )
     ]
     assert classification_complete(inputs) is True
-
-
-# ---- CII-EV-011 ------------------------------------------------------------
 
 
 _SNAPSHOT_AUTHORITY_FLAGS = list(SnapshotAuthority.model_fields)

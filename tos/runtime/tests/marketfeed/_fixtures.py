@@ -1,10 +1,4 @@
-"""Shared builders for ``tos_runtime.marketfeed`` tests (TOS tick-source wave, lane A).
-
-Hermetic (D1.4): every case writes its own YAML under ``tmp_path``; no network, no ambient env.
-Mirrors ``tos/tests/marketfeed/_marketfeed_fixtures.py``'s own two-field-per-observation shape
-(``close`` + ``session`` sharing one raw event id) so a fixture observation here exercises the
-same multi-field-per-observation case the kernel's own authoring-evidence suite does.
-"""
+"""Shared builders for ``tos_runtime.marketfeed`` tests (TOS tick-source wave, lane A)."""
 
 from __future__ import annotations
 
@@ -25,16 +19,12 @@ INSTRUMENT = "ES"
 ENVIRONMENT = "paper-test"
 DECISION_CLASS = "entry"
 
-#: Two bar coordinates, distinct by construction — mirrors the kernel fixture's own
-#: BAR_ONE_AS_OF/BAR_TWO_AS_OF pair.
 BAR_ONE_AS_OF = 1_700_000_060_000
 BAR_TWO_AS_OF = 1_700_000_120_000
 
 CLOSE_BAR_ONE = 4_512_500
 CLOSE_BAR_TWO = 4_513_000
 
-#: Every top-level scalar header line, keyed by the YAML key it declares — a test overrides or
-#: omits by key rather than doing fragile substring surgery on a monolithic block.
 _HEADER_LINES: dict[str, str] = {
     "policy_id": 'policy_id: "cip-fixture-1"',
     "policy_version": 'policy_version: "v1"',
@@ -45,8 +35,6 @@ _HEADER_LINES: dict[str, str] = {
     "intended_use": f'intended_use: "{DECISION_CLASS}"',
 }
 
-#: The default ``fields:`` block — ``close`` (numeric, KRW minor units) + ``session`` (a state
-#: token), both with a 5000ms freshness ceiling.
 DEFAULT_FIELDS_BLOCK = (
     "fields:\n"
     "  - field_key: close\n"
@@ -70,18 +58,7 @@ def policy_yaml(
     overrides: dict[str, str] | None = None,
     fields_block: str = DEFAULT_FIELDS_BLOCK,
 ) -> str:
-    """Compose a Critical Input Policy YAML document from the header line table + a fields block.
-
-    Args:
-        omit: Header keys to leave out entirely (a "missing key" case).
-        overrides: Header keys whose declared line is replaced (e.g. ``{"policy_id": "policy_id:
-            null"}`` for a "named-TBD" case).
-        fields_block: The full ``fields:`` YAML block (or ``""`` to omit the key outright, or
-            ``"fields: []\\n"`` for an explicit empty list).
-
-    Returns:
-        The composed YAML text.
-    """
+    """Compose a Critical Input Policy YAML document from the header line table + a fields block."""
     overrides = overrides or {}
     lines = [
         overrides.get(key, default_line)
@@ -91,7 +68,6 @@ def policy_yaml(
     return "\n".join(lines) + "\n" + fields_block
 
 
-#: A fully-filled, valid Critical Input Policy document.
 VALID_POLICY_YAML = policy_yaml()
 
 

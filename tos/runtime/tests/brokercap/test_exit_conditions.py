@@ -1,10 +1,4 @@
-"""TOS Phase 4 plan §4 exit-condition battery (EC-1..EC-5) —
-``docs/plans/2026-09-09-tos-phase4-scopes-and-verify-realization-plan.md``.
-
-Hermetic: real config under ``tmp_path``, the real byte-immutable KIS draft
-INSTANCE file (read-only), and (EC-2/EC-5) a real composed runtime driven
-through one crossing event — never a mock of the gateway's own verify list.
-"""
+"""TOS Phase 4 plan §4 exit-condition battery (EC-1..EC-5) —"""
 
 from __future__ import annotations
 
@@ -52,13 +46,6 @@ from ..compose import _fixtures as fx
 from ..compose.conftest import write_approval_file
 from ..compose.test_compose_root import _compose, _reach_trusted
 
-# ``config_dir`` / ``data_dir`` / ``custody_root`` are NOT imported here: they are re-exported by
-# this package's own ``conftest.py`` (kernel round #3 K-6) precisely so pytest resolves them as
-# fixtures for the test methods below without this module ever binding those names itself — the
-# same names appear as parameters throughout this file, and importing them here too would trip
-# ruff's F811 (a false positive: pyflakes reads "parameter shadows import" without knowing pytest
-# resolves fixtures by name, never by import visibility).
-
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -72,10 +59,7 @@ _RUNTIME_SRC = Path(__file__).resolve().parents[2] / "src" / "tos_runtime"
 
 
 def _instance_path(config: BrokerScopesConfig) -> Path:
-    """``config.instance_path``, asserted present — every call site below
-    builds its config via ``_load_example`` (this module's own helper),
-    which always sets ``instance_path`` explicitly (absent is a real,
-    reachable case for other configs — never for one built here)."""
+    """``config.instance_path``, asserted present — every call site below"""
     path = config.instance_path
     assert path is not None
     return path
@@ -84,9 +68,7 @@ def _instance_path(config: BrokerScopesConfig) -> Path:
 def _load_example(tmp_path: Path, **overrides: str | bool) -> BrokerScopesConfig:
     raw = yaml.safe_load(_EXAMPLE_PATH.read_text(encoding="utf-8"))
     raw["active_scope"] = overrides.pop("active_scope", "SYNTHETIC_FUTURES_ORDER")
-    raw["instance_path"] = os.path.relpath(
-        _DRAFT_PATH, tmp_path
-    )  # relative, as committed trees (#958)
+    raw["instance_path"] = os.path.relpath(_DRAFT_PATH, tmp_path)
     if overrides.pop("mock_evidence_ok", False):
         for scope in raw["scopes"]:
             if scope["name"] == "MOCK_STOCK_ORDER":
@@ -96,18 +78,8 @@ def _load_example(tmp_path: Path, **overrides: str | bool) -> BrokerScopesConfig
     return load_broker_scopes(path, environment_label="paper-env-7")
 
 
-# ===========================================================================
-# EC-1 — MOCK -> REAL fallback mutation never admitted; no rewriting
-# ===========================================================================
-
-
 class TestEC1NoFallbackRewriting:
-    """Plan §4 EC-1: a requested tuple with no exact scope match denies —
-    :func:`resolve_scope` never widens across environments (already pinned
-    exhaustively by lane A's own mutation evidence M-A,
-    ``tos/runtime/tests/brokercap/test_scopes.py::
-    test_mutation_evidence_m_a_shipped_resolver_never_widens_environment`` —
-    not duplicated here)."""
+    """Plan §4 EC-1: a requested tuple with no exact scope match denies —"""
 
     def test_broker_simulation_futures_mock_order_has_no_scope_unsupported_deny(
         self, tmp_path: Path
@@ -125,24 +97,7 @@ class TestEC1NoFallbackRewriting:
         assert resolution.scope is None
 
     def test_no_consumer_of_endpoint_class_outside_the_allowlist(self) -> None:
-        """AST-based negative-grep (plan §4 EC-1): ``.endpoint_class`` is
-        read off a :class:`~tos_runtime.brokercap.scopes.BrokerScope` (a
-        PROHIBITED scope included) ONLY inside the allowlisted trio —
-        ``brokercap/scopes.py`` (loader + G-4 derivation),
-        ``brokercap/derive.py`` (items 6/12), and ``compose/_wiring.py``
-        (none currently, reserved for G-4 wiring). ``.principal`` is NOT
-        scanned the same way: the attribute name alone is ambiguous in this
-        codebase (``ComposeContextResolver.principal`` and
-        ``FileCustody``'s own credential principal are unrelated concepts
-        sharing the name) — a blanket scan would false-positive on today's
-        correct code. A PROHIBITED scope's own principal never reaching a
-        transport is instead guaranteed structurally: ``active_scope`` can
-        never BE a PROHIBITED scope (boot refusal,
-        ``test_active_scope_prohibited_refuses_to_load``), and G-4's own
-        readers (``transport_nature``/``credential_route_inventory``, both
-        allowlisted) never special-case admissibility when reading a
-        principal for inventory visibility.
-        """
+        """AST-based negative-grep (plan §4 EC-1): ``.endpoint_class`` is"""
         allowlist = {"scopes.py", "derive.py", "_wiring.py"}
         offenders = []
         for path in _RUNTIME_SRC.rglob("*.py"):
@@ -153,11 +108,6 @@ class TestEC1NoFallbackRewriting:
                 if isinstance(node, ast.Attribute) and node.attr == "endpoint_class":
                     offenders.append(f"{path}:{node.lineno}")
         assert offenders == []
-
-
-# ===========================================================================
-# EC-2 — read-only principal can never reach an order endpoint
-# ===========================================================================
 
 
 class TestEC2ReadPrincipalCannotReachOrder:
@@ -180,8 +130,6 @@ class TestEC2ReadPrincipalCannotReachOrder:
             config, active_principal="egressgw-paper-env-7"
         )
         by_principal = {entry.principal: entry for entry in inventory}
-        # The READ principal DOES carry a usable credential/route (it reaches
-        # a broker for reads) — the point is no ORDER-class scope shares it.
         assert by_principal[read_scope.principal].usable_credential is True
 
     def test_composing_with_active_principal_equal_to_read_principal_refuses_at_boot(
@@ -191,8 +139,6 @@ class TestEC2ReadPrincipalCannotReachOrder:
         custody_root: Path,
         tmp_path: Path,
     ) -> None:
-        # REAL_READ's principal after {environment_label} substitution
-        # ("non-live-test", the environment_label _compose() always uses).
         raw = yaml.safe_load((config_dir / "egress_coordinates.yaml").read_text())
         raw["active_principal"] = {"value": "kis-read-non-live-test"}
         (config_dir / "egress_coordinates.yaml").write_text(
@@ -204,13 +150,7 @@ class TestEC2ReadPrincipalCannotReachOrder:
     def test_read_principal_self_declared_synthetic_is_rejected_by_the_inventory(
         self, tmp_path: Path
     ) -> None:
-        """Kernel-level check: even if a transport LIES that the READ
-        principal is synthetic/non-broker (a forged self-report),
-        :func:`resolve_broker_applicability` refuses to accept it, because
-        the injected credential-route inventory (built from the scope
-        table) shows that exact principal DOES carry a usable credential
-        and a broker route — corroboration always wins over self-report
-        (design #34 §4.2 item 2)."""
+        """Kernel-level check: even if a transport LIES that the READ"""
         config = _load_example(tmp_path)
         read_scope = next(s for s in config.scopes if s.name == "REAL_READ")
         inventory = credential_route_inventory(
@@ -234,16 +174,8 @@ class TestEC2ReadPrincipalCannotReachOrder:
         assert applicability is BrokerApplicability.BROKER_RESOURCE_CONSUMING
 
 
-# ===========================================================================
-# EC-3 — futures REAL order capability never created by config/env alone
-# ===========================================================================
-
-
 class TestEC3ConfigAloneNeverCreatesFuturesRealOrder:
-    """Plan §4 EC-3 (kernel rule 4). The load-refusal itself is lane A's own
-    ``test_broker_production_futures_order_in_config_refuses_to_load_naming_scope``
-    (``test_scopes.py``) — referenced, not duplicated. This class adds the
-    M-B mutation evidence the plan asks for."""
+    """Plan §4 EC-3 (kernel rule 4). The load-refusal itself is lane A's own"""
 
     def test_illegal_axis_combination_refuses_naming_the_scope(
         self, tmp_path: Path
@@ -294,13 +226,7 @@ class TestEC3ConfigAloneNeverCreatesFuturesRealOrder:
             assert "getenv(" not in source, f"{path}: getenv( found"
 
     def test_mutation_evidence_m_b_model_construct_would_bypass_the_seal(self) -> None:
-        """M-B: a loader rewritten to use ``model_construct``/``model_copy
-        (update=`` would bypass the validated-construction seal (kernel rule
-        4) — demonstrated directly against the kernel type, never against
-        this loader (which the shipped source pins by negative-grep,
-        ``test_scopes.py::test_no_model_construct_or_model_copy_update_in_
-        brokercap_package``, extended to cover this file's new
-        ``derive.py`` too via the same directory glob)."""
+        """M-B: a loader rewritten to use ``model_construct``/``model_copy"""
         illegal = CapabilityTuple.model_construct(
             environment=BrokerEnvironment.BROKER_PRODUCTION,
             operation_class=OperationClass.ORDER_SEND,
@@ -308,10 +234,6 @@ class TestEC3ConfigAloneNeverCreatesFuturesRealOrder:
             asset_scope=AssetScope.FUTURES,
             authorization_class=AuthorizationClass.REAL_ORDER,
         )
-        # The bypass succeeds at construction (no validator ran) — this IS
-        # the mutation going red, which is exactly why the negative-grep
-        # over the shipped loader source (never using model_construct) is
-        # the real seal, not a runtime type check here.
         assert illegal.asset_scope is AssetScope.FUTURES
         with pytest.raises(ValidationError):
             CapabilityTuple(
@@ -321,12 +243,6 @@ class TestEC3ConfigAloneNeverCreatesFuturesRealOrder:
                 asset_scope=AssetScope.FUTURES,
                 authorization_class=AuthorizationClass.REAL_ORDER,
             )
-
-
-# ===========================================================================
-# EC-4 — MOCK-unsupported conditions still measurable via evidence-bearing
-# reads/probes
-# ===========================================================================
 
 
 class TestEC4MockUnsupportedStillMeasurable:
@@ -362,24 +278,14 @@ class TestEC4MockUnsupportedStillMeasurable:
     ) -> None:
         config = _load_example(tmp_path)
         scope = next(s for s in config.scopes if s.name == "MOCK_STOCK_ORDER")
-        assert scope.admissibility is Admissibility.PROHIBITED  # null evidence
-
-
-# ===========================================================================
-# EC-5 — honesty test (NOT a pass): broker-reaching mock e2e denies honestly
-# ===========================================================================
+        assert scope.admissibility is Admissibility.PROHIBITED
 
 
 def _ec5_config_dir(config_dir: Path) -> Path:
-    """Rewrite the standard fixture's ``broker_scopes.yaml`` to activate
-    MOCK_STOCK_ORDER (REDUCED, real evidence flag) bound to the REAL MOCK_VTS
-    INSTANCE document — every other config file is left as the standard
-    fixture wrote it."""
+    """Rewrite the standard fixture's ``broker_scopes.yaml`` to activate"""
     raw = yaml.safe_load(_EXAMPLE_PATH.read_text(encoding="utf-8"))
     raw["active_scope"] = "MOCK_STOCK_ORDER"
-    raw["instance_path"] = os.path.relpath(
-        _DRAFT_PATH, config_dir
-    )  # relative, as committed trees (#958)
+    raw["instance_path"] = os.path.relpath(_DRAFT_PATH, config_dir)
     for scope in raw["scopes"]:
         if scope["name"] == "MOCK_STOCK_ORDER":
             scope["profile_evidence_ok"] = True
@@ -390,9 +296,7 @@ def _ec5_config_dir(config_dir: Path) -> Path:
 
 
 class TestEC5HonestyNotAPass:
-    """Plan §4 EC-5 — deliberately NOT satisfied (§7 운영자 확인 지점 1): this
-    class pins the HONEST denial a broker-reaching mock scope produces
-    today, never a fabricated pass."""
+    """Plan §4 EC-5 — deliberately NOT satisfied (§7 운영자 확인 지점 1): this"""
 
     def test_broker_reaching_mock_scope_never_even_reaches_the_gateway(
         self,
@@ -401,28 +305,7 @@ class TestEC5HonestyNotAPass:
         custody_root: Path,
         tmp_path: Path,
     ) -> None:
-        """A REAL, EARLIER honest denial layer this compose root already
-        has (TOS Phase 3 Wave 2 Lane B-R, ``tos_runtime.compose.
-        _preconditions.RuntimeCoordinatorPreconditions.live_scope_authorized``):
-        a broker-reaching transport (``reaches_broker is True``, G-4-derived
-        from the active MOCK_STOCK_ORDER scope) is structurally refused
-        under the ONLY supported governance posture (``NOT_AUTHORIZED``) —
-        the tick halts at ``LIVE_SCOPE_NOT_AUTHORIZED`` BEFORE step 1, no
-        pipeline, no gateway verification, no ledger mutation. Zero
-        transport calls holds trivially here; item 6/12 honesty is proven
-        at the gateway/kernel level directly below
-        (:meth:`test_kernel_level_item6_item12_deny_honestly_for_the_broker_reaching_scope`),
-        since this e2e path cannot reach the gateway at all for a
-        broker-reaching scope.
-
-        T2 lane C: an active broker-reaching scope now requires the
-        ``kis-mock`` transport (:func:`~tos_runtime.compose._transport_wiring
-        .refuse_transport_scope_mismatch` — one source of truth), so this
-        e2e path composes with it. The compose-wide fixture's own
-        ``nonlive_broker_consuming.admitted: false`` posture is left
-        untouched, so the Coordinator gate's honest denial is EXACTLY the
-        same as before this lane — the transport kind is orthogonal to it.
-        """
+        """A REAL, EARLIER honest denial layer this compose root already"""
         _ec5_config_dir(config_dir)
         fx.write_kis_mock_transport_config(config_dir)
         fx.provision_kis_mock_custody(custody_root)
@@ -440,9 +323,6 @@ class TestEC5HonestyNotAPass:
         assert results[0].pipeline is None
         assert results[0].halt_reason is not None
         assert results[0].halt_reason.value == "LIVE_SCOPE_NOT_AUTHORIZED"
-        # T2 lane C: runtime.transport is now a KisMockTransport (no synthetic-only
-        # `.requests` attribute) — zero transport calls is instead proven by the
-        # absence of ANY TRANSPORT_* evidence row this adapter would otherwise emit.
         transport_evidence_rows = runtime.evidence_store.connection.execute(
             "SELECT COUNT(*) FROM entries WHERE kind LIKE 'TRANSPORT_%'"
         ).fetchone()[0]
@@ -455,20 +335,7 @@ class TestEC5HonestyNotAPass:
     def test_kernel_level_item6_item12_deny_honestly_for_the_broker_reaching_scope(
         self, tmp_path: Path
     ) -> None:
-        """The plan §4 EC-5 honesty proof, driven directly against the
-        kernel gateway (``tos.egressgw.verify_send_boundary``) with the
-        SAME derived fields :mod:`tos_runtime.compose.context` would feed
-        it — bypassing the earlier Coordinator-preconditions halt (previous
-        test) purely to exercise items 6/12/deferred in isolation, exactly
-        as the plan asks: item 6 DENIED naming brokercap's PROHIBITED
-        verdict, item 12 DENIED (DRAFT ⇒ ``broker_constraint_generation_current``
-        is a strict ``bool`` — :func:`~tos_runtime.brokercap.derive_item6_item12`
-        never returns ``None`` for it — so the DRAFT profile's honest ``False``
-        is now an explicit denial, not folded into ``UNKNOWN`` the way the
-        pre-kernel-round-#3 gate's ``_positive()`` single-polarity check did;
-        kernel round #3 §11 결정 5), every deferred item (4/5/7/8/9/10)
-        UNKNOWN — never NOT_APPLICABLE (that would claim this send was
-        synthetic, which a broker-reaching scope never is)."""
+        """The plan §4 EC-5 honesty proof, driven directly against the"""
         from tos.egress import RestrictiveLatchState
         from tos.egressgw import verify_send_boundary
         from tos.engine import AttemptRequest
@@ -524,8 +391,6 @@ class TestEC5HonestyNotAPass:
         assert item12.outcome is VerifyOutcome.DENIED
         assert "broker-constraint generation" in (item12.reason or "")
 
-        # Items 7/8/9/10 went with plan S2-a and S2-b folded the authority epoch; live
-        # scope is the deferred set now.
         deferred_items = (SendVerifyItem.VALID_LIVE_SCOPE,)
         for item in deferred_items:
             assert by_item[item].outcome is VerifyOutcome.UNKNOWN
@@ -541,9 +406,7 @@ class TestEC5HonestyNotAPass:
         custody_root: Path,
         tmp_path: Path,
     ) -> None:
-        """The unchanged existing e2e hand-off count (module docstring) —
-        items 6/12 SATISFIED for the SYNTHETIC default scope, now derived
-        rather than attested."""
+        """The unchanged existing e2e hand-off count (module docstring) —"""
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
         event = fx.crossing_event()
@@ -579,15 +442,8 @@ class TestEC5HonestyNotAPass:
         runtime.evidence_store.close()
 
 
-# ===========================================================================
-# M-C — mutation evidence: a stubbed derive_item6_item12 would falsely pass
-# ===========================================================================
-
-
 class TestMutationEvidenceMC:
-    """A ``derive_item6_item12`` stub that always returns ``True``/current
-    would make EC-5's honesty assertions fail — demonstrating the shipped
-    derivation is load-bearing, not decorative."""
+    """A ``derive_item6_item12`` stub that always returns ``True``/current"""
 
     def test_constant_true_stub_would_break_the_ec5_prohibited_assertion(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -600,11 +456,8 @@ class TestMutationEvidenceMC:
             _instance_path(config), environment="MOCK_VTS"
         )
 
-        # Item 12, not item 6: since option (a) "K" (operator decision 2026-10-23) the REDUCED
-        # mock scope passes item 6, but with no fresh mock-account read (``None`` here) its
-        # broker-constraint generation is honestly NOT current.
         shipped = derive_item6_item12(scope, config, instance)
-        assert shipped.broker_constraint_generation_current is False  # honest
+        assert shipped.broker_constraint_generation_current is False
 
         def _stub_always_true(*_args: object, **_kwargs: object) -> Item6Item12Fields:
             return Item6Item12Fields(
@@ -618,25 +471,14 @@ class TestMutationEvidenceMC:
 
         monkeypatch.setattr(derive_module, "derive_item6_item12", _stub_always_true)
         mutated = derive_module.derive_item6_item12(scope, config, instance)
-        assert mutated.broker_constraint_generation_current is True  # the mutation, red
+        assert mutated.broker_constraint_generation_current is True
 
         with pytest.raises(AssertionError):
             assert mutated.broker_constraint_generation_current is False
 
 
-# ===========================================================================
-# F9 — the INSTANCE file is parsed AT MOST ONCE per boot
-# ===========================================================================
-
-
 class TestF9SingleInstanceLoadPerBoot:
-    """Independent-review finding F9: ``_wiring.py`` used to load the active
-    scope's INSTANCE document TWICE per boot — once in
-    ``_resolve_strategies_and_attested_inputs`` (for the boot-integrity
-    record) and again in ``_build_context_resolver`` (for the gateway
-    context) — re-parsing the same 4,789-line file for no reason. The fix
-    loads it exactly once and threads the SAME ``InstanceDocument`` through
-    ``_BootResult`` to both consumers."""
+    """Independent-review finding F9: ``_wiring.py`` used to load the active"""
 
     def test_load_instance_document_called_at_most_once_per_boot(
         self,
@@ -646,25 +488,12 @@ class TestF9SingleInstanceLoadPerBoot:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # Activates MOCK_STOCK_ORDER, the one scope whose `instance` block
-        # actually causes the real INSTANCE file to be parsed at all (the
-        # default fixture's SYNTHETIC_FUTURES_ORDER scope has no `instance`
-        # block, so it would never exercise either call site).
-        #
-        # T2 lane C: a broker-reaching active scope now requires the
-        # kis-mock transport (refuse_transport_scope_mismatch). This test's
-        # own counted call site (`derive_module.load_instance_document`) is
-        # unaffected: kis-mock's OWN host-seal loading uses the plural
-        # `load_instance_documents` (a different function this monkeypatch
-        # does not touch), so the count this test pins stays exactly 1.
         _ec5_config_dir(config_dir)
         fx.write_kis_mock_transport_config(config_dir)
         fx.provision_kis_mock_custody(custody_root)
         calls: list[int] = []
         original = derive_module.load_instance_document
 
-        # `Any`, not `object`: this spy stands in for `load_instance_document`'s own signature
-        # and must forward every call unchanged (plan §1.1 A-rt boundary use of `Any`).
         def _counting(*args: Any, **kwargs: Any) -> object:
             calls.append(1)
             return original(*args, **kwargs)

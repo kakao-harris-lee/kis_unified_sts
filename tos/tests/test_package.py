@@ -1,9 +1,4 @@
-"""Hermetic smoke test for the tos package skeleton (§2.4).
-
-Hermetic by construction: no .env, no filesystem I/O beyond import, no network,
-no external services. Its only import is the package under test (`import tos`),
-which the firewall permits as a self-import.
-"""
+"""Hermetic smoke test for the tos package skeleton (§2.4)."""
 
 from __future__ import annotations
 
