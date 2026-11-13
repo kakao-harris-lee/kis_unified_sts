@@ -33,6 +33,7 @@ loopback-only socket guard before composing.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import socket
@@ -231,7 +232,7 @@ def reboot(root: Path, result_path: Path) -> int:
         "authority_effect": (
             None
             if recovery is None
-            else recovery.authority_effect.model_dump(mode="json")
+            else dataclasses.asdict(recovery.authority_effect)
         ),
     }
     runtime.rcl_log.close()
