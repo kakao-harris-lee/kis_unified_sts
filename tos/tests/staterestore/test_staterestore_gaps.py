@@ -211,17 +211,6 @@ def test_gap_iv_the_outside_orchestration_reaches_the_worker_as_a_module_path() 
     )
 
 
-# --------------------------------------------------------------------------
-# (v) persistence != transmission
-# --------------------------------------------------------------------------
-
-
-def test_gap_v_the_tos_wide_non_transmitting_invariant_is_still_declared() -> None:
-    """``tos/src/tos/__init__.py`` line 6 — the sentence staterestore must not falsify."""
-    text = _TOS_INIT.read_text(encoding="utf-8")
-    assert _NON_TRANSMITTING_SENTENCE in text
-
-
 def test_gap_v_staterestore_adds_local_persistence_and_zero_egress() -> None:
     """The new package keeps the invariant: disk I/O yes, network egress no.
 

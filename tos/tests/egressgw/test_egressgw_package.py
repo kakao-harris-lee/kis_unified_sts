@@ -44,36 +44,6 @@ def test_every_exported_name_resolves() -> None:
         ), f"tos.egressgw.__all__ names a missing {name!r}"
 
 
-def test_the_package_declares_its_honest_scope_in_its_own_docstring() -> None:
-    """(§1.1) The provisional / no-EV / no-live declaration lives in the code, not only the doc."""
-    doc = " ".join((tos.egressgw.__doc__ or "").split())
-    for phrase in (
-        "closes no EV",
-        "synthetic transport",
-        "P0-2",
-        "admits no live send",
-        "no ADR acceptance, restricted-live, or production is authorized",
-    ):
-        assert (
-            phrase in doc
-        ), f"the package docstring lost its honest-scope phrase: {phrase!r}"
-
-
-def test_the_package_states_the_four_two_one_split() -> None:
-    """(§4.1) The 4 / 2 / 1 honesty table is stated where a reader of the code will see it.
-
-    It was 6 / 5 / 6 until plan S2-a removed the RFC's items 7/8/9/10, and 6 / 5 / 2 until plan
-    S2-b folded six more into the earlier stage that already stops the same input. A stale
-    count reads as a stronger claim than the gate makes, so it is pinned.
-    """
-    doc = " ".join((tos.egressgw.__doc__ or "").split())
-    assert "this gateway judges seven" in doc
-    assert "Four are verified by shipped predicates" in doc
-    assert "two read owner-supplied flags" in doc
-    assert "live scope (5) — is deferred" in doc
-    assert "three fields as the only remaining" not in doc
-
-
 def test_no_module_exposes_a_sibling_kernel_production_symbol() -> None:
     """(§0.3 / §11-3, author-level) The kernels are consumed; their productions are not re-hosted.
 

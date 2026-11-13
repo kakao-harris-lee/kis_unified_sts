@@ -107,22 +107,3 @@ def test_the_pattern_catches_every_real_offending_shape_and_spares_the_one_real_
         assert not _EOD_LIQUIDATION_SHAPE.search(
             line
         ), f"expected the regex NOT to match: {line!r}"
-
-
-def test_the_one_real_prose_mention_in_this_tree_is_spared_by_name() -> None:
-    """Positive confirmation, not just a synthetic string: read the actual file/line the survey
-    named (``strategy/bindings.py:37``) and assert the regex does not fire on it — if a future
-    edit changed that docstring's wording to something call-shaped, this test (not just the
-    synthetic self-test above) would catch it."""
-    bindings_path = _SRC / "tos_runtime" / "strategy" / "bindings.py"
-    assert bindings_path.exists(), f"expected {bindings_path} to exist"
-    lines = bindings_path.read_text(encoding="utf-8").splitlines()
-    flattened_lines = [line for line in lines if "flattened" in line]
-    assert flattened_lines, (
-        "expected to find the known 'flattened' docstring prose in bindings.py — if this no "
-        "longer exists the test should be updated, not silently left checking nothing"
-    )
-    for line in flattened_lines:
-        assert not _EOD_LIQUIDATION_SHAPE.search(
-            line
-        ), f"the EOD/liquidation regex now matches a known-benign prose line: {line!r}"

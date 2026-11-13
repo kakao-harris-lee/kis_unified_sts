@@ -422,12 +422,9 @@ EXAMPLE_TOUCHPOINTS: dict[str, frozenset[str]] = {
             "tos_runtime/compose/_currentness_wiring.py",
         }
     ),
-    "strategy_bindings": frozenset(
-        {
-            "tos_runtime/strategy/bindings.py",
-            "tos_runtime/strategy/resolve.py",
-        }
-    ),
+    # `resolve.py` names the file only in its own docstrings, and prose is not a touch point
+    # (`example_integrity.code_text`) — it reads the bindings through `load_strategy_bindings`.
+    "strategy_bindings": frozenset({"tos_runtime/strategy/bindings.py"}),
     "time": frozenset(
         {
             "tos_runtime/compose/_types.py",

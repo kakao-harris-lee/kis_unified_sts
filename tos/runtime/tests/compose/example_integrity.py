@@ -58,6 +58,8 @@ PR #737 review round 2 found TWO further gaps, both closed here rather than by i
 
 from __future__ import annotations
 
+import io
+import tokenize
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -66,6 +68,11 @@ import yaml
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
 RUNTIME_SRC = Path(__file__).resolve().parents[2] / "src"
+
+#: A STRING token right after one of these starts a statement, so it is a docstring or bare prose.
+_STATEMENT_START = frozenset(
+    {tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.ENCODING}
+)
 
 #: A key path into a nested mapping, e.g. ``("activation", "not_expired")``.
 KeyPath = tuple[str, ...]
@@ -126,16 +133,43 @@ def assert_required_paths_present(stem: str, required_paths: list[KeyPath]) -> N
     )
 
 
+def code_text(path: str | Path) -> str:
+    """``path``'s source with comments and docstrings dropped, as joined token text.
+
+    A mention that lives only in prose is not a touch point. The S4 prose strip
+    (``docs/plans/2026-11-13-tos-code-halving-plan.md`` §S4) deletes comments and all but the
+    first line of every docstring, so a drift signal keyed on prose fires on a documentation
+    edit while saying nothing about who reads the config. Narrowing to code only ever REMOVES
+    hits — a token's text still carries its own quotes, so the literal search is otherwise
+    unchanged (measured 2026-11-13: of the 25 recorded stems, exactly one set changes).
+    """
+    source = Path(path).read_text(encoding="utf-8")
+    kept: list[str] = []
+    previous = tokenize.ENCODING
+    for token in tokenize.generate_tokens(io.StringIO(source, newline="").readline):
+        if token.type == tokenize.COMMENT:
+            continue
+        if token.type == tokenize.STRING and previous in _STATEMENT_START:
+            # a standalone string statement — a docstring, or bare prose
+            previous = tokenize.STRING
+            continue
+        if token.type != tokenize.NL:
+            previous = token.type
+        kept.append(token.string)
+    return "\n".join(kept)
+
+
 def touchpoint_files(stem: str) -> frozenset[str]:
-    """Live-grep every ``*.py`` file under ``tos/runtime/src`` for the literal deployed filename
-    (``"{stem}.yaml"``) and return the set of files (paths relative to ``tos/runtime/src``) where
-    it appears — comments and docstrings included on purpose: a NEW mention is exactly the signal
-    this check exists to surface, whether it turns out to be a real new reader or not.
+    """Live-grep the CODE of every ``*.py`` file under ``tos/runtime/src`` for the literal
+    deployed filename (``"{stem}.yaml"``) and return the set of files (paths relative to
+    ``tos/runtime/src``) where it appears. A NEW mention is exactly the signal this check exists
+    to surface, whether it turns out to be a real new reader or not; a mention in a comment or a
+    docstring is not one (see :func:`code_text`).
     """
     literal = f'"{stem}.yaml"'
     found: set[str] = set()
     for path in RUNTIME_SRC.rglob("*.py"):
-        if literal in path.read_text(encoding="utf-8"):
+        if literal in code_text(path):
             found.add(str(path.relative_to(RUNTIME_SRC)))
     return frozenset(found)
 

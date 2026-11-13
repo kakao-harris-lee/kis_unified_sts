@@ -340,15 +340,6 @@ def test_the_real_module_imports_with_its_own_literal() -> None:
     assert bootproof_guard._validated_prefixes(("a", "b/c")) == ("a", "b/c")
 
 
-def test_the_allowlist_attests_intent_not_provenance() -> None:
-    """Said out loud, in the module, because the distinction is load-bearing:
-    nothing authenticates ``source_id``. The list records which producer names
-    the operator has decided may create a permanent corpus — a producer that
-    lies about its name is outside what this guard can see."""
-    assert "intent, not provenance" in bootproof_guard.__doc__
-    assert "self-declared" in bootproof_guard.__doc__
-
-
 def test_red_h1_an_unmarked_resident_style_journal_cannot_reach_a_designated_dir(
     tmp_path: Path, state: types.SimpleNamespace
 ) -> None:
