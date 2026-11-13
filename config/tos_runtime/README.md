@@ -5,6 +5,20 @@ real value an operator has signed off on for a named environment
 (`paper/`, later `live/`), distinct from the unapproved templates under
 `tos/runtime/config/*.example.yaml`.
 
+> **2026-11-13 — plan S2-a deleted five of the files documented below**
+> (`docs/plans/2026-11-13-tos-code-halving-plan.md`): `safety_envelope.yaml`,
+> `safety_profile.yaml`, `safety_activation.yaml`, `safety_deviations.yaml` and
+> `safety_incidents.yaml`. The safety-mesh services that read them are gone — their
+> judgement inputs were static YAML constants in every shipped tree and none ever
+> denied a send. `monitor_coverage.yaml` is still here but slimmed to the two bounds
+> the slim monitor actually reads (`coverage_generation` + `bounds.{max_evidence_tip_
+> stall_ms,max_inbox_unconsumed}`); its `manifest`/`items` blocks and
+> `healthy_time_states` went too. The ARE ceiling that used to live on
+> `safety_envelope.yaml::envelope.governed_dimensions[].envelope_max` moved, same
+> values, into `aggregate_risk_policy.yaml::_runtime.envelope_max`.
+> **Every sentence below that names one of the five deleted files is history, not
+> current procedure.**
+
 **Trees here are not one-per-environment-label.** `paper/` is the resident
 deployment (the daily session, `docs/runbooks/tos-paper-boot.md` §7); a
 **tenant** tree is a separate deployment with its own off-repo render and its

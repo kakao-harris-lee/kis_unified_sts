@@ -137,22 +137,10 @@ exceptions:
     ``egressgw/venuefacts.py::venue_generation_item_verdict`` 로 이관되고, 이
     모듈에는 ``(attempt, applicability)`` 를 버리고 위임만 하는 얇은 래퍼(약 12줄)만
     남았다(mesh 분리와 동일 패턴) — import 1줄 추가를 감안해도 순감소.
-- target: tos/src/tos/sir/predicates.py
-  measured: 1681
-  owner: tos-kernel
-  decomposition_order: 2
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/posttrade/predicates.py
   measured: 1644
   owner: tos-kernel
   decomposition_order: 3
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/stm/predicates.py
-  measured: 1514
-  owner: tos-kernel
-  decomposition_order: 4
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/sci/records.py
@@ -173,24 +161,6 @@ exceptions:
   measured: 1186
   owner: tos-kernel
   decomposition_order: 7
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/spg/predicates.py
-  measured: 1145
-  owner: tos-kernel
-  decomposition_order: 8
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/hag/predicates.py
-  measured: 1060
-  owner: tos-kernel
-  decomposition_order: 9
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/wdr/predicates.py
-  measured: 1014
-  owner: tos-kernel
-  decomposition_order: 10
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/posttrade/vocabulary.py
@@ -245,7 +215,7 @@ exceptions:
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
     2026-09-07 decomposition_order 13→14(measured 불변, __call__ 재정렬로 인한 이동).
 - target: tos/src/tos/egressgw/records.py::send_boundary_context
-  measured: 239
+  measured: 223
   owner: tos-kernel
   decomposition_order: 15
   expires_on: '2026-12-31'
@@ -289,28 +259,10 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성 ·
     커널 라운드 #4 K-3(signer/approval/evidence kwarg 3개 추가)으로 136→151 실측 갱신
-- target: tos/src/tos/spg/predicates.py::semantic_validation
-  measured: 134
-  owner: tos-kernel
-  decomposition_order: 21
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/marketfeed/value.py::publish_context_value_view
   measured: 133
   owner: tos-kernel
   decomposition_order: 22
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/stm/predicates.py::critical_coverage_complete_or_gap
-  measured: 116
-  owner: tos-kernel
-  decomposition_order: 23
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/spg/predicates.py::profile_within_envelope
-  measured: 115
-  owner: tos-kernel
-  decomposition_order: 24
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/authority/predicates.py::degraded_lease_valid
@@ -344,7 +296,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1190
+  measured: 1187
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -609,7 +561,7 @@ exceptions:
     `ComposeContextResolver(...)` 호출부 pass-through 1→3줄(+2줄) + 도크스트링
     설명 확장(+2줄).
 - target: tos/runtime/src/tos_runtime/compose/_engine_wiring.py::wire_engine_and_driver
-  measured: 167
+  measured: 160
   owner: tos-runtime
   decomposition_order: 33
   expires_on: '2026-12-31'
@@ -720,7 +672,7 @@ exceptions:
     (계획 `docs/plans/2026-11-13-tos-code-halving-plan.md` S2-c) — 2026-09-12/09-13
     두 항목이 더한 +5/+3 이 그대로 되돌아왔다. measured-drift 가드 재실측 갱신.
 - target: tos/src/tos/egressgw/records.py
-  measured: 1083
+  measured: 1069
   owner: tos-kernel
   decomposition_order: 37
   expires_on: '2026-12-31'
@@ -963,7 +915,7 @@ exceptions:
 # only rejects a DUPLICATE decomposition_order, never a gap — module docstring's
 # own enforced failure classes (a)-(f) do not include "must be contiguous").
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py::_build_context_resolver
-  measured: 115
+  measured: 114
   owner: tos-runtime
   decomposition_order: 40
   expires_on: '2026-12-31'
@@ -1002,7 +954,7 @@ exceptions:
     `tos.egressgw.venuefacts.venue_session_account_facts_current` 로 이관되며
     이 리졸버는 세 원시 sub-fact 를 각각 공급할 뿐 합성하지 않는다.
 - target: tos/runtime/src/tos_runtime/compose/_finalize_wiring.py::_finalize
-  measured: 128
+  measured: 124
   owner: tos-runtime
   decomposition_order: 41
   expires_on: '2026-12-31'
@@ -1039,72 +991,3 @@ exceptions:
     유일한 지점이라 분해 대신 등재.
     2026-09-26 egress 거래일 계획 T-3 — `trading_date_now` 매개변수 1줄 + `wire_engine_and_driver` 호출부 인자 1줄로 103→105(+2). 재등재.
     2026-09-26 주기 평가·C-2 계획 W2 — `kis_credential_sessions` 생성 1줄(본문은 `_kis_credential_sessions` 헬퍼로 분리) + `wire_engine_and_driver`·`ComposedRuntime` 호출부 인자 각 1줄로 105→108(+3). 재등재.
-- target: tos/runtime/src/tos_runtime/compose/_preconditions.py::RuntimeCoordinatorPreconditions.live_scope_authorized
-  measured: 107
-  owner: tos-runtime
-  decomposition_order: 42
-  expires_on: '2026-12-31'
-  note: >-
-    W3.1 독립 리뷰 처분(MEDIUM-6, once-per-tick SafetyMeshSnapshot) 신규 등재 —
-    `mesh_snapshot_refresher`(주어졌을 때)를 매 호출 최상단에서 무조건 1회
-    호출해 이번 틱의 `SafetyMeshSnapshot`을 셀에 채우는 블록(주석 6줄 포함) +
-    `_mesh_clear`를 그 스냅샷을 받아 `service.clear()`를 직접 부르는 대신
-    `snapshot.clear_for(identity)`를 읽도록 재작성(스냅샷 부재 시에만
-    `service.clear()` 폴백, 기존 유닛 테스트의 페이크 서비스 호환 유지)하며
-    100→107(+7) — Coordinator 자신이 매 틱 스냅샷을 «갱신하는» 유일한 소비자여야
-    한다는 팀리드 처분의 핵심 지점이라 분해 대신 등재.
-- target: tos/runtime/src/tos_runtime/compose/_safety_wiring.py::build_safety_mesh
-  measured: 149
-  owner: tos-runtime
-  decomposition_order: 43
-  expires_on: '2026-12-31'
-  note: >-
-    W3.1 독립 리뷰 처분(HIGH-1/MEDIUM-6) 신규 등재 — HIGH-1: 구성 직후
-    `monitoring_service.clear()` 1회 웜업 호출(주석 포함, 최초 관측이 항상
-    UNKNOWN 인 a2 의 HIGH-2 수정으로 인한 첫 틱 회귀를 boot 시점에 소진) +
-    `_evidence_tip_observer_excluding_own_alerts` 로 STM_ALERT 자기 관측 배제.
-    MEDIUM-6: `_SafetyMeshTickCell`/`_mesh_dimension_reader_for`/
-    `_clear_value`/`_current_tick_snapshot` 를 통해 `dimension_readers`·
-    `_deferred_fields`·`RestrictiveLatchOwner` 세 소비자 모두 같은 per-tick
-    스냅샷을 공유하도록 재배선(개별 `service.clear()`/`service.dimension_report()`
-    직접 호출을 제거) — 이 함수 자신이 그 세 소비자의 결선 지점이라 순증분
-    대부분이 여기 남는다. 100→116(+16) — 팀리드가 명시한 구조적 처분(one
-    evaluation per tick, shared by all consumers)의 결선 지점이라 분해 대신 등재.
-    **2026-09-11 재심 처분(MEDIUM-8, latent — M17 잔존) 재등재 116→122**:
-    `_mesh_dimension_reader_for`/`_deferred_fields`/`restrictive_latch` 의
-    `incident_clear`/`profile_clear` 클로저·`refresh_tick_snapshot` 람다 모두에
-    `inbox_cell` 인자 1개씩 관통 배선(틱 세대 식별자의 소스 — 이미 이 함수가
-    쥐고 있는 `_InboxCell`을 재사용, 새 결선 없음) — 이 함수 자신이 그 다섯
-    호출부 전부의 결선 지점이라 순증분이 여기 남는다. 분해 대신 등재.
-    **2026-09-11 W3.2 lane d2 재등재 122→140(+18)**: `ProtectiveActionService`
-    구성(§2 결정 8) — `latch_state`/`incident_clear`(같은 per-tick 스냅샷 재사용,
-    새 스냅샷 소비자 아님)/`time_health_state`/`evidence_recorder` 4개 포트를
-    조립하는 블록(주석 6줄 포함) + `_SafetyMesh` 반환에 `protective_action=` 1줄
-    추가 — 이 함수가 그 유일한 결선 지점이라 분해 대신 등재.
-    **2026-09-12 Phase 5 W4 lane e2 재등재 140→147(+7)**: 결정 6 — 시그니처에
-    `software_deployment_ok: bool | None = None` 파라미터 1개(§2 결정 6, STAGE B
-    `release_admission` 결과를 SAFETY_ENVELOPE_PROFILE 로 관통 배선) + 도크스트링
-    Args 항목 5줄 + `SafetyProfileService(...)` 호출에 인자 1줄 — 이 함수가 그
-    유일한 결선 지점이라 분해 대신 등재. (같은 PR 의 `b5a3e7a1` 이 STAGE B
-    `_stage_b_release_probe` 를 이 함수 호출 앞으로 재배치해 `_wiring.py` 가
-    `software_deployment_ok=release_admitted` 실값을 넘긴다 — 최초 결선 시점의
-    «`None` 기본값·후속 이월» 문언은 W4 독립 리뷰 MEDIUM 1 로 정정.)
-    **2026-09-12 Phase 5 W4 최종 후속 재등재 147→148**: `_SafetyMesh` 반환문에
-    `peek_tick_snapshot=tick_cell.peek,` 1줄 추가(§2 결정 7 — operator projection
-    이 `.clear()` 재호출 없이 마지막 스냅샷을 읽는 유일한 경로) — 이 함수가
-    `_SafetyMesh` 조립의 유일한 지점이라 분해 대신 등재.
-    **2026-09-16 TOS 리스크 상태 서비스 웨이브(레인 b) 재등재 148→149(+1)**:
-    `_SafetyMesh` 반환문에 `profile_service=profile_service,` 1줄 추가 — HSE
-    (`governed_dimensions`)를 `tos_runtime.compose._riskstate_wiring`가 재로드
-    없이 읽도록 `SafetyProfileService`를 이름으로 노출(`services` 튜플 위치 의존
-    회피) — 이 함수가 `_SafetyMesh` 조립의 유일한 지점이라 분해 대신 등재.
-
-# 2026-09-16 리스크 상태 서비스 웨이브 리뷰 처분(item T1): `riskstate/policies.py` 가
-# 레인 b의 `side_tokens`/`instrument_scope`/`account_scope` 확장으로 1000줄 문턱을
-# 넘겼을 때 등재된 신규 예외 항목은 "분해가 원칙, 등재는 드리프트만" 규율을 어겼다
-# (등재 시 사유가 이미 "분해는 이 웨이브 범위 밖"이라고 자인). 처분: `tos_runtime/venue
-# /config.py` 가 이미 밟은 분할(`_venue_policy_loader.py`/`_order_construction_policy
-# _loader.py`)과 동일한 패턴으로 `policies.py` 를 얇은 재수출 shim 으로 축소하고
-# `_aggregate_risk_policy_loader.py`/`_action_flow_policy_loader.py`(+ 공유 헬퍼
-# `_riskstate_primitives.py`) 로 분리 — 예외 항목 자체를 제거. 세 파일 모두 100/1000줄
-# 문턱 아래.

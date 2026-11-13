@@ -2,6 +2,16 @@
 
 CP-3 **첫 tenant** 설정 트리 — Setup D VWAP 되돌림, **LONG 배포**.
 
+> **2026-11-13 — S2-a 계획이 아래 문서가 가리키는 파일 다섯 개를 지웠다**
+> (`docs/plans/2026-11-13-tos-code-halving-plan.md`): `safety_envelope.yaml` ·
+> `safety_profile.yaml` · `safety_activation.yaml` · `safety_deviations.yaml` ·
+> `safety_incidents.yaml`. 그들을 읽던 안전망 서비스가 사라졌다 — 판정 입력이 모든
+> 출하 트리에서 정적 YAML 상수였고 한 번도 송신을 거부하지 않았다.
+> `monitor_coverage.yaml` 은 남았지만 축소판 모니터가 실제로 읽는 두 경계값만 남겼다.
+> ARE 상한(`envelope_max`)은 같은 값으로
+> `aggregate_risk_policy.yaml::_runtime.envelope_max` 로 옮겼다.
+> **아래에서 지워진 다섯 파일을 가리키는 문장은 현재 절차가 아니라 이력이다.**
+
 > 이 디렉터리는 **값**이다. 아무것도 부팅하지 않았고, 아래 「무엇이 증명되지 않았나」가
 > 그 목록이다. 부모 `config/tos_runtime/README.md` 의 규칙(인용 없는 값은 여기 있을 자격이
 > 없다)이 그대로 적용된다.
@@ -33,7 +43,8 @@ CP-3 **첫 tenant** 설정 트리 — Setup D VWAP 되돌림, **LONG 배포**.
 
 ## 3. 상주 트리와 무엇이 다른가 (실측 2026-10-09)
 
-**이 트리는 33 파일이다: 바이트 동일 23 + 다름 6 + tenant 전용 4.** 더해서 상주 트리의
+**이 트리는 28 파일이다: 바이트 동일 18 + 다름 6 + tenant 전용 4.**
+(2026-11-13 S2-a 실측 — 33 → 28 · 바이트 동일 23 → 18 은 지워진 안전망 설정 다섯 개다.) 더해서 상주 트리의
 `strategies/bootproof_band.strategy.yaml` **하나가 이 트리에 없다**(상주 30 파일 기준).
 31 → 32 · 다름 5 → 6 은 2026-10-10 PR-B 가 더한 **`RENDER.yaml`** 때문이다(상주 29 → 30 은
 PR-A 가 더한 상주 `RENDER.yaml`).
