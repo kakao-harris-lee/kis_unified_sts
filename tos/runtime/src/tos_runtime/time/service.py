@@ -39,12 +39,11 @@ exactly as often as its caller calls it (the marketfeed pass loop: measured
 
 What IS bounded is how often the ``TIME_HEALTH_SNAPSHOT`` evidence ROW is
 appended: on a change of judged content, and otherwise no more often than
-``time_health_snapshot_heartbeat_ms`` (see that config key's own YAML comment
-for the incident). Measured 2026-11-13 over every live evidence store
-(``~/.local/state/tos/{paper-data,cp3-setup-d-*-data}/*/evidence.sqlite3``):
-2.9 M of 3.45 M rows — 84.4 %, 8.3 GB — were this one kind, re-appending the
-same judgement every ~400 ms, and on 2026-11-10 the host disk filled and
-sessions were LOST.
+``time_health_snapshot_heartbeat_ms`` — a key whose YAML comment carries both
+the incident and why it must stay strictly under the closed-session evaluate
+interval. Measured 2026-11-13 over every live evidence store: 2.9 M of 3.45 M
+rows (84.4 %, 8.3 GB) were this one kind, re-appending the same judgement
+every ~400 ms, and on 2026-11-10 the host disk filled and sessions were LOST.
 
 **The receipt discipline is unchanged where it means something.** Every
 *judgement* still reaches a durable receipt before it is observable: the
@@ -57,6 +56,17 @@ own id/instant, and the previous-reading pair. None of those is a judgement,
 none is read back out of evidence by anything in this runtime, and none
 survives a restart anyway (``tos.time.recovery_generation_revives_nothing``:
 a fresh process mints a brand-new anchor and generation regardless).
+
+**Said plainly about the wall clock.** The exact ``wall_clock_observation`` is
+one more thing a skipped cycle does not record, and that reading is NOT inert:
+this runtime serves it to the calendar session phase, the marketfeed
+``source_age`` anchor, the egress trading-date stamp and the KIS quote-request
+anchor. All of them read the LIVE in-memory snapshot, still re-issued every
+cycle, so what they see is unchanged — but **the exact reading reaches
+evidence only on a judged-content change or at the heartbeat**, a sample of
+the series rather than every value. Whether a reading exists at all stays in
+the fingerprint, so acquiring or losing one always writes a row. Details and
+every consumer named: :mod:`tos_runtime.time.judged_content`.
 """
 
 from __future__ import annotations
@@ -87,6 +97,7 @@ from tos.workload import RuntimeIdentity
 from tos_runtime.evidence.ports import EvidenceAppendPort
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.generation import GenerationCounter
+from tos_runtime.time.judged_content import judged_content
 from tos_runtime.time.sources import MonotonicSource, ReferenceSourceReader
 
 __all__ = [
@@ -107,63 +118,6 @@ _SNAPSHOT_RECORD_CLASS = "TIME_HEALTH_SNAPSHOT"
 #: decision 8) — appended exactly once per service instance.
 _WALL_CLOCK_EXPOSED_KIND = "TIME_WALL_CLOCK_EXPOSED"
 _WALL_CLOCK_EXPOSED_RECORD_CLASS = "TIME_WALL_CLOCK_EXPOSED"
-
-#: Top-level dumped-snapshot fields that carry THIS CYCLE'S INSTANT, not its judgement, and so
-#: are excluded from the on-change fingerprint (module docstring "Evidence cadence is NOT
-#: evaluation cadence"). ``canonical_digest`` is ``f(covered content)`` and the covered content
-#: includes the instants, so it moves every cycle by construction.
-#: ``wall_clock_observation`` is the raw reference reading; the kernel's own
-#: :class:`~tos.time.TimeHealthSnapshot` docstring records that it is **audit-only** ("no
-#: predicate reads it for expiry/freshness/ordering"), so its VALUE is not a judgement — but
-#: its PRESENCE is (see :func:`_judged_content`).
-_INSTANT_FIELDS: frozenset[str] = frozenset(
-    {
-        "snapshot_id",
-        "canonical_digest",
-        "issue_monotonic_value",
-        "wall_clock_observation",
-    }
-)
-
-#: ``(section, field)`` pairs of the same kind, one level down. The two anchor values are this
-#: cycle's monotonic reading and the ratcheted high-water mark; ``suspension_status
-#: .suspension_ms`` is the raw ``max(0, Δwall - Δmono)`` magnitude, which jitters by a
-#: millisecond on a quiet host — its JUDGEMENT, the sibling ``suspended`` bool the kernel's
-#: ``anchor_valid`` actually turns on, stays in the fingerprint.
-_INSTANT_SUBFIELDS: tuple[tuple[str, str], ...] = (
-    ("evaluated_monotonic_anchor", "monotonic_anchor_value"),
-    ("time_continuity_identity", "monotonic_anchor_value"),
-    ("suspension_status", "suspension_ms"),
-)
-
-
-def _judged_content(payload: Mapping[str, Any], reason: str | None) -> dict[str, Any]:
-    """The part of a dumped snapshot a consumer judges on, plus this cycle's refusal reason.
-
-    Built by SUBTRACTION, never by listing what to keep: a field added to
-    :class:`~tos.time.TimeHealthSnapshot` later counts as judged content automatically and
-    fails toward writing a row, rather than being silently dropped from the comparison by an
-    allowlist nobody updated.
-
-    ``reason`` is :attr:`TrustworthyTimeService.last_transition_reason` — a refused
-    transition is a real change a consumer reads, and it is not carried on the snapshot at
-    all, so comparing only the dump would miss a cycle that newly started refusing.
-    """
-    judged: dict[str, Any] = {
-        key: dict(value) if isinstance(value, dict) else value
-        for key, value in payload.items()
-        if key not in _INSTANT_FIELDS
-    }
-    for section, field_name in _INSTANT_SUBFIELDS:
-        block = judged.get(section)
-        if isinstance(block, dict):
-            block.pop(field_name, None)
-    # Presence, not value: a cycle that first acquires (or loses) a wall-clock reading has
-    # changed what it can attest, and the TIME_WALL_CLOCK_EXPOSED announcement below cites the
-    # snapshot_id of exactly such a cycle — it must not cite a row that was never written.
-    judged["wall_clock_observed"] = payload.get("wall_clock_observation") is not None
-    judged["last_transition_reason"] = reason
-    return judged
 
 
 class TimeServiceNotStarted(RuntimeError):
@@ -285,7 +239,8 @@ class TrustworthyTimeService:
         #: recovered from the snapshot afterwards. ``None`` until a cycle supplies them.
         self._cycle_previous_monotonic_ms: int | None = None
         self._cycle_suspension_ms: int | None = None
-        #: The judged content (:func:`_judged_content`) of the last cycle whose
+        #: The judged content (:func:`~tos_runtime.time.judged_content.judged_content`) of the
+        #: last cycle whose
         #: ``TIME_HEALTH_SNAPSHOT`` row actually got a receipt, and the monotonic reading that
         #: cycle took. ``None`` until the first ``evaluate()`` commits one — which is why the
         #: first cycle of every process always writes. Updated only inside the post-receipt
@@ -802,7 +757,7 @@ class TrustworthyTimeService:
         )
 
         payload = snapshot.model_dump(mode="json")
-        judged = _judged_content(payload, reason)
+        judged = judged_content(payload, reason)
         # The reading to announce (G-1 decision 8), or None when this is not that cycle.
         announce_ms: int | None = (
             wall_clock_observation

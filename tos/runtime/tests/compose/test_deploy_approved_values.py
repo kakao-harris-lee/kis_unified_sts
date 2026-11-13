@@ -197,7 +197,7 @@ _VALUE_PINS: dict[str, Any] = {
     "time.yaml::MAX_send_result_wait_ms": 2000,
     # Not a VER-002 bound: an operational evidence-volume knob (that key's own YAML comment
     # carries the 2026-11-13 measurement and the 2026-11-10 disk-full incident, CLAUDE.md R5).
-    "time.yaml::time_health_snapshot_heartbeat_ms": 60000,
+    "time.yaml::time_health_snapshot_heartbeat_ms": 55000,
     "time.yaml::tz_db_version": "2026c",
     "time.yaml::trading_calendar_version": "krx-2026.11",
     "time.yaml::verification_profile_version": "VERIFICATION-PROFILE-002-v2.1",
@@ -1086,6 +1086,28 @@ def test_time_trading_calendar_version_matches_the_deployed_calendar() -> None:
     assert (
         _mapping("time.yaml")["trading_calendar_version"]
         == _mapping("calendar.yaml")["calendar_version"]
+    )
+
+
+def test_snapshot_heartbeat_is_shorter_than_the_closed_evaluate_interval() -> None:
+    """The ``TIME_HEALTH_SNAPSHOT`` heartbeat must be STRICTLY shorter than the closed-session
+    evaluation spacing, or a healthy closed session drops every other heartbeat row.
+
+    The concrete failing input this pins (review of #1075, LOW): both values at ``60000``.
+    In a closed session ``evaluate()`` runs only on the pacer's own cadence
+    (``time_pacer._due``: ``now - last_eval >= closed_interval_ms``, on the PACER's monotonic
+    clock), and the service then reads ITS monotonic clock a moment later
+    (``service.evaluate``). The gap between those two reads varies per cycle, so when the
+    previous cycle's gap was the larger one the difference the service sees is UNDER 60000,
+    the heartbeat is not due, the row is skipped, and the next one lands ~120 s later — which
+    is exactly the "no new row in 2 minutes" defect verdict of the operator runbook's §4
+    check. A strict inequality makes every closed-session evaluation due.
+    """
+    heartbeat_ms = _mapping("time.yaml")["time_health_snapshot_heartbeat_ms"]
+    closed_interval_ms = _mapping("marketfeed.yaml")["time_evaluate_closed_interval_ms"]
+    assert heartbeat_ms < closed_interval_ms, (
+        f"time_health_snapshot_heartbeat_ms={heartbeat_ms} must be < "
+        f"time_evaluate_closed_interval_ms={closed_interval_ms}"
     )
 
 

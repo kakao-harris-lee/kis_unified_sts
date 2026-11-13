@@ -183,17 +183,22 @@ sqlite3 "$DATA/evidence.sqlite3"   'SELECT COUNT(*) FROM entries;'
 닫혀 있으면 `marketfeed.yaml::time_evaluate_closed_interval_ms`(paper 60000)마다 시간 건강을
 **평가**한다(`marketfeed/time_pacer.py`) — 그 평가 주기는 그대로다. 다만 **증거 행은 평가마다
 쓰지 않는다**(2026-11-13 이후): 판정 내용이 바뀔 때 즉시, 그 밖에는
-`time.yaml::time_health_snapshot_heartbeat_ms`(paper 60000)마다 한 행이다
+`time.yaml::time_health_snapshot_heartbeat_ms`(paper **55000**)마다 한 행이다
 (`tos_runtime/time/service.py` 모듈 docstring).
 
 ```bash
 sqlite3 "$DATA/evidence.sqlite3" "SELECT COUNT(*) FROM entries WHERE kind='TIME_HEALTH_SNAPSHOT';"
 ```
 
-**기대치는 열림·닫힘 모두 ≈ 1 행/분** 이다(닫힘은 평가 자체가 60 s 주기, 열림은 하트비트가
-60 s 주기). 2분 넘게 돌렸는데 **전혀 늘지 않으면** §5 ④ 의 「평가가 멈춘」 결함 형태다 —
-그 판정은 전과 같은 강도로 남는다. 반대로 **분당 수백 행이면** 판정이 계속 흔들리고 있다는
-뜻이니(열림/닫힘 플래핑, 참조 원천 단속, 앵커 거절) 그 행들의 `health_state` 를 본다.
+**기대치는 열림·닫힘 모두 ≥ 1 행/분** 이다. 하트비트 55 s 가 닫힌 세션의 평가 주기 60 s 보다
+**짧기 때문에** 닫힘에서는 평가마다 한 행(=1 행/분)이고, 열림에서는 55 s 마다 한 행이다.
+두 값이 같으면(둘 다 60000) 하트비트가 한 번씩 빗나가 건강한 세션에도 약 120 초 구멍이
+생기므로, 그 부등식은 `tests/compose/test_deploy_approved_values.py` 가 고정한다.
+
+따라서 **2분 넘게 돌렸는데 전혀 늘지 않으면** §5 ④ 의 「평가가 멈춘」 결함 형태다 — 이 문턱은
+위 부등식 덕분에 이제 거짓 양성이 없다(건강한 세션은 2분 안에 반드시 1행 이상 늘린다).
+반대로 **분당 수백 행이면** 판정이 계속 흔들리고 있다는 뜻이니(열림/닫힘 플래핑, 참조 원천
+단속, 앵커 거절) 그 행들의 `health_state` 를 본다.
 
 ⚠ **이 수를 「패스가 도는지」로 읽으면 안 된다.** 틱 소비는 위의 `marketfeed.sqlite3::snapshots`
 (또는 `EVENT_CONSUMED`)로 본다. 2026-11-13 이전의 「패스마다 1행 · `poll_interval_ms: 400`

@@ -128,6 +128,14 @@ MAX_time_source_sequence_gap_ms: null
 # 8.3 GB) — the same judgement re-appended every ~400 ms between engine
 # passes. On 2026-11-10 the host's C: drive filled and the running sessions
 # were LOST (memory/host-disk-c-full-docker-gc.md).
+#
+# ⚠ Pick a value STRICTLY SHORTER than that deployment's
+# marketfeed.yaml::time_evaluate_closed_interval_ms. A closed session only
+# evaluates on the pacer's cadence, and the pacer and the time service read
+# two different monotonic clocks a moment apart, so equal values drop every
+# other heartbeat row and leave a ~120 s gap a healthy session cannot explain
+# (review of PR #1075; the paper trees use 55000 against a 60000 interval, and
+# tests/compose/test_deploy_approved_values.py pins the inequality).
 time_health_snapshot_heartbeat_ms: null
 
 # --- non-bound identity/version strings -----------------------------------
