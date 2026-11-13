@@ -56,7 +56,10 @@ DEFAULT_SCOPE: tuple[str, ...] = (
     "tests/tools/test_tos_*.py",
 )
 
-#: Never stripped, even when named on the command line.
+#: Never stripped, whatever ``--root`` and the path arguments say. The check is on the path's
+#: own parts, not on a position relative to ``--root``: ``--root <repo>/shared decision`` would
+#: otherwise reach the B3 witness ``shared/decision/setups/vwap_reversion.py``, which must stay
+#: byte-identical until ``TOS_PAPER_READY`` (root ``CLAUDE.md``).
 FORBIDDEN_ROOTS: tuple[str, ...] = ("shared", "scripts", "services", "cli")
 
 #: Directory names pruned while walking.
@@ -72,8 +75,18 @@ PRUNED_DIRS: frozenset[str] = frozenset(
     }
 )
 
-#: A comment holding one of these substrings is machine-readable, not prose.
-KEEP_MARKERS: tuple[str, ...] = ("noqa", "type:", "pragma", "fmt:")
+#: A comment holding one of these substrings is machine-readable, not prose. The last entry is
+#: this repo's own per-line directive: ``tos/runtime/tests/engine/test_no_direct_core_calls.py``
+#: refuses a direct ``core.handle(``/``core.run(`` call unless its line carries that exact
+#: comment, so stripping it turns five sanctioned call sites into pin violations (measured in
+#: the S4 dry run).
+KEEP_MARKERS: tuple[str, ...] = (
+    "noqa",
+    "type:",
+    "pragma",
+    "fmt:",
+    "direct-core-call:",
+)
 
 _ENCODING_COOKIE = re.compile(r"coding[:=]\s*([-\w.]+)")
 
@@ -140,13 +153,18 @@ def _literal(first: str) -> str:
 
 
 def _runtime_doc_targets(tree: ast.Module) -> tuple[bool, set[str]]:
-    """``(module docstring is read, names whose docstrings are read)``."""
+    """``(module docstring is read, names whose docstrings are read)``.
+
+    ``"*"`` in the name set means "keep every docstring in this file": the read is through
+    something this scan cannot resolve to a definition in the file — ``self``/``cls``, a call
+    result, a subscript, or a dynamic ``getattr(x, "__doc__")``.
+    """
     keep_module = False
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr == "__doc__":
             target = node.value
-            if isinstance(target, ast.Name):
+            if isinstance(target, ast.Name) and target.id not in {"self", "cls"}:
                 names.add(target.id)
             elif isinstance(target, ast.Attribute):
                 names.add(target.attr)
@@ -155,7 +173,24 @@ def _runtime_doc_targets(tree: ast.Module) -> tuple[bool, set[str]]:
                 names.add("*")
         elif isinstance(node, ast.Name) and node.id == "__doc__":
             keep_module = True
+        elif _is_dynamic_doc_read(node):
+            keep_module = True
+            names.add("*")
     return keep_module, names
+
+
+def _is_dynamic_doc_read(node: ast.AST) -> bool:
+    """``getattr(x, "__doc__")`` / ``vars(x)["__doc__"]`` and friends — unresolvable, so keep all."""
+    if not isinstance(node, ast.Call):
+        return False
+    function = node.func
+    name = function.id if isinstance(function, ast.Name) else None
+    if name not in {"getattr", "hasattr"}:
+        return False
+    return any(
+        isinstance(argument, ast.Constant) and argument.value == "__doc__"
+        for argument in node.args
+    )
 
 
 def _docstring_edits(
@@ -274,11 +309,20 @@ def verify_equivalent(before: str, after: str) -> None:
 
 
 def _is_forbidden(path: Path, root: Path) -> bool:
+    """True unless ``path`` is under ``root`` and no part of it names a forbidden root.
+
+    The forbidden check reads the WHOLE resolved path, not just its first part relative to
+    ``root``: ``--root <repo>/shared decision`` would otherwise make
+    ``shared/decision/setups/vwap_reversion.py`` — the B3 witness — reachable. A checkout whose
+    own ancestor directory is named ``shared``/``scripts``/``services``/``cli`` therefore strips
+    nothing: a false refusal, which is the direction this rail is allowed to be wrong in.
+    """
+    resolved = path.resolve()
     try:
-        relative = path.resolve().relative_to(root.resolve())
+        resolved.relative_to(root.resolve())
     except ValueError:
         return True
-    return bool(relative.parts) and relative.parts[0] in FORBIDDEN_ROOTS
+    return any(part in FORBIDDEN_ROOTS for part in resolved.parts)
 
 
 def _walk(directory: Path) -> Iterator[Path]:
@@ -338,33 +382,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("strip_prose: no files in scope", file=sys.stderr)
         return 2
 
-    changed: list[Path] = []
+    changed: list[tuple[Path, str]] = []
     failures: list[tuple[Path, str]] = []
     before_total = 0
     after_total = 0
     for path in files:
-        source = _read(path)
         try:
+            source = _read(path)
             stripped = strip_source(source)
             verify_equivalent(source, stripped)
             if strip_source(stripped) != stripped:
                 raise StripError("not idempotent: a second pass changes the file")
-        except (SyntaxError, StripError, tokenize.TokenError) as exc:
+        except Exception as exc:  # noqa: BLE001 — one bad file must not stop the run
             failures.append((path, f"{type(exc).__name__}: {exc}"))
             continue
         before_total += len(_split_lines(source))
         after_total += len(_split_lines(stripped))
-        if stripped == source:
-            continue
-        changed.append(path)
-        if args.write:
-            path.write_bytes(stripped.encode("utf-8"))
+        if stripped != source:
+            changed.append((path, stripped))
 
     def relative(path: Path) -> Path:
         return path.relative_to(args.root)
 
     for path, reason in failures:
         print(f"FAIL {relative(path)}: {reason}", file=sys.stderr)
+
+    # All or nothing: a single unverifiable file leaves the whole tree untouched, so a failed
+    # run never has to be half-reverted.
+    if args.write and not failures:
+        for path, stripped in changed:
+            path.write_bytes(stripped.encode("utf-8"))
 
     print(
         f"strip_prose: {len(files)} files, {len(changed)} would change, "
@@ -374,12 +421,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if failures:
         return 2
     if args.write:
-        for path in changed:
+        for path, _ in changed:
             print(f"stripped {relative(path)}")
         return 0
     if args.verify:
         return 0
-    for path in changed:
+    for path, _ in changed:
         print(f"would strip {relative(path)}")
     return 1 if changed else 0
 

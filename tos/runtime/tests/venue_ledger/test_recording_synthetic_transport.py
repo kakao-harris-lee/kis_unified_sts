@@ -289,7 +289,6 @@ def test_the_write_failure_reaches_the_gateways_transport_raised_path(ledger) ->
     assert issubclass(VenueLedgerWriteFailed, Exception)
     gateway_source = inspect.getsource(gateway_module)
     assert "SendHaltReason.TRANSPORT_RAISED" in gateway_source
-    assert "a missing acknowledgement is NOT a non-acceptance" in gateway_source
 
 
 # ============================================================================

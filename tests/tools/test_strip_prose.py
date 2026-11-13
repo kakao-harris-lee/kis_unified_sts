@@ -295,6 +295,44 @@ def test_named_docstring_survives_a_qualified_dunder_doc_read():
     assert "module prose" not in stripped
 
 
+@pytest.mark.parametrize(
+    "read",
+    [
+        "self.__doc__",
+        "cls.__doc__",
+        'getattr(obj, "__doc__")',
+        'hasattr(obj, "__doc__")',
+    ],
+)
+def test_an_unresolvable_dunder_doc_read_keeps_every_docstring(read):
+    """``self``/``cls``/``getattr`` name no definition in this file — keep all, conservatively."""
+    stripped = _roundtrip(f'''
+        """Module summary.
+
+        module prose
+        """
+
+
+        class C:
+            """Class summary.
+
+            class prose
+            """
+
+            def read(self, obj=None, cls=None):
+                return {read}
+        ''')
+    assert "module prose" in stripped
+    assert "class prose" in stripped
+
+
+def test_the_repos_own_per_line_directive_comment_survives():
+    """``test_no_direct_core_calls.py`` refuses a direct call unless its line carries this."""
+    marker = "# direct-core-call: sanctioned (determinism control)"
+    stripped = _roundtrip(f"core.handle(event)  {marker}\n")
+    assert marker in stripped
+
+
 # --------------------------------------------------------------------------
 # equivalence / safety
 # --------------------------------------------------------------------------
@@ -323,6 +361,48 @@ def test_forbidden_roots_are_never_selected(tmp_path):
     selected = sp.iter_files(["shared", "tos/src"], tmp_path)
     assert kernel in selected
     assert witness not in selected
+
+
+def test_a_root_pointed_inside_shared_still_cannot_reach_the_b3_witness(
+    tmp_path, capsys
+):
+    """``--root <repo>/shared decision`` must not make the witness in-scope (review MEDIUM-1)."""
+    (tmp_path / "shared" / "decision" / "setups").mkdir(parents=True)
+    witness = tmp_path / "shared" / "decision" / "setups" / "vwap_reversion.py"
+    original = '"""Witness.\n\nprose\n"""\nX = 1  # prose\n'
+    witness.write_text(original, encoding="utf-8")
+
+    assert sp.iter_files(["decision"], tmp_path / "shared") == []
+    assert sp.main(["--write", "--root", str(tmp_path / "shared"), "decision"]) == 2
+    assert witness.read_text(encoding="utf-8") == original
+    assert "no files in scope" in capsys.readouterr().err
+
+
+def test_a_failing_file_makes_the_whole_write_a_no_op(tmp_path, capsys, monkeypatch):
+    """One unverifiable file leaves the tree untouched (review LOW-1/LOW-2)."""
+    (tmp_path / "tos" / "src").mkdir(parents=True)
+    first = tmp_path / "tos" / "src" / "a_mod.py"
+    second = tmp_path / "tos" / "src" / "b_mod.py"
+    original = '"""Doc.\n\nprose\n"""\nX = 1\n'
+    first.write_text(original, encoding="utf-8")
+    second.write_text(original, encoding="utf-8")
+
+    real_strip = sp.strip_source
+    seen: list[str] = []
+
+    def sabotaged(source: str) -> str:
+        seen.append(source)
+        # the second file's first pass returns code that is not AST-equivalent
+        if len(seen) > 2:
+            return real_strip(source) + "\nY = 2\n"
+        return real_strip(source)
+
+    monkeypatch.setattr(sp, "strip_source", sabotaged)
+
+    assert sp.main(["--write", "--root", str(tmp_path), "tos/src"]) == 2
+    assert first.read_text(encoding="utf-8") == original
+    assert second.read_text(encoding="utf-8") == original
+    assert "FAIL tos/src/b_mod.py" in capsys.readouterr().err
 
 
 def test_write_mode_rewrites_only_in_scope_files(tmp_path, capsys):
