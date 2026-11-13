@@ -11,9 +11,6 @@
   분포(선물 트리의 4단계 UNKNOWN 은 따로 떼어 이름을 붙인다 — :func:`_fmt_flow_halts`),
   M5 첫 수(값을 쥐고도 UNKNOWN 으로 거절된 post-boot 봉), ``MARKETFEED_FIELD_REFUSED``
   행, ``VENUE_BAND_OBSERVED`` 행, ``MARKETFEED_PASS_OVERRUN`` 행 수와 가장 긴 pass(#949).
-* B3 대조 — 먼저 **돌았는가**(``<session>/b3/status.json``, 세션 러너 step 14 가 자동으로
-  남긴다), 그 다음 **무엇을 봤는가**(``<session>/b3/report/summary.json``) — unresolved ·
-  divergent. 돌지 않은 세션은 그 사유가 나오고, 수는 나오지 않는다.
 * 생산자 지연(journal ``as_of_ms`` − 분 마감) p50/p90 과 생산자 카운터.
 * 상주 paper 세션(``paper-sessions`` · ``paper-ops`` pid) 상태와 그 세션의
   ``MARKETFEED_PASS_OVERRUN`` · 권한 행.
@@ -125,25 +122,6 @@ AUTHORITY_KINDS: tuple[str, ...] = (
 #: 부팅마다 한 번 쓰이는 행 — 누적 잎을 «부팅 구간» seq 범위로 나누는 경계다.
 #: band 행처럼 날짜를 싣지 않는 행(REFUSED 는 trading_date 가 없다)은 이 범위로만 세션에 묶인다.
 BOOT_KIND = "TIME_SERVICE_STARTUP"
-#: diff_decisions.py 가 쓰는 summary 모양 — 다른 값이면 키를 믿지 않고 막힘으로 보고한다.
-B3_SUMMARY_SCHEMA_VERSIONS = frozenset({2, 3})
-#: 선언된 divergence 를 자기 버킷(``live_comparison.declared_difference_counts``)에
-#: 담아 내는 첫 summary 모양. **그 아래 모양의 `divergent` 는 선언된 차이를 섞어 센다**
-#: — 「설명 안 되는 divergence」로 읽으면 안 되므로 v2 는 수를 그대로 보여 주되 그
-#: 사실을 줄에 적는다. v3 부터는 `divergent` 가 바로 그 수다. 2026-11-11 완화 뒤
-#: 두 모양 모두 «확인» 이다(그 수는 깨끗함 판정에서 빠진다 —
-#: ``docs/plans/2026-11-11-tos-paper-ready-relaxation.md`` §2 문장 1).
-B3_DECLARED_BUCKET_SCHEMA_VERSION = 3
-#: 세션 디렉터리 아래 B3 산출물 디렉터리. ``config/tos_cp3_b3.yaml::subdir`` 와 같아야 하고
-#: ``tests/tools/test_cp3_post_session_b3.py`` 가 그 일치를 고정한다 — 두 값이 어긋나면
-#: 상태판은 돌아간 대조를 «결과 없음» 으로 읽는다.
-B3_SUBDIR = "b3"
-#: post_session_b3.py 가 쓰는 실행 기록 모양(``<session>/b3/status.json``).
-B3_STATUS_SCHEMA_VERSIONS = frozenset({1})
-#: 그 기록의 verdict — 「돌았다」 하나뿐이고 나머지는 전부 「재지 못했다」다.
-B3_VERDICT_OK = "ok"
-B3_VERDICT_SKIPPED = "skipped"
-
 _SESSION_DIR_RE = re.compile(r"^(?P<label>[a-z0-9][a-z0-9-]*?)-(?P<day>\d{8})$")
 _PAPER_DIR_RE = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2})-(?P<hms>\d{6})-(?P<direction>[A-Z]+)$"
@@ -416,7 +394,7 @@ class RunnerLog:
 
 _RUNNER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("repo_commit", re.compile(r"checkout ok: .*repo_commit=(\w+)")),
-    # 줄 머리를 고정한다 — 뒤의 B3 줄(`=== B3 … market=… ceiling …`)도 같은 토큰을 싣는다.
+    # 줄 머리를 고정한다 — 러너의 다른 줄도 `market=` 토큰을 싣는다.
     ("market", re.compile(r"^market=(\w+) \(tree and producer agree\)")),
     ("data_leaf", re.compile(r"instrument=(\S+) · data leaf (\S+)")),
     ("render", re.compile(r"=== RENDER tree=(\S+) direction=(\S+)")),
@@ -916,119 +894,6 @@ def session_seq_range(
 
 
 # ---------------------------------------------------------------------------
-# B3
-# ---------------------------------------------------------------------------
-
-
-def b3_run_facts(session_dir: Path) -> dict[str, Any] | None:
-    """B3 **실행 기록**(``b3/status.json``) 요약. 파일이 없으면 ``None``.
-
-    summary 와 역할이 다르다. summary 는 「대조가 무엇을 봤나」이고 이 파일은 「대조가
-    돌았나」다. 자동 단계(``tools/tos_cp3/post_session_b3.py``)는 첫 단계 **전에**
-    ``verdict: running`` 으로 이 파일을 쓰고 끝에 원자적으로 교체하므로,
-    ``running`` 이 남아 있는 것은 **끝내지 못했다**는 뜻이다(예산 초과·SIGKILL).
-
-    Returns:
-        ``{"verdict", "reason", "stage", "ok"}`` — 모양이 다르면 ``{"error": …}``.
-        ``ok`` 는 verdict 가 ``"ok"`` 일 때만 참이고, 그때만 summary 의 수를 믿는다.
-    """
-    path = session_dir / B3_SUBDIR / "status.json"
-    if not path.exists():
-        return None
-    record = _read_json(path)
-    if not isinstance(record, dict):
-        return {"error": f"{path.name} 이 JSON 객체가 아니다"}
-    version = record.get("status_schema_version")
-    if version not in B3_STATUS_SCHEMA_VERSIONS:
-        return {
-            "error": f"status_schema_version={version!r} — 이 상태판은"
-            f" {sorted(B3_STATUS_SCHEMA_VERSIONS)} 모양만 읽는다"
-        }
-    verdict = record.get("verdict")
-    if not isinstance(verdict, str) or not verdict:
-        return {"error": f"verdict 가 문자열이 아니다: {verdict!r}"}
-    stage = record.get("stage")
-    reason = record.get("reason")
-    return {
-        "verdict": verdict,
-        "stage": stage if isinstance(stage, str) else None,
-        "reason": reason if isinstance(reason, str) else "",
-        "ok": verdict == B3_VERDICT_OK,
-        "overdue": _b3_run_overdue(record),
-    }
-
-
-def _b3_run_overdue(record: dict[str, Any]) -> bool:
-    """``verdict: running`` 이 **지났는가** — 자기 예산을 넘겼는가.
-
-    B3 는 정지 뒤 1-2 분을 돈다. 그 사이에 상태판을 보면 ``running`` 이 정상이므로
-    그것만으로 막힘을 올리면 하루 한 번 거짓 경보가 난다. 그래서 기록이 **자기**
-    예산(``total_timeout_s``, 그 파일이 싣는다)과 시작 시각을 들고 있고, 그 합을
-    넘겼으면 더는 돌고 있을 수 없다.
-
-    시각이나 예산을 읽을 수 없으면 **지난 것으로 본다** — 읽을 수 없는 기록으로
-    「아직 돌고 있다」를 주장할 수는 없다.
-    """
-    started, budget = record.get("started_at"), record.get("total_timeout_s")
-    if not isinstance(started, str) or not isinstance(budget, int):
-        return True
-    try:
-        began = _dt.datetime.fromisoformat(started)
-    except ValueError:
-        return True
-    if began.tzinfo is None:
-        return True
-    # 60 s: 바깥 ceiling 이 SIGKILL 을 보내고 러너가 그 줄을 적는 데 드는 여유.
-    return _dt.datetime.now(KST) - began > _dt.timedelta(seconds=budget + 60)
-
-
-def b3_facts(session_dir: Path) -> dict[str, Any] | None:
-    """B3 summary 요약. 파일이 없으면 ``None``, 모양이 다르면 ``{"error": …}``."""
-    path = session_dir / B3_SUBDIR / "report" / "summary.json"
-    if not path.exists():
-        return None
-    summary = _read_json(path)
-    if not isinstance(summary, dict):
-        return {"error": f"{path.name} 이 JSON 객체가 아니다"}
-    version = summary.get("summary_schema_version")
-    if version not in B3_SUMMARY_SCHEMA_VERSIONS:
-        return {
-            "error": f"summary_schema_version={version!r} — 이 상태판은"
-            f" {sorted(B3_SUMMARY_SCHEMA_VERSIONS)} 모양만 읽는다"
-        }
-    unresolved = summary.get("unresolved")
-    live = summary.get("live_comparison")
-    window = summary.get("window_identity")
-    count = unresolved.get("count") if isinstance(unresolved, dict) else None
-    if not isinstance(count, int) or isinstance(count, bool):
-        return {"error": f"unresolved.count 가 정수가 아니다: {unresolved!r}"}
-    if not isinstance(live, dict) or not all(
-        isinstance(live.get(k), int)
-        for k in ("compared_bars", "identical", "divergent")
-    ):
-        return {
-            "error": "live_comparison 의 compared_bars/identical/divergent 가 정수가 아니다"
-        }
-    window = window if isinstance(window, dict) else {}
-    declared = live.get("declared_difference_counts")
-    excluded = live.get("excluded_bar_counts")
-    separates = version >= B3_DECLARED_BUCKET_SCHEMA_VERSION
-    return {
-        "unresolved": count,
-        "compared_bars": live["compared_bars"],
-        "identical": live["identical"],
-        "divergent": live["divergent"],
-        # 「선언된 차이로 설명된 봉」과 「대조에서 빼 둔 봉」. ``None`` 은 0 이 아니라
-        # «이 summary 모양은 말하지 않는다» 다 — 그래야 아래 divergent 줄이 v2 의
-        # 섞인 수를 「설명 안 되는 차이」로 읽지 않는다.
-        "declared": declared if separates and isinstance(declared, dict) else None,
-        "excluded": excluded if separates and isinstance(excluded, dict) else None,
-        "separates_declared": separates,
-        "window": f"{window.get('window_start')}..{window.get('window_end')}",
-    }
-
-
-# ---------------------------------------------------------------------------
 # one tenant session
 # ---------------------------------------------------------------------------
 
@@ -1046,8 +911,6 @@ class TenantSession:
     expected_code_digest: str | None
     producer: dict[str, Any]
     store: dict[str, Any] | None
-    b3: dict[str, Any] | None
-    b3_run: dict[str, Any] | None
     boot_snapshot_error: str | None = None
     issues: list[tuple[str, str]] = field(default_factory=list)
 
@@ -1117,8 +980,6 @@ def read_tenant_session(
         expected_code_digest=expected_code_digest(path / "config"),
         producer=producer_facts(path, cfg.latency_percentiles),
         store=store,
-        b3=b3_facts(path),
-        b3_run=b3_run_facts(path),
         boot_snapshot_error=boot_snapshot_error,
     )
     session.issues = tenant_issues(session, cfg)
@@ -1342,59 +1203,6 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
                         f" ≠ release.yaml {s.expected_code_digest[:12]}",
                     )
                 )
-    # 실행 기록이 먼저다. 「돌지 않았다」를 모르는 채 summary 의 수를 읽으면, 앞선 날의
-    # 남은 summary 가 오늘의 결과로 보인다 — 그래서 verdict 가 ok 가 아니면 수를 읽지
-    # 않고 그 사실을 올린다.
-    if s.b3_run is not None and "error" in s.b3_run:
-        issues.append((BLOCK, f"B3 실행 기록을 읽을 수 없다 — {s.b3_run['error']}"))
-    elif s.b3_run is not None and not s.b3_run["ok"]:
-        verdict = s.b3_run["verdict"]
-        where = f" ({s.b3_run['stage']})" if s.b3_run["stage"] else ""
-        if verdict == B3_VERDICT_SKIPPED:
-            # 설정·시장으로 «돌리지 않기로 한» 것. B3 가 돌지 않은 것은 맞으므로
-            # 숨기지 않고, 결함이 아니므로 막힘도 아니다.
-            issues.append((WARN, f"B3 대조 건너뜀 — {s.b3_run['reason']}"))
-        elif verdict == "running" and not s.b3_run["overdue"]:
-            issues.append((WARN, f"B3 대조 진행 중{where}"))
-        else:
-            issues.append(
-                (
-                    BLOCK,
-                    f"B3 대조가 돌지 않았다 — {verdict}{where}: {s.b3_run['reason']}",
-                )
-            )
-    elif s.b3 is not None:
-        if "error" in s.b3:
-            issues.append((BLOCK, f"B3 summary 를 읽을 수 없다 — {s.b3['error']}"))
-        else:
-            # 두 수는 계속 올리지만 등급은 «확인» 이다 — 2026-11-11 완화
-            # (docs/plans/2026-11-11-tos-paper-ready-relaxation.md §2 문장 1:
-            # «unresolved · divergent 는 상태판에 계속 «확인» 으로 나오지만 깨끗함
-            # 판정에서 빠진다 — B3 는 레거시 증인과의 대조이지 과정의 동작 조건이
-            # 아니다»). 수를 숨기지는 않는다: 막는 것만 그만둔다.
-            if s.b3["unresolved"]:
-                issues.append((WARN, f"B3 unresolved={s.b3['unresolved']}"))
-            # **선언된 차이를 자기 버킷으로 가른 모양(v3)에서만** divergent 가 「설명
-            # 안 되는 divergence」다. 그 아래 모양은 선언된 차이를 섞어 세므로 그
-            # 사실을 줄에 적는다 — 섞인 수를 설명 안 되는 차이로 읽지 않기 위해.
-            if s.b3["divergent"]:
-                declared = s.b3["declared"] or {}
-                tail = (
-                    f" (선언 {_fmt_counts(declared)})"
-                    if s.b3["separates_declared"]
-                    else " — 이 summary 모양은 선언된 차이를 가르지 않는다"
-                )
-                issues.append(
-                    (
-                        WARN,
-                        f"B3 live divergent {s.b3['divergent']}/{s.b3['compared_bars']}"
-                        f"{tail}",
-                    )
-                )
-    elif s.status in ("ENDED", "ABORT", "FAILED"):
-        issues.append(
-            (WARN, "B3 결과 없음(세션 디렉터리에 b3/report/summary.json 이 없다)")
-        )
     return issues
 
 
@@ -1624,18 +1432,16 @@ def load_tree_calendar(path: Path) -> TreeCalendar:
 def day_clean(session: TenantSession | None, scfg: StreakConfig) -> str:
     """깨끗한 거래일인가 — 깨끗하면 ``""``, 아니면 **왜 아닌지** 한 줄.
 
-    조건은 둘뿐이다(2026-11-11 완화,
-    ``docs/plans/2026-11-11-tos-paper-ready-relaxation.md`` §2 문장 1): 세션이 기동해
-    ``clean_run_rcs`` 안의 rc 로 끝났고 · B3 대조가 **돌았다**(실행 기록
-    ``b3/status.json`` 의 verdict 가 ``ok``).
+    조건은 하나다: 세션이 기동해 ``clean_run_rcs`` 안의 rc 로 끝났다.
 
-    B3 가 **무엇을 봤는지**(``unresolved`` · ``divergent`` · summary 모양 · 대조한 봉
-    수)는 더는 보지 않는다 — B3 는 레거시 증인과의 대조이지 과정의 동작 조건이 아니다.
-    그 수들은 :func:`tenant_issues` 가 «확인» 으로 계속 올리므로 숨지 않는다.
+    2026-11-11 완화(``docs/plans/2026-11-11-tos-paper-ready-relaxation.md`` §2
+    문장 1)가 B3 가 **무엇을 봤는지**를 판정에서 뺐고, 2026-11-13 의 B3 은퇴
+    (``docs/plans/2026-11-11-tos-platform-roadmap.md`` §7 결정 3 — P2-b 동등성이
+    626,745 셀 0 불일치로 끝났다)가 **돌았는지**까지 뺐다. 레거시 증인과의 대조는
+    더 돌지 않으므로 깨끗함은 런타임과 생산자만의 사실이다.
 
-    세션이 없는 것 · 끝나지 않은 것 · rc 가 다른 것 · B3 실행 기록이 없거나 읽히지
-    않거나 ok 가 아닌 것은 깨끗하지 않다. 깨끗하지 않은 하루는 그날만 세지 않고
-    앞의 누적을 지우지 않는다(:func:`tree_streak`).
+    세션이 없는 것 · 끝나지 않은 것 · rc 가 다른 것은 깨끗하지 않다. 깨끗하지 않은
+    하루는 그날만 세지 않고 앞의 누적을 지우지 않는다(:func:`tree_streak`).
     """
     if session is None:
         return "세션 디렉터리 없음"
@@ -1645,14 +1451,6 @@ def day_clean(session: TenantSession | None, scfg: StreakConfig) -> str:
         return f"세션 상태 {session.status}{detail}"
     if r.run_rc not in scfg.clean_run_rcs:
         return f"런타임 종료 rc={r.run_rc} (깨끗은 {sorted(scfg.clean_run_rcs)})"
-    run = session.b3_run
-    if run is None:
-        return f"B3 실행 기록 없음 ({B3_SUBDIR}/status.json)"
-    if "error" in run:
-        return f"B3 실행 기록을 읽을 수 없다 — {run['error']}"
-    if not run["ok"]:
-        where = f" ({run['stage']})" if run["stage"] else ""
-        return f"B3 대조가 돌지 않았다 — {run['verdict']}{where}: {run['reason']}"
     return ""
 
 
@@ -1664,22 +1462,14 @@ def day_pending(session: TenantSession | None) -> str | None:
     끝난 거래일이고, 오늘은 끝나면 센다. 앞선 거래일에는 이 함수를 쓰지 않으므로 같은
     모양이 어제의 것이면 :func:`day_clean` 이 그대로 「깨진 날」로 적는다 — 보류가
     하루를 영구히 사면하지 않는다.
+
+    B3 대조가 은퇴한 뒤(2026-11-13) 정지와 장후 단계 사이의 창은 없다 — 세션이
+    SETTLED 상태에 이르면 그날의 판정에 필요한 사실은 모두 나와 있다.
     """
     if session is None:
         return "세션 디렉터리 아직 없음"
     if session.status not in SETTLED_STATUSES:
         return f"세션 {session.status}"
-    run = session.b3_run
-    if session.status == "ENDED" and run is None:
-        # 러너 step 14 는 첫 단계 **전에** status.json 을 쓴다(#1000). 정지와 그 쓰기
-        # 사이가 이 창이고, 끝까지 비어 있으면 오늘이 어제가 되는 순간 깨진 날이 된다.
-        return (
-            f"B3 기록 없음({B3_SUBDIR}/status.json) — 정지 직후면 정상이고,"
-            " 끝까지 없으면 내일 깨진 날로 적힌다"
-        )
-    if isinstance(run, dict) and run.get("verdict") == "running" and not run["overdue"]:
-        where = f" ({run['stage']})" if run.get("stage") else ""
-        return f"B3 대조 진행 중{where}"
     return None
 
 
@@ -1919,8 +1709,6 @@ def _session_json(s: TenantSession) -> dict[str, Any]:
         "aborts": r.aborts,
         "producer": s.producer,
         "store": s.store,
-        "b3": s.b3,
-        "b3_run": s.b3_run,
         "issues": [{"level": lv, "text": t} for lv, t in s.issues],
     }
 
@@ -1941,7 +1729,6 @@ def _history_row(s: TenantSession) -> dict[str, Any]:
         "witness_lost_mid_session": (st.get("authority") or {}).get(
             "witness_lost_mid_session"
         ),
-        "b3_unresolved": (s.b3 or {}).get("unresolved"),
         "store_error": st.get("error"),
         "blocks": sum(1 for lv, _ in s.issues if lv == BLOCK),
     }
@@ -2088,36 +1875,6 @@ def render_text(board: Mapping[str, Any]) -> str:
             f"    생산자: journal {p['journal_rows']}줄 · 지연(as_of−분마감) {lat_txt or '—'} · 최대 {lat['max']}ms · band 줄 {band}"
         )
         add(f"    생산자 카운터: {counters}")
-        b3, b3_run = s["b3"], s["b3_run"]
-        if b3_run is not None and "error" in b3_run:
-            add(f"    B3 대조: 실행 기록을 읽을 수 없음 — {b3_run['error']}")
-        elif b3_run is not None and not b3_run["ok"]:
-            where = f" ({b3_run['stage']})" if b3_run["stage"] else ""
-            add(f"    B3 대조: {b3_run['verdict']}{where} — {b3_run['reason']}")
-        elif b3 is None:
-            add(
-                f"    B3 대조: 결과 없음(세션 디렉터리 {B3_SUBDIR}/report/summary.json)"
-            )
-        elif "error" in b3:
-            add(f"    B3 대조: summary 를 읽을 수 없음 — {b3['error']}")
-        else:
-            add(
-                f"    B3 대조: unresolved {b3['unresolved']} · divergent {b3['divergent']}/{b3['compared_bars']}"
-                f" (identical {b3['identical']}) · 창 {b3['window']}"
-            )
-            # 선언된 차이와 대조에서 빼 둔 봉은 divergent 와 **따로** 보여 준다.
-            # 같은 줄에 섞으면 「설명 안 되는 divergence」가 몇인지 읽을 수 없다.
-            if b3["separates_declared"]:
-                add(
-                    f"      선언된 차이: {_fmt_counts(b3['declared'])}"
-                    f" · 대조 제외: {_fmt_counts(b3['excluded'])}"
-                )
-            else:
-                add(
-                    "      선언된 차이: 모름 — 이 summary 모양(v"
-                    f"{B3_DECLARED_BUCKET_SCHEMA_VERSION} 미만)은 선언된 차이를"
-                    " divergent 와 가르지 않는다"
-                )
     if board["cron"]:
         add("  크론 마지막 줄:")
         for name, line in board["cron"].items():
@@ -2164,7 +1921,7 @@ def render_text(board: Mapping[str, Any]) -> str:
     if board["history"]:
         add("■ 최근 세션(날짜별)")
         add(
-            "  날짜      세션        상태        rc   틱   stale 기타 band 초과 상실/장중 B3unres 막힘"
+            "  날짜      세션        상태        rc   틱   stale 기타 band 초과 상실/장중 막힘"
         )
         for h in board["history"]:
             err = " 저장소모름" if h["store_error"] else ""
@@ -2176,7 +1933,7 @@ def render_text(board: Mapping[str, Any]) -> str:
             add(
                 f"  {h['day']}  {h['label']:<10}  {h['status']:<10}  {str(h['run_rc']):>3}"
                 f"  {str(h['ticks']):>4}  {str(h['stale']):>4}  {h['other_withheld']:>3}  {str(h['band']):>3}  {str(h['overrun']):>3}  {lost:>9}"
-                f"  {str(h['b3_unresolved']):>6}  {h['blocks']:>3}{err}"
+                f"  {h['blocks']:>3}{err}"
             )
         add("")
     streak = board.get("clean_streak") or []

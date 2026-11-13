@@ -1,9 +1,9 @@
-"""CP-3 B1b test package.
+"""CP-3 ``sts tos inspect`` test package.
 
 ``__init__.py`` is present so these modules import as ``cp3.tests.*`` and can
 reach the package under test with a **relative** import. That is not a style
 choice: the import firewall's allowlist does not name ``cp3``, so
-``import cp3.runner`` from a file under ``tos/`` is a TOS-FW-A violation, while
+``import cp3.inspect_session`` from a file under ``tos/`` is a TOS-FW-A violation, while
 a relative import is skipped by the gate (``tools/tos_firewall_check.py``
 ``node.level > 0``). The firewall scans ``tos/`` tests as well as sources
 (design §2.4), so the rule applies here identically.

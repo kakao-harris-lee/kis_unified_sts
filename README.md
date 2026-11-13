@@ -126,7 +126,7 @@ docker compose --profile test run --rm tests
 # (docs/plans/2026-11-07-legacy-removal-plan.md, L3).
 sts --help
 
-# One-page operator status board (sessions, B3 verdicts, clean-day streaks)
+# One-page operator status board (sessions, clean-day streaks)
 sts tos status
 
 # Tests and checks
@@ -158,7 +158,7 @@ npm test
 
 ```text
 tos/                 TOS kernel + tos_runtime shell (see tos/CLAUDE.md)
-tools/tos_*          CP-3 producer, B3 witness, firewall/digest/size checkers
+tools/tos_*          CP-3 producer, Setup D witness, firewall/digest/size checkers
 tools/broker_probes/ KIS capability probes (GET reads; order probes interlocked)
 shared/              what the surviving roots import — replay/decision/indicators,
                      KIS auth, config, storage, risk primitives, LLM
@@ -179,8 +179,8 @@ docs/                architecture, plans, runbooks, broker profiles
   `StrategyFactory` can build nothing. A strategy is Tenant Content (DSL +
   profile) under `config/tos_runtime/`, executed by the TOS kernel.
 - `config/strategies/futures/setup_d_vwap_reversion.yaml` is the one strategy
-  YAML left — it is the CP-3 B3 witness's input and is read by
-  `tools/tos_cp3/emit_legacy_decisions.py`.
+  YAML left — it is the frozen legacy Setup D witness's input and is read by
+  `tools/tos_cp3/produce_fields.py`.
 - New thresholds, risk knobs, symbols, and feature flags should be added to
   config files, not hardcoded.
 - Futures strategies must support long and short symmetry.
