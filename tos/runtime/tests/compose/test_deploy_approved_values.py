@@ -970,7 +970,18 @@ def test_generation_identifiers_are_all_first_generation(
 
 @pytest.mark.parametrize(
     ("name", "dotted"),
-    [],
+    [
+        # All six of this list's original members were safety-mesh identifiers
+        # (safety_envelope / safety_profile / safety_activation / safety_deviations /
+        # safety_incidents, plus monitor_coverage's coverage_manifest_id) and went with
+        # plan S2-a together with the documents that carried them. The rule did not go
+        # with them: these are the identifiers the shipped tree still carries in that
+        # shape, so an empty parameter set (a SKIPPED test, which reads as coverage)
+        # is not what the removal left behind.
+        ("critical_input_policy.yaml", "policy_id"),
+        ("critical_input_policy.yaml", "issuer_principal_id"),
+        ("finality.yaml", "proof_recipe_id"),
+    ],
 )
 def test_identifiers_follow_the_proposal_naming_rule(name: str, dotted: str) -> None:
     """Proposal §4.3: identifiers are names, not measurements — ``tos-paper-<what>-g<gen>``,

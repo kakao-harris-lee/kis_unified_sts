@@ -185,11 +185,21 @@ def test_shipped_example_still_refuses_to_load(stem: str) -> None:
 def test_shipped_example_is_a_template(stem: str) -> None:
     """Every leaf of these shipped examples is ``null``/``[]`` — see
     ``example_integrity_registry.EXAMPLE_TEMPLATE_ONLY``'s own docstring for why "still refuses
-    to load" cannot substitute for this here (PR #737 review, HIGH finding).
-
-    The registry is empty since plan S2-a removed the two all-optional spg documents that were
-    its only members, so this parametrization currently yields no cases."""
+    to load" cannot substitute for this here (PR #737 review, HIGH finding)."""
     assert_shipped_example_is_a_template(stem)
+
+
+def test_the_template_only_lane_is_empty_and_says_so() -> None:
+    """``EXAMPLE_TEMPLATE_ONLY`` has no members since plan S2-a removed the two all-optional
+    spg documents that were its only ones, so the parametrized test above yields no cases.
+
+    Stated here positively rather than left as a bare SKIPPED line, which reads like coverage
+    that ran. The lane itself is kept, not deleted: the coverage ledger
+    (:func:`test_every_registered_example_has_value_leak_coverage`) unions this set, so the
+    moment a config whose loader cannot be relied on to refuse is registered, the lane above
+    starts checking it — and this test goes red to say the set is no longer empty.
+    """
+    assert not EXAMPLE_TEMPLATE_ONLY, sorted(EXAMPLE_TEMPLATE_ONLY)
 
 
 @pytest.mark.parametrize("stem", sorted(LOADS_SUCCESSFULLY_LOADERS))
