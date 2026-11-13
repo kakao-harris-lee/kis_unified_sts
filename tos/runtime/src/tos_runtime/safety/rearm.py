@@ -46,8 +46,9 @@ import yaml
 from tos_runtime._named_tbd import is_named_tbd_placeholder
 from tos_runtime.custody.file_custody import verify_file_mode_and_owner
 from tos_runtime.custody.ports import CustodyLoadRefused
-from tos_runtime.engine.inbox import NewRiskHaltClearOutcome, SqliteEventInbox
+from tos_runtime.engine.inbox import NewRiskHaltClearOutcome
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.safety.latch import NewRiskHaltReader
 
 __all__ = [
     "NewRiskHaltDoorDecision",
@@ -203,7 +204,7 @@ class ReArmWorkflow:
         self,
         approvals_dir: Path,
         evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
+        inbox: NewRiskHaltReader,
         *,
         environment_label: str,
         expected_owner_uid: int,
@@ -215,9 +216,13 @@ class ReArmWorkflow:
             approvals_dir: The directory ``rearm/<latched_evidence_seq>.yaml`` resolves
                 under.
             evidence_store: Where ``REARM_APPROVED``/``REARM_REFUSED`` rows land.
-            inbox: Held for interface symmetry with the caller's own resources; this
-                class reads the latch through the ``current`` reading its caller passes
-                to :func:`prepare_new_risk_halt_clear`, never independently.
+            inbox: The new-risk-halt latch reader
+                (:class:`~tos_runtime.safety.latch.NewRiskHaltReader`, which
+                ``SqliteEventInbox`` satisfies structurally). Held for interface
+                symmetry with the caller's own resources; this class reads the latch
+                through the ``current`` reading its caller passes to
+                :func:`prepare_new_risk_halt_clear`, never independently — so the
+                read-only port is the honest annotation, not the concrete store.
             environment_label: This runtime's own boot-argument environment label.
             expected_owner_uid: The uid both the approval file's owner and the calling
                 process itself are expected to be (file custody's 0600 rule).
@@ -303,7 +308,7 @@ def prepare_new_risk_halt_clear(
     latched_evidence_seq: int,
     approvals_dir: Path,
     evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
+    inbox: NewRiskHaltReader,
     environment_label: str,
     expected_owner_uid: int,
     refused_kind: str,

@@ -1808,36 +1808,30 @@ class TestIdentityCodeDigestBoundToObservation:
         assert list(custody_root.glob("*.sqlite3")) == []
 
 
-class TestSoftwareDeploymentOkThreadedIntoSafetyMesh:
-    """Phase 5 W4 §2 decision 6 (2026-09-12 reorder) — ``_stage_b_release_probe``
-    now runs right after the RCL log is verified, BEFORE ``build_safety_mesh``, so
-    its real ``release_admitted`` verdict (never a literal ``True``) reaches
-    SAFETY_ENVELOPE_PROFILE's ``SemanticValidationInputs.software_deployment_ok``.
+class TestStageBReleaseProbeRunsBeforeTheMonitorOwners:
+    """``_stage_b_release_probe`` runs right after the RCL log is verified, BEFORE
+    ``build_monitor_owners``, and its real verdict (never a literal ``True``) is what
+    ``ComposedRuntime.release_admitted`` and the RELEASE currentness dimension report.
 
-    ``TestReleaseAdmissionRefusalBlocksBoot`` above already proves release
-    admission gates the WHOLE boot on a digest mismatch, but that refusal is a
-    STAGE A rejection (pure digest comparison, no I/O) — ``_stage_b_release_probe``
-    is never reached in that scenario either before or after this reorder, so it
-    does not by itself pin the STAGE B -> ``build_safety_mesh`` wiring. The two
-    tests below do: one over a normal boot (the real ``True`` reaches the
-    service), one mutation-style (forcing ``decide()`` to refuse proves
-    ``build_safety_mesh`` is never even called with a stale/hardcoded value)."""
+    ``TestReleaseAdmissionRefusalBlocksBoot`` above already proves release admission gates
+    the WHOLE boot on a digest mismatch, but that refusal is a STAGE A rejection (pure digest
+    comparison, no I/O) — ``_stage_b_release_probe`` is never reached in that scenario, so it
+    does not by itself pin the STAGE B -> ``build_monitor_owners`` ORDER. The two tests below
+    do: one over a normal boot, one mutation-style (forcing ``decide()`` to refuse proves the
+    owners are never built at all).
 
-    def test_normal_boot_threads_the_real_admitted_verdict(
+    The SAFETY_ENVELOPE_PROFILE service this verdict used to be threaded into went with plan
+    S2-a (``docs/plans/2026-11-13-tos-code-halving-plan.md``), so what is asserted here is the
+    boot ORDER and the surviving consumer, not that service's own input.
+    """
+
+    def test_normal_boot_reports_the_real_admitted_verdict(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
         composed = _compose(tmp_path, config_dir, data_dir, custody_root)
         assert composed.release_admitted is True
-        # Honest read path: the kernel's own EngineCore stores the injected
-        # CoordinatorPreconditions as ``self._preconditions`` (tos/src/tos/engine/
-        # core.py), which in turn stores the safety-mesh tuple it was constructed
-        # with as ``self._safety_mesh`` (tos_runtime.compose._preconditions
-        # .RuntimeCoordinatorPreconditions.__init__) — item 0 of that tuple is
-        # SAFETY_ENVELOPE_PROFILE (build_safety_mesh's own services tuple order).
-        profile_service = composed.core._preconditions._safety_mesh[0]
-        assert profile_service._software_deployment_ok is True
 
-    def test_a_refused_stage_b_verdict_never_reaches_build_safety_mesh(
+    def test_a_refused_stage_b_verdict_never_reaches_build_monitor_owners(
         self,
         config_dir: Path,
         data_dir: Path,
@@ -1845,26 +1839,25 @@ class TestSoftwareDeploymentOkThreadedIntoSafetyMesh:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """M2-style guard: if ``software_deployment_ok`` were hardcoded ``True``
-        (disconnected from the real STAGE B verdict), forcing that verdict to
-        refuse would not stop ``build_safety_mesh`` from running with a stale
-        ``True``. Forcing ``ReleaseAdmissionService.decide`` to always return
-        ``False`` must instead raise before ``build_safety_mesh`` is ever
-        called."""
+        """M2-style guard: forcing ``ReleaseAdmissionService.decide`` to refuse must raise
+        BEFORE ``build_monitor_owners`` is ever called — a boot that built its monitor and
+        latch owners first would have done I/O on a deployment it then refused."""
         import tos_runtime.compose._wiring as wiring_module
         from tos_runtime.release.admission import ReleaseAdmissionService
 
         calls: list[object] = []
-        real_build_safety_mesh = wiring_module.build_safety_mesh
+        real_build_monitor_owners = wiring_module.build_monitor_owners
 
-        # `Any`, not `object`: this spy stands in for `build_safety_mesh`'s own signature and
-        # must forward every call unchanged — narrowing it would require duplicating that
+        # `Any`, not `object`: this spy stands in for `build_monitor_owners`'s own signature
+        # and must forward every call unchanged — narrowing it would require duplicating that
         # signature here just to satisfy the splat below (plan §1.1 A-rt boundary use of `Any`).
-        def _spy_build_safety_mesh(*args: Any, **kwargs: Any) -> object:
-            calls.append(kwargs.get("software_deployment_ok"))
-            return real_build_safety_mesh(*args, **kwargs)
+        def _spy_build_monitor_owners(*args: Any, **kwargs: Any) -> object:
+            calls.append(kwargs.get("evidence_store"))
+            return real_build_monitor_owners(*args, **kwargs)
 
-        monkeypatch.setattr(wiring_module, "build_safety_mesh", _spy_build_safety_mesh)
+        monkeypatch.setattr(
+            wiring_module, "build_monitor_owners", _spy_build_monitor_owners
+        )
         monkeypatch.setattr(
             ReleaseAdmissionService,
             "decide",
