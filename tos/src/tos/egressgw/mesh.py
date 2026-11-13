@@ -151,7 +151,7 @@ def resolve_broker_applicability(
 
 
 # ===========================================================================
-# §4.2 — the deferred live safety-governance mesh (items 4, 5, 7, 8, 9, 10)
+# §4.2 — the deferred live safety-governance mesh (items 4, 5 — 7/8/9/10 went with S2-a)
 # ===========================================================================
 
 

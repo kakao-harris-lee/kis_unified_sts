@@ -65,6 +65,65 @@ def test_one_named_approver_clears(
     assert "REARM_APPROVED" in _kinds(evidence_store)
 
 
+def test_a_seq_whose_approval_was_already_used_is_refused(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    """One approval, one use (grade-A review LOW 2). ``tos.hag``'s
+    ``approval_set_single_use`` is gone, so the workflow reads its own durable
+    ``REARM_APPROVED`` history back instead.
+
+    Failing input without the guard: a violation re-latches at the SAME ``evidence_seq``
+    and the leftover approval file clears it a second time with nobody deciding again.
+    """
+    write_rearm_approval_file(tmp_path, latched_evidence_seq=_SEQ)
+    first = _workflow(tmp_path, evidence_store).approve_and_clear(_SEQ)
+    assert first.status is ReArmStatus.APPROVED
+
+    second = _workflow(tmp_path, evidence_store).approve_and_clear(_SEQ)
+    assert second.status is ReArmStatus.REFUSED
+    assert "already has a REARM_APPROVED row" in second.reasons[0]
+    assert second.attestation_text is None
+    assert _kinds(evidence_store).count("REARM_APPROVED") == 1
+
+
+def test_the_single_use_check_reads_the_store_not_an_in_process_cache(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    """A FRESH workflow object over the same store refuses identically — the guard is
+    log-enforced, not memory-enforced, so restarting the process does not re-open the
+    door (the same discipline ``safety.ack._already_acknowledged`` applies)."""
+    write_rearm_approval_file(tmp_path, latched_evidence_seq=_SEQ)
+    assert (
+        _workflow(tmp_path, evidence_store).approve_and_clear(_SEQ).status
+        is ReArmStatus.APPROVED
+    )
+    fresh = ReArmWorkflow(
+        tmp_path,
+        evidence_store,
+        FakeNewRiskHaltInbox(None),
+        environment_label=_LABEL,
+        expected_owner_uid=os.getuid(),
+    )
+    assert fresh.approve_and_clear(_SEQ).status is ReArmStatus.REFUSED
+
+
+def test_a_different_seq_is_unaffected_by_an_earlier_use(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    """The guard is per-seq, not a global latch: a genuinely new violation at a NEW seq
+    still clears with its own approval."""
+    write_rearm_approval_file(tmp_path, latched_evidence_seq=_SEQ)
+    assert (
+        _workflow(tmp_path, evidence_store).approve_and_clear(_SEQ).status
+        is ReArmStatus.APPROVED
+    )
+    write_rearm_approval_file(tmp_path, latched_evidence_seq=_SEQ + 1)
+    assert (
+        _workflow(tmp_path, evidence_store).approve_and_clear(_SEQ + 1).status
+        is ReArmStatus.APPROVED
+    )
+
+
 # ---------------------------------------------------------------------------
 # the approval file itself
 # ---------------------------------------------------------------------------

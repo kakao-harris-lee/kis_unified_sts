@@ -19,7 +19,7 @@ Two properties the builders must have, both of them review findings:
 
 Instances are built with ``model_construct`` on purpose: the pins measure the
 serialization of the covered content, not artifact admissibility, and hand-
-building 17 admissible ``issue()`` calls would make the pins expensive without
+building an admissible ``issue()`` call per model would make the pins expensive without
 measuring anything more (review-798 1차 MEDIUM-2(c)).
 """
 
@@ -211,9 +211,9 @@ def digest_map() -> dict[str, str]:
     """Every digest the set-ordering pins compare, keyed by a stable name.
 
     Returns:
-        A mapping of pin key to canonical digest, covering the 17
-        ``covered_content()`` models, the two non-covered call shapes, and the
-        :data:`CONTROL_KEY` negative control.
+        A mapping of pin key to canonical digest, covering every
+        :data:`COVERED_SET_MODELS` model (9 since plans S1-a/S2-a/S2-c; it was 19),
+        the two non-covered call shapes, and the :data:`CONTROL_KEY` negative control.
     """
     scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
     digests: dict[str, str] = {}

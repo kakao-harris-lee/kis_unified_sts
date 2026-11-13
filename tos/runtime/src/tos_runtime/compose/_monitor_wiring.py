@@ -203,10 +203,15 @@ def build_monitor_owners(
         evidence_recorder=_stm_alert_recorder_for(evidence_store),
     )
     # Boot-time warm-up (never a fabricated verdict): the monitor's own honest contract
-    # reports the evidence tip UNKNOWN on the VERY FIRST observation any instance makes,
-    # since there is no prior advance timestamp to compare against. Discharging that one
-    # unavoidable "no baseline yet" observation here, at boot, before any attempt is ever
-    # driven, is what a production system does before trusting a stall detector.
+    # reports UNKNOWN on the VERY FIRST observation any instance makes, because its
+    # evidence-chain continuity judgement needs a prior `(seq, chain_digest)` pair to
+    # compare against and there is none yet (monitoring.py's own module docstring, "The
+    # first observation is UNKNOWN, not healthy"). Left undischarged, the first real
+    # DECISION_TICK would read MONITORING unestablished and refuse on an otherwise healthy
+    # runtime. Discharging that one unavoidable observation here, at boot, before any
+    # attempt is ever driven, is what a production system does before trusting a chain
+    # detector — and it establishes the baseline every LATER call judges against. It
+    # authors no verdict of its own; it records the honest UNKNOWN as an `STM_ALERT`.
     monitoring.healthy()
     latch_reader: NewRiskHaltReader = _LateBoundInboxReader(inbox_cell)
     return _MonitorOwners(

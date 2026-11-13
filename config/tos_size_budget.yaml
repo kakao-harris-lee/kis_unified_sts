@@ -59,11 +59,15 @@ scope:
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
 exceptions:
 - target: tos/src/tos/egressgw/gateway.py
-  measured: 1802
+  measured: 1804
   owner: tos-kernel
   decomposition_order: 1
   expires_on: '2026-12-31'
   note: >-
+    **2026-11-13 S2-a 리뷰 LOW(3) 재등재 1802→1804(+2)**: 모듈 도크스트링의 "17 항목 중
+    여섯" · "여섯은 유보" 문언을 실제 13 항목 · 유보 2 로 고치고, `verify_send_boundary`
+    도크스트링과 step 15 주석에서 "17-item" 을 걷어내며 줄바꿈 2줄. 문언만 바뀌었고
+    판정 경로는 그대로다.
     **2026-10-23 재등재 1806→1802(-4)**: #932 Codex r2 — 송신 컨텍스트의 binding 표를 걷어내고 프로필 자신의 environment_class 만 읽도록 바꾸며 줄었다.
     **2026-10-23 #932 리뷰 MEDIUM 재등재 1776→1806(+30)**: `_mock_class_bound_to_profile` 신설(도크스트링 + endpoint_binding_from_profile_ok 대조) — mock 튜플이 첨부 프로필 키에 묶일 때만 건너뛴다 + import 1줄 + 주석 정정.
     **2026-10-23 PR-3a option (a) "K" 재등재 1764→1776(+12)**: `_check_allowance` 의 option (a) 분기(mock 클래스면 프로필 검사 생략) 주석 4줄 + 블록 들여쓰기 + 도크스트링 항목 6줄 + import 1줄.
@@ -229,6 +233,10 @@ exceptions:
     deferred-6 kwargs(safety_authority_epoch_current/live_scope_valid/
     safety_profile_current/deviation_clear/incident_clear/monitoring_clear) 6개와
     그 pass-through 배선 6줄 추가.
+    2026-11-13 S2-a — measured 239→223(-16). 위 deferred-6 중 넷
+    (safety_profile_current/deviation_clear/incident_clear/monitoring_clear)이
+    verify 7~10 과 함께 삭제됐다. 남은 둘은 4(safety_authority_epoch_current) ·
+    5(live_scope_valid) 다.
     2026-09-12 kernel round #3 K-2(§2 결정 4) — measured 236→245(+9). 단일
     kwarg `venue_session_account_facts_current` 를 3개
     (`session_facts_current`/`tradability_facts_current`/`account_facts_current`)
@@ -672,11 +680,14 @@ exceptions:
     (계획 `docs/plans/2026-11-13-tos-code-halving-plan.md` S2-c) — 2026-09-12/09-13
     두 항목이 더한 +5/+3 이 그대로 되돌아왔다. measured-drift 가드 재실측 갱신.
 - target: tos/src/tos/egressgw/records.py
-  measured: 1069
+  measured: 1070
   owner: tos-kernel
   decomposition_order: 37
   expires_on: '2026-12-31'
   note: >-
+    **2026-11-13 S2-a 리뷰 LOW(3) 재등재 1069→1070(+1)**: `SendBoundaryVerification.admitted`
+    도크스트링에서 "normative 17" 을 `SEND_VERIFY_ITEMS` 튜플 인용으로 바꾸며 줄바꿈 1줄.
+    문언만 바뀌었고 판정은 그대로다.
     **2026-10-23 재등재 1098→1083(-15)**: #932 Codex r2 — 송신 컨텍스트의 binding 표를 걷어내고 프로필 자신의 environment_class 만 읽도록 바꾸며 줄었다.
     **2026-10-23 #932 리뷰 MEDIUM 재등재 1083→1098(+15)**: 같은 두 필드(주석 5줄) + import 2줄 + 팩토리 매개변수 · 전달 · Args.
     **2026-10-23 PR-3a option (a) "K" 재등재 1070→1083(+13)**: `SendBoundaryContext.capability_tuples` 필드(주석 4줄) + import 확장 + 팩토리 매개변수·전달·Args.

@@ -1,8 +1,9 @@
-"""§4.1 — the RFC-002 §10.8:741-759 17-item verify list and its honest disposition table.
+"""§4.1 — the RFC-002 §10.8:741-759 verify list and its honest disposition table.
 
 The design's central over-claim risk is reading "the gate ran" as "the send is safe". These tests
-lock the *honesty structure*: the list is exactly seventeen, the three dispositions partition it
-6 / 5 / 6, every non-deferred item has a named check, and the only admitting outcomes are the two
+lock the *honesty structure*: the list is exactly :data:`SEND_VERIFY_ITEMS`, the three
+dispositions partition it 6 / 5 / 2 (it was 6 / 5 / 6 until plan S2-a removed the RFC's items
+7/8/9/10), every non-deferred item has a named check, and the only admitting outcomes are the two
 enumerated positive ones.
 
 Design #34 §12.1-1 target: "verify 항목 임의 하나가 deny/None/UNKNOWN 반환 시 SendHandoff
@@ -165,7 +166,7 @@ def test_a_deferred_item_may_be_not_applicable() -> None:
 
 
 def test_the_baseline_run_judges_every_item_in_the_normative_order() -> None:
-    """(§10.8:761) Seventeen judgements, in the RFC's order — an unevaluated item is a stop."""
+    """(§10.8:761) One judgement per item, in the RFC's order — an unevaluated item is a stop."""
     attempt, context = happy_context()
     verification = verify_send_boundary(attempt=attempt, context=context)
     assert verification.admitted is True

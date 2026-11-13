@@ -381,13 +381,12 @@ def test_main_check_flag_exits_zero_when_clean(tmp_path: Path, capsys) -> None:
 #: SILENT drop below it means the candidate-detection signature itself weakened (round 3
 #: re-review MEDIUM — see ``test_a_weakened_candidate_signature_drops_below_the_floor``
 #: for the mutation this floor is proven against).
-#: Re-measured 2026-10-24 (standing session approval, PR #955 — a new YAML loader,
+#: Re-measured 2026-11-13 after BOTH removals landed — plan S2-c deleted two loaders with
+#: the nontrade package (``tos_runtime/nontrade/config.py``,
+#: ``compose/_nontrade_eval_dispatch.py``) and plan S2-a the safety-mesh loaders this guard
+#: scanned. Previously 2026-10-24 (standing session approval, PR #955 — a new YAML loader,
 #: ``tos_runtime/authority/standing.py``): real tree 50, weakened-signature count 46.
-#: Re-measured 2026-11-13 (S2-c, ``docs/plans/2026-11-13-tos-code-halving-plan.md`` —
-#: two loaders DELETED with the nontrade package: ``tos_runtime/nontrade/config.py``
-#: and ``compose/_nontrade_eval_dispatch.py``): real tree 48, weakened-signature 44.
-#: A deliberate drop, re-measured here rather than left to fail as a silent weakening.
-_REAL_TREE_CANDIDATE_FLOOR = 48
+_REAL_TREE_CANDIDATE_FLOOR = __FLOOR__
 
 
 def test_check_real_config_and_scope_smoke() -> None:
@@ -415,7 +414,15 @@ def test_a_weakened_candidate_signature_drops_below_the_floor(monkeypatch) -> No
     ``"load_yaml_document("`` removed from ``_CANDIDATE_SIGNALS`` — exactly the kind of
     silent weakening a future edit could introduce — the real-tree candidate count must
     fall below :data:`_REAL_TREE_CANDIDATE_FLOOR`, proving the floor assertion above is
-    load-bearing rather than decorative."""
+    load-bearing rather than decorative.
+
+    Since plan S2-a one ``stale-registration`` violation also appears under this mutation:
+    ``safety/monitoring.py`` is a candidate only through ``load_yaml_document(`` and is
+    registered (it reads three ints and no operator-typed string), so dropping the signal
+    makes its registration stale. That is incidental to today's register contents — it
+    disappears the moment that file stops being registered — so what this test pins is
+    still the candidate count, and the non-registration violation classes must stay empty.
+    """
     weakened = tuple(s for s in guard._CANDIDATE_SIGNALS if s != "load_yaml_document(")
     assert len(weakened) == len(guard._CANDIDATE_SIGNALS) - 1
     monkeypatch.setattr(guard, "_CANDIDATE_SIGNALS", weakened)
@@ -425,7 +432,9 @@ def test_a_weakened_candidate_signature_drops_below_the_floor(monkeypatch) -> No
         scope_dir=_REPO_ROOT / guard.DEFAULT_SCOPE,
         config_path=_REPO_ROOT / guard.DEFAULT_CONFIG,
     )
-    assert violations == []  # still "clean" -- that is exactly the danger this pins
+    # No file goes UNGUARDED under the mutation -- that is exactly the danger this pins:
+    # the shrunken signature sees fewer files, so it accuses none of them.
+    assert [v for v in violations if "[stale-registration]" not in v] == [], violations
     assert len(candidates) < _REAL_TREE_CANDIDATE_FLOOR, (
         "weakening the candidate signature should have dropped the count below the "
         f"floor, but got {len(candidates)} -- the floor would not have caught this"

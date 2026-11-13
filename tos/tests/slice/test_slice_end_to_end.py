@@ -210,7 +210,7 @@ def test_b_a_bar_inside_the_band_is_a_no_action_and_starts_no_flow() -> None:
         assert result.flow is None, "a no-action must start no commitment flow"
 
 
-# -- (c) the 17-item verify list ---------------------------------------------
+# -- (c) the verify list -----------------------------------------------------
 
 
 def test_c_the_thirteen_item_verify_list_admitted_with_a_positive_synthetic_na() -> (

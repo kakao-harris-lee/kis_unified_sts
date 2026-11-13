@@ -543,7 +543,7 @@ class ComposeContextResolver:
         # PROVISIONAL STAND-INS (review finding #5, 2026-09-09) — this
         # compose root has no real quorum-runtime replication yet, so there
         # is no live source to read them from. They are replaced by a
-        # genuine issued QCC in Phase 5. None of the kernel's 17 items
+        # genuine issued QCC in Phase 5. None of the kernel's verify items
         # compares them: ``exact_binding_holds``
         # (``tos/src/tos/egress/predicates.py``) checks only the QCC's
         # *command* digest against the request record, never these fields —

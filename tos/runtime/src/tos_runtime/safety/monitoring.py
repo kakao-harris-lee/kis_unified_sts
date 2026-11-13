@@ -1,20 +1,35 @@
-"""The slim runtime monitor: evidence-tip stall and inbox backlog.
+"""The slim runtime monitor: evidence-chain continuity, tip stall, inbox backlog.
 
 What this owns, and what it no longer does (plan S2-a). It used to be the
-``tos.stm`` safety-mesh service: a coverage manifest, a conformance snapshot,
-three self-observations and the egress verify item 10 ``monitoring_clear``
-flag. Every one of its 60 alerts in the real evidence was a boot-first-
-observation artefact, its coverage manifest was a static YAML constant in all
-four shipped tenant trees, and verify item 10 never once denied. The kernel
-``tos.stm`` package and verify item 10 are gone; monitoring is carried by the
-MONITORING currentness dimension alone.
+``tos.stm`` safety-mesh service: a coverage manifest, a conformance snapshot, a
+time-health observation and the egress verify item 10 ``monitoring_clear`` flag.
+Its coverage manifest was a static YAML constant in all four shipped tenant
+trees and verify item 10 never once denied. The kernel ``tos.stm`` package and
+verify item 10 are gone; monitoring is carried by the MONITORING currentness
+dimension alone.
 
-What it still does: read two injected self-observations once per call — the
-evidence tip's own advance (a stall past ``max_evidence_tip_stall_ms`` is not
-healthy) and the durable inbox's unconsumed count (a backlog past
-``max_inbox_unconsumed`` is not healthy) — report MONITORING's currentness
-verdict from them, and append one ``STM_ALERT`` evidence row whenever the
-verdict is not positively healthy.
+What it still does: read two injected self-observations once per call and judge
+THREE facts from them — report MONITORING's currentness verdict, and append one
+``STM_ALERT`` evidence row whenever that verdict is not positively healthy.
+
+1. **Evidence-chain continuity** (grade-A review, 2026-11-13: kept, not dropped).
+   The observer reports ``(seq, chain_digest)``. A ``seq`` that REGRESSES is
+   always a break; otherwise ``seq`` advancing and ``chain_digest`` changing must
+   AGREE — both (an ordinary append) or neither (an idle tick). Disagreement is
+   exactly a torn or rewritten chain: an append with no digest movement, or a
+   digest movement with no append. The failing inputs this exists for:
+   ``(10, A)`` then ``(9, B)``, and ``(10, A)`` then ``(11, A)``. Without it both
+   read as healthy and the send proceeds.
+2. **Evidence-tip freshness** — a stall past ``max_evidence_tip_stall_ms``.
+3. **Inbox backlog** — an unconsumed count past ``max_inbox_unconsumed``.
+
+**The first observation is UNKNOWN, not healthy.** Continuity needs a prior
+``(seq, chain_digest)`` pair to compare against, so the very first observation any
+instance makes reports ``None`` — MONITORING unestablished, which denies. That is
+the pre-S2-a behaviour, kept deliberately: an unestablished fact must not read as
+a positive one. ``tos_runtime.compose._monitor_wiring`` discharges that one
+unavoidable observation with a boot-time warm-up call, before any attempt is ever
+driven, so a healthy runtime's first real tick sees a baseline.
 
 Time health is deliberately NOT observed here: the Trustworthy Time service
 owns the TRUSTWORTHY_TIME currentness dimension, and judging the same fact a
@@ -63,6 +78,8 @@ _IDENTITY = "monitoring-service-v2"
 #: Deterministic, fixed-order reason tokens.
 _REASON_EVIDENCE_TIP_UNKNOWN = "evidence_tip_never_observed"
 _REASON_EVIDENCE_TIP_STALL = "evidence_tip_stalled"
+_REASON_CONTINUITY_UNESTABLISHED = "source_continuity_unestablished"
+_REASON_CONTINUITY_BROKEN = "source_continuity_broken"
 _REASON_INBOX_BACKLOG = "inbox_unconsumed_over_bound"
 _REASON_ALERT_DELIVERY_FAILED = "stm_alert_delivery_failed"
 
@@ -128,10 +145,14 @@ class _Observation:
     """One :meth:`MonitoringService.healthy` call's raw self-observation results.
 
     ``tip_ok`` is ``None`` only when the evidence tip has never been observed
-    (``seq is None``) — a genuine gap, never a fabricated pass.
+    (``seq is None``) — a genuine gap, never a fabricated pass. ``continuity_ok``
+    is ``None`` on the first real observation (no prior pair to compare against)
+    and is left unjudged when the tip itself was never observed, since that gap
+    already covers the call.
     """
 
     tip_ok: bool | None
+    continuity_ok: bool | None
     last_seq: int | None
     unconsumed: int
     inbox_ok: bool
@@ -185,6 +206,10 @@ class MonitoringService:
         self._evidence_recorder = evidence_recorder
         self._tip_last_seq: int | None = None
         self._tip_last_advance_ns: int | None = None
+        #: Raw previous ``(seq, chain_digest)``, updated on every observation — the
+        #: baseline the continuity judgement compares against (module docstring 1).
+        self._continuity_last_seq: int | None = None
+        self._continuity_last_chain_digest: str | None = None
         self._last_delivery_failure: str | None = None
 
     @property
@@ -199,9 +224,12 @@ class MonitoringService:
 
     def _observe(self, now_ns: int) -> _Observation:
         """Read each self-observation port exactly once for this call."""
-        seq, _chain_digest, _key_generation = self._evidence_tip_observer()
+        seq, chain_digest, _key_generation = self._evidence_tip_observer()
         if seq is None:
+            # Never observed: a gap, not an unknown. Continuity is left unjudged
+            # because the gap already covers this call.
             tip_ok: bool | None = None
+            continuity_ok: bool | None = None
         else:
             if seq != self._tip_last_seq:
                 self._tip_last_seq = seq
@@ -209,40 +237,68 @@ class MonitoringService:
             assert self._tip_last_advance_ns is not None
             stall_ms = (now_ns - self._tip_last_advance_ns) // _NS_PER_MS
             tip_ok = stall_ms <= self._docs.max_evidence_tip_stall_ms
+
+            if self._continuity_last_seq is None:
+                # First real observation: there is no prior pair to compare.
+                continuity_ok = None
+            else:
+                seq_advanced = seq > self._continuity_last_seq
+                seq_regressed = seq < self._continuity_last_seq
+                digest_changed = chain_digest != self._continuity_last_chain_digest
+                # A regression is always a break; otherwise advanced and
+                # digest-changed must agree (both an append, neither an idle tick).
+                continuity_ok = (
+                    False if seq_regressed else (seq_advanced == digest_changed)
+                )
+            self._continuity_last_seq = seq
+            self._continuity_last_chain_digest = chain_digest
+
         unconsumed = self._inbox_unconsumed_observer()
         return _Observation(
             tip_ok=tip_ok,
+            continuity_ok=continuity_ok,
             last_seq=seq,
             unconsumed=unconsumed,
             inbox_ok=unconsumed <= self._docs.max_inbox_unconsumed,
         )
 
     def healthy(self) -> bool | None:
-        """``True`` when both self-observations are positively within bounds, ``False``
-        when one is positively out of bounds, ``None`` when the evidence tip has never
-        been observed (unestablished, never a fabricated pass).
+        """``True`` when every self-observation is positively within bounds, ``False``
+        when one is positively violated, ``None`` when a fact is merely unestablished
+        (never a fabricated pass).
+
+        An UNESTABLISHED fact (the tip never observed; continuity without a baseline)
+        yields ``None``; a POSITIVELY VIOLATED one (a stall, a broken chain, a
+        backlog, an undelivered prior alert) yields ``False`` and wins over any
+        unestablished fact beside it — a denial is never softened to an unknown.
 
         Appends one ``STM_ALERT`` row on every non-``True`` result. A recorder failure
         propagates and is remembered, so the NEXT call can never report ``True`` while a
         prior alert went undelivered.
         """
-        reasons: list[str] = []
+        unestablished: list[str] = []
+        violated: list[str] = []
         if self._last_delivery_failure is not None:
-            reasons.append(_REASON_ALERT_DELIVERY_FAILED)
+            violated.append(_REASON_ALERT_DELIVERY_FAILED)
         obs = self._observe(self._monotonic_ns())
         if obs.tip_ok is None:
-            reasons.append(_REASON_EVIDENCE_TIP_UNKNOWN)
+            unestablished.append(_REASON_EVIDENCE_TIP_UNKNOWN)
         elif obs.tip_ok is False:
-            reasons.append(_REASON_EVIDENCE_TIP_STALL)
+            violated.append(_REASON_EVIDENCE_TIP_STALL)
+        if obs.continuity_ok is None and obs.tip_ok is not None:
+            unestablished.append(_REASON_CONTINUITY_UNESTABLISHED)
+        elif obs.continuity_ok is False:
+            violated.append(_REASON_CONTINUITY_BROKEN)
         if obs.inbox_ok is False:
-            reasons.append(_REASON_INBOX_BACKLOG)
+            violated.append(_REASON_INBOX_BACKLOG)
 
-        if not reasons:
-            verdict: bool | None = True
-        elif reasons == [_REASON_EVIDENCE_TIP_UNKNOWN]:
+        reasons = violated + unestablished
+        if violated:
+            verdict: bool | None = False
+        elif unestablished:
             verdict = None
         else:
-            verdict = False
+            verdict = True
 
         if verdict is True:
             self._last_delivery_failure = None
@@ -255,6 +311,7 @@ class MonitoringService:
                     "clear": verdict,
                     "reasons": tuple(reasons),
                     "last_evidence_seq": obs.last_seq,
+                    "source_continuity_present": obs.continuity_ok,
                     "inbox_unconsumed": obs.unconsumed,
                 },
             )

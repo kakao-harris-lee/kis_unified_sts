@@ -12,8 +12,8 @@ every test below runs the real gateway.
 What it pins:
 
 * **Reaches the transport.** With the deployment sealed to the mock host (egress endpoint =
-  transport ``endpoint_rest_base + order_path``) and both GETs answering, all 17 verify items
-  are SATISFIED; dry_run stops at the adapter with byte-seal identity, live gets one POST and
+  transport ``endpoint_rest_base + order_path``) and both GETs answering, every verify item
+  is SATISFIED; dry_run stops at the adapter with byte-seal identity, live gets one POST and
   an ``ACK``.
 * **Still refuses when a fact is not there.** Egress endpoint not the mock host's -> item 5
   DENIED; halted instrument or a failed account read -> item 12 not SATISFIED; zero order POSTs
@@ -438,7 +438,7 @@ def test_dry_run_reaches_the_adapter_with_every_verify_item_satisfied(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeKisServer,
 ) -> None:
-    """``mode: dry_run``: all 17 items SATISFIED with no lift; ``SEND_SEALED`` before
+    """``mode: dry_run``: every item SATISFIED with no lift; ``SEND_SEALED`` before
     ``NETWORK_CALL_ENTERED``; the dry-run digest equals the seal's and an independent oracle's;
     the reservation is quarantined UNKNOWN; and the order endpoint receives nothing (the two
     broker-fact GETs are the only requests)."""

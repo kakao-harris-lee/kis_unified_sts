@@ -11,16 +11,32 @@ actually fenced the latch:
    ``latched_evidence_seq``; an absent latch (``NO_LATCH``) or a different currently-
    latched seq (``SEQ_MISMATCH``) is refused before the approval file is even read, so a
    stale approval can never clear a newer halt.
-2. **The approval file is custody-gated.** 0600 mode and owner uid
+2. **One approval, one use.** An approval for a seq that ALREADY has a
+   ``REARM_APPROVED`` row is refused. The ``tos.hag`` ``approval_set_single_use``
+   predicate that used to enforce this is gone, so the check is made here against the
+   store's own durable history (never an in-process cache — a freshly re-opened process
+   over the same store refuses identically, the same log-enforced discipline
+   :func:`tos_runtime.safety.ack._already_acknowledged` applies to alerts). Without it
+   one approval file could clear the SAME ``evidence_seq`` twice: nothing stops a
+   violation from re-latching at a seq a leftover file still names.
+3. **The approval file is custody-gated.** 0600 mode and owner uid
    (:func:`~tos_runtime.custody.file_custody.verify_file_mode_and_owner`), the same rule
    every other operator file in this runtime obeys.
-3. **Cross-environment isolation.** The file's own ``environment_label`` must equal this
+4. **Cross-environment isolation.** The file's own ``environment_label`` must equal this
    runtime's byte-exact.
-4. **One named principal, positively APPROVE.** Exactly one approval entry, a non-blank
+5. **One named principal, positively APPROVE.** Exactly one approval entry, a non-blank
    ``principal_id`` that is not still the ``TBD`` template placeholder, and a
    ``decision`` of exactly ``APPROVE``. ``DENY``/``ABSTAIN``/anything else refuses.
-5. **Every outcome is durably evidenced** — ``REARM_APPROVED`` before the caller's own
-   storage clear, ``REARM_REFUSED`` on every refusal including an unreadable file.
+6. **Every outcome is durably evidenced** — ``REARM_APPROVED`` before the caller's own
+   storage clear, ``REARM_REFUSED`` on every refusal including an unreadable file. That
+   ``REARM_APPROVED`` row is what item 2 reads back.
+
+**What plan S2-a removed and did NOT replace** (grade-A review disclosure): the
+two-person quorum itself, roster membership and its effective-principal/conflict graph
+(``quorum_independence_satisfied`` / ``dual_control_effective_distinct``), and the
+request-digest binding (``approval_binding_exact``) that tied an approval to one exact
+constructed request record. Item 2 above restores single use; the other three are
+deliberately gone, having recorded zero re-arms in the live evidence.
 
 **Machine pin.** ``tests/engine/test_no_direct_latch_clear.py`` allows exactly two files
 to call :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt` directly:
@@ -34,6 +50,7 @@ Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``pyyaml`
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -71,9 +88,10 @@ _DECISIONS = frozenset({_APPROVE, "DENY", "ABSTAIN"})
 
 
 class ReArmApprovalFileError(Exception):
-    """Raised internally for any refusal reading/validating the on-disk approval file —
-    always caught by :meth:`ReArmWorkflow.approve_and_clear` and turned into a
-    ``REFUSED`` :class:`ReArmOutcome`, never propagated to the caller."""
+    """Raised internally for any refusal reading/validating the on-disk approval file,
+    or for a seq whose approval was already used — always caught by
+    :meth:`ReArmWorkflow.approve_and_clear` and turned into a ``REFUSED``
+    :class:`ReArmOutcome`, never propagated to the caller."""
 
 
 class ReArmStatus(StrEnum):
@@ -131,6 +149,24 @@ def _load_raw_rearm_file(
             f"{path} must parse to a mapping (got {type(raw).__name__})"
         )
     return raw
+
+
+def _already_approved(evidence_store: SqliteEvidenceStore, seq: int) -> bool:
+    """Whether a prior ``REARM_APPROVED`` row already names ``seq`` (module docstring
+    item 2).
+
+    Read from the store's own durable history, never an in-process cache, so a freshly
+    re-opened process over the same store refuses a second use identically.
+    """
+    rows = evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = ?",
+        (_REARM_APPROVED_KIND,),
+    ).fetchall()
+    for (payload_json,) in rows:
+        payload = json.loads(payload_json)["payload"]
+        if payload.get("latched_evidence_seq") == seq:
+            return True
+    return False
 
 
 def _verify_environment_label(
@@ -245,6 +281,13 @@ class ReArmWorkflow:
         """
         path = self._approvals_dir / "rearm" / f"{latched_evidence_seq}.yaml"
         try:
+            if _already_approved(self._evidence_store, latched_evidence_seq):
+                raise ReArmApprovalFileError(
+                    f"evidence_seq {latched_evidence_seq} already has a "
+                    f"{_REARM_APPROVED_KIND} row — one approval, one use "
+                    "(module docstring item 2); a re-latched seq needs a new "
+                    "approval, not the leftover file"
+                )
             raw = _load_raw_rearm_file(
                 path,
                 expected_owner_uid=self._expected_owner_uid,

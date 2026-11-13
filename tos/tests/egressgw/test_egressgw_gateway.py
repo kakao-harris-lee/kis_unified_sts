@@ -697,7 +697,7 @@ def test_an_absent_transport_is_a_stop_never_a_skip() -> None:
 # the transport — quantity, price, side — and the command digest the outbound request carries
 # were, before this hardening, passed through unbound: the fixtures wired them consistently and
 # nothing enforced it. Each case below forges exactly one of them while leaving every one of the
-# seventeen verify items satisfied, so only the binding check can catch it.
+# every verify item satisfied, so only the binding check can catch it.
 
 
 def _forged(**override: Any):
@@ -807,7 +807,7 @@ def test_the_binding_predicate_accepts_the_consistent_baseline() -> None:
 
 
 def test_a_diverging_claim_and_active_principal_halts_as_seal_unconstructable() -> None:
-    """(design §1.1 A2) A gap none of the 17 items or the binding check close — the seal does.
+    """(design §1.1 A2) A gap no verify item or the binding check closes — the seal does.
 
     ``context.principal`` (item 1's claim principal) and ``authorized_coordinates.
     active_principal`` (item 17's coordinate) are never compared to each other anywhere in the

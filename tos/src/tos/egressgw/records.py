@@ -582,9 +582,10 @@ class SendBoundaryVerification(FrozenModel):
     """The whole step-15 verify result (design #34 §4.1).
 
     ``admitted`` is **positive polarity**: only ``True`` records an admitted verification, and it
-    is set only when every one of the 17 items produced an outcome in
+    is set only when every one of the items produced an outcome in
     :data:`~tos.egressgw.vocabulary.ADMITTING_VERIFY_OUTCOMES` *and* the item set is exactly the
-    normative 17 (an unevaluated item is a stop, never a skip — RFC-002 §10.8:761).
+    whole :data:`~tos.egressgw.vocabulary.SEND_VERIFY_ITEMS` tuple (an unevaluated
+    item is a stop, never a skip — RFC-002 §10.8:761).
     """
 
     attempt_id: str

@@ -59,12 +59,22 @@ def test_the_package_declares_its_honest_scope_in_its_own_docstring() -> None:
         ), f"the package docstring lost its honest-scope phrase: {phrase!r}"
 
 
-def test_the_package_states_the_six_five_six_split() -> None:
-    """(§4.1) The 6 / 5 / 6 honesty table is stated where a reader of the code will see it."""
+def test_the_package_states_the_six_five_two_split() -> None:
+    """(§4.1) The 6 / 5 / 2 honesty table is stated where a reader of the code will see it.
+
+    It was 6 / 5 / 6 until plan S2-a removed the RFC's items 7/8/9/10 with the safety-mesh
+    services that supplied their flags, leaving thirteen carried items and two deferred ones.
+    The counts are pinned here because the docstring is the only place a reader of the code
+    meets them, and a stale count reads as a stronger claim than the gate makes.
+    """
     doc = " ".join((tos.egressgw.__doc__ or "").split())
+    assert "carries thirteen" in doc
     assert "six are verified by shipped predicates" in doc
     assert "five are non-authoritative provisional stand-ins" in doc
-    assert "six" in doc and "deferred" in doc
+    assert (
+        "two — what is left of the live safety-governance mesh (4, 5) — are deferred"
+        in doc
+    )
 
 
 def test_the_package_recounts_the_actual_remaining_attestations() -> None:
