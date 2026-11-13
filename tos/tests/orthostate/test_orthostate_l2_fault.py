@@ -70,34 +70,35 @@ _BASE = "tos/src/tos/canonical/_base.py"
 _CANONICALIZATION = "tos/src/tos/canonical/canonicalization.py"
 _RECORD_PAIR = "tos/src/tos/canonical/record_pair.py"
 
-#: fault id -> the **measured** guard sites, each ``(path, line, token-on-that-line)``.
+#: fault id -> the guard sites, each ``(path, token-identifying-the-guard-line)``.
 #:
 #: design §3 line 163 (v1.2 N3) makes measuring the *real* guard line an implementation
 #: obligation: the design table's own "가드 코드 라인" column is a docstring anchor for
-#: five rows and is deliberately NOT reused here. ``token`` is the anti-phantom seal —
-#: :func:`test_guard_code_lines_are_measured_not_phantom` re-reads each file and fails if
-#: the recorded line no longer carries it, so a later edit cannot leave the fault timeline
-#: citing a line that has moved (the citation-drift defect class).
-_GUARD_SITES: dict[str, tuple[tuple[str, int, str], ...]] = {
-    "ST-01": ((_RECORDS, 94, "intent_state: IntentState"),),
+#: five rows and is deliberately NOT reused here. The line number is **measured at run
+#: time** from the token (:func:`_guard_line`) rather than recorded beside it, so the
+#: citation cannot go stale when unrelated lines above the guard move; the token itself
+#: is the anti-phantom seal — :func:`_guard_line` RAISES when the guard code is gone, so
+#: a later edit cannot leave the fault timeline citing code that no longer exists.
+_GUARD_SITES: dict[str, tuple[tuple[str, str], ...]] = {
+    "ST-01": ((_RECORDS, "intent_state: IntentState"),),
     "ST-02": (
-        (_RECORDS, 95, "transmission_attempt_state: TransmissionAttemptState"),
-        (_VOCABULARY, 82, 'NONE = "NONE"'),
+        (_RECORDS, "transmission_attempt_state: TransmissionAttemptState"),
+        (_VOCABULARY, 'NONE = "NONE"'),
     ),
-    "ST-03": ((_RECORDS, 96, "broker_order_state: BrokerOrderState"),),
-    "ST-04": ((_RECORDS, 97, "knowledge_state: KnowledgeState"),),
-    "ST-05": ((_BASE, 211, "if digest != expected_digest:"),),
-    "ST-06": ((_BASE, 211, "if digest != expected_digest:"),),
+    "ST-03": ((_RECORDS, "broker_order_state: BrokerOrderState"),),
+    "ST-04": ((_RECORDS, "knowledge_state: KnowledgeState"),),
+    "ST-05": ((_BASE, "if digest != expected_digest:"),),
+    "ST-06": ((_BASE, "if digest != expected_digest:"),),
     "ST-07": (
-        (_CANONICALIZATION, 261, "if version is None or version not in _REGISTRY:"),
-        (_BASE, 209, "get_scheme(self.canonicalization_version)"),
+        (_CANONICALIZATION, "if version is None or version not in _REGISTRY:"),
+        (_BASE, "get_scheme(self.canonicalization_version)"),
     ),
-    "ST-08": ((_RECORD_PAIR, 96, "else RecordPairKind.CRITICAL_CONFLICT"),),
-    "ST-09": ((_BASE, 205, "if digest is None:"),),
-    "ST-11": ((_RECORDS, 102, "observation_revision: int | None = None"),),
+    "ST-08": ((_RECORD_PAIR, "else RecordPairKind.CRITICAL_CONFLICT"),),
+    "ST-09": ((_BASE, "if digest is None:"),),
+    "ST-11": ((_RECORDS, "observation_revision: int | None = None"),),
     "ST-12": (
-        (_BASE, 187, "include=set(self._COVERED_FIELDS)"),
-        (_RECORDS, 102, "observation_revision: int | None = None"),
+        (_BASE, "include=set(self._COVERED_FIELDS)"),
+        (_RECORDS, "observation_revision: int | None = None"),
     ),
 }
 
@@ -118,9 +119,26 @@ _CATALOG: tuple[str, ...] = (
 )
 
 
+def _guard_line(path: str, token: str) -> int:
+    """The 1-based line of the first line in ``path`` holding ``token``.
+
+    Raises ``AssertionError`` when the guard code is gone — an extractor that finds
+    nothing must fail rather than report an empty citation.
+    """
+    lines = (_REPO_ROOT / path).read_text(encoding="utf-8").splitlines()
+    for number, line in enumerate(lines, start=1):
+        if token in line:
+            return number
+    raise AssertionError(
+        f"guard citation is phantom — {path} no longer holds {token!r}"
+    )
+
+
 def _guard(fault_id: str) -> str:
     """The measured ``path:line`` guard citation(s) for ``fault_id``."""
-    return "; ".join(f"{path}:{line}" for path, line, _ in _GUARD_SITES[fault_id])
+    return "; ".join(
+        f"{path}:{_guard_line(path, token)}" for path, token in _GUARD_SITES[fault_id]
+    )
 
 
 def _witness_ref(composite: CompositeState) -> str:
@@ -167,10 +185,12 @@ def test_guard_code_lines_are_measured_not_phantom(fault_id: str) -> None:
     """Every ``injection_point`` this suite writes still names the real guard line.
 
     Anti-phantom drift lock (design §0.5-1): a citation is only evidence while the cited
-    line still holds the cited code. Without this, a refactor silently converts the whole
-    fault timeline into fabricated provenance.
+    code is still there. Without this, a refactor silently converts the whole fault
+    timeline into fabricated provenance. The line is measured from the token, so moving
+    the guard is not drift — deleting or rewriting it is, and that is what fails here.
     """
-    for path, line, token in _GUARD_SITES[fault_id]:
+    for path, token in _GUARD_SITES[fault_id]:
+        line = _guard_line(path, token)
         lines = (_REPO_ROOT / path).read_text(encoding="utf-8").splitlines()
         assert 1 <= line <= len(lines), f"{fault_id}: {path}:{line} is past EOF"
         assert token in lines[line - 1], (

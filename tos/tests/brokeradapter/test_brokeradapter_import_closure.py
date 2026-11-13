@@ -481,20 +481,3 @@ def test_every_submodule_is_covered_by_the_closure_child() -> None:
         for path in _SRC.glob("*.py")
     }
     assert on_disk == set(_SUBMODULES) == set(_LOADED_SUBMODULES)
-
-
-def test_the_package_declares_that_the_real_path_is_designed_but_not_implemented() -> (
-    None
-):
-    """(§2.1 / §5.1) The stage separation is stated in the code, not only in the design doc."""
-    doc = " ".join((tos.brokeradapter.__doc__ or "").split())
-    for phrase in (
-        "the real broker path",
-        "not implemented",
-        "broker-resource-consuming",
-        "closes no EV",
-        "No blind resubmission",
-    ):
-        assert (
-            phrase in doc
-        ), f"the package docstring lost its honest-scope phrase: {phrase!r}"

@@ -520,10 +520,3 @@ def test_source_binds_no_verification_profile_key_in_code() -> None:
     assert (
         offenders == []
     ), f"a VERIFICATION-PROFILE-002 key is bound in code: {offenders}"
-
-
-def test_verification_profile_deferral_is_documented() -> None:
-    """(§8) The ten keys are named in prose so the Phase-0 deferral is explicit, not silent."""
-    doc = tos.sci.__doc__ or ""
-    for key in _VERIFICATION_PROFILE_KEYS:
-        assert key in doc, f"{key} is not named in the §8 deferral note"

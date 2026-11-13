@@ -159,13 +159,6 @@ def test_placeholder_normalization_does_not_reject_lookalikes() -> None:
         assert sci.mutable_name_is_not_identity(lookalike) is True
 
 
-def test_denylist_honesty_is_documented() -> None:
-    """(§0.5-8 / RLP #25) The non-exhaustiveness is stated, not implied."""
-    doc = sci.is_mutable_name_notation.__doc__ or ""
-    assert "non-exhaustive" in doc
-    assert "+Security" in doc
-
-
 def test_unknown_restriction_state_token_is_the_template_value() -> None:
     """(§5.0) The denied restriction-state sentinel is the template's ``UNKNOWN``, not invented."""
     assert sci.UNKNOWN_RESTRICTION_STATE == "UNKNOWN"

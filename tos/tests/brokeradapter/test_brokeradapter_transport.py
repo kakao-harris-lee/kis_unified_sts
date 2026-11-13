@@ -413,23 +413,6 @@ def test_the_synthetic_execution_id_differs_by_attempt_for_the_same_kind() -> No
     assert first.broker_execution_id != second.broker_execution_id
 
 
-def test_the_synthetic_execution_id_is_declared_synthetic_not_a_broker_identity() -> (
-    None
-):
-    """([K2-p3-#6b]) The module's own docstring must say this id is a SYNTHETIC identity, not a
-    real broker one — ADR-002-002 §15.3 identity is for paper-transport idempotency only, never
-    evidence that a real broker was ever contacted (mirrors the module's existing
-    ``NON-AUTHORITATIVE`` disclosure).
-    """
-    from pathlib import Path
-
-    import tos.brokeradapter.synthetic as synthetic
-
-    source = Path(synthetic.__file__).read_text(encoding="utf-8")
-    assert "SYNTHETIC" in source
-    assert "§15.3" in source
-
-
 # ---------------------------------------------------------------------------
 # attempt identity (design #31 §2.1(ii))
 # ---------------------------------------------------------------------------

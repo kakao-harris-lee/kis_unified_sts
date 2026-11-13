@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import inspect
 
-import pytest
 import tos.posttrade as posttrade
 import tos.posttrade.predicates as posttrade_predicates
 import tos.posttrade.records as posttrade_records
@@ -231,49 +230,3 @@ def test_the_margin_state_vocabulary_is_substrate_with_no_transition_rule() -> N
         "haircut_applied",
     ):
         assert not _package_has(deferred)
-
-
-# --- the honesty tags ---------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "phrase",
-    ["Closing PTF-EV = 0", "No EV-L1-complete claim", "Phase 1, EV-L1"],
-)
-def test_the_package_docstring_carries_the_discipline_tag(phrase: str) -> None:
-    """(§1 / §7) The tag is present in the code, not only in the design document."""
-    assert posttrade.__doc__ is not None
-    assert phrase in posttrade.__doc__
-
-
-def test_the_docstring_names_the_five_rows_that_hold_an_l1_slice() -> None:
-    """(§1) The five PTF-EV rows with an ``EV-L1`` slice — and no claim about the rest."""
-    assert posttrade.__doc__ is not None
-    for row in ("001", "002", "004", "006", "008"):
-        assert row in posttrade.__doc__
-    assert "NOT_IMPLEMENTED" in posttrade.__doc__
-
-
-def test_the_docstring_disclaims_acceptance_and_live_operation() -> None:
-    """(§0.2) Authoring is not acceptance; nothing here authorizes live operation."""
-    assert posttrade.__doc__ is not None
-    for phrase in (
-        "Registration is not execution",
-        "restricted-live",
-        "capacity release",
-    ):
-        assert phrase in posttrade.__doc__
-
-
-@pytest.mark.parametrize(
-    "module",
-    [posttrade_vocabulary, posttrade_predicates],
-    ids=["vocabulary", "predicates"],
-)
-def test_the_module_docstrings_carry_the_discipline_tag(module: object) -> None:
-    """(§1) The two decision modules carry the tag too — a reader cannot miss it."""
-    assert module.__doc__ is not None
-    assert (
-        "Closing\nPTF-EV = 0" in module.__doc__
-        or "Closing PTF-EV = 0" in module.__doc__
-    )

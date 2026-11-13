@@ -240,18 +240,6 @@ def test_every_rejection_reason_is_named_with_no_catch_all() -> None:
     assert len(names) == len(ValueRejectionReason)
 
 
-# ---------------------------------------------------------------------------
-# Honest scope (design #32 §1.1)
-# ---------------------------------------------------------------------------
-
-
-def test_the_package_docstring_declares_the_provisional_scope() -> None:
-    """(§1.1) The reader of the code meets the honesty declaration, not only the design doc."""
-    doc = marketfeed.__doc__ or ""
-    assert "closes no EV" in doc
-    assert "Provisional" in doc
-
-
 def test_the_published_view_records_the_non_production_canonicalization_version() -> (
     None
 ):

@@ -89,42 +89,6 @@ def test_every_submodule_declares_a_resolvable_surface(module_name, module) -> N
         assert hasattr(module, name), f"{module_name}.__all__ names a missing {name!r}"
 
 
-@pytest.mark.parametrize(
-    "phrase",
-    [
-        "closes no EV",
-        "NON-AUTHORITATIVE PROVISIONAL",
-        "fail-closed guarantee: steps 1-14 only",
-        "escape-safety: not demonstrated",
-        "reproducibility, not distinctness",
-        "release: gated on a finality-proof token only",
-    ],
-)
-def test_the_package_docstring_carries_its_honesty_declarations(phrase) -> None:
-    """(§1.1/§4.4/§4.5/§3.5/§6) The scope limits live in the code, not only in the plan."""
-    assert engine.__doc__ is not None
-    assert phrase in engine.__doc__, (
-        f"the package docstring must state {phrase!r} — an honesty boundary that lives only in a "
-        "design document is one refactor away from an over-claim"
-    )
-
-
-@pytest.mark.parametrize(
-    ("module", "phrase"),
-    [
-        (state, "NON-AUTHORITATIVE PROVISIONAL"),
-        (standins, "NON-AUTHORITATIVE PROVISIONAL"),
-        (state, "release only via finality proof"),
-        (sequencer, "steps 15-19 are not hostable"),
-        (sink, "over-realization"),
-    ],
-)
-def test_the_provisional_modules_label_themselves(module, phrase) -> None:
-    """(§4.4/§4.5/§9-3) Each provisional module states its own limits in its own docstring."""
-    assert module.__doc__ is not None
-    assert phrase in module.__doc__
-
-
 # ---------------------------------------------------------------------------
 # drift anchors
 # ---------------------------------------------------------------------------

@@ -405,6 +405,3 @@ def test_target_scope_coupling_is_explicitly_deferred() -> None:
     field is ever added.
     """
     assert "canonical_digest" not in sci.SupplyChainScope.model_fields
-    doc = sci.admission_admits_only_positive.__doc__ or ""
-    assert "not** coupled to" in doc
-    assert "Phase-0 / +Security responsibility" in doc

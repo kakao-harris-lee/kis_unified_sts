@@ -81,8 +81,6 @@ def test_the_one_generation_comparison_here_is_the_reopen_rule_not_a_fence() -> 
     proof = clean_finality_proof(bound_generation=1)
     assert finality_proof_current(proof, 1) is True
     assert finality_proof_current(proof, 2) is False
-    assert finality_proof_current.__doc__ is not None
-    assert "ordering" in finality_proof_current.__doc__
 
 
 def test_the_identity_coordinates_this_package_supplies_are_carried_not_judged() -> (

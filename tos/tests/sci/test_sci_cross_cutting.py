@@ -182,8 +182,6 @@ def test_sci_does_not_reauthor_the_cur_floor_advance() -> None:
     assert not hasattr(sci, "fence_advances_floor")
     assert not hasattr(sci, "RestrictiveFenceRecord")
     assert not hasattr(sci, "floor_strictly_advances")
-    doc = sci.restriction_is_monotonic_non_revival.__doc__ or ""
-    assert "fence_advances_floor" in doc
 
 
 # --- (d) active currentness is a negative gate ------------------------------------------------

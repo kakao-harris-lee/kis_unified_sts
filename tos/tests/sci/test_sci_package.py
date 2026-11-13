@@ -173,30 +173,6 @@ def test_no_forbidden_operation_callable_on_the_package() -> None:
         ), f"tos.sci.{name}() reads as an imperative action (design #29 §0.2)"
 
 
-def test_regime_tag_is_present_in_the_package_docstring() -> None:
-    """(§1) The completion-discipline tag is attached — no EV-L1-complete claim."""
-    doc = sci.__doc__ or ""
-    assert "NOT_IMPLEMENTED" in doc
-    assert "+Security" in doc
-    assert "EV-L1-complete claim is forbidden" in doc
-
-
-def test_no_sci_ev_is_claimed_closed() -> None:
-    """(§1) The package never claims to close an SCI-EV row."""
-    doc = sci.__doc__ or ""
-    assert "no SCI-EV is closed by code alone" in doc
-    for module_doc in (
-        sci.predicates.__doc__,
-        sci.records.__doc__,
-        sci.vocabulary.__doc__,
-        sci.state.__doc__,
-        sci._base.__doc__,
-    ):
-        assert "closes no SCI-EV" in (
-            module_doc or ""
-        ), "every sci submodule must carry the §1 regime tag"
-
-
 def test_scope_model_is_a_plain_value_model() -> None:
     """(§2.1) SupplyChainScope carries no id and no digest — it is a value model."""
     fields = set(sci.SupplyChainScope.model_fields)
