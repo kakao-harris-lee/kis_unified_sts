@@ -91,6 +91,16 @@ observer never polled for it and the fill stayed unobserved for 6.5 h. Reading b
 cannot fix an untrusted clock — it only stops this adapter's own wait from making a trusted one
 stale. ``None`` is still ``None``: nothing is ever guessed.
 
+**(incident 2026-11-13)** The same ACK went out undated again, and reading earlier was not the
+missing piece: the PASS's own pre-send work — two app-key pacer slots for the pre-send GETs,
+``SEND_STARTED`` 4287 ms into the pass — had already aged that pass's one time-health evaluation
+past the conservative freshness bound, so the source answered ``None`` at send start too. The fix
+is in the reader compose hands this adapter, not here:
+:func:`~tos_runtime.compose._session_wiring.build_egress_trading_date_reader` re-establishes
+freshness with one fresh evaluation at the stamp. This module is unchanged by it —
+``trading_date_now`` is still read exactly once, at send start, and ``None`` still stamps
+nothing.
+
 Firewall: stdlib (``hashlib``, ``json``) + ``tos.*`` (``tos.brokeradapter``,
 ``tos.egressgw``, ``tos.engine``, ``tos.ordering``) + ``tos_runtime.custody``/``tos_runtime.
 time`` + this package's own sibling modules only. No third-party import, no ``os.environ``.

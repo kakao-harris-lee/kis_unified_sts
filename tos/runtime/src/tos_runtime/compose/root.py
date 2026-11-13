@@ -101,6 +101,7 @@ from tos_runtime.compose._session_wiring import (
     SessionInboxCell,
     apply_nontrade_wiring,
     apply_session_wiring,
+    build_egress_trading_date_reader,
     build_nontrade_admissibility_provider,
     build_nontrade_processor,
     build_session_facts_owner,
@@ -538,7 +539,12 @@ def compose_paper_runtime(
         transport_config=boot.transport_config,
         # The broker-acknowledged result's KST trading date, through the SAME trusted wall
         # clock and calendar as every session phase (plan 2026-09-26 egress trading date).
-        trading_date_now=trading_date_reader,
+        # The egress stamp — and ONLY it — re-establishes freshness before reading: this
+        # pass's own pre-send paced GETs age its one time evaluation out before the send
+        # starts (incident 2026-11-13; the wrapper's docstring carries the measurement).
+        trading_date_now=build_egress_trading_date_reader(
+            trading_date_reader, time_service=boot.infra.time_service
+        ),
         credential_sessions_cell=credential_sessions_cell,
         venue_ledger=venue_ledger.ledger,
     )

@@ -761,11 +761,12 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 526
+  measured: 531
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-11-13 egress 거래일자 재등재 526→531(+5)**: `_finalize(trading_date_now=)` 에 주는 리더를 `build_egress_trading_date_reader(trading_date_reader, time_service=...)` 로 감싼다 — 호출 3줄(기존 1줄 대체) + 사유 주석 3줄. 감싸는 판단과 그 측정은 `compose/_session_wiring.py` 의 함수 docstring 에 있고, 여기 남은 것은 «어느 소비자만 감싸는가» 라는 결선뿐이다(egress 스탬프만 — 루프 스레드이고, 나머지 소비자는 FETCH 스레드에서도 일자를 읽는다). 호출 시퀀스 무변경.
     **2026-11-04 #1025 청산 보유수량 재등재 517→526(+9)**: `DurableEntryCloseBoundReader(...).read` 를 **한 번만** 짓고 step 2(`_build_construction_stages`)와 step 6(`build_risk_state_service`) 둘에 같은 callable 을 준다 — 지역 바인딩 7줄(기존 step 6 인라인 7줄을 대체) + `_build_construction_stages(entry_close_bound_reader=)` 1줄 + step 6 쪽 1줄, 그리고 왜 하나여야 하는지(두 번 지으면 같은 저장소를 두 시점에 읽는다 = #1025 그 자체)의 주석 6줄. 두 소비자를 잇는 결선이라 그 순서는 root.py 에서만 표현된다. 호출 시퀀스 무변경.
     **2026-10-31 #1011 P2 venue 원장 배선 재등재 498→517(+19)**: `build_synthetic_venue_ledger(...)` 호출 7줄 + 사유 주석 5줄, `_finalize(venue_ledger=)` 1줄, `composed.venue_ledger` 1줄 + provenance 4줄, `apply_release_wiring(venue_witness=)` 1줄, `apply_recovery_barrier(witness=)` 의 조건식 5줄(기존 1줄 대체). 쓰는 쪽(전송)은 `_finalize` 전, 읽는 쪽(증인)은 release·recovery 결선에 필요해 **두 시점 사이**를 잇는 결선이고, 그 순서는 root.py 에서만 표현된다. 호출 시퀀스 무변경.
     **2026-10-30 #1011 CLOSE 수량 상한 원천 재등재 488→498(+10)**: `build_risk_state_service(...)` 에 `close_authority=_close_authority_for(transport_kind)` 1줄(주석 2줄) + `entry_close_bound_reader=DurableEntryCloseBoundReader(...).read` 7줄. 전송 종류→상한 원천의 판단 자체는 모듈 수준 `_close_authority_for` 로 빼 함수 밖에 두었고, 여기 남은 것은 결선뿐이다(synthetic 트리는 브로커가 없어 증거 저장소가 곧 브로커 — 결선 순서는 root.py 에서만 표현된다). 호출 시퀀스 무변경.
