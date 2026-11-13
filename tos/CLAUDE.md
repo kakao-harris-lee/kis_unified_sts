@@ -98,8 +98,8 @@ python tools/tos_size_budget.py --check
   `tos_spec_status.py` · `tos_evidence_run.py` · `tos_profile_census.py` 와 그
   테스트, mdBook CI 단계, 명세 앵커 커널 테스트(`sci/test_sci_anchor_drift.py` ·
   `sci/test_sci_authority.py` · `stm/test_stm_adr_enumeration_closure.py` ·
-  `stm/test_stm_anchor_resolution.py`)도 함께 지웠다. 커널·런타임 docstring 에
-  남은 `tos-spec/src/...` 인용은 git 이력을 가리키는 주석이며 읽는 코드는 없다.
+  `stm/test_stm_anchor_resolution.py`)도 함께 지웠다. 커널·런타임의
+  `tos-spec/src/...` 인용은 S4 산문 걷어내기(docstring 첫 줄만)에서 함께 사라졌다.
 - `.github/workflows/tos-gate.yml` 은 삭제하거나 잡 이름을 바꾸지 않는다 —
   룰셋이 `tos-gate` 체크를 필수로 요구하므로, 사라지면 모든 PR 이 오지 않는
   체크를 기다린다. 내용은 `tools/tos_redigest.py --check` 다.
