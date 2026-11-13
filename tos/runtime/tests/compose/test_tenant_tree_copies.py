@@ -60,11 +60,6 @@ _IDENTICAL_BOTH = frozenset(
         "release.yaml",
         "risk.yaml",
         "risk_attestations.yaml",
-        "safety_activation.yaml",
-        "safety_deviations.yaml",
-        "safety_envelope.yaml",
-        "safety_incidents.yaml",
-        "safety_profile.yaml",
         "time.yaml",
     }
 )

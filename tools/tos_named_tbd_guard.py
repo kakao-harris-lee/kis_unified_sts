@@ -90,10 +90,11 @@ review that decides each file's actual exemption reason.
 **The checker's own candidate-detection signature is itself covered against silent
 weakening (round 3 re-review MEDIUM — "the checker itself was not checked"): the real-
 tree smoke test pins a candidate-count FLOOR, not just "0 violations" — removing a
-signal from ``_CANDIDATE_SIGNALS`` silently shrinks the candidate set while staying
-"clean" otherwise (proven: removing ``"load_yaml_document("`` drops 46 candidates to 42
-with zero violations), so a bare ``violations == []`` assertion cannot catch that
-regression. The floor makes it visible.**
+signal from ``_CANDIDATE_SIGNALS`` silently shrinks the candidate set while accusing
+nobody of being unguarded (measured 2026-11-13, after plan S2-a: removing
+``"load_yaml_document("`` drops 44 candidates to 43 with zero ``unguarded`` violations),
+so a bare ``violations == []`` assertion cannot catch that regression. The floor makes it
+visible.**
 """
 
 from __future__ import annotations

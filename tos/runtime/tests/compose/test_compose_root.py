@@ -307,43 +307,17 @@ def _write_rearm_approval(
     approvals: list[dict[str, str]] | None = None,
     mode: int = 0o600,
 ) -> Path:
-    """Write one ``approvals/rearm/<latched_evidence_seq>.yaml`` two-person
-    decision file (:mod:`tos_runtime.safety.rearm` module docstring) — the
-    TOS Phase 5 W3 replacement for the old free-text ``operator_attestation``
-    string this suite used to pass directly to ``clear_new_risk_halt``.
-    Defaults to a genuinely satisfying two-distinct-principal ``APPROVE`` pair.
+    """Write one ``approvals/rearm/<latched_evidence_seq>.yaml`` operator decision file
+    (:mod:`tos_runtime.safety.rearm` module docstring).
 
-    Also writes a matching ``approvals/rearm/roster.yaml`` (independent-review
-    HIGH-3 disposition: the effective-principal graph is loaded from an
-    operator-authored roster, never a constant identity graph — see
-    :mod:`tos_runtime.safety.rearm`'s own module docstring), derived from
-    ``approvals`` — two genuinely distinct, unconnected principals, exactly
-    what this suite's happy-path re-arm scenarios need.
+    Defaults to a genuinely satisfying SINGLE ``APPROVE``. Plan S2-a replaced the
+    ``tos.hag`` two-person quorum with one custody-gated principal, so the effective-
+    principal roster this used to write beside the decision went with it.
     """
     import os
 
     if approvals is None:
-        approvals = [
-            {"principal_id": "alice", "decision": "APPROVE"},
-            {"principal_id": "bob", "decision": "APPROVE"},
-        ]
-    roster_path = custody_root / "approvals" / "rearm" / "roster.yaml"
-    roster_path.parent.mkdir(parents=True, exist_ok=True)
-    roster_path.write_text(
-        yaml.safe_dump(
-            {
-                "environment_label": environment_label,
-                "principals": [
-                    {"id": entry["principal_id"]}
-                    for entry in sorted(approvals, key=lambda e: e["principal_id"])
-                ],
-                "control_edges": [],
-                "unresolved_control": False,
-            },
-            sort_keys=False,
-        )
-    )
-    os.chmod(roster_path, mode)
+        approvals = [{"principal_id": "alice", "decision": "APPROVE"}]
     path = custody_root / "approvals" / "rearm" / f"{latched_evidence_seq}.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -564,15 +538,11 @@ class TestComposeRootWiring:
             # allowed/broker_constraint_generation_current (TOS Phase 4 plan §2
             # decision 4) and restrictive_latch_state/worst_credible_capacity (TOS
             # Phase 5 W3 plan §2 decision 6) were already derived/owned before this.
-            # Phase 5 W3 safety-mesh policy documents (extra_config_files,
-            # tos_runtime.compose._safety_wiring.SAFETY_MESH_CONFIG_FILE_NAMES) —
-            # named-config-document rows, not attestations, but folded into the
-            # SAME OPERATOR_ATTESTED_INPUTS evidence record by name
-            "safety_envelope.yaml",
-            "safety_profile.yaml",
-            "safety_activation.yaml",
-            "safety_deviations.yaml",
-            "safety_incidents.yaml",
+            # The slim monitor's policy document (extra_config_files,
+            # tos_runtime.compose._monitor_wiring.MONITOR_CONFIG_FILE_NAMES) — a
+            # named-config-document row, not an attestation, but folded into the
+            # SAME OPERATOR_ATTESTED_INPUTS evidence record by name. The five
+            # safety-mesh documents beside it went with plan S2-a.
             "monitor_coverage.yaml",
             # broker_scopes.yaml (1) — the active scope's own name
             "SYNTHETIC_FUTURES_ORDER",
@@ -604,11 +574,6 @@ class TestComposeRootWiring:
                 "risk_attestations.yaml",
                 "egress_coordinates.yaml",
                 "broker_scopes.yaml",
-                "safety_envelope.yaml",
-                "safety_profile.yaml",
-                "safety_activation.yaml",
-                "safety_deviations.yaml",
-                "safety_incidents.yaml",
                 "monitor_coverage.yaml",
                 fx.BAND_STRATEGY_FILE_NAME,
             )
@@ -785,44 +750,6 @@ class TestSyntheticEventDrivesTheChain:
             ), f"step {step_name}: {verdict_by_step[step_name].reason}"
 
         assert len(runtime.transport.requests) == 1
-
-        runtime.rcl_log.close()
-        runtime.evidence_store.close()
-
-    def test_action_flow_decision_carries_a_real_protective_classification_digest(
-        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
-    ) -> None:
-        """Phase 5 W3.2 plan §2 decision 8, lane d2/d1 cross-lane follow-up: the
-        Action Flow Governor is wired with ``ProtectiveActionService
-        .protective_classification_digest`` as its ``protective_classification_digest_
-        provider`` (``_currentness_wiring._build_risk_and_currentness``), so every
-        genuinely-admitted ACTION_FLOW_DECISION now carries a REAL digest — never the
-        ``None`` default a caller-supplied input would otherwise leave permanently
-        unfed (``tos_runtime.risk.flow`` module history)."""
-        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
-        _reach_trusted(runtime)
-
-        event = fx.crossing_event()
-        results = runtime.run_once((event,))
-        proposal_digest = results[0].pipeline.proposal.canonical_digest
-        construction = runtime.construction_stage.construction
-        assert construction is not None and construction.intent is not None
-        write_approval_file(
-            custody_root,
-            proposal_digest=proposal_digest,
-            environment_label="non-live-test",
-            approved_intent_envelope_digest=construction.intent.canonical_digest,
-        )
-
-        results2 = runtime.run_once((event,))
-        flow = results2[0].flow
-        assert flow is not None
-        verdict_by_step = {v.step.value: v for v in flow.verdicts}
-        assert verdict_by_step["ACTION_FLOW_DECISION"].outcome.value == "ADMIT"
-
-        decision = runtime.flow_governor.last_decision
-        assert decision is not None
-        assert decision.protective_classification_digest is not None
 
         runtime.rcl_log.close()
         runtime.evidence_store.close()
@@ -1808,36 +1735,30 @@ class TestIdentityCodeDigestBoundToObservation:
         assert list(custody_root.glob("*.sqlite3")) == []
 
 
-class TestSoftwareDeploymentOkThreadedIntoSafetyMesh:
-    """Phase 5 W4 §2 decision 6 (2026-09-12 reorder) — ``_stage_b_release_probe``
-    now runs right after the RCL log is verified, BEFORE ``build_safety_mesh``, so
-    its real ``release_admitted`` verdict (never a literal ``True``) reaches
-    SAFETY_ENVELOPE_PROFILE's ``SemanticValidationInputs.software_deployment_ok``.
+class TestStageBReleaseProbeRunsBeforeTheMonitorOwners:
+    """``_stage_b_release_probe`` runs right after the RCL log is verified, BEFORE
+    ``build_monitor_owners``, and its real verdict (never a literal ``True``) is what
+    ``ComposedRuntime.release_admitted`` and the RELEASE currentness dimension report.
 
-    ``TestReleaseAdmissionRefusalBlocksBoot`` above already proves release
-    admission gates the WHOLE boot on a digest mismatch, but that refusal is a
-    STAGE A rejection (pure digest comparison, no I/O) — ``_stage_b_release_probe``
-    is never reached in that scenario either before or after this reorder, so it
-    does not by itself pin the STAGE B -> ``build_safety_mesh`` wiring. The two
-    tests below do: one over a normal boot (the real ``True`` reaches the
-    service), one mutation-style (forcing ``decide()`` to refuse proves
-    ``build_safety_mesh`` is never even called with a stale/hardcoded value)."""
+    ``TestReleaseAdmissionRefusalBlocksBoot`` above already proves release admission gates
+    the WHOLE boot on a digest mismatch, but that refusal is a STAGE A rejection (pure digest
+    comparison, no I/O) — ``_stage_b_release_probe`` is never reached in that scenario, so it
+    does not by itself pin the STAGE B -> ``build_monitor_owners`` ORDER. The two tests below
+    do: one over a normal boot, one mutation-style (forcing ``decide()`` to refuse proves the
+    owners are never built at all).
 
-    def test_normal_boot_threads_the_real_admitted_verdict(
+    The SAFETY_ENVELOPE_PROFILE service this verdict used to be threaded into went with plan
+    S2-a (``docs/plans/2026-11-13-tos-code-halving-plan.md``), so what is asserted here is the
+    boot ORDER and the surviving consumer, not that service's own input.
+    """
+
+    def test_normal_boot_reports_the_real_admitted_verdict(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
         composed = _compose(tmp_path, config_dir, data_dir, custody_root)
         assert composed.release_admitted is True
-        # Honest read path: the kernel's own EngineCore stores the injected
-        # CoordinatorPreconditions as ``self._preconditions`` (tos/src/tos/engine/
-        # core.py), which in turn stores the safety-mesh tuple it was constructed
-        # with as ``self._safety_mesh`` (tos_runtime.compose._preconditions
-        # .RuntimeCoordinatorPreconditions.__init__) — item 0 of that tuple is
-        # SAFETY_ENVELOPE_PROFILE (build_safety_mesh's own services tuple order).
-        profile_service = composed.core._preconditions._safety_mesh[0]
-        assert profile_service._software_deployment_ok is True
 
-    def test_a_refused_stage_b_verdict_never_reaches_build_safety_mesh(
+    def test_a_refused_stage_b_verdict_never_reaches_build_monitor_owners(
         self,
         config_dir: Path,
         data_dir: Path,
@@ -1845,26 +1766,25 @@ class TestSoftwareDeploymentOkThreadedIntoSafetyMesh:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """M2-style guard: if ``software_deployment_ok`` were hardcoded ``True``
-        (disconnected from the real STAGE B verdict), forcing that verdict to
-        refuse would not stop ``build_safety_mesh`` from running with a stale
-        ``True``. Forcing ``ReleaseAdmissionService.decide`` to always return
-        ``False`` must instead raise before ``build_safety_mesh`` is ever
-        called."""
+        """M2-style guard: forcing ``ReleaseAdmissionService.decide`` to refuse must raise
+        BEFORE ``build_monitor_owners`` is ever called — a boot that built its monitor and
+        latch owners first would have done I/O on a deployment it then refused."""
         import tos_runtime.compose._wiring as wiring_module
         from tos_runtime.release.admission import ReleaseAdmissionService
 
         calls: list[object] = []
-        real_build_safety_mesh = wiring_module.build_safety_mesh
+        real_build_monitor_owners = wiring_module.build_monitor_owners
 
-        # `Any`, not `object`: this spy stands in for `build_safety_mesh`'s own signature and
-        # must forward every call unchanged — narrowing it would require duplicating that
+        # `Any`, not `object`: this spy stands in for `build_monitor_owners`'s own signature
+        # and must forward every call unchanged — narrowing it would require duplicating that
         # signature here just to satisfy the splat below (plan §1.1 A-rt boundary use of `Any`).
-        def _spy_build_safety_mesh(*args: Any, **kwargs: Any) -> object:
-            calls.append(kwargs.get("software_deployment_ok"))
-            return real_build_safety_mesh(*args, **kwargs)
+        def _spy_build_monitor_owners(*args: Any, **kwargs: Any) -> object:
+            calls.append(kwargs.get("evidence_store"))
+            return real_build_monitor_owners(*args, **kwargs)
 
-        monkeypatch.setattr(wiring_module, "build_safety_mesh", _spy_build_safety_mesh)
+        monkeypatch.setattr(
+            wiring_module, "build_monitor_owners", _spy_build_monitor_owners
+        )
         monkeypatch.setattr(
             ReleaseAdmissionService,
             "decide",

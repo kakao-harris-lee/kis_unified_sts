@@ -108,7 +108,6 @@ from tos.egressgw.records import CandidateConstruction
 from tos.engine.records import StageRequest
 from tos.ioc import EconomicEffectEnvelope
 from tos.rcl import CapacityComponent, CapacityVector
-from tos.spg import HardSafetyEnvelope
 from tos.venue import ActionClass
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -167,17 +166,16 @@ _AFG_BOUND_KIND = "ACTION_FLOW_POLICY_BOUND"
 _OBSERVED_KIND = "RISK_STATE_OBSERVED"
 
 
-def _envelope_max_vector(
-    are_policy: LoadedAggregateRiskPolicy, hse_envelope: HardSafetyEnvelope
-) -> CapacityVector:
-    """Every ARE-governed dimension id's ``envelope_max`` off the ALREADY-loaded Hard Safety
-    Envelope (plan §2.1 "ARE ``injected_envelope_max``") — the wiring-time boot cross-check
-    (:mod:`tos_runtime.compose._riskstate_wiring`) already proved every one of these ids
-    exists among ``hse_envelope.governed_dimensions``, so a lookup miss here is unreachable in
-    production; this function still fails closed (``magnitude=None``, UNKNOWN) rather than
-    raise, matching ``CapacityComponent``'s own "``None`` for UNKNOWN" discipline."""
+def _envelope_max_vector(are_policy: LoadedAggregateRiskPolicy) -> CapacityVector:
+    """Every ARE-governed dimension id's ``injected_envelope_max`` ceiling, off the ARE
+    policy's own ``_runtime.envelope_max`` (plan S2-a — the ceiling moved here from the spg
+    Hard Safety Envelope, same values, config-driven). That loader REQUIRES a ceiling for
+    every ``dimension_ids`` value, so a lookup miss is unreachable; this function still fails
+    closed (``magnitude=None``, UNKNOWN) rather than raise, matching ``CapacityComponent``'s
+    own "``None`` for UNKNOWN" discipline."""
     by_dimension = {
-        gdl.dimension: gdl.envelope_max for gdl in hse_envelope.governed_dimensions
+        component.dimension_id: component.magnitude
+        for component in are_policy.envelope_max.components
     }
     components = tuple(
         CapacityComponent(
@@ -230,7 +228,6 @@ class RiskStateService:
         are_policy: LoadedAggregateRiskPolicy,
         afg_policy: LoadedActionFlowPolicy,
         scheme: CanonicalizationScheme,
-        hse_envelope: HardSafetyEnvelope,
         scenario_set: AdverseScenarioSet,
         required_scenario_kinds: frozenset[AdverseScenarioKind],
         position_reader: EvidencePositionReader,
@@ -270,7 +267,6 @@ class RiskStateService:
         self._are_policy = are_policy
         self._afg_policy = afg_policy
         self._scheme = scheme
-        self._hse_envelope = hse_envelope
         self._scenario_set = scenario_set
         self._required_scenario_kinds = required_scenario_kinds
         self._position_reader = position_reader
@@ -296,7 +292,7 @@ class RiskStateService:
         #: The step-6 synthetic bound and the quantity it admitted, held for the step-9 fence
         #: exactly as ``_close_fence_proof`` holds the broker-held one — one use, per attempt.
         self._close_fence_bound: tuple[str, EntryCloseBound, Decimal] | None = None
-        self._envelope_max = _envelope_max_vector(are_policy, hse_envelope)
+        self._envelope_max = _envelope_max_vector(are_policy)
         self._snapshot_seq = 0
         self._observation_seq = 0
         #: One (attempt_id, FlowObservation, committed_flow_vectors) slot, filled by whichever

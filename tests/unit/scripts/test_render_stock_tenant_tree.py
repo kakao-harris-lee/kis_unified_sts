@@ -215,7 +215,7 @@ def test_a_malformed_instrument_block_is_refused(
         rpc.load_manifest(tree)
 
 
-def test_the_stock_render_activates_five_policy_kinds(rendered: Path) -> None:
+def test_the_stock_render_prints_five_policy_kinds(rendered: Path) -> None:
     payload = json.loads((rendered / rpc.RENDERED_NAME).read_text(encoding="utf-8"))
     assert {entry["kind"] for entry in payload["policy_digests"]} == {
         "VENUE_CONSTRAINT_POLICY",
@@ -224,7 +224,6 @@ def test_the_stock_render_activates_five_policy_kinds(rendered: Path) -> None:
         "ACTION_FLOW_POLICY",
         "CRITICAL_INPUT_POLICY",
     }
-    assert payload["activation_check"]
     assert payload["tree_id"] == "cp3-setup-d-stock-005930"
     assert payload["instrument"] == _SYMBOL
     assert _FAKE_ACCOUNT not in (rendered / rpc.RENDERED_NAME).read_text("utf-8")

@@ -19,7 +19,7 @@ Pins, in the same spirit as ``test_deploy_policies.py``:
 
 The fixture Hard Safety Envelope / Runtime Safety Profile gain the policy's
 governed dimension for this test only -- no paper HSE instance is committed
-yet (``safety_envelope.yaml`` is still an ``.example.yaml``), which the real
+yet, which the real
 policy file's header records.
 
 Hermetic (D1.4): every write lands under ``tmp_path``.
@@ -50,13 +50,11 @@ from . import _fixtures as fx
 from .conftest import (
     _VENUE_POLICY_ACCOUNT,
     _VENUE_POLICY_INSTRUMENT,
-    _governed_dimension_entry,
-    _write_yaml,
 )
 from .test_compose_root import _reach_trusted
 from .test_deploy_config import _install_real_calendar, _kst_unix_ms
 from .test_deploy_policies import _install_real_policies
-from .test_venue_wiring import _kind_count, _rewrite_activation
+from .test_venue_wiring import _kind_count
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -102,10 +100,12 @@ def _filled_risk_policy(path: Path, *, account: str, instrument: str | None) -> 
 
 
 def _install_real_risk_files(config_dir: Path) -> tuple[str, str]:
-    """Install the real ``risk.yaml`` verbatim and the two filled real policies
-    over the fixture ones, give the fixture HSE/profile the policy's governed
-    dimension, and append both member refs to the activation ``members:``.
-    Returns both policy digests."""
+    """Install the real ``risk.yaml`` verbatim and the two filled real policies over the
+    fixture ones. Returns both policy digests.
+
+    The fixture HSE/profile dimension append and the activation ``members:`` extension
+    this used to do went with plan S2-a: the ARE ceiling now lives in the policy's own
+    ``_runtime.envelope_max`` and there is no activation document."""
     (config_dir / "risk.yaml").write_text(
         _REAL_RISK.read_text(encoding="utf-8"), encoding="utf-8"
     )
@@ -122,19 +122,6 @@ def _install_real_risk_files(config_dir: Path) -> tuple[str, str]:
         (config_dir / name).write_text(
             yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
         )
-    # The fixture HSE/profile must govern the policy's dimension (no paper HSE
-    # instance exists yet -- the real policy file's own header says so).
-    for file_name, top_key, magnitude_key in (
-        ("safety_envelope.yaml", "envelope", "envelope_max"),
-        ("safety_profile.yaml", "profile", "profile_value"),
-    ):
-        path = config_dir / file_name
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        entry = _governed_dimension_entry(magnitude_key=magnitude_key, value="1")
-        entry["dimension"] = _ADOPTED_DIMENSION_ID
-        raw[top_key]["governed_dimensions"].append(entry)
-        _write_yaml(path, raw)
-
     are = load_aggregate_risk_policy(
         config_dir / "aggregate_risk_policy.yaml", scheme=_SCHEME
     )
@@ -143,31 +130,6 @@ def _install_real_risk_files(config_dir: Path) -> tuple[str, str]:
     )
     assert are.policy.canonical_digest is not None
     assert afg.policy.canonical_digest is not None
-    activation = yaml.safe_load(
-        (config_dir / "safety_activation.yaml").read_text(encoding="utf-8")
-    )
-    members = [dict(m) for m in activation["members"]]
-    members.extend(
-        [
-            {
-                "kind": "AGGREGATE_RISK_POLICY",
-                "member_id": are.policy.policy_id,
-                "generation": are.policy.policy_generation,
-                "digest": are.policy.canonical_digest,
-                "resolved": True,
-                "immutable": True,
-            },
-            {
-                "kind": "ACTION_FLOW_POLICY",
-                "member_id": afg.policy.policy_id,
-                "generation": afg.policy.policy_generation,
-                "digest": afg.policy.canonical_digest,
-                "resolved": True,
-                "immutable": True,
-            },
-        ]
-    )
-    _rewrite_activation(config_dir, members)
     return are.policy.canonical_digest, afg.policy.canonical_digest
 
 

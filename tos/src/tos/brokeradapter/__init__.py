@@ -22,7 +22,7 @@ sources is the mechanical evidence for that claim (design #34 §0.3/§2.2-①).
 
 **Why the slice executes the synthetic path** (design #34 §2, on the broker-reached / synthetic
 axis — *not* live / non-live): a real paper-account API call is non-live and still
-**broker-resource-consuming**, so RFC-002 §10.8:741 triggers the full 17-item verify list for it,
+**broker-resource-consuming**, so RFC-002 §10.8:741 triggers the full verify list for it,
 and with the deferred safety-governance mesh plus the P0-2-blocked Broker Capability Profile its
 required facts are unverifiable ⇒ §10.8:761 rejection. The synthetic transport is the opposite
 side of that axis — it consumes no broker resource — not a way around it.

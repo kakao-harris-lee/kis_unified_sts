@@ -83,22 +83,10 @@ export default function TosPage() {
           <Fact label="시간 신뢰 상태">{value(p.time?.health)}</Fact>
           <Fact label="복구 사유">{list(p.recovery?.reasons)}</Fact>
         </Card>
-        <Card title="릴리스와 보호 상태">
+        <Card title="릴리스 상태">
           <Fact label="릴리스 수용">{flag(p.release?.admitted, '수용', '거부')}</Fact>
           <Fact label="배포 검증">{flag(p.release?.software_deployment_ok, '통과', '미통과')}</Fact>
-          <Fact label="보호 분류">{value(p.protective?.last_verdict?.classification)}</Fact>
-          <Fact label="해제 허용">{flag(p.protective?.last_verdict?.derestriction_admissible, '허용', '불허')}</Fact>
-          <Fact label="용량 소진">{flag(p.protective?.last_verdict?.capacity_exhausted, '소진', '여유')}</Fact>
-          <Fact label="보호 미확인 사유">{list(p.protective?.last_verdict?.reasons)}</Fact>
-          <Fact label="보호 미평가 항목">{list(p.protective?.last_verdict?.unevaluated)}</Fact>
           <Fact label="의존성 수용">{flag(p.operations?.dependency_admission, '수용', '거부')}</Fact>
-        </Card>
-        <Card title="안전 서비스">
-          {p.safety_mesh?.services && Object.keys(p.safety_mesh.services).length
-            ? Object.entries(p.safety_mesh.services).map(([name, facts]) => <Fact key={name} label={name.toUpperCase()}>
-              {/* `list()` like every other list on this page: null is 알 수 없음, [] is 없음. */}
-              {flag(facts.clear, '해소', '미해소')}{` · ${list(facts.reasons)}`}
-            </Fact>) : <Fact label="서비스 상태">알 수 없음</Fact>}
         </Card>
         <Card title="입력 유효성과 처리 대기">
           <Fact label="유효성 조립">{flag(p.currentness?.last_assemble_complete, '완료', '미완료')}</Fact>

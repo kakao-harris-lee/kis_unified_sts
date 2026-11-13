@@ -21,9 +21,8 @@
 # The slot list below is byte-equivalent to the renderer's own `_coordinate_rules` table as
 # of main bb9a4d4d; `tests/unit/scripts/test_render_paper_config.py` pins both the
 # equivalence (transition) and the full (file, key, anchor, replacement) tuples (plan §4.1).
-# `safety_activation.yaml::members` is deliberately absent — it is ALWAYS derived from
-# `print-policy-digests` against the already-coordinate-filled copy, never hand-written
-# (plan §2.1, adoption plan §2 decision 3).
+# `safety_activation.yaml` went with plan S2-a (2026-11-13): the activation document and the
+# safety mesh it activated are deleted, so there is no `members:` slot to derive any more.
 
 tree_id: "paper"
 

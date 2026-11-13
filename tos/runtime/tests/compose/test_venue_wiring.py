@@ -26,7 +26,6 @@ from tos_runtime.calendar.ports import FixedWallClockReference
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.compose._venue_wiring import VenuePolicyScopeMismatch
 from tos_runtime.compose.root import compose_paper_runtime
-from tos_runtime.venue import PolicyNotActivated
 
 if TYPE_CHECKING:
     from tos_runtime.compose._venue_wiring import VenueServiceStage
@@ -69,61 +68,6 @@ def _fresh_compose_dirs(root: Path) -> tuple[Path, Path, Path]:
     data_dir = call_wrapped_fixture(_data_dir_fixture, root)
     custody_root = call_wrapped_fixture(_custody_root_fixture, root)
     return config_dir, data_dir, custody_root
-
-
-def _rewrite_activation(config_dir: Path, members: list[dict[str, object]]) -> None:
-    """Overwrite ``safety_activation.yaml``'s own ``members:`` list, keeping every other key
-    (the ``activation:``/``not_expired:`` blocks) exactly as ``conftest.py`` wrote them.
-    """
-    path = config_dir / "safety_activation.yaml"
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    raw["members"] = members
-    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
-
-
-def _real_members(config_dir: Path) -> list[dict[str, object]]:
-    """The two REAL member rows ``conftest.py`` wrote — read back rather than re-derived, so a
-    mutation test changes exactly one field of a genuinely-activating pair."""
-    raw = yaml.safe_load(
-        (config_dir / "safety_activation.yaml").read_text(encoding="utf-8")
-    )
-    members = raw["members"]
-    assert isinstance(members, list) and len(members) == 2
-    return [dict(m) for m in members]
-
-
-def _sync_venue_activation_digest(config_dir: Path) -> None:
-    """Re-load ``venue_constraint_policy.yaml`` (as it stands NOW, after a test's own
-    mutation) and rewrite ``safety_activation.yaml``'s ``VENUE_CONSTRAINT_POLICY`` member
-    digest to match — a scope/admitting-phase mutation test wants to reach the scope/calendar
-    cross-check itself, not an (unrelated) activation-digest refusal, since changing the
-    policy's own content also changes its freshly-computed digest."""
-    from tos_runtime.venue import load_venue_constraint_policy
-
-    loaded = load_venue_constraint_policy(
-        config_dir / "venue_constraint_policy.yaml", scheme=_SCHEME
-    )
-    members = _real_members(config_dir)
-    for member in members:
-        if member["kind"] == "VENUE_CONSTRAINT_POLICY":
-            member["digest"] = loaded.policy.canonical_digest
-    _rewrite_activation(config_dir, members)
-
-
-def _sync_ocp_activation_digest(config_dir: Path) -> None:
-    """Sibling of :func:`_sync_venue_activation_digest` for the ORDER_CONSTRUCTION_POLICY
-    member — re-loads ``order_construction_policy.yaml`` as it stands NOW (after a test's own
-    mutation) and rewrites ``safety_activation.yaml``'s own member digest to match."""
-    from tos_runtime.venue import load_order_construction_policy
-
-    loaded = load_order_construction_policy(
-        config_dir / "order_construction_policy.yaml", scheme=_SCHEME
-    )
-    members = _real_members(config_dir)
-    for member in members:
-        if member["kind"] == "ORDER_CONSTRUCTION_POLICY":
-            member["digest"] = loaded.policy.canonical_digest
-    _rewrite_activation(config_dir, members)
 
 
 def _compose_with_construction(
@@ -451,58 +395,6 @@ def test_broker_capability_profile_facts_stay_none_for_a_real_draft_instance_doc
 
 
 class TestVenueBootRefusals:
-    def test_activation_digest_mismatch_refuses_to_boot(self, tmp_path: Path) -> None:
-        config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
-        members = _real_members(config_dir)
-        members[0]["digest"] = "deliberately-wrong-digest"
-        _rewrite_activation(config_dir, members)
-        fx.write_band_strategy_file(config_dir)
-        with pytest.raises(PolicyNotActivated):
-            compose_paper_runtime(
-                config_dir,
-                data_dir,
-                custody_root,
-                "non-live-test",
-                construction=fx.construction_config(),
-                aggregate_risk_inputs_provider=_aggregate_inputs,
-                action_flow_inputs_provider=_action_flow_inputs,
-                transport_kind=TransportKind.SYNTHETIC,
-            )
-
-    def test_activation_resolved_false_refuses_to_boot(self, tmp_path: Path) -> None:
-        config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
-        members = _real_members(config_dir)
-        members[0]["resolved"] = False
-        _rewrite_activation(config_dir, members)
-        fx.write_band_strategy_file(config_dir)
-        with pytest.raises(PolicyNotActivated):
-            compose_paper_runtime(
-                config_dir,
-                data_dir,
-                custody_root,
-                "non-live-test",
-                construction=fx.construction_config(),
-                aggregate_risk_inputs_provider=_aggregate_inputs,
-                action_flow_inputs_provider=_action_flow_inputs,
-                transport_kind=TransportKind.SYNTHETIC,
-            )
-
-    def test_activation_empty_members_refuses_to_boot(self, tmp_path: Path) -> None:
-        config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
-        _rewrite_activation(config_dir, [])
-        fx.write_band_strategy_file(config_dir)
-        with pytest.raises(PolicyNotActivated):
-            compose_paper_runtime(
-                config_dir,
-                data_dir,
-                custody_root,
-                "non-live-test",
-                construction=fx.construction_config(),
-                aggregate_risk_inputs_provider=_aggregate_inputs,
-                action_flow_inputs_provider=_action_flow_inputs,
-                transport_kind=TransportKind.SYNTHETIC,
-            )
-
     def test_admitting_phase_token_not_in_calendar_refuses_to_boot(
         self, tmp_path: Path
     ) -> None:
@@ -526,7 +418,6 @@ class TestVenueBootRefusals:
             ),
             encoding="utf-8",
         )
-        _sync_venue_activation_digest(config_dir)
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(VenuePolicyScopeMismatch):
             compose_paper_runtime(
@@ -644,7 +535,6 @@ class TestVenueBootRefusals:
             ),
             encoding="utf-8",
         )
-        _sync_venue_activation_digest(config_dir)
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(VenuePolicyScopeMismatch):
             compose_paper_runtime(
@@ -1064,7 +954,6 @@ class TestSilentlyRoundedIsNeverIntroduced:
             ),
             encoding="utf-8",
         )
-        _sync_ocp_activation_digest(config_dir)
         construction = fx.construction_config()
         runtime = _compose_with_construction(
             tmp_path, config_dir, data_dir, custody_root, construction

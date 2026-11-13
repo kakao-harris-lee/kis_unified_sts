@@ -11,8 +11,8 @@ class holds no reference to a store, a driver, a gateway, or any other write-cap
 proof this package holds no write port at all).
 
 **"One callable per field group."** The constructor accepts exactly one read callable per
-top-level JSON field group (``runtime``, ``recovery``, ``driver``, ``time``, ``safety_mesh``,
-``currentness``, ``rcl``, ``inbox``, ``evidence``, ``release``, ``protective``, ``operations``),
+top-level JSON field group (``runtime``, ``recovery``, ``driver``, ``time``,
+``currentness``, ``rcl``, ``inbox``, ``evidence``, ``release``, ``operations``),
 plus two callables for the ``alerts`` group (the raw STM_ALERT candidate seqs and the resolved
 seqs — kept separate because "unresolved" is a DERIVED fact, computed here, never supplied
 pre-computed by a caller). Each group callable returns either an already-shaped dict for that
@@ -105,13 +105,11 @@ _GROUP_FIELDS: tuple[str, ...] = (
     "recovery",
     "driver",
     "time",
-    "safety_mesh",
     "currentness",
     "rcl",
     "inbox",
     "evidence",
     "release",
-    "protective",
     "operations",
 )
 
@@ -131,13 +129,11 @@ class OperatorProjection:
         read_recovery: ReadCallable,
         read_driver: ReadCallable,
         read_time: ReadCallable,
-        read_safety_mesh: ReadCallable,
         read_currentness: ReadCallable,
         read_rcl: ReadCallable,
         read_inbox: ReadCallable,
         read_evidence: ReadCallable,
         read_release: ReadCallable,
-        read_protective: ReadCallable,
         read_operations: ReadCallable,
         read_unresolved_stm_alert_candidate_seqs: ReadCallable,
         read_resolved_stm_alert_seqs: ReadCallable,
@@ -148,13 +144,11 @@ class OperatorProjection:
             "recovery": read_recovery,
             "driver": read_driver,
             "time": read_time,
-            "safety_mesh": read_safety_mesh,
             "currentness": read_currentness,
             "rcl": read_rcl,
             "inbox": read_inbox,
             "evidence": read_evidence,
             "release": read_release,
-            "protective": read_protective,
             "operations": read_operations,
         }
         self._read_candidate_seqs = read_unresolved_stm_alert_candidate_seqs

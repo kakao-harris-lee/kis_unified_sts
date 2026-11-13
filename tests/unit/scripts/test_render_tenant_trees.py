@@ -884,7 +884,7 @@ def test_the_alias_form_parses_exactly_like_three_literals(
 
 
 @pytest.mark.parametrize("tree", _TREE_IDS)
-def test_the_tenant_render_activates_and_prints_five_policy_kinds(
+def test_the_tenant_render_prints_five_policy_kinds(
     tree: str, rendered: dict[str, Any]
 ) -> None:
     """``print-policy-digests`` prints all five kinds — the four ``compose`` calls
@@ -904,7 +904,6 @@ def test_the_tenant_render_activates_and_prints_five_policy_kinds(
         "ACTION_FLOW_POLICY",
         "CRITICAL_INPUT_POLICY",
     }
-    assert payload["activation_check"]
     assert payload["tree_id"] == tree
     assert payload["direction"] == _TENANT_TREES[tree][0]
     assert _FAKE_ACCOUNT not in manifest_path.read_text(encoding="utf-8")

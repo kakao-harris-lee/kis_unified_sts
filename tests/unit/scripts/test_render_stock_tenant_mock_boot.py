@@ -36,7 +36,7 @@ Two further blockers sat behind B2/B3:
   90000; the committed render now carries a signal past the first second.
 
 The committed render with no approval stops exactly at step 4 (``INDEPENDENT_APPROVAL``); with an
-approval for the attempt, all 17 verify items are SATISFIED and the dry-run send seals — nothing
+approval for the attempt, all 13 verify items are SATISFIED and the dry-run send seals — nothing
 staged in the copy.
 """
 
@@ -587,7 +587,7 @@ def test_the_committed_render_boots_kis_mock_and_stops_exactly_at_step_4(
     assert out["order_posts"] == 0
 
 
-def test_with_an_approval_all_17_items_are_satisfied_and_the_dry_run_send_seals(
+def test_with_an_approval_all_13_items_are_satisfied_and_the_dry_run_send_seals(
     rendered: Path, tmp_path: Path
 ) -> None:
     """The positive path, on the committed render: the attempt's approval is written
@@ -598,7 +598,7 @@ def test_with_an_approval_all_17_items_are_satisfied_and_the_dry_run_send_seals(
         tmp_path,
         approve=True,
     )
-    assert len(out["verify_items"]) == 17
+    assert len(out["verify_items"]) == 13
     assert set(out["verify_items"].values()) == {"SATISFIED"}, out["verify_items"]
     assert out["counts"]["BROKER_FACTS_OBSERVED"] == 1
     assert out["counts"]["SEND_SEALED"] == 1

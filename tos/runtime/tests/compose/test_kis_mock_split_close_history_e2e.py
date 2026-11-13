@@ -31,7 +31,6 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 _CLOSE_1_ODNO = "0000004491"
 _CLOSE_2_ODNO = "0000004492"
 _OCP_CONFIG_NAME = "order_construction_policy.yaml"
-_ACTIVATION_NAME = "safety_activation.yaml"
 
 
 @pytest.fixture()
@@ -82,22 +81,8 @@ def _write_risk_budget(
         path, scheme=get_scheme(EV_L1_PROVISIONAL_VERSION)
     )
     assert loaded.policy.canonical_digest == digest
-    activation_path = config_dir / _ACTIVATION_NAME
-    activation = yaml.safe_load(activation_path.read_text(encoding="utf-8"))
-    assert isinstance(activation, dict)
-    members = activation["members"]
-    assert isinstance(members, list)
-    ocp_member = next(
-        member
-        for member in members
-        if isinstance(member, dict)
-        and member.get("kind") == "ORDER_CONSTRUCTION_POLICY"
-    )
-    ocp_member["generation"] = loaded.policy.policy_generation
-    ocp_member["digest"] = loaded.policy.canonical_digest
-    activation_path.write_text(
-        yaml.safe_dump(activation, sort_keys=False), encoding="utf-8"
-    )
+    # The activation digest re-sync this used to do went with plan S2-a along with
+    # safety_activation.yaml — the policy's own canonical_digest is the only pin now.
     digest = loaded.policy.canonical_digest
     assert isinstance(digest, str)
     return digest

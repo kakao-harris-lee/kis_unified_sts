@@ -78,6 +78,11 @@ from tos_runtime.compose._egress_coordinates import (
 )
 from tos_runtime.compose._envelope_wiring import build_construction_inputs
 from tos_runtime.compose._ledger_wiring import _build_ledger_stages
+from tos_runtime.compose._monitor_wiring import (
+    _MonitorOwners,
+    build_capacity_owner,
+    build_monitor_owners,
+)
 from tos_runtime.compose._pending_dimensions import PendingDimensionSpec
 from tos_runtime.compose._request_digest import (
     RequestBytesDigestSource,
@@ -86,11 +91,6 @@ from tos_runtime.compose._request_digest import (
 from tos_runtime.compose._risk_attestations import (
     wrap_action_flow_inputs_provider,
     wrap_aggregate_risk_inputs_provider,
-)
-from tos_runtime.compose._safety_wiring import (
-    _SafetyMesh,
-    build_capacity_owner,
-    build_safety_mesh,
 )
 from tos_runtime.compose._transport_wiring import TransportKind, resolve_transport_boot
 from tos_runtime.compose._types import (
@@ -881,7 +881,7 @@ def _build_context_resolver(
     environment_label: str,
     continuity_id: str,
     authority_epoch_service: SafetyAuthorityEpochService,
-    safety_mesh: _SafetyMesh,
+    monitor_owners: _MonitorOwners,
     projection: SqliteReservationProjectionReader,
     evidence_store: SqliteEvidenceStore,
     transport_config: KisMockTransportConfig | None,
@@ -891,7 +891,7 @@ def _build_context_resolver(
     nature / credential-route inventory STRUCTURALLY DERIVED from ``broker_scopes.active_scope``
     (G-4, plan §2 decision 2; ``refuse_principal_collision`` generalizes the old R2 literal
     check over EVERY configured scope's principal). ``instance_document`` loaded EXACTLY ONCE
-    per boot (F9); ``authority_epoch_service``/``safety_mesh``/``projection`` feed items 4/7-10
+    per boot (F9); ``authority_epoch_service``/``monitor_owners``/``projection`` feed item 4
     + the item-16 latch/capacity owners (Phase 5 W3-b, §2 decisions 4/6/8); ``evidence_store``
     records the EGRESS_IDENTITY evidence-only observation (MEDIUM-4 —
     :func:`~tos_runtime.compose.context.record_egress_identity_observation`) — all forwarded to
@@ -935,8 +935,7 @@ def _build_context_resolver(
         broker_scopes=broker_scopes,
         instance_document=instance_document,
         authority_epoch_service=authority_epoch_service,
-        safety_mesh_deferred_fields=safety_mesh.deferred_fields,
-        latch=safety_mesh.latch,
+        latch=monitor_owners.latch,
         capacity=build_capacity_owner(projection, instrument_key),
         # Transport's OWN identity (slice #3) — derived from the active scope, G-4 closed.
         transport_nature=transport_nature(broker_scopes.active_scope),
@@ -1038,7 +1037,7 @@ def _resolve_strategies_and_attested_inputs(
         broker_scopes=broker_scopes,
         instance_document=instance_document,
         extra_config_files=(
-            transport_boot.extra_config_files + risk.safety_mesh.config_files
+            transport_boot.extra_config_files + risk.monitor_owners.config_files
         ),
     )
     return (
@@ -1122,12 +1121,10 @@ def _boot_services(
     release_admitted = _stage_b_release_probe(
         release_service, identity, infra.time_service, rcl.rcl_log
     )
-    safety_mesh = build_safety_mesh(
+    monitor_owners = build_monitor_owners(
         config_dir,
         evidence_store=infra.evidence_store,
-        time_service=infra.time_service,
         monotonic_source=infra.monotonic_source,
-        software_deployment_ok=release_admitted,
     )
     risk = _build_risk_and_currentness(
         config_dir,
@@ -1137,7 +1134,7 @@ def _boot_services(
         infra.time_service,
         rcl.authority_epoch_service,
         environment_label,
-        safety_mesh,
+        monitor_owners,
     )
     (
         egress_coordinates,

@@ -33,6 +33,7 @@ from tos_runtime.compose._dimension_readers import (
     _ReleaseDimensionState,
     _TradingApprovalDimensionState,
 )
+from tos_runtime.compose._monitor_wiring import _MonitorOwners
 from tos_runtime.compose._pending_dimensions import (
     PendingDimensionSpec,
     load_pending_currentness_dimensions,
@@ -41,7 +42,6 @@ from tos_runtime.compose._risk_attestations import (
     RiskAttestations,
     load_risk_attestations,
 )
-from tos_runtime.compose._safety_wiring import _SafetyMesh
 from tos_runtime.compose.context import (
     RecordingActionFlowGovernor,
     RecordingAggregateRiskService,
@@ -108,9 +108,9 @@ class _RiskAndCurrentness:
     #: ``_resolve_strategies_and_attested_inputs`` returns (see
     #: ``_EnvironmentScopeDimensionState``'s own docstring for why).
     environment_scope_dimension_state: _EnvironmentScopeDimensionState
-    #: The four W3-a1/a2 safety-mesh services + item-16 latch owner (Phase 5 W3-b, plan §2
-    #: decision 8) — see :mod:`tos_runtime.compose._safety_wiring`'s own module docstring.
-    safety_mesh: _SafetyMesh
+    #: The slim monitor + item-16 latch owner — see
+    #: :mod:`tos_runtime.compose._monitor_wiring`'s own module docstring.
+    monitor_owners: _MonitorOwners
     #: Phase 5 W3.2's five late-bound cells (plan §2 decisions 2-6; AGGREGATE_RISK needs
     #: none — its reader closes over :attr:`risk_service` directly, already constructed
     #: by the time :func:`_build_dimension_readers` runs) — see each cell's own docstring
@@ -165,26 +165,19 @@ def _build_flow_governor(
     envelope: ActionAmplificationEnvelope,
     *,
     writer_epoch: int,
-    safety_mesh: _SafetyMesh,
 ) -> RecordingActionFlowGovernor:
     """Step 7's Action Flow Governor — split out of
     :func:`_build_risk_and_currentness` purely for the size budget.
 
-    Phase 5 W3.2 plan §2 decision 8 (lane d2 follow-up): wires
-    ``safety_mesh.protective_action.protective_classification_digest`` (a bound
-    method, ``Callable[[], str | None]``) as the real fact
-    ``ActionFlowDecisionInputs.protective_classification_digest`` supplies,
-    replacing the ``None`` default that otherwise left it permanently unfed
-    (``risk/flow.py``'s own construction-site follow-up note).
+    ``protective_classification_digest_provider`` is left at its ``None`` default: the
+    ``tos.protective`` service that supplied it went with plan S2-a. It classified, it
+    never blocked, and every shipped tenant tree fed it the same constant inputs.
     """
     return RecordingActionFlowGovernor(
         rcl_log,
         evidence_store,
         envelope,
         writer_epoch=writer_epoch,
-        protective_classification_digest_provider=(
-            safety_mesh.protective_action.protective_classification_digest
-        ),
     )
 
 
@@ -221,7 +214,7 @@ def _build_risk_and_currentness(
     time_service: TrustworthyTimeService,
     authority_epoch_service: SafetyAuthorityEpochService,
     environment_label: str,
-    safety_mesh: _SafetyMesh,
+    monitor_owners: _MonitorOwners,
 ) -> _RiskAndCurrentness:
     """Aggregate Risk Authority + Action Flow Governor (order 5), currentness assembler +
     Egress Currentness Proof issuer (order 6); forwards to
@@ -240,7 +233,6 @@ def _build_risk_and_currentness(
         evidence_store,
         envelope,
         writer_epoch=writer_epoch,
-        safety_mesh=safety_mesh,
     )
 
     currentness_policy = _build_currentness_policy(config_dir)
@@ -251,7 +243,7 @@ def _build_risk_and_currentness(
         authority_epoch_service=authority_epoch_service,
         currentness_policy=currentness_policy,
         environment_label=environment_label,
-        safety_mesh=safety_mesh,
+        monitor_owners=monitor_owners,
         risk_service=risk_service,
     )
     currentness_assembler = CurrentnessAssembler(
@@ -295,6 +287,6 @@ def _build_risk_and_currentness(
         decision_proof_intent_dimension_state=dimension_states.decision_proof_intent,
         post_trade_dimension_state=dimension_states.post_trade,
         release_dimension_state=dimension_states.release,
-        safety_mesh=safety_mesh,
+        monitor_owners=monitor_owners,
         proof_issuer=proof_issuer,
     )

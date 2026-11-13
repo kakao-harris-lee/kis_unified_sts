@@ -19,7 +19,7 @@ Two properties the builders must have, both of them review findings:
 
 Instances are built with ``model_construct`` on purpose: the pins measure the
 serialization of the covered content, not artifact admissibility, and hand-
-building 17 admissible ``issue()`` calls would make the pins expensive without
+building an admissible ``issue()`` call per model would make the pins expensive without
 measuring anything more (review-798 1차 MEDIUM-2(c)).
 """
 
@@ -37,22 +37,13 @@ from tos.brokercap.records import BrokerCapabilityProfile
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, DigestBoundArtifact, get_scheme
 from tos.cur.records import CurrentnessPolicy, RestrictiveFenceRecord
 from tos.engine.records import EngineEvent, event_identity
-from tos.hag.records import (
-    HumanApprovalRequest,
-    HumanAuthorityPolicy,
-    HumanDelegationRecord,
-    HumanHaltCommand,
-)
-from tos.liveauth.records import LiveAuthorization, ReArmApprovalRecord
 from tos.posttrade.records import StatementCoverageManifest
 from tos.sbr.records import (
     RecoveryInventoryCut,
     RecoveryObligation,
     RecoveryReadinessDecision,
 )
-from tos.sir.records import SafetyIncidentPolicy
 from tos.venue.records import OrderAdmissibilityDecision, VenueConstraintPolicy
-from tos.wdr.records import SafetyDeviationPolicy
 
 #: Deliberately mixed-length, mixed-case, non-ASCII-carrying set elements.
 MIXED_LENGTH_ELEMENTS: tuple[str, ...] = (
@@ -67,38 +58,28 @@ MIXED_LENGTH_ELEMENTS: tuple[str, ...] = (
     "9",
 )
 
-#: The 17 ``DigestBoundArtifact`` subclasses whose covered field tree holds a set
-#: (plan §1.2). Six of them were already deterministic through a per-model
-#: sorter; the other eleven were not.
+#: The ``DigestBoundArtifact`` subclasses whose covered field tree holds a set
+#: (plan §1.2). Nine of the original 17 are left: two were already deterministic
+#: through a per-model sorter, the other seven were not. The seven safety-mesh
+#: models went with plan S2-a and the two nontrade Trial* models with S2-c.
 COVERED_SET_MODELS: tuple[type[DigestBoundArtifact], ...] = (
     BrokerCapabilityProfile,
     CurrentnessPolicy,
     RestrictiveFenceRecord,
-    HumanApprovalRequest,
-    HumanAuthorityPolicy,
-    HumanDelegationRecord,
-    HumanHaltCommand,
-    LiveAuthorization,
-    ReArmApprovalRecord,
     StatementCoverageManifest,
     RecoveryInventoryCut,
     RecoveryObligation,
     RecoveryReadinessDecision,
-    SafetyIncidentPolicy,
     OrderAdmissibilityDecision,
     VenueConstraintPolicy,
-    SafetyDeviationPolicy,
 )
 
-#: The six models that carried their own ``sorted()`` before this change; their
+#: The two surviving models that carried their own ``sorted()`` before this
+#: change (it was six until S2-a/S2-c removed the rest); their
 #: digests must be bit-identical after it (plan §2.3).
 PREVIOUSLY_SORTED_MODELS: tuple[type[DigestBoundArtifact], ...] = (
     CurrentnessPolicy,
     RestrictiveFenceRecord,
-    SafetyDeviationPolicy,
-    SafetyIncidentPolicy,
-    LiveAuthorization,
-    ReArmApprovalRecord,
 )
 
 _MAX_DEPTH = 8
@@ -230,9 +211,9 @@ def digest_map() -> dict[str, str]:
     """Every digest the set-ordering pins compare, keyed by a stable name.
 
     Returns:
-        A mapping of pin key to canonical digest, covering the 17
-        ``covered_content()`` models, the two non-covered call shapes, and the
-        :data:`CONTROL_KEY` negative control.
+        A mapping of pin key to canonical digest, covering every
+        :data:`COVERED_SET_MODELS` model (9 since plans S1-a/S2-a/S2-c; it was 19),
+        the two non-covered call shapes, and the :data:`CONTROL_KEY` negative control.
     """
     scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
     digests: dict[str, str] = {}

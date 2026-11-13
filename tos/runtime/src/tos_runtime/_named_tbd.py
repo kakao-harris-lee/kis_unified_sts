@@ -68,7 +68,7 @@ def first_named_tbd_leaf(value: Any, path: str) -> str | None:
     scalars ARE the leaves), or ``None`` if there is none.
 
     For a loader that hands a raw dict straight to ``pydantic.model_validate`` with no
-    per-field extraction of its own (e.g. :mod:`tos_runtime.safety.profile`'s three
+    per-field extraction of its own (e.g. a policy loader's own per-document
     policy documents) — :func:`reject_named_tbd` has nothing to wrap in that shape,
     since there is no individual ``value``/``field`` pair to check one at a time. This
     walks the whole raw mapping/list tree in one pass instead, the same discipline

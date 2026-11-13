@@ -4,7 +4,7 @@ This is the object D-E1's ``Transmit`` slot (``engine/sequencer.py:104-116``) wa
 It satisfies ``(AttemptRequest) -> SendHandoff`` and runs, in the ADR's own order:
 
 * **step 15** (:class:`~tos.engine.CommitmentStep.SEND_BOUNDARY_VERIFICATION`,
-  :func:`verify_send_boundary`) — the RFC-002 §10.8:741-759 17-item verify list, then (still
+  :func:`verify_send_boundary`) — the RFC-002 §10.8:741-759 verify list, then (still
   step 15's own output, Phase 3 wave 3 KW3-GW — the closed 19-step
   :class:`~tos.engine.CommitmentStep` enum gains no "step 15½" member for this)
   :func:`~tos.egressgw.seal.build_send_seal` builds the one immutable pre-``SEND_STARTED``
@@ -43,8 +43,9 @@ Four structural seals carry the design's weight:
    (design #34 §4.7): a real paper-account API call is non-live **and** broker-resource-consuming,
    so it does not pass this gate either.
 2. **Admission is positive membership in a closed set.** Every item must land in
-   :data:`~tos.egressgw.vocabulary.ADMITTING_VERIFY_OUTCOMES`, the item set must be exactly the
-   normative 17, and a missing item is a stop rather than a skip (RFC-002 §10.8:761). A failed
+   :data:`~tos.egressgw.vocabulary.ADMITTING_VERIFY_OUTCOMES`, the item set must be exactly
+   :data:`~tos.egressgw.vocabulary.SEND_VERIFY_ITEMS`, and a missing item is a stop rather than
+   a skip (RFC-002 §10.8:761). A failed
    verification returns ``SendHandoff(accepted_for_transmission=None)`` and calls no transport.
 3. **No blind resubmit is unrepresentable, not merely unwritten** (design #34 §5.4/§6). The
    transport port has exactly one single-shot method; the gateway calls it exactly once and never
@@ -64,9 +65,10 @@ Four structural seals carry the design's weight:
    downstream after the proof comparison"; design §0 makes the seal the *only* source, not only
    the source for the fields that happen to be security-relevant).
 
-⚠ **Honest scope (design #34 §1.1 — closes no EV).** Six of the seventeen items are verified by
-shipped predicates over *structure and coordinates*; five are non-authoritative provisional
-stand-ins; six are deferred. ``SEND_STARTED`` durability, the RCL atomic claim / consume, the QCC
+⚠ **Honest scope (design #34 §1.1 — closes no EV).** Six of the thirteen items this gateway
+carries are verified by shipped predicates over *structure and coordinates*; five are
+non-authoritative provisional stand-ins; two are deferred (the RFC's items 7/8/9/10 went with
+plan S2-a). ``SEND_STARTED`` durability, the RCL atomic claim / consume, the QCC
 quorum, byte-level outbound reconstruction, route confinement, and real credential-inventory
 enumeration are **not** claimed here. Passing this gate is not evidence of currentness, QCC,
 single-use, or credential isolation acceptance.
@@ -384,12 +386,12 @@ def verify_send_boundary(
     attempt: AttemptRequest,
     context: SendBoundaryContext,
 ) -> SendBoundaryVerification:
-    """Run the RFC-002 §10.8:741-759 17-item verify list for one attempt (design #34 §4.1).
+    """Run the RFC-002 §10.8:741-759 verify list for one attempt (design #34 §4.1).
 
     The broker-applicability gate (:func:`resolve_broker_applicability`) runs **first**, because
-    it decides whether the six deferred mesh items are required or explicitly N/A. Then every
-    item is judged in the normative order and the whole verification admits only when **all
-    seventeen** land in :data:`~tos.egressgw.vocabulary.ADMITTING_VERIFY_OUTCOMES`.
+    it decides whether the two deferred mesh items are required or explicitly N/A. Then every
+    item is judged in the normative order and the whole verification admits only when **every
+    one of them** lands in :data:`~tos.egressgw.vocabulary.ADMITTING_VERIFY_OUTCOMES`.
 
     Args:
         attempt: The Coordinator's step-12 attempt request.
@@ -415,8 +417,8 @@ def verify_send_boundary(
             verdicts=judged,
             halt_reason=SendHaltReason.VERIFY_LIST_INCOMPLETE,
             detail=(
-                "the verify list did not cover the normative 17 items — an unevaluated item is "
-                "a stop, never a skip (RFC-002 §10.8:761)"
+                "the verify list did not cover every item this gateway carries — an "
+                "unevaluated item is a stop, never a skip (RFC-002 §10.8:761)"
             ),
         )
     for verdict in judged:
@@ -1240,7 +1242,7 @@ def _item16_obligation(
 ) -> tuple[int | None, bool]:
     """Item 16's preserved-capacity obligation, independent of which item halted.
 
-    All 17 verify items are always evaluated (design #34 §4.1), and only afterwards does the
+    Every verify item is always evaluated (design #34 §4.1), and only afterwards does the
     loop pick the **first** non-admitting one as ``halt_item``. Item 16's own verdict — and any
     obligation it authored — therefore exists regardless of which item that is. Transferring the
     obligation only when ``verification.halt_item is SendVerifyItem.CURRENTNESS`` was the
@@ -1257,7 +1259,7 @@ def _item16_obligation(
     Returns:
         The ``(preserved_worst_credible_capacity, preserved_obligation_magnitude_unknown)`` pair
         from item 16's own verdict (kernel round #1 review #4), or ``(None, False)`` if item 16
-        has no verdict (should not occur — all 17 items are always evaluated).
+        has no verdict (should not occur — every item is always evaluated).
     """
     for verdict in verification.verdicts:
         if verdict.item is SendVerifyItem.CURRENTNESS:
@@ -1547,7 +1549,7 @@ class BrokerEgressGateway:
                 ),
             )
 
-        # -- step 15: the 17-item verify list ------------------------------------------
+        # -- step 15: the verify list --------------------------------------------------
         verification = verify_send_boundary(attempt=attempt, context=context)
         self.verifications += (verification,)
         for verdict in verification.verdicts:

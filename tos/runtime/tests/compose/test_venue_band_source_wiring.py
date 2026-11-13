@@ -76,7 +76,6 @@ from .test_compose_root import (
 )
 from .test_marketfeed_intake_kind_wiring import _write_kis_quote_transport_config
 from .test_transport_wiring import _activate_mock_stock_order, _build_custody
-from .test_venue_wiring import _real_members, _rewrite_activation
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -144,12 +143,11 @@ def _payloads(runtime: Any, kind: str) -> list[dict[str, Any]]:
     return [json.loads(row[0])["payload"] for row in cursor.fetchall()]
 
 
-def _declare_band_source(
-    config_dir: Path, *, sync_activation: bool = True, **overrides: Any
-) -> None:
-    """Rewrite the compose fixture's venue policy so it DECLARES a band source, and re-sync the
-    activation digest the rewrite invalidates (the same two-step every scope-mutation test in
-    ``test_venue_wiring.py`` performs)."""
+def _declare_band_source(config_dir: Path, **overrides: Any) -> None:
+    """Rewrite the compose fixture's venue policy so it DECLARES a band source.
+
+    The activation-digest re-sync this used to do went with plan S2-a, along with
+    ``safety_activation.yaml`` itself."""
     overrides.setdefault("instrument", _VENUE_POLICY_INSTRUMENT)
     (config_dir / "venue_constraint_policy.yaml").write_text(
         venue_policy_yaml(
@@ -165,11 +163,6 @@ def _declare_band_source(
         ),
         encoding="utf-8",
     )
-    # A test that expects the LOADER to refuse must skip this: the sync re-loads the same
-    # document through the same loader, so it would raise first and the test would pass for
-    # the fixture's reason instead of the boot's.
-    if sync_activation:
-        _sync_venue_activation_digest(config_dir)
 
 
 def _declare_producer_journal_band_source(
@@ -201,30 +194,7 @@ def _declare_producer_journal_band_source(
     loaded = load_venue_constraint_policy(
         config_dir / "venue_constraint_policy.yaml", scheme=_SCHEME
     )
-    members = _real_members(config_dir)
-    for member in members:
-        if member["kind"] == "VENUE_CONSTRAINT_POLICY":
-            member["digest"] = loaded.policy.canonical_digest
-    _rewrite_activation(config_dir, members)
-
-
-def _sync_venue_activation_digest(config_dir: Path) -> None:
-    """``test_venue_wiring``'s own helper, re-declared here because that one loads the policy
-    WITHOUT a ``band_transport_instrument`` — which is itself a boot refusal once the document
-    declares a band source, so reusing it would mask the test under the fixture's own error.
-    """
-    loaded = load_venue_constraint_policy(
-        config_dir / "venue_constraint_policy.yaml",
-        scheme=_SCHEME,
-        band_transport_instrument_reader=lambda: read_declared_instrument(
-            config_dir / "kis_quote.yaml"
-        ),
-    )
-    members = _real_members(config_dir)
-    for member in members:
-        if member["kind"] == "VENUE_CONSTRAINT_POLICY":
-            member["digest"] = loaded.policy.canonical_digest
-    _rewrite_activation(config_dir, members)
+    del loaded  # loaded purely to prove the mutated document still parses
 
 
 def _tree_runtime_block(tree: str) -> dict[str, Any]:
@@ -726,7 +696,7 @@ class TestADeclaredSourceAtBoot:
         ``read_declared_instrument`` call."""
         self._kis_mock_boot(config_dir, custody_root)
         assert not (config_dir / "kis_quote.yaml").exists()
-        _declare_band_source(config_dir, sync_activation=False)
+        _declare_band_source(config_dir)
 
         with pytest.raises(VenuePolicyConfigError) as excinfo:
             _compose(

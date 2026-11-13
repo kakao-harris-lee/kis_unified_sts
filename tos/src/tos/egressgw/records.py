@@ -582,9 +582,10 @@ class SendBoundaryVerification(FrozenModel):
     """The whole step-15 verify result (design #34 §4.1).
 
     ``admitted`` is **positive polarity**: only ``True`` records an admitted verification, and it
-    is set only when every one of the 17 items produced an outcome in
+    is set only when every one of the items produced an outcome in
     :data:`~tos.egressgw.vocabulary.ADMITTING_VERIFY_OUTCOMES` *and* the item set is exactly the
-    normative 17 (an unevaluated item is a stop, never a skip — RFC-002 §10.8:761).
+    whole :data:`~tos.egressgw.vocabulary.SEND_VERIFY_ITEMS` tuple (an unevaluated
+    item is a stop, never a skip — RFC-002 §10.8:761).
     """
 
     attempt_id: str
@@ -749,18 +750,20 @@ class SendBoundaryContext(FrozenModel):
 
     # Deferred safety flags come from their owning runtime; the kernel maps True/False/None to
     # SATISFIED/DENIED/UNKNOWN and never derives the flags itself.
+    #
+    # Plan S2-a removed items 7/8/9/10's four flags from this model
+    # (``safety_profile_current``/``deviation_clear``/``incident_clear``/
+    # ``monitoring_clear``). Removal condition, measured before the cut: this model is
+    # built per attempt and read field-by-field by the gateway — it is never
+    # ``model_dump``-ed, never written to the evidence store or the inbox, and never
+    # re-validated from storage (grepped: zero ``SendBoundaryContext`` dumps under
+    # ``tos/src`` and ``tos/runtime/src``). So dropping a field here cannot move a
+    # stored byte, an ``event_identity``, or a ``payload_digest``. A field whose value
+    # DOES reach a persisted row must instead be kept as a vestigial ``None`` key.
     #: Item 4 — Safety Authority epoch currency (``CURRENT_SAFETY_AUTHORITY_EPOCH``).
     safety_authority_epoch_current: bool | None = None
     #: Item 5 — live-scope validity (``VALID_LIVE_SCOPE``).
     live_scope_valid: bool | None = None
-    #: Item 7 — Hard Safety Envelope version currency (``HARD_SAFETY_ENVELOPE_VERSIONS``).
-    safety_profile_current: bool | None = None
-    #: Item 8 — safety-deviation clear (``SAFETY_DEVIATION``).
-    deviation_clear: bool | None = None
-    #: Item 9 — safety-incident clear (``SAFETY_INCIDENT``).
-    incident_clear: bool | None = None
-    #: Item 10 — safety-monitoring clear (``SAFETY_MONITORING``).
-    monitoring_clear: bool | None = None
 
     broker_capability_profile: BrokerCapabilityProfile | None = None
     required_capability_set: RequiredCapabilitySet | None = None
@@ -882,10 +885,6 @@ def send_boundary_context(
     capsule_egress_request_digest: str | None = None,
     safety_authority_epoch_current: bool | None = None,
     live_scope_valid: bool | None = None,
-    safety_profile_current: bool | None = None,
-    deviation_clear: bool | None = None,
-    incident_clear: bool | None = None,
-    monitoring_clear: bool | None = None,
     commitment_epoch_current: bool | None = None,
     broker_capability_profile: BrokerCapabilityProfile | None = None,
     required_capability_set: RequiredCapabilitySet | None = None,
@@ -972,14 +971,6 @@ def send_boundary_context(
             positively supplied by its owning runtime service (item 4).
         live_scope_valid: The live-scope validity flag, positively supplied by its owning
             runtime service (item 5).
-        safety_profile_current: The Hard Safety Envelope version-currency flag, positively
-            supplied by its owning runtime service (item 7).
-        deviation_clear: The safety-deviation-clear flag, positively supplied by its owning
-            runtime service (item 8).
-        incident_clear: The safety-incident-clear flag, positively supplied by its owning
-            runtime service (item 9).
-        monitoring_clear: The safety-monitoring-clear flag, positively supplied by its owning
-            runtime service (item 10).
         commitment_epoch_current: ⚠ provisional RCL epoch stand-in (item 3).
         broker_capability_profile: The Broker Capability Profile (items 6 / 12).
         required_capability_set: The required capability set (items 6 / 12).
@@ -1034,10 +1025,6 @@ def send_boundary_context(
         reservation_action_flow_permit_identity=attempt.action_flow_permit_identity,
         safety_authority_epoch_current=safety_authority_epoch_current,
         live_scope_valid=live_scope_valid,
-        safety_profile_current=safety_profile_current,
-        deviation_clear=deviation_clear,
-        incident_clear=incident_clear,
-        monitoring_clear=monitoring_clear,
         commitment_epoch_current=commitment_epoch_current,
         broker_capability_profile=broker_capability_profile,
         required_capability_set=required_capability_set,

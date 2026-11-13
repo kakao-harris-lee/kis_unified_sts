@@ -22,12 +22,15 @@ cross-checked against) — the loader REQUIRES each ``_runtime.dimension_ids`` Y
 equal exactly ``f"{scope}::{dimension}"`` for its own nested ``scope``/``dimension`` pair
 (fail-closed on drift, never a silently-accepted arbitrary key).
 
-**What this module does NOT do (lane a boundary, plan §4.1).** It issues neither policy
-against a Hard Safety Envelope — the ``injected_envelope_max``/HSE dimension cross-check
-(plan §2.1) is a LANE B wiring-time responsibility (:mod:`tos_runtime.compose
-._riskstate_wiring`), run once both this policy AND the HSE are loaded; this loader has no
-HSE input and performs no such check. It does not activate the policy
-(``tos_runtime.venue.activation.require_member_activated`` is lane b's job).
+**``_runtime.envelope_max`` — the ARE ceiling, config-owned (plan S2-a).** Step 6's
+``injected_envelope_max`` used to be read off the spg Hard Safety Envelope
+(``safety_envelope.yaml::envelope.governed_dimensions[].envelope_max``), with a wiring-time
+cross-check that the envelope governed every ARE dimension. The safety mesh that loaded that
+document is gone; the ceiling itself is not. It is now declared here, next to
+``effective_limits``, with the SAME per-dimension-id key set — and this loader REQUIRES an
+``envelope_max`` entry for every ``dimension_ids`` value (a missing one refuses at load, which
+is where the old boot cross-check's refusal moved to), so no ARE-governed dimension can ever be
+admitted against a ceiling this deployment never declared.
 
 Firewall (R1, runtime scope): stdlib + ``pyyaml`` (transitively, via the reused primitives) +
 ``tos.*`` + ``tos_runtime.venue._policy_primitives`` + ``tos_runtime.riskstate
@@ -146,6 +149,9 @@ class LoadedAggregateRiskPolicy:
     policy: AggregateRiskPolicy
     dimension_ids: Mapping[tuple[RiskScopeKind, RiskDimensionKind], str]
     effective_limits: CapacityVector
+    #: Step 6's ``injected_envelope_max`` ceiling, one component per ``dimension_ids`` value
+    #: (module docstring) — the risk cap that used to live on the spg Hard Safety Envelope.
+    envelope_max: CapacityVector
     required_scenario_kinds: frozenset[AdverseScenarioKind]
     required_scopes: frozenset[RiskScopeKind]
     applicable_risk_scopes: tuple[str, ...]
@@ -294,6 +300,45 @@ def _parse_are_effective_limits(
     return CapacityVector(components=tuple(components))
 
 
+def _parse_are_envelope_max(
+    runtime_raw: dict[str, Any],
+    path: Path,
+    *,
+    dimension_ids: dict[tuple[RiskScopeKind, RiskDimensionKind], str],
+    unit: str,
+) -> CapacityVector:
+    """``_runtime.envelope_max`` — step 6's ``injected_envelope_max`` ceiling (module
+    docstring). Same shape as :func:`_parse_are_effective_limits`, with one extra rule it
+    deliberately does NOT share: every ``dimension_ids`` value MUST have an entry here. That
+    completeness requirement is where the retired wiring-time HSE cross-check's refusal moved
+    to — an ARE-governed dimension with no declared ceiling is a governance-authoring bug,
+    refused at load, never admitted against an absent bound.
+    """
+    envelope_raw = require_mapping_key(runtime_raw, "envelope_max", path)
+    known_ids = frozenset(dimension_ids.values())
+    components: list[CapacityComponent] = []
+    for dimension_id, value in envelope_raw.items():
+        if dimension_id not in known_ids:
+            raise VenuePolicyConfigError(
+                f"{path}: _runtime.envelope_max key {dimension_id!r} is not among "
+                f"_runtime.dimension_ids' own values {sorted(known_ids)!r}"
+            )
+        magnitude = require_nonnegative_decimal(
+            value, path, f"_runtime.envelope_max[{dimension_id!r}]"
+        )
+        components.append(
+            CapacityComponent(dimension_id=dimension_id, magnitude=magnitude, unit=unit)
+        )
+    missing = sorted(known_ids - frozenset(envelope_raw))
+    if missing:
+        raise VenuePolicyConfigError(
+            f"{path}: _runtime.envelope_max declares no ceiling for governed dimension "
+            f"id(s) {missing!r} — every ARE-governed dimension must have a real envelope "
+            "ceiling"
+        )
+    return CapacityVector(components=tuple(components))
+
+
 def _parse_are_runtime_sets(
     runtime_raw: dict[str, Any], path: Path
 ) -> tuple[frozenset[AdverseScenarioKind], frozenset[RiskScopeKind], tuple[str, ...]]:
@@ -383,8 +428,10 @@ def load_aggregate_risk_policy(
             ``_runtime.dimension_ids`` key does not equal its own
             ``"<scope>::<dimension>"`` convention, or names a (scope, dimension) pair outside
             the policy's own ``governed_scopes``/``governed_dimensions``; a
-            ``_runtime.effective_limits`` key is not among ``_runtime.dimension_ids``' own
-            values, or its magnitude is not a non-negative decimal; ``canonical_digest`` is
+            ``_runtime.effective_limits``/``_runtime.envelope_max`` key is not among
+            ``_runtime.dimension_ids``' own values, or its magnitude is not a non-negative
+            decimal; ``_runtime.envelope_max`` declares no ceiling for some governed
+            dimension id (module docstring); ``canonical_digest`` is
             present but does not match the freshly computed digest; or any template
             rule-list/``authority``/``evidence``/``hard_safety_envelope``
             /``runtime_safety_profile`` key is absent or not list/mapping-shaped.
@@ -421,6 +468,9 @@ def load_aggregate_risk_policy(
     effective_limits = _parse_are_effective_limits(
         runtime_raw, path, dimension_ids=dimension_ids, unit=unit
     )
+    envelope_max = _parse_are_envelope_max(
+        runtime_raw, path, dimension_ids=dimension_ids, unit=unit
+    )
     required_scenario_kinds, required_scopes, applicable_tokens = (
         _parse_are_runtime_sets(runtime_raw, path)
     )
@@ -450,6 +500,7 @@ def load_aggregate_risk_policy(
         policy=policy,
         dimension_ids=dimension_ids,
         effective_limits=effective_limits,
+        envelope_max=envelope_max,
         required_scenario_kinds=required_scenario_kinds,
         required_scopes=required_scopes,
         applicable_risk_scopes=applicable_tokens,

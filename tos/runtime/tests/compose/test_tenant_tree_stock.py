@@ -60,7 +60,7 @@ from .test_compose_root import (
 from .test_deploy_config import _kst_unix_ms
 from .test_deploy_policies import _filled
 from .test_kis_mock_e2e_honesty import _sealed_mock_deployment
-from .test_venue_wiring import _kind_count, _rewrite_activation, _rows
+from .test_venue_wiring import _kind_count, _rows
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -105,15 +105,6 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
     "coordinator_preconditions.yaml": frozenset({"nonlive_broker_consuming.admitted"}),
     # B5 (operator approved 2026-10-24): the witness bound covers the 60 s closed cadence.
     "authority.yaml": frozenset({"containment_bound_ms"}),
-    # B4 (operator approved 2026-10-24): the recorded activation approval + attestation.
-    "safety_activation.yaml": frozenset(
-        {
-            "activation.activation_id",
-            "activation.scope",
-            "activation.approval_ids",
-            "activation.compatibility_attestation_refs",
-        }
-    ),
     "egress_coordinates.yaml": frozenset({"endpoint.value", "route_identity.value"}),
     "construction.yaml": frozenset({"instrument_class"}),
     "marketfeed.yaml": frozenset({"instrument_class", "unit"}),
@@ -122,8 +113,6 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
     ),
     "action_flow_policy.yaml": frozenset({"policy_id"}),
     "critical_input_policy.yaml": frozenset({"policy_id", "issuer_principal_id"}),
-    "safety_envelope.yaml": frozenset({"envelope.governed_dimensions.0.unit"}),
-    "safety_profile.yaml": frozenset({"profile.governed_dimensions.0.unit"}),
     "order_construction_policy.yaml": frozenset(
         {
             "policy_id",
@@ -596,23 +585,7 @@ def _install_stock_tree(config_dir: Path) -> str:
     ocp = load_order_construction_policy(
         config_dir / "order_construction_policy.yaml", scheme=_SCHEME
     )
-    _rewrite_activation(
-        config_dir,
-        [
-            {
-                "kind": kind,
-                "member_id": loaded.policy.policy_id,
-                "generation": loaded.policy.policy_generation,
-                "digest": loaded.policy.canonical_digest,
-                "resolved": True,
-                "immutable": True,
-            }
-            for kind, loaded in (
-                ("VENUE_CONSTRAINT_POLICY", venue),
-                ("ORDER_CONSTRUCTION_POLICY", ocp),
-            )
-        ],
-    )
+    del ocp  # loaded purely to prove the rendered stock OCP still parses
     digest = venue.policy.canonical_digest
     assert digest is not None, "the loaded stock VCP carries no canonical_digest"
     return digest

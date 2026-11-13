@@ -20,7 +20,6 @@ from pydantic import BaseModel, ConfigDict
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, DigestBoundArtifact, get_scheme
 from tos.canonical._base import FrozenModel
 from tos.canonical._canonical_json import CanonicalJsonMixin, _is_this_hook
-from tos.liveauth.records import LiveAuthorization, ReArmApprovalRecord
 
 from ._set_order_builders import (
     CONTROL_KEY,
@@ -31,7 +30,8 @@ from ._set_order_builders import (
     digest_map,
 )
 
-#: Digests of the six models that already sorted their own sets, measured on
+#: Digests of the two models that still sort their own sets (it was six before
+#: plans S2-a and S2-c removed the rest), measured on
 #: ``origin/main`` ``153c8fd0`` (before this change) with the builders in
 #: ``_set_order_builders.py``. The mixed-length elements matter: with same-length
 #: elements a length-first sort key and a lexicographic one agree, and the "wrong
@@ -41,24 +41,11 @@ from ._set_order_builders import (
 #: worker against the model tree and read the printed digest:
 #:     PYTHONPATH=tos/src python -m tests.canonical._set_order_worker   # from tos/
 _PRE_HOOK_GOLDEN: dict[str, str] = {
-    "CurrentnessPolicy": "70219489496fd2226b8c8ee70c98ec8a7708eed2ff7ea533fcf43adbacc3650b",
-    "LiveAuthorization": "8f821b530e86c82121402c0fdb2adad36410cdee7931d3eff5a8bf50c61eaf32",
-    "ReArmApprovalRecord": "d0b7ac035d8f5fca38ed69b124e836b21eef388c47513f29fe8754fe075df769",
+    # Re-derived after plan S2-a removed three DimensionKey members from the mandated
+    # floor this policy's covered `mandated` set enumerates.
+    "CurrentnessPolicy": "36a05f3e3fe38892aaac0b2b209484030dacae698d453b97334b5efc7ec5785c",
     "RestrictiveFenceRecord": "85c35e3f7a2d0714772bba563c18572b78428867a1c46e7da6bfca504c77a313",
-    "SafetyDeviationPolicy": "b3e6c02605e96160f54160f08756f942f37dfde68085b80f5222c1131be4e3ff",
-    "SafetyIncidentPolicy": "ea884e0030a0bd73dd02180fffb058905fd1c6ef2afc7dd33ddd9efe89693874",
 }
-
-#: The two models whose PYTHON-mode dump deliberately CHANGED with this work: a
-#: ``field_serializer(..., when_used="always")`` used to sort their scope
-#: dimensions in every mode, so python-mode callers saw sorted lists. The shared
-#: hook is json-mode only, so python mode now returns the ``frozenset`` itself.
-#: Nothing reads it — ``tos/src`` and ``tos/runtime/src`` make zero python-mode
-#: ``model_dump()`` calls (review-798 3차 L-1) — and the json bytes are identical.
-_PYTHON_MODE_CHANGED: frozenset[str] = frozenset(
-    {"LiveAuthorization", "ReArmApprovalRecord"}
-)
-
 
 # --------------------------------------------------------------------------
 # Synthetic models — the hook's contract, independent of any kernel artifact
@@ -207,13 +194,7 @@ def test_python_mode_keeps_sets_as_sets() -> None:
 def test_covered_models_keep_frozensets_in_python_mode(
     model_cls: type[DigestBoundArtifact],
 ) -> None:
-    """Python-mode dumps of the 17 covered models still carry ``frozenset`` values.
-
-    ``LiveAuthorization`` / ``ReArmApprovalRecord`` are the deliberate change
-    (see ``_PYTHON_MODE_CHANGED``): they used to return sorted lists in python
-    mode too, and now return the sets. This test asserts the NEW expectation for
-    all 17 uniformly, and the docstring records why two of them moved.
-    """
+    """Python-mode dumps of every covered model still carry ``frozenset`` values."""
     instance = build_instance(model_cls)
     dumped = instance.model_dump()
     found = _find_container_types(dumped)
@@ -236,20 +217,6 @@ def _find_container_types(node: Any, seen: set[type] | None = None) -> set[type]
         for value in node:
             _find_container_types(value, found)
     return found
-
-
-def test_liveauth_python_mode_change_is_the_expected_one() -> None:
-    """The two models whose python-mode output moved, named explicitly."""
-    for model_cls in (LiveAuthorization, ReArmApprovalRecord):
-        assert model_cls.__name__ in _PYTHON_MODE_CHANGED
-        instance = build_instance(model_cls)
-        scope_field = (
-            "live_authorization_scope"
-            if model_cls is LiveAuthorization
-            else "requested_scope"
-        )
-        scope = instance.model_dump()[scope_field]
-        assert isinstance(scope["accounts"], frozenset)
 
 
 def test_incomparable_set_elements_raise_without_a_fallback_key() -> None:
@@ -441,9 +408,9 @@ def test_the_cost_pin_can_actually_see_the_hook(mode: str) -> None:
 def test_previously_sorted_models_are_bit_compatible(
     model_cls: type[DigestBoundArtifact],
 ) -> None:
-    """The six models that already sorted keep their exact pre-hook digest.
+    """The models that already sorted keep their exact pre-hook digest.
 
-    RED when the hook orders sets by anything other than ``sorted()`` — the six
+    RED when the hook orders sets by anything other than ``sorted()`` — the
     per-model sorters this change deleted used plain ``sorted()``, so any other
     key (a length-first canonical token, say) moves these bytes.
     """
@@ -459,7 +426,7 @@ def test_previously_sorted_models_are_bit_compatible(
 
 
 def test_digest_map_covers_every_pinned_surface() -> None:
-    """The cross-process worker measures all 17 models plus both non-covered shapes."""
+    """The cross-process worker measures every covered model plus both non-covered shapes."""
     digests = digest_map()
     expected = {model.__name__ for model in COVERED_SET_MODELS} | {
         "EngineEvent.event_identity",
@@ -467,7 +434,10 @@ def test_digest_map_covers_every_pinned_surface() -> None:
         CONTROL_KEY,
     }
     assert set(digests) == expected
-    assert len(COVERED_SET_MODELS) == 17
+    # Nine: the original 17 less the seven safety-mesh models (plan S2-a) and the
+    # two nontrade Trial* models (plan S2-c). Measured against the tuple, not
+    # hand-counted -- a removal that forgets this line is what the number catches.
+    assert len(COVERED_SET_MODELS) == 9
 
 
 # --------------------------------------------------------------------------

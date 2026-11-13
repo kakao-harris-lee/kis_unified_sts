@@ -7,7 +7,7 @@ it to a composed runtime, replacing the retired
 (:mod:`tos_runtime.compose._egress_attestations`, deleted — plan §2 decision
 4) with a real runtime owner.
 
-**Two-phase construction, mirroring ``_safety_wiring.py``'s own inbox-cell
+**Two-phase construction, mirroring ``_monitor_wiring.py``'s own inbox-cell
 idiom.** The owner is built EARLY in :func:`~tos_runtime.compose.root
 .compose_paper_runtime` — right after ``_boot_services`` returns — because
 step 3's ``VenueConstraintStage`` (built by ``_build_construction_stages``,
@@ -16,7 +16,7 @@ time. But the owner's own ``tick_generation_reader`` needs the durable event
 inbox, which does not exist until ``_finalize`` builds it
 (:mod:`tos_runtime.compose._engine_wiring`). :class:`SessionInboxCell` is the
 same "construct now, fill in once the dependency exists" cell
-:class:`~tos_runtime.compose._safety_wiring._InboxCell` already uses for the
+:class:`~tos_runtime.compose._monitor_wiring._InboxCell` already uses for the
 identical reason — :func:`apply_session_wiring`, called immediately after
 ``_finalize`` returns (mirroring ``apply_release_wiring``/
 ``apply_recovery_barrier``), fills it in and attaches the owner to
@@ -84,7 +84,7 @@ class SessionInboxCell:
 
     def read(self) -> int | None:
         """The inbox's own ``count`` (the SAME tick-generation formula
-        :mod:`tos_runtime.compose._safety_wiring`'s own
+        :mod:`tos_runtime.compose._monitor_wiring`'s own
         ``_current_tick_generation`` uses), or ``None`` before the inbox is
         wired in (module docstring — a boot-order fact, not a runtime error)."""
         inbox = self.inbox

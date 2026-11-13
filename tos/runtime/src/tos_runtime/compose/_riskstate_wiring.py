@@ -2,11 +2,9 @@
 .RiskStateService` (TOS risk state service wave, lane b; plan §2.4/§4/§4.1).
 
 **Mirrors ``_venue_wiring.py``'s own idiom exactly** (module docstring there): load both
-governed policy YAMLs, require BOTH be positively activated
-(:mod:`tos_runtime.venue.activation` — new ``AGGREGATE_RISK_POLICY``/``ACTION_FLOW_POLICY``
-member kinds), run every boot-time cross-check BEFORE the service is constructed (so a refusal
-here surfaces before this function writes any evidence of its own), then construct the service
-and let it record its own two ``*_POLICY_BOUND`` boot rows.
+governed policy YAMLs, run every boot-time cross-check BEFORE the service is constructed (so a
+refusal here surfaces before this function writes any evidence of its own), then construct the
+service and let it record its own two ``*_POLICY_BOUND`` boot rows.
 
 **Cross-checks (plan §2.4, all ``RiskPolicyScopeMismatch`` — a governance-authoring bug,
 refused at boot, never silently narrowed):**
@@ -14,10 +12,10 @@ refused at boot, never silently narrowed):**
 1. The ARE policy's own ``account_scope``/``instrument_scope`` equal ``construction.account``/
    ``.instrument`` (the SAME scope discipline :func:`~tos_runtime.compose._venue_wiring
    ._cross_check_scope` already applies to the venue policy).
-2. Every ARE-governed dimension id is a member of the loaded Hard Safety Envelope's own
-   ``governed_dimensions`` — an ARE policy governing a dimension the envelope never bounds
-   would let step 6 admit against an ``injected_envelope_max`` this deployment never actually
-   ceilinged.
+2. (retired by plan S2-a) The ARE ceiling cross-check moved INTO the policy loader: step 6's
+   ``injected_envelope_max`` now comes from the ARE policy's own ``_runtime.envelope_max``,
+   which :func:`~tos_runtime.riskstate.policies.load_aggregate_risk_policy` refuses to load
+   unless every governed dimension id has a declared ceiling.
 3. ``required_scenario_kinds`` (``risk.yaml``) is a subset of the loaded ``AdverseScenarioSet``'s
    own ``covered_scenario_kinds`` — a required kind the scenario set does not cover would make
    ``tos.are.adverse_increment`` UNKNOWN forever for that kind (dishonest coverage, not merely
@@ -45,7 +43,6 @@ from tos.egressgw import SizingBound, VenueQuantityConstraint
 from tos.egressgw.records import CandidateConstruction
 from tos.engine.records import StageRequest
 from tos.ioc import EconomicEffectEnvelope
-from tos.spg import BundleMemberKind, HardSafetyEnvelope
 from tos.venue import ActionClass
 
 from tos_runtime.compose._types import ConstructionConfig
@@ -71,14 +68,8 @@ from tos_runtime.riskstate.policies import (
 )
 from tos_runtime.riskstate.position import EvidencePositionReader
 from tos_runtime.riskstate.service import RiskStateService
-from tos_runtime.venue import load_activation_members, require_member_activated
 
 __all__ = ["RiskPolicyScopeMismatch", "build_risk_state_service"]
-
-#: Duplicated from ``tos_runtime.venue._venue_wiring``'s own module-private constant (a
-#: private module symbol, not exported) — the SAME "duplicate the literal" discipline that
-#: module already applies to it.
-_SAFETY_ACTIVATION_CONFIG_NAME = "safety_activation.yaml"
 
 
 class RiskPolicyScopeMismatch(RuntimeError):
@@ -101,19 +92,6 @@ def _cross_check_are_scope(
         raise RiskPolicyScopeMismatch(
             f"aggregate risk policy instrument_scope {are_policy.instrument_scope!r} != "
             f"configured construction.instrument {construction.instrument!r}"
-        )
-
-
-def _cross_check_hse_dimensions(
-    are_policy: LoadedAggregateRiskPolicy, *, hse_envelope: HardSafetyEnvelope
-) -> None:
-    hse_ids = {gdl.dimension for gdl in hse_envelope.governed_dimensions}
-    missing = sorted(set(are_policy.dimension_ids.values()) - hse_ids)
-    if missing:
-        raise RiskPolicyScopeMismatch(
-            f"aggregate risk policy governs dimension id(s) {missing!r} that the Hard Safety "
-            f"Envelope's own governed_dimensions {sorted(d for d in hse_ids if d)!r} does not "
-            "declare — every ARE-governed dimension must have a real envelope ceiling"
         )
 
 
@@ -228,9 +206,9 @@ def _cross_check_ocp_sizing_bound(
 def _load_and_activate(
     *, config_dir: Path, scheme: CanonicalizationScheme
 ) -> tuple[LoadedAggregateRiskPolicy, LoadedActionFlowPolicy, str, str]:
-    """Load both policies, require both activated, and return their activated member
-    digests — split out of :func:`build_risk_state_service` purely for that function's own
-    100-line size budget."""
+    """Load both policies and return their canonical digests — split out of
+    :func:`build_risk_state_service` purely for that function's own 100-line size budget.
+    """
     are_policy = load_aggregate_risk_policy(
         config_dir / AGGREGATE_RISK_POLICY_CONFIG_NAME, scheme=scheme
     )
@@ -241,23 +219,11 @@ def _load_and_activate(
     assert p.policy_id is not None and p.policy_generation is not None
     assert p.canonical_digest is not None and a.canonical_digest is not None
     assert a.policy_id is not None and a.policy_generation is not None
-    members = load_activation_members(config_dir / _SAFETY_ACTIVATION_CONFIG_NAME)
-    are_member = require_member_activated(
-        members,
-        kind=BundleMemberKind.AGGREGATE_RISK_POLICY,
-        member_id=p.policy_id,
-        generation=p.policy_generation,
-        digest=p.canonical_digest,
-    )
-    afg_member = require_member_activated(
-        members,
-        kind=BundleMemberKind.ACTION_FLOW_POLICY,
-        member_id=a.policy_id,
-        generation=a.policy_generation,
-        digest=a.canonical_digest,
-    )
-    assert are_member.digest is not None and afg_member.digest is not None
-    return are_policy, afg_policy, are_member.digest, afg_member.digest
+    # The two ``*_POLICY_BOUND`` evidence rows record WHICH policy document this boot
+    # bound. Before plan S2-a that digest came back from ``safety_activation.yaml``, which
+    # only ever matched when it equalled the policy's own ``canonical_digest``; reading it
+    # straight off the policy is the same value with no second document to keep in sync.
+    return are_policy, afg_policy, p.canonical_digest, a.canonical_digest
 
 
 def build_risk_state_service(
@@ -269,7 +235,6 @@ def build_risk_state_service(
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
     rcl_log: SqliteCommitLog,
-    hse_envelope: HardSafetyEnvelope,
     scenario_set: AdverseScenarioSet,
     required_scenario_kinds: frozenset[AdverseScenarioKind],
     rcl_tip_reader: Callable[[], int | None],
@@ -299,17 +264,12 @@ def build_risk_state_service(
 
     Raises:
         tos_runtime.riskstate.VenuePolicyConfigError: either policy YAML is missing/malformed.
-        tos_runtime.venue.ActivationMembersConfigError: ``safety_activation.yaml`` carries no
-            explicit ``members:`` list.
-        tos_runtime.venue.PolicyNotActivated: either policy has no exactly-one, positively
-            resolved+immutable activation member.
         RiskPolicyScopeMismatch: any of the module docstring's five cross-checks fails.
     """
     are_policy, afg_policy, are_digest, afg_digest = _load_and_activate(
         config_dir=config_dir, scheme=scheme
     )
     _cross_check_are_scope(are_policy, construction=construction)
-    _cross_check_hse_dimensions(are_policy, hse_envelope=hse_envelope)
     _cross_check_scenario_coverage(
         are_policy, required_scenario_kinds, scenario_set=scenario_set
     )
@@ -330,7 +290,6 @@ def build_risk_state_service(
         are_policy=are_policy,
         afg_policy=afg_policy,
         scheme=scheme,
-        hse_envelope=hse_envelope,
         scenario_set=scenario_set,
         required_scenario_kinds=required_scenario_kinds,
         position_reader=position_reader,

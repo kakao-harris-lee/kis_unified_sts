@@ -134,13 +134,23 @@ class DimensionKey(StrEnum):
     *more*, never fewer; §5.5).
     """
 
+    #: **Removal condition for a member, measured before the plan-S2-a cut** (which took
+    #: SAFETY_ENVELOPE_PROFILE / DEVIATION / INCIDENT with the safety mesh that owned
+    #: them). A member reaches durable storage only inside an evidence payload's JSON,
+    #: as a plain string; the one place a stored token is re-validated into this enum is
+    #: ``tos_runtime.currentness.config``, which reads ``currentness.yaml``'s
+    #: ``required_dimensions`` — config, not storage — so a removed member must be
+    #: dropped from every tenant tree's ``currentness.yaml`` in the same change.
+    #: Removing one does NOT move an already-recorded row (measured on copies of the
+    #: four live leaves: 128,001/128,001 evidence payloads digest-identical,
+    #: 2,989/2,989 inbox events identical in ``event_id`` and bytes). It DOES move
+    #: :data:`MANDATED_DIMENSION_FLOOR`, and with it the canonical digest of any
+    #: ``CurrentnessPolicy`` whose covered ``mandated`` set is derived from the floor —
+    #: no deployment pins that digest today, which is why the three could go.
     ENVIRONMENT_SCOPE = "ENVIRONMENT_SCOPE"
     CURRENTNESS_POLICY = "CURRENTNESS_POLICY"
     COMMIT_LOG = "COMMIT_LOG"
     SAFETY_AUTHORITY = "SAFETY_AUTHORITY"
-    SAFETY_ENVELOPE_PROFILE = "SAFETY_ENVELOPE_PROFILE"
-    DEVIATION = "DEVIATION"
-    INCIDENT = "INCIDENT"
     MONITORING = "MONITORING"
     RELEASE = "RELEASE"
     POST_TRADE = "POST_TRADE"

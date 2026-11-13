@@ -218,8 +218,6 @@ def _finalize(
         transport_kind=transport_kind,
         transport_config=transport_config,
         credential_sessions=kis_credential_sessions,
-        safety_mesh=risk.safety_mesh.services,
-        mesh_snapshot_refresher=risk.safety_mesh.refresh_tick_snapshot,
         trading_date_now=trading_date_now,
         # #1011 P2: the synthetic transport records into this boot's venue ledger
         # before it answers, when `finality.yaml::witness` selected one.
@@ -273,7 +271,5 @@ def _finalize(
         inbox=wired.inbox,
         driver=wired.driver,
         scopes=broker_scopes,
-        safety_mesh_peek=risk.safety_mesh.peek_tick_snapshot,
-        protective_last_verdict=lambda: risk.safety_mesh.protective_action.last_verdict,
         kis_credential_sessions=kis_credential_sessions,
     )

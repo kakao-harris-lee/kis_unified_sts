@@ -6,8 +6,8 @@ decision 1):
 
 * :func:`resolve_broker_applicability` — the §4.2 positive gate that decides whether a send
   consumes a broker resource *before* any per-item check runs.
-* :func:`deferred_item_verdict` — judges one of the six deferred live safety-governance mesh
-  items (:data:`~tos.egressgw.vocabulary.DEFERRED_ITEMS`), now reading the six injected
+* :func:`deferred_item_verdict` — judges one of the deferred live safety-governance mesh
+  items (:data:`~tos.egressgw.vocabulary.DEFERRED_ITEMS`), now reading the injected
   :class:`~tos.egressgw.records.SendBoundaryContext` fields the owning runtime services supply
   (kernel round #2 §2 decision 2), rather than returning ``UNKNOWN`` unconditionally.
 
@@ -47,16 +47,13 @@ __all__ = [
 ]
 
 #: The closed item -> ``SendBoundaryContext`` field mapping the deferred mesh judges (kernel
-#: round #2 §2 decision 2). Exactly the six :data:`~tos.egressgw.vocabulary.DEFERRED_ITEMS`
+#: round #2 §2 decision 2). Exactly the :data:`~tos.egressgw.vocabulary.DEFERRED_ITEMS`
 #: members — an item outside this table is a structural error (mutation M6), never a silent
-#: ``UNKNOWN``.
+#: ``UNKNOWN``. (Items 7/8/9/10 went with plan S2-a, which removed the safety mesh whose
+#: services supplied them; items 4 and 5 are the two that remain.)
 _DEFERRED_ITEM_FIELDS: dict[SendVerifyItem, str] = {
     SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH: "safety_authority_epoch_current",
     SendVerifyItem.VALID_LIVE_SCOPE: "live_scope_valid",
-    SendVerifyItem.HARD_SAFETY_ENVELOPE_VERSIONS: "safety_profile_current",
-    SendVerifyItem.SAFETY_DEVIATION: "deviation_clear",
-    SendVerifyItem.SAFETY_INCIDENT: "incident_clear",
-    SendVerifyItem.SAFETY_MONITORING: "monitoring_clear",
 }
 
 
@@ -154,7 +151,7 @@ def resolve_broker_applicability(
 
 
 # ===========================================================================
-# §4.2 — the deferred live safety-governance mesh (items 4, 5, 7, 8, 9, 10)
+# §4.2 — the deferred live safety-governance mesh (items 4, 5 — 7/8/9/10 went with S2-a)
 # ===========================================================================
 
 
@@ -181,15 +178,15 @@ def deferred_item_verdict(
       (RFC-002 §10.8:741 → :761).
 
     Args:
-        item: One of the six :data:`~tos.egressgw.vocabulary.DEFERRED_ITEMS` members.
+        item: One of the :data:`~tos.egressgw.vocabulary.DEFERRED_ITEMS` members.
         applicability: The §4.2 gate's verdict for this send.
-        context: The send-boundary context carrying the six injected mesh flags.
+        context: The send-boundary context carrying the injected mesh flags.
 
     Returns:
         The :class:`~tos.egressgw.records.VerifyItemVerdict`.
 
     Raises:
-        ArtifactIntegrityError: ``item`` is not one of the six closed
+        ArtifactIntegrityError: ``item`` is not one of the closed
             :data:`_DEFERRED_ITEM_FIELDS` members — a structural error, never a silent
             ``UNKNOWN`` (mutation M6).
     """
@@ -209,11 +206,10 @@ def deferred_item_verdict(
         )
     if item not in _DEFERRED_ITEM_FIELDS:
         raise ArtifactIntegrityError(
-            f"{item!r} is not one of the six deferred safety-governance mesh items "
+            f"{item!r} is not one of the deferred safety-governance mesh items "
             f"{sorted(f.value for f in _DEFERRED_ITEM_FIELDS)} — deferred_item_verdict judges "
-            "only the closed CURRENT_SAFETY_AUTHORITY_EPOCH / VALID_LIVE_SCOPE / "
-            "HARD_SAFETY_ENVELOPE_VERSIONS / SAFETY_DEVIATION / SAFETY_INCIDENT / "
-            "SAFETY_MONITORING set (design #34 §4.2; kernel round #2 §2 decision 2) — an item "
+            "only the closed CURRENT_SAFETY_AUTHORITY_EPOCH / VALID_LIVE_SCOPE set "
+            "(design #34 §4.2; kernel round #2 §2 decision 2) — an item "
             "outside it is a structural error, never a silent UNKNOWN"
         )
     flag = getattr(context, _DEFERRED_ITEM_FIELDS[item])

@@ -11,8 +11,6 @@ had a real runtime producer. This module is that producer:
 * :class:`RestrictiveLatchOwner` composes THREE facts this runtime already
   tracks — the durable new-risk-halt latch
   (:meth:`~tos_runtime.engine.inbox.SqliteEventInbox.new_risk_halt`), whether the
-  incident-mesh owner (W3-a2, :mod:`tos_runtime.safety.incident`) currently reports
-  clear, and whether the safety-profile owner (W3-a1, :mod:`tos_runtime.safety.profile`)
   currently reports clear — into the one kernel :class:`~tos.egress.RestrictiveLatchState`
   :func:`~tos.egress.predicates.monotonic_denial_no_revival` consumes. It authors no
   judgement of its own: any of the three being non-positive is
@@ -43,7 +41,7 @@ only — no ``shared.*``, no verdict authorship (Phase 5 plan §2 decision 1 (b)
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -80,11 +78,11 @@ class NewRiskHaltReader(Protocol):
 class RestrictiveLatchOwner:
     """The item-16 ``restrictive_latch_state`` runtime owner (plan §2 decision 6).
 
-    ``CLEAR`` only when ALL THREE hold: (1) the durable new-risk-halt latch
-    (:mod:`tos_runtime.engine.inbox`) is absent, (2) the incident-mesh owner's
-    ``clear()`` reports positively (``is True``), and (3) the safety-profile owner's
-    ``clear()`` reports positively (``is True``). Any latched / ``False`` / ``None``
-    input collapses to :attr:`~tos.egress.RestrictiveLatchState.DENY_LATCHED` — the
+    ``CLEAR`` only when the durable new-risk-halt latch
+    (:mod:`tos_runtime.engine.inbox`) is absent. (The incident-mesh and safety-profile
+    clearances this also used to AND went with plan S2-a, along with the services that
+    produced them.) A latched new-risk halt collapses to
+    :attr:`~tos.egress.RestrictiveLatchState.DENY_LATCHED` — the
     kernel vocabulary (:mod:`tos.egress.vocabulary`) has exactly two members
     (``CLEAR`` / ``DENY_LATCHED``, no ``UNKNOWN``), and the kernel's own
     :func:`~tos.egress.predicates.monotonic_denial_no_revival` already treats a
@@ -93,57 +91,33 @@ class RestrictiveLatchOwner:
     different answers this owner would have to invent a third member to tell
     apart.
 
-    Verdict authorship is forbidden here (plan §2 decision 1 (b)): this class
-    combines three already-decided facts; it decides nothing of its own about
-    whether an incident or profile deviation exists.
+    Verdict authorship is forbidden here (plan §2 decision 1 (b)): this class reports an
+    already-decided fact; it decides nothing of its own.
     """
 
-    def __init__(
-        self,
-        inbox_reader: NewRiskHaltReader,
-        incident_clear: Callable[[], bool | None],
-        profile_clear: Callable[[], bool | None],
-    ) -> None:
+    def __init__(self, inbox_reader: NewRiskHaltReader) -> None:
         """Args:
         inbox_reader: The new-risk-halt latch reader (module docstring).
-        incident_clear: The incident-mesh owner's ``clear()`` boolean — typically
-            ``lambda: incident_service.clear().clear`` (W3-a2,
-            :mod:`tos_runtime.safety.incident`).
-        profile_clear: The safety-profile owner's ``clear()`` boolean — typically
-            ``lambda: profile_service.clear().clear`` (W3-a1,
-            :mod:`tos_runtime.safety.profile`).
         """
         self._inbox = inbox_reader
-        self._incident_clear = incident_clear
-        self._profile_clear = profile_clear
 
     def state(self) -> RestrictiveLatchState:
         """The combined restrictive-latch state, evaluated fresh on every call.
 
         Returns:
             :attr:`~tos.egress.RestrictiveLatchState.CLEAR` only when the new-risk
-            latch is absent AND both injected ``clear`` callables report ``True``;
-            :attr:`~tos.egress.RestrictiveLatchState.DENY_LATCHED` otherwise
-            (latched, ``False``, or ``None`` — fail-closed).
+            latch is absent; :attr:`~tos.egress.RestrictiveLatchState.DENY_LATCHED`
+            otherwise (fail-closed).
         """
         if self._inbox.new_risk_halt() is not None:
-            return RestrictiveLatchState.DENY_LATCHED
-        if self._incident_clear() is not True:
-            return RestrictiveLatchState.DENY_LATCHED
-        if self._profile_clear() is not True:
             return RestrictiveLatchState.DENY_LATCHED
         return RestrictiveLatchState.CLEAR
 
     def describe(self) -> Mapping[str, Any]:
-        """Evidence-facing description — no secrets, three booleans + the resolved state."""
-        latched = self._inbox.new_risk_halt() is not None
-        incident_clear = self._incident_clear()
-        profile_clear = self._profile_clear()
+        """Evidence-facing description — no secrets, one boolean + the resolved state."""
         return {
             "owner": "RestrictiveLatchOwner",
-            "new_risk_halt_latched": latched,
-            "incident_clear": incident_clear,
-            "profile_clear": profile_clear,
+            "new_risk_halt_latched": self._inbox.new_risk_halt() is not None,
             "state": self.state().value,
         }
 

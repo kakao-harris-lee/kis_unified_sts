@@ -11,7 +11,7 @@ canonical blocker list for why no such runtime is ever reachable from the CLI to
 production source). An operator running ``rearm`` from the CLI therefore has no live
 runtime to hand a clear request to at all — "wire it through a live compose call" is not
 a path that exists. :func:`rearm_and_clear` is that second door: it goes through the
-IDENTICAL HAG two-person quorum evaluation
+IDENTICAL operator approval evaluation
 (:func:`~tos_runtime.safety.rearm.prepare_new_risk_halt_clear`) the live-runtime door
 uses, and clears the storage-layer latch itself ONLY on an ``APPROVED`` outcome — never
 bypassing the quorum gate the machine pin
@@ -40,7 +40,7 @@ regardless of which door cleared a given halt.
 
 **Machine pin.** ``tests/engine/test_no_direct_latch_clear.py`` allows exactly TWO files
 to call ``SqliteEventInbox.clear_new_risk_halt(`` directly: ``compose/_types.py`` (the
-live-runtime door) and THIS file (the CLI-only door) — both go through the SAME HAG
+live-runtime door) and THIS file (the CLI-only door) — both go through the SAME operator-approval
 quorum gate via :func:`~tos_runtime.safety.rearm.prepare_new_risk_halt_clear`; neither
 bypasses it. A separate AST-level pin in ``tests/compose/test_cli.py`` proves this
 module contains exactly one such call site, reachable only past a guard clause that
@@ -50,7 +50,7 @@ already returned on any non-``APPROVED`` :func:`~tos_runtime.safety.rearm
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``hashlib``) +
 ``tos.canonical`` + ``tos_runtime.engine.inbox`` + ``tos_runtime.evidence.store`` +
 ``tos_runtime.marketfeed.policy`` + ``tos_runtime.riskstate.policies`` +
-``tos_runtime.safety.rearm`` + ``tos_runtime.time.service`` only.
+``tos_runtime.safety.rearm`` only.
 ``tos_runtime.riskstate.policies``/``tos_runtime.marketfeed.policy`` were added for
 :func:`risk_state_policy_digest_lines`/:func:`marketfeed_policy_digest_lines` (risk state
 service wave lane b; tick-source wave lane D) — the SAME "``cli.py``'s size budget pushed a
@@ -78,7 +78,6 @@ from tos_runtime.riskstate.policies import (
     load_aggregate_risk_policy,
 )
 from tos_runtime.safety.rearm import prepare_new_risk_halt_clear
-from tos_runtime.time.service import TrustworthyTimeService
 
 __all__ = [
     "RearmCliOutcome",
@@ -164,7 +163,7 @@ class RearmCliOutcome:
         outcome: The underlying :class:`~tos_runtime.engine.inbox.NewRiskHaltClearOutcome`
             once the storage clear was attempted (``CLEARED`` or ``STORAGE_REFUSED``), or
             ``None`` when refused before ever reaching that call (``NO_LATCH`` /
-            ``SEQ_MISMATCH`` / ``QUORUM_REFUSED`` — the HAG quorum pre-checks/evaluation
+            ``SEQ_MISMATCH`` / ``QUORUM_REFUSED`` — the approval pre-checks/evaluation
             own these three; see :func:`~tos_runtime.safety.rearm
             .prepare_new_risk_halt_clear`'s own ``NewRiskHaltDoorDecision.refusal``).
         reason: A short, non-secret, human-readable disclosure of what happened — never
@@ -181,13 +180,12 @@ def rearm_and_clear(
     *,
     inbox: SqliteEventInbox,
     evidence_store: SqliteEvidenceStore,
-    time_service: TrustworthyTimeService,
     approvals_dir: Path,
     environment_label: str,
     expected_owner_uid: int,
     latched_evidence_seq: int,
 ) -> RearmCliOutcome:
-    """Evaluate the HAG two-person re-arm quorum for ``latched_evidence_seq`` and, only on
+    """Evaluate the operator re-arm approval for ``latched_evidence_seq`` and, only on
     an ``APPROVED`` outcome, clear the storage-layer latch (module docstring).
 
     Args:
@@ -195,19 +193,16 @@ def rearm_and_clear(
             other caller (besides ``compose/_types.py``) permitted to call its
             :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`
             directly (machine pin).
-        evidence_store: Where the HAG workflow's own ``REARM_APPROVED``/``REARM_REFUSED``
+        evidence_store: Where the approval workflow's own ``REARM_APPROVED``/``REARM_REFUSED``
             evidence lands (via :func:`~tos_runtime.safety.rearm
             .prepare_new_risk_halt_clear`), and where this function's own
             ``NEW_RISK_HALT_CLEARED_BY_OPERATOR``/``NEW_RISK_HALT_CLEAR_REFUSED`` rows
             land.
-        time_service: Carried through to :class:`~tos_runtime.safety.rearm.ReArmWorkflow`
-            for interface symmetry only — that class never actually consults it (its own
-            docstring: hag reads no clock).
-        approvals_dir: The directory ``rearm/<latched_evidence_seq>.yaml`` (decision) and
-            ``rearm/roster.yaml`` are resolved under.
+        approvals_dir: The directory ``rearm/<latched_evidence_seq>.yaml`` is resolved
+            under.
         environment_label: This runtime's own boot-argument environment label; the
-            approval/roster files' own labels must match byte-exact.
-        expected_owner_uid: The uid both the approval/roster files' owner and the calling
+            approval file's own label must match byte-exact.
+        expected_owner_uid: The uid both the approval file's owner and the calling
             process itself are expected to be (file-custody's 0600 rule).
         latched_evidence_seq: The ``evidence_seq`` of the currently-latched violation the
             operator reviewed. Must equal the CURRENTLY-latched row's own seq — a stale
@@ -223,7 +218,6 @@ def rearm_and_clear(
         approvals_dir=approvals_dir,
         evidence_store=evidence_store,
         inbox=inbox,
-        time_service=time_service,
         environment_label=environment_label,
         expected_owner_uid=expected_owner_uid,
         refused_kind=_NEW_RISK_HALT_CLEAR_REFUSED_KIND,
@@ -234,7 +228,7 @@ def rearm_and_clear(
         )
 
     # decision.refusal is None only past the NO_LATCH/SEQ_MISMATCH pre-checks AND a
-    # satisfied HAG quorum (prepare_new_risk_halt_clear's own contract) — current and
+    # satisfied operator approval (prepare_new_risk_halt_clear's own contract) — current and
     # attestation_text are therefore both guaranteed non-None here.
     assert current is not None
     attestation_text = decision.attestation_text

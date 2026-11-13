@@ -15,7 +15,7 @@ considered and rejected: the actual-outbound comparison is tightly coupled to th
   Authorized Construction Envelope*, and repair-free. ioc ``compile_command`` then seals the
   result by declare-and-verify.
 * :mod:`tos.egressgw.gateway` — the **Broker Egress Gateway** (steps 15-19): the RFC-002
-  §10.8:741-759 17-item verify list, the broker-applicability positive gate, the single-use
+  §10.8:741-759 verify list, the broker-applicability positive gate, the single-use
   claim and ``SEND_STARTED`` ordering, delegation to an injected transport, and the result
   evidence.
 
@@ -31,8 +31,11 @@ honesty of everything here:
    ``capability_admissible`` is structurally ``PROHIBITED`` for every action class: this gateway
    **admits no live send**, by construction rather than by policy.
 
-Of the seventeen verify items, six are verified by shipped predicates over structure and
-coordinates (1, 2, 11, 13, 16, 17), five are non-authoritative provisional stand-ins (3, 6, 12,
+Of the RFC's seventeen verify items this gateway carries thirteen — items 7/8/9/10 went with
+plan S2-a (see :class:`~tos.egressgw.vocabulary.SendVerifyItem`); the numbers in this
+paragraph are the RFC's own, not :func:`~tos.egressgw.vocabulary.verify_item_number`'s, which
+renumbers from the shipped tuple. Of those thirteen, six are verified by shipped predicates over
+structure and coordinates (1, 2, 11, 13, 16, 17), five are non-authoritative provisional stand-ins (3, 6, 12,
 14, 15) at the kernel's own disposition-table level (design #34 §4.1; :data:`PROVISIONAL_ITEMS`)
 — the static disposition-table split is unchanged by what a later runtime derives structurally —
 though the reference runtime composition (``tos_runtime.compose``) now structurally derives all
@@ -42,7 +45,7 @@ is now owned by ``tos_runtime.calendar.owner.SessionFactsOwner`` — Phase 5 W5;
 ``restrictive_latch_state`` and ``worst_credible_capacity`` are now owned by
 ``tos_runtime.safety.latch`` — Phase 5 W3; kernel round #3 §2 decision 6 recount, superseding
 round #2 §2 decision 4's "three fields" count) —
-and six — the live safety-governance mesh (4, 5, 7, 8, 9, 10) — are deferred and gated on
+and two — what is left of the live safety-governance mesh (4, 5) — are deferred and gated on
 broker-applicability. Tag for any claim: "send-boundary structural / coordinate wiring only;
 no currentness, QCC, single-use, credential-isolation, or capacity acceptance; **no ADR
 acceptance, restricted-live, or production is authorized**."

@@ -17,10 +17,8 @@ Two layers, deliberately NOT sharing fixtures across suites (mirrors
   which this suite's own attempt-identity needs are too shallow to justify building.
 * **Wiring layer** — :func:`build_risk_state_service`'s five cross-checks, against a MINIMAL
   config directory this file owns alone (NOT ``tests/compose/conftest.py``'s shared
-  ``config_dir`` — that fixture's own ``safety_envelope.yaml``/``safety_activation.yaml``
-  serve ~400 other compose e2e tests whose HSE governed-dimension set and activation member
-  count must stay exactly as they are; extending it here would risk a regression this suite
-  has no way to detect until CI runs the whole compose suite).
+  ``config_dir``, which serves ~400 other compose e2e tests; extending it here would risk
+  a regression this suite has no way to detect until CI runs the whole compose suite).
 * One ``compose_paper_runtime``-level boot-refusal test (``RiskStateConfigError``) using the
   shared ``config_dir`` fixture UNMODIFIED (it never carries the two risk-state policy files,
   so it is the correct fixture for "files absent" cases).
@@ -82,7 +80,6 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-import yaml
 from tos.afg import ActionClassKind
 from tos.are import AdverseScenarioKind, AdverseScenarioSet
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
@@ -97,7 +94,6 @@ from tos.engine.records import (
 from tos.engine.vocabulary import CommitmentStep, EgressResultKind, EventKind
 from tos.ioc import AxisBinding, ConformanceAxis
 from tos.ordering import OrderingEvent
-from tos.spg import GovernedDimensionLimit, HardSafetyEnvelope
 from tos.venue import ActionClass
 from tos_runtime.calendar.ports import FixedWallClockReference
 from tos_runtime.compose._riskstate_wiring import (
@@ -126,12 +122,12 @@ from tos_runtime.riskstate.held_position import (
     RclTip,
 )
 from tos_runtime.riskstate.policies import (
+    VenuePolicyConfigError,
     load_action_flow_policy,
     load_aggregate_risk_policy,
 )
 from tos_runtime.riskstate.position import EvidencePositionReader, PositionObservation
 from tos_runtime.riskstate.service import RiskStateService
-from tos_runtime.venue import PolicyNotActivated
 
 from ..riskstate._documents import (
     action_flow_policy_yaml,
@@ -288,18 +284,6 @@ def _stage_request(
     )
 
 
-def _hse(*, envelope_max: str = "1") -> HardSafetyEnvelope:
-    return HardSafetyEnvelope(
-        governed_dimensions=(
-            GovernedDimensionLimit(
-                dimension=_ARE_DIM_ID,
-                envelope_max=Decimal(envelope_max),
-                unit="CONTRACTS",
-            ),
-        )
-    )
-
-
 def _scenario_set() -> AdverseScenarioSet:
     scenario_set = AdverseScenarioSet.issue(
         scheme=_SCHEME,
@@ -325,7 +309,7 @@ def _service(
     action_class: ActionClass = ActionClass.NEW_LONG,
     action_class_reader: Callable[[], ActionClass] | None = None,
     rcl_tip_reader: Callable[[], int | None] | None = None,
-    hse_envelope_max: str = "1",
+    envelope_max_value: str = "1",
     effective_limit_value: str = "1",
     current_seq_reader: Callable[[], int | None] | None = None,
     monotonic_reader: Callable[[], int | None] | None = None,
@@ -345,6 +329,7 @@ def _service(
             instrument_scope=f'["{_INSTRUMENT}"]',
             account_scope=f'["{_ACCOUNT}"]',
             effective_limit_value=effective_limit_value,
+            envelope_max_value=envelope_max_value,
         ),
         encoding="utf-8",
     )
@@ -367,7 +352,6 @@ def _service(
         are_policy=are_policy,
         afg_policy=afg_policy,
         scheme=_SCHEME,
-        hse_envelope=_hse(envelope_max=hse_envelope_max),
         scenario_set=_scenario_set(),
         required_scenario_kinds=are_policy.required_scenario_kinds,
         position_reader=position_reader,
@@ -680,23 +664,23 @@ class TestAggregateInputsFor:
         ``envelope_max`` and the policy's ``effective_limit`` to the SAME value, so a mutation
         that swaps ``injected_envelope_max`` (``service.py``, plan §2.1's own "ARE
         ``injected_envelope_max`` comes from the already-loaded HSE") for
-        ``self._are_policy.effective_limits`` (bypassing the HSE entirely) stays green. This
-        test separates the two sources: HSE ``envelope_max=5``, policy
+        ``self._are_policy.effective_limits`` (bypassing the ceiling entirely) stays green.
+        This test separates the two sources: ``_runtime.envelope_max=5``, policy
         ``effective_limit_value=100`` — a policy document that (incorrectly) tries to claim a
-        limit twenty times its own governing envelope.
+        limit twenty times its own declared ceiling.
         """
         service = _service(
             tmp_path,
             evidence_store,
             inbox,
             rcl_log,
-            hse_envelope_max="5",
+            envelope_max_value="5",
             effective_limit_value="100",
         )
         request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
         inputs = service.aggregate_inputs_for(request)
         assert inputs is not None
-        # The HSE bound, not the policy's own (inflated) claim:
+        # The declared ceiling, not the policy's own (inflated) effective-limit claim:
         assert inputs.injected_envelope_max is not None
         assert inputs.injected_envelope_max.magnitude(_ARE_DIM_ID) == Decimal("5")
         # The policy's own claim is carried too (untouched, for the predicate to compare
@@ -1090,8 +1074,7 @@ def _write_riskstate_wiring_config(
     action_class_map: str | None = None,
     buy_side_token: str = "BUY",
     sell_side_token: str = "SELL",
-    activate_are: bool = True,
-    activate_afg: bool = True,
+    omit_envelope_max: bool = False,
 ) -> Path:
     """A minimal, self-contained config directory for
     :func:`~tos_runtime.compose._riskstate_wiring.build_risk_state_service`'s own cross-check
@@ -1101,7 +1084,9 @@ def _write_riskstate_wiring_config(
     directory.mkdir()
     (directory / "aggregate_risk_policy.yaml").write_text(
         aggregate_risk_policy_yaml(
-            instrument_scope=f'["{instrument}"]', account_scope=f'["{account}"]'
+            instrument_scope=f'["{instrument}"]',
+            account_scope=f'["{account}"]',
+            omit_envelope_max=omit_envelope_max,
         ),
         encoding="utf-8",
     )
@@ -1114,38 +1099,6 @@ def _write_riskstate_wiring_config(
         ),
         encoding="utf-8",
     )
-    are_loaded = load_aggregate_risk_policy(
-        directory / "aggregate_risk_policy.yaml", scheme=_SCHEME
-    )
-    afg_loaded = load_action_flow_policy(
-        directory / "action_flow_policy.yaml", scheme=_SCHEME
-    )
-    members = []
-    if activate_are:
-        members.append(
-            {
-                "kind": "AGGREGATE_RISK_POLICY",
-                "member_id": are_loaded.policy.policy_id,
-                "generation": are_loaded.policy.policy_generation,
-                "digest": are_loaded.policy.canonical_digest,
-                "resolved": True,
-                "immutable": True,
-            }
-        )
-    if activate_afg:
-        members.append(
-            {
-                "kind": "ACTION_FLOW_POLICY",
-                "member_id": afg_loaded.policy.policy_id,
-                "generation": afg_loaded.policy.policy_generation,
-                "digest": afg_loaded.policy.canonical_digest,
-                "resolved": True,
-                "immutable": True,
-            }
-        )
-    (directory / "safety_activation.yaml").write_text(
-        yaml.safe_dump({"members": members}, sort_keys=False), encoding="utf-8"
-    )
     return directory
 
 
@@ -1156,19 +1109,11 @@ def _build_service_from_wiring_config(
     inbox: SqliteEventInbox,
     rcl_log: SqliteCommitLog,
     *,
-    hse_dimension: str = _ARE_DIM_ID,
     venue_allowed_sides: frozenset[str] = frozenset({"BUY", "SELL"}),
     scenario_set: AdverseScenarioSet | None = None,
 ) -> RiskStateService:
     del tmp_path
     construction = fx.construction_config()
-    hse = HardSafetyEnvelope(
-        governed_dimensions=(
-            GovernedDimensionLimit(
-                dimension=hse_dimension, envelope_max=Decimal("1"), unit="CONTRACTS"
-            ),
-        )
-    )
     return build_risk_state_service(
         config_dir=directory,
         scheme=_SCHEME,
@@ -1177,7 +1122,6 @@ def _build_service_from_wiring_config(
         evidence_store=evidence_store,
         inbox=inbox,
         rcl_log=rcl_log,
-        hse_envelope=hse,
         scenario_set=scenario_set if scenario_set is not None else _scenario_set(),
         required_scenario_kinds=frozenset(
             {AdverseScenarioKind.ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ}
@@ -1220,35 +1164,19 @@ class TestBuildRiskStateServiceCrossChecks:
                 directory, tmp_path, evidence_store, inbox, rcl_log
             )
 
-    def test_hse_dimension_missing_refuses(
+    def test_a_governed_dimension_with_no_declared_ceiling_refuses(
         self,
         tmp_path: Path,
         evidence_store: SqliteEvidenceStore,
         inbox: SqliteEventInbox,
         rcl_log: SqliteCommitLog,
     ) -> None:
-        """Plan §5 실증 (5): a policy dimension the HSE does not declare refuses at boot."""
-        directory = _write_riskstate_wiring_config(tmp_path)
-        with pytest.raises(RiskPolicyScopeMismatch, match="governed_dimensions"):
-            _build_service_from_wiring_config(
-                directory,
-                tmp_path,
-                evidence_store,
-                inbox,
-                rcl_log,
-                hse_dimension="INSTRUMENT::SOME_OTHER_DIMENSION",
-            )
-
-    def test_members_activation_missing_refuses(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
-        """Plan §5 실증 (6): a ``members:`` mismatch (here: absent entirely) refuses at boot."""
-        directory = _write_riskstate_wiring_config(tmp_path, activate_are=False)
-        with pytest.raises(PolicyNotActivated):
+        """Plan S2-a: the "every ARE-governed dimension has a real envelope ceiling"
+        refusal moved from this wiring (against the spg HSE) into the policy loader
+        (against the policy's own ``_runtime.envelope_max``). An ARE document whose
+        ceiling map is missing its one dimension still refuses at boot."""
+        directory = _write_riskstate_wiring_config(tmp_path, omit_envelope_max=True)
+        with pytest.raises(VenuePolicyConfigError, match="envelope_max"):
             _build_service_from_wiring_config(
                 directory, tmp_path, evidence_store, inbox, rcl_log
             )

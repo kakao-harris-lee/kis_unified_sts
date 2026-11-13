@@ -8,11 +8,9 @@ a whole required key being missing from the document: the loader refuses either 
 looks like the right reason, and the test stays green.
 
 Closes the class ``docs/plans/2026-09-18-tos-config-adoption-and-carryover-plan.md`` names A-0b:
-``safety_activation.example.yaml`` satisfied ONE of its two real readers
-(``tos_runtime.safety.profile``'s ``activation:``/``not_expired:`` schema) while silently missing
-the key a SECOND, independent reader added later (``tos_runtime.venue.activation
-.load_activation_members``'s ``members:`` key) — the exact same shape of bug W2 hit once already
-for ``marketfeed.example.yaml``'s missing ``intake_kind`` (commit ``47cf1671``), which is why this
+a shipped example satisfied ONE of its two real readers while silently missing the key a
+SECOND, independent reader added later — the same shape of bug W2 hit once already for
+``marketfeed.example.yaml``'s missing ``intake_kind`` (commit ``47cf1671``), which is why this
 module makes the check itself, not just one more instance fix.
 
 Three independent assertions close this, together:
@@ -24,15 +22,10 @@ Three independent assertions close this, together:
   document (a value-leak detector — see its own docstring), for readers whose loader has at least
   one per-field null/TBD check of its own to fail on.
 * :func:`assert_shipped_example_is_a_template` — every leaf of the document is ``null``/``[]``
-  (a DIFFERENT value-leak detector, for a reader — ``tos_runtime.safety.profile._load_documents``'s
-  ``HardSafetyEnvelope``/``RuntimeSafetyProfile`` halves — whose kernel record has every field
-  optional, so nothing in that loader ever raises on a filled-in leaf; see that function's own
-  docstring for why "does it still refuse" cannot substitute here. A PR #737 review caught this
-  exact gap: the module comment above ``EXAMPLE_LOADERS`` in ``example_integrity_registry.py``
-  once claimed ``safety_envelope``/``safety_profile`` "get their own targeted test", but the only
-  test touching them (``test_safety_activation_still_refuses_on_both_independent_readers``) only
-  ever raises via ``activation``'s ``not_expired`` — replacing either file's content wholesale
-  with concrete-looking values left the whole suite green.
+  (a DIFFERENT value-leak detector, for a reader whose kernel record has every field optional,
+  so nothing in that loader ever raises on a filled-in leaf; see that function's own docstring
+  for why "does it still refuse" cannot substitute here). No shipped example needs it since
+  plan S2-a removed the two all-optional spg documents that did.
 * :func:`assert_touchpoints_match` — a live grep of ``tos_runtime`` for the config's own deployed
   filename literal (``f'"{stem}.yaml"'``) must match a RECORDED set of touch-point files exactly.
   A new file referencing that literal (a new wiring call site, or a genuinely new independent
@@ -49,15 +42,14 @@ PR #737 review round 2 found TWO further gaps, both closed here rather than by i
   its REAL check) and adding its name to the bogus set instead: the whole suite stayed green.
   Fixed by making those two categories real dicts of callables
   (``example_integrity_registry.LOADS_SUCCESSFULLY_LOADERS``/``MULTI_READER_CHECKS``) that a
-  parametrized test actually iterates and calls — :func:`assert_safety_activation_refuses_on_both
-  _readers` and :func:`assert_risk_refuses_on_both_readers` are the two standalone checks
-  ``MULTI_READER_CHECKS`` registers; ``LOADS_SUCCESSFULLY_LOADERS`` reuses the existing
+  parametrized test actually iterates and calls — :func:`assert_risk_refuses_on_both_readers`
+  is the standalone check ``MULTI_READER_CHECKS`` registers; ``LOADS_SUCCESSFULLY_LOADERS``
+  reuses the existing
   ``LoaderSpec`` shape. The ledger sets are now DERIVED (``frozenset(THE_DICT)``), so naming a
   stem "covered" and making it actually get called are the same act.
 * :func:`is_template_document`'s leaf-flattener silently dropped an EMPTY MAPPING (``{}``) —
-  reproduced by collapsing ``safety_envelope.example.yaml``'s ``envelope_version:`` block (7
-  required ``null`` subfields) to ``envelope_version: {}``: neither this function nor
-  ``assert_required_paths_present`` (registered only one level deep for this config) caught it.
+  reproduced by collapsing a nested required block to ``{}``: neither this function nor
+  ``assert_required_paths_present`` (registered only one level deep) caught it.
   Fixed generically in :func:`_leaf_values` (an empty mapping is now itself a leaf, exactly like
   an empty list already was) rather than by registering those 7 subfields as explicit required
   paths — the latter would have closed only this one instance, not the class (a different block
@@ -254,69 +246,21 @@ def assert_shipped_example_is_a_template(stem: str) -> None:
     document = load_example_document(stem)
     assert is_template_document(document), (
         f"{stem}.example.yaml has at least one non-null, non-empty leaf — its loader "
-        "(tos_runtime.safety.profile._load_documents) validates this half via a kernel record "
-        "whose fields are ALL optional (module docstring), so it never raises on a filled-in "
-        "value here; a real, concrete value appears to have leaked into a file that is supposed "
-        "to ship as an all-null/empty template."
+        "validates it via a record whose fields are ALL optional (module docstring), so it "
+        "never raises on a filled-in value here; a real, concrete value appears to have "
+        "leaked into a file that is supposed to ship as an all-null/empty template."
     )
-
-
-def assert_safety_activation_refuses_on_both_readers() -> None:
-    """Call BOTH real readers of ``safety_activation.example.yaml`` and assert each still
-    refuses — the A-0b defect this whole module exists because of (module docstring): the file
-    has two independent schemas, and a value leaking into either one's leaves must be caught.
-
-    A standalone function (not a data-driven ``LoaderSpec``, unlike :func:`assert_shipped_example
-    _still_refuses`) because the second reader (``_load_documents``) takes three paths, not one —
-    but still a REAL, directly-callable check, not a bookkeeping label: registered in
-    ``example_integrity_registry.MULTI_READER_CHECKS`` by name, and that registry IS what a
-    parametrized test in ``test_shipped_example_integrity.py`` calls (PR #737 review round 2,
-    first HIGH finding: a hand-typed ``frozenset`` of stem names claiming coverage, with nothing
-    tying it to an actual test, let a real coverage gap through — ``backtest_calibration``
-    reproduced it: removed from ``EXAMPLE_LOADERS`` and its name added to the OLD bookkeeping set
-    instead, the whole suite stayed green). Making the "is this stem covered" set equal to
-    ``MULTI_READER_CHECKS.keys()`` — the SAME dict this function is registered in and the
-    parametrized test iterates — closes that gap structurally: there is no longer a way to claim
-    coverage without also registering something a test actually calls.
-    """
-    from tos_runtime.safety.profile import SafetyProfileConfigError, _load_documents
-    from tos_runtime.venue.activation import (
-        ActivationMembersConfigError,
-        load_activation_members,
-    )
-
-    example_path = CONFIG_DIR / "safety_activation.example.yaml"
-    try:
-        members_result = load_activation_members(example_path)
-    except ActivationMembersConfigError:
-        pass
-    else:
-        raise AssertionError(
-            f"{example_path.name} loaded successfully via load_activation_members instead of "
-            f"refusing (got {members_result!r}) — a real value appears to have leaked into the "
-            "members: schema."
-        )
-    try:
-        documents_result = _load_documents(
-            CONFIG_DIR / "safety_envelope.example.yaml",
-            CONFIG_DIR / "safety_profile.example.yaml",
-            example_path,
-        )
-    except SafetyProfileConfigError:
-        pass
-    else:
-        raise AssertionError(
-            f"{example_path.name} loaded successfully via _load_documents instead of refusing "
-            f"(got {documents_result!r}) — a real value appears to have leaked into the activation:/"
-            "not_expired: schema."
-        )
 
 
 def assert_risk_refuses_on_both_readers() -> None:
     """Call ALL THREE real reader functions of ``risk.example.yaml`` and assert each still
-    refuses — see :func:`assert_safety_activation_refuses_on_both_readers`'s own docstring for
-    why this is a standalone registered check rather than a ``LoaderSpec`` entry, and for the
-    PR #737 review round 2 finding this closes."""
+    refuses.
+
+    A standalone registered check rather than a ``LoaderSpec`` entry because the three readers
+    do not share one signature. It is registered in
+    ``example_integrity_registry.MULTI_READER_CHECKS`` by name, and that registry IS what a
+    parametrized test in ``test_shipped_example_integrity.py`` calls, so there is no way to
+    claim coverage without registering something a test actually calls."""
     from tos_runtime.compose._currentness_wiring import _load_action_flow_envelope
     from tos_runtime.risk.aggregate import (
         AggregateRiskConfigError,
@@ -348,9 +292,9 @@ def assert_touchpoints_match(stem: str, expected_files: frozenset[str]) -> None:
     required-paths registry only stays correct as long as nobody adds a NEW file that reads this
     same config for a NEW purpose. When one does, this test goes red — pointing at exactly which
     file is new/gone — until a human decides whether it is a real independent schema reader (in
-    which case ``EXAMPLE_REQUIRED_PATHS`` for this ``stem`` must grow to cover it too, mirroring
-    how ``safety_activation``'s entry covers BOTH ``tos_runtime.safety.profile`` and
-    ``tos_runtime.venue.activation``) or just another wiring call site that forwards to an
+    which case ``EXAMPLE_REQUIRED_PATHS`` for this ``stem`` must grow to cover it too, the way
+    ``risk``'s entry covers all three of its readers) or just another wiring call site that
+    forwards to an
     already-covered canonical loader (in which case the recorded set is simply updated).
     """
     found = touchpoint_files(stem)

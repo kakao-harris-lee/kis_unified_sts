@@ -1,5 +1,5 @@
-"""Tests for :mod:`tos_runtime.safety.shutdown` (Phase 5 W3.2 plan §2 decision 9,
-lane d3). Fixtures are local to this file, never shared via ``conftest.py`` or
+"""Tests for :mod:`tos_runtime.safety.shutdown` — latch first, then close, then
+record. Fixtures are local to this file, never shared via ``conftest.py`` or
 another test module: ``tos/runtime/tests/safety/`` is a shared worktree where
 several lanes land tests concurrently (this file is lane d3's own), so a
 fixture this file alone needs stays here rather than risking a merge
@@ -21,19 +21,17 @@ from tos.rcl import (
     ReservationScope,
     TransitionCause,
 )
-from tos.sir import (
-    SHUTDOWN_PROHIBITIONS,
-    AllFalseIncidentAuthority,
-    IncidentRecoveryHandoffPackage,
-    recovery_handoff_requires_accepted_barrier,
-)
 from tos.workload import RuntimeIdentity
 from tos_runtime.custody.file_custody import FileCustody
 from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
-from tos_runtime.safety.shutdown import ControlledShutdown, ShutdownOutcome
+from tos_runtime.safety.shutdown import (
+    STEP_LATCH_NEW_RISK_HALT,
+    ControlledShutdown,
+    ShutdownOutcome,
+)
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 _SCOPE = ReservationScope(account="acct-1", instrument="101S06")
@@ -182,13 +180,11 @@ def test_nominal_shutdown_proves_every_step(
     outcome = shutdown.run(reason="test-nominal-shutdown")
 
     assert isinstance(outcome, ShutdownOutcome)
-    assert len(outcome.procedure.ordered_steps) == 6
-    assert all(step.completed is True for step in outcome.procedure.ordered_steps)
-    assert all(outcome.step_completion_proven)
+    assert len(outcome.steps) == 5
+    assert all(step.completed is True for step in outcome.steps)
     assert outcome.all_steps_proven is True
-    assert outcome.not_broker_finality is True
-    assert outcome.procedure.deny_before_stop is True
-    assert frozenset(outcome.procedure.prohibited) >= SHUTDOWN_PROHIBITIONS
+    assert outcome.latched_before_close is True
+    assert outcome.steps[0].step_kind == STEP_LATCH_NEW_RISK_HALT
 
     # the new-risk-halt latch is durable — a FRESH inbox instance over the same file
     # sees it, independent of the (closed) instance under test.
@@ -209,23 +205,10 @@ def test_no_obligations_when_no_reservation_is_outstanding(
 ) -> None:
     outcome = shutdown.run(reason="test-no-obligations")
     assert outcome.obligations == ()
-    assert outcome.handoff_package.unresolved_obligations == ()
 
 
 # ---------------------------------------------------------------------------
 # obligations_survive_shutdown is disclosed as never-called (module docstring)
-# ---------------------------------------------------------------------------
-
-
-def test_obligations_survive_shutdown_is_never_called(
-    shutdown: ControlledShutdown,
-) -> None:
-    outcome = shutdown.run(reason="test-obligations-disclosure")
-    assert outcome.obligations_survive_shutdown_called is False
-
-
-# ---------------------------------------------------------------------------
-# unresolved RCL reservations transfer as OngoingSafetyObligation
 # ---------------------------------------------------------------------------
 
 
@@ -238,13 +221,7 @@ def test_unresolved_reservation_becomes_an_ongoing_obligation(
 
     outcome = shutdown.run(reason="test-unresolved-obligation")
 
-    assert len(outcome.obligations) == 1
-    obligation = outcome.obligations[0]
-    assert obligation.obligation_id == "res-1"
-    assert obligation.kind == CapacityState.ATTEMPT_BOUND.value
-    assert obligation.resolved is False
-    assert obligation.transferred_with_owner_and_evidence is True
-    assert outcome.handoff_package.unresolved_obligations == outcome.obligations
+    assert outcome.obligations == (("res-1", CapacityState.ATTEMPT_BOUND.value),)
 
 
 def test_released_reservation_is_not_an_obligation(
@@ -270,46 +247,15 @@ def test_released_reservation_is_not_an_obligation(
 # ---------------------------------------------------------------------------
 
 
-def test_handoff_is_honestly_not_accepted_at_shutdown_time(
+def test_the_handoff_id_comes_from_the_started_evidence_row(
     shutdown: ControlledShutdown,
 ) -> None:
+    """A real, unique coordinate — never a fabricated id. The next boot's recovery
+    barrier owns acceptance, so this shutdown records no acceptance of its own."""
     outcome = shutdown.run(reason="test-handoff-honesty")
 
-    assert outcome.handoff_package.recovery_barrier_closed is None
-    assert outcome.handoff_package.accepted_by_recovery_session is None
-    assert outcome.handoff_accepted is False
-
-
-def test_handoff_predicate_requires_both_barrier_and_session_true(
-    shutdown: ControlledShutdown,
-) -> None:
-    """M4 pin — the KERNEL predicate itself, called on a package our production code
-    never builds (both coordinates faked ``True``), is the ONLY way it admits. This
-    proves :meth:`ControlledShutdown._build_handoff_package`'s ``None``/``None`` default
-    is not vacuously always-``False`` for some unrelated reason (e.g. a missing field),
-    and that faking acceptance is a real, deliberate, never-taken path."""
-    outcome = shutdown.run(reason="test-handoff-predicate-shape")
-    honest_package = outcome.handoff_package
-
-    faked_package = IncidentRecoveryHandoffPackage(
-        handoff_id=honest_package.handoff_id,
-        handoff_generation=honest_package.handoff_generation,
-        incident_id=honest_package.incident_id,
-        active_set_generation=honest_package.active_set_generation,
-        unresolved_obligations=honest_package.unresolved_obligations,
-        recovery_barrier_closed=True,
-        accepted_by_recovery_session=True,
-        authority_effect=AllFalseIncidentAuthority(),
-    )
-
-    assert recovery_handoff_requires_accepted_barrier(honest_package) is False
-    assert recovery_handoff_requires_accepted_barrier(faked_package) is True
-
-
-# ---------------------------------------------------------------------------
-# fail-closed halt policy — a raising close leaves later 1-4 steps unattempted,
-# but step 5 (record) and step 6 (custody no-op) are ALWAYS attempted
-# ---------------------------------------------------------------------------
+    assert outcome.handoff_id is not None
+    assert outcome.handoff_id.startswith("controlled-shutdown-evidence-seq-")
 
 
 def test_inbox_close_raising_halts_later_steps_but_still_records(
@@ -321,14 +267,13 @@ def test_inbox_close_raising_halts_later_steps_but_still_records(
     inbox.close = _raise  # type: ignore[method-assign]
 
     outcome = shutdown.run(reason="test-inbox-close-raises")
-    steps = outcome.procedure.ordered_steps
+    steps = outcome.steps
 
-    assert steps[0].completed is True  # deny_before_stop — ran before the failure
+    assert steps[0].completed is True  # latch — ran before the failure
     assert steps[1].completed is True  # obligation transfer — ran before the failure
     assert steps[2].completed is False  # close inbox — raised
     assert steps[3].completed is None  # close rcl log — never attempted (halted)
     assert steps[4].completed is True  # record + close evidence — ALWAYS attempted
-    assert steps[5].completed is True  # custody no-op — ALWAYS attempted
     assert outcome.all_steps_proven is False
 
     # step 5 still recorded evidence despite the halt (module docstring "stop and record").
@@ -356,11 +301,9 @@ def test_pending_inbox_event_leaves_disposition_unestablished(
     assert inbox.unconsumed_count == 1
 
     outcome = shutdown.run(reason="test-pending-inbox-event")
-    steps = outcome.procedure.ordered_steps
+    steps = outcome.steps
 
-    assert (
-        steps[2].completed is False
-    )  # ESTABLISH_DISPOSITION... — one event still pending
+    assert steps[2].completed is False  # one event still pending
     assert steps[3].completed is None  # halted — rcl log close never attempted
 
 

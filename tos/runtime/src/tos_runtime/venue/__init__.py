@@ -9,8 +9,6 @@ split):
   YAML documents and issues ``VenueConstraintPolicy`` / ``OrderConstructionPolicy``
   through the kernel's own ``.issue()`` constructors. No admissibility
   judgement.
-* :mod:`tos_runtime.venue.activation` — an exact-match check against
-  ``safety_activation.yaml``'s own ``members:`` list (spg-owned activation
   authority — ADR-002-014 §3.5/§13, ADR-002-019 §5.1 line 111).
 * :mod:`tos_runtime.venue.service` — issues ``VenueConstraintSnapshot`` (once
   per tick generation) and ``OrderAdmissibilityDecision`` (once per
@@ -42,12 +40,6 @@ reuses rather than re-implements.
 
 from __future__ import annotations
 
-from tos_runtime.venue.activation import (
-    ActivationMembersConfigError,
-    PolicyNotActivated,
-    load_activation_members,
-    require_member_activated,
-)
 from tos_runtime.venue.band_journal import (
     BAND_JOURNAL_LINE_KEYS,
     BAND_JOURNAL_LINE_KIND,
@@ -109,11 +101,6 @@ __all__ = [
     "load_venue_constraint_policy",
     "LoadedOrderConstructionPolicy",
     "load_order_construction_policy",
-    # activation
-    "ActivationMembersConfigError",
-    "PolicyNotActivated",
-    "load_activation_members",
-    "require_member_activated",
     # service
     "VENUE_POLICY_BOUND_KIND",
     "ORDER_CONSTRUCTION_POLICY_BOUND_KIND",

@@ -2,10 +2,9 @@
 §0.1.4 / §4 W-A row A-0b): a shipped ``tos/runtime/config/*.example.yaml`` file that satisfies
 only SOME of the readers that parse it.
 
-``safety_activation.example.yaml`` filled in exactly the ``activation:``/``not_expired:`` schema
-:mod:`tos_runtime.safety.profile` reads, and silently had NO ``members:`` key at all — the SEPARATE
-top-level key :func:`tos_runtime.venue.activation.load_activation_members` reads from the SAME
-document. A copy of the shipped example refused to boot, but every existing test that touched this
+One shipped example filled in exactly the schema its first reader parsed and silently had no
+key at all for a SEPARATE top-level key a second, independent reader read from the SAME
+document. A copy of that example refused to boot, but every existing test that touched the
 file only ever checked "does loading it refuse" (true either way — a missing key and a present-
 but-null key produce the identical named-TBD refusal in every loader this codebase has, by
 convention: ``raw.get(key) is None`` cannot tell them apart), so nothing caught it. This module is
@@ -88,11 +87,11 @@ def test_every_registered_example_has_value_leak_coverage() -> None:
     """Every ``EXAMPLE_REQUIRED_PATHS`` entry has EXACTLY ONE value-leak check assigned to it —
     ``EXAMPLE_LOADERS`` ("still refuses"), ``EXAMPLE_TEMPLATE_ONLY`` ("every leaf is null/[]"), or
     one of the two dedicated-check dicts below (custody.manifest/evidence_retention's "loads
-    successfully", safety_activation/risk's own multi-reader checks).
+    successfully", risk's own multi-reader check).
 
     This is the completeness guard PR #737's review round 1 found missing: ``EXAMPLE_LOADERS``'s
-    own module comment *claimed* ``safety_envelope``/``safety_profile`` "get their own targeted
-    test", but nothing actually asserted that claim — a filled-in real value passed the whole
+    own module comment *claimed* two configs "get their own targeted test", but nothing
+    actually asserted that claim — a filled-in real value passed the whole
     suite silently. Round 1's fix (this test) caught a second real gap the moment it first ran
     (``evidence_retention``, registered nowhere). Round 2's review then found THIS test's own two
     "dedicated" categories were still hand-typed ``frozenset``s naming stems with nothing tying
@@ -155,9 +154,9 @@ def test_required_key_paths_present(stem: str) -> None:
     """The shipped example for ``stem`` carries every key path its real reader(s) require as an
     explicit key (``null`` is fine) — see ``example_integrity.assert_required_paths_present``.
 
-    Mutation check (run by hand, not in CI — see A-0b completion report): deleting
-    ``members:`` from ``safety_activation.example.yaml`` turns this red for
-    ``stem="safety_activation"``; restoring it turns this green again.
+    Mutation check (run by hand, not in CI — see A-0b completion report): deleting a required
+    key from any shipped example turns this red for that stem; restoring it turns this green
+    again.
     """
     assert_required_paths_present(stem, EXAMPLE_REQUIRED_PATHS[stem])
 
@@ -186,14 +185,21 @@ def test_shipped_example_still_refuses_to_load(stem: str) -> None:
 def test_shipped_example_is_a_template(stem: str) -> None:
     """Every leaf of these shipped examples is ``null``/``[]`` — see
     ``example_integrity_registry.EXAMPLE_TEMPLATE_ONLY``'s own docstring for why "still refuses
-    to load" cannot substitute for this here (PR #737 review, HIGH finding).
-
-    Mutation check (run by hand — see the A-0b HIGH-remediation report): replacing
-    ``safety_envelope.example.yaml`` wholesale with concrete-looking values (a real
-    ``envelope_id``, a non-empty ``permitted_scope``, etc.) turned this red; restoring it turned
-    it green again, with the rest of the suite unaffected either way (confirming the earlier gap:
-    that mutation left every OTHER test in this module green)."""
+    to load" cannot substitute for this here (PR #737 review, HIGH finding)."""
     assert_shipped_example_is_a_template(stem)
+
+
+def test_the_template_only_lane_is_empty_and_says_so() -> None:
+    """``EXAMPLE_TEMPLATE_ONLY`` has no members since plan S2-a removed the two all-optional
+    spg documents that were its only ones, so the parametrized test above yields no cases.
+
+    Stated here positively rather than left as a bare SKIPPED line, which reads like coverage
+    that ran. The lane itself is kept, not deleted: the coverage ledger
+    (:func:`test_every_registered_example_has_value_leak_coverage`) unions this set, so the
+    moment a config whose loader cannot be relied on to refuse is registered, the lane above
+    starts checking it — and this test goes red to say the set is no longer empty.
+    """
+    assert not EXAMPLE_TEMPLATE_ONLY, sorted(EXAMPLE_TEMPLATE_ONLY)
 
 
 @pytest.mark.parametrize("stem", sorted(LOADS_SUCCESSFULLY_LOADERS))
@@ -209,8 +215,8 @@ def test_shipped_example_loads_successfully(stem: str) -> None:
 
 @pytest.mark.parametrize("stem", sorted(MULTI_READER_CHECKS))
 def test_multi_reader_example_still_refuses_on_both_readers(stem: str) -> None:
-    """``safety_activation``/``risk`` each have multiple independent real readers (this module's
-    own docstring) — every one must still refuse to load the shipped, all-``null`` template.
+    """``risk`` has multiple independent real readers (this module's own docstring) — every one
+    must still refuse to load the shipped, all-``null`` template.
     Parametrized over ``example_integrity_registry.MULTI_READER_CHECKS`` — the SAME dict the
     coverage ledger (``_MULTI_READER_DEDICATED_TESTS`` above) derives from, for the same reason as
     ``test_shipped_example_loads_successfully`` above."""

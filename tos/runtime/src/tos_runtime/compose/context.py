@@ -426,15 +426,11 @@ class ComposeContextResolver:
     #: Coordinator's ``RuntimeCoordinatorPreconditions.authority_epoch_current`` already
     #: reads (:mod:`tos_runtime.compose._preconditions`), never a second service.
     authority_epoch_service: SafetyAuthorityEpochService
-    #: Items 7/8/9/10's deferred egress-mesh fields (Phase 5 W3-b, plan §2 decision 8) —
-    #: :attr:`~tos_runtime.compose._safety_wiring._SafetyMesh.deferred_fields`, evaluated
-    #: fresh on every call (never cached), never a second judgement authored here.
-    safety_mesh_deferred_fields: Callable[[], dict[str, Any]]
     #: Item 16's restrictive-latch owner (W3-c) — the composed
-    #: :class:`~tos_runtime.compose._safety_wiring._SafetyMesh.latch`.
+    #: :class:`~tos_runtime.compose._monitor_wiring._MonitorOwners.latch`.
     latch: RestrictiveLatchOwner
     #: Item 16's worst-credible-capacity owner (W3-c) — built once ``instrument_key`` is
-    #: known (:func:`~tos_runtime.compose._safety_wiring.build_capacity_owner`), unlike
+    #: known (:func:`~tos_runtime.compose._monitor_wiring.build_capacity_owner`), unlike
     #: :attr:`latch` which needs the late-bound inbox cell instead.
     capacity: CapacityOwner
     contexts: tuple[SendBoundaryContext, ...] = field(default_factory=tuple)
@@ -547,7 +543,7 @@ class ComposeContextResolver:
         # PROVISIONAL STAND-INS (review finding #5, 2026-09-09) — this
         # compose root has no real quorum-runtime replication yet, so there
         # is no live source to read them from. They are replaced by a
-        # genuine issued QCC in Phase 5. None of the kernel's 17 items
+        # genuine issued QCC in Phase 5. None of the kernel's verify items
         # compares them: ``exact_binding_holds``
         # (``tos/src/tos/egress/predicates.py``) checks only the QCC's
         # *command* digest against the request record, never these fields —
@@ -764,9 +760,8 @@ class ComposeContextResolver:
         own ``_bound_epoch``) — never a second currentness/authorization comparison
         authored here.
 
-        Items 7/8/9/10 come from :attr:`safety_mesh_deferred_fields` — the four W3-a1/a2
-        safety-mesh services' own ``clear().clear`` (:mod:`tos_runtime.compose
-        ._safety_wiring`'s own ``build_safety_mesh``), evaluated fresh on every call.
+        Items 7/8/9/10 went with plan S2-a, along with the four safety-mesh services
+        whose ``clear().clear`` supplied them.
 
         Item 5 (``live_scope_valid``) is derived per attempt by
         :func:`~tos_runtime.brokercap.live_scope.live_scope_valid` (PR-3 option (a),
@@ -787,7 +782,6 @@ class ComposeContextResolver:
                 transport_endpoint=self.transport_endpoint,
                 environment_label=self.environment_label,
             ),
-            **self.safety_mesh_deferred_fields(),
         }
 
     def _capability_scope_fields(self) -> dict[str, Any]:

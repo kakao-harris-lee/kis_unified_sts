@@ -36,7 +36,7 @@ Three further kinds of pin live here:
    to ``null`` must refuse with that loader's own typed error, naming the leaf.
 3. **Still-undetermined leaves refuse, by name** — what survived the 2026-09-23 operator
    answers AND the W-A / A-5 round (``finality.yaml::source_revision``,
-   ``safety_activation.yaml::members``). Each one's refusal is pinned WITH THE KEY NAME, so
+   a still-unrendered coordinate slot). Each one's refusal is pinned WITH THE KEY NAME, so
    filling it later is a deliberate act. ``finality.yaml``'s ``value_date``/``proof_recipe_id``
    left this list on 2026-09-23 (operator decision 3 / operator choice (가), design
    ``docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md``) and are now
@@ -111,15 +111,8 @@ from tos_runtime.release.config import (
     ReleaseAdmissionConfigError,
     load_release_config,
 )
-from tos_runtime.safety.deviation import DeviationConfigError, DeviationService
-from tos_runtime.safety.incident import IncidentConfigError, IncidentService
 from tos_runtime.safety.monitoring import MonitoringConfigError, MonitoringService
-from tos_runtime.safety.profile import SafetyProfileConfigError, SafetyProfileService
 from tos_runtime.time.config import TimeConfigError, load_time_config
-from tos_runtime.venue.activation import (
-    ActivationMembersConfigError,
-    load_activation_members,
-)
 
 from ._loader_probe import format_table, refusing_labels, run_probes
 from .conftest import EXPECTED_CODE_DIGEST
@@ -162,11 +155,6 @@ _ADOPTED_BY_THIS_WAVE: tuple[str, ...] = (
     "engine_driver.yaml",
     "coordinator_preconditions.yaml",
     "finality.yaml",
-    "safety_envelope.yaml",
-    "safety_profile.yaml",
-    "safety_activation.yaml",
-    "safety_deviations.yaml",
-    "safety_incidents.yaml",
     "monitor_coverage.yaml",
 )
 
@@ -232,16 +220,13 @@ _VALUE_PINS: dict[str, Any] = {
         "CRITICAL_INPUT",
         "CURRENTNESS_POLICY",
         "DECISION_PROOF_INTENT",
-        "DEVIATION",
         "EGRESS_IDENTITY",
         "ENVIRONMENT_SCOPE",
-        "INCIDENT",
         "MONITORING",
         "POST_TRADE",
         "RECOVERY",
         "RELEASE",
         "SAFETY_AUTHORITY",
-        "SAFETY_ENVELOPE_PROFILE",
         "TRADING_APPROVAL",
         "TRUSTWORTHY_TIME",
     ],
@@ -298,127 +283,19 @@ _VALUE_PINS: dict[str, Any] = {
     # §29 Q3 remains an OPEN question naming no approved identifier; this opaque token asserts
     # the absence, it does not claim an approval.
     "finality.yaml::proof_recipe_id": "tos-paper-proof-recipe-bootproof-g1",
-    # --- safety_envelope.yaml --------------------------------------------
-    "safety_envelope.yaml::envelope.envelope_id": "tos-paper-envelope-g1",
-    "safety_envelope.yaml::envelope.envelope_generation": 1,
-    "safety_envelope.yaml::envelope.envelope_version.version": "1",
-    "safety_envelope.yaml::envelope.envelope_version.effective_date": "2026-09-23",
-    "safety_envelope.yaml::envelope.envelope_version.evidence_package_version": None,
-    "safety_envelope.yaml::envelope.envelope_version.approver_identity": "operator (System Owner) — 2026-09-18 승인 · 2026-09-23 채택",
-    "safety_envelope.yaml::envelope.envelope_version.expiration_or_revalidation_date": None,
-    "safety_envelope.yaml::envelope.envelope_version.superseded_version_link": None,
-    "safety_envelope.yaml::envelope.envelope_version.change_classification": None,
     # Operator approval 2026-09-23 (W-A / A-5): the Hard Safety Envelope governs the ONE
     # dimension the aggregate risk policy governs, at the bound that policy's own
     # compatibility_requirements (:74) had been asking for — ``envelope_max >= 1``, and 1 is
     # that policy's already-approved effective limit (:111). INCLUSIVE because an EXCLUSIVE
     # boundary rejects ``value == max``, i.e. would authorize nothing at 1 contract.
-    "safety_envelope.yaml::envelope.governed_dimensions": [
-        {
-            "dimension": "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL",
-            "envelope_max": "1",
-            "unit": "CONTRACTS",
-            "multiplier": "1",
-            "sign": "POSITIVE",
-            "precision": "0",
-            "rounding": "NEAREST",
-            "boundary": "INCLUSIVE",
-        }
-    ],
-    "safety_envelope.yaml::envelope.permitted_scope": [],
-    "safety_envelope.yaml::envelope.prohibited_fallbacks": [],
-    "safety_envelope.yaml::envelope.residual_risk_ceiling": None,
-    "safety_envelope.yaml::envelope.evidence_package_ref": None,
-    # --- safety_profile.yaml ---------------------------------------------
-    "safety_profile.yaml::profile.profile_id": "tos-paper-profile-g1",
-    "safety_profile.yaml::profile.profile_generation": 1,
-    "safety_profile.yaml::profile.profile_version.version": "1",
-    "safety_profile.yaml::profile.profile_version.effective_date": "2026-09-23",
-    "safety_profile.yaml::profile.profile_version.evidence_package_version": None,
-    "safety_profile.yaml::profile.profile_version.approver_identity": "operator (System Owner) — 2026-09-18 승인 · 2026-09-23 채택",
-    "safety_profile.yaml::profile.profile_version.expiration_or_revalidation_date": None,
-    "safety_profile.yaml::profile.profile_version.superseded_version_link": None,
-    "safety_profile.yaml::profile.profile_version.change_classification": None,
-    "safety_profile.yaml::profile.target_envelope_id": "tos-paper-envelope-g1",
-    "safety_profile.yaml::profile.target_envelope_generation": 1,
     # The profile MUST declare every envelope-declared dimension — ``profile_within_envelope``
     # (``spg/predicates.py:278-283``) refuses a profile that omits one, and ``:274-277``
     # refuses an empty envelope outright, so the pre-2026-09-23 "both empty" pair could not
     # pass that predicate either. ``profile_value`` is the exact operating value = the same
     # approved effective limit.
-    "safety_profile.yaml::profile.governed_dimensions": [
-        {
-            "dimension": "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL",
-            "profile_value": "1",
-            "unit": "CONTRACTS",
-            "multiplier": "1",
-            "sign": "POSITIVE",
-            "precision": "0",
-            "rounding": "NEAREST",
-            "boundary": "INCLUSIVE",
-        }
-    ],
-    "safety_profile.yaml::profile.scope": [],
-    "safety_profile.yaml::profile.permitted_behaviors": [],
-    "safety_profile.yaml::profile.fallback_rules": [],
-    "safety_profile.yaml::profile.evidence_package_ref": None,
-    # --- safety_activation.yaml ------------------------------------------
-    "safety_activation.yaml::activation.activation_id": "tos-paper-activation-g1",
-    "safety_activation.yaml::activation.profile_generation": 1,
-    "safety_activation.yaml::activation.envelope_digest": None,
-    "safety_activation.yaml::activation.profile_digest": None,
-    "safety_activation.yaml::activation.bundle_digest": None,
-    "safety_activation.yaml::activation.scope": [],
-    "safety_activation.yaml::activation.approval_ids": [],
-    "safety_activation.yaml::activation.compatibility_attestation_refs": [],
-    "safety_activation.yaml::activation.predecessor_generation": None,
-    "safety_activation.yaml::activation.restrictive_generation_effects": [],
-    "safety_activation.yaml::not_expired": True,
-    "safety_activation.yaml::members": None,
-    # --- safety_deviations.yaml ------------------------------------------
-    "safety_deviations.yaml::deviations.active_set.active_set_id": "tos-paper-deviation-set-g1",
-    "safety_deviations.yaml::deviations.active_set.active_set_generation": 1,
-    "safety_deviations.yaml::deviations.active_set.deviation_generation": 1,
-    "safety_deviations.yaml::deviations.active_set.is_complete": True,
-    "safety_deviations.yaml::deviations.active_set.combined_within_envelope": True,
-    "safety_deviations.yaml::deviations.applicable_decision_ids": [],
-    "safety_deviations.yaml::deviations.members": [],
-    # --- safety_incidents.yaml -------------------------------------------
-    "safety_incidents.yaml::incidents.active_set.active_set_id": "tos-paper-incident-set-g1",
-    "safety_incidents.yaml::incidents.active_set.active_set_generation": 1,
-    "safety_incidents.yaml::incidents.active_set.incident_generation": 1,
-    "safety_incidents.yaml::incidents.active_set.safety_cell": "tos-paper-cell-g1",
-    "safety_incidents.yaml::incidents.active_set.shared_dependencies": [],
-    "safety_incidents.yaml::incidents.active_set.is_complete": True,
-    "safety_incidents.yaml::incidents.active_set.is_current": True,
-    "safety_incidents.yaml::incidents.applicable_incident_ids": [],
-    "safety_incidents.yaml::incidents.members": [],
     # --- monitor_coverage.yaml -------------------------------------------
-    "monitor_coverage.yaml::coverage.manifest.coverage_manifest_id": "tos-paper-coverage-manifest-g1",
-    "monitor_coverage.yaml::coverage.manifest.coverage_generation": 1,
-    "monitor_coverage.yaml::coverage.manifest.coverage_manifest_digest": "tos-paper-coverage-manifest-digest-g1",
-    "monitor_coverage.yaml::coverage.manifest.policy_digest": "tos-paper-coverage-policy-digest-g1",
-    "monitor_coverage.yaml::coverage.manifest.is_complete": True,
-    "monitor_coverage.yaml::coverage.items.evidence-tip-currency.restrictive_response_present": True,
-    "monitor_coverage.yaml::coverage.items.evidence-tip-currency.alert_path_present": True,
-    "monitor_coverage.yaml::coverage.items.evidence-tip-currency.evidence_path_present": True,
-    "monitor_coverage.yaml::coverage.items.evidence-tip-currency.currentness_rule_present": True,
-    "monitor_coverage.yaml::coverage.items.evidence-tip-currency.closure_1_to_12_complete": True,
-    "monitor_coverage.yaml::coverage.items.evidence-tip-currency.criticality": "CRITICAL",
-    "monitor_coverage.yaml::coverage.items.time-service-health.restrictive_response_present": True,
-    "monitor_coverage.yaml::coverage.items.time-service-health.alert_path_present": True,
-    "monitor_coverage.yaml::coverage.items.time-service-health.evidence_path_present": True,
-    "monitor_coverage.yaml::coverage.items.time-service-health.currentness_rule_present": True,
-    "monitor_coverage.yaml::coverage.items.time-service-health.closure_1_to_12_complete": True,
-    "monitor_coverage.yaml::coverage.items.time-service-health.criticality": "CRITICAL",
-    "monitor_coverage.yaml::coverage.items.inbox-backlog.restrictive_response_present": True,
-    "monitor_coverage.yaml::coverage.items.inbox-backlog.alert_path_present": True,
-    "monitor_coverage.yaml::coverage.items.inbox-backlog.evidence_path_present": True,
-    "monitor_coverage.yaml::coverage.items.inbox-backlog.currentness_rule_present": True,
-    "monitor_coverage.yaml::coverage.items.inbox-backlog.closure_1_to_12_complete": True,
-    "monitor_coverage.yaml::coverage.items.inbox-backlog.criticality": "CRITICAL",
+    "monitor_coverage.yaml::coverage.coverage_generation": 1,
     "monitor_coverage.yaml::coverage.bounds.max_evidence_tip_stall_ms": 60000,
-    "monitor_coverage.yaml::coverage.bounds.healthy_time_states": ["TRUSTED"],
     "monitor_coverage.yaml::coverage.bounds.max_inbox_unconsumed": 100,
 }
 
@@ -604,18 +481,9 @@ def _monitoring_service(config_dir: Path) -> MonitoringService:
     return MonitoringService(
         config_path=config_dir / "monitor_coverage.yaml",
         evidence_tip_observer=lambda: _no_op_observer(),
-        time_health_observer=lambda: _no_op_observer(),
         inbox_unconsumed_observer=lambda: _no_op_observer(),
         monotonic_ns=lambda: _no_op_observer(),
         evidence_recorder=lambda *_args, **_kwargs: _no_op_observer(),
-    )
-
-
-def _safety_mesh_documents(config_dir: Path) -> SafetyProfileService:
-    return SafetyProfileService(
-        envelope_path=config_dir / "safety_envelope.yaml",
-        profile_path=config_dir / "safety_profile.yaml",
-        activation_path=config_dir / "safety_activation.yaml",
     )
 
 
@@ -695,12 +563,6 @@ def test_approved_value_is_unchanged(ref: str) -> None:
         ("engine.yaml", "max_unresolved_send_per_scope", "50"),
         ("authority.yaml", "containment_bound_ms", "99999"),
         ("currentness_dimensions.yaml", "CONTEXT.positively_established", "false"),
-        (
-            "safety_deviations.yaml",
-            "deviations.active_set.combined_within_envelope",
-            "false",
-        ),
-        ("safety_incidents.yaml", "incidents.active_set.is_current", "false"),
         ("monitor_coverage.yaml", "coverage.bounds.max_inbox_unconsumed", "999999"),
     ],
 )
@@ -832,27 +694,6 @@ _LOADABLE: tuple[_LoadablePin, ...] = (
         mutate=("coordinator_preconditions.yaml", "live_authorization_state"),
     ),
     _LoadablePin(
-        label="safety_envelope+profile+activation",
-        files=("safety_envelope.yaml", "safety_profile.yaml", "safety_activation.yaml"),
-        load=_safety_mesh_documents,
-        error=SafetyProfileConfigError,
-        mutate=("safety_activation.yaml", "not_expired"),
-    ),
-    _LoadablePin(
-        label="safety_deviations.yaml",
-        files=("safety_deviations.yaml",),
-        load=lambda d: DeviationService(deviations_path=d / "safety_deviations.yaml"),
-        error=DeviationConfigError,
-        mutate=("safety_deviations.yaml", "deviations.active_set.is_complete"),
-    ),
-    _LoadablePin(
-        label="safety_incidents.yaml",
-        files=("safety_incidents.yaml",),
-        load=lambda d: IncidentService(config_path=d / "safety_incidents.yaml"),
-        error=IncidentConfigError,
-        mutate=("safety_incidents.yaml", "incidents.active_set.is_current"),
-    ),
-    _LoadablePin(
         label="monitor_coverage.yaml",
         files=("monitor_coverage.yaml",),
         load=_monitoring_service,
@@ -900,7 +741,6 @@ def test_named_tbd_mutation_of_one_approved_value_refuses(
 #: loaders from drifting apart. Each entry is a real, named blocker — not a tolerated failure.
 _EXPECTED_REFUSALS: dict[str, str] = {
     "finality.yaml": "source_revision 은 렌더 산출물(배포 SHA) — 커밋 파일은 자기 SHA 를 담을 수 없다",
-    "safety_activation.yaml::members": "[D] print-policy-digests 산출물 — 좌표가 digest 에 들어가 커밋 불가",
     "venue_constraint_policy.yaml": "운영자 좌표 scope.accounts — 렌더가 저장소 밖에서 채운다",
     "order_construction_policy.yaml": "운영자 좌표 scope.accounts — 렌더가 저장소 밖에서 채운다",
     "aggregate_risk_policy.yaml": "운영자 좌표 instrument_scope — 렌더가 저장소 밖에서 채운다",
@@ -923,7 +763,7 @@ def test_loader_probe_partition_is_as_recorded() -> None:
         outcomes
     )
     passed = sum(1 for outcome in outcomes if outcome.passed)
-    assert (passed, len(outcomes)) == (18, 27), format_table(outcomes)
+    assert (passed, len(outcomes)) == (15, 23), format_table(outcomes)
 
 
 # ============================================================================
@@ -1111,39 +951,10 @@ def test_snapshot_heartbeat_is_shorter_than_the_closed_evaluate_interval() -> No
     )
 
 
-def test_profile_targets_the_deployed_envelope_generation() -> None:
-    """``RuntimeSafetyProfile`` must pin the exact envelope generation it operates under."""
-    envelope = _mapping("safety_envelope.yaml")["envelope"]
-    profile = _mapping("safety_profile.yaml")["profile"]
-    assert profile["target_envelope_id"] == envelope["envelope_id"]
-    assert profile["target_envelope_generation"] == envelope["envelope_generation"]
-
-
-def test_activation_pins_the_deployed_profile_generation() -> None:
-    activation = _mapping("safety_activation.yaml")["activation"]
-    profile = _mapping("safety_profile.yaml")["profile"]
-    assert activation["profile_generation"] == profile["profile_generation"]
-
-
-def test_time_safety_profile_version_names_the_deployed_profile() -> None:
-    """``time.yaml``'s ``safety_profile_version`` is recorded on every issued
-    ``TimeHealthSnapshot``. Nothing in the runtime cross-checks it today (measured: compose
-    passes no ``expected_safety_profile_version``), so this pin is what keeps the two from
-    drifting into naming different generations."""
-    assert (
-        _mapping("time.yaml")["safety_profile_version"]
-        == _mapping("safety_profile.yaml")["profile"]["profile_id"]
-    )
-
-
 @pytest.mark.parametrize(
     ("name", "dotted"),
     [
-        ("safety_envelope.yaml", "envelope.envelope_generation"),
-        ("safety_profile.yaml", "profile.profile_generation"),
-        ("safety_deviations.yaml", "deviations.active_set.active_set_generation"),
-        ("safety_incidents.yaml", "incidents.active_set.active_set_generation"),
-        ("monitor_coverage.yaml", "coverage.manifest.coverage_generation"),
+        ("monitor_coverage.yaml", "coverage.coverage_generation"),
         ("authority.yaml", "trading_approval_policy_generation"),
     ],
 )
@@ -1160,12 +971,16 @@ def test_generation_identifiers_are_all_first_generation(
 @pytest.mark.parametrize(
     ("name", "dotted"),
     [
-        ("safety_envelope.yaml", "envelope.envelope_id"),
-        ("safety_profile.yaml", "profile.profile_id"),
-        ("safety_activation.yaml", "activation.activation_id"),
-        ("safety_deviations.yaml", "deviations.active_set.active_set_id"),
-        ("safety_incidents.yaml", "incidents.active_set.active_set_id"),
-        ("monitor_coverage.yaml", "coverage.manifest.coverage_manifest_id"),
+        # All six of this list's original members were safety-mesh identifiers
+        # (safety_envelope / safety_profile / safety_activation / safety_deviations /
+        # safety_incidents, plus monitor_coverage's coverage_manifest_id) and went with
+        # plan S2-a together with the documents that carried them. The rule did not go
+        # with them: these are the identifiers the shipped tree still carries in that
+        # shape, so an empty parameter set (a SKIPPED test, which reads as coverage)
+        # is not what the removal left behind.
+        ("critical_input_policy.yaml", "policy_id"),
+        ("critical_input_policy.yaml", "issuer_principal_id"),
+        ("finality.yaml", "proof_recipe_id"),
     ],
 )
 def test_identifiers_follow_the_proposal_naming_rule(name: str, dotted: str) -> None:
@@ -1186,14 +1001,6 @@ def test_identifiers_follow_the_proposal_naming_rule(name: str, dotted: str) -> 
         # 2026-09-23: the operator approved ONE governed dimension, so "빈 것이 사실이다" is no
         # longer the fact about them. They are value-pinned in ``_VALUE_PINS`` instead, and
         # ``test_envelope_and_profile_govern_the_are_dimension`` pins the pair's coherence.
-        ("safety_envelope.yaml", "envelope.permitted_scope"),
-        ("safety_envelope.yaml", "envelope.prohibited_fallbacks"),
-        ("safety_activation.yaml", "activation.approval_ids"),
-        ("safety_activation.yaml", "activation.compatibility_attestation_refs"),
-        ("safety_deviations.yaml", "deviations.applicable_decision_ids"),
-        ("safety_deviations.yaml", "deviations.members"),
-        ("safety_incidents.yaml", "incidents.applicable_incident_ids"),
-        ("safety_incidents.yaml", "incidents.members"),
     ],
 )
 def test_empty_lists_are_explicitly_empty_never_null(name: str, dotted: str) -> None:
@@ -1224,29 +1031,18 @@ def test_required_dimensions_is_the_whole_mandated_floor() -> None:
 
     declared = _mapping("currentness.yaml")["required_dimensions"]
     assert declared == sorted(key.value for key in MANDATED_DIMENSION_FLOOR)
-    assert len(declared) == 21
+    assert len(declared) == 18
 
 
 def test_monitor_coverage_bounds_use_the_earlier_recommended_values() -> None:
     """Operator 2026-09-23 "추천 값이 있으면 활용". Proposal §6 item 5 called these "상위
     원천 미확인"; re-searching the repo found ``docs/plans/2026-09-12-tos-operator-value-
-    proposals.md`` §4 recommending exactly these three (grade C, "서버 실측 후 하향")."""
+    proposals.md`` §4 recommending exactly these (grade C, "서버 실측 후 하향"). The third,
+    ``healthy_time_states``, went with plan S2-a: the TRUSTWORTHY_TIME currentness
+    dimension already owns that fact."""
     bounds = _mapping("monitor_coverage.yaml")["coverage"]["bounds"]
     assert bounds["max_evidence_tip_stall_ms"] == 60_000
-    assert bounds["healthy_time_states"] == ["TRUSTED"]
     assert bounds["max_inbox_unconsumed"] == 100
-
-
-def test_healthy_time_states_is_the_narrowest_honest_declaration() -> None:
-    """``TRUSTED`` is the only ``tos.time.HealthState`` member that means "time is
-    trustworthy"; naming any other would widen what this monitor calls healthy."""
-    from tos.time import HealthState
-
-    declared = _mapping("monitor_coverage.yaml")["coverage"]["bounds"][
-        "healthy_time_states"
-    ]
-    assert declared == ["TRUSTED"]
-    assert set(declared) < {member.value for member in HealthState}
 
 
 # ============================================================================
@@ -1276,34 +1072,6 @@ def test_finality_refuses_while_those_keys_are_undetermined() -> None:
     by name so a future fill cannot pass as "it already loaded"."""
     with pytest.raises(FinalityConfigError, match="source_revision"):
         load_finality_config(_DEPLOY_DIR / "finality.yaml")
-
-
-def test_activation_members_is_still_undetermined_and_refuses() -> None:
-    """Proposal §3 [D] — ``members`` is DERIVED from
-    ``print-policy-digests --config-dir <dir>``, never hand-written. A-3 (2026-09-23) ran
-    that command and it REFUSED: ``venue_constraint_policy.yaml``'s ``scope.accounts`` is
-    still the operator-fill ``"TBD"`` the 2026-09-16 adoption deliberately left (that file's
-    own header: "the paper account number (never committed here)").
-
-    ``members`` therefore stays ``null``. Substituting ``[]`` would claim a different fact —
-    "nothing is activated" — which the example's own comment forbids without an operator
-    decision."""
-    assert _mapping("safety_activation.yaml")["members"] is None
-    with pytest.raises(ActivationMembersConfigError, match="members"):
-        load_activation_members(_DEPLOY_DIR / "safety_activation.yaml")
-
-
-def test_activation_derived_digests_stay_null_because_no_derivation_exists() -> None:
-    """Proposal §3 row 3 / §6 item 3: the derivation procedure for
-    ``envelope_digest``/``profile_digest``/``bundle_digest`` was UNCONFIRMED. A-3 measured
-    it: ``print-policy-digests`` prints only the five governed POLICY documents'
-    id/generation/digest, and no other subcommand computes an envelope/profile/bundle
-    digest. The kernel record types all three ``X | None``, so ``null`` loads — this is a
-    missing derivation, not a missing refusal."""
-    activation = _mapping("safety_activation.yaml")["activation"]
-    for key in ("envelope_digest", "profile_digest", "bundle_digest"):
-        assert activation[key] is None
-    _safety_mesh_documents(_DEPLOY_DIR)
 
 
 # ============================================================================
@@ -1727,57 +1495,45 @@ def test_ocp_scope_still_authorizes_both_directions() -> None:
 
 
 def test_envelope_and_profile_govern_the_are_dimension() -> None:
-    """The three files must agree, or the boot refuses (and used to).
+    """The ARE policy's own ceiling map must cover every dimension it governs.
 
-    ``compose/_riskstate_wiring.py:101-107`` refuses when an ARE-governed dimension id is not
-    declared by the Hard Safety Envelope. The id compared is the ARE's own
-    ``_runtime.dimension_ids`` COMPOSED spelling, never the unprefixed
-    ``_model_view.governed_dimensions`` one — a drift between the two spellings passes step 5
-    while the capacity lookup finds nothing, which is the exact phantom a withdrawn fixture
-    value already was.
+    Plan S2-a moved this from the spg Hard Safety Envelope into the policy document's
+    own ``_runtime.envelope_max``, and the refusal from
+    ``compose/_riskstate_wiring.py`` into ``load_aggregate_risk_policy``. The id compared
+    is the ARE's own ``_runtime.dimension_ids`` COMPOSED spelling, never the unprefixed
+    ``_model_view.governed_dimensions`` one — a drift between the two spellings would pass
+    while the capacity lookup finds nothing.
     """
     are = _mapping("aggregate_risk_policy.yaml")
     dimension_ids = set(are["_runtime"]["dimension_ids"])
-    envelope_dims = {
-        entry["dimension"]
-        for entry in _mapping("safety_envelope.yaml")["envelope"]["governed_dimensions"]
-    }
-    profile_dims = {
-        entry["dimension"]
-        for entry in _mapping("safety_profile.yaml")["profile"]["governed_dimensions"]
-    }
+    ceilinged = set(are["_runtime"]["envelope_max"])
 
-    assert dimension_ids <= envelope_dims, (
-        "every ARE-governed dimension needs a real envelope ceiling "
-        f"(ARE {sorted(dimension_ids)} vs envelope {sorted(envelope_dims)})"
+    assert dimension_ids <= ceilinged, (
+        "every ARE-governed dimension needs a real declared ceiling "
+        f"(ARE {sorted(dimension_ids)} vs envelope_max {sorted(ceilinged)})"
     )
-    # profile_within_envelope's "omit" limb: the profile may not drop an envelope dimension.
-    assert envelope_dims == profile_dims
+    assert ceilinged <= dimension_ids, "a ceiling for an ungoverned dimension is dead"
 
 
 def test_envelope_maximum_admits_the_deployments_own_effective_limit() -> None:
-    """``envelope_max`` must actually admit what this deployment sizes to.
+    """``_runtime.envelope_max`` must actually admit what this deployment sizes to.
 
-    The ARE's approved effective limit and the OCP's ``max_quantity`` are both 1 contract, and
-    ``aggregate_risk_policy.yaml``'s own compatibility requirement asks for
-    ``envelope_max >= 1``. With an EXCLUSIVE boundary the kernel rejects ``value == max``
-    (``profile_within_envelope``'s ``_exceeds_envelope_maximum`` arm), so an EXCLUSIVE 1 would
-    authorize nothing at all — a ceiling that reads as "1" while admitting zero.
+    The ARE's approved effective limit and the OCP's ``max_quantity`` are both 1 contract,
+    and ``aggregate_risk_policy.yaml``'s own compatibility requirement asks for
+    ``envelope_max >= 1``. Plan S2-a moved the ceiling off the spg Hard Safety Envelope and
+    into this same document, with the SAME values — this is the pin that proves it.
     """
     from decimal import Decimal
 
     are = _mapping("aggregate_risk_policy.yaml")
     dimension_id = "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"
     effective_limit = Decimal(str(are["_runtime"]["effective_limits"][dimension_id]))
+    ceiling = Decimal(str(are["_runtime"]["envelope_max"][dimension_id]))
 
-    (entry,) = _mapping("safety_envelope.yaml")["envelope"]["governed_dimensions"]
-    (profile_entry,) = _mapping("safety_profile.yaml")["profile"]["governed_dimensions"]
-
-    assert Decimal(entry["envelope_max"]) >= effective_limit
-    assert entry["boundary"] == "INCLUSIVE"
-    assert Decimal(profile_entry["profile_value"]) <= Decimal(entry["envelope_max"])
-    # The unit must not drift between the artifacts or the comparison is meaningless.
-    assert entry["unit"] == profile_entry["unit"] == are["_runtime"]["unit"]
+    assert ceiling >= effective_limit
+    assert ceiling == Decimal(
+        1
+    ), "the value measured off safety_envelope.yaml before plan S2-a deleted it"
 
 
 def test_the_requirement_that_asked_for_this_value_is_still_in_the_are_policy() -> None:

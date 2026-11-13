@@ -210,13 +210,13 @@ def test_b_a_bar_inside_the_band_is_a_no_action_and_starts_no_flow() -> None:
         assert result.flow is None, "a no-action must start no commitment flow"
 
 
-# -- (c) the 17-item verify list ---------------------------------------------
+# -- (c) the verify list -----------------------------------------------------
 
 
-def test_c_the_seventeen_item_verify_list_admitted_with_a_positive_synthetic_na() -> (
+def test_c_the_thirteen_item_verify_list_admitted_with_a_positive_synthetic_na() -> (
     None
 ):
-    """(c) All seventeen items judged; the six deferred ones are positively N/A."""
+    """(c) All thirteen items judged; the two deferred ones are positively N/A."""
     sliced = run_slice()
     assert len(sliced.gateway.verifications) == 1
     verification = sliced.gateway.verifications[0]
@@ -226,7 +226,7 @@ def test_c_the_seventeen_item_verify_list_admitted_with_a_positive_synthetic_na(
     assert verification.halt_reason is None
     assert verification.applicability is BrokerApplicability.NON_BROKER_SYNTHETIC
 
-    assert len(verification.verdicts) == len(SEND_VERIFY_ITEMS) == 17
+    assert len(verification.verdicts) == len(SEND_VERIFY_ITEMS) == 13
     assert tuple(verdict.item for verdict in verification.verdicts) == SEND_VERIFY_ITEMS
     assert all(
         verdict.outcome in ADMITTING_VERIFY_OUTCOMES
@@ -234,7 +234,7 @@ def test_c_the_seventeen_item_verify_list_admitted_with_a_positive_synthetic_na(
     )
 
     # ★ the N/A is a recorded positive judgement about a synthetic non-broker send, never a
-    #   silent skip: exactly the six deferred mesh items, and only those, are NOT_APPLICABLE.
+    #   silent skip: exactly the deferred mesh items, and only those, are NOT_APPLICABLE.
     not_applicable = {
         verdict.item
         for verdict in verification.verdicts
@@ -253,7 +253,7 @@ def test_c_the_seventeen_item_verify_list_admitted_with_a_positive_synthetic_na(
 
     # the gateway's own record order: 17 verify items, then claim/SEND_STARTED, then the call.
     kinds = sliced.gateway_sink.kinds
-    assert kinds.count("VERIFY_ITEM") == 17
+    assert kinds.count("VERIFY_ITEM") == 13
     assert kinds.index("SEND_STARTED") > max(
         index for index, kind in enumerate(kinds) if kind == "VERIFY_ITEM"
     )

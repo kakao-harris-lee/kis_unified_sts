@@ -92,22 +92,12 @@ def test_egress_identity_stays_pending() -> None:
     assert DimensionKey.EGRESS_IDENTITY in PENDING_DIMENSION_KEYS
 
 
-@pytest.mark.parametrize(
-    "safety_mesh_key",
-    [
-        DimensionKey.SAFETY_ENVELOPE_PROFILE,
-        DimensionKey.DEVIATION,
-        DimensionKey.INCIDENT,
-        DimensionKey.MONITORING,
-    ],
-)
-def test_safety_mesh_dimension_is_no_longer_pending(
-    safety_mesh_key: DimensionKey,
-) -> None:
-    """RED until each of the four Phase 5 W3-a1/a2 safety-mesh services lands its own
-    ``dimension_readers`` entry (``tos_runtime.compose._safety_wiring.build_safety_mesh``).
+def test_monitoring_dimension_is_no_longer_pending() -> None:
+    """RED until the slim monitor lands its own ``dimension_readers`` entry
+    (``tos_runtime.compose._monitor_wiring.build_monitor_owners``). Its three former
+    safety-mesh siblings went with plan S2-a, enum members and all.
     """
-    assert safety_mesh_key not in PENDING_DIMENSION_KEYS
+    assert DimensionKey.MONITORING not in PENDING_DIMENSION_KEYS
 
 
 @pytest.mark.parametrize(
@@ -149,9 +139,6 @@ def test_pending_dimension_keys_reaches_the_plan_exit_condition_of_three() -> No
         DimensionKey.RECOVERY,
         DimensionKey.TRADING_APPROVAL,
         DimensionKey.ENVIRONMENT_SCOPE,
-        DimensionKey.SAFETY_ENVELOPE_PROFILE,
-        DimensionKey.DEVIATION,
-        DimensionKey.INCIDENT,
         DimensionKey.MONITORING,
         DimensionKey.AGGREGATE_RISK,
         DimensionKey.CONSTRUCTION,

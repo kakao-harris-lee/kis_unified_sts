@@ -69,10 +69,6 @@ def test_the_synthetic_baseline_is_positively_established_as_non_broker() -> Non
     [
         "safety_authority_epoch_current",
         "live_scope_valid",
-        "safety_profile_current",
-        "deviation_clear",
-        "incident_clear",
-        "monitoring_clear",
     ],
 )
 def test_an_explicit_false_deferred_flag_is_still_not_applicable_under_synthetic(
@@ -302,10 +298,6 @@ def test_a_broker_consuming_send_also_loses_the_brokercap_allowance_item() -> No
 _DEFERRED_FIELD_BY_ITEM = {
     SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH: "safety_authority_epoch_current",
     SendVerifyItem.VALID_LIVE_SCOPE: "live_scope_valid",
-    SendVerifyItem.HARD_SAFETY_ENVELOPE_VERSIONS: "safety_profile_current",
-    SendVerifyItem.SAFETY_DEVIATION: "deviation_clear",
-    SendVerifyItem.SAFETY_INCIDENT: "incident_clear",
-    SendVerifyItem.SAFETY_MONITORING: "monitoring_clear",
 }
 
 #: Hoisted out of the ``@pytest.mark.parametrize(...)`` call sites below: inlining

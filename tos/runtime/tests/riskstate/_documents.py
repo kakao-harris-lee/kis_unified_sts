@@ -129,6 +129,9 @@ def aggregate_risk_policy_yaml(
     unit: str = "CONTRACTS",
     effective_limit_key: str | None = None,
     effective_limit_value: str = "1",
+    envelope_max_key: str | None = None,
+    envelope_max_value: str | None = None,
+    omit_envelope_max: bool = False,
     required_scenario_kinds: str = '["ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ"]',
     required_scopes: str = '["INSTRUMENT"]',
     applicable_risk_scopes: str = '["INSTRUMENT"]',
@@ -138,6 +141,13 @@ def aggregate_risk_policy_yaml(
         policy_generation if model_view_generation is None else model_view_generation
     )
     limit_key = dimension_id if effective_limit_key is None else effective_limit_key
+    env_key = dimension_id if envelope_max_key is None else envelope_max_key
+    env_value = (
+        effective_limit_value if envelope_max_value is None else envelope_max_value
+    )
+    envelope_block = (
+        "" if omit_envelope_max else f'  envelope_max:\n    "{env_key}": {env_value}\n'
+    )
     head = textwrap.dedent(f"""\
         artifact_type: AGGREGATE_RISK_POLICY
         schema_version: "1.0-DRAFT"
@@ -173,10 +183,12 @@ def aggregate_risk_policy_yaml(
               dimension: "{dimension_dimension}"
           effective_limits:
             "{limit_key}": {effective_limit_value}
-          required_scenario_kinds: {required_scenario_kinds}
-          required_scopes: {required_scopes}
-          applicable_risk_scopes: {applicable_risk_scopes}
         """)
+    model_view += envelope_block + (
+        f"  required_scenario_kinds: {required_scenario_kinds}\n"
+        f"  required_scopes: {required_scopes}\n"
+        f"  applicable_risk_scopes: {applicable_risk_scopes}\n"
+    )
     return (
         head
         + _NULL_ENVELOPE_REF_BLOCK
