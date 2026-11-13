@@ -386,7 +386,8 @@ def test_main_check_flag_exits_zero_when_clean(tmp_path: Path, capsys) -> None:
 #: ``compose/_nontrade_eval_dispatch.py``) and plan S2-a the safety-mesh loaders this guard
 #: scanned. Previously 2026-10-24 (standing session approval, PR #955 — a new YAML loader,
 #: ``tos_runtime/authority/standing.py``): real tree 50, weakened-signature count 46.
-_REAL_TREE_CANDIDATE_FLOOR = __FLOOR__
+#: Measured now: real tree 44, weakened-signature count 43.
+_REAL_TREE_CANDIDATE_FLOOR = 44
 
 
 def test_check_real_config_and_scope_smoke() -> None:

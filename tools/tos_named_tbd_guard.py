@@ -92,7 +92,7 @@ weakening (round 3 re-review MEDIUM — "the checker itself was not checked"): t
 tree smoke test pins a candidate-count FLOOR, not just "0 violations" — removing a
 signal from ``_CANDIDATE_SIGNALS`` silently shrinks the candidate set while accusing
 nobody of being unguarded (measured 2026-11-13, after plan S2-a: removing
-``"load_yaml_document("`` drops 46 candidates to 45 with zero ``unguarded`` violations),
+``"load_yaml_document("`` drops 44 candidates to 43 with zero ``unguarded`` violations),
 so a bare ``violations == []`` assertion cannot catch that regression. The floor makes it
 visible.**
 """
