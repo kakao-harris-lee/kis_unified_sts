@@ -47,10 +47,15 @@ _SEEDS: tuple[str, ...] = ("0", "1", "2", "3", "7", "11")
 #: The negative control key produced by the worker.
 _CONTROL_KEY = "CONTROL.raw_frozenset_order"
 
-#: The 19 ``covered_content()`` models plus the two non-``covered_content()``
+#: The 17 ``covered_content()`` models plus the two non-``covered_content()``
 #: call shapes the worker measures. Asserted as a floor so adding a model is not
 #: a spurious RED, while a worker that measured nothing still fails.
-_MIN_MEASURED_KEYS = 21
+#:
+#: 19, not 21: 2026-11-13, the unused kernel packages `tos.rlp`,
+#: `tos.replacement` and `tos.failuredomain` were deleted, which removed
+#: ``TrialEvidencePackage`` / ``TrialPolicy`` (both ``tos.rlp.records``) from the
+#: covered-set model tree — 19 covered models became 17.
+_MIN_MEASURED_KEYS = 19
 
 
 def _run_worker(seed: str) -> dict[str, str]:

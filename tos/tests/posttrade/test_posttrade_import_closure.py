@@ -129,7 +129,6 @@ _EVERY_SIBLING = (
     "tos.afg",
     "tos.hag",
     "tos.egress",
-    "tos.replacement",
     "tos.nontrade",
     "tos.cur",
     "tos.some_future_sibling",

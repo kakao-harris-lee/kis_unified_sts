@@ -69,7 +69,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.dsl",
         "tos.egress",
         "tos.evidence",
-        "tos.failuredomain",
         "tos.hag",
         "tos.iap",
         "tos.ioc",
@@ -80,8 +79,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.protective",
         "tos.rcl",
         "tos.recon",
-        "tos.replacement",
-        "tos.rlp",
         "tos.sbr",
         "tos.sci",  # ADR-002-029 — landed, but kept an injected coordinate with 0 code citation
         "tos.sir",
@@ -223,7 +220,6 @@ def _leak_canary_child(queue: mp.Queue) -> None:
         "numpy",
         "tos.cur",  # forward-seam consumer — an import would invert the seam into a cycle
         "tos.spg",  # governed-artifact-kind owner — re-authored, not imported
-        "tos.rlp",  # forward-seam consumer
         "tos.sir",  # forward-seam consumer
         "tos.rcl",  # rcl edge 0 — re-authored, not imported
         "tos.sci",  # ADR-002-029 — injected coordinate, never a code citation
@@ -291,7 +287,6 @@ def test_leak_canary_is_detected() -> None:
     for expected in (
         "tos.cur",
         "tos.spg",
-        "tos.rlp",
         "tos.sir",
         "tos.rcl",
         "tos.sci",

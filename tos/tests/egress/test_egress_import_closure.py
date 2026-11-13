@@ -70,16 +70,13 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.protective",
         "tos.rcl",
         "tos.recon",
-        "tos.replacement",
         "tos.sbr",
         "tos.spg",
         "tos.time",
         "tos.venue",
         "tos.cur",  # landed sibling — still excluded (sibling edge 0)
-        "tos.failuredomain",  # landed sibling — still excluded (sibling edge 0)
         "tos.nontrade",  # landed sibling — still excluded (sibling edge 0)
         "tos.posttrade",  # landed sibling — still excluded (sibling edge 0)
-        "tos.rlp",  # landed sibling — still excluded (sibling edge 0)
         "tos.sci",  # landed sibling — still excluded (sibling edge 0)
         "tos.sir",  # landed sibling — still excluded (sibling edge 0)
         "tos.stm",  # landed sibling — still excluded (sibling edge 0)

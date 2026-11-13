@@ -19,7 +19,7 @@ Two properties the builders must have, both of them review findings:
 
 Instances are built with ``model_construct`` on purpose: the pins measure the
 serialization of the covered content, not artifact admissibility, and hand-
-building 19 admissible ``issue()`` calls would make the pins expensive without
+building 17 admissible ``issue()`` calls would make the pins expensive without
 measuring anything more (review-798 1차 MEDIUM-2(c)).
 """
 
@@ -45,7 +45,6 @@ from tos.hag.records import (
 )
 from tos.liveauth.records import LiveAuthorization, ReArmApprovalRecord
 from tos.posttrade.records import StatementCoverageManifest
-from tos.rlp.records import TrialEvidencePackage, TrialPolicy
 from tos.sbr.records import (
     RecoveryInventoryCut,
     RecoveryObligation,
@@ -68,8 +67,8 @@ MIXED_LENGTH_ELEMENTS: tuple[str, ...] = (
     "9",
 )
 
-#: The 19 ``DigestBoundArtifact`` subclasses whose covered field tree holds a set
-#: (plan §1.2). Eight of them were already deterministic through a per-model
+#: The 17 ``DigestBoundArtifact`` subclasses whose covered field tree holds a set
+#: (plan §1.2). Six of them were already deterministic through a per-model
 #: sorter; the other eleven were not.
 COVERED_SET_MODELS: tuple[type[DigestBoundArtifact], ...] = (
     BrokerCapabilityProfile,
@@ -82,8 +81,6 @@ COVERED_SET_MODELS: tuple[type[DigestBoundArtifact], ...] = (
     LiveAuthorization,
     ReArmApprovalRecord,
     StatementCoverageManifest,
-    TrialEvidencePackage,
-    TrialPolicy,
     RecoveryInventoryCut,
     RecoveryObligation,
     RecoveryReadinessDecision,
@@ -93,15 +90,13 @@ COVERED_SET_MODELS: tuple[type[DigestBoundArtifact], ...] = (
     SafetyDeviationPolicy,
 )
 
-#: The eight models that carried their own ``sorted()`` before this change; their
+#: The six models that carried their own ``sorted()`` before this change; their
 #: digests must be bit-identical after it (plan §2.3).
 PREVIOUSLY_SORTED_MODELS: tuple[type[DigestBoundArtifact], ...] = (
     CurrentnessPolicy,
     RestrictiveFenceRecord,
     SafetyDeviationPolicy,
     SafetyIncidentPolicy,
-    TrialEvidencePackage,
-    TrialPolicy,
     LiveAuthorization,
     ReArmApprovalRecord,
 )
@@ -235,7 +230,7 @@ def digest_map() -> dict[str, str]:
     """Every digest the set-ordering pins compare, keyed by a stable name.
 
     Returns:
-        A mapping of pin key to canonical digest, covering the 19
+        A mapping of pin key to canonical digest, covering the 17
         ``covered_content()`` models, the two non-covered call shapes, and the
         :data:`CONTROL_KEY` negative control.
     """

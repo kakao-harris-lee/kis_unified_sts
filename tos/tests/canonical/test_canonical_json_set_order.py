@@ -31,7 +31,7 @@ from ._set_order_builders import (
     digest_map,
 )
 
-#: Digests of the eight models that already sorted their own sets, measured on
+#: Digests of the six models that already sorted their own sets, measured on
 #: ``origin/main`` ``153c8fd0`` (before this change) with the builders in
 #: ``_set_order_builders.py``. The mixed-length elements matter: with same-length
 #: elements a length-first sort key and a lexicographic one agree, and the "wrong
@@ -47,8 +47,6 @@ _PRE_HOOK_GOLDEN: dict[str, str] = {
     "RestrictiveFenceRecord": "85c35e3f7a2d0714772bba563c18572b78428867a1c46e7da6bfca504c77a313",
     "SafetyDeviationPolicy": "b3e6c02605e96160f54160f08756f942f37dfde68085b80f5222c1131be4e3ff",
     "SafetyIncidentPolicy": "ea884e0030a0bd73dd02180fffb058905fd1c6ef2afc7dd33ddd9efe89693874",
-    "TrialEvidencePackage": "967ce2e0a0904f91453f16009f31203d8670d212a581456b3dd17932532a4ab8",
-    "TrialPolicy": "c9f1038ed4dbdee47e8000aa7d3ab06a5cd6d9e500dff81d06e4b6a98f5eec80",
 }
 
 #: The two models whose PYTHON-mode dump deliberately CHANGED with this work: a
@@ -209,12 +207,12 @@ def test_python_mode_keeps_sets_as_sets() -> None:
 def test_covered_models_keep_frozensets_in_python_mode(
     model_cls: type[DigestBoundArtifact],
 ) -> None:
-    """Python-mode dumps of the 19 covered models still carry ``frozenset`` values.
+    """Python-mode dumps of the 17 covered models still carry ``frozenset`` values.
 
     ``LiveAuthorization`` / ``ReArmApprovalRecord`` are the deliberate change
     (see ``_PYTHON_MODE_CHANGED``): they used to return sorted lists in python
     mode too, and now return the sets. This test asserts the NEW expectation for
-    all 19 uniformly, and the docstring records why two of them moved.
+    all 17 uniformly, and the docstring records why two of them moved.
     """
     instance = build_instance(model_cls)
     dumped = instance.model_dump()
@@ -443,9 +441,9 @@ def test_the_cost_pin_can_actually_see_the_hook(mode: str) -> None:
 def test_previously_sorted_models_are_bit_compatible(
     model_cls: type[DigestBoundArtifact],
 ) -> None:
-    """The eight models that already sorted keep their exact pre-hook digest.
+    """The six models that already sorted keep their exact pre-hook digest.
 
-    RED when the hook orders sets by anything other than ``sorted()`` — the eight
+    RED when the hook orders sets by anything other than ``sorted()`` — the six
     per-model sorters this change deleted used plain ``sorted()``, so any other
     key (a length-first canonical token, say) moves these bytes.
     """
@@ -461,7 +459,7 @@ def test_previously_sorted_models_are_bit_compatible(
 
 
 def test_digest_map_covers_every_pinned_surface() -> None:
-    """The cross-process worker measures all 19 models plus both non-covered shapes."""
+    """The cross-process worker measures all 17 models plus both non-covered shapes."""
     digests = digest_map()
     expected = {model.__name__ for model in COVERED_SET_MODELS} | {
         "EngineEvent.event_identity",
@@ -469,7 +467,7 @@ def test_digest_map_covers_every_pinned_surface() -> None:
         CONTROL_KEY,
     }
     assert set(digests) == expected
-    assert len(COVERED_SET_MODELS) == 19
+    assert len(COVERED_SET_MODELS) == 17
 
 
 # --------------------------------------------------------------------------
