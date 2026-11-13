@@ -208,6 +208,7 @@ def _time_config() -> TrustworthyTimeConfig:
         trading_calendar_version=_CALENDAR_VERSION,
         verification_profile_version="vp-0",
         safety_profile_version="sp-0",
+        time_health_snapshot_heartbeat_ms=55_000,
     )
 
 

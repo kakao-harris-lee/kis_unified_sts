@@ -655,9 +655,45 @@ class TrustworthyTimeService:
         )
         return snapshot
 
+    def _re_establishes_freshness(self, now_ms: int) -> bool:
+        """Whether this cycle is the one that makes an AGED-OUT exposed reading fresh again.
+
+        Freshness is itself consumed as a judgement, not just as bookkeeping:
+        :meth:`wall_clock_now_if_fresh` serves a reading only while the snapshot it came from
+        is within ``max_time_conservative_freshness_age_ms``, and the egress trading-date
+        stamp (``compose/_session_wiring.py``, bound to that same config value) calls exactly
+        that. A cycle that flips the answer from "too old to use" to "usable now" therefore
+        changes what a consumer may do, even when the health state and every source verdict
+        are identical to the last evidenced cycle — so it is due, and if its append fails the
+        whole cycle fails and nothing is exposed.
+
+        Without this, a stale-clock cycle whose durable append would have raised instead
+        SUCCEEDS (nothing is appended, so nothing can fail), re-establishes freshness and lets
+        an egress stamp go out on a clock the runtime could not evidence — the exact
+        fail-closed property ``tests/compose/test_egress_trading_date.py::
+        test_an_unevaluable_clock_stamps_nothing_and_never_the_stale_date`` pins (PR #1074).
+
+        Costs nothing in the open session (passes are ~410 ms apart against a 1000 ms bound,
+        so the exposed reading is never stale); in the closed session every 60 s cycle is
+        stale by that bound and writes, which is the one row per minute the heartbeat already
+        produced there.
+        """
+        previous = self._snapshot
+        if previous is None:
+            return False
+        issued = previous.issue_monotonic_value
+        if issued is None:
+            return True
+        age_ms = now_ms - issued
+        return (
+            age_ms < 0 or age_ms > self._config.max_time_conservative_freshness_age_ms
+        )
+
     def _snapshot_evidence_due(self, judged: Mapping[str, Any], now_ms: int) -> bool:
         """Whether this cycle's ``TIME_HEALTH_SNAPSHOT`` row must be appended: the judged
-        content moved, or the heartbeat interval has elapsed since the last row that got one.
+        content moved, this cycle re-establishes freshness
+        (:meth:`_re_establishes_freshness`), or the heartbeat interval has elapsed since the
+        last row that got a receipt.
 
         Fails toward writing. The first cycle of a process has nothing to compare against and
         writes; a monotonic reading that went BACKWARD since the last written row is exactly
@@ -665,6 +701,8 @@ class TrustworthyTimeService:
         deferring on a negative age.
         """
         if self._evidenced_content is None or judged != self._evidenced_content:
+            return True
+        if self._re_establishes_freshness(now_ms):
             return True
         last_ms = self._evidenced_monotonic_ms
         if last_ms is None or now_ms < last_ms:

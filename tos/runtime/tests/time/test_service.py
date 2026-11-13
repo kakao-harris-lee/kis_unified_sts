@@ -743,7 +743,10 @@ def test_time_wall_clock_exposed_evidence_appended_exactly_once() -> None:
 #: One engine pass, as measured on the 2026-10-22 session (~408 ms, p90 411) — the real
 #: cadence this gate exists to stop writing a row for.
 _PASS_MS = 400
-_HEARTBEAT_MS = 60_000
+_HEARTBEAT_MS = 55_000
+#: ``_config()``'s own ``max_time_conservative_freshness_age_ms`` — the bound
+#: ``wall_clock_now_if_fresh`` and the egress trading-date stamp both use.
+_FRESHNESS_AGE_MS = 1000
 
 
 def _snapshot_rows(evidence: InMemoryEvidenceDouble) -> list[AppendedRecord]:
@@ -782,7 +785,7 @@ def _steady_trusted(*, heartbeat_ms: int = _HEARTBEAT_MS) -> _SteadyTrusted:
 def test_identical_evaluations_append_one_row_then_one_heartbeat() -> None:
     """N identical cycles write NO row until the heartbeat falls due, and then exactly one.
 
-    100 passes at the measured 400 ms cadence is 40 s — inside the 60 s heartbeat — and
+    100 passes at the measured 400 ms cadence is 40 s — inside the 55 s heartbeat — and
     under the per-cycle write this replaced it would have been 100 rows.
     """
     service, evidence, monotonic, _ = _steady_trusted()
@@ -832,7 +835,7 @@ def test_a_changed_evaluation_appends_immediately_inside_the_heartbeat() -> None
     service.evaluate()
 
     rows = _snapshot_rows(evidence)
-    assert len(rows) == 3  # 4 s into a 60 s heartbeat
+    assert len(rows) == 3  # 4 s into a 55 s heartbeat
     # An unreachable source also supplies no wall clock, so this cycle's suspension is
     # unknown and the anchor cannot be proven continuous — UNTRUSTED, not holdover.
     assert service.health_state is HealthState.UNTRUSTED
@@ -905,6 +908,46 @@ def test_wall_clock_first_becoming_available_is_a_change_worth_a_row() -> None:
     assert len(exposed) == 1
     written_ids = {r.payload["snapshot_id"] for r in _snapshot_rows(evidence)}
     assert exposed[0].payload["snapshot_id"] in written_ids
+
+
+def test_a_cycle_that_re_establishes_freshness_is_always_due() -> None:
+    """Freshness is consumed as a judgement, so the cycle that restores it must be evidenced.
+
+    Nothing about the verdict changes here — same TRUSTED state, same source, well inside the
+    heartbeat — but the exposed reading has aged past
+    ``max_time_conservative_freshness_age_ms``, so ``wall_clock_now_if_fresh`` went from
+    ``None`` back to a value. That flip is what the egress trading-date stamp acts on
+    (PR #1074), so it gets a row.
+    """
+    service, evidence, monotonic, _ = _steady_trusted()
+    rows_before = len(_snapshot_rows(evidence))
+    assert service.wall_clock_now_if_fresh(_FRESHNESS_AGE_MS) is not None
+
+    # Age the exposed reading out of the 1000 ms freshness bound (4287 ms is the measured
+    # pre-send gap from the 2026-11-13 incident), still 4 s inside the 55 s heartbeat.
+    monotonic.value += 4_287
+    assert service.wall_clock_now_if_fresh(_FRESHNESS_AGE_MS) is None
+
+    service.evaluate()
+
+    assert len(_snapshot_rows(evidence)) == rows_before + 1
+    assert service.wall_clock_now_if_fresh(_FRESHNESS_AGE_MS) is not None
+
+
+def test_a_stale_clock_cycle_whose_append_fails_exposes_nothing() -> None:
+    """The fail-closed consequence of the test above: when the evaluation that would restore
+    freshness cannot be evidenced, it raises and the stale reading stays stale — never a
+    stamp on a clock the runtime could not evidence."""
+    service, _, monotonic, _ = _steady_trusted()
+    before = service.current_snapshot()
+    monotonic.value += 4_287
+
+    service._evidence = RaisingAfterNEvidenceDouble(raise_from_call=1)  # noqa: SLF001
+    with pytest.raises(RuntimeError):
+        service.evaluate()
+
+    assert service.current_snapshot() is before
+    assert service.wall_clock_now_if_fresh(_FRESHNESS_AGE_MS) is None
 
 
 def test_a_skipped_row_still_propagates_an_append_failure_when_one_is_due() -> None:
