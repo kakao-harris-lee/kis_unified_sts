@@ -245,7 +245,12 @@ def _docstring_edits(
         assert isinstance(constant, ast.Constant)
         text = constant.value
         assert isinstance(text, str)
-        replacement = _literal(_first_line(text))
+        first = _first_line(text)
+        # black pads a one-line docstring ending in its own quote with a space; that form is
+        # already stripped, or strip and black rewrite each other forever.
+        if text == first + " " and first.endswith(('"', "'")):
+            continue
+        replacement = _literal(first)
         start = offsets[stmt.lineno - 1] + stmt.col_offset
         assert stmt.end_lineno is not None and stmt.end_col_offset is not None
         end = offsets[stmt.end_lineno - 1] + stmt.end_col_offset
