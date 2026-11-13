@@ -155,8 +155,9 @@ What is still true and still enforced:
   implementation. Keep it byte-identical until `TOS_PAPER_READY`
   (`docs/plans/2026-11-07-legacy-removal-plan.md` §2, operator decision 3).
 - The retired cutover runbooks (`stock-pipeline-cutover-m5d.md`,
-  `futures-pipeline-cutover-f9.md`, `paper-live-code-separation.md`) are history,
-  not procedure. Their code last existed at tag `legacy-final` (`6fc17c0f8d25`).
+  `futures-pipeline-cutover-f9.md`, `paper-live-code-separation.md`) were deleted
+  on 2026-11-13 with the rest of the legacy-runtime docs; they are history, not
+  procedure. Their code last existed at tag `legacy-final` (`6fc17c0f8d25`).
 
 ## Storage And Data
 
@@ -346,9 +347,10 @@ Agent roster, skill list, directory layout, and execution detail live under
 - Plan index: `docs/plans/INDEX.md`
 - Superpowers plan archive/index: `docs/superpowers/plans/INDEX.md`
 - Port policy: `docs/ports.md`
-- Runtime storage: `docs/runtime_storage_architecture.md`
 - Runbook index: `README.md` § Runbooks
-- Retired (history, not procedure — their code last existed at tag
-  `legacy-final`): `docs/runbooks/stock-pipeline-cutover-m5d.md` ·
-  `docs/runbooks/futures-pipeline-cutover-f9.md` ·
-  `docs/runbooks/paper-live-code-separation.md`
+- 2026-11-13 에 레거시 런타임 시절의 런북·루트 문서와 2026-07~08 RFC 설계
+  코퍼스를 지웠다 (`docs/plans/2026-11-13-tos-code-halving-plan.md` §S3). 그중
+  은퇴 런북(`stock-pipeline-cutover-m5d` · `futures-pipeline-cutover-f9` ·
+  `paper-live-code-separation`)과 `docs/runtime_storage_architecture.md` ·
+  `docs/ROADMAP.md` 를 포함해 전부 git 이력에 있다:
+  `git log --diff-filter=D -- docs/`.

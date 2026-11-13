@@ -89,7 +89,8 @@ Unlike the snapshot above, this section records a live host inspection.
   437 s with the generation frozen after the 15:45 KST stop. The UI's own stale
   rendering was not screenshot-verified, only the API age that drives it.
   Numbers and caveats: the 2026-10-07 observation section of the
-  [CP-1 implementation and verification record](testing/2026-10-06-tos-control-plane.md).
+  CP-1 implementation and verification record,
+  `docs/testing/2026-10-06-tos-control-plane.md` (2026-11-13 은퇴 — `git log --diff-filter=D -- docs/`).
 - Same-day manual restart (17:32-17:34 KST, operator-authorized, same leaf):
   `process_nonce` changed, `projection_generation` returned to 1 and the
   authenticated API served the new identity; `runtime_generation` stayed 0 on
@@ -103,8 +104,10 @@ Unlike the snapshot above, this section records a live host inspection.
 
 - [TOS integration plan](plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md):
   Control Plane, first paper tenant and legacy disposition sequencing.
-- [ROADMAP.md](ROADMAP.md): existing Cross-Asset + Stock + Futures strategy roadmap;
-  `plans/2026-07-02-unified-investment-system-roadmap.md`.
+- The legacy Cross-Asset + Stock + Futures strategy roadmap (`ROADMAP.md`) was
+  retired on 2026-11-13 with the runtime it described
+  (`git log --diff-filter=D -- docs/`). The live one is
+  [plans/2026-11-11-tos-platform-roadmap.md](plans/2026-11-11-tos-platform-roadmap.md).
 - Normative TOS contracts/registers remain authoritative for conformance and
   authorization. These status and planning documents do not replace them.
 
@@ -344,7 +347,7 @@ policy-blocked (PR #636).
 
 **2026-07-05 to 2026-07-12** - New-architecture refactoring plan P0-P6 executed
 (TA-Lib SoT, declarative builder, vectorbt, risk primitives, futures read-models).
-Plan: [plans/2026-07-08-new-architecture-refactoring-plan.md](plans/2026-07-08-new-architecture-refactoring-plan.md)
+Plan: `plans/2026-07-08-new-architecture-refactoring-plan.md`
 (checkboxes re-synced to code on 2026-09-06). Landed: dead-package removal +
 TA-Lib/vectorbt CI gates (P0, PR #604); indicator engine as the single source of
 truth with parity-gated delegation of every hand-rolled site (P1, PRs #561-#611);
@@ -428,7 +431,7 @@ policy docs/tests, theme/fusion quality tooling, and Workbench evidence UX.
 This does not promote strategies or resolve Mini vs full KOSPI 200 policy;
 real paper/market evidence and operator approval are still required before
 promotion, live, or cutover gates. Evidence:
-[testing/quant-gap-execution-2026-06-28.md](testing/quant-gap-execution-2026-06-28.md).
+`testing/quant-gap-execution-2026-06-28.md`.
 
 **2026-06-28** - Expert execution board opened.
 Created `reports/quant-gap/2026-06-28-execution-board.md` to coordinate market-structure,
@@ -438,7 +441,7 @@ futures, stock, Workbench, and QA expert lanes from the 2026-06-28 gap research.
 Roadmap/status docs now reflect Setup D paper enablement, the enriched Signal
 Decision Trace endpoint, PR #547 hardening, and the split gap list for KOSPI 200
 futures vs stock trading. Research note:
-[investigations/2026-06-28-quant-system-gap-research.md](investigations/2026-06-28-quant-system-gap-research.md).
+`investigations/2026-06-28-quant-system-gap-research.md`.
 The main new roadmap decisions are: collect futures F-9/Setup C/Setup D evidence
 before cutover/live gates, and explicitly choose KRX-only stock v1 vs a
 Nextrade/ATS smart-order-routing readiness track.
@@ -540,12 +543,12 @@ host-crontab registration docs, and obsolete RL/ClickHouse-era plans were
 archived or de-indexed. The roadmap now includes a cross-asset Quant Ops
 Workbench track with a multi-agent implementation plan:
 `plans/2026-06-22-quant-ops-workbench-uiux.md`.
-Current operators should start from [ROADMAP.md](ROADMAP.md), this status page,
-and runbooks.
+Current operators should start from this status page and the runbooks (the
+`ROADMAP.md` this 2026-06 entry names was retired on 2026-11-13).
 
 **2026-06-20** - Documentation cleanup (this PR). Superseded RL/paradigm plans
 and the synthetic-data stock validation summary were archived with SUPERSEDED
-banners and de-indexed; a single authoritative [ROADMAP.md](ROADMAP.md) (Stock +
+banners and de-indexed; a single authoritative `ROADMAP.md` (Stock +
 Futures) was added; `strategies.md` and Phase-5/Strategy-Lab/RegimeGate specs
 were corrected for current state (no RL, no ClickHouse, Next.js UI).
 
@@ -575,7 +578,7 @@ default Python dependencies no longer include ClickHouse drivers.
 
 ## Legacy Open Validation (historical follow-ups; reverify before resuming)
 
-Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top items:
+Full per-asset open list with owners/gates is in `ROADMAP.md`. Top items:
 
 - **Stock:** HAR-RV log-RV transition (forecast model stale since 2026-05-31,
   daily refit failing — RV-history serialization and local file-backed log-RV
