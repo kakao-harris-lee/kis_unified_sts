@@ -242,7 +242,7 @@ def test_the_stm_sci_name_collisions_are_exactly_the_sealed_ones() -> None:
     """
     import tos.sci
 
-    from .test_stm_anchor_resolution import _authored_names
+    from ._authorship import authored_names as _authored_names
 
     #: Submodule attributes and the ``from __future__`` binding are package *plumbing*, identical in
     #: every tos package; they are not a proposition and are excluded from both sides.

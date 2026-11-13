@@ -47,6 +47,9 @@ from dataclasses import dataclass, field
 
 from tools.broker_probes.common import ENV_MOCK, ENV_NONE, ENV_REAL
 
+#: The Verification Profile these bound keys cite. The file was retired with the
+#: spec corpus on 2026-11-13 (docs/plans/2026-11-13-tos-code-halving-plan.md §S3);
+#: the citation is kept as a git-history pointer for the measured bounds below.
 _VP = "tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml"
 
 

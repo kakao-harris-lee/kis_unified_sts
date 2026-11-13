@@ -1,9 +1,9 @@
 # Legacy disposition — 기능별 처리와 전환 작업표
 
 기준: 2026-10-06, repository `5c4f38e9`. **처분 계획이며 전환/삭제 완료 증거가 아니다.**
-실행 경로·규범 이관 상태의 정본은 기존
-[MIGRATION-CONFORMANCE-REGISTER.csv](../../tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.csv)와
-[설명 문서](../../tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.md)다.
+실행 경로·규범 이관 상태의 정본이던 `tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.{csv,md}`
+는 명세 코퍼스와 함께 2026-11-13 에 은퇴했다
+(`docs/plans/2026-11-13-tos-code-halving-plan.md` §S3; 내용은 git 이력에 있다).
 이 문서는 그 ID를 유지하고 제품·연구·운영 기능의 작업 순서를 보완한다.
 정본 레지스터를 복사하거나 완료 상태를 독립적으로 승격하지 않는다.
 
