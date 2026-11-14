@@ -26,7 +26,7 @@ from tos.workload import RuntimeIdentity
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.config import FinalityConfig
-from tos_runtime.posttrade.finality import SyntheticFinalityProducer
+from tos_runtime.posttrade.finality import FinalityResult, SyntheticFinalityProducer
 from tos_runtime.posttrade.release_consumer import (
     CAPACITY_RELEASE_HELD_KIND,
     CAPACITY_RELEASE_INTENT_KIND,
@@ -384,15 +384,17 @@ def _full_fill_payload() -> EgressResultPayload:
     )
 
 
-def _append_obligation(evidence_store: SqliteEvidenceStore, produced: object) -> None:
+def _append_obligation(
+    evidence_store: SqliteEvidenceStore, produced: FinalityResult
+) -> None:
     """Durably record one produced obligation record AND its finality proof."""
     evidence_store.append(
-        produced.record.model_dump(mode="json"),  # type: ignore[attr-defined]
+        produced.record.model_dump(mode="json"),
         kind="ECONOMIC_OBLIGATION",
         record_class="ECONOMIC_OBLIGATION",
     )
     evidence_store.append(
-        produced.proof.model_dump(mode="json"),  # type: ignore[attr-defined]
+        produced.proof.model_dump(mode="json"),
         kind="POSTTRADE_FINALITY_PROOF",
         record_class="POSTTRADE_FINALITY_PROOF",
     )
@@ -400,7 +402,7 @@ def _append_obligation(evidence_store: SqliteEvidenceStore, produced: object) ->
 
 def _seed_full_fill_obligation(
     evidence_store: SqliteEvidenceStore,
-) -> tuple[EgressResultPayload, object]:
+) -> tuple[EgressResultPayload, FinalityResult]:
     """Produce this suite's FULL_FILL obligation and record it with its proof."""
     payload = _full_fill_payload()
     produced = _producer().produce(payload)

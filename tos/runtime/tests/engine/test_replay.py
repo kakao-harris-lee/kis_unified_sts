@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.engine import EngineCore
 from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.orthostate_projection import (
@@ -34,7 +35,7 @@ def _driver(
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
     *,
-    core: object | None = None,
+    core: EngineCore | None = None,
 ) -> EngineDriver:
     """This suite's one driver wiring; ``core`` overrides the default engine core."""
     return EngineDriver(
