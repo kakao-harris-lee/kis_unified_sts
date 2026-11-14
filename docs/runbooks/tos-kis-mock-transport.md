@@ -1,6 +1,7 @@
 # TOS KIS MOCK transport 운영 런북 (레인 T1 → T2 lane C 갱신)
 
-- **상위 계획**: `docs/plans/2026-09-10-tos-kis-mock-transport-plan.md`
+- **상위 계획**: `docs/plans/2026-09-10-tos-kis-mock-transport-plan.md` — 2026-11-14 은퇴,
+  git 이력에 있다 (`git log --diff-filter=D -- docs/plans/`). 이 런북이 현행 절차 정본이다.
 - **레인**: T1 어댑터(`tos_runtime.transport.kis_mock`) 착지 + T2 lane C(compose 결선
   `--transport {synthetic,kis-mock}`, `tos_runtime.compose._transport_wiring`, custody
   `PROVISIONED_SCOPES` 확장) 착지. T2 lane A(codec digest 결속)·lane B(Coordinator non-live
