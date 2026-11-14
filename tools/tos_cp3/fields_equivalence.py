@@ -43,6 +43,7 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     load_stitched_bars,
     load_strategy_inputs,
     produce_bars,
+    replay_admission_offset,
     resolve_open_anchor,
 )
 from tools.tos_cp3.stitch import load_manifest  # noqa: E402
@@ -443,7 +444,8 @@ def run_declarative(
     evaluator = FieldEvaluator(inputs.document)
     records: dict[str, dict[str, Any]] = {}
     omitted: list[tuple[str, str]] = []
-    for row in inputs.df.itertuples(index=False):
+    admitted_from = replay_admission_offset(inputs.df)
+    for index, row in enumerate(inputs.df.itertuples(index=False)):
         bar = FieldBar.create(
             row.timestamp,
             open=float(row.open),
@@ -452,6 +454,9 @@ def run_declarative(
             close=float(row.close),
             volume=float(row.volume),
         )
+        if index < admitted_from:
+            evaluator.warm(bar)
+            continue
         raw_event_id = derive_raw_event_id(inputs.symbol, bar.ts_kst)
         try:
             evaluated = evaluator.step(bar)

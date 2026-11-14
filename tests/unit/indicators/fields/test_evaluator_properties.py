@@ -341,3 +341,88 @@ class TestRefusalsAtRuntime:
         )
         with pytest.raises(FieldEvalError, match="has no value on this bar"):
             evaluate_bars(forced, [bar(0)])
+
+
+class TestWarm:
+    """``warm`` is the bar the witness reads but never decides on.
+
+    ``MarketContextReplay`` precomputes ATR and the session VWAP over the whole
+    frame and then yields from the 60th bar onward, skipping the frame's first
+    session — so the legacy setup's ``check()``, and therefore its causal
+    ``gated_*`` windows, never see that leading prefix, while its ATR at the
+    first admitted bar is nonetheless the one computed over it. These two tests
+    are the two halves of that sentence.
+    """
+
+    def test_it_advances_the_frame_wide_indicators(self) -> None:
+        """``atr``/``vwap`` after a warmed prefix equal the all-stepped ones."""
+        bars = _bars(80)
+        stepped = evaluate_bars(parsed(_FIELDS, _PUBLISH), bars)
+        warmed = FieldEvaluator(parsed(_FIELDS, _PUBLISH))
+        for one in bars[:60]:
+            warmed.warm(one)
+        tail = [warmed.step(one) for one in bars[60:]]
+        assert tail
+        for index, record in enumerate(tail):
+            reference = stepped[60 + index]
+            assert record.values["atr"] == reference.values["atr"]
+            assert record.values["vwap"] == reference.values["vwap"]
+
+    def test_it_does_not_sample_the_causal_windows(self) -> None:
+        """A warmed bar must not enter a ``gated_*`` window.
+
+        The concrete consequence of getting this wrong, measured on a 7-session
+        futures frame: 88 ``hi_vol`` cells differed from the witness, because
+        the declarative windows held samples ``check()`` never took (review of
+        PR #1067, M2).
+        """
+        bars = _bars(80)
+        warmed = FieldEvaluator(parsed(_FIELDS, _PUBLISH))
+        for one in bars[:60]:
+            warmed.warm(one)
+        first_decided = warmed.step(bars[60])
+        # The warmed prefix contributed no sample, so every gated window is
+        # still inside its warmup on the first decided bar.
+        assert first_decided.values["vol_ref"] is None
+        assert first_decided.values["recent_high"] is None
+        assert first_decided.values["prev_close"] is None
+        # The all-stepped driver, by contrast, filled them long ago.
+        stepped = evaluate_bars(parsed(_FIELDS, _PUBLISH), bars)
+        assert stepped[60].values["vol_ref"] is not None
+
+
+class TestRefusalCarriesWhatWasEvaluated:
+    def test_a_refused_bar_reports_the_fields_it_had(self) -> None:
+        """So a caller can ask its own gate instead of matching the message.
+
+        ``tools/tos_cp3/produce_fields.py`` has to tell "ATR is zero, which my
+        omission gate calls ``atr_14 <= 0 (z is undefined)``" apart from "this
+        declaration is broken" — and the lineage records the former's wording
+        byte for byte, so reading it off the message text would make a
+        published file depend on an error string.
+        """
+        fields = [
+            {"name": "close", "op": "bar.close"},
+            {"name": "vwap", "op": "session.vwap_typical"},
+            {"name": "atr", "op": "atr", "params": {"period": 3}},
+            {"name": "z", "op": "ratio_z", "inputs": ["close", "vwap", "atr"]},
+            {"name": "probe", "op": "gt", "inputs": ["z"], "params": {"const": -99}},
+        ]
+        flat = [
+            bar(index, open=10.0, high=10.0, low=10.0, close=10.0, volume=100.0)
+            for index in range(3)
+        ]
+        with pytest.raises(FieldEvalError) as caught:
+            evaluate_bars(parsed(fields), flat)
+        values = caught.value.values
+        assert values["atr"] == 0.0
+        assert values["close"] == 10.0
+        assert values["vwap"] == 10.0
+        # Only what was reached: ``z`` is the field that refused, ``probe``
+        # comes after it.
+        assert "z" not in values
+        assert "probe" not in values
+
+    def test_a_refusal_with_no_bar_context_carries_nothing(self) -> None:
+        """The payload is optional, so the class stays raisable from anywhere."""
+        assert FieldEvalError("no bar here").values == {}
