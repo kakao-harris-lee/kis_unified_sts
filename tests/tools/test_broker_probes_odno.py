@@ -41,6 +41,7 @@ from typing import Any
 
 import pytest
 
+from tests.support.probe_auth import install_stub_auth
 from tools.broker_probes import probes_order
 from tools.broker_probes.common import ProbeError, ProbeRun
 from tools.broker_probes.probes_order import (
@@ -90,11 +91,6 @@ def futures_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KIS_FUTURES_APP_SECRET", "test-secret")
     monkeypatch.setenv("KIS_FUTURES_ACCOUNT_NO", _ACCOUNT)
     monkeypatch.delenv("KIS_TOKEN_CACHE_DIR", raising=False)
-
-
-class _StubAuth:
-    def get_auth_headers(self) -> dict[str, str]:
-        return {"authorization": "Bearer stub"}
 
 
 def _args(**overrides: object) -> argparse.Namespace:
@@ -214,9 +210,7 @@ def _install_futures_recorder(
         return 200, payload, 1.0, "{}"
 
     monkeypatch.setattr(probes_order, "http_json", _recorder)
-    monkeypatch.setattr(
-        "shared.kis.auth.KISAuthManager", lambda *a, **k: _StubAuth(), raising=True
-    )
+    install_stub_auth(monkeypatch)
     return calls
 
 

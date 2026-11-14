@@ -271,25 +271,23 @@ jobs:
       #
       # TWO PASSES, the repo convention (docs/CI_PARALLEL_NOTES.md): parallel
       # over everything NOT marked `serial`, then a second, unparallelised pass
-      # over the `serial`-marked ones. This is not belt-and-braces. Measured on
-      # this tree at `-n 4`: the single unfiltered pass that used to run here
-      # goes RED on
+      # over the `serial`-marked ones.
+      #
+      # The one test that made the split necessary here —
       #   tests/tools/test_tos_evidence_scan_measure.py::
       #     test_a_stop_signal_during_the_end_of_run_bookkeeping_is_deferred_not_lost
-      # which sends itself a SIGTERM after blocking it with
-      # `signal.pthread_sigmask` and asserts the signal stays pending until the
-      # bookkeeping finishes. `pthread_sigmask` blocks the CALLING THREAD only,
-      # and an xdist worker is a multi-threaded process (execnet's receiver
-      # thread), so the signal is delivered to the other thread and the
-      # measure tool's own handler raises `MeasureSignalled` mid-`Path.write_text`.
-      # The test was ALREADY marked `@pytest.mark.serial` (the repo-root
-      # `serial` marker, registered in pyproject.toml) — this step simply never
-      # honoured the marker, because it ran one unfiltered pass. It is the only
-      # `serial`-marked test in this workflow's whole corpus today.
+      # — went with `tools/tos_evidence_scan_{measure,bench}.py` on 2026-11-15
+      # (retired one-off measurement drivers: no CI step, cron, runner or
+      # runbook called either one). This corpus therefore carries NO
+      # `serial`-marked test today, so the second pass collects nothing and
+      # pytest exits 5 ("no tests ran").
       #
-      # If that ever becomes zero, the second pass exits 5 ("no tests ran") and
-      # this step goes red. Delete the pass then; do not relax it to `|| true`,
-      # which would also swallow a real serial-pass failure.
+      # The pass stays rather than being deleted, because the marker still has
+      # to be honoured the day someone adds a `serial` test under
+      # tests/tools/test_tos_*.py or tests/tos_l3 — without it, the `-m "not
+      # serial"` filter on the first pass would silently skip that test
+      # forever. Exit 5, and ONLY exit 5, is accepted. This is NOT `|| true`:
+      # a real serial-pass failure (exit 1) still turns this step red.
       - name: tos governance test batteries (parallel + serial 2-pass)
         # `set -e` (not `&&`) chains the two passes, so a comment can sit
         # between them without breaking a line continuation.
@@ -297,10 +295,18 @@ jobs:
           set -euo pipefail
           pytest tests/tools/test_tos_*.py \
             tests/tos_l3 -q -p no:cacheprovider -n auto -m "not serial"
-          # Second pass: the `serial` marker. Exactly one test carries it today,
-          # so this pass exits 5 (red) if it ever disappears — see step header.
+          # Second pass: the `serial` marker. No test carries it today, so
+          # pytest exits 5 ("no tests ran") — see the step header for why that
+          # one code, and only that one, is tolerated here.
+          set +e
           pytest tests/tools/test_tos_*.py \
             tests/tos_l3 -q -p no:cacheprovider -m serial
+          serial_rc=$?
+          set -e
+          if [ "$serial_rc" -ne 0 ] && [ "$serial_rc" -ne 5 ]; then
+            echo "serial pass failed with exit $serial_rc" >&2
+            exit "$serial_rc"
+          fi
 
   # ===========================================================================
   # Formatting and typing. Nothing here reads anything the other jobs write.

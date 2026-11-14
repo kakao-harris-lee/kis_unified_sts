@@ -407,8 +407,11 @@ sqlite 내부 공백이 다르고 `PRAGMA table_info` 는 동일 — 테스트�
 **부팅 2026-09-28 11:00:01 KST · 정지 11:15:04 KST**(같은 디렉터리의 `report.json` 의
 `started_kst`/`ended_kst`. 디렉터리 이름의 숫자는 **부팅 시각**이고, 파일 mtime 은 **정지
 시각**이다 — 한 값으로 뭉치면 다른 런으로 오인된다).
-⚠ **이 corpus 는 지금 A1 증거 스캔 캠페인의 살아 있는 `--reference` 파일이다**
-(`tools/tos_evidence_scan_bench.py`). 언젠가 이것을 **실제로** 마이그레이션한다면 — §4-A 가
+⚠ **(2026-11-15 갱신: 더는 아니다.)** 이 corpus 는 A1 증거 스캔 캠페인의 `--reference`
+파일이었다(`tools/tos_evidence_scan_bench.py`). 그 캠페인은 끝났고 측정은 재실행 금지이며,
+도구 둘(`tos_evidence_scan_bench.py` · `tos_evidence_scan_measure.py`)은 호출자가 하나도
+없어 2026-11-15 에 삭제됐다(git 이력에 있다). 아래 경고는 그때의 기록으로 남긴다 —
+언젠가 이것을 **실제로** 마이그레이션한다면 — §4-A 가
 이제 바로 그 경우를 위한 절차라고 적고 있으므로 — 그 리더가 멎은 뒤에 해야 한다.
 §4-A 의 「구 코드 프로세스 전부 정지」 전제는 `backup-set` 이 **기계적으로 탐지하지 못하는**
 전제다(그 함수의 문서화된 한계). 확인은 손으로 한다: `fuser -v <corpus>/*.sqlite3`.
