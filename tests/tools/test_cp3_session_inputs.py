@@ -2319,22 +2319,14 @@ def test_the_live_cli_requires_the_boot_snapshot(
     assert "--boot-snapshot" in capsys.readouterr().err
 
 
-def test_the_m5_criterion_records_the_budget_and_the_non_stale_rule(
+def test_the_emitted_definition_names_what_the_number_is(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """The 2026-10-23 criterion lives next to the number it judges, with the measurement it
-    came from — so nobody has to re-derive why it is 0.5% and not 0, or why ``max_age_ms``
-    stays at 800."""
+    """The emitted document says what the consumed-field-state count counts."""
     bars = _bars(hinge, 2)
     data_dir = _session(tmp_path, hinge, bars)
     definition = _document(tmp_path, data_dir)["consumed_field_states"]["definition"]
-    criterion = si.consumed_field_states.__doc__ or ""
 
-    assert "0.5%" in criterion and "0.244%" in criterion
-    assert "max_age_ms`` STAYS at 800" in criterion
-    assert "other than staleness is a finding at any" in criterion
-    assert "MARKETFEED_FIELD_REFUSED" in criterion
-    # the definition string itself still names what the number IS, unchanged
     assert "stale, or evaluation clock unknown" in definition
 
 

@@ -1,11 +1,4 @@
-"""RCLP-EV-005 (core) — same-command-id / different-bytes conflict + idempotency.
-
-Because ``command_identity`` is orthogonal to ``canonical_command_digest`` (design
-§3.1, ``id != f(digest)``), a same-id / different-bytes command pair is a Critical
-integrity conflict (ADR-012 §9 line 270) and a same-id / same-bytes pair is an
-idempotent duplicate (RCLP-INV-006). The classifier is the promoted
-``tos.canonical.classify_record_pair`` applied to command pairs.
-"""
+"""RCLP-EV-005 (core) — same-command-id / different-bytes conflict + idempotency."""
 
 from __future__ import annotations
 
@@ -25,17 +18,13 @@ def _classify(a, b) -> RecordPairKind:
 def test_all_four_kinds_reachable_on_command_pairs() -> None:
     """NOT_COMPARABLE / IDEMPOTENT_DUP / CRITICAL_CONFLICT / DISTINCT all reachable."""
     a = issue_command(command_identity="cmd-1", actor_identity="actor-1")
-    # same id + same bytes
     dup = issue_command(command_identity="cmd-1", actor_identity="actor-1")
-    # same id + different bytes
     conflict = issue_command(command_identity="cmd-1", actor_identity="actor-2")
-    # different id
     distinct = issue_command(command_identity="cmd-2", actor_identity="actor-1")
 
     assert _classify(a, dup) is RecordPairKind.IDEMPOTENT_DUP
     assert _classify(a, conflict) is RecordPairKind.CRITICAL_CONFLICT
     assert _classify(a, distinct) is RecordPairKind.DISTINCT
-    # A DRAFT command (null digest) is not a ledger citizen => NOT_COMPARABLE.
     from tos.rcl import LedgerCommandRecord
 
     d1 = LedgerCommandRecord(command_identity="cmd-1")
@@ -44,16 +33,11 @@ def test_all_four_kinds_reachable_on_command_pairs() -> None:
 
 
 def test_id_orthogonal_to_digest_keeps_conflict_reachable() -> None:
-    """(regression lock) id != f(digest): same command id + different bytes conflicts.
-
-    If identity were derived from the digest, same-id would imply same-bytes and
-    CRITICAL_CONFLICT would be unreachable. The reservation identity is likewise
-    independent (never reused after terminal release, §9 line 502).
-    """
+    """(regression lock) id != f(digest): same command id + different bytes conflicts."""
     a = issue_command(command_identity="cmd-1", actor_identity="actor-1")
     b = issue_command(command_identity="cmd-1", actor_identity="actor-2")
     assert a.command_identity == b.command_identity
-    assert a.canonical_digest != b.canonical_digest  # id did NOT track the digest
+    assert a.canonical_digest != b.canonical_digest
     assert _classify(a, b) is RecordPairKind.CRITICAL_CONFLICT
 
 

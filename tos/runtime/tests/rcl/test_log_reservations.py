@@ -20,18 +20,11 @@ from tos_runtime.rcl.log import (
     SqliteCommitLog,
 )
 
-#: A fixed scope for tests that exercise transition mechanics, not scope
-#: semantics themselves (laneO port-fix round, design #40 runtime slice #2
-#: §5, 2026-09-08 — ``scope`` is now a required binding on every committed
-#: reservation-lifecycle transition).
 DEFAULT_SCOPE = ReservationScope(account="acct-1", instrument="101S06")
 
 
 def _seq(receipt: AppendReceipt) -> int:
-    """``receipt.seq``, asserted present — a successful
-    ``apply_reservation_transition`` never returns a ``None`` seq. This
-    file's tests immediately reuse one transition's tip as the next
-    transition's ``expected_seq``."""
+    """``receipt.seq``, asserted present — a successful"""
     assert receipt.seq is not None
     return receipt.seq
 
@@ -66,7 +59,6 @@ def test_structurally_illegal_transition_raises_refusal(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
     epoch = log.acquire_epoch(identity)
-    # RELEASED is terminal — no transition may leave it (ADR-002-002 §10.1).
     transition = CapacityReservationTransition(
         reservation_id="res-1",
         writer_epoch=epoch,
@@ -91,9 +83,6 @@ def test_structurally_legal_but_weak_cause_refuses_conservatism_decrease(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
     epoch = log.acquire_epoch(identity)
-    # PARTIALLY_CONSUMED -> COMMITTED_UNBOUND is a conservatism DECREASE — legal
-    # under SOME cause (structurally), but a weak cause (TIMEOUT) may only
-    # increase conservatism (ADR-002-002 §10.2).
     transition = CapacityReservationTransition(
         reservation_id="res-1",
         writer_epoch=epoch,
@@ -143,9 +132,6 @@ def test_release_with_finality_witness_true_is_admitted(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
     epoch = log.acquire_epoch(identity)
-    # Build real history first (HIGH-1 fix, 2026-09-08): from_state is checked
-    # against the held record, so a reservation must actually be held at
-    # POTENTIALLY_LIVE before a POTENTIALLY_LIVE -> RELEASED claim can pass.
     setup = log.apply_reservation_transition(
         CapacityReservationTransition(
             reservation_id="res-1",
@@ -183,21 +169,10 @@ def test_release_with_finality_witness_true_is_admitted(
     assert rows["res-1"] == CapacityState.RELEASED
 
 
-# ============================================================================
-# HIGH-1 (independent review, 2026-09-08) — claimed from_state must agree
-# with the held record; a stale/mistaken claim must never be admitted even
-# when it is structurally legal and cause-admissible in isolation.
-# ============================================================================
-
-
 def test_stale_from_state_claim_after_release_is_refused(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """The exact HIGH-1 repro: RELEASE a reservation, then claim it is still
-    COMMITTED_UNBOUND and try to re-arm it toward POTENTIALLY_LIVE. Before the
-    fix this was admitted (AppendReceipt) — an automatic re-arm of a
-    finalized reservation (ADR-002-012 :37). It must now refuse.
-    """
+    """The exact HIGH-1 repro: RELEASE a reservation, then claim it is still"""
     epoch = log.acquire_epoch(identity)
     to_potentially_live = log.apply_reservation_transition(
         CapacityReservationTransition(
@@ -234,9 +209,6 @@ def test_stale_from_state_claim_after_release_is_refused(
     rows = {rid: state for rid, state, _seq, _scope in log.reservation_rows()}
     assert rows["res-1"] == CapacityState.RELEASED
 
-    # The stale/mistaken re-arm claim: structurally legal (an increase) and
-    # cause-admissible in isolation, but the held record says RELEASED, not
-    # COMMITTED_UNBOUND.
     re_arm_attempt = log.apply_reservation_transition(
         CapacityReservationTransition(
             reservation_id="res-1",
@@ -254,7 +226,6 @@ def test_stale_from_state_claim_after_release_is_refused(
 
     assert isinstance(re_arm_attempt, AppendRefusal)
     assert re_arm_attempt.reason == AppendRefusalReason.INTEGRITY_VIOLATION
-    # And the held record is unchanged — still RELEASED, never re-armed.
     rows_after = {rid: state for rid, state, _seq, _scope in log.reservation_rows()}
     assert rows_after["res-1"] == CapacityState.RELEASED
 
@@ -262,10 +233,7 @@ def test_stale_from_state_claim_after_release_is_refused(
 def test_honest_from_state_after_prior_transition_still_commits(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """A regression guard: a truthful, sequential chain of transitions must
-    still be admitted — the HIGH-1 fix only refuses a DISAGREEING claim, not
-    every claim.
-    """
+    """A regression guard: a truthful, sequential chain of transitions must"""
     epoch = log.acquire_epoch(identity)
     first = log.apply_reservation_transition(
         CapacityReservationTransition(
@@ -287,7 +255,7 @@ def test_honest_from_state_after_prior_transition_still_commits(
         CapacityReservationTransition(
             reservation_id="res-1",
             writer_epoch=epoch,
-            from_state=CapacityState.ATTEMPT_BOUND,  # honestly matches the held state
+            from_state=CapacityState.ATTEMPT_BOUND,
             to_state=CapacityState.POTENTIALLY_LIVE,
             scope=DEFAULT_SCOPE,
         ),
@@ -305,12 +273,7 @@ def test_honest_from_state_after_prior_transition_still_commits(
 def test_no_row_with_non_initial_from_state_is_refused(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """A brand-new ``reservation_id`` (no held row) may only be claimed to
-    originate from ``COMMITTED_UNBOUND`` — the sole entry point the engine's
-    own ``ProvisionalReservationLedger.commit_unbound`` admits with no prior
-    projection (``tos.engine.state``). Claiming ATTEMPT_BOUND with no history
-    at all must be refused, never silently admitted.
-    """
+    """A brand-new ``reservation_id`` (no held row) may only be claimed to"""
     epoch = log.acquire_epoch(identity)
     result = log.apply_reservation_transition(
         CapacityReservationTransition(

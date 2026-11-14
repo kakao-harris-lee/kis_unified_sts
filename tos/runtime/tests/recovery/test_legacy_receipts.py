@@ -1,5 +1,4 @@
-"""Unit tests for :mod:`tos_runtime.recovery.legacy_receipts` (TOS Phase 5 W1; Phase 3
-carryover ⓑ)."""
+"""Unit tests for :mod:`tos_runtime.recovery.legacy_receipts` (TOS Phase 5 W1; Phase 3"""
 
 from __future__ import annotations
 
@@ -18,10 +17,7 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 def _mark_consumed(
     inbox: SqliteEventInbox, seq: int, consumed: EvidenceAppendReceipt
 ) -> None:
-    """``inbox.mark_consumed(...)``, narrowing ``consumed``'s ``seq``/
-    ``key_generation`` — a successful evidence ``append()`` never returns either
-    as ``None`` (``EvidenceAppendReceipt``'s own docstring: "a failed or partial
-    append never returns this type")."""
+    """``inbox.mark_consumed(...)``, narrowing ``consumed``'s ``seq``/"""
     assert consumed.seq is not None
     assert consumed.key_generation is not None
     inbox.mark_consumed(
@@ -94,9 +90,7 @@ def test_fingerprint_less_receipt_is_legacy(
 def test_unconsumed_decision_tick_is_not_legacy(
     inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """An admitted-but-never-consumed ``DECISION_TICK`` has no receipt at all yet — it is a
-    pending/possibly-live concern (:mod:`tos_runtime.recovery.possibly_live`), never legacy.
-    """
+    """An admitted-but-never-consumed ``DECISION_TICK`` has no receipt at all yet — it is a"""
     inbox.enqueue(fx.crossing_event(seq=1))
     facts = legacy_receipts_in_window(
         inbox, evidence_store, scheme=SCHEME, window_events=None
@@ -107,8 +101,7 @@ def test_unconsumed_decision_tick_is_not_legacy(
 def test_window_excludes_receipts_outside_it(
     inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """A fingerprint-less receipt admitted BEFORE the window starts is not flagged — mirrors
-    ``replay_engine``'s own windowing exactly (module docstring)."""
+    """A fingerprint-less receipt admitted BEFORE the window starts is not flagged — mirrors"""
     _admit_and_consume(inbox, evidence_store, seq=1, flow_fingerprint=None)
     in_window_id = _admit_and_consume(
         inbox, evidence_store, seq=2, flow_fingerprint=_FINGERPRINT
@@ -132,16 +125,10 @@ def test_legacy_receipt_within_a_wider_window_is_still_found(
     assert facts.event_ids == (legacy_id,)
 
 
-# ============================================================================
-# Independent-review finding F4: validate against the real FlowFingerprint model
-# ============================================================================
-
-
 def test_empty_dict_flow_fingerprint_is_legacy(
     inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """An empty dict satisfies ``is not None`` (the module's own original, now-removed check)
-    but fails ``FlowFingerprint`` validation (``handed_off`` is required)."""
+    """An empty dict satisfies ``is not None`` (the module's own original, now-removed check)"""
     event_id = _admit_and_consume(inbox, evidence_store, seq=1, flow_fingerprint={})
     facts = legacy_receipts_in_window(
         inbox, evidence_store, scheme=SCHEME, window_events=None
@@ -177,9 +164,7 @@ def test_string_flow_fingerprint_is_legacy(
 def test_forged_shape_flow_fingerprint_is_legacy(
     inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """A dict with unrelated/wrong-typed fields (never a genuine ``FlowResult``-derived
-    fingerprint) fails ``FlowFingerprint``'s own strict (``extra="forbid"``) validation.
-    """
+    """A dict with unrelated/wrong-typed fields (never a genuine ``FlowResult``-derived"""
     event_id = _admit_and_consume(
         inbox,
         evidence_store,
@@ -196,14 +181,8 @@ def test_forged_shape_flow_fingerprint_is_legacy(
 def test_event_consumed_row_missing_event_id_counts_as_legacy(
     inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """A corrupted/forged ``EVENT_CONSUMED`` row with no ``event_id`` at all cannot be matched
-    to a specific ``DECISION_TICK`` — it must still count, never be silently dropped by the
-    ``event_id not in decision_tick_ids`` membership filter every genuine row goes through.
-    """
-    # A real, well-formed DECISION_TICK receipt in the window (so decision_tick_ids is
-    # non-empty and the scan actually runs).
+    """A corrupted/forged ``EVENT_CONSUMED`` row with no ``event_id`` at all cannot be matched"""
     _admit_and_consume(inbox, evidence_store, seq=1, flow_fingerprint=_FINGERPRINT)
-    # Plus one corrupted row with no event_id at all.
     evidence_store.append(
         {"outcome_digest": "digest-corrupted"},
         kind="EVENT_CONSUMED",

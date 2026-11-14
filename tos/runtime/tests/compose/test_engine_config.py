@@ -1,9 +1,4 @@
-"""``tos_runtime.compose._engine_config`` tests (F5, pre-merge fix,
-2026-09-08). CLAUDE.md non-negotiable: "thresholds ... belong in YAML/env/
-config files, not hardcoded branches" — ``dsl_evaluation_budget_steps``/
-``max_unresolved_send_per_scope`` were bare literals in
-``_wiring.py::_finalize``. Hermetic — real config files under ``tmp_path``.
-"""
+"""``tos_runtime.compose._engine_config`` tests (F5, pre-merge fix,"""
 
 from __future__ import annotations
 

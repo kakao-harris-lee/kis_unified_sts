@@ -1,6 +1,4 @@
-"""``tos_runtime.safety.ack`` tests (TOS runtime operations wiring plan
-``docs/plans/2026-09-13-tos-runtime-operations-wiring-plan.md`` §2 decision 4).
-"""
+"""``tos_runtime.safety.ack`` tests (TOS runtime operations wiring plan"""
 
 from __future__ import annotations
 
@@ -74,11 +72,6 @@ def _payload_for_kind(evidence_store: SqliteEvidenceStore, kind: str) -> dict:
     return payload
 
 
-# ============================================================================
-# Happy path
-# ============================================================================
-
-
 def test_happy_path_acknowledges_a_real_alert_seq(
     tmp_path: Path, evidence_store: SqliteEvidenceStore, expected_owner_uid: int
 ) -> None:
@@ -103,11 +96,6 @@ def test_happy_path_acknowledges_a_real_alert_seq(
     assert payload["acknowledged_at_label"]
 
 
-# ============================================================================
-# Missing file
-# ============================================================================
-
-
 def test_missing_ack_file_is_refused(
     tmp_path: Path, evidence_store: SqliteEvidenceStore, expected_owner_uid: int
 ) -> None:
@@ -127,11 +115,6 @@ def test_missing_ack_file_is_refused(
     assert _evidence_kinds(evidence_store) == ["STM_ALERT"]
 
 
-# ============================================================================
-# Wrong mode (0644 instead of 0600)
-# ============================================================================
-
-
 def test_wrong_mode_0644_is_refused(
     tmp_path: Path, evidence_store: SqliteEvidenceStore, expected_owner_uid: int
 ) -> None:
@@ -149,11 +132,6 @@ def test_wrong_mode_0644_is_refused(
     assert outcome.acknowledged is False
     assert "custody mode/owner gate" in outcome.reason
     assert _evidence_kinds(evidence_store) == ["STM_ALERT"]
-
-
-# ============================================================================
-# Wrong owner uid
-# ============================================================================
 
 
 def test_wrong_owner_uid_is_refused(
@@ -176,11 +154,6 @@ def test_wrong_owner_uid_is_refused(
     assert _evidence_kinds(evidence_store) == ["STM_ALERT"]
 
 
-# ============================================================================
-# Environment-label mismatch
-# ============================================================================
-
-
 def test_environment_label_mismatch_is_refused(
     tmp_path: Path, evidence_store: SqliteEvidenceStore, expected_owner_uid: int
 ) -> None:
@@ -200,11 +173,6 @@ def test_environment_label_mismatch_is_refused(
     assert _evidence_kinds(evidence_store) == ["STM_ALERT"]
 
 
-# ============================================================================
-# Target seq is not a real STM_ALERT row (mutation M9's positive-direction pin)
-# ============================================================================
-
-
 def test_seq_not_an_stm_alert_row_is_refused(
     tmp_path: Path, evidence_store: SqliteEvidenceStore, expected_owner_uid: int
 ) -> None:
@@ -222,11 +190,6 @@ def test_seq_not_an_stm_alert_row_is_refused(
     assert outcome.acknowledged is False
     assert "ALERT_SEQ_NOT_FOUND" in outcome.reason
     assert _evidence_kinds(evidence_store) == []
-
-
-# ============================================================================
-# Double-ack is idempotent refusal, never a second row
-# ============================================================================
 
 
 def test_double_acknowledgement_is_idempotent_refusal(
@@ -256,21 +219,10 @@ def test_double_acknowledgement_is_idempotent_refusal(
     assert _evidence_kinds(evidence_store) == ["STM_ALERT", "STM_ALERT_ACKNOWLEDGED"]
 
 
-# ============================================================================
-# Mutation M9 — removing the seq-existence check would let a bogus seq
-# "succeed". This test proves the current code refuses it (see
-# test_seq_not_an_stm_alert_row_is_refused above); this second assertion
-# pins that no evidence at all is appended for that refusal, so a mutant
-# that deletes _alert_row_exists's call site and falls through to a
-# successful append is caught even if the reason-string assertion above is
-# weakened.
-# ============================================================================
-
-
 def test_mutation_m9_bogus_seq_never_appends_acknowledged_evidence(
     tmp_path: Path, evidence_store: SqliteEvidenceStore, expected_owner_uid: int
 ) -> None:
-    _append_stm_alert(evidence_store)  # a real STM_ALERT exists, but at a different seq
+    _append_stm_alert(evidence_store)
     bogus_seq = 4242
     _write_ack_file(tmp_path / "approvals", alert_seq=bogus_seq)
 
@@ -285,12 +237,6 @@ def test_mutation_m9_bogus_seq_never_appends_acknowledged_evidence(
     assert outcome.acknowledged is False
     assert EVIDENCE_KIND_STM_ALERT_ACKNOWLEDGED not in _evidence_kinds(evidence_store)
 
-
-# ============================================================================
-# Structural pin (mutation M4) — ack.py must never import monitoring/latch/
-# rearm/inbox, so an acknowledgement can never reach the mesh clear()/latch/
-# re-arm decision through this module.
-# ============================================================================
 
 _ACK_MODULE_PATH = (
     Path(__file__).resolve().parents[2] / "src" / "tos_runtime" / "safety" / "ack.py"
@@ -317,8 +263,7 @@ def _imported_module_names(tree: ast.Module) -> list[str]:
 def test_structural_pin_ack_imports_nothing_from_monitoring_latch_rearm_or_inbox() -> (
     None
 ):
-    """Mutation M4: inserting ``import tos_runtime.safety.monitoring`` (or any of the
-    other three forbidden modules) into ``ack.py`` must turn this test red."""
+    """Mutation M4: inserting ``import tos_runtime.safety.monitoring`` (or any of the"""
     tree = ast.parse(_ACK_MODULE_PATH.read_text(encoding="utf-8"))
     imported = _imported_module_names(tree)
     offenders = [
@@ -339,8 +284,7 @@ def test_structural_pin_ack_imports_nothing_from_monitoring_latch_rearm_or_inbox
 def test_the_import_scan_itself_would_catch_a_real_offending_import(
     tmp_path: Path,
 ) -> None:
-    """Proves the AST scan is not vacuous: a scratch module containing exactly the
-    forbidden import IS caught by the same detection logic the pin above uses."""
+    """Proves the AST scan is not vacuous: a scratch module containing exactly the"""
     scratch = tmp_path / "scratch_offender.py"
     scratch.write_text("import tos_runtime.safety.monitoring\n")
     tree = ast.parse(scratch.read_text(encoding="utf-8"))
@@ -354,11 +298,6 @@ def test_the_import_scan_itself_would_catch_a_real_offending_import(
         )
     ]
     assert offenders == ["tos_runtime.safety.monitoring"]
-
-
-# ============================================================================
-# File-not-a-mapping / not-YAML shapes (round out the custody-load path)
-# ============================================================================
 
 
 def test_ack_file_not_a_mapping_is_refused(
@@ -413,9 +352,7 @@ def test_missing_principal_id_is_refused(
 def test_named_tbd_placeholder_principal_id_is_refused(
     tmp_path: Path, evidence_store: SqliteEvidenceStore, expected_owner_uid: int
 ) -> None:
-    """W-A A-0 round 2: an operator typing the literal placeholder string ``"TBD"``
-    for the acknowledging identity must never be sealed into
-    ``STM_ALERT_ACKNOWLEDGED`` as though a real operator acknowledged it."""
+    """W-A A-0 round 2: an operator typing the literal placeholder string ``"TBD"``"""
     seq = _append_stm_alert(evidence_store)
     _write_ack_file(tmp_path / "approvals", alert_seq=seq, principal_id="TBD")
 

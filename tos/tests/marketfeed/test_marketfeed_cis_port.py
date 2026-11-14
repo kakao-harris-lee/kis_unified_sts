@@ -1,73 +1,13 @@
-"""§4 (design #38) — the admitted-snapshot injection port: its surface, its requirement, its seal.
-
-Design #38 creates no runtime type. :class:`~tos.marketfeed.SnapshotStore` and
-:class:`~tos.marketfeed.ValueCandidateSource` were shipped by design #32, a fake CIS already drives
-the real resolver (``tos/tests/slice/_slice_fixtures.py:335-422``), and the exclusivity *behaviour*
-is already committed (``test_slice_conformant_path.py:233-257``). None of that is re-authored here.
-What was **not** locked is the port's own shape, and that is the whole of this file (design #38
-§11-1 (ii)):
-
-* **P1 — the Protocol surface itself.** Adding ``session_token=`` to ``SnapshotStore.__call__``
-  breaks no committed canary today: the record-level fetch-surface seal reads pydantic
-  ``model_fields``, the namespace sweep reads ``vars()``, and the import-closure canary reads
-  imports — a Protocol parameter is the target of none of them. So the call-only shape, the exact
-  parameter sets, the ambient-name exclusion, and the closure "exactly two CIS injections" are
-  locked here. D-E4's ``test_brokeradapter_transport.py:69-96`` is the isomorph.
-* **P2 / P5 — required injection.** Before this file the marketfeed suite used ``inspect`` nowhere,
-  so "a resolver cannot be built without a CIS-issued source" was a structural fact that nothing
-  read. One predicate reads it, and the three ways to bypass it — moved out of ``__init__``, made
-  positional, given a default — are run against that same predicate and must all be caught.
-* **P3 — the over-claim seal.** Nothing stopped a later edit from writing "this layer fully enforces
-  distinctness" into a marketfeed docstring. The rule is **co-occurrence**, not bare substring: an
-  over-claim stem is admitted only when its own sentence also carries an upstream/negation anchor.
-  So the shipped honest sentence — "the environment-injection point does **not** re-verify it" —
-  passes, and an unqualified planted claim does not.
-* **P4 — the gates, restated at the port boundary.** The four publication gates are asserted
-  through a fake CIS pair rather than against the gate function, which is the form of
-  "the most a dishonest source achieves is a rejection record" (``resolver.py:89``).
-
-**Where the P3 seal stops, stated rather than implied.** Two boundaries, both inherited from the
-ratified contract rather than chosen here:
-
-* **Scope.** The sweep reads module docstrings plus the public classes and functions each module
-  *owns* — 31 surfaces — because that is the scope design #38 §4-P3 declares and its v1.2 Open
-  Question ④ fixed. **Method docstrings are outside it**: 24 of them (callables carrying a
-  docstring in those classes' own ``__dict__``), so an over-claim planted in
-  ``MarketFeedContextResolver.resolve``'s docstring would pass this seal. Widening the sweep is a
-  follow-on candidate, not a silent extension of a ratified scope.
-* **Sensitivity.** The absence rule exempts a stem as soon as an anchor appears **anywhere in the
-  same sentence**, and ``"not "`` is one of the anchors ratified §4-P3.2 names — so
-  "this layer fully enforces distinctness, which is not obvious" would pass. P3 is therefore a
-  **tripwire for an accidental over-claim edit**, not a proof that no over-claim can be written. A
-  determined author can still write one; that residue belongs to review, not to this canary.
-
-**What this file does not claim.** The port does not make the upstream producer honest (design #38
-§3.3). A producer that stamps two bars with one as-of still collapses the chain, and the test below
-asserts that collapse as a *limit* rather than pretending the gate catches it — complete enforcement
-of per-bar distinctness is upstream, in the Context Integrity Service. A fabricated-but-plausible
-lineage is not tested at all: from this layer's inputs a forged self-consistent lineage is
-byte-indistinguishable from a true one, so no discriminator exists and inventing one would be the
-over-claim this file seals against (design #38 §4.2 N2).
-
-Regime tag: authoring evidence only; closes no EV (design #32 §1.1; design #38 provisional).
-"""
+"""§4 (design #38) — the admitted-snapshot injection port: its surface, its requirement, its seal."""
 
 from __future__ import annotations
 
 import functools
 import inspect
-import re
 from collections.abc import Iterable, Sequence
-from pathlib import Path
 from typing import Any, Protocol, get_args, get_type_hints
 
 import pytest
-import tos.marketfeed
-import tos.marketfeed._base
-import tos.marketfeed.records
-import tos.marketfeed.resolver
-import tos.marketfeed.value
-import tos.marketfeed.vocabulary
 from tos.capsule import CriticalInputSnapshot, DecisionContextCapsule
 from tos.engine import InstrumentKey
 from tos.marketfeed import (
@@ -101,13 +41,7 @@ from ._marketfeed_fixtures import (
 
 KEY = InstrumentKey(account=ACCOUNT, instrument=INSTRUMENT)
 
-#: The band a derived-value bar exposes (the lineage suite's magnitude, reused as a plain number).
 _BAND = 4_500_000
-
-
-# ===========================================================================
-# The fake CIS: the port's upstream, in this file's own shapes
-# ===========================================================================
 
 
 def _store_for(snapshot: CriticalInputSnapshot | None) -> SnapshotStore:
@@ -154,10 +88,6 @@ def _reasons(resolved: ResolvedTick) -> set[ValueRejectionReason]:
     return {entry.reason for entry in resolved.resolution.rejected}
 
 
-# ===========================================================================
-# P1 — the Protocol surface itself (design #38 §4-P1; D-E4 :69-96 isomorph)
-# ===========================================================================
-
 _PORT_PROTOCOLS = (SnapshotStore, ValueCandidateSource)
 
 
@@ -173,11 +103,7 @@ def _public_names(protocol: type) -> list[str]:
 
 @pytest.mark.parametrize("protocol", _PORT_PROTOCOLS, ids=_protocol_id)
 def test_each_port_protocol_is_call_only(protocol: type) -> None:
-    """(§4-P1.1 ★) One anonymous call surface — a named ``fetch`` / ``subscribe`` has nowhere to go.
-
-    D-E4 locks ``vars(Transport) == ["send_once"]``; the ingress form of the same lock is the empty
-    list plus a ``__call__`` the Protocol really declares itself (design #34 §5.1 isomorph).
-    """
+    """(§4-P1.1 ★) One anonymous call surface — a named ``fetch`` / ``subscribe`` has nowhere to go."""
     assert _public_names(protocol) == []
     assert "__call__" in vars(
         protocol
@@ -215,10 +141,6 @@ def test_the_candidate_source_call_takes_exactly_the_snapshot_and_the_scope() ->
     }
 
 
-#: Names that would turn an injection port into an ambient one: a live-transport surface, a
-#: credential, or a clock. Matched **token-wise** (``split("_")`` plus the whole name) — the
-#: ``_base.py:17-19`` discipline. An exact-name rule would miss ``session_token``; a bare substring
-#: rule would over-reject, which is its own defect class (the #26 WDR MAJOR-1 lesson).
 _AMBIENT_TOKENS = frozenset(
     {
         "clock",
@@ -256,8 +178,7 @@ def test_no_port_call_admits_an_ambient_or_transport_parameter(protocol: type) -
 
 
 def test_the_ambient_rule_is_token_wise_and_does_not_over_reject() -> None:
-    """(§4-P1.3 both ways) Token-wise is why ``session_token`` is caught; whole-name is why
-    ``canonical_digest`` is not."""
+    """(§4-P1.3 both ways) Token-wise is why ``session_token`` is caught; whole-name is why"""
     assert _ambient_offenders(["session_token"]) == ("session_token",)
     assert _ambient_offenders(["fetch_url", "clock", "credential_ref"]) == (
         "fetch_url",
@@ -273,13 +194,7 @@ def test_the_ambient_rule_is_token_wise_and_does_not_over_reject() -> None:
 
 
 def test_exactly_two_constructor_injections_are_cis_product_surfaces() -> None:
-    """(§4-P1.4 ★) The port is a pair, and the time projection is not a third member of it.
-
-    ``resolver.py:39`` carries ``from __future__ import annotations``, so the raw annotations are
-    *strings* and an identity comparison against them would be meaningless — ``get_type_hints``
-    resolves them first (design #38 §12 ③). The string-ness is asserted, so this reasoning cannot
-    quietly become stale.
-    """
+    """(§4-P1.4 ★) The port is a pair, and the time projection is not a third member of it."""
     raw = MarketFeedContextResolver.__init__.__annotations__
     assert isinstance(
         raw["snapshot_store"], str
@@ -295,31 +210,15 @@ def test_exactly_two_constructor_injections_are_cis_product_surfaces() -> None:
     assert hints["snapshot_store"] is SnapshotStore
     assert hints["candidate_source"] is ValueCandidateSource
 
-    # The time authority is a separate, optional injection — a "now" reading is not admitted
-    # snapshot content, and absorbing it into the port would be scope creep (design #38 §2.3).
     assert hints["time_projection"] is not TimeCoordinateProjection
     assert get_args(hints["time_projection"]) == (TimeCoordinateProjection, type(None))
 
-
-# ===========================================================================
-# P2 / P5 — required injection, and the three ways to bypass it
-# ===========================================================================
 
 _PORT_INJECTIONS = ("snapshot_store", "candidate_source")
 
 
 def _bypass_offenders(target: type) -> tuple[str, ...]:
-    """Ways ``target`` would let a resolver be built without a CIS-issued source.
-
-    Empty means both port halves are required, keyword-only constructor arguments — the structural
-    form of "no snapshot body and no candidate value enters except through the port".
-
-    Args:
-        target: The class whose ``__init__`` is read.
-
-    Returns:
-        One complaint per bypass found, empty when the port is required.
-    """
+    """Ways ``target`` would let a resolver be built without a CIS-issued source."""
     parameters = inspect.signature(target.__init__).parameters  # type: ignore[misc]
     offenders: list[str] = []
     for name in _PORT_INJECTIONS:
@@ -431,223 +330,8 @@ def test_every_port_bypass_mutation_is_killed(mutant: type, complaint: str) -> N
     assert all(complaint in offender for offender in offenders), offenders
 
 
-# ===========================================================================
-# P3 — the over-claim seal (design #38 §4-P3; existence + absence)
-# ===========================================================================
-
-_MARKETFEED_SRC = Path(tos.marketfeed.__file__).resolve().parent
-
-#: The shipped submodules whose authored prose is in scope. Compared against disk below, so a
-#: seventh module cannot land un-swept (``test_marketfeed_import_closure.py:627-641`` discipline).
-_SWEPT_MODULES = {
-    "tos.marketfeed": tos.marketfeed,
-    "tos.marketfeed._base": tos.marketfeed._base,
-    "tos.marketfeed.records": tos.marketfeed.records,
-    "tos.marketfeed.resolver": tos.marketfeed.resolver,
-    "tos.marketfeed.value": tos.marketfeed.value,
-    "tos.marketfeed.vocabulary": tos.marketfeed.vocabulary,
-}
-
-#: Claims the port cannot back (design #38 §3.3). Stems, not whole phrases, so a conjugation does
-#: not walk past the rule.
-_OVER_CLAIM_STEMS = (
-    "complete enforcement",
-    "fully enforc",
-    "completely enforc",
-    "re-verif",
-    "guarantees producer",
-    "guarantee producer honesty",
-)
-
-#: The qualification that turns a stem into an honest statement — the claim is placed upstream or
-#: negated. "Complete enforcement is upstream" is honest; "this layer fully enforces" is not.
-_HONEST_ANCHORS = ("upstream", "cannot", "does not", "not ")
-
-#: Sentence split on terminal punctuation **followed by whitespace**, trailing closers consumed. A
-#: bare ``"."`` split would cut ``value.py:44`` in half and orphan an anchor from its stem — an
-#: over-rejection this rule must not commit (design #38 §12 NIT-3).
-_SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s+")
-
-
-def _normalized(text: str) -> str:
-    """One-line form — every pin below must survive a line wrap (design #38 §12 ①).
-
-    ``__init__.py:64-65`` wraps "none of / them is claimed as closed" across two source lines, so a
-    raw substring check would fail on landing. The precedent is ``test_egressgw_package.py:43``.
-    """
-    return " ".join(text.split())
-
-
-def _sentences(text: str) -> list[str]:
-    """``text`` split into sentences, dotted tokens such as ``value.py:44`` kept whole."""
-    return [part for part in _SENTENCE_END.split(_normalized(text)) if part]
-
-
-def _over_claim_offenders(text: str) -> tuple[str, ...]:
-    """Sentences claiming enforcement the port does not have (design #38 §3.3).
-
-    Co-occurrence, not substring: a stem is an offence only when its own sentence carries no
-    upstream/negation anchor. The honest uses already shipped — "the environment-injection point
-    does not re-verify it" — must pass, or the rule would be an over-rejection.
-
-    Args:
-        text: The docstring under inspection.
-
-    Returns:
-        The offending sentences, empty when every stem is qualified.
-    """
-    offenders: list[str] = []
-    for sentence in _sentences(text):
-        lowered = sentence.lower()
-        if not any(stem in lowered for stem in _OVER_CLAIM_STEMS):
-            continue
-        if any(anchor in lowered for anchor in _HONEST_ANCHORS):
-            continue
-        offenders.append(sentence)
-    return tuple(offenders)
-
-
-def _documented_surfaces() -> list[tuple[str, str]]:
-    """``(name, normalized docstring)`` for every swept module and the surfaces it owns.
-
-    Scope is design #38 §4-P3: the six modules plus the public classes and functions each module
-    **owns**. A name re-exported from ``tos.canonical`` is that package's prose, not marketfeed's,
-    and is filtered out by its ``__module__``.
-    """
-    surfaces: list[tuple[str, str]] = []
-    for module_name, module in sorted(_SWEPT_MODULES.items()):
-        surfaces.append((module_name, _normalized(module.__doc__ or "")))
-        for attr_name, obj in sorted(vars(module).items()):
-            if attr_name.startswith("_"):
-                continue
-            if not (inspect.isclass(obj) or inspect.isfunction(obj)):
-                continue
-            if getattr(obj, "__module__", None) != module_name:
-                continue
-            surfaces.append(
-                (f"{module_name}.{attr_name}", _normalized(obj.__doc__ or ""))
-            )
-    return surfaces
-
-
-def test_the_over_claim_sweep_covers_every_shipped_submodule() -> None:
-    """(anti-phantom) The swept set is the on-disk set — a new module cannot land un-swept."""
-    on_disk = {
-        f"tos.marketfeed.{path.stem}" if path.stem != "__init__" else "tos.marketfeed"
-        for path in _MARKETFEED_SRC.glob("*.py")
-    }
-    assert on_disk == set(_SWEPT_MODULES), (
-        f"the shipped submodule set drifted: on-disk={sorted(on_disk)}, "
-        f"swept={sorted(_SWEPT_MODULES)}"
-    )
-
-
-def test_the_sweep_reaches_the_port_docstrings_this_contract_edits() -> None:
-    """(§4-P3 scope) The §5.2 edits land inside the swept set, not outside it."""
-    names = {name for name, _ in _documented_surfaces()}
-    for expected in (
-        "tos.marketfeed",
-        "tos.marketfeed.resolver",
-        "tos.marketfeed.resolver.SnapshotStore",
-        "tos.marketfeed.resolver.ValueCandidateSource",
-        "tos.marketfeed.resolver.MarketFeedContextResolver",
-        "tos.marketfeed.value.publish_context_value_view",
-    ):
-        assert expected in names, f"{expected} is outside the over-claim sweep"
-
-
-def test_the_package_still_declares_what_it_is_not() -> None:
-    """(§4-P3.1 / §5.1 ★ positive pin) The honesty phrases the port naming must not retire."""
-    doc = _normalized(tos.marketfeed.__doc__ or "")
-    for phrase in (
-        "not the Context Integrity Service runtime",
-        "detects rather than enforces",
-        "none of them is claimed as closed",
-    ):
-        assert (
-            phrase in doc
-        ), f"the package docstring lost its honesty phrase: {phrase!r}"
-
-
-def test_the_publication_layer_still_names_the_limit_it_cannot_close() -> None:
-    """(§4-P3.1 ★ positive pin) ``value.py`` states the as-of limit as a limit, not a guarantee."""
-    assert "cannot close" in _normalized(tos.marketfeed.value.__doc__ or "")
-
-
-def test_no_marketfeed_docstring_claims_enforcement_the_port_does_not_have() -> None:
-    """(§4-P3.2 ★ the seal) Over-claim stems are admitted only alongside their qualification."""
-    offenders = [
-        (name, sentence)
-        for name, doc in _documented_surfaces()
-        for sentence in _over_claim_offenders(doc)
-    ]
-    assert (
-        offenders == []
-    ), f"unqualified enforcement claim in marketfeed prose: {offenders}"
-
-
-def test_the_over_claim_rule_is_co_occurrence_not_substring() -> None:
-    """(§4-P3.3 both ways) The honest sentence passes; the planted unqualified claim fails."""
-    assert _over_claim_offenders("Complete enforcement is upstream (the CIS).") == ()
-    assert _over_claim_offenders("This layer fully enforces distinctness.") == (
-        "This layer fully enforces distinctness.",
-    )
-
-
-def test_a_planted_over_claim_is_caught_where_it_would_actually_land() -> None:
-    """(§4-P3.3 ★ mutation) The rule catches the claim inside real shipped prose."""
-    planted = (
-        _normalized(tos.marketfeed.__doc__ or "")
-        + " This layer fully enforces distinctness."
-    )
-    assert _over_claim_offenders(planted) == (
-        "This layer fully enforces distinctness.",
-    )
-
-
-def test_the_sentence_split_keeps_a_dotted_source_reference_whole() -> None:
-    """(§4-P3.2 / §12 NIT-3) A bare ``"."`` split would orphan the anchor and over-reject."""
-    qualified = "Nothing here fully enforces value.py:44's limit; it is upstream."
-    assert _sentences(qualified) == [qualified]
-    assert _over_claim_offenders(qualified) == ()
-
-    naive = [part for part in qualified.split(".") if part]
-    assert any(
-        "fully enforces" in part and "upstream" not in part for part in naive
-    ), "the naive split no longer demonstrates the over-rejection this protection prevents"
-
-
-def test_the_shipped_trust_seam_sentence_is_what_the_rule_admits() -> None:
-    """(§4-P3.3 in-scope example) The rule has bite on shipped prose, not only on synthetic text.
-
-    ``value.py:35-37`` says the environment-injection point "does **not** re-verify it" — a stem and
-    its anchor in one sentence. If that sentence ever disappears the rule would still be green, so
-    its presence is asserted rather than assumed.
-    """
-    doc = _normalized(tos.marketfeed.value.__doc__ or "")
-    stemmed = [
-        sentence
-        for sentence in _sentences(doc)
-        if any(stem in sentence.lower() for stem in _OVER_CLAIM_STEMS)
-    ]
-    assert (
-        stemmed
-    ), "value.py carries no over-claim stem any more — the rule is vacuous here"
-    assert all("not" in sentence.lower() for sentence in stemmed), stemmed
-    assert _over_claim_offenders(doc) == ()
-
-
-# ===========================================================================
-# P4 — the four gates, restated at the port boundary (design #38 §4-P4)
-# ===========================================================================
-
-
 def test_a_body_that_is_not_the_referenced_one_is_refused_at_the_port() -> None:
-    """(§4-P4 a / G1) A store answering with another snapshot publishes nothing.
-
-    The gate-level form of this is committed at ``test_marketfeed_resolver.py:93-102`` (K11); this
-    restates it as the port's own obligation, which is the framing the other three reuse.
-    """
+    """(§4-P4 a / G1) A store answering with another snapshot publishes nothing."""
     capsule, _, candidates = one_bar()
     impostor = issue_snapshot(intended_use="something-else")
     resolved = _resolve(capsule=capsule, snapshot=impostor, candidates=candidates)
@@ -718,11 +402,6 @@ def test_an_unevaluated_field_is_refused_at_the_port() -> None:
     assert _reasons(resolved) == {ValueRejectionReason.FIELD_STATE_NOT_VALID}
     assert resolved.payload.value_view is not None
     assert resolved.payload.value_view.values == ()
-
-
-# ===========================================================================
-# §4.2 — source parity in three structural shapes, and its KILL mutation
-# ===========================================================================
 
 
 class _MethodBook:
@@ -814,11 +493,7 @@ def _view_digest(
 
 
 def test_the_port_does_not_discriminate_between_upstream_shapes() -> None:
-    """(§4.2 parity ★) Function, bound method, callable object / partial — one digest.
-
-    This is the structural form of ``resolver.py:16-18`` "the resolver cannot tell them apart": the
-    three shapes are different *kinds of Python object*, not three names for one function.
-    """
+    """(§4.2 parity ★) Function, bound method, callable object / partial — one digest."""
     capsule, snapshot, candidates = one_bar()
     digests = {
         shape: _view_digest(store, source, capsule)
@@ -843,20 +518,8 @@ def test_a_store_that_branches_on_its_own_kind_breaks_the_parity_claim() -> None
     assert peeking.payload.value_view is None
 
 
-# ===========================================================================
-# The non-guarantee, stated as a non-guarantee (design #38 §3.3 N1 / §4.2)
-# ===========================================================================
-
-
 def test_the_port_does_not_make_the_producer_honest_about_as_of() -> None:
-    """(§3.3 N1 ★ limit, not a guarantee) Two bars stamped with one as-of collapse the chain.
-
-    Nothing here is asserted to be *caught*. The port admits both, their digests coincide, and
-    complete enforcement of per-bar distinctness stays upstream, in the Context Integrity Service —
-    which is what K1 (``test_marketfeed_distinctness.py:236-247``) says at the gate and what this
-    says at the port. Adding an as-of reuse rejection would be deferral ②(b) work and the invention
-    design #38 §0.4 (f) forbids, so it is not done.
-    """
+    """(§3.3 N1 ★ limit, not a guarantee) Two bars stamped with one as-of collapse the chain."""
     capsule_one, snapshot_one, candidates_one = one_bar(
         as_of=BAR_ONE_AS_OF, close=CLOSE_BAR_ONE
     )

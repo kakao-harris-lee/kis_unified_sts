@@ -1,10 +1,4 @@
-"""CII-EV-003 admission mismatch reject + CII-EV-002 predicate-only continuity.
-
-Design §2.2 admission is a pure function over one observation and an injected
-policy expectation. A concrete unit/scale/mapping mismatch rejects (-> INVALID);
-an expected-but-missing field is uncertain (-> UNKNOWN); a clean match is
-admitted (-> VALID candidate). CII-EV-002 is predicate-only at L1 (design §7).
-"""
+"""CII-EV-003 admission mismatch reject + CII-EV-002 predicate-only continuity."""
 
 from __future__ import annotations
 
@@ -65,7 +59,7 @@ def test_exact_match_is_admitted(field: str, value: str) -> None:
 )
 def test_missing_observed_is_uncertain(field: str, expected: str) -> None:
     """An expected-but-unverifiable field is uncertain -> UNKNOWN (fail-closed)."""
-    obs = Observation(mapping=Mapping())  # observed field is None
+    obs = Observation(mapping=Mapping())
     expectation = AdmissionExpectation.model_validate({field: expected})
     result, _ = compute_admission(obs, expectation)
     assert result == AdmissionResult.UNCERTAIN
@@ -91,9 +85,6 @@ def test_out_of_trust_endpoint_rejects() -> None:
     result, reasons = compute_admission(obs, expectation)
     assert result == AdmissionResult.REJECTED
     assert "out_of_trust_endpoint" in reasons
-
-
-# ---- CII-EV-002 predicate-only ---------------------------------------------
 
 
 @given(gap=st.booleans(), result=st.sampled_from(list(AdmissionResult)))

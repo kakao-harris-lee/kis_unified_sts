@@ -1,48 +1,4 @@
-"""Standing session approval — one operator artifact that approves a bounded set of step-4
-proposals for ONE KIS MOCK stock session (operator decision 2026-10-24).
-
-Why it exists. A per-proposal approval file (``approvals/<proposal_digest>.yaml``,
-:mod:`tos_runtime.authority.iap`) binds a proposal digest, and every proposal binds its own
-decision context capsule, so no operator can author that file before the proposal exists — and
-nothing re-drives a proposal halted ``UNKNOWN`` at step 4. The first MOCK stock session would
-send zero orders. The operator therefore writes ONE artifact before the open
-(``approvals/standing-session.yaml``, ``tos-runtime write-standing-approval``) and this module
-turns it into a per-proposal :class:`~tos.iap.IndependentApprovalDecision` only for a proposal
-that falls inside every bound it names.
-
-What bounds a use (all must hold; anything else is "not covered" and step 4 stays ``UNKNOWN``,
-exactly as with no artifact at all):
-
-* **MOCK only, by construction** — the active broker scope is the kernel's
-  :func:`~tos.brokercap.mock_order_without_position_or_cash` class AND its bound INSTANCE profile
-  is a host-bound ``BROKER_SIMULATION`` profile
-  (:func:`~tos_runtime.brokercap.derive.is_mock_order_class`, the facts the gateway's item-6 skip
-  reads). The artifact has no field that names an environment class, so no file, config or env
-  value can extend this to a REAL, POSITION_OR_CASH or SYNTHETIC scope.
-* the runtime's ``environment_label`` and admitted ``code_digest`` (the tenant tree release);
-* the KST trading date (``trading_date_now`` through the trusted, fresh wall clock — ``None``
-  outside every calendar session window, so the artifact expires at session close);
-* the proposal's ``strategy_id`` (a content digest of the strategy) and instrument;
-* the action — the proposal's ``position_effect`` and ``direction`` plus the command's ``SIDE``
-  — must match one declared action exactly; the command's quantity must not exceed
-  ``max_quantity``;
-* per-action use caps.
-
-Uses are durable. Each use is the ordinary IAP consumption commit — one content-addressed RCL
-``CONSUME_APPROVAL_DECISION`` entry — under a slot id ``standing-approval:<date>:<action>:<n>``.
-The free slot is chosen from the committed log, so a use that committed is counted after any
-crash or restart, a use whose append did not commit (refused / rolled back) is not, and a slot is
-never reused: a restart re-proposes with a new capsule, and that new command takes the NEXT slot.
-Slots are keyed by trading date, not by artifact digest, so rewriting the artifact mid-day cannot
-reset the count.
-
-Integrity. Per-proposal approval files carry no signature; they are custody-gated (0600, owner
-uid) and environment-label checked. This artifact gets the same gate, plus its canonical digest
-(``tos.canonical``) is recorded once as ``APPROVAL_STANDING_BOUND`` and pinned for the life of the
-process: a later read with a different digest is refused (``APPROVAL_STANDING_REFUSED``) until a
-restart re-binds. Every committed use records ``APPROVAL_STANDING_CONSUMED`` linking the artifact
-digest, the proposal digest and the RCL command id.
-"""
+"""Standing session approval — one operator artifact that approves a bounded set of step-4"""
 
 from __future__ import annotations
 
@@ -77,11 +33,9 @@ __all__ = [
     "standing_approval_digest",
 ]
 
-#: Where the artifact lives, relative to the custody root (next to the per-proposal files).
 STANDING_APPROVAL_RELPATH = Path("approvals") / "standing-session.yaml"
 STANDING_APPROVAL_SCHEMA = "tos-standing-session-approval/1"
 
-#: Slot ids start with this token (inside the IAP ``iap-consumption:`` command id).
 _SLOT_PREFIX = "standing-approval"
 _CONSUMPTION_PREFIX = "iap-consumption"
 
@@ -116,8 +70,7 @@ class StandingApprovalError(RuntimeError):
 
 @dataclass(frozen=True)
 class StandingAction:
-    """One declared action: the proposal's position effect and direction, the command's side,
-    and how many times it may be used this session."""
+    """One declared action: the proposal's position effect and direction, the command's side,"""
 
     position_effect: str
     direction: str
@@ -193,11 +146,7 @@ def _parse_actions(raw: Any, path: Path) -> tuple[StandingAction, ...]:
 
 
 def parse_standing_approval(raw: Any, path: Path) -> StandingApproval:
-    """Parse ``raw`` strictly: exact key set, no defaults, no unknown field.
-
-    Raises:
-        StandingApprovalError: Any deviation.
-    """
+    """Parse ``raw`` strictly: exact key set, no defaults, no unknown field."""
     if not isinstance(raw, dict) or set(raw) != _TOP_KEYS:
         got = sorted(raw) if isinstance(raw, dict) else type(raw).__name__
         raise StandingApprovalError(
@@ -243,11 +192,7 @@ def parse_standing_approval(raw: Any, path: Path) -> StandingApproval:
 def load_standing_approval(
     path: Path, *, expected_owner_uid: int, getuid: Callable[[], int] = os.getuid
 ) -> StandingApproval:
-    """Custody gate (0600, owner) BEFORE parsing, then a strict parse.
-
-    Raises:
-        StandingApprovalError: Custody, read, YAML or schema failure.
-    """
+    """Custody gate (0600, owner) BEFORE parsing, then a strict parse."""
     try:
         verify_file_mode_and_owner(
             path, expected_owner_uid=expected_owner_uid, getuid=getuid
@@ -301,22 +246,7 @@ class StandingApprovalSource:
         evidence: Any,
         getuid: Callable[[], int] = os.getuid,
     ) -> None:
-        """Wire the source over facts the composition root already owns.
-
-        Args:
-            custody_root: The custody root (artifact at :data:`STANDING_APPROVAL_RELPATH`).
-            environment_label: This runtime's boot environment label.
-            code_digest: This runtime's admitted source-tree digest (``RuntimeIdentity``).
-            uid: Expected owner uid of the artifact (custody rule).
-            mock_class: Whether the active scope + bound profile is the MOCK class
-                (:func:`~tos_runtime.brokercap.derive.is_mock_order_class`) — re-read per call.
-            trading_date_reader: The KST trading date (``YYYYMMDD``) now, or ``None``.
-            construction_reader: Step 2's current ``CandidateConstruction`` (or ``None``).
-            rcl_log: The RCL log uses are committed to and counted from.
-            writer_epoch: The RCL writer epoch for linearizable reads.
-            evidence: The durable evidence append port.
-            getuid: Injectable ``os.getuid``.
-        """
+        """Wire the source over facts the composition root already owns."""
         self._path = custody_root / STANDING_APPROVAL_RELPATH
         self._environment_label = environment_label
         self._code_digest = code_digest
@@ -333,17 +263,13 @@ class StandingApprovalSource:
         self._not_covered_reasons: set[str] = set()
         self._pending: _PendingUse | None = None
 
-    # ------------------------------------------------------------------ binding
-
     def bind_at_boot(self) -> None:
-        """Bind (and evidence) the artifact if it is already present at boot — never on a
-        non-MOCK runtime, where the artifact is not read at all."""
+        """Bind (and evidence) the artifact if it is already present at boot — never on a"""
         if self._mock_class() is True and self._path.is_file():
             self._load_bound()
 
     def _load_bound(self) -> StandingApproval | None:
-        """Load the artifact, binding its digest on first sight and refusing any other digest
-        for the rest of this process."""
+        """Load the artifact, binding its digest on first sight and refusing any other digest"""
         try:
             approval = load_standing_approval(
                 self._path, expected_owner_uid=self._uid, getuid=self._getuid
@@ -398,13 +324,10 @@ class StandingApprovalSource:
             record_class=_EVIDENCE_NOT_COVERED,
         )
 
-    # ------------------------------------------------------------------ provider
-
     def provide(self, request: StageRequest) -> LoadedApproval | None:
         """The decision for ``request`` if the artifact covers it, else ``None``."""
         self._pending = None
         if self._mock_class() is not True:
-            # Never MOCK: the artifact is not even read (stock MOCK only, by construction).
             return None
         if not self._path.is_file():
             return None
@@ -442,8 +365,7 @@ class StandingApprovalSource:
         return _Covered(action=action, slot=slot, command_digest=command_digest)
 
     def free_slot(self, trading_date: str, action: StandingAction) -> int | None:
-        """The lowest uncommitted slot for ``action`` today, read from the committed log;
-        ``None`` when every slot is used or the log cannot be read (fail closed)."""
+        """The lowest uncommitted slot for ``action`` today, read from the committed log;"""
         prefix = f"{_CONSUMPTION_PREFIX}:{_SLOT_PREFIX}:{trading_date}:{action.key}:"
         try:
             view = self._rcl_log.read_linearizable(writer_epoch=self._writer_epoch)
@@ -456,7 +378,7 @@ class StandingApprovalSource:
             if entry.command_id is None or not entry.command_id.startswith(prefix):
                 continue
             if entry.kind is not CommandType.CONSUME_APPROVAL_DECISION:
-                return None  # a foreign kind under our prefix is corruption: no use
+                return None
             token = entry.command_id[len(prefix) :].split(":", 1)[0]
             if not token.isdigit():
                 return None
@@ -563,10 +485,7 @@ def _bounds_verdict(
     code_digest: str,
     trading_date: str | None,
 ) -> tuple[str | None, StandingAction | None, str | None]:
-    """``(None, action, command_digest)`` when every bound holds, else ``(reason, None, None)``.
-
-    Reads only the proposal the sequencer handed step 4 and step 2's command for THAT proposal.
-    """
+    """``(None, action, command_digest)`` when every bound holds, else ``(reason, None, None)``."""
     proposal = request.proposal
     if approval.code_digest != code_digest:
         return "code_digest_mismatch", None, None
@@ -612,8 +531,7 @@ def chain_decision_providers(
     primary: Callable[[StageRequest], LoadedApproval | None],
     standing: StandingApprovalSource,
 ) -> Callable[[StageRequest], LoadedApproval | None]:
-    """Per-proposal file first (unchanged path); the standing artifact only when no
-    per-proposal file resolved a decision."""
+    """Per-proposal file first (unchanged path); the standing artifact only when no"""
 
     def _provider(request: StageRequest) -> LoadedApproval | None:
         loaded = primary(request)
@@ -625,8 +543,7 @@ def chain_decision_providers(
 
 
 class StandingRecordingStage:
-    """Step 4 wrapped so a committed standing use is evidenced after the stage judged it.
-    Delegates unchanged; never alters the verdict."""
+    """Step 4 wrapped so a committed standing use is evidenced after the stage judged it."""
 
     def __init__(
         self,

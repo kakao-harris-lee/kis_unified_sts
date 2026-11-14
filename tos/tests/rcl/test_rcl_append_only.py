@@ -1,9 +1,4 @@
-"""Append-only ledger discipline (RCL design §4.2; ADR-002-002 §28; ADR-012 §17).
-
-Records are frozen with no update / delete method; a lifecycle change (resize /
-transfer / release / quarantine / correction) is expressed by APPENDING a new
-committed command / transition — existing records' covered fields never mutate.
-"""
+"""Append-only ledger discipline (RCL design §4.2; ADR-002-002 §28; ADR-012 §17)."""
 
 from __future__ import annotations
 
@@ -20,18 +15,12 @@ LIMITS = vec(gross_notional=100)
 def test_records_are_frozen() -> None:
     """An issued record cannot be mutated in place (frozen)."""
     reservation = issue_reservation()
-    with pytest.raises(ValidationError):  # frozen assignment is rejected
+    with pytest.raises(ValidationError):
         reservation.action_class = "CLOSE"
 
 
 def test_no_update_or_delete_methods_on_records() -> None:
-    """No record exposes a lifecycle-mutation method (append-only §4.2).
-
-    Lifecycle change (resize / transfer / release / quarantine / correction) is
-    expressed by appending a new committed command / transition, never by a bespoke
-    mutator on the record. (Pydantic's own ``update_forward_refs`` /``model_copy``
-    are not domain mutators and are not flagged.)
-    """
+    """No record exposes a lifecycle-mutation method (append-only §4.2)."""
     reservation = issue_reservation()
     forbidden = [
         name
@@ -79,7 +68,6 @@ def test_lifecycle_change_is_append_not_mutation() -> None:
         limits=LIMITS,
         applicable_dimensions=DIMS,
     )
-    # The prior reservation object is preserved untouched; the change is an append.
     assert o2.state.committed[0] is first_reservation
     assert len(o2.state.committed) == 2
     assert o2.state.applied_commands[0] is o1.state.applied_commands[0]
@@ -101,7 +89,6 @@ def test_prior_state_object_is_not_mutated_by_apply() -> None:
         limits=LIMITS,
         applicable_dimensions=DIMS,
     )
-    # The original (frozen) state tuples are unchanged.
     assert s0.committed is before_committed and len(s0.committed) == 0
     assert s0.applied_commands is before_applied and len(s0.applied_commands) == 0
     assert s0.revision == 0
@@ -110,7 +97,6 @@ def test_prior_state_object_is_not_mutated_by_apply() -> None:
 def test_rejected_command_recorded_without_capacity_change() -> None:
     """A rejected command appends an idempotency record but changes no committed capacity."""
     s0 = LedgerState()
-    # Stale expected revision => rejected, recorded, no committed reservation added.
     outcome = apply_committed(
         s0,
         commit_reservation_command(

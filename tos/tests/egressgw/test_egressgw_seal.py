@@ -1,12 +1,4 @@
-"""``SendSeal`` unit tests (Phase 4 작업 6, design §1.4).
-
-Exercises :mod:`tos.egressgw.seal` directly — construction rejection (every required field),
-the coordinate/field combined validator, the ``claim_principal == active_principal`` A2
-enforcement, digest determinism, and :func:`seal_matches_outbound`'s polarity. Gateway-level
-ordering / claim / mutation coverage lives in ``test_egressgw_gateway.py``.
-
-Regime tag: authoring evidence only; closes no EV (design #34 §1.1).
-"""
+"""``SendSeal`` unit tests (Phase 4 작업 6, design §1.4)."""
 
 from __future__ import annotations
 
@@ -25,17 +17,6 @@ from tos.egressgw import (
 
 from ._egressgw_fixtures import SCHEME, authorized_coordinates, happy_context, ordering
 
-# ---------------------------------------------------------------------------
-# build_send_seal — every required fact rejects None (design §1.4)
-# ---------------------------------------------------------------------------
-
-#: Each case's third element is the exact set of field names ``build_send_seal``'s missing-fact
-#: check must name in its raised reason (independent review finding #6 — previously the
-#: parametrization asserted only ``pytest.raises(SendSealUnconstructable)`` with no ``match``, so
-#: any of the three rejection paths (missing fact / coordinate mismatch / principal mismatch)
-#: satisfied every case; ``match="missing required fact"`` on its own already proves the case is
-#: **not** satisfied by one of the other two paths, and the per-field check below proves the
-#: *right* fact was named).
 _MISSING_FIELD_CASES: list[tuple[str, dict[str, Any], tuple[str, ...]]] = [
     ("instrument_key", {"instrument_key": None}, ("instrument_key",)),
     (
@@ -100,14 +81,7 @@ _MISSING_FIELD_CASES: list[tuple[str, dict[str, Any], tuple[str, ...]]] = [
 def test_build_send_seal_rejects_each_missing_required_fact(
     label: str, override: dict[str, Any], expected_missing: tuple[str, ...]
 ) -> None:
-    """(design §1.1 "None 불허 · 생성 자체가 거부") Any one absent fact makes the seal unconstructable.
-
-    ``match="missing required fact"`` proves this is the missing-fact rejection path specifically
-    — not the coordinate/field validator or the principal-equality validator, both of which also
-    raise :class:`SendSealUnconstructable` but with a different reason text (independent review
-    finding #6). The per-field membership check then proves the *named* fact is the one this case
-    is actually about.
-    """
+    """(design §1.1 "None 불허 · 생성 자체가 거부") Any one absent fact makes the seal unconstructable."""
     attempt, context = happy_context(**override)
     with pytest.raises(
         SendSealUnconstructable, match="missing required fact"
@@ -139,13 +113,7 @@ def test_build_send_seal_succeeds_on_the_unmodified_happy_context() -> None:
 
 
 def test_send_seal_rejects_a_none_reference_directly() -> None:
-    """(design §0/§1.1) ``reference`` is a required sealed field like any other.
-
-    ``SendBoundaryContext.reference`` defaults to an empty ``OrderingEvent()`` and is never
-    itself ``None`` (so ``build_send_seal`` can never observe a missing ``reference`` through a
-    ``happy_context`` override the way it can for every other field above) — the rejection is
-    therefore exercised directly against :class:`SendSeal`'s own required-field type seal.
-    """
+    """(design §0/§1.1) ``reference`` is a required sealed field like any other."""
     attempt, context = happy_context()
     seal = build_send_seal(
         context=context,
@@ -157,11 +125,6 @@ def test_send_seal_rejects_a_none_reference_directly() -> None:
     tampered["reference"] = None
     with pytest.raises(ValidationError):
         SendSeal.model_validate(tampered)
-
-
-# ---------------------------------------------------------------------------
-# the combined coordinate/field validator (design §1.1)
-# ---------------------------------------------------------------------------
 
 
 def test_build_send_seal_rejects_a_coordinate_value_that_disagrees_with_its_field() -> (
@@ -186,26 +149,15 @@ def test_build_send_seal_rejects_a_coordinate_name_the_seal_has_no_field_for() -
     """An outbound coordinate shape other than the fixed 10-name order is unconstructable."""
     attempt, context = happy_context()
     coordinates = outbound_coordinates(context)
-    truncated = coordinates[
-        :-1
-    ]  # drop "active_principal" — the shape no longer matches
+    truncated = coordinates[:-1]
     with pytest.raises(SendSealUnconstructable):
         build_send_seal(
             context=context, attempt=attempt, coordinates=truncated, scheme=SCHEME
         )
 
 
-# ---------------------------------------------------------------------------
-# claim_principal == active_principal (design §1.1 A2 — measured-equal, so enforced)
-# ---------------------------------------------------------------------------
-
-
 def test_claim_principal_must_equal_active_principal() -> None:
-    """A seal whose claim principal diverges from the sealed active principal is unconstructable.
-
-    Every measured fixture (``happy_context``, the slice fixtures) binds the two identically —
-    this proves the validator itself, independent of whether any fixture happens to trip it.
-    """
+    """A seal whose claim principal diverges from the sealed active principal is unconstructable."""
     attempt, context = happy_context()
     seal = build_send_seal(
         context=context,
@@ -215,19 +167,12 @@ def test_claim_principal_must_equal_active_principal() -> None:
     )
     tampered = dict(seal.model_dump())
     tampered["active_principal"] = "someone-else"
-    # Keep the coordinate/field validator satisfied so it is the principal-equality validator,
-    # not the coordinate one, that fires.
     tampered["outbound_coordinates"] = tuple(
         (name, "someone-else") if name == "active_principal" else (name, value)
         for name, value in tampered["outbound_coordinates"]
     )
     with pytest.raises(ValidationError, match="claim_principal"):
         SendSeal.model_validate(tampered)
-
-
-# ---------------------------------------------------------------------------
-# digest determinism (design §1.4)
-# ---------------------------------------------------------------------------
 
 
 def test_seal_digests_are_deterministic_over_the_same_inputs() -> None:
@@ -283,11 +228,6 @@ def test_seal_digests_change_when_any_one_field_changes(
     assert changed.seal_digest != baseline.seal_digest
     assert changed.outbound_request_digest != baseline.outbound_request_digest
     del label
-
-
-# ---------------------------------------------------------------------------
-# seal_matches_outbound polarity (design §1.4)
-# ---------------------------------------------------------------------------
 
 
 def test_seal_matches_outbound_is_true_for_the_seals_own_values() -> None:

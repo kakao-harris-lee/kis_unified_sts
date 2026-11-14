@@ -1,10 +1,4 @@
-"""Retention / tombstone / supersession — ERI-EV-010, ERI-INV-011 (design #4 §4.5/§2.6).
-
-Retention is orthogonal to economic effect: expiry / compaction / deletion never
-erase an order, exposure, UNKNOWN, or commitment. A Tombstone over a record that
-supports live/economic state is inadmissible; a supersession preserves the
-original (append-only lineage).
-"""
+"""Retention / tombstone / supersession — ERI-EV-010, ERI-INV-011 (design #4 §4.5/§2.6)."""
 
 from __future__ import annotations
 
@@ -65,11 +59,7 @@ def test_no_horizon_is_none() -> None:
 
 
 def test_injected_durations_determine_longest_applicable() -> None:
-    """(MINOR-3) Injected per-horizon durations are authoritative over the rank fallback.
-
-    "Longest applicable" (§17) is ultimately a duration decision; when injected
-    durations are supplied they win, and the documented rank is only a fallback.
-    """
+    """(MINOR-3) Injected per-horizon durations are authoritative over the rank fallback."""
     rule = RetentionRecordClassRule(
         record_class="INTENT",
         horizons=(
@@ -77,9 +67,7 @@ def test_injected_durations_determine_longest_applicable() -> None:
             RetentionHorizon.IDEMPOTENCY_REPLAY,
         ),
     )
-    # By rank alone, ECONOMIC_EFFECT dominates.
     assert effective_retention_horizon(rule) is RetentionHorizon.ECONOMIC_EFFECT
-    # With injected durations, the longer duration wins even against the rank.
     injected = {
         RetentionHorizon.ECONOMIC_EFFECT: 10,
         RetentionHorizon.IDEMPOTENCY_REPLAY: 10_000,
@@ -88,9 +76,6 @@ def test_injected_durations_determine_longest_applicable() -> None:
         effective_retention_horizon(rule, horizon_durations_ms=injected)
         is RetentionHorizon.IDEMPOTENCY_REPLAY
     )
-
-
-# ---- tombstone admissibility (§2.6) ----------------------------------------
 
 
 def test_tombstone_admissible_for_inert_subject() -> None:
@@ -116,9 +101,6 @@ def test_tombstone_record_class_is_an_envelope() -> None:
     )
 
 
-# ---- supersession lineage (append-only) ------------------------------------
-
-
 def test_supersession_preserves_original() -> None:
     """A superseding record links back; the original stays immutable (§2.0/§17 443)."""
     original = issue_envelope(evidence_record_id="er-1")
@@ -129,6 +111,5 @@ def test_supersession_preserves_original() -> None:
         lifecycle=Lifecycle(retention_class="standard", supersedes_record_id="er-1"),
     )
     assert superseder.lifecycle.supersedes_record_id == "er-1"
-    # The original is untouched (append-only, not overwritten).
     assert original.evidence_record_id == "er-1"
     assert original.lifecycle.supersedes_record_id is None

@@ -1,8 +1,4 @@
-"""tos.position pure predicates — ported from tos_runtime.riskstate.position (kernel round #4
-K-2; DR-0003 §2.2). These tests exercise the kernel package directly (no evidence-store I/O —
-that stays runtime-side); the runtime's own ``tos_runtime/tests/riskstate/test_position.py``
-covers the I/O + wiring end to end and must keep passing unchanged (K-2 end condition).
-"""
+"""tos.position pure predicates — ported from tos_runtime.riskstate.position (kernel round #4"""
 
 from __future__ import annotations
 
@@ -22,8 +18,6 @@ from tos.position import (
 
 _BUY = "BUY"
 _SELL = "SELL"
-#: The terminal result-kind tokens — injected exactly as the runtime reader injects
-#: ``tos.engine.TERMINAL_RESULT_KINDS``'s values (pinned against it below).
 _TERMINAL = frozenset({"FULL_FILL", "REJECT", "CANCEL_ACK", "EXPIRED"})
 
 
@@ -51,7 +45,6 @@ def test_worst_credible_usage_pushes_unknowns_to_the_larger_direction() -> None:
         in_flight_buy=Decimal(2),
         in_flight_sell=Decimal(0),
     )
-    # long_case = 5+3+2=10, short_case = |5-1-0| = 4 -> worst is 10.
     assert worst_credible_directional_usage(obs) == Decimal(10)
 
 
@@ -63,7 +56,6 @@ def test_conservative_current_usage_excludes_in_flight() -> None:
         in_flight_buy=Decimal(100),
         in_flight_sell=Decimal(100),
     )
-    # long_case = 5+3=8, short_case=|5-1|=4 -> 8, unaffected by in-flight.
     assert conservative_current_usage(obs) == Decimal(8)
 
 
@@ -163,9 +155,7 @@ def test_classify_no_terminal_result_is_in_flight() -> None:
 def test_classify_unrecognized_side_on_confirmed_fill_is_unknown_both_directions() -> (
     None
 ):
-    """An unrecognized side token on a CONFIRMED fill must not silently drop the confirmed
-    magnitude — it fails closed into UNKNOWN in BOTH directions (never a guessed direction).
-    """
+    """An unrecognized side token on a CONFIRMED fill must not silently drop the confirmed"""
     sealed = (SealedSend(attempt_id="a1", side="MYSTERY", quantity=Decimal(9)),)
     result = classify_sealed_sends(
         sealed,
@@ -197,10 +187,6 @@ def test_classify_missing_quantity_treated_as_zero_never_guessed() -> None:
     assert in_flight_buy == Decimal(0)
     assert in_flight_sell == Decimal(0)
 
-
-# ===========================================================================
-# Lane A re-review #7 (high): a CONSUMED result is not necessarily a TERMINAL one
-# ===========================================================================
 
 _SIDES = ((_BUY, 1), (_SELL, -1))
 
@@ -262,8 +248,7 @@ def test_terminal_tokens_match_the_engine_vocabulary() -> None:
 def test_nonterminal_zero_fill_keeps_full_sealed_quantity_outstanding(
     kind: str, side: str, sign: int
 ) -> None:
-    """The reproduced defect: a sealed 10-lot with one consumed ACK / TIMEOUT / UNKNOWN result
-    had worst-credible usage 0. It must stay 10 — the attempt has no terminal result."""
+    """The reproduced defect: a sealed 10-lot with one consumed ACK / TIMEOUT / UNKNOWN result"""
     obs = _as_obs(_classify_one(side, ConsumedResult(result_kind=kind)))
     assert obs.confirmed_net == Decimal(0)
     assert _toward(obs, sign) == Decimal(10)
@@ -306,9 +291,7 @@ def test_terminal_full_fill_leaves_nothing_outstanding(side: str, sign: int) -> 
 def test_terminal_zero_or_partial_fill_releases_the_unfilled_remainder(
     kind: str, side: str, sign: int
 ) -> None:
-    """DR-0003 §2.2 counts in full only attempts with NO terminal result; a terminal
-    REJECT / CANCEL_ACK / EXPIRED resolves the unfilled remainder (confirmed = filled).
-    """
+    """DR-0003 §2.2 counts in full only attempts with NO terminal result; a terminal"""
     zero = _as_obs(_classify_one(side, ConsumedResult(result_kind=kind)))
     assert zero.confirmed_net == Decimal(0)
     assert in_flight_overlap_effect(zero) == Decimal(0)
@@ -325,9 +308,7 @@ def test_unrecognized_result_kind_is_not_terminal(kind: str | None) -> None:
 
 
 def test_outstanding_is_never_below_sealed_minus_filled() -> None:
-    """A non-terminal row whose ``remaining_quantity`` under-reports (or omits) the unfilled
-    part never shrinks it below ``sealed - filled``; an over-report is kept (the larger of the
-    two governs)."""
+    """A non-terminal row whose ``remaining_quantity`` under-reports (or omits) the unfilled"""
     under = _as_obs(_classify_one(_BUY, _partial(remaining=1)))
     assert under.in_flight_buy == Decimal(3)
     omitted = _as_obs(
@@ -354,13 +335,7 @@ def test_unrecognized_side_on_nonterminal_result_is_both_directions() -> None:
 def test_zero_fill_nonterminal_result_never_lowers_the_decision_sum(
     kind: str, side: str, prior_net: int
 ) -> None:
-    """The bucket choice's own justification, made mechanical. ARE grants iff
-    ``requested_increment <= headroom``, i.e. ``conservative_current_usage + command + overlap
-    <= limit``. A zero-fill NON-terminal result must leave ``conservative + overlap`` exactly
-    where the same attempt with NO result at all (sealed, in flight) left it — against a prior
-    confirmed position in either direction. (Routing the remainder to UNKNOWN instead would
-    fail this for an opposite-side attempt: prior +10 and an unknown 10-lot sell give 10, not
-    the 20 the sealed-in-flight state gives.)"""
+    """The bucket choice's own justification, made mechanical. ARE grants iff"""
     prior_side = _BUY if prior_net >= 0 else _SELL
     sealed = (
         SealedSend(

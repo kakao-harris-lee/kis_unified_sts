@@ -1,17 +1,4 @@
-"""One normalizer for every broker-host comparison (#932 final review MEDIUM).
-
-The MOCK-only host seals (``kis_mock`` / ``kis_quote`` transport configs, the KIS witness
-config) and the broker-profile ``environment_class`` binding all ask the same question: "is
-this rest_base the REAL broker host?". Compared byte-exact, a REAL host spelled
-differently — ``…:9443/``, ``OpenAPI.…``, the default port left implicit, a trailing-dot
-FQDN — was not the REAL host, and passed as the mock one.
-
-:func:`endpoint_origin` reduces a ``rest_base`` to the ``(scheme, host, port)`` a client would
-actually connect to (the REAL-host exclusion then compares its host), using :func:`urllib.parse.urlsplit`, and refuses every spelling it cannot
-reduce honestly (fail closed): a scheme other than http/https, userinfo, a query, a fragment,
-any path but an empty or single ``/``, a non-ASCII or otherwise non-hostname host (no IDN
-decoding — refusal is simpler and closed), an invalid port, whitespace or control characters.
-"""
+"""One normalizer for every broker-host comparison (#932 final review MEDIUM)."""
 
 from __future__ import annotations
 
@@ -28,12 +15,9 @@ __all__ = [
 ]
 
 _DEFAULT_PORTS = {"https": 443, "http": 80}
-#: Dot-separated LDH labels (lowercase — :attr:`SplitResult.hostname` lowercases).
 _HOSTNAME = re.compile(
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
 )
-#: Printable ASCII without space: anything else (whitespace, controls, non-ASCII) is refused
-#: before ``urlsplit`` can silently strip or reinterpret it.
 _URL_CHARS = re.compile(r"[\x21-\x7e]+")
 
 
@@ -43,8 +27,7 @@ class EndpointOriginError(ValueError):
 
 @dataclass(frozen=True)
 class EndpointOrigin:
-    """The normalized origin a client connects to: lowercase scheme and host, the host's one
-    trailing dot removed, the port explicit."""
+    """The normalized origin a client connects to: lowercase scheme and host, the host's one"""
 
     scheme: str
     host: str
@@ -52,11 +35,7 @@ class EndpointOrigin:
 
 
 def endpoint_origin(rest_base: str) -> EndpointOrigin:
-    """Normalize ``rest_base`` to its :class:`EndpointOrigin`.
-
-    Raises:
-        EndpointOriginError: any spelling the module docstring refuses.
-    """
+    """Normalize ``rest_base`` to its :class:`EndpointOrigin`."""
     if not isinstance(rest_base, str) or not _URL_CHARS.fullmatch(rest_base):
         raise EndpointOriginError(
             f"rest_base {rest_base!r} is empty or carries whitespace / control / non-ASCII "
@@ -110,14 +89,7 @@ def real_host_problem(
     instance_mock_rest_base: str,
     instance_real_rest_base: str,
 ) -> str | None:
-    """The MOCK-only seals' REAL-host exclusion, on normalized origins: why
-    ``endpoint_rest_base`` (or the MOCK instance fact itself) is — or cannot be proven not to
-    be — the REAL host, or ``None``. The byte-exact match against the MOCK fact stays each
-    seal's own (stricter) check.
-
-    The exclusion is by HOST, not origin: the REAL hostname on any scheme or port (its
-    implicit default port included) is the REAL host — a MOCK endpoint never shares it.
-    """
+    """The MOCK-only seals' REAL-host exclusion, on normalized origins: why"""
     try:
         endpoint = endpoint_origin(endpoint_rest_base)
         mock = endpoint_origin(instance_mock_rest_base)

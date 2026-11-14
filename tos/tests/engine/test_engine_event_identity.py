@@ -1,17 +1,4 @@
-"""§7.1 canary extension — content-addressed event identity (Phase 3 A-K-1; design #31 §2.1(ii)).
-
-2026-09-09 survey measured first: no ``event_id`` (or any content-addressed event identity) exists
-anywhere in :mod:`tos.engine` — :class:`~tos.engine.records.EngineEvent` carries no id field and no
-scheme. Adding one *as a field* would need the canonicalization scheme at construction time, which
-:class:`EngineEvent` — a plain :class:`~tos.canonical.FrozenModel`, not an
-:class:`~tos.canonical.IdDerivedArtifact` — does not hold. So :func:`~tos.engine.records.event_identity`
-is a **pure helper function** taking the event and an injected scheme, following the exact seam
-:func:`~tos.engine.sequencer.reference_coordinate_digest` already uses for the attempt identity's
-reference-coordinate component: ``derive_id(prefix, scheme.compute_digest(...))``, no ``uuid4``, no
-timestamp, no RNG.
-
-Regime tag: orchestration authoring evidence only; closes no EV.
-"""
+"""§7.1 canary extension — content-addressed event identity (Phase 3 A-K-1; design #31 §2.1(ii))."""
 
 from __future__ import annotations
 

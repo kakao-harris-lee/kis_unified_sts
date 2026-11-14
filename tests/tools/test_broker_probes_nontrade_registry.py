@@ -17,11 +17,12 @@ CA-API exists (VERIFIED/E1); this test guards the *registration* for both —
 the right kind/environment/flags are on file, both bound keys are cited, N-19
 shows up in ``coverage_report()['unsupported']`` with a real reason, P-CA does
 not, and the ratified canonical-12 / census-4 counts are untouched by adding
-follow-ups. It also pins
-the corrected ``ADJACENT_BOUND_KEYS`` ``vp_line`` values against a live re-read
-of the VERIFICATION-PROFILE-002 source file, so future drift in that file fails
-this test loudly instead of silently going stale (see the drift table in the
-design doc §0.1).
+follow-ups. Two tests here re-read the live ``VERIFICATION-PROFILE-002.yaml`` to pin the
+``ADJACENT_BOUND_KEYS`` ``vp_line`` values against drift. That file went with the
+``tos-spec/`` corpus on 2026-11-13
+(``docs/plans/2026-11-13-tos-code-halving-plan.md`` §S3), so the drift guard has no
+target left and was removed with it; the ``vp_line`` values stay in the registry as
+git-history pointers to the measured bounds.
 """
 
 from __future__ import annotations
@@ -29,7 +30,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from tools.broker_probes.registry import (
-    _VP,
     ADJACENT_BOUND_KEYS,
     PROBES,
     coverage_report,
@@ -39,37 +39,8 @@ from tools.broker_probes.registry import (
 _NON_TRADE_KEYS = ("B_non_trade_event_detect", "B_non_trade_reconcile")
 
 
-def _vp_key_line(key: str) -> int:
-    """Return the 1-based line where ``key:`` starts in the live VP-002 source.
-
-    Mirrors the convention the other :class:`BoundKey` entries use (verified by
-    reading a couple of existing entries against the file): ``vp_line`` is the
-    line of the ``<key>:`` mapping header itself, not a rationale/value line
-    inside the block.
-    """
-    repo_root = Path(__file__).resolve().parents[2]
-    vp_path = repo_root / _VP
-    needle = f"{key}:"
-    for lineno, line in enumerate(
-        vp_path.read_text(encoding="utf-8").splitlines(), start=1
-    ):
-        if line.strip() == needle:
-            return lineno
-    raise AssertionError(f"{key!r} not found in {vp_path}")
-
-
-class TestAdjacentBoundKeysDriftCorrection:
-    """§8.1 — the two non_trade ``vp_line`` values must track the live VP-002 file."""
-
-    def test_non_trade_event_detect_vp_line_matches_live_source(self) -> None:
-        assert ADJACENT_BOUND_KEYS["B_non_trade_event_detect"].vp_line == _vp_key_line(
-            "B_non_trade_event_detect"
-        )
-
-    def test_non_trade_reconcile_vp_line_matches_live_source(self) -> None:
-        assert ADJACENT_BOUND_KEYS["B_non_trade_reconcile"].vp_line == _vp_key_line(
-            "B_non_trade_reconcile"
-        )
+class TestAdjacentBoundKeys:
+    """§8.1 — the adjacent bound-key entries stay on file with their notes."""
 
     def test_other_adjacent_bound_keys_untouched(self) -> None:
         # Scope discipline: this registration touches only the two non_trade

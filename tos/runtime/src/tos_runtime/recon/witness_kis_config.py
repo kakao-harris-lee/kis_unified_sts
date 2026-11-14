@@ -1,50 +1,4 @@
-"""``KisWitnessConfig`` — fail-closed boot config for the real KIS 모의투자 ``BrokerWitness``
-(W3 lane, ``docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md`` §4 W3).
-
-Mirrors :mod:`tos_runtime.transport.kis_mock.config`'s own fail-closed / host-seal shape
-(same style, same rationale) over a **read-only, GET-only** surface — this module has no
-``order_cash`` body to validate, so it is considerably smaller: two TR ids
-(stock balance + stock daily execution inquiry), one host, no ``field_map``.
-
-**Host seal (mirrors ``kis_mock/config.py:303-354``).** ``endpoint_rest_base`` must
-byte-exact match the caller-supplied ``instance_mock_rest_base`` fact and must NOT equal
-``instance_real_rest_base`` — exactly the same two-sided check ``kis_mock/config.py``
-performs for the order transport, the REAL side on normalized hosts
-(:func:`tos_runtime.transport.endpoint.real_host_problem`). A config value cannot re-point this witness at a live
-host, no matter what an operator (or an attacker with write access to the config file)
-sets it to.
-
-**TR id shape (mirrors ``kis_mock/config.py``'s ``_validate_tr_id``).** Both TR ids must
-be the KIS mock (모의) shape ``^V[A-Z]{3}\\d{4}[A-Z]{1}$`` — measured against the two TR
-ids this witness actually uses:
-
-* stock balance inquiry — mock ``VTTC8434R`` (real ``TTTC8434R``) — measured
-  ``docs/broker-profiles/evidence/2026-09-11-p02-t3-campaign/P-BAL-20260911T002427Z.json``
-  ``measurements.target.tr_id``, and ``shared/kis/client.py:919`` (reference only, not
-  imported — firewall-denied).
-* stock daily execution inquiry (주식일별주문체결조회) — mock ``VTTC0081R`` (real
-  ``TTTC0081R``) — measured
-  ``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:1548-1575`` (§ "체결조회로
-  독립 확인") and mirrored, with the exact wire params, at
-  ``tools/broker_probes/probes_order.py:1079-1150``.
-
-A config naming a ``T``/``S``/``C``-prefixed (real-order) TR id, or any other shape, is
-refused at load time — this witness is 모의투자-only by construction (task scope: "A real
-KIS 모의투자 witness"), never a live-broker read.
-
-**Asset is structurally ``stock`` only.** The mock server serves no futures balance query
-at all (``shared/kis/client.py:1026`` NOTE, reference only) and the real futures account is
-never funded (root ``CLAUDE.md`` Non-Negotiable Rules) — there is no futures TR id field on
-this config to even mis-populate. :func:`refuse_futures_asset` is the one, explicit,
-testable refusal point a caller (or a config extension) must route a futures request
-through; it is never bypassed by a per-call scope.
-
-Firewall (RUNTIME scope, R1 — ``tools/tos_firewall_check.py`` SCOPE SPLIT): stdlib
-(``dataclasses``, ``pathlib``, ``re``, ``urllib.parse``) + ``pyyaml`` only — no
-``tos``/``tos_runtime`` sibling import (mirrors ``kis_mock/config.py``'s own firewall
-note: this module has nothing to seal against yet). No ``os.environ``/``os.getenv``
-anywhere (TOS-FW-C).
-"""
+"""``KisWitnessConfig`` — fail-closed boot config for the real KIS 모의투자 ``BrokerWitness``"""
 
 from __future__ import annotations
 
@@ -69,45 +23,22 @@ __all__ = [
 
 
 class KisWitnessConfigError(Exception):
-    """The KIS witness config is missing, malformed, still named-TBD, or names an
-    unrecognized/forbidden value — fail-closed at load, never a silent default."""
+    """The KIS witness config is missing, malformed, still named-TBD, or names an"""
 
 
 class FuturesAssetRefused(Exception):
-    """Raised by :func:`refuse_futures_asset` — futures is refused outright (module
-    docstring): the mock server serves no futures balance query, and the real futures
-    account is never funded (root ``CLAUDE.md`` Non-Negotiable Rules)."""
+    """Raised by :func:`refuse_futures_asset` — futures is refused outright (module"""
 
 
-#: The KIS mock (모의) TR id shape (mirrors ``kis_mock/config.py``'s ``_TR_ID_PATTERN``,
-#: review F7's citation): 'V' + 3 letters + 4 digits + 1 letter, e.g. ``VTTC8434R``.
-#: Case-sensitive — KIS never lower-cases a TR id.
 _TR_ID_PATTERN = re.compile(r"^V[A-Z]{3}\d{4}[A-Z]$")
 
-#: Real-order/real-night TR id prefixes this witness must never carry (module docstring;
-#: mirrors ``kis_mock/config.py``'s ``_FORBIDDEN_TR_PREFIXES``).
 _FORBIDDEN_TR_PREFIXES = ("T", "STTN", "CTF")
 
-#: The template's reserved not-yet-filled placeholder (W-A A-0 round 2) — the SAME token
-#: ``tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`` names, duplicated here (never imported)
-#: per this module's own stdlib-only firewall discipline (module docstring): an operator
-#: typing this literal into ``balance_path``/``order_inquiry_path`` must never be sealed in
-#: as a real value the way a bare ``null`` already refuses. Every other string field here is
-#: already gated by the host-seal equality check or the TR-id regex, which "TBD" fails on
-#: its own.
 _TBD_STR = "TBD"
 
 
 def refuse_futures_asset(asset: str) -> None:
-    """The one structural refusal point for a futures request (module docstring).
-
-    Args:
-        asset: The requested asset class. Only ``"stock"`` is accepted.
-
-    Raises:
-        FuturesAssetRefused: ``asset`` is ``"futures"`` (or anything other than
-            ``"stock"``) — named reason, never a silent empty result.
-    """
+    """The one structural refusal point for a futures request (module docstring)."""
     if asset != "stock":
         raise FuturesAssetRefused(
             f"KisWitnessConfig: asset={asset!r} is refused — this witness is stock-only. "
@@ -122,12 +53,7 @@ def refuse_futures_asset(asset: str) -> None:
 
 @dataclass(frozen=True)
 class KisWitnessConfig:
-    """The fully-valued, fail-closed-loaded KIS 모의투자 witness config (module docstring).
-
-    Every field names a GET-only surface: there is no order-mutation field anywhere on
-    this dataclass (contrast ``KisMockTransportConfig``'s ``field_map``/
-    ``static_body_fields``, which build an order body).
-    """
+    """The fully-valued, fail-closed-loaded KIS 모의투자 witness config (module docstring)."""
 
     endpoint_rest_base: str
     balance_path: str
@@ -226,8 +152,6 @@ def _validate_endpoint(
             "excluded — a caller that cannot state the REAL_PROD host cannot honestly "
             "prove this config excludes it"
         )
-    # Normalized REAL-host exclusion (#932 final review MEDIUM): a REAL host spelled
-    # differently (trailing "/", case, implicit port, trailing-dot FQDN) is still the REAL host.
     problem = real_host_problem(
         endpoint_rest_base,
         instance_mock_rest_base=instance_mock_rest_base,
@@ -284,24 +208,7 @@ def load_kis_witness_config(
     instance_mock_rest_base: str,
     instance_real_rest_base: str,
 ) -> KisWitnessConfig:
-    """Load + fail-closed-validate the KIS 모의투자 witness config from ``path``.
-
-    Args:
-        path: The config file (shaped like
-            ``tos/runtime/config/kis_witness.example.yaml``).
-        instance_mock_rest_base: The INSTANCE MOCK_VTS document's own
-            ``_kis.endpoints.rest_base`` literal — the one value
-            ``endpoint_rest_base`` is allowed to equal.
-        instance_real_rest_base: The INSTANCE REAL_PROD document's own ``rest_base`` —
-            REQUIRED, and must differ from ``instance_mock_rest_base`` (module
-            docstring's "Host seal").
-
-    Returns:
-        The fully-valued config.
-
-    Raises:
-        KisWitnessConfigError: Any fail-closed check fails — see the module docstring.
-    """
+    """Load + fail-closed-validate the KIS 모의투자 witness config from ``path``."""
     return kis_witness_config_from_mapping(
         _read_yaml_mapping(path),
         path=path,
@@ -317,20 +224,7 @@ def kis_witness_config_from_mapping(
     instance_mock_rest_base: str,
     instance_real_rest_base: str,
 ) -> KisWitnessConfig:
-    """:func:`load_kis_witness_config`'s validation over an already-read mapping — every check
-    identical (host seal, TR-id shape, positive bounds). The stock fill wiring
-    (:mod:`tos_runtime.compose._broker_posttrade_wiring`) uses it to seal the witness to the SAME
-    host the order transport was sealed to, rather than a second host value in a second file.
-
-    Args:
-        raw: The config mapping.
-        path: Named in every refusal message (the file the mapping came from).
-        instance_mock_rest_base: See :func:`load_kis_witness_config`.
-        instance_real_rest_base: See :func:`load_kis_witness_config`.
-
-    Raises:
-        KisWitnessConfigError: Any fail-closed check fails — see the module docstring.
-    """
+    """:func:`load_kis_witness_config`'s validation over an already-read mapping — every check"""
     allow_plaintext_for_tests = _require_bool(raw, "allow_plaintext_for_tests", path)
     endpoint_rest_base = _require_str(raw, "endpoint_rest_base", path)
     _validate_endpoint(

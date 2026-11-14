@@ -24,10 +24,6 @@ export interface TosProjection {
   recovery?: { readiness_verdict?: string | null; reasons?: string[] | null } | null;
   driver?: { wired?: boolean | null; halt_latched?: boolean | null; halt_reason?: string | null } | null;
   time?: { health?: string | null } | null;
-  safety_mesh?: {
-    snapshot_generation?: number | null;
-    services?: Record<string, { clear?: boolean | null; reasons?: string[] | null }> | null;
-  } | null;
   currentness?: { pending_dimensions?: string[] | null; last_assemble_complete?: boolean | null } | null;
   rcl?: { last_seq?: number | null; open_reservations?: number | null } | null;
   inbox?: { unconsumed_count?: number | null } | null;
@@ -36,9 +32,6 @@ export interface TosProjection {
     key_generation?: number | null;
   } | null;
   release?: { admitted?: boolean | null; software_deployment_ok?: boolean | null } | null;
-  // Producer: tos/runtime/src/tos_runtime/compose/_operations_wiring.py::_read_protective
-  // emits this six-key object (or null), never a string.
-  protective?: { last_verdict?: TosProtectiveVerdict | null } | null;
   operations?: {
     schema_versions?: Record<string, number | null> | null;
     last_backup?: {
@@ -50,15 +43,6 @@ export interface TosProjection {
   } | null;
   alerts?: { unresolved_stm_alert_seqs?: number[] | null; delivery_owner?: string | null } | null;
   export?: { failures?: number | null; last_error?: string | null } | null;
-}
-
-export interface TosProtectiveVerdict {
-  derestriction_admissible?: boolean | null;
-  capacity_exhausted?: boolean | null;
-  classification?: string | null;
-  unevaluated?: string[] | null;
-  reasons?: string[] | null;
-  protective_classification_digest?: string | null;
 }
 
 export interface TosProjectionResponse {

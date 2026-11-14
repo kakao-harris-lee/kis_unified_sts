@@ -1,30 +1,4 @@
-"""KST-native trading-calendar configuration loader (Phase 5 W5 plan §2
-decision 1, ``docs/plans/2026-09-12-tos-phase5-w5-scenarios-plan.md``).
-
-**Calendar is data, phase judgement is the kernel's** — this module only
-loads and validates the calendar's DATA (holidays, session windows, futures
-expiry rules); it never judges admissibility itself. Session-phase TOKENS
-(``phase: str`` on a window, ``closed_phase``, ``expired_phase``) are opaque
-strings the config defines — this module never validates them against a
-runtime enum, matching the kernel's own ``tos.venue.vocabulary.SessionPhase``,
-which is deliberately not an enum (W5 survey §0 "세션 위상" row).
-
-Fail-closed discipline, same idiom every ``tos_runtime.*.config`` loader in
-this codebase follows (W5 survey §8; see e.g.
-:mod:`tos_runtime.compose._egress_attestations`'s ``load_egress_attestations`
-for the pattern this module copies): a missing file, a non-mapping top
-level, a missing required key, or a required scalar left ``null``
-(named-TBD) all refuse to load — never a silent default. ``holidays`` and
-each per-class session-window list must be an EXPLICIT list (``[]`` is
-accepted as a deliberate "there are none" value; ``null`` is refused as
-still-TBD).
-
-The `require_*_field` helpers in :mod:`tos_runtime.safety._policy_loader` are
-NOT reused here (W5 survey §8: that module's helpers are scoped to
-``safety/`` only, and no W4/W5-adjacent module imports them) — this module
-re-implements its own inline validation, following the established
-per-package convention.
-"""
+"""KST-native trading-calendar configuration loader (Phase 5 W5 plan §2"""
 
 from __future__ import annotations
 
@@ -51,42 +25,18 @@ __all__ = [
 
 
 class CalendarConfigError(RuntimeError):
-    """Raised when the calendar config is missing, malformed, carries an
-    unfilled (named-TBD) required field, an unresolvable ``tz_id``, an
-    invalid date/time/day token, overlapping session windows, or a
-    ``futures_expiry`` rule for an instrument class with no regular
-    (non-crossing) session window — fail-closed at load, never a silent
-    default."""
+    """Raised when the calendar config is missing, malformed, carries an"""
 
 
-#: Day-of-week vocabulary this loader accepts in ``days``/``weekday`` fields
-#: (Monday=0 .. Sunday=6, matching ``datetime.date.weekday()``). This is a
-#: PARSING vocabulary only (three-letter day names are a common, unambiguous
-#: YAML spelling) — it is not a runtime phase-token enum and carries no
-#: session-domain meaning of its own.
 _DAY_NAMES = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 _DAY_INDEX: Mapping[str, int] = {name: i for i, name in enumerate(_DAY_NAMES)}
 
-#: The template's reserved not-yet-filled placeholder (W-A A-0 round 2) — the SAME token
-#: ``tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`` names, duplicated here (never imported)
-#: per this module's own "re-implements its own inline validation" per-package convention
-#: (module docstring). ``phase``/``closed_phase``/``expired_phase`` are deliberately opaque,
-#: un-enum-gated tokens (module docstring) — exactly the shape with no allow-list to catch
-#: "TBD" on its own, so ``calendar_version``/``tz_id``/every phase token all route through
-#: this one check.
 _TBD_STR = "TBD"
 
 
 @dataclass(frozen=True)
 class SessionWindow:
-    """One session window for one instrument class.
-
-    ``days`` is the set of weekdays (0=Mon..6=Sun) this window's occurrence
-    STARTS on — for a window with ``crosses_midnight=True``, the occurrence
-    that starts on day D runs until ``end`` on day D+1 (day membership is
-    judged by the START day, never the day the instant itself falls on;
-    plan §2 decision 1).
-    """
+    """One session window for one instrument class."""
 
     phase: str
     start: datetime.time
@@ -97,12 +47,7 @@ class SessionWindow:
 
 @dataclass(frozen=True)
 class ExpiryRule:
-    """A futures-expiry rule for one instrument class: the expiry date in a
-    rule month is the ``ordinal``-th occurrence of ``weekday`` in that month
-    (e.g. weekday=THU, ordinal=2 -> "second Thursday").
-
-    ``ordinal`` is 1..4 (loader-enforced): every month has at least four of
-    each weekday, a fifth is not guaranteed."""
+    """A futures-expiry rule for one instrument class: the expiry date in a"""
 
     weekday: int
     ordinal: int
@@ -112,15 +57,7 @@ class ExpiryRule:
 
 @dataclass(frozen=True)
 class SessionOverride:
-    """A date-specific replacement of one or more classes' session windows
-    (issue #924 — e.g. the KRX college-entrance-exam day, when the exchange
-    shifts the open and close by an hour, differently per market).
-
-    ``sessions`` maps an instrument class to the windows that REPLACE its
-    regular windows on ``day`` only; a class not named keeps its regular
-    windows. Every window's ``days`` is ``{day.weekday()}`` and none crosses
-    midnight (loader-enforced), so the phase functions can treat an override
-    exactly like a regular window on that date."""
+    """A date-specific replacement of one or more classes' session windows"""
 
     day: datetime.date
     reason: str
@@ -137,8 +74,6 @@ class CalendarConfig:
     sessions: Mapping[str, tuple[SessionWindow, ...]]
     closed_phase: str
     futures_expiry: Mapping[str, ExpiryRule]
-    #: Date-specific session exceptions, keyed by date (:class:`SessionOverride`).
-    #: Empty for a calendar file without the optional ``session_overrides`` key.
     session_overrides: Mapping[datetime.date, SessionOverride] = field(
         default_factory=dict
     )
@@ -146,9 +81,7 @@ class CalendarConfig:
     def windows_on(
         self, day: datetime.date, instrument_class: str
     ) -> tuple[SessionWindow, ...]:
-        """The windows that apply to ``instrument_class`` on ``day``: the
-        override's when ``day`` carries one for that class, else the regular
-        ones (``()`` for an unknown class)."""
+        """The windows that apply to ``instrument_class`` on ``day``: the"""
         override = self.session_overrides.get(day)
         if override is not None and instrument_class in override.sessions:
             return override.sessions[instrument_class]
@@ -251,10 +184,7 @@ def _parse_session_window(raw: Any, ctx: str, path: Path) -> SessionWindow:
 
 
 def _window_segments(window: SessionWindow) -> list[tuple[int, int, int]]:
-    """Decompose a window into (weekday, start_minute, end_minute) segments,
-    anchored to the day it STARTS on (module docstring). A crossing window
-    contributes two segments: the evening piece on its start day, and the
-    morning piece on the following day."""
+    """Decompose a window into (weekday, start_minute, end_minute) segments,"""
     start_min = window.start.hour * 60 + window.start.minute
     end_min = window.end.hour * 60 + window.end.minute
     segments = []
@@ -319,39 +249,7 @@ def _check_expiry_rules_have_regular_windows(
     futures_expiry: Mapping[str, ExpiryRule],
     path: Path,
 ) -> None:
-    """Refuse a ``futures_expiry`` rule whose instrument class has no regular
-    (non-crossing) session window **that runs on the rule's own weekday**.
-
-    :func:`tos_runtime.calendar.phase.maturity_at` flips ``expired`` at the
-    end of that class's last regular window on the expiry day, and reports
-    the NEXT rule month's expiry at every other instant. The set of windows
-    it can flip on is exactly what
-    :func:`tos_runtime.calendar.phase._last_regular_window_end` selects:
-
-        not window.crosses_midnight and day.weekday() in window.days
-
-    and ``day`` there is always the expiry date, whose weekday is
-    ``rule.weekday`` by construction (:func:`~tos_runtime.calendar.phase._nth_weekday_of_month`
-    only ever returns a date with that weekday). So the predicate below —
-    ``not window.crosses_midnight and rule.weekday in window.days`` — is that
-    same selection evaluated at config-load time, in the same weekday
-    representation (``_DAY_INDEX``: Monday=0..Sunday=6, matching
-    ``datetime.date.weekday()``), and a class with no such window has no
-    instant at which the flip can be judged: its rule would never produce
-    ``expired=True`` and the ``expired_phase`` token it declares would be
-    unreachable, silently. A declared rule that can never fire is a
-    named-TBD-shaped gap, so it is refused here rather than honoured as an
-    always-open calendar.
-
-    **Both halves of the predicate matter** (review-799 round 2): checking
-    only "some non-crossing window exists" accepted a class whose regular
-    window runs ``days: [MON]`` under a ``weekday: THU`` rule — every expiry
-    date is a Thursday, no window covers it, and the class never expired
-    (measured: 0 expired instants across 2026).
-
-    (A class absent from ``sessions`` entirely is the same case: no windows at
-    all means no qualifying window.)
-    """
+    """Refuse a ``futures_expiry`` rule whose instrument class has no regular"""
     for instrument_class in sorted(futures_expiry):
         rule = futures_expiry[instrument_class]
         windows = sessions.get(instrument_class, ())
@@ -385,13 +283,6 @@ def _parse_expiry_rule(raw: Any, ctx: str, path: Path) -> ExpiryRule:
     weekday_token = raw.get("weekday")
     weekday = _parse_day_token(weekday_token, ctx, path)
     ordinal = raw.get("ordinal")
-    # 1..4, not 1..5: every month has at least four of each weekday but not
-    # always a fifth, so `ordinal: 5` produces a rule that resolves in some
-    # months and raises IndexError in others (review-799 LOW-1 — reachable
-    # since maturity_at rolls into the NEXT rule month, which may be a month
-    # with only four). KRX's own rule is the second weekday (ordinal 2), and
-    # no approved source in this repo asks for a fifth-weekday expiry;
-    # widening this back is a config-design decision, not a loader tweak.
     if (
         not isinstance(ordinal, int)
         or isinstance(ordinal, bool)
@@ -465,12 +356,7 @@ def _parse_holidays(raw: Any, path: Path) -> frozenset[datetime.date]:
 
 
 def _repeated_override_dates(text: str) -> list[str]:
-    """Dates repeated as ``session_overrides`` keys, read from the YAML node tree.
-
-    The loaded mapping cannot show an IDENTICAL key twice (the loader keeps the last),
-    so this looks one level below it. The legacy-side reader runs the same check
-    (``tools.tos_cp3.session_day.repeated_override_dates``; the firewall keeps the
-    two apart) so both refuse the same file (review #963 MEDIUM)."""
+    """Dates repeated as ``session_overrides`` keys, read from the YAML node tree."""
     root = yaml.compose(text, Loader=yaml.SafeLoader)
     if not isinstance(root, yaml.MappingNode):
         return []
@@ -532,27 +418,7 @@ def _parse_session_overrides(
     sessions: Mapping[str, tuple[SessionWindow, ...]],
     holidays: frozenset[datetime.date],
 ) -> Mapping[datetime.date, SessionOverride]:
-    """Parse the optional ``session_overrides`` mapping (issue #924).
-
-    Shape (one entry per date)::
-
-        session_overrides:
-          "YYYY-MM-DD":
-            reason: "<the exchange notice this is copied from>"
-            sessions:
-              <instrument class>:
-                - {phase: CONTINUOUS, start: "HH:MM", end: "HH:MM", crosses_midnight: false}
-
-    Refused, fail-closed: a non-mapping value (``null`` is still-TBD; ``{}`` is
-    the deliberate "no exceptions"); a bad date; a date that is also a holiday
-    (a closed day belongs in ``holidays`` and nowhere else); a missing
-    ``reason``; a class the regular ``sessions`` do not declare; an empty
-    window list; a ``days`` field (the date IS the day); a window that crosses
-    midnight; a phase token the class's regular windows never produce (the
-    venue wiring derives the admissible-token set from the regular windows,
-    so a new token here would be one nothing cross-checked); overlapping
-    windows.
-    """
+    """Parse the optional ``session_overrides`` mapping (issue #924)."""
     if not isinstance(raw, dict):
         raise CalendarConfigError(
             f"{path}: 'session_overrides' must be a mapping of 'YYYY-MM-DD' -> "
@@ -626,17 +492,7 @@ def _validate_tz_id(tz_id: str, path: Path) -> None:
 
 
 def load_calendar_config(path: Path) -> CalendarConfig:
-    """Load + fail-closed-validate a KST trading calendar from ``path``
-    (shaped like ``tos/runtime/config/calendar.example.yaml``).
-
-    Raises:
-        CalendarConfigError: the file is missing/unreadable/not valid
-            YAML/not a mapping; any required key is absent or still ``null``
-            (named-TBD); ``tz_id`` does not resolve via ``zoneinfo``; a
-            session window has a malformed time/day/crossing shape; or two
-            session windows for the same instrument class overlap on the
-            same weekday.
-    """
+    """Load + fail-closed-validate a KST trading calendar from ``path``"""
     if not path.is_file():
         raise CalendarConfigError(f"calendar config file not found: {path}")
     try:
@@ -673,8 +529,6 @@ def load_calendar_config(path: Path) -> CalendarConfig:
         )
     futures_expiry = _parse_futures_expiry(raw["futures_expiry"], path)
     _check_expiry_rules_have_regular_windows(sessions, futures_expiry, path)
-    # Optional (issue #924): calendars written before dated exceptions existed
-    # have no such key, and its absence means exactly "no dated exceptions".
     repeated = _repeated_override_dates(text)
     if repeated:
         raise CalendarConfigError(
@@ -709,19 +563,7 @@ def _window_projection(window: SessionWindow) -> dict[str, Any]:
 
 
 def calendar_bind_digest(cfg: CalendarConfig) -> str:
-    """A stable sha256 digest over the loaded, validated calendar content
-    (module docstring; used for the ``SESSION_CALENDAR_BOUND`` evidence a
-    later lane emits). No shared canonical-digest helper exists elsewhere in
-    this codebase to reuse (W5 survey §8) — this is
-    ``hashlib.sha256`` over ``json.dumps(..., sort_keys=True,
-    separators=(",", ":"))`` of a canonical, JSON-safe projection of
-    ``cfg``'s own fields (not the raw YAML text), so the digest is
-    insensitive to incidental formatting/key-order in the source file and
-    sensitive to any actual content change.
-
-    ``session_overrides`` joins the projection only when non-empty, so a
-    calendar without dated exceptions keeps the digest it had before the key
-    existed (issue #924) and a calendar that adds one changes it."""
+    """A stable sha256 digest over the loaded, validated calendar content"""
     canonical: dict[str, Any] = {
         "calendar_version": cfg.calendar_version,
         "tz_id": cfg.tz_id,

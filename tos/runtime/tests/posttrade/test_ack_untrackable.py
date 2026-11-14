@@ -1,13 +1,4 @@
-"""An ACK the fill observer cannot join to a broker row is refused VISIBLY.
-
-Incident 2026-11-05 (CP-3 stock MOCK 005930, the first-ever MOCK order): the ACK carried an ODNO
-but no ``trading_date``, and ``_tracked_attempts``'s ``isinstance(row["trading_date"], str)``
-guard dropped it inside an ``and`` chain that short-circuited before the untrackable row was
-written. Nothing was tracked, ``VTTC0081R`` was polled 0 times, no ``FILL_OBSERVED`` was emitted,
-the RCL reservation stayed ``COMMITTED_UNBOUND`` — and no evidence row said any of it, for 6.5 h.
-
-Hermetic: a ``tmp_path`` evidence file and a broker reader that fails the test if it is called.
-"""
+"""An ACK the fill observer cannot join to a broker row is refused VISIBLY."""
 
 from __future__ import annotations
 
@@ -128,10 +119,7 @@ def undated(tmp_path: Path) -> Iterator[SqliteEvidenceStore]:
 def test_an_undated_ack_is_refused_with_a_row_that_names_the_reason(
     undated: SqliteEvidenceStore,
 ) -> None:
-    """The 2026-11-05 shape: an ODNO, no trading date. Nothing is tracked and nothing is read —
-    an ODNO is a per-day sequence, so there is no date to walk and no date is invented — but the
-    refusal is now ON the record. Mutation: drop the ``no_trading_date`` branch -> the ACK
-    vanishes again, zero rows -> red."""
+    """The 2026-11-05 shape: an ODNO, no trading date. Nothing is tracked and nothing is read —"""
     observer = _observer(undated)
     assert observer.poll_once().polled is False
     (row,) = _untrackable_rows(undated)
@@ -143,15 +131,11 @@ def test_an_undated_ack_is_refused_with_a_row_that_names_the_reason(
 def test_the_refusal_is_recorded_once_however_often_it_is_polled(
     undated: SqliteEvidenceStore,
 ) -> None:
-    """Every pass re-derives the durable picture, so the row needs the same once-per-attempt
-    dedup the all-zero-ODNO refusal has — otherwise one undated ACK fills the evidence file.
-    """
+    """Every pass re-derives the durable picture, so the row needs the same once-per-attempt"""
     observer = _observer(undated)
     for _ in range(3):
         assert observer.poll_once().polled is False
     assert len(_untrackable_rows(undated)) == 1
 
-    # A fresh observer over the same file re-derives everything from evidence: the durable row
-    # it already finds is what stops a restart from writing a second one.
     assert _observer(undated).poll_once().polled is False
     assert len(_untrackable_rows(undated)) == 1

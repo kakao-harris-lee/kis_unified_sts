@@ -1,6 +1,4 @@
-"""Builds the standing session approval source (:mod:`tos_runtime.authority.standing`) from
-facts the composition root already owns — split out of ``root.py`` for the size budget.
-"""
+"""Builds the standing session approval source (:mod:`tos_runtime.authority.standing`) from"""
 
 from __future__ import annotations
 
@@ -23,12 +21,7 @@ def build_standing_approval(
     environment_label: str,
     uid: int,
 ) -> StandingApprovalSource:
-    """The standing source for this compose root, bound (and evidenced) at boot when the
-    artifact is already present.
-
-    The MOCK gate closes over the boot-resolved active scope and INSTANCE document — the
-    same two objects the gateway's item-6 skip is fed — and is re-evaluated on every call.
-    """
+    """The standing source for this compose root, bound (and evidenced) at boot when the"""
     scope = boot.broker_scopes.active_scope
     instance = boot.instance_document
     source = StandingApprovalSource(

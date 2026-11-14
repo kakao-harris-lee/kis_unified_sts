@@ -1,11 +1,4 @@
-"""Required-covered issuance guards + ISSUED-reachable-under-null-bounds (§2.2/§3.2).
-
-Each record drops one required covered path and asserts issuance is rejected. A
-companion test proves a capability is still ISSUED-reachable with the numeric claims
-null (the design §2.2 reason numeric bounds are excluded from the required set — else
-every Phase-1 capability would fall to DRAFT and be unrepresentable), while the
-epoch-transition record additionally rejects a non-increasing epoch (§10.5).
-"""
+"""Required-covered issuance guards + ISSUED-reachable-under-null-bounds (§2.2/§3.2)."""
 
 from __future__ import annotations
 
@@ -67,11 +60,7 @@ def test_every_record_has_non_vacuous_required_covered() -> None:
 
 
 def test_capability_issued_reachable_under_null_numeric_bounds() -> None:
-    """A capability ISSUES with both numeric claims null (bounds excluded from required, §2.2).
-
-    ISSUED-reachability is what keeps the §5.2 numeric-claim precondition meaningful:
-    the capability reaches the ledger, then fails closed at *consumption*, not issuance.
-    """
+    """A capability ISSUES with both numeric claims null (bounds excluded from required, §2.2)."""
     capability = issue_capability(
         maximum_quantity=None,
         maximum_risk_vector_effect_or_reservation_identity=None,
@@ -93,17 +82,11 @@ def test_issued_record_requires_independent_id() -> None:
 
 
 def test_epoch_transition_rejects_non_increasing_epoch() -> None:
-    """(canary) A transition whose new_epoch <= old_epoch is unconstructable (§5.2/§10.5).
-
-    Rejects epoch reuse / reset / wraparound structurally — the model provides no path
-    to decrease or reuse an epoch.
-    """
-    # equal (reuse)
+    """(canary) A transition whose new_epoch <= old_epoch is unconstructable (§5.2/§10.5)."""
     with pytest.raises(ValidationError):
         AuthorityEpochTransitionRecord.issue(
             scheme=SCHEME, **transition_required_kwargs(old_epoch=5, new_epoch=5)
         )
-    # decrease (reset / wraparound)
     with pytest.raises(ValidationError):
         AuthorityEpochTransitionRecord.issue(
             scheme=SCHEME, **transition_required_kwargs(old_epoch=6, new_epoch=5)
@@ -125,11 +108,7 @@ def test_epoch_transition_strictly_increasing_is_issuable() -> None:
 
 
 def test_issued_epoch_accessors_raise_on_a_draft_transition() -> None:
-    """``issued_old_epoch``/``issued_new_epoch`` are reachable, not dead code: a DRAFT
-    transition (a normal, validator-accepted state, §3.2) legitimately carries both
-    epochs ``None`` — the required-covered guard (and the strictly-increasing check)
-    only fire at ISSUED, not at DRAFT. These accessors express the ISSUED-only
-    contract at the type level and must themselves fail closed here."""
+    """``issued_old_epoch``/``issued_new_epoch`` are reachable, not dead code: a DRAFT"""
     draft = AuthorityEpochTransitionRecord()
     assert draft.status is ArtifactStatus.DRAFT
     assert draft.old_epoch is None

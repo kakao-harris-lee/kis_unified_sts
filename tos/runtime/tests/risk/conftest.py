@@ -1,5 +1,4 @@
-"""Shared fixtures for ``tos_runtime.risk`` tests (design #40 §5 order 5;
-slice plan §2)."""
+"""Shared fixtures for ``tos_runtime.risk`` tests (design #40 §5 order 5;"""
 
 from __future__ import annotations
 
@@ -42,14 +41,10 @@ from tos_runtime.risk.flow import ActionFlowDecisionInputs, ActionFlowGovernor
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: The (scope, dimension) key ``tos.are.predicates.adverse_increment`` groups
-#: cells under (``f"{scope.value}::{dimension.value}"``) — used to keep the
-#: GRANT-shaped fixtures below consistent with that internal key shape.
 _ARE_DIM_KEY = (
     f"{RiskScopeKind.ACCOUNT.value}::{RiskDimensionKind.GROSS_NOTIONAL.value}"
 )
 
-#: A governed afg dimension id (the namespace-prefixed value, afg §2.2-4).
 _AFG_DIM_ID = "afg.ORDER"
 
 
@@ -83,18 +78,7 @@ class FakeEvidenceAppendPort:
 
 
 class CountingCommitLog:
-    """Wraps a real :class:`~tos_runtime.rcl.log.SqliteCommitLog`, counting
-    calls to the two commit-entry methods (``apply_reservation_transition`` /
-    ``append_cas``) so a test can assert exactly one commit-entry call
-    happened per :class:`~tos_runtime.risk.ledger_stages.AtomicCommitStage`
-    invocation — pinning that module's own "single transaction, never split"
-    invariant (independent review MEDIUM, 2026-09-08: a mutation splitting the
-    step-9 commit into two separate calls left every existing test green).
-
-    Every other attribute (``read_linearizable``, ``reservation_rows``, the
-    private ``_conn``, etc.) is forwarded verbatim to the wrapped log via
-    ``__getattr__`` — only the two counted methods are intercepted.
-    """
+    """Wraps a real :class:`~tos_runtime.rcl.log.SqliteCommitLog`, counting"""
 
     def __init__(self, log: SqliteCommitLog) -> None:
         self._log = log
@@ -238,8 +222,7 @@ def afg_governor(
 def grant_shaped_are_inputs(
     required_scenario_kinds: frozenset[AdverseScenarioKind],
 ) -> AggregateRiskDecisionInputs:
-    """An :class:`AggregateRiskDecisionInputs` bundle that drives
-    ``tos.are.risk_decision`` to ``GRANT`` (every premise positively proven)."""
+    """An :class:`AggregateRiskDecisionInputs` bundle that drives"""
     cell = ProjectedCell(
         scope=RiskScopeKind.ACCOUNT,
         dimension=RiskDimensionKind.GROSS_NOTIONAL,
@@ -275,8 +258,7 @@ def grant_shaped_are_inputs(
 
 
 def grant_shaped_afg_inputs() -> ActionFlowDecisionInputs:
-    """An :class:`ActionFlowDecisionInputs` bundle that drives
-    ``tos.afg.action_flow_decision`` to ``GRANT``."""
+    """An :class:`ActionFlowDecisionInputs` bundle that drives"""
     cause = ActionCause(
         root_cause_identity="cause-1",
         parent_lineage=("root-1",),

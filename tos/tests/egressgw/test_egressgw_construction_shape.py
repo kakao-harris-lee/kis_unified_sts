@@ -1,14 +1,4 @@
-"""``CandidateConstruction`` combined-shape validator (design #34 §3.2, TOS-GAP-001).
-
-``construct_candidate_command`` only ever produces two shapes: a **denied** bundle
-(``command is None`` with a non-empty ``denial_reason`` and no ioc verdict) or a **built** bundle
-(``command`` present alongside ``intent`` / ``envelope`` / ``policy`` and both ioc verdicts). The
-model validator under test (``records.py::CandidateConstruction._shape_is_one_of_the_sanctioned_bundles``)
-rejects every other combination at construction time, so a partially-formed bundle can never reach
-the gateway.
-
-Regime tag: authoring evidence only; closes no EV (design #34 §1.1).
-"""
+"""``CandidateConstruction`` combined-shape validator (design #34 §3.2, TOS-GAP-001)."""
 
 from __future__ import annotations
 
@@ -48,11 +38,6 @@ def _built_kwargs(built: CandidateConstruction) -> dict[str, object]:
     }
 
 
-# ---------------------------------------------------------------------------
-# the two sanctioned shapes construct cleanly
-# ---------------------------------------------------------------------------
-
-
 def test_the_denied_shape_construction_site_1_is_sanctioned() -> None:
     """(construction.py:594) A denial from the derivation itself is a valid denied bundle."""
     denied = construction(price=admitted_price(value=None))
@@ -76,9 +61,7 @@ def test_the_built_shape_construction_site_3_is_sanctioned() -> None:
 
 
 def test_a_denied_bundle_may_still_carry_partial_intent_envelope_policy() -> None:
-    """(construction.py:641) The ioc-exception denial site may bind a partial intent/envelope/
-    policy before compile_command raised — that partiality is not itself rejected, only a
-    denial that also carries an ioc verdict is."""
+    """(construction.py:641) The ioc-exception denial site may bind a partial intent/envelope/"""
     CandidateConstruction(
         derivation=_denied_derivation(),
         intent=_built().intent,
@@ -86,11 +69,6 @@ def test_a_denied_bundle_may_still_carry_partial_intent_envelope_policy() -> Non
         policy=_built().policy,
         denial_reason="ioc construction denied the candidate: boom",
     )
-
-
-# ---------------------------------------------------------------------------
-# denied-shape violations (command is None)
-# ---------------------------------------------------------------------------
 
 
 def test_a_denied_bundle_with_no_denial_reason_is_rejected() -> None:
@@ -130,11 +108,6 @@ def test_a_denied_bundle_carrying_a_widening_witness_is_rejected() -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# built-shape violations (command is not None)
-# ---------------------------------------------------------------------------
-
-
 def test_a_built_bundle_carrying_a_denial_reason_is_rejected() -> None:
     kwargs = _built_kwargs(_built())
     kwargs["denial_reason"] = "should not coexist with a command"
@@ -163,17 +136,14 @@ def test_a_built_bundle_missing_a_required_field_is_rejected(
 
 
 def test_a_built_bundle_with_unknown_conformance_is_still_sanctioned() -> None:
-    """UNKNOWN is a decided (non-None) ioc verdict value — the shape validator only demands
-    presence, not a particular decided value; the gateway's own item-13 polarity handles what
-    UNKNOWN means."""
+    """UNKNOWN is a decided (non-None) ioc verdict value — the shape validator only demands"""
     kwargs = _built_kwargs(_built())
     kwargs["conformance_result"] = ConformanceResult.UNKNOWN
     CandidateConstruction(**kwargs)  # type: ignore[arg-type]
 
 
 def test_a_built_bundle_with_false_widening_witness_is_still_sanctioned() -> None:
-    """``no_silent_widening_ok=False`` is a decided negative-polarity witness, not an absence —
-    the validator must check ``is None``, never bare truthiness."""
+    """``no_silent_widening_ok=False`` is a decided negative-polarity witness, not an absence —"""
     kwargs = _built_kwargs(_built())
     kwargs["no_silent_widening_ok"] = False
     CandidateConstruction(**kwargs)  # type: ignore[arg-type]

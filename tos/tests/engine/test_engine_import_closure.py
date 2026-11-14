@@ -1,52 +1,4 @@
-"""§7.1 import-closure + determinism canaries for ``tos.engine`` — **allowlist** form (design #31 §0.3).
-
-``tos.engine`` is the series' first **wide** import-closure integrator: the thirty-two packages
-before it are pure decision kernels whose closure is minimal, whereas the engine assembles them, so
-its closure is a *superset* of theirs. That is the nature of an integrator, not a firewall breach
-(design #31 §0.3/§10.2-1) — and the allowlist is still a strict subset, so a leak fails exactly as
-loudly as it does everywhere else::
-
-    {tos, tos.canonical, tos.ordering, tos.dsl, tos.capsule, tos.time, tos.evidence,
-     tos.ioc, tos.venue, tos.rcl, tos.are, tos.afg, tos.cur, tos.engine, tos.orthostate,
-     tos.nontrade}
-
-``tos.orthostate`` was added 2026-09-09 (Phase 3 wave 2 KW2-C2, plan §2.2 — the
-``engine/orthostate_projection.py`` adapter). It is safe in the direction that matters:
-``tos.orthostate`` does not, and structurally cannot without breaking its own ratified
-closure, import ``tos.engine`` back.
-
-``tos.nontrade`` was added 2026-09-12 (kernel round #3 §2 결정 1 — the
-``EventKind.CORPORATE_ACTION`` handler, ``engine/_corporate_action.py``), the SAME one-way
-widening argument as ``tos.orthostate``: ``tos.nontrade`` holds "sibling edge 0" by its own
-design (§0.4b/§0.4c) and cannot, and structurally cannot without breaking its own ratified
-closure, import ``tos.engine`` back. It moves from ``_FORBIDDEN_SIBLINGS`` to this allowlist —
-never both.
-
-The two packages the design puts **outside** the closure carry the most weight: ``tos.brokercap``
-and ``tos.egress`` live beyond the D-E4 send-boundary injection point, and ``tos.egress`` (the QCC
-kernel) must never be encroached upon (design #31 §5.4/§4.5/§10.2-3). Both are asserted absent, as
-is a not-yet-invented ``tos.brokeradapter``.
-
-Beyond the closure this module asserts, by AST scan of the shipped sources (design #31 §0.3/§7.1):
-
-  1. no operational package (``shared.*`` runtime, ``services.*``, ``cli.*``) and no
-     ``numpy`` / ``pandas`` / ``yaml`` in the closure;
-  2. no ``os.environ`` / ``os.getenv``;
-  3. no dynamic escape — ``exec`` / ``eval`` / ``compile`` / ``__import__`` / ``importlib``;
-  4. no network stdlib;
-  5. **no wall clock** — ``time`` / ``datetime`` / ``monotonic`` / ``perf_counter``: the core's time
-     is the reference coordinate the event carries and :mod:`tos.time` is itself clock-free
-     (design #31 §2.3);
-  6. **no RNG or nonce source** — ``random`` / ``secrets`` / ``uuid`` / the seed-randomized builtin
-     ``hash`` (design #31 §7.1, MAJOR-3). This is what forces the step-12 attempt identity to stay
-     content-addressed; introducing ``uuid4()`` or a timestamp nonce would destroy replay identity
-     (RFC-003 §10:360-363), and this canary is what detects it.
-
-Planted-leak and planted-escape canaries prove the pipeline actually catches what it claims to, so
-"green" is evidence the checker works rather than evidence it was neutered.
-
-Regime tag: orchestration authoring evidence only; closes no EV (design #31 §1.1).
-"""
+"""§7.1 import-closure + determinism canaries for ``tos.engine`` — **allowlist** form (design #31 §0.3)."""
 
 from __future__ import annotations
 
@@ -56,7 +8,6 @@ from pathlib import Path
 
 import tos.engine
 import tos.engine._base
-import tos.engine._corporate_action
 import tos.engine.adapters
 import tos.engine.admission
 import tos.engine.core
@@ -70,11 +21,6 @@ import tos.engine.standins
 import tos.engine.state
 import tos.engine.vocabulary
 
-#: The §0.3 allowlist — the only top-level ``tos.*`` packages the closure may contain.
-#: ``tos.orthostate`` was added 2026-09-09 (Phase 3 wave 2 KW2-C2, plan §2.2) — see
-#: ``tos/src/tos/engine/__init__.py``'s "Closure widened" docstring note and
-#: ``tos/src/tos/engine/orthostate_projection.py`` for the one-way-safety argument (it does
-#: not, and structurally cannot, import ``tos.engine`` back).
 _ALLOWED_TOS_PACKAGES = frozenset(
     {
         "tos",
@@ -92,32 +38,27 @@ _ALLOWED_TOS_PACKAGES = frozenset(
         "tos.cur",
         "tos.engine",
         "tos.orthostate",
-        "tos.nontrade",
     }
 )
 
-#: Siblings the design deliberately keeps **outside** the closure, plus a future one.
 _FORBIDDEN_SIBLINGS = frozenset(
     {
         "tos.authority",
-        "tos.brokercap",  # D-E4 edge — beyond the send-boundary injection point (§4.5)
-        "tos.egress",  # the QCC kernel — never encroached upon (§5.4)
-        "tos.failuredomain",
+        "tos.brokercap",
+        "tos.egress",
         "tos.hag",
         "tos.iap",
         "tos.liveauth",
         "tos.posttrade",
         "tos.protective",
         "tos.recon",
-        "tos.replacement",
-        "tos.rlp",
         "tos.sbr",
         "tos.sci",
         "tos.sir",
         "tos.spg",
         "tos.stm",
         "tos.wdr",
-        "tos.brokeradapter",  # a *future* D-E4 sibling — excluded by construction
+        "tos.brokeradapter",
         "tos.future_sibling",
     }
 )
@@ -140,12 +81,6 @@ _FORBIDDEN_EXACT = frozenset(
         "yaml",
     }
 )
-#: ``socket`` / ``ssl`` / ``asyncio`` are deliberately **absent** from the closure denylist: the
-#: allowed third party ``pydantic`` pulls them into ``sys.modules`` on its own, in every tos
-#: package alike, so a closure-membership assertion about them would measure pydantic, not the
-#: engine. The accurate mechanism for "the engine opens no socket and runs no event loop" is the
-#: AST source scan below (:data:`_NETWORK_MODULES`), which is what design #31 §0.3/§2.1 actually
-#: constrains — the engine's own sources.
 _FORBIDDEN_PREFIXES = (
     "shared.execution.",
     "shared.kis.",
@@ -166,11 +101,8 @@ _ENGINE_SRC = Path(__file__).resolve().parents[2] / "src" / "tos" / "engine"
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "compile", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
-#: Real-clock modules the event core must never import (design #31 §2.3).
 _CLOCK_MODULES = frozenset({"time", "datetime"})
-#: Nondeterministic identity / nonce sources (design #31 §7.1, MAJOR-3).
 _RNG_MODULES = frozenset({"random", "secrets", "uuid"})
-#: Network / process stdlib.
 _NETWORK_MODULES = frozenset(
     {
         "socket",
@@ -184,7 +116,6 @@ _NETWORK_MODULES = frozenset(
         "ctypes",
     }
 )
-#: Wall-clock / RNG call names that would be nondeterministic even without a module import.
 _NONDETERMINISTIC_CALLS = frozenset(
     {
         "monotonic",
@@ -205,13 +136,11 @@ _NONDETERMINISTIC_CALLS = frozenset(
         "token_urlsafe",
     }
 )
-#: The seed-randomized builtin. Using it for any identity would break cross-process reproduction.
 _FORBIDDEN_BUILTIN_CALLS = frozenset({"hash", "id"})
 
 _ENGINE_SUBMODULES = (
     "tos.engine",
     "tos.engine._base",
-    "tos.engine._corporate_action",
     "tos.engine.adapters",
     "tos.engine.admission",
     "tos.engine.core",
@@ -227,12 +156,9 @@ _ENGINE_SUBMODULES = (
 )
 
 
-#: Every shipped submodule, imported **statically** (the firewall forbids ``import_module``), so
-#: the author-level sweep below reads the real namespaces rather than a re-import.
 _LOADED_SUBMODULES = {
     "tos.engine": tos.engine,
     "tos.engine._base": tos.engine._base,
-    "tos.engine._corporate_action": tos.engine._corporate_action,
     "tos.engine.adapters": tos.engine.adapters,
     "tos.engine.admission": tos.engine.admission,
     "tos.engine.core": tos.engine.core,
@@ -275,7 +201,6 @@ def _closure_child(queue: mp.Queue) -> None:
 
     import tos.engine  # noqa: F401
     import tos.engine._base  # noqa: F401
-    import tos.engine._corporate_action  # noqa: F401
     import tos.engine.adapters  # noqa: F401
     import tos.engine.admission  # noqa: F401
     import tos.engine.core  # noqa: F401
@@ -421,7 +346,7 @@ def test_allowlist_classifier_canaries() -> None:
     assert _is_forbidden_non_tos("numpy") is True
     assert _is_forbidden_non_tos("pydantic") is False
     assert _is_forbidden_non_tos("enum") is False
-    assert _is_forbidden_non_tos("click") is False  # must not false-match "cli"
+    assert _is_forbidden_non_tos("click") is False
 
 
 def _ast_offenders(path: Path) -> list[str]:
@@ -583,12 +508,7 @@ def test_source_imports_no_module_outside_the_allowlist() -> None:
 
 
 def test_every_submodule_is_covered_by_the_closure_child() -> None:
-    """Anti-phantom: the closure child imports **every** shipped submodule, not a stale subset.
-
-    The #27 FD lesson in its author-level form: locking the export surface is not locking the
-    package. If a new submodule lands and the child does not import it, its imports would never be
-    exercised by the closure scan — so the file list on disk is compared against the child's list.
-    """
+    """Anti-phantom: the closure child imports **every** shipped submodule, not a stale subset."""
     on_disk = {
         f"tos.engine.{path.stem}" if path.stem != "__init__" else "tos.engine"
         for path in _ENGINE_SRC.glob("*.py")
@@ -600,22 +520,17 @@ def test_every_submodule_is_covered_by_the_closure_child() -> None:
 
 
 def test_engine_namespace_exposes_no_sibling_mutation_symbol() -> None:
-    """(§4.3 author-level lock) No mutation / construction / capability symbol is reachable.
-
-    Not only "the engine does not import it" but "the engine's own namespaces do not carry it":
-    the #27 FD lesson that locking the export surface alone leaves the submodules open. Every
-    engine module's ``vars()`` is swept, not just ``tos.engine.__all__``.
-    """
+    """(§4.3 author-level lock) No mutation / construction / capability symbol is reachable."""
     forbidden = (
-        "apply_committed",  # rcl — capacity mutation
-        "apply_benefit",  # rcl
-        "claim_capability",  # rcl — capability consumption
-        "fold_commands",  # rcl
-        "compile_command",  # ioc — broker-command construction
-        "permit_single_use",  # afg — permit consumption semantics
-        "risk_decision",  # are — the Authority's own production
-        "action_flow_decision",  # afg — the Governor's own production
-        "vector_complete",  # cur — the per-send currentness production
+        "apply_committed",
+        "apply_benefit",
+        "claim_capability",
+        "fold_commands",
+        "compile_command",
+        "permit_single_use",
+        "risk_decision",
+        "action_flow_decision",
+        "vector_complete",
     )
     for module_name, module in _LOADED_SUBMODULES.items():
         for name in forbidden:

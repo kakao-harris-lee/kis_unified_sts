@@ -15,7 +15,7 @@
 - [계층과 의존성 정본](../architecture/tos-system-context.md)
 - [공개/내부 인터페이스 목록](../architecture/tos-public-interfaces.md)
 - [Legacy disposition](../migration/legacy-disposition.md)
-- [기존 migration 정본](../../tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.md)
+- `기존 migration 정본`
 - [기존 runtime 운영 배선 계획](2026-09-13-tos-runtime-operations-wiring-plan.md)
 - [paper 부팅 런북](../runbooks/tos-paper-boot.md), [cold backup 런북](../runbooks/tos-evidence-cold-backup.md)
 
@@ -131,7 +131,7 @@ rollback drill → rollback 의존 종료 → caller 없는 legacy 코드 삭제
 | 첫 tenant 전략/상품/기간/담당자 | CP-3 시작 | 결정됨 2026-10-07 — Setup D (CP-3 착수 문서 §4) |
 | scope별 rollback 종료·삭제 시점 | CP-4 삭제 전 | 미정; 관측 증거 필요 |
 
-CP-1 구현 상태는 §6과 [검증 기록](../testing/2026-10-06-tos-control-plane.md)을 따른다.
+CP-1 구현 상태는 §6과 `검증 기록`을 따른다.
 명령/거래 런타임 변경이나 운영 배포는 수행하지 않았다. 기존 paper 운영·장기 증거 측정은 해당 런북을 따른다.
 
 ## 5. 이번 문서 검증
@@ -168,4 +168,4 @@ cron·코드 핀 정책·커널·durable set은 변경하지 않았다.
 실제 export generation 증가·종료 후 stale 관측은 다음 정상 세션에서 확인해야 한다.
 Claude 독립 리뷰는 token 한도로 미실행이며 자체 점검·CI 통과와 구분한다.
 [출력 연결 런북](../runbooks/tos-paper-projection-connection.md)과
-[배포 검증 기록](../testing/2026-10-06-tos-control-plane.md)을 참조한다.
+`배포 검증 기록`을 참조한다.

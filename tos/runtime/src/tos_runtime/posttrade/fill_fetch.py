@@ -1,46 +1,4 @@
-"""The fill observer's FETCH half: broker reads off the session loop's thread (issue #950).
-
-:class:`~tos_runtime.posttrade.fill_observer.KisMockFillObserver` is split in two:
-
-* **FETCH** (this module) — network only. One :class:`FetchPlan` (built on the loop thread from
-  durable evidence) is run by :func:`run_fetch`: the ``VTTC0081R`` order reads for the planned
-  dates and, when the release path will need it, the release reconciliation's broker snapshot.
-  A separately scoped stock held-position observation may also be requested by cadence, even
-  when there are no ACK reads. It touches no engine, no RCL, and no observer state; what it
-  produces is a :class:`FetchResult`, data only.
-* **APPLY** (the observer) — everything else, on the loop thread only: classifying rows, every
-  observer evidence row, feeding the engine, finality, release, re-projection.
-
-**Why the release snapshot is fetched here** (#949 review round 2 MEDIUM-1). A terminal fill fed
-to the engine runs finality -> the release consumer -> ``ReconciliationService.reconcile`` ->
-``witness.observe``: a balance walk plus an order walk per date, on the loop thread, with no
-deadline. FETCH reads that snapshot ahead of time — when a read row looks like a full fill
-(:func:`may_release`) or a finality re-run is due — and APPLY serves it to the reconciliation
-(:class:`SnapshotPrefetcher.serving`). The reconciliation itself is unchanged: same scope, same
-judgement, same fail-closed outcome for an unavailable read; only the instant the broker was read
-moves. **That instant is bounded** (#969 review r1 HIGH): a snapshot older than
-``release_snapshot_max_age_ms`` (from its read's start) is not served — an order that appeared at
-the broker since (an orphan, which must block the release) could be missing from it — so that
-release HOLDS and the observer records the snapshot's real read instants and age. The first
-expiry in a run of consecutive expiries schedules a fresh worker read at once; later ones wait
-``finality_retry_interval_ms`` like any other finality re-run (#971 / PR #978). Expiry never
-falls back to a live read on the loop. **The age starts at the balance read's first pacer
-grant** (issue #970, review-979 r1 HIGH), not before: every request on the app key is paced, so
-queueing in the pacer is not broker-state age, and the witness reads the closed earlier days'
-order walks BEFORE the balance and today's walk last — the window covers everything that can
-still change (``KisStockBrokerWitness.observe``'s read-order note; :class:`SnapshotRead`). An
-expiry records whether the read's own window outran the limit (:class:`SnapshotUse`).
-**Not moved**: a reconciliation whose scope the prefetch did not
-anticipate (its key or trading date differs) falls back to the live read, exactly as before #950
-— bounded by ``witness_request_timeout_s`` per page, as #949 left it.
-
-**One FETCH at a time, stopped with the session.** :class:`FetchRunner` runs at most one plan on
-one worker thread. :meth:`FetchRunner.close` stops it: the in-flight read stops at its next page
-(the stop flag is part of every read's deadline predicate), the worker is joined, and the result
-is dropped — a FETCH in flight at shutdown never reaches APPLY.
-
-Firewall: stdlib + ``tos_runtime.recon`` + ``tos_runtime.time`` only.
-"""
+"""The fill observer's FETCH half: broker reads off the session loop's thread (issue #950)."""
 
 from __future__ import annotations
 
@@ -72,9 +30,6 @@ __all__ = [
     "snapshot_key",
 ]
 
-#: ``(account, instrument keys, order dates)`` — what a broker snapshot depends on. The KIS
-#: witness never filters by attempt id and ``as_of_generation`` is not a broker input, so two
-#: scopes with the same key read the same broker state.
 SnapshotKey = tuple[str, tuple[object, ...], frozenset[str]]
 
 
@@ -85,35 +40,19 @@ def snapshot_key(scope: WitnessScope) -> SnapshotKey:
 
 @dataclass(frozen=True)
 class PrefetchedSnapshot:
-    """A release-reconciliation snapshot read on the FETCH thread: the snapshot, or the
-    :class:`~tos_runtime.recon.ports.WitnessUnavailable` the read ended in (served as the same
-    raise — an unavailable read stays a hold, never a guess)."""
+    """A release-reconciliation snapshot read on the FETCH thread: the snapshot, or the"""
 
     key: SnapshotKey
     today: str
     outcome: WitnessSnapshot | WitnessUnavailable
-    #: Monotonic instants the read started and finished (#969 review r1 HIGH). The age the
-    #: serving side checks is measured from the START — the balance read's first pacer grant
-    #: (:class:`SnapshotRead`), the earliest moment the state that can still change was read.
     read_started_ms: int
     read_finished_ms: int
-    #: The grant of the read's very first request — earlier than ``read_started_ms`` by the
-    #: closed days' order walks. Recorded, not aged from. ``None``: unknown (nothing sent, or
-    #: built by hand).
     first_request_ms: int | None = None
 
 
 @dataclass(frozen=True)
 class HeldPositionSnapshot:
-    """A periodic CLOSE-position double observation read on the FETCH worker.
-
-    ``scope`` is the risk-only scope actually passed to ``prefetch`` (account and exactly one
-    instrument, with no historical order dates). ``first_balance_read_started_ms`` and
-    ``confirmation_balance_read_started_ms`` are the raw grants returned by
-    :attr:`SnapshotRead.age_origin_ms`; unlike the release snapshot's compatibility timestamp,
-    they are deliberately left ``None`` when the witness did not record a balance grant. Both
-    raw samples and grants are retained for the cache's independent strict comparison.
-    """
+    """A periodic CLOSE-position double observation read on the FETCH worker."""
 
     scope: WitnessScope | None
     today: str | None
@@ -129,18 +68,7 @@ class HeldPositionSnapshot:
 
 @dataclass(frozen=True)
 class SnapshotRead:
-    """What :meth:`SnapshotPrefetcher.prefetch` read, and when it started reading.
-
-    Attributes:
-        outcome: The snapshot, or the unavailability the read ended in.
-        first_request_ms: The monotonic grant instant of the read's FIRST broker request (the
-            app key pacer's slot, issue #970). ``None`` when the read sent nothing.
-        age_origin_ms: The grant of the BALANCE read's first request — the age origin
-            (review-979 r1 HIGH). The witness reads closed earlier days first, then the balance,
-            then today; everything that can still change is read from here on
-            (``KisStockBrokerWitness.observe``'s read-order note). Release snapshots retain their
-            compatibility fallback; CLOSE proof uses this raw field and refuses ``None``.
-    """
+    """What :meth:`SnapshotPrefetcher.prefetch` read, and when it started reading."""
 
     outcome: WitnessSnapshot | WitnessUnavailable
     first_request_ms: int | None
@@ -149,21 +77,16 @@ class SnapshotRead:
 
 @dataclass(frozen=True)
 class SnapshotUse:
-    """One reconciliation the serving side answered from a prefetched snapshot (``served``) or
-    refused because it was older than the limit (``expired``) — APPLY records each."""
+    """One reconciliation the serving side answered from a prefetched snapshot (``served``) or"""
 
     verdict: str
     snapshot: PrefetchedSnapshot
     age_ms: int
     max_age_ms: int
-    #: Why an ``expired`` one expired: ``read_span_exceeds_max_age`` (the read's own window,
-    #: balance grant to last request, is longer than the limit — it can never be served) or
-    #: ``aged_before_apply``. ``None`` when served.
     reason: str | None = None
 
     def read_fields(self) -> dict[str, object]:
-        """The read's evidence fields: its monotonic instants (age origin = ``read_started``,
-        the first request of all, the end) and the expiry reason."""
+        """The read's evidence fields: its monotonic instants (age origin = ``read_started``,"""
         return {
             "read_started_monotonic_ms": self.snapshot.read_started_ms,
             "read_finished_monotonic_ms": self.snapshot.read_finished_ms,
@@ -188,9 +111,7 @@ class SnapshotPrefetcher(Protocol):
         max_age_ms: int,
         now_ms: Callable[[], int],
     ) -> AbstractContextManager[list[SnapshotUse]]:
-        """While open, an ``observe`` on THIS thread whose scope matches is answered from
-        ``prefetched`` — or, past ``max_age_ms``, refused as unavailable (a HOLD, never a live
-        read). Yields the list each such answer is appended to (APPLY)."""
+        """While open, an ``observe`` on THIS thread whose scope matches is answered from"""
         ...
 
     def serving_required(
@@ -202,43 +123,13 @@ class SnapshotPrefetcher(Protocol):
         max_age_ms: int,
         now_ms: Callable[[], int],
     ) -> AbstractContextManager[list[SnapshotUse]]:
-        """Serve only this scope/date; mismatch, unknown date, or expiry must refuse rather
-        than fall through to a live broker read on the session-loop thread."""
+        """Serve only this scope/date; mismatch, unknown date, or expiry must refuse rather"""
         ...
 
 
 @dataclass(frozen=True)
 class FetchPlan:
-    """What one FETCH reads — built on the loop thread, read-only afterwards.
-
-    Attributes:
-        reads: ``(date, scope)`` per order inquiry; ``scope.attempt_ids`` names the attempts the
-            date is read for (APPLY attributes against exactly those).
-        targets: ``(odno_key, date)`` of every planned attempt — :func:`may_release`'s input.
-        instrument: The observer's instrument.
-        deadline_ms: The order reads' shared deadline (``poll_deadline_ms`` from the plan's start,
-            on the injected monotonic clock).
-        snapshot_scope: The release reconciliation's scope, or ``None`` when there is no trusted
-            trading date (the live read then refuses on its own, without a network call).
-        today: The trusted trading date the snapshot is read under.
-        reproject_ids: Attempts whose finality re-run is due — a snapshot is always fetched for
-            them.
-        held_position_snapshot_due: Whether this plan includes a cadence-due CLOSE snapshot
-            request. It remains true when date/scope is unavailable so APPLY can invalidate an
-            older proof rather than silently leave it usable.
-        held_position_scope: Optional, one-instrument risk-only scope to fetch for CLOSE proof.
-            It is independent of order reads and is fetched even when ``reads`` is empty.
-        held_position_generation: RCL sequence captured when the held-position plan was built;
-            ``None`` means the observation cannot prove a position.
-        held_position_tip: Atomic ``(writer_epoch, last_seq)`` captured with the generation; the
-            cache compares both to reject an epoch change even when sequence numbers match.
-        held_position_token: The held-position cache's pending token, captured before FETCH; an
-            older worker result cannot overwrite a newer cache request.
-        recovery_attempt_ids: Close attempts whose entry discharge should be resumed from the
-            release-scope snapshot; never resumed by a live read on the session loop.
-        evidence_seq_at_plan: Durable evidence tail captured before planning. The loop uses it to
-            preempt a risk-only FETCH if a new ACK arrives while its broker read is in flight.
-    """
+    """What one FETCH reads — built on the loop thread, read-only afterwards."""
 
     reads: tuple[tuple[str, WitnessScope], ...]
     targets: frozenset[tuple[str | None, str]]
@@ -289,10 +180,7 @@ class OrderRowsReader(Protocol):
 
 
 def odno_key(raw: str | None) -> str | None:
-    """Canonical comparison key for a KIS ODNO: whitespace and leading zeros dropped (a single
-    ``"0"`` kept); ``None`` for an absent, all-zero, or non-ASCII-digit value — a value that is
-    not an order number never matches one (``tools/broker_probes/probes_order.py::odno_key``
-    measured why both sides must be canonicalized)."""
+    """Canonical comparison key for a KIS ODNO: whitespace and leading zeros dropped (a single"""
     text = (raw or "").strip()
     if not text or not (text.isascii() and text.isdigit()):
         return None
@@ -301,10 +189,7 @@ def odno_key(raw: str | None) -> str | None:
 
 
 def may_release(plan: FetchPlan, rows: tuple[KisOrderRow, ...]) -> bool:
-    """Whether ``rows`` show a planned attempt fully filled — the one observation APPLY feeds to
-    the engine as ``FULL_FILL``, i.e. the one that reaches the release reconciliation. A loose
-    superset is harmless (an unused snapshot); a miss only means the live read, as before #950.
-    """
+    """Whether ``rows`` show a planned attempt fully filled — the one observation APPLY feeds to"""
     zero = Decimal(0)
     return any(
         (odno_key(r.odno), r.ord_dt or "") in plan.targets
@@ -336,8 +221,6 @@ def _release_snapshot(
         return None
     called_ms = monotonic.now_ms()
     read = snapshots.prefetch(plan.snapshot_scope, today=plan.today, abort=stop)
-    # Release reconciliation keeps its existing fallback for snapshots whose witness did not
-    # report the balance grant; that compatibility rule is not used by CLOSE risk proof.
     origin = (
         read.age_origin_ms if read.age_origin_ms is not None else read.first_request_ms
     )
@@ -384,8 +267,6 @@ def _held_position_snapshot(
         )
         first = first_read.outcome
         first_started = first_read.age_origin_ms
-        # A first failure, incomplete position list, non-independent source, or missing balance
-        # grant cannot establish a comparable sample, so do not spend another paced read.
         if (
             isinstance(first, WitnessSnapshot)
             and first.positions_complete
@@ -420,13 +301,7 @@ def run_fetch(
     monotonic: MonotonicSource,
     stop: Callable[[], bool],
 ) -> FetchResult:
-    """Run ``plan``'s reads. Network only: no evidence written by this function, no engine.
-
-    Each order read gets one predicate — the plan's deadline OR ``stop`` — which the witness
-    asks before every page, so a shutdown ends a walk at its next page. The snapshot read gets
-    ``stop`` only: a time deadline on it would turn a slow-but-working broker into a held
-    release (``witness_kis.order_rows``'s own note), which this split does not change.
-    """
+    """Run ``plan``'s reads. Network only: no evidence written by this function, no engine."""
 
     def _expired() -> bool:
         return stop() or monotonic.now_ms() >= plan.deadline_ms
@@ -443,10 +318,6 @@ def run_fetch(
             continue
         reads.append((date, rows))
         releasing = releasing or may_release(plan, rows)
-    # Do not reuse the release read for CLOSE proof: its scope may contain historical order
-    # dates, while the risk proof binds one instrument and one RCL generation. Run the double
-    # observation first so the release/recovery snapshot is the final broker read before APPLY;
-    # otherwise two paced CLOSE reads can make that single-use snapshot stale before it is served.
     held_position_snapshot = _held_position_snapshot(
         plan, snapshots=snapshots, monotonic=monotonic, stop=stop
     )
@@ -525,9 +396,7 @@ class FetchRunner:
         return True
 
     def take_done(self) -> FetchResult | None:
-        """The finished FETCH's result (once), or ``None`` while none is finished. A FETCH that
-        raised re-raises here, on the loop thread — the observer's bookkeeping failed, and the
-        loop's own rule is that such a failure propagates."""
+        """The finished FETCH's result (once), or ``None`` while none is finished. A FETCH that"""
         future = self._future
         if future is None or not future.done() or self._stop.is_set():
             return None

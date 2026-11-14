@@ -1,27 +1,4 @@
-"""``ProvisionalReservationLedger.discard_unsent`` + ``UnsentDiscardRef`` (2026-11-01
-unsent-reservation-release plan §3.2 / §5 ①; issue #974).
-
-The defect this closes, measured on `main` before the change (#974's own ``measure_974.py``, the
-last test in this file): a ``CLOSE`` flow that commits at step 9 and then halts at step 10-14 is
-left ``COMMITTED_UNBOUND``/``NOT_SENT`` in the engine's projection, and *nothing* can take it out
-again — ``release`` refuses it (``NOT_SENT`` is not a terminal knowledge state) — so every later
-flow for that scope stops at the step-8 capacity pre-check before any injected stage is consulted.
-The position can no longer be closed through the engine at all.
-
-What this file locks:
-
-* **the two discardable states** — ``COMMITTED_UNBOUND`` and ``ATTEMPT_BOUND`` are removed, and
-  the scope admits a new exposure immediately afterwards;
-* **the refusals** — ``POTENTIALLY_LIVE`` (and anything later), an attempt that already carries an
-  applied egress result, an unknown proposal, and a repeat discard all return ``False`` and leave
-  the projection byte-identical. None of them raises;
-* **the type gate** — a bare proposal id, a ``FinalityProofRef``, ``None``, or a dict raises
-  ``TypeError``, mirroring ``release``'s own token gate;
-* **the end-to-end unblock** — the ``measure_974.py`` scenario, driven through
-  ``run_commitment_flow``, now admits the second flow all the way to a hand-off.
-
-Regime tag: authoring evidence only; closes no EV (design #31 §1.1).
-"""
+"""``ProvisionalReservationLedger.discard_unsent`` + ``UnsentDiscardRef`` (2026-11-01"""
 
 from __future__ import annotations
 
@@ -85,11 +62,6 @@ def _outstanding(
     return reservation
 
 
-# ===========================================================================
-# the two discardable states
-# ===========================================================================
-
-
 def test_not_sent_committed_unbound_is_discarded_and_the_scope_reopens() -> None:
     """§5 ① row 1: the exact state a step-9 commit + pre-send halt leaves behind."""
     ledger, key = _committed_ledger()
@@ -103,7 +75,6 @@ def test_not_sent_committed_unbound_is_discarded_and_the_scope_reopens() -> None
     assert ledger.outstanding(key) is None
     assert ledger.outstanding_count(key) == 0
     assert ledger.admits_new_exposure(key) is True
-    # The scope really reopens: a genuinely fresh commit is admitted, not merely "not denied".
     ledger.commit_unbound(key, proposal_id="proposal-unsent-2")
     assert _outstanding(ledger, key).proposal_id == "proposal-unsent-2"
 
@@ -121,14 +92,8 @@ def test_not_sent_attempt_bound_is_discarded() -> None:
     assert ledger.admits_new_exposure(key) is True
 
 
-# ===========================================================================
-# the refusals — every one a recorded False, never a crash
-# ===========================================================================
-
-
 def test_potentially_live_is_refused_and_the_projection_is_unchanged() -> None:
-    """§5 ① row 3: past ``mark_potentially_live`` the engine may not assume "not sent"
-    (ADR-002-002 INV-005:168) — that is broker-proof territory (plan §3.4)."""
+    '§5 ① row 3: past ``mark_potentially_live`` the engine may not assume "not sent"'
     ledger, key = _committed_ledger()
     ledger.bind_attempt(key, attempt_id=_ATTEMPT)
     ledger.mark_potentially_live(key)
@@ -164,8 +129,6 @@ def test_an_attempt_with_an_applied_egress_result_is_refused(
             instrument_key=key,
             attempt_id=_ATTEMPT,
             kind=kind,
-            # Only the fill-bearing kinds carry magnitudes; the payload's own shape validator
-            # requires both of them there and refuses them anywhere else.
             filled_quantity=Decimal("1") if fills else None,
             remaining_quantity=Decimal("0") if fills else None,
         )
@@ -181,9 +144,7 @@ def test_an_attempt_with_an_applied_egress_result_is_refused(
 def test_an_applied_result_refuses_the_discard_even_at_an_unadvanced_capacity_state() -> (
     None
 ):
-    """The third gate on its own. An ``ACK`` leaves ``capacity_state`` at ``ATTEMPT_BOUND``
-    (``_RESULT_TRANSITIONS`` maps it to ``None``), so the capacity gate alone would admit this
-    discard — the broker has nevertheless answered this exact attempt."""
+    """The third gate on its own. An ``ACK`` leaves ``capacity_state`` at ``ATTEMPT_BOUND``"""
     ledger, key = _committed_ledger()
     ledger.bind_attempt(key, attempt_id=_ATTEMPT)
     applied = ledger.apply_egress_result(
@@ -215,9 +176,7 @@ def test_a_double_discard_is_false_the_second_time() -> None:
 
 
 def test_a_discarded_attempt_may_be_committed_and_bound_again() -> None:
-    """A never-sent attempt reached no broker, so it is NOT remembered as terminal: re-binding it
-    after the discard is an ordinary new reservation, not the ``ArtifactIntegrityError`` a
-    *released* (broker-settled) attempt id would raise from ``_store``."""
+    """A never-sent attempt reached no broker, so it is NOT remembered as terminal: re-binding it"""
     ledger, key = _committed_ledger()
     ledger.bind_attempt(key, attempt_id=_ATTEMPT)
     assert ledger.discard_unsent(_ref()) is True
@@ -225,11 +184,6 @@ def test_a_discarded_attempt_may_be_committed_and_bound_again() -> None:
     ledger.commit_unbound(key, proposal_id=_PROPOSAL)
     ledger.bind_attempt(key, attempt_id=_ATTEMPT)
     assert _outstanding(ledger, key).attempt_id == _ATTEMPT
-
-
-# ===========================================================================
-# the type gate — mirrors ``release``'s own
-# ===========================================================================
 
 
 @pytest.mark.parametrize(
@@ -255,18 +209,11 @@ def test_only_the_typed_token_is_accepted(bogus: Any) -> None:
 
 
 def test_the_reason_is_a_closed_vocabulary() -> None:
-    """A free-form cause cannot reach the kernel — the record a replay reads back is validated
-    into this same type (``UnsentDiscardReason``'s own docstring). ``model_validate`` is the exact
-    seam the boot replay uses to turn a durable row back into this token."""
+    """A free-form cause cannot reach the kernel — the record a replay reads back is validated"""
     with pytest.raises(ValueError):
         UnsentDiscardRef.model_validate(
             {"proposal_id": _PROPOSAL, "reason": "whatever-I-like"}
         )
-
-
-# ===========================================================================
-# the #974 scenario, end to end through the sequencer
-# ===========================================================================
 
 
 def _proposal():
@@ -277,14 +224,7 @@ def _proposal():
 
 
 def test_the_974_block_clears_after_the_discard() -> None:
-    """#974's own ``measure_974.py``, adapted: flow 1 commits at step 9 and halts at step 10;
-    flow 2 is then denied at step 8 *before any injected stage runs*. After the discard, flow 2
-    runs the whole sequence and hands off.
-
-    The spy is what makes the before/after real: ``measure_974.py`` measured that step 8's
-    injected stage was never consulted at all, because the capacity pre-check stops the flow
-    ahead of it (``sequencer.py``'s own at-most-one retention).
-    """
+    """#974's own ``measure_974.py``, adapted: flow 1 commits at step 9 and halts at step 10;"""
     proposal = _proposal()
     key = instrument_key()
     ledger = ProvisionalReservationLedger(

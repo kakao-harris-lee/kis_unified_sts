@@ -1,10 +1,4 @@
-"""``broker_execution_id`` cross-reference in ``ReconciliationService`` (carryover plan W-C C-1).
-
-A real broker witness returns orders with ``attempt_id=None``. These tests pin that such an order
-joins its attempt only through an unambiguous one-to-one broker-id match against same-trading-date
-evidence receipts, and that every ambiguous, cross-day, undated or unmatched case stays an orphan
-(fail-closed).
-"""
+"""``broker_execution_id`` cross-reference in ``ReconciliationService`` (carryover plan W-C C-1)."""
 
 from __future__ import annotations
 
@@ -65,8 +59,7 @@ def _matched_witness_order(
     broker_execution_id: str | None | object = _KEEP,
     quantity: Decimal | None | object = _KEEP,
 ) -> WitnessOrder:
-    """``test_service``'s matched witness order, carrying the broker's own order date
-    (``ord_dt``) — ``TODAY`` unless told otherwise."""
+    """``test_service``'s matched witness order, carrying the broker's own order date"""
     order = dataclasses.replace(_undated_order(), order_date=order_date)
     if attempt_id is not _KEEP:
         assert attempt_id is None or isinstance(attempt_id, str)
@@ -124,9 +117,7 @@ def _classes(
 
 
 def test_attemptless_order_joins_through_its_broker_id(fresh: FreshnessMarker) -> None:
-    """The KIS shape: the witness knows only the ODNO. It now joins the attempt whose receipt
-    recorded that ODNO — MATCHED, no duplicate orphan, and the permits follow the kernel.
-    """
+    """The KIS shape: the witness knows only the ODNO. It now joins the attempt whose receipt"""
     report = _reconcile(
         fresh,
         receipts=(_matched_receipt(),),
@@ -141,8 +132,7 @@ def test_attemptless_order_joins_through_its_broker_id(fresh: FreshnessMarker) -
 def test_joined_order_with_conflicting_quantity_still_does_not_permit(
     fresh: FreshnessMarker,
 ) -> None:
-    """Joining grants nothing by itself — a quantity disagreement between the receipt and the
-    joined order is still the kernel's conflict."""
+    """Joining grants nothing by itself — a quantity disagreement between the receipt and the"""
     report = _reconcile(
         fresh,
         receipts=(_matched_receipt(),),
@@ -228,8 +218,7 @@ def test_two_orders_resolving_to_one_attempt_both_stay_orphans(
 def test_direct_attempt_match_is_not_displaced_by_a_cross_referenced_one(
     fresh: FreshnessMarker,
 ) -> None:
-    """An attempt that already has its own order keeps it; a second, id-matched order for the
-    same attempt is a disagreement and stays an orphan — never silently merged."""
+    """An attempt that already has its own order keeps it; a second, id-matched order for the"""
     direct = _matched_witness_order()
     report = _reconcile(
         fresh,
@@ -267,9 +256,7 @@ def _assert_orphaned(report: ReconciliationReport) -> None:
 def test_receipt_from_another_trading_day_does_not_join(
     fresh: FreshnessMarker,
 ) -> None:
-    """Review S2: a KIS ODNO is a per-day sequence. Today's order with no receipt of its own must
-    not join yesterday's attempt that happened to record the same ODNO — before this guard both
-    permits went True here."""
+    """Review S2: a KIS ODNO is a per-day sequence. Today's order with no receipt of its own must"""
     report = _reconcile(
         fresh,
         receipts=(_matched_receipt(trading_date=YESTERDAY),),
@@ -286,8 +273,7 @@ def test_receipt_from_another_trading_day_does_not_join(
 def test_missing_date_on_either_side_does_not_join(
     fresh: FreshnessMarker, receipt_date: str | None, order_date: str | None
 ) -> None:
-    """An undated receipt is every receipt recorded before the trading date existed — it must
-    never join. An undated order is a witness row without ``ord_dt``."""
+    """An undated receipt is every receipt recorded before the trading date existed — it must"""
     report = _reconcile(
         fresh,
         receipts=(_matched_receipt(trading_date=receipt_date),),
@@ -309,9 +295,7 @@ def test_order_dated_another_day_does_not_join(fresh: FreshnessMarker) -> None:
 def test_attempt_whose_receipts_name_two_ids_does_not_join(
     fresh: FreshnessMarker,
 ) -> None:
-    """Review S1: receipts X then Y for one attempt; the broker shows only X. The service judges
-    against the last receipt (Y), so joining on X would merge a real disagreement into MATCHED —
-    before this guard both permits went True here."""
+    """Review S1: receipts X then Y for one attempt; the broker shows only X. The service judges"""
     report = _reconcile(
         fresh,
         receipts=(
@@ -341,8 +325,7 @@ def test_joined_id_must_be_on_the_receipt_used_as_evidence(
 def test_earlier_receipt_with_another_id_blocks_the_join(
     fresh: FreshnessMarker,
 ) -> None:
-    """The evidence receipt (the last one) does carry the order's id, but an earlier receipt of the
-    same attempt names another — the attempt's broker identity is not one id."""
+    """The evidence receipt (the last one) does carry the order's id, but an earlier receipt of the"""
     report = _reconcile(
         fresh,
         receipts=(
@@ -357,8 +340,7 @@ def test_earlier_receipt_with_another_id_blocks_the_join(
 def test_evidence_receipt_from_another_day_blocks_the_join(
     fresh: FreshnessMarker,
 ) -> None:
-    """Today's receipts all carry X, but the receipt the service judges quantities against is a
-    later one dated another day with Y — matching on X would compare against Y."""
+    """Today's receipts all carry X, but the receipt the service judges quantities against is a"""
     report = _reconcile(
         fresh,
         receipts=(

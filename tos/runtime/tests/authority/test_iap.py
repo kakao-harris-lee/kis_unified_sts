@@ -1,5 +1,4 @@
-"""``IntentRegistry`` + ``load_operator_approval_file`` tests (design #40 §5
-order 4 item 3)."""
+"""``IntentRegistry`` + ``load_operator_approval_file`` tests (design #40 §5"""
 
 from __future__ import annotations
 
@@ -31,10 +30,6 @@ from .conftest import (
     write_approval_file,
 )
 
-# ============================================================================
-# load_operator_approval_file — zero auto-approval; verbatim result pass-through
-# ============================================================================
-
 
 @pytest.mark.parametrize("result", ["APPROVE", "DENY", "UNKNOWN"])
 def test_loader_passes_the_operators_result_verbatim(
@@ -55,9 +50,7 @@ def test_loader_passes_the_operators_result_verbatim(
 def test_loader_refuses_named_tbd_placeholder_decision_id(
     approvals_dir: Path, expected_owner_uid: int
 ) -> None:
-    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): decision_id/request_id/
-    request_digest/etc. are free strings sealed straight into the issued
-    decision's own canonical digest — an operator-typed ``"TBD"`` must never pass."""
+    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): decision_id/request_id/"""
     path = write_approval_file(approvals_dir / "p1.yaml", decision_id="TBD")
     with pytest.raises(OperatorApprovalFileError, match="template placeholder"):
         load_operator_approval_file(
@@ -105,8 +98,7 @@ def test_loader_refuses_environment_label_mismatch(
 def test_loader_never_opens_the_file_before_the_custody_gate(
     approvals_dir: Path, expected_owner_uid: int
 ) -> None:
-    """Mirrors custody's own LOW-1 discipline: a mode/owner refusal happens
-    before any YAML parsing is attempted."""
+    """Mirrors custody's own LOW-1 discipline: a mode/owner refusal happens"""
     path = write_approval_file(approvals_dir / "p1.yaml", mode=0o644)
     path.write_bytes(b"not even valid yaml: [[[")
     with pytest.raises(OperatorApprovalFileError):
@@ -117,22 +109,10 @@ def test_loader_never_opens_the_file_before_the_custody_gate(
         )
 
 
-# ============================================================================
-# max_decision_age_ms — 2026-09-08 re-review MEDIUM: no kernel predicate
-# enforces decision expiry (tos.iap is clock-free; decision_current is an
-# injected fact), so a non-null value must be REFUSED at load, never
-# silently accepted-but-unenforced (ADR-002-023 §12 item 2 "unexpired").
-# ============================================================================
-
-
 def test_loader_refuses_a_non_null_max_decision_age_ms(
     approvals_dir: Path, expected_owner_uid: int
 ) -> None:
-    """Kernel round #1 §2.2 relaxed this to a conditional check (issued_at
-    present => accept), but re-review finding #7 (LOW) restored the
-    unconditional refusal for THIS loader specifically — see
-    :func:`test_loader_refuses_a_non_null_max_decision_age_ms_even_with_issued_at`
-    for that once-relaxed case."""
+    """Kernel round #1 §2.2 relaxed this to a conditional check (issued_at"""
     path = write_approval_file(
         approvals_dir / "p1.yaml", decision_id="d1", max_decision_age_ms=60_000
     )
@@ -156,11 +136,6 @@ def test_loader_accepts_a_null_max_decision_age_ms(
         path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
     )
     assert decision.max_decision_age_ms is None
-
-
-# ============================================================================
-# consume() — single-use, log-enforced (IAP-INV-006)
-# ============================================================================
 
 
 def _decision(
@@ -240,8 +215,7 @@ def test_conflicting_second_command_is_rejected(
 def test_ineligible_decision_never_reaches_the_log(
     intent_registry: IntentRegistry, approvals_dir: Path, expected_owner_uid: int
 ) -> None:
-    """decision_current=False (or an envelope mismatch) is REJECTED_INELIGIBLE
-    and commits nothing — a later legitimate consume must still succeed."""
+    """decision_current=False (or an envelope mismatch) is REJECTED_INELIGIBLE"""
     decision = _decision(intent_registry, approvals_dir, expected_owner_uid)
     refused = intent_registry.consume(
         decision,
@@ -279,7 +253,6 @@ def test_binding_mismatch_denies_via_exact_binding_holds_before_any_log_write(
     assert refused.outcome is ConsumptionOutcome.REJECTED_INELIGIBLE
     assert refused.record is None
 
-    # Nothing was committed — a legitimate consume afterward still succeeds.
     admitted = intent_registry.consume(
         decision,
         command_identity="cmd-1",
@@ -298,9 +271,7 @@ def test_double_consume_refused_across_a_recreated_registry(
     approvals_dir: Path,
     expected_owner_uid: int,
 ) -> None:
-    """A brand-new IntentRegistry over the SAME log (simulated restart — no
-    in-memory state carried over) still refuses a second consumption of the
-    same decision (IAP-INV-006; module docstring)."""
+    """A brand-new IntentRegistry over the SAME log (simulated restart — no"""
     first_registry = IntentRegistry(
         log,
         evidence_port,
@@ -317,8 +288,6 @@ def test_double_consume_refused_across_a_recreated_registry(
     )
     assert first.outcome is ConsumptionOutcome.CONSUMED_NEW
 
-    # "Restart": open a fresh SqliteCommitLog handle at the same path and a
-    # fresh IntentRegistry over it — no Python object shared with `first_registry`.
     second_log = SqliteCommitLog(log_path, evidence_port=FakeEvidenceAppendPort())
     try:
         second_registry = IntentRegistry(
@@ -336,9 +305,6 @@ def test_double_consume_refused_across_a_recreated_registry(
         )
         assert second.outcome is ConsumptionOutcome.REJECTED_CONFLICT
 
-        # Even a byte-identical retry of the ORIGINAL command is only ever an
-        # idempotent replay of the existing record — never a second, distinct
-        # consumption.
         replay = second_registry.consume(
             decision,
             command_identity="cmd-1",
@@ -349,12 +315,6 @@ def test_double_consume_refused_across_a_recreated_registry(
         assert replay.outcome is ConsumptionOutcome.IDEMPOTENT_REPLAY
     finally:
         second_log.close()
-
-
-# ============================================================================
-# decision_current() — input collection: policy-generation equality + a
-# log-derived proposal-scoped supersession check (no kernel predicate exists)
-# ============================================================================
 
 
 def test_decision_current_true_when_policy_generation_matches(
@@ -402,7 +362,6 @@ def test_decision_current_none_when_decision_carries_no_generation(
         approvals_dir / "p1.yaml",
         decision_id="d1",
         request_id="proposal-1",
-        # trading_approval_policy_generation omitted -> None
     )
     decision = load_operator_approval_file(
         path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
@@ -422,7 +381,6 @@ def test_decision_current_none_when_decision_carries_no_request_id(
         decision_id="d1",
         decision_generation=1,
         trading_approval_policy_generation=trading_approval_policy_generation,
-        # request_id omitted -> supersession undeterminable
     )
     decision = load_operator_approval_file(
         path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
@@ -437,9 +395,7 @@ def test_decision_current_false_when_superseded_by_a_later_consumed_decision(
     expected_owner_uid: int,
     trading_approval_policy_generation: int,
 ) -> None:
-    """A later-generation decision for the SAME proposal, already consumed,
-    supersedes an older one (§11 line 298) — detected purely from the log's
-    own command-id encoding, no payload readback (module docstring)."""
+    """A later-generation decision for the SAME proposal, already consumed,"""
     older_path = write_approval_file(
         approvals_dir / "older.yaml",
         decision_id="d-older",
@@ -466,9 +422,6 @@ def test_decision_current_false_when_superseded_by_a_later_consumed_decision(
         environment_label="non-live-test",
     )
 
-    # Only the newer decision is ever consumed — the older one is never
-    # itself consumed, so its currency depends entirely on the supersession
-    # check, not on its own consumption status.
     consumed = intent_registry.consume(
         newer,
         command_identity="cmd-newer",
@@ -521,11 +474,6 @@ def test_decision_current_true_when_not_yet_superseded_by_anything_consumed(
     assert intent_registry.decision_current(decision) is True
 
 
-# ============================================================================
-# kernel round #1 §2.1 — CommandType switch + legacy-kind fail-closed refusal
-# ============================================================================
-
-
 def test_consume_uses_the_new_consume_approval_decision_command_type(
     intent_registry: IntentRegistry,
     log: SqliteCommitLog,
@@ -533,9 +481,7 @@ def test_consume_uses_the_new_consume_approval_decision_command_type(
     approvals_dir: Path,
     expected_owner_uid: int,
 ) -> None:
-    """A newly-committed consumption is written under the new, dedicated
-    ``CONSUME_APPROVAL_DECISION`` member (kernel round #1 §1.1/§2.1) — the
-    reported-gap ``CONSUME_TRANSMISSION_CAPABILITY`` reuse is resolved."""
+    """A newly-committed consumption is written under the new, dedicated"""
     path = write_approval_file(approvals_dir / "p1.yaml", decision_id="d1")
     decision = load_operator_approval_file(
         path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
@@ -560,12 +506,7 @@ def test_consume_raises_on_a_legacy_kind_entry_at_the_same_command_id(
     approvals_dir: Path,
     expected_owner_uid: int,
 ) -> None:
-    """A pre-existing entry at this decision's own consumption command-id,
-    committed under the OLD legacy ``CONSUME_TRANSMISSION_CAPABILITY`` kind,
-    must never be silently treated as "not yet consumed" by
-    :meth:`IntentRegistry._current_consumption` — that would let a second,
-    differently-kinded consumption slip through undetected (fail-open). It
-    must instead raise :class:`CommitLogCorruption` (kernel round #1 §2.1)."""
+    """A pre-existing entry at this decision's own consumption command-id,"""
     path = write_approval_file(approvals_dir / "p1.yaml", decision_id="d1")
     decision = load_operator_approval_file(
         path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
@@ -596,12 +537,7 @@ def test_decision_current_raises_on_a_legacy_kind_entry_under_the_supersession_p
     expected_owner_uid: int,
     trading_approval_policy_generation: int,
 ) -> None:
-    """A later-generation entry under this proposal's own consumption prefix,
-    committed under the OLD legacy ``CONSUME_TRANSMISSION_CAPABILITY`` kind,
-    must never be silently skipped by the supersession scan in
-    :meth:`IntentRegistry.decision_current` — skipping it would hide a real
-    supersession (fail-open). It must instead raise
-    :class:`CommitLogCorruption` (kernel round #1 §2.1)."""
+    """A later-generation entry under this proposal's own consumption prefix,"""
     path = write_approval_file(
         approvals_dir / "p1.yaml",
         decision_id="d1",
@@ -624,22 +560,10 @@ def test_decision_current_raises_on_a_legacy_kind_entry_under_the_supersession_p
         intent_registry.decision_current(decision)
 
 
-# ============================================================================
-# kernel round #1 §2.2 — decision-expiry runtime path
-# ============================================================================
-
-
 def test_loader_refuses_a_non_null_max_decision_age_ms_even_with_issued_at(
     approvals_dir: Path, expected_owner_uid: int
 ) -> None:
-    """Kernel round #1 §2.2 re-review finding #7 (LOW): the receipt-less
-    ``load_operator_approval_file`` produces no receipt, so a non-null
-    ``max_decision_age_ms`` loaded through it could never be enforced —
-    only ever denied forever at consumption with the operator's expiry
-    intent invisible (module docstring's "decision expiry runtime path").
-    This loader refuses it OUTRIGHT again, regardless of whether
-    ``issued_at_unix_ms`` is also set — that combination is now
-    ``load_operator_approval_with_receipt``'s job exclusively."""
+    """Kernel round #1 §2.2 re-review finding #7 (LOW): the receipt-less"""
     path = write_approval_file(
         approvals_dir / "p1.yaml",
         decision_id="d1",
@@ -684,7 +608,6 @@ def test_load_operator_approval_with_receipt_refuses_a_future_dated_issuance(
         approvals_dir / "p1.yaml",
         decision_id="d1",
         max_decision_age_ms=60_000,
-        # More than max_future_timestamp_tolerance_ms (200) ahead of wall_now.
         issued_at_unix_ms=1_000_000 + 10_000,
     )
     with pytest.raises(OperatorApprovalFileError, match="future-dated"):
@@ -700,18 +623,7 @@ def test_load_operator_approval_with_receipt_refuses_a_future_dated_issuance(
 def test_real_time_service_refuses_a_future_dated_issuance(
     approvals_dir: Path, expected_owner_uid: int
 ) -> None:
-    """G-1 end-to-end pin (runtime operations wiring plan §2 decision 1,
-    mutation M2): the SAME refusal as
-    ``test_load_operator_approval_with_receipt_refuses_a_future_dated_issuance``
-    above, but through a REAL ``TrustworthyTimeService`` driven to TRUSTED —
-    not the ``FakeTimeService`` double — proving the wiring from
-    ``LocalSystemClockReader``-shaped reference reads through
-    ``_issue_snapshot``'s ``wall_clock_observation`` fill-in to
-    ``load_operator_approval_with_receipt``'s consumer check is genuinely
-    connected. M2: removing the ``_issue_snapshot`` fill-in (service.py)
-    makes ``wall_now`` stay ``None`` again, which makes this future-dated
-    approval SILENTLY ADMITTED (the check at iap.py:477 is skipped whenever
-    ``wall_now is None``) — this test goes red."""
+    """G-1 end-to-end pin (runtime operations wiring plan §2 decision 1,"""
     monotonic = FakeMonotonicSource(first=1_000)
     time_service = TrustworthyTimeService(
         monotonic=monotonic,
@@ -721,17 +633,15 @@ def test_real_time_service_refuses_a_future_dated_issuance(
         evidence=FakeEvidenceAppendPort(),
     )
     time_service.start()
-    time_service.evaluate()  # -> SYNCHRONIZING
+    time_service.evaluate()
     monotonic.value = 1_010
-    time_service.evaluate()  # -> TRUSTED, wall_clock_observation == 1_000_000
+    time_service.evaluate()
     assert time_service.wall_clock_now() == 1_000_000
 
     path = write_approval_file(
         approvals_dir / "p1.yaml",
         decision_id="d1",
         max_decision_age_ms=60_000,
-        # More than max_future_timestamp_tolerance_ms (200, _time_config's
-        # default) ahead of the real service's wall_clock_now().
         issued_at_unix_ms=1_000_000 + 10_000,
     )
     with pytest.raises(OperatorApprovalFileError, match="future-dated"):
@@ -781,9 +691,7 @@ def test_load_operator_approval_with_receipt_is_none_safe_before_time_service_st
     expected_owner_uid: int,
     expiry_time_config: TrustworthyTimeConfig,
 ) -> None:
-    """An un-set ``FakeTimeService`` (no snapshot yet — the real
-    ``TimeServiceNotStarted`` case) never raises; the receipt just carries no
-    facts, and expiry later fails closed."""
+    """An un-set ``FakeTimeService`` (no snapshot yet — the real"""
     time_service = FakeTimeService(snapshot=None)
     path = write_approval_file(
         approvals_dir / "p1.yaml",
@@ -837,20 +745,14 @@ def test_decision_current_admits_before_expiry_and_denies_after_time_advances(
     approvals_dir: Path,
     expected_owner_uid: int,
 ) -> None:
-    """Kernel round #1 §2.2 RED-then-GREEN case: age bound at load is
-    issuer_signed_age(100) + issuer_age_uncertainty(50) +
-    transport_bound(10) + queue_bound(0) + conversion_bound(50) +
-    consumer_elapsed(0) = 210 <= max(300) => admit. Advancing the fake
-    monotonic reading by 150ms (same continuity) raises consumer_elapsed to
-    150, bound to 360 > 300 => deny — a real kernel-predicate-driven
-    transition, not a runtime-authored comparison."""
+    """Kernel round #1 §2.2 RED-then-GREEN case: age bound at load is"""
     loaded = _load_expiry_decision(
         approvals_dir,
         expected_owner_uid,
         expiry_time_service,
         expiry_time_config,
         max_decision_age_ms=300,
-        issued_at_unix_ms=999_900,  # 100ms before the 1_000_000 wall_now default
+        issued_at_unix_ms=999_900,
     )
     assert (
         expiry_intent_registry.decision_current(loaded.decision, receipt=loaded) is True
@@ -896,10 +798,7 @@ def test_decision_current_denies_after_a_continuity_change_simulating_restart(
     approvals_dir: Path,
     expected_owner_uid: int,
 ) -> None:
-    """A changed monotonic continuity id (simulated process restart) makes
-    the kernel ``anchor_valid`` check fail => the composed age bound is
-    ``None`` => :func:`tos.iap.decision_unexpired` denies — never coerced to
-    admit just because the caller "has no reason to think it's stale"."""
+    """A changed monotonic continuity id (simulated process restart) makes"""
     loaded = _load_expiry_decision(
         approvals_dir,
         expected_owner_uid,
@@ -943,9 +842,7 @@ def test_decision_current_is_unaffected_when_max_decision_age_ms_is_none(
     expected_owner_uid: int,
     trading_approval_policy_generation: int,
 ) -> None:
-    """A registry with NO ``time``/``time_config`` wired (every pre-existing
-    call site) keeps working exactly as before, as long as the decision
-    itself never configures expiry."""
+    """A registry with NO ``time``/``time_config`` wired (every pre-existing"""
     path = write_approval_file(
         approvals_dir / "p1.yaml",
         decision_id="d1",
@@ -1024,13 +921,7 @@ def test_decision_current_denies_when_suspension_is_unobserved(
     approvals_dir: Path,
     expected_owner_uid: int,
 ) -> None:
-    """Kernel round #1 §2.2 re-review finding #2 (HIGH): production must read
-    the consumer's OBSERVED suspension off the snapshot
-    (``snapshot.suspension_status.suspension_ms``), never fabricate a ``0``.
-    A snapshot that has never actually observed suspension is ``None``
-    there — ``tos.time.predicates.anchor_valid`` treats ``None`` as an
-    invalid anchor (unknown => fail-closed), so the composed age bound
-    collapses to ``None`` and :func:`tos.iap.decision_unexpired` must deny."""
+    """Kernel round #1 §2.2 re-review finding #2 (HIGH): production must read"""
     loaded = _load_expiry_decision(
         approvals_dir,
         expected_owner_uid,
@@ -1053,10 +944,7 @@ def test_consume_rejects_when_suspension_is_unobserved(
     approvals_dir: Path,
     expected_owner_uid: int,
 ) -> None:
-    """Same unobserved-suspension case as
-    :func:`test_decision_current_denies_when_suspension_is_unobserved`, but
-    proving the effect reaches :meth:`~tos_runtime.authority.iap.IntentRegistry.consume`:
-    a non-current decision must be rejected as ineligible, never consumed."""
+    """Same unobserved-suspension case as"""
     loaded = _load_expiry_decision(
         approvals_dir,
         expected_owner_uid,
@@ -1085,9 +973,7 @@ def test_decision_current_denies_when_suspension_exceeds_the_configured_bound(
     approvals_dir: Path,
     expected_owner_uid: int,
 ) -> None:
-    """``max_process_suspension_ms`` is ``0`` in the test config (conftest
-    ``_time_config``), so ANY observed positive suspension — not merely an
-    unobserved (``None``) reading — must invalidate the anchor and deny."""
+    """``max_process_suspension_ms`` is ``0`` in the test config (conftest"""
     loaded = _load_expiry_decision(
         approvals_dir,
         expected_owner_uid,

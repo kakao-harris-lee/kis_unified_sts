@@ -1,0 +1,86 @@
+# Decision-generation tokens for the CP-3 tenants that run on a PERSISTENT data leaf.
+#
+# ⚠ This is NOT an approved VALUE file (same standing as each tree's `RENDER.yaml`): nothing
+# here is read by any runtime and no deployment value lives here. Every entry is a DERIVED
+# pin of what the sibling trees already say, carried so a change to them cannot land without
+# someone saying out loud that the tenant's durable leaf has to be re-genesis'd.
+#
+# ⚠ **The incident this file exists to stop** (CLAUDE.md R5 — a new guard needs one real
+# incident it would have stopped, written next to it). 2026-11-12 08:53 the KIS-MOCK stock
+# tenant session `stock-r1-20261112` was refused at boot:
+#
+#     run: refused — compose_paper_runtime raised EngineReplayDiverged:
+#     engine replay diverged for 1075 of 1075 compared events
+#
+# PR #1056 had added a fourth decision rule (`R4-M2-PROBE-ENTRY-LONG`) and the
+# `m2_probe_entry_enabled` binding to `cp3-setup-d-stock-005930/` while that tenant keeps
+# ONE durable data leaf across days (`~/.local/state/tos/cp3-setup-d-stock-005930-data/
+# 005930`, born 2026-11-06). Every boot re-derives the whole recorded decision ledger
+# against TODAY's strategy, so a 3-rule history re-derived under a 4-rule strategy diverged
+# on all 1075 events — and that refusal wrote 1075 permanent `REPLAY_DIVERGED` rows, which
+# the recovery barrier requires to be ZERO. The leaf was left un-bootable and had to be
+# archived so the next session could genesis-create a fresh one. Neither the author nor the
+# reviewer connected «the decision contract changed» to «the persistent leaf must be
+# re-genesis'd first»; nothing in CI said it either.
+#
+# **What a token is.** `decision_digest` is a digest of the PARSED decision contract of the
+# tree: the kernel's own canonical digest of each `strategies/*.strategy.yaml`, the runtime's
+# own parsed `strategy_bindings.yaml`, and the runtime's own parsed `engine.yaml` (the two
+# bounds `_build_engine_configuration` hands the kernel). It is deliberately NOT a digest of
+# the bytes: a comment or formatting edit does not change what the engine decides, does not
+# diverge a replay, and must not force a re-genesis.
+#
+# ⚠ **2026-11-12, review MEDIUM — the formula widened, the GENERATIONS did not.** The first
+# cut folded only the strategies and the bindings, so lowering a tree's
+# `dsl_evaluation_budget_steps` from 64 to 30 kept the pin green while the stock policy needs
+# 31 work steps — every replayed tick would degrade to NoAction and the boot would refuse
+# with `EngineReplayDiverged`, the exact failure above. `engine.yaml` is now in the payload,
+# which re-derived all three digests below. **The generation numbers are unchanged on
+# purpose**: the decision contract each leaf was genesis'd under did not change, only how
+# much of it this file measures. No leaf needs re-genesis for this re-pin.
+#
+# **When you have to touch this file.** Change a rule, a target, a rationale, a
+# `dsl_version`/`config_binding_version`, a decision binding, or one of `engine.yaml`'s two
+# bounds in one of the trees below, and the pin test goes red at PR time. Then, IN THE SAME
+# PR:
+#
+#   1. bump that tenant's `generation` by one and paste the digest the failure printed; and
+#   2. archive that tenant's data leaf so the next session genesis-creates a fresh one,
+#      BEFORE the change deploys — `docs/runbooks/tos-paper-boot.md` §7.2-f («genesis»).
+#
+# Step 2 is the point. Step 1 is only the reviewable act that forces someone to say it out
+# loud. A bump without the re-genesis still poisons the leaf.
+#
+# Guard: `tos/runtime/tests/compose/test_tenant_decision_generation.py` (required CI check
+# `tos-firewall`). The tenant list is pinned against
+# `tools/tos_cp3/runners/cp3_tenant_daily.sh` by that same file, so a fourth persistent-leaf
+# tenant cannot be added without landing here.
+#
+# ⚠ This file lives BESIDE the tenant trees, not inside them. A file added inside a tree is
+# classified by three exhaustive file-set guards (`test_tenant_tree_copies.py`,
+# `test_tenant_tree_short.py`, `test_tenant_tree_stock.py`) and is byte-copied into the
+# off-repo render output by `scripts/tos/render_paper_config.py`. Keeping the tokens out
+# here leaves every rendered tree byte-identical to what boots today, and puts all three
+# tenants' generations in one reviewable diff hunk.
+
+tenants:
+  # The two synthetic FUTURES tenants (they send nothing). Generation 1 = the contract these
+  # leaves were born under; neither has had a decision-contract change since.
+  cp3-setup-d-long:
+    generation: 1
+    decision_digest: "sha256:8f45700eb42432af37cada175a5a0b508c0b929e1bb08e1b1759c71b5f9511f4"
+
+  cp3-setup-d-short:
+    generation: 1
+    decision_digest: "sha256:503b198c88d2d787608983c20f68e5ba44d923f5aaf58133159943e648841f93"
+
+  # The KIS-MOCK stock tenant — the one that DOES send.
+  #   generation 1: R1-R3 (Setup D LONG), the contract the 2026-11-06 leaf was born under.
+  #   generation 2: + R4-M2-PROBE-ENTRY-LONG and `m2_probe_entry_enabled` (PR #1056). The
+  #                 11-06 leaf was archived 2026-11-12 after the refusal above, so the next
+  #                 session genesis-creates a fresh leaf under THIS generation.
+  # ⚠ Turning `m2_probe_entry_enabled` back to `false` after M2 succeeds is a decision-
+  # binding change like any other: generation 3, and the leaf is re-genesis'd with it.
+  cp3-setup-d-stock-005930:
+    generation: 2
+    decision_digest: "sha256:1b6efb2efc044b969822ea7fd627c3754b1bf286ed666561394f82bc263eee39"

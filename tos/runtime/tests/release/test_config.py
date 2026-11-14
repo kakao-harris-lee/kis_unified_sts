@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from tos.sci import AdmissionResult
 from tos_runtime.release.config import ReleaseAdmissionConfigError, load_release_config
+from tos_runtime.release.verdict import AdmissionResult
 
 _VALID = """
 expected_code_digest: "digest-abc"
@@ -63,9 +63,7 @@ def test_null_expected_dependency_set_digest_refuses(tmp_path: Path) -> None:
 
 
 def test_named_tbd_placeholder_expected_code_digest_refuses(tmp_path: Path) -> None:
-    """W-A A-0: an operator typing the literal placeholder string ``"TBD"`` in
-    place of a real digest must never be sealed into the release-admission
-    config as though it were a genuine digest."""
+    """W-A A-0: an operator typing the literal placeholder string ``"TBD"`` in"""
     text = _VALID.replace(
         'expected_code_digest: "digest-abc"', 'expected_code_digest: "TBD"'
     )
@@ -136,7 +134,7 @@ def test_restriction_present_true_with_filled_restriction_loads(tmp_path: Path) 
     assert config.restriction_present is True
     assert config.restriction is not None
     assert config.restriction.restriction_id == "r-1"
-    assert config.restriction.canonical_digest is not None
+    assert config.restriction.restriction_generation == 1
 
 
 def test_example_file_is_all_named_tbd() -> None:
@@ -144,3 +142,12 @@ def test_example_file_is_all_named_tbd() -> None:
     example = Path(__file__).resolve().parents[2] / "config" / "release.example.yaml"
     with pytest.raises(ReleaseAdmissionConfigError):
         load_release_config(example)
+
+
+def test_restriction_id_named_tbd_refuses_at_load(tmp_path: Path) -> None:
+    """A placeholder `TBD` restriction id is refused at load, not later at admission."""
+    text = _VALID.replace("restriction_present: false", "restriction_present: true")
+    text = text.replace("restriction_id: null", 'restriction_id: "TBD"')
+    text = text.replace("restriction_generation: null", "restriction_generation: 1")
+    with pytest.raises(ReleaseAdmissionConfigError):
+        load_release_config(_write(tmp_path, text))

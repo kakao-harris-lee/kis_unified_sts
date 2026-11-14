@@ -61,15 +61,6 @@ class FakeMonotonicSource:
         return self.value
 
 
-#: G-1 (team-lead follow-up, 2026-09-13): a fixed, non-None default wall
-#: reading. Anchor validity now needs a real Δwall-Δmono observation
-#: (``TrustworthyTimeService._observed_suspension_ms``) — a reader that never
-#: supplies a wall value can no longer reach TRUSTED at all, which would
-#: break every existing ``make_trusted()``-driven test in this package.
-#: Held CONSTANT across every read() by default (this class's instances are
-#: never mutated between evaluate() calls unless a test does so explicitly),
-#: so Δwall == 0 and the observed suspension is always exactly 0 for every
-#: test that isn't specifically about wall-clock/suspension semantics.
 _DEFAULT_TEST_WALL_CLOCK_UNIX_MS = 1_700_000_000_000
 
 
@@ -79,10 +70,6 @@ class FakeReferenceReader:
     healthy: bool = True
     quality: str | None = "FAKE"
     common_mode_group: str | None = None
-    #: G-1 (runtime operations wiring plan §2 decision 1) — a fixed, static
-    #: default (see :data:`_DEFAULT_TEST_WALL_CLOCK_UNIX_MS`'s own docstring);
-    #: a test proving the "no wall clock at all" gap sets this to ``None``
-    #: explicitly.
     wall_clock_unix_ms: int | None = _DEFAULT_TEST_WALL_CLOCK_UNIX_MS
 
     def read(self) -> ReferenceObservation:
@@ -125,9 +112,7 @@ def writer_epoch(log: SqliteCommitLog, identity: RuntimeIdentity) -> int:
 
 
 class _TimeConfigKwargs(TypedDict):
-    """1:1 with :class:`TrustworthyTimeConfig`'s dataclass fields (plan §1.1 A-rt) — a runtime
-    ``@dataclass``, not a pydantic model, so ``**base``/``**overrides`` are checked key-by-key
-    and type-by-type instead of swallowed by a ``**dict[str, object]`` splat."""
+    """1:1 with :class:`TrustworthyTimeConfig`'s dataclass fields (plan §1.1 A-rt) — a runtime"""
 
     max_time_source_precision_ms: int
     max_time_transport_and_queue_uncertainty_ms: int
@@ -144,11 +129,11 @@ class _TimeConfigKwargs(TypedDict):
     trading_calendar_version: str
     verification_profile_version: str
     safety_profile_version: str
+    time_health_snapshot_heartbeat_ms: int
 
 
 class _TimeConfigKwargsPartial(TypedDict, total=False):
-    """Same fields as :class:`_TimeConfigKwargs`, all optional — the override-kwargs shape
-    for :func:`_time_config`."""
+    """Same fields as :class:`_TimeConfigKwargs`, all optional — the override-kwargs shape"""
 
     max_time_source_precision_ms: int
     max_time_transport_and_queue_uncertainty_ms: int
@@ -165,6 +150,7 @@ class _TimeConfigKwargsPartial(TypedDict, total=False):
     trading_calendar_version: str
     verification_profile_version: str
     safety_profile_version: str
+    time_health_snapshot_heartbeat_ms: int
 
 
 def _time_config(
@@ -186,6 +172,7 @@ def _time_config(
         "trading_calendar_version": "cal-1",
         "verification_profile_version": "vp-0",
         "safety_profile_version": "sp-0",
+        "time_health_snapshot_heartbeat_ms": 60_000,
     }
     base.update(overrides)
     return TrustworthyTimeConfig(**base)
@@ -219,13 +206,7 @@ def time_service(
 
 
 def make_trusted(service: TrustworthyTimeService) -> None:
-    """Drive a freshly-started :class:`TrustworthyTimeService` to ``TRUSTED``.
-
-    Two ``evaluate()`` calls at a stable monotonic reading: the first moves
-    ``UNINITIALIZED -> SYNCHRONIZING``, the second ``SYNCHRONIZING ->
-    TRUSTED`` (the same FSM shape ``tos/runtime/tests/time/test_service.py``
-    exercises directly).
-    """
+    """Drive a freshly-started :class:`TrustworthyTimeService` to ``TRUSTED``."""
     service.evaluate()
     service.evaluate()
     assert service.health_state is HealthState.TRUSTED
@@ -309,35 +290,8 @@ def expected_owner_uid() -> int:
     return os.getuid()
 
 
-# ============================================================================
-# kernel round #1 §2.2 — decision-expiry test doubles
-# ============================================================================
-
-
 class FakeTimeService:
-    """A ``TrustworthyTimeService``-shaped double for decision-expiry tests
-    (mirrors ``tos_runtime.tests.currentness.conftest.FakeTimeService``
-    exactly): returns a fixed, injected :class:`~tos.time.TimeHealthSnapshot`
-    (or raises ``TimeServiceNotStarted`` when none is set) — the real FSM is
-    lane K's own test scope, not this lane's. Using a duck-typed double
-    (rather than driving the real FSM to a chosen wall-clock reading) keeps
-    most of these tests hermetic and focused on the expiry composition logic
-    directly, at an arbitrary chosen instant, without needing a real clock
-    read or a multi-``evaluate()`` FSM walk for every scenario.
-
-    G-1 update (runtime operations wiring plan §2 decision 1): the real
-    :class:`~tos_runtime.time.service.TrustworthyTimeService` CAN now
-    populate ``wall_clock_observation`` once TRUSTED, PROVIDED it is wired
-    with a reference reader that itself supplies a
-    :attr:`~tos_runtime.time.sources.ReferenceObservation.wall_clock_unix_ms`
-    value (:class:`FakeReferenceReader` above defaults this to ``None`` —
-    matching every reader already configured on the shared ``time_service``
-    fixture, unaffected). ``test_iap.py``'s
-    ``test_real_time_service_refuses_a_future_dated_issuance`` exercises this
-    end-to-end with the real service, replacing this double for that one
-    case, precisely to prove the wiring is genuinely connected now — this
-    double remains the right tool for every OTHER expiry-composition test in
-    this suite, which do not need a live FSM walk."""
+    """A ``TrustworthyTimeService``-shaped double for decision-expiry tests"""
 
     def __init__(self, snapshot: TimeHealthSnapshot | None = None) -> None:
         self._snapshot = snapshot
@@ -360,19 +314,7 @@ def expiry_snapshot(
     generation: int = 1,
     suspension_ms: int | None = 0,
 ) -> TimeHealthSnapshot:
-    """A digest-verified, minimally-complete :class:`~tos.time.TimeHealthSnapshot`
-    with a settable monotonic continuity/value and wall-clock observation —
-    the two coordinates :func:`~tos_runtime.authority.iap.load_operator_approval_with_receipt`
-    / :meth:`~tos_runtime.authority.iap.IntentRegistry._expiry_verdict` read.
-
-    ``suspension_ms`` defaults to ``0`` — an explicit OBSERVED "not suspended"
-    fact for the admit-path tests (kernel round #1 §2.2 re-review finding #2:
-    :meth:`~tos_runtime.authority.iap.IntentRegistry._expiry_verdict` now reads
-    ``snapshot.suspension_status.suspension_ms`` rather than fabricating a
-    literal, so a caller that wants an admit must supply the observation
-    itself). Pass ``None`` for the "never actually observed" case, which the
-    kernel's own ``tos.time.predicates.anchor_valid`` treats as an invalid
-    anchor (fail-closed)."""
+    """A digest-verified, minimally-complete :class:`~tos.time.TimeHealthSnapshot`"""
     anchor = TimeContinuityIdentity(
         host_or_runtime_id="cell-1",
         boot_id="boot-1",

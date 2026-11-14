@@ -1,10 +1,4 @@
-"""Required-covered issuance guards + ISSUED-reachable-under-null-bounds (§2.2/§3.2).
-
-Each record drops one required covered path and asserts issuance is rejected. A
-companion test proves a reservation is still ISSUED-reachable with all numeric
-bounds null (the design §2.2 reason numeric bounds are excluded from the required
-set — else every Phase-1 snapshot would fall to DRAFT).
-"""
+"""Required-covered issuance guards + ISSUED-reachable-under-null-bounds (§2.2/§3.2)."""
 
 from __future__ import annotations
 

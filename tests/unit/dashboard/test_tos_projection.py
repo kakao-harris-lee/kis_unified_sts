@@ -5,7 +5,6 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import get_args
 
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -35,15 +34,6 @@ _VALID_PROJECTION: dict = {
     "recovery": {"readiness_verdict": "READY", "reasons": []},
     "driver": {"wired": True, "halt_latched": None, "halt_reason": None},
     "time": {"health": "TRUSTED"},
-    "safety_mesh": {
-        "snapshot_generation": None,
-        "services": {
-            "spg": {"clear": None, "reasons": []},
-            "wdr": {"clear": True, "reasons": []},
-            "sir": {"clear": None, "reasons": ["no source"]},
-            "stm": {"clear": None, "reasons": []},
-        },
-    },
     "currentness": {
         "pending_dimensions": ["CONTEXT", "CRITICAL_INPUT", "EGRESS_IDENTITY"],
         "last_assemble_complete": None,
@@ -56,7 +46,6 @@ _VALID_PROJECTION: dict = {
         "key_generation": None,
     },
     "release": {"admitted": None, "software_deployment_ok": None},
-    "protective": {"last_verdict": None},
     "operations": {
         "schema_versions": {"evidence": 1, "rcl": 1, "inbox": None},
         "last_backup": {
@@ -99,7 +88,6 @@ def test_valid_projection_round_trips(monkeypatch, tmp_path):
     assert body["projection"]["schema_version"] == 1
     assert body["projection"]["projection_generation"] == 17
     assert body["projection"]["non_authorizing"] is True
-    assert body["projection"]["safety_mesh"]["services"]["spg"]["clear"] is None
     # ``OperationsFacts.schema_versions`` is declared ``dict[str, int | None]``
     # (compose/_types.py) — a store whose ``PRAGMA user_version`` is not
     # readable yet reports ``None`` for its own key, and that must survive.
@@ -297,17 +285,13 @@ SHARED_PROJECTION_FIXTURES = frozenset(
 # test_shared_product_contract_fixture`, which substitutes the fixture's own
 # groups for the projection's readers and so proves assembler pass-through
 # only — it never exercises the real `_operations_wiring` readers. The
-# producer's actual key set is checked separately, from the producer source,
-# by `test_protective_last_verdict_matches_the_producer_key_set` below.
+# producer's actual key set is checked separately, from the producer source.
 # No imports cross the TOS boundary.
 #
 # This assertion is the only lane that reads fixture CONTENT against the DTO.
 # The runtime test named above cannot stand in for it: it feeds each group
 # back as its own reader and `OperatorProjection.build` does not validate
-# reader return values, so group content there is a pure echo. Measured:
-# deleting `protective_classification_digest` from
-# `operator-projection-v1.json` leaves the runtime test green and fails this
-# one.
+# reader return values, so group content there is a pure echo.
 #
 # CI reach: the fixtures sit under `tos/`, which
 # `.github/workflows/test.yml` excludes with `!tos/**` — so that file
@@ -352,7 +336,6 @@ def test_missing_groups_remain_unknown_instead_of_empty_facts(monkeypatch, tmp_p
     body = _client(monkeypatch, tmp_path, path).get("/api/tos/projection").json()
     assert body["available"] is True
     assert body["projection"]["alerts"] is None
-    assert body["projection"]["safety_mesh"] is None
     assert body["projection"]["release"] is None
 
 
@@ -429,119 +412,6 @@ def test_atomic_replace_reads_age_and_payload_from_same_inode(monkeypatch, tmp_p
     assert json.loads(path.read_text())["projection_generation"] == 2
 
 
-_PRODUCER_SOURCE = (
-    Path(__file__).resolve().parents[3]
-    / "tos/runtime/src/tos_runtime/compose/_operations_wiring.py"
-)
-
-
-def _producer_last_verdict_keys() -> set[str]:
-    """The ``protective.last_verdict`` keys the producer literally emits.
-
-    Read from the producer's source with ``ast`` — never imported. The
-    dashboard must not import ``tos_runtime`` (reverse-import firewall, and
-    it is not installed in this virtualenv), but the file is in this
-    repository and the repo split removes the legacy runtime rather than
-    moving ``tos/`` (CLAUDE.md "tos Kernel Boundary"), so this path is not
-    allowed to go missing: a missing file fails loudly instead of skipping.
-    """
-    assert _PRODUCER_SOURCE.exists(), f"producer source missing: {_PRODUCER_SOURCE}"
-    tree = ast.parse(_PRODUCER_SOURCE.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        is_reader = (
-            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == "_read_protective"
-        )
-        if not is_reader:
-            continue
-        for inner in ast.walk(node):
-            if not isinstance(inner, ast.Dict):
-                continue
-            for key, value in zip(inner.keys, inner.values):
-                is_verdict = (
-                    isinstance(key, ast.Constant)
-                    and key.value == "last_verdict"
-                    and isinstance(value, ast.Dict)
-                )
-                if is_verdict:
-                    return {
-                        k.value
-                        for k in value.keys
-                        if isinstance(k, ast.Constant) and isinstance(k.value, str)
-                    }
-    raise AssertionError(
-        "no 'last_verdict' object literal found in _read_protective — the "
-        "producer's shape changed; re-derive this DTO against it"
-    )
-
-
-def test_protective_last_verdict_matches_the_producer_key_set():
-    """지적 1 red proof: the DTO models every key the producer emits.
-
-    The first assertion reads the producer source only, so it holds with or
-    without the fix. Against the pre-fix DTO (``last_verdict: str | None``)
-    this test fails where ``_ProtectiveVerdict`` is dereferenced — the class
-    does not exist — and the end-to-end test below returns
-    ``available=false``, ``reason="schema mismatch at protective.last_verdict:
-    ValidationError"``.
-    """
-    producer_keys = _producer_last_verdict_keys()
-
-    assert producer_keys == {
-        "derestriction_admissible",
-        "capacity_exhausted",
-        "classification",
-        "unevaluated",
-        "reasons",
-        "protective_classification_digest",
-    }, producer_keys
-    assert set(tos_projection._ProtectiveVerdict.model_fields) == producer_keys
-    # The nested model must be what the field actually points at. `is not str`
-    # would not do: `(str | None) is not str` is true, so the pre-fix
-    # annotation passed that check.
-    annotation = tos_projection._ProtectiveFacts.model_fields["last_verdict"].annotation
-    assert tos_projection._ProtectiveVerdict in get_args(annotation), annotation
-    assert type(None) in get_args(annotation), annotation
-
-
-def test_a_real_producer_protective_verdict_round_trips(monkeypatch, tmp_path):
-    """The populated verdict the producer emits after a processed tick.
-
-    Shapes mirror ``tos_runtime.safety.protective.ProtectiveVerdict``: two
-    tri-state booleans, a ``ProtectiveActionOutcome.value`` string (always
-    ``None`` today), two ordered token lists, and a digest string.
-    """
-    verdict = {
-        "derestriction_admissible": False,
-        "capacity_exhausted": True,
-        "classification": None,
-        "unevaluated": ["correction_reversal_idempotent"],
-        "reasons": ["derestriction_admissible", "capacity_exhausted"],
-        "protective_classification_digest": "sha256:abc123",
-    }
-    assert set(verdict) == _producer_last_verdict_keys()
-    payload = dict(_VALID_PROJECTION, protective={"last_verdict": verdict})
-    path = tmp_path / "protective.json"
-    path.write_text(json.dumps(payload), encoding="utf-8")
-
-    body = _client(monkeypatch, tmp_path, path).get("/api/tos/projection").json()
-
-    assert body["available"] is True, body
-    assert body["projection"]["protective"]["last_verdict"] == verdict
-
-
-def test_an_all_none_protective_verdict_stays_all_none(monkeypatch, tmp_path):
-    verdict = dict.fromkeys(_producer_last_verdict_keys())
-    payload = dict(_VALID_PROJECTION, protective={"last_verdict": verdict})
-    path = tmp_path / "protective-null.json"
-    path.write_text(json.dumps(payload), encoding="utf-8")
-
-    body = _client(monkeypatch, tmp_path, path).get("/api/tos/projection").json()
-
-    assert body["available"] is True, body
-    assert body["projection"]["protective"]["last_verdict"] == verdict
-
-
 def test_reason_lists_keep_absent_distinct_from_empty(monkeypatch, tmp_path):
     """지적 2: ``null`` is accepted, and an absent key stays ``null``, not ``[]``.
 
@@ -551,13 +421,6 @@ def test_reason_lists_keep_absent_distinct_from_empty(monkeypatch, tmp_path):
     payload = dict(
         _VALID_PROJECTION,
         recovery={"readiness_verdict": "READY", "reasons": None},
-        safety_mesh={
-            "snapshot_generation": None,
-            "services": {
-                "spg": {"clear": None, "reasons": None},
-                "wdr": {"clear": True},
-            },
-        },
     )
     path = tmp_path / "reasons.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -566,17 +429,14 @@ def test_reason_lists_keep_absent_distinct_from_empty(monkeypatch, tmp_path):
 
     assert body["available"] is True, body
     assert body["projection"]["recovery"]["reasons"] is None
-    services = body["projection"]["safety_mesh"]["services"]
-    assert services["spg"]["reasons"] is None
     # Absent, not explicitly null — still must not become [].
-    assert services["wdr"]["reasons"] is None
+    assert body["projection"]["driver"]["halt_reason"] is None
 
 
 def test_inner_facts_may_be_null_without_losing_the_document(monkeypatch, tmp_path):
-    """노트 a: the four inner fields that became nullable, all set to ``null``."""
+    """노트 a: the inner fields that became nullable, all set to ``null``."""
     payload = dict(
         _VALID_PROJECTION,
-        safety_mesh={"snapshot_generation": None, "services": None},
         currentness={"pending_dimensions": None, "last_assemble_complete": None},
         operations={
             "schema_versions": None,
@@ -592,7 +452,6 @@ def test_inner_facts_may_be_null_without_losing_the_document(monkeypatch, tmp_pa
 
     assert body["available"] is True, body
     projection = body["projection"]
-    assert projection["safety_mesh"]["services"] is None
     assert projection["currentness"]["pending_dimensions"] is None
     assert projection["operations"]["schema_versions"] is None
     assert projection["operations"]["last_backup"] is None
@@ -769,9 +628,11 @@ def test_schema_mismatch_location_keeps_real_field_names_through_a_mapping(
     """The sanitizer must not flatten everything to ``<key>``."""
     payload = dict(
         _VALID_PROJECTION,
-        safety_mesh={
-            "snapshot_generation": None,
-            "services": {"spg": {"clear": "not-a-bool", "reasons": []}},
+        operations={
+            "schema_versions": {"evidence": "not-an-int"},
+            "last_backup": None,
+            "key_continuity": None,
+            "dependency_admission": None,
         },
     )
     path = tmp_path / "service-field.json"
@@ -781,7 +642,7 @@ def test_schema_mismatch_location_keeps_real_field_names_through_a_mapping(
 
     assert body["available"] is False
     assert body["reason"].startswith(
-        "schema mismatch at safety_mesh.services.<key>.clear"
+        "schema mismatch at operations.schema_versions.<key>"
     )
 
 

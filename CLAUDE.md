@@ -45,27 +45,31 @@ The legacy trading runtime is **gone** (removal plan
 `docs/plans/2026-11-07-legacy-removal-plan.md`, steps L1–L6, merged 2026-11).
 What runs is the TOS kernel plus a read-only operator surface.
 
-- `tos/`, `tos-spec/`, `tos-evidence/`, `tools/tos_*`: the TOS kernel, its spec
-  corpus, its evidence, and the CP-3 measurement tools. See `tos/CLAUDE.md`.
+- `tos/`, `tools/tos_*`: the TOS kernel and the CP-3 measurement tools. See
+  `tos/CLAUDE.md`. The spec corpus `tos-spec/` and its evidence `tos-evidence/`
+  were retired on 2026-11-13 (`docs/plans/2026-11-13-tos-code-halving-plan.md`
+  §S3); they are in git history.
 - `tools/broker_probes/`: KIS capability probes (mock-account GET reads; order
   probes are interlocked by `config/futures_live.yaml::enabled`).
-- `shared/`: what the surviving roots import — the CP-3 producer and B3 witness
-  path (backtest replay, Setup D decision, instruments, determinism, market-data
-  store), KIS auth/client, indicators, config, storage, risk primitives, LLM
-  analysis. Packages reachable only through `__init__` fan-out are still being
-  measured away (removal plan L7).
+- `shared/`: what the surviving roots import — the CP-3 producer and Setup D
+  witness path (backtest replay, Setup D decision, instruments, determinism, market-data
+  store), KIS auth, indicators, config, storage, risk primitives, LLM
+  analysis. `shared/execution/executor.py`, `shared/kis/client.py` and the
+  packages only they pulled in (`shared/http`, `shared/observability`,
+  `services/monitoring`) went on 2026-11-13 with the checker that was their only
+  remaining reason to exist; `shared/execution/{tr_ids,contract_spec}.py` stay
+  because the broker probes and the Setup D walk-forward script import them.
 - `services/dashboard`: the FastAPI app behind Caddy. Its whole surface is
   `/api/tos/*`, `/health` and the OpenAPI docs.
-- `services/monitoring`: metrics/health helpers `shared/kis` imports lazily.
 - `strategy-builder-ui/`: the only frontend. It serves the `/tos` operator page,
   a `/` redirect to it, and the `/api` proxy.
 - `config/`: YAML config for what remains — `config/tos_runtime/` tenant trees,
   `config/tos_*.yaml` gates, KIS/execution/risk/storage/streaming settings, and
   one strategy file (`config/strategies/futures/setup_d_vwap_reversion.yaml`,
-  the B3 witness's).
+  the legacy Setup D witness's).
 - `cli/main.py`: `sts` entrypoint; the only command group is `sts tos`.
 - `scripts/`: `scripts/tos/` tenant-tree rendering and the Setup D walk-forward
-  script the B3 witness loads by path.
+  script the legacy Setup D path loads by path.
 
 ## tos Kernel Boundary (two projects in one repo)
 
@@ -80,8 +84,8 @@ What runs is the TOS kernel plus a read-only operator surface.
   `shared.config.secrets`, `services`, `cli`)
   (design: `docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md` §3).
 - **tos work starts from `tos/CLAUDE.md`**, which lists the tos working set
-  (`tos/`, `tos-spec/`, `tos-evidence/`, `tools/tos_*`, `tests/tools/test_tos_*`,
-  `docs/plans/*tos*`, `config/tos_completion.yaml`). Agents on tos tasks should
+  (`tos/`, `tools/tos_*`, `tests/tools/test_tos_*`,
+  `docs/plans/*tos*`). Agents on tos tasks should
   search and edit inside that set and treat `shared/`, `services/`, and the
   frontend as out of scope.
 - Repo split is deferred to the live gate (design §6.2) and, when it happens,
@@ -146,13 +150,18 @@ What is still true and still enforced:
   it. (The stock runtime that drove it was removed in L1–L6, and
   `shared/strategy/exit/three_stage.py` itself went in L7; the rule is kept for
   future work.)
-- `shared/decision/setups/vwap_reversion.py` and its dependencies are the **B3
-  witness**: the CP-3 post-session comparison reads this legacy Setup D
-  implementation. Keep it byte-identical until `TOS_PAPER_READY`
-  (`docs/plans/2026-11-07-legacy-removal-plan.md` §2, operator decision 3).
+- `shared/decision/setups/vwap_reversion.py` and its dependencies are the
+  **legacy Setup D witness**: `tools/tos_cp3/produce_fields.py` still drives this
+  implementation bar by bar to produce the CP-3 field stream, until the P2-c
+  producer switch lands. Keep it byte-identical until `TOS_PAPER_READY`
+  (`docs/plans/2026-11-07-legacy-removal-plan.md` §2, operator decision 3). The
+  post-session **B3 대조** that also read it retired on 2026-11-13
+  (`docs/plans/2026-11-11-tos-platform-roadmap.md` §7 결정 3), its condition —
+  P2-b 동등성(626,745 셀 0 불일치, #1065 · #1066) — being met.
 - The retired cutover runbooks (`stock-pipeline-cutover-m5d.md`,
-  `futures-pipeline-cutover-f9.md`, `paper-live-code-separation.md`) are history,
-  not procedure. Their code last existed at tag `legacy-final` (`6fc17c0f8d25`).
+  `futures-pipeline-cutover-f9.md`, `paper-live-code-separation.md`) were deleted
+  on 2026-11-13 with the rest of the legacy-runtime docs; they are history, not
+  procedure. Their code last existed at tag `legacy-final` (`6fc17c0f8d25`).
 
 ## Storage And Data
 
@@ -178,8 +187,8 @@ exits and sizers — all of them outside the surviving import closure
 (`docs/plans/2026-11-07-legacy-removal-plan.md` §3).
 
 What is left of `shared/strategy/` is `base.py` (the abstract classes),
-`market_data.py`, `market_time.py`, and `exit/setup_target_exit.py` — the CP-3
-B3 witness's exit and the helpers it reaches. The only strategy YAML left is
+`market_data.py`, `market_time.py`, and `exit/setup_target_exit.py` — the legacy
+Setup D witness's exit and the helpers it reaches. The only strategy YAML left is
 `config/strategies/futures/setup_d_vwap_reversion.yaml`, that witness's input.
 
 Execution authority today is the TOS kernel, where a strategy is Tenant Content
@@ -202,27 +211,13 @@ Execution authority today is the TOS kernel, where a strategy is Tenant Content
      Routine fixes, config edits, and doc changes go straight to implementation.
 - **Do not reinvent the wheel.** A bespoke parser/tokenizer/checker is the
   last resort, not the first move; prefer proven tooling and existing modules.
-- **Read the index before the contract (operator directive, 2026-09-01).** Any
-  task touching the Phase-0 completion contract
-  (`docs/plans/2026-08-12-tos-phase0-completion-contract-design.md`, 10k lines /
-  1.3MB) starts with the derived index, not the document:
-
-  ```bash
-  python tools/tos_contract_index.py --locate S-26     # section/identifier -> line range
-  python tools/tos_contract_index.py                   # full derived map
-  ```
-
-  Locate the identifier or section first, then read only that range. Do not scan
-  the whole file, and do not summarize it — this arc failed seven consecutive
-  reviews writing summaries (`dad94fd3`); the disposition that passed was
-  "point at the source, do not paraphrase". The index is a generated artifact:
-  if `--check` reports stale, regenerate it rather than trusting it.
-  The contract body is frozen and blob-bound (`bound_set_digest`) — never edit
-  it as a side effect of other work; any byte change resets the S-26 closure
-  counter and blocks D0-A entry. Since the 2026-10-22 rescope
-  (`docs/plans/2026-10-22-tos-rescope-plan.md`) the contract is a historical
-  record: S-26 closure and the per-row Evidence programme are no longer pursued,
-  and TOS completion is the plan's `TOS_PAPER_READY` (§2).
+- **Phase-0 판정 장치는 퇴역했다 (2026-11-12,
+  `docs/plans/2026-11-12-phase0-retirement-plan.md`).** 완료 계약서, 그 인덱스
+  도구(`tos_contract_index.py`), 완료/계약 검사기(`tos_completion_status.py` ·
+  `tos_contract_check.py`), U-17 예방 통제, 그리고 그들의 CI 단계가 전부
+  삭제됐다 — Phase 0 는 2026-10-22 서명(#920)으로 닫혔고 완료 기준은
+  `TOS_PAPER_READY` 다. 내용은 git 이력에 그대로 있다
+  (`git log --diff-filter=D -- docs/plans/2026-08-12-*`).
 
 ## Development Commands
 
@@ -240,8 +235,9 @@ sts tos inspect <session>         # per-bar: fields, per-compare pass/fail, deci
 TOS checkers (what CI gates on — see `.github/workflows/tos-{gate,firewall}.yml`):
 
 ```bash
-python tools/tos_spec_status.py --check
 python tools/tos_firewall_check.py
+python tools/tos_redigest.py --check   # the `tos-gate` required check, since 2026-11-12
+python tools/tos_size_budget.py --check
 mypy tools/tos_*.py tools/tos_cp3 --ignore-missing-imports --explicit-package-bases  # tos-firewall-static runs this
 # `lint-imports` as CI runs it (.github/workflows/tos-firewall.yml): plain, after
 # an editable install of the root project and tos/runtime. Without that install
@@ -345,6 +341,8 @@ Agent roster, skill list, directory layout, and execution detail live under
 | 2026-09-11 | **Codex code scope reopened, bounded** — hard-to-reverse paths (live order paths, money movement, risk limits, auth/credentials, DB migrations, data purge) may go to `codex-gate` / `codex-reviewer` once the operator approves scope and cost; every other code diff stays with the Claude-side lane. Supersedes the 2026-09-04 blanket exclusion | CLAUDE.md, codex-gate, codex-reviewer, codex-plan-reviewer | A week with zero cross-model review of code left Claude approving its own code; cost is bounded by scope, not by prohibition |
 | 2026-10-22 | **Review policy R1–R7** — review by risk grade (A/B/C, docs and evidence PRs need no review lane), at most two rounds, only a HIGH with a concrete failing input blocks, plans ≤300 lines, a new guard needs a real incident, no meta-judgment, one-table measurement records · Phase-0 contract becomes a historical record (TOS rescope) | CLAUDE.md | Three months of TOS work moved zero Evidence rows; the Phase-0 contract grew to 10,723 lines over 81 reviews and one docs PR took four rounds — the review process, not the code, was the bottleneck |
 | 2026-08-30 | Doc-only fix to the model-lanes paragraph: it claimed every audit lens runs on Sonnet 5, contradicting the 2026-08-25 row and the actual frontmatter (`architecture-auditor`/`security-auditor` are Opus) | CLAUDE.md | Cost audit found the prose had drifted from the pinned `model:` values; agent files unchanged |
+| 2026-11-12 | **Phase-0 판정 장치 퇴역** — 완료 계약서·인덱스 도구·완료/계약 검사기·U-17 예방 통제와 그 CI 단계를 삭제. 필수 체크 `tos-gate` 는 이름을 유지하고 내용만 `tos_redigest --check`(살아 있는 핀 게이트)로 교체 | CLAUDE.md, tos/CLAUDE.md, `.github/workflows/tos-{gate,firewall,test}.yml`, `tools/`, `tos-spec/`, `docs/` | Phase 0 는 2026-10-22 서명(#920)으로 닫혔고 완료 기준은 `TOS_PAPER_READY` 다. 역사 기록이 된 판정 장치가 PR 마다 수 분의 CI 와 저장소 부피의 큰 몫을 계속 먹었다 (계획: `docs/plans/2026-11-12-phase0-retirement-plan.md`) |
+| 2026-11-13 | **명세·증거 코퍼스 은퇴 (S3)** — `tos-spec/`(66k 줄) · `tos-evidence/`(25k) 전체와 그들만 읽던 도구(`tos_spec_status` · `tos_evidence_run` · `tos_profile_census`)·테스트·CI 단계(mdBook 빌드, 코퍼스 무결성), `BROKER-TRANSPORT-SYMBOLS.{csv,md}`, 명세 앵커 커널 테스트를 삭제. 그 검사기가 유일한 존속 이유였던 `shared/execution/executor.py` · `shared/kis/client.py` 와 그 폐쇄(`shared/http` · `shared/observability` · `services/monitoring`)도 함께 삭제 | CLAUDE.md, tos/CLAUDE.md, `.github/workflows/tos-{firewall,test}.yml`, `tools/`, `tos-spec/`, `tos-evidence/`, `shared/`, `services/`, `docs/` | 운영자 지시: 코드·문서 부피 절반화 (계획: `docs/plans/2026-11-13-tos-code-halving-plan.md` §S3) |
 
 ## Documentation Map
 
@@ -353,9 +351,10 @@ Agent roster, skill list, directory layout, and execution detail live under
 - Plan index: `docs/plans/INDEX.md`
 - Superpowers plan archive/index: `docs/superpowers/plans/INDEX.md`
 - Port policy: `docs/ports.md`
-- Runtime storage: `docs/runtime_storage_architecture.md`
 - Runbook index: `README.md` § Runbooks
-- Retired (history, not procedure — their code last existed at tag
-  `legacy-final`): `docs/runbooks/stock-pipeline-cutover-m5d.md` ·
-  `docs/runbooks/futures-pipeline-cutover-f9.md` ·
-  `docs/runbooks/paper-live-code-separation.md`
+- 2026-11-13 에 레거시 런타임 시절의 런북·루트 문서와 2026-07~08 RFC 설계
+  코퍼스를 지웠다 (`docs/plans/2026-11-13-tos-code-halving-plan.md` §S3). 그중
+  은퇴 런북(`stock-pipeline-cutover-m5d` · `futures-pipeline-cutover-f9` ·
+  `paper-live-code-separation`)과 `docs/runtime_storage_architecture.md` ·
+  `docs/ROADMAP.md` 를 포함해 전부 git 이력에 있다:
+  `git log --diff-filter=D -- docs/`.

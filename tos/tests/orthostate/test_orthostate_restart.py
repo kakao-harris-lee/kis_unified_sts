@@ -1,11 +1,4 @@
-"""Conservative restart reconstruction — never RECONCILED; monotone conservatism (§6.3; §13).
-
-Attempt at SEND_STARTED+ forces Capacity to at least POTENTIALLY_LIVE (preserving a
-more-conservative value); a non-terminal Broker becomes UNKNOWN; Knowledge is re-derived
-so RECONCILED is structurally unreachable in the output — over ARBITRARY inputs the
-projection never yields RECONCILED and never yields a less-conservative composite.
-[STATE-EV-004 substrate — real durable reload / Recovery Barrier are EV-L3, deferred]
-"""
+"""Conservative restart reconstruction — never RECONCILED; monotone conservatism (§6.3; §13)."""
 
 from __future__ import annotations
 
@@ -97,7 +90,6 @@ def test_non_terminal_broker_becomes_unknown(broker: BrokerOrderState) -> None:
 @pytest.mark.parametrize("broker", [_B.FILLED, _B.CANCELLED, _B.REJECTED, _B.EXPIRED])
 def test_terminal_broker_is_preserved(broker: BrokerOrderState) -> None:
     """(§13) A structurally terminal Broker order is preserved across restart."""
-    # Use ACK_OBSERVED + a matching capacity so no unrelated dimension changes the point.
     post = reconstruct_conservative(
         _pre(transmission_attempt_state=_A.ACK_OBSERVED, broker_order_state=broker)
     )
@@ -140,9 +132,7 @@ def test_reconstruct_never_outputs_reconciled(pre) -> None:
 def test_reconstruct_is_monotone_conservative(pre) -> None:
     """(property §6.3) The projection never yields a less-conservative composite on any dimension."""
     post = reconstruct_conservative(pre)
-    # Capacity: rcl comparator.
     assert capacity_at_least_as_conservative(post.capacity_state, pre.capacity_state)
-    # Broker / Knowledge: per-dimension conservatism rank never decreases.
     assert (
         _BROKER_CONSERVATISM_RANK[post.broker_order_state]
         >= _BROKER_CONSERVATISM_RANK[pre.broker_order_state]
@@ -151,7 +141,6 @@ def test_reconstruct_is_monotone_conservative(pre) -> None:
         _KNOWLEDGE_CONSERVATISM_RANK[post.knowledge_state]
         >= _KNOWLEDGE_CONSERVATISM_RANK[pre.knowledge_state]
     )
-    # Attempt is preserved (rank unchanged).
     assert (
         _ATTEMPT_CONSERVATISM_RANK[post.transmission_attempt_state]
         == _ATTEMPT_CONSERVATISM_RANK[pre.transmission_attempt_state]

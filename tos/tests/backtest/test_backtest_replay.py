@@ -1,22 +1,4 @@
-"""§8-6 — replay reproducibility, honestly scoped (design #33 §5.2).
-
-ADR-DEV-010 §7:167-168 (BTE-INV-005) requires a backtest to be hermetic and reproducible, and D-E3
-realizes it *structurally*: there is no clock and no RNG anywhere on the path, so the same
-``(bars, injected parameters, stage map, fill scenario)`` produce a byte-identical trace.
-
-The scope limits are asserted just as explicitly as the property, because over-claiming here would
-be the series' recurring defect:
-
-* **reproducibility, not distinctness** (design #33 §5.2, D-E1 Gap-1). Two bars sharing a Snapshot
-  digest may collapse to the same proposal identity; making *different* bars produce *different*
-  identities depends on D-E2 supplying distinct Snapshot digests. The suite demonstrates the
-  collapse rather than hiding it.
-* **audit-grade, not acceptance-grade** (RFC-003 §10:365-367). "Replayable is not independently
-  recomputable" — reproducing a run satisfies audit, not SAFE-034 independent recomputation, and it
-  closes no EV.
-
-Regime tag: orchestration authoring evidence only; closes no EV (design #33 §1.1).
-"""
+"""§8-6 — replay reproducibility, honestly scoped (design #33 §5.2)."""
 
 from __future__ import annotations
 
@@ -107,14 +89,7 @@ def _multi_symbol_run():  # noqa: ANN202 - a local runner
 
 
 def test_two_multi_symbol_runs_produce_an_identical_trace_and_fill_records() -> None:
-    """(§5.2 / design #37 §1.6, M19 EXTEND) N lanes reproduce byte-identically too.
-
-    Multi-symbol adds one new way for reproducibility to break that a single-symbol run does not
-    have: the interleave. If two symbols sharing a ``timestamp_coordinate`` were ordered by mapping
-    iteration rather than by the contracted ``(account, instrument)`` tie-break, two runs of the
-    same input could differ — so the digest **and** the fill-record tuple are both pinned here
-    (design #37 §3.3).
-    """
+    """(§5.2 / design #37 §1.6, M19 EXTEND) N lanes reproduce byte-identically too."""
     first = _multi_symbol_run()
     second = _multi_symbol_run()
 
@@ -217,13 +192,7 @@ def test_a_diverging_run_is_not_reported_as_a_match() -> None:
 
 
 def test_distinctness_across_bars_is_not_claimed() -> None:
-    """(§5.2 / D-E1 Gap-1) Bars sharing a Snapshot digest may collapse to one proposal identity.
-
-    Recorded rather than hidden: the slice's Capsule source is identical per bar because the value
-    surface that would distinguish them is D-E2's (design #33 §3.5). The design explicitly does not
-    claim distinctness, and this test pins that honest limit so a future reader does not mistake
-    reproducibility for it.
-    """
+    """(§5.2 / D-E1 Gap-1) Bars sharing a Snapshot digest may collapse to one proposal identity."""
     from ._backtest_fixtures import build_converter
 
     ticks = list(build_converter().stream(reference_bars(3)))

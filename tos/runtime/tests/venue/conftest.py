@@ -1,13 +1,4 @@
-"""Hermetic fixtures for tos_runtime.venue tests (tmp_path only, no external
-network, no ambient env — same discipline as tos/runtime/tests/calendar
-/conftest.py and tos/runtime/tests/compose/conftest.py).
-
-The document builders themselves (``venue_policy_yaml``/``ocp_yaml``/``write_fixture_*``) now
-live in :mod:`tests.venue._documents` — factored out (lane b compose wiring dispatch, 2026-09-15)
-so :mod:`tests.compose.conftest` can reuse the SAME template-shaped builders rather than
-re-typing the full template key set a second time; re-exported here unchanged so every existing
-``from .conftest import ...`` call site in this suite is unaffected.
-"""
+"""Hermetic fixtures for tos_runtime.venue tests (tmp_path only, no external"""
 
 from __future__ import annotations
 
@@ -48,10 +39,7 @@ __all__ = [
 
 
 class FixedKeyProvider:
-    """A :class:`~tos_runtime.evidence.store.KeyProvider` test double — fixed
-    bytes (mirrors ``tos/runtime/tests/calendar/test_owner.py``'s own
-    re-declared double; cross-suite imports are forbidden per that module's
-    convention)."""
+    """A :class:`~tos_runtime.evidence.store.KeyProvider` test double — fixed"""
 
     def current(self) -> tuple[int, bytes]:
         return (1, b"test-fixed-key-bytes-venue-suite")

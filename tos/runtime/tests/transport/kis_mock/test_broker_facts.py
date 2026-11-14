@@ -31,8 +31,7 @@ def _quote(flag: object) -> dict[str, Any]:
 
 
 class _Client:
-    """Answers by TR id from a scripted queue; records every GET. ``on_call`` runs per GET
-    (a test advances its clock there to model a slow round trip)."""
+    """Answers by TR id from a scripted queue; records every GET. ``on_call`` runs per GET"""
 
     def __init__(self, on_call: Any = None, **by_tr: list[object]) -> None:
         self._by_tr = {k: list(v) for k, v in by_tr.items()}
@@ -122,7 +121,6 @@ def test_two_good_answers_make_all_three_facts_current() -> None:
     assert facts.account_facts_current() is True
     assert facts.tradability_facts_current() is True
     assert facts.generation_current() is True
-    # one refresh for the three reads — two GETs, one evidence row
     assert [c["tr_id"] for c in client.calls] == ["VTTC8434R", "FHKST01010100"]
     assert [kind for kind, _ in sink.rows] == [BROKER_FACTS_OBSERVED_KIND]
     balance, quote = client.calls
@@ -184,9 +182,7 @@ def test_a_stale_token_is_no_facts_at_all() -> None:
 
 
 def test_an_unexpected_exception_is_no_facts_and_never_escapes() -> None:
-    """#932 review LOW 3: an exception nobody listed (here from the token step) used to escape
-    through the send-boundary resolver. Now: not current, the type name as the reason.
-    """
+    """#932 review LOW 3: an exception nobody listed (here from the token step) used to escape"""
     facts, _, sink = _facts(_Client(), session=_Session(RuntimeError("surprise")))
     assert facts.account_facts_current() is False
     assert facts.generation_current() is False
@@ -208,14 +204,12 @@ _CANARY = "Bearer canary-0f3a91 CANO=88888888"
 @pytest.mark.parametrize(
     ("balance", "quote", "reason"),
     [
-        # a malformed rt_cd carrying a header echo
         (
             {"rt_cd": {"authorization": _CANARY, "CANO": "88888888"}},
             _quote("N"),
             "balance_rt_cd_not_ok",
         ),
         ({"rt_cd": _CANARY * 100}, _quote("N"), "balance_rt_cd_not_ok"),
-        # the temp_stop_yn fallback path
         (_OK_BALANCE, _quote(_CANARY), "temp_stop_yn_unrecognized"),
         (_OK_BALANCE, _quote({"authorization": _CANARY}), "temp_stop_yn_unrecognized"),
     ],
@@ -223,9 +217,7 @@ _CANARY = "Bearer canary-0f3a91 CANO=88888888"
 def test_no_response_value_reaches_the_evidence_reason(
     balance: object, quote: object, reason: str
 ) -> None:
-    """#932 Codex r1 MEDIUM: reasons are fixed categories. Before, ``rt_cd`` and
-    ``temp_stop_yn`` were interpolated (``repr``) into the BROKER_FACTS_OBSERVED reason, so a
-    malformed body could carry a token or the account straight into evidence."""
+    """#932 Codex r1 MEDIUM: reasons are fixed categories. Before, ``rt_cd`` and"""
     client = _Client(VTTC8434R=[balance], FHKST01010100=[quote])
     facts, _, sink = _facts(client)
     facts.refresh()
@@ -236,9 +228,7 @@ def test_no_response_value_reaches_the_evidence_reason(
 
 
 def test_reads_that_together_outlast_max_age_are_not_handed_out() -> None:
-    """#932 Codex r1 MEDIUM: max_age_ms 30000, each GET 16000 ms. The observation is stamped
-    BEFORE the GETs (conservative), so it is 32000 ms old when refresh returns — it used to be
-    returned as current. Now it is unavailable."""
+    """#932 Codex r1 MEDIUM: max_age_ms 30000, each GET 16000 ms. The observation is stamped"""
     client = _Client(VTTC8434R=[_OK_BALANCE], FHKST01010100=[_quote("N")])
     facts, clock, _ = _facts(client)
 
@@ -246,7 +236,6 @@ def test_reads_that_together_outlast_max_age_are_not_handed_out() -> None:
         clock.now += 16_000
 
     client.on_call = _slow
-    # Both GETs succeeded, yet the 32 000 ms-old observation is not handed out.
     assert facts.account_facts_current() is None
     assert [c["tr_id"] for c in client.calls] == ["VTTC8434R", "FHKST01010100"]
 
@@ -256,7 +245,7 @@ def test_reads_that_finish_inside_max_age_are_current() -> None:
     facts, clock, _ = _facts(client)
 
     def _slow() -> None:
-        clock.now += 15_000  # 30000 ms total: exactly the bound, still current
+        clock.now += 15_000
 
     client.on_call = _slow
     assert facts.account_facts_current() is True
@@ -285,17 +274,12 @@ def test_an_observation_past_max_age_is_refreshed_before_use() -> None:
     )
     facts, clock, _ = _facts(client)
     assert facts.account_facts_current() is True
-    clock.now += 30_000  # exactly max_age: still current, no GET
+    clock.now += 30_000
     assert facts.account_facts_current() is True
     assert len(client.calls) == 2
-    clock.now += 1  # past max_age: refresh, and the new answer wins
+    clock.now += 1
     assert facts.account_facts_current() is False
     assert len(client.calls) == 4
-
-
-# ---------------------------------------------------------------------------
-# config
-# ---------------------------------------------------------------------------
 
 
 def test_the_shipped_config_names_the_official_trs() -> None:
@@ -314,7 +298,6 @@ def test_the_shipped_config_names_the_official_trs() -> None:
         ({"balance_params": {"CANO": "1"}}, "CANO/ACNT_PRDT_CD"),
         ({"balance_params": {"X": 1}}, "strings to strings"),
         ({"extra": 1}, "exactly the keys"),
-        # named-TBD placeholders are refused, not sent to the broker as a TR id / path / param
         ({"quote_tr_id": "TBD"}, "placeholder"),
         ({"balance_path": "TBD"}, "placeholder"),
         ({"balance_params": {"INQR_DVSN": "TBD"}}, "placeholder"),

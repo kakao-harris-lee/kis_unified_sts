@@ -1,13 +1,4 @@
-"""core §5.2 — bounded amplification + complete cause lineage (AFG-EV-002 substrate).
-
-ADR-002-022 §11 line 284-296; AFG-INV-002; §5.8 line 141 "unknown or unbounded
-amplification is denial". Both-ways canaries on every guard (design #16 §4.2/§4.7):
-the forbidden direction (bound exceeded, lineage missing / cyclic, duplicate minting a new
-allowance) **and** the permitted direction (every count within bound + a complete attested
-lineage passes).
-
-Closes **no** AFG-EV: predicate / coordinate substrate only (design #16 §1).
-"""
+"""core §5.2 — bounded amplification + complete cause lineage (AFG-EV-002 substrate)."""
 
 from __future__ import annotations
 
@@ -42,19 +33,8 @@ _INT_AXES = (
 )
 
 
-# ---------------------------------------------------------------------------
-# amplification_bounded (§11 line 284-296; §5.8 line 141)
-# ---------------------------------------------------------------------------
-
-
 def test_the_governed_axis_list_is_non_empty_and_covers_every_envelope_field() -> None:
-    """(anti-vacuity) The axis table is not empty and leaves no envelope bound unchecked.
-
-    An empty (or partial) axis table would make :func:`amplification_bounded` a vacuous
-    ``True`` for the unlisted axes — exactly the "empty required set" fail-open class. The
-    table must therefore cover **every** declared envelope field and every observation
-    field except the three §11 line 294 boolean witnesses.
-    """
+    """(anti-vacuity) The axis table is not empty and leaves no envelope bound unchecked."""
     from tos.afg.predicates import _AMPLIFICATION_AXES
 
     assert _AMPLIFICATION_AXES, "the amplification axis table must not be empty"
@@ -173,14 +153,9 @@ def test_concurrent_consumers_must_share_one_envelope() -> None:
 def test_amplification_is_monotone_in_the_fan_out_axis(fan_out: int) -> None:
     """(property) The verdict follows ``observed <= bound`` exactly on the fan-out axis."""
     envelope = full_envelope()
-    assert envelope.max_fan_out is not None  # full_envelope() declares every axis
+    assert envelope.max_fan_out is not None
     verdict = amplification_bounded(envelope, within_observation(fan_out=fan_out))
     assert verdict is (fan_out <= envelope.max_fan_out)
-
-
-# ---------------------------------------------------------------------------
-# cause_lineage_complete (§11 line 284 / 296)
-# ---------------------------------------------------------------------------
 
 
 def test_complete_attested_lineage_passes() -> None:
@@ -220,11 +195,6 @@ def test_cyclic_forked_or_inconsistent_lineage_is_contained() -> None:
     for field in ("cyclic", "forked_beyond_bound", "inconsistent"):
         for value in (True, None):
             assert cause_lineage_complete(clean_cause(**{field: value})) is False
-
-
-# ---------------------------------------------------------------------------
-# changed_command_is_new_action (§11 line 294; AFG-AC-002)
-# ---------------------------------------------------------------------------
 
 
 def test_unchanged_command_needs_no_fresh_artifacts() -> None:

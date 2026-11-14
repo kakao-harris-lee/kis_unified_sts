@@ -1,11 +1,4 @@
-"""The KIS 모의투자 quote intake (TOS tick-source wave, W2 lane, plan
-``docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md`` §4 W2).
-
-Re-exports the public surface of this package's two modules
-(:mod:`~tos_runtime.transport.kis_quote.config`, :mod:`~tos_runtime.transport.kis_quote.adapter`)
-so a caller (compose wiring, or a test) can
-``from tos_runtime.transport.kis_quote import KisQuoteObservationIntake`` directly.
-"""
+"""The KIS 모의투자 quote intake (TOS tick-source wave, W2 lane, plan"""
 
 from __future__ import annotations
 

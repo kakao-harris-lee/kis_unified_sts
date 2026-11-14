@@ -1,9 +1,4 @@
-"""classify_field: empty / single / corroborated / conflict / common-mode / stale (§5.1).
-
-RECON-EV-001 / -004 predicate substrate (design #9 §5.1 / §7). Both-ways canaries: each
-fail-closed guard fires on the negative input AND the positive path still reaches the
-strong class. Independence / tolerance / freshness are injected — no hardcoded numbers.
-"""
+"""classify_field: empty / single / corroborated / conflict / common-mode / stale (§5.1)."""
 
 from __future__ import annotations
 
@@ -101,7 +96,6 @@ def test_aged_corroborated_is_stale_m1() -> None:
         observation(independence_class="A", agrees_within_tolerance=True),
         observation(independence_class="B", agrees_within_tolerance=True),
     )
-    # Same observations under a fresh marker would be CORROBORATED (both-ways).
     assert classify_field(obs, fresh_marker()) is _C.CORROBORATED
     assert classify_field(obs, stale_marker()) is _C.STALE
 

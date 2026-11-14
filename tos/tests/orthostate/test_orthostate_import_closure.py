@@ -1,37 +1,4 @@
-"""§7.1 import-closure verification for ``tos.orthostate`` (design #8 §7.1).
-
-Isomorphic to the authority / capsule / evidence / dsl / rcl / liveauth closure tests,
-extended to the Orthogonal Trading State package. It imports every ``tos.orthostate``
-submodule in a **fresh, spawned interpreter** (``subprocess`` / ``os`` are
-firewall-forbidden even in tests) and asserts:
-
-  1. No design #1 §2.3 operational package is in the closure (``shared.execution`` /
-     ``kis`` / ``streaming`` / ``llm`` / ``storage`` / ``backtest``, ``services.*``,
-     ``cli.*``).
-  2. Neither ``shared.config`` nor ``shared.config.secrets`` is present (the transitive
-     ambient-credential intake), nor ``shared.determinism``.
-  3. ``numpy`` / ``pandas`` / ``yaml`` are absent (bounds are injected; YAML parsing is
-     the harness's concern — design #8 §0.3/§7.1).
-  4. **``tos.evidence`` AND ``tos.capsule`` AND ``tos.dsl`` AND ``tos.authority`` AND
-     ``tos.liveauth`` AND ``tos.time`` are absent** (§0.3/§3.5 layering — orthostate is
-     the sibling of all six; Knowledge is a decision-side axis upstream of the evidence
-     ledger, capsule ``FieldState`` is a different coordinate, authority-epoch / freshness
-     are injected flags, referenced only by scalar).
-  5. **``tos.rcl`` AND ``tos.ordering`` AND ``tos.canonical`` ARE present** — the third
-     ratified sibling→sibling edge (``tos.rcl`` §3.4) is explicitly ALLOWED, not sealed;
-     the closure *bounds* it rather than forbidding it.
-  6. No ``tos.orthostate`` source references ``os.environ`` / ``os.getenv`` or a dynamic
-     escape (``exec`` / ``eval`` / ``__import__`` / ``importlib``) or a real clock
-     (``time`` / ``datetime``).
-
-A planted-leak canary proves the spawn+scan pipeline actually catches a leak, and a
-planted-AST-escape canary proves the static scan catches an escape, so "green" is
-evidence the checker works — not that it has been neutered.
-
-Network stdlib (``socket`` / ``ssl`` / …) is intentionally NOT asserted absent:
-``pydantic`` transitively loads it into every tos closure; design #1 §4 accepts that as
-residual risk, and the direct-import ban is the firewall gate (TOS-FW-B) alone.
-"""
+"""§7.1 import-closure verification for ``tos.orthostate`` (design #8 §7.1)."""
 
 from __future__ import annotations
 
@@ -91,7 +58,6 @@ _ORTHOSTATE_SRC = (
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
-#: Real-clock modules that must never be imported by a clock-free orthostate source (§0.2).
 _CLOCK_MODULES = frozenset({"time", "datetime"})
 
 
@@ -209,7 +175,6 @@ def test_is_forbidden_classifier_canaries() -> None:
     assert _is_forbidden("tos.liveauth") is True
     assert _is_forbidden("tos.time") is True
     assert _is_forbidden("tos.time.snapshot") is True
-    # Allowed: self, the ratified sibling edge, the core substrate, third-party.
     assert _is_forbidden("tos.orthostate") is False
     assert _is_forbidden("tos.rcl") is False
     assert _is_forbidden("tos.rcl.predicates") is False
@@ -217,7 +182,7 @@ def test_is_forbidden_classifier_canaries() -> None:
     assert _is_forbidden("tos.ordering") is False
     assert _is_forbidden("pydantic") is False
     assert _is_forbidden("decimal") is False
-    assert _is_forbidden("click") is False  # must not false-match the "cli" prefix
+    assert _is_forbidden("click") is False
 
 
 def _ast_escape_offenders(path: Path) -> list[str]:

@@ -1,22 +1,4 @@
-"""§7.2-4 — the dispatch key is **structurally derived**, and ∅ is handled both ways (§3.3/§6).
-
-The design's target: *"키↔전략 선언 instrument 불일치 등록 거부·event↔strategy instrument 불일치 무평가"*.
-
-``TargetSpec``'s scope fields are literal strings, so one strategy targets one hard-coded
-(account, instrument) pair. The key therefore comes **out of the artifact**, never out of a
-registrant's assertion — the series' "구조 파생 > 자기신고" discipline. Registration is refused for a
-mismatching asserted key, for a ``None`` (wildcard) scope, for a strategy declaring more than one
-scope, and for a strategy declaring none.
-
-The ∅ discipline is asserted **both ways** (the #17/#26 vacuity defect class): a *missing* key is
-fail-closed and evaluates nothing, while a key declared with *zero* strategies is a defined
-no-action. Collapsing either into the other is the defect.
-
-The third leg of the agreement — the Capsule's own declared scope — is asserted too, so
-"event says X, strategy says X, capsule says Y" cannot evaluate.
-
-Regime tag: orchestration authoring evidence only; closes no EV.
-"""
+"""§7.2-4 — the dispatch key is **structurally derived**, and ∅ is handled both ways (§3.3/§6)."""
 
 from __future__ import annotations
 

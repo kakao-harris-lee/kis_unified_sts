@@ -1,14 +1,4 @@
-"""invalidation_closure — invalidation dependency closure (design #15 §5.4; IAP-EV-007 substrate, core L1 slice).
-
-The closure property (§7 / §4.4): a material trigger reaches EVERY dependent (no escape — a
-partial closure is a fail-open); an uncertain edge is EXPANDED (treated reachable — under-count is
-prohibited, the #14 MAJOR-1 safety direction); a proven-disconnected node is excluded (the
-availability side). ∅ both-ways: an empty graph yields the minimal closure {trigger}. materiality
-UNKNOWN => MATERIAL is the entry condition (§5.7 line 126). Pure function — deterministic.
-
-Regime tag: predicate / model substrate only; IAP-EV-007 NOT_IMPLEMENTED (`/3` residue);
-EV-L1-complete claim forbidden.
-"""
+"""invalidation_closure — invalidation dependency closure (design #15 §5.4; IAP-EV-007 substrate, core L1 slice)."""
 
 from __future__ import annotations
 

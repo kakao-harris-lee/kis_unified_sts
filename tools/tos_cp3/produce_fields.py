@@ -1,111 +1,5 @@
 #!/usr/bin/env python3
-"""CP-3 B1a — shared indicator producer: Parquet minute bars → per-bar field JSONL.
-
-What this is
-------------
-The upstream half of the CP-3 "same input, compare decisions" path
-(``docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md`` §3 B1a, §5 step 1).
-The TOS kernel computes **no indicators** — every value it compares arrives as
-a declared ``bool``/``int``/``str`` Critical Input field (floats are rejected:
-``tos/src/tos/marketfeed/value.py``). So Setup D's band math has to run
-upstream, and if it ran upstream as a *second* implementation the comparison
-would measure the band formula instead of the policy (plan §2, closing
-paragraph). This tool therefore **drives the legacy
-:class:`~shared.decision.setups.vwap_reversion.SetupDVWAPReversion` bar by bar
-and reads its own evaluation trace** (``setup.last_eval``) — it restates no
-threshold and no formula.
-
-What a line carries
--------------------
-Five top-level keys — ``raw_event_id``, ``source_id``, ``instrument``,
-``as_of_ms``, ``fields`` — which is exactly the required-key set of the only
-JSONL observation reader in the repo
-(``tos/runtime/src/tos_runtime/marketfeed/journal.py``; that reader refuses the
-whole poll on a missing key).
-
-``fields`` carries **the bar itself** (``open_x100``/``high_x100``/``low_x100``/
-``close_x100``/``volume``/``session_token``) as well as the derived Setup D
-inputs. The bar half is what lets B1b build a ``tos.backtest.Bar`` — which
-requires open/high/low/close/volume/session_token with range validation — from
-this file ALONE. Without it B1b would need its own path back to the Parquet
-tree, which is precisely the second ingestion B1a exists to prevent.
-
-Firewall
---------
-``tools/`` is inside the reverse scan of ``tools/tos_firewall_check.py``
-(TOS-FW-R), so this module imports **nothing** from ``tos`` or
-``tos_runtime`` — including the journal's required-key set and ``Bar``'s field
-names, which are mirrored here as literals and pinned by tests that say so.
-
-Causality
----------
-Every value is a function of bars at or before the bar it is stamped on:
-
-* ``close``/``vwap``/``atr14`` come from ``MarketContextReplay``, whose VWAP is
-  session-anchored up to and including the current bar and whose ATR is the
-  trailing ``atr_partial`` series (``shared/backtest/market_context_replay.py``
-  docstring). The replay's full-series ``atr_90th_percentile`` IS look-ahead —
-  Setup D deliberately does not read it, and neither does this tool.
-* ``hi_vol``/``stall_ok``/``reversal_ok`` come from the setup's own causal
-  deques, which append the current bar only AFTER reading
-  (``_vol_reference`` / ``_self_range`` / ``_trend_score``). We call
-  ``check()`` exactly once per bar so those windows advance exactly as they do
-  in the orchestrator, and we never touch them ourselves.
-
-That is what the prefix test pins: fields for ``bars[:n]`` equal the first
-``n``-worth of lines of fields for ``bars[:n+k]``.
-
-Gate fields and "never evaluated"
----------------------------------
-``check()`` returns early, so on a given bar the setup may never reach a gate.
-``last_eval`` records a key only for a branch it actually took, and this tool
-maps an ABSENT key to ``False`` — **fail-closed**: a bar whose gate was never
-evaluated must never read as a passing gate.
-
-This does not disturb a tenant policy, because the gate that rejected has its
-OWN field false on that bar. On a 09:05 bar rejected for ``vol_below_gate``,
-``entry_window`` is still **true** (the bar IS in the window) and ``hi_vol`` is
-false, so the entry AND is false through ``hi_vol``. On a bar rejected for
-``not_extreme``, ``stall_ok``/``reversal_ok`` are false *and* the ``z_x1000``
-comparison is false. Only on a ``before_window``/``after_cutoff`` bar is
-``entry_window`` itself false. The session-exit rules read only
-``vwap_reverted``/``eod``/``z_x1000``, none of which depend on a gate having
-been evaluated, so they keep working after the entry cutoff.
-
-Bars with no publishable ATR
-----------------------------
-When ``atr_14`` is 0 (a run of perfectly flat bars) the extension ``z`` is
-undefined. Those bars are **omitted** from the JSONL rather than filled with a
-sentinel, and the lineage lists their ids and the reason. A sentinel would not
-be fail-closed: a ``z_x1000 == 0`` reads as "at VWAP" to any band comparison.
-The same applies to ``vwap <= 0`` and ``close <= 0`` (see
-:func:`_inputs_unusable`); a non-finite input is a data defect and aborts the
-run instead. Omission is an output decision only — ``check()`` still runs on
-the bar, so the causal deques advance exactly as in the legacy replay.
-
-Declared differences from the legacy strategy
----------------------------------------------
-Ten, each recorded in the lineage sidecar under ``declared_differences`` with
-its reason, so none is a silent divergence: D1 ``min_confidence`` (no published
-field — the DSL has no arithmetic), D2 regime gates (adapter-level), D3
-``vwap_reverted`` band form, D4 ``eod`` calendar helpers, D5 unevaluated gate
-fields, D6 omitted bars, D7 moving-VWAP exit vs the legacy's frozen entry-time
-target, D8 quantization, D9 ``trend_filter_enabled`` has no field (and the run
-refuses while it is on), D10 the decision-6 ATR stop.
-
-Usage
------
-::
-
-    .venv/bin/python tools/tos_cp3/produce_fields.py \\
-        --data-root /home/deploy/project/kis_unified_sts/data/market \\
-        --symbol 101S6000 --start 2025-12-01 --end 2026-04-30 \\
-        --strategy-yaml config/strategies/futures/setup_d_vwap_reversion.yaml \\
-        --out /tmp/cp3-b1a-run1
-
-Market data is gitignored and lives only in the primary checkout, hence
-``--data-root`` is required and never defaulted to the current worktree.
-"""
+"""CP-3 B1a — shared indicator producer: Parquet minute bars → per-bar field JSONL."""
 
 from __future__ import annotations
 
@@ -126,11 +20,6 @@ from typing import Any
 
 import yaml
 
-#: Repo root of the checkout this file belongs to. Inserted at the FRONT of
-#: ``sys.path`` so that an editable install of the primary checkout cannot
-#: shadow this worktree's ``shared/`` (verified: without it, ``import shared``
-#: resolves to whichever checkout pip installed, and the producer would then
-#: run a different copy of the band math than the one under review).
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -179,18 +68,10 @@ from tools.tos_cp3.stitch import (  # noqa: E402
     shift_price_x100,
 )
 
-#: Lineage schema version — separate from the tool version so a reader can
-#: tell "values may differ" from "the sidecar is shaped differently".
 LINEAGE_SCHEMA_VERSION = 2
 
-#: Stable producer identity stamped on every line as ``source_id``.
 SOURCE_ID = f"tos-cp3-b1a/{TOS_CP3_VERSION}"
 
-#: The top-level keys every line carries. MIRRORS
-#: ``tos/runtime/src/tos_runtime/marketfeed/journal.py::_REQUIRED_KEYS`` — the
-#: import firewall forbids importing it from here, so the set is restated as a
-#: literal and ``tests/tools/test_cp3_produce_fields.py`` pins it with the same
-#: mirroring note. A missing key makes that reader refuse the whole poll.
 JOURNAL_REQUIRED_KEYS = (
     "raw_event_id",
     "source_id",
@@ -199,31 +80,15 @@ JOURNAL_REQUIRED_KEYS = (
     "fields",
 )
 
-#: Output file names inside ``--out``.
 FIELDS_FILENAME = "fields.jsonl"
 LINEAGE_FILENAME = "lineage.json"
 
-#: Price scale: index points → hundredths of an index point. Exact for the
-#: KOSPI200 futures tick (0.05 pt → 5 units); :func:`_assert_scale_covers_tick`
-#: refuses any contract whose tick is not an integer at this scale.
 PRICE_SCALE = 100
-#: ATR-unit scale for the VWAP extension ``z``: thousandths of one ATR.
 Z_SCALE = 1000
 
-#: The KST date from which the futures day session opens at 08:45 instead of
-#: 09:00. Sourced from ``shared/backtest/market_context_replay.py`` (the
-#: ``market_open_hour`` field comment), which states that a replay over
-#: PRE-cutover data MUST use 09:00 or every open-relative window is shifted 15
-#: minutes and the replayed signals no longer match the regime that produced
-#: the published OOS numbers.
 OPEN_ANCHOR_CUTOVER = date(2026, 6, 28)
-#: The pre-cutover anchor that same comment names.
 PRE_CUTOVER_OPEN = (9, 0)
 
-#: Default density gate, matching
-#: ``scripts/analysis/walkforward_setup_d_vwap_reversion.py``'s own default —
-#: the OOS numbers this parity window is compared against were produced with
-#: it. 0 is the explicit opt-out.
 DEFAULT_MIN_BARS_PER_DAY = 330
 
 
@@ -232,31 +97,7 @@ class ProduceFieldsError(RuntimeError):
 
 
 def _asset_class(raw: object) -> AssetClass:
-    """Narrow the YAML's ``asset_class`` to the two values the store accepts.
-
-    **This refuses earlier than the old code did, and for more callers.** State
-    it plainly rather than claim the change is free:
-
-    * For the three sites that actually hand ``strategy.asset_class`` to the
-      store (:func:`main`'s loads, lines ~2056/2063/2075), any other value was
-      already fatal: it became a partition directory that does not exist and the
-      load raised ``ProduceFieldsError`` a few frames later with
-      "no ... minute bars". For these the only change is *where* the same error
-      is raised and that it can now name the offending value.
-    * For every other caller of :func:`load_strategy_inputs` it is a NEW
-      refusal. ``live_producer/producer.py`` loads bars from its own
-      ``self.config.asset_class``, ``minute_probe.py`` hardcodes ``"futures"``,
-      and ``stitch_measure.py`` loads no bars through this value at all; two
-      more sites (``produce_fields`` line ~1728 and
-      ``emit_legacy_decisions`` line ~1763) only copy it into output metadata,
-      where a wrong value was previously written out verbatim. A strategy YAML
-      carrying e.g. ``asset_class: Futures`` used to start those tools and now
-      stops them at load.
-
-    No YAML in this repo carries such a value, so nothing in tree changes
-    behaviour; the refusal is for a config that would otherwise mislabel an
-    artifact or silently pick the wrong partition root.
-    """
+    """Narrow the YAML's ``asset_class`` to the two values the store accepts."""
     value = str(raw or "futures")
     if value == "stock":
         return "stock"
@@ -267,60 +108,18 @@ def _asset_class(raw: object) -> AssetClass:
     )
 
 
-# ---------------------------------------------------------------------------
-# Scaling
-# ---------------------------------------------------------------------------
-#
-# ``scaled_int_half_up`` / ``scaled_int_toward_zero`` were MOVED VERBATIM to
-# ``shared/indicators/fields/scaling.py`` (P2-a,
-# ``docs/plans/2026-11-11-tos-p2-declarative-fields.md`` §3) and are imported
-# above. The declarative field evaluator publishes with the same two rounding
-# modes, and a second copy of them is precisely how the legacy-driven producer
-# and the declarative producer would come to disagree about a bar whose value
-# lands on a half — which is what P2-b compares byte for byte. The names stay
-# re-exported from this module because ``emit_legacy_decisions.py`` (B2) and
-# ``tests/tools/test_cp3_produce_fields.py`` read them from here; the published
-# bytes are unchanged.
-
-
-# ---------------------------------------------------------------------------
-# Join keys
-# ---------------------------------------------------------------------------
-#
-# ONE definition, shared with the B2 decision emitter
-# (``tools/tos_cp3/emit_legacy_decisions.py``). B3 joins the two artifacts on
-# ``raw_event_id``, so a second derivation on the other side — even an
-# identical-looking one — is how the two files would come to disagree about
-# which bar a line is about. B2 imports these; it does not restate them.
-
-
 def derive_raw_event_id(symbol: str, bar_kst: datetime) -> str:
-    """The join key for one replayed bar.
-
-    ``<symbol>:1m:<YYYYmmddTHHMMSS±HHMM>``. The offset is part of the key so a
-    naive and an aware stamp for the same wall-clock minute cannot collide, and
-    the timeframe token says what a "bar" is here.
-    """
+    """The join key for one replayed bar."""
     return f"{symbol}:1m:{bar_kst.strftime('%Y%m%dT%H%M%S%z')}"
 
 
 def derive_as_of_ms(bar_kst: datetime) -> int:
-    """Epoch milliseconds of the bar's LABELLED minute.
-
-    The label, not label+60s: the session fields (``entry_window``, ``eod``)
-    are computed on the label, so an end-of-bar stamp would desynchronise
-    ``as_of_ms`` from them (a 15:15 bar would carry a 15:16 ``as_of_ms``).
-    """
+    """Epoch milliseconds of the bar's LABELLED minute."""
     return int(bar_kst.timestamp() * 1000)
 
 
 def _assert_scale_covers_tick(spec: ContractSpec, scale: int) -> None:
-    """Refuse a contract whose tick is not an integer at *scale*.
-
-    A 0.05-point tick is 5 units at scale 100. A 0.025-point tick would be 2.5
-    — the published integer could then not represent every tradable price, and
-    two adjacent prices would collapse onto one value. Fail loudly instead.
-    """
+    """Refuse a contract whose tick is not an integer at *scale*."""
     ticks = spec.tick_size_points * scale
     if abs(ticks - round(ticks)) > 1e-9:
         raise ProduceFieldsError(
@@ -328,11 +127,6 @@ def _assert_scale_covers_tick(spec: ContractSpec, scale: int) -> None:
             f"scale {scale} ({ticks}); the integer encoding would lose "
             f"tradable prices for contract {spec.name!r}"
         )
-
-
-# ---------------------------------------------------------------------------
-# Inputs: strategy YAML
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -369,15 +163,8 @@ def load_strategy_inputs(path: Path) -> StrategyInputs:
 
     entry_params = dict(entry.get("params") or {})
     exit_params = dict(exit_.get("params") or {})
-    # ``SetupDConfig`` is ServiceConfigBase (extra="ignore"), so the
-    # adapter-only keys in this section (regime_gate, *_blocked_regimes, ...)
-    # are dropped exactly as the decoupled decision_engine drops them.
     config = SetupDConfig(**{k: v for k, v in entry_params.items() if v is not None})
 
-    # The trend gate is causal state inside check() with no published field and
-    # no Critical Input declaration, so a run with it ON would emit a field set
-    # that cannot reproduce the legacy decision. Refuse rather than ship a
-    # quietly incomplete baseline (declared difference D9).
     if config.trend_filter_enabled:
         raise ProduceFieldsError(
             f"{path}: strategy.entry.params.trend_filter_enabled is true, but "
@@ -388,9 +175,6 @@ def load_strategy_inputs(path: Path) -> StrategyInputs:
             "the follow-up; until then this run refuses."
         )
 
-    # The band-form premise of vwap_reverted (declared differences D3/D7): at
-    # the fade trigger the VWAP-revert target IS the VWAP, which only holds
-    # while the extension term beats the reward/risk floor.
     floor_mult = config.min_reward_risk * config.stop_atr_mult
     if not config.extreme_atr_mult > floor_mult:
         raise ProduceFieldsError(
@@ -401,10 +185,6 @@ def load_strategy_inputs(path: Path) -> StrategyInputs:
             "band form would be documented against a false statement"
         )
 
-    # Build the legacy exit config itself rather than re-deriving the cutoff:
-    # ``eod_close_time`` is its property. ``from_dict`` would do the same field
-    # filtering but is deprecated (it warns on every call), so the known fields
-    # are selected here and the class's own validate() is run.
     exit_config = SetupTargetExitConfig(
         **{
             key: value
@@ -414,9 +194,6 @@ def load_strategy_inputs(path: Path) -> StrategyInputs:
     )
     exit_config.validate()
 
-    # Band parameter: its own key when the YAML declares one, else the
-    # reversal-confirmation tolerance it currently borrows. Recorded either way
-    # so a reader never has to guess which was in force.
     declared_band = exit_params.get("vwap_revert_band_atr_mult")
     if declared_band is not None:
         band = float(declared_band)
@@ -442,11 +219,6 @@ def load_strategy_inputs(path: Path) -> StrategyInputs:
     )
 
 
-# ---------------------------------------------------------------------------
-# Inputs: the open anchor
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class OpenAnchor:
     """The futures open the replay stamps on every context, and where it came from."""
@@ -463,15 +235,7 @@ class OpenAnchor:
 def resolve_open_anchor(
     *, cli_value: str, first_session: date, last_session: date
 ) -> OpenAnchor:
-    """Resolve the open anchor from ``--market-open`` or the era rule.
-
-    ``auto`` applies the rule stated in ``market_context_replay.py``: data
-    before 2026-06-28 was produced when the futures day session opened at
-    09:00, and replaying it at 08:45 shifts every open-relative window by 15
-    minutes, so the replayed signals no longer match the regime that produced
-    the published OOS numbers. A window that STRADDLES the cutover has no
-    single correct anchor, so it is refused rather than silently given one.
-    """
+    """Resolve the open anchor from ``--market-open`` or the era rule."""
     if cli_value != "auto":
         try:
             parsed = datetime.strptime(cli_value, "%H:%M").time()
@@ -496,11 +260,6 @@ def resolve_open_anchor(
     )
 
 
-# ---------------------------------------------------------------------------
-# Inputs: Parquet bars
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class InputFile:
     """One Parquet partition file that fed this run."""
@@ -513,12 +272,7 @@ class InputFile:
 def discover_input_files(
     data_root: Path, *, asset_class: str, symbol: str, start: date, end: date
 ) -> list[InputFile]:
-    """List, in sorted order, the Parquet partitions inside ``[start, end]``.
-
-    Mirrors ``ParquetMarketDataStore``'s partition layout
-    (``<root>/<asset_class>/minute/code=<symbol>/year=/month=/day=``) so the
-    lineage names the files the loader actually read.
-    """
+    """List, in sorted order, the Parquet partitions inside ``[start, end]``."""
     base = data_root / asset_class / "minute" / f"code={symbol}"
     found: list[InputFile] = []
     for parquet in sorted(base.glob("year=*/month=*/day=*/*.parquet")):
@@ -541,19 +295,7 @@ def discover_input_files(
 
 
 def _apply_density_gate(df: Any, *, min_bars_per_day: int, loaded: int) -> Any:
-    """Drop whole sessions thinner than *min_bars_per_day*. ONE body.
-
-    Called by :func:`load_bars` (single contract) and by
-    :func:`load_stitched_bars` (cross-contract, plan §3.2a). Shared rather than
-    copied because the gate decides WHICH DAYS enter the frame: two copies
-    could come to keep different sessions, and a producer seeded from a
-    different set of sessions than the offline run it is compared against
-    makes B3 diverge for a reason that looks like a field defect (plan §3.2
-    「밀도 게이트를 B1a 와 같게」).
-
-    Args:
-        loaded: the PRE-gate row count, for the refusal message only.
-    """
+    """Drop whole sessions thinner than *min_bars_per_day*. ONE body."""
     if min_bars_per_day <= 0:
         return df
     bars_per_day = df.groupby(df["timestamp"].dt.date).size()
@@ -578,19 +320,7 @@ def load_bars(
     end: date,
     min_bars_per_day: int,
 ) -> tuple[Any, int]:
-    """Load minute bars through the project's Parquet store.
-
-    Uses ``ParquetMarketDataStore`` — the very object
-    ``shared.storage.market_data_store.load_market_bars_for_backtest`` builds
-    via ``create_market_data_store`` — constructed with an explicit ``root``
-    because the market-data tree is gitignored and lives only in the primary
-    checkout (the configured ``StorageConfig`` root would point at the wrong
-    checkout from a worktree). Same construction, and the same default
-    ``min_bars_per_day``, as
-    ``scripts/analysis/walkforward_setup_d_vwap_reversion.py::load_clean``.
-
-    Returns the gated frame and the PRE-gate row count.
-    """
+    """Load minute bars through the project's Parquet store."""
     store = ParquetMarketDataStore(root=data_root, asset_class=asset_class)
     df = store.get_minute_bars(symbol, start=start, end=end)
     if df.empty:
@@ -603,17 +333,8 @@ def load_bars(
         .reset_index(drop=True)
     )
     loaded = int(len(df))
-    # ONE gate body, shared with the stitched loader (review MEDIUM-2). The
-    # first cut copied these lines into a second function for the stitched
-    # path and left this one in place, so the two could drift into keeping
-    # different sessions — the exact divergence the gate exists to prevent.
     gated = _apply_density_gate(df, min_bars_per_day=min_bars_per_day, loaded=loaded)
     return gated, loaded
-
-
-# ---------------------------------------------------------------------------
-# Inputs: the cross-contract (month-stitch) seed — plan §3.2a
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -621,13 +342,8 @@ class StitchedInputs:
     """What reading a stitched window produced, beyond the frame itself."""
 
     manifest: StitchManifest
-    #: Junctions re-derived from the stored UNADJUSTED partitions and asserted
-    #: equal to the manifest's (plan §3.2a MEDIUM-3).
     recomputed: tuple[StitchJunction, ...]
-    #: ``contract -> offset_x100`` actually applied to that segment's OHLC.
     offsets_x100: dict[str, int]
-    #: Splice-day NEW-contract partitions, read for the recomputation only and
-    #: deliberately NOT part of the frame (re-review N-3).
     recompute_input_files: list[InputFile]
     recompute_bars: int
 
@@ -661,17 +377,7 @@ def load_stitched_bars(
     manifest: StitchManifest,
     min_bars_per_day: int,
 ) -> tuple[Any, int, list[InputFile], StitchedInputs]:
-    """Read exactly the manifest's ``(contract, day)`` pairs and align them.
-
-    Never a date-range glob (plan §3.2a 「구간에 적힌 (월물, 거래일) 쌍만 읽는다」):
-    a session directory holds the previous month's partitions too, and a glob
-    over the target symbol alone would silently drop them while a glob over the
-    tree would silently duplicate the splice day.
-
-    The previous month's OHLC is shifted by the manifest's integer ``c_x100``
-    — volume is untouched — and the splice day's new-contract partition is read
-    ONLY to recompute that constant.
-    """
+    """Read exactly the manifest's ``(contract, day)`` pairs and align them."""
     import pandas as pd
 
     offsets = segment_offsets_x100(manifest)
@@ -780,20 +486,7 @@ def _as_parse_tuples(df: Any, contract: str) -> list[tuple]:
 def resolve_session_manifest(
     data_root: Path, *, symbol: str, stitch_manifest: Path | None
 ) -> StitchManifest | None:
-    """The session-directory refusal rules of plan §3.2a (MEDIUM-1, N-2).
-
-    ``stitch.json`` sits directly under the ``--data-root`` B1a and B2 are
-    given, i.e. ``<session dir>/market/``. A run against that directory that
-    does not pass the manifest would read only the target contract's
-    partitions and silently produce a SHORTER frame than the producer's, so it
-    is refused. A manifest describing another instrument is refused for the
-    same reason: it would align the wrong segment.
-
-    ⛔ Not implemented, by decision: "there are sibling ``code=`` directories,
-    so this must be a stitched tree". The legacy ``data/market`` root always
-    holds several contract months and the check would be a false positive on
-    every legacy run (plan §9 MEDIUM-1).
-    """
+    """The session-directory refusal rules of plan §3.2a (MEDIUM-1, N-2)."""
     manifest = load_manifest(stitch_manifest) if stitch_manifest else None
     in_session = data_root / STITCH_FILENAME
     if manifest is None and in_session.is_file():
@@ -813,13 +506,6 @@ def resolve_session_manifest(
     return manifest
 
 
-# ---------------------------------------------------------------------------
-# Production
-# ---------------------------------------------------------------------------
-
-#: Published field order. Fixed so the JSONL is byte-stable. The first six are
-#: the bar itself (what B1b needs to build a ``tos.backtest.Bar``); the rest are
-#: the derived Setup D inputs.
 FIELD_ORDER = (
     "open_x100",
     "high_x100",
@@ -841,11 +527,7 @@ FIELD_ORDER = (
 
 @dataclass(frozen=True)
 class FieldRecord:
-    """One published observation: a bar's scalar field set.
-
-    ``bar_kst`` is carried for the lineage summary and for tests; it is NOT
-    published — the wire form is exactly :data:`JOURNAL_REQUIRED_KEYS`.
-    """
+    """One published observation: a bar's scalar field set."""
 
     raw_event_id: str
     instrument: str
@@ -869,14 +551,7 @@ class FieldRecord:
 def _assert_scalar_fields(
     fields: dict[str, int | bool | str], raw_event_id: str
 ) -> None:
-    """Guard the kernel's hard rule: a float field is rejected at the border.
-
-    ``tos/src/tos/marketfeed/value.py`` drops a float outright, so a float
-    leaking into this JSONL would show up as a silently missing field on the
-    kernel side rather than as an error here. Concretely, this fires if a
-    scaling helper is ever changed to return ``value * scale`` instead of an
-    ``int``.
-    """
+    """Guard the kernel's hard rule: a float field is rejected at the border."""
     for key, value in fields.items():
         if isinstance(value, (bool, str)):
             continue
@@ -887,33 +562,11 @@ def _assert_scalar_fields(
             )
 
 
-#: How many omitted-bar ids the lineage lists before truncating (the count is
-#: always exact; the id list is a sample above this many).
 OMITTED_ID_LIST_CAP = 200
 
 
 def _inputs_unusable(close: float, vwap: float, atr: float) -> str | None:
-    """Name the reason this bar's ATR-scaled fields cannot be published.
-
-    Returns ``None`` when ``close``/``vwap``/``atr`` can all carry their
-    published meaning, else the reason. Each case is a value the setup's own
-    docstrings call out as NOT a benign zero:
-
-    * ``atr <= 0`` — a run of perfectly flat bars makes every true range 0, so
-      ``atr_partial`` is 0 and ``z = (close - vwap) / atr`` is undefined.
-    * ``vwap <= 0`` — at ``vwap == 0`` the extension degenerates to
-      ``close / atr``, "a huge FABRICATED extreme" (``REQUIRES_VWAP``
-      docstring).
-    * ``close <= 0`` — ``check`` rejects ``no_price``.
-
-    Publishing a sentinel instead would be worse than publishing nothing: a
-    ``z_x1000`` of 0 reads as "at VWAP" to any band comparison. A bar with no
-    publishable ATR is therefore OMITTED (and counted in the lineage).
-
-    A NON-FINITE input is different in kind: NaN/inf is a defect in the Parquet
-    tree, not a legitimately quiet bar, and counting it as an omission would
-    hide a corrupted dataset behind a number that looks benign. It raises.
-    """
+    """Name the reason this bar's ATR-scaled fields cannot be published."""
     for name, value in (("close", close), ("vwap", vwap), ("atr_14", atr)):
         if not math.isfinite(value):
             raise ProduceFieldsError(
@@ -935,23 +588,12 @@ class ProducedBars:
 
     records: list[FieldRecord]
     bars_replayed: int
-    omitted: list[tuple[str, str]]  # (raw_event_id, reason)
-    #: Bars replayed from a NON-target stitch segment (plan §3.2a). They
-    #: advance the causal windows and are then dropped without a
-    #: ``raw_event_id``: naming a previous-month bar after this symbol is
-    #: precisely the label error the plan's 「라벨은 진실하게」 rule forbids, so
-    #: they are COUNTED here and never listed by id.
+    omitted: list[tuple[str, str]]
     non_target_segment_bars: int = 0
 
 
 def _bar_lookup(df: Any) -> dict[Any, tuple[float, float, float, float]]:
-    """Map each bar timestamp to its ``(open, high, low, volume)``.
-
-    ``MarketContext`` carries only the close, so the OHLCV half of a published
-    line is read back from the frame the replay was built from. A duplicated
-    timestamp would make that lookup ambiguous (the #516 minute-dedup defect),
-    so it is refused rather than resolved arbitrarily.
-    """
+    """Map each bar timestamp to its ``(open, high, low, volume)``."""
     import pandas as pd
 
     stamps = df["timestamp"]
@@ -979,40 +621,7 @@ def produce_bars(
     emit_days: frozenset[date] | None = None,
     observer: Callable[[datetime, Mapping[str, Any]], None] | None = None,
 ) -> ProducedBars:
-    """Drive the legacy Setup D bar by bar and project its state into fields.
-
-    ``check()`` is called exactly once per replayed bar — that single call is
-    what advances the setup's causal ATR / close / VWAP windows, so calling it
-    more or fewer times than the orchestrator would change ``hi_vol`` and
-    ``stall_ok``. Nothing in this function recomputes a threshold or a formula
-    that the setup owns.
-
-    A bar whose inputs cannot carry their published meaning
-    (:func:`_inputs_unusable`) is still EVALUATED — the legacy replay evaluates
-    every bar, and the causal deques must advance identically — but is not
-    emitted. Its id and reason go into the lineage.
-
-    Args:
-        emit_days: when given, only bars on these KST dates are EMITTED. Every
-            other bar is still replayed — the whole point of a stitched seed is
-            that the previous month's sessions advance ATR, the vol-window
-            percentile and ``prev_close`` — but produces no record, because a
-            previous-month bar carrying a ``raw_event_id`` named after this
-            symbol would be a label error (plan §3.2a). ``None`` keeps the
-            pre-stitch behaviour: every replayed bar is a candidate.
-        observer: read-only hook called with ``(bar_kst, last_eval)`` after
-            ``check()`` on EVERY replayed bar — the non-emitted previous-month
-            bars included, which is the point: the causal ATR window is filled
-            by bars this function does not publish, so a measurement of that
-            window (``tools/tos_cp3/stitch_measure.py`` S1b, plan §3.2a's
-            「``_atr_window`` 내용과 백분위 기준값」) cannot read it from the
-            records. It observes the setup's own trace — nothing here is
-            recomputed — and takes no part in the decision: it is handed a
-            :class:`~types.MappingProxyType` over ``last_eval``, so a write
-            raises instead of leaking into the next bar, and the returned
-            records are identical with and without it
-            (``tests/tools/test_cp3_produce_fields.py``).
-    """
+    """Drive the legacy Setup D bar by bar and project its state into fields."""
     import pandas as pd
 
     setup = SetupDVWAPReversion(config=strategy.entry_config)
@@ -1036,23 +645,14 @@ def produce_bars(
     bars_replayed = 0
     non_target = 0
     for ctx in replay.iter_contexts():
-        # `arg-type` 억제 사유는 `emit_legacy_decisions.py` 의 같은 호출에 적었다 —
-        # frozen `MarketContext` 대 쓰기 가능 멤버를 선언한 `FuturesMarketView`
-        # 프로토콜의 기존 간극(`shared/backtest/decision_harness.py:262`).
         setup.check(ctx)  # type: ignore[arg-type]
         ev = setup.last_eval
         if observer is not None:
-            # Read-only by construction, not by convention: the proxy raises on
-            # any write, so "it takes no part in the decision" is enforced here
-            # rather than only asserted in a test. The default path keeps the
-            # `is not None` guard, so it allocates no proxy at all.
             observer(ctx.now, MappingProxyType(ev))
         bars_replayed += 1
 
         now: datetime = ctx.now
         if emit_days is not None and now.date() not in emit_days:
-            # Replayed (the windows advanced on the check() above) and then
-            # dropped BEFORE a join key is derived — see the docstring.
             non_target += 1
             continue
         as_of_ms = derive_as_of_ms(now)
@@ -1084,9 +684,6 @@ def produce_bars(
                     f"{raw_event_id}: non-finite bar {name}={value!r}"
                 )
 
-        # ONE definition of z, shared with check() (see the accessor's
-        # docstring). Published on every bar because the session-exit fields
-        # outlive the entry window, where check() returns early.
         z = SetupDVWAPReversion.vwap_extension_z(close, vwap, atr)
 
         fields: dict[str, int | bool | str] = {
@@ -1095,8 +692,6 @@ def produce_bars(
             "low_x100": scaled_int_half_up(bar_low, PRICE_SCALE),
             "close_x100": scaled_int_half_up(close, PRICE_SCALE),
             "volume": int(bar_volume),
-            # Opaque session identifier — a tos Bar reads no market hours from
-            # it. Futures is day-only, so the KST date IS the session.
             "session_token": now.date().isoformat(),
             "vwap_x100": scaled_int_half_up(vwap, PRICE_SCALE),
             "atr14_x100": scaled_int_half_up(atr, PRICE_SCALE),
@@ -1137,37 +732,7 @@ def produce_bars(
 def assert_dsl_refs_are_published(
     document: FieldsDocument, *, strategies_dir: Path
 ) -> None:
-    """Refuse a tenant whose DSL reads a field the declaration does not publish.
-
-    Plan §2.2. The kernel resolves a strategy rule's
-    ``ref: [capsule, resolved_values, <name>]`` out of the journal line's
-    ``fields``, and a name the producer never publishes is not a silent
-    ``None`` there — the marketfeed journal refuses the whole poll on a missing
-    required key (``tos_runtime/marketfeed/journal.py``). So the failure is a
-    refused poll at 09:00, every minute, with the cause three layers away from
-    the typo that caused it.
-
-    Checked at producer START, before a single bar is read, because that is the
-    only moment at which the answer is free: both documents are already open
-    and nothing has been published yet.
-
-    Concrete input this refuses: a tenant whose strategy compares
-    ``capsule.resolved_values.rsi14`` while its ``fields.yaml`` publishes only
-    the fifteen Setup D names.
-
-    Args:
-        document: the tenant's parsed ``fields.yaml``.
-        strategies_dir: the tenant tree's ``strategies/`` directory — every
-            ``*.yaml`` in it is read, which is the same set
-            ``tos_runtime.strategy.loader`` admits.
-
-    Raises:
-        ProduceFieldsError: a referenced name is not in ``publish``; the
-            directory does not exist or holds no strategy at all; or a strategy
-            file cannot be parsed. Every one of those is "the DSL could not be
-            read", and a tenant whose DSL cannot be read is not a tenant whose
-            DSL agrees — so each refuses rather than passing quietly.
-    """
+    """Refuse a tenant whose DSL reads a field the declaration does not publish."""
     published = {entry.name for entry in document.publish}
     if not strategies_dir.is_dir():
         raise ProduceFieldsError(
@@ -1200,19 +765,7 @@ def assert_dsl_refs_are_published(
 
 
 def _dsl_resolved_value_refs(path: Path) -> set[str]:
-    """Every ``capsule.resolved_values.<name>`` a strategy document reads.
-
-    Walked over the PARSED document rather than matched in the text, so a
-    reference is found wherever the DSL puts it (``all_of`` comparisons today,
-    anywhere a ``ref`` is legal tomorrow) and a commented-out one is correctly
-    not a reference.
-
-    A file ``yaml.safe_load`` cannot read — malformed, or a multi-document
-    stream, which it refuses outright — would otherwise leave this function
-    raising a ``yaml`` error the producer's caller does not catch, and a file
-    that parses to anything but a mapping carries no ``ref`` at all and would
-    report agreement it never checked. Both refuse by name.
-    """
+    """Every ``capsule.resolved_values.<name>`` a strategy document reads."""
     try:
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
@@ -1257,42 +810,7 @@ def produce_bars_declarative(
     document: FieldsDocument,
     emit_days: frozenset[date] | None = None,
 ) -> ProducedBars:
-    """Produce the published fields from a tenant's ``fields.yaml`` (P2-c).
-
-    The declarative replacement for the legacy-driven loop: the evaluator owns
-    every threshold and window, and this function owns only what the PRODUCER
-    owns either way —
-
-    * the emit-day filter (a previous month's bar advances the causal windows
-      and is then dropped before a join key is derived, plan §3.2a);
-    * the omission gate :func:`_inputs_unusable`, unchanged and still here
-      rather than in the catalog. A single-pass declaration has no way to say
-      "stop here and omit this bar", so the producer keeps that decision;
-    * the ``raw_event_id`` / ``as_of_ms`` derivation and the scalar-field
-      assertion, so a declarative line and a legacy line join in B3.
-
-    Which bars are REPLAYED is the witness's rule, restated here from the same
-    two counts the legacy lineage reconciles with (:func:`_bar_accounting`):
-    ``MarketContextReplay.iter_contexts`` yields from the 60th bar onward and
-    additionally skips every bar whose session has no previous session, so the
-    leading ``warmup + first-session`` bars are read but never decided on.
-    They go to :meth:`~shared.indicators.fields.FieldEvaluator.warm`, which
-    advances ``atr``/``session.vwap_typical`` — defined over the whole frame on
-    both sides — and leaves the ``gated_*`` windows untouched, exactly as the
-    legacy setup's ``check()`` never ran on them. They are not counted as
-    replayed, for the same reason the legacy does not count them.
-
-    Every ADMITTED bar is evaluated, including the ones no day emits: the
-    ``gated_*`` windows must advance identically, which is the same reason the
-    legacy loop replayed them.
-
-    A bar the evaluator REFUSES (``FieldEvalError`` — ``ratio_z`` on a zero
-    ATR, by the same contract the legacy's early return took) is omitted
-    **with the reason this producer's own gate gives it**, so the legacy and
-    declarative lineages carry the same bytes. A refusal the gate does NOT
-    name is a declaration defect and aborts the run rather than being counted
-    as a quiet bar.
-    """
+    """Produce the published fields from a tenant's ``fields.yaml`` (P2-c)."""
     evaluator = FieldEvaluator(document)
     records: list[FieldRecord] = []
     omitted: list[tuple[str, str]] = []
@@ -1310,9 +828,6 @@ def produce_bars_declarative(
                 volume=float(row.volume),
             )
         except FieldEvalError as exc:
-            # Same judgement as `_inputs_unusable` makes on a non-finite input:
-            # NaN/inf is a defect in the Parquet tree, not a legitimately quiet
-            # bar, and counting it as an omission would hide a corrupt dataset.
             raise ProduceFieldsError(
                 f"{exc} — the Parquet window is corrupt; omitting the bar "
                 "would hide that"
@@ -1384,37 +899,13 @@ def produce_bars_declarative(
 
 
 def replay_admission_offset(df: Any) -> int:
-    """How many leading frame bars the witness reads but never decides on.
-
-    ``MarketContextReplay.iter_contexts`` yields from index
-    ``DEFAULT_WARMUP_BARS`` onward and additionally skips every bar whose
-    session has no previous session in the frame — which is the first session
-    date. Both skips land in a leading RUN of bars, so the admitted set is the
-    frame minus a prefix, and that prefix length is exactly the pair
-    :func:`_bar_accounting` reports and ``build_lineage`` reconciles against.
-    Deriving it from that one function is what keeps the declarative producer's
-    ``bars_replayed`` and the lineage cross-check from drifting apart.
-
-    A declarative driver feeds this prefix to
-    :meth:`~shared.indicators.fields.FieldEvaluator.warm` — the frame-wide
-    ``atr``/VWAP advance, the ``gated_*`` windows do not, which is precisely
-    what the witness does by precomputing the former over the whole frame and
-    never calling ``check()`` on the latter.
-    """
+    """How many leading frame bars the witness reads but never decides on."""
     warmup_skipped, first_session_dropped = _bar_accounting(df)
     return warmup_skipped + first_session_dropped
 
 
 def _gate_numbers(values: Mapping[str, Any]) -> tuple[float, float, float] | None:
-    """The three omission-gate inputs, or ``None`` if they are not all there.
-
-    ``close``/``vwap``/``atr`` are the UNSCALED field names every shipped
-    declaration carries; a declaration that renamed them would reach the gate
-    with nothing to check, which is a refusal and never a zero. ``None`` is
-    returned rather than raised because the two callers answer it differently:
-    on an evaluated bar it is a declaration defect, while on a REFUSED bar it
-    only means the gate cannot explain the refusal.
-    """
+    """The three omission-gate inputs, or ``None`` if they are not all there."""
     numbers: list[float] = []
     for name in ("close", "vwap", "atr"):
         value = values.get(name)
@@ -1426,16 +917,7 @@ def _gate_numbers(values: Mapping[str, Any]) -> tuple[float, float, float] | Non
 
 
 def _gate_verdict(values: Mapping[str, Any]) -> str | None:
-    """Ask the omission gate to name a REFUSED bar, else ``None``.
-
-    The refusal the gate is expected to name is ``ratio_z`` dividing by a zero
-    ``atr``: the legacy loop reached the same bar, returned early from
-    ``check()`` on ``atr <= 0`` and omitted it as ``atr_14 <= 0 (z is
-    undefined)``. Reusing :func:`_inputs_unusable` rather than restating that
-    sentence is what keeps the two lineages' ``omitted`` reasons byte-identical
-    — the lineage lists ``sorted({reason})``, so one differing word is a
-    differing file.
-    """
+    """Ask the omission gate to name a REFUSED bar, else ``None``."""
     numbers = _gate_numbers(values)
     if numbers is None:
         return None
@@ -1465,31 +947,6 @@ def render_jsonl(records: list[FieldRecord]) -> bytes:
     return "".join(f"{record.to_json_line()}\n" for record in records).encode("utf-8")
 
 
-# ---------------------------------------------------------------------------
-# Lineage
-# ---------------------------------------------------------------------------
-
-#: D7's measurement — how often an exit written on the moving session-VWAP
-#: SIGN differs from the legacy exit's target price FROZEN at signal time.
-#:
-#: The generator is :func:`measure_moving_vs_frozen_exit` in THIS module, driven
-#: by :data:`D7_GENERATOR_COMMAND`::
-#:
-#:     python tools/tos_cp3/produce_fields.py --measure-d7 \
-#:         --data-root <root> --symbol 101S6000 \
-#:         --start 2025-12-01 --end 2026-04-30 \
-#:         --strategy-yaml config/strategies/futures/setup_d_vwap_reversion.yaml \
-#:         --out <unused>
-#:
-#: which prints exactly this literal to stdout for pasting. It is restated here
-#: rather than computed on every produce so a field run does not pay for a
-#: second simulation; regenerate whenever the window, the anchor or the strategy
-#: parameters change. (An earlier revision of this comment pointed at a
-#: ``measure_d7.py`` script that was never written — the flag above is the
-#: generator that actually exists.)
-#:
-#: Recorded in the lineage as ``declared_differences[D7].d7_measurement_generator``
-#: so a reader of the sidecar can regenerate the number without reading this file.
 D7_GENERATOR_COMMAND = "produce_fields.py --measure-d7"
 
 D7_MEASUREMENT: dict[str, Any] = {
@@ -1560,15 +1017,7 @@ def _bool_field(
 def _field_lineage(
     strategy: StrategyInputs, anchor: OpenAnchor, records: list[FieldRecord]
 ) -> dict[str, dict[str, Any]]:
-    """Per-field provenance (ADR-002-018 §10 derived-Critical-Input lineage).
-
-    Each entry carries the parent values it is derived from, the transform
-    identity, the causal window it reads, the published type/sign, the
-    unit/scale/multiplier triple in the shape
-    ``config/tos_runtime/paper/critical_input_policy.yaml`` uses (a token for
-    ``scale``, a number for ``multiplier``), and the range actually observed in
-    this run.
-    """
+    """Per-field provenance (ADR-002-018 §10 derived-Critical-Input lineage)."""
     cfg = strategy.entry_config
     bar_parents = ["parquet:minute_bar"]
     spec: dict[str, dict[str, Any]] = {
@@ -1927,12 +1376,7 @@ def _declared_differences(
 def _stitch_lineage(
     stitch: StitchedInputs | None, non_target_segment_bars: int
 ) -> dict[str, Any] | None:
-    """The cross-contract block both B1a and B2 record, or ``None``.
-
-    Shared rather than restated on each side: the two sidecars are compared
-    field by field, and two spellings of the same block is how they would come
-    to disagree about a window they both read correctly.
-    """
+    """The cross-contract block both B1a and B2 record, or ``None``."""
     if stitch is None:
         return None
     manifest = stitch.manifest
@@ -1945,9 +1389,6 @@ def _stitch_lineage(
         "junctions": [junction.to_payload() for junction in manifest.junctions],
         "recomputed_junctions": [item.to_payload() for item in stitch.recomputed],
         "offsets_x100": dict(sorted(stitch.offsets_x100.items())),
-        # The splice day's NEW-contract partition. Read to re-derive c_x100 and
-        # deliberately kept OUT of the frame: two contracts' bars on one minute
-        # would hit the duplicate-timestamp refusal (plan §3.2a re-review N-3).
         "junction_recompute_only_input_files": [
             {"path": item.path, "sha256": item.sha256, "size_bytes": item.size_bytes}
             for item in stitch.recompute_input_files
@@ -1978,12 +1419,7 @@ def build_lineage(
     input_files: list[InputFile],
     stitch: StitchedInputs | None = None,
 ) -> dict[str, Any]:
-    """Assemble the lineage sidecar.
-
-    Deliberately carries **no run timestamp and no duration**: two runs over
-    the same inputs must produce identical bytes, so that a changed lineage
-    means changed inputs, parameters or code — never merely a re-run.
-    """
+    """Assemble the lineage sidecar."""
     records = produced.records
     session_dates = sorted({record.bar_kst.date() for record in records})
     as_of_values = [record.as_of_ms for record in records]
@@ -1996,12 +1432,6 @@ def build_lineage(
             f"{dropped_before_replay} dropped before replay != "
             f"{produced.bars_replayed} replayed"
         )
-    # The second half of the chain, which B2 has always asserted and this side
-    # did not. It became load-bearing with the stitch segment counter (plan
-    # §3.2a): a replayed bar now leaves by one of exactly three doors —
-    # emitted, omitted as unusable, or dropped as non-target — and a counter
-    # that misses one would publish a lineage whose own numbers do not add up
-    # while B3 compared the file happily.
     accounted = len(records) + len(produced.omitted) + produced.non_target_segment_bars
     if accounted != produced.bars_replayed:
         raise ProduceFieldsError(
@@ -2077,11 +1507,6 @@ def build_lineage(
                 for item in input_files
             ],
             "input_file_count": len(input_files),
-            # Plan §3.2a: part of B3's WINDOW IDENTITY, so it is present on
-            # EVERY run. ``None`` means "no manifest" (a legacy data root) —
-            # NOT "no splice": the producer writes ``stitch.json`` even on a
-            # day with zero junctions, so a producer session is always
-            # non-null and a legacy B2 paired with a stitched B1a is refused.
             "stitch_manifest_sha256": stitch.manifest.sha256 if stitch else None,
             "stitch": _stitch_lineage(stitch, produced.non_target_segment_bars),
         },
@@ -2141,11 +1566,6 @@ def render_lineage(lineage: dict[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
-# ---------------------------------------------------------------------------
-# D7 measurement (moving VWAP vs the legacy frozen target)
-# ---------------------------------------------------------------------------
-
-
 def measure_moving_vs_frozen_exit(
     df: Any,
     *,
@@ -2154,26 +1574,7 @@ def measure_moving_vs_frozen_exit(
     contract_spec: ContractSpec,
     anchor: OpenAnchor,
 ) -> dict[str, Any]:
-    """Measure D7: when does a moving-VWAP exit differ from the legacy target?
-
-    For every bar the legacy setup FIRES on, walk the remaining bars of that
-    session and record the first bar at which
-
-    * the **frozen** rule triggers — the legacy ``take_profit`` price (fixed on
-      the signal) is reached, exactly as ``SetupTargetExit`` compares it, and
-    * the **moving** rule triggers — price is back at the session VWAP on the
-      entry's side (``z >= 0`` for a long fade, ``z <= 0`` for a short), which
-      is the strongest form a tenant policy can write on the published fields.
-
-    Returns the counts the lineage's D7 entry quotes. Kept beside the producer
-    rather than in a scratch script so the number in the sidecar can be
-    regenerated by the same code that documents it: ``--measure-d7`` prints the
-    :data:`D7_MEASUREMENT` literal from this function's output.
-
-    The buckets are disjoint and exhaustive — ``earlier + identical + later +
-    never_either == entries`` — and every lead is session-bounded, because the
-    inner walk stops at the session boundary.
-    """
+    """Measure D7: when does a moving-VWAP exit differ from the legacy target?"""
     setup = SetupDVWAPReversion(config=strategy.entry_config)
     replay = MarketContextReplay(
         df=df,
@@ -2187,18 +1588,13 @@ def measure_moving_vs_frozen_exit(
     )
 
     contexts: list[Any] = []
-    entries: list[tuple[int, str, float]] = []  # (index, direction, take_profit)
+    entries: list[tuple[int, str, float]] = []
     for ctx in replay.iter_contexts():
-        # 같은 프로토콜 간극 — 위 호출의 주석 참조.
         signal = setup.check(ctx)  # type: ignore[arg-type]
         contexts.append(ctx)
         if signal is not None:
             entries.append((len(contexts) - 1, signal.direction, signal.take_profit))
 
-    # Buckets are disjoint and exhaustive, and a "lead" is a number only when
-    # BOTH rules triggered inside the session. The first draft measured the
-    # frozen-never case to the end of the whole SERIES and reported a
-    # 32591-bar maximum — not a quantity about any session.
     earlier = identical = later = never_either = 0
     earlier_frozen_never = later_moving_never = 0
     leads: list[int] = []
@@ -2263,11 +1659,6 @@ def measure_moving_vs_frozen_exit(
     }
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class RunResult:
     """What a completed run wrote, for the CLI summary and for tests."""
@@ -2281,14 +1672,7 @@ class RunResult:
 
 
 def _bar_accounting(df: Any) -> tuple[int, int]:
-    """Return (warmup bars skipped, first-session bars dropped for no prior close).
-
-    ``MarketContextReplay`` yields from index ``DEFAULT_WARMUP_BARS`` onward and
-    additionally skips every bar whose session has no previous session in the
-    frame — which is exactly the first session date. Making both counts
-    explicit is what lets ``gated - dropped == replayed`` be asserted rather
-    than assumed.
-    """
+    """Return (warmup bars skipped, first-session bars dropped for no prior close)."""
     total = int(len(df))
     warmup = min(DEFAULT_WARMUP_BARS, total)
     first_date = df["timestamp"].dt.date.iloc[0]
@@ -2306,7 +1690,6 @@ class LoadedWindow:
     bars_loaded: int
     anchor: OpenAnchor
     input_files: list[InputFile]
-    #: Present only for a stitched window (plan §3.2a); ``None`` otherwise.
     stitch: StitchedInputs | None = None
 
     @property
@@ -2331,27 +1714,7 @@ def load_window(
     market_open: str,
     stitch_manifest: Path | None = None,
 ) -> LoadedWindow:
-    """Resolve strategy, contract, bars and open anchor for one window.
-
-    Shared by :func:`run` and the ``--measure-d7`` path so the measurement is
-    taken over exactly the window a produce would use — a second, slightly
-    different loader here is how the number in the sidecar would come to
-    describe a window nobody published.
-
-    **It is also the ONE alignment function** (plan §3.2a HIGH-1). B2
-    (``tools/tos_cp3/emit_legacy_decisions.py``) builds its frame through this
-    very call and the live producer reuses the same helpers, so a stitched
-    seed does not need three implementations to agree — there is one. Had the
-    alignment been a B1a flag instead, every stitched session would have been
-    an automatic B3 refusal on input digests and line counts.
-
-    Args:
-        stitch_manifest: path to a ``stitch.json``. With it, the frame is read
-            from exactly the manifest's ``(contract, day)`` pairs, the older
-            contract's OHLC is shifted by the integer ``c_x100``, and the
-            constant is re-derived from the stored bars and asserted against
-            the manifest.
-    """
+    """Resolve strategy, contract, bars and open anchor for one window."""
     strategy = load_strategy_inputs(strategy_yaml)
     registry = ContractSpecRegistry.from_yaml(str(REPO_ROOT / "config/execution.yaml"))
     contract_spec = resolve_contract_spec(symbol, registry)
@@ -2413,22 +1776,7 @@ def load_window(
 def _assert_window_matches_manifest(
     manifest: StitchManifest, *, start: date, end: date
 ) -> None:
-    """``--start``/``--end`` must be EXACTLY the manifest's span.
-
-    The manifest, not the date range, selects the partitions — but the range
-    is half of B3's window identity (``window_start`` / ``window_end``), so
-    the declared window has to be true of the frame that was actually read.
-
-    **Both directions are refused** (review LOW-1). Narrower was always
-    refused: the manifest would reach outside the window it claims. Wider was
-    accepted by the first cut and is just as wrong in the direction that
-    matters — ``--start 2026-09-01`` over a manifest beginning 2026-10-02
-    publishes a sidecar claiming a September window, and because B1a and B2
-    take the SAME flag they would both claim it, so B3 compares two equal
-    labels and never notices. The check has to be here or nowhere. There is no
-    case for a wider window: with a manifest the span IS the manifest's, and a
-    caller who wants a different one wants a different manifest.
-    """
+    """``--start``/``--end`` must be EXACTLY the manifest's span."""
     days = manifest.all_days
     if (start, end) != (days[0], days[-1]):
         raise ProduceFieldsError(

@@ -1,209 +1,4 @@
-"""``TickScheduler`` — the tick source (TOS tick-source wave, plan
-``docs/plans/2026-09-16-tos-tick-source-plan.md`` §2 decisions 1/5/6/7/8/9, lane D).
-
-Composes every other module in this package into one loop: poll the injected
-:class:`~tos_runtime.marketfeed.ports.ObservationIntake` -> take this pass's wall-clock reading
-through the injected ``before_decide`` hook -> gate on the session -> issue a
-:class:`~tos.capsule.CriticalInputSnapshot` (lane A) -> durably record it (lane B) -> issue a
-:class:`~tos.capsule.DecisionContextCapsule` (lane A) -> resolve through the REAL kernel
-:class:`~tos.marketfeed.MarketFeedContextResolver` (injected with the durable store and the lane C
-:class:`~tos_runtime.marketfeed.time_projection.RuntimeTimeProjection`) -> hand the resulting
-``DECISION_TICK`` to :class:`~tos_runtime.engine.driver.EngineDriver`.
-
-**Split: a pure decision function plus a thin loop (plan §2 decision 7).** :func:`decide_tick`
-receives only already-fetched, already-injected values (a session context, a batch of polled
-observations, the store's own ``latest_as_of``, a wall-clock reading, the last tick's own
-wall-clock reading, and the configured poll interval) and returns a :class:`TickDecision` — no
-I/O, no clock read, no randomness. Every test in the paired test module drives this function
-directly, or :meth:`TickScheduler.tick_once` (which performs the I/O and then calls it).
-:meth:`TickScheduler.run_forever` is the ONLY place ``time.sleep`` is called — mirrors the
-``time.sleep`` precedent already shipped at ``transport/kis_mock/adapter.py:480`` (module
-docstring's own firewall note).
-
-**The post-pass hook: injected work that is not part of producing a tick** (PR-3b follow-up,
-rescope plan ``docs/plans/2026-10-22-tos-rescope-plan.md`` §3 M2). :meth:`TickScheduler
-.run_forever` calls the constructor-injected ``after_pass`` hook once per pass, AFTER
-:meth:`tick_once` returns and BEFORE ``sleep``. Compose passes
-``_broker_posttrade_wiring.fill_observer_pass``, which polls a stock MOCK boot's post-ACK fill
-observer (:mod:`tos_runtime.posttrade.fill_observer`) — until this hook existed nothing called
-``poll_if_due()`` in a running session, so a real fill was never observed. Three properties,
-each deliberate:
-
-* **In the loop, not inside** :meth:`tick_once`. The hook's work is not part of producing a
-  tick, and it must run on EVERY pass — including the ones :meth:`tick_once` returns early
-  from. ``SKIPPED_SESSION_CLOSED`` is the one that matters: an order ACKed just before the
-  close still has a fill to observe and capacity to release, and a hook reached only on the
-  ``TICKED`` path would stop reading the broker exactly when the answer arrives.
-* **After the pass, never before it — and the whole pass is MEASURED** (#949 review HIGH).
-  Ordering it after the decision is the same reasoning (and the same independent-review
-  finding, LOW-5) that put :meth:`TickScheduler._record_field_refusals` after the decision
-  rather than between ``store.put`` and it. But ordering alone does not bound anything: a
-  bar's age when the next pass reads it is the collector's delay plus this loop's own period,
-  and the boot guard ``_marketfeed_wiring._load_config_within_freshness_budget`` reserves
-  exactly ``poll_interval_ms + journal_pass_allowance_ms`` of the field policy's
-  ``max_age_ms`` for that — so a hook that takes longer than its share pushes bars toward
-  ``STALE``, which (issue #807) are consumed and never retried. Three things hold the line,
-  none of them ordering:
-
-  1. **The sleep is compensated** (:meth:`TickScheduler._pass_sleep_seconds`): the loop sleeps
-     ``poll_interval_ms`` MINUS what the pass already spent, so the tick-to-tick PERIOD — the
-     thing a bar's age is actually measured against — stays what the config asked for. A hook
-     that finishes inside the interval costs the feed nothing at all.
-  2. **The hook's own work is bounded by its own config**, not by the order path's: the fill
-     observer's GETs take ``fill_observer.yaml::witness_request_timeout_s`` (2 s, not the
-     order path's 10 s) and the whole poll takes ``poll_deadline_ms`` (1.5 s), after which it
-     starts no further read and fetches no further page — an absence, never a partial list.
-  3. **Every pass is measured** (:meth:`TickScheduler._record_pass_overrun`), so a ``STALE``
-     field caused by this hook is distinguishable from a late producer.
-
-  **The broker reads are no longer on this thread** (issue #950). The fill observer's
-  ``poll_if_due`` hands its reads — the order inquiry AND the release reconciliation's
-  balance/order snapshot, the #949 r2 MEDIUM-1 term — to one worker thread
-  (:mod:`tos_runtime.posttrade.fill_fetch`) and applies the result on this thread on a later
-  pass, so a slow or sick broker stretches no pass. What stays on this thread is the APPLY
-  work (evidence rows, the engine feed, finality, the release's RCL/evidence writes) — local
-  sqlite, no network. ⚠ One bounded remainder: a release reconciliation whose scope the
-  prefetch did not anticipate (a receipt date appearing between plan and apply, or the trading
-  date turning over in between) reads the broker live here, bounded by
-  ``witness_request_timeout_s`` x ``max_pages`` per walk as before #950 — recorded by the
-  overrun row if it ever outruns the window. A prefetched snapshot past
-  ``release_snapshot_max_age_ms`` is never re-read here: that release holds and the worker
-  re-reads (#969 review r1). And while the worker is issuing a KIS token, an order send or quote
-  read on this thread waits on the token lock for at most the app key's request wait budget
-  (``kis_mock_transport.yaml::app_key_request_wait_budget_ms``, 4 s) before it is refused
-  unsent (review-979 r1 MEDIUM; before it waited out the worker's whole POST). That is not the
-  whole wait: a request that gets the token then waits for its own pacer slot, bounded by the
-  same budget, so one order or quote read can sit up to ~8 s on this thread before it is sent
-  or refused (review-979 r2 LOW-B; the PR's loop-blocking bound).
-
-**Every journal-intake tree gets the compensation and the overrun row, not only the stock
-one** (#949 r2 LOW-1). ``journal_pass_allowance_ms`` is required for ``intake_kind: journal``,
-so paper and the CP-3 LONG/SHORT trees are measured and compensated too, from their next boot
-— their pass period becomes the configured ``poll_interval_ms`` instead of
-``poll_interval_ms + tick``. Those trees have no post-pass hook at all (no fill observer), so
-the change is a few milliseconds of period and strictly better for freshness; it is still a
-timing change in a running futures session and is called out in #949's own PR body.
-* **A raise propagates**, exactly like every other evidence failure in this module
-  (:meth:`TickScheduler._record_field_refusals`'s own docstring). The hook's own non-fatal
-  conditions stay its own business — the fill observer records a failed broker read as an
-  evidence row and returns normally — so what reaches this loop is a failure of the durable
-  bookkeeping itself, and a runtime that kept ticking past that would keep taking risk it can
-  no longer account for.
-
-**Read order: the intake FIRST, the wall-clock reading SECOND** (plan
-``docs/plans/2026-09-27-tos-freshness-read-order-plan.md`` §2.1, operator disposition §6.1;
-issue #809). :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now` returns the
-reading the LAST ``evaluate()`` cached (``time/service.py:697-711``), so a pass that evaluated
-BEFORE reading the journal judged every line appended in between against a reading older than the
-line's own ``as_of`` — ``source_age`` went negative, and past
-``MAX_future_timestamp_tolerance_ms`` (50) the kernel answered ``CONFLICTED``
-(``tos/src/tos/time/predicates.py`` ``freshness_verdict``) for an observation that was simply
-*newer than the reading*. Measured: 1 of 35 appended observations in the 2026-09-27 rehearsal.
-Reading the journal first and evaluating after makes ``as_of <= R < S'`` for any sane collector,
-so ``source_age >= 0`` and ``CONFLICTED`` is left to mean what it should — a collector clock
-genuinely ahead by more than the tolerance. The kernel's future-dating defence is neither widened
-nor narrowed, and the evaluation count stays exactly one per pass.
-
-**``tick_once`` still never evaluates time itself.** It calls the constructor-injected
-``before_decide`` hook (compose passes :meth:`~tos_runtime.marketfeed.time_pacer
-.TimeEvaluationPacer.before_decide`) between the poll and the decision, and
-:meth:`TickScheduler.run_forever` calls nothing but :meth:`TickScheduler.tick_once` and ``sleep``.
-A ``False`` answer — the evaluation was due and failed — returns
-:attr:`~tos_runtime.marketfeed.ports.TickOutcome.SKIPPED_TIME_NOT_EVALUATED` **without** a
-``store.put``, so the polled observation is not consumed. ⚠ Not consuming is the whole of what
-this module can do — whether the next pass actually SEES that observation again is the INTAKE's
-property, not this one's. It holds for an intake whose ``poll`` is a pure function of
-``after_as_of_ms`` (the port's own contract, and what
-:class:`~tos_runtime.marketfeed.journal.JsonLinesObservationJournal` does), and it also holds for
-``transport.kis_quote.adapter.KisQuoteObservationIntake``, which dedups on a content digest it
-holds PENDING until ``after_as_of_ms`` advances — the signal that the previous pass's observation
-was durably consumed (``ports.py``'s own ``SKIPPED_TIME_NOT_EVALUATED`` docstring).
-
-**The request anchor: a pending observation is stamped HERE, after the hook** (plan
-``docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md`` §2.3; issue #810). A pull intake
-with no source event time of its own returns
-:class:`~tos_runtime.marketfeed.ports.MonotonicAnchoredObservation` — the monotonic instants its
-fetch spanned — and :meth:`TickScheduler._anchor_polled` maps them onto THIS pass's freshly
-evaluated reading through :meth:`~tos_runtime.time.service.TrustworthyTimeService
-.wall_clock_at_monotonic`, so ``as_of`` is the instant the REQUEST went out and ``source_age``
-carries the round trip instead of the pass spacing. When either mapping is unavailable (time not
-``TRUSTED``, or the instants fall outside the cycle that evaluation covers) the pass answers
-:attr:`~tos_runtime.marketfeed.ports.TickOutcome.SKIPPED_TIME_UNANCHORED` — again without a
-``store.put``, and again without stopping the loop. A ``RawObservation`` is never re-anchored:
-its collector measured a real event time and this module does not overwrite measurements.
-
-**The session gate runs before the anchor, not after it** (PR #812 review, MEDIUM). While the
-session is known shut the pacer is typically not due, so ``before_decide`` answers ``True``
-without evaluating and the pass still holds an EARLIER cycle's mapping — a pending observation
-fetched since then lies outside that cycle's domain and maps to ``None``. Anchoring first would
-then label a shut market ``SKIPPED_TIME_UNANCHORED``, whose whole meaning is "the evaluation
-succeeded, the anchor did not". :meth:`TickScheduler.tick_once` therefore reads the session
-immediately after the hook and answers
-:attr:`~tos_runtime.marketfeed.ports.TickOutcome.SKIPPED_SESSION_CLOSED` first — the same gate
-order :func:`decide_tick` itself applies, so the thin loop and the pure function name the same
-absence for the same pass.
-
-**Per-observation distinctness is checked here too, independently of the journal's own filter**
-(plan §2 decision 5; ``ports.py``'s ``DurableSnapshotStore.latest_as_of`` docstring). A collector
-could hand a raw observation to ANY :class:`~tos_runtime.marketfeed.ports.ObservationIntake`
-implementation, not only :class:`~tos_runtime.marketfeed.journal.JsonLinesObservationJournal` (which
-already filters ``after_as_of_ms``) — so :func:`decide_tick` re-derives ``SKIPPED_NOT_NEWER`` from
-the polled batch and the store's own durable ``latest_as_of``, rather than trusting the intake to
-have filtered correctly. A distinct as-of is what makes a distinct snapshot digest (design #32 §4.1)
-— this is the CIS's own obligation, not the publication gate's (``tos/tests/marketfeed
-/test_marketfeed_cis_port.py:46-49``).
-
-**``reference`` is never claimed** (plan §2 decision 8). This module calls
-``self._resolver(capsule, instrument_key=...)`` — :meth:`~tos.marketfeed.MarketFeedContextResolver
-.__call__`, whose own docstring already leaves ``reference`` at the engine's ``OrderingEvent()``
-default — and hands the resulting :class:`~tos.engine.EngineEvent` to
-:meth:`~tos_runtime.engine.driver.EngineDriver.enqueue_and_run`, whose ``_stamp`` discards
-whatever ``reference`` a caller supplied and re-stamps from its own yield-order counter
-(``engine/driver.py:397``). Nothing in this module ever constructs an ``OrderingEvent`` itself.
-
-**Single instrument only** (plan §2 decision 8; ``ports.py``'s ``TickOutcome`` docstring). A live
-multi-symbol event source would owe the engine core the same single-continuity ingest order its
-backtest counterpart provides (:class:`~tos.backtest.driver.YieldOrderCounter`), and that
-obligation — FORWARD-OBLIGATION-MS1 — is recorded as *new and unratified*
-(``tos/src/tos/backtest/driver.py:78-86``). :class:`TickScheduler` therefore takes ``instruments``
-as a ``Sequence[str]`` (the shape a config file naturally produces) and REFUSES at construction,
-citing that obligation, when it does not name exactly one.
-
-**Held runtime (recovery barrier HOLD) — mirrors ``ComposedRuntime.observe_nontrade``'s own shape,
-does not invent a second one** (module docstring's own "no code path left that could touch
-capacity" discipline, ``_recovery_wiring.py``). When ``driver is None`` (the TOS Phase 5 W1
-recovery barrier did not resolve to ``READY`` — ``ComposedRuntime.driver``'s own docstring), this
-module never pretends the tick was processed: it enqueues the UNSTAMPED event directly onto the
-durable inbox (to be picked up once a driver eventually exists — the SAME "inbox, not a phantom
-process" idiom :meth:`~tos_runtime.compose._types.ComposedRuntime.observe_nontrade` already uses
-for its own held-runtime branch) and appends an evidence row naming what was queued. **Deviation
-from the committed ``ports.py`` ``TickOutcome`` vocabulary, reported rather than patched around**:
-that enum has no "queued, driver absent" member. Rather than editing a landed contract to add one,
-or silently reusing ``SKIPPED_*`` (which would misreport — a tick genuinely WAS produced and
-durably queued, nothing was skipped), :meth:`TickScheduler.tick_once` returns the ADDITIVE
-:class:`TickResult`
-wrapper (this module's own type, not a `ports.py`` edit) — ``outcome=TickOutcome.TICKED`` with
-``queued_until_recovery=True``, an honest "yes, but not yet run" the plain enum cannot express.
-(#809 DID add one member to that enum,
-:attr:`~tos_runtime.marketfeed.ports.TickOutcome.SKIPPED_TIME_NOT_EVALUATED`, under the operator's
-own disposition — and the two cases are not the same shape: that one names a pass that produced
-**no** tick, which is exactly what this vocabulary is for, whereas "queued, driver absent" is a
-tick that WAS produced and therefore belongs on the richer result, as this enum's own docstring
-already says.)
-
-**Every declared field going ``UNKNOWN`` is still a tick, never ``REFUSED_POLICY``.** This wave's
-scheduler never produces :attr:`~tos_runtime.marketfeed.ports.TickOutcome.REFUSED_POLICY` — a
-payload whose fields are all stale/absent under the governed policy still publishes an
-explicit-empty (or partially-empty) value view (plan §5 exit criterion 3/4), which is a real,
-recorded ``TICKED`` tick, not a refusal. The member is left in ``ports.py`` for a future producer
-that might refuse a whole observation outright (e.g. an intake-level trust failure this wave does
-not have); this scheduler simply never reaches it.
-
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``time``) + ``tos.*`` +
-``tos_runtime.*`` only. No ``shared.*``, no network. The one clock read anywhere in this module's
-call graph is :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now`, treated as
-an opaque injected reading (mirrors :mod:`~tos_runtime.marketfeed.time_projection`'s own note).
-"""
+"""``TickScheduler`` — the tick source (TOS tick-source wave, plan"""
 
 from __future__ import annotations
 
@@ -249,40 +44,19 @@ __all__ = [
 
 @dataclass(frozen=True)
 class PassBudget:
-    """What one :meth:`TickScheduler.run_forever` pass is allowed to cost, and the clock that
-    measures it (#949 review HIGH item (b); :meth:`TickScheduler._record_pass_overrun`).
-
-    One object rather than two optional constructor arguments: a budget without a clock cannot
-    be measured and a clock without a budget has nothing to judge, so both-or-neither is the
-    shape, enforced here instead of by matching ``None`` checks at the use site.
-
-    Attributes:
-        monotonic: The injected monotonic source — a DURATION measurement, never a time fact,
-            so it is unrelated to the one wall-clock reading a pass takes (module docstring).
-        allowance_ms: ``marketfeed.yaml::journal_pass_allowance_ms`` — the runtime's own share
-            of the freshness budget ``_marketfeed_wiring._load_config_within_freshness_budget``
-            already refuses a config for exceeding. The same number, read once.
-    """
+    """What one :meth:`TickScheduler.run_forever` pass is allowed to cost, and the clock that"""
 
     monotonic: MonotonicSource
     allowance_ms: int
 
 
 class MultiInstrumentRefused(RuntimeError):
-    """Raised by :meth:`TickScheduler.__init__` when ``instruments`` does not name exactly one
-    instrument (module docstring — FORWARD-OBLIGATION-MS1 is unratified for a live multi-symbol
-    source)."""
+    """Raised by :meth:`TickScheduler.__init__` when ``instruments`` does not name exactly one"""
 
 
 @dataclass(frozen=True)
 class TickDecision:
-    """One pure verdict from :func:`decide_tick`.
-
-    Attributes:
-        outcome: Why this pass did or did not tick.
-        observation: The observation to issue a snapshot for — concrete iff
-            ``outcome is TickOutcome.TICKED``, ``None`` otherwise.
-    """
+    """One pure verdict from :func:`decide_tick`."""
 
     outcome: TickOutcome
     observation: RawObservation | None = None
@@ -297,33 +71,13 @@ def decide_tick(
     last_tick_wall_clock_ms: int | None,
     poll_interval_ms: int,
 ) -> TickDecision:
-    """The pure decision (plan §2 decision 7): does the session admit a tick, is there a new
-    observation, is it newer than what is already durably issued, and has the poll interval
-    elapsed — in that order, each a DIFFERENT named absence when it fails.
-
-    Args:
-        session_context: This tick's session facts (``SessionFactsOwner.session_context(...)``),
-            or ``None`` when no wall-clock reading was available to derive one.
-        observations: The batch :meth:`~tos_runtime.marketfeed.ports.ObservationIntake.poll`
-            returned, oldest-first (may be empty).
-        latest_as_of_ms: The store's own newest already-issued as-of for this instrument, or
-            ``None`` if none has been issued yet.
-        now_ms: The current wall-clock reading, or ``None`` when unavailable.
-        last_tick_wall_clock_ms: The wall-clock reading at the last ``TICKED`` pass, or ``None``
-            before the first tick.
-        poll_interval_ms: The configured minimum spacing between ticks.
-
-    Returns:
-        The :class:`TickDecision`.
-    """
+    """The pure decision (plan §2 decision 7): does the session admit a tick, is there a new"""
     if session_context is None or not session_context.is_open:
         return TickDecision(outcome=TickOutcome.SKIPPED_SESSION_CLOSED)
     if not observations:
         return TickDecision(outcome=TickOutcome.SKIPPED_NO_OBSERVATION)
     newest = max(observations, key=lambda observation: observation.as_of_ms)
     if latest_as_of_ms is not None and newest.as_of_ms <= latest_as_of_ms:
-        # The CIS's own distinctness obligation (module docstring) — independent of whatever
-        # filtering the intake itself already did.
         return TickDecision(outcome=TickOutcome.SKIPPED_NOT_NEWER)
     if (
         now_ms is not None
@@ -336,52 +90,22 @@ def decide_tick(
 
 @dataclass(frozen=True)
 class TickResult:
-    """One :meth:`TickScheduler.tick_once` outcome (module docstring's own "held runtime"
-    deviation note — additive over the plain :class:`~tos_runtime.marketfeed.ports.TickOutcome`,
-    never a replacement for it).
-
-    Attributes:
-        outcome: The :class:`~tos_runtime.marketfeed.ports.TickOutcome`.
-        queued_until_recovery: ``True`` iff a tick WAS produced (``outcome is TICKED``) but the
-            recovery barrier held (``driver is None``), so it was durably enqueued rather than
-            run. Always ``False`` for every non-``TICKED`` outcome.
-        value_view: The resolved :class:`~tos.dsl.ContextValueView` the REAL kernel resolver
-            published for this tick — the SAME object handed to the engine, exposed here so a
-            caller (a test, an operator dashboard) can inspect what a tick actually admitted
-            without re-resolving it. ``None`` for every non-``TICKED`` outcome (mirrors
-            :attr:`~tos.engine.records.DecisionTickPayload.value_view`'s own "absent, not
-            fabricated" discipline — an explicit-empty view is still a concrete, non-``None``
-            :class:`~tos.dsl.ContextValueView` with ``values == ()``).
-    """
+    'One :meth:`TickScheduler.tick_once` outcome (module docstring\'s own "held runtime"'
 
     outcome: TickOutcome
     queued_until_recovery: bool = False
     value_view: ContextValueView | None = None
 
 
-#: The evidence kind for a tick queued while the recovery barrier holds (module docstring —
-#: mirrors ``ComposedRuntime._NONTRADE_QUEUED_UNTIL_RECOVERY_KIND``'s own naming convention).
 _MARKETFEED_QUEUED_UNTIL_RECOVERY_KIND = "MARKETFEED_QUEUED_UNTIL_RECOVERY"
 
-#: The evidence kind for a tick whose issued snapshot refused at least one policy-declared
-#: field — :meth:`TickScheduler._record_field_refusals`'s own docstring has the measurement
-#: this exists for.
 _MARKETFEED_FIELD_REFUSED_KIND = "MARKETFEED_FIELD_REFUSED"
 
-#: The evidence kind for a :meth:`TickScheduler.run_forever` pass whose own work (the tick plus
-#: the post-pass hook) ran longer than the configured pass budget —
-#: :meth:`TickScheduler._record_pass_overrun`'s own docstring has the reasoning.
 _MARKETFEED_PASS_OVERRUN_KIND = "MARKETFEED_PASS_OVERRUN"
 
 
 def _require_single_instrument(instruments: Sequence[str]) -> str:
-    """The one instrument ``instruments`` must name (module docstring; :class:`TickScheduler`'s
-    own single-instrument-scope discipline, split out purely for its ``__init__``'s 100-line
-    function budget — no behaviour difference from inlining it there).
-
-    Raises:
-        MultiInstrumentRefused: ``instruments`` does not name exactly one instrument.
-    """
+    """The one instrument ``instruments`` must name (module docstring; :class:`TickScheduler`'s"""
     if len(instruments) != 1:
         raise MultiInstrumentRefused(
             "TickScheduler is single-instrument-scoped (plan §2 decision 8) — instruments must "
@@ -405,16 +129,7 @@ def _build_issuers(
     store: DurableSnapshotStore,
     time_projection: RuntimeTimeProjection,
 ) -> tuple[SnapshotIssuer, CapsuleIssuer, MarketFeedContextResolver]:
-    """Build :class:`TickScheduler`'s three issuance collaborators (split out of ``__init__``
-    purely for its 100-line function budget — no behaviour difference from inlining it there).
-
-    ``environment``/``decision_class``/``issuer_principal_id`` are read from ``policy``, never
-    re-typed here (구조 파생 > 자기신고 — the same discipline ``snapshot.py``/``capsule.py`` already
-    apply). The resolver's ``candidate_source`` is ``store.candidates`` — the BOUND METHOD, never
-    the store object itself (``ports.py``'s ``DurableSnapshotStore`` docstring's own trap: passing
-    the object there passes every construction-time check and then raises ``TypeError`` at the
-    first resolve).
-    """
+    """Build :class:`TickScheduler`'s three issuance collaborators (split out of ``__init__``"""
     snapshot_issuer = SnapshotIssuer(policy=policy, scheme=scheme, account=account)
     capsule_issuer = CapsuleIssuer(
         account=account,
@@ -468,36 +183,7 @@ class TickScheduler:
         after_pass: Callable[[], None] | None = None,
         pass_budget: PassBudget | None = None,
     ) -> None:
-        """Wire the scheduler (every arg's own docstring lives on the field it fills below —
-        ``instruments``/``instrument_class``/``account``/``direction``/``quantity_basis``/
-        ``unit``/``poll_interval_ms`` are this scheduler's own scope; ``policy``/``scheme``/
-        ``intake``/``store``/``time_projection`` are the injected collaborators the class
-        docstring already names; ``time_service``/``session_owner``/``driver``/``inbox``/
-        ``evidence_store`` are THIS PROCESS's shared instances, never a second independently-run
-        one (mirrors every other compose wiring module's "SAME source" discipline)).
-
-        ``before_decide`` runs INSIDE every :meth:`tick_once` pass — after the intake read and
-        before this pass's wall-clock reading is taken (module docstring's own read-order
-        paragraph, plan 2026-09-27 §2.1 / issue #809) — and the pass decides only when it returns
-        ``True``. Compose passes :meth:`~tos_runtime.marketfeed.time_pacer
-        .TimeEvaluationPacer.before_decide` so the wall-clock reading advances once per pass, on
-        the intake-read side of the poll (plan 2026-09-26 periodic time eval, W1); ``None`` leaves
-        the time service to the caller. :meth:`tick_once` still evaluates nothing itself — it only
-        calls this hook.
-
-        ``after_pass`` runs once per :meth:`run_forever` pass, after :meth:`tick_once` returns
-        and before ``sleep`` — whatever that pass's outcome was, and never from
-        :meth:`tick_once` itself (module docstring's own post-pass-hook paragraph). Compose
-        passes ``_broker_posttrade_wiring.fill_observer_pass``; ``None`` leaves the loop with
-        nothing to run after a pass, which is every boot that is not a stock MOCK order tree.
-
-        ``pass_budget`` is what makes a pass's own duration MEASURED rather than assumed
-        (:class:`PassBudget`, :meth:`_record_pass_overrun`). ``None`` — the default — leaves a
-        scheduler that behaves exactly as it did before and records no overrun row.
-
-        Raises:
-            MultiInstrumentRefused: ``instruments`` does not name exactly one instrument.
-        """
+        """Wire the scheduler (every arg's own docstring lives on the field it fills below —"""
         self._before_decide = before_decide
         self._after_pass = after_pass
         self._pass_budget = pass_budget
@@ -531,21 +217,7 @@ class TickScheduler:
     def _anchor_polled(
         self, polled: Sequence[RawObservation | MonotonicAnchoredObservation]
     ) -> tuple[RawObservation, ...] | None:
-        """Finalize every :class:`~tos_runtime.marketfeed.ports.MonotonicAnchoredObservation`
-        in ``polled`` against the reading THIS pass's evaluation just produced (module
-        docstring's own request-anchor paragraph; plan 2026-09-28 §2.3).
-
-        A :class:`~tos_runtime.marketfeed.ports.RawObservation` passes through untouched — the
-        journal's collector already stamped an honest source event time, and re-anchoring it
-        here would overwrite a measurement with a guess.
-
-        Returns:
-            The finalized batch, or ``None`` when ANY pending observation cannot be mapped —
-            the whole pass is then :attr:`~tos_runtime.marketfeed.ports.TickOutcome
-            .SKIPPED_TIME_UNANCHORED`. All-or-nothing on purpose: a batch silently reduced to
-            its mappable members would let ``decide_tick`` pick a "newest" that is merely the
-            newest of the survivors.
-        """
+        """Finalize every :class:`~tos_runtime.marketfeed.ports.MonotonicAnchoredObservation`"""
         finalized: list[RawObservation] = []
         for observation in polled:
             if isinstance(observation, RawObservation):
@@ -567,18 +239,7 @@ class TickScheduler:
         return tuple(finalized)
 
     def tick_once(self) -> TickResult:
-        """Run exactly one scheduler pass — intake read FIRST, wall-clock reading SECOND (module
-        docstring's own read-order paragraph; plan 2026-09-27 §2.1, issue #809).
-
-        Returns:
-            The :class:`TickResult`. ``SKIPPED_TIME_NOT_EVALUATED`` when ``before_decide``
-            answered ``False``, ``SKIPPED_SESSION_CLOSED`` when the session this pass reads is
-            absent or shut, and ``SKIPPED_TIME_UNANCHORED`` when the session WAS open and a
-            polled :class:`~tos_runtime.marketfeed.ports.MonotonicAnchoredObservation` could not
-            be placed on the resulting reading: no ``store.put`` happens on any of the three, so
-            whatever was polled stays unconsumed. Whether the next pass then SEES it again is
-            the intake's own property (module docstring).
-        """
+        """Run exactly one scheduler pass — intake read FIRST, wall-clock reading SECOND (module"""
         latest_as_of_ms = self._store.latest_as_of(instrument=self._instrument)
         polled = self._intake.poll(
             instrument=self._instrument, after_as_of_ms=latest_as_of_ms
@@ -587,14 +248,6 @@ class TickScheduler:
             return TickResult(outcome=TickOutcome.SKIPPED_TIME_NOT_EVALUATED)
         now_ms = self._time_service.wall_clock_now()
         session_context = self._session_owner.session_context(self._instrument_class)
-        # The session gate runs BEFORE the anchor — the same order :func:`decide_tick` applies
-        # it in (module docstring's own gate-order paragraph). While the session is known shut
-        # the pacer is typically NOT due, so ``before_decide`` answers ``True`` without
-        # evaluating and this pass still holds an earlier cycle's mapping; a pending
-        # observation fetched since then falls outside that cycle's domain and maps to
-        # ``None``. Anchoring first would therefore report SKIPPED_TIME_UNANCHORED — "the
-        # evaluation succeeded, the anchor did not" — for a pass whose real and sufficient
-        # reason is that the market is shut.
         if session_context is None or not session_context.is_open:
             return TickResult(outcome=TickOutcome.SKIPPED_SESSION_CLOSED)
         observations = self._anchor_polled(polled)
@@ -611,7 +264,7 @@ class TickScheduler:
         if decision.outcome is not TickOutcome.TICKED:
             return TickResult(outcome=decision.outcome)
         observation = decision.observation
-        assert observation is not None  # decide_tick's own TICKED contract
+        assert observation is not None
 
         issued = self._snapshot_issuer.issue(observation, now_ms=now_ms)
         self._store.put(issued.snapshot, issued.preimages)
@@ -623,21 +276,12 @@ class TickScheduler:
         if self._driver is not None:
             self._driver.enqueue_and_run(event)
         else:
-            # Held runtime (module docstring) — mirrors
-            # ComposedRuntime.observe_nontrade's own "enqueue + evidence row, never pretend it
-            # was processed" branch, never a second convention.
             self._inbox.enqueue(event)
             self._evidence_store.append(
                 {"instrument": self._instrument, "as_of_ms": observation.as_of_ms},
                 kind=_MARKETFEED_QUEUED_UNTIL_RECOVERY_KIND,
                 record_class=_MARKETFEED_QUEUED_UNTIL_RECOVERY_KIND,
             )
-        # AFTER the decision, not between `store.put` and it (independent review LOW-5). The
-        # append is a BEGIN IMMEDIATE/COMMIT, and this row is DIAGNOSTICS — putting it on the
-        # path to `enqueue_and_run` would make every refused tick pay that write before its
-        # decision. On a tick whose fields were refused for being LATE, that is the one place
-        # a diagnostic must not cost time. Still after `store.put`, so the snapshot it
-        # explains is durable first.
         self._record_field_refusals(issued, observation, now_ms=now_ms)
         self._last_tick_wall_clock_ms = now_ms
         return TickResult(
@@ -653,48 +297,7 @@ class TickScheduler:
         *,
         now_ms: int | None,
     ) -> None:
-        """Record WHY an issued snapshot refused fields, when it refused any.
-
-        ⛔ **The measurement this exists for.** On 2026-10-22 one consumed bar
-        (``A05611:1m:20261022T151200+0900``) was refused ``TIME_NOT_ADMITTED``/
-        ``DECISION_WITHHELD``, and answering "stale, or was the evaluation clock unknown?"
-        took a full read-only dive through the durable store, because the number that
-        decided it was nowhere: :func:`~tos_runtime.marketfeed.snapshot._derive_field_state`
-        computes the reason and the snapshot keeps only ``FieldState.UNKNOWN``, with
-        ``field_evaluations[*].freshness.source_age`` written ``null``.
-        ``tools/tos_cp3/session_inputs.py`` already says so in its own docstring ("the
-        persisted FieldState is never STALE ... keeps the reason in memory only") and spends
-        a whole derived upper bound working around it. :class:`FieldEvaluationReport` was
-        built for "a future evidence row" (its own docstring); this is that row.
-
-        The answer that day was 922 ms against a ``max_age_ms`` of 800 — a scheduler pass
-        that ran 1280 ms in a 408 ms loop, not a late producer. Both numbers are on this row
-        now, so the same question is one query.
-
-        **Diagnostics only.** Nothing reads this row to decide anything: the refusal already
-        happened inside the issuer, and the conservative path (UNKNOWN values ⇒ no
-        transmission) is unchanged whether or not this row is written.
-
-        **Called after the decision** (independent review LOW-5), and after ``store.put`` so
-        the snapshot it explains is durable first. An append is a ``BEGIN IMMEDIATE``/
-        ``COMMIT``; between the put and the decision it would make every refused tick pay that
-        write BEFORE deciding, and on a tick whose fields were refused for being LATE that is
-        the one place a diagnostic must not cost time.
-
-        **A failed append propagates** — deliberately, and the same way every other evidence
-        row in this module behaves. Evidence that cannot be written is not a condition to
-        continue past: a runtime that kept ticking with an unwritable store would produce
-        decisions no one can later account for. Pinned by
-        ``test_scheduler.py::TestTheFieldRefusalRow::test_an_unwritable_evidence_store_stops_the_pass``.
-
-        Args:
-            issued: The snapshot just issued, carrying its per-field reports.
-            observation: The observation it was issued from — its ``as_of_ms`` is the left
-                side of the age comparison.
-            now_ms: The wall-clock reading this pass evaluated against, or ``None`` when the
-                clock could not be established (then every field reads ``now_ms_unknown``
-                and ``age_ms`` is honestly absent rather than invented).
-        """
+        """Record WHY an issued snapshot refused fields, when it refused any."""
         refused = [
             report for report in issued.field_reports if report.reason is not None
         ]
@@ -712,7 +315,6 @@ class TickScheduler:
                 "raw_event_id": observation.raw_event_id,
                 "as_of_ms": observation.as_of_ms,
                 "evaluated_at_ms": now_ms,
-                # The comparison itself, both sides. `None` only when `now_ms` was.
                 "age_ms": None if now_ms is None else now_ms - observation.as_of_ms,
                 "stale_max_age_ms": stale_bounds,
                 "fields_declared": len(issued.field_reports),
@@ -731,30 +333,7 @@ class TickScheduler:
         sleep: Callable[[float], None] = time.sleep,
         stop: Callable[[], bool] = lambda: False,
     ) -> None:
-        """The thin loop — the ONLY place this module calls ``time.sleep`` (module docstring).
-
-        Args:
-            sleep: Injected sleep callable (seconds) — a test supplies a fake to run this
-                loop without a real wall-clock wait.
-            stop: Injected stop predicate, checked before every pass — a test supplies one that
-                flips ``True`` after N calls so this loop terminates.
-
-        This loop calls :meth:`tick_once`, the constructor's ``after_pass`` hook, and ``sleep``
-        — nothing else. The ``before_decide`` hook now runs INSIDE the pass, between the intake
-        read and the decision (module docstring's own read-order paragraph; plan 2026-09-27
-        §2.1, issue #809), so a pass whose time evaluation failed is a :class:`TickResult` with
-        ``SKIPPED_TIME_NOT_EVALUATED``, not a pass this loop skipped.
-
-        ``after_pass`` runs once per pass, after the tick's own decision work and before the
-        sleep, on EVERY outcome — the post-pass-hook paragraph in the module docstring has the
-        three reasons (why here and not in :meth:`tick_once`, why after and not before, and why
-        a raise from it propagates out of this loop rather than being swallowed).
-
-        ``sleep`` is called with the interval MINUS this pass's own elapsed time whenever a
-        :class:`PassBudget` is wired (:meth:`_pass_sleep_seconds`), so the loop's PERIOD —
-        what bar ages are measured against — does not grow by whatever the tick and the hook
-        spent. Without a budget it is the plain configured interval, as before.
-        """
+        """The thin loop — the ONLY place this module calls ``time.sleep`` (module docstring)."""
         budget = self._pass_budget
         while not stop():
             started_ms = None if budget is None else budget.monotonic.now_ms()
@@ -767,25 +346,7 @@ class TickScheduler:
             sleep(self._pass_sleep_seconds(started_ms, done_ms))
 
     def _pass_sleep_seconds(self, started_ms: int | None, done_ms: int | None) -> float:
-        """How long to sleep after a pass: the configured interval MINUS what the pass itself
-        already spent, never negative.
-
-        ⛔ **Why the subtraction** (#949 review HIGH). What a bar's age is measured against is
-        the gap between two intake reads, not the sleep: an uncompensated loop makes that gap
-        ``poll_interval_ms + this pass's own work``, so every millisecond the post-pass hook
-        spends reading the broker is a millisecond of freshness taken from the next bar — and
-        past the field policy's ``max_age_ms`` the bar is read ``STALE``, consumed, and never
-        retried (issue #807). Subtracting keeps the PERIOD at the interval the config asked
-        for, so a hook that finishes inside the interval costs the feed exactly nothing.
-
-        Clamped at zero rather than carried forward: a pass that outran the whole interval
-        starts the next one immediately, and :meth:`_record_pass_overrun` has already recorded
-        it. Catching up by sleeping negative time is not a thing, and skipping a pass to catch
-        up would drop an intake read, which is the opposite of what this protects.
-
-        With no :class:`PassBudget` there is no clock to measure with, so the sleep is the
-        plain configured interval — exactly the pre-#949 behaviour.
-        """
+        """How long to sleep after a pass: the configured interval MINUS what the pass itself"""
         if started_ms is None or done_ms is None:
             return self._poll_interval_ms / 1000
         remaining_ms = self._poll_interval_ms - (done_ms - started_ms)
@@ -794,54 +355,11 @@ class TickScheduler:
     def _record_pass_overrun(
         self, started_ms: int | None, ticked_ms: int | None, done_ms: int | None
     ) -> None:
-        """Record a pass that ran longer than the whole window the freshness guard reserves —
-        and nothing otherwise.
-
-        ⛔ **Why this row exists** (#949 review HIGH, item (b)). A bar's age when the next pass
-        reads it is the collector's delay plus the loop's own period, and the boot guard
-        ``_marketfeed_wiring._load_config_within_freshness_budget`` budgets exactly
-        ``poll_interval_ms + journal_pass_allowance_ms`` of the field policy's ``max_age_ms``
-        for that. Before this row, a pass could spend arbitrarily longer than that — the
-        post-pass hook's broker read is the reason it now can — and the only visible
-        consequence was a ``STALE`` field, which looks exactly like a late producer. The
-        2026-10-22 refusal cost a read-only dive through the durable store to answer "stale, or
-        a slow pass?" (:meth:`_record_field_refusals`'s own measurement note). This row answers
-        it directly: both halves of the pass, and the window they were measured against.
-
-        **The threshold is the whole reserved window, not the allowance alone** (#949 r2
-        MEDIUM-3). ``journal_pass_allowance_ms`` on its own was the right comparison for an
-        UNCOMPENSATED loop, where the period was ``interval + pass`` and every millisecond of
-        pass came straight off the next bar's freshness. With :meth:`_pass_sleep_seconds`
-        subtracting the pass from the sleep, the period stays at ``poll_interval_ms`` until the
-        pass exceeds it — so a 210 ms pass on a 400 ms interval costs the feed nothing and is
-        not worth a row. What the reserved window says is: ages up to
-        ``poll_interval_ms + journal_pass_allowance_ms`` were PAID FOR at boot. A pass longer
-        than that is the first point where a bar can age past ``max_age_ms`` even with
-        compensation, and that is exactly when this row is worth writing.
-
-        **Diagnostics only, and only on an overrun.** Nothing reads this row to decide
-        anything, and a pass inside the window writes nothing at all — this must not add a
-        write to every pass of a healthy session.
-
-        **Written before the sleep, after the hook.** A pass that has already overrun is not
-        the place to defer the evidence that says so; and like every other append in this
-        module, a failure to write it propagates (:meth:`_record_field_refusals`).
-
-        Args:
-            started_ms: The monotonic reading taken before :meth:`tick_once`, or ``None`` when
-                no :class:`PassBudget` was injected (then nothing is measured or recorded).
-            ticked_ms: The reading taken after :meth:`tick_once` returned — the split between
-                the tick's own cost and the hook's.
-            done_ms: The reading taken after the hook returned. The SAME reading
-                :meth:`_pass_sleep_seconds` compensates with, so the row and the sleep can
-                never disagree about how long this pass took.
-        """
+        """Record a pass that ran longer than the whole window the freshness guard reserves —"""
         budget = self._pass_budget
         if budget is None or started_ms is None or ticked_ms is None or done_ms is None:
             return
         pass_ms = done_ms - started_ms
-        # The reserved window, both halves of it — the SAME sum the boot guard checks against
-        # the freshness budget, never a second notion of "too long".
         budget_ms = self._poll_interval_ms + budget.allowance_ms
         if pass_ms <= budget_ms:
             return

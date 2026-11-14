@@ -1,9 +1,4 @@
-"""Partition authority deny-table + registry-unavailable (§6.5; SA-EV-003/014).
-
-When the safety control plane is unverifiable (False OR None), every new-authority action
-is DENIED while existing economic effect is preserved; automatic re-arm is denied
-unconditionally (rejoin never auto-restores live mode).
-"""
+"""Partition authority deny-table + registry-unavailable (§6.5; SA-EV-003/014)."""
 
 from __future__ import annotations
 
@@ -48,7 +43,6 @@ def test_rejoin_never_auto_rearms() -> None:
     """(canary §13.5) Automatic re-arm is denied even when the control plane is verifiable."""
     verdict = partition_authority_verdict(True)
     assert verdict.automatic_rearm_denied is True
-    # But the other new-authority actions are permitted with a verifiable control plane.
     assert verdict.new_normal_risk_increasing_denied is False
     assert verdict.normal_capability_renewal_denied is False
     assert verdict.limit_enlargement_denied is False

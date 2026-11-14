@@ -1,20 +1,4 @@
-"""Strategy-output-semantics property tests — SOS-EV-001..006 (design §6.3; ADR-DEV-007).
-
-* **SOS-EV-001**: No-Action and an Explicit-Flat Proposal are **distinct** non-null
-  types with opposite exposure — never conflated, never an error/null/omission.
-* **SOS-EV-002/003**: a Portfolio Vector is a **set** of per-instrument Proposals
-  with **no** union / aggregate-authority field (realized by that field's absence).
-* **SOS-EV-004**: each target binds a Capsule and is wildcard-free; the Proposal
-  Builder rejects a wildcard / 'latest' account or instrument.
-* **SOS-EV-005**: every Outcome carries an all-false authority block; any true flag
-  is unconstructable.
-* **SOS-EV-006**: an undeclared vector is atomic (fail-closed); an atomic partial
-  approval yields whole-vector non-realization + required re-evaluation — never a
-  silent naked partial.
-
-★ fail-open guards: **★3 vacuous-True** (an empty vector is unconstructable);
-**★5 SOS-INV-005** true-flag authority is unconstructable.
-"""
+"""Strategy-output-semantics property tests — SOS-EV-001..006 (design §6.3; ADR-DEV-007)."""
 
 from __future__ import annotations
 
@@ -86,11 +70,6 @@ def _build_action(**overrides: object) -> Proposal:
     return build_proposal(**base)  # type: ignore[arg-type]
 
 
-# ---------------------------------------------------------------------------
-# SOS-EV-001 — No-Action ≠ Explicit-Flat
-# ---------------------------------------------------------------------------
-
-
 def test_no_action_and_explicit_flat_are_distinct_non_null_types() -> None:
     """No-Action and Explicit-Flat are distinct, recorded, opposite-exposure outcomes (SOS-EV-001)."""
     na = issue_no_action()
@@ -101,12 +80,9 @@ def test_no_action_and_explicit_flat_are_distinct_non_null_types() -> None:
     assert not isinstance(na, Proposal)
     assert not isinstance(flat, NoActionOutcome)
 
-    # Both are non-null and recorded (reproducible), never an error / omission.
     assert na.outcome_id is not None
     assert flat.proposal_id is not None
 
-    # Opposite exposure: a flat is a zero-position ACTION-shaped proposal; a
-    # no-action leaves exposure and carries no target/quantity vocabulary at all.
     assert flat.target_kind is TargetKind.FLAT
     assert flat.quantity_basis == FLAT_QUANTITY_BASIS
     assert not hasattr(na, "target_kind")
@@ -117,11 +93,6 @@ def test_action_proposal_cannot_use_flat_quantity_basis() -> None:
     """An ACTION proposal using the zero-position basis is an Explicit Flat — rejected (SOS-INV-001)."""
     with pytest.raises(ValidationError):
         _build_action(quantity_basis=FLAT_QUANTITY_BASIS)
-
-
-# ---------------------------------------------------------------------------
-# SOS-EV-002/003 — Portfolio Vector is a set, with no aggregate authority
-# ---------------------------------------------------------------------------
 
 
 def test_portfolio_vector_is_a_set_of_proposals_without_aggregate_authority() -> None:
@@ -141,7 +112,7 @@ def test_portfolio_vector_is_a_set_of_proposals_without_aggregate_authority() ->
         "total_authority",
         "union_authority",
     }
-    assert forbidden_aggregate_fields.isdisjoint(fields)  # SOS-INV-003 by absence
+    assert forbidden_aggregate_fields.isdisjoint(fields)
     assert {"components", "interdependence"} <= fields
 
 
@@ -170,11 +141,6 @@ def test_empty_vector_is_unconstructable() -> None:
         issue_vector(components=())
 
 
-# ---------------------------------------------------------------------------
-# SOS-EV-004 — targets are wildcard-free and Capsule-bound
-# ---------------------------------------------------------------------------
-
-
 def test_each_vector_target_is_capsule_bound_and_wildcard_free() -> None:
     """Every component binds a Capsule and names no wildcard scope (SOS-EV-004)."""
     vector = issue_vector()
@@ -198,15 +164,10 @@ def test_proposal_builder_rejects_wildcard_instrument(token: str) -> None:
         _build_action(instrument=token)
 
 
-# ---------------------------------------------------------------------------
-# SOS-EV-005 — every Outcome authority block is all-false
-# ---------------------------------------------------------------------------
-
-
 def test_default_authority_is_all_false() -> None:
     """The authored authority block defaults every flag to false (SOS-EV-005)."""
     authority = AllFalseAuthority()
-    assert _FLAG_NAMES  # non-vacuous: there are flags to check
+    assert _FLAG_NAMES
     assert all(getattr(authority, flag) is False for flag in _FLAG_NAMES)
 
 
@@ -224,11 +185,6 @@ def test_every_outcome_carries_all_false_authority() -> None:
             assert getattr(artifact.authority, flag) is False
 
 
-# ---------------------------------------------------------------------------
-# SOS-EV-006 — interdependence default + partial-approval transition
-# ---------------------------------------------------------------------------
-
-
 def test_undeclared_interdependence_defaults_to_atomic() -> None:
     """An undeclared vector is atomic (fail-closed default; SOS-EV-006)."""
     vector = issue_vector(interdependence=None)
@@ -243,7 +199,7 @@ def test_atomic_partial_approval_yields_whole_vector_non_realization() -> None:
     resolution = resolve_vector_realization(vector, frozenset({keys[0]}))
     assert resolution.realization is VectorRealization.WHOLE_VECTOR_NON_REALIZATION
     assert resolution.reevaluation_required is True
-    assert resolution.proceeding_targets == ()  # never a silent naked partial
+    assert resolution.proceeding_targets == ()
     assert keys[0] in resolution.rejected_targets
 
 

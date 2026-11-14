@@ -1,64 +1,4 @@
-"""Lane C pin (W3 plan §4 W3 row C: "``ReconciliationService`` 경로 실증 — 실 증인일 때
-``CORROBORATED`` 의 의미가 바뀌는 지점을 테스트로 고정 · 합성 증인과의 차이").
-
-**Status: closed on the orders axis (plan 2026-09-26 egress trading date).** ``ReconciliationService``
-cross-references ``(broker_execution_id, date)``: the receipt's ``trading_date`` — recorded at the
-ACK instant from trusted time — against the order's own broker-assigned ``order_date`` (KIS
-``ord_dt``). A KIS ODNO is a per-day sequence, so the id alone is not an identity (#804 review S2).
-The (b) tests below now pin the JOIN with these concrete classes; the one that stays unjoined is a
-receipt recorded before the date existed (no ``trading_date``), which is fail-closed by design. The
-history below is kept because it is why the join exists; the join's rules are pinned with doubles
-in ``test_service_execution_id_join.py``.
-
-**Why this file exists — read this before deleting any test in it.** The W3 plan's own §0.4
-states the wave's entire justification: a genuinely independent witness turns a ``CORROBORATED``
-verdict from a structural label into something substantive. This file's second half
-(:func:`test_real_kis_witness_cannot_join_the_same_order_to_its_known_attempt` and
-:func:`test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combination`) measures
-that this is **FALSE on the orders axis specifically**, with the real, concrete
-:class:`~tos_runtime.recon.witness_kis.KisStockBrokerWitness` class — not a prediction, not a
-double standing in for a hoped-for future shape.
-
-**The mechanism, named exactly.** :class:`~tos_runtime.recon.ports.WitnessOrder.attempt_id` is
-how :class:`~tos_runtime.recon.service.ReconciliationService.reconcile` joins a witness-observed
-order to the attempt the RCL/evidence-receipt paths already know about
-(``witness_by_attempt = {o.attempt_id: o for o in snapshot.orders if o.attempt_id is not None}``,
-``service.py``'s own ``reconcile`` body). ``KisStockBrokerWitness._order_from_row`` has exactly
-ONE construction site for :class:`WitnessOrder` in the whole module, and it hardcodes
-``attempt_id=None`` unconditionally — KIS's own 주문체결조회 response
-(``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:1548-1575``) carries no
-attempt-id concept at all; an ODNO identifies a broker order, never a runtime attempt. The
-consequence follows deductively, not just from the two cases this file happens to run: since
-``witness_by_attempt`` can therefore NEVER contain an entry keyed by any real attempt id,
-``_classify_attempt`` (``service.py``) can never see ``has_witness=True`` for a known attempt, so
-its ``classification is ReconciliationClass.MATCHED`` branch is UNREACHABLE whenever this witness
-is the injected one — and both ``rearm_ok``/``capacity_ok`` in
-``_attempt_field_confidences_and_gates`` are gated on exactly that ``classification is MATCHED``
-check. Every order this witness returns instead lands in ``orphan_orders`` (``o.attempt_id is
-None`` — true of literally every order it can ever produce), where ``reconcile`` hardcodes
-``rearm_flags.append(False)`` / ``capacity_flags.append(False)`` unconditionally. **The double
-counting this produces**: the SAME physical broker order (same ``broker_execution_id``/ODNO) the
-evidence-receipt path already recorded against a known attempt (1) degrades that attempt's own
-classification to ``STALE_RESERVATION`` (RCL present, no witness confirmation reaches it) AND (2)
-is separately reported a second time as an unrelated ``ORPHAN_BROKER_ORDER`` — not corroboration,
-a duplicate. Closing this (a ``broker_execution_id`` cross-reference between the witness and
-:class:`~tos_runtime.recon.ports.EvidenceReceiptReader`, added to ``ReconciliationService`` itself)
-is a service-level design decision this witness lane does not get to make on its way past — it is
-reported here, pinned as a test, and left alone.
-
-**The other half, stated with equal weight because it is also true.** This gap is specific to the
-ORDERS axis (the ``attempt_id`` join). The POSITIONS/CASH axis needs no attempt join at all —
-:attr:`~tos_runtime.recon.ports.WitnessSnapshot.positions`/``cash`` are account-level facts, not
-per-attempt ones. An independent, continuation-complete positions/cash read from the real broker
-is exactly what this witness delivers without qualification; see
-``test_witness_kis.py::test_multi_page_balance_walk_assembles_all_25_positions`` and
-``test_independent_of_evidence_store_is_true``. Nothing here contradicts that half.
-
-Exercises the two CONCRETE ``BrokerWitness`` implementations — not Protocol doubles — inside a
-real :class:`~tos_runtime.recon.service.ReconciliationService`, against a real
-:class:`~tos_runtime.evidence.store.SqliteEvidenceStore` shared with a real
-:class:`~tos_runtime.recon.evidence_reader.SqliteEvidenceReceiptReader`.
-"""
+"""Lane C pin (W3 plan §4 W3 row C: "``ReconciliationService`` 경로 실증 — 실 증인일 때"""
 
 from __future__ import annotations
 
@@ -80,16 +20,12 @@ from ._witness_kis_fakes import FakeCredentialSession, FakeKstDateSource
 
 BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 ORDER_PATH = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
-ACCOUNT = "1234567801"  # CANO=12345678, ACNT_PRDT_CD=01
-#: ``FakeKstDateSource``'s default — the date the witness queries and the broker rows carry.
+ACCOUNT = "1234567801"
 TODAY = "20260917"
 
 
 class _MinimalRclReader:
-    """A tiny :class:`~tos_runtime.recon.ports.ReservationProjectionReader` double — local to
-    this file rather than imported from ``test_service.py``, matching this test suite's own
-    convention of small per-file fakes (mirrors ``test_service.py``'s ``FakeRclReader``
-    structurally, not by import)."""
+    """A tiny :class:`~tos_runtime.recon.ports.ReservationProjectionReader` double — local to"""
 
     def __init__(self, states: dict[str, CapacityState]) -> None:
         self._states = dict(states)
@@ -139,21 +75,13 @@ def _append_egress_result(store, **overrides: object) -> None:
     store.append(fields, kind="EGRESS_RESULT_CONSUMED", record_class="RESULT_UNMATCHED")
 
 
-# ---------------------------------------------------------------------------
-# (a) the concrete SyntheticLedgerWitness — independence collapses (baseline,
-#     now pinned against the CONCRETE classes rather than test_service.py's doubles)
-# ---------------------------------------------------------------------------
-
-
 def test_synthetic_witness_never_reaches_corroborated_even_when_matched(
     store, fresh
 ) -> None:
     _append_egress_result(store)
     rcl = _MinimalRclReader({"a1": CapacityState.POSITION_CONSUMED})
     evidence = SqliteEvidenceReceiptReader(store)
-    witness = SyntheticLedgerWitness(
-        store
-    )  # independent_of_evidence_store=False, always
+    witness = SyntheticLedgerWitness(store)
     service = ReconciliationService(rcl, evidence, witness)
 
     report = service.reconcile(
@@ -163,16 +91,6 @@ def test_synthetic_witness_never_reaches_corroborated_even_when_matched(
     [record] = report.classifications
     assert record.attempt_id == "a1"
     assert record.classification == ReconciliationClass.MATCHED
-    # Matched, but the two CAPACITY-RELEASING quantity fields are never CORROBORATED: their
-    # only two observations (evidence-receipt + witness) carry the SAME independence class
-    # (EVIDENCE_RECEIPT) because the synthetic witness reads the same store — RECON-EV-001's
-    # "common-mode paths cannot corroborate each other" (mirrors test_service.py's own
-    # ``test_synthetic_witness_never_permits_capacity_release`` exactly, against the CONCRETE
-    # ``SyntheticLedgerWitness``/``SqliteEvidenceReceiptReader`` classes instead of doubles).
-    # ORDER_EXISTENCE is excluded from this check on purpose: RCL + the evidence receipt are
-    # ALREADY two distinct independence classes (RCL_RESERVATION_LOG / EVIDENCE_RECEIPT) for
-    # that one field, independent of the witness path entirely — this test is not claiming
-    # otherwise.
     assert not any(
         fc.confidence_class is FieldConfidenceClass.CORROBORATED
         and fc.field
@@ -183,12 +101,6 @@ def test_synthetic_witness_never_reaches_corroborated_even_when_matched(
         for fc in report.field_confidences
     )
     assert report.permits_capacity_release is False
-
-
-# ---------------------------------------------------------------------------
-# (b) the concrete KisStockBrokerWitness — genuinely independent, but structurally
-#     UNABLE to join to an attempt (the finding this file exists to pin)
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -228,8 +140,7 @@ def _kis_witness(server: FakeKisGetServer) -> KisStockBrokerWitness:
 def _reconcile_same_order(
     store, fresh, kis_server: FakeKisGetServer, **receipt_overrides: object
 ):
-    """Receipt for attempt ``a1`` with ODNO ``0000004470`` (plus ``receipt_overrides``) and the REAL
-    KIS witness reporting that same ODNO today with ``attempt_id=None``."""
+    """Receipt for attempt ``a1`` with ODNO ``0000004470`` (plus ``receipt_overrides``) and the REAL"""
     _append_egress_result(store, **receipt_overrides)
     kis_server.queue_response(
         BALANCE_PATH, status=200, body={"rt_cd": "0", "output1": []}
@@ -242,8 +153,8 @@ def _reconcile_same_order(
             "output1": [
                 {
                     "pdno": "005930",
-                    "odno": "0000004470",  # matches the evidence receipt's broker_execution_id
-                    "ord_dt": TODAY,  # the broker's own order date (KIS 주문일자)
+                    "odno": "0000004470",
+                    "ord_dt": TODAY,
                     "tot_ccld_qty": "1",
                     "rmn_qty": "0",
                     "cncl_yn": "N",
@@ -266,10 +177,7 @@ def _reconcile_same_order(
 def test_real_kis_witness_joins_the_same_order_to_its_known_attempt(
     store, fresh, kis_server: FakeKisGetServer
 ) -> None:
-    """The receipt carries today's trading date, the broker row carries today's ``ord_dt``: the
-    order joins ``a1`` — MATCHED, no duplicate orphan. Re-arm follows (three independence classes
-    agree, quantities agree); capacity release does not (no separately recorded finality proof —
-    a fill receipt alone is not a Final Quantity Proof)."""
+    """The receipt carries today's trading date, the broker row carries today's ``ord_dt``: the"""
     report = _reconcile_same_order(store, fresh, kis_server, trading_date=TODAY)
     [record] = report.classifications
     assert record.attempt_id == "a1"
@@ -285,9 +193,7 @@ def test_real_kis_witness_joins_the_same_order_to_its_known_attempt(
 def test_real_kis_witness_does_not_join_an_undated_or_other_day_receipt(
     store, fresh, kis_server: FakeKisGetServer, receipt_date: str | None
 ) -> None:
-    """A receipt recorded before the trading date existed (no key), or on another day: the ODNO
-    match is not an identity, so ``a1`` stays ``STALE_RESERVATION`` and the order stays an orphan
-    — conservative, both permits ``False``."""
+    """A receipt recorded before the trading date existed (no key), or on another day: the ODNO"""
     overrides: dict[str, object] = (
         {} if receipt_date is None else {"trading_date": receipt_date}
     )
@@ -303,10 +209,10 @@ def test_real_kis_witness_does_not_join_an_undated_or_other_day_receipt(
 @pytest.mark.parametrize(
     "rcl_present,evidence_present",
     [
-        (True, True),  # RCL knows the attempt, evidence-receipt recorded it too
-        (True, False),  # RCL knows the attempt, no receipt at all
-        (False, True),  # no RCL reservation, but a receipt exists
-        (False, False),  # neither RCL nor a receipt — attempt named only by scope
+        (True, True),
+        (True, False),
+        (False, True),
+        (False, False),
     ],
 )
 def test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combination(
@@ -316,12 +222,7 @@ def test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combinatio
     rcl_present: bool,
     evidence_present: bool,
 ) -> None:
-    """All four combinations of RCL-reservation-present x evidence-receipt-present with the real
-    KIS witness and a dated receipt: ``MATCHED`` — and with it re-arm — is reached in exactly the
-    (RCL, receipt) case and no other; capacity release stays ``False`` in all four (no finality
-    proof). The case this loop does NOT reach is "no attempt named at all", covered by
-    ``ReconciliationReport``'s own empty-``rearm_flags`` guard.
-    """
+    """All four combinations of RCL-reservation-present x evidence-receipt-present with the real"""
     if evidence_present:
         _append_egress_result(store, trading_date=TODAY)
     kis_server.queue_response(
@@ -361,14 +262,6 @@ def test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combinatio
     assert report.permits_capacity_release is False
 
 
-# ---------------------------------------------------------------------------
-# (c) issue #981 — the orphan a malformed order page used to hide. An orphan broker order is
-#     the one witness observation that unconditionally blocks a release
-#     (``reconcile``'s own ``capacity_flags.append(False)`` for every orphan), so a page the
-#     walk read as "zero rows" was a fail-open: the attempt on the READABLE page stayed
-#     MATCHED and the release went ahead without the order it never saw.
-# ---------------------------------------------------------------------------
-
 _ORPHAN_ODNO = "0000009999"
 
 
@@ -387,8 +280,7 @@ def _orphan_row() -> dict[str, str]:
 def _reconcile_two_page_order_walk(
     store, fresh, kis_server: FakeKisGetServer, second_page: dict[str, object]
 ):
-    """Attempt ``a1``'s receipt and its order row on page 0 (``tr_cont='M'``, a cursor), then
-    ``second_page`` as page 1 — the measured two-page continuation shape."""
+    """Attempt ``a1``'s receipt and its order row on page 0 (``tr_cont='M'``, a cursor), then"""
     _append_egress_result(store, trading_date=TODAY)
     kis_server.queue_response(
         BALANCE_PATH, status=200, body={"rt_cd": "0", "output1": []}
@@ -439,17 +331,7 @@ def _reconcile_two_page_order_walk(
 def test_an_order_page_that_is_not_a_list_makes_the_whole_reconciliation_unavailable(
     store, fresh, kis_server: FakeKisGetServer, second_page: dict[str, object]
 ) -> None:
-    """Page 0 is the attempt's own fill; page 1 is not a list (the last case literally carries
-    the orphan as a dict). Before #981 the walk read page 1 as zero rows, so ``a1`` was
-    MATCHED off page 0 and the report said nothing about the order page 1 held — the broker
-    showed something this runtime could not read and the release proceeded anyway. Now the
-    witness is unavailable, which ``reconcile`` turns into both permits ``False`` with no
-    classification at all.
-
-    Mutation: restore the pre-#981 ``for row in rows if rows is not None else ()`` in
-    ``_read_order_rows`` -> the ``dict-carrying-the-orphan`` case reports ``a1`` MATCHED with
-    ``permits_rearm is True`` and no orphan -> red.
-    """
+    """Page 0 is the attempt's own fill; page 1 is not a list (the last case literally carries"""
     report = _reconcile_two_page_order_walk(store, fresh, kis_server, second_page)
     assert report.classifications == ()
     assert (report.reason or "").startswith("broker witness unavailable")
@@ -460,10 +342,7 @@ def test_an_order_page_that_is_not_a_list_makes_the_whole_reconciliation_unavail
 def test_an_orphan_on_a_well_formed_second_order_page_blocks_the_release(
     store, fresh, kis_server: FakeKisGetServer
 ) -> None:
-    """What the hidden orphan would have done, had the page been readable: ``a1`` joins and is
-    MATCHED, the unattributed order is reported as an orphan, and both permits are ``False``.
-    This is why the refusal above is the conservative answer and not merely a stricter one.
-    """
+    """What the hidden orphan would have done, had the page been readable: ``a1`` joins and is"""
     report = _reconcile_two_page_order_walk(
         store, fresh, kis_server, {"rt_cd": "0", "output1": [_orphan_row()]}
     )
@@ -478,9 +357,7 @@ def test_an_orphan_on_a_well_formed_second_order_page_blocks_the_release(
 def test_an_empty_second_order_page_still_matches_the_attempt(
     store, fresh, kis_server: FakeKisGetServer
 ) -> None:
-    """The positive control: a two-page order walk whose second page is an empty LIST is a
-    complete read of one order. ``a1`` is MATCHED and re-arm is permitted exactly as in the
-    single-page case — the #981 refusal must not fire on a well-formed continuation."""
+    """The positive control: a two-page order walk whose second page is an empty LIST is a"""
     report = _reconcile_two_page_order_walk(
         store, fresh, kis_server, {"rt_cd": "0", "output1": []}
     )

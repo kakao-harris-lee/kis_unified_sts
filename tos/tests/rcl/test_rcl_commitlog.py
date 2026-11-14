@@ -1,16 +1,4 @@
-"""RCL Safety Commit Log port + fault-contract predicates (design #40 D2.1).
-
-Covers ``tos.rcl.commitlog``: Protocol conformance (via a test-only in-memory
-double — never a src-level default implementation, per D1 not being ratified
-yet), the D2.1 ①②⑤⑦ fault-contract predicates (positive/negative/None-polarity
-cases), the derived legal-transition whitelist's exhaustiveness over the full
-:class:`~tos.rcl.vocabulary.CapacityState` product, the closed refusal-reason
-vocabulary's member count, and an import-closure/absence check isomorphic to
-``test_rcl_import_closure.py`` but scoped to ``commitlog.py`` alone (verifying
-the module's own "no I/O" claim: no ``sqlite3`` / ``os`` / ``socket`` / ``time`` /
-``datetime``, and — per the epoch-conflict note in its docstring — no
-``tos.authority``).
-"""
+"""RCL Safety Commit Log port + fault-contract predicates (design #40 D2.1)."""
 
 from __future__ import annotations
 
@@ -56,19 +44,8 @@ CAPACITY_STATES = st.sampled_from(list(CapacityState))
 TRANSITION_CAUSES = st.sampled_from(list(TransitionCause))
 
 
-# ===========================================================================
-# Protocol conformance — test-only in-memory double (never a src default impl;
-# D1 / tos.runtime is not ratified — module docstring)
-# ===========================================================================
-
-
 class _InMemoryCommitLogDouble:
-    """A minimal, test-only :class:`CommitLog` satisfier — no durability, no I/O.
-
-    Exists solely to prove the Protocol's four-method shape is implementable and
-    callable; it is not a candidate runtime implementation (that is
-    ``tos_runtime.rcl.SqliteCommitLog``, D2.1, out of kernel scope).
-    """
+    """A minimal, test-only :class:`CommitLog` satisfier — no durability, no I/O."""
 
     def __init__(self) -> None:
         self._epoch: WriterEpoch = 1
@@ -93,8 +70,6 @@ class _InMemoryCommitLogDouble:
 
     def read_linearizable(self, *, writer_epoch: WriterEpoch) -> LogView:
         if writer_epoch != self._epoch:
-            # A read under a non-current epoch proves nothing linearizable — the
-            # double reports no entries rather than the (possibly stale) state.
             return LogView(epoch=self._epoch, last_seq=None, entries=())
         return LogView(
             epoch=self._epoch,
@@ -145,11 +120,6 @@ def test_double_refuses_stale_epoch_and_seq_mismatch() -> None:
     assert bad_seq.reason is AppendRefusalReason.SEQ_MISMATCH
 
 
-# ===========================================================================
-# D2.1 fault ① — stale_writer_epoch
-# ===========================================================================
-
-
 def test_stale_writer_epoch_matching_epoch_admits() -> None:
     assert stale_writer_epoch(5, 5) is None
 
@@ -178,11 +148,6 @@ def test_stale_writer_epoch_self_equal_always_admits(epoch: int) -> None:
     assert stale_writer_epoch(epoch, epoch) is None
 
 
-# ===========================================================================
-# D2.1 fault ② — duplicate_command
-# ===========================================================================
-
-
 def test_duplicate_command_no_prior_entry_admits() -> None:
     """No existing digest for this id => nothing to conflict with => admit."""
     assert duplicate_command(None, "any-digest") is None
@@ -204,17 +169,11 @@ def test_duplicate_command_different_bytes_is_mismatch() -> None:
 
 
 def test_duplicate_command_attempted_none_with_existing_entry_fails_closed() -> None:
-    """(canary) An UNKNOWN attempted digest against a real prior entry can never
-    resolve to DUPLICATE_COMMAND_ID (that would assert an unproven sameness)."""
+    """(canary) An UNKNOWN attempted digest against a real prior entry can never"""
     assert (
         duplicate_command("digest-a", None)
         is AppendRefusalReason.COMMAND_BYTES_MISMATCH
     )
-
-
-# ===========================================================================
-# D2.1 fault ⑤ — replay_reproduces_state
-# ===========================================================================
 
 
 def test_replay_reproduces_state_matching_digests_admits() -> None:
@@ -248,11 +207,6 @@ def test_replay_reproduces_state_both_none_fails_closed() -> None:
     )
 
 
-# ===========================================================================
-# release_admissible
-# ===========================================================================
-
-
 def test_release_admissible_released_requires_true_witness() -> None:
     transition = CapacityReservationTransition(to_state=CapacityState.RELEASED)
     assert release_admissible(transition, True) is True
@@ -283,14 +237,7 @@ def test_release_admissible_unknown_destination_fails_closed() -> None:
 def test_release_admissible_rejects_truthy_non_true_witness(
     truthy_non_true_witness: object,
 ) -> None:
-    """Mutation-killing (independent review LOW finding, 2026-09-08): the gate is
-    ``finality_witness is True``, not ``bool(finality_witness)`` — a truthy-but-
-    not-True witness (``1``, ``"y"``, ``[True]``) must still refuse for both
-    finality destinations. Confirmed to actually kill the mutation: mutating
-    line 435 to ``return bool(finality_witness)`` made all 33 pre-existing tests
-    in this module pass (verified in a scratch worktree) because every prior
-    case used only ``True``/``False``/``None`` witnesses, none of which
-    distinguish the two implementations."""
+    """Mutation-killing (independent review LOW finding, 2026-09-08): the gate is"""
     released = CapacityReservationTransition(to_state=CapacityState.RELEASED)
     confirmed_analog = CapacityReservationTransition(
         to_state=CapacityState.POSITION_CONSUMED
@@ -305,19 +252,12 @@ def test_release_admissible_rejects_truthy_non_true_witness(
 def test_release_admissible_never_admits_finality_states_without_true_witness(
     state: CapacityState,
 ) -> None:
-    """(canary, both-ways) Every finality state refuses False/None; non-finality states
-    are unconditionally admissible — proves the gate is neither vacuously open nor
-    vacuously closed (methodology §3.7)."""
+    """(canary, both-ways) Every finality state refuses False/None; non-finality states"""
     transition = CapacityReservationTransition(to_state=state)
     is_finality = state in (CapacityState.RELEASED, CapacityState.POSITION_CONSUMED)
     assert release_admissible(transition, None) is (not is_finality)
     assert release_admissible(transition, False) is (not is_finality)
     assert release_admissible(transition, True) is True
-
-
-# ===========================================================================
-# reservation_transition_structurally_legal — closed whitelist exhaustiveness
-# ===========================================================================
 
 
 def test_reservation_transition_structurally_legal_none_never_admits() -> None:
@@ -360,10 +300,7 @@ def test_reservation_transition_structurally_legal_from_non_released_is_always_l
 def test_reservation_transition_structurally_legal_matches_any_cause_derivation(
     from_state: CapacityState, to_state: CapacityState
 ) -> None:
-    """(exhaustiveness, hypothesis over the full enum product) The whitelist's
-    membership for every pair equals "legal under at least one TransitionCause"
-    per the already-ratified transition_allowed — proving the closed whitelist
-    was not hand-drifted from its own derivation rule."""
+    """(exhaustiveness, hypothesis over the full enum product) The whitelist's"""
     expected = any(
         transition_allowed(from_state, to_state, cause) for cause in TransitionCause
     )
@@ -382,15 +319,8 @@ def test_reservation_transition_structurally_legal_whitelist_pair_count() -> Non
     assert legal_count == n * n - n
 
 
-# ===========================================================================
-# ReservationScope — the InstrumentKey field mirror (laneO port-fix round,
-# design #40 runtime slice #2 §5 disposition, 2026-09-08)
-# ===========================================================================
-
-
 def test_capacity_reservation_transition_scope_defaults_to_none() -> None:
-    """Like every other field on this record, an absent scope stays ``None`` —
-    never silently defaulted to some fabricated scope."""
+    """Like every other field on this record, an absent scope stays ``None`` —"""
     transition = CapacityReservationTransition(to_state=CapacityState.RELEASED)
     assert transition.scope is None
 
@@ -410,18 +340,7 @@ def test_capacity_reservation_transition_carries_scope() -> None:
 
 
 def test_reservation_scope_field_set_mirrors_instrument_key() -> None:
-    """(test-only cross-check) ``ReservationScope`` was added as a structural
-    mirror instead of importing ``tos.engine.records.InstrumentKey`` directly
-    — an ``rcl -> engine`` edge the module docstring's anti-phantom grep
-    reports as illegitimate (``engine`` already imports ``rcl``). This proves
-    the mirror claim is not just prose: the two field sets — names, types,
-    and required-ness — actually agree.
-
-    Importing ``tos.engine`` HERE is fine: this is a test file, not kernel
-    source. Both the AST gate (``tools/tos_firewall_check.py``) and the
-    import-closure test (``test_rcl_import_closure.py``) scan ``tos/src``
-    only, never ``tos/tests``.
-    """
+    """(test-only cross-check) ``ReservationScope`` was added as a structural"""
     from tos.engine.records import InstrumentKey
 
     scope_fields = ReservationScope.model_fields
@@ -432,18 +351,8 @@ def test_reservation_scope_field_set_mirrors_instrument_key() -> None:
         assert scope_fields[name].is_required() == key_fields[name].is_required()
 
 
-# ===========================================================================
-# committed_vector — the wire-shape counterpart of ReservationRecord's own
-# adverse_increment_vector (kernel round #4 K-4)
-# ===========================================================================
-
-
 def test_capacity_reservation_transition_committed_vector_defaults_to_none() -> None:
-    """Like ``scope`` above, an absent committed vector stays ``None`` — never a
-    silently-fabricated zero vector (the M7 mutation this pins against: a
-    projection accessor that always returns an empty vector instead of the
-    genuinely-absent ``None`` would be indistinguishable from "no dimensions
-    declared" without this positive/negative split)."""
+    """Like ``scope`` above, an absent committed vector stays ``None`` — never a"""
     transition = CapacityReservationTransition(to_state=CapacityState.RELEASED)
     assert transition.committed_vector is None
 
@@ -466,15 +375,8 @@ def test_capacity_reservation_transition_carries_committed_vector() -> None:
     assert transition.committed_vector.magnitude("INSTRUMENT::DELTA") == 3
 
 
-# ===========================================================================
-# closed refusal vocabulary — member count pin
-# ===========================================================================
-
-
 def test_append_refusal_reason_member_count_pin() -> None:
-    """Pins the closed vocabulary at exactly the 7 D2.1 ①②⑦ reasons (regression
-    anchor — an addition/removal here is a deliberate vocabulary change, not a
-    silent drift)."""
+    """Pins the closed vocabulary at exactly the 7 D2.1 ①②⑦ reasons (regression"""
     assert len(list(AppendRefusalReason)) == 7
     assert {member.value for member in AppendRefusalReason} == {
         "STALE_EPOCH",
@@ -487,19 +389,8 @@ def test_append_refusal_reason_member_count_pin() -> None:
     }
 
 
-# ===========================================================================
-# import-closure / absence — commitlog.py's own "no I/O" claim (isomorphic to
-# test_rcl_import_closure.py, scoped to this one file; no subprocess/os — both
-# firewall-forbidden even in tests, so this stays a static AST scan)
-# ===========================================================================
-
-#: Root module names commitlog.py is allowed to import (module docstring's
-#: closure claim). Anything else is a leak.
 _ALLOWED_ROOTS = frozenset({"__future__", "collections", "enum", "typing", "tos"})
 
-#: Specifically-forbidden imports the module docstring calls out by name — these
-#: would indicate D1 (runtime I/O) landing prematurely, or the reported
-#: tos.authority epoch-namespace conflict being silently resolved by force-reuse.
 _FORBIDDEN_MODULES = frozenset(
     {
         "sqlite3",
@@ -532,9 +423,7 @@ def test_commitlog_source_exists() -> None:
 
 
 def test_commitlog_imports_no_forbidden_module() -> None:
-    """(absence, negative-token) None of sqlite3/os/socket/time/datetime/tos.authority
-    /tos.evidence/tos.capsule is imported by commitlog.py — verifies both the
-    "no I/O" and the reported epoch-namespace-conflict claims in its docstring."""
+    """(absence, negative-token) None of sqlite3/os/socket/time/datetime/tos.authority"""
     imported = _imported_module_roots(_COMMITLOG_SRC)
     leaked = imported & _FORBIDDEN_MODULES
     assert leaked == set(), f"forbidden import(s) found in commitlog.py: {leaked}"
@@ -548,8 +437,7 @@ def test_commitlog_imports_only_allowed_roots() -> None:
 
 
 def test_forbidden_module_scan_detects_planted_leak(tmp_path: Path) -> None:
-    """(both-ways canary) The scan actually catches a planted forbidden import —
-    proves "green" above is evidence the checker works, not that it is neutered."""
+    """(both-ways canary) The scan actually catches a planted forbidden import —"""
     planted = tmp_path / "planted.py"
     planted.write_text(
         "import sqlite3\nimport os\nfrom tos.authority import records\n",

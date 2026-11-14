@@ -1,10 +1,4 @@
-"""``IndependentApprovalStage`` tests (design #40 §5 order 4 item 4).
-
-The central fault contract under test: **this stage never emits
-``StageAuthorityClass.NON_AUTHORITATIVE_PROVISIONAL``**, in any of ADMIT /
-DENY / UNKNOWN — that member is reserved for
-``tos.engine.standins.ProvisionalStandIn``, which this stage replaces.
-"""
+"""``IndependentApprovalStage`` tests (design #40 §5 order 4 item 4)."""
 
 from __future__ import annotations
 
@@ -34,9 +28,7 @@ def _bare_request() -> StageRequest:
 
 
 def _bare_loaded(decision: IndependentApprovalDecision) -> LoadedApproval:
-    """A :class:`LoadedApproval` with no receipt facts — these stage-level
-    tests exercise routing/outcome mapping, not expiry composition (kernel
-    round #1 §2.2's own ``IntentRegistry`` tests own that)."""
+    """A :class:`LoadedApproval` with no receipt facts — these stage-level"""
     return LoadedApproval(
         decision=decision,
         issued_at_unix_ms=None,
@@ -81,8 +73,6 @@ def test_deny_never_uses_non_authoritative_provisional(
     intent_registry: IntentRegistry, approvals_dir: Path, expected_owner_uid: int
 ) -> None:
     decision = build_decision(intent_registry, approvals_dir, expected_owner_uid)
-    # Consume it once outside the stage, with a DIFFERENT command, so the
-    # stage's own consumption attempt collides as REJECTED_CONFLICT (a DENY).
     intent_registry.consume(
         decision,
         command_identity="cmd-0",

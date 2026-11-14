@@ -1,18 +1,4 @@
-"""Tests for the evidence-scan measurement driver (growth plan §2 A1-b,
-``tools/tos_evidence_scan_measure.py``).
-
-What has to be tested here is not "does it run the bench" but "does it really refuse".
-The 2026-09-30 A1 run's guards were never committed and are gone (plan §7.1.7 deviation 11),
-and the swap floor the operator's global rule requires was missing from them entirely
-(deviation 11-b) — a hole nothing detected because a guard that never fires and a guard that
-does not exist look identical from outside. So every refusal below is exercised against a
-real host reader pointed at a fake ``/proc/meminfo`` and a fake ``pgrep``, each guard is
-proven to fail red when neutralized, and the watchdog is proven to actually kill a live
-child rather than merely to return a verdict.
-
-Hermetic: every file these tests write goes under ``tmp_path``, no network, and the only
-processes started are ``sleep``/``python -c`` children of the test itself.
-"""
+"""Tests for the evidence-scan measurement driver (growth plan §2 A1-b,"""
 
 from __future__ import annotations
 
@@ -53,45 +39,11 @@ bench = _load("tos_evidence_scan_bench_for_tests", _BENCH_PATH)
 
 _GB = 1024**3
 
-#: One fabricated competing driver's command line, shared by several tests below.
 _A_SECOND_DRIVER = "/usr/bin/python tools/tos_evidence_scan_measure.py run --days 90"
 
 
-# ---------------------------------------------------------------------------------------
-# Fabricated processes (#848)
-# ---------------------------------------------------------------------------------------
-#
-# A test that invents a competing process has to invent the whole world that process lives
-# in. The driver does not take a ``pgrep`` line at face value: it drops lines whose PID is
-# its own, is one of its own ancestors or descendants, or has a ``pytest`` ancestor
-# (round-2 F2). Every one of those questions is answered by reading ``/proc`` and by
-# asking the OS which PID the driver is. Leave either of those pointed at the real host
-# and the fabrication is judged against whatever the runner happened to allocate: on
-# tos-firewall run 36997189121 the hardcoded ``5150`` was a live pytest descendant, the
-# driver dropped the only injected line as a colleague's test run, and a refusal test
-# silently read ``assert 'ok' == 'refused'`` (#848).
-#
-# So a fabricated process table comes with both halves of that world:
-#
-# * a fake ``/proc`` built from the SAME table (:func:`_fake_proc_for`), so the ancestry
-#   rules read the tree the test described;
-# * a ``self_pid`` that is part of the fabrication too. ``HostReader.self_pid`` exists for
-#   this (review F5): without it ``_self_pid_chain`` starts at the runner's ``os.getpid()``
-#   and no ``proc_root`` can redirect it.
-#
-# :func:`_fake_pid` keeps every invented PID above the kernel's ceiling on top of that.
-# That is hygiene for the fabricated trees, and it is load-bearing for exactly one reader:
-# :func:`_reader_that_reports_a_build_once` watches a REAL bench child, so it must read the
-# real ``/proc``, and an unassignable PID is what makes its one invented process invisible
-# there (review F4).
-
-
 def _pid_ceiling() -> int:
-    """The first number the kernel will not hand out as a PID.
-
-    ``/proc/sys/kernel/pid_max`` is one GREATER than the largest assignable PID, so the
-    value itself is already unassignable.
-    """
+    """The first number the kernel will not hand out as a PID."""
     try:
         return int(Path("/proc/sys/kernel/pid_max").read_text().strip())
     except (OSError, ValueError):  # pragma: no cover - every Linux has this file
@@ -100,17 +52,11 @@ def _pid_ceiling() -> int:
 
 _FAKE_PID_BASE = _pid_ceiling()
 
-#: The stand-in for ``init`` in every fabricated tree. Fabricated processes hang off this
-#: instead of off real pid 1, so a runner where the test process itself is pid 1 (a
-#: container) cannot make a fabrication look like the driver's own ancestor.
 _FAKE_INIT_PID = _FAKE_PID_BASE
 
 
 def _fake_pid(n: int) -> int:
-    """The ``n``-th PID (``n >= 0``) that no live process can hold.
-
-    ``n`` only has to be unique within one fabricated tree; each test builds its own.
-    """
+    """The ``n``-th PID (``n >= 0``) that no live process can hold."""
     return _FAKE_PID_BASE + 1 + n
 
 
@@ -125,18 +71,12 @@ def _real_self_cmdline() -> str:
 
 
 def _proc_table(processes: Sequence[tuple[int, str]]) -> str:
-    """``pgrep -af`` text for these processes.
-
-    The ONE place a ``(pid, args)`` pair becomes a line, so the table a test feeds to
-    ``pgrep`` and the ``/proc`` it feeds to the ancestry walk cannot describe different
-    hosts (review F7).
-    """
+    """``pgrep -af`` text for these processes."""
     return "".join(f"{pid} {args}\n" for pid, args in processes)
 
 
 def _fake_proc(root: Path, tree: dict[int, tuple[int, str]]) -> Path:
-    """A `/proc` with just the two files the ancestry walk reads: `status` (PPid) and
-    `cmdline`."""
+    """A `/proc` with just the two files the ancestry walk reads: `status` (PPid) and"""
     for pid, (ppid, cmdline) in tree.items():
         entry = root / str(pid)
         entry.mkdir(parents=True, exist_ok=True)
@@ -148,22 +88,7 @@ def _fake_proc(root: Path, tree: dict[int, tuple[int, str]]) -> Path:
 def _fake_proc_for(
     root: Path, processes: Sequence[tuple[int, str]], *, self_pid: int
 ) -> Path:
-    """The ``/proc`` that belongs with a fabricated ``pgrep`` table.
-
-    Three rules, each closing a way the fabrication could still be judged against the real
-    host:
-
-    * a fabricated process is a child of :data:`_FAKE_INIT_PID`, never of real pid 1;
-    * the reader's own PID is a PARENTLESS root. The driver is the root of the fabricated
-      world, and handing it the fabricated init as a parent would let the descendant rule
-      drop the very lines ``pid in mine`` is there to drop — which is how the first
-      version of the self-PID test passed without pinning anything (review F1);
-    * the real ``os.getpid()`` appears with its real command line whenever it is not
-      itself one of the fabricated processes. ``preflight`` reads the output-directory
-      lock through this same tree, and a lock whose ``/proc/<pid>/cmdline`` is missing is
-      reported as stale rather than held — so without this entry ``output_dir_unlocked``
-      could never refuse in any test that fabricates processes (review F3).
-    """
+    """The ``/proc`` that belongs with a fabricated ``pgrep`` table."""
     tree: dict[int, tuple[int, str]] = {_FAKE_INIT_PID: (0, "/sbin/init")}
     for pid, args in processes:
         tree[pid] = (0 if pid == self_pid else _FAKE_INIT_PID, args)
@@ -172,11 +97,6 @@ def _fake_proc_for(
     if self_pid not in tree:
         tree[self_pid] = (0, "/usr/bin/python tools/tos_evidence_scan_measure.py run")
     return _fake_proc(root, tree)
-
-
-# ---------------------------------------------------------------------------------------
-# Fixtures: a fake host, and a miniature reference evidence file
-# ---------------------------------------------------------------------------------------
 
 
 def _meminfo(
@@ -202,18 +122,7 @@ def _reader(
     self_pid: int | None = None,
     proc_root: Path | None = None,
 ) -> Any:
-    """A real :class:`HostReader` pointed at fake inputs.
-
-    ``pgrep`` is replaced by a real process producing real stdout — the reader's parsing,
-    self-exclusion and search-command filtering all run for real. Nothing is monkeypatched.
-
-    ``processes`` is the whole fabrication: the ``pgrep`` table, the ``/proc`` tree and the
-    reader's own identity are all derived from it, so they cannot disagree (#848). A reader
-    with no fabricated process keeps the real ``/proc``, which is what the output-directory
-    lock check needs for real PIDs. ``proc_root`` is overridable for one purpose only — so
-    the regression test can point a fabrication back at the real ``/proc`` and show the
-    failure this seam exists to prevent.
-    """
+    """A real :class:`HostReader` pointed at fake inputs."""
     meminfo = _meminfo(
         tmp_path / f"meminfo-{available_gb}-{swap_free_gb}",
         available_gb=available_gb,
@@ -227,10 +136,6 @@ def _reader(
             proc_root=Path("/proc") if proc_root is None else proc_root,
             self_pid=whoami,
         )
-    # A faithful `pgrep -af`: a fixed process table, matched with the SAME extended regex
-    # the real binary would apply. Echoing the lines back unconditionally would test the
-    # reader's parsing while leaving the patterns themselves unexercised — and the patterns
-    # are where review F3 found the bug.
     text = _proc_table(processes)
     stamp = abs(hash(text))
     table = tmp_path / f"proc-table-{stamp}"
@@ -251,20 +156,7 @@ def _reader(
 
 
 def _reader_that_reports_a_build_once(tmp_path: Path, *, gate: Path) -> Any:
-    """A host that is healthy until ``gate`` exists and running a Gradle daemon from then
-    on.
-
-    Three watchdog tests need the same thing: an abort at a known point in the run rather
-    than after some number of samples. Tying the daemon's appearance to a file the run
-    itself creates keeps that deterministic.
-
-    This one keeps the REAL ``/proc``, deliberately (review F4). These are the only tests
-    that run a real bench child, and the sampler reads that child's ``status`` and ``io``
-    through this same ``proc_root``; a fabricated tree would answer "no such process" for
-    it and quietly stop exercising the per-child sampling path. Reading the real tree is
-    safe here because the one process this reader invents carries a PID the kernel cannot
-    assign, so the ancestry rules can never find anything under it.
-    """
+    """A host that is healthy until ``gate`` exists and running a Gradle daemon from then"""
     daemon = _fake_pid(0)
     fake_pgrep = tmp_path / "fake-pgrep.sh"
     fake_pgrep.write_text(
@@ -292,17 +184,6 @@ def _guard(**overrides):
     kwargs.update(overrides)
     return driver.GuardConfig.validated(**kwargs)
 
-
-# ---------------------------------------------------------------------------------------
-# Checkout fixtures — REAL git repositories, in each shape the guard has to refuse
-# ---------------------------------------------------------------------------------------
-#
-# Real `git init`, not a stub binary: the guard asks git four questions (toplevel, HEAD,
-# `status --porcelain`, `merge-base --is-ancestor`) and a fake would only prove the fake
-# answers them. Each repo is two files and lives under `tmp_path`, so it is cheap and
-# hermetic. `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` are pinned to /dev/null so the
-# developer's own git config (hooks, templates, signing, `init.defaultBranch`) cannot
-# change what these tests measure.
 
 _GIT_ENV = {
     **os.environ,
@@ -335,15 +216,7 @@ def _make_checkout(
     origin_main: bool = True,
     bench_ignored: bool = False,
 ) -> Path:
-    """A git checkout holding stand-ins for the driver and the bench, in the asked shape.
-
-    The two files only have to exist and be hashable — the guard reads git about the tree
-    and sha256 about the bench, never the Python inside either.
-
-    ``bench_ignored`` puts the bench in ``.gitignore``. That is the one shape in which a
-    bench can change while ``git status --porcelain`` stays empty, which is why the digest
-    is checked next to cleanliness rather than instead of it.
-    """
+    """A git checkout holding stand-ins for the driver and the bench, in the asked shape."""
     repo = root / "checkout"
     (repo / "tools").mkdir(parents=True)
     (repo / "tools" / "tos_evidence_scan_measure.py").write_text("# driver stand-in\n")
@@ -363,7 +236,6 @@ def _make_checkout(
         _git(repo, "update-ref", "refs/remotes/origin/main", base)
     head = base
     if not ancestor:
-        # One commit past origin/main: present in the tree, not in the published history.
         (repo / "tools" / "unmerged.txt").write_text("not on origin/main\n")
         _git(repo, "add", "-A")
         _git(repo, "commit", "-q", "-m", "unmerged")
@@ -388,11 +260,6 @@ def _checkout(repo: Path, *, enforced: bool = True, bench: Path | None = None):
     ).with_baseline()
 
 
-#: One clean detached checkout for the whole session, AND one guard over it with its
-#: baseline already read. Both are built once: the ~50 tests that merely need a passing
-#: guard should not each pay for a `git init`, nor for the five `git` subprocesses
-#: `with_baseline()` costs — the shared repo never changes under them (review F10). A
-#: test that MOVES the tree builds its own repo and its own guard under its ``tmp_path``.
 _SHARED: dict[str, Any] = {}
 
 
@@ -412,8 +279,7 @@ def _clean_checkout(*, enforced: bool = True):
 
 
 def _write_reference(path: Path, *, hot_rows: int = 20) -> None:
-    """A miniature stand-in for a real ``evidence.sqlite3`` — the same shape the bench's own
-    test uses, so the two suites agree on what a reference looks like."""
+    """A miniature stand-in for a real ``evidence.sqlite3`` — the same shape the bench's own"""
     conn = sqlite3.connect(str(path))
     try:
         conn.execute(bench._ENTRIES_TABLE_SQL)
@@ -451,13 +317,7 @@ def _write_reference(path: Path, *, hot_rows: int = 20) -> None:
 def _stub_bench(
     tmp_path: Path, main_body: str, name: str = "tos_evidence_scan_bench.py"
 ):
-    """A stand-in for the bench: importable (the driver loads it for `profile_kinds`) and
-    doing whatever a test needs when run as a child.
-
-    Needed because the real bench cannot be made to fail or to run long on a tiny fixture,
-    and because `synthetic_absent` now refuses the "pre-create the file" trick the F1 test
-    used to make `build` fail.
-    """
+    """A stand-in for the bench: importable (the driver loads it for `profile_kinds`) and"""
     path = tmp_path / name
     path.write_text(
         "import sys, time, os, pathlib\n"
@@ -543,13 +403,7 @@ def _failed(record) -> dict[str, str]:
 
 
 def _abort_records(out_dir: Path, name: str) -> list[Path]:
-    """Every ``ABORTED`` artifact for one ``<step>-<days>d``, sorted by name.
-
-    Deliberately NOT a plain ``out_dir / f"ABORTED-{name}.json"``: the fixed name is the
-    defect plan §7.1.23 registered — the 270-day campaign's second stop overwrote the
-    first one's record in place. The glob matches the run-id form only, so a regression
-    back to the fixed name reads as "no record" here rather than passing quietly.
-    """
+    """Every ``ABORTED`` artifact for one ``<step>-<days>d``, sorted by name."""
     return sorted(out_dir.glob(f"ABORTED-{name}.*.json"))
 
 
@@ -566,11 +420,6 @@ def _abort_record(out_dir: Path, name: str) -> dict[str, Any]:
     assert len(found) == 1, f"expected one abort record for {name}, found {found}"
     record: dict[str, Any] = json.loads(found[0].read_text())
     return record
-
-
-# ---------------------------------------------------------------------------------------
-# Preflight refusals — one per threshold
-# ---------------------------------------------------------------------------------------
 
 
 def test_preflight_passes_on_a_healthy_host_and_records_the_context(
@@ -594,12 +443,8 @@ def test_preflight_passes_on_a_healthy_host_and_records_the_context(
         "artifacts_absent",
         "output_dir_unlocked",
     }
-    # The global rule asks for the top-RSS census as part of the check; it is recorded, not
-    # gated, and a run must be readable afterwards next to what else was resident.
     assert record.top_rss
     assert record.watchdog_enabled is True
-    # The tree is recorded whatever the verdict (plan §2 A1-c): the 180-day run had to be
-    # reconstructed from a reflog afterwards because the driver wrote none of this.
     assert record.checkout["detached"] is True
     assert record.checkout["clean"] is True
     assert record.checkout["ancestor_of_origin_main"] is True
@@ -623,8 +468,7 @@ def test_preflight_refuses_when_mem_available_is_below_the_start_floor(
 def test_preflight_refuses_when_swap_free_is_below_the_start_floor(
     tmp_path: Path,
 ) -> None:
-    """Plan §7.1.7 deviation 11-b: this clause of the global rule was absent from the lost
-    driver, and swap — not MemAvailable — is what hit zero in the §7.1.5 incident."""
+    """Plan §7.1.7 deviation 11-b: this clause of the global rule was absent from the lost"""
     record = _preflight(
         tmp_path, _reader(tmp_path, available_gb=12.0, swap_free_gb=1.5)
     )
@@ -633,7 +477,6 @@ def test_preflight_refuses_when_swap_free_is_below_the_start_floor(
     failed = _failed(record)
     assert "swap_free" in failed
     assert "1.50 GiB" in failed["swap_free"]
-    # Memory alone would have let this run start — which is exactly how the hole survived.
     assert "mem_available" not in failed
 
 
@@ -679,22 +522,7 @@ def _case_dir(tmp_path: Path, name: str, reference: Path) -> Path:
 def test_a_fabricated_competitor_is_read_from_the_fabricated_proc_not_the_runners(
     tmp_path: Path,
 ) -> None:
-    """#848, at the mechanism: an invented PID must never be looked up in the real /proc.
-
-    The test above went red on tos-firewall run 36997189121 with
-    ``assert 'ok' == 'refused'`` — nothing about the code had changed, the runner had
-    simply allocated the hardcoded ``5150`` to a live pytest descendant, so the driver
-    dropped the only injected line and the refusal evaporated. Waiting for that collision
-    again is not a test, so it is CONSTRUCTED here out of PIDs this process can name with
-    certainty: its own parent (an ancestor, the branch the issue's reproduction forced by
-    faking ``os.getpid()``) and a live child of its own (a descendant, and under pytest a
-    pytest descendant too).
-
-    Each is checked both ways round. Pointed at the real ``/proc`` the fabrication is
-    dropped and the verdict is ``ok``: that half is the old failure, on demand, and it
-    fails if the seam ever stops being the thing that saves the test. Pointed at the fake
-    tree the line was fabricated in, it is a competitor and the run is refused.
-    """
+    """#848, at the mechanism: an invented PID must never be looked up in the real /proc."""
     reference = tmp_path / "evidence.sqlite3"
     _write_reference(reference)
     real = driver.HostReader()
@@ -715,10 +543,6 @@ def test_a_fabricated_competitor_is_read_from_the_fabricated_proc_not_the_runner
         assert record.verdict == "refused", label
         assert str(pid) in _failed(record)["competing_measurement"], label
 
-    # The ancestor half needs an ancestor to exist. It does not when pytest is itself pid
-    # 1 — the container case this module's fabricated init guards against — and asserting
-    # `os.getppid()` is in the chain would then fail for a reason that is not the bug
-    # (review F2). The descendant half below covers the same mechanism either way.
     parent = real._parent_pid(os.getpid())
     if parent is not None and parent > 0:
         assert parent in real._self_pid_chain(), "precondition: a real ancestor"
@@ -738,16 +562,7 @@ def test_a_fabricated_competitor_is_read_from_the_fabricated_proc_not_the_runner
 def test_the_drivers_own_pid_is_never_read_as_a_competing_driver(
     tmp_path: Path,
 ) -> None:
-    """The branch #848 tripped over, pinned as intended instead of left ambiguous.
-
-    A driver must not refuse to run because it can see itself, so ``scan`` drops a line
-    whose PID is in its own chain. The fabricated driver here has NO parent, which is what
-    makes this test able to fail: ``pid in mine`` is then the only rule that can drop the
-    line, and deleting that clause from ``HostReader.scan`` turns this red. The first
-    version of this test parented the self PID to the fabricated init, so the descendant
-    rule dropped the same line and the test would have stayed green with the branch gone
-    (review F1) — the "guard that admits what it names" shape.
-    """
+    """The branch #848 tripped over, pinned as intended instead of left ambiguous."""
     the_driver = _fake_pid(0)
     reader = _reader(
         tmp_path, processes=[(the_driver, _A_SECOND_DRIVER)], self_pid=the_driver
@@ -760,15 +575,7 @@ def test_the_drivers_own_pid_is_never_read_as_a_competing_driver(
 def test_a_fabricated_process_table_does_not_blind_the_output_directory_lock(
     tmp_path: Path,
 ) -> None:
-    """Review F3. A fake ``/proc`` must not quietly answer "owner gone" for a real lock.
-
-    ``preflight`` reads the output-directory lock through the SAME ``proc_root`` as the
-    process rules, and :func:`read_lock` treats a lock whose ``/proc/<pid>/cmdline`` it
-    cannot read as stale. A fabricated tree holding only the fabricated processes would
-    therefore leave ``output_dir_unlocked`` unable to refuse in every test that fabricates
-    a process table — a check that cannot fail, which is the thing this module exists to
-    catch.
-    """
+    """Review F3. A fake ``/proc`` must not quietly answer "owner gone" for a real lock."""
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     (out_dir / driver.LOCK_NAME).write_text(
@@ -787,19 +594,12 @@ def test_a_fabricated_process_table_does_not_blind_the_output_directory_lock(
 
     assert record.verdict == "refused"
     failed = _failed(record)
-    # Both, so that neither check can stand in for the other.
     assert "output_dir_unlocked" in failed
     assert "competing_measurement" in failed
 
 
 def test_no_fabricated_pid_can_belong_to_a_live_process() -> None:
-    """``_fake_pid`` is unassignable, not merely unlikely.
-
-    Every fabricated tree reads better for it, and one reader depends on it outright:
-    :func:`_reader_that_reports_a_build_once` reads the REAL ``/proc`` so that the
-    per-child sampling path stays exercised, and only an unassignable PID keeps its
-    invented Gradle daemon invisible there.
-    """
+    """``_fake_pid`` is unassignable, not merely unlikely."""
     ceiling = int(Path("/proc/sys/kernel/pid_max").read_text().strip())
     fabricated = (_FAKE_INIT_PID, *(_fake_pid(n) for n in range(8)))
 
@@ -811,12 +611,7 @@ def test_no_fabricated_pid_can_belong_to_a_live_process() -> None:
 def test_a_process_merely_searching_for_the_marker_is_not_a_competing_build(
     tmp_path: Path,
 ) -> None:
-    """Both directions, because a filter that is too wide is the same bug as no filter.
-
-    The live 2026-09-30 preflight matched another session's
-    ``bash -c "... pgrep -f 'GradleWrapperMain|...'"``. That line must NOT count; a real
-    ``java ... GradleDaemon`` line must.
-    """
+    """Both directions, because a filter that is too wide is the same bug as no filter."""
     searching = _reader(
         tmp_path,
         processes=[
@@ -865,9 +660,7 @@ def test_preflight_refuses_when_a_step_artifact_already_exists(tmp_path: Path) -
 
 
 def test_preflight_writes_its_artifact_even_when_it_refuses(tmp_path: Path) -> None:
-    """A refusal that leaves nothing behind is indistinguishable from never having checked —
-    plan §7.1.2's complaint about a measurement whose guards existed only in session memory.
-    """
+    """A refusal that leaves nothing behind is indistinguishable from never having checked —"""
     record = _preflight(tmp_path, _reader(tmp_path, available_gb=1.0, swap_free_gb=0.1))
 
     assert record.verdict == "refused"
@@ -877,10 +670,8 @@ def test_preflight_writes_its_artifact_even_when_it_refuses(tmp_path: Path) -> N
     checks = {c["check"]: c for c in payload["checks"]}
     assert checks["mem_available"]["ok"] is False
     assert checks["swap_free"]["ok"] is False
-    # Every refusal names the failing check AND the measured value.
     assert "1.00 GiB" in checks["mem_available"]["measured"]
     assert "0.10 GiB" in checks["swap_free"]["measured"]
-    # The append-only history keeps an earlier refusal when a later run overwrites the .json.
     assert (tmp_path / "out" / "preflight.jsonl").read_text().count("\n") == 1
 
 
@@ -894,14 +685,8 @@ def test_meminfo_without_the_fields_the_guards_need_is_refused(tmp_path: Path) -
         reader.meminfo()
 
 
-# ---------------------------------------------------------------------------------------
-# Guard configuration
-# ---------------------------------------------------------------------------------------
-
-
 def test_an_abort_floor_above_the_start_floor_is_refused() -> None:
-    """A guard must not admit what it names. With the abort floor above the start floor the
-    watchdog would kill a run the preflight had just approved."""
+    """A guard must not admit what it names. With the abort floor above the start floor the"""
     with pytest.raises(driver.MeasureRefused, match="abort-available-gb"):
         _guard(min_available_gb=4.0, abort_available_gb=6.0)
 
@@ -910,8 +695,7 @@ def test_an_abort_floor_above_the_start_floor_is_refused() -> None:
 
 
 def test_the_defaults_are_the_operator_rule_not_a_local_invention() -> None:
-    """The global rule (``~/.claude/CLAUDE.md``, 로컬 빌드 동시 실행 제한) is 6 GB available
-    and 2 GB swap free. If a future edit relaxes either default, this fails."""
+    """The global rule (``~/.claude/CLAUDE.md``, 로컬 빌드 동시 실행 제한) is 6 GB available"""
     assert driver.DEFAULT_MIN_AVAILABLE_GB == 6.0
     assert driver.DEFAULT_MIN_SWAP_FREE_GB == 2.0
     assert driver.DEFAULT_ABORT_AVAILABLE_GB == 4.0
@@ -921,15 +705,8 @@ def test_the_defaults_are_the_operator_rule_not_a_local_invention() -> None:
     assert guard.abort_swap_free_bytes < guard.min_swap_free_bytes
 
 
-# ---------------------------------------------------------------------------------------
-# Size estimate — the drift guard on the duplicated scaling rule
-# ---------------------------------------------------------------------------------------
-
-
 def test_the_size_estimate_predicts_the_real_row_count_exactly(tmp_path: Path) -> None:
-    """The driver reapplies the bench's replication rule to size the disk check. This builds
-    a real synthetic file and compares, so a change to either copy shows up here instead of
-    as a disk check that silently sizes the wrong thing."""
+    """The driver reapplies the bench's replication rule to size the disk check. This builds"""
     reference = tmp_path / "evidence.sqlite3"
     _write_reference(reference)
     estimate = driver.estimate_synthetic_size(
@@ -954,8 +731,6 @@ def test_the_size_estimate_predicts_the_real_row_count_exactly(tmp_path: Path) -
     assert estimate.predicted_rows == report.rows
     assert estimate.recurring_repeats == report.recurring_repeats
     assert estimate.boot_repeats == report.boot_repeats
-    # Bytes are an estimate, not an identity: the prediction scales payload by the
-    # reference's own file/payload ratio. It must be the right order and on the safe side.
     assert estimate.predicted_file_bytes >= report.file_bytes * 0.5
 
 
@@ -979,14 +754,7 @@ def test_the_estimate_refuses_a_reference_the_bench_itself_refuses(
         )
 
 
-# ---------------------------------------------------------------------------------------
-# Watchdog — it must actually kill a live child
-# ---------------------------------------------------------------------------------------
-
-
 def _sleep_step(tmp_path: Path, seconds: int = 30, *, name: str = "before"):
-    # No return annotation: `driver` is loaded by path, so `driver.Step` is not a name
-    # mypy can resolve — the same reason the bench's own suite leaves these unannotated.
     return driver.Step(
         name=name,
         argv=(sys.executable, "-c", f"import time; time.sleep({seconds})"),
@@ -996,8 +764,7 @@ def _sleep_step(tmp_path: Path, seconds: int = 30, *, name: str = "before"):
 
 
 def _series(reader, samples: list[tuple[float, float]]):
-    """A sampler that walks a scripted MemAvailable/SwapFree series and then holds the last
-    value, so a test states exactly when the host goes bad."""
+    """A sampler that walks a scripted MemAvailable/SwapFree series and then holds the last"""
     calls = {"n": 0}
 
     def take(pid: int):
@@ -1017,8 +784,7 @@ def _series(reader, samples: list[tuple[float, float]]):
 
 
 def _healthy(reader=None):
-    """A sampler for a host that stays fine, so a test about resource capture is not also a
-    test of whatever else happens to be running on the machine."""
+    """A sampler for a host that stays fine, so a test about resource capture is not also a"""
     return _series(reader or driver.HostReader(), [(12.0, 5.0)])
 
 
@@ -1049,15 +815,11 @@ def test_the_watchdog_kills_the_child_when_memory_falls_and_writes_the_abort_art
     assert record["signal_sent"] == "SIGTERM"
     assert record["returncode"] != 0
     assert record["last_samples"], "the abort record must carry the samples it acted on"
-    # Plan §7.1.2: the aborted 365-day pass left NO numbers (before-365d.time was 0 bytes),
-    # so every figure cited for it had to be demoted to a hypothesis. A stopped step now
-    # reports how far it got.
     partial = record["partial_resource"]
     assert partial["max_rss_bytes"] > 0
     assert partial["user_seconds"] >= 0.0
     assert "fs_inputs_blocks" in partial and "proc_io" in partial
     assert record["elapsed_seconds"] < 120, "the 120 s child did not actually die"
-    # The series is on disk too, so a later plan section cites an artifact, not a session.
     lines = (out_dir / "watchdog.jsonl").read_text().strip().splitlines()
     assert len(lines) == len(record["last_samples"])
     assert json.loads(lines[0])["step"] == "before"
@@ -1146,9 +908,6 @@ def test_a_child_that_ignores_sigterm_is_escalated_to_sigkill(tmp_path: Path) ->
     )
 
     def sampler(pid: int):
-        # Healthy until the child says its SIGTERM handler is installed. Without this the
-        # abort can land during interpreter startup, the default disposition kills the
-        # child, and the test would pass while proving nothing about escalation.
         starved = ready.exists()
         return driver.HostSample(
             at_kst="2026-09-30T12:00:00.000+09:00",
@@ -1201,14 +960,8 @@ def test_the_watchdog_can_be_turned_off_but_the_run_says_so(tmp_path: Path) -> N
 
     assert result.returncode == 0
     assert not _abort_records(out_dir, "build-1d")
-    # The samples are still recorded, flagged as unguarded.
     row = json.loads((out_dir / "watchdog.jsonl").read_text().strip().splitlines()[0])
     assert row["watchdog_enabled"] is False
-
-
-# ---------------------------------------------------------------------------------------
-# Resource capture
-# ---------------------------------------------------------------------------------------
 
 
 def test_a_step_records_wall_clock_max_rss_and_the_children_io_counters(
@@ -1248,7 +1001,6 @@ def test_a_step_records_wall_clock_max_rss_and_the_children_io_counters(
     assert result.user_seconds >= 0.0
     assert result.samples_taken >= 1
 
-    # The GNU `time -v` field names the plan already cites must still be greppable.
     time_text = (out_dir / "build-1d.time").read_text()
     assert "Maximum resident set size (kbytes):" in time_text
     assert "File system inputs:" in time_text
@@ -1258,7 +1010,6 @@ def test_a_step_records_wall_clock_max_rss_and_the_children_io_counters(
     assert record["fs_outputs_blocks"] >= 0
     assert "proc_io" in record
     if record["proc_io"]:
-        # The physical/logical distinction plan §7.1.2 recorded as missing.
         assert "rchar" in record["proc_io"]
         assert "write_bytes" in record["proc_io"]
         assert record["proc_io_sample_age_seconds"] is not None
@@ -1288,14 +1039,9 @@ def test_a_failing_child_is_reported_with_its_exit_status(tmp_path: Path) -> Non
     assert "Exit status: 3" in (out_dir / "build-1d.time").read_text()
 
 
-# ---------------------------------------------------------------------------------------
-# Step planning and the end-to-end path
-# ---------------------------------------------------------------------------------------
-
-
 def test_the_planned_steps_are_the_bench_commands_in_order(tmp_path: Path) -> None:
     steps = driver.plan_steps(
-        names=["after", "build", "before"],  # order of the argument must not matter
+        names=["after", "build", "before"],
         python="/usr/bin/python3",
         bench_path=_BENCH_PATH,
         reference=tmp_path / "ref.sqlite3",
@@ -1312,7 +1058,6 @@ def test_the_planned_steps_are_the_bench_commands_in_order(tmp_path: Path) -> No
     assert [s.name for s in steps] == ["build", "before", "after"]
     assert "build" in steps[0].argv and "--days" in steps[0].argv
     assert steps[0].stdout_path.name == "build-365d.json"
-    # Only the `after` step creates the index; the bench has no separate index subcommand.
     assert "--create-index" not in steps[1].argv
     assert "--create-index" in steps[2].argv
     assert str(tmp_path / "after-365d.json") in steps[2].argv
@@ -1339,9 +1084,7 @@ def test_an_unknown_step_name_is_refused(tmp_path: Path) -> None:
 def test_the_whole_driver_runs_build_before_and_after_end_to_end(
     tmp_path: Path,
 ) -> None:
-    """A real, tiny measurement: three real bench children, the real preflight (against a
-    fake host reader is not possible through the CLI, so the thresholds are lowered to what
-    any host satisfies), and every artifact the plan will cite."""
+    """A real, tiny measurement: three real bench children, the real preflight (against a"""
     reference = tmp_path / "evidence.sqlite3"
     _write_reference(reference)
     out_dir = tmp_path / "out"
@@ -1394,7 +1137,6 @@ def test_the_whole_driver_runs_build_before_and_after_end_to_end(
     build = json.loads((out_dir / "build-1d.json").read_text())
     assert build["days"] == 1 and build["rows"] > 0
 
-    # The `after` pass really used the index — that is the whole point of the pair.
     after = json.loads((out_dir / "after-1d.json").read_text())
     plans = " ".join(line for m in after for line in m["plan"])
     assert "entries_kind_seq" in plans
@@ -1403,7 +1145,6 @@ def test_the_whole_driver_runs_build_before_and_after_end_to_end(
         line for m in before for line in m["plan"]
     )
 
-    # Default is to remove the synthetic file so peak disk stays one file.
     assert not synthetic.exists()
 
 
@@ -1416,9 +1157,6 @@ def test_a_synthetic_file_the_run_did_not_create_is_never_deleted(
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     synthetic.parent.mkdir(parents=True)
 
-    # Build it first — `--steps build` leaves the pair unmeasured, so the driver keeps
-    # the file on its own and no --keep-synthetic workaround is needed (review #853
-    # finding 2) — then measure against it in a second invocation.
     assert (
         driver.main(
             [
@@ -1552,44 +1290,26 @@ def _import_roots(path: Path) -> set[str]:
 
 
 def test_the_driver_is_stdlib_only_and_reaches_into_no_tos_package() -> None:
-    """Two properties in one AST pass, both enforced elsewhere but cheap to keep local.
-
-    ``tos``/``tos_runtime``: the import firewall's reverse rule (TOS-FW-R) forbids anything
-    outside ``tos/`` from importing them, and ``tools/tos_firewall_check.py`` runs in CI.
-    Stdlib-only: a guard that protects a host must not be defeatable by a dependency missing
-    on that host.
-    """
+    """Two properties in one AST pass, both enforced elsewhere but cheap to keep local."""
     roots = _import_roots(_MODULE_PATH)
     assert "tos" not in roots and "tos_runtime" not in roots
     assert roots <= set(sys.stdlib_module_names), roots - set(sys.stdlib_module_names)
 
 
 def test_the_measure_pattern_does_not_match_this_test_process_itself() -> None:
-    """Self-exclusion by PID chain, exercised against the real ``pgrep`` on the real host:
-    this pytest process's command line contains the driver's module name (the test file is
-    named after it), and it must not count as a competing measurement."""
+    """Self-exclusion by PID chain, exercised against the real ``pgrep`` on the real host:"""
     reader = driver.HostReader()
     found = reader.competing_processes(driver.COMPETING_MEASURE_PATTERN)
     assert os.getpid() not in {p.pid for p in found}
 
 
 def test_an_aborted_run_keeps_the_synthetic_file_it_built(tmp_path: Path) -> None:
-    """A watchdog abort must not throw the build away.
-
-    The guard fires because the host is short of MEMORY; deleting a multi-gigabyte
-    synthetic file does nothing for that and costs the operator the whole build (366 s at
-    365 days, plan §7.1.2). The cheapest recovery is to rerun the remaining steps against
-    the file that already exists, so the run keeps it and says where it is.
-    """
+    """A watchdog abort must not throw the build away."""
     reference = tmp_path / "evidence.sqlite3"
     _write_reference(reference)
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
 
-    # The `before` step's stdout file is created by posix_spawn the instant the child
-    # starts, so gating the daemon on it lands the abort in `before`, after `build` has
-    # finished and written the synthetic: the build really is complete and really is worth
-    # preserving whenever this fires.
     reader = _reader_that_reports_a_build_once(tmp_path, gate=out_dir / "before-1d.out")
 
     rc = driver.main(
@@ -1627,7 +1347,6 @@ def test_an_aborted_run_keeps_the_synthetic_file_it_built(tmp_path: Path) -> Non
     )
 
     assert rc == 1
-    # Whichever step the competing build lands in, the abort is recorded.
     (aborted,) = _abort_records(out_dir, "before-1d")
     assert aborted.name.startswith(
         "ABORTED-before-1d."
@@ -1636,10 +1355,6 @@ def test_an_aborted_run_keeps_the_synthetic_file_it_built(tmp_path: Path) -> Non
     assert record["check"] == "competing_build"
     assert synthetic.exists(), "the aborted run deleted the build it had just paid for"
 
-    # This reader keeps the REAL `/proc`, so the per-child sampling really ran (review
-    # F4). Point it at a fabricated tree instead and both of these go empty — the live
-    # bench child is simply not in it — which would retire the whole per-child read from
-    # the only tests that exercise it against a real process.
     assert record["partial_resource"][
         "proc_io"
     ], "the child's /proc/<pid>/io never read"
@@ -1659,9 +1374,7 @@ def test_an_aborted_run_keeps_the_synthetic_file_it_built(tmp_path: Path) -> Non
 def test_the_synthetic_disposition_says_the_right_thing_for_each_outcome(
     tmp_path: Path,
 ) -> None:
-    """The three branches of the keep/delete decision, including the one the CLI test
-    cannot reach deterministically (an abort DURING the build, which leaves a partial
-    file that must not be advertised as resumable)."""
+    """The three branches of the keep/delete decision, including the one the CLI test"""
     path = tmp_path / "synth-365d.sqlite3"
 
     done = driver.decide_synthetic_disposition(
@@ -1699,17 +1412,10 @@ def test_the_synthetic_disposition_says_the_right_thing_for_each_outcome(
     assert "--steps before,after" in resumable.message
     assert "53.23 GB" in resumable.message
 
-    # The two measured flags have no defaults: a caller that forgets them must not get a
-    # decision that silently falls toward deletion.
     with pytest.raises(TypeError):
         driver.decide_synthetic_disposition(
             path, remaining=[], size_bytes=1, created_by_this_run=True
         )
-
-
-# ---------------------------------------------------------------------------------------
-# Review #826 findings — each with the scenario the reviewer named
-# ---------------------------------------------------------------------------------------
 
 
 def _cli(
@@ -1720,8 +1426,7 @@ def _cli(
     synthetic: Path | None = None,
     reader=None,
 ):
-    """Run the CLI with the floors lowered to what any host satisfies, so a test decides
-    the outcome rather than whatever else is running on the machine."""
+    """Run the CLI with the floors lowered to what any host satisfies, so a test decides"""
     reference = reference or (tmp_path / "evidence.sqlite3")
     if not reference.exists():
         _write_reference(reference)
@@ -1766,10 +1471,7 @@ def _cli(
 def test_f1_a_failed_step_stops_the_run_keeps_the_file_and_exits_non_zero(
     tmp_path: Path,
 ) -> None:
-    """F1. The first revision only looked at exceptions, so a child that merely exited
-    non-zero counted as a completed step: the later steps ran against a DB that was never
-    built, all three names landed in `completed`, the file was deleted and the process
-    returned 0."""
+    """F1. The first revision only looked at exceptions, so a child that merely exited"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     failing = _stub_bench(
@@ -1780,10 +1482,8 @@ def test_f1_a_failed_step_stops_the_run_keeps_the_file_and_exits_non_zero(
     rc = _cli(tmp_path, "--bench", str(failing), out_dir=out_dir, synthetic=synthetic)
 
     assert rc == 1
-    # The failed step's own files are moved aside, reason and all.
     err = list(out_dir.glob("build-1d.*.aborted.err"))
     assert err and "refusing" in err[0].read_text()
-    # The later steps must not have run.
     assert not (out_dir / "before-1d.json").exists()
     assert not (out_dir / "after-1d.json").exists()
     assert not (out_dir / "before-1d.resource.json").exists()
@@ -1791,12 +1491,9 @@ def test_f1_a_failed_step_stops_the_run_keeps_the_file_and_exits_non_zero(
 
 
 def test_f1_a_failed_step_keeps_a_synthetic_this_run_did_create(tmp_path: Path) -> None:
-    """The other half of F1: when the failing step is not `build`, the build's own output
-    must survive rather than be deleted as if the pair had finished."""
+    """The other half of F1: when the failing step is not `build`, the build's own output"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
-    # Point `--repeats 0` at the measure steps: the bench refuses (`--repeats must be >= 1`)
-    # so `before` exits 1 after `build` has succeeded.
     rc = _cli(tmp_path, "--repeats", "0", out_dir=out_dir, synthetic=synthetic)
 
     assert rc == 1
@@ -1809,9 +1506,7 @@ def test_f1_a_failed_step_keeps_a_synthetic_this_run_did_create(tmp_path: Path) 
 def test_f2_a_host_read_failure_is_retried_once_then_aborts_with_an_artifact(
     tmp_path: Path,
 ) -> None:
-    """F2. A transient `pgrep` exit 2/3 raised MeasureRefused out of the sampler, which the
-    BaseException path turned into a silent kill: child dead, no ABORTED artifact, and a
-    message whose exception type says 'Nothing was started'."""
+    """F2. A transient `pgrep` exit 2/3 raised MeasureRefused out of the sampler, which the"""
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     calls = {"n": 0}
@@ -1843,7 +1538,6 @@ def test_f2_a_host_read_failure_is_retried_once_then_aborts_with_an_artifact(
     record = _abort_record(out_dir, "before-90d")
     assert record["check"] == "host_read"
     assert "pgrep exited 2" in record["reason"]
-    # Retried once: the run survived the first failure and stopped on the second.
     assert calls["n"] == 3
     rows = [
         json.loads(line)
@@ -1857,8 +1551,7 @@ def test_f2_a_host_read_failure_is_retried_once_then_aborts_with_an_artifact(
 def test_f2_an_unexpected_driver_error_still_writes_an_abort_artifact(
     tmp_path: Path,
 ) -> None:
-    """The general case of F2: any exception out of the loop must leave the same evidence,
-    not the zero-artifact stop §7.1.2 had to demote to a hypothesis."""
+    """The general case of F2: any exception out of the loop must leave the same evidence,"""
     out_dir = tmp_path / "out"
     out_dir.mkdir()
 
@@ -1886,10 +1579,7 @@ def test_f2_an_unexpected_driver_error_still_writes_an_abort_artifact(
 def test_f3_editing_or_testing_this_tool_is_not_a_competing_measurement(
     tmp_path: Path,
 ) -> None:
-    """F3. The pattern was a bare filename substring, so `pytest tests/tools/
-    test_tos_evidence_scan_measure.py`, `mypy tools/…`, `vim tools/…` and `git show
-    main:tools/…` all counted — editing this tool during a multi-hour run killed the run.
-    """
+    """F3. The pattern was a bare filename substring, so `pytest tests/tools/"""
     innocent = [
         (_fake_pid(i), args)
         for i, args in enumerate(
@@ -1920,8 +1610,6 @@ def test_f3_a_real_second_driver_invocation_is_still_caught(tmp_path: Path) -> N
         assert record.verdict == "refused", args
         assert "competing_measurement" in _failed(record), args
 
-    # `profile` reads a 5 MB file and `preflight` starts no child: neither competes, and
-    # killing a six-hour run for one of them is a real loss (round-2 F2).
     for i, harmless in enumerate(
         (
             "/usr/bin/python tools/tos_evidence_scan_bench.py profile --reference /x",
@@ -1939,9 +1627,7 @@ def test_f3_a_real_second_driver_invocation_is_still_caught(tmp_path: Path) -> N
 def test_f3_the_pattern_matches_a_real_invocation_through_the_real_pgrep(
     tmp_path: Path,
 ) -> None:
-    """The regex is evaluated by `pgrep`, not by Python, so both directions are checked
-    against live processes and the real binary. `_pgrep` is used rather than `scan` because
-    these children ARE descendants of pytest, which `scan` now deliberately excludes."""
+    """The regex is evaluated by `pgrep`, not by Python, so both directions are checked"""
     script = tmp_path / "tos_evidence_scan_measure.py"
     script.write_text("import time\ntime.sleep(20)\n")
     running = subprocess.Popen([sys.executable, str(script), "run", "--days", "365"])
@@ -1967,10 +1653,7 @@ def test_f3_the_pattern_matches_a_real_invocation_through_the_real_pgrep(
 def test_f2_the_test_suites_own_bench_children_cannot_kill_a_live_run(
     tmp_path: Path,
 ) -> None:
-    """F2, the integration half. The suite spawns real `bench build`/`measure` children
-    (the e2e tests do) and they match the measurement pattern. Here they are this
-    process's own descendants, so the descendant rule covers them; the OTHER pytest's
-    children are covered by `_has_pytest_ancestor`, tested separately below."""
+    """F2, the integration half. The suite spawns real `bench build`/`measure` children"""
     script = tmp_path / "tos_evidence_scan_bench.py"
     script.write_text("import time\ntime.sleep(20)\n")
     child = subprocess.Popen([sys.executable, str(script), "build", "--days", "1"])
@@ -1991,13 +1674,7 @@ def test_f2_the_test_suites_own_bench_children_cannot_kill_a_live_run(
 
 
 def test_f2_a_process_descended_from_another_pytest_is_excluded(tmp_path: Path) -> None:
-    """F2, the rule itself, on a constructed process tree.
-
-    The scenario the review names is a LIVE driver watching a colleague's test run: those
-    bench children are not the driver's descendants, so only this rule keeps them from
-    SIGTERMing a six-hour measurement. The suite cannot stage that with real processes —
-    its own children are its descendants — so the tree is built by hand.
-    """
+    """F2, the rule itself, on a constructed process tree."""
     another_pytest = _fake_pid(0)
     its_bench_child = _fake_pid(1)
     a_login_shell = _fake_pid(2)
@@ -2031,20 +1708,10 @@ def test_f2_a_process_descended_from_another_pytest_is_excluded(tmp_path: Path) 
 def test_f2_the_descendant_rule_is_live_in_scan_not_just_available(
     tmp_path: Path,
 ) -> None:
-    """F2, the descendant rule exercised THROUGH `scan`, with no pytest in the picture.
-
-    Under pytest every descendant of this process also has a pytest ancestor, so the two
-    exclusions cover each other and removing either leaves the suite green — a guard that
-    is never the reason for anything. Here the whole process tree is constructed:
-    ``the_driver`` stands in for the driver (a plain shell, no pytest anywhere),
-    ``its_bench_child`` is the child it spawned, and ``an_unrelated_run`` is a second run
-    that must still be seen.
-    """
+    """F2, the descendant rule exercised THROUGH `scan`, with no pytest in the picture."""
     the_driver = _fake_pid(0)
     its_bench_child = _fake_pid(1)
     an_unrelated_run = _fake_pid(2)
-    # The driver is a parentless root: give it the fabricated init as a parent and every
-    # other fabricated process becomes its "descendant".
     tree = {
         _FAKE_INIT_PID: (0, "/sbin/init"),
         the_driver: (0, "/bin/bash -l"),
@@ -2059,7 +1726,6 @@ def test_f2_the_descendant_rule_is_live_in_scan_not_just_available(
     }
     root = _fake_proc(tmp_path / "proc", tree)
     table = tmp_path / "table"
-    # The visible half of the same tree — one source for both views (review F7).
     table.write_text(
         _proc_table(
             [(pid, tree[pid][1]) for pid in (its_bench_child, an_unrelated_run)]
@@ -2068,7 +1734,6 @@ def test_f2_the_descendant_rule_is_live_in_scan_not_just_available(
     fake = tmp_path / "fake-pgrep.sh"
     fake.write_text(f'#!/bin/sh\ngrep -E -- "$1" "{table}" || true\nexit 0\n')
     fake.chmod(0o755)
-    # `self_pid` is the driver's own identity seam — no reaching into the private memo.
     reader = driver.HostReader(
         proc_root=root, pgrep_argv=(str(fake),), self_pid=the_driver
     )
@@ -2084,9 +1749,7 @@ def test_f2_the_descendant_rule_is_live_in_scan_not_just_available(
 def test_f2_the_drivers_own_child_and_grandchildren_are_not_competitors(
     tmp_path: Path,
 ) -> None:
-    """The other exclusion: the bench child this driver spawned is the work being
-    measured. Checked by identity on the real `/proc` ancestry, with this process standing
-    in for the driver."""
+    """The other exclusion: the bench child this driver spawned is the work being"""
     script = tmp_path / "tos_evidence_scan_bench.py"
     script.write_text("import time\ntime.sleep(20)\n")
     child = subprocess.Popen([sys.executable, str(script), "measure", "--db", "/x"])
@@ -2103,29 +1766,20 @@ def test_f2_the_drivers_own_child_and_grandchildren_are_not_competitors(
 def test_f9_a_search_command_glued_to_shell_syntax_is_still_a_search(
     tmp_path: Path,
 ) -> None:
-    """F9. Splitting on whitespace after stripping single quotes left `$(pgrep`, `;pgrep`
-    and `|grep` unrecognized, so a line that was plainly searching counted as a build.
-    """
+    """F9. Splitting on whitespace after stripping single quotes left `$(pgrep`, `;pgrep`"""
     for args in (
         "bash -c 'for p in $(pgrep -f GradleWorkerMain); do kill $p; done'",
         'sh -c "pgrep -f GradleDaemon|wc -l"',
         "bash -c 'ps aux;grep GradleWrapperMain'",
     ):
         assert driver._is_searching_for_the_pattern(args), args
-    # And a path that merely contains the letters is not a search command.
     assert not driver._is_searching_for_the_pattern(
         "/opt/grepbuild/gradlew --daemon org.gradle.launcher.daemon.bootstrap.GradleDaemon"
     )
 
 
 def test_r2_f7_a_build_whose_paths_end_in_a_search_command_name_is_not_hidden() -> None:
-    """Round-2 F7, both cases the reviewer EXECUTED against the branch.
-
-    `os.path.basename` was applied to every whitespace token, so a JVM argument like
-    `-Dorg.gradle.appname=/home/u/rg` read as the command `rg` and the whole Gradle build
-    was filed as "merely searching" — invisible to both the preflight and the watchdog.
-    A command name only appears at a command position; a `key=/path` value never is one.
-    """
+    """Round-2 F7, both cases the reviewer EXECUTED against the branch."""
     for hidden in (
         "java -Dorg.gradle.appname=/home/u/rg -cp x worker.GradleWorkerMain",
         "/usr/bin/java -Duser.dir=/srv/grep "
@@ -2135,7 +1789,6 @@ def test_r2_f7_a_build_whose_paths_end_in_a_search_command_name_is_not_hidden() 
     ):
         assert not driver._is_searching_for_the_pattern(hidden), hidden
 
-    # The command positions themselves still classify.
     assert driver._command_position_tokens(
         "java -Dorg.gradle.appname=/home/u/rg -cp x worker.GradleWorkerMain"
     ) == ["java"]
@@ -2145,10 +1798,7 @@ def test_r2_f7_a_build_whose_paths_end_in_a_search_command_name_is_not_hidden() 
 def test_f4_the_documented_resume_command_actually_gets_past_preflight(
     tmp_path: Path,
 ) -> None:
-    """F4. The abort log said 'resume with --steps before,after'; the artifacts_absent
-    check then refused that exact command, because the aborted step's own `.out`/`.err`
-    (created by posix_spawn) were sitting there. The resume was advice nothing tested.
-    """
+    """F4. The abort log said 'resume with --steps before,after'; the artifacts_absent"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     aborting_reader = _reader_that_reports_a_build_once(
@@ -2162,11 +1812,9 @@ def test_f4_the_documented_resume_command_actually_gets_past_preflight(
     log = (out_dir / "measure-1d.log").read_text()
     assert "--steps before,after" in log
     assert synthetic.exists()
-    # The aborted step's output was moved aside, not deleted.
     assert list(out_dir.glob("before-1d.*.aborted.out")), "the output is preserved"
     assert not (out_dir / "before-1d.out").exists()
 
-    # Now run the command the log told the operator to run. It must get past preflight.
     rc = _cli(tmp_path, "--steps", "before,after", out_dir=out_dir, synthetic=synthetic)
 
     assert rc == 0, "the documented resume must actually work"
@@ -2177,10 +1825,7 @@ def test_f4_the_documented_resume_command_actually_gets_past_preflight(
 def test_f5_a_resume_is_not_asked_for_the_space_its_build_already_spent(
     tmp_path: Path,
 ) -> None:
-    """F5. disk_free always demanded predicted x headroom, so a measure-only rerun on the
-    very disk that now holds the synthetic file was refused by the tool's own advice."""
-    # The `build` case needs the file ABSENT (otherwise synthetic_absent refuses first),
-    # so the two cases get their own directories.
+    """F5. disk_free always demanded predicted x headroom, so a measure-only rerun on the"""
     build_dir = tmp_path / "b"
     build_dir.mkdir()
     _write_reference(build_dir / "evidence.sqlite3")
@@ -2203,7 +1848,6 @@ def test_f5_a_resume_is_not_asked_for_the_space_its_build_already_spent(
     assert resume_check.floor_bytes is not None
     assert build_check.floor_bytes is not None
     assert resume_check.floor_bytes < build_check.floor_bytes
-    # Only the index is new: ~1.8 % of the file on disk, not the whole predicted file.
     assert resume_check.floor_bytes <= int(
         4096 * driver.DEFAULT_INDEX_GROWTH_RATIO * driver.DEFAULT_DISK_HEADROOM_RATIO
     )
@@ -2212,8 +1856,7 @@ def test_f5_a_resume_is_not_asked_for_the_space_its_build_already_spent(
 def test_f5_measure_only_without_a_synthetic_file_is_refused_up_front(
     tmp_path: Path,
 ) -> None:
-    """The step selection has to be consistent with what is on disk: with `build` excluded
-    nothing creates the file, so refusing now beats three children failing later."""
+    """The step selection has to be consistent with what is on disk: with `build` excluded"""
     record = _preflight(tmp_path, _reader(tmp_path), steps=["before", "after"])
 
     assert record.verdict == "refused"
@@ -2223,9 +1866,7 @@ def test_f5_measure_only_without_a_synthetic_file_is_refused_up_front(
 def test_f6_wall_clock_is_not_rounded_up_to_the_host_sample_interval(
     tmp_path: Path,
 ) -> None:
-    """F6. wait4 was polled only after sleep(watch_interval_s), so a step that finished
-    early was still reported as having run until the next sample: an 8 s step under a 5 s
-    cadence read as 10 s at 80 % CPU, not comparable with the GNU `time -v` numbers."""
+    """F6. wait4 was polled only after sleep(watch_interval_s), so a step that finished"""
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     step = driver.Step(
@@ -2237,7 +1878,6 @@ def test_f6_wall_clock_is_not_rounded_up_to_the_host_sample_interval(
 
     result = driver.run_step(
         step,
-        # A deliberately coarse host cadence next to a fine reap cadence.
         guard=_guard(watch_interval_s=5.0, poll_interval_s=0.02),
         checkout=_clean_checkout(),
         reader=driver.HostReader(),
@@ -2253,12 +1893,7 @@ def test_f6_wall_clock_is_not_rounded_up_to_the_host_sample_interval(
 
 
 def _wait_until_reapable(pid: int, timeout: float = 10.0) -> bool:
-    """Block until ``pid`` is a zombie (exited, not yet reaped) or gone.
-
-    A child writing "I am done" to a file and then exiting are two different instants, so
-    a marker file cannot express "the child has already exited" — the first version of the
-    F7 test used one and raced. The kernel's own ``Z`` state can.
-    """
+    """Block until ``pid`` is a zombie (exited, not yet reaped) or gone."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -2275,9 +1910,7 @@ def _wait_until_reapable(pid: int, timeout: float = 10.0) -> bool:
 def test_f7_a_breach_that_coincides_with_the_child_exiting_is_not_an_abort(
     tmp_path: Path,
 ) -> None:
-    """F7. A sample taken on a child that had already exited could produce an ABORTED
-    artifact next to a complete `<step>-Nd.json`, and the next resume was then refused by
-    artifacts_absent for a step that had in fact succeeded."""
+    """F7. A sample taken on a child that had already exited could produce an ABORTED"""
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     step = driver.Step(
@@ -2289,8 +1922,6 @@ def test_f7_a_breach_that_coincides_with_the_child_exiting_is_not_an_abort(
     seen = {"reaped": False}
 
     def sampler(pid: int):
-        # Hold the sample until the child really has exited, then report a starved host:
-        # exactly the interleaving the guard has to recognize as "already finished".
         seen["reaped"] = _wait_until_reapable(pid)
         return driver.HostSample(
             at_kst="2026-10-01T12:00:00.000+09:00",
@@ -2320,8 +1951,7 @@ def test_f7_a_breach_that_coincides_with_the_child_exiting_is_not_an_abort(
 def test_f7_an_abort_records_the_exit_code_the_way_a_step_result_does(
     tmp_path: Path,
 ) -> None:
-    """The raw wait status leaked into AbortRecord.returncode on the non-signalled branch:
-    a child that had exited 1 was recorded as 256 while StepResult said 1."""
+    """The raw wait status leaked into AbortRecord.returncode on the non-signalled branch:"""
     assert driver._returncode(0) == 0
     assert driver._returncode(1 << 8) == 1, "exit 1 is 1, not 256"
     assert driver._returncode(9) == -9, "SIGKILL is -9"
@@ -2330,15 +1960,13 @@ def test_f7_an_abort_records_the_exit_code_the_way_a_step_result_does(
 def test_f8_lowering_the_start_floor_lowers_the_in_run_floor_with_it(
     tmp_path: Path,
 ) -> None:
-    """F8. The help said `--min-swap-free-gb 0` opts out on a swapless host; the default
-    abort floor of 1.0 then refused, citing a flag the operator had never typed."""
+    """F8. The help said `--min-swap-free-gb 0` opts out on a swapless host; the default"""
     guard = driver.GuardConfig.validated(min_available_gb=6.0, min_swap_free_gb=0.0)
 
     assert guard.abort_swap_free_bytes == 0
     assert guard.abort_available_bytes == int(driver.DEFAULT_ABORT_AVAILABLE_GB * _GB)
     assert any("abort_swap_free_gb derived" in d for d in guard.derivations)
 
-    # An abort floor the operator DID type above the start floor is still a contradiction.
     with pytest.raises(driver.MeasureRefused, match="abort-swap-free-gb"):
         driver.GuardConfig.validated(
             min_available_gb=6.0, min_swap_free_gb=0.0, abort_swap_free_gb=1.0
@@ -2374,7 +2002,6 @@ def test_f8_a_swapless_host_runs_end_to_end_with_one_flag(tmp_path: Path) -> Non
             "200",
             "--min-available-gb",
             "0",
-            # The one flag the help text names. No --abort-swap-free-gb.
             "--min-swap-free-gb",
             "0",
             "--watch-interval-s",
@@ -2395,40 +2022,7 @@ def test_f8_a_swapless_host_runs_end_to_end_with_one_flag(tmp_path: Path) -> Non
 
 
 def _await_exec(pid: int, argv0: str, *, timeout_s: float = 10.0) -> None:
-    """Block until ``/proc/<pid>/cmdline`` shows the image ``pid`` exec'd.
-
-    ``subprocess.Popen`` returns when the child's close-on-exec error pipe reaches EOF —
-    that is, once ``execve`` has got far enough to close it. The child is therefore
-    already *inside* exec, not still forked; but the kernel has not yet published
-    ``mm->arg_start``/``arg_end`` for the new image, so ``/proc/<pid>/cmdline`` reads back
-    **empty** for a moment longer. :func:`driver.read_lock` reads exactly that file and
-    reports an unreadable or non-matching one as "owner gone" — so a test that spawns a
-    process, writes a lock naming it, and asserts the lock is live is racing that
-    publication, and loses whenever it reads first.
-
-    Which window it is was measured, not assumed: spawning ``/bin/sleep`` (an argv0 that
-    differs from the parent's) 400 times and reading the file immediately gave 154 fully
-    exec'd, 246 empty, and **0** showing the parent's own cmdline. A pre-exec fork would
-    have shown the parent's command line, because the child shares its mm until exec
-    replaces it; it never appeared.
-
-    That race is not a parallelism bug and predates any ``-n auto``: reproduced standalone
-    on this repo's host (16 cores) by spawning the same child, writing the same JSON and
-    reading the same file, 300 times — ``read_lock`` saw "owner gone" 3.7% of the time
-    with the host idle and 6.3% with every core busy. Running the battery under xdist put
-    it over the line often enough to go red on a hosted 4-vCPU runner (tos-firewall job
-    119690898248), which is how it was found; the serial battery had been carrying the
-    same ~4% all along.
-
-    Waiting here rather than marking the test ``serial``: the marker would have halved the
-    failure rate and left the test lying about why it was serial. Nothing about what the
-    test asserts changes — it still requires a live lock to read as live and a dead one to
-    read as stale.
-
-    ``/proc/<pid>/status`` PPid, which the ancestry helpers in this module use, IS
-    populated at fork, so the sibling tests that spawn a child and immediately ask
-    ``_is_descendant_of`` are not in this class and are left alone.
-    """
+    """Block until ``/proc/<pid>/cmdline`` shows the image ``pid`` exec'd."""
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         try:
@@ -2449,16 +2043,12 @@ def _await_exec(pid: int, argv0: str, *, timeout_s: float = 10.0) -> None:
 def test_the_output_directory_lock_refuses_a_second_run_and_survives_a_kill(
     tmp_path: Path,
 ) -> None:
-    """The lock is the exact half of F3 that a pattern cannot do: it says whether another
-    run claimed THIS output directory. A lock whose owner is gone must not block forever —
-    a SIGKILLed run cannot clean up after itself."""
+    """The lock is the exact half of F3 that a pattern cannot do: it says whether another"""
     out_dir = tmp_path / "out"
     out_dir.mkdir()
 
     live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"])
     try:
-        # The child's new argv must be published in /proc before the lock can name it as
-        # a live owner — see _await_exec for the window this closes.
         _await_exec(live.pid, sys.executable)
         (out_dir / driver.LOCK_NAME).write_text(
             json.dumps({"pid": live.pid, "argv0": sys.executable, "run_id": "other"})
@@ -2469,7 +2059,6 @@ def test_the_output_directory_lock_refuses_a_second_run_and_survives_a_kill(
         live.kill()
         live.wait()
 
-    # Owner gone: stale, and the next run proceeds.
     assert driver.read_lock(out_dir) is None
     assert _preflight(tmp_path, _reader(tmp_path)).verdict == "ok"
 
@@ -2480,18 +2069,10 @@ def test_the_lock_is_released_when_a_run_finishes(tmp_path: Path) -> None:
     assert not (out_dir / driver.LOCK_NAME).exists()
 
 
-# ---------------------------------------------------------------------------------------
-# Round-2 review findings
-# ---------------------------------------------------------------------------------------
-
-
 def test_r2_f1_sigterm_to_the_driver_kills_the_child_and_leaves_an_artifact(
     tmp_path: Path,
 ) -> None:
-    """Round-2 F1. With no handler, SIGTERM to the driver (a closed tmux pane, `kill`,
-    `timeout`, earlyoom picking the driver) exited the interpreter immediately: the abort
-    path never ran, the bench child was ORPHANED and kept writing a 53 GB file with no
-    watchdog, and no artifact was written."""
+    """Round-2 F1. With no handler, SIGTERM to the driver (a closed tmux pane, `kill`,"""
     out_dir = tmp_path / "out"
     reference = tmp_path / "evidence.sqlite3"
     _write_reference(reference)
@@ -2532,16 +2113,10 @@ def test_r2_f1_sigterm_to_the_driver_kills_the_child_and_leaves_an_artifact(
             "0.01",
             "--term-grace-s",
             "1",
-            # The stub bench lives under tmp_path, outside the checkout, and the real
-            # checkout is a branch: both are exactly what the A1-c guard refuses, and
-            # this test is about SIGTERM.
             "--allow-shared-checkout",
             "--bench",
             str(slow),
         ],
-        # The real HostReader is used here (this is a real subprocess), so the fake
-        # /proc/meminfo is handed over the only way a subprocess can take it: it cannot.
-        # The floors are zeroed above instead, and the fake file is unused.
         env={**os.environ, "TOS_MEASURE_FAKE_MEMINFO": str(meminfo)},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -2562,12 +2137,10 @@ def test_r2_f1_sigterm_to_the_driver_kills_the_child_and_leaves_an_artifact(
             proc.wait()
 
     assert proc.returncode == 1, proc.stderr
-    # The child is gone, not orphaned.
     assert not _pid_alive(child_pid), "the bench child outlived the signalled driver"
     record = _abort_record(out_dir, "build-1d")
     assert record["check"] == "driver_signalled"
     assert "SIGTERM" in record["reason"]
-    # And the lock the run took is released.
     assert not (out_dir / driver.LOCK_NAME).exists()
 
 
@@ -2583,9 +2156,7 @@ def _pid_alive(pid: int) -> bool:
 def test_r2_f3_a_build_onto_an_existing_synthetic_is_refused_before_anything_runs(
     tmp_path: Path,
 ) -> None:
-    """Round-2 F3. The bench refuses to overwrite its `--out`, so this run was GUARANTEED
-    to fail at step 1 — after preflight said ok, and after leaving four artifacts behind
-    that then blocked the retry."""
+    """Round-2 F3. The bench refuses to overwrite its `--out`, so this run was GUARANTEED"""
     reference = tmp_path / "evidence.sqlite3"
     _write_reference(reference)
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
@@ -2599,7 +2170,6 @@ def test_r2_f3_a_build_onto_an_existing_synthetic_is_refused_before_anything_run
     payload = json.loads((out_dir / "preflight.json").read_text())
     checks = {c["check"]: c for c in payload["checks"]}
     assert checks["synthetic_absent"]["ok"] is False
-    # Nothing ran, so nothing was left behind to block the retry.
     assert not (out_dir / "build-1d.json").exists()
     assert not (out_dir / "build-1d.err").exists()
     assert not list(out_dir.glob("*.resource.json"))
@@ -2608,8 +2178,7 @@ def test_r2_f3_a_build_onto_an_existing_synthetic_is_refused_before_anything_run
 def test_r2_f4_with_the_watchdog_off_a_host_read_failure_is_recorded_not_fatal(
     tmp_path: Path,
 ) -> None:
-    """Round-2 F4. `--no-watchdog` turns the in-run guards off, but the `host_read` abort
-    still fired and killed the child citing blind guards that were disabled."""
+    """Round-2 F4. `--no-watchdog` turns the in-run guards off, but the `host_read` abort"""
     out_dir = tmp_path / "out"
     out_dir.mkdir()
 
@@ -2646,9 +2215,7 @@ def test_r2_f4_with_the_watchdog_off_a_host_read_failure_is_recorded_not_fatal(
 def test_r2_f5_a_failed_step_cannot_have_its_resource_numbers_overwritten(
     tmp_path: Path,
 ) -> None:
-    """Round-2 F5. `artifacts_absent` guarded `.out/.err/.json` only, while a failed step
-    had already written `.time` and `.resource.json`; the rerun then replaced the failed
-    pass's numbers with no trace."""
+    """Round-2 F5. `artifacts_absent` guarded `.out/.err/.json` only, while a failed step"""
     step = driver.Step(
         name="before",
         argv=("x",),
@@ -2681,9 +2248,7 @@ def test_r2_f5_a_failed_step_cannot_have_its_resource_numbers_overwritten(
 def test_r2_f6_a_reader_failure_still_writes_the_preflight_record(
     tmp_path: Path,
 ) -> None:
-    """Round-2 F6. `meminfo()` and `competing_processes()` raised out of `preflight()`
-    before the record was written, so a host with no SwapFree line produced the very
-    'refusal that leaves no artifact' this record exists to prevent."""
+    """Round-2 F6. `meminfo()` and `competing_processes()` raised out of `preflight()`"""
     partial = tmp_path / "partial-meminfo"
     partial.write_text("MemTotal: 22016000 kB\nMemAvailable: 12000000 kB\n")
     reader = driver.HostReader(meminfo_path=partial, pgrep_argv=("/bin/true",))
@@ -2696,7 +2261,6 @@ def test_r2_f6_a_reader_failure_still_writes_the_preflight_record(
     assert checks["swap_free"]["ok"] is False
     assert "SwapFree" in checks["swap_free"]["measured"]
 
-    # Same for an unusable pgrep.
     broken = driver.HostReader(
         meminfo_path=_meminfo(tmp_path / "mi", available_gb=12.0, swap_free_gb=5.0),
         pgrep_argv=("/bin/sh", "-c", "exit 2", "--"),
@@ -2710,9 +2274,7 @@ def test_r2_f6_a_reader_failure_still_writes_the_preflight_record(
 
 
 def test_r2_f8_the_run_log_is_appended_not_replaced(tmp_path: Path) -> None:
-    """Round-2 F8. The documented resume (same --days, same --out-dir) overwrote the
-    aborted run's log wholesale, including the ABORT line — the human-readable timeline
-    the plan says it will cite instead of session memory."""
+    """Round-2 F8. The documented resume (same --days, same --out-dir) overwrote the"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     aborting = _reader_that_reports_a_build_once(
@@ -2736,9 +2298,7 @@ def test_r2_f8_the_run_log_is_appended_not_replaced(tmp_path: Path) -> None:
 def test_r2_f10_a_measure_only_resume_needs_no_reference_at_all(
     tmp_path: Path,
 ) -> None:
-    """Round-2 F10. The estimate (a GROUP BY over the whole reference) ran unconditionally
-    before the memory checks and even for resumes that never use it, so `--reference` was
-    mandatory for a run that does not read it."""
+    """Round-2 F10. The estimate (a GROUP BY over the whole reference) ran unconditionally"""
     reference = tmp_path / "evidence.sqlite3"
     _write_reference(reference)
     out_dir = tmp_path / "out"
@@ -2816,37 +2376,23 @@ def test_r2_f10_a_build_without_a_reference_is_refused_with_a_clear_reason(
 def test_r2_f10_the_reference_is_not_scanned_when_the_host_already_failed(
     tmp_path: Path,
 ) -> None:
-    """Sizing the run means scanning the reference. Doing that for a run that is not going
-    to start is work on a host that is already in trouble — and the disk check says it was
-    skipped rather than quietly passing."""
+    """Sizing the run means scanning the reference. Doing that for a run that is not going"""
     record = _preflight(tmp_path, _reader(tmp_path, available_gb=1.0, swap_free_gb=0.1))
 
     assert record.verdict == "refused"
     disk = next(c for c in record.checks if c.check == "disk_free")
     assert disk.evaluated is False
     assert "mem_available" in disk.floor
-    # Not evaluated is not a pass: it stays out of the refusal list but is in the record.
     assert "disk_free" not in (record.refusal or "")
     assert record.estimate is None
 
 
 def test_every_check_is_evaluated_on_a_healthy_host(tmp_path: Path) -> None:
-    """The guard on the guard: `evaluated=False` must only ever happen because something
-    else already refused the run. If a healthy host could skip a check, the skip would be
-    a silent pass."""
+    """The guard on the guard: `evaluated=False` must only ever happen because something"""
     record = _preflight(tmp_path, _reader(tmp_path))
 
     assert record.verdict == "ok"
     assert all(c.evaluated for c in record.checks)
-
-
-# ---------------------------------------------------------------------------------------
-# A1-c — the measurement runs from a detached worktree, and the tree may not move under it
-# ---------------------------------------------------------------------------------------
-#
-# Plan §2 A1-c, registered by the §7.1.16 F6 disposition. The 365-day and 180-day
-# measurements both ran from the shared checkout and the tree moved under both of them
-# mid-run. Each test below names the shape that would have let that happen again.
 
 
 def test_a1c_preflight_refuses_a_checkout_attached_to_a_branch(tmp_path: Path) -> None:
@@ -2865,8 +2411,7 @@ def test_a1c_preflight_refuses_a_checkout_attached_to_a_branch(tmp_path: Path) -
 
 
 def test_a1c_preflight_refuses_a_dirty_checkout(tmp_path: Path) -> None:
-    """Detached is not enough: an uncommitted edit means the bench that runs is not the
-    bench any commit names."""
+    """Detached is not enough: an uncommitted edit means the bench that runs is not the"""
     repo = _make_checkout(tmp_path, dirty=True)
     record = _preflight(tmp_path, _reader(tmp_path), checkout=_checkout(repo))
 
@@ -2882,8 +2427,7 @@ def test_a1c_preflight_refuses_a_dirty_checkout(tmp_path: Path) -> None:
 def test_a1c_preflight_refuses_a_head_that_is_not_an_ancestor_of_origin_main(
     tmp_path: Path,
 ) -> None:
-    """Clean and detached, but at a commit that was never published: a measurement is
-    evidence, and evidence is produced by merged code (#793)."""
+    """Clean and detached, but at a commit that was never published: a measurement is"""
     repo = _make_checkout(tmp_path, ancestor=False)
     record = _preflight(tmp_path, _reader(tmp_path), checkout=_checkout(repo))
 
@@ -2899,9 +2443,7 @@ def test_a1c_preflight_refuses_a_head_that_is_not_an_ancestor_of_origin_main(
 def test_a1c_preflight_refuses_when_origin_main_is_absent_and_says_to_fetch(
     tmp_path: Path,
 ) -> None:
-    """The driver does not fetch — a measurement must not reach the network, and a tool
-    that moved a remote ref would be changing the answer to its own question. So a missing
-    origin/main is a refusal that says what to run, not a pass."""
+    """The driver does not fetch — a measurement must not reach the network, and a tool"""
     repo = _make_checkout(tmp_path, origin_main=False)
     record = _preflight(tmp_path, _reader(tmp_path), checkout=_checkout(repo))
 
@@ -2915,9 +2457,7 @@ def test_a1c_preflight_refuses_when_origin_main_is_absent_and_says_to_fetch(
 def test_a1c_preflight_refuses_a_bench_from_outside_the_checkout(
     tmp_path: Path,
 ) -> None:
-    """run_p_ca.sh's module-provenance check, in Python. --python is deliberately the
-    SHARED checkout's venv, so the interpreter vouches for nothing; if --bench may point
-    anywhere, the three git checks above vouch for code that never runs."""
+    """run_p_ca.sh's module-provenance check, in Python. --python is deliberately the"""
     repo = _make_checkout(tmp_path)
     stranger = tmp_path / "elsewhere" / "tos_evidence_scan_bench.py"
     stranger.parent.mkdir()
@@ -2932,7 +2472,6 @@ def test_a1c_preflight_refuses_a_bench_from_outside_the_checkout(
     assert check.ok is False
     assert "resolves OUTSIDE the checkout" in check.detail
     assert record.checkout["bench_in_repo"] is False
-    # Recorded even so: the digest is how a reader finds out WHICH stranger it was.
     assert len(str(record.checkout["bench_sha256"])) == 64
 
 
@@ -2973,9 +2512,7 @@ def test_a1c_a_missing_git_binary_is_refused_rather_than_skipped(
 def test_a1c_the_refusal_names_every_reason_not_only_the_first(
     tmp_path: Path,
 ) -> None:
-    """An operator who has to fix one refusal at a time learns about the dirty tree only
-    after fixing the branch — the same rule the rest of this preflight already follows.
-    """
+    """An operator who has to fix one refusal at a time learns about the dirty tree only"""
     repo = _make_checkout(tmp_path, detached=False, dirty=True, ancestor=False)
     record = _preflight(tmp_path, _reader(tmp_path), checkout=_checkout(repo))
 
@@ -2988,9 +2525,7 @@ def test_a1c_the_refusal_names_every_reason_not_only_the_first(
 def test_a1c_a_bad_checkout_stops_the_run_before_the_reference_is_scanned(
     tmp_path: Path,
 ) -> None:
-    """Sizing the run means a GROUP BY over the whole reference. Doing that for a run that
-    cannot start is work for nothing — the same reason the disk check is skipped when
-    memory already failed (round-2 F10)."""
+    """Sizing the run means a GROUP BY over the whole reference. Doing that for a run that"""
     repo = _make_checkout(tmp_path, detached=False)
     record = _preflight(tmp_path, _reader(tmp_path), checkout=_checkout(repo))
 
@@ -3003,11 +2538,9 @@ def test_a1c_a_bad_checkout_stops_the_run_before_the_reference_is_scanned(
 def test_a1c_the_escape_hatch_records_the_warning_and_does_not_refuse(
     tmp_path: Path,
 ) -> None:
-    """--allow-shared-checkout is needed by this suite and by a deliberate operator run.
-    It turns the refusal off; it does not turn the RECORD off, so a run made with the
-    hatch open cannot be mistaken for a clean one afterwards."""
+    """--allow-shared-checkout is needed by this suite and by a deliberate operator run."""
     repo = _make_checkout(tmp_path, detached=False, dirty=True)
-    (tmp_path / "synth.sqlite3").write_bytes(b"")  # nothing else may refuse this run
+    (tmp_path / "synth.sqlite3").write_bytes(b"")
     record = driver.preflight(
         run_id="hatch",
         guard=_guard(),
@@ -3034,7 +2567,6 @@ def test_a1c_the_escape_hatch_records_the_warning_and_does_not_refuse(
     assert record.checkout["detached"] is False
     assert record.checkout["clean"] is False
     assert any("--allow-shared-checkout" in w for w in record.warnings)
-    # And on disk, not only in the returned object.
     payload = json.loads((tmp_path / "out" / "preflight.json").read_text())
     assert payload["checkout"]["allow_shared_checkout"] is True
     assert any("--allow-shared-checkout" in w for w in payload["warnings"])
@@ -3050,10 +2582,7 @@ def test_a1c_the_cli_warns_on_stderr_when_the_hatch_is_open(
 def test_a1c_the_guard_follows_the_drivers_own_file_not_the_working_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Production resolves the repo from ``__file__``, so running the driver from
-    somewhere else does not point the guard at a different tree. ``preflight`` starts no
-    child, and the verdict is left alone: on a developer branch it refuses, in CI's
-    detached checkout it may not, and neither says anything about this property."""
+    """Production resolves the repo from ``__file__``, so running the driver from"""
     monkeypatch.chdir(tmp_path)
     out_dir = tmp_path / "out"
     driver.main(
@@ -3076,16 +2605,10 @@ def test_a1c_the_guard_follows_the_drivers_own_file_not_the_working_directory(
     )
 
     payload = json.loads((out_dir / "preflight.json").read_text())
-    # Resolved on both sides: `git rev-parse --show-toplevel` answers with the path as
-    # git knows it, which need not be the resolved one on a checkout reached through a
-    # symlink. The property under test is "the driver's own tree", not its spelling.
     assert Path(str(payload["checkout"]["repo_path"])).resolve() == _REPO_ROOT
     assert payload["checkout"]["driver_path"] == str(_MODULE_PATH)
     assert payload["checkout"]["bench_path"] == str(_BENCH_PATH)
     assert payload["checkout"]["bench_in_repo"] is True
-
-
-# -- the run-time guard: the property the SHA line could only document -------------------
 
 
 def _trivial_step(tmp_path: Path, name: str = "before"):
@@ -3114,19 +2637,15 @@ def _run_with(checkout, tmp_path: Path, *, out_dir: Path, name: str = "before"):
 def test_a1c_a_commit_that_moves_between_steps_aborts_before_the_child_starts(
     tmp_path: Path,
 ) -> None:
-    """THE property. The preflight runs once; `before` and `after` do not — at 180 days
-    they started 1 h 39 m apart. A SHA written into the artifact proves afterwards that
-    the tree moved; this stops the second child from running at all."""
+    """THE property. The preflight runs once; `before` and `after` do not — at 180 days"""
     repo = _make_checkout(tmp_path)
     checkout = _checkout(repo)
     out_dir = tmp_path / "out"
     out_dir.mkdir()
 
-    # Step one runs against the tree the preflight approved.
     first = _run_with(checkout, tmp_path, out_dir=out_dir, name="build")
     assert first.returncode == 0
 
-    # …and then the tree moves, exactly as it did under both earlier measurements.
     moved_from = _git(repo, "rev-parse", "HEAD")
     _git(repo, "commit", "-q", "--allow-empty", "-m", "a parallel lane lands something")
     moved_to = _git(repo, "rev-parse", "HEAD")
@@ -3138,8 +2657,6 @@ def test_a1c_a_commit_that_moves_between_steps_aborts_before_the_child_starts(
     record = _abort_record(out_dir, "before-7d")
     assert record["check"] == "checkout_drift"
     assert moved_from in record["reason"] and moved_to in record["reason"]
-    # No child was started, and the record says so instead of printing a 0 that would read
-    # as "the child exited cleanly".
     assert record["returncode"] is None
     assert record["partial_resource"] == {}
     assert record["signal_sent"].startswith("none")
@@ -3167,10 +2684,7 @@ def test_a1c_a_tree_that_goes_dirty_between_steps_aborts(tmp_path: Path) -> None
 def test_a1c_a_bench_edited_between_steps_aborts_even_with_a_clean_tree(
     tmp_path: Path,
 ) -> None:
-    """Why the digest is checked next to cleanliness rather than behind it: an IGNORED
-    bench can change while `git status --porcelain` stays empty and HEAD stays put. That
-    is the one case where the two git answers are both "nothing moved" and the two passes
-    were still measured with different benches."""
+    """Why the digest is checked next to cleanliness rather than behind it: an IGNORED"""
     repo = _make_checkout(tmp_path, bench_ignored=True)
     checkout = _checkout(repo)
     out_dir = tmp_path / "out"
@@ -3195,8 +2709,7 @@ def test_a1c_a_bench_edited_between_steps_aborts_even_with_a_clean_tree(
 def test_a1c_every_step_artifact_carries_the_commit_and_the_bench_digest(
     tmp_path: Path,
 ) -> None:
-    """Requirement 3: a changed bench stays detectable even when the guard is bypassed,
-    because each step's own artifact says which bench produced it."""
+    """Requirement 3: a changed bench stays detectable even when the guard is bypassed,"""
     repo = _make_checkout(tmp_path)
     checkout = _checkout(repo)
     out_dir = tmp_path / "out"
@@ -3221,8 +2734,6 @@ def test_a1c_every_step_artifact_carries_the_commit_and_the_bench_digest(
         assert key in payload["checkout"], key
     assert payload["checkout"]["bench_sha256"] == digest
 
-    # The .time file carries the same two facts as COMMENTS, so §7.1.2's grep for
-    # `File system inputs` keeps working unchanged.
     timing = (out_dir / "before-7d.time").read_text()
     assert f"# repo_commit: {head}" in timing
     assert f"# bench sha256: {digest}" in timing
@@ -3232,8 +2743,7 @@ def test_a1c_every_step_artifact_carries_the_commit_and_the_bench_digest(
 def test_a1c_with_the_hatch_open_drift_is_recorded_but_does_not_abort(
     tmp_path: Path,
 ) -> None:
-    """The deliberate operator run: nothing is blocked, and the step artifact still shows
-    the tree moved — baseline_commit next to repo_commit, in the file itself."""
+    """The deliberate operator run: nothing is blocked, and the step artifact still shows"""
     repo = _make_checkout(tmp_path)
     checkout = _checkout(repo, enforced=False)
     out_dir = tmp_path / "out"
@@ -3251,8 +2761,7 @@ def test_a1c_with_the_hatch_open_drift_is_recorded_but_does_not_abort(
 
 
 def test_a1c_a_checkout_that_stays_put_is_not_an_abort(tmp_path: Path) -> None:
-    """The other direction, because a guard that is too eager is the same bug as no guard:
-    three steps in a row against an unmoving tree all run."""
+    """The other direction, because a guard that is too eager is the same bug as no guard:"""
     repo = _make_checkout(tmp_path)
     checkout = _checkout(repo)
     out_dir = tmp_path / "out"
@@ -3264,15 +2773,7 @@ def test_a1c_a_checkout_that_stays_put_is_not_an_abort(tmp_path: Path) -> None:
 
 
 def test_a1c_a_state_that_errored_is_never_ok_however_good_the_rest_looks() -> None:
-    """The fail-closed clause, given the concrete input it refuses.
-
-    It needs its own test. Through :func:`read_checkout` the clause is MASKED: every
-    error path returns before the four git answers are filled in, so they are all False
-    and ``ok`` would already be False without it — deleting ``not self.error`` leaves the
-    refusal tests above green. A clause nothing can fail is a clause that blocks nothing
-    (`MEMORY.md`, "가드가 자기가 막는다고 말한 것을 허용한다"), so here is the state it
-    exists for: a reader that learns the four answers and THEN fails.
-    """
+    """The fail-closed clause, given the concrete input it refuses."""
     state = driver.CheckoutState(
         at_kst="2026-10-02T12:00:00.000+09:00",
         repo_path="/somewhere",
@@ -3296,11 +2797,6 @@ def test_a1c_a_state_that_errored_is_never_ok_however_good_the_rest_looks() -> N
     assert "unreadable" in state.summary()
 
 
-# ---------------------------------------------------------------------------------------
-# Review #838 findings — each with the scenario the reviewer named
-# ---------------------------------------------------------------------------------------
-
-
 def _resource_artifact(
     out_dir: Path, step: str, days: int, *, commit: str, digest: str
 ) -> Path:
@@ -3316,16 +2812,11 @@ def _resource_artifact(
 
 
 def test_f1_a_resume_at_a_different_commit_is_refused(tmp_path: Path) -> None:
-    """F1, the hole the in-process baseline could not see. `before` today and `after`
-    next week are two PROCESSES: each is internally consistent, and together they are a
-    pair measured with two different trees. Nothing read what the first one wrote down.
-    """
+    """F1, the hole the in-process baseline could not see. `before` today and `after`"""
     repo = _make_checkout(tmp_path)
     checkout = _checkout(repo)
     out_dir = tmp_path / "out"
-    _resource_artifact(
-        out_dir, "before", 1, commit="0" * 40, digest="1" * 64
-    )  # measured at X / S1
+    _resource_artifact(out_dir, "before", 1, commit="0" * 40, digest="1" * 64)
 
     record = _preflight(tmp_path, _reader(tmp_path), checkout=checkout, steps=["after"])
 
@@ -3363,9 +2854,7 @@ def test_f1_a_resume_from_the_same_tree_is_allowed(tmp_path: Path) -> None:
 def test_f1_a_resume_onto_an_artifact_with_no_provenance_is_refused(
     tmp_path: Path,
 ) -> None:
-    """An artifact written before A1-c carries no `checkout` block. That is not a pass:
-    "which tree measured this" is exactly the question, and the artifact cannot answer.
-    """
+    """An artifact written before A1-c carries no `checkout` block. That is not a pass:"""
     repo = _make_checkout(tmp_path)
     out_dir = tmp_path / "out"
     out_dir.mkdir(parents=True)
@@ -3384,9 +2873,7 @@ def test_f1_a_resume_onto_an_artifact_with_no_provenance_is_refused(
 def test_f1_a_different_size_in_the_same_out_dir_is_not_compared(
     tmp_path: Path,
 ) -> None:
-    """One output directory holds every size (the existing `a1/` does). A 365-day run
-    months ago is a DIFFERENT measurement and may legitimately be at another commit —
-    comparing it would refuse every real campaign."""
+    """One output directory holds every size (the existing `a1/` does). A 365-day run"""
     repo = _make_checkout(tmp_path)
     out_dir = tmp_path / "out"
     _resource_artifact(out_dir, "before", 365, commit="9" * 40, digest="8" * 64)
@@ -3403,16 +2890,13 @@ def test_f1_a_different_size_in_the_same_out_dir_is_not_compared(
 def test_f2_an_untracked_file_hidden_by_the_operators_git_config_is_still_dirty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """F2. `status.showUntrackedFiles = no` is a common personal setting, and under the
-    plain `--porcelain` this shipped with it made an untracked bench INVISIBLE — the tree
-    read clean and both the preflight and the per-step re-check passed."""
+    """F2. `status.showUntrackedFiles = no` is a common personal setting, and under the"""
     repo = _make_checkout(tmp_path)
     (repo / "tools" / "stray_bench.py").write_text("# nobody committed me\n")
     config = tmp_path / "gitconfig"
     config.write_text("[status]\n\tshowUntrackedFiles = no\n")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
 
-    # The premise, measured rather than assumed: plain --porcelain really does hide it.
     plain = subprocess.run(
         ["git", "-C", str(repo), "status", "--porcelain"],
         capture_output=True,
@@ -3434,8 +2918,7 @@ def test_f2_an_untracked_file_hidden_by_the_operators_git_config_is_still_dirty(
 def test_f2_a_clean_tree_is_still_clean_under_the_same_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Both directions: a filter that calls everything dirty is the same bug as no
-    filter."""
+    """Both directions: a filter that calls everything dirty is the same bug as no"""
     repo = _make_checkout(tmp_path)
     config = tmp_path / "gitconfig"
     config.write_text("[status]\n\tshowUntrackedFiles = no\n")
@@ -3458,8 +2941,7 @@ def _fake_git(tmp_path: Path, body: str, name: str = "fake-git.sh") -> Path:
 
 
 def test_f4_a_git_that_never_answers_is_an_error_not_a_pass(tmp_path: Path) -> None:
-    """F4. A `git status` behind somebody's index.lock used to stall the per-child
-    re-check forever: no watchdog is watching the driver, and no artifact is written."""
+    """F4. A `git status` behind somebody's index.lock used to stall the per-child"""
     repo = _make_checkout(tmp_path)
     slow = _fake_git(tmp_path, "sleep 30\nexit 0\n")
 
@@ -3481,8 +2963,6 @@ def test_f4_a_hung_git_at_the_per_child_recheck_aborts_with_an_artifact(
     repo = _make_checkout(tmp_path)
     good = _checkout(repo)
     slow = _fake_git(tmp_path, "sleep 30\nexit 0\n")
-    # Baseline from the real git, re-check through the hung one — the shape of a lock
-    # taken by someone else after the run started.
     stalled = dataclasses.replace(good, git=(str(slow),), timeout_s=0.5)
     out_dir = tmp_path / "out"
     out_dir.mkdir()
@@ -3499,17 +2979,10 @@ def test_f4_a_hung_git_at_the_per_child_recheck_aborts_with_an_artifact(
 def test_f3_a_signal_during_the_pre_spawn_recheck_still_leaves_an_artifact(
     tmp_path: Path,
 ) -> None:
-    """F3. The five git calls take real time and run hours into a measurement. A SIGTERM
-    landing in the middle of them escaped with NO artifact — past the handler whose
-    docstring says an abort is never silent, whatever caused it."""
+    """F3. The five git calls take real time and run hours into a measurement. A SIGTERM"""
 
     class SignalledCheckout:
-        """The guard seam with a signal arriving where the five git calls would be.
-
-        Duck-typed rather than a subclass: `run_step` asks a checkout for exactly
-        `read`/`record`/`drift`, and `driver` is loaded by path so its classes are not
-        names a type checker can subclass.
-        """
+        """The guard seam with a signal arriving where the five git calls would be."""
 
         def read(self):
             raise driver.MeasureSignalled("received SIGTERM — terminating the child")
@@ -3537,9 +3010,7 @@ def test_f3_a_signal_during_the_pre_spawn_recheck_still_leaves_an_artifact(
 def test_f5_output_written_into_the_checkout_is_refused_up_front(
     tmp_path: Path,
 ) -> None:
-    """F5. `--synthetic ./synth-365d.sqlite3` inside the worktree used to pass, then
-    `build` spent six minutes and 53 GB, and only then did the `before` re-check abort
-    the run blaming "someone working in the tree"."""
+    """F5. `--synthetic ./synth-365d.sqlite3` inside the worktree used to pass, then"""
     repo = _make_checkout(tmp_path)
     inside = repo / "synth-1d.sqlite3"
 
@@ -3564,13 +3035,11 @@ def test_f5_output_written_into_the_checkout_is_refused_up_front(
     assert check.ok is False
     assert "--synthetic" in check.measured
     assert "NOT gitignored" in check.measured
-    # And the stderr-bound refusal says it too, not only the stdout detail line (F8).
     assert "NOT gitignored" in (record.refusal or "")
 
 
 def test_f5_a_gitignored_path_inside_the_checkout_is_allowed(tmp_path: Path) -> None:
-    """Ignored is the one safe way to be inside: it cannot dirty the tree, and
-    `git add -A` will not stage it."""
+    """Ignored is the one safe way to be inside: it cannot dirty the tree, and"""
     repo = _make_checkout(tmp_path)
     (repo / ".gitignore").write_text("synth-*.sqlite3\n")
     _git(repo, "add", "-A")
@@ -3606,9 +3075,7 @@ def test_f5_a_gitignored_path_inside_the_checkout_is_allowed(tmp_path: Path) -> 
 def test_f5_the_output_check_is_not_released_by_the_shared_checkout_hatch(
     tmp_path: Path,
 ) -> None:
-    """Unlike the rest of the guard. The hatch is a choice about where the CODE comes
-    from, not a licence to drop a 53 GB file into the repository — the same line
-    run_p_ca.sh draws around its own override."""
+    """Unlike the rest of the guard. The hatch is a choice about where the CODE comes"""
     repo = _make_checkout(tmp_path)
 
     record = driver.preflight(
@@ -3637,9 +3104,7 @@ def test_f5_the_output_check_is_not_released_by_the_shared_checkout_hatch(
 def test_f6_a_branch_created_between_steps_aborts_even_at_the_same_commit(
     tmp_path: Path,
 ) -> None:
-    """F6. `git switch -c scratch` leaves the commit and the tree exactly as they were,
-    so the first revision's three comparisons all passed — and the next child ran from a
-    branch a parallel lane can advance, the very state the preflight refuses."""
+    """F6. `git switch -c scratch` leaves the commit and the tree exactly as they were,"""
     repo = _make_checkout(tmp_path)
     checkout = _checkout(repo)
     out_dir = tmp_path / "out"
@@ -3665,7 +3130,6 @@ def test_f6_origin_main_moving_away_between_steps_aborts(tmp_path: Path) -> None
     out_dir.mkdir()
     assert _run_with(checkout, tmp_path, out_dir=out_dir, name="build").returncode == 0
 
-    # A fetch lands while the measurement runs and origin/main diverges from HEAD.
     _git(repo, "checkout", "-q", "-B", "side", "HEAD")
     _git(repo, "commit", "-q", "--allow-empty", "-m", "published elsewhere")
     _git(
@@ -3675,19 +3139,15 @@ def test_f6_origin_main_moving_away_between_steps_aborts(tmp_path: Path) -> None
     _git(repo, "branch", "-q", "-D", "side")
     assert _git(repo, "rev-parse", "HEAD") == checkout.baseline.repo_commit
 
-    # HEAD is still an ancestor here, so this must NOT abort — the ancestor relation is
-    # what the check cares about, not equality with origin/main.
     assert _run_with(checkout, tmp_path, out_dir=out_dir, name="before").returncode == 0
 
-    # Now rewind origin/main behind HEAD: the ancestor relation really is broken.
     _git(repo, "update-ref", "refs/remotes/origin/main", "0" * 40)
     with pytest.raises(driver.MeasureAborted, match="no longer satisfies"):
         _run_with(checkout, tmp_path, out_dir=out_dir, name="after")
 
 
 def test_f7_a_merge_base_that_fails_is_an_error_not_a_verdict(tmp_path: Path) -> None:
-    """F7. Exit 0 is "ancestor" and 1 is "not"; 128 is git failing. Reporting it as
-    "not an ancestor" tells the operator to merge code that is already merged."""
+    """F7. Exit 0 is "ancestor" and 1 is "not"; 128 is git failing. Reporting it as"""
     repo = _make_checkout(tmp_path)
     broken = _fake_git(
         tmp_path,
@@ -3709,16 +3169,13 @@ def test_f7_a_merge_base_that_fails_is_an_error_not_a_verdict(tmp_path: Path) ->
     assert state.ok is False
     assert "merge-base exited 128" in state.error
     assert "bad object" in state.error
-    # And it must NOT claim the wrong cause.
     assert "is not an ancestor of origin/main" not in "; ".join(state.failures())
 
 
 def test_f8_the_refusal_names_the_actionable_cause_not_only_the_summary(
     tmp_path: Path,
 ) -> None:
-    """F8. `summary()` for a worktree with no origin/main reads perfectly healthy
-    ("detached, clean"), so the operator saw a refusal whose text never said to fetch.
-    """
+    """F8. `summary()` for a worktree with no origin/main reads perfectly healthy"""
     repo = _make_checkout(tmp_path, origin_main=False)
 
     record = _preflight(tmp_path, _reader(tmp_path), checkout=_checkout(repo))
@@ -3739,11 +3196,7 @@ def test_f8_the_cli_refusal_on_stderr_carries_the_cause(
 
 
 def test_f9_children_cannot_import_from_the_shared_checkout(tmp_path: Path) -> None:
-    """F9. `--python` is the SHARED checkout's venv by design, and on this host that venv
-    carries an editable-install `.pth` putting the shared tree on `sys.path`. Measured:
-    `-I` alone does NOT remove it — a child run with `-I` still imported `tools.*` from
-    the shared tree while every provenance field described the worktree. `-S` is what
-    closes it, and `-I` closes PYTHONPATH and user-site next to it."""
+    """F9. `--python` is the SHARED checkout's venv by design, and on this host that venv"""
     repo = _make_checkout(tmp_path)
     injected = tmp_path / "injected"
     (injected / "smuggled").mkdir(parents=True)
@@ -3810,58 +3263,30 @@ def test_f9_children_cannot_import_from_the_shared_checkout(tmp_path: Path) -> N
     assert payload["no_site"] == 1
     assert payload["smuggled_from"] is None, "PYTHONPATH reached the child"
     assert str(injected) not in payload["sys_path"]
-    # And the artifact says which flags were in force, so the question is answerable
-    # afterwards from the file rather than from this test.
     assert result.checkout["child_python_flags"] == list(driver.CHILD_PYTHON_FLAGS)
 
 
 def test_f10_the_shared_guard_is_built_once_not_per_test() -> None:
-    """F10. `_clean_checkout()` used to re-run `with_baseline()` — five git subprocesses
-    — on every one of ~50 tests, over a repo that never changes."""
+    """F10. `_clean_checkout()` used to re-run `with_baseline()` — five git subprocesses"""
     first = _clean_checkout()
     second = _clean_checkout()
 
     assert first is second
     assert first.baseline is not None
-    # The non-enforcing view is the same baseline, not a second read.
     assert _clean_checkout(enforced=False).baseline is first.baseline
-
-
-# ---------------------------------------------------------------------------------------
-# Plan §7.1.23 "답하지 못한 것" 3 and "계획에 바꾸는 것" 3 — the two follow-ups the
-# 270-day measurement registered against this driver
-# ---------------------------------------------------------------------------------------
-#
-# Both are about what a RESUME does to the previous attempt's evidence. The 270-day
-# campaign stopped twice in one output directory and finished on the third run, and both
-# defects only exist because that happened:
-#
-#   1. the abort record's name carried no run id, so the second stop silently overwrote
-#      the first one's `reason` / `signal_sent` / `returncode` / `partial_resource`;
-#   2. a resume that succeeds never says anything about the synthetic file, because the
-#      driver only disposes of a file it built in the same run — so 36-53 GB sat on the
-#      host with nothing in the log saying it was the operator's to remove.
 
 
 def test_two_stops_in_one_output_directory_leave_two_abort_records(
     tmp_path: Path,
 ) -> None:
-    """Plan §7.1.23: the 270-day run was stopped twice and only ONE record survived.
-
-    `.out`/`.err` were moved aside under their run id (both pairs are still on the host),
-    the JSON was not — so the plan had to cite the first stop's burned wall clock as "≥",
-    reconstructed from `watchdog.jsonl`, and its `reason` / `signal_sent` / `returncode` /
-    `partial_resource` are simply gone. Two stops, two records.
-    """
+    """Plan §7.1.23: the 270-day run was stopped twice and only ONE record survived."""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     aborting = _reader_that_reports_a_build_once(
         tmp_path, gate=out_dir / "before-1d.out"
     )
 
-    # First stop: build succeeds, `before` is aborted by the competing build.
     assert _cli(tmp_path, out_dir=out_dir, synthetic=synthetic, reader=aborting) == 1
-    # Second stop: the documented resume, aborted at the same place by the same host.
     assert (
         _cli(
             tmp_path,
@@ -3881,8 +3306,6 @@ def test_two_stops_in_one_output_directory_leave_two_abort_records(
     )
     first, second = (json.loads(p.read_text()) for p in records)
     assert first["run_id"] != second["run_id"]
-    # Each record is a whole record, not a pointer: the fields the plan lost are present
-    # in BOTH.
     for record in (first, second):
         assert record["check"] == "competing_build"
         assert record["reason"]
@@ -3891,19 +3314,13 @@ def test_two_stops_in_one_output_directory_leave_two_abort_records(
         assert record["partial_resource"]["proc_io"]
     assert first != second
 
-    # And the moved-aside streams of both attempts are still next to them, which is the
-    # convention the JSON now follows.
     assert len(list(out_dir.glob("before-1d.*.aborted.out"))) == 2
 
 
 def test_an_abort_record_names_the_run_that_wrote_it_in_the_file_and_inside(
     tmp_path: Path,
 ) -> None:
-    """The run id in the name is the same run id the record already carried.
-
-    A name that disagrees with the payload would be worse than the fixed name: it would
-    look like per-run evidence while attributing it to the wrong run.
-    """
+    """The run id in the name is the same run id the record already carried."""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     aborting = _reader_that_reports_a_build_once(
@@ -3915,8 +3332,6 @@ def test_an_abort_record_names_the_run_that_wrote_it_in_the_file_and_inside(
     (path,) = _abort_records(out_dir, "before-1d")
     record = json.loads(path.read_text())
     assert path.name == f"ABORTED-before-1d.{record['run_id']}.json"
-    # The same run id is in the preflight record and in the watchdog series, so the three
-    # can be joined without guessing.
     assert json.loads((out_dir / "preflight.json").read_text())["run_id"] == (
         record["run_id"]
     )
@@ -3931,12 +3346,7 @@ def test_an_abort_record_names_the_run_that_wrote_it_in_the_file_and_inside(
 def test_the_preflight_accepts_an_output_directory_full_of_abort_records(
     tmp_path: Path,
 ) -> None:
-    """`artifacts_absent` guards the STEP artifacts, and an abort record is not one.
-
-    Written down because the run-id suffix changes those names: a check that started
-    counting them would refuse every resume after the second stop — exactly the directory
-    the 270-day measurement finished in.
-    """
+    """`artifacts_absent` guards the STEP artifacts, and an abort record is not one."""
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
@@ -3946,7 +3356,6 @@ def test_the_preflight_accepts_an_output_directory_full_of_abort_records(
         (out_dir / f"ABORTED-before-1d.{run_id}.json").write_text(
             json.dumps({"run_id": run_id, "step": "before", "days": 1})
         )
-    # The pre-run-id name too: a directory that predates this change still resumes.
     (out_dir / "ABORTED-before-1d.json").write_text(json.dumps({"step": "before"}))
 
     record = _preflight(tmp_path, _reader(tmp_path), steps=["before", "after"])
@@ -3961,13 +3370,7 @@ def test_the_preflight_accepts_an_output_directory_full_of_abort_records(
 def test_a_resume_that_finishes_says_the_synthetic_is_not_its_to_delete(
     tmp_path: Path,
 ) -> None:
-    """Plan §7.1.23 "뒤처리": 40 GB (36-53 GB across the campaign) stayed on the host and
-    the run that finished the measurement said nothing about it.
-
-    The driver disposes only of a file it built in the same run — correct, and the reason
-    the 180- and 270-day index sizes could be read at all — but silence is what made the
-    deletion a step the operator had to remember on their own.
-    """
+    """Plan §7.1.23 "뒤처리": 40 GB (36-53 GB across the campaign) stayed on the host and"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     assert _cli(tmp_path, "--steps", "build", out_dir=out_dir, synthetic=synthetic) == 0
@@ -3989,8 +3392,6 @@ def test_a_resume_that_finishes_says_the_synthetic_is_not_its_to_delete(
     assert "KEPT synthetic" in log
     assert "not built by this run" in log
     assert f"rm {synthetic}" in log, "the log must carry the exact command"
-    # Printed once where the decision is made and once in the closing summary, so a
-    # scrollback that lost the middle of a three-hour run still ends with it.
     assert log.count(f"rm {synthetic}") >= 2
 
 
@@ -4020,8 +3421,7 @@ def test_a_resume_can_opt_into_deleting_the_synthetic_it_did_not_build(
 def test_the_opt_in_delete_is_refused_when_the_pair_would_not_be_measured(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`--steps before --delete-synthetic-on-success` would throw the file away BETWEEN
-    the two halves of the pair — every planned step ran, and `after` still needs it."""
+    """`--steps before --delete-synthetic-on-success` would throw the file away BETWEEN"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     synthetic.parent.mkdir(parents=True)
@@ -4065,7 +3465,7 @@ def test_the_opt_in_delete_and_keep_synthetic_cannot_both_be_asked_for(
 def test_the_disposition_covers_the_resume_cases_the_plan_hit(tmp_path: Path) -> None:
     """The branches the CLI tests below reach, as the pure decision they come from."""
     path = tmp_path / "synth-270d.sqlite3"
-    forty = 40_099_414_016  # the kept 270-day file, plan §7.1.23
+    forty = 40_099_414_016
 
     kept = driver.decide_synthetic_disposition(
         path,
@@ -4091,7 +3491,6 @@ def test_the_disposition_covers_the_resume_cases_the_plan_hit(tmp_path: Path) ->
     )
     assert deleted.action == "delete"
 
-    # An unfinished resume is never deleted, whatever the flag says.
     aborted = driver.decide_synthetic_disposition(
         path,
         remaining=["after"],
@@ -4117,17 +3516,7 @@ def test_an_unmeasured_pair_is_never_deleted_on_either_branch(
     after_measured: bool,
     missing: str,
 ) -> None:
-    """Review #853 findings 1 and 2, as one property on both branches.
-
-    Finding 1: `--steps after --delete-synthetic-on-success` satisfied a POSITIONAL check
-    ("is the string `after` in --steps") and deleted a pair whose `before` had never run.
-    Finding 2: the created-by-this-run branch did not read the distinction at all, so
-    `--steps build` deleted the file it had just spent hours building, with the bare
-    message `removed synthetic <path>`.
-
-    Both are the same invariant — a pair that is not measured is not finished with — and
-    the flag must not be able to buy its way past it.
-    """
+    """Review #853 findings 1 and 2, as one property on both branches."""
     path = tmp_path / "synth-270d.sqlite3"
     for delete_on_success in (False, True):
         decision = driver.decide_synthetic_disposition(
@@ -4151,9 +3540,7 @@ def test_an_unmeasured_pair_is_never_deleted_on_either_branch(
 def test_keep_synthetic_is_answered_before_the_provenance_split(
     tmp_path: Path,
 ) -> None:
-    """Review #853 finding 5. On a resume `--keep-synthetic` fell through to the
-    not-ours branch, which recommends `--delete-synthetic-on-success` — the one flag the
-    startup refusal rejects next to `--keep-synthetic`."""
+    """Review #853 finding 5. On a resume `--keep-synthetic` fell through to the"""
     path = tmp_path / "synth-270d.sqlite3"
 
     decision = driver.decide_synthetic_disposition(
@@ -4178,8 +3565,7 @@ def test_keep_synthetic_is_answered_before_the_provenance_split(
 def test_the_rm_command_is_quoted_for_a_path_a_shell_would_split(
     tmp_path: Path,
 ) -> None:
-    """Review #853 finding 6. `delete_command` is documented as paste-ready; an unquoted
-    path with a space is a two-operand `rm` against a 26-53 GB clean-up."""
+    """Review #853 finding 6. `delete_command` is documented as paste-ready; an unquoted"""
     path = tmp_path / "a dir with spaces" / "synth-270d.sqlite3"
 
     for decision in (
@@ -4220,7 +3606,7 @@ def test_the_run_summary_records_the_disposition_for_the_plan_to_cite(
     assert len(summaries) == 2, "one per run, named by run id like every other artifact"
     resume = json.loads(summaries[-1].read_text())
     build_run = json.loads(summaries[0].read_text())
-    if resume["steps_planned"] == ["build"]:  # glob order is by run id, not by time
+    if resume["steps_planned"] == ["build"]:
         resume, build_run = build_run, resume
 
     assert resume["outcome"] == "ok"
@@ -4243,8 +3629,7 @@ def test_the_run_summary_records_the_disposition_for_the_plan_to_cite(
 def test_the_run_summary_is_written_when_the_run_is_aborted_too(
     tmp_path: Path,
 ) -> None:
-    """The summary is most useful on the run that did NOT finish — it is where the abort
-    record, the kept file and the resume command are named in one place."""
+    """The summary is most useful on the run that did NOT finish — it is where the abort"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     aborting = _reader_that_reports_a_build_once(
@@ -4268,13 +3653,7 @@ def test_the_run_summary_is_written_when_the_run_is_aborted_too(
 def test_the_summary_records_the_file_size_even_when_it_deletes_the_file(
     tmp_path: Path,
 ) -> None:
-    """§7.1.15 "답하지 못한 것" 3 / §7.1.23 4, partially: the size after the last step.
-
-    The size the plan wanted is the one AFTER `after` creates the index, and it was
-    readable only off a synthetic file that happened to survive — the default run deletes
-    it and recorded nothing. The number is read at disposition time, so it is in the
-    summary whichever way the file goes.
-    """
+    """§7.1.15 "답하지 못한 것" 3 / §7.1.23 4, partially: the size after the last step."""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
 
@@ -4289,19 +3668,10 @@ def test_the_summary_records_the_file_size_even_when_it_deletes_the_file(
     assert isinstance(blob["size_bytes"], int) and blob["size_bytes"] > 0
 
 
-# ---------------------------------------------------------------------------------------
-# Independent review #853 findings — each with the scenario the reviewer reproduced
-# ---------------------------------------------------------------------------------------
-
-
 def test_f1_the_opt_in_delete_is_refused_when_before_was_never_measured(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """F1. `--steps after --delete-synthetic-on-success` on a pre-built file satisfied the
-    positional check ("is `after` in --steps"), ran only `after`, and deleted the
-    synthetic with `before` never measured — the exact case the refusal's own message said
-    it existed to stop. `matches_earlier_steps` passes vacuously with no earlier artifact,
-    so nothing else caught it."""
+    """F1. `--steps after --delete-synthetic-on-success` on a pre-built file satisfied the"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     assert _cli(tmp_path, "--steps", "build", out_dir=out_dir, synthetic=synthetic) == 0
@@ -4327,8 +3697,7 @@ def test_f1_the_opt_in_delete_is_refused_when_before_was_never_measured(
 def test_f1_the_opt_in_delete_is_allowed_once_before_is_on_disk_for_this_file(
     tmp_path: Path,
 ) -> None:
-    """The other direction of F1: the property is "is this pass recorded", so a `before`
-    that already ran in this directory against THIS file unlocks it."""
+    """The other direction of F1: the property is "is this pass recorded", so a `before`"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     assert (
@@ -4353,9 +3722,7 @@ def test_f1_the_opt_in_delete_is_allowed_once_before_is_on_disk_for_this_file(
 def test_f1_a_recorded_before_that_measured_a_different_file_does_not_unlock_it(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """An output directory can be reused. A `before-1d.resource.json` naming a different
-    `--db` is evidence about a different file, and a positional "the artifact exists"
-    check would be the same shape of defect F1 is."""
+    """An output directory can be reused. A `before-1d.resource.json` naming a different"""
     out_dir = tmp_path / "out"
     other = tmp_path / "synth" / "synth-other.sqlite3"
     assert (
@@ -4384,8 +3751,7 @@ def test_f1_a_recorded_before_that_measured_a_different_file_does_not_unlock_it(
 def test_f2_a_build_only_run_keeps_the_file_and_says_the_pair_is_unmeasured(
     tmp_path: Path,
 ) -> None:
-    """F2. `run --steps build` (and `build,before`) deleted the file it had just spent
-    hours building, with the bare message `removed synthetic <path>`."""
+    """F2. `run --steps build` (and `build,before`) deleted the file it had just spent"""
     for steps, missing in (("build", "before,after"), ("build,before", "after")):
         out_dir = tmp_path / f"out-{steps.replace(',', '-')}"
         synthetic = tmp_path / "synth" / f"synth-{steps.replace(',', '-')}.sqlite3"
@@ -4407,11 +3773,7 @@ def test_f2_a_build_only_run_keeps_the_file_and_says_the_pair_is_unmeasured(
 def test_f3_an_unlink_that_fails_still_leaves_the_summary_log_and_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """F3. The `stat()` and the bare `unlink()` ran on every run including aborts, outside
-    any guard. An OSError there left the `finally` with an exception the outer handler
-    does not name: it replaced the in-flight failure and skipped the summary, the closing
-    lines, the `measure-<days>d.log` append — the ONLY write of the buffered log — and
-    `release_lock`."""
+    """F3. The `stat()` and the bare `unlink()` ran on every run including aborts, outside"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     real_unlink = Path.unlink
@@ -4440,8 +3802,7 @@ def test_f3_an_unlink_that_fails_still_leaves_the_summary_log_and_lock(
 def test_f3_a_stat_that_fails_does_not_replace_the_runs_real_outcome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The other unguarded call. The run here is already failing; the `stat` must not
-    overwrite why."""
+    """The other unguarded call. The run here is already failing; the `stat` must not"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     real_stat = Path.stat
@@ -4451,9 +3812,6 @@ def test_f3_a_stat_that_fails_does_not_replace_the_runs_real_outcome(
             raise OSError(5, "Input/output error", str(self))
         return real_stat(self, *args, **kwargs)
 
-    # Armed only once the steps are over, so the preflight's own reads are untouched and
-    # the failure lands exactly where the guard is. `--repeats 0` makes the bench refuse,
-    # so `before` exits 1 after `build` succeeded.
     armed: list[bool] = []
     real_run_step = driver.run_step
 
@@ -4487,9 +3845,7 @@ def test_f3_a_stat_that_fails_does_not_replace_the_runs_real_outcome(
 def test_f4_a_preflight_refusal_writes_a_summary_and_an_argument_one_does_not(
     tmp_path: Path,
 ) -> None:
-    """F4. `_run_outcome` said `"refused" is the preflight`, but every preflight refusal
-    is raised before the inner `try` and wrote no summary at all — a documented artifact
-    state that could not occur."""
+    """F4. `_run_outcome` said `"refused" is the preflight`, but every preflight refusal"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
 
@@ -4511,8 +3867,6 @@ def test_f4_a_preflight_refusal_writes_a_summary_and_an_argument_one_does_not(
     assert summary["steps_completed"] == []
     assert summary["synthetic"]["exists_after_the_run"] is False
 
-    # An argument contradiction is refused before the output directory exists, so it
-    # leaves nothing — like any argparse error, and the docstrings now say so.
     bare = tmp_path / "never-created"
     assert (
         _cli(
@@ -4530,8 +3884,7 @@ def test_f4_a_preflight_refusal_writes_a_summary_and_an_argument_one_does_not(
 def test_f4_the_outcome_names_which_of_the_four_stopped_the_run(
     tmp_path: Path,
 ) -> None:
-    """Collapsing `step-failed` / `signalled` / `aborted` to one word survived the first
-    revision's tests. Each is pinned here against the thing that produces it."""
+    """Collapsing `step-failed` / `signalled` / `aborted` to one word survived the first"""
     failed_dir = tmp_path / "failed"
     assert (
         _cli(
@@ -4568,10 +3921,7 @@ def test_f4_the_outcome_names_which_of_the_four_stopped_the_run(
 def test_f5_keep_synthetic_on_a_resume_is_recorded_and_recommends_nothing_it_refuses(
     tmp_path: Path,
 ) -> None:
-    """F5, through the CLI: `--steps before,after --keep-synthetic` on a resume yielded
-    `keep-not-ours` and told the operator to pass `--delete-synthetic-on-success`, which
-    the startup refusal rejects next to `--keep-synthetic`; `--keep-synthetic` left no
-    trace in the summary at all."""
+    """F5, through the CLI: `--steps before,after --keep-synthetic` on a resume yielded"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     assert _cli(tmp_path, "--steps", "build", out_dir=out_dir, synthetic=synthetic) == 0
@@ -4615,8 +3965,7 @@ def test_f6_the_rm_command_in_the_artifact_is_quoted(tmp_path: Path) -> None:
 def test_the_opt_in_delete_is_refused_when_the_run_builds_the_file_itself(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Note d. The flag says RESUME; with `build` in --steps it was accepted as a no-op,
-    which reads as asking for something it is not doing."""
+    """Note d. The flag says RESUME; with `build` in --steps it was accepted as a no-op,"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
 
@@ -4632,8 +3981,7 @@ def test_the_opt_in_delete_is_refused_when_the_run_builds_the_file_itself(
 def test_the_synthetic_may_not_be_the_reference_itself(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Note h. The one file the driver must never build onto or delete is the real
-    evidence store it is replicating. Checked on resolved paths, not strings."""
+    """Note h. The one file the driver must never build onto or delete is the real"""
     reference = tmp_path / "evidence.sqlite3"
     _write_reference(reference)
     out_dir = tmp_path / "out"
@@ -4654,20 +4002,13 @@ def test_the_synthetic_may_not_be_the_reference_itself(
 def test_a_stop_signal_during_the_end_of_run_bookkeeping_is_deferred_not_lost(
     tmp_path: Path,
 ) -> None:
-    """Note g. The end-of-run block got longer in this revision, and every write in it is
-    the only write of what it writes. A SIGTERM landing inside used to raise straight out
-    of the `finally` and take the run log with it.
-
-    Blocked, not ignored: the operator's stop request is still delivered, after the
-    bookkeeping and after the handlers are restored.
-    """
+    """Note g. The end-of-run block got longer in this revision, and every write in it is"""
     previous = driver._install_signal_handlers()
     held = None
     try:
         held = driver._hold_stop_signals()
         assert held is not None, "this platform must be able to block SIGTERM"
         os.kill(os.getpid(), signal.SIGTERM)
-        # Still running: the signal is pending, not delivered, so bookkeeping finishes.
         marker = tmp_path / "written-while-held"
         marker.write_text("the finally got to run")
         assert marker.read_text() == "the finally got to run"
@@ -4685,9 +4026,7 @@ def test_a_stop_signal_during_the_end_of_run_bookkeeping_is_deferred_not_lost(
 def test_the_closing_summary_survives_a_summary_write_that_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The `#####` lines sat in the `else` of the summary-write try, so one ENOSPC took
-    both the artifact and the closing lines out of the run log — the one place a reader
-    who lost the middle of a three-hour scrollback still looks."""
+    """The `#####` lines sat in the `else` of the summary-write try, so one ENOSPC took"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
 
@@ -4708,11 +4047,7 @@ def test_the_closing_summary_survives_a_summary_write_that_fails(
 def test_the_end_of_run_bookkeeping_runs_with_stop_signals_held(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The hold is wired into the `finally`, and the mask is put back before main returns.
-
-    Without the second half a successful run would leave the caller's process unable to
-    receive SIGTERM at all.
-    """
+    """The hold is wired into the `finally`, and the mask is put back before main returns."""
     calls: list[str] = []
     real_hold = driver._hold_stop_signals
     real_release = driver._release_stop_signals
@@ -4746,10 +4081,7 @@ def test_the_end_of_run_bookkeeping_runs_with_stop_signals_held(
 def test_a_file_that_vanishes_between_the_exists_and_the_stat_is_not_fatal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The second half of F3's guard: `exists()` then `stat()` is two syscalls, and the
-    file can go between them (another cleanup, a filling disk). The `stat` raising there
-    must not take the summary, the run log and the lock with it — and "I could not tell"
-    must not be written down as "it is gone"."""
+    """The second half of F3's guard: `exists()` then `stat()` is two syscalls, and the"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     armed: list[bool] = []
@@ -4761,7 +4093,6 @@ def test_a_file_that_vanishes_between_the_exists_and_the_stat_is_not_fatal(
         return result
 
     monkeypatch.setattr(driver, "run_step", arming_run_step)
-    # The race, made deterministic: `exists()` says yes, and by the `stat()` it is gone.
     monkeypatch.setattr(
         driver, "_exists_or_unknown", lambda path: True if armed else path.exists()
     )
@@ -4793,14 +4124,7 @@ def test_a_file_that_vanishes_between_the_exists_and_the_stat_is_not_fatal(
 def test_n1_an_argument_contradiction_writes_nothing_into_a_directory_that_exists(
     tmp_path: Path,
 ) -> None:
-    """Round-2 N1. The claim "an argument contradiction is refused before anything is
-    created and leaves nothing behind" was gated on `out_dir.exists()`, so it held only
-    for the one input the first test used — a directory that was not there yet.
-
-    `--delete-synthetic-on-success` is a RESUME flag, so by the time anyone passes it the
-    output directory normally holds the earlier steps, and a contradiction was dropping a
-    `refused` summary into it.
-    """
+    """Round-2 N1. The claim "an argument contradiction is refused before anything is"""
     out_dir = tmp_path / "out"
     synthetic = tmp_path / "synth" / "synth-1d.sqlite3"
     assert _cli(tmp_path, "--steps", "build", out_dir=out_dir, synthetic=synthetic) == 0
@@ -4826,9 +4150,7 @@ def test_n1_an_argument_contradiction_writes_nothing_into_a_directory_that_exist
 
 
 def test_n2_a_refusal_raised_inside_the_run_carries_its_reason(tmp_path: Path) -> None:
-    """Round-2 N2. `MeasureRefused` also comes from inside the run — `_spawn` cannot find
-    the interpreter, the host reader gives up — and the summary was the only place that
-    would say why, with `refusal: null`."""
+    """Round-2 N2. `MeasureRefused` also comes from inside the run — `_spawn` cannot find"""
     out_dir = tmp_path / "out"
 
     rc = _cli(
@@ -4849,8 +4171,7 @@ def test_n2_a_refusal_raised_inside_the_run_carries_its_reason(tmp_path: Path) -
 def test_n3_a_preflight_refusal_still_says_what_it_was_going_to_run(
     tmp_path: Path,
 ) -> None:
-    """Round-2 N3. `plan_steps` has already run by the time the preflight refuses, so
-    `steps_planned: []` said "nothing was planned" about a run with a full plan."""
+    """Round-2 N3. `plan_steps` has already run by the time the preflight refuses, so"""
     out_dir = tmp_path / "out"
 
     assert (
@@ -4870,41 +4191,8 @@ def test_n3_a_preflight_refusal_still_says_what_it_was_going_to_run(
     assert summary["steps_completed"] == []
 
 
-# ---------------------------------------------------------------------------------------
-# Units — a printed byte quantity must name the base it was computed in
-# ---------------------------------------------------------------------------------------
-#
-# Plan §7.1.26 「남는 후속 하나 — 문턱 문자열의 기수」. `_GB` is `1024**3`, and every human
-# string built from it used to be labelled "GB", so `36.67 GiB` was read back out of the
-# logs as 36.67 GB and the lower end of the plan's "36-53 GB" range was wrong (#853 F7;
-# the upper end, 53.23, was decimal already).
-#
-# The five tests below are deliberately NOT a list of the places that were fixed. A list
-# of places is a guard that only knows about the strings somebody already remembered, and
-# the next check someone adds walks straight past it. They ask the property instead: read
-# the number and the unit token back out of what the driver printed, and require the
-# number to equal the bytes divided by the base THE TOKEN NAMES. Both halves then have to
-# hold — relabel without rebasing and the token assertion fires, rebase without
-# relabelling and the arithmetic one does.
-#
-# What they sweep, which is finite and is also what the driver's own units comment claims:
-# every `PreflightCheck` field of a preflight record against its `*_bytes` companion, both
-# `in_run_breach` reasons, the per-step completion log line, `--help`, and `_decimal_gb`.
-# Not swept: `source` strings, disposition message bodies (those have their own tests
-# further up), and docstring prose.
-#
-# Every input is chosen so the two bases disagree in the PRINTED DIGITS, and each test
-# asserts that divergence about its own inputs rather than trusting the author to have
-# picked well — a quantity under ~73 MB rounds to the same two decimals in both bases, and
-# a test fed one of those passes whatever the label says (#858 F2, which is how a 0-byte
-# synthetic made the disk check's own assertions vacuous).
-
-#: `12.00 GiB`, `0.55 GiB needed`, `48.8 MiB` — a number followed by a unit token. The
-#: separator is optional because the step log writes `maxrss=48.8 MiB` with no guarantee
-#: of one and the earlier form had none at all (#858 F4).
 _UNIT_TOKEN = re.compile(r"(\d+\.\d+)\s*(GiB|GB|MiB|MB|KiB|kB)\b")
 
-#: How many bytes each token claims its number is counting.
 _UNIT_BASE = {
     "GiB": 1024**3,
     "GB": 10**9,
@@ -4920,24 +4208,7 @@ def _unit_tokens(text: str) -> list[tuple[float, str]]:
 
 
 def _bases_disagree(raw: int, unit: str, *, places: int = 2) -> bool:
-    """True when `raw` prints different digits in the binary and decimal base of `unit`,
-    rounded to `places` decimals.
-
-    The anti-trivial check: an assertion about a number that renders identically in both
-    bases proves nothing about which base produced it. How small "too small" is depends on
-    both the prefix and the precision, because the gap is `1024**e / 1000**e` — 2.4 % at
-    K, 4.9 % at M, 7.4 % at G. At two decimals the quantity has to clear roughly 0.21 KiB,
-    0.10 MiB or 0.07 GiB; at one decimal, ten times that.
-
-    `places` is not decoration. The step log prints peak RSS at `:.1f`, and a guard asked
-    at `:.2f` there would wave through a value the assertion beside it cannot tell apart —
-    half a MiB is `0.50` against `0.52` at two decimals and `0.5` against `0.5` at one
-    (#858 round 3 M2).
-
-    The two renderings are compared, not assigned to roles, so there is no binary/decimal
-    branch to get backwards: `GiB` and `GB` of the same byte count differ in exactly the
-    same way, whichever the label claims.
-    """
+    """True when `raw` prints different digits in the binary and decimal base of `unit`,"""
     exponent = {"K": 1, "M": 2, "G": 3}[unit[0].upper()]
     binary = f"{raw / 1024**exponent:.{places}f}"
     decimal = f"{raw / 1000**exponent:.{places}f}"
@@ -4947,14 +4218,7 @@ def _bases_disagree(raw: int, unit: str, *, places: int = 2) -> bool:
 def test_every_byte_quantity_in_the_preflight_record_names_its_own_base(
     tmp_path: Path,
 ) -> None:
-    """Every `measured`/`floor`/`detail` in the record is computed with `_GB`, so every
-    unit token in one has to be `GiB` — and each of the three now carries the raw bytes
-    beside it, so the division itself is checkable too.
-
-    `days=365` rather than the helper's default 1: at one day the predicted synthetic is
-    572 kB and the disk check prints `0.00` in both bases, which is exactly the vacuous
-    assertion #858 F2 found. At 365 days it is ~0.19 GiB / 0.21 GB and the digits part.
-    """
+    """Every `measured`/`floor`/`detail` in the record is computed with `_GB`, so every"""
     record = _preflight(
         tmp_path, _reader(tmp_path, available_gb=12.0, swap_free_gb=5.0), days=365
     )
@@ -4987,9 +4251,6 @@ def test_every_byte_quantity_in_the_preflight_record_names_its_own_base(
             )
             checked_against_bytes.add((check.check, field_name))
 
-    # A property test that found nothing to look at is a test that passes for free. Both
-    # sets are pinned: the first says the strings were seen, the second says each was
-    # checked against a number the driver did not also format.
     assert carrying_units == {
         ("mem_available", "measured"),
         ("mem_available", "floor"),
@@ -5023,13 +4284,7 @@ def test_the_watchdog_abort_reason_names_its_own_base(
     swap_bytes: int,
     floor_attribute: str,
 ) -> None:
-    """Both branches of `in_run_breach` that print a byte quantity — the strings
-    `ABORTED-*.json` carries and plan §7.1.15 and §7.1.23 quote.
-
-    Computed from the bytes, not compared against a literal: an exact-string equality
-    would be the only assertion doing work and the unit clauses beside it would be dead
-    (#858 F6).
-    """
+    """Both branches of `in_run_breach` that print a byte quantity — the strings"""
     guard = _guard()
     sample = driver.HostSample(
         at_kst="2026-10-03T12:00:00.000+09:00",
@@ -5059,9 +4314,7 @@ def test_the_watchdog_abort_reason_names_its_own_base(
 
 
 def test_the_step_log_line_names_its_own_base(tmp_path: Path) -> None:
-    """The per-step completion line prints peak RSS as `bytes / 1024**2`, which it used to
-    label `MB` (#858 F4). It is the one byte quantity outside the preflight record and the
-    abort reasons, and it is what an operator watching a six-hour run actually reads."""
+    """The per-step completion line prints peak RSS as `bytes / 1024**2`, which it used to"""
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     lines: list[str] = []
@@ -5100,14 +4353,7 @@ def test_the_cli_help_does_not_label_a_gib_default_as_gb(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`--help` prints the in-run swap default, and the flags are read in GiB. The flag
-    NAMES stay `--*-gb`: they are what every recorded invocation and every plan citation
-    uses, and renaming them would break those to fix a label.
-
-    `COLUMNS` is pinned because argparse wraps to the terminal width, and at 36-45 columns
-    the number and its unit land on different lines — the assertion would then fail for a
-    reason that has nothing to do with units (#858 F6).
-    """
+    """`--help` prints the in-run swap default, and the flags are read in GiB. The flag"""
     monkeypatch.setenv("COLUMNS", "120")
     with pytest.raises(SystemExit):
         driver.main(["run", "--help"])
@@ -5121,25 +4367,16 @@ def test_the_cli_help_does_not_label_a_gib_default_as_gb(
 
 
 def test_the_anti_trivial_guard_is_asked_at_the_precision_the_assertion_uses() -> None:
-    """`_bases_disagree` is what keeps the other tests from passing on a degenerate input,
-    so its own precision has to match theirs. Half a MiB is the witness: two decimals tell
-    the bases apart, one decimal does not, and the step log prints one (#858 round 3 M2).
-    """
+    """`_bases_disagree` is what keeps the other tests from passing on a degenerate input,"""
     half_mib = 1024 * 1024 // 2
 
     assert _bases_disagree(half_mib, "MiB")
     assert not _bases_disagree(half_mib, "MiB", places=1)
-    # Ten times the quantity clears one decimal too, which is the regime the step log runs
-    # in — a 40 MiB child is nowhere near the degenerate band.
     assert _bases_disagree(10 * half_mib, "MiB", places=1)
-    # The label does not change the answer: it is one byte count rendered two ways.
     assert _bases_disagree(half_mib, "MB") is _bases_disagree(half_mib, "MiB")
 
 
 def test_a_file_size_in_a_disposition_message_stays_decimal() -> None:
-    """The other half of the rule, pinned from the other side. Disposition messages are
-    read next to the growth plan's own file sizes (26.73 / 40.10 / 53.23 GB), so they are
-    decimal and say "GB". A later tidy-up that "unifies" them onto `_GB` fails here: 40
-    GiB of bytes is 42.95 GB, not 40.00."""
+    """The other half of the rule, pinned from the other side. Disposition messages are"""
     assert driver._decimal_gb(40 * 1024**3) == "42.95 GB"
     assert driver._decimal_gb(40_000_000_000) == "40.00 GB"

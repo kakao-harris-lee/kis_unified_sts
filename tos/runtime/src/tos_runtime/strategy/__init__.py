@@ -1,16 +1,4 @@
-"""``tos_runtime.strategy`` — loads Authored Strategy YAML files, admits
-them through the kernel's own typed admission gate, and resolves the ONE
-composition-root strategy source (TOS Phase 3 슬라이스 D-R,
-``docs/plans/2026-09-09-tos-phase3-event-core-plan.md`` §1.2).
-
-See :mod:`tos_runtime.strategy.loader` for the file-loading contract,
-:mod:`tos_runtime.strategy.bindings` for the per-strategy config bindings
-surface (``[D-R-3]``, finding #9 disposition), and
-:mod:`tos_runtime.strategy.resolve` for the composition-root hookup
-(building a :class:`~tos.engine.StrategyRegistry` from the loaded set, the
-``registry``-injection-vs-file both-present refusal, the positive bindings
-resolution, and the ``STRATEGY_REFUSED`` evidence-before-halt discipline).
-"""
+"""``tos_runtime.strategy`` — loads Authored Strategy YAML files, admits"""
 
 from __future__ import annotations
 

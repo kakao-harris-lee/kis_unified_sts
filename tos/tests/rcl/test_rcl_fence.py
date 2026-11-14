@@ -1,9 +1,4 @@
-"""Writer fencing predicate (RCL design §6.1-§6.3; RCLP-EV-003 substrate).
-
-State-machine fencing (ADR-012 §13 layer 2) as a pure predicate over injected epoch
-state: stale / removed / restored / stale-revision, and — the central fail-closed
-canary — any missing (``None``) coordinate FENCES.
-"""
+"""Writer fencing predicate (RCL design §6.1-§6.3; RCLP-EV-003 substrate)."""
 
 from __future__ import annotations
 

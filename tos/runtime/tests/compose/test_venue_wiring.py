@@ -1,13 +1,4 @@
-"""Compose e2e tests for :mod:`tos_runtime.compose._venue_wiring` (TOS venue constraint
-service wave, ``docs/plans/2026-09-15-tos-venue-constraint-service-plan.md`` §5).
-
-Hermetic (D1.4): real sqlite files under ``tmp_path``, real custody files this suite's own
-``conftest.py``/``_fixtures.py`` create with 0600 + uid. Every negative-path test here builds
-its OWN fresh ``(config_dir, data_dir, custody_root)`` triple (mirroring
-``test_symmetry.py``'s own ``_fresh_compose_dirs``) so it can mutate the governed policy /
-activation files without disturbing the happy-path ``config_dir`` fixture every other compose
-e2e test relies on.
-"""
+"""Compose e2e tests for :mod:`tos_runtime.compose._venue_wiring` (TOS venue constraint"""
 
 from __future__ import annotations
 
@@ -26,7 +17,6 @@ from tos_runtime.calendar.ports import FixedWallClockReference
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.compose._venue_wiring import VenuePolicyScopeMismatch
 from tos_runtime.compose.root import compose_paper_runtime
-from tos_runtime.venue import PolicyNotActivated
 
 if TYPE_CHECKING:
     from tos_runtime.compose._venue_wiring import VenueServiceStage
@@ -60,70 +50,12 @@ _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 
 def _fresh_compose_dirs(root: Path) -> tuple[Path, Path, Path]:
-    """Mirrors ``test_symmetry.py``'s own helper — one independent
-    ``(config_dir, data_dir, custody_root)`` triple, built via the SAME fixture-writing logic
-    every other compose e2e test uses (called through ``__wrapped__`` since pytest refuses a
-    fixture function called directly)."""
+    """Mirrors ``test_symmetry.py``'s own helper — one independent"""
     root.mkdir(parents=True, exist_ok=True)
     config_dir = call_wrapped_fixture(_config_dir_fixture, root)
     data_dir = call_wrapped_fixture(_data_dir_fixture, root)
     custody_root = call_wrapped_fixture(_custody_root_fixture, root)
     return config_dir, data_dir, custody_root
-
-
-def _rewrite_activation(config_dir: Path, members: list[dict[str, object]]) -> None:
-    """Overwrite ``safety_activation.yaml``'s own ``members:`` list, keeping every other key
-    (the ``activation:``/``not_expired:`` blocks) exactly as ``conftest.py`` wrote them.
-    """
-    path = config_dir / "safety_activation.yaml"
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    raw["members"] = members
-    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
-
-
-def _real_members(config_dir: Path) -> list[dict[str, object]]:
-    """The two REAL member rows ``conftest.py`` wrote — read back rather than re-derived, so a
-    mutation test changes exactly one field of a genuinely-activating pair."""
-    raw = yaml.safe_load(
-        (config_dir / "safety_activation.yaml").read_text(encoding="utf-8")
-    )
-    members = raw["members"]
-    assert isinstance(members, list) and len(members) == 2
-    return [dict(m) for m in members]
-
-
-def _sync_venue_activation_digest(config_dir: Path) -> None:
-    """Re-load ``venue_constraint_policy.yaml`` (as it stands NOW, after a test's own
-    mutation) and rewrite ``safety_activation.yaml``'s ``VENUE_CONSTRAINT_POLICY`` member
-    digest to match — a scope/admitting-phase mutation test wants to reach the scope/calendar
-    cross-check itself, not an (unrelated) activation-digest refusal, since changing the
-    policy's own content also changes its freshly-computed digest."""
-    from tos_runtime.venue import load_venue_constraint_policy
-
-    loaded = load_venue_constraint_policy(
-        config_dir / "venue_constraint_policy.yaml", scheme=_SCHEME
-    )
-    members = _real_members(config_dir)
-    for member in members:
-        if member["kind"] == "VENUE_CONSTRAINT_POLICY":
-            member["digest"] = loaded.policy.canonical_digest
-    _rewrite_activation(config_dir, members)
-
-
-def _sync_ocp_activation_digest(config_dir: Path) -> None:
-    """Sibling of :func:`_sync_venue_activation_digest` for the ORDER_CONSTRUCTION_POLICY
-    member — re-loads ``order_construction_policy.yaml`` as it stands NOW (after a test's own
-    mutation) and rewrites ``safety_activation.yaml``'s own member digest to match."""
-    from tos_runtime.venue import load_order_construction_policy
-
-    loaded = load_order_construction_policy(
-        config_dir / "order_construction_policy.yaml", scheme=_SCHEME
-    )
-    members = _real_members(config_dir)
-    for member in members:
-        if member["kind"] == "ORDER_CONSTRUCTION_POLICY":
-            member["digest"] = loaded.policy.canonical_digest
-    _rewrite_activation(config_dir, members)
 
 
 def _compose_with_construction(
@@ -133,11 +65,7 @@ def _compose_with_construction(
     custody_root: Path,
     construction,
 ):
-    """Mirrors ``test_compose_root.py``'s own ``_compose`` but takes a caller-supplied
-    ``construction`` (that helper hardcodes ``fx.construction_config()``) — used by the (a′)
-    wave's order-shape sourcing tests below to mutate the injected literal shape / envelope
-    independently of the shared happy-path fixture every other e2e test in this file relies
-    on."""
+    """Mirrors ``test_compose_root.py``'s own ``_compose`` but takes a caller-supplied"""
     fx.write_band_strategy_file(config_dir)
     facts = _LiveRuntimeFacts()
     runtime = compose_paper_runtime(
@@ -171,11 +99,6 @@ def _rows(runtime, kind: str) -> list[dict]:
     return [json.loads(row[0])["payload"] for row in cursor.fetchall()]
 
 
-# ===========================================================================
-# e2e (1)-(5) — plan §5 실증
-# ===========================================================================
-
-
 class TestVenueServiceE2E:
     def test_boot_binds_the_policies_once_and_step3_admits_with_the_real_decision(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -206,19 +129,10 @@ class TestVenueServiceE2E:
         )
         assert decision.result is fold
 
-        # HIGH-2 (team-lead review, 2026-09-15): the returned StageVerdict must bind the REAL
-        # issued decision's own digest/identity — a mutation that returns stage0's verdict
-        # (built with decision=None, before the real decision was issued) would leave
-        # bound_digest/bound_identity None here (tos.engine.adapters.venue_admissibility_verdict
-        # sets both from `decision`, `tos/src/tos/engine/adapters.py:105-106`).
         assert step3.bound_digest is not None
         assert step3.bound_digest == decision.canonical_digest
         assert step3.bound_identity == decision.decision_id
 
-        # HIGH-1 (team-lead review, 2026-09-15): this scope (SYNTHETIC_FUTURES_ORDER) declares
-        # no `instance:` block at all (config/broker_scopes.example.yaml) — pin that premise so
-        # this test fails loudly if the fixture ever binds one — and the decision's own
-        # broker-capability fields must stay honestly None, never an invented "draft" digest.
         assert runtime.context_resolver.instance_document is None
         assert decision.broker_capability_profile_version is None
         assert decision.broker_capability_profile_digest is None
@@ -244,7 +158,6 @@ class TestVenueServiceE2E:
 
         assert _kind_count(runtime, "VENUE_SNAPSHOT_ISSUED") == 1
         assert _kind_count(runtime, "ORDER_ADMISSIBILITY_DECISION_ISSUED") == 2
-        # Both decisions reference the SAME (one) issued snapshot — same constraint generation.
         snapshot_ids = {
             row["snapshot_id"]
             for row in _rows(runtime, "ORDER_ADMISSIBILITY_DECISION_ISSUED")
@@ -257,11 +170,6 @@ class TestVenueServiceE2E:
     def test_closed_phase_instant_denies_step3(
         self, config_dir: Path, data_dir: Path, custody_root: Path
     ) -> None:
-        # A Saturday: the conftest.py calendar is open 24/7 (every weekday incl. SAT/SUN), so
-        # narrow it here to a weekday-only window (mirrors test_session_wiring.py's own
-        # `_write_narrow_calendar`) — the SAME "CONTINUOUS" phase token stays declared (the
-        # venue policy's own admitting_phases cross-check must still pass at boot), only the
-        # window during which it is OBSERVED narrows.
         (config_dir / "calendar.yaml").write_text(
             yaml.safe_dump(
                 {
@@ -286,7 +194,7 @@ class TestVenueServiceE2E:
             ),
             encoding="utf-8",
         )
-        saturday_kst = 1_789_779_600_000  # 2026-09-19 10:00 KST
+        saturday_kst = 1_789_779_600_000
         fx.write_band_strategy_file(config_dir)
         facts = _LiveRuntimeFacts()
         runtime = compose_paper_runtime(
@@ -308,7 +216,7 @@ class TestVenueServiceE2E:
         verdicts = {v.step: v for v in results[0].flow.verdicts}
         step3 = verdicts[CommitmentStep.VENUE_ADMISSIBILITY_DECISION]
         assert step3.outcome is not StageOutcome.ADMIT
-        assert runtime.venue is not None  # this runtime always wires a venue stage
+        assert runtime.venue is not None
         last_snapshot = runtime.venue.last_snapshot
         assert last_snapshot is not None
         assert last_snapshot.observed_session_phase == "CLOSED"
@@ -361,15 +269,8 @@ class TestVenueServiceE2E:
         assert match.group(1) == bound_digest
 
 
-# ===========================================================================
-# Structural pins (mutations M4, M9)
-# ===========================================================================
-
-
 def test_the_retired_ocp_literals_do_not_appear_under_tos_runtime_src() -> None:
-    """M4: the old ``policy_id="compose-ocp"``/``policy_version="ocp-v1"`` literals must never
-    reappear anywhere in the runtime source tree — step 2's OCP coordinates come exclusively
-    from the governed, loaded Order Construction Policy now."""
+    """M4: the old ``policy_id="compose-ocp"``/``policy_version="ocp-v1"`` literals must never"""
     src_root = Path(__file__).resolve().parents[2] / "src" / "tos_runtime"
     offenders = []
     for path in src_root.rglob("*.py"):
@@ -380,10 +281,7 @@ def test_the_retired_ocp_literals_do_not_appear_under_tos_runtime_src() -> None:
 
 
 def test_compose_context_resolver_has_no_venue_decision_field() -> None:
-    """M9: ``ComposeContextResolver`` must carry no ``venue_decision``/``venue_policy``/
-    ``venue_snapshot`` dataclass FIELD (they are attempt-fresh reads off ``venue_stage`` now,
-    never a boot-time-fixed constant) — an AST check over the dataclass body, not a runtime
-    probe, so a reintroduced field is caught even if nothing currently reads it."""
+    """M9: ``ComposeContextResolver`` must carry no ``venue_decision``/``venue_policy``/"""
     context_path = (
         Path(__file__).resolve().parents[2]
         / "src"
@@ -407,21 +305,10 @@ def test_compose_context_resolver_has_no_venue_decision_field() -> None:
     assert "venue_snapshot" not in field_names
 
 
-# ===========================================================================
-# HIGH-1 (team-lead review, 2026-09-15): brokercap digest stays None for a genuinely DRAFT
-# INSTANCE document — never an invented "draft" string (mutation M7).
-# ===========================================================================
-
-
 def test_broker_capability_profile_facts_stay_none_for_a_real_draft_instance_document() -> (
     None
 ):
-    """Loads the REAL, repo-tracked KIS draft INSTANCE document (the same file
-    ``test_transport_wiring.py`` loads for its own kis-mock e2e tests) and pins
-    :func:`~tos_runtime.compose._venue_wiring._broker_capability_profile_facts` against it
-    directly — the happy-path e2e boot (``SYNTHETIC_FUTURES_ORDER``) never binds an INSTANCE
-    document at all, so it alone cannot prove the DRAFT-specific "digest stays None" claim this
-    test exists to pin."""
+    """Loads the REAL, repo-tracked KIS draft INSTANCE document (the same file"""
     from tos_runtime.brokercap.instance import load_instance_document
     from tos_runtime.compose._venue_wiring import _broker_capability_profile_facts
 
@@ -432,8 +319,6 @@ def test_broker_capability_profile_facts_stay_none_for_a_real_draft_instance_doc
         / "KIS-BROKER-CAPABILITY-PROFILE-draft.yaml"
     )
     document = load_instance_document(path, environment="MOCK_VTS")
-    # The premise this test's own name asserts — fails loudly if this fixture file is ever
-    # finalized to ISSUED (at which point a real digest would become the honest value).
     assert document.status == "DRAFT"
     assert document.profile.canonical_digest is None
 
@@ -442,73 +327,14 @@ def test_broker_capability_profile_facts_stay_none_for_a_real_draft_instance_doc
     profile_version = document.profile.profile_version
     assert profile_version is not None
     assert version == profile_version.profile_version
-    assert version is not None  # the version string itself IS real, unlike the digest
-
-
-# ===========================================================================
-# Negative boot tests (mutations M2, M10, M11; scope mismatch)
-# ===========================================================================
+    assert version is not None
 
 
 class TestVenueBootRefusals:
-    def test_activation_digest_mismatch_refuses_to_boot(self, tmp_path: Path) -> None:
-        config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
-        members = _real_members(config_dir)
-        members[0]["digest"] = "deliberately-wrong-digest"
-        _rewrite_activation(config_dir, members)
-        fx.write_band_strategy_file(config_dir)
-        with pytest.raises(PolicyNotActivated):
-            compose_paper_runtime(
-                config_dir,
-                data_dir,
-                custody_root,
-                "non-live-test",
-                construction=fx.construction_config(),
-                aggregate_risk_inputs_provider=_aggregate_inputs,
-                action_flow_inputs_provider=_action_flow_inputs,
-                transport_kind=TransportKind.SYNTHETIC,
-            )
-
-    def test_activation_resolved_false_refuses_to_boot(self, tmp_path: Path) -> None:
-        config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
-        members = _real_members(config_dir)
-        members[0]["resolved"] = False
-        _rewrite_activation(config_dir, members)
-        fx.write_band_strategy_file(config_dir)
-        with pytest.raises(PolicyNotActivated):
-            compose_paper_runtime(
-                config_dir,
-                data_dir,
-                custody_root,
-                "non-live-test",
-                construction=fx.construction_config(),
-                aggregate_risk_inputs_provider=_aggregate_inputs,
-                action_flow_inputs_provider=_action_flow_inputs,
-                transport_kind=TransportKind.SYNTHETIC,
-            )
-
-    def test_activation_empty_members_refuses_to_boot(self, tmp_path: Path) -> None:
-        config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
-        _rewrite_activation(config_dir, [])
-        fx.write_band_strategy_file(config_dir)
-        with pytest.raises(PolicyNotActivated):
-            compose_paper_runtime(
-                config_dir,
-                data_dir,
-                custody_root,
-                "non-live-test",
-                construction=fx.construction_config(),
-                aggregate_risk_inputs_provider=_aggregate_inputs,
-                action_flow_inputs_provider=_action_flow_inputs,
-                transport_kind=TransportKind.SYNTHETIC,
-            )
-
     def test_admitting_phase_token_not_in_calendar_refuses_to_boot(
         self, tmp_path: Path
     ) -> None:
         config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
-        # A phase token the shared conftest.py calendar never declares for this instrument
-        # class (it only ever declares "CONTINUOUS"/"CLOSED").
         (config_dir / "venue_constraint_policy.yaml").write_text(
             venue_policy_yaml(
                 environment=_VENUE_POLICY_ENVIRONMENT,
@@ -526,7 +352,6 @@ class TestVenueBootRefusals:
             ),
             encoding="utf-8",
         )
-        _sync_venue_activation_digest(config_dir)
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(VenuePolicyScopeMismatch):
             compose_paper_runtime(
@@ -543,13 +368,7 @@ class TestVenueBootRefusals:
     def test_instrument_class_mismatch_refuses_to_boot(
         self, config_dir: Path, data_dir: Path, custody_root: Path
     ) -> None:
-        """(a′) wave lane D — mutation proof for plan §4.2's "``instrument_class``: literal
-        kept, ALREADY cross-checked" claim: ``ConstructionConfig.instrument_class`` disagreeing
-        with the loaded venue policy's own ``scope.instrument_class`` refuses at boot
-        (``_cross_check_scope``, ``compose/_venue_wiring.py``) rather than silently admitting a
-        copy that has drifted from the governed policy — never exercised end-to-end before this
-        wave's §4.2 checklist named it as an "already pinned" claim to demonstrate, not just
-        assert."""
+        """(a′) wave lane D — mutation proof for plan §4.2's "``instrument_class``: literal"""
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(VenuePolicyScopeMismatch, match="instrument_class"):
             compose_paper_runtime(
@@ -568,14 +387,7 @@ class TestVenueBootRefusals:
     def test_kis_mock_wire_codec_null_refuses_at_compose_level(
         self, tmp_path: Path
     ) -> None:
-        """MEDIUM (team-lead review, 2026-09-15): ``write_kis_mock_transport_config`` used to
-        unconditionally rewrite ``order_construction_policy.yaml``'s ``wire_codec`` into the
-        exact KIS codec block, so no compose-level test ever proved a ``kis-mock`` boot with
-        ``wire_codec: null`` is actually refused. Reuses the SAME MOCK_STOCK_ORDER scope +
-        custody + transport-config recipe ``test_transport_wiring.py``'s own
-        ``test_e2e_boot_wires_a_kis_mock_transport_and_codec_digest_source`` already proves
-        boots successfully — the ONE difference is the deliberate ``wire_codec=None`` override
-        here."""
+        """MEDIUM (team-lead review, 2026-09-15): ``write_kis_mock_transport_config`` used to"""
         config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
         _activate_mock_stock_order(config_dir)
         fx.write_kis_mock_transport_config(config_dir, wire_codec=None)
@@ -596,12 +408,7 @@ class TestVenueBootRefusals:
     def test_synthetic_wire_codec_non_null_refuses_at_compose_level(
         self, tmp_path: Path
     ) -> None:
-        """MEDIUM inverse (team-lead review, 2026-09-15): a ``synthetic`` transport boot with a
-        non-null ``wire_codec`` declared must also refuse at the compose level — the shared
-        ``config_dir`` fixture already writes ``wire_codec: null``, so this only needs to
-        overwrite the OCP file with a non-null codec before composing (no kis-mock
-        scope/custody dance needed — the active scope stays the default SYNTHETIC one).
-        """
+        """MEDIUM inverse (team-lead review, 2026-09-15): a ``synthetic`` transport boot with a"""
         config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
         (config_dir / "order_construction_policy.yaml").write_text(
             ocp_yaml(
@@ -644,7 +451,6 @@ class TestVenueBootRefusals:
             ),
             encoding="utf-8",
         )
-        _sync_venue_activation_digest(config_dir)
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(VenuePolicyScopeMismatch):
             compose_paper_runtime(
@@ -660,11 +466,7 @@ class TestVenueBootRefusals:
 
 
 class TestWireCodecCrossCheck:
-    """M11, at the unit level: a full kis-mock e2e boot needs a whole scope/custody dance
-    (``test_transport_wiring.py``'s own ``_activate_mock_stock_order`` +
-    ``provision_kis_mock_custody``) unrelated to what this cross-check itself decides, so this
-    pins :func:`~tos_runtime.compose._venue_wiring._cross_check_wire_codec` directly against a
-    REAL loaded ``LoadedOrderConstructionPolicy`` (never a hand-built stand-in)."""
+    """M11, at the unit level: a full kis-mock e2e boot needs a whole scope/custody dance"""
 
     def test_null_wire_codec_with_kis_mock_transport_refuses(
         self, tmp_path: Path
@@ -733,27 +535,12 @@ class TestWireCodecCrossCheck:
         )
 
 
-# ===========================================================================
-# (a′) wave lane C — order_shape field sourcing
-# (docs/plans/2026-09-16-tos-aprime-envelope-order-shape-plan.md §2 decisions 2/3/4)
-# ===========================================================================
-
-
 class TestDerivedQuantityReachesVenueGate:
-    """decision 2: ``order_shape.quantity`` is judged from the derivation
-    (``construction.command.axis_value(QUANTITY)``), never the caller-declared literal on
-    ``ConstructionConfig.order_shape``."""
+    """decision 2: ``order_shape.quantity`` is judged from the derivation"""
 
     def test_derived_quantity_reaches_the_fold_not_the_literal(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        # (a′) wave lane D: `ConstructionConfig.order_shape` is gone, so there is no longer a
-        # literal to inject here at all — `VenueServiceStage` folds a bare `OrderShapeFields()`
-        # skeleton (quantity=None) and `_sourced_shape` ALWAYS replaces `quantity` with the
-        # derivation's own output. The derived quantity is `ocp_yaml()`'s own shared default
-        # (`construction.sizing.risk_budget=100` / `per_unit_risk=10` = 10, already an exact
-        # `lot_size=2` multiple, within `[min_quantity=2, max_quantity=100]`) — proving the
-        # skeleton's `None` became a real, policy-derived quantity, not a leaked literal.
         construction = fx.construction_config()
         runtime = _compose_with_construction(
             tmp_path, config_dir, data_dir, custody_root, construction
@@ -768,8 +555,6 @@ class TestDerivedQuantityReachesVenueGate:
         assert (
             construction_result is not None and construction_result.command is not None
         )
-        # the bound axis value is a canonicalized Decimal string (e.g. "1E+1", not "10") —
-        # assert the parsed *value*, not its literal spelling.
         from decimal import Decimal
 
         from tos.ioc import ConformanceAxis
@@ -786,43 +571,9 @@ class TestDerivedQuantityReachesVenueGate:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
-    # No e2e "a policy-violating literal quantity never leaks through" test here any more
-    # (a′ wave lane D): `ConstructionConfig.order_shape` is gone, so there is no longer any
-    # compose-level place to inject a literal (999, say) that the venue policy would refuse on
-    # its own — the field removal makes the whole scenario structurally impossible to construct
-    # at this level, which is a STRONGER guarantee than a passing test ever was. The same
-    # property — a caller-declared literal never reaches the judged shape — is pinned directly
-    # at ``VenueServiceStage._sourced_shape`` instead:
-    # ``TestSourcedShapeIgnoresPolicyViolatingLiteralQuantity`` below.
-
-    # No e2e "denied derivation ⇒ step3 sees quantity=None" test: ``tos.engine.sequencer
-    # .run_commitment_flow``'s "positive-admit gate" halts the flow entirely at the FIRST
-    # non-ADMIT verdict ("Only an explicit ADMIT advances") — a denied step 2
-    # (``candidate_command_verdict`` DENYs whenever ``construction.command is None``) means
-    # step 3's stage never runs at all, so there is no ``StageVerdict`` to read here. The
-    # ``candidate_command is None ⇒ quantity is None`` fail-closed behaviour is instead
-    # covered directly at the unit level: ``TestDerivedShapeQuantityUnit
-    # .test_absent_candidate_command_is_none`` below.
-
 
 class TestSourcedShapeNonIntegralQuantityNeverFallsBackToTheLiteral:
-    """MEDIUM (team-lead review, PR #718): pins ``VenueServiceStage._sourced_shape`` ITSELF —
-    the reviewer made it silently fall back to the injected literal quantity when the
-    derivation yields ``None`` and all 2225 other tests still passed, because nothing
-    exercised ``_sourced_shape`` with a ``candidate_command`` that IS present
-    (``candidate_command is not None``, i.e. step 2 admitted) but bound to a non-integral
-    QUANTITY value — ``_derived_shape_quantity``'s own fail-closed branch, distinct from the
-    "no command at all" case ``TestDerivedQuantityReachesVenueGate`` already covers (that one
-    halts the sequencer before step 3 ever runs, so it cannot reach this branch either).
-
-    Exercises the REAL ``_sourced_shape`` method against a hand-built
-    ``CanonicalBrokerCommand`` — not a reimplementation of its logic — rather than forcing a
-    genuinely-DERIVED non-integral quantity through the full compose stack: that path is
-    structurally closed, since ``VenueShapeConstraints.lot_size`` is ``int``-typed, so any
-    quantity that clears the venue policy's own lot check is necessarily integer-valued
-    (verified while writing this test — an all-``Decimal("0.5")`` lot/sizing-bound override
-    hits ``VenuePolicyConfigError: ... lot_size must be an int or null`` at the venue-policy
-    loader, before derivation is even reached)."""
+    """MEDIUM (team-lead review, PR #718): pins ``VenueServiceStage._sourced_shape`` ITSELF —"""
 
     @staticmethod
     def _stage(shape) -> VenueServiceStage:
@@ -832,15 +583,11 @@ class TestSourcedShapeNonIntegralQuantityNeverFallsBackToTheLiteral:
         from tos_runtime.venue import VenueConstraintService
 
         class _StubService(VenueConstraintService):
-            """Only ``VenueServiceStage._sourced_shape`` — never ``__call__`` — is exercised
-            here, so this double never runs the real ``__init__`` and never sets (or needs)
-            ``shape_constraints``/``policy``/etc (mypy stage 3 §1.3 rule 3: the callee's wide
-            ``VenueConstraintService`` surface means the double subclasses the concrete class
-            rather than getting its own port)."""
+            """Only ``VenueServiceStage._sourced_shape`` — never ``__call__`` — is exercised"""
 
             def __init__(
                 self,
-            ) -> None:  # real __init__ deliberately skipped — unused fields
+            ) -> None:
                 pass
 
         class _StubConstructionStage:
@@ -861,7 +608,7 @@ class TestSourcedShapeNonIntegralQuantityNeverFallsBackToTheLiteral:
         literal_quantity = 20
         resolved = OrderShapeFields(
             price=4500,
-            quantity=literal_quantity,  # must NOT survive into the sourced shape
+            quantity=literal_quantity,
             order_type="LIMIT",
             tif="DAY",
             side="BUY",
@@ -882,16 +629,7 @@ class TestSourcedShapeNonIntegralQuantityNeverFallsBackToTheLiteral:
 
 
 class TestSourcedShapeIgnoresPolicyViolatingLiteralQuantity:
-    """(a′) wave lane D: pins the same property
-    ``TestDerivedQuantityReachesVenueGate.test_literal_derived_quantity_mismatch_no_longer_
-    passes_on_the_literal`` used to prove end-to-end — a caller-declared literal quantity the
-    venue policy would refuse on its own (999, well past any real ``max_quantity``) never
-    reaches the judged shape — directly at ``VenueServiceStage._sourced_shape``. The e2e form
-    is no longer constructible at all: ``ConstructionConfig.order_shape`` is gone, so there is
-    no compose-level literal to inject any more (field removal, plan §4.2/§4.7); this is the
-    unit-level replacement, exercising the real method against a hand-built literal shape and
-    command, mirroring ``TestSourcedShapeNonIntegralQuantityNeverFallsBackToTheLiteral``'s own
-    ``_stage`` pattern."""
+    """(a′) wave lane D: pins the same property"""
 
     @staticmethod
     def _stage(shape) -> VenueServiceStage:
@@ -901,15 +639,11 @@ class TestSourcedShapeIgnoresPolicyViolatingLiteralQuantity:
         from tos_runtime.venue import VenueConstraintService
 
         class _StubService(VenueConstraintService):
-            """Only ``VenueServiceStage._sourced_shape`` — never ``__call__`` — is exercised
-            here, so this double never runs the real ``__init__`` and never sets (or needs)
-            ``shape_constraints``/``policy``/etc (mypy stage 3 §1.3 rule 3: the callee's wide
-            ``VenueConstraintService`` surface means the double subclasses the concrete class
-            rather than getting its own port)."""
+            """Only ``VenueServiceStage._sourced_shape`` — never ``__call__`` — is exercised"""
 
             def __init__(
                 self,
-            ) -> None:  # real __init__ deliberately skipped — unused fields
+            ) -> None:
                 pass
 
         class _StubConstructionStage:
@@ -928,9 +662,7 @@ class TestSourcedShapeIgnoresPolicyViolatingLiteralQuantity:
     ) -> None:
         from tos.ioc import AxisBinding, CanonicalBrokerCommand, ConformanceAxis
 
-        literal_quantity = (
-            999  # exceeds any real venue max_quantity — would DENY if judged
-        )
+        literal_quantity = 999
         shape = fx.order_shape(quantity=literal_quantity)
         command = CanonicalBrokerCommand(
             command_id="cmd-test",
@@ -946,38 +678,7 @@ class TestSourcedShapeIgnoresPolicyViolatingLiteralQuantity:
 
 
 class TestSilentlyRoundedIsNeverIntroduced:
-    """(a′) wave lane C, HIGH round 3 (team-lead re-review, PR #718, 2026-09-16):
-    ``silently_rounded`` is no longer computed from a grid re-derivation — two rounds of
-    review found that approach missing one more of ``order_shape_admissible``'s own
-    precondition fields each time (round 1: core fields; round 2: band fields), because
-    re-deriving a verdict the kernel owns means predicting every precondition it will ever
-    check. See :func:`~tos_runtime.compose._venue_wiring._observed_silently_rounded`'s own
-    docstring for the full reasoning: it is now a hardcoded ``False``, honest because this
-    runtime never rounds/clamps/widens a quantity AFTER ``derive_order_size`` decided it.
-
-    This class pins the underlying INVARIANT that constant relies on — the sourced shape's
-    quantity always equals the derivation's own output, unaltered, including under a genuine
-    ``FLOOR_TO_LOT`` floor — never the hardcoded constant itself (asserting ``is False`` on a
-    literal ``False`` would be exactly the tautology this project has been bitten by before).
-    If a future change ever introduces a normalization step between derivation and the judged
-    shape, these tests go red and ``_observed_silently_rounded`` must be revisited.
-
-    A further test confirms the hardcoded ``False`` never interferes with the kernel's OWN
-    classification of a genuinely unknown shape — one of the two scenarios rounds 1 and 2 of
-    review found broken by a grid RE-derivation. With the grid arithmetic deleted there is
-    nothing left in this module for that scenario to break, but it is kept as a regression pin
-    on the interaction, not as coverage of branching logic this module no longer has.
-
-    The sibling "off-grid price still denies" regression pin is GONE ((a′) wave lane D):
-    it depended on an injected literal price (4200) standing in for the shape when step 3's
-    value-surface projection is disabled — the very ``ConstructionConfig.order_shape`` literal
-    this wave removed. The scenario is now structurally impossible to construct at this
-    runtime-wiring level at all (the skeleton this module folds is always a bare
-    ``OrderShapeFields()``, price included), and the underlying kernel invariant it was a
-    regression pin FOR — off-grid price denies — is independently pinned at the kernel level
-    (``tos/tests/venue/test_venue_order_shape.py``), never this runtime wiring's job to
-    duplicate.
-    """
+    """(a′) wave lane C, HIGH round 3 (team-lead re-review, PR #718, 2026-09-16):"""
 
     def test_sourced_quantity_equals_the_derivations_own_output_on_the_happy_path(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
@@ -1003,26 +704,7 @@ class TestSilentlyRoundedIsNeverIntroduced:
     def test_sourced_quantity_equals_the_derivations_own_output_when_floor_to_lot_actually_rounds(
         self, tmp_path: Path
     ) -> None:
-        """FLOOR_TO_LOT check (team-lead brief, 2026-09-16). ``risk_budget=1030`` /
-        ``per_unit_risk=50`` = ``20.6`` — NOT already a ``lot_size=2`` multiple, so the
-        derivation GENUINELY floors it to ``20``. That floor is the authored policy
-        PRODUCING the decision, not a caller normalizing an already-decided shape: the
-        derived, floored ``20`` is the only quantity that ever exists in this runtime's path,
-        and it reaches the judged shape unaltered — confirming ``FLOOR_TO_LOT`` does not put
-        the "always ``False``" claim back in the position the grid re-derivation was removed
-        for.
-
-        Customization moved to the governed OCP document (integration correction,
-        team-lead re-review, 2026-09-16, post lane-A/B/C merge): the sizing bound now comes
-        from ``build_construction_envelope`` reading the OCP's own ``_runtime.construction``
-        block, never from an injected ``ConstructionConfig.envelope`` — so this test writes
-        its own ``order_construction_policy.yaml`` (via ``ocp_yaml(construction=...)``, "the
-        override wholesale" seam its own docstring names for exactly this) rather than
-        passing a customized envelope into ``fx.construction_config`` the way the earlier,
-        now-defanged version of this test did. ``lot_rounding`` is switched to
-        ``FLOOR_TO_LOT`` explicitly — the shared fixture default is
-        ``EXACT_MULTIPLE_REQUIRED``, under which a raw ``20.6`` would be DENIED, not floored,
-        which would silently stop this test from exercising a floor at all."""
+        """FLOOR_TO_LOT check (team-lead brief, 2026-09-16). ``risk_budget=1030`` /"""
         from decimal import Decimal
 
         from tos.egressgw import DerivationOutcome
@@ -1064,7 +746,6 @@ class TestSilentlyRoundedIsNeverIntroduced:
             ),
             encoding="utf-8",
         )
-        _sync_ocp_activation_digest(config_dir)
         construction = fx.construction_config()
         runtime = _compose_with_construction(
             tmp_path, config_dir, data_dir, custody_root, construction
@@ -1075,8 +756,6 @@ class TestSilentlyRoundedIsNeverIntroduced:
         construction_result = runtime.construction_stage.construction
         assert construction_result is not None
         assert construction_result.derivation.outcome is DerivationOutcome.DERIVED
-        # the raw size (20.6) was NOT already a lot multiple — FLOOR_TO_LOT genuinely rounded
-        # it, this is not a no-op floor.
         assert construction_result.derivation.quantity == Decimal("20")
 
         assert runtime.venue_stage.resolved_shape is not None
@@ -1091,12 +770,7 @@ class TestSilentlyRoundedIsNeverIntroduced:
     def test_missing_price_still_reaches_unknown_not_the_hardcoded_false_blocking_it(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        """A structurally-unprojectable step-3 price — ``_shape_for``'s own documented
-        "projection impossible ⇒ structural UNKNOWN" path (``egressgw/construction.py
-        :1074-1098``) — must still reach ``order_shape_admissible``'s OWN missing-field
-        ``UNKNOWN`` classification with ``silently_rounded`` hardcoded ``False``: the constant
-        never blocks the kernel's own legitimate ``UNKNOWN`` (round-1 regression pin, now
-        against the deleted grid arithmetic rather than for it)."""
+        """A structurally-unprojectable step-3 price — ``_shape_for``'s own documented"""
         construction = fx.construction_config(
             shape_price_field_key="not-a-real-field-key"
         )
@@ -1117,19 +791,9 @@ class TestSilentlyRoundedIsNeverIntroduced:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
-    # "off-grid price still denies via the kernel's own tick check" removed here — (a′) wave
-    # lane D: it relied on ``fx.construction_config(shape_price_field_key=None)`` leaving the
-    # injected literal price (4200) standing in for the folded shape; that literal
-    # (``ConstructionConfig.order_shape``) is gone, so the skeleton this module folds is always
-    # a bare ``OrderShapeFields()`` regardless of ``shape_price_field_key`` — there is no
-    # literal left to go off-grid. See the class docstring for where the underlying kernel
-    # invariant is still pinned.
-
 
 class TestDerivedShapeQuantityUnit:
-    """decision 2: pure unit coverage for :func:`_derived_shape_quantity`'s fail-closed
-    parsing — the case an e2e path cannot cheaply exercise (a bound axis value that is not an
-    exact whole number)."""
+    """decision 2: pure unit coverage for :func:`_derived_shape_quantity`'s fail-closed"""
 
     def test_absent_candidate_command_is_none(self) -> None:
         from tos_runtime.compose._venue_wiring import _derived_shape_quantity
@@ -1167,22 +831,7 @@ class TestDerivedShapeQuantityUnit:
 
 
 class TestConstructionRulesShapeSourcingUnit:
-    """decisions 2/3: pure unit coverage for the ``ConstructionRules``-driven sourcing
-    helpers. Reachable end-to-end since lane D — ``compose/_wiring.py``'s own
-    ``_build_construction_stages`` passes ``loaded_ocp.construction_rules`` into
-    ``VenueServiceStage`` on the real compose path (``TestVenueServiceE2E`` and the other e2e
-    classes in this file exercise that live wiring); the unit coverage here stays to pin the
-    helpers' own branching directly, cheaper than a full compose boot per case.
-
-    ``action_class_shape`` is keyed by ``(ActionClass, direction)`` (contract amended
-    2026-09-16, commit ``7e79f00c``) — a single ``ActionClass.CLOSE`` member cannot otherwise
-    express both a long-close and a short-close arm. ``direction`` is resolved through
-    ``resolve_construction_direction`` — a direction-named class (``NEW_LONG``/``NEW_SHORT``)
-    from the class itself, a direction-agnostic one from ``authorized_axes``' own ``DIRECTION``
-    binding (see ``_shape_side_and_position_effect``'s own docstring) — so each test below
-    builds ONE ``ConstructionRules`` per direction rather than one shared instance covering
-    both.
-    """
+    """decisions 2/3: pure unit coverage for the ``ConstructionRules``-driven sourcing"""
 
     def test_side_and_position_effect_come_from_the_mapping(self) -> None:
         from tos.ioc import AxisBinding, ConformanceAxis
@@ -1218,11 +867,6 @@ class TestConstructionRulesShapeSourcingUnit:
             "CLOSE",
         )
 
-        # NEW_SHORT / short-close mirror — a SEPARATE ConstructionRules whose
-        # authorized_axes DIRECTION is SHORT, with its OWN CLOSE arm distinct from the
-        # long-close arm above (the exact ambiguity the (ActionClass, direction) key
-        # exists to resolve) — symmetric, not a narrower/omitted case (CLAUDE.md
-        # non-negotiable: "Futures must preserve long/short symmetry").
         short_rules = ConstructionRules(
             sizing_bound=fx.sizing_bound(),
             admitted_quantity_bases=frozenset({"RISK"}),
@@ -1271,8 +915,6 @@ class TestConstructionRulesShapeSourcingUnit:
             effect_dimensions=(),
         )
 
-        # NEW_SHORT is absent for direction LONG (there is no (NEW_SHORT, "LONG") entry,
-        # and there is no CLOSE entry at all) — both refuse.
         assert _shape_side_and_position_effect(rules, ActionClass.NEW_SHORT) == (
             None,
             None,
@@ -1281,17 +923,7 @@ class TestConstructionRulesShapeSourcingUnit:
         assert _shape_side_and_position_effect(rules, None) == (None, None)
 
     def test_no_direction_binding_is_a_refusal(self) -> None:
-        """No ``DIRECTION`` axis binding at all is the SAME refusal as an absent mapping
-        entry — never a fallback to some default direction (team-lead brief, 2026-09-16:
-        "no direction" gets the same discipline already applied to "no derivation").
-
-        Uses ``ActionClass.CLOSE`` — a direction-AGNOSTIC class — never a direction-named one
-        like ``NEW_LONG``: ``resolve_construction_direction`` resolves a direction-named class's
-        direction from the class itself (its own docstring), so it never even looks at
-        ``authorized_axes``, and an empty axis tuple would not exercise this refusal at all for
-        ``NEW_LONG`` (lane D correction — an earlier version of this test used ``NEW_LONG`` and
-        passed for the wrong reason, back when ``_shape_side_and_position_effect`` read the
-        axis unconditionally for every class alike)."""
+        """No ``DIRECTION`` axis binding at all is the SAME refusal as an absent mapping"""
         from tos.venue import ActionClass
         from tos_runtime.compose._venue_wiring import _shape_side_and_position_effect
         from tos_runtime.venue.construction_rules import (
@@ -1302,7 +934,7 @@ class TestConstructionRulesShapeSourcingUnit:
         rules = ConstructionRules(
             sizing_bound=fx.sizing_bound(),
             admitted_quantity_bases=frozenset({"RISK"}),
-            authorized_axes=(),  # no DIRECTION binding
+            authorized_axes=(),
             action_class_shape={
                 (ActionClass.CLOSE, "LONG"): ActionClassShape(
                     side="SELL", position_effect="CLOSE"

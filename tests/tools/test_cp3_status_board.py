@@ -282,10 +282,6 @@ def test_stale_ratio_over_the_limit_blocks_an_ended_session(cfg: sb.BoardConfig)
     blocks = _issues(board, sb.BLOCK)
     assert blocks == ["long-20261022: stale 거절(M5 ①) 1/5 = 20.000% > 0.5%"]
     warns = _issues(board, sb.WARN)
-    assert (
-        "long-20261022: B3 결과 없음(세션 디렉터리에 b3/report/summary.json 이 없다)"
-        in warns
-    )
     assert any("VENUE_BAND_OBSERVED 행 없음" in w for w in warns)
 
 
@@ -348,36 +344,13 @@ def test_past_day_does_not_look_at_pids(
     )
 
 
-def test_abort_day_with_b3(cfg: sb.BoardConfig):
+def test_abort_day(cfg: sb.BoardConfig):
     board = _board(cfg, D1015)
     s = _session(board, "long-20261015")
     assert s["status"] == "ABORT"
-    assert s["b3"] == {
-        "unresolved": 0,
-        "compared_bars": 303,
-        "identical": 277,
-        "divergent": 26,
-        # v2 summary: it does not separate the declared families out of
-        # `divergent`, and `None` says so rather than claiming zero.
-        "declared": None,
-        "excluded": None,
-        "separates_declared": False,
-        "window": "2026-10-08..2026-10-15",
-    }
     assert any("ABORT: the producer stopped" in b for b in _issues(board, sb.BLOCK))
     assert board["paper"]["session"] is None
     assert "paper: 2026-10-15 상주 paper 세션 디렉터리 없음" in _issues(board, sb.WARN)
-
-
-def test_b3_unresolved_is_a_check_not_a_block(state: Path, cfg: sb.BoardConfig):
-    """2026-11-11 완화 §2 문장 1 — 수는 계속 올리지만 막지는 않는다."""
-    path = state / "cp3-sessions/long-20261015/b3/report/summary.json"
-    data = json.loads(path.read_text())
-    data["unresolved"]["count"] = 3
-    path.write_text(json.dumps(data))
-    board = _board(cfg, D1015)
-    assert "long-20261015: B3 unresolved=3" in _issues(board, sb.WARN)
-    assert "long-20261015: B3 unresolved=3" not in _issues(board, sb.BLOCK)
 
 
 def test_code_digest_mismatch_blocks(state: Path, cfg: sb.BoardConfig):
@@ -498,7 +471,6 @@ def test_text_rendering_carries_every_section(
         "VENUE_BAND_OBSERVED OBSERVED 20261023",
         "VENUE_BAND_OBSERVED 0행 (이 트리는 band 를 끔)",
         "지연(as_of−분마감) p50",
-        "B3 대조: 결과 없음",
         "■ 상주 paper",
         "■ 최근 세션(날짜별)",
         "■ 막힌 것 / 확인할 것",
@@ -525,7 +497,7 @@ def test_sts_tos_status_exit_code_and_json(state: Path):
     )
     doc = json.loads(as_json.output)
     assert doc["date"] == "2026-10-15"
-    assert doc["tenant_sessions"][0]["b3"]["divergent"] == 26
+    assert doc["tenant_sessions"][0]["name"] == "long-20261015"
 
 
 # --- review-935 regressions ------------------------------------------------------
@@ -650,216 +622,6 @@ def test_n3_missing_expected_code_digest_after_boot_warns(
         "long-20261022: release.yaml 의 expected_code_digest 를 찾지 못해 code_digest 를"
         " 대조하지 않았다" in _issues(_board(cfg, D1022), sb.WARN)
     )
-
-
-@pytest.mark.parametrize(
-    "mutate, needle",
-    [
-        (lambda d: d.update(unresolved=3), "unresolved.count 가 정수가 아니다"),
-        (lambda d: d.update(summary_schema_version=4), "summary_schema_version=4"),
-        (lambda d: d["live_comparison"].pop("divergent"), "live_comparison"),
-    ],
-)
-def test_n4_b3_summary_of_another_shape_blocks_without_crashing(
-    state: Path, cfg: sb.BoardConfig, mutate, needle
-):
-    path = state / "cp3-sessions/long-20261015/b3/report/summary.json"
-    data = json.loads(path.read_text())
-    mutate(data)
-    path.write_text(json.dumps(data))
-    board = _board(cfg, D1015)
-    assert any(
-        "B3 summary 를 읽을 수 없다" in b and needle in b
-        for b in _issues(board, sb.BLOCK)
-    )
-    assert "B3 대조: summary 를 읽을 수 없음" in sb.render_text(board)
-
-
-def test_n4_a_v2_divergence_count_is_a_warning_because_it_mixes_declared_ones(
-    cfg: sb.BoardConfig,
-):
-    """A v2 summary's ``divergent`` is NOT the unexplained count.
-
-    Concrete input: the 10-15 genesis summary, 26 divergent of 303 — a count
-    that mixes the B1b-D1 family in, because that shape had no bucket for it.
-    Reading it as "설명 안 되는 divergence" would report declared bars as
-    unexplained, so the line says so and the grade stays 확인.
-    """
-    board = _board(cfg, D1015)
-    assert (
-        "long-20261015: B3 live divergent 26/303 — 이 summary 모양은 선언된 차이를"
-        " 가르지 않는다" in _issues(board, sb.WARN)
-    )
-    assert "선언된 차이: 모름" in sb.render_text(board)
-
-
-def test_n4_a_v3_divergence_is_a_check_and_the_declared_buckets_show_separately(
-    state: Path, cfg: sb.BoardConfig
-):
-    """From v3 on, ``divergent`` IS the unexplained count — shown, not blocking.
-
-    Concrete input: the same session rewritten in the v3 shape — 25 of the 26
-    bars attributed to B1b-D1, one bar held out as the boot journal's own, and
-    one left unexplained. The declared and held-out counts appear on their own
-    line: folded into the divergent line they would be unreadable, and folded
-    into ``divergent`` they would be unfalsifiable. The grade is 확인 since the
-    2026-11-11 relaxation (§2 sentence 1) took these numbers out of the verdict.
-    """
-    path = state / "cp3-sessions/long-20261015/b3/report/summary.json"
-    data = json.loads(path.read_text())
-    data["summary_schema_version"] = sb.B3_DECLARED_BUCKET_SCHEMA_VERSION
-    data["live_comparison"].update(
-        bars_in_scope=303,
-        excluded_from_comparison=1,
-        compared_bars=302,
-        divergent=1,
-        declared_difference_counts={"B1b-D1": 25},
-        excluded_bar_counts={"pre_boot_at_boot": 1},
-    )
-    path.write_text(json.dumps(data))
-    board = _board(cfg, D1015)
-    assert "long-20261015: B3 live divergent 1/302 (선언 B1b-D1 25)" in _issues(
-        board, sb.WARN
-    )
-    assert not any("divergent" in b for b in _issues(board, sb.BLOCK))
-    assert "선언된 차이: B1b-D1 25 · 대조 제외: pre_boot_at_boot 1" in sb.render_text(
-        board
-    )
-
-
-def _b3_status(state: Path, session: str, **fields) -> None:
-    """``<session>/b3/status.json`` — what the automated step leaves behind
-    (``tools/tos_cp3/post_session_b3.py``)."""
-    record = {
-        "status_schema_version": 1,
-        "verdict": "ok",
-        "reason": "",
-        "stage": None,
-        "started_at": dt.datetime.now(sb.KST).isoformat(timespec="seconds"),
-        "total_timeout_s": 480,
-    }
-    record.update(fields)
-    path = state / "cp3-sessions" / session / "b3" / "status.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record), encoding="utf-8")
-
-
-def test_b3_that_could_not_run_blocks_and_the_summary_is_not_read(
-    state: Path, cfg: sb.BoardConfig
-):
-    """**The fail-closed direction, on the board.** ``unresolved`` has a good
-    value (0), so a stale summary next to a failed run must not be reported as
-    this session's result: the run record is read first and the numbers are
-    not read at all."""
-    _b3_status(
-        state,
-        "long-20261015",
-        verdict="failed",
-        stage="b1a-fields",
-        reason="b1a-fields exited 2 — see /x/b1a-fields.log",
-    )
-    board = _board(cfg, D1015)
-    blocks = _issues(board, sb.BLOCK)
-    assert (
-        "long-20261015: B3 대조가 돌지 않았다 — failed (b1a-fields):"
-        " b1a-fields exited 2 — see /x/b1a-fields.log" in blocks
-    )
-    # the fixture's own summary says unresolved 0 and divergent 26; neither is
-    # reported, because this session did not produce them
-    assert not any("B3 unresolved" in b for b in blocks)
-    assert not any("B3 live divergent" in w for w in _issues(board, sb.WARN))
-    assert "B3 대조: failed (b1a-fields)" in sb.render_text(board)
-
-
-def test_b3_skipped_is_a_warning_not_a_block(state: Path, cfg: sb.BoardConfig):
-    """A skip is a decision (the config, or a market B3 does not cover), not a
-    defect — but B3 still did not run, so it is not silent either."""
-    _b3_status(
-        state,
-        "long-20261015",
-        verdict="skipped",
-        reason="market 'stock' is not in config markets ['futures']",
-    )
-    board = _board(cfg, D1015)
-    assert (
-        "long-20261015: B3 대조 건너뜀 — market 'stock' is not in config"
-        " markets ['futures']" in _issues(board, sb.WARN)
-    )
-    assert not any("B3" in b for b in _issues(board, sb.BLOCK))
-
-
-def test_b3_still_running_inside_its_budget_is_only_a_warning(
-    state: Path, cfg: sb.BoardConfig
-):
-    """B3 runs for a minute or two after the stop. Blocking on ``running``
-    alone would raise a false alarm once a day, so the record's own
-    ``total_timeout_s`` decides."""
-    _b3_status(state, "long-20261015", verdict="running", stage=None)
-    board = _board(cfg, D1015)
-    assert "long-20261015: B3 대조 진행 중" in _issues(board, sb.WARN)
-    assert not any("B3" in b for b in _issues(board, sb.BLOCK))
-
-
-@pytest.mark.parametrize(
-    "started",
-    [
-        "overdue",
-        "unreadable",
-        "naive",
-    ],
-)
-def test_b3_running_past_its_budget_blocks(
-    state: Path, cfg: sb.BoardConfig, started: str
-):
-    """``running`` that outlived its own budget is the SIGKILL case — the outer
-    ``timeout`` cut the tool off and nothing replaced the record. A start time
-    that cannot be read is treated the same way: an unreadable record cannot be
-    used to claim the run is still going."""
-    stamps = {
-        "overdue": (dt.datetime.now(sb.KST) - dt.timedelta(seconds=10_000)).isoformat(
-            timespec="seconds"
-        ),
-        "unreadable": "어제",
-        "naive": "2026-10-15T15:50:00",
-    }
-    _b3_status(state, "long-20261015", verdict="running", started_at=stamps[started])
-    blocks = _issues(_board(cfg, D1015), sb.BLOCK)
-    assert any("B3 대조가 돌지 않았다 — running" in b for b in blocks), blocks
-
-
-def test_b3_ok_reads_the_summary_as_before(state: Path, cfg: sb.BoardConfig):
-    """The record gates the numbers; it does not replace them."""
-    _b3_status(state, "long-20261015", verdict="ok")
-    board = _board(cfg, D1015)
-    assert _session(board, "long-20261015")["b3"]["divergent"] == 26
-    assert any("B3 live divergent 26/303" in w for w in _issues(board, sb.WARN))
-
-
-@pytest.mark.parametrize(
-    ("fields", "needle"),
-    [
-        ({"status_schema_version": 2}, "status_schema_version=2"),
-        ({"verdict": None}, "verdict 가 문자열이 아니다"),
-    ],
-)
-def test_a_b3_record_of_another_shape_blocks_without_crashing(
-    state: Path, cfg: sb.BoardConfig, fields: dict, needle: str
-):
-    _b3_status(state, "long-20261015", **fields)
-    board = _board(cfg, D1015)
-    assert any(
-        "B3 실행 기록을 읽을 수 없다" in b and needle in b
-        for b in _issues(board, sb.BLOCK)
-    )
-    assert "B3 대조: 실행 기록을 읽을 수 없음" in sb.render_text(board)
-
-
-def test_a_session_with_no_b3_record_keeps_the_old_reading(cfg: sb.BoardConfig):
-    """Sessions from before step 14 existed have no record. They must still be
-    read off the summary alone, or every historical session turns red."""
-    board = _board(cfg, D1015)
-    assert _session(board, "long-20261015")["b3_run"] is None
-    assert _session(board, "long-20261015")["b3"]["unresolved"] == 0
 
 
 def test_n5_history_days_one_is_only_the_day(cfg: sb.BoardConfig):
@@ -1412,7 +1174,6 @@ def test_history_label_column_fits_a_two_digit_stock_run():
         "overrun": 0,
         "witness_lost": 0,
         "witness_lost_mid_session": 0,
-        "b3_unresolved": None,
         "store_error": None,
         "blocks": 0,
     }
@@ -1520,12 +1281,11 @@ def test_the_market_line_of_a_tenant_session_is_read(state: Path):
         (state / "cp3-sessions/long-20261015/session.log").read_text(encoding="utf-8")
     )
     assert runner.market == "futures"
-    # 뒤에 오는 B3 줄(`=== B3 … market=… ceiling …`)은 이 값을 덮지 않는다.
-    b3_only = sb.parse_runner_log(
-        "2026-10-15 15:50:03 === B3 session-dir=/x instrument=A05611 "
-        "market=stock ceiling 600s"
+    # 줄 머리를 고정하므로 `market=` 토큰을 싣는 다른 줄은 이 값을 덮지 않는다.
+    mid_line_only = sb.parse_runner_log(
+        "2026-10-15 15:50:03 === END session-dir=/x instrument=A05611 market=stock"
     )
-    assert b3_only.market is None
+    assert mid_line_only.market is None
 
 
 def test_futures_tree_step4_unknown_is_labelled_expected(
@@ -1618,12 +1378,8 @@ def _mk_session(
     *,
     run_rc: int | None = 0,
     booted: bool = False,
-    status_fields: dict | None = None,
-    summary_fields: dict | None = None,
-    write_status: bool = True,
-    write_summary: bool = True,
 ) -> Path:
-    """세션 디렉터리 하나 — 누적 판정이 읽는 것만 담는다(러너 로그의 END 줄 + B3 두 파일).
+    """세션 디렉터리 하나 — 누적 판정이 읽는 것만 담는다(러너 로그의 END 줄).
 
     저장소는 담지 않는다. 깨끗함의 조건에 저장소는 없고, 담으면 이 테스트가 판정이 아니라
     sqlite 모양을 시험하게 된다. ``booted=True`` 에 ``run_rc=None`` 은 11-10 호스트
@@ -1640,45 +1396,6 @@ def _mk_session(
             f"{day} 15:50:01 === END producer rc=0",
         ]
     (path / "session.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    if write_status:
-        record = {
-            "status_schema_version": 1,
-            "verdict": "ok",
-            "reason": "",
-            "stage": None,
-            "started_at": dt.datetime.now(sb.KST).isoformat(timespec="seconds"),
-            "total_timeout_s": 480,
-        }
-        record.update(status_fields or {})
-        (path / "b3").mkdir(exist_ok=True)
-        (path / "b3" / "status.json").write_text(json.dumps(record), encoding="utf-8")
-    if write_summary:
-        live = {
-            "bars_in_scope": 409,
-            "excluded_from_comparison": 1,
-            "compared_bars": 408,
-            "identical": 408,
-            "divergent": 0,
-            "declared_difference_counts": {},
-            "excluded_bar_counts": {"pre_boot_at_boot": 1},
-        }
-        summary = {
-            "summary_schema_version": sb.B3_DECLARED_BUCKET_SCHEMA_VERSION,
-            "unresolved": {"count": 0},
-            "live_comparison": live,
-            "window_identity": {
-                "window_start": "2026-10-06",
-                "window_end": f"{day}",
-            },
-        }
-        for key, value in (summary_fields or {}).items():
-            if key == "live_comparison":
-                live.update(value)
-            else:
-                summary[key] = value
-        report = path / "b3" / "report"
-        report.mkdir(parents=True, exist_ok=True)
-        (report / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
     return path
 
 
@@ -1843,49 +1560,6 @@ def test_the_most_recent_broken_day_is_the_one_reported(
 
 
 @pytest.mark.parametrize(
-    "mutate",
-    [
-        pytest.param({"summary_schema_version": 2}, id="v2-shape"),
-        pytest.param({"live_comparison": {"divergent": 3, "identical": 405}}, id="div"),
-        pytest.param({"unresolved": {"count": 2}}, id="unresolved"),
-        pytest.param(
-            {"live_comparison": {"compared_bars": 0, "identical": 0}}, id="zero-bars"
-        ),
-    ],
-)
-def test_what_b3_saw_no_longer_decides_whether_a_day_counts(
-    streak_state: Path, streak_cfg: sb.BoardConfig, mutate: dict
-):
-    """2026-11-11 완화 §2 문장 1 — B3 는 **돌았는지만** 본다.
-
-    구체 입력: 10-08 의 summary 를 옛 모양 · divergent 3 · unresolved 2 · 대조한 봉 0
-    으로 바꾼다. 전에는 각각이 그 하루를 깨뜨렸다. 이제는 B3 가 돌았으므로(실행 기록의
-    verdict 가 ok) 그 하루가 그대로 세어지고, 그 수들은 상태판의 «확인» 줄로만 나온다
-    (``test_b3_unresolved_is_a_check_not_a_block``).
-    """
-    path = streak_state / "cp3-sessions/long-20261008/b3/report/summary.json"
-    data = json.loads(path.read_text())
-    for key, value in mutate.items():
-        if key == "live_comparison":
-            data["live_comparison"].update(value)
-        else:
-            data[key] = value
-    path.write_text(json.dumps(data))
-    long = _streak(_board(streak_cfg, D1012), "long")
-    assert (long["days"], long["met"], long["broke_on"]) == (5, True, None)
-
-
-def test_a_day_whose_summary_is_missing_still_counts_if_b3_ran(
-    streak_state: Path, streak_cfg: sb.BoardConfig
-):
-    """summary 가 없어도 실행 기록이 ok 면 센다 — 깨끗함의 조건에서 빠졌다."""
-    shutil.rmtree(streak_state / "cp3-sessions" / "long-20261008")
-    _mk_session(streak_state, "long", dt.date(2026, 10, 8), write_summary=False)
-    long = _streak(_board(streak_cfg, D1012), "long")
-    assert (long["days"], long["met"], long["broke_on"]) == (5, True, None)
-
-
-@pytest.mark.parametrize(
     "run_rc, reason",
     [
         (1, "세션 상태 FAILED"),
@@ -1906,39 +1580,6 @@ def test_a_session_that_did_not_end_with_a_clean_rc_is_not_counted(
         "2026-10-08",
         reason,
     )
-
-
-def test_a_missing_b3_status_is_not_counted_and_the_summary_is_not_read(
-    streak_state: Path, streak_cfg: sb.BoardConfig
-):
-    """**fail-closed 방향.** 실행 기록이 없으면 B3 가 돌았다는 근거가 없다.
-
-    구체 입력: 10-08 에 ``b3/status.json`` 이 없고 깨끗한 v3 summary 만 있다. 그 summary
-    가 이 세션의 것이라는 근거는 없으므로(#1000) 그 하루는 세지 않는다.
-    """
-    shutil.rmtree(streak_state / "cp3-sessions" / "long-20261008")
-    _mk_session(streak_state, "long", dt.date(2026, 10, 8), write_status=False)
-    long = _streak(_board(streak_cfg, D1012), "long")
-    assert (long["days"], long["broke_on"]) == (4, "2026-10-08")
-    assert long["broke_reason"] == "B3 실행 기록 없음 (b3/status.json)"
-
-
-@pytest.mark.parametrize(
-    "fields, needle",
-    [
-        ({"verdict": "failed", "stage": "b1a-fields", "reason": "exited 2"}, "failed"),
-        ({"verdict": "skipped", "reason": "markets 에 없다"}, "skipped"),
-        ({"status_schema_version": 9}, "B3 실행 기록을 읽을 수 없다"),
-    ],
-)
-def test_a_b3_run_that_is_not_ok_is_not_counted(
-    streak_state: Path, streak_cfg: sb.BoardConfig, fields: dict, needle: str
-):
-    shutil.rmtree(streak_state / "cp3-sessions" / "long-20261008")
-    _mk_session(streak_state, "long", dt.date(2026, 10, 8), status_fields=fields)
-    long = _streak(_board(streak_cfg, D1012), "long")
-    assert (long["days"], long["broke_on"]) == (4, "2026-10-08")
-    assert needle in long["broke_reason"]
 
 
 def test_reaching_the_target_stops_the_walk(
@@ -1965,27 +1606,11 @@ def test_the_board_date_is_pending_until_it_settles(
     어제의 것이면 그대로 깨진 날로 적힌다(위 rc=None 케이스).
     """
     shutil.rmtree(streak_state / "cp3-sessions" / "long-20261012")
-    _mk_session(streak_state, "long", D1012, run_rc=None, write_status=False)
+    _mk_session(streak_state, "long", D1012, run_rc=None)
     long = _streak(_board(streak_cfg, D1012, today=D1012), "long")
     assert (long["days"], long["start"]) == (4, "2026-10-02")
     assert long["pending"] == "세션 NOT-BOOTED"
     assert long["broke_on"] == "2026-10-01"
-
-
-def test_a_b3_still_running_on_the_board_date_is_pending_not_a_break(
-    streak_state: Path, streak_cfg: sb.BoardConfig
-):
-    shutil.rmtree(streak_state / "cp3-sessions" / "long-20261012")
-    _mk_session(
-        streak_state,
-        "long",
-        D1012,
-        status_fields={"verdict": "running"},
-        write_summary=False,
-    )
-    long = _streak(_board(streak_cfg, D1012, today=D1012), "long")
-    assert long["pending"] == "B3 대조 진행 중"
-    assert long["days"] == 4
 
 
 def test_only_the_days_inside_the_window_are_counted(

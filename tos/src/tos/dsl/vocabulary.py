@@ -1,40 +1,4 @@
-"""Authoring Surface Vocabulary = closed typed AST algebra (design §3.1, DCE-INV-001).
-
-This module is the **constructive** realization of DCE-INV-001 (ADR-DEV-001 §6
-L140-144): the authoring surface is *exactly* the RFC-008 §7 permitted
-expressions, and every prohibited effect is **absent from the type**, not
-blocklisted on a reachable host. There is no node type for ``import``,
-``network``, ``clock``, ``FFI``, ``reflection``, ``dynamic-eval``, or a wildcard
-scope — so those effects are unexpressible by construction (RFC-008 §11 items
-12/13/17). "default-deny = absent-from-surface, not blocklisted" is realized here
-as *the type system itself*.
-
-The algebra is deliberately less than a general-purpose language (RFC-008 §7):
-
-* value operands: a literal :class:`Const` or a read-only :class:`Operand` ``ref``
-  into the Decision Context (no ambient clock/rand/net/fs — those cannot be named);
-* :class:`Compare` (a total, pure comparison) combined into a :class:`Rule` guard
-  (``all_of`` — a non-empty conjunction, so a rule never fires vacuously);
-* :class:`Decision` nodes — the only outputs a strategy may name: propose an
-  action, propose an explicit flat, propose a portfolio vector, or no-action
-  (RFC-008 §6 principle 2, §7);
-* :class:`DecisionPolicy` — an ordered rule list plus a mandatory default
-  Decision, so evaluation is total and deterministic (RFC-008 §9).
-
-The algebra is **family-independent** (design §3.1): it reads equally as the
-grammar of a standalone constrained language or the admissible-node set of an
-embedded subset, so it does not pre-empt RFC-008 §14 Q1 (ADR-DEV-001 §7 — the
-family choice is approved design/config, deferred; design §0).
-
-The pure evaluator (:func:`evaluate_policy`) is a function of the policy and an
-environment derived solely from the Capsule + configuration (design §4). It reads
-ambient nothing: there is no clock/rand/net/fs parameter to read (RFC-008 §9).
-Mapping the chosen :class:`Decision` to a concrete Outcome artifact lives in
-:mod:`tos.dsl.determinism` (kept out of this module to keep the vocabulary free of
-any Proposal/Outcome dependency).
-
-Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design §firewall).
-"""
+"""Authoring Surface Vocabulary = closed typed AST algebra (design §3.1, DCE-INV-001)."""
 
 from __future__ import annotations
 
@@ -44,15 +8,6 @@ from typing import Any
 from pydantic import model_validator
 
 from tos.dsl._base import ArtifactIntegrityError, FrozenModel
-
-# ---------------------------------------------------------------------------
-# Authoring Surface Vocabulary — the admissible node-kind names (design §3.1)
-# ---------------------------------------------------------------------------
-# These strings name every construct the surface provides. They are the
-# membership set the static admissibility predicate (:mod:`tos.dsl.admissibility`)
-# tests a candidate against: default-deny means a node whose kind is not in this
-# frozenset is *absent from the surface* and therefore inadmissible. Nothing here
-# names an ambient/escape effect — that is DCE-INV-001 realized as data.
 
 KIND_CONST = "const"
 KIND_CONTEXT_REF = "context_ref"
@@ -65,8 +20,6 @@ KIND_PROPOSE_FLAT = "propose_flat"
 KIND_PROPOSE_VECTOR = "propose_vector"
 KIND_NO_ACTION = "no_action"
 
-#: The complete Authoring Surface Vocabulary (DCE-INV-001). Anything outside it is
-#: inadmissible by default-deny membership, not by a blocklist.
 ADMISSIBLE_KINDS: frozenset[str] = frozenset(
     {
         KIND_CONST,
@@ -82,25 +35,14 @@ ADMISSIBLE_KINDS: frozenset[str] = frozenset(
     }
 )
 
-#: The only Decision Context read sources a ``context_ref`` may name (design §4).
-#: A read from any other named source (clock/rand/net/fs/global/builtin) is an
-#: ambient reach and is inadmissible (RFC-008 §11 item 12; DCE-INV-003).
 ADMISSIBLE_CONTEXT_SOURCES: frozenset[str] = frozenset({"capsule", "config"})
 
 
-#: A DSL scalar value. Booleans are kept distinct from numbers by the comparison
-#: rules below (a bool is never treated as an orderable magnitude).
 ScalarValue = bool | int | float | str
 
 
 class _Unknown:
-    """Singleton sentinel for an unresolved / non-scalar context read (design §4).
-
-    Missing, non-scalar, or absent context resolves to ``UNKNOWN`` and any
-    comparison against it is ``False`` — "UNKNOWN is restrictive" (RFC-008 §10):
-    an unresolved read never satisfies a guard, so it can only *narrow* the action
-    set, never widen it.
-    """
+    """Singleton sentinel for an unresolved / non-scalar context read (design §4)."""
 
     _instance: _Unknown | None = None
 
@@ -144,33 +86,14 @@ class DecisionKind(StrEnum):
 
 
 class VectorInterdependence(StrEnum):
-    """Portfolio-vector component interdependence (ADR-DEV-007 §5, SOS-INV-006).
-
-    ``ATOMIC`` = all-or-none; ``INDEPENDENT`` = mutual independence. Absence of a
-    declaration is treated as ``ATOMIC`` (fail-closed) by the consuming models.
-    """
+    """Portfolio-vector component interdependence (ADR-DEV-007 §5, SOS-INV-006)."""
 
     ATOMIC = "ATOMIC"
     INDEPENDENT = "INDEPENDENT"
 
 
 class Operand(FrozenModel):
-    """A value operand: exactly one of a literal ``const`` or a context ``ref``.
-
-    ``ref`` is a read-only path into the Decision Context environment (design §4);
-    its first component names the source and SHALL be an
-    :data:`ADMISSIBLE_CONTEXT_SOURCES` member — there is no way to name an ambient
-    source here (DCE-INV-003). ``const`` carries an injected literal (thresholds
-    are configuration, never hard-coded — design §7).
-
-    ``ref[0]`` is **positively** validated against :data:`ADMISSIBLE_CONTEXT_SOURCES` at
-    construction (Phase 3 K2-p3-#10) — this is the load-bearing gate for that claim. Before this,
-    only the escape-checker (:func:`tos.dsl.admissibility.analyze`, run over the *lowered*
-    program) enforced it; the typed algebra's own construction admitted any source string,
-    including an ambient one (``Operand(ref=("ambient", "now"))`` was constructible). The
-    escape-checker remains a second, independent gate — a ``model_construct``-bypassed instance is
-    still caught there — but the two now agree by construction, not only in effect.
-    """
+    """A value operand: exactly one of a literal ``const`` or a context ``ref``."""
 
     const: ScalarValue | None = None
     ref: tuple[str, ...] | None = None
@@ -205,14 +128,7 @@ class Compare(FrozenModel):
 
 
 class TargetSpec(FrozenModel):
-    """A single per-instrument authored target (ADR-DEV-007 §8; ADR-002-020 §8 anchor).
-
-    Carries only the proposing-role vocabulary (RFC-008 §7): account, instrument,
-    direction, position effect, and — as *evidence*, never capacity — a quantity
-    basis and an edge/confidence. Timing/execution are *requests* (RFC-005), not
-    commands. Well-formedness (wildcard-free, flat-vs-action consistency) is
-    enforced when this is assembled into a :class:`~tos.dsl.proposal.Proposal`.
-    """
+    """A single per-instrument authored target (ADR-DEV-007 §8; ADR-002-020 §8 anchor)."""
 
     kind: TargetKind
     account: str | None = None
@@ -226,18 +142,7 @@ class TargetSpec(FrozenModel):
 
 
 class Decision(FrozenModel):
-    """A terminal authored outcome node (RFC-008 §6 principle 2; ADR-DEV-007).
-
-    Exactly one of four shapes, discriminated by :class:`DecisionKind`:
-
-    * ``NO_ACTION`` — propose nothing, leave exposure (a first-class outcome);
-    * ``ACTION`` / ``FLAT`` — a single :class:`TargetSpec` (flat = zero-position);
-    * ``VECTOR`` — a non-empty set of per-instrument targets with a declared
-      :class:`VectorInterdependence` (undeclared ⇒ atomic, fail-closed).
-
-    ``rationale`` is mandatory: an outcome must record why it followed from the
-    context (RFC-008 §7). Shape consistency is enforced at construction.
-    """
+    """A terminal authored outcome node (RFC-008 §6 principle 2; ADR-DEV-007)."""
 
     kind: DecisionKind
     rationale: str
@@ -278,7 +183,7 @@ class Decision(FrozenModel):
                 raise ArtifactIntegrityError(
                     "Decision kind=VECTOR must not carry a single target"
                 )
-        else:  # NO_ACTION
+        else:
             if self.target is not None or self.vector:
                 raise ArtifactIntegrityError(
                     "Decision kind=NO_ACTION must carry no target/vector"
@@ -287,13 +192,7 @@ class Decision(FrozenModel):
 
 
 class Rule(FrozenModel):
-    """A guarded rule: a non-empty conjunction of comparisons and a Decision.
-
-    ``all_of`` SHALL be non-empty: an empty conjunction would fire *vacuously*
-    (``all([]) is True``), which the design forbids (★ vacuous-True prohibition).
-    The always-applicable case is expressed by :class:`DecisionPolicy` ``default``,
-    never by an empty guard.
-    """
+    """A guarded rule: a non-empty conjunction of comparisons and a Decision."""
 
     all_of: tuple[Compare, ...]
     decision: Decision
@@ -310,37 +209,14 @@ class Rule(FrozenModel):
 
 
 class DecisionPolicy(FrozenModel):
-    """An ordered rule list plus a mandatory default Decision (RFC-008 §9).
-
-    Evaluation is total (there is always a ``default``) and deterministic (rules
-    are tried in order, first match wins), so a strategy evaluation over a fixed
-    context is a pure function (RFC-008 §9). ``rules`` may be empty — a
-    policy that is *only* its default is a valid, always-same-outcome policy.
-    """
+    """An ordered rule list plus a mandatory default Decision (RFC-008 §9)."""
 
     rules: tuple[Rule, ...] = ()
     default: Decision
 
 
-# ---------------------------------------------------------------------------
-# Pure evaluator (design §4) — a function of (policy, environment) only.
-# ---------------------------------------------------------------------------
-
-
 def resolve_operand(operand: Operand, env: dict[str, Any]) -> ScalarValue | _Unknown:
-    """Resolve an operand to a scalar, or :data:`UNKNOWN` (design §4).
-
-    A ``const`` resolves to its literal. A ``ref`` walks ``env`` by its path; any
-    missing component, or a non-scalar leaf, resolves to :data:`UNKNOWN`. The read
-    reaches nothing outside ``env`` — no ambient source is reachable (DCE-INV-003).
-
-    Args:
-        operand: The operand to resolve.
-        env: The Decision Context environment (namespaced Capsule + config view).
-
-    Returns:
-        The resolved :data:`ScalarValue`, or :data:`UNKNOWN`.
-    """
+    """Resolve an operand to a scalar, or :data:`UNKNOWN` (design §4)."""
     if operand.const is not None:
         return operand.const
     value: Any = env
@@ -355,19 +231,7 @@ def resolve_operand(operand: Operand, env: dict[str, Any]) -> ScalarValue | _Unk
 
 
 def eval_compare(compare: Compare, env: dict[str, Any]) -> bool:
-    """Evaluate one comparison; :data:`UNKNOWN` operands make it ``False`` (design §4).
-
-    ``EQ``/``NE`` apply to any scalar pair. Ordering comparisons apply only to
-    numbers (a ``bool`` is never an orderable magnitude, and a str/number mismatch
-    never orders); an inapplicable comparison is ``False`` (restrictive).
-
-    Args:
-        compare: The comparison node.
-        env: The Decision Context environment.
-
-    Returns:
-        The boolean result (``False`` on any :data:`UNKNOWN` or type mismatch).
-    """
+    """Evaluate one comparison; :data:`UNKNOWN` operands make it ``False`` (design §4)."""
     left = resolve_operand(compare.left, env)
     right = resolve_operand(compare.right, env)
     if isinstance(left, _Unknown) or isinstance(right, _Unknown):
@@ -376,7 +240,6 @@ def eval_compare(compare: Compare, env: dict[str, Any]) -> bool:
         return type(left) is type(right) and left == right
     if compare.op is CompareOp.NE:
         return not (type(left) is type(right) and left == right)
-    # Ordering: numeric-only, bool excluded.
     if isinstance(left, bool) or isinstance(right, bool):
         return False
     if not isinstance(left, int | float) or not isinstance(right, int | float):
@@ -387,7 +250,7 @@ def eval_compare(compare: Compare, env: dict[str, Any]) -> bool:
         return left <= right
     if compare.op is CompareOp.GT:
         return left > right
-    return left >= right  # CompareOp.GE
+    return left >= right
 
 
 def rule_fires(rule: Rule, env: dict[str, Any]) -> bool:
@@ -396,19 +259,7 @@ def rule_fires(rule: Rule, env: dict[str, Any]) -> bool:
 
 
 def evaluate_policy(policy: DecisionPolicy, env: dict[str, Any]) -> Decision:
-    """Evaluate a policy to its chosen Decision (pure, deterministic; RFC-008 §9).
-
-    Rules are tried in order; the first whose guard fires selects its Decision.
-    If none fires, the mandatory ``default`` is chosen — so the result is total
-    and depends only on ``(policy, env)`` (referential transparency; design §4).
-
-    Args:
-        policy: The authored decision policy.
-        env: The Decision Context environment (Capsule + config view).
-
-    Returns:
-        The chosen :class:`Decision`.
-    """
+    """Evaluate a policy to its chosen Decision (pure, deterministic; RFC-008 §9)."""
     for rule in policy.rules:
         if rule_fires(rule, env):
             return rule.decision

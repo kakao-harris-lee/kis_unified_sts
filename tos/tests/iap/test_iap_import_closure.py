@@ -1,32 +1,4 @@
-"""§7.1 import-closure verification for ``tos.iap`` (design #15 §0.3/§7.1 — sibling edge 0).
-
-Isomorphic to the ioc closure test, but with **sibling edge 0** (the design #15 distinction from
-#14): unlike ioc — which allows the single ``tos.rcl`` ``CapacityVector`` edge — ``tos.iap``
-allows **NO** sibling in its closure. It imports every ``tos.iap`` submodule in a **fresh,
-spawned interpreter** (``subprocess`` / ``os`` are firewall-forbidden even in tests) and asserts:
-
-  1. No design #1 §2.3 operational package is in the closure (``shared.execution`` / ``kis`` /
-     ``streaming`` / ``llm`` / ``storage`` / ``backtest``, ``services.*``, ``cli.*``).
-  2. Neither ``shared.config`` nor ``shared.config.secrets`` is present (the transitive
-     ambient-credential intake), nor ``shared.determinism``.
-  3. ``numpy`` / ``pandas`` / ``yaml`` are absent (iap has no numeric — bounds are injected; YAML
-     parsing is the harness's concern — design #15 §0.3/§7.1).
-  4. **All fifteen siblings are absent** — ``tos.dsl`` / ``tos.capsule`` / ``tos.ioc`` /
-     ``tos.brokercap`` / ``tos.spg`` / ``tos.venue`` / ``tos.are`` / ``tos.rcl`` /
-     ``tos.orthostate`` / ``tos.liveauth`` / ``tos.authority`` / ``tos.time`` / ``tos.evidence`` /
-     ``tos.protective`` / ``tos.recon`` (design #15 §3.4/§3.5 — every seam is a consumed / produced
-     scalar / digest, so those edges stay 0). **``tos.rcl`` IS forbidden here** — the #14
-     distinction (iap REUSES no sibling type; sibling edge 0, §0.4c).
-  5. **``tos.canonical`` AND ``tos.ordering`` ARE present** — the two core substrates (§3.1/§3.2)
-     are explicitly ALLOWED; no sibling is.
-  6. No ``tos.iap`` source references ``os.environ`` / ``os.getenv`` or a dynamic escape
-     (``exec`` / ``eval`` / ``__import__`` / ``importlib``) or a real clock (``time`` /
-     ``datetime`` — iap is clock-free, §3.4/§19).
-
-A planted-leak canary proves the spawn+scan pipeline actually catches a leak (incl. a planted
-``tos.rcl``, the #14-allowed edge that is forbidden here), and a planted-AST-escape canary proves
-the static scan catches an escape, so "green" is evidence the checker works.
-"""
+"""§7.1 import-closure verification for ``tos.iap`` (design #15 §0.3/§7.1 — sibling edge 0)."""
 
 from __future__ import annotations
 
@@ -34,8 +6,6 @@ import ast
 import multiprocessing as mp
 from pathlib import Path
 
-#: The fifteen siblings ``tos.iap`` must never import at runtime (sibling edge 0 — venue is
-#: unimplemented but listed so a future venue package is caught).
 _SIBLINGS = (
     "tos.dsl",
     "tos.capsule",
@@ -94,7 +64,6 @@ _IAP_SRC = Path(__file__).resolve().parent.parent.parent / "src" / "tos" / "iap"
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
-#: Real-clock modules that must never be imported by a clock-free iap source (§3.4/§19).
 _CLOCK_MODULES = frozenset({"time", "datetime"})
 
 
@@ -134,9 +103,7 @@ def _leak_canary_child(queue: mp.Queue) -> None:
     import tos.iap  # noqa: F401
 
     sys.modules["shared.config"] = types.ModuleType("shared.config")
-    sys.modules["tos.rcl"] = types.ModuleType(
-        "tos.rcl"
-    )  # the #14-allowed edge, forbidden here
+    sys.modules["tos.rcl"] = types.ModuleType("tos.rcl")
     sys.modules["tos.dsl"] = types.ModuleType("tos.dsl")
     sys.modules["tos.orthostate"] = types.ModuleType("tos.orthostate")
     sys.modules["tos.ioc"] = types.ModuleType("tos.ioc")
@@ -185,7 +152,7 @@ def test_leak_canary_is_detected() -> None:
     leaked = result["leaked"]
     for expected in (
         "shared.config",
-        "tos.rcl",  # the #14-allowed edge — forbidden for iap (sibling edge 0)
+        "tos.rcl",
         "tos.dsl",
         "tos.orthostate",
         "tos.ioc",
@@ -207,16 +174,14 @@ def test_is_forbidden_classifier_canaries() -> None:
     for sibling in _SIBLINGS:
         assert _is_forbidden(sibling) is True, f"{sibling} not flagged forbidden"
         assert _is_forbidden(sibling + ".records") is True
-    # tos.rcl is forbidden for iap (the #14 distinction — sibling edge 0).
     assert _is_forbidden("tos.rcl") is True
     assert _is_forbidden("tos.rcl.vector") is True
-    # Allowed: self, the two core substrates, third-party.
     assert _is_forbidden("tos.iap") is False
     assert _is_forbidden("tos.iap.predicates") is False
     assert _is_forbidden("tos.canonical") is False
     assert _is_forbidden("tos.ordering") is False
     assert _is_forbidden("pydantic") is False
-    assert _is_forbidden("click") is False  # must not false-match the "cli" prefix
+    assert _is_forbidden("click") is False
 
 
 def _ast_escape_offenders(path: Path) -> list[str]:

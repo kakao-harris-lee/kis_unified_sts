@@ -1,14 +1,4 @@
-"""predicate-only §6 — retry, cancel-storm, classification, reserve, currentness, partition.
-
-AFG-EV-003/004/005/006/009/010/011/012 substrate (design #16 §6). Every one of these rows
-is minimum ``EV-L2`` in EVIDENCE-REGISTER-002 (AFG-EV-004 carries an ``EV-L1/3+Broker``
-slice, so its L1 substrate is a core target cross-referenced from §7) — this file authors
-the **L1-decidable** rules only and closes **no** AFG-EV.
-
-Every guard carries a both-ways canary plus the Gap-5 ∅ / ``None`` canary: with every
-argument ``None`` the predicate must be restrictive, and a fully-proven positive tuple must
-pass (a vacuous block is an availability defect just as a vacuous grant is a safety one).
-"""
+"""predicate-only §6 — retry, cancel-storm, classification, reserve, currentness, partition."""
 
 from __future__ import annotations
 
@@ -49,10 +39,6 @@ from ._afg_strategies import (
     trigger,
     within_observation,
 )
-
-# ---------------------------------------------------------------------------
-# §6.1 — no_blind_retry (AFG-EV-003; AFG-INV-008)
-# ---------------------------------------------------------------------------
 
 
 def _retry(**overrides: object) -> bool:
@@ -120,8 +106,6 @@ def test_blind_failover_is_forbidden() -> None:
 
 def test_retry_count_elapsed_and_backoff_cannot_convert_unknown_to_rejection() -> None:
     """(structural §14:352) Accumulated retries / elapsed / backoff never change the verdict."""
-    # Negative side: a SENT_UNCONFIRMED attempt stays refused no matter how much time,
-    # how many retries, or how many identical responses accumulate.
     for retries, elapsed, backoff, repeated in (
         (0, 0, 0, False),
         (99, 999_999, 60_000, True),
@@ -141,18 +125,12 @@ def test_retry_count_elapsed_and_backoff_cannot_convert_unknown_to_rejection() -
             )
             is False
         )
-    # Positive side: the same accumulation cannot *remove* a legitimate governed retry.
     assert _retry(retry_count=99, elapsed_ms=999_999, backoff_ms=60_000) is True
 
 
 def test_all_none_retry_inputs_is_no_retry() -> None:
     """(Gap-5 ∅ / None canary) Every argument ``None`` => ``False`` (unproven => no retry)."""
     assert no_blind_retry(None, None, None, None) is False
-
-
-# ---------------------------------------------------------------------------
-# §6.2 — cancel ACK is not a Final Quantity Proof + bounded oscillation
-# ---------------------------------------------------------------------------
 
 
 def _cancel(**overrides: object) -> bool:
@@ -285,11 +263,6 @@ def test_oscillation_none_inputs_fail_closed() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# §6.3 — action_class_conservative (AFG-EV-005)
-# ---------------------------------------------------------------------------
-
-
 def test_most_conservative_applicable_class_governs() -> None:
     """(canary + §9:268) The most conservative applicable class governs a conflict."""
     verdict = action_class_conservative(
@@ -354,11 +327,6 @@ def test_unknown_vector_dimension_makes_classification_unknown() -> None:
         )
         is ActionFlowResult.UNKNOWN
     )
-
-
-# ---------------------------------------------------------------------------
-# §6.4 — protective reserve exclusivity (AFG-EV-006; AFG-INV-006)
-# ---------------------------------------------------------------------------
 
 
 def _reserve(**overrides: object) -> bool:
@@ -479,11 +447,6 @@ def test_high_priority_queue_never_upgrades_a_guarantee() -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# §6.5 — materiality + currentness invalidation (AFG-EV-009)
-# ---------------------------------------------------------------------------
-
-
 def test_unknown_materiality_is_material() -> None:
     """(Gap-7 §5.10:149 verbatim) Unknown / undeclared materiality => material."""
     assert is_material(MaterialChangeKind.POLICY, None) is True
@@ -568,7 +531,6 @@ def test_egress_may_not_invent_a_cause_or_change_the_action_class() -> None:
 def test_nothing_to_keep_current_invalidates() -> None:
     """(∅ canary) A ``None`` decision AND ``None`` permit => nothing provable => invalidate."""
     assert _currentness(decision=None, permit=None) is True
-    # ...but one of the two present is enough to be evaluated.
     assert _currentness(decision=None) is False
     assert _currentness(permit=None) is False
 
@@ -587,11 +549,6 @@ def test_empty_trigger_sequence_is_not_proof_of_currentness() -> None:
         )
         is True
     )
-
-
-# ---------------------------------------------------------------------------
-# §6.6 — partition / stale writer / protective lease (AFG-EV-010)
-# ---------------------------------------------------------------------------
 
 
 def _lease(**overrides: object) -> bool:
@@ -655,11 +612,6 @@ def test_loss_of_exclusivity_or_unfenced_stale_writer_denies() -> None:
             assert _lease(**{field: value}) is False
 
 
-# ---------------------------------------------------------------------------
-# §6.7 — authority separation (AFG-EV-011; AFG-INV-011)
-# ---------------------------------------------------------------------------
-
-
 def test_governor_grants_no_authority_positive_side() -> None:
     """(canary +) A default governor effect grants nothing => True."""
     assert governor_grants_no_authority(ActionFlowGovernorEffect()) is True
@@ -673,11 +625,6 @@ def test_governor_holds_no_broker_credential_field_can_ever_be_true() -> None:
         except Exception:
             continue
         raise AssertionError(f"ActionFlowGovernorEffect({field}=True) must be rejected")
-
-
-# ---------------------------------------------------------------------------
-# §6.8 — non-revival + economic continuity (AFG-EV-012; AFG-INV-012/014)
-# ---------------------------------------------------------------------------
 
 
 def test_non_revival_is_unconditional() -> None:

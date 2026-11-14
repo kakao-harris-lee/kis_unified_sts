@@ -1,13 +1,4 @@
-"""Truthy-sentinel structural seal — __bool__ raises + is-gate regression (design #23 §2.2/§4.2/§7).
-
-``ProofResult`` (CURRENT / RESTRICTED / UNKNOWN) and ``CurrentnessAdmission`` (ADMIT / DENY) are
-non-empty ``StrEnum`` strings, so ``if result:`` / ``bool(admission)`` would read a **denial** member
-(RESTRICTED / UNKNOWN / DENY) as truthy — a catastrophic silent fail-open (the #13/#14 M1 lesson,
-adopted from the start). Each subclasses ``_NonTruthyStrEnum`` (``__bool__`` raises). ``DimensionKey``
-is a plain closed StrEnum (structural membership token), deliberately NOT sealed.
-
-Regime tag: vocabulary substrate; EV-L1-complete claim forbidden.
-"""
+"""Truthy-sentinel structural seal — __bool__ raises + is-gate regression (design #23 §2.2/§4.2/§7)."""
 
 from __future__ import annotations
 
@@ -46,7 +37,6 @@ def test_is_identity_gate_still_works() -> None:
     assert (ProofResult.CURRENT is ProofResult.CURRENT) is True
     assert (ProofResult.RESTRICTED is ProofResult.CURRENT) is False
     assert (CurrentnessAdmission.ADMIT is CurrentnessAdmission.ADMIT) is True
-    # …and set membership / .value / hashing (none call __bool__).
     assert ProofResult.CURRENT in {ProofResult.CURRENT}
     assert ProofResult.CURRENT.value == "CURRENT"
     assert hash(ProofResult.UNKNOWN) == hash(ProofResult.UNKNOWN)
@@ -54,7 +44,7 @@ def test_is_identity_gate_still_works() -> None:
 
 def test_dimension_key_is_not_sealed() -> None:
     """(§2.2) DimensionKey is a plain closed membership token — truthiness is fine (not a verdict)."""
-    assert bool(DimensionKey.CONTEXT) is True  # a membership token, never a gate result
+    assert bool(DimensionKey.CONTEXT) is True
 
 
 def test_denial_values_would_have_failed_open_under_bare_truthiness() -> None:

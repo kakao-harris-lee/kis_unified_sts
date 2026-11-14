@@ -1,20 +1,4 @@
-"""§7.2-3/-5/-9 — namespace disjointness, env reachability, and byte-exact backward compatibility.
-
-Three related claims of design #32 §3.2:
-
-1. **disjointness is measured, not declared** (MINOR-3, carried into implementation by the delta
-   review). The merge key must be absent from the Capsule's *actual* ``model_dump(mode="json")``
-   keys, checked at publication time against the object at hand — not asserted against a
-   transcribed seventeen-name list that goes stale the moment a Capsule field is added. A collision
-   refuses publication rather than overwriting covered Capsule content.
-2. **the merged values are actually reachable** by the shipped interpreter. ``resolve_operand``
-   walks dict keys only and demands a scalar leaf (``vocabulary.py:334, 338``), which is exactly why
-   the projection is a flat ``{field_key: scalar}`` mapping. A list-shaped exposure would resolve to
-   ``UNKNOWN``, i.e. would silently stop working — so reachability is asserted, not assumed.
-3. **absence stays restrictive.** No view ⇒ no namespace ⇒ ``UNKNOWN`` ⇒ every comparison ``False``.
-
-Regime tag: authoring evidence only; closes no EV (design #32 §1.1).
-"""
+"""§7.2-3/-5/-9 — namespace disjointness, env reachability, and byte-exact backward compatibility."""
 
 from __future__ import annotations
 
@@ -57,11 +41,6 @@ def _resolved_env():
     )
 
 
-# ---------------------------------------------------------------------------
-# 1. Disjointness, measured (design #32 §3.2 (1), MINOR-3)
-# ---------------------------------------------------------------------------
-
-
 def test_the_namespace_is_disjoint_from_the_shipped_capsule_key_set() -> None:
     """(§3.2 (1) ★) The check reads the model, so a future Capsule field cannot silently collide."""
     assert value_namespace_is_disjoint() is True
@@ -85,12 +64,7 @@ def test_the_class_level_and_instance_level_key_sets_agree_on_the_declared_field
 
 
 def test_a_colliding_namespace_refuses_publication_rather_than_overwriting() -> None:
-    """(§3.2 (1) ★ mutation canary) A Capsule that already carries the key blocks the merge.
-
-    Simulated by asking the gate about a Capsule whose dump *does* carry the reserved key — the
-    honest way to exercise a branch that a well-formed Capsule can never reach today, without
-    mutating the ratified Capsule model.
-    """
+    """(§3.2 (1) ★ mutation canary) A Capsule that already carries the key blocks the merge."""
 
     class _CollidingCapsule(DecisionContextCapsule):
         """A capsule-shaped stand-in whose dump carries the reserved namespace key."""
@@ -126,11 +100,6 @@ def test_build_environment_refuses_to_shadow_a_capsule_key() -> None:
     colliding = _CollidingCapsule.model_construct(**dict(capsule))
     with pytest.raises(ArtifactIntegrityError, match="collides"):
         build_environment(colliding, _CONFIG, resolved_context=resolution.view)
-
-
-# ---------------------------------------------------------------------------
-# 2. Reachability by the shipped interpreter (design #32 §3.2 (2))
-# ---------------------------------------------------------------------------
 
 
 def test_a_merged_value_is_reachable_as_a_scalar_leaf() -> None:
@@ -195,11 +164,6 @@ def test_an_explicit_empty_view_is_published_but_reaches_no_value() -> None:
         resolve_operand(Operand(ref=("capsule", VALUE_NAMESPACE, "close")), env)
         is UNKNOWN
     )
-
-
-# ---------------------------------------------------------------------------
-# 3. Backward compatibility (design #32 §7.2-9)
-# ---------------------------------------------------------------------------
 
 
 def test_the_value_free_environment_is_byte_identical_to_the_pre_d_e2_one() -> None:

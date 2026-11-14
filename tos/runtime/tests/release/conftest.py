@@ -19,11 +19,7 @@ def identity() -> RuntimeIdentity:
 
 @pytest.fixture
 def observation() -> RuntimeArtifactObservation:
-    """A real-shaped :class:`RuntimeArtifactObservation` whose
-    ``source_tree_digest`` matches ``identity.code_digest`` above (Phase 5
-    W4 — release admission now compares the OBSERVATION's digests, not
-    ``identity.code_digest``, against the operator-approved expected
-    values)."""
+    """A real-shaped :class:`RuntimeArtifactObservation` whose"""
     return RuntimeArtifactObservation(
         source_tree_digest="digest-abc",
         dependency_set_digest="dep-digest-abc",

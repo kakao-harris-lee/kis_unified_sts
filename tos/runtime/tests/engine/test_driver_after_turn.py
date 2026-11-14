@@ -1,10 +1,4 @@
-"""Hermetic tests for :meth:`tos_runtime.engine.driver.EngineDriver.bind_after_turn` (TOS Phase
-5 W4 plan §2 decision 7 — the operator-projection export hook).
-
-Mirrors ``test_driver.py``'s own fixture/admission idiom (``driver._stamp`` + ``inbox.enqueue``
-to admit an event without going through ``enqueue_and_run``'s own loop, when a test needs to
-control exactly how many events are pending before calling ``run_once``/``run_until_idle``).
-"""
+"""Hermetic tests for :meth:`tos_runtime.engine.driver.EngineDriver.bind_after_turn` (TOS Phase"""
 
 from __future__ import annotations
 
@@ -22,9 +16,6 @@ SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
-#: Independent review finding #14 (mirrored from ``test_driver.py``): a concrete, very large
-#: bound so no test here accidentally exercises timeout-injection machinery unrelated to what
-#: this module tests.
 _NO_TIMEOUT_WITHIN_TEST = 10**12
 
 
@@ -53,14 +44,9 @@ def _make_driver(
 
 
 def _admit(driver: EngineDriver, inbox: SqliteEventInbox, *, seq: int) -> None:
-    """Durably admit a DECISION_TICK event WITHOUT processing it (mirrors
-    ``test_driver.py``'s crash-window setup idiom) — lets a test control exactly how many events
-    are pending before calling ``run_once``/``run_until_idle``."""
+    """Durably admit a DECISION_TICK event WITHOUT processing it (mirrors"""
     stamped = driver._stamp(fx.decision_tick_event(seq=seq))
     inbox.enqueue(stamped)
-
-
-# -- run_once ------------------------------------------------------------------
 
 
 def test_run_once_fires_after_turn_exactly_once_when_a_turn_was_processed(
@@ -100,7 +86,7 @@ def test_run_once_does_not_fire_after_turn_when_idle(
     calls: list[int] = []
     driver.bind_after_turn(lambda: calls.append(1))
 
-    result = driver.run_once()  # nothing admitted
+    result = driver.run_once()
 
     assert result is None
     assert calls == []
@@ -120,14 +106,11 @@ def test_run_once_with_no_bound_callback_costs_nothing(
     )
     _admit(driver, inbox, seq=1)
 
-    result = driver.run_once()  # no bind_after_turn call at all
+    result = driver.run_once()
 
     assert result is not None
     assert driver.after_turn_failures == 0
     assert driver.after_turn_last_error is None
-
-
-# -- run_until_idle --------------------------------------------------------------
 
 
 def test_run_until_idle_fires_after_turn_once_per_processed_event(
@@ -175,9 +158,6 @@ def test_run_until_idle_on_an_empty_inbox_never_fires(
     assert calls == []
 
 
-# -- enqueue_and_run --------------------------------------------------------------
-
-
 def test_enqueue_and_run_fires_after_turn_exactly_once(
     inbox: SqliteEventInbox,
     evidence_store: SqliteEvidenceStore,
@@ -220,9 +200,6 @@ def test_enqueue_and_run_called_twice_fires_after_turn_twice(
     assert calls == [1, 1]
 
 
-# -- a raising callback never stops the drain loop --------------------------------
-
-
 def test_a_raising_after_turn_callback_does_not_stop_run_until_idle_and_is_counted(
     inbox: SqliteEventInbox,
     evidence_store: SqliteEvidenceStore,
@@ -243,7 +220,7 @@ def test_a_raising_after_turn_callback_does_not_stop_run_until_idle_and_is_count
     _admit(driver, inbox, seq=1)
     _admit(driver, inbox, seq=2)
 
-    results = driver.run_until_idle()  # must not raise, must not stop early
+    results = driver.run_until_idle()
 
     assert len(results) == 2
     assert driver.after_turn_failures == 2
@@ -270,7 +247,7 @@ def test_a_raising_after_turn_callback_does_not_stop_run_once(
     driver.bind_after_turn(_boom)
     _admit(driver, inbox, seq=1)
 
-    result = driver.run_once()  # must not raise
+    result = driver.run_once()
 
     assert result is not None
     assert driver.after_turn_failures == 1

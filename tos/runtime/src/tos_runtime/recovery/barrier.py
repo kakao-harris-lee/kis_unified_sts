@@ -1,59 +1,19 @@
-"""``RecoveryBarrier`` — the boot-time recovery verdict (TOS Phase 5 W1; plan §2 decision 2:
-"복구는 부팅 전 장벽").
-
-**The kernel does the judging, this module only observes and folds.** Every fact in
-:class:`~tos_runtime.recovery.inputs.RecoveryInputs` is a structural observation this runtime
-already durably owns (see that module's own docstring for the source of each field). This module
-turns those observations into six :class:`~tos.sbr.records.RecoveryObligation` records — the
-runtime is the "owning sibling" that OBSERVES each fact (design #17 §3.5's own division of
-labour: SBR folds, it does not re-derive), never the component that decides what counts as
-closure — and hands the whole set to the kernel's own
-:func:`tos.sbr.predicates.obligation_graph_closed` for the actual judgement (never re-authored
-here). The verdict is the kernel's own :class:`~tos.sbr.vocabulary.ReadinessVerdict` —
-``READY`` only when the kernel's graph-closure predicate says so, ``NOT_READY`` otherwise; this
-module never invents a third value or a "positive by default" branch.
-
-**Why ``ReadinessVerdict`` and not a runtime-invented ``RESUME_CONSERVATIVE`` literal.** The
-Phase 5 plan (§2 decision 2) names the target state ``RESUME_CONSERVATIVE`` in prose, annotated
-"(커널 sbr 어휘)" — but no such literal exists anywhere in :mod:`tos.sbr` (grepped directly: the
-closest kernel vocabulary is :class:`~tos.sbr.vocabulary.ReadinessVerdict`'s own ``READY``, the
-positive resume value :func:`tos.sbr.predicates.obligation_graph_closed` can actually produce).
-Inventing a fifth barrier-state member here would mean authoring a NEW kernel-shaped value
-outside the kernel (exactly what design #17's own truthy-sentinel discipline exists to prevent —
-see :mod:`tos.sbr.vocabulary`'s own module docstring). This module therefore uses
-``ReadinessVerdict.READY`` as that resume value and records the discrepancy here rather than
-silently reinterpreting the plan's prose.
-
-**Truthy-sentinel discipline preserved.** :class:`~tos.sbr.vocabulary.ReadinessVerdict` is
-truthy-untestable (``bool()`` raises) — this module never writes ``if verdict:``; every gate is
-the explicit ``verdict is ReadinessVerdict.READY`` identity check.
-
-**Authority separation, defence in depth.** Every verdict this module produces carries an
-all-false :class:`~tos.sbr.records.RecoveryAuthorityEffect` and is re-checked with
-:func:`tos.sbr.predicates.recovery_authority_separated` before being returned — a validated
-``RecoveryAuthorityEffect`` is unconstructable with any ``True`` flag (SBR-INV-003), so this is
-the redundant, load-bearing "never trust an unvalidated block" check that predicate's own
-docstring calls for. :func:`tos.sbr.predicates.recovery_completion_revives_nothing` is also
-called (unconditionally ``True``) purely to record, in this module's own call graph, that no
-input here is treated as reviving any prior authority.
-
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos.*`` +
-``tos_runtime.*`` only. No ``shared.*``.
-"""
+"""``RecoveryBarrier`` — the boot-time recovery verdict (TOS Phase 5 W1; plan §2 decision 2:"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tos.sbr.predicates import (
+from tos_runtime.recovery.inputs import RecoveryInputs
+from tos_runtime.recovery.readiness import (
+    ObligationResult,
+    ReadinessVerdict,
+    RecoveryAuthorityEffect,
+    RecoveryObligation,
     obligation_graph_closed,
     recovery_authority_separated,
     recovery_completion_revives_nothing,
 )
-from tos.sbr.records import RecoveryAuthorityEffect, RecoveryObligation
-from tos.sbr.vocabulary import ObligationResult, ReadinessVerdict
-
-from tos_runtime.recovery.inputs import RecoveryInputs
 from tos_runtime.recovery.reconciliation import RECON_UNAVAILABLE, ReconciliationOutcome
 
 __all__ = [
@@ -65,17 +25,9 @@ __all__ = [
 
 
 class RecoveryBarrierInvariantError(RuntimeError):
-    """Raised when one of :meth:`RecoveryBarrier.verdict`'s own defence-in-depth invariant
-    re-checks fails (independent-review finding F8, 2026-09-10) — a typed exception, never a
-    bare ``assert`` (which ``python -O`` strips entirely, silently discarding the check exactly
-    when it matters most). Should be unreachable in practice; its existence documents that this
-    module treats "unreachable" as "raises loudly", never "silently assumed"."""
+    """Raised when one of :meth:`RecoveryBarrier.verdict`'s own defence-in-depth invariant"""
 
 
-#: The outcome substituted for a possibly-live attempt with no entry at all in
-#: :attr:`~tos_runtime.recovery.inputs.RecoveryInputs.possibly_live_reconciliation` — reconciliation
-#: never ran for it, treated exactly like an explicit unavailable/unmatched result (fail-closed,
-#: never vacuously cleared).
 _UNRECONCILED = ReconciliationOutcome(cleared=False, reason=RECON_UNAVAILABLE)
 
 _OBLIGATION_REPLAY_IDENTICAL = "PHASE5_W1_REPLAY_VERDICT_IDENTICAL"
@@ -89,10 +41,7 @@ _OBLIGATION_COMPOSITE_STATE_OK = "PHASE5_W1_COMPOSITE_STATE_RESTORE_OK"
 
 
 def _satisfied(obligation_id: str, *, ok: bool) -> RecoveryObligation:
-    """One flat (no-prerequisite) obligation, SATISFIED iff ``ok`` (module docstring's "the
-    runtime observes, the kernel judges" split — this function only stamps the OBSERVED result;
-    :func:`tos.sbr.predicates.obligation_graph_closed` is what actually decides readiness).
-    """
+    """One flat (no-prerequisite) obligation, SATISFIED iff ``ok`` (module docstring's "the"""
     return RecoveryObligation(
         obligation_id=obligation_id,
         obligation_type="TOS_PHASE5_W1_RECOVERY_BARRIER",
@@ -105,41 +54,7 @@ def _satisfied(obligation_id: str, *, ok: bool) -> RecoveryObligation:
 
 
 def _build_obligations(inputs: RecoveryInputs) -> frozenset[RecoveryObligation]:
-    """The six plan §2 decision 2 barrier gates, each as one flat obligation.
-
-    1. Replay verdict identical — :attr:`~tos_runtime.recovery.inputs.RecoveryInputs
-       .replay_verdict_ok` (independent-review finding F5, 2026-09-10): a durable
-       ``REPLAY_VERDICT_IDENTICAL`` row exists in the evidence store AND no ``REPLAY_DIVERGED``
-       row exists at all. This barrier only ever executes after
-       :func:`~tos_runtime.compose._engine_wiring.verify_replay_or_halt` already raised
-       :class:`~tos_runtime.compose._boot_integrity.EngineReplayDiverged` on any genuine
-       divergence THIS boot, INSIDE the same boot (``compose_paper_runtime`` -> ``_finalize``) —
-       but that guarantee alone used to be recorded as a hardcoded ``ok=True`` here, never
-       actually checked against a durable fact; a caller that removed the ``_finalize`` call
-       entirely (or a LATER read of this same evidence store) had no durable trace to catch it.
-       Never re-verified by re-running replay a second time — that would be the exact "the guard
-       is also the oracle" failure design #39 §5.3 warns against — only read back.
-    2. Every possibly-live attempt (ⓗ) is either absent or positively RECONCILED — never a bare
-       "none exist" check: :attr:`~tos_runtime.recovery.inputs.RecoveryInputs
-       .possibly_live_reconciliation` (:mod:`tos_runtime.recovery.reconciliation`) must mark
-       every entry in :attr:`~tos_runtime.recovery.inputs.RecoveryInputs.possibly_live_attempts`
-       :attr:`~tos_runtime.recovery.reconciliation.ReconciliationOutcome.cleared` ``True``; a
-       missing entry (reconciliation never ran for it) fails closed exactly like an explicit
-       ``False`` (:data:`_UNRECONCILED`).
-    3. No legacy receipts in the replay window (ⓑ).
-    4. RCL generation state consistent with the evidence tip — a structural PRESENCE check only
-       (design #40 v1.1 note ② forbids equating the two epochs outright): a genesis boot with an
-       empty evidence store and no recorded runtime generation is consistent (nothing to compare
-       yet); any other combination requires both to be present.
-    5. Inbox unconsumed events are replayable — :attr:`~tos_runtime.recovery.inputs
-       .RecoveryInputs.inbox_events_parseable` (independent-review finding F5, 2026-09-10):
-       every admitted inbox row parses through the kernel ``EngineEvent`` model
-       (:func:`~tos_runtime.recovery.inputs._inbox_events_parseable`). Previously a bare
-       ``ok=True`` reasoned "a row that failed to parse would have raised before this function
-       is ever called" — true, but that meant a malformed row crashed the boot with an
-       unhandled exception rather than producing a graceful FAILED obligation here.
-    6. Composite-state restore OK for every possibly-live attempt (staterestore).
-    """
+    """The six plan §2 decision 2 barrier gates, each as one flat obligation."""
     genesis_consistent = (
         inputs.evidence_tip_seq is None and inputs.rcl_runtime_generation is None
     )
@@ -205,30 +120,7 @@ def _reason_for(inputs: RecoveryInputs, *, ready: bool) -> str:
 
 @dataclass(frozen=True)
 class RecoveryVerdict:
-    """The recovery barrier's own verdict — never a permission, only a denial-context label
-    plus the runtime-level reason and bookkeeping a caller (``tos_runtime.compose
-    ._recovery_wiring``) needs to durably record it and decide whether to wire a driver at all.
-
-    Attributes:
-        readiness_verdict: The kernel's own :class:`~tos.sbr.vocabulary.ReadinessVerdict` —
-            truthy-untestable; gate on ``verdict.readiness_verdict is ReadinessVerdict.READY``,
-            never ``if verdict.readiness_verdict:``.
-        ready: The plain ``bool`` a compose caller actually branches on (the identity-checked
-            result of :attr:`readiness_verdict`, computed once here so every caller uses the
-            SAME positive-identity gate rather than re-deriving it with a bare truthiness test).
-        reason: A human-readable, non-authoritative summary (never itself evidence — the caller
-            durably records the full :class:`~tos_runtime.recovery.inputs.RecoveryInputs`
-            alongside this).
-        possibly_live_reconciliation: ``{event_id: reason}`` for every possibly-live attempt —
-            the ``reason`` half of :attr:`~tos_runtime.recovery.inputs.RecoveryInputs
-            .possibly_live_reconciliation`'s own :class:`~tos_runtime.recovery.reconciliation
-            .ReconciliationOutcome` (:data:`~tos_runtime.recovery.reconciliation
-            .RECONCILED_MATCHED` when cleared, :data:`~tos_runtime.recovery.reconciliation
-            .NO_ATTEMPT_ID`, a :class:`~tos_runtime.recon.service.ReconciliationReport`-supplied
-            reason, or :data:`RECON_UNAVAILABLE` otherwise).
-        authority_effect: The all-false :class:`~tos.sbr.records.RecoveryAuthorityEffect` this
-            verdict carries (SBR-INV-003 — a recovery verdict creates no authority).
-    """
+    """The recovery barrier's own verdict — never a permission, only a denial-context label"""
 
     readiness_verdict: ReadinessVerdict
     ready: bool
@@ -242,35 +134,17 @@ class RecoveryBarrier:
 
     @staticmethod
     def verdict(inputs: RecoveryInputs) -> RecoveryVerdict:
-        """Fold ``inputs`` into a :class:`RecoveryVerdict` via the kernel's own predicates.
-
-        Args:
-            inputs: The durably-assembled :class:`~tos_runtime.recovery.inputs.RecoveryInputs`.
-
-        Returns:
-            The :class:`RecoveryVerdict`. ``READY`` only when
-            :func:`tos.sbr.predicates.obligation_graph_closed` says the six-obligation graph is
-            closed; ``NOT_READY`` otherwise (never anything permissive by default).
-        """
+        """Fold ``inputs`` into a :class:`RecoveryVerdict` via the kernel's own predicates."""
         obligations = _build_obligations(inputs)
         closed = obligation_graph_closed(obligations)
 
-        effect = (
-            RecoveryAuthorityEffect()
-        )  # every flag False — unconstructable otherwise
-        # Defence in depth (module docstring): re-check separation on the ALREADY-validated
-        # effect rather than trusting construction alone. Independent-review finding F8
-        # (2026-09-10): an `assert` here is stripped entirely under `python -O`, silently
-        # discarding this defence-in-depth re-check exactly when a `-O`-run process would most
-        # need it caught — an explicit check raising a typed, never-optimized-away exception
-        # survives that mode.
-        if not recovery_authority_separated(effect, forced_ready_requested=False):
+        effect = RecoveryAuthorityEffect()
+        if not recovery_authority_separated(effect):
             raise RecoveryBarrierInvariantError(
                 "RecoveryAuthorityEffect() must always separate authority — this check "
                 "documents the defence-in-depth re-check design #17 calls for, and should be "
                 "unreachable"
             )
-        # Documents (does not decide) that nothing here revives a prior authority (SBR-INV-014).
         if not recovery_completion_revives_nothing():
             raise RecoveryBarrierInvariantError(
                 "recovery_completion_revives_nothing() returned False -- SBR-INV-014 violated"

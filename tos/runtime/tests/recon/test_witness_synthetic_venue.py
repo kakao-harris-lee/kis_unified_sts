@@ -1,13 +1,4 @@
-"""``SyntheticVenueLedgerWitness`` (plan 2026-10-31 §5 ②).
-
-Four clauses: it is constructible with no evidence-store handle at all, it declares
-``independent_of_evidence_store=True``, it ignores rows outside its scope, and a row it cannot
-read makes it UNAVAILABLE rather than quietly smaller.
-
-Every test reads a REAL ``venue_ledger.sqlite3`` written by the real store — a witness tested
-against an in-memory double would prove nothing about the one property this class exists for
-(which file it reads).
-"""
+"""``SyntheticVenueLedgerWitness`` (plan 2026-10-31 §5 ②)."""
 
 from __future__ import annotations
 
@@ -96,15 +87,8 @@ def _scope(
     )
 
 
-# ============================================================================
-# ② clause 1 — no evidence-store handle, structurally
-# ============================================================================
-
-
 def test_the_constructor_accepts_no_evidence_store(ledger_path: Path) -> None:
-    """Independent-review finding F2 made ``independent_of_evidence_store`` a field because the
-    disclosure alone was not mechanical. Here the absence is in the signature: there is no
-    parameter an evidence store could be passed through."""
+    """Independent-review finding F2 made ``independent_of_evidence_store`` a field because the"""
     parameters = inspect.signature(SyntheticVenueLedgerWitness.__init__).parameters
     assert set(parameters) == {
         "self",
@@ -119,11 +103,7 @@ def test_the_constructor_accepts_no_evidence_store(ledger_path: Path) -> None:
 
 
 def test_the_module_never_imports_the_evidence_store() -> None:
-    """Structural: a later edit cannot reach the evidence store through an import either.
-
-    Reads the module's own import statements out of its AST rather than grepping the text, so
-    the docstring may keep naming the package it deliberately does not import.
-    """
+    """Structural: a later edit cannot reach the evidence store through an import either."""
     tree = ast.parse(inspect.getsource(witness_module))
     imported: set[str] = set()
     for node in ast.walk(tree):
@@ -153,11 +133,6 @@ def test_equal_or_blank_side_tokens_are_refused(ledger_path: Path) -> None:
             )
 
 
-# ============================================================================
-# ② clause 2 — independence + the snapshot's own axes
-# ============================================================================
-
-
 def test_the_snapshot_declares_independence_and_names_its_provenance(
     ledger, ledger_path: Path
 ) -> None:
@@ -181,17 +156,14 @@ def test_the_snapshot_declares_independence_and_names_its_provenance(
 
 
 def test_a_short_fill_nets_negative(ledger, ledger_path: Path) -> None:
-    """Long/short symmetry: a SHORT entry fills the reducing side first and is still a held
-    position — ``broker_position_flat`` checks ``quantity != 0``, not ``quantity > 0``.
-    """
+    """Long/short symmetry: a SHORT entry fills the reducing side first and is still a held"""
     _record(ledger, attempt_id="s1", side=SELL, filled="2")
     snapshot = _witness(ledger_path).observe(_scope())
     assert snapshot.positions == (("101W12", Decimal("-2")),)
 
 
 def test_a_round_trip_nets_flat(ledger, ledger_path: Path) -> None:
-    """Entry then exit: the net is zero, so the instrument is simply absent — which, with
-    ``positions_complete=True``, is what proves flatness after a close (§3.3)."""
+    """Entry then exit: the net is zero, so the instrument is simply absent — which, with"""
     _record(ledger, attempt_id="a1", side=BUY, filled="1")
     _record(ledger, attempt_id="a2", side=SELL, filled="1")
     snapshot = _witness(ledger_path).observe(_scope())
@@ -222,17 +194,11 @@ def test_non_fill_rows_do_not_move_the_net(ledger, ledger_path: Path) -> None:
 def test_an_unestablished_inquiry_date_does_not_make_the_witness_unavailable(
     ledger, ledger_path: Path
 ) -> None:
-    """The join reads each order's own ``order_date``; ``order_inquiry_date`` is a record of the
-    inquiry, and its own contract already allows ``None``."""
+    """The join reads each order's own ``order_date``; ``order_inquiry_date`` is a record of the"""
     _record(ledger, attempt_id="a1", side=BUY, filled="1")
     snapshot = _witness(ledger_path, today=None).observe(_scope())
     assert snapshot.order_inquiry_date is None
     assert snapshot.positions == (("101W12", Decimal("1")),)
-
-
-# ============================================================================
-# ② clause 3 — scope
-# ============================================================================
 
 
 def test_rows_for_another_instrument_are_ignored(ledger, ledger_path: Path) -> None:
@@ -253,9 +219,7 @@ def test_rows_for_another_account_are_ignored(ledger, ledger_path: Path) -> None
 def test_orders_are_never_filtered_down_to_the_scopes_attempt_ids(
     ledger, ledger_path: Path
 ) -> None:
-    """A witness order the caller does not know about is the orphan the reconciliation is
-    looking for (``WitnessScope``'s own contract) — filtering it away would make orphan
-    detection structurally impossible."""
+    """A witness order the caller does not know about is the orphan the reconciliation is"""
     _record(ledger, attempt_id="known", side=BUY, filled="1")
     _record(ledger, attempt_id="unknown", side=BUY, filled="1")
     snapshot = _witness(ledger_path).observe(_scope(attempts=("known",)))
@@ -277,17 +241,8 @@ def test_an_empty_instrument_scope_covers_every_instrument_of_the_account(
     )
 
 
-# ============================================================================
-# ② clause 4 — a row it cannot read is UNAVAILABLE, never a smaller answer
-# ============================================================================
-
-
 def _raw_insert(path: Path, **columns: object) -> None:
-    """Write a row straight through sqlite, bypassing the store's own validation.
-
-    The only way to produce a malformed row: the table rejects UPDATE/DELETE outright, and
-    :meth:`SyntheticVenueLedger.record` refuses every shape below by name.
-    """
+    """Write a row straight through sqlite, bypassing the store's own validation."""
     row: dict[str, object] = {
         "trading_date": TODAY,
         "broker_execution_id": "syn-exec:x:FULL_FILL",
@@ -327,8 +282,7 @@ def _raw_insert(path: Path, **columns: object) -> None:
 def test_a_row_this_witness_cannot_read_makes_it_unavailable(
     ledger, ledger_path: Path, column: str, value: object
 ) -> None:
-    """Never a dropped row: a dropped fill reads as a SMALLER net than the venue holds, and a
-    smaller net reads as flat — which is exactly what releases capacity."""
+    """Never a dropped row: a dropped fill reads as a SMALLER net than the venue holds, and a"""
     _record(ledger, attempt_id="a1", side=BUY, filled="1")
     _raw_insert(ledger_path, **{column: value})
     with pytest.raises(WitnessUnavailable):
@@ -338,8 +292,7 @@ def test_a_row_this_witness_cannot_read_makes_it_unavailable(
 def test_a_fill_with_an_unknown_side_token_makes_the_witness_unavailable(
     ledger, ledger_path: Path
 ) -> None:
-    """A fill whose direction cannot be signed cannot be netted — and an unsigned fill silently
-    treated as zero would understate the position."""
+    """A fill whose direction cannot be signed cannot be netted — and an unsigned fill silently"""
     _raw_insert(ledger_path, side="LONG_OPEN")
     with pytest.raises(WitnessUnavailable, match="neither configured side token"):
         _witness(ledger_path).observe(_scope())

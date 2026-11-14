@@ -1,19 +1,14 @@
-"""Compose e2e tests for :func:`tos_runtime.compose._operations_wiring.apply_operations_wiring`
-(TOS Phase 5 W4 plan §2 decisions 7-11).
-
-Mirrors ``test_compose_root.py``'s own ``_compose`` helper (module docstring there: writes the
-band-reversion strategy file, synthetic transport, ``"non-live-test"`` label) — duplicated here,
-not imported, so this module can thread ``projection_path``/``backup_root`` through without
-touching a file another lane owns.
-"""
+"""Compose e2e tests for :func:`tos_runtime.compose._operations_wiring.apply_operations_wiring`"""
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 from tos_runtime.calendar.ports import FixedWallClockReference
 from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.operations.backup_set import (
@@ -43,13 +38,11 @@ _TOP_LEVEL_KEYS = frozenset(
         "recovery",
         "driver",
         "time",
-        "safety_mesh",
         "currentness",
         "rcl",
         "inbox",
         "evidence",
         "release",
-        "protective",
         "operations",
         "alerts",
         "export",
@@ -79,10 +72,6 @@ def _compose(
         action_flow_inputs_provider=_action_flow_inputs_for(facts),
         projection_path=projection_path,
         backup_root=backup_root,
-        # TOS Phase 5 W5 plan §2 decision 2 — this module's own _compose (module
-        # docstring: duplicated from test_compose_root.py, not imported) needs the
-        # SAME non-production FixedWallClockReference default so step 3 stays
-        # ADMISSIBLE / item 12 SATISFIED for _reach_admitted_send's real-send tests.
         wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
     )
     facts.runtime = runtime
@@ -94,13 +83,7 @@ def _kind_count(evidence_store, kind: str) -> int:
 
 
 def _reach_admitted_send(runtime, custody_root: Path) -> None:
-    """Drive ``fx.crossing_event()`` twice — once to construct the proposal/intent, then
-    again with a real approval file written so the flow ADMITs all the way through
-    ACTION_FLOW_DECISION to an actual send attempt (mirrors ``test_compose_root.py``'s own
-    ``test_engine_steps_admit_for_real_and_reach_the_transport``). Needed because a single
-    pass halts at INDEPENDENT_APPROVAL (UNKNOWN, no approval file yet) — never reaching the
-    protective/currentness-proof code paths a bare ``run_once`` call does not exercise.
-    """
+    """Drive ``fx.crossing_event()`` twice — once to construct the proposal/intent, then"""
     event = fx.crossing_event()
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
@@ -140,9 +123,6 @@ def _write_manifest(backup_root: Path, generation: int) -> BackupSetManifest:
     return manifest
 
 
-# -- projection_path=None: no file, no evidence ------------------------------
-
-
 def test_boot_without_projection_path_writes_no_file_and_no_evidence(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
@@ -152,9 +132,6 @@ def test_boot_without_projection_path_writes_no_file_and_no_evidence(
     assert runtime.operations is not None
     assert not projection_path.exists()
     assert _kind_count(runtime.evidence_store, "OPERATOR_PROJECTION_ENABLED") == 0
-
-
-# -- projection_path given: file, schema, generation, evidence ---------------
 
 
 def test_boot_with_projection_path_exports_a_file(
@@ -207,13 +184,7 @@ def test_projection_generation_increments_after_a_processed_event(
 def test_export_field_combines_an_earlier_write_failure_into_the_next_successful_export(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """team-lead Phase B directive: ``export.failures``/``export.last_error`` fold a
-    :class:`~tos_runtime.operator.export.ProjectionExporter`'s own write-side failures into the
-    SAME document's export field. Drives one genuine write failure (a directory squatting on the
-    projection path, so the publishing ``os.replace`` fails) then removes it and asserts the NEXT
-    successful export reports it. A directory rather than ``chmod`` so the failure is real under
-    root too, where permission bits do not block writes.
-    """
+    """team-lead Phase B directive: ``export.failures``/``export.last_error`` fold a"""
     projection_dir = tmp_path / "projection_dir"
     projection_dir.mkdir()
     projection_path = projection_dir / "operator_projection.json"
@@ -245,11 +216,7 @@ def test_currentness_last_assemble_complete_is_null_before_any_assemble_call(
 
     document = json.loads(projection_path.read_text())
     assert document["currentness"]["last_assemble_complete"] is None
-    assert document["currentness"]["pending_dimensions"] == [
-        "CONTEXT",
-        "CRITICAL_INPUT",
-        "EGRESS_IDENTITY",
-    ]
+    assert document["currentness"]["pending_dimensions"] == []
 
 
 def test_currentness_last_assemble_complete_reports_a_real_bool_after_a_processed_tick(
@@ -319,88 +286,6 @@ def test_release_admitted_and_software_deployment_ok_are_the_same_fact(
     document = json.loads(projection_path.read_text())
     assert document["release"]["admitted"] is runtime.release_admitted
     assert document["release"]["software_deployment_ok"] is runtime.release_admitted
-
-
-# -- disclosed gaps: safety_mesh.services / protective.last_verdict stay None ---
-
-
-def test_safety_mesh_is_reported_null_before_the_coordinator_s_first_refresh(
-    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
-) -> None:
-    """Boot itself never drives a tick through the Coordinator (``build_safety_mesh``'s own
-    warm-up ``monitoring_service.clear()`` call bypasses the tick cell entirely) — so
-    ``safety_mesh_peek()`` genuinely has nothing to report yet. This is the honest
-    "nothing observed yet" case, not the disclosed-gap case (see the sibling test below for
-    the real, populated case after a tick)."""
-    projection_path = tmp_path / "operator_projection.json"
-    _compose(config_dir, data_dir, custody_root, projection_path=projection_path)
-
-    document = json.loads(projection_path.read_text())
-    safety_mesh = document["safety_mesh"]
-    assert safety_mesh["snapshot_generation"] is None
-    assert set(safety_mesh["services"]) == {"spg", "wdr", "sir", "stm"}
-    for service in safety_mesh["services"].values():
-        assert service["clear"] is None
-        assert service["reasons"] == []
-
-
-def test_safety_mesh_reports_the_real_snapshot_after_a_processed_tick(
-    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
-) -> None:
-    projection_path = tmp_path / "operator_projection.json"
-    runtime = _compose(
-        config_dir, data_dir, custody_root, projection_path=projection_path
-    )
-
-    _reach_admitted_send(runtime, custody_root)
-
-    document = json.loads(projection_path.read_text())
-    safety_mesh = document["safety_mesh"]
-    assert safety_mesh["snapshot_generation"] is not None
-    assert set(safety_mesh["services"]) == {"spg", "wdr", "sir", "stm"}
-    for service in safety_mesh["services"].values():
-        assert service["clear"] is not None
-        assert isinstance(service["reasons"], list)
-
-
-def test_protective_last_verdict_is_reported_null_before_any_real_evaluation(
-    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
-) -> None:
-    """``ProtectiveActionService.verdict()`` is never called during boot (only a real tick's
-    ``ActionFlowGovernor`` reaches it, via ``protective_classification_digest``) — the honest
-    "no evaluation happened yet" case, not the disclosed-gap case (see the sibling test below
-    for the real, populated case after a tick)."""
-    projection_path = tmp_path / "operator_projection.json"
-    _compose(config_dir, data_dir, custody_root, projection_path=projection_path)
-
-    document = json.loads(projection_path.read_text())
-    assert document["protective"]["last_verdict"] is None
-
-
-def test_protective_last_verdict_reports_the_real_verdict_after_a_processed_tick(
-    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
-) -> None:
-    projection_path = tmp_path / "operator_projection.json"
-    runtime = _compose(
-        config_dir, data_dir, custody_root, projection_path=projection_path
-    )
-
-    _reach_admitted_send(runtime, custody_root)
-
-    document = json.loads(projection_path.read_text())
-    last_verdict = document["protective"]["last_verdict"]
-    assert last_verdict is not None
-    assert set(last_verdict) == {
-        "derestriction_admissible",
-        "capacity_exhausted",
-        "classification",
-        "unevaluated",
-        "reasons",
-        "protective_classification_digest",
-    }
-
-
-# -- backup-set observation ---------------------------------------------------
 
 
 def test_backup_set_observed_evidence_appears_when_a_manifest_exists(
@@ -482,9 +367,6 @@ def test_empty_backup_root_means_no_evidence_and_null_last_backup(
     assert document["operations"]["last_backup"] is None
 
 
-# -- operations.schema_versions / dependency_admission / key_continuity -------
-
-
 def test_operations_schema_versions_are_populated_ints(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
@@ -513,10 +395,7 @@ def test_operations_dependency_admission_matches_release_admitted(
 def test_operations_key_continuity_reports_the_real_boot_time_verdict(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """The evidence store's own boot-time continuity check (module docstring of
-    ``OperationsFacts.key_continuity``) — always ``CONTINUOUS`` for a runtime that exists to be
-    read from at all (any other verdict means the store's constructor already raised).
-    """
+    """The evidence store's own boot-time continuity check (module docstring of"""
     projection_path = tmp_path / "operator_projection.json"
     runtime = _compose(
         config_dir, data_dir, custody_root, projection_path=projection_path
@@ -530,18 +409,10 @@ def test_operations_key_continuity_reports_the_real_boot_time_verdict(
     )
 
 
-# -- alerts: nothing has ever been resolved (no producer exists yet) ---------
-
-
 def test_alerts_delivery_owner_and_unresolved_seq_list_shape(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """Boot itself emits ONE genuine ``STM_ALERT`` (``_safety_wiring.build_safety_mesh``'s own
-    "boot-time warm-up" — the monitoring service's FIRST-ever observation is honestly
-    ``source_continuity_present=None``/UNKNOWN, which alerts) — so a freshly-composed runtime's
-    ``unresolved_stm_alert_seqs`` is NOT empty; this test pins the shape (a list of ints, matching
-    real evidence rows), never a specific count coupled to this service's own internal policy.
-    """
+    """A freshly-composed runtime emits NO ``STM_ALERT`` at boot any more."""
     projection_path = tmp_path / "operator_projection.json"
     runtime = _compose(
         config_dir, data_dir, custody_root, projection_path=projection_path
@@ -565,26 +436,43 @@ def test_alerts_delivery_owner_and_unresolved_seq_list_shape(
 def test_acknowledging_an_alert_removes_it_from_the_unresolved_list(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """Runtime operations wiring plan (2026-09-13) §2 decision 4/8:
-    :func:`tos_runtime.safety.ack.acknowledge_alert` is the resolved-seq reader's real source
-    now. Acknowledging one of boot's own genuine ``STM_ALERT`` rows must remove exactly that
-    seq from the exported ``unresolved_stm_alert_seqs`` — and must NOT clear/latch/re-arm
-    anything else (the safety-mesh/new-risk-halt state this compose otherwise exercises stays
-    untouched by this call, per :mod:`tos_runtime.safety.ack`'s own structural pin).
-    """
+    """Runtime operations wiring plan (2026-09-13) §2 decision 4/8:"""
+    from tos_runtime.compose._monitor_wiring import build_monitor_owners
     from tos_runtime.safety.ack import acknowledge_alert
+    from tos_runtime.time.sources import ProcessMonotonicSource
 
     projection_path = tmp_path / "operator_projection.json"
     runtime = _compose(
         config_dir, data_dir, custody_root, projection_path=projection_path
     )
 
+    monitor_config = tmp_path / "monitor-config"
+    monitor_config.mkdir()
+    shutil.copy(
+        config_dir / "monitor_coverage.yaml", monitor_config / "monitor_coverage.yaml"
+    )
+    raw = yaml.safe_load(
+        (monitor_config / "monitor_coverage.yaml").read_text(encoding="utf-8")
+    )
+    raw["coverage"]["bounds"]["max_inbox_unconsumed"] = 0
+    (monitor_config / "monitor_coverage.yaml").write_text(
+        yaml.safe_dump(raw, sort_keys=False), encoding="utf-8"
+    )
+    owners = build_monitor_owners(
+        monitor_config,
+        evidence_store=runtime.evidence_store,
+        monotonic_source=ProcessMonotonicSource(),
+    )
+    owners.inbox_cell.inbox = runtime.inbox
+    runtime.inbox.enqueue(fx.crossing_event())
+    assert owners.monitoring.healthy() is False
+
     real_stm_alert_seqs = [
         entry.seq
         for entry in runtime.evidence_store.iter_entry_meta()
         if entry.kind == "STM_ALERT"
     ]
-    assert real_stm_alert_seqs, "boot must have emitted at least one real STM_ALERT"
+    assert real_stm_alert_seqs, "the monitor must have emitted a real STM_ALERT"
     target_seq = real_stm_alert_seqs[0]
 
     approvals_dir = tmp_path / "approvals"

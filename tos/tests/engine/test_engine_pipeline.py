@@ -1,22 +1,4 @@
-"""The RFC-003 §7 four-phase decision pipeline (design #31 §3.1) — accept, interpret, decide, emit.
-
-Phase 1 ("accept context", §7:201-204) carries the safety weight: *a missing, stale, incomplete, or
-invalid Capsule forbids a decision*. So the pipeline confirms — **positively** — that the Capsule is
-issued, digest-bound, required-covered complete, and scoped to the event, and that the injected
-:mod:`tos.time` verdicts admit; and only then is ``evaluate`` called at all. Each of those gates is
-exercised here in isolation, and the "``evaluate`` was not called" half is asserted by the absence
-of any emitted outcome, not merely by the halt reason.
-
-Phase 3 ("decide", §7:208-212) has one slice-specific rule: a ``DecisionKind.VECTOR`` outcome
-violates the per-instrument premise (RFC-003 §9:327-339) and is **fail-closed** — no progress,
-restrictive no-action, recorded. The vector folding rule belongs to a later multi-symbol cycle
-(design #31 §3.1 MINOR-1).
-
-A hypothesis property closes the freshness gate over arbitrary injected coordinates: an absent
-bound, an absent session context, or a non-``TRUSTED`` health state can never admit.
-
-Regime tag: orchestration authoring evidence only; closes no EV.
-"""
+"""The RFC-003 §7 four-phase decision pipeline (design #31 §3.1) — accept, interpret, decide, emit."""
 
 from __future__ import annotations
 
@@ -57,11 +39,6 @@ def _tick_result(**kwargs):
     return core.handle(decision_tick(**kwargs)), sink, transmit
 
 
-# ---------------------------------------------------------------------------
-# phase 1 — accept context (RFC-003 §7:201-204)
-# ---------------------------------------------------------------------------
-
-
 def test_a_draft_capsule_forbids_a_decision() -> None:
     """(§3.1 phase 1) A pre-issuance Capsule has no digest — evaluation is not attempted."""
     draft = DecisionContextCapsule(issuer_principal_id="iss-1")
@@ -78,14 +55,7 @@ def test_a_draft_capsule_forbids_a_decision() -> None:
 
 
 def test_an_incomplete_capsule_forbids_a_decision() -> None:
-    """(§3.1 phase 1) The ``_REQUIRED_COVERED`` completeness gate is checked positively.
-
-    Defence in depth, and deliberately reached through ``model_construct``: an incomplete Capsule
-    is already **unconstructable** as an ISSUED artifact (``tos.capsule`` verifies the digest and
-    the required-covered set at construction), and the ``DecisionTickPayload`` model re-validates
-    the nested Capsule, so this branch cannot be reached through ordinary construction. It is kept
-    because "the outer model happens to revalidate" is not a guarantee the pipeline should rely on.
-    """
+    """(§3.1 phase 1) The ``_REQUIRED_COVERED`` completeness gate is checked positively."""
     from tos.engine.records import DecisionTickPayload
 
     capsule = issue_capsule()
@@ -224,11 +194,6 @@ def test_an_empty_time_input_block_denies() -> None:
     assert reason is not None
 
 
-# ---------------------------------------------------------------------------
-# phase 3 — decide (RFC-003 §7:208-212)
-# ---------------------------------------------------------------------------
-
-
 def test_a_vector_outcome_is_fail_closed() -> None:
     """(§3.1 MINOR-1) A ``VECTOR`` outcome violates the per-instrument premise — no progress."""
     core, sink = build_core(
@@ -276,12 +241,7 @@ def test_a_firing_policy_emits_a_proposal_bound_to_the_exact_capsule() -> None:
 
 
 def test_a_proposal_whose_scope_left_the_key_is_refused() -> None:
-    """(§3.3 삼자 일치) The emitted proposal's own scope is cross-checked against the key.
-
-    The registry key is derived from the strategy's declared scope, so agreement is normally
-    structural. This asserts the *check exists* rather than relying on that: a proposal whose scope
-    is not the dispatch key never reaches the sequencer.
-    """
+    """(§3.3 삼자 일치) The emitted proposal's own scope is cross-checked against the key."""
     from tos.engine.pipeline import run_decision_pipeline
     from tos.engine.records import DecisionTickPayload
     from tos.engine.sink import RecordingEvidenceSink
@@ -292,7 +252,6 @@ def test_a_proposal_whose_scope_left_the_key_is_refused() -> None:
     entry = registry.declared_keys()[0]
     registered = registry.resolve(entry).entries[0]
 
-    # The capsule + event agree with each other but not with the registered strategy's key.
     payload = DecisionTickPayload(
         instrument_key=instrument_key(),
         capsule=issue_capsule(),

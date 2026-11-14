@@ -1,11 +1,4 @@
-"""ERI-EV-006 (core) — causal ordering & time ambiguity (design #4 §4.3, ADR §11).
-
-Ordering follows the §11 priority (quorum -> egress journal -> source-native ->
-component continuity + local monotonic -> typed causal links -> trustworthy-time
-interval). A bare cross-host wall clock never orders; cross-continuity monotonic
-values are never subtracted; overlapping time uncertainty is ambiguous, not
-sorted.
-"""
+"""ERI-EV-006 (core) — causal ordering & time ambiguity (design #4 §4.3, ADR §11)."""
 
 from __future__ import annotations
 
@@ -47,7 +40,6 @@ def test_cross_continuity_monotonic_not_subtracted() -> None:
     """Different continuities cannot be ordered by their monotonic values (§11 313)."""
     ea = OrderingEvent(source_continuity_id="c1", local_monotonic_value=100)
     eb = OrderingEvent(source_continuity_id="c2", local_monotonic_value=1)
-    # No shared basis and no time interval => ambiguous, not "100 > 1".
     assert compare_order(ea, eb) is Ordering.AMBIGUOUS
 
 
@@ -76,7 +68,6 @@ def test_typed_causal_link_orders() -> None:
 
 def test_priority_quorum_over_time() -> None:
     """Quorum index outranks a conflicting trustworthy-time interval."""
-    # Quorum says a before b; time intervals (if trusted) would say a after b.
     ea = OrderingEvent(event_id="a", quorum_commit_index=1, time_lo=100, time_hi=110)
     eb = OrderingEvent(event_id="b", quorum_commit_index=2, time_lo=10, time_hi=20)
     assert compare_order(ea, eb) is Ordering.BEFORE

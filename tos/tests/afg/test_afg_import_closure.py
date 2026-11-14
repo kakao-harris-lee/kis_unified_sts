@@ -1,37 +1,4 @@
-"""§7.1 import-closure verification for ``tos.afg`` — **allowlist** form (design #16 §0.3).
-
-Unlike the earlier denylist-style closure tests, this one is written as an **allowlist**
-(design #16 M9): after importing every ``tos.afg`` submodule in a fresh interpreter, the
-set of top-level ``tos.*`` packages in ``sys.modules`` must be a subset of::
-
-    {tos.canonical, tos.ordering, tos.rcl, tos.afg}
-
-An enumerated denylist would go stale the moment a new sibling lands (session A added
-``tos.ioc`` and ``tos.iap`` while this design was in review); the allowlist is
-**future-robust** — any sibling, present or future, fails the assertion simply by appearing.
-
-``tos.rcl`` is IN the allowlist: it is the **one** sanctioned sibling edge, for the
-``CapacityVector`` type plus ``aggregate_usage`` / ``effective_limit`` (design #16 §0.4c;
-the #8 orthostate -> rcl / #13 are -> rcl precedent, rcl -> afg does not exist so the edge
-is acyclic).
-
-It also asserts:
-
-  1. no design #1 §2.3 operational package is in the closure (``shared.execution`` / ``kis``
-     / ``streaming`` / ``llm`` / ``storage`` / ``backtest``, ``services.*``, ``cli.*``);
-  2. neither ``shared.config`` nor ``shared.config.secrets`` is present (the transitive
-     ambient-credential intake), nor ``shared.determinism``;
-  3. ``numpy`` / ``pandas`` / ``yaml`` are absent (bounds are injected; YAML parsing is the
-     harness's concern — design #16 §0.3);
-  4. no ``tos.afg`` source references ``os.environ`` / ``os.getenv``, a dynamic escape
-     (``exec`` / ``eval`` / ``__import__`` / ``importlib``), or a real clock (``time`` /
-     ``datetime``) — afg is **clock-free** (§3.2).
-
-A planted-leak canary proves the spawn+scan pipeline catches a leak (including a *future*
-sibling name that no denylist could have anticipated), and a planted-AST-escape canary
-proves the static scan catches an escape — so "green" is evidence the checker works, not
-that it has been neutered.
-"""
+"""§7.1 import-closure verification for ``tos.afg`` — **allowlist** form (design #16 §0.3)."""
 
 from __future__ import annotations
 
@@ -39,7 +6,6 @@ import ast
 import multiprocessing as mp
 from pathlib import Path
 
-#: The §7.1 allowlist: the only top-level ``tos.*`` packages the afg closure may contain.
 _ALLOWED_TOS_PACKAGES = frozenset(
     {"tos", "tos.canonical", "tos.ordering", "tos.rcl", "tos.afg"}
 )
@@ -82,7 +48,6 @@ _AFG_SRC = Path(__file__).resolve().parent.parent.parent / "src" / "tos" / "afg"
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
-#: Real-clock modules that must never be imported by a clock-free afg source (§3.2).
 _CLOCK_MODULES = frozenset({"time", "datetime"})
 
 
@@ -145,7 +110,7 @@ def _leak_canary_child(queue: mp.Queue) -> None:
         "tos.orthostate",
         "tos.ioc",
         "tos.iap",
-        "tos.some_future_sibling",  # the allowlist catches names no denylist knew
+        "tos.some_future_sibling",
     ):
         sys.modules[planted] = types.ModuleType(planted)
 
@@ -248,7 +213,6 @@ def test_allowlist_classifier_canaries() -> None:
     ):
         assert _is_allowed_tos_module(sibling) is False
         assert _is_allowed_tos_module(sibling + ".predicates") is False
-    # non-tos classification
     assert _is_forbidden_non_tos("shared.config") is True
     assert _is_forbidden_non_tos("shared.config.secrets") is True
     assert _is_forbidden_non_tos("shared.determinism") is True
@@ -258,7 +222,7 @@ def test_allowlist_classifier_canaries() -> None:
     assert _is_forbidden_non_tos("yaml") is True
     assert _is_forbidden_non_tos("pydantic") is False
     assert _is_forbidden_non_tos("decimal") is False
-    assert _is_forbidden_non_tos("click") is False  # must not false-match "cli"
+    assert _is_forbidden_non_tos("click") is False
 
 
 def _ast_escape_offenders(path: Path) -> list[str]:

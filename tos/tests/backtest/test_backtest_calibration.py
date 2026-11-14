@@ -1,12 +1,4 @@
-"""Phase 3 wave 3 §3.1 작업 6 — the calibration deviation-budget + expectancy claim gate.
-
-Three verdict branches (WITHIN / EXCEEDED / INSUFFICIENT_OBSERVATIONS), the two fail-closed
-INSUFFICIENT triggers (zero observations even with ``min_observations == 0``; an unobservable
-``None`` dimension), the precedence between them, and the expectancy claim gate that hides the value
-whenever the verdict is not WITHIN.
-
-Regime tag: orchestration authoring evidence only; closes no EV (design #33 §1.1).
-"""
+"""Phase 3 wave 3 §3.1 작업 6 — the calibration deviation-budget + expectancy claim gate."""
 
 from __future__ import annotations
 
@@ -25,8 +17,6 @@ from tos.backtest.calibration import (
     expectancy_claim_permitted,
 )
 
-#: The house convention (``_backtest_fixtures.INTEGRITY_ERRORS``) — a ``model_validator`` raise
-#: surfaces through pydantic as ``ValidationError``, not the bare ``BacktestIntegrityError``.
 _INTEGRITY_ERRORS = (BacktestIntegrityError, ValidationError)
 
 
@@ -43,11 +33,6 @@ def _clean_observation() -> FillDeviation:
     return FillDeviation(
         price_bps=Decimal(1), fill_ratio=Decimal("0.01"), latency_bars=0
     )
-
-
-# ---------------------------------------------------------------------------
-# the three verdict branches
-# ---------------------------------------------------------------------------
 
 
 def test_within_budget_when_every_observation_is_inside_every_bound() -> None:
@@ -86,11 +71,6 @@ def test_insufficient_when_fewer_observations_than_the_minimum() -> None:
     assert verdict is CalibrationVerdict.INSUFFICIENT_OBSERVATIONS
 
 
-# ---------------------------------------------------------------------------
-# the two fail-closed INSUFFICIENT triggers
-# ---------------------------------------------------------------------------
-
-
 def test_zero_observations_is_insufficient_even_with_zero_minimum() -> None:
     """An empty observation set proves nothing about a budget never measured against — fail-closed."""
     verdict = calibration_within_budget((), _budget(min_observations=0))
@@ -118,11 +98,6 @@ def test_any_unobservable_dimension_alone_is_sufficient_to_withhold(
     observation = FillDeviation(**kwargs)
     verdict = calibration_within_budget((observation,), _budget(min_observations=0))
     assert verdict is CalibrationVerdict.INSUFFICIENT_OBSERVATIONS
-
-
-# ---------------------------------------------------------------------------
-# precedence: INSUFFICIENT beats EXCEEDED beats WITHIN
-# ---------------------------------------------------------------------------
 
 
 def test_insufficient_precedence_beats_an_exceedance_elsewhere_in_the_set() -> None:
@@ -155,20 +130,10 @@ def test_exceeded_precedence_beats_within_when_mixed() -> None:
     assert verdict is CalibrationVerdict.EXCEEDED
 
 
-# ---------------------------------------------------------------------------
-# the truthy-sentinel seal
-# ---------------------------------------------------------------------------
-
-
 def test_exceeded_verdict_refuses_truthiness_testing() -> None:
     """EXCEEDED is a non-empty string; `if verdict:` must not silently read it as pass."""
     with pytest.raises(TypeError):
         bool(CalibrationVerdict.EXCEEDED)
-
-
-# ---------------------------------------------------------------------------
-# the expectancy claim gate
-# ---------------------------------------------------------------------------
 
 
 def test_expectancy_claim_permitted_only_for_within() -> None:
@@ -218,11 +183,6 @@ def test_expectancy_claim_rejects_blank_withheld_reason_as_absent() -> None:
         ExpectancyClaim(value=None, withheld_reason="   ")
 
 
-# ---------------------------------------------------------------------------
-# construction-time guards on the two input types
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -270,11 +230,6 @@ def test_deviation_budget_rejects_negative_bounds(kwargs: dict) -> None:
         DeviationBudget(**kwargs)
 
 
-# ---------------------------------------------------------------------------
-# the seal — these new types carry no performance-surface field of their own
-# ---------------------------------------------------------------------------
-
-
 def test_none_of_the_new_types_carry_a_performance_surface_field() -> None:
     from tos.backtest._base import performance_surface_offenders
 
@@ -283,18 +238,8 @@ def test_none_of_the_new_types_carry_a_performance_surface_field() -> None:
         assert offenders == (), f"{model.__name__} carries {offenders}"
 
 
-# ---------------------------------------------------------------------------
-# the claim gate is external — pinned, not incidental (team-lead decision, Phase 3 wave 3 §3.1)
-# ---------------------------------------------------------------------------
-
-
 def test_calibration_names_are_not_reexported_from_the_package_namespace() -> None:
-    """The submodule is imported by path (``tos.backtest.calibration``), never through the package.
-
-    A future re-export is a deliberate act that must update
-    ``test_backtest_result_surface.py``'s ``_SEALED_MODELS`` / ``_RUN_RESULTS`` drift canaries in
-    the same change — this pin catches a silent widening that forgot to.
-    """
+    """The submodule is imported by path (``tos.backtest.calibration``), never through the package."""
     import tos.backtest as package
 
     exported_names = set(package.__all__)
@@ -320,14 +265,7 @@ def test_calibration_names_are_not_reexported_from_the_package_namespace() -> No
 
 
 def test_run_results_carry_no_expectancy_or_calibration_field() -> None:
-    """(§1.2 B1, reaffirmed) The sealed run types gained no field from this module's addition.
-
-    Belt-and-suspenders alongside the existing ``seal_performance_surface`` construction-time
-    check: this module's own suite independently pins that ``BacktestRun`` /
-    ``MultiSymbolBacktestRun`` carry no ``expectancy`` field (the literal name the plan originally
-    asked for) and no ``calibration`` field either (a plausible alternate name this module's
-    docstring explicitly rejects as an evasion of the seal, not a satisfaction of it).
-    """
+    """(§1.2 B1, reaffirmed) The sealed run types gained no field from this module's addition."""
     import dataclasses
 
     from tos.backtest.results import BacktestRun, MultiSymbolBacktestRun
@@ -339,16 +277,3 @@ def test_run_results_carry_no_expectancy_or_calibration_field() -> None:
                 f"{run_type.__name__} declares a field containing {forbidden_token!r}: {names} — "
                 "the calibration claim gate must stay external (module docstring)"
             )
-
-
-# ---------------------------------------------------------------------------
-# mutation-matrix documentation (run manually, see test file docstring / PR report):
-#
-# Mutation 1 — change "0 observations => INSUFFICIENT" to "0 observations => WITHIN":
-#   caught by test_zero_observations_is_insufficient_even_with_zero_minimum
-#
-# Mutation 2 — change "None dimension => INSUFFICIENT" to "skip the None dimension and judge the
-# rest":
-#   caught by test_unobservable_dimension_is_insufficient_not_within and
-#   test_any_unobservable_dimension_alone_is_sufficient_to_withhold
-# ---------------------------------------------------------------------------

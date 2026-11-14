@@ -1,30 +1,4 @@
-"""The dsl-side D-E2 extension: the value carrier, the merge, and the signature append (design #32).
-
-This file covers the **additive** ``tos.dsl`` surface design #32 §15.2 ① declares, and it is a *new*
-file on purpose: every shipped ``tos/tests/dsl`` test stays byte-for-byte unedited and green, which
-is the sanction premise ("committed 테스트 파괴 0", §15.2 ③) demonstrated rather than asserted.
-
-Three claims:
-
-1. **the carrier is a lean, governed container** (§2.2) — primitives only, no ``tos.capsule`` type,
-   no re-declared field state, wildcard-free keys, no duplicate keys;
-2. **the merge is additive and byte-compatible** (§3.2, §7.2-9) — ``resolved_context=None`` returns
-   exactly what ``build_environment`` has always returned;
-3. **the recorded signature covers the fourth decision input** (§3.2 (3b), MAJOR-2a) — a view's
-   canonical digest is appended to ``captured_external_value_refs``, so two evaluations that differ
-   only in their values differ in their signature. Without the append they would be
-   indistinguishable on replay while producing different outcomes.
-
-⚠ **Recorded deviation.** Design #32 §3.2 (3) specifies ``evaluate(…, resolved_context=None)``. The
-committed canary ``test_dsl_determinism.py:136-146`` asserts ``evaluate``'s parameter set is exactly
-its five existing names, so a sixth parameter would break a shipped test — and editing a canary so
-new code fits is the neutered-canary defect class. The substance is therefore implemented in
-:func:`~tos.dsl.evaluate_resolved`, a separate entry point over a shared body, and both the design's
-safety property and the committed canary hold at once. See that function's docstring; the
-reconciliation (errata vs. sanctioned canary amendment) is the orchestrator's.
-
-Regime tag: authoring evidence only; closes no EV (design #32 §1.1).
-"""
+"""The dsl-side D-E2 extension: the value carrier, the merge, and the signature append (design #32)."""
 
 from __future__ import annotations
 
@@ -161,11 +135,6 @@ def _strategy(*, threshold: int) -> AuthoredStrategy:
 _CONFIG = EvaluationConfig(config_version="cfg-1", bindings={})
 
 
-# ---------------------------------------------------------------------------
-# 1. The carrier (design #32 §2.2)
-# ---------------------------------------------------------------------------
-
-
 def test_the_carrier_fields_are_primitives_only() -> None:
     """(§2.2) A lean container — no ``tos.capsule`` type, and no re-declared field state."""
     annotations = {
@@ -206,8 +175,6 @@ def test_an_absent_as_of_or_provenance_pointer_is_unconstructable() -> None:
         ContextValue(
             field_key="close",
             value=1,
-            # Deliberately illegal per the (non-Optional) signature — this test's
-            # whole point is an absent as_of pointer.
             as_of=cast(int, None),
             payload_digest="p",
             observation_ref="r",
@@ -268,11 +235,6 @@ def test_an_explicit_empty_view_is_constructable() -> None:
     )
     assert view.values == ()
     assert view.as_environment_mapping() == {}
-
-
-# ---------------------------------------------------------------------------
-# 2. The merge (design #32 §3.2; §7.2-9 backward compatibility)
-# ---------------------------------------------------------------------------
 
 
 def test_build_environment_without_a_view_is_unchanged() -> None:
@@ -338,13 +300,7 @@ def test_a_namespace_collision_raises_rather_than_shadowing() -> None:
     colliding = _CollidingCapsule.model_construct(**dict(_capsule()))
     with pytest.raises(ArtifactIntegrityError, match="collides"):
         build_environment(colliding, _CONFIG, resolved_context=_view())
-    # ...and without a view there is nothing to merge, so nothing to refuse.
     assert VALUE_NAMESPACE in build_environment(colliding, _CONFIG)["capsule"]
-
-
-# ---------------------------------------------------------------------------
-# 3. The recorded signature (design #32 §3.2 (3b), MAJOR-2a)
-# ---------------------------------------------------------------------------
 
 
 def test_evaluate_is_unchanged_and_its_committed_canary_still_describes_it() -> None:
@@ -359,13 +315,7 @@ def test_evaluate_is_unchanged_and_its_committed_canary_still_describes_it() -> 
 
 
 def test_evaluate_resolved_has_its_own_locked_signature() -> None:
-    """(review MINOR-3) The new entry point gets the same structural lock ``evaluate`` has.
-
-    ``evaluate``'s parameter set is pinned by the committed canary at
-    ``test_dsl_determinism.py:136-146``; without a mirror here the *new* entry point would be the
-    one place a later change could quietly add an ambient parameter. Same discipline, same shape:
-    an exact set, plus the explicit ambient-name exclusion.
-    """
+    """(review MINOR-3) The new entry point gets the same structural lock ``evaluate`` has."""
     parameters = inspect.signature(evaluate_resolved).parameters
     assert set(parameters) == {
         "strategy",
@@ -441,12 +391,7 @@ def test_the_view_digest_is_appended_to_the_captured_value_refs() -> None:
 
 
 def test_two_runs_differing_only_in_their_values_differ_in_their_signature() -> None:
-    """(§3.2 (3b) ★ mutation canary) Removing the append makes these two signatures identical.
-
-    Same Capsule, same strategy, same config — different resolved values, and therefore a different
-    outcome. If the signature did not move with the values, replay would reconstruct one of these
-    two runs and silently disagree with the other (RFC-008 §9:302-306).
-    """
+    """(§3.2 (3b) ★ mutation canary) Removing the append makes these two signatures identical."""
     capsule = _capsule()
     strategy = _strategy(threshold=_CLOSE - 1)
     high = evaluate_resolved(

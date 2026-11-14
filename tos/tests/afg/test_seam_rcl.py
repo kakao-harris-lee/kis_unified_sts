@@ -1,26 +1,4 @@
-"""MANDATED test-only seam cross-check: afg <-> rcl (design #16 §3.4(d) / §0.4c).
-
-afg imports the rcl ``CapacityVector`` type plus ``aggregate_usage`` / ``effective_limit``
-at runtime — the **one** sanctioned sibling edge. It does **not** re-author rcl's binding
-or capacity arithmetic. This file imports the rcl ``GrantDecisionRef`` /
-``RclAuthorityEffect`` / ``grant_authorizes_exact_request`` / ``CommittedReservation``
-consumers as a **test** to lock:
-
-(a) the forward-only decision-content-ref seam (rcl ``authority.py:53-55``, whose slot
-    ``:40`` is literally named an "Aggregate Risk / **Action Flow** decision reference");
-(b) the non-cyclic pipeline — afg supplies no reservation coordinate, so a grant built from
-    afg content alone is **not** authorized until rcl charges ``bound_reservation_*``
-    post-commit (ADR §29 q2);
-(c) the all-false authority isomorphism (afg ``ActionFlowGovernorEffect`` <->
-    ``RclAuthorityEffect``);
-(d) the type-level coordinate parity — the action-flow vector IS the ``CapacityVector`` rcl
-    commits, and the headroom check REUSES rcl's own fail-closed arithmetic.
-
-Causal isolation: each polarity assertion fixes a valid baseline and flips exactly one flag.
-
-A test-only cross-import is **not** a runtime package edge (design #16 §3.4(d)/§7.1); the
-``CapacityVector`` type edge is the single sanctioned ``afg -> rcl`` import.
-"""
+"""MANDATED test-only seam cross-check: afg <-> rcl (design #16 §3.4(d) / §0.4c)."""
 
 from __future__ import annotations
 
@@ -66,8 +44,6 @@ def test_afg_content_ref_fills_the_action_flow_slot_of_grant_decision_ref() -> N
     assert ref.decision_id == decision.decision_id
     assert ref.decision_generation == decision.decision_generation
     assert ref.canonical_decision_digest == decision.canonical_digest
-    # id ⊥ digest: the consumer carries them as separate fields precisely because the
-    # decision id is NOT f(digest) (design #16 §3.1 / §0.4e).
     assert ref.decision_id != ref.canonical_decision_digest
 
 
@@ -109,8 +85,6 @@ def test_action_flow_vector_is_the_exact_type_rcl_commits() -> None:
     decision = issue_decision()
     vector = action_flow_vector_of(decision)
     assert isinstance(vector, CapacityVector)
-    # The rcl commit coordinate is the same container type, so an afg-produced vector
-    # drops straight into the ledger (design #16 §0.4c).
     reservation = CommittedReservation()
     assert isinstance(reservation.adverse_increment, CapacityVector)
 
@@ -127,12 +101,10 @@ def test_headroom_reuses_rcl_arithmetic_rather_than_re_deriving_it() -> None:
     dimension = rcl_usage.dimension_ids()[0]
     assert rcl_usage.magnitude(dimension) == Decimal("110")
     assert rcl_limit.magnitude(dimension) == Decimal("100")
-    # afg's verdict is exactly `usage <= limit` over those rcl-computed values.
     assert (
         headroom_within_limits([committed, proposed], hard, runtime)
         is ActionFlowResult.DENY
     )
-    # Causal isolation: shrink ONLY the proposal, everything else fixed => GRANT.
     assert (
         headroom_within_limits(
             [committed, flow_vector(magnitude=Decimal("40"))], hard, runtime
