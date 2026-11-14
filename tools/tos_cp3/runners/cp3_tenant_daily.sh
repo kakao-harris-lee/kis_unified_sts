@@ -745,6 +745,67 @@ else
 fi
 log "runner rc=$rc session=$SESSION"
 
+# --- the bar-document export (roadmap §P1 ②) -------------------------------
+#
+# HERE, and not inside run_tenant_session.sh, for one reason: the session AND
+# its B3 reconciliation (that script's step 14) must both be finished, and
+# "the runner returned" is exactly that point. Before the exit-code `case`
+# below, because that case `exit`s on the normal codes.
+#
+# ⛔ **It cannot change this session's verdict.** Same discipline as B3: the rc
+# is logged and discarded. The session's exit code is about the runtime and the
+# producer, and a read-only export that could not run says nothing about
+# either. Nothing between here and the `case` may fail the script, so every
+# expansion is `${VAR:-}` (this script runs under `set -u`) and the only
+# command is wrapped in `timeout`.
+#
+# It READS the session directory and the tenant durable set — both 0700, both
+# owned by the user this cron runs as — and WRITES only into
+# $TOS_OPERATOR_PROJECTION_DIR (the directory the dashboard already has
+# bind-mounted read-only) plus its own log beside the session's others.
+#
+# ⚠ "outside the session and data trees", NOT "outside $STATE": on this host
+# TOS_OPERATOR_PROJECTION_DIR is $STATE/paper-projection, i.e. UNDER the state
+# root. What the hook never touches is any session directory's contents beyond
+# its own log, and any tenant durable set.
+#
+# ⚠ Unset variable = SKIP, logged. That variable is not part of the tenant
+# cron's environment today (it lives in .env.paper, for the resident paper
+# session), so until an operator exports it for this wrapper the hook says so
+# and does nothing. A guessed destination would write a document the container
+# does not mount, which from the page is indistinguishable from no document.
+BARS_CEILING_S=${CP3_BARS_CEILING_S:-120}
+# `timeout 0s` disables the ceiling, so 0 and non-numbers fall back to 120.
+case $BARS_CEILING_S in ''|*[!0-9]*|0) BARS_CEILING_S=120 ;; esac
+if [ -z "${TOS_OPERATOR_PROJECTION_DIR:-}" ]; then
+  log "=== BARS EXPORT SKIPPED — TOS_OPERATOR_PROJECTION_DIR is unset, so there is no directory the dashboard reads; set it for this wrapper to enable the /tos bar panel (this does NOT affect the session)"
+elif [ "${TOS_OPERATOR_PROJECTION_DIR#/}" = "$TOS_OPERATOR_PROJECTION_DIR" ]; then
+  log "=== BARS EXPORT SKIPPED — TOS_OPERATOR_PROJECTION_DIR=$TOS_OPERATOR_PROJECTION_DIR is not absolute; a relative path resolves against cron's cwd, not the dashboard mount (this does NOT affect the session)"
+elif [ ! -f "$WT/tools/tos_cp3/export_bars.py" ]; then
+  # `-f` alone: the file is run as `"$PY" <script>`, so its execute bit is
+  # irrelevant and the earlier `! -x && ! -f` pair could only ever agree with
+  # `! -f`.
+  log "=== BARS EXPORT SKIPPED — $WT/tools/tos_cp3/export_bars.py is absent at this origin/main revision (this does NOT affect the session)"
+else
+  # ⚠ The `--kill-after` SIGKILL can land between the exporter's `mkstemp` and
+  # its `os.replace`, leaving one `.<name>.<rand>.tmp` in the bars directory.
+  # DOCUMENTED, not swept (decision, review of #1060): the route lists only
+  # `*.json` and such a file's suffix is `.tmp`, so it is invisible to the page
+  # and to `latest`, and `os.replace` means no half-written document is ever
+  # served. One dotfile per kill in a 0700 directory does not earn a sweeper
+  # (CLAUDE.md R5 — a new guard needs a real incident beside it). Both halves
+  # are pinned on the Python side: `_write_atomically`'s docstring records the
+  # decision and `test_latest_ignores_a_leftover_temp_file` proves the listing
+  # cannot mistake one for a document.
+  log "=== BARS EXPORT session=$SESSION -> ${TOS_OPERATOR_PROJECTION_DIR}/bars ceiling ${BARS_CEILING_S}s"
+  timeout --kill-after=5s "${BARS_CEILING_S}s" \
+    "$PY" "$WT/tools/tos_cp3/export_bars.py" "$SESSION" \
+    --out-dir "$TOS_OPERATOR_PROJECTION_DIR" \
+    --state-dir "$STATE" >>"$SESSION/bars-export.out" 2>&1
+  bars_rc=$?
+  log "=== END BARS EXPORT rc=$bars_rc (record: $SESSION/bars-export.out · this rc does NOT change the session's)"
+fi
+
 # Exit codes: runbook §7.2-d 「종료 코드」.
 case $rc in
 0 | 143)
