@@ -44,12 +44,19 @@ def _importer_imports(key: str) -> tuple[str, ...]:
     wanted = _closure_children.IMPORTERS[key].__name__
     for node in ast.parse(source).body:
         if isinstance(node, ast.FunctionDef) and node.name == wanted:
-            return tuple(
-                alias.name
-                for child in ast.walk(node)
-                if isinstance(child, ast.Import)
-                for alias in child.names
+            body = node.body[1:] if ast.get_docstring(node) else node.body
+            offenders = [
+                ast.dump(stmt) for stmt in body if not isinstance(stmt, ast.Import)
+            ]
+            assert offenders == [], (
+                f"{wanted} holds a statement that is not a plain ``import`` — the measured "
+                f"closure would not be the one this test reads: {offenders}"
             )
+            names = tuple(
+                alias.name for stmt in body for alias in stmt.names  # type: ignore[attr-defined]
+            )
+            assert names, f"{wanted} imports nothing — its canary would be vacuous"
+            return names
     raise AssertionError(f"{wanted} is not defined in _closure_children.py")
 
 
@@ -74,6 +81,30 @@ WITH_SUBMODULE_DIR = _params(lambda p: p.submodule_dir is not None)
 WITH_NAMESPACE = _params(lambda p: bool(p.namespace_forbidden))
 WITH_BOUND = _params(lambda p: bool(p.bounded_by))
 WITH_EVERY_EDGE = _params(lambda p: p.every_edge_is_taken)
+
+_FAMILIES = {
+    "allowlist": WITH_ALLOWLIST,
+    "edges": WITH_EDGES,
+    "siblings": WITH_SIBLINGS,
+    "planted": WITH_PLANTED,
+    "scan": WITH_SCAN,
+    "static_scan": WITH_STATIC_SCAN,
+    "suite": WITH_SUITE,
+    "submodule_dir": WITH_SUBMODULE_DIR,
+    "namespace": WITH_NAMESPACE,
+    "bound": WITH_BOUND,
+    "every_edge": WITH_EVERY_EDGE,
+}
+
+
+def test_the_table_is_populated_and_no_family_is_empty() -> None:
+    """∅-seal: a predicate that selects nothing would make its whole test silently not run."""
+    assert (
+        len(POLICIES) == 24
+    ), f"the closure table holds {len(POLICIES)} policies, not 24"
+    assert {param.values[0].name for param in ALL} == set(POLICIES)
+    empty = sorted(name for name, family in _FAMILIES.items() if not family)
+    assert empty == [], f"parametrized families select no policy at all: {empty}"
 
 
 def _bound(policy: ClosurePolicy) -> set[str]:
@@ -126,9 +157,9 @@ def test_leak_canary_is_detected(policy: ClosurePolicy) -> None:
     result = canary_of(policy)
     if policy.allowed_tos is not None:
         extra = set(result["tos_tops"]) - _bound(policy)
-        for expected in policy.planted_tos:
+        for expected in policy.planted_tos():
             assert expected in extra, f"planted {expected} leak was NOT detected"
-        for expected in policy.planted_non_tos:
+        for expected in policy.planted_non_tos():
             assert (
                 expected in result["forbidden"]
             ), f"planted {expected} was NOT detected"
@@ -283,3 +314,79 @@ def test_the_closure_child_imports_exactly_the_declared_modules(
         "have drifted — the measured closure would not be the declared one"
     )
     assert _importer_imports(f"{policy.name}:root") == policy.canary_imports
+    for module in policy.bounded_by:
+        assert _importer_imports(f"module:{module}") == (module,), (
+            f"the importer for module:{module} names more than {module} — the bound it widens "
+            "the allowlist by would be measured too wide, and no other test would notice"
+        )
+
+
+_PINNED_SHAPES: dict[str, tuple[int, int, int, int, int, int]] = {
+    "afg": (14, 13, 5, 0, 6, 7),
+    "are": (25, 24, 0, 0, 6, 7),
+    "authority": (17, 16, 0, 0, 9, 5),
+    "backtest": (15, 14, 17, 18, 12, 9),
+    "brokeradapter": (14, 13, 6, 17, 3, 5),
+    "brokercap": (23, 22, 0, 0, 6, 5),
+    "capsule": (12, 11, 0, 0, 11, 2),
+    "cur": (14, 13, 4, 28, 6, 8),
+    "dsl": (14, 13, 0, 0, 11, 3),
+    "egress": (14, 13, 4, 28, 6, 8),
+    "egressgw": (14, 13, 12, 16, 9, 6),
+    "engine": (14, 13, 15, 17, 14, 8),
+    "evidence": (13, 12, 0, 0, 14, 2),
+    "iap": (29, 28, 0, 0, 6, 6),
+    "ioc": (26, 25, 0, 0, 6, 7),
+    "marketfeed": (14, 13, 16, 19, 6, 7),
+    "orthostate": (20, 19, 0, 0, 6, 7),
+    "posttrade": (14, 13, 4, 23, 5, 25),
+    "rcl": (16, 15, 0, 0, 11, 4),
+    "recon": (22, 21, 0, 0, 6, 5),
+    "staterestore": (20, 19, 0, 0, 5, 4),
+    "time": (15, 14, 0, 0, 8, 4),
+    "venue": (14, 13, 4, 18, 6, 6),
+    "workload": (20, 19, 0, 0, 4, 4),
+}
+
+_NO_SOURCE_SCAN = frozenset({"brokeradapter"})
+_NO_DETERMINISM_DENIAL = frozenset({"capsule", "evidence"})
+_NO_YAML_DENIAL = frozenset({"capsule", "dsl", "evidence", "time"})
+
+
+def _shape(policy: ClosurePolicy) -> tuple[int, int, int, int, int, int]:
+    """The declared-fact sizes this package is pinned to."""
+    return (
+        len(policy.deny_exact),
+        len(policy.deny_prefixes),
+        len(policy.allowed_tos or ()),
+        len(policy.forbidden_siblings),
+        len(policy.child_imports),
+        len(policy.planted),
+    )
+
+
+def test_the_declared_facts_are_pinned() -> None:
+    """A floor the canaries cannot move: they read the table, so the table's size is pinned here."""
+    measured = {name: _shape(policy) for name, policy in POLICIES.items()}
+    assert measured == _PINNED_SHAPES, (
+        "a declared fact was added or removed. Every canary above reads the same table, so a "
+        "deletion there would make them agree with themselves and stay green — this pin is what "
+        "goes red instead. Update it in the same commit, with the reason in the PR body."
+    )
+
+
+def test_the_scan_and_denial_exceptions_are_pinned() -> None:
+    """The three families that are deliberately scanned or denied less are named, not inferred."""
+    assert {n for n, p in POLICIES.items() if p.scan is None} == _NO_SOURCE_SCAN
+    assert {
+        n for n, p in POLICIES.items() if "shared.determinism" not in p.deny_exact
+    } == _NO_DETERMINISM_DENIAL
+    assert {
+        n for n, p in POLICIES.items() if "yaml" not in p.deny_exact
+    } == _NO_YAML_DENIAL
+    starved = sorted(
+        n
+        for n, p in POLICIES.items()
+        if p.scan is not None and "env" not in p.scan.categories
+    )
+    assert starved == [], f"these packages no longer scan for ambient env: {starved}"

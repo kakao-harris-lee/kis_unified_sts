@@ -308,8 +308,6 @@ class ClosurePolicy:
     deny_prefixes: tuple[str, ...]
     canary_imports: tuple[str, ...] = ()
     planted: tuple[str, ...] = ()
-    planted_tos: tuple[str, ...] = ()
-    planted_non_tos: tuple[str, ...] = ()
     allowed_tos: frozenset[str] | None = None
     static_allowed: frozenset[str] | None = None
     static_scan: bool = False
@@ -344,6 +342,14 @@ class ClosurePolicy:
             assert self.static_allowed is not None
             return tuple(sorted(self.static_allowed))
         return self.expected_present
+
+    def planted_tos(self) -> tuple[str, ...]:
+        """The ``tos.*`` names this package's leak canary plants."""
+        return tuple(n for n in self.planted if tos_top_level(n) is not None)
+
+    def planted_non_tos(self) -> tuple[str, ...]:
+        """The non-``tos`` names this package's leak canary plants."""
+        return tuple(n for n in self.planted if tos_top_level(n) is None)
 
     def denied_tos_siblings(self) -> tuple[str, ...]:
         """Every ``tos.*`` sibling this package's denylist names outright."""

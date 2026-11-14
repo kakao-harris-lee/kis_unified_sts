@@ -124,10 +124,6 @@ POLICIES["afg"] = _policy(
         "shared.config numpy tos.protective tos.orthostate tos.ioc tos.iap "
         "tos.some_future_sibling"
     ),
-    planted_tos=names(
-        "tos.protective tos.orthostate tos.ioc tos.iap tos.some_future_sibling"
-    ),
-    planted_non_tos=names("shared.config numpy"),
     deny=_deny(),
     allowed_tos=nameset("tos tos.afg tos.canonical tos.ordering tos.rcl"),
     static_scan=True,
@@ -196,8 +192,6 @@ POLICIES["backtest"] = _policy(
         "shared.backtest shared.execution numpy pandas vectorbt tos.egress "
         "tos.brokercap tos.egressgw tos.future_sibling"
     ),
-    planted_tos=names("tos.egress tos.brokercap tos.egressgw tos.future_sibling"),
-    planted_non_tos=names("shared.backtest pandas"),
     deny=_deny(
         extra=("vectorbt",),
     ),
@@ -246,8 +240,6 @@ POLICIES["brokeradapter"] = _policy(
     ),
     canary_imports=names("tos.brokeradapter"),
     planted=names("shared.kis numpy tos.egressgw tos.egress tos.future_sibling"),
-    planted_tos=names("tos.egressgw tos.egress tos.future_sibling"),
-    planted_non_tos=names("shared.kis numpy"),
     deny=_deny(),
     allowed_tos=nameset(
         "tos tos.brokeradapter tos.brokercap tos.canonical tos.engine tos.ordering"
@@ -321,8 +313,6 @@ POLICIES["cur"] = _policy(
         "shared.config numpy tos.egress tos.venue tos.iap tos.capsule tos.sci "
         "tos.future_sibling"
     ),
-    planted_tos=names("tos.egress tos.venue tos.iap tos.capsule tos.future_sibling"),
-    planted_non_tos=names("shared.config numpy"),
     deny=_deny(),
     allowed_tos=nameset("tos tos.canonical tos.cur tos.ordering"),
     static_scan=True,
@@ -376,8 +366,6 @@ POLICIES["egress"] = _policy(
         "shared.config numpy tos.rcl tos.ioc tos.evidence tos.capsule tos.nt "
         "tos.future_sibling"
     ),
-    planted_tos=names("tos.rcl tos.ioc tos.evidence tos.capsule tos.future_sibling"),
-    planted_non_tos=names("shared.config numpy"),
     deny=_deny(),
     allowed_tos=nameset("tos tos.canonical tos.egress tos.ordering"),
     static_scan=True,
@@ -413,8 +401,6 @@ POLICIES["egressgw"] = _policy(
         "shared.config shared.execution numpy tos.brokeradapter tos.spg "
         "tos.future_sibling"
     ),
-    planted_tos=names("tos.brokeradapter tos.spg tos.future_sibling"),
-    planted_non_tos=names("shared.config shared.execution numpy"),
     deny=_deny(),
     allowed_tos=nameset(
         "tos tos.brokercap tos.canonical tos.cur tos.dsl tos.egress tos.egressgw "
@@ -456,10 +442,6 @@ POLICIES["engine"] = _policy(
         "shared.config shared.execution numpy tos.egress tos.brokercap tos.posttrade "
         "tos.brokeradapter tos.future_sibling"
     ),
-    planted_tos=names(
-        "tos.egress tos.brokercap tos.posttrade tos.brokeradapter tos.future_sibling"
-    ),
-    planted_non_tos=names("shared.config shared.execution numpy"),
     deny=_deny(),
     allowed_tos=nameset(
         "tos tos.afg tos.are tos.canonical tos.capsule tos.cur tos.dsl tos.engine "
@@ -568,8 +550,6 @@ POLICIES["marketfeed"] = _policy(
         "shared.config shared.execution numpy tos.egress tos.brokercap tos.backtest "
         "tos.future_sibling"
     ),
-    planted_tos=names("tos.egress tos.brokercap tos.backtest tos.future_sibling"),
-    planted_non_tos=names("shared.config shared.execution numpy"),
     deny=_deny(),
     allowed_tos=nameset(
         "tos tos.afg tos.are tos.canonical tos.capsule tos.cur tos.dsl tos.engine "
@@ -635,13 +615,6 @@ POLICIES["posttrade"] = _policy(
         "tos.ioc tos.iap tos.sbr tos.venue tos.afg tos.hag tos.egress tos.nontrade "
         "tos.cur tos.some_future_sibling shared.config numpy"
     ),
-    planted_tos=names(
-        "tos.capsule tos.evidence tos.time tos.dsl tos.rcl tos.authority tos.liveauth "
-        "tos.orthostate tos.recon tos.brokercap tos.spg tos.protective tos.are "
-        "tos.ioc tos.iap tos.sbr tos.venue tos.afg tos.hag tos.egress tos.nontrade "
-        "tos.cur tos.some_future_sibling"
-    ),
-    planted_non_tos=names("shared.config numpy"),
     deny=_deny(),
     allowed_tos=nameset("tos tos.canonical tos.ordering tos.posttrade"),
     static_scan=True,
@@ -739,8 +712,6 @@ POLICIES["venue"] = _policy(
     ),
     canary_imports=names("tos.venue"),
     planted=names("shared.config numpy tos.iap tos.sbr tos.dsl tos.pr"),
-    planted_tos=names("tos.iap tos.sbr tos.dsl tos.pr"),
-    planted_non_tos=names("shared.config numpy"),
     deny=_deny(),
     allowed_tos=nameset("tos tos.canonical tos.ordering tos.venue"),
     static_scan=True,
