@@ -1,8 +1,4 @@
-"""Reference source independence + common-mode collapse (time design §2.5 A).
-
-EV-L1 predicate substrate only; TIME-EV-003 remains NOT_IMPLEMENTED pending
-EV-L2/L3 fault injection.
-"""
+"""Reference source independence + common-mode collapse (time design §2.5 A)."""
 
 from __future__ import annotations
 
@@ -57,7 +53,6 @@ def test_common_mode_never_over_counts(n_grouped: int, n_ungrouped: int) -> None
         ReferenceSource(source_id=f"u{i}", common_mode_group=None)
         for i in range(n_ungrouped)
     ]
-    # n_grouped shared-group members collapse to exactly 1.
     assert independent_reference_count(grouped + ungrouped) == 1 + n_ungrouped
 
 

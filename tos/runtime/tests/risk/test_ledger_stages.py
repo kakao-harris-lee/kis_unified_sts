@@ -1,5 +1,4 @@
-"""Engine ``Stage`` realizations for steps 6-10 — tests (design #40 §5 order 5
-item 3; slice plan §2 item 3 fault contracts)."""
+"""Engine ``Stage`` realizations for steps 6-10 — tests (design #40 §5 order 5"""
 
 from __future__ import annotations
 
@@ -62,18 +61,12 @@ def _request(
 
 
 def _permit_scoped_id(request: StageRequest, permit) -> str:
-    """The production reservation-id derivation (#966) — the id step 10 re-derives too.
-
-    Narrowed to ``str``: every permit this suite builds carries an identity, so a ``None`` here
-    would be a broken fixture rather than the production ``None`` step 9 maps to UNKNOWN (that
-    path has its own test).
-    """
+    """The production reservation-id derivation (#966) — the id step 10 re-derives too."""
     reservation_id = reservation_id_in_scope(request.instrument_key, permit.permit_id)
     assert reservation_id is not None
     return reservation_id
 
 
-#: The step-5 Economic Effect Envelope every step-9 stage in this suite records (#972).
 _STEP5_ENVELOPE = CapacityVector(
     components=(CapacityComponent(dimension_id="notional", magnitude=Decimal("250")),)
 )
@@ -88,11 +81,6 @@ def _committed_permit(afg_governor: ActionFlowGovernor):
     return afg_governor.build_permit(
         decision, permit_generation=1, command_identity="cmd-1"
     )
-
-
-# ============================================================================
-# step 6 — AggregateRiskDecisionStage
-# ============================================================================
 
 
 def test_step6_admits_on_a_granted_decision(
@@ -167,9 +155,7 @@ def test_step6_never_admits_when_evidence_append_fails(
     required_scenario_kinds,
     evidence_port: FakeEvidenceAppendPort,
 ) -> None:
-    """Evidence is appended (inside ``decide()``) before ``risk_decision``'s
-    result is ever returned to the caller — an append failure means the
-    stage NEVER reaches ADMIT for this attempt."""
+    """Evidence is appended (inside ``decide()``) before ``risk_decision``'s"""
     evidence_port.fail_next_append(RuntimeError("evidence store down"))
     stage = AggregateRiskDecisionStage(
         ara_service,
@@ -180,11 +166,6 @@ def test_step6_never_admits_when_evidence_append_fails(
     )
     verdict = stage(_request(CommitmentStep.AGGREGATE_RISK_DECISION, instrument_key))
     assert verdict.outcome is StageOutcome.UNKNOWN
-
-
-# ============================================================================
-# step 7 — ActionFlowDecisionStage
-# ============================================================================
 
 
 def test_step7_admits_on_a_granted_decision(
@@ -210,11 +191,6 @@ def test_step7_is_unknown_when_time_does_not_permit_new_risk(
     )
     verdict = stage(_request(CommitmentStep.ACTION_FLOW_DECISION, instrument_key))
     assert verdict.outcome is StageOutcome.UNKNOWN
-
-
-# ============================================================================
-# step 8 — LedgerVerificationStage
-# ============================================================================
 
 
 def test_step8_admits_a_fresh_scope(
@@ -293,7 +269,7 @@ def test_step8_is_unknown_on_a_stale_writer_epoch(
     second = SqliteCommitLog(log_path, evidence_port=evidence_port)
     try:
         stale_epoch = first.acquire_epoch(identity)
-        second.acquire_epoch(identity)  # fences `first`'s epoch as stale
+        second.acquire_epoch(identity)
         reader = SqliteReservationProjectionReader(first)
         stage = LedgerVerificationStage(
             first,
@@ -306,11 +282,6 @@ def test_step8_is_unknown_on_a_stale_writer_epoch(
     finally:
         first.close()
         second.close()
-
-
-# ============================================================================
-# step 9 — AtomicCommitStage
-# ============================================================================
 
 
 def test_step9_commits_reservation_and_permit_in_one_transaction(
@@ -352,8 +323,7 @@ def test_step9_records_the_step5_envelope_as_the_committed_vector(
     afg_governor: ActionFlowGovernor,
     projection_reader: SqliteReservationProjectionReader,
 ) -> None:
-    """#972: before this, step 9 committed every reservation with ``committed_vector=None``,
-    so the ARE snapshot summed nothing and saw an open position as zero usage."""
+    """#972: before this, step 9 committed every reservation with ``committed_vector=None``,"""
     permit = _committed_permit(afg_governor)
     stage = AtomicCommitStage(
         log,
@@ -459,8 +429,7 @@ def test_step9_is_unknown_and_commits_nothing_without_a_step5_envelope(
     afg_governor: ActionFlowGovernor,
     step5_envelope: CapacityVector | None,
 ) -> None:
-    """A reservation with no vector would count as UNKNOWN usage for as long as it is
-    outstanding, so step 9 refuses to create one rather than commit it blind."""
+    """A reservation with no vector would count as UNKNOWN usage for as long as it is"""
     permit = _committed_permit(afg_governor)
     stage = AtomicCommitStage(
         log,
@@ -483,12 +452,7 @@ def test_step9_commits_via_exactly_one_commit_entry_call(
     instrument_key: InstrumentKey,
     afg_governor: ActionFlowGovernor,
 ) -> None:
-    """Pins the module docstring's "ONE apply_reservation_transition call,
-    never split into two transactions" invariant: a mutation splitting the
-    step-9 commit into two separate calls (reservation first, nonce/digest
-    binding second) must fail this test, even though every *outcome*-level
-    assertion elsewhere in this file would still pass (independent review
-    MEDIUM, 2026-09-08)."""
+    """Pins the module docstring's "ONE apply_reservation_transition call,"""
     permit = _committed_permit(afg_governor)
     counting_log = CountingCommitLog(log)
     stage = AtomicCommitStage(
@@ -512,14 +476,7 @@ def test_step9_single_entry_carries_both_the_reservation_and_the_permit_binding(
     instrument_key: InstrumentKey,
     afg_governor: ActionFlowGovernor,
 ) -> None:
-    """Independent content check (not the call-count wrapper above): exactly
-    ONE row exists in ``entries`` for this attempt, and that ONE row's
-    ``command_id``/``command_digest`` (the permit's single-use claim) sit on
-    the SAME entry as the reservation transition's own
-    ``is_reservation_transition=1``/scope/state — a two-call split would
-    either leave two ``entries`` rows (caught by the ``COUNT(*)`` check) or a
-    reservation row whose commit fields never proved they came from ONE
-    transaction (independent review MEDIUM, 2026-09-08)."""
+    """Independent content check (not the call-count wrapper above): exactly"""
     permit = _committed_permit(afg_governor)
     stage = AtomicCommitStage(
         log,
@@ -623,7 +580,7 @@ def test_step9_denies_a_permit_claimed_twice(
     stage_b = AtomicCommitStage(
         log,
         writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,  # SAME permit, different scope
+        permit_provider=lambda _r: permit,
         reservation_id_provider=lambda request, permit: (
             _permit_scoped_id(request, permit) + "-b"
         ),
@@ -700,9 +657,7 @@ def test_step9_atomic_commit_leaves_neither_reservation_nor_permit_on_a_crash_be
     identity: RuntimeIdentity,
     instrument_key: InstrumentKey,
 ) -> None:
-    """Crash injection immediately before COMMIT: the whole attempt leaves
-    NEITHER the reservation NOR the permit's commitment coordinate durable —
-    never a partial state (all-or-nothing)."""
+    """Crash injection immediately before COMMIT: the whole attempt leaves"""
 
     def crash_before_commit(point: str) -> None:
         if point == "before_commit":
@@ -750,9 +705,6 @@ def test_step9_atomic_commit_leaves_neither_reservation_nor_permit_on_a_crash_be
         assert reader.scope_reservations(instrument_key) == ()
         assert dict(reader.all_reservations()) == {}
 
-        # Nothing leaked: the SAME permit's nonce was never durably claimed by
-        # the crashed attempt, so a fresh stage call over the reopened log can
-        # still claim it (proving the crash consumed no single-use state).
         retry_stage = AtomicCommitStage(
             reopened,
             writer_epoch=epoch,
@@ -767,11 +719,6 @@ def test_step9_atomic_commit_leaves_neither_reservation_nor_permit_on_a_crash_be
         assert retry_verdict.outcome is StageOutcome.ADMIT
     finally:
         reopened.close()
-
-
-# ============================================================================
-# step 10 — CommitmentUnavailabilityStage
-# ============================================================================
 
 
 def test_step10_confirms_a_durable_commit(
@@ -847,11 +794,6 @@ def test_step10_is_unknown_when_the_projection_is_unreachable(
     assert verdict.outcome is StageOutcome.UNKNOWN
 
 
-# ============================================================================
-# item15_fields
-# ============================================================================
-
-
 def test_item15_fields_carries_permit_identity_and_commitment_current(
     afg_governor: ActionFlowGovernor,
 ) -> None:
@@ -869,11 +811,6 @@ def test_item15_fields_is_none_shaped_without_a_permit() -> None:
         "action_flow_permit_identity": None,
         "action_flow_commitment_current": None,
     }
-
-
-# ============================================================================
-# cross-cutting — authority_class is never NON_AUTHORITATIVE_PROVISIONAL
-# ============================================================================
 
 
 def test_no_stage_here_ever_emits_non_authoritative_provisional(
@@ -933,11 +870,6 @@ def test_no_stage_here_ever_emits_non_authoritative_provisional(
         )
 
 
-# ============================================================================
-# step 8 — the #966 admission table, row by row, each against a concrete input
-# ============================================================================
-
-
 def _rows(*states: CapacityState) -> tuple[ScopeReservation, ...]:
     return tuple(
         ScopeReservation(reservation_id=f"resv-{i}", state=state, last_seq=i)
@@ -946,11 +878,7 @@ def _rows(*states: CapacityState) -> tuple[ScopeReservation, ...]:
 
 
 def test_step8_open_denies_a_scope_that_already_holds_a_consumed_position() -> None:
-    """A SECOND entry over a filled one is still refused — #966 did not open pyramiding.
-
-    The concrete failing input this row exists for: scope holds ``POSITION_CONSUMED`` (an
-    entry filled), a new OPEN arrives. Admitting it would put two positions on one scope.
-    """
+    """A SECOND entry over a filled one is still refused — #966 did not open pyramiding."""
     verdict = verdict_for_scope("OPEN", _rows(CapacityState.POSITION_CONSUMED))
     assert verdict.outcome is StageOutcome.DENY
     assert "no pyramiding" in (verdict.reason or "")
@@ -962,11 +890,7 @@ def test_step8_open_admits_an_empty_scope() -> None:
 
 
 def test_step8_open_admits_again_once_every_reservation_is_released() -> None:
-    """The #966 re-entry case: a released row no longer blocks a fresh entry.
-
-    Before #966 step 8 denied on ANY row, RELEASED included, so a scope that had completed a
-    full entry→exit cycle could never trade again.
-    """
+    """The #966 re-entry case: a released row no longer blocks a fresh entry."""
     verdict = verdict_for_scope(
         "OPEN", _rows(CapacityState.RELEASED, CapacityState.RELEASED)
     )
@@ -996,11 +920,7 @@ def test_step8_close_denies_an_empty_scope() -> None:
 def test_step8_close_denies_a_reservation_that_is_not_consumed(
     state: CapacityState,
 ) -> None:
-    """Closing against an unresolved order is refused, and the reason names the state.
-
-    Concrete failing input: one reservation mid-flight (an entry order sent, no fill known).
-    A CLOSE admitted there would send a sell against a position that may never exist.
-    """
+    """Closing against an unresolved order is refused, and the reason names the state."""
     verdict = verdict_for_scope("CLOSE", _rows(state))
     assert verdict.outcome is StageOutcome.DENY
     assert state.value in (verdict.reason or "")
@@ -1041,5 +961,5 @@ def test_step8_reads_the_live_arm_not_a_captured_one(
     )
     first = stage(_request(CommitmentStep.LEDGER_VERIFICATION, instrument_key))
     second = stage(_request(CommitmentStep.LEDGER_VERIFICATION, instrument_key))
-    assert first.outcome is StageOutcome.ADMIT  # OPEN over an empty scope
-    assert second.outcome is StageOutcome.DENY  # CLOSE over an empty scope
+    assert first.outcome is StageOutcome.ADMIT
+    assert second.outcome is StageOutcome.DENY

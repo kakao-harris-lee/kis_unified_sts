@@ -1,108 +1,5 @@
 #!/usr/bin/env python3
-"""Preflight + watchdog driver for the evidence scan measurement (growth plan §2 A1-b).
-
-``tools/tos_evidence_scan_bench.py`` knows how to build a synthetic evidence file and time
-the runtime's ``FROM entries WHERE kind ...`` shapes against it. It knows nothing about the
-host it runs on. This module is the part that does: it **refuses to start** and **aborts
-mid-run** when the machine cannot afford the measurement, and it writes the evidence of
-having checked.
-
-Why it exists (plan §7.1.7 deviations 11 and 11-b). The 2026-09-30 A1 run was driven by a
-script that carried exactly these guards — and that script was never committed and is gone
-from the host, so the plan had to withdraw the claim that "the next run is protected again".
-The same round found the swap floor had been missing from those guards all along, which
-matters because in the 2026-09-30 00:24 KST earlyoom incident (§7.1.5) the thing that hit
-zero first was **swap**, not ``MemAvailable``. Both holes close by the guards living here,
-in the tree, default-on, with tests.
-
-What it drives (three child steps, matching ``~/.local/state/tos/measure/a1/`` naming so the
-plan's tables stay comparable):
-
-===========  ==============================================  ==========================
-step         child command                                   artifacts
-===========  ==============================================  ==========================
-``build``    ``bench build --days N``                        ``build-Nd.json`` (the
-                                                             child's own BuildReport on
-                                                             stdout)
-``before``   ``bench measure``                               ``before-Nd.json``
-``after``    ``bench measure --create-index``                ``after-Nd.json``
-===========  ==============================================  ==========================
-
-There is no separate "build index" step because the bench does not offer one: index creation
-lives inside ``measure --create-index`` (``create_kind_index`` then measure, in one child), so
-the index build time is reported by the child on its own stdout and captured in
-``after-Nd.out``. Every step additionally gets ``<step>-Nd.time`` (GNU ``time -v`` field names,
-so an existing citation like "``before-90d.time`` の ``File system inputs``" keeps working) and
-``<step>-Nd.resource.json`` (the same numbers structured, plus the child's ``/proc/<pid>/io``).
-
-**Per run, not per directory** (plan §7.1.23). One output directory holds every attempt at
-one size: the 270-day measurement was stopped twice and finished on the third run in
-``a1b-270/``. So a run writes ``run-<days>d.<run_id>.summary.json`` (how it ended, which
-steps ran, what happened to the synthetic file, which abort records it wrote), and a stop
-writes ``ABORTED-<step>-<days>d.<run_id>.json`` — the run id is in the name because the
-fixed name let the second stop overwrite the first one's ``reason`` / ``signal_sent`` /
-``returncode`` / ``partial_resource``, which the plan then had to reconstruct from
-``watchdog.jsonl`` and cite as "≥". ⚠ The summary exists for every run that reaches an
-output directory, which includes a preflight refusal but NOT an argument contradiction:
-those are refused before anything is created, like an ``argparse`` error.
-
-**Resource capture uses** ``os.wait4`` **, not** ``getrusage(RUSAGE_CHILDREN)`` **deltas.**
-``RUSAGE_CHILDREN.ru_maxrss`` is a running maximum over every child reaped so far, so a
-before/after difference attributes a step's peak RSS exactly only when that step raised the
-maximum — for the ``measure`` steps, whose peak is well under ``build``'s, the difference is
-zero and says nothing. ``os.wait4(pid, ...)`` returns the rusage of **that one child**, from
-the same kernel counters GNU ``time -v`` reads, so every field below is per-step and exact.
-That is a deliberate improvement on the mechanism A1-b was specified with, not a shortcut.
-
-**Physical vs logical reads** (plan §7.1.2 said the measurement lacked this): ``ru_inblock``
-gives what ``time -v`` calls "File system inputs" (512-byte blocks, block layer), and the
-child's ``/proc/<pid>/io`` gives ``rchar`` (bytes the process asked for, page cache included)
-next to ``read_bytes`` (bytes actually fetched from storage). The ``/proc`` numbers are the
-last sample taken before the child exited, so each record carries its own
-``sample_age_seconds`` — an unavoidable residual bounded by ``--watch-interval-s``, reported
-rather than hidden.
-
-Pure stdlib, and it imports nothing from ``tos``/``tos_runtime``: the import firewall
-(``tools/tos_firewall_check.py`` rule (e)/TOS-FW-R) forbids anything outside ``tos/`` from
-reaching in. It does load its sibling bench module by path, which is not a firewall concern
-(``tools`` importing ``tools``) and is what keeps the disk estimate below tied to the bench's
-own ``profile_kinds`` and drift guard instead of a second copy of the ``entries`` DDL.
-
-**It runs from a detached worktree, and refuses otherwise** (plan §2 A1-c, registered by
-the §7.1.16 F6 disposition). The 365-day and the 180-day measurements were both launched
-from the shared checkout and the tree moved under both of them mid-run (``32539e07`` →
-``f23bb4c3``; ``a0578bf9`` → ``1024bcce`` → ``d7ce609b``). Both turned out harmless, but
-that was established by a byte diff AFTERWARDS — it was never prevented. Writing ``git
-rev-parse HEAD`` into the artifact does not prevent it either: ``before`` and ``after``
-start hours apart (1 h 39 m at 180 days), so a bench edited in between measures the two
-passes with two different benches, and the SHA line proves the contamination rather than
-stopping it. So:
-
-* the ``checkout_detached_and_clean`` preflight refuses a checkout that is attached to a
-  branch, dirty, or not an ancestor of ``origin/main`` — and refuses a ``--bench`` that
-  resolves outside that same checkout;
-* the same facts are re-read **before every child is spawned**, and a run whose ``HEAD``
-  moved, whose tree went dirty, or whose bench changed between two steps aborts with an
-  artifact naming the drift. This is the part that matters: the preflight runs once, the
-  children do not;
-* ``repo_commit`` / ``repo_path`` / ``detached`` / ``clean`` / ``ancestor_of_origin_main``
-  and the bench file's own sha256 are recorded in ``preflight.json``, in every step
-  artifact and in an ``ABORTED-…`` artifact, so a measurement describes the tree it came
-  from without anyone having to reconstruct it from a reflog afterwards.
-
-The driver does NOT fetch: ``origin/main`` is read as it stands in that checkout, and a
-missing one is a refusal that says so. The escape hatch is ``--allow-shared-checkout``,
-logged as a warning and recorded in every artifact. The precedent is
-``tools/broker_probes/runners/run_p_ca.sh`` (#793) and ``MEMORY.md`` "프로브는 분리
-워크트리(origin/main)에서만" — this is the same discipline in Python, including that
-runner's module-provenance check (there, the probe module must resolve inside the checkout;
-here, the bench must, because ``--python`` is deliberately the SHARED checkout's venv and
-therefore vouches for nothing).
-
-Every threshold is an argument. The two that gate the START of a run come from the operator's
-global rule; the rest are named below with their actual source, including the ones this
-driver chose itself.
-"""
+"""Preflight + watchdog driver for the evidence scan measurement (growth plan §2 A1-b)."""
 
 from __future__ import annotations
 
@@ -166,167 +63,41 @@ __all__ = [
 _KST = ZoneInfo("Asia/Seoul")
 _GB = 1024.0**3
 
-# --------------------------------------------------------------------------------------
-# Units in human-facing strings. One rule, decided by HOW the number was computed, not by
-# which function prints it. This is the follow-up review #853 F7 registered and plan
-# §7.1.26 「남는 후속 하나」 held open; review #858 then added the ``detail_bytes`` and
-# step-log halves below.
-#
-#   * Divided by ``_GB`` (1024**3) -> labelled **GiB**. Every such number here is a host
-#     quantity that is binary at the source: ``/proc/meminfo`` reports KiB, the operator's
-#     start floors ("available 6 GB / Swap free 2 GB", ~/.claude/CLAUDE.md) are read in
-#     that same binary base, and the disk check is sized off ``--expect-gb`` x ``_GB``.
-#     The VALUE does not move; only the label stops naming the wrong base.
-#   * A FILE SIZE in an operator-facing disposition message -> ``_decimal_gb`` and
-#     labelled **GB** (1e9), because it is read next to the growth plan's own file sizes
-#     (26.73 / 40.10 / 53.23 GB).
-#
-# What is deliberately NOT touched, because these are NAMES in machine-read artifacts
-# rather than labels on a printed number: the ``--*-gb`` flag spellings and their GiB
-# semantics; the ``*_gb`` keys in ``preflight.json``, ``watchdog.jsonl`` and
-# ``ABORTED-*.json`` (the last carries them inside ``last_samples``); and ``max_rss_mb``
-# in the resource artifacts, which is ``bytes / 1024**2`` — MiB under a ``_mb`` spelling,
-# the same shape of mismatch, kept because plan §7.1.15 and §7.1.23 already cite that
-# field. Every artifact and plan citation already written is keyed by these names.
-#
-# One carve-out, named rather than left to be noticed: ``disk_free`` prints a FILE size
-# (``predicted … GiB``) in the binary base, not through ``_decimal_gb``. Its three numbers
-# — free, needed, predicted — are read against each other in one row, and two of them come
-# from ``statvfs`` and ``--expect-gb`` x ``_GB``; rendering the third in a different base
-# would make that row arithmetic nobody can do by eye. One comparison, one base. The raw
-# bytes sit beside all three (``measured_bytes`` / ``floor_bytes`` / ``detail_bytes``), so
-# a reader who wants decimal GB divides, rather than trusting a mixed row.
-#
-# Enforcement is a property, not a list of places, but the swept surface is finite and is
-# this: the ``PreflightCheck`` fields of a preflight record (``measured`` / ``floor`` /
-# ``detail``, each against its ``*_bytes`` companion), both ``in_run_breach`` reasons, the
-# per-step completion log line, ``--help``, and ``_decimal_gb``. Section "Units — a printed
-# byte quantity must name the base it was computed in" in
-# ``tests/tools/test_tos_evidence_scan_measure.py`` holds one test per surface, plus a
-# contract test for the anti-trivial guard all of them lean on. NOT swept:
-# ``source`` strings, disposition message bodies (``decide_synthetic_disposition`` has its
-# own tests), and the prose in docstrings and comments.
-#
-# The threshold strings this rule governs were quoted verbatim in the plan §7.1.12 /
-# §7.1.15 / §7.1.23 preflight tables as they read before 2026-10-03. Those quotations
-# keep that wording and carry a dated annotation instead of being rewritten (the
-# §7.1.24 F5 discipline).
-# --------------------------------------------------------------------------------------
 
-# --------------------------------------------------------------------------------------
-# Thresholds. Each default names where it comes from — an operator rule, a measurement in
-# the plan, or this driver's own judgement. None of them is a bare literal in a branch.
-# --------------------------------------------------------------------------------------
-
-#: START floor on ``MemAvailable``. Source: operator rule in ``~/.claude/CLAUDE.md``,
-#: section "로컬 빌드 동시 실행 제한" (2026-09-25): do not start when available is under 6 GB.
 DEFAULT_MIN_AVAILABLE_GB = 6.0
 
-#: START floor on ``SwapFree``. Source: the SAME operator rule, the clause that the lost
-#: driver did not implement (plan §7.1.7 deviation 11-b): "**또는 Swap free 가 2GB 미만**
-#: 이면 빌드를 시작하지 않는다". It is not decoration — in the §7.1.5 earlyoom incident swap
-#: was the number at zero.
 DEFAULT_MIN_SWAP_FREE_GB = 2.0
 
-#: IN-RUN abort floor on ``MemAvailable``. Source: the value the 2026-09-30 run's (lost)
-#: driver enforced, as recorded in plan §7.1.2 — "진행 중 < 4 GB 면 워치독이 해당 단계를
-#: 중단". Kept so a rerun is comparable with that run.
 DEFAULT_ABORT_AVAILABLE_GB = 4.0
 
-#: IN-RUN abort floor on ``SwapFree``. **No external rule sets one** — the global rule speaks
-#: only about starting. This is this driver's own value: half the start floor, the same
-#: relationship the memory pair has (4 of 6). Stated as a choice, not dressed up as a rule.
 DEFAULT_ABORT_SWAP_FREE_GB = 1.0
 
-#: Seconds between host samples while a child runs. This driver's own value, matching the
-#: cadence plan §7.1.5's "재발 방지" describes ("5 초마다").
 DEFAULT_WATCH_INTERVAL_S = 5.0
 
-#: Seconds between ``wait4`` polls. Separate from the host-sample cadence so a child's
-#: wall clock is not rounded up to the next sample: polling only every 5 s reported an
-#: 8.0 s step as 10.0 s at 80 % CPU, which is not comparable with the GNU ``time -v``
-#: numbers plan §7.1.2 cites (review F6). This driver's own value; it bounds the
-#: attribution error, and 0.1 s costs ~10 cheap syscalls a second.
 DEFAULT_POLL_INTERVAL_S = 0.1
 
-#: How many consecutive host-read failures are tolerated before the watchdog treats itself
-#: as blind and stops the run. This driver's own value: one transient ``pgrep`` exit 2/3 or
-#: an unreadable ``/proc`` must not end a six-hour measurement, and two in a row must not
-#: pass unnoticed either (review F2).
 DEFAULT_HOST_READ_RETRIES = 1
 
-#: Seconds a child gets after ``SIGTERM`` before ``SIGKILL``. This driver's own value: the
-#: bench's steps hold an open sqlite connection and nothing else, so there is no long
-#: unwind to wait for, but a hung interpreter must not keep the host under pressure either.
 DEFAULT_TERM_GRACE_S = 10.0
 
-#: Multiplier applied to the predicted synthetic size for the disk check. The prediction
-#: covers the synthetic FILE only; the ``after`` step additionally creates
-#: ``entries_kind_seq`` in place (+1.8 % of file size, measured at both 30 and 90 days —
-#: plan §7.1.2) and sqlite needs transient room while building it. 1.25 is this driver's
-#: own margin over that measurement.
 DEFAULT_DISK_HEADROOM_RATIO = 1.25
 
-#: How much an ``entries_kind_seq`` index grows the file, as a fraction. Source: plan
-#: §7.1.2 measured +1.8 % at BOTH 30 and 90 days (4.374 → 4.452 GB, 13.123 → 13.357 GB).
-#: Used to size the disk check for a resume, where the synthetic file already exists and
-#: the only new bytes are the index (review F5).
 DEFAULT_INDEX_GROWTH_RATIO = 0.018
 
-#: Processes whose presence means "a heavy build is already running on this host". Source:
-#: the global rule's own check, ``pgrep -af 'GradleWrapperMain|GradleWorkerMain'``, plus
-#: ``GradleDaemon`` (the rule's separate instruction to look for leftover daemons).
 COMPETING_BUILD_PATTERN = "GradleWrapperMain|GradleWorkerMain|GradleDaemon"
 
-#: A second measurement of this kind already in flight. Two of these on one host is the
-#: co-tenancy the whole preflight exists to prevent, and it would also race on the
-#: synthetic file and the artifact names.
-#:
-#: It matches the INVOCATION SHAPE, not the filename. A bare ``tos_evidence_scan_measure``
-#: substring appears in every command that merely mentions these files — ``pytest
-#: tests/tools/test_tos_evidence_scan_measure.py``, ``mypy tools/…``, ``vim tools/…``,
-#: ``git show main:tools/…`` — and the first revision counted all of them, so editing or
-#: testing this tool during a multi-hour run would have killed the run (review F3).
-#: Requiring a subcommand token right after the ``.py`` leaves only an actual invocation.
-#: ``profile`` and ``preflight`` are deliberately NOT in the alternation: ``profile`` is a
-#: read-only ``GROUP BY`` over a 5 MB reference and ``preflight`` starts no child at all, so
-#: neither competes for anything, while killing a six-hour measurement for one of them is a
-#: real loss (round-2 review F2).
 COMPETING_MEASURE_PATTERN = (
     r"tos_evidence_scan_(measure|bench)\.py +(run|build|measure)\b"
 )
 
-#: Commands whose mention of a pattern means they are LOOKING FOR it, not running it. The
-#: global rule's own check ends in ``| grep -v pgrep`` for this reason, and the case is real:
-#: the first live run of this preflight (2026-09-30) matched another agent session's
-#: ``bash -c "... pgrep -f 'GradleWrapperMain|...' ..."``, whose command line contains the
-#: marker only because it is searching for it.
-#:
-#: This skips a match, so it is worth being exact about what it can hide. Every pattern this
-#: driver searches for is either a JVM main-class name or this tool's own filename, and a
-#: shell that both runs ``pgrep`` and launches a build is not itself the heavy process — the
-#: ``java`` (or ``python``) child it starts carries the marker on its own command line and is
-#: matched on its own. What this cannot see is a build whose ONLY process is a shell whose
-#: command line also contains ``grep``; there is no such thing for these markers.
 _SEARCH_COMMANDS = frozenset({"pgrep", "grep", "egrep", "fgrep", "rg", "ugrep"})
 
-#: Shell punctuation that glues a command name to its surroundings. Splitting on whitespace
-#: alone left ``$(pgrep``, ``;pgrep`` and ``|grep`` unrecognized, so a line that was plainly
-#: searching still counted as a build (review F9).
 _SHELL_PUNCTUATION = "\"'`;|&()<>{}$\n\t"
 
-#: The subset of the above that STARTS a new command, as opposed to merely being noise.
-#: ``"`` and ``'`` do not: ``sh -c "pgrep …"`` puts the command after ``-c``, not after the
-#: quote.
 _SHELL_SEPARATORS = "`;|&()<>{}$\n"
 
-#: Shells whose ``-c`` argument is itself a command line.
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash", "busybox"})
 
-#: Words that occupy a command position but are FOLLOWED by the real command: shell
-#: keywords and the wrappers people put in front of things. Without these,
-#: ``bash -c "eval 'if ! pgrep -f X; …'"`` hid its ``pgrep`` behind ``eval`` and ``!``, and
-#: the line counted as a build.
 _COMMAND_PREFIXES = frozenset(
     {
         "!",
@@ -349,55 +120,20 @@ _COMMAND_PREFIXES = frozenset(
     }
 )
 
-#: ``VAR=value`` prefixing a command. Not a command itself, and in particular not a
-#: command named after whatever its value's last path component happens to be.
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
-#: How many of the most recent samples an abort record carries. Bounds artifact size; gates
-#: nothing, which is why it is not an argument.
 _ABORT_SAMPLE_TAIL = 10
 
-#: How many processes the top-RSS record holds. The global rule asks for ``ps
-#: --sort=-rss | head`` as a record of what else is on the host; it is context for reading a
-#: run afterwards, not a gate.
 _TOP_RSS_ROWS = 5
 
-#: Longest command line kept in the top-RSS record. A JVM command line runs to kilobytes
-#: (the 2026-09-30 host had one over 4 KB) and would otherwise dominate the artifact.
 _TOP_RSS_ARGS_CHARS = 200
 
 STEP_NAMES = ("build", "before", "after")
 
-#: Seconds any single ``git`` call gets. Source: ``tools/tos_completion_status.py``'s
-#: ``_GIT_TIMEOUT = 30``, the value this repo already uses for the same kind of call.
-#: Unbounded was the first revision's bug (review F4): the per-child re-check runs hours
-#: into a measurement with no watchdog over it, so a ``git status`` waiting on somebody
-#: else's ``index.lock`` would stall the run silently and forever.
 DEFAULT_GIT_TIMEOUT_S = 30.0
 
-#: Global git options prepended to EVERY call the checkout guard makes.
-#:
-#: Only ``--no-optional-locks``, and it is NOT a guard: it keeps these read-only calls
-#: from taking ``index.lock``, so the per-child re-check cannot itself become the thing
-#: a concurrent git waits on. The other half of the F4 fix, next to the timeout.
-#:
-#: ``-c status.showUntrackedFiles=all`` was proposed here too and is deliberately NOT
-#: added. Measured: with ``status.showUntrackedFiles = no`` in the global config, either
-#: that ``-c`` or the ``-uall`` on the status command alone restores the untracked entry
-#: — so with both, neither can be shown to decide anything, and a clause nothing can
-#: fail is a clause that blocks nothing (`MEMORY.md`, the lesson this PR's own round-1
-#: red proof already ran into). ``-uall`` is the one kept, on the command where it reads.
 GIT_HARDENING_FLAGS = ("--no-optional-locks",)
 
-#: Interpreter flags every child is launched with. Measured, not assumed (review F9):
-#: on this host the shared checkout's venv carries an editable-install ``.pth`` that puts
-#: ``/home/deploy/project/kis_unified_sts`` on ``sys.path``, and ``-I`` alone does NOT
-#: remove it — a child run with ``-I`` still imported ``tools.tos_evidence_run`` from the
-#: SHARED tree while every provenance field described the worktree. ``-S`` is what closes
-#: it, and ``-I`` (which implies ``-E -P -s``) closes the ``PYTHONPATH`` and user-site
-#: vectors next to it. The bench is stdlib-only, so neither costs it anything; if a future
-#: bench needs a third-party package it fails loudly here rather than resolving it out of
-#: whatever tree happens to be installed.
 CHILD_PYTHON_FLAGS = ("-I", "-S")
 
 
@@ -406,24 +142,15 @@ class MeasureRefused(RuntimeError):
 
 
 class MeasureAborted(RuntimeError):
-    """A guard fired while a child was running. The child was terminated and an
-    ``ABORTED-<step>-<days>d.<run_id>.json`` artifact was written."""
+    """A guard fired while a child was running. The child was terminated and an"""
 
 
 class MeasureSignalled(RuntimeError):
-    """The driver itself was sent ``SIGTERM``/``SIGHUP``.
-
-    Without a handler the default disposition exits the interpreter immediately: the
-    ``except BaseException`` path never runs, the bench child is ORPHANED and keeps writing
-    a 53 GB file with no watchdog, the lock goes stale and no abort artifact is written
-    (round-2 review F1). Raising instead routes a signal into the same path a crash takes.
-    """
+    """The driver itself was sent ``SIGTERM``/``SIGHUP``."""
 
 
 class MeasureStepFailed(RuntimeError):
-    """A child exited non-zero. The remaining steps do not run, the synthetic file is
-    kept, and the driver exits non-zero — a failed measurement must not be reported as a
-    finished one (review F1)."""
+    """A child exited non-zero. The remaining steps do not run, the synthetic file is"""
 
 
 def _now_kst() -> str:
@@ -431,10 +158,7 @@ def _now_kst() -> str:
 
 
 def _load_bench_module(bench_path: Path) -> ModuleType:
-    """Load the sibling bench as a module so the size estimate reuses ITS distribution
-    reader (and therefore its ``entries`` shape drift guard) rather than carrying a second
-    copy of the schema. ``tools`` importing ``tools`` is outside the firewall's concern;
-    importing ``tos_runtime`` would not be."""
+    """Load the sibling bench as a module so the size estimate reuses ITS distribution"""
     import importlib.util
 
     if not bench_path.is_file():
@@ -445,35 +169,13 @@ def _load_bench_module(bench_path: Path) -> ModuleType:
     if spec is None or spec.loader is None:
         raise MeasureRefused(f"cannot load bench module from {bench_path}")
     module = importlib.util.module_from_spec(spec)
-    # Registered BEFORE exec: `@dataclass` resolves annotations through
-    # `sys.modules[cls.__module__]`, so a module that is not there yet makes every frozen
-    # dataclass in the bench fail to build.
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
-# --------------------------------------------------------------------------------------
-# Host observation
-# --------------------------------------------------------------------------------------
-
-
 def _command_position_tokens(args: str) -> list[str]:
-    """The tokens of ``args`` that sit where a COMMAND NAME goes.
-
-    Taking the basename of every token classified ``-Dorg.gradle.appname=/home/u/rg`` as
-    the command ``rg`` — so a Gradle build of any directory whose last path component is
-    ``rg``, ``grep`` or the like was filed as "merely searching" and hidden from both the
-    preflight and the watchdog (round-2 review F7). A command name appears in exactly three
-    places, and nowhere else:
-
-    * first,
-    * right after a shell separator (``;`` ``|`` ``&`` ``(`` ``$(`` `````),
-    * right after a shell's own ``-c``, which is how ``bash -c 'pgrep …'`` gets its
-      command — the case the F9 fix exists for, so it cannot simply be dropped.
-
-    A leading ``VAR=value`` is an assignment, not a command, so the scan steps over it.
-    """
+    """The tokens of ``args`` that sit where a COMMAND NAME goes."""
     sentinel = "\x00"
     for char in _SHELL_PUNCTUATION:
         args = args.replace(char, f" {sentinel} " if char in _SHELL_SEPARATORS else " ")
@@ -488,10 +190,10 @@ def _command_position_tokens(args: str) -> list[str]:
             continue
         if at_command:
             if _ASSIGNMENT.match(token):
-                continue  # VAR=value cmd …  — the command is still ahead
+                continue
             base = os.path.basename(token)
             if base in _COMMAND_PREFIXES:
-                continue  # eval / if / ! / sudo … — the command is still ahead
+                continue
             out.append(token)
             current_shell = base in _SHELLS
             at_command = False
@@ -502,11 +204,7 @@ def _command_position_tokens(args: str) -> list[str]:
 
 
 def _is_searching_for_the_pattern(args: str) -> bool:
-    """Whether a matched command line is a SEARCH for the marker rather than a build.
-
-    See :data:`_SEARCH_COMMANDS` for why this exists and exactly what it can and cannot
-    hide, and :func:`_command_position_tokens` for why only some tokens are even looked at.
-    """
+    """Whether a matched command line is a SEARCH for the marker rather than a build."""
     return any(
         os.path.basename(token) in _SEARCH_COMMANDS
         for token in _command_position_tokens(args)
@@ -515,8 +213,7 @@ def _is_searching_for_the_pattern(args: str) -> bool:
 
 @dataclass(frozen=True)
 class CompetingProcess:
-    """One process a competition check matched, with enough of its command line to tell
-    the operator what to wait for."""
+    """One process a competition check matched, with enough of its command line to tell"""
 
     pid: int
     pattern: str
@@ -551,38 +248,17 @@ class HostSample:
 
 @dataclass(frozen=True)
 class HostReader:
-    """Everything this driver knows about the machine, behind one injectable seam.
-
-    The paths, command lines and the PID this reader calls its own are constructor
-    arguments so a test can point the reader at a fake ``/proc/meminfo``, a fake ``pgrep``
-    and a fake ``/proc`` and exercise each refusal for real, instead of patching module
-    globals and proving only that the patch worked.
-    """
+    """Everything this driver knows about the machine, behind one injectable seam."""
 
     meminfo_path: Path = Path("/proc/meminfo")
     pgrep_argv: tuple[str, ...] = ("pgrep", "-af")
     ps_argv: tuple[str, ...] = ("ps", "-eo", "pid,rss,args", "--sort=-rss")
     proc_root: Path = Path("/proc")
-    #: Whose work this reader treats as its own — this process, unless a test says
-    #: otherwise. :meth:`_self_pid_chain` starts here, and it is the one input
-    #: ``proc_root`` cannot stand in for: a test that builds a process tree out of nothing
-    #: still had the OS answer "who am I?", so the fabrication was judged half against the
-    #: tree and half against the runner (#848).
     self_pid: int = field(default_factory=os.getpid)
-    #: Memo for things that cannot change during a run. A six-hour measurement takes ~4,300
-    #: samples, and rebuilding the driver's own ancestor chain from ``/proc`` on each of
-    #: them was pure overhead on a host this tool exists to keep quiet (round-2 review F9).
     _cache: dict[str, object] = field(default_factory=dict, repr=False, compare=False)
 
-    # -- memory ------------------------------------------------------------------------
-
     def meminfo(self) -> dict[str, int]:
-        """``MemAvailable``/``SwapFree``/``SwapTotal`` in BYTES.
-
-        Raises:
-            MeasureRefused: the file is unreadable, or a field the guards need is missing.
-                Fail closed: a preflight that cannot read memory has not checked memory.
-        """
+        """``MemAvailable``/``SwapFree``/``SwapTotal`` in BYTES."""
         try:
             text = self.meminfo_path.read_text()
         except OSError as exc:
@@ -609,24 +285,15 @@ class HostReader:
             )
         return values
 
-    # -- competing processes -----------------------------------------------------------
-
     def _pgrep(self, pattern: str) -> list[tuple[int, str]]:
-        """``pgrep -af <pattern>`` as ``(pid, args)`` pairs.
-
-        Raises:
-            MeasureRefused: ``pgrep`` is missing or exited for a reason other than "no
-                match". Fail closed: a check that could not run has not run.
-        """
+        """``pgrep -af <pattern>`` as ``(pid, args)`` pairs."""
         argv = (*self.pgrep_argv, pattern)
         try:
-            # argv is a constructed list, never a shell string.
             completed = subprocess.run(
                 argv, capture_output=True, text=True, check=False
             )
         except OSError as exc:
             raise MeasureRefused(f"cannot run {argv[0]}: {exc}") from exc
-        # pgrep exits 1 for "no match" — that is not an error. Any other non-zero exit is.
         if completed.returncode not in (0, 1):
             raise MeasureRefused(
                 f"{argv[0]} exited {completed.returncode}: "
@@ -644,27 +311,7 @@ class HostReader:
     def scan(
         self, patterns: Mapping[str, str]
     ) -> dict[str, tuple[CompetingProcess, ...]]:
-        """Every named pattern, in ONE ``pgrep``, with this driver's own work excluded.
-
-        One subprocess instead of one per pattern per sample (round-2 review F9): the
-        alternation goes to ``pgrep`` and each matched line is then attributed back to the
-        patterns it satisfies. ``pgrep`` applies POSIX ERE and the re-attribution uses
-        Python's ``re``; the two agree on everything these patterns use (alternation,
-        escaped dot, ``\b``), and the attribution can only narrow what ``pgrep`` already
-        matched.
-
-        Four kinds of line are dropped, each for a stated reason:
-
-        * this process and its own ancestors — the driver's command line matches its own
-          measurement pattern, and so does the shell that launched it;
-        * this process's DESCENDANTS — the bench child the driver itself spawned, and
-          anything that child spawns, are the work being measured, not competition;
-        * descendants of a ``pytest`` — the suite spawns real ``bench build``/``measure``
-          children, so without this a colleague running the tests would SIGTERM a live
-          six-hour measurement (round-2 review F2);
-        * lines that are SEARCHING for the marker rather than running it
-          (:func:`_is_searching_for_the_pattern`).
-        """
+        """Every named pattern, in ONE ``pgrep``, with this driver's own work excluded."""
         if not patterns:
             return {}
         combined = "|".join(f"({p})" for p in patterns.values())
@@ -690,13 +337,11 @@ class HostReader:
         return {name: tuple(rows) for name, rows in found.items()}
 
     def competing_processes(self, pattern: str) -> tuple[CompetingProcess, ...]:
-        """One pattern's matches. A thin wrapper over :meth:`scan` for single-pattern
-        callers and for the tests that exercise one rule at a time."""
+        """One pattern's matches. A thin wrapper over :meth:`scan` for single-pattern"""
         return self.scan({"only": pattern})["only"]
 
     def _ancestors(self, pid: int) -> list[int]:
-        """``pid``'s ancestor chain, nearest first, bounded so a ``/proc`` oddity cannot
-        hang a sample."""
+        """``pid``'s ancestor chain, nearest first, bounded so a ``/proc`` oddity cannot"""
         chain: list[int] = []
         seen = {pid}
         current = pid
@@ -733,7 +378,7 @@ class HostReader:
             return cached
         chain = {self.self_pid}
         pid = self.self_pid
-        for _ in range(64):  # bounded: a runaway /proc must not hang the preflight
+        for _ in range(64):
             ppid = self._parent_pid(pid)
             if ppid is None or ppid in chain or ppid <= 0:
                 break
@@ -752,12 +397,8 @@ class HostReader:
             return None
         return None
 
-    # -- record-only observations --------------------------------------------------------
-
     def top_rss(self, rows: int = _TOP_RSS_ROWS) -> tuple[dict[str, object], ...]:
-        """The heaviest processes on the host, for the record. Never a gate — the global
-        rule asks for this so that a run can be read afterwards next to what else was
-        resident (2026-09-30: a 16 GB python in another session)."""
+        """The heaviest processes on the host, for the record. Never a gate — the global"""
         try:
             completed = subprocess.run(
                 self.ps_argv, capture_output=True, text=True, check=False
@@ -782,8 +423,7 @@ class HostReader:
         return tuple(out)
 
     def child_peak_rss_bytes(self, pid: int) -> int | None:
-        """``VmHWM`` of a running child — the kernel's own high-water mark, so a single late
-        read reports the peak so far. ``None`` once the process is gone."""
+        """``VmHWM`` of a running child — the kernel's own high-water mark, so a single late"""
         try:
             for line in (self.proc_root / str(pid) / "status").read_text().splitlines():
                 if line.startswith("VmHWM:"):
@@ -793,10 +433,7 @@ class HostReader:
         return None
 
     def child_io(self, pid: int) -> dict[str, int]:
-        """``/proc/<pid>/io`` of a running child: ``rchar``/``wchar`` are what the process
-        asked for (page cache included), ``read_bytes``/``write_bytes`` what the block layer
-        actually moved. The gap between them is the physical-vs-logical distinction plan
-        §7.1.2 recorded as missing."""
+        """``/proc/<pid>/io`` of a running child: ``rchar``/``wchar`` are what the process"""
         try:
             text = (self.proc_root / str(pid) / "io").read_text()
         except OSError:
@@ -831,26 +468,9 @@ class HostReader:
         )
 
 
-# --------------------------------------------------------------------------------------
-# Checkout provenance — the tree the driver and the bench are read from (plan §2 A1-c)
-# --------------------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class CheckoutState:
-    """What git says about the tree this driver and its bench were loaded from.
-
-    One read, four questions, and every answer is recorded whether it passed or not:
-    *is it a worktree at all*, *is ``HEAD`` detached*, *is the tree clean*, *is ``HEAD`` an
-    ancestor of ``origin/main``* — plus the module-provenance question
-    ``run_p_ca.sh`` asks of its probe module and this driver asks of its bench: *does the
-    file the children will execute live inside that same checkout*.
-
-    ``origin/main`` is read AS IT STANDS. The driver never fetches: a measurement must not
-    reach the network, and a tool that silently updated a remote ref would change the
-    answer to its own question. A missing ``origin/main`` is therefore a refusal whose
-    message says to fetch, not a pass.
-    """
+    """What git says about the tree this driver and its bench were loaded from."""
 
     at_kst: str
     repo_path: str
@@ -879,11 +499,7 @@ class CheckoutState:
         )
 
     def failures(self) -> tuple[str, ...]:
-        """Every reason this state is not acceptable, each naming what was measured.
-
-        All of them, not the first: an operator who has to fix one refusal at a time
-        learns about the dirty tree only after fixing the branch.
-        """
+        """Every reason this state is not acceptable, each naming what was measured."""
         if self.error:
             return (self.error,)
         reasons: list[str] = []
@@ -931,11 +547,7 @@ class CheckoutState:
 
 
 def _sha256_of(path: Path) -> str:
-    """The file's digest, or ``""`` when it cannot be read.
-
-    Empty rather than an exception: this is a RECORD, and a bench that cannot be hashed is
-    already caught as a failing check by whoever needed it to exist.
-    """
+    """The file's digest, or ``""`` when it cannot be read."""
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
@@ -943,13 +555,7 @@ def _sha256_of(path: Path) -> str:
 
 
 class _GitUnavailable(RuntimeError):
-    """git could not be asked at all — missing, unrunnable, or it never answered.
-
-    Private and local to :func:`read_checkout`: it exists so one ``except`` turns every
-    such failure into a :class:`CheckoutState` error, rather than each call site
-    remembering to. A later call that forgot would have let a hang or a missing binary
-    escape as a traceback, past the preflight that was supposed to write an artifact.
-    """
+    """git could not be asked at all — missing, unrunnable, or it never answered."""
 
 
 def read_checkout(
@@ -959,17 +565,7 @@ def read_checkout(
     git: Sequence[str] = ("git",),
     timeout_s: float = DEFAULT_GIT_TIMEOUT_S,
 ) -> CheckoutState:
-    """Ask git about the tree ``driver_path`` sits in, and hash ``bench_path``.
-
-    Fails closed in one direction only: every git failure lands in
-    :attr:`CheckoutState.error`, which makes :attr:`CheckoutState.ok` false. There is no
-    path on which an unanswerable question counts as answered — and a half-read state is
-    still RETURNED (with everything it did learn) rather than raised, so the preflight
-    writes its artifact instead of dying before it. That includes a git that never
-    returns: every call is bounded by ``timeout_s`` and a ``TimeoutExpired`` becomes an
-    error like any other (review F4 — an unbounded ``git status`` behind somebody's
-    ``index.lock`` would hang the per-child re-check with no watchdog and no artifact).
-    """
+    """Ask git about the tree ``driver_path`` sits in, and hash ``bench_path``."""
     at_kst = _now_kst()
     bench_digest = _sha256_of(bench_path)
     repo_path = ""
@@ -1005,14 +601,9 @@ def read_checkout(
     start = driver_path.parent if driver_path.is_file() else driver_path
 
     def run(*args: str, cwd: str = "") -> subprocess.CompletedProcess[str]:
-        """One git call, bounded in time and insulated from the operator's config.
-
-        Raises:
-            _GitUnavailable: the binary is missing, unrunnable, or did not answer.
-        """
+        """One git call, bounded in time and insulated from the operator's config."""
         argv = [*git, *GIT_HARDENING_FLAGS, "-C", cwd or str(start), *args]
         try:
-            # argv is constructed, never a shell string.
             return subprocess.run(
                 argv, capture_output=True, text=True, check=False, timeout=timeout_s
             )
@@ -1042,31 +633,12 @@ def read_checkout(
             )
         repo_commit = head.stdout.strip()
 
-        # `--porcelain=v1 -z -uall`, and each flag earns its place (review F2):
-        # the plain `--porcelain` this first shipped with inherits the operator's
-        # `status.showUntrackedFiles`, so a `~/.gitconfig` saying `no` makes an untracked
-        # bench INVISIBLE and the tree reads clean — a guard reporting as absent exactly
-        # what it says it refuses (measured, not assumed). `-uall` overrides that config
-        # and additionally un-collapses a directory into its files, so `dirty_sample`
-        # names a file instead of `dir/`; `-z` keeps a path containing a newline or a
-        # quote from being re-encoded or split.
-        #
-        # The repo already solved this in `tools/tos_evidence_run.py::parse_porcelain`
-        # (same three flags, same reason). It is not imported: that module pulls `yaml`
-        # and `tools.tos_profile_census`, and this driver is stdlib-only by design
-        # (`test_the_driver_is_stdlib_only_and_reaches_into_no_tos_package`). The flags
-        # are copied; the parsing here is deliberately smaller, because the only
-        # questions are "is there any entry" and "name one".
         status = run("status", "--porcelain=v1", "-z", "-uall", cwd=repo_path)
         if status.returncode != 0:
             return state(
                 f"cannot read the working tree state in {repo_path}: "
                 f"{status.stderr.strip() or '(no stderr)'}"
             )
-        # NUL-separated records. A rename emits its new path and then its old path as two
-        # records, so the count is not the number of changed files — it is not used as
-        # one. `dirty_sample` takes the first record, which for a rename is the
-        # `R  <new path>` half, the informative one.
         entries = [e for e in status.stdout.split("\0") if e.strip()]
         clean = not entries
         dirty_sample = entries[0].strip() if entries else ""
@@ -1077,9 +649,6 @@ def read_checkout(
                 f"cannot read the branch name in {repo_path}: "
                 f"{named.stderr.strip() or '(no stderr)'}"
             )
-        # `git rev-parse --abbrev-ref HEAD` prints the literal "HEAD" exactly when HEAD is
-        # detached — the same test run_p_ca.sh makes. (git refuses to create a branch
-        # actually named HEAD, so the two cannot be confused.)
         branch = named.stdout.strip()
         detached = branch == "HEAD"
 
@@ -1087,10 +656,6 @@ def read_checkout(
         origin_present = origin.returncode == 0
         origin_commit = origin.stdout.strip()
         if origin_present:
-            # Exit 0 is "ancestor" and 1 is "not"; ANY other code is git failing —
-            # a missing object after a partial fetch, an ambiguous ref — and must not be
-            # reported as "not an ancestor", which would send the operator to merge code
-            # that is already merged (review F7).
             merge_base = run(
                 "merge-base", "--is-ancestor", "HEAD", "origin/main", cwd=repo_path
             )
@@ -1113,16 +678,7 @@ def read_checkout(
 
 @dataclass(frozen=True)
 class CheckoutGuard:
-    """The preflight check and the per-child re-check, over one :class:`CheckoutState`.
-
-    ``baseline`` is the state the preflight recorded. :meth:`drift` compares a fresh read
-    against it before each child is spawned, because that is the window the SHA line could
-    only document: at 180 days ``before`` and ``after`` started 1 h 39 m apart.
-
-    ``enforced`` is ``False`` under ``--allow-shared-checkout``. Then nothing refuses and
-    nothing aborts — but every fact is still read and still recorded, so a run made with
-    the hatch open says so in each of its artifacts rather than looking like a clean one.
-    """
+    """The preflight check and the per-child re-check, over one :class:`CheckoutState`."""
 
     driver_path: Path
     bench_path: Path
@@ -1144,29 +700,7 @@ class CheckoutGuard:
         return replace(self, baseline=state if state is not None else self.read())
 
     def drift(self, current: CheckoutState) -> str | None:
-        """Why ``current`` is not the tree the baseline described, or ``None``.
-
-        Four things can move between two children: the commit, the cleanliness of the
-        tree, **every other condition the preflight required**, and the bench file's own
-        bytes.
-
-        The third is the one the first revision left out (review F6). It re-read
-        ``detached`` and ``ancestor_of_origin_main`` and then compared neither, so
-        ``git switch -c scratch`` inside the measurement worktree — same commit, clean
-        tree — passed, and the next child ran from a branch a parallel lane can advance,
-        which is the exact state the preflight refuses. So the rule is now stated once:
-        **whatever the preflight required to start is required to still hold**, by
-        asking :attr:`CheckoutState.ok` rather than by re-listing the conditions here
-        and letting the two lists drift apart.
-
-        The fourth is redundant while the first three hold (a changed tracked file makes
-        the tree dirty) and is checked anyway, because it is the one that directly
-        invalidates a measurement, it costs one hash, and an IGNORED bench changes
-        without any of the others noticing.
-
-        The specific comparisons come first so the message names the thing that moved;
-        ``ok`` is the catch-all underneath them.
-        """
+        """Why ``current`` is not the tree the baseline described, or ``None``."""
         if not self.enforced or self.baseline is None:
             return None
         if current.error:
@@ -1195,23 +729,7 @@ class CheckoutGuard:
         return None
 
     def output_conflicts(self, paths: Mapping[str, Path]) -> tuple[str, ...]:
-        """Which of ``paths`` would be written INTO the checkout without being ignored.
-
-        The driver's own output must not become the dirt its own guard trips over
-        (review F5). The failure it prevents is expensive and confusing in equal measure:
-        ``--synthetic ./synth-365d.sqlite3`` inside the worktree passes the preflight,
-        ``build`` spends six minutes writing 53 GB, and then the ``before`` re-check sees
-        ``?? synth-365d.sqlite3`` and aborts the run blaming "someone working in the tree".
-
-        Unlike the rest of this guard it is **not** released by ``--allow-shared-checkout``.
-        The precedent is ``run_p_ca.sh``, whose refusal to place a file where ``git add -A``
-        would stage it also sits outside its own override: a deliberate run from a shared
-        checkout is a choice about WHERE THE CODE COMES FROM, not a licence to drop a 53 GB
-        file into the repository.
-
-        Returns the reasons, empty when every path is fine. A checkout this guard could
-        not read answers nothing here — the caller must not evaluate the check at all.
-        """
+        """Which of ``paths`` would be written INTO the checkout without being ignored."""
         if self.baseline is None or self.baseline.error or not self.baseline.repo_path:
             return ()
         repo = Path(self.baseline.repo_path).resolve()
@@ -1249,7 +767,7 @@ class CheckoutGuard:
                 )
                 continue
             if checked.returncode == 0:
-                continue  # ignored — it cannot dirty the tree or be staged
+                continue
             if checked.returncode != 1:
                 reasons.append(
                     f"{label} {resolved} is inside the checkout and git check-ignore "
@@ -1265,8 +783,7 @@ class CheckoutGuard:
         return tuple(reasons)
 
     def record(self, current: CheckoutState) -> dict[str, object]:
-        """The provenance block stamped into ``preflight.json``, every step artifact and
-        every ``ABORTED-…`` artifact."""
+        """The provenance block stamped into ``preflight.json``, every step artifact and"""
         data = current.as_dict()
         data["enforced"] = self.enforced
         data["allow_shared_checkout"] = not self.enforced
@@ -1276,15 +793,11 @@ class CheckoutGuard:
         data["baseline_bench_sha256"] = (
             self.baseline.bench_sha256 if self.baseline is not None else ""
         )
-        # Recorded, not merely applied: a reader asking "could this child have imported
-        # from the shared checkout?" must be able to answer from the artifact (review F9).
         data["child_python_flags"] = list(CHILD_PYTHON_FLAGS)
         data["git_timeout_s"] = self.timeout_s
         return data
 
 
-#: What ``--allow-shared-checkout`` is recorded as. Named so the warning text and the test
-#: that asserts it cannot drift apart.
 ALLOW_SHARED_CHECKOUT_WARNING = (
     "--allow-shared-checkout: the detached / clean / ancestor-of-origin-main guard is OFF "
     "for this run, and so is the per-child re-check. Plan §2 A1-c exists because the 365- "
@@ -1293,23 +806,9 @@ ALLOW_SHARED_CHECKOUT_WARNING = (
 )
 
 
-# --------------------------------------------------------------------------------------
-# Guards
-# --------------------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class GuardConfig:
-    """The four memory floors plus the watchdog's cadences and kill escalation.
-
-    Raises:
-        MeasureRefused: on construction through :meth:`validated`, when an abort floor the
-            operator set EXPLICITLY sits above the matching start floor. That combination
-            is a guard that admits what it names: preflight would pass at exactly the level
-            the watchdog is supposed to call fatal, so the first sample of a healthy run
-            would abort it — or, read the other way, the start floor would be the real
-            in-run floor and the abort floor decoration.
-    """
+    """The four memory floors plus the watchdog's cadences and kill escalation."""
 
     min_available_bytes: int
     min_swap_free_bytes: int
@@ -1320,7 +819,6 @@ class GuardConfig:
     term_grace_s: float
     host_read_retries: int
     watchdog_enabled: bool = True
-    #: Human-readable notes about floors this class derived rather than took as given.
     derivations: tuple[str, ...] = ()
 
     @classmethod
@@ -1337,16 +835,7 @@ class GuardConfig:
         host_read_retries: int = DEFAULT_HOST_READ_RETRIES,
         watchdog_enabled: bool = True,
     ) -> GuardConfig:
-        """Build a config, deriving an unset abort floor from the matching start floor.
-
-        ``None`` means "the operator did not say", and then the abort floor is
-        ``min(default, start floor)``. Without that, lowering a start floor turned into a
-        refusal citing a flag the operator never typed: ``--min-swap-free-gb 0`` on a
-        swapless host hit ``--abort-swap-free-gb 1.0 is above --min-swap-free-gb 0.0``,
-        even though the help text advertised the first flag as the way to opt out (review
-        F8). An abort floor the operator DID type is still checked, because that is a real
-        contradiction rather than a default meeting an unusual host.
-        """
+        """Build a config, deriving an unset abort floor from the matching start floor."""
         derivations: list[str] = []
         if abort_available_gb is None:
             abort_available_gb = min(DEFAULT_ABORT_AVAILABLE_GB, min_available_gb)
@@ -1410,11 +899,7 @@ class GuardConfig:
         )
 
     def in_run_breach(self, sample: HostSample) -> tuple[str, str] | None:
-        """``(check, reason)`` for the first in-run floor ``sample`` crosses, else ``None``.
-
-        Every reason names the check and the measured value, so an abort artifact never
-        says only "aborted".
-        """
+        """``(check, reason)`` for the first in-run floor ``sample`` crosses, else ``None``."""
         if sample.mem_available_bytes < self.abort_available_bytes:
             return (
                 "mem_available",
@@ -1437,34 +922,9 @@ class GuardConfig:
         return None
 
 
-# --------------------------------------------------------------------------------------
-# Size estimate — how big the synthetic file will be, derived, never guessed
-# --------------------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class SizeEstimate:
-    """What ``build --days N`` is predicted to write, and how the prediction was made.
-
-    Derivation, so a reader can check it rather than trust it:
-
-    1. ``profile_kinds`` (the bench's own, so the ``entries`` shape drift guard applies)
-       gives each kind's row count and ``payload_json`` byte total in the REFERENCE file.
-    2. The bench replicates a kind ``days`` times when it holds at most
-       ``--boot-once-max-rows`` rows (a once-per-boot record) and
-       ``round(days * session_hours * 60 / reference_minutes)`` times otherwise. This module
-       reapplies that rule; ``tests/tools/test_tos_evidence_scan_measure.py`` builds a real
-       synthetic file and asserts :attr:`predicted_rows` equals the bench's own reported row
-       count exactly, so the copy cannot drift silently.
-    3. Rows carry more than payload (identifiers, two digests, sqlite page overhead). The
-       ratio of those is measured from the reference file itself —
-       ``reference_file_bytes / reference_payload_bytes`` — rather than assumed.
-
-    Checked against the 2026-09-30 run's own artifact (``a1/build-30d.json``), from the same
-    reference file: predicted rows 2,359,200 vs written 2,359,200 — **exact** — and predicted
-    4,471,389,391 B vs written 4,373,725,184 B, i.e. **2.2 % high**. The estimate therefore
-    errs toward refusing a marginal disk rather than filling it.
-    """
+    """What ``build --days N`` is predicted to write, and how the prediction was made."""
 
     reference: str
     days: int
@@ -1488,8 +948,7 @@ def estimate_synthetic_size(
     boot_once_max_rows: int,
     bench: ModuleType,
 ) -> SizeEstimate:
-    """Predict the synthetic file's size from the reference distribution. See
-    :class:`SizeEstimate` for the derivation."""
+    """Predict the synthetic file's size from the reference distribution. See"""
     if reference is None:
         raise MeasureRefused("no --reference to size the synthetic file from")
     if days < 1:
@@ -1535,11 +994,6 @@ def estimate_synthetic_size(
     )
 
 
-# --------------------------------------------------------------------------------------
-# Steps
-# --------------------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class Step:
     """One child process the driver runs, with where its output goes."""
@@ -1565,17 +1019,7 @@ def plan_steps(
     boot_once_max_rows: int,
     batch_rows: int,
 ) -> tuple[Step, ...]:
-    """The child command lines, in the order they must run.
-
-    ``before`` and ``after`` both write their measurement JSON through the bench's own
-    ``--json-out``, which refuses to overwrite an earlier run's numbers; ``build`` has no
-    such flag, so its stdout (a ``BuildReport`` JSON object) IS ``build-Nd.json``.
-
-    Every child is launched with :data:`CHILD_PYTHON_FLAGS`. ``--python`` is the SHARED
-    checkout's venv by design — a freshly added worktree has none and must not get one —
-    so without those flags the bench's digest vouches for a file while the interpreter
-    around it can still resolve imports out of the shared tree (review F9).
-    """
+    """The child command lines, in the order they must run."""
     unknown = [n for n in names if n not in STEP_NAMES]
     if unknown:
         raise MeasureRefused(
@@ -1641,15 +1085,7 @@ def plan_steps(
 
 
 def step_artifact_paths(step: Step, *, out_dir: Path, days: int) -> tuple[Path, ...]:
-    """Every file one step writes, in one place.
-
-    The ``artifacts_absent`` preflight and the move-aside path have to agree on this list.
-    They did not: the preflight guarded ``.out``/``.err``/``.json`` while a failed step had
-    already written ``.time`` and ``.resource.json``, so the rerun the operator was told to
-    do silently replaced the failed pass's resource numbers — against this driver's own
-    stated rule that a later run must not quietly replace an earlier one's evidence
-    (round-2 review F5).
-    """
+    """Every file one step writes, in one place."""
     return tuple(
         dict.fromkeys(
             (
@@ -1665,39 +1101,19 @@ def step_artifact_paths(step: Step, *, out_dir: Path, days: int) -> tuple[Path, 
 
 @dataclass(frozen=True)
 class EarlierStep:
-    """What an already-finished step of this same measurement says about its tree.
-
-    "Same measurement" means the same ``--out-dir`` AND the same ``--days``: one output
-    directory holds every size (the existing ``a1/`` does), and 30-day and 365-day runs
-    are separate measurements that may legitimately have been taken months and many
-    commits apart. Steps of ONE size are a single pair of numbers that get compared with
-    each other, so they must come from one tree.
-    """
+    """What an already-finished step of this same measurement says about its tree."""
 
     step: str
     path: str
     repo_commit: str
     bench_sha256: str
-    #: Why this artifact cannot vouch for anything — unreadable, or written by a driver
-    #: that recorded no provenance at all (anything before A1-c).
     problem: str = ""
 
 
 def read_earlier_steps(
     out_dir: Path, *, days: int, planned: Sequence[str]
 ) -> tuple[EarlierStep, ...]:
-    """The provenance blocks of the finished steps a resume would be building on.
-
-    This is the half of A1-c that an in-process baseline cannot cover (review F1). The
-    per-child re-check holds a run together; it says nothing about the documented resume,
-    which is a SECOND process: ``run --steps before`` today at commit X, ``run --steps
-    after`` next week at commit Y, each internally consistent, together a before/after
-    pair measured with two different benches. Nothing in the first revision read what the
-    earlier step had already written down.
-
-    Only steps this run is NOT planning to produce are read; a planned step's artifact
-    cannot exist, because ``artifacts_absent`` refuses the run when it does.
-    """
+    """The provenance blocks of the finished steps a resume would be building on."""
     found: list[EarlierStep] = []
     for name in STEP_NAMES:
         if name in planned:
@@ -1769,41 +1185,14 @@ def earlier_step_mismatches(
 
 
 def abort_record_path(out_dir: Path, *, step: str, days: int, run_id: str) -> Path:
-    """Where one stop's ``ABORTED`` artifact goes — one file per (step, run).
-
-    The 270-day measurement was stopped twice and finished on the third run, all in one
-    output directory. The stopped step's ``.out``/``.err`` were moved aside under their
-    run id, so both attempts' streams are still on the host; the JSON was written to the
-    fixed ``ABORTED-before-270d.json`` by both, so the second stop OVERWROTE the first
-    and its ``reason``, ``signal_sent``, ``escalated_to_sigkill``, ``returncode`` and
-    ``partial_resource`` are gone. Plan §7.1.23 had to cite that run's burned wall clock
-    as "≥ 6,904.445 s", recovered from the surviving ``watchdog.jsonl`` series, and
-    registered the gap as "답하지 못한 것" 3. The run id in the name is what stops a
-    second attempt erasing the first, and it matches the convention
-    :func:`move_step_artifacts_aside` already used for the streams.
-
-    **No un-suffixed "latest" pointer is written alongside.** Nothing reads
-    ``ABORTED-<step>-<days>d.json``: not :func:`read_earlier_steps`, not the
-    ``artifacts_absent`` preflight (which lists :func:`step_artifact_paths` only), not any
-    other tool in this repo. ``preflight.json`` next to ``preflight.jsonl`` is NOT a
-    counter-example and the difference is the whole point: there the pointer is a copy of
-    the last line of an append-only series, so overwriting it loses nothing. An abort
-    record has no such series — the pointer would be the only copy of that run's record,
-    which is precisely the failure this name fixes. The records are found with
-    ``glob("ABORTED-<step>-<days>d.*.json")``; each one carries its own ``run_id`` field,
-    which equals the one in its name.
-    """
+    """Where one stop's ``ABORTED`` artifact goes — one file per (step, run)."""
     return out_dir / f"ABORTED-{step}-{days}d.{run_id}.json"
 
 
 def move_step_artifacts_aside(
     step: Step, *, out_dir: Path, days: int, run_id: str
 ) -> list[Path]:
-    """Rename a stopped step's files out of the way, keeping every byte.
-
-    Renamed, never deleted: they are that attempt's output and the next plan section may
-    want them. The run id in the name keeps a second stop from clobbering the first.
-    """
+    """Rename a stopped step's files out of the way, keeping every byte."""
     moved: list[Path] = []
     for path in step_artifact_paths(step, out_dir=out_dir, days=days):
         if not path.exists():
@@ -1837,11 +1226,6 @@ class StepResult:
     proc_io: dict[str, int]
     proc_io_sample_age_seconds: float | None
     samples_taken: int
-    #: The tree this child was spawned from, re-read immediately BEFORE the spawn:
-    #: ``repo_commit`` / ``repo_path`` / ``detached`` / ``clean`` /
-    #: ``ancestor_of_origin_main`` plus the bench's own sha256 (plan §2 A1-c). Per step
-    #: rather than per run, because ``before`` and ``after`` start hours apart — this is
-    #: what lets a pair of measurements say by themselves whether one bench produced both.
     checkout: dict[str, object] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
@@ -1853,9 +1237,7 @@ class StepResult:
 
 @dataclass(frozen=True)
 class AbortRecord:
-    """What an ``ABORTED-<step>-<days>d.<run_id>.json`` holds — one per run, so a second
-    stop in the same output directory cannot erase the first (plan §7.1.23). A mid-run stop
-    is never silent."""
+    """What an ``ABORTED-<step>-<days>d.<run_id>.json`` holds — one per run, so a second"""
 
     run_id: str
     step: str
@@ -1866,16 +1248,9 @@ class AbortRecord:
     elapsed_seconds: float
     signal_sent: str
     escalated_to_sigkill: bool
-    #: ``None`` when no child was ever started — a ``checkout_drift`` abort fires BEFORE
-    #: the spawn. A 0 there would read as "the child exited cleanly", which is the kind of
-    #: number that means "not measured" and that this plan has already had to withdraw once.
     returncode: int | None
-    #: How far the stopped child actually got — the numbers plan §7.1.2 could not cite for
-    #: the aborted 365-day pass because nothing recorded them. Empty for a pre-spawn abort.
     partial_resource: dict[str, object]
     last_samples: tuple[dict[str, object], ...]
-    #: The same provenance block :class:`StepResult` carries, so an abort says which tree
-    #: it was looking at when it stopped.
     checkout: dict[str, object] = field(default_factory=dict)
 
 
@@ -1895,12 +1270,7 @@ def _spawn(argv: Sequence[str], stdout_path: Path, stderr_path: Path) -> int:
 
 
 def _returncode(status: int) -> int:
-    """A wait status as a shell-style return code: ``-N`` for signal N, else the exit code.
-
-    ``AbortRecord`` used the RAW wait status on the non-signalled branch, so a child that
-    had already exited with 1 was recorded as ``256`` while ``StepResult`` recorded ``1``
-    for the same thing (review F7). One conversion, used by both.
-    """
+    """A wait status as a shell-style return code: ``-N`` for signal N, else the exit code."""
     if os.WIFSIGNALED(status):
         return -os.WTERMSIG(status)
     return os.WEXITSTATUS(status)
@@ -1909,15 +1279,7 @@ def _returncode(status: int) -> int:
 def _terminate(
     pid: int, *, grace_s: float, sleep: Callable[[float], None]
 ) -> tuple[bool, int, resource.struct_rusage]:
-    """``SIGTERM``, then ``SIGKILL`` after ``grace_s``.
-
-    Returns ``(escalated, status, rusage)``. The rusage is the killed child's own, and it
-    is returned rather than discarded because plan §7.1.2's complaint about the aborted
-    365-day pass was precisely that it left no numbers behind: ``before-365d.time`` was
-    0 bytes, ``before-365d.json`` never existed, and every figure the first draft cited
-    for that pass had to be demoted to a hypothesis. A stopped step now reports how far it
-    got.
-    """
+    """``SIGTERM``, then ``SIGKILL`` after ``grace_s``."""
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -1952,47 +1314,7 @@ def run_step(
     sampler: Callable[[int], HostSample] | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> StepResult:
-    """Run one child under the watchdog.
-
-    The loop is single-threaded on purpose: the driver has nothing else to do while a child
-    runs, and a thread would add a synchronization story to a component whose whole job is
-    to be trustworthy. Samples go to ``watchdog.jsonl`` as they are taken, so an abort — or
-    a kill of the driver itself — still leaves the series behind.
-
-    **Two cadences, one loop.** ``wait4`` is polled every ``--poll-interval-s`` (0.1 s) and
-    the host is sampled every ``--watch-interval-s`` (5 s). Polling only at the sample
-    cadence would attribute up to a whole interval of idle waiting to the child: an 8.0 s
-    measure step reaped at t=10.0 reports 10.0 s wall and 80 % CPU, which is not comparable
-    with the GNU ``time -v`` numbers plan §7.1.2 cites (review F6).
-
-    **A breach is re-checked against the child before it becomes an abort.** If the child
-    exited between the last poll and the sample, the step has already succeeded and there
-    is nothing to kill; killing a zombie and writing an ``ABORTED`` artifact next to a
-    complete ``<step>-Nd.json`` would make the next resume unrunnable (review F7).
-
-    **The checkout is re-read before the spawn, every time** (plan §2 A1-c). The preflight
-    runs once and the children do not: at 180 days ``before`` and ``after`` started 1 h
-    39 m apart, and anything that moved the tree in between would have been recorded by a
-    SHA line and stopped by nothing. A commit that moved, a tree that went dirty or a bench
-    whose bytes changed aborts the step HERE, with no child started — so the
-    ``ABORTED-<step>-<days>d.<run_id>.json`` for that case carries no resource numbers and
-    ``returncode: null``, which is the honest shape for "nothing ran".
-
-    Args:
-        checkout: The provenance guard. Its baseline is what the preflight recorded; its
-            fresh read is stamped into this step's artifacts whether or not it is enforced.
-        sampler: Overrides how a sample is taken, for tests that need a specific series.
-            Production passes ``None`` and the injected :class:`HostReader` is used.
-
-    Raises:
-        MeasureAborted: the tree moved under the run, a floor was crossed, a competing
-            build appeared, the host could not be read for ``--host-read-retries`` + 1
-            consecutive samples, or the driver hit an unexpected error. In every one of
-            those cases ``ABORTED-<step>-<days>d.<run_id>.json`` is written BEFORE this is
-            raised,
-            and any child that had been started is terminated first — an abort is never
-            silent, whatever caused it (review F2).
-    """
+    """Run one child under the watchdog."""
     take = sampler or (lambda pid: reader.sample(child_pid=pid))
     watchdog_path = out_dir / "watchdog.jsonl"
     samples: list[dict[str, object]] = []
@@ -2006,11 +1328,7 @@ def run_step(
     checkout_record: dict[str, object] = {}
 
     def write_prespawn_abort(check: str, reason: str) -> None:
-        """An ``ABORTED`` artifact for a stop that happened BEFORE any child existed.
-
-        Defensive on its own failure: a write that cannot happen (ENOSPC) must not
-        replace the original reason with an IOError traceback.
-        """
+        """An ``ABORTED`` artifact for a stop that happened BEFORE any child existed."""
         path = abort_record_path(out_dir, step=step.name, days=days, run_id=run_id)
         try:
             path.write_text(
@@ -2037,15 +1355,9 @@ def run_step(
                 encoding="utf-8",
             )
             log(f"wrote {path}")
-        except Exception as write_exc:  # never mask the original failure
+        except Exception as write_exc:
             log(f"could not write the abort artifact: {write_exc!r}")
 
-    # The five git calls below take real time, and this runs hours into a measurement.
-    # A SIGTERM (a dropped tmux pane, `kill`, earlyoom) landing in the middle of them
-    # used to escape with NO artifact, straight past the handler that exists so that
-    # "an abort is never silent, whatever caused it" (review F3). The window is now
-    # inside a handler of its own — it cannot share the child's, because there is no
-    # child yet to terminate.
     try:
         current_checkout = checkout.read()
         checkout_record = checkout.record(current_checkout)
@@ -2140,8 +1452,6 @@ def run_step(
         path = abort_record_path(out_dir, step=step.name, days=days, run_id=run_id)
         path.write_text(json.dumps(asdict(record_out), indent=2), encoding="utf-8")
         log(f"wrote {path}")
-        # The step's own files are moved aside so the documented resume is not refused by
-        # the artifacts_absent preflight for files this abort itself created (review F4).
         for moved in move_step_artifacts_aside(
             step, out_dir=out_dir, days=days, run_id=run_id
         ):
@@ -2177,9 +1487,6 @@ def run_step(
             try:
                 sample = take(pid)
             except MeasureRefused as exc:
-                # A transient host read (pgrep exiting 2/3, a momentarily unreadable
-                # /proc) must not end a multi-hour run on its first occurrence, and must
-                # not pass silently either (review F2).
                 consecutive_read_failures += 1
                 record(
                     {
@@ -2189,10 +1496,6 @@ def run_step(
                     }
                 )
                 log(f"host read failed ({consecutive_read_failures}): {exc}")
-                # With --no-watchdog there is no guard to go blind: killing the child for
-                # an unreadable /proc would be the one in-run kill condition left after
-                # the operator deliberately turned the in-run kills off (round-2 review
-                # F4). The failure is still recorded, every time.
                 if (
                     guard.watchdog_enabled
                     and consecutive_read_failures > guard.host_read_retries
@@ -2211,8 +1514,6 @@ def run_step(
             breach = guard.in_run_breach(sample)
             if breach is None:
                 continue
-            # The child may have finished while this sample was being taken. A finished
-            # step is a success, not an abort (review F7).
             done, status, usage = os.wait4(pid, os.WNOHANG)
             if done == pid:
                 wall = time.monotonic() - started_wall
@@ -2225,11 +1526,6 @@ def run_step(
     except MeasureAborted:
         raise
     except BaseException as exc:
-        # A driver that dies must not leave the child holding the host, AND must not leave
-        # a stopped run with no artifact — the exact shape §7.1.2 had to demote to
-        # hypothesis for the 365-day pass (review F2).
-        # Separate names: the happy path's `usage` is always a struct_rusage, and reusing
-        # the name here would make it Optional for the whole function.
         failed_usage: resource.struct_rusage | None
         try:
             failed_escalated, failed_status, failed_usage = _terminate(
@@ -2249,7 +1545,7 @@ def run_step(
                 status=failed_status,
                 usage=failed_usage,
             )
-        except Exception as write_exc:  # never mask the original failure
+        except Exception as write_exc:
             log(f"could not write the abort artifact: {write_exc!r}")
         raise
 
@@ -2298,16 +1594,7 @@ def _format_elapsed(seconds: float) -> str:
 
 
 def _write_resource_artifacts(result: StepResult, *, out_dir: Path, days: int) -> None:
-    """``<step>-Nd.time`` (GNU ``time -v`` field names) and ``<step>-Nd.resource.json``.
-
-    Two files rather than one because they answer different readers. The ``.time`` file
-    keeps the plan's existing citations working — §7.1.2 quotes ``before-90d.time``'s
-    ``File system inputs`` line — so the same grep must keep finding the same field name.
-    The JSON carries what GNU ``time`` cannot: the child's ``/proc/<pid>/io``, and the age of
-    that sample. Fields GNU ``time`` prints but ``wait4`` does not supply are OMITTED rather
-    than zero-filled; a zero that means "not measured" is the kind of number this plan has
-    already had to withdraw once.
-    """
+    """``<step>-Nd.time`` (GNU ``time -v`` field names) and ``<step>-Nd.resource.json``."""
     percent_cpu = (
         int(100.0 * (result.user_seconds + result.system_seconds) / result.wall_seconds)
         if result.wall_seconds > 0
@@ -2316,10 +1603,6 @@ def _write_resource_artifacts(result: StepResult, *, out_dir: Path, days: int) -
     lines = [
         "# produced by tools/tos_evidence_scan_measure.py from os.wait4() rusage of this",
         "# child — GNU `time -v` field names, fields wait4 does not supply are omitted.",
-        # COMMENT lines, so the grep plan §7.1.2 runs for `File system inputs` is
-        # untouched. The same two facts are machine-readable next door in
-        # `<step>-Nd.resource.json`; they are here because a reader who opens the `.time`
-        # file should not have to ask a second file which tree produced it.
         f"# repo_commit: {result.checkout.get('repo_commit', '')} "
         f"({result.checkout.get('repo_path', '')})",
         f"# bench sha256: {result.checkout.get('bench_sha256', '')}",
@@ -2346,11 +1629,6 @@ def _write_resource_artifacts(result: StepResult, *, out_dir: Path, days: int) -
     )
 
 
-# --------------------------------------------------------------------------------------
-# Preflight
-# --------------------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class PreflightCheck:
     """One gate, its measured value and its floor. A refusal quotes this verbatim."""
@@ -2361,28 +1639,15 @@ class PreflightCheck:
     floor: str
     source: str
     detail: str = ""
-    #: The same two values as raw bytes where the check is numeric, so ``preflight.json``
-    #: can be cited arithmetically instead of by re-parsing a formatted "12.00 GiB".
     measured_bytes: int | None = None
     floor_bytes: int | None = None
-    #: Same, for the one quantity ``detail`` carries where it carries exactly one. Without
-    #: it a ``detail`` string could be rebased to 1e9 under a "GiB" label and nothing would
-    #: notice — the units property test has no second number to check the division against
-    #: (review #858 F1). ``None`` where ``detail`` is prose or empty.
     detail_bytes: int | None = None
-    #: ``False`` when the check was SKIPPED because the run is already refused for another
-    #: reason — never a quiet pass. A not-evaluated check is excluded from the refusal
-    #: list (it would add a second, bogus reason) and visible in the record, and
-    #: ``test_every_check_is_evaluated_on_a_healthy_host`` pins that a passing host
-    #: evaluates all of them.
     evaluated: bool = True
 
 
 @dataclass(frozen=True)
 class PreflightRecord:
-    """Everything the preflight looked at, written to ``preflight.json`` whether it passed
-    or refused — a refusal that leaves no artifact is indistinguishable from never having
-    run (plan §7.1.2's complaint about citing session memory)."""
+    """Everything the preflight looked at, written to ``preflight.json`` whether it passed"""
 
     run_id: str
     at_kst: str
@@ -2396,9 +1661,6 @@ class PreflightRecord:
     watchdog_enabled: bool
     warnings: tuple[str, ...]
     steps_planned: tuple[str, ...]
-    #: The tree this run was planned from (plan §2 A1-c): ``repo_commit`` / ``repo_path`` /
-    #: ``detached`` / ``clean`` / ``ancestor_of_origin_main``, the bench's sha256, and
-    #: whether the guard was enforced. Recorded on a refusal too.
     checkout: dict[str, object] = field(default_factory=dict)
     refusal: str | None = None
 
@@ -2410,42 +1672,19 @@ class PreflightRecord:
 
 @dataclass(frozen=True)
 class SyntheticDisposition:
-    """What to do with the synthetic file at the end of a run, and what to tell the
-    operator.
-
-    ``action`` is one of ``delete`` / ``delete-failed`` / ``keep-partial`` /
-    ``keep-resumable`` / ``keep-unmeasured`` / ``keep-not-ours`` / ``keep-requested``.
-    """
+    """What to do with the synthetic file at the end of a run, and what to tell the"""
 
     action: str
     message: str
 
 
 def _decimal_gb(size_bytes: int) -> str:
-    """``size_bytes`` as decimal GB, which is the unit the growth plan is written in.
-
-    This is the **GB** half of the units rule stated at the top of the module: a file size
-    in an operator-facing disposition message is read next to the plan's own file sizes
-    (26.73 / 40.10 / 53.23 GB), so it uses the plan's base and says so. Everything derived
-    from ``_GB`` (``1024**3``) is a host quantity and is labelled **GiB** instead.
-
-    History, because the two halves landed apart. #853 F7 introduced this function while
-    deliberately leaving the threshold strings mislabelled ("GB" on a GiB value — the wart
-    plan §7.1.23 registered), since those strings are quoted verbatim in the §7.1.12 /
-    §7.1.15 / §7.1.23 preflight tables and rewriting them as a side effect of another
-    change is how citations rot. The follow-up closed that: the labels moved and the
-    quoting passages were annotated in the same commit (plan §7.1.26 「남는 후속 하나」).
-    """
+    """``size_bytes`` as decimal GB, which is the unit the growth plan is written in."""
     return f"{size_bytes / 1_000_000_000.0:.2f} GB"
 
 
 def _rm_command(path: Path) -> str:
-    """The deletion command, safe to paste.
-
-    ``shlex.quote`` because this string is handed to an operator and stored as
-    ``delete_command``: an unquoted path with a space turns a 26-53 GB clean-up into a
-    two-operand ``rm`` that removes the wrong thing or nothing.
-    """
+    """The deletion command, safe to paste."""
     return f"rm {shlex.quote(str(path))}"
 
 
@@ -2460,42 +1699,7 @@ def decide_synthetic_disposition(
     keep_requested: bool = False,
     delete_on_success: bool = False,
 ) -> SyntheticDisposition:
-    """Decide the fate of the synthetic file, and say it out loud in every case.
-
-    Plan §7.1.2 keeps peak disk at one file by deleting each size's synthetic DB once its
-    before/after pair is done. Three situations are exactly when NOT to apply that:
-
-    * **An abort.** The watchdog fires because the host is short of MEMORY, and deleting a
-      53 GB file does nothing for memory while costing the operator the whole build (366 s
-      at 365 days). Two unfinished shapes, because they need different advice —
-      ``build`` still in ``remaining`` means a PARTIAL write that the bench will refuse to
-      overwrite, so the honest instruction is "delete it before rebuilding", not a resume
-      that cannot work; ``build`` done with a measure step left means the file is complete
-      and the run really is resumable with ``--steps``.
-    * **A pair that is not measured yet.** Every planned step can finish with the
-      measurement still half-done: ``--steps build`` builds and stops, ``--steps after``
-      on a pre-built file measures one half. Deleting then throws away the file the other
-      pass needs. ``before_measured`` / ``after_measured`` are what this reads, and they
-      are REQUIRED keyword arguments with no defaults — a default here would decide, for
-      every future caller that forgets them, in the direction of deletion.
-    * **A resume that succeeds.** ``created_by_this_run`` is false, so the file is not
-      this run's to delete — and that is deliberate: it is why the 180- and 270-day
-      index-time file sizes could be read at all (§7.1.15 · §7.1.23 "답하지 못한 것" 4).
-      But the run that FINISHED the measurement used to say nothing whatsoever about a
-      26-53 GB file, so "delete it now" was a step the operator had to remember on their
-      own (§7.1.23 "뒤처리"). It now says so, with the exact command, and
-      ``--delete-synthetic-on-success`` opts into having the driver do it.
-
-    The two measured flags are a PROPERTY of the output directory, not a reading of
-    ``--steps``: a pass counts as measured when this run completed it or when its
-    ``<step>-<days>d.resource.json`` is already there. The CLI refuses
-    ``--delete-synthetic-on-success`` on the same property, and this function re-derives
-    the verdict from the flags rather than trusting that refusal — a guard that holds only
-    because a different guard ran is the failure mode ``MEMORY.md`` records as "가드가
-    자기가 막는다고 말한 것을 허용한다", and independent review #853 found exactly that in
-    the first revision (``--steps after`` passed a positional check and deleted an
-    unmeasured pair).
-    """
+    """Decide the fate of the synthetic file, and say it out loud in every case."""
     size = _decimal_gb(size_bytes)
     rm = _rm_command(path)
     missing = [
@@ -2506,7 +1710,6 @@ def decide_synthetic_disposition(
     not_ours = "" if created_by_this_run else " It was not built by this run."
 
     if remaining:
-        # Unfinished, whatever the flags say: an incomplete run never deletes.
         if "build" in remaining:
             return SyntheticDisposition(
                 "keep-partial",
@@ -2528,10 +1731,6 @@ def decide_synthetic_disposition(
         )
 
     if keep_requested:
-        # Checked before the created/not-created split: on a resume the first revision
-        # fell through to the not-ours branch and recommended
-        # --delete-synthetic-on-success, the one flag the startup refusal rejects next to
-        # --keep-synthetic (review #853 finding 5).
         unmeasured = (
             ""
             if not missing
@@ -2587,33 +1786,7 @@ def write_run_summary(
     disposition: SyntheticDisposition | None,
     refusal: str | None = None,
 ) -> Path:
-    """``run-<days>d.<run_id>.summary.json`` — how this one run ended, in fields.
-
-    The run log is for a human reading a scrollback; a plan section cites fields. Until
-    now the disposition of the synthetic file existed only as a sentence in
-    ``measure-<days>d.log`` — and on a successful resume not even that, which is the half
-    of plan §7.1.23 "뒤처리" that nothing recorded. ``delete_command`` is the exact string
-    an operator (or the plan's clean-up paragraph) can paste for a file that is still on
-    the host; it is ``shlex.quote``d.
-
-    ``-<days>d`` is in the name for the same reason every other artifact carries it: one
-    output directory holds every size (the existing ``a1/`` does).
-
-    The abort records are listed by name rather than inlined: they are whole artifacts of
-    their own, one per (step, run), and this file is the index that says which run wrote
-    which.
-
-    ``size_bytes`` is the size read at DISPOSITION time — after the last step, before any
-    deletion — not a fresh ``stat`` here, so it survives the default run that removes the
-    file. That is a partial answer to §7.1.15 "답하지 못한 것" 3 / §7.1.23 4 (the driver
-    never recorded the file size after the index step): the number is now in an artifact
-    for every run that reaches its steps, instead of only for the runs whose file happened
-    to survive. It is ``st_size`` and nothing more — the ``PRAGMA`` / ``sqlite_master`` /
-    ``index_list`` detail those sections read off the surviving file is still read off the
-    file. ``None`` means the file was not there, or could not be stat'd, when the run
-    ended — which ``exists_after_the_run`` tells apart: it is ``None`` when the driver
-    could not find out, never ``False`` on the strength of an I/O error.
-    """
+    """``run-<days>d.<run_id>.summary.json`` — how this one run ended, in fields."""
     still_there = exists_after_the_run
     payload: dict[str, object] = {
         "run_id": run_id,
@@ -2653,19 +1826,7 @@ LOCK_NAME = ".measure.lock"
 def read_lock(
     out_dir: Path, *, proc_root: Path = Path("/proc")
 ) -> dict[str, object] | None:
-    """The live lock in ``out_dir``, or ``None`` when there is none.
-
-    A pattern match over ``pgrep`` output tells you that something LOOKS like a second
-    driver; a lock file tells you that one really claimed this output directory. Both are
-    kept because they answer different questions — the pattern sees a driver writing
-    somewhere else on the same host, the lock is exact about this directory and has no
-    false positives at all.
-
-    A lock whose PID is gone, or whose PID has been recycled by an unrelated process, is
-    STALE and reported as absent: a driver killed with SIGKILL cannot clean up after
-    itself, and a lock that outlives its owner would block every later run forever. The
-    recycle check compares the recorded argv0 against ``/proc/<pid>/cmdline``.
-    """
+    """The live lock in ``out_dir``, or ``None`` when there is none."""
     path = out_dir / LOCK_NAME
     try:
         held = json.loads(path.read_text())
@@ -2684,9 +1845,9 @@ def read_lock(
             .decode("utf-8", "replace")
         )
     except OSError:
-        return None  # owner is gone
+        return None
     if str(held.get("argv0", "")) not in cmdline:
-        return None  # pid recycled by something else
+        return None
     return dict(held)
 
 
@@ -2720,8 +1881,7 @@ def release_lock(out_dir: Path) -> None:
 
 
 def _disk_free(path: Path) -> int:
-    """Free bytes on the filesystem that will hold ``path``, walking up to the nearest
-    directory that exists (the synthetic file's parent is often not created yet)."""
+    """Free bytes on the filesystem that will hold ``path``, walking up to the nearest"""
     probe = path if path.exists() else path.parent
     while not probe.exists() and probe != probe.parent:
         probe = probe.parent
@@ -2745,20 +1905,12 @@ def preflight(
     synthetic: Path,
     warnings: Sequence[str] = (),
 ) -> PreflightRecord:
-    """Check the host, write ``preflight.json``/``preflight.jsonl``, and refuse if anything
-    fails.
-
-    Order matters only for readability — every check runs, so one artifact names every
-    problem rather than making the operator fix them one refusal at a time.
-    """
+    """Check the host, write ``preflight.json``/``preflight.jsonl``, and refuse if anything"""
     out_dir.mkdir(parents=True, exist_ok=True)
     checks: list[PreflightCheck] = []
     build_planned = any(step.name == "build" for step in steps)
     synthetic_present = synthetic.exists()
 
-    # FIRST, because it is the cheapest and the most fundamental: if the tree is wrong,
-    # nothing measured from it is worth the hours it would take, and the expensive
-    # reference scan below is skipped for the same reason a failing memory check skips it.
     checkout_state = (
         checkout.baseline if checkout.baseline is not None else checkout.read()
     )
@@ -2789,8 +1941,6 @@ def preflight(
         )
     )
 
-    # The resume this guard could not see (review F1). `before` today and `after` next
-    # week are two PROCESSES; an in-process baseline says nothing about the first one.
     earlier = read_earlier_steps(
         out_dir, days=days, planned=[step.name for step in steps]
     )
@@ -2827,8 +1977,6 @@ def preflight(
         )
     )
 
-    # The driver's own output must not become the dirt its own guard trips over
-    # (review F5). Never released by --allow-shared-checkout — see output_conflicts.
     output_problems = checkout.output_conflicts(
         {"--out-dir": out_dir, "--synthetic": synthetic}
     )
@@ -2852,17 +2000,10 @@ def preflight(
                 "where `git add -A` would stage it — the shared-checkout hatch is about "
                 "where the CODE comes from, not a licence to write 53 GB into the repo"
             ),
-            # Empty on purpose: `measured` already IS the list of problems, and the
-            # refusal line now carries the detail (F8), so repeating it printed the same
-            # paragraph twice in one message.
             detail="",
         )
     )
 
-    # Reader failures become FAILED CHECKS, not exceptions. Raising here skipped
-    # preflight.json entirely, so a host with no SwapFree line or a broken pgrep produced
-    # the "refusal that leaves no artifact" this record exists to prevent — contradicting
-    # both PreflightRecord's own docstring and plan §7.1.9 (round-2 review F6).
     try:
         info: dict[str, int] | None = reader.meminfo()
         memory_error = ""
@@ -2947,7 +2088,6 @@ def preflight(
             )
         )
 
-    # The two directions of "is the file where the planned steps need it to be".
     if not build_planned and not synthetic_present:
         checks.append(
             PreflightCheck(
@@ -2959,9 +2099,6 @@ def preflight(
             )
         )
     if build_planned and synthetic_present:
-        # The bench refuses to overwrite its --out, so this run is GUARANTEED to fail at
-        # step 1 — after preflight said ok, and after leaving four artifacts behind that
-        # then block the retry (round-2 review F3).
         checks.append(
             PreflightCheck(
                 check="synthetic_absent",
@@ -2977,11 +2114,6 @@ def preflight(
             )
         )
 
-    # The estimate is a GROUP BY over the whole reference file. It runs LAST of the cheap
-    # checks, only when `build` is planned (a measure-only resume never uses it), and only
-    # when nothing has already refused the run — scanning a reference to size a disk for a
-    # run that is not going to start is work on a host that is already in trouble
-    # (round-2 review F10).
     estimate: SizeEstimate | None = None
     estimate_error = ""
     already_refused = any(c.evaluated and not c.ok for c in checks)
@@ -3026,8 +2158,6 @@ def preflight(
             base_bytes = estimate.predicted_file_bytes if estimate else 0
             basis = f"predicted synthetic size x --disk-headroom-ratio {disk_headroom_ratio}"
         else:
-            # Measure-only: the file exists, so only the index is new. Sized off the file
-            # on disk, not off a prediction, because the real thing is right there.
             on_disk = synthetic.stat().st_size if synthetic_present else 0
             base_bytes = int(on_disk * index_growth_ratio)
             basis = (
@@ -3112,13 +2242,6 @@ def preflight(
         None
         if not failed
         else " | ".join(
-            # The detail belongs in the refusal, not only in the stdout line above it
-            # (review F8). `MeasureRefused` is what reaches stderr and the operator's
-            # scrollback, and for this check the summary can read perfectly healthy
-            # ("detached, clean, ancestor of origin/main") while the actionable half —
-            # "run git fetch origin", "--bench resolves OUTSIDE the checkout" — lived
-            # only in `detail`. That is a refusal that hides its own cause, and it is
-            # the same defect wherever a check has a detail.
             f"{c.check}: measured {c.measured}, need {c.floor}"
             + (f" [{c.detail}]" if c.detail else "")
             for c in failed
@@ -3158,11 +2281,6 @@ def preflight(
     with (out_dir / "preflight.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload) + "\n")
     return record
-
-
-# --------------------------------------------------------------------------------------
-# CLI
-# --------------------------------------------------------------------------------------
 
 
 def _add_guard_arguments(parser: argparse.ArgumentParser) -> None:
@@ -3353,15 +2471,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-#: Signals that mean "stop now" and must not bypass the abort path: a closed tmux pane
-#: (``SIGHUP``), a ``kill`` or ``timeout`` (``SIGTERM``), or earlyoom choosing the driver
-#: rather than the child.
 _STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
 
 
 def _install_signal_handlers() -> dict[int, object]:
-    """Route ``SIGTERM``/``SIGHUP`` into the same path a crash takes, and return the
-    handlers they replaced so they can be put back."""
+    """Route ``SIGTERM``/``SIGHUP`` into the same path a crash takes, and return the"""
 
     def handler(signum: int, _frame: object) -> None:
         raise MeasureSignalled(
@@ -3374,8 +2488,6 @@ def _install_signal_handlers() -> dict[int, object]:
         try:
             previous[signum] = signal.signal(signum, handler)
         except (ValueError, OSError):
-            # Not the main thread, or the platform has no such signal. The driver still
-            # works; it just keeps the default disposition for that one signal.
             continue
     return previous
 
@@ -3401,14 +2513,7 @@ def _print_preflight(record: PreflightRecord, *, log: Callable[[str], None]) -> 
 
 
 def _exists_or_unknown(path: Path) -> bool | None:
-    """``True`` / ``False`` / ``None`` for "it is there" / "it is not" / "cannot tell".
-
-    ``Path.exists()`` re-raises an ``OSError`` that is not one of the "this just means
-    absent" errnos (``EIO`` on a failing disk, ``EACCES`` on a directory that became
-    unreadable). Reporting that as ``False`` would put "the synthetic file is gone" in an
-    artifact on the strength of an I/O error, which is the kind of number plan §7.1.2 has
-    already had to withdraw once.
-    """
+    """``True`` / ``False`` / ``None`` for "it is there" / "it is not" / "cannot tell"."""
     try:
         return path.exists()
     except OSError:
@@ -3416,11 +2521,7 @@ def _exists_or_unknown(path: Path) -> bool | None:
 
 
 def _same_path(left: Path, right: Path) -> bool:
-    """Whether two paths name the same file, symlinks and ``..`` resolved.
-
-    A string compare would miss ``./evidence.sqlite3`` against an absolute path, and the
-    one thing this is asked about is whether a run is pointed at its own reference.
-    """
+    """Whether two paths name the same file, symlinks and ``..`` resolved."""
     try:
         return left.resolve() == right.resolve()
     except OSError:  # pragma: no cover - resolve() on an unreadable parent
@@ -3428,26 +2529,13 @@ def _same_path(left: Path, right: Path) -> bool:
 
 
 def recorded_pass(out_dir: Path, *, step: str, days: int) -> Path | None:
-    """The finished ``<step>-<days>d.resource.json`` in ``out_dir``, or ``None``.
-
-    "Has this pass been measured?" is a question about the OUTPUT DIRECTORY, not about
-    ``--steps``. The first revision answered it positionally — "is the literal string
-    ``after`` in ``--steps``" — and independent review #853 showed what that admits:
-    ``run --steps after --delete-synthetic-on-success`` against a pre-built file passes
-    the check, measures one half of the pair and deletes the file the other half needs.
-    The refusal's own message said it existed to stop that.
-    """
+    """The finished ``<step>-<days>d.resource.json`` in ``out_dir``, or ``None``."""
     path = out_dir / f"{step}-{days}d.resource.json"
     return path if path.exists() else None
 
 
 def _measures_this_file(resource_path: Path, synthetic: Path) -> bool:
-    """Whether that recorded pass was measured against THIS synthetic file.
-
-    An output directory can be reused, and a resource artifact naming a different ``--db``
-    is evidence about a different file. Read from the child's own ``argv`` rather than
-    assumed, and a record that cannot be read vouches for nothing.
-    """
+    """Whether that recorded pass was measured against THIS synthetic file."""
     try:
         payload = json.loads(resource_path.read_text())
     except (OSError, ValueError):
@@ -3466,24 +2554,7 @@ def _measures_this_file(resource_path: Path, synthetic: Path) -> bool:
 
 
 def _hold_stop_signals() -> frozenset[int] | None:
-    """Block ``SIGTERM``/``SIGHUP`` for the duration of the end-of-run bookkeeping.
-
-    That bookkeeping got longer in this revision — dispose of the synthetic file, write
-    ``run-<days>d.<run_id>.summary.json``, append the buffered log, release the lock — and
-    every one of those is the ONLY write of what it writes. A stop signal landing inside
-    it raises :class:`MeasureSignalled` out of a ``finally`` and the rest never happens:
-    the run log, which is the human-readable timeline the plan says it will cite instead
-    of session memory, would be lost in its entirety.
-
-    Blocked, not ignored and not reset to the default: ``SIG_IGN`` discards the operator's
-    stop request and ``SIG_DFL`` kills the process on the spot, which is the thing being
-    prevented. A blocked signal stays PENDING and is delivered when the mask is restored
-    at the end of :func:`main` — after the handlers have been put back, so a driver that
-    was told to stop still stops, having finished writing first.
-
-    Returns the previous mask, or ``None`` where the platform or thread cannot do this
-    (the same tolerance :func:`_install_signal_handlers` already has).
-    """
+    """Block ``SIGTERM``/``SIGHUP`` for the duration of the end-of-run bookkeeping."""
     try:
         return frozenset(signal.pthread_sigmask(signal.SIG_BLOCK, _STOP_SIGNALS))
     except (AttributeError, ValueError, OSError):
@@ -3501,20 +2572,7 @@ def _release_stop_signals(previous: frozenset[int] | None) -> None:
 
 
 def _run_outcome(failure: BaseException | None) -> str:
-    """How a run ended, as one word for ``run-<days>d.<run_id>.summary.json``.
-
-    The four named exceptions are the four things that stop this driver, and they are not
-    interchangeable: "aborted" is a guard that fired mid-step, "step-failed" is a child
-    that exited non-zero, "signalled" is something outside the run killing it, and
-    "refused" is the preflight or an argument the driver would not run with. A single
-    "failed" would make the summary unable to answer the first question anyone asks of a
-    stopped measurement.
-
-    ⚠ A "refused" summary only exists when the refusal happened after the output
-    directory did. An argument contradiction is refused before anything is created and
-    leaves no artifact at all, exactly like an ``argparse`` error; the preflight's own
-    refusals are in ``preflight.json`` / ``preflight.jsonl`` as well.
-    """
+    """How a run ended, as one word for ``run-<days>d.<run_id>.summary.json``."""
     if failure is None:
         return "ok"
     for kind, name in (
@@ -3529,14 +2587,7 @@ def _run_outcome(failure: BaseException | None) -> str:
 
 
 def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> int:
-    """Entry point.
-
-    Args:
-        reader: Where the host facts come from. Deliberately NOT a command-line option —
-            the operator must not be able to point the guards at a friendlier ``/proc``
-            from the shell. Tests pass one so that "does this refusal fire" is decided by
-            the injected host and not by whatever else happens to be running.
-    """
+    """Entry point."""
     raw = list(sys.argv[1:] if argv is None else argv)
     args = build_parser().parse_args(raw)
     out_dir: Path = args.out_dir
@@ -3548,17 +2599,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
         print(message, flush=True)
 
     summary_written = False
-    #: True once the run is past the pre-launch refusals and owns an output directory.
-    #: NOT "this call created the directory": a resume runs into a directory that already
-    #: holds the earlier steps, and gating on `out_dir.exists()` made "an argument
-    #: contradiction leaves nothing behind" true only for the one input the test used, a
-    #: directory that was not there yet (round-2 N1). `--delete-synthetic-on-success` is a
-    #: RESUME flag, so the directory normally does exist, and its contradictions were
-    #: writing a `refused` summary into someone else's directory.
     out_dir_ready = False
-    #: The planned step names, once they are known. A preflight refusal happens after
-    #: `plan_steps` has run, so reporting `[]` there would say "nothing was planned" about
-    #: a run that had a full plan (round-2 N3).
     planned_names: list[str] = []
 
     def emit_summary(
@@ -3573,11 +2614,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
         disposition: SyntheticDisposition | None,
         refusal: str | None,
     ) -> Path | None:
-        """Write this run's summary once, and never let that write mask a real failure.
-
-        Returns the path, or ``None`` when there was nothing to write into (an argument
-        refused before the output directory existed) or the write itself failed.
-        """
+        """Write this run's summary once, and never let that write mask a real failure."""
         nonlocal summary_written
         if summary_written or not out_dir_ready:
             return None
@@ -3598,7 +2635,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                 disposition=disposition,
                 refusal=refusal,
             )
-        except Exception as summary_exc:  # never mask the original failure
+        except Exception as summary_exc:
             log(f"could not write the run summary: {summary_exc!r}")
             return None
         summary_written = True
@@ -3641,9 +2678,6 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
             )
             print(f"WARNING: {warnings[-1]}", file=sys.stderr)
 
-        # BEFORE out_dir.mkdir: an argument the driver will not run with must not leave a
-        # directory behind as its only trace. Everything below reads paths, never creates
-        # them (`exists()` on a path under a missing parent is simply False).
         step_names = [s.strip() for s in args.steps.split(",") if s.strip()]
         if "build" in step_names and args.reference is None:
             raise MeasureRefused(
@@ -3657,10 +2691,6 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                 "may build onto it or delete it"
             )
         if args.command == "run" and args.delete_synthetic_on_success:
-            # Refused up front rather than reconciled later. A flag pair that contradicts
-            # itself has no defensible winner, and a delete that lands between the two
-            # halves of the pair destroys the file the other half needs — cheap to say
-            # now, expensive to discover after a three-hour `before`.
             if args.keep_synthetic:
                 raise MeasureRefused(
                     "--keep-synthetic and --delete-synthetic-on-success ask for opposite "
@@ -3695,8 +2725,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
         out_dir_ready = True
 
         def estimator() -> SizeEstimate:
-            """Deferred so the reference is scanned only when `build` is planned AND the
-            cheap host checks have passed (round-2 review F10)."""
+            """Deferred so the reference is scanned only when `build` is planned AND the"""
             return estimate_synthetic_size(
                 args.reference,
                 days=args.days,
@@ -3750,11 +2779,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
         failure: BaseException | None = None
 
         def _pass_is_recorded(step: str) -> bool:
-            """Whether ``step`` has a result for THIS synthetic file in this directory.
-
-            The property the deletion refusal is written on, re-derived here so the
-            disposition cannot disagree with it.
-            """
+            """Whether ``step`` has a result for THIS synthetic file in this directory."""
             if step in completed:
                 return True
             recorded = recorded_pass(out_dir, step=step, days=args.days)
@@ -3775,15 +2800,7 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                     out_dir=out_dir,
                     log=log,
                 )
-                # A child that failed has NOT completed the step. The first revision only
-                # looked at exceptions, so a `build` that refused (an existing --synthetic,
-                # a disk error) let `before`/`after` run against a missing DB, counted all
-                # three as done, deleted the file and exited 0 — the "job succeeded" shape
-                # plan §7.1.2/#772 complains about (review F1).
                 if result.returncode != 0:
-                    # Its five files go aside like an abort's, so the retry is not blocked
-                    # by this attempt's own output and this attempt's `.time`/
-                    # `.resource.json` are not silently overwritten (round-2 review F5).
                     moved = move_step_artifacts_aside(
                         step, out_dir=out_dir, days=args.days, run_id=run_id
                     )
@@ -3798,36 +2815,12 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                     )
                 completed.append(step.name)
         except BaseException as exc:
-            # Recorded, then re-raised untouched: the summary below has to be able to say
-            # HOW the run ended, and `finally` alone cannot tell "finished" from "stopped".
             failure = exc
             raise
         finally:
-            # Stop signals are held for the whole of this block: every write below is the
-            # ONLY write of what it writes, and a SIGTERM landing in the middle used to
-            # take the run log with it (review #853 finding 3's neighbour). The mask is
-            # restored at the very end of main(), so a pending stop is delivered then.
             held_signals = _hold_stop_signals()
-            # The file is disposed of in every case, and the decision is always said out
-            # loud — including the one the first revision passed over in silence, a resume
-            # that succeeds against a file it did not build (plan §7.1.23 "뒤처리": the
-            # operator was left to remember a 26-53 GB deletion with nothing in the log).
-            # Deletion still happens only when every planned step ran AND both halves of
-            # the pair have a recorded result (plan §7.1.2: peak disk is one file); an
-            # abort is exactly when NOT to delete, because the watchdog fires over MEMORY
-            # and throwing away a 53 GB / 366 s build does nothing for that.
             disposition = None
             remaining = [s.name for s in steps if s.name not in completed]
-            # Read BEFORE any delete: this is the file size after the last step that ran,
-            # which for a finished pair is the size after `after` created the index — the
-            # number §7.1.15 "답하지 못한 것" 3 and §7.1.23 4 say the driver never wrote
-            # down, readable until now only off a file that happened to survive.
-            #
-            # Guarded, like the summary write below and for the same reason: an OSError
-            # here (the file vanished, EACCES, a path that is a directory) would leave the
-            # `finally` with an exception the outer handler does not name, replacing an
-            # in-flight MeasureAborted and skipping the summary, the run log and the lock
-            # release (review #853 finding 3).
             synthetic_present = _exists_or_unknown(args.synthetic)
             synthetic_bytes: int | None = None
             if synthetic_present:
@@ -3854,9 +2847,6 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                         args.synthetic.unlink(missing_ok=True)
                         synthetic_present = False
                     except OSError as unlink_exc:
-                        # Reported as its own disposition rather than swallowed: the
-                        # operator has to know the file is still there, and the summary
-                        # has to say so too.
                         disposition = SyntheticDisposition(
                             "delete-failed",
                             f"COULD NOT remove synthetic {args.synthetic} "
@@ -3874,13 +2864,8 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                 exists_after_the_run=synthetic_present,
                 size_bytes=synthetic_bytes,
                 disposition=disposition,
-                # A refusal can also come from INSIDE the run — `_spawn` cannot find the
-                # interpreter, the host reader gives up — and then this is the only place
-                # that would say why (round-2 N2).
                 refusal=(str(failure) if isinstance(failure, MeasureRefused) else None),
             )
-            # Outside the summary write's success path: a closing summary that an ENOSPC
-            # on one artifact can delete from the run log is not a closing summary.
             log(
                 f"##### summary (run {run_id}): {_run_outcome(failure)} · "
                 f"completed {','.join(completed) or 'none'} · "
@@ -3890,11 +2875,6 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
                 log(f"##### synthetic: {disposition.message}")
             if summary_path is not None:
                 log(f"wrote {summary_path}")
-            # APPENDED, with a run header. `write_text` meant the documented resume
-            # (same --days, same --out-dir) replaced the aborted run's log wholesale,
-            # including the ABORT line and the disposition message — the human-readable
-            # timeline the plan says it will cite instead of session memory (round-2
-            # review F8).
             with (out_dir / f"measure-{args.days}d.log").open(
                 "a", encoding="utf-8"
             ) as handle:
@@ -3910,11 +2890,6 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
         MeasureStepFailed,
         MeasureSignalled,
     ) as exc:
-        # A refusal that got as far as an output directory says so there too, so the
-        # question "what happened to run <id>" has one answer in one place. A refusal
-        # that happened BEFORE the directory existed — an argument contradiction — leaves
-        # nothing, like any argparse error; `emit_summary` returns None and the module
-        # docstring says so rather than promising an artifact that cannot exist.
         emit_summary(
             outcome=_run_outcome(exc),
             planned=planned_names,
@@ -3930,8 +2905,6 @@ def main(argv: list[str] | None = None, *, reader: HostReader | None = None) -> 
         return 1
     finally:
         _restore_signal_handlers(previous_handlers)
-        # Last, and after the handlers are back: anything held through the end-of-run
-        # bookkeeping is delivered now, to whatever disposition the caller had.
         _release_stop_signals(held_signals)
 
 

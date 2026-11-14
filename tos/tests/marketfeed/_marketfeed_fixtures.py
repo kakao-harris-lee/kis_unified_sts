@@ -1,12 +1,4 @@
-"""Shared builders for the ``tos.marketfeed`` authoring-evidence suite (design #32 §7).
-
-Every builder is deterministic and clock-free: no ``time`` / ``datetime`` / ``random`` / ``uuid``
-appears anywhere, including here, because the §7.1 canary scans the sources and the tests must not
-model something the shipped package forbids.
-
-The whole suite is **authoring evidence**, not acceptance: design #32 §1.1 declares the slice
-provisional and closes no EV.
-"""
+"""Shared builders for the ``tos.marketfeed`` authoring-evidence suite (design #32 §7)."""
 
 from __future__ import annotations
 
@@ -38,10 +30,6 @@ from tos.marketfeed import (
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: A construction-time seal breach surfaces either as the marketfeed error itself (when raised from
-#: a plain function) or wrapped by pydantic as a ``ValidationError`` (when raised from a validator).
-#: Both mean "unconstructable", which is the property under test — the shipped ``tos.backtest``
-#: suite's ``INTEGRITY_ERRORS`` precedent.
 INTEGRITY_ERRORS = (MarketFeedIntegrityError, ValidationError)
 
 ACCOUNT = "acct-1"
@@ -49,11 +37,9 @@ INSTRUMENT = "ES"
 DECISION_CLASS = "entry"
 ENVIRONMENT = "non-live-test"
 
-#: Two bar coordinates, distinct by construction (design #32 §4.1 — distinct as-of per bar).
 BAR_ONE_AS_OF = 1_700_000_060_000
 BAR_TWO_AS_OF = 1_700_000_120_000
 
-#: The exposed numeric form is an **integer** in minor/tick units (design #32 §2.5), never a float.
 CLOSE_BAR_ONE = 4_512_500
 CLOSE_BAR_TWO = 4_513_000
 
@@ -194,12 +180,7 @@ def one_bar(
     raw_event_id: str = "raw-1",
     session: str = "REGULAR",
 ) -> tuple[DecisionContextCapsule, CriticalInputSnapshot, tuple[AdmittedValue, ...]]:
-    """The canonical happy path: one bar, two admitted values (``close`` + ``session``).
-
-    Returns:
-        ``(capsule, snapshot, candidates)`` — the Capsule binds the snapshot exactly, and both
-        candidates pass every gate.
-    """
+    """The canonical happy path: one bar, two admitted values (``close`` + ``session``)."""
     payload = preimage(close=close, session=session)
     obs = observation(raw_event_id=raw_event_id, payload=payload, as_of=as_of)
     snapshot = issue_snapshot(

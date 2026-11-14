@@ -1,23 +1,4 @@
-"""Operator-configured ``EngineConfiguration`` bounds (pre-merge fix F5,
-2026-09-08).
-
-CLAUDE.md non-negotiable: "thresholds, symbols, risk values, ports, Redis
-DBs, schedules, and feature gates belong in YAML/env/config files, not
-hardcoded branches." ``tos_runtime.compose._wiring._finalize`` previously
-constructed the kernel's :class:`~tos.engine.records.EngineConfiguration`
-with ``dsl_evaluation_budget_steps=64``/``max_unresolved_send_per_scope=1``
-as bare Python literals — the kernel's own ``EngineConfiguration`` docstring
-table names ``dsl_evaluation_budget_steps`` as "key absent from
-VERIFICATION-PROFILE-002 — provisional", which makes a code literal the
-weaker home (a config file is at least visible, editable, and inspectable
-at deploy time without a code change).
-
-This module loads both bounds from ``tos/runtime/config/engine.example.yaml``
--shaped config, fail-closed (a missing file, missing key, or ``null`` value
-refuses composition at startup) — the same discipline every other
-``tos_runtime.*.config``/``tos_runtime.compose._*`` loader in this codebase
-applies. Never a fallback default.
-"""
+"""Operator-configured ``EngineConfiguration`` bounds (pre-merge fix F5,"""
 
 from __future__ import annotations
 
@@ -36,15 +17,12 @@ _FIELDS: tuple[str, ...] = (
 
 
 class EngineConfigError(Exception):
-    """Raised when the engine config is missing, malformed, or carries an
-    unfilled (named-TBD) field — fail-closed at load, never a silent
-    default."""
+    """Raised when the engine config is missing, malformed, or carries an"""
 
 
 @dataclass(frozen=True)
 class EngineConfig:
-    """The two operator-configured ``EngineConfiguration`` bounds (module
-    docstring)."""
+    """The two operator-configured ``EngineConfiguration`` bounds (module"""
 
     dsl_evaluation_budget_steps: int
     max_unresolved_send_per_scope: int
@@ -62,14 +40,7 @@ def _require_int(raw: Any, field: str, path: Path) -> int:
 
 
 def load_engine_config(path: Path) -> EngineConfig:
-    """Load + fail-closed-validate the engine bounds from ``path`` (shaped
-    like ``tos/runtime/config/engine.example.yaml``).
-
-    Raises:
-        EngineConfigError: The file is missing/unreadable/not valid YAML/
-            not a mapping, a key is absent, or its value is still ``null``
-            (named-TBD).
-    """
+    """Load + fail-closed-validate the engine bounds from ``path`` (shaped"""
     if not path.is_file():
         raise EngineConfigError(f"engine config file not found: {path}")
     try:

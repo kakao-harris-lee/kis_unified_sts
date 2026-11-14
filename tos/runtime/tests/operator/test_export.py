@@ -1,6 +1,4 @@
-"""Hermetic tests for :class:`tos_runtime.operator.export.ProjectionExporter` (TOS Phase 5 W4
-plan §2 decision 7).
-"""
+"""Hermetic tests for :class:`tos_runtime.operator.export.ProjectionExporter` (TOS Phase 5 W4"""
 
 from __future__ import annotations
 
@@ -30,10 +28,7 @@ _GROUP_NAMES = (
 
 
 def _reader_for(name: str) -> Callable[[], Any]:
-    """A zero-arg reader closing over ``name`` by value (a fresh call frame per loop
-    iteration), not by the late-binding reference a default-arg lambda would need to fake —
-    and one mypy can actually type as :data:`~tos_runtime.operator.projection.ReadCallable`
-    (``Callable[[], Any]``), unlike a default-arg lambda (plan §1.1 A-rt)."""
+    """A zero-arg reader closing over ``name`` by value (a fresh call frame per loop"""
     return lambda: {"populated": name}
 
 
@@ -102,16 +97,13 @@ def test_export_repeated_calls_increment_projection_generation_in_the_file(
 
 
 def test_export_failure_is_counted_and_never_raises(tmp_path: Path) -> None:
-    """An unwritable destination directory (its parent path is actually a FILE, not a directory,
-    so ``mkdir(parents=True)`` cannot create it) must be caught, counted, and must never raise
-    out of :meth:`ProjectionExporter.export` (module docstring's "failure never reaches the
-    caller")."""
+    """An unwritable destination directory (its parent path is actually a FILE, not a directory,"""
     blocker = tmp_path / "blocker"
     blocker.write_text("not a directory")
     path = blocker / "sub" / "operator_projection.json"
     exporter = ProjectionExporter(path=path, projection=_projection())
 
-    exporter.export()  # must not raise
+    exporter.export()
 
     assert exporter.failures == 1
     assert exporter.last_error is not None

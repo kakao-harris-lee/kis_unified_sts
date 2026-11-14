@@ -1,22 +1,4 @@
-"""KIS MOCK fill → finality → release e2e, against the fake KIS server, NO verify item patched
-(PR-3b, rescope plan §3 M2).
-
-Order → ACK (PR-3a's real gateway) → the post-ACK observer polls ``VTTC0081R`` → ``PARTIAL_FILL``
-→ ``FULL_FILL`` → broker-sourced finality proof → reconciliation against the real
-``KisStockBrokerWitness`` → RCL ``POSITION_CONSUMED``, with every evidence row naming the one
-attempt. Also pinned:
-
-* the same execution observed twice is reported once;
-* an execution for an ODNO this runtime never ACKed is flagged and never attributed — and, being an
-  orphan broker order, it blocks release;
-* odd broker rows become ``UNKNOWN``, never a fill;
-* a kill/restart between ACK and fill: the boot replay rebuilds the engine's reservation
-  projection (#944), so the rebooted runtime's observer feeds the fill and it is applied and
-  releases the durable RCL reservation exactly once, reconciled against the KIS witness.
-
-Hermetic: the fake server binds ``127.0.0.1``; the only production patch is PR-3a's INSTANCE
-``rest_base`` → fake server (infrastructure, not a verify item).
-"""
+"""KIS MOCK fill → finality → release e2e, against the fake KIS server, NO verify item patched"""
 
 from __future__ import annotations
 
@@ -49,8 +31,6 @@ from .test_kis_mock_e2e_honesty import (
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
-#: The measured 모의 stock encoding — the ACK's ``output.ODNO`` and the inquiry row's ``odno`` are
-#: the same zero-padded 10 digits (P-11 2026-08-05, ``queried_odno``/``row.odno``).
 _ODNO = "0000004470"
 _FOREIGN_ODNO = "0000009999"
 
@@ -63,11 +43,6 @@ def server() -> Iterator[FakeKisServer]:
         yield srv
     finally:
         srv.stop()
-
-
-# ===========================================================================
-# helpers
-# ===========================================================================
 
 
 def _deploy(config_dir, custody_root, server, monkeypatch) -> None:
@@ -101,8 +76,7 @@ def _sealed_quantity(runtime) -> Decimal:
 
 
 def _witness_paths(config_dir: Path, date: str) -> tuple[str, str]:
-    """The two GET paths ``KisStockBrokerWitness`` builds — wire params as that module sends them
-    (``probes_balance``/``probes_order`` mirrors), the paths from the shipped config."""
+    """The two GET paths ``KisStockBrokerWitness`` builds — wire params as that module sends them"""
     config = load_fill_observer_config(config_dir / FILL_OBSERVER_CONFIG_NAME)
     fields = config.witness_fields
     digits = fx.ACCOUNT.replace("-", "")
@@ -169,16 +143,11 @@ def _row(
 
 
 class _Unset:
-    """A distinguishable "no override given" sentinel for ``_script_broker``'s
-    ``holdings_container`` — the same pattern ``_fixtures.write_kis_mock_transport_config``
-    uses, and needed for the same reason: a plain ``None`` default cannot be told apart from a
-    test that wants a literal ``output1: null`` on the wire (review-973 round 2)."""
+    """A distinguishable "no override given" sentinel for ``_script_broker``'s"""
 
 
 class _OmitKey:
-    """``holdings_container=_OMIT_OUTPUT1`` leaves the ``output1`` key OUT of the balance body
-    entirely — distinct from writing it as ``null``, and a case review-973 round 2 asks for in
-    its own right (``body.get`` answers ``None`` for both, so only the wire differs)."""
+    """``holdings_container=_OMIT_OUTPUT1`` leaves the ``output1`` key OUT of the balance body"""
 
 
 _UNSET_CONTAINER = _Unset()
@@ -195,22 +164,7 @@ def _script_broker(
     raw_holdings: list[dict[str, Any]] | None = None,
     holdings_container: Any = _UNSET_CONTAINER,
 ) -> str:
-    """Script both witness GETs for ``date``: the order inquiry from ``rows``, the balance
-    inquiry from ``holdings`` (default: a flat account with NO rows, the shape every test here
-    had before ``holdings`` existed).
-
-    ``rows`` is written to the order ``output1`` verbatim, so a test can put an element there
-    that is not an order row at all (issue #981's unreadable row).
-
-    ``raw_holdings`` writes the balance ``output1`` rows verbatim instead, so a test can send
-    a quantity the production parser cannot read (``hldg_qty: ""``) or a ``pdno`` that is not a
-    string (issue #981) and observe what ``KisStockBrokerWitness`` actually does with it —
-    #966 review round 1 needs that exact input, and building it from ``Decimal`` cannot
-    express it.
-
-    ``holdings_container`` replaces the whole ``output1`` VALUE, including with a non-list
-    (``None``, a dict), which review-973 round 2 needs: a malformed container is not an empty
-    page."""
+    """Script both witness GETs for ``date``: the order inquiry from ``rows``, the balance"""
     balance, orders = _witness_paths(config_dir, date)
     balance_body: dict[str, Any] = {
         "rt_cd": "0",
@@ -243,14 +197,7 @@ def _rcl_state(runtime) -> CapacityState:
 
 
 def _rcl_releases(runtime, *, attempt_id: str | None = None) -> int:
-    """Committed RCL release transitions — the durable fact, not the pre-mutation intent row.
-
-    ``attempt_id`` narrows the count to the release THAT attempt's own fill drove, by the
-    command id the release consumer keys it on. A test whose fixture seeds an earlier,
-    already-discharged attempt (``test_kis_mock_fill_finality_r2``) needs that narrowing —
-    since #966 each attempt has its own reservation, so the log legitimately carries one
-    release command per completed attempt rather than one per scope.
-    """
+    """Committed RCL release transitions — the durable fact, not the pre-mutation intent row."""
     return sum(
         1
         for entry in runtime.rcl_log.replay()
@@ -260,7 +207,6 @@ def _rcl_releases(runtime, *, attempt_id: str | None = None) -> int:
 
 
 def _close(runtime) -> None:
-    # Issue #950: stop the observer's FETCH worker before the stores it reports into.
     if runtime.fill_observer is not None:
         runtime.fill_observer.close()
     runtime.rcl_log.close()
@@ -275,11 +221,6 @@ def _acked(tmp_path, config_dir, data_dir, custody_root, server, monkeypatch):
     ack = _ack(runtime)
     assert ack["broker_execution_id"] == _ODNO and ack["trading_date"] is not None
     return runtime, ack["trading_date"], _sealed_quantity(runtime)
-
-
-# ===========================================================================
-# 1. ACK -> partial -> full -> finality -> release
-# ===========================================================================
 
 
 def test_partial_then_full_fill_releases_once_with_connected_evidence(
@@ -307,9 +248,7 @@ def test_partial_then_full_fill_releases_once_with_connected_evidence(
             ResultDisposition.APPLIED,
         ),
     )
-    # Cadence comes from fill_observer.yaml: an immediate second poll_if_due does not poll.
     assert observer.poll_if_due().polled is False
-    # The same execution observed again is not reported again.
     assert observer.poll_once().emitted == ()
     assert len(_rows(runtime, "FILL_OBSERVED")) == 1
 
@@ -324,7 +263,6 @@ def test_partial_then_full_fill_releases_once_with_connected_evidence(
         (EgressResultKind.FULL_FILL, ResultDisposition.APPLIED)
     ]
 
-    # Finality: a broker proof, never SYNTHETIC; release committed once, to POSITION_CONSUMED.
     attempt_id = _ack(runtime)["attempt_id"]
     (proof,) = _rows(runtime, "POSTTRADE_FINALITY_PROOF")
     assert proof["idempotency_key"] == f"broker-fqp-proof:{attempt_id}"
@@ -338,7 +276,6 @@ def test_partial_then_full_fill_releases_once_with_connected_evidence(
     assert _rcl_state(runtime) is CapacityState.POSITION_CONSUMED
     assert _rcl_releases(runtime) == 1
 
-    # Every result row names the one attempt and the one broker order.
     results = _rows(runtime, "EGRESS_RESULT_CONSUMED")
     assert [r["egress_result_kind"] for r in results] == [
         "ACK",
@@ -350,9 +287,6 @@ def test_partial_then_full_fill_releases_once_with_connected_evidence(
     } == {(attempt_id, _ODNO, date)}
     assert {r["attempt_id"] for r in _rows(runtime, "FILL_OBSERVED")} == {attempt_id}
 
-    # Terminal: a held-position proof may still read broker holdings and order rows after the
-    # entry has transitioned to POSITION_CONSUMED. Those risk-only GETs must not reproject the
-    # already released fill.
     before = len(server.all_requests)
     terminal_results = _rows(runtime, "EGRESS_RESULT_CONSUMED")
     observed_fills = _rows(runtime, "FILL_OBSERVED")
@@ -362,7 +296,6 @@ def test_partial_then_full_fill_releases_once_with_connected_evidence(
     assert _rows(runtime, "EGRESS_RESULT_CONSUMED") == terminal_results
     assert _rows(runtime, "FILL_OBSERVED") == observed_fills
     assert _rcl_releases(runtime) == 1
-    # Any new GET belongs to the independent held-position proof; order submission stays once.
     assert all(
         request.method == "GET"
         for request in server.all_requests[before:]
@@ -382,11 +315,6 @@ def test_partial_then_full_fill_releases_once_with_connected_evidence(
     _close(runtime)
 
 
-# ===========================================================================
-# 2. an execution for an unknown ODNO is flagged, never attributed
-# ===========================================================================
-
-
 def test_unknown_odno_is_flagged_and_blocks_release(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
@@ -396,7 +324,6 @@ def test_unknown_odno_is_flagged_and_blocks_release(
     observer = runtime.fill_observer
     assert observer is not None
 
-    # Only a foreign execution: flagged once, nothing enqueued.
     foreign = _row(
         odno=_FOREIGN_ODNO, date=date, ord_qty=qty, filled=qty, remaining=Decimal(0)
     )
@@ -411,8 +338,6 @@ def test_unknown_odno_is_flagged_and_blocks_release(
         r["egress_result_kind"] for r in _rows(runtime, "EGRESS_RESULT_CONSUMED")
     ] == ["ACK"]
 
-    # Our order then fills. Ours is attributed; the foreign one is still an orphan broker order
-    # in the same scope, so reconciliation does not corroborate and nothing is released.
     _script_broker(
         server,
         config_dir,
@@ -426,11 +351,6 @@ def test_unknown_odno_is_flagged_and_blocks_release(
     assert _rows(runtime, "CAPACITY_RELEASE_INTENT") == []
     assert _rcl_state(runtime) is not CapacityState.POSITION_CONSUMED
     _close(runtime)
-
-
-# ===========================================================================
-# 3. odd broker rows -> UNKNOWN, never a fill
-# ===========================================================================
 
 
 @pytest.mark.parametrize(
@@ -475,36 +395,24 @@ def test_odd_rows_become_unknown_never_a_fill(
     assert runtime.core.ledger.outstanding(fx.instrument_key()).capacity_state is (
         CapacityState.QUARANTINED_UNKNOWN
     )
-    # Reported once.
     assert observer.poll_once().emitted == ()
     _close(runtime)
-
-
-# ===========================================================================
-# 4. kill/restart between ACK and fill
-# ===========================================================================
 
 
 def test_restart_between_ack_and_fill_releases_once_and_keeps_every_later_boot_sound(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
-    """The boot replay rebuilds the engine's reservation projection (#944), so a fill that lands
-    while the runtime is down is fed to the rebooted engine, applied, and released exactly once.
-    Before #944 the restarted engine held no pre-restart attempt: the observer could only record
-    what the broker showed (``FILL_OBSERVER_ENGINE_RESERVATION_ABSENT``) and the capacity stayed
-    reserved forever. Every later boot re-derives the same APPLIED fill and the same single
-    release, so no later boot's replay diverges.
-    """
+    """The boot replay rebuilds the engine's reservation projection (#944), so a fill that lands"""
     runtime, date, qty = _acked(
         tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
     )
     attempt_id = _ack(runtime)["attempt_id"]
-    _close(runtime)  # the process dies after the ACK was consumed; the fill comes later
+    _close(runtime)
 
     runtime2 = _boot(tmp_path, config_dir, data_dir, custody_root)
     assert runtime2.recovery is not None and runtime2.recovery.ready is True
     held = runtime2.core.ledger.outstanding(fx.instrument_key())
-    assert held is not None and held.attempt_id == attempt_id  # rebuilt at boot
+    assert held is not None and held.attempt_id == attempt_id
     observer = runtime2.fill_observer
     assert observer is not None
     _script_broker(
@@ -520,18 +428,15 @@ def test_restart_between_ack_and_fill_releases_once_and_keeps_every_later_boot_s
     ]
     assert report.held == ()
     assert _rows(runtime2, "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT") == []
-    # The fill reached the engine, was proven against the broker, and released once.
     assert [r["egress_result_kind"] for r in _rows(runtime2, "RESULT_UNMATCHED")] == []
     (proof,) = _rows(runtime2, "POSTTRADE_FINALITY_PROOF")
     assert proof["idempotency_key"] == f"broker-fqp-proof:{attempt_id}"
     assert _rcl_releases(runtime2) == 1
     assert _rcl_state(runtime2) is CapacityState.POSITION_CONSUMED
 
-    # The same execution observed again is not reported again.
     assert observer.poll_once().emitted == ()
     _close(runtime2)
 
-    # The next boot re-derives the same APPLIED fill and the same one release.
     runtime3 = _boot(tmp_path, config_dir, data_dir, custody_root)
     assert runtime3.recovery is not None and runtime3.recovery.ready is True
     assert runtime3.core.ledger.outstanding(fx.instrument_key()) is None
@@ -539,13 +444,8 @@ def test_restart_between_ack_and_fill_releases_once_and_keeps_every_later_boot_s
     report3 = runtime3.fill_observer.poll_once()
     assert report3.emitted == () and report3.reprojected == ()
     assert _rcl_releases(runtime3) == 1
-    assert len(server.requests_for(_ORDER_PATH)) == 1  # nothing re-sent across restarts
+    assert len(server.requests_for(_ORDER_PATH)) == 1
     _close(runtime3)
-
-
-# ===========================================================================
-# 5. which witness each boot reconciles against
-# ===========================================================================
 
 
 def test_stock_mock_boot_reconciles_against_the_kis_witness(

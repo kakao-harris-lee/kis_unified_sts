@@ -1,26 +1,4 @@
-"""``release_admission`` — Phase 2 release-admission gate (design #40 §5 order
-6, lane R item 4;
-`docs/plans/2026-09-08-tos-phase2-runtime-slice3-authority-risk-currentness-
-compose-plan.md` §3 item 4).
-
-Calls :func:`~tos_runtime.release.verdict.software_deployment_ok_verdict`
-**only** — this module makes no admission decision of its own. The THREE
-comparisons it performs itself are ``observation.source_tree_digest ==
-config.expected_code_digest``, ``observation.dependency_set_digest ==
-config.expected_dependency_set_digest``, and ``identity.code_digest ==
-observation.source_tree_digest`` (Phase 5 W4 plan §2 decision 5 — the
-``observation`` is a REAL measurement from
-:mod:`tos_runtime.operations.dependency_admission`, replacing the earlier
-constant ``code_digest`` fixture; the third comparison is a re-review
-disposition, HIGH, 2026-09-12 — ``identity.code_digest`` used to flow in
-unchecked): no kernel predicate computes
-``RuntimeArtifactAttestation.runtime_artifact_match`` (the §18 runtime-
-measurement predicates are explicitly not-Phase-1, per that record's own
-module docstring), so this is "runtime input collection: equality" — the
-plain fallback the slice plan itself names when no kernel predicate exists
-("비교 자체는 커널 술어가 하면 그것을 쓰고, 없으면 «단순 동등 비교 = 런타임
-입력 수집»으로 docstring 명시").
-"""
+"""``release_admission`` — Phase 2 release-admission gate (design #40 §5 order"""
 
 from __future__ import annotations
 
@@ -38,14 +16,7 @@ __all__ = ["ReleaseAdmissionService", "ReleaseRestrictionLookup", "release_admis
 
 
 class ReleaseRestrictionLookup:
-    """The result of one restriction-registry lookup, positive-polarity-safe.
-
-    ``resolved`` is ``True`` only when the lookup itself completed (finding
-    either an active restriction or confirming none) — an unresolved lookup
-    (``resolved`` is ``False``/``None``) denies conservatively regardless of
-    what ``active`` carries (SCI-INV-014; §21 line 427 "No retry, mirror,
-    cache ... may select a more permissive state when ... unknown").
-    """
+    """The result of one restriction-registry lookup, positive-polarity-safe."""
 
     def __init__(
         self, *, resolved: bool | None, active: ReleaseRestriction | None
@@ -55,9 +26,7 @@ class ReleaseRestrictionLookup:
 
     @property
     def present(self) -> bool | None:
-        """Negative-polarity ``restriction_present`` — ``None`` (unknown) when
-        the lookup itself did not resolve, never a permissive assumed
-        ``False``."""
+        """Negative-polarity ``restriction_present`` — ``None`` (unknown) when"""
         if self.resolved is not True:
             return None
         return self.active is not None
@@ -70,25 +39,7 @@ def _runtime_attestation_matches(
     expected_code_digest: str,
     expected_dependency_set_digest: str,
 ) -> bool:
-    """Whether the running artifact matches the operator-approved release —
-    the module docstring's "runtime input collection: equality" fallback.
-
-    ``runtime_artifact_match`` is ``True`` only when the observed
-    source-tree digest and the observed dependency-set digest BOTH match
-    their operator-approved expected values (Phase 5 W4 plan §2 decision 5
-    (e)) AND ``identity.code_digest`` itself equals
-    ``observation.source_tree_digest`` (re-review disposition, HIGH,
-    2026-09-12: ``identity.code_digest`` was never actually read here —
-    only the observation's own digests were compared against config, so a
-    caller that built ``identity`` from a constant instead of the real
-    observation would go undetected; every green test still passed because
-    nothing checked the binding between the two. ``tos_runtime.compose
-    ._wiring._build_identity`` sets ``identity.code_digest`` FROM this same
-    observation, so on the real boot path this is always an identity
-    check — but it is a REAL check now, not an accident of two callers
-    agreeing by construction). A single-coordinate match is not
-    sufficient.
-    """
+    """Whether the running artifact matches the operator-approved release —"""
     source_matches = (
         observation.source_tree_digest is not None
         and observation.source_tree_digest == expected_code_digest
@@ -114,32 +65,7 @@ def release_admission(
     expected_code_digest: str,
     expected_dependency_set_digest: str,
 ) -> bool:
-    """Whether this release is admitted for deployment (kernel predicate only).
-
-    Args:
-        identity: This process's :class:`~tos.workload.RuntimeIdentity`.
-        admission: The exact :class:`~tos_runtime.release.verdict.AdmissionResult` for the
-            deployed artifact (Phase 2: an operator-approved static value,
-            never computed here — see :mod:`tos_runtime.release.config`).
-        restriction: The :class:`ReleaseRestrictionLookup` result.
-        currentness_current: The injected ``tos.cur`` active-currentness
-            verdict (e.g. ``proof.result is ProofResult.CURRENT``, from
-            :mod:`tos_runtime.currentness`).
-        observation: The REAL
-            :class:`~tos_runtime.operations.dependency_admission.RuntimeArtifactObservation`
-            (source-tree + dependency-set digests) this process was actually
-            built from.
-        expected_code_digest: The operator-approved expected source-tree
-            digest this release must match.
-        expected_dependency_set_digest: The operator-approved expected
-            dependency-set digest this release must match.
-
-    Returns:
-        ``True`` iff :func:`~tos_runtime.release.verdict.software_deployment_ok_verdict`
-        holds. Even a ``True`` here is a negative gate only — it supplies no
-        capacity, authority, protection, approval, or admissibility (§1
-        line 27).
-    """
+    """Whether this release is admitted for deployment (kernel predicate only)."""
     matches = _runtime_attestation_matches(
         identity,
         observation,
@@ -156,15 +82,7 @@ def release_admission(
 
 
 class ReleaseAdmissionService:
-    """Binds a :class:`~tos_runtime.release.config.ReleaseAdmissionConfig` AND
-    one :class:`~tos_runtime.operations.dependency_admission.RuntimeArtifactObservation`
-    to :func:`release_admission`, so the composition root does not have to
-    thread the expected digests / the static admission+restriction facts /
-    the observation through every call site itself — and so STAGE A and
-    STAGE B (:mod:`tos_runtime.compose._wiring`) reuse the SAME observation
-    (computed once at construction) rather than each re-walking the source
-    tree / re-enumerating installed distributions (Phase 5 W4 plan §2
-    decision 5 (e))."""
+    """Binds a :class:`~tos_runtime.release.config.ReleaseAdmissionConfig` AND"""
 
     def __init__(
         self,
@@ -177,16 +95,7 @@ class ReleaseAdmissionService:
     def decide(
         self, identity: RuntimeIdentity, currentness_current: bool | None
     ) -> bool:
-        """Decide admission for ``identity`` under this service's config.
-
-        Args:
-            identity: This process's :class:`~tos.workload.RuntimeIdentity`.
-            currentness_current: The injected ``tos.cur`` active-currentness
-                verdict.
-
-        Returns:
-            The :func:`release_admission` verdict.
-        """
+        """Decide admission for ``identity`` under this service's config."""
         restriction = ReleaseRestrictionLookup(
             resolved=self._config.restriction_state_resolved,
             active=(

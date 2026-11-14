@@ -1,9 +1,4 @@
-"""CII-EV-008 correction/invalidation fan-out + economic-effect orthogonality.
-
-Design §4.5 (CII-INV-008/009): a material correction invalidates the transitive
-closure of affected downstream permissions, while economic effects (orders,
-fills, exposure, capacity) are orthogonal and survive the invalidation.
-"""
+"""CII-EV-008 correction/invalidation fan-out + economic-effect orthogonality."""
 
 from __future__ import annotations
 
@@ -30,7 +25,6 @@ _edge_maps = st.dictionaries(
 def test_closure_is_transitively_closed(edges: dict, roots: list) -> None:
     """The invalidation closure is closed under the dependency relation (fan-out)."""
     closure = transitive_dependents(roots, edges)
-    # every dependent of a closure member is also in the closure (no missed hop)
     for node in closure:
         for dependent in edges.get(node, []):
             assert dependent in closure

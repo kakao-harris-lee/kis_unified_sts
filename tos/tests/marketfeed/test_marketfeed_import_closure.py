@@ -1,41 +1,4 @@
-"""§7.1 — import-closure, cycle-0, and determinism canaries for ``tos.marketfeed`` (design #32 §7.1).
-
-``tos.marketfeed`` is a **producer** package: it consumes ``tos.dsl``, ``tos.capsule``,
-``tos.canonical`` and (in its resolver layer only) ``tos.engine``, and **nothing consumes it**. That
-asymmetry is the whole cycle-0 argument of design #32 §2.2/§3.4, and it is asserted here in both
-directions rather than asserted in prose:
-
-* *forward* — the marketfeed closure ⊆ the declared allowlist, and every declared entry is really
-  taken (no padded phantom edge);
-* *backward* — importing ``tos.dsl`` or ``tos.engine`` in a **fresh interpreter** never pulls in
-  ``tos.marketfeed``. That is what makes ``engine -> marketfeed -> engine`` and
-  ``dsl -> marketfeed -> dsl`` impossible, and it is what keeps the committed fourteen-package
-  engine allowlist (``tos/tests/engine/test_engine_import_closure.py:59-76``) green with no edit.
-
-**The pure-layer claim, stated honestly.** Design #32 §3.4 splits the package into a pure value
-layer and a resolver adapter, and says the pure layer's closure carries no ``tos.engine``. At
-*runtime* that claim is unmeasurable for a submodule: ``import tos.marketfeed.value`` necessarily
-executes ``tos.marketfeed.__init__`` first, whose re-exports include the resolver. So the split is
-enforced **statically**, by scanning the pure modules' own sources for a ``tos.engine`` import — the
-form of the claim that is actually checkable. Asserting the runtime form would be asserting
-something the import system makes untrue.
-
-Beyond the closure this module asserts, by AST scan of the shipped sources:
-
-  1. no operational package (``shared.*``, ``services.*``, ``cli.*``) and no ``numpy`` / ``pandas``
-     / ``yaml``;
-  2. no ``os.environ`` / ``os.getenv``;
-  3. no dynamic escape — ``exec`` / ``eval`` / ``compile`` / ``__import__`` / ``importlib``;
-  4. **no network stdlib** — the structural form of "the value surface never fetches"
-     (RFC-004 §9:242-244), which is the single most load-bearing canary for a package whose *name*
-     says "feed";
-  5. no wall clock and no RNG / nonce source, so a published view digest is reproducible.
-
-Planted-leak and planted-escape canaries prove the checker catches what it claims to, so green is
-evidence the pipeline works rather than evidence it was neutered.
-
-Regime tag: authoring evidence only; closes no EV (design #32 §1.1).
-"""
+"""§7.1 — import-closure, cycle-0, and determinism canaries for ``tos.marketfeed`` (design #32 §7.1)."""
 
 from __future__ import annotations
 
@@ -52,9 +15,6 @@ import tos.marketfeed.vocabulary
 
 from . import _cycle_children
 
-#: The §0.3 allowlist — the only top-level ``tos.*`` packages the marketfeed closure may contain.
-#: Wide, because the resolver layer speaks the engine's payload vocabulary and ``tos.engine`` is
-#: itself an integrator; still a strict subset, so a leak fails as loudly as anywhere else.
 _ALLOWED_TOS_PACKAGES = frozenset(
     {
         "tos",
@@ -76,10 +36,6 @@ _ALLOWED_TOS_PACKAGES = frozenset(
     }
 )
 
-#: Siblings deliberately outside the closure. ``tos.egress`` (the QCC kernel) and ``tos.brokercap``
-#: live beyond the D-E4 send boundary; ``tos.backtest`` / ``tos.egressgw`` / ``tos.brokeradapter``
-#: are *downstream consumers* — a marketfeed edge into any of them would invert the layering the
-#: same way an ``engine -> marketfeed`` edge would.
 _FORBIDDEN_SIBLINGS = frozenset(
     {
         "tos.authority",
@@ -141,7 +97,6 @@ _FORBIDDEN_PREFIXES = (
 
 _MARKETFEED_SRC = Path(__file__).resolve().parents[2] / "src" / "tos" / "marketfeed"
 
-#: The pure layer (design #32 §3.4) — every module except the resolver adapter.
 _PURE_MODULE_FILES = (
     "__init__.py",
     "_base.py",
@@ -199,8 +154,6 @@ _MARKETFEED_SUBMODULES = (
     "tos.marketfeed.vocabulary",
 )
 
-#: Every shipped submodule, imported **statically** (the firewall forbids ``import_module``), so the
-#: author-level sweep below reads the real namespaces rather than a re-import.
 _LOADED_SUBMODULES = {
     "tos.marketfeed": tos.marketfeed,
     "tos.marketfeed._base": tos.marketfeed._base,
@@ -300,11 +253,6 @@ def _run_child(target) -> dict:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Forward: the closure is inside the allowlist, and the allowlist is not padded
-# ---------------------------------------------------------------------------
-
-
 def test_marketfeed_tos_closure_is_within_the_allowlist() -> None:
     """(§0.3) The tos closure ⊆ the declared packages."""
     result = _run_child(_closure_child)
@@ -375,12 +323,7 @@ def test_allowlist_classifier_canaries() -> None:
     assert _is_forbidden_non_tos("services.dashboard") is True
     assert _is_forbidden_non_tos("numpy") is True
     assert _is_forbidden_non_tos("pydantic") is False
-    assert _is_forbidden_non_tos("click") is False  # must not false-match "cli"
-
-
-# ---------------------------------------------------------------------------
-# Backward: nothing imports marketfeed — the cycle has no first edge (§7.2-13)
-# ---------------------------------------------------------------------------
+    assert _is_forbidden_non_tos("click") is False
 
 
 def _run_cycle_child(target) -> list[str]:
@@ -401,11 +344,7 @@ def test_importing_dsl_alone_never_pulls_in_marketfeed() -> None:
 
 
 def test_importing_engine_alone_never_pulls_in_marketfeed() -> None:
-    """(§2.2 F1 ★ cycle-0) ``engine -> marketfeed -> engine`` has no first edge either.
-
-    This is the property that lets ``DecisionTickPayload.value_view`` be a **dsl** type and lets the
-    committed fourteen-package engine allowlist stay untouched.
-    """
+    """(§2.2 F1 ★ cycle-0) ``engine -> marketfeed -> engine`` has no first edge either."""
     assert _run_cycle_child(_cycle_children.engine_only_child) == []
 
 
@@ -415,12 +354,7 @@ def test_importing_capsule_alone_never_pulls_in_marketfeed() -> None:
 
 
 def test_the_cycle_children_module_imports_nothing_at_module_scope() -> None:
-    """(anti-phantom) The measurement is real only if its child module is marketfeed-free.
-
-    A spawn child imports the module its target lives in. Were that module to import
-    ``tos.marketfeed`` at scope, the three assertions above would pass vacuously — they would be
-    measuring the harness. So the harness itself is checked.
-    """
+    """(anti-phantom) The measurement is real only if its child module is marketfeed-free."""
     source = Path(_cycle_children.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
     module_level = [
@@ -458,18 +392,7 @@ def test_no_dsl_or_engine_source_statically_imports_marketfeed() -> None:
 
 
 def test_the_engine_allowlist_still_omits_marketfeed() -> None:
-    """(§15.2 ③) The committed engine canary's own allowlist is read and confirmed unchanged.
-
-    Anti-phantom in its existence form: rather than asserting "we did not have to edit the engine
-    test", the shipped constant is parsed out of the engine canary's source. It is read from disk
-    rather than imported because the firewall's allowlist has no cross-suite ``tests.*`` entry —
-    reading the file is both compliant and a stricter check, since it sees the committed text.
-
-    The count pin moved from 14 to 15 on 2026-09-09 (Phase 3 wave 2 KW2-C2, plan §2.2):
-    ``tos.orthostate`` was added as a directly realized engine edge for
-    ``engine/orthostate_projection.py``. ``tos.marketfeed`` staying absent is the claim this
-    test actually protects, and that claim is unaffected by that widening.
-    """
+    """(§15.2 ③) The committed engine canary's own allowlist is read and confirmed unchanged."""
     engine_canary = (
         Path(__file__).resolve().parents[1] / "engine" / "test_engine_import_closure.py"
     )
@@ -492,11 +415,6 @@ def test_the_engine_allowlist_still_omits_marketfeed() -> None:
     assert len(declared) == 15
 
 
-# ---------------------------------------------------------------------------
-# The pure / adapter split, enforced statically (§3.4)
-# ---------------------------------------------------------------------------
-
-
 def _statically_imported_tos_modules(path: Path) -> set[str]:
     """Every ``tos.*`` module a source statically imports."""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -510,11 +428,7 @@ def _statically_imported_tos_modules(path: Path) -> set[str]:
 
 
 def test_the_pure_layer_statically_imports_no_engine() -> None:
-    """(§3.4 ★) Only the resolver adapter may name ``tos.engine``.
-
-    The ``__init__`` re-export is excluded from the *pure* list on purpose: a package's ``__init__``
-    exposing the adapter is the adapter's edge, not the value layer's.
-    """
+    """(§3.4 ★) Only the resolver adapter may name ``tos.engine``."""
     offenders: list[str] = []
     for filename in _PURE_MODULE_FILES:
         if filename == "__init__.py":
@@ -532,11 +446,6 @@ def test_the_adapter_layer_really_holds_the_engine_edge() -> None:
     assert any(
         name == "tos.engine" or name.startswith("tos.engine.") for name in imported
     ), "resolver.py declares no tos.engine import — the declared adapter edge would be a phantom"
-
-
-# ---------------------------------------------------------------------------
-# Source-level escape / ambient / clock / RNG / network canaries (§7.1)
-# ---------------------------------------------------------------------------
 
 
 def _ast_offenders(path: Path) -> list[str]:
@@ -693,12 +602,7 @@ def test_source_imports_no_module_outside_the_allowlist() -> None:
 
 
 def test_every_submodule_is_covered_by_the_closure_child() -> None:
-    """Anti-phantom (#27 FD): the child imports **every** shipped submodule, not a stale subset.
-
-    Locking the export surface is not locking the package. If a new submodule lands and the child
-    does not import it, its imports would never be exercised — so the on-disk file list is compared
-    against the child's list.
-    """
+    """Anti-phantom (#27 FD): the child imports **every** shipped submodule, not a stale subset."""
     on_disk = {
         f"tos.marketfeed.{path.stem}" if path.stem != "__init__" else "tos.marketfeed"
         for path in _MARKETFEED_SRC.glob("*.py")
@@ -717,22 +621,16 @@ def test_the_pure_module_file_list_matches_disk() -> None:
 
 
 def test_marketfeed_namespace_exposes_no_authority_or_mutation_symbol() -> None:
-    """(author-level lock, #27 FD) No sibling capability symbol is reachable from any submodule.
-
-    Not "marketfeed does not import it" but "marketfeed's own namespaces do not carry it": every
-    module's ``vars()`` is swept, not just ``tos.marketfeed.__all__``. A value surface produces
-    evidence about values; it approves nothing, mutates no capacity, constructs no command, and
-    transmits nothing.
-    """
+    """(author-level lock, #27 FD) No sibling capability symbol is reachable from any submodule."""
     forbidden = (
-        "apply_committed",  # rcl — capacity mutation
-        "claim_capability",  # rcl — capability consumption
-        "compile_command",  # ioc — broker-command construction
-        "permit_single_use",  # afg — permit consumption semantics
-        "risk_decision",  # are — the Authority's own production
-        "action_flow_decision",  # afg — the Governor's own production
-        "vector_complete",  # cur — the per-send currentness production
-        "send_once",  # brokeradapter — transmission
+        "apply_committed",
+        "claim_capability",
+        "compile_command",
+        "permit_single_use",
+        "risk_decision",
+        "action_flow_decision",
+        "vector_complete",
+        "send_once",
     )
     for module_name, module in _LOADED_SUBMODULES.items():
         for name in forbidden:

@@ -1,10 +1,4 @@
-"""BrokerCapabilityProfile: digest / id / append-only / conflict (§2.1/§2.3/§3.1/§4.7).
-
-Reuses the core ``tos.canonical`` digest substrate. Identity is independent of the digest
-(id != f(digest)), so a same-id / different-bytes re-issuance (a forged re-publish of a
-profile version) is a detectable ``classify_record_pair`` CRITICAL_CONFLICT, while a
-legitimate revalidation (fresh id) is DISTINCT.
-"""
+"""BrokerCapabilityProfile: digest / id / append-only / conflict (§2.1/§2.3/§3.1/§4.7)."""
 
 from __future__ import annotations
 
@@ -35,11 +29,6 @@ def _profile_with_qty(value: Decimal | None) -> BrokerCapabilityProfile:
     return issue_profile(live_scope=LiveScope(quantity_risk_limit=value))
 
 
-# ---------------------------------------------------------------------------
-# CanonicalDecimal digest regression lock (vs tos.canonical PROMOTE target)
-# ---------------------------------------------------------------------------
-
-
 def test_qty_scale_equal_values_share_digest() -> None:
     """1.0 == 1.00 inside a LiveScope limit => equal profile digest (PROMOTE lock; §3.1)."""
     assert (
@@ -66,11 +55,6 @@ def test_frozenset_prohibited_proofs_digest_is_deterministic() -> None:
     assert len(digests) == 1
 
 
-# ---------------------------------------------------------------------------
-# Issuance / status / id⊥digest
-# ---------------------------------------------------------------------------
-
-
 def test_issue_reaches_issued_with_digest() -> None:
     """A fully-specified profile ISSUES with a concrete digest and independent id."""
     p = issue_profile()
@@ -94,11 +78,6 @@ def test_issued_reachable_under_null_bounds() -> None:
     p = issue_profile(live_scope=LiveScope(quantity_risk_limit=None))
     assert p.status is ArtifactStatus.ISSUED
     assert p.canonical_digest is not None
-
-
-# ---------------------------------------------------------------------------
-# classify_record_pair reachability (same-id / different-bytes => CRITICAL_CONFLICT)
-# ---------------------------------------------------------------------------
 
 
 def test_same_id_different_bytes_is_critical_conflict() -> None:
@@ -142,11 +121,6 @@ def test_distinct_ids_are_distinct() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Append-only / frozen (no update / delete / mutate)
-# ---------------------------------------------------------------------------
-
-
 def test_profile_is_frozen() -> None:
     """(§2.0) A profile is immutable — in-place mutation is rejected."""
     p = issue_profile()
@@ -157,13 +131,8 @@ def test_profile_is_frozen() -> None:
 def test_declaration_for_lookup() -> None:
     """declaration_for returns the declaration for a declared dimension, None otherwise."""
     p = issue_profile(declarations=(verified_declaration(),))
-    assert p.declaration_for(CapabilityDimension.ORDER_IDENTITY) is not None  # declared
-    assert p.declaration_for(CapabilityDimension.CANCELLATION) is None  # undeclared
-
-
-# ---------------------------------------------------------------------------
-# Required-covered drop-one
-# ---------------------------------------------------------------------------
+    assert p.declaration_for(CapabilityDimension.ORDER_IDENTITY) is not None
+    assert p.declaration_for(CapabilityDimension.CANCELLATION) is None
 
 
 def _required_cases() -> list[Any]:

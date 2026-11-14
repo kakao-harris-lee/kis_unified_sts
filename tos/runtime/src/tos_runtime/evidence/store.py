@@ -1,108 +1,4 @@
-"""The durable, append-only, chained Evidence Store (design #40 D3, §2 item 1).
-
-Implements the kernel's pure D3 seams over a single sqlite3 file: scrubbing
-(:func:`tos.evidence.scrub.scrub_secret_fields`), canonical digesting
-(:mod:`tos.canonical`'s EV-L1 provisional scheme — no production
-canonicalization scheme has been registered yet; see the module-level
-``_CANONICALIZATION_VERSION`` note), HMAC chaining
-(:class:`tos.evidence.chain.Sha256HmacChainScheme` /
-:func:`tos.evidence.chain.verify_chain`), and the append receipt contract
-(:class:`tos.evidence.EvidenceAppendReceipt` — never constructed except after
-a durable commit).
-
-Fault-contract table (design #40 §5 lane L / slice plan §2 "장애 계약";
-column = how THIS module satisfies it):
-
-=======  ============================================================
-Contract  How :class:`SqliteEvidenceStore` satisfies it
-=======  ============================================================
-②        ``seq`` is the sqlite ``PRIMARY KEY`` on ``entries`` — a caller
-         cannot cause two rows to share one ``seq``; this module never
-         accepts a caller-supplied ``seq`` in the first place (allocated
-         internally from ``MAX(seq) + 1`` inside the same locked
-         transaction as the insert).
-④        ``append()`` writes inside ``BEGIN IMMEDIATE`` ... ``COMMIT``.
-         An injectable ``crash_hook`` (test-only) can raise
-         :class:`InjectedCrash` at ``"before_commit"`` (caught, the
-         transaction is rolled back, the row never exists) or
-         ``"after_commit_before_receipt"`` (the row is already durably
-         committed and chain-consistent; only the receipt's return to
-         the caller is what never happens) — modelling a process death
-         at exactly those two points, since a real ``os._exit`` /
-         subprocess crash-injection harness (the ``tests/tos_l3``
-         pattern) is unavailable here: ``subprocess`` is firewall-
-         forbidden in runtime scope (``tools/tos_firewall_check.py``
-         R1). Reopening a fresh :class:`SqliteEvidenceStore` on the same
-         path after either crash point observes exactly the disjunction
-         the contract requires: "항목 부재 또는 체인 정합".
-⑤        :meth:`verify` re-derives every link with
-         :func:`tos.evidence.chain.verify_chain`, which is fail-closed
-         (never silently skips a link) and raises
-         :class:`~tos.evidence.chain.ArtifactIntegrityError`-free — it
-         returns ``False`` on any mismatch; this module raises
-         :class:`EvidenceCorruption` when :meth:`verify` is asked to
-         raise instead of report (see :meth:`verify_or_raise`). Plain
-         ``bool`` ``verify()`` is vacuously ``True`` on an empty store
-         (:func:`verify_chain`'s own "nothing to falsify" contract) —
-         :meth:`verify_detailed` (2026-09-08 independent-review LOW-4)
-         returns a :class:`ChainVerification` so a caller can tell
-         "0 links, vacuously ok" apart from "N links, genuinely
-         verified" instead of collapsing both to the same ``True``.
-⑦        Any sqlite failure during the transaction (locked file,
-         read-only filesystem, disk full) propagates as the underlying
-         :class:`sqlite3.Error` from inside the ``try``/``except`` that
-         guards ``COMMIT``; the ``except`` clause always issues
-         ``ROLLBACK`` first, so a partial write never becomes a partial
-         commit. No :class:`~tos.evidence.EvidenceAppendReceipt` is
-         constructed on any exception path. If ``ROLLBACK`` ITSELF
-         raises (2026-09-08 independent-review LOW-6), that rollback
-         failure is caught, attached to the ORIGINAL commit-path
-         exception via :meth:`BaseException.add_note`, and the
-         ORIGINAL exception is what propagates — never silently
-         replaced by the rollback failure's own (possibly unrelated)
-         type.
-=======  ============================================================
-
-**Canonicalization version note.** Design #40 D3.1 fixes only the *chain*
-scheme's new version (``ev-l2-sha256-hmac-chain-1``, :mod:`tos.evidence.chain`);
-no Phase-2 *canonicalization* scheme has been registered in the kernel. This
-module therefore reuses the kernel's one existing registered scheme,
-:data:`tos.canonical.EV_L1_PROVISIONAL_VERSION`
-(:class:`tos.canonical.EVL1ProvisionalCanonicalizer`), for ``entry_digest`` —
-consistent with every other kernel package's own "항목 digest = SHA-256(정본
-바이트)" convention (:mod:`tos.evidence.chain` module docstring) rather than
-inventing a second, parallel canonical-JSON encoder. The version is
-constructor-injected (``canonicalization_version``) so a future PR that
-registers a production scheme needs no change here — only a different
-injected version string.
-
-**Append-only, mechanically.** ``entries`` carries ``BEFORE UPDATE``/
-``BEFORE DELETE`` triggers that ``RAISE(ABORT, ...)`` unconditionally — the
-invariant is unrepresentable through this store's own sqlite handle, not
-merely undocumented.
-
-**``rotate-key`` ordering (TOS Phase 5 W4 §2 decision 4(b), discovered during implementation).**
-:class:`~tos_runtime.custody.key_provider.FileKeyProvider`'s own rotation-order contract is
-"place the new generation's key file FIRST, only THEN call :meth:`SqliteEvidenceStore.rotate`" —
-but that means the new file is ALREADY on disk by the time an operator's ``rotate-key`` CLI
-invocation opens this store fresh, and the constructor's own deny-first continuity gate
-(``__init__``'s own body, below) unconditionally refuses exactly that state
-(``KeyContinuityVerdict.ROTATION_PENDING``) for every caller — empirically confirmed: a plain
-re-open with the new generation's file present always raises, with no way to reach
-:func:`~tos_runtime.operations.key_rotation.rotate_evidence_key` at all. ``__init__``'s
-``permit_rotation_pending_for_generation`` parameter is the one, narrowly-scoped exception: a
-caller (only the ``rotate-key`` CLI path) that explicitly names the EXACT pending generation it
-intends to rotate to may open the store anyway, signing under the store's OWN EXISTING tip
-generation (never the pending new one — ``rotate()`` is still the only way to actually switch
-signing keys). Every other caller passes ``None`` (the default) and gets the unconditional
-refusal unchanged; every OTHER non-``CONTINUOUS`` verdict still refuses regardless of this
-parameter (see :func:`_rotation_permitted`'s own docstring for the exact condition).
-
-Firewall: stdlib (``sqlite3``, ``json``, ``time``) + ``pydantic`` +
-``tos.canonical``/``tos.evidence``/``tos.workload`` + ``tos_runtime.evidence``
-+ ``tos_runtime.operations`` (the schema-ledger boot check, TOS Phase 5 W4
-plan §2 decision 3) only (R1 allowlist).
-"""
+"""The durable, append-only, chained Evidence Store (design #40 D3, §2 item 1)."""
 
 from __future__ import annotations
 
@@ -150,24 +46,10 @@ __all__ = [
 ]
 
 #: TOS Phase 5 W4 plan §2 decision 3 — this store's own ``PRAGMA user_version`` /
-#: ``schema_ledger`` baseline. Bumped only when this store's table shape actually changes; see
-#: :mod:`tos_runtime.operations.schema_migrations` for the registered migration this version
-#: corresponds to.
-#:
-#: **v2 (evidence growth plan §2 A2,
-#: ``docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md``).** ``entries`` gained the
-#: :data:`_CREATE_KIND_SEQ_INDEX_SQL` covering index. A pre-existing v1 file must be brought
-#: up via ``tos_runtime.operations.schema_migrations.apply_migrations(path, "evidence")`` (the
-#: ``migrate`` CLI) BEFORE this code can open it again —
-#: :func:`~tos_runtime.operations.schema_ledger.open_or_create_schema` refuses a non-fresh
-#: file whose stamped version disagrees: a boot refusal, never an auto-migrate.
 EVIDENCE_SCHEMA_VERSION = 2
 
-#: The genesis commitment every fresh chain folds from — matches
-#: :mod:`tos.evidence.chain`'s own (private) ``_CHAIN_GENESIS`` convention.
 _CHAIN_GENESIS = ""
 
-#: See the module docstring's "canonicalization version note".
 _CANONICALIZATION_VERSION = EV_L1_PROVISIONAL_VERSION
 
 _CREATE_ENTRIES_TABLE_SQL = """
@@ -185,36 +67,6 @@ CREATE TABLE IF NOT EXISTS entries (
 )
 """
 
-#: Schema v2 (evidence growth plan §2 A2). Every historical read this runtime performs at
-#: boot/recovery is ``WHERE kind = ?`` / ``WHERE kind IN (...)``, optionally with ``AND seq >
-#: ?`` and always ordered by ``seq``. ``git grep -l "FROM entries" -- tos/runtime/src`` matches
-#: 21 files, but TWO of those (``rcl/gates.py``, ``rcl/log.py``) query the RCL commit log's own,
-#: separate ``entries`` table — so 19 modules read THIS store, and 14 of the 19 are on the
-#: boot/recovery path (the plan's §7 reader table names each one). Without this index each of
-#: them is a full table scan, so boot cost grows with TOTAL
-#: history even though every one of those readers wants a single kind; ``TIME_HEALTH_SNAPSHOT``
-#: alone was 77 % of the rows and 89 % of the bytes those scans read (84.4 % by the
-#: 2026-11-13 re-measurement over every live store), and nothing in this runtime ever reads it
-#: back. ``(kind, seq)`` — in that order — makes the filter a range seek and the ``ORDER BY
-#: seq`` free within a kind. (Since 2026-11-13 that kind is written on judged-content change
-#: plus a configured heartbeat rather than per engine pass —
-#: ``tos_runtime.time.service``'s module docstring — so the share shrinks; the index earns its
-#: keep on the OTHER kinds' scans regardless, which is what the shape argument above rests on.)
-#:
-#: **This is an auxiliary structure, not a change of stored representation.** No row's bytes,
-#: ``entry_digest`` or ``chain_digest`` move, so the append-only triggers below and
-#: :meth:`SqliteEvidenceStore.verify` are untouched by it. Rollback is correspondingly total:
-#: ``DROP INDEX entries_kind_seq`` restores the v1 storage exactly (see
-#: :mod:`tos_runtime.operations.schema_migrations`'s own rollback note).
-#:
-#: **Created at genesis, and NEVER on a boot** (:func:`_create_evidence_schema` below runs it
-#: only when :func:`~tos_runtime.operations.schema_ledger.open_or_create_schema` hands it
-#: ``fresh=True``). Unlike the ``CREATE TABLE``/``CREATE TRIGGER`` statements beside it,
-#: ``CREATE INDEX IF NOT EXISTS`` is not a no-op against a pre-existing file: running it
-#: unconditionally would build a full index into a v1 file that the same call is about to refuse
-#: as BEHIND — a boot that writes and then refuses, against that module's own "부팅 시 자동 적용
-#: 0" — and would rebuild an index an operator had just dropped to roll v2 back. Both belong to
-#: ``migrate``, and only to ``migrate``.
 _CREATE_KIND_SEQ_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS entries_kind_seq ON entries (kind, seq)
 """
@@ -241,30 +93,11 @@ class EvidenceCorruption(RuntimeError):
 
 
 class InjectedCrash(RuntimeError):
-    """Raised by a test-supplied ``crash_hook`` to simulate a process death (contract ④).
-
-    Never raised by production code paths — this module only *calls* the
-    injected hook; the hook itself decides whether, and with what, to raise.
-    """
+    """Raised by a test-supplied ``crash_hook`` to simulate a process death (contract ④)."""
 
 
 class ChainVerification(BaseModel):
-    """The detailed result of :meth:`SqliteEvidenceStore.verify_detailed` (contract ⑤).
-
-    A plain ``bool`` (:meth:`SqliteEvidenceStore.verify`) cannot distinguish
-    "0 links, vacuously ``True``" (an empty store — :func:`verify_chain`'s
-    own "nothing to falsify" contract) from "N links, genuinely re-derived" —
-    both collapse to the same ``True``. This record keeps ``ok`` (so a
-    caller that only wants the boolean still gets it) but ALSO reports how
-    many links were actually re-verified, so the two cases stay
-    distinguishable (2026-09-08 independent-review LOW-4).
-
-    ``verified_links`` is fail-closed on failure: :func:`verify_chain` is
-    "the WHOLE chain fails, never partially" (its own docstring) — it does
-    not report which link broke or how far it got — so this record never
-    overclaims a partial count when ``ok`` is ``False``; ``verified_links``
-    is ``0`` in that case, not "however many links exist".
-    """
+    """The detailed result of :meth:`SqliteEvidenceStore.verify_detailed` (contract ⑤)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -275,23 +108,7 @@ class ChainVerification(BaseModel):
 
 @runtime_checkable
 class KeyProvider(Protocol):
-    """The injected source of the store's initial signing key (design #40 D4).
-
-    Custody of the real key bytes is ``tos_runtime.custody`` territory
-    (design #40 D4, sequence item 4 — out of this slice's scope); this
-    Protocol is the seam a future custody implementation satisfies. Tests
-    inject a fixed-byte double. :meth:`current` is consulted exactly once, at
-    construction — :meth:`SqliteEvidenceStore.rotate` is the ongoing rotation
-    mechanism thereafter (explicit ``new_generation``/``new_key`` arguments,
-    not a second :meth:`current` call).
-
-    :meth:`generations` was added by TOS Phase 5 W4 plan §2 decision 4 — the
-    constructor's own key-generation continuity gate
-    (:func:`tos_runtime.operations.key_rotation.verify_key_generation_continuity`)
-    calls it, ALSO at construction, before :meth:`current` — every caller
-    that constructs a :class:`SqliteEvidenceStore` with a custom
-    :class:`KeyProvider` double must implement both methods.
-    """
+    """The injected source of the store's initial signing key (design #40 D4)."""
 
     def current(self) -> tuple[int, bytes]:
         """Return ``(key_generation, key_bytes)`` for the initial signing key."""
@@ -302,11 +119,7 @@ class KeyProvider(Protocol):
         ...
 
     def key_for(self, generation: int) -> bytes:
-        """Return the key bytes for a SPECIFIC ``generation`` — added alongside
-        ``permit_rotation_pending_for_generation`` (module docstring's "rotate-key ordering"
-        note): the rotation-pending-permitted construction path signs under the store's
-        existing tip generation via this method, never :meth:`current` (which would resolve
-        the PENDING new generation instead)."""
+        """Return the key bytes for a SPECIFIC ``generation`` — added alongside"""
         ...
 
 
@@ -324,41 +137,20 @@ class _EntryRow(NamedTuple):
 
 
 class _Entry(NamedTuple):
-    """One raw ``entries`` row, meta fields PLUS the payload — :meth:`SqliteEvidenceStore
-    .entry`'s read shape.
-
-    Composed of :class:`_EntryRow` rather than re-listing its eight fields, so the meta
-    shape has exactly one definition for both readers to follow.
-    """
+    """One raw ``entries`` row, meta fields PLUS the payload — :meth:`SqliteEvidenceStore"""
 
     meta: _EntryRow
     payload_json: str
 
 
-#: The ``entries`` columns :class:`_EntryRow` unpacks, in field order — DERIVED from the
-#: NamedTuple, never hand-maintained beside it.
-#:
-#: Every meta field's name is also its column name in the ``CREATE TABLE`` above, so the
-#: field order IS the correct select list. Writing it out by hand would leave two places to
-#: keep in lockstep with a third (the tuple), and ``_EntryRow(*row)`` unpacks POSITIONALLY:
-#: inserting or reordering one field without editing the string would silently mis-assign
-#: every field after it, in both readers at once. Deriving it removes that failure class
-#: instead of halving it. A field added here that is NOT a column fails loudly on the next
-#: read (``sqlite3.OperationalError: no such column``), and
-#: ``tos/runtime/tests/evidence/test_store.py`` pins the correspondence directly against
 #: ``PRAGMA table_info`` so the failure is a red test, not a runtime surprise.
 _ENTRY_META_COLUMNS_SQL = ", ".join(_EntryRow._fields)
 
-#: :data:`_ENTRY_META_COLUMNS_SQL` plus the payload — :meth:`SqliteEvidenceStore.entry`'s
-#: select list. ``payload_json`` is appended LAST so the meta fields keep their positions and
-#: ``_EntryRow(*row[:-1])`` stays correct.
 _ENTRY_COLUMNS_SQL = f"{_ENTRY_META_COLUMNS_SQL}, payload_json"
 
 
 def _tip_key_generation(conn: sqlite3.Connection) -> int | None:
-    """The ``key_generation`` of the most recently committed ``entries`` row, or ``None`` for
-    an empty (fresh) store — the constructor's own continuity-gate input (TOS Phase 5 W4 plan
-    §2 decision 4)."""
+    """The ``key_generation`` of the most recently committed ``entries`` row, or ``None`` for"""
     row = conn.execute(
         "SELECT key_generation FROM entries ORDER BY seq DESC LIMIT 1"
     ).fetchone()
@@ -366,13 +158,7 @@ def _tip_key_generation(conn: sqlite3.Connection) -> int | None:
 
 
 def _tip_has_rotation_commit_for(conn: sqlite3.Connection, generation: int) -> bool:
-    """Whether a ``KEY_ROTATION`` entry recording ``new_key_generation == generation`` exists.
-
-    Reads ``payload_json`` in Python rather than sqlite's ``json_extract`` — the JSON1
-    extension is not guaranteed compiled into every sqlite3 build this runtime might run
-    against, and the number of rotations in a store's lifetime is small enough that a full
-    scan of ``KEY_ROTATION``-kind rows costs nothing worth optimizing for.
-    """
+    """Whether a ``KEY_ROTATION`` entry recording ``new_key_generation == generation`` exists."""
     cur = conn.execute(
         "SELECT payload_json FROM entries WHERE kind = ?", ("KEY_ROTATION",)
     )
@@ -389,15 +175,7 @@ def _rotation_permitted(
     permit_rotation_pending_for_generation: int | None,
     conn: sqlite3.Connection,
 ) -> bool:
-    """Whether the constructor's ``permit_rotation_pending_for_generation`` override
-    (that parameter's own docstring) applies to THIS specific ``continuity`` result.
-
-    ``True`` only when ALL of: the verdict is exactly ``ROTATION_PENDING`` (never
-    ``HISTORY_UNVERIFIABLE``, which always refuses regardless of this parameter); the caller
-    supplied a generation; the highest generation actually on disk equals it (never a
-    caller-claimed generation the custody root does not, in fact, have staged); and a real
-    tip generation exists (a fresh store with no prior entries at all is a different,
-    ill-defined case this override does not cover — module docstring)."""
+    """Whether the constructor's ``permit_rotation_pending_for_generation`` override"""
     if continuity.verdict != KeyContinuityVerdict.ROTATION_PENDING:
         return False
     if permit_rotation_pending_for_generation is None:
@@ -412,21 +190,12 @@ def _rotation_permitted(
 def _resolve_signing_key(
     continuity: KeyContinuityCheck, conn: sqlite3.Connection, key_provider: KeyProvider
 ) -> tuple[int, bytes]:
-    """The ``(key_generation, key_bytes)`` pair the constructor signs new entries with.
-
-    ``key_provider.current()`` (the highest generation on disk) when ``continuity`` is
-    ``CONTINUOUS``; otherwise the store's OWN EXISTING tip generation — NEVER the pending new
-    one — for the rotation-pending-permitted path (module docstring's "rotate-key ordering"
-    note; :meth:`SqliteEvidenceStore.rotate` is the only sanctioned way to actually switch
-    signing keys). The constructor only reaches this function at all when ``continuity`` is
-    either ``CONTINUOUS`` or an explicitly-permitted ``ROTATION_PENDING`` — see
-    :func:`_rotation_permitted`.
-    """
+    """The ``(key_generation, key_bytes)`` pair the constructor signs new entries with."""
     if continuity.verdict == KeyContinuityVerdict.CONTINUOUS:
         return key_provider.current()
     key_generation = _tip_key_generation(conn)
     if key_generation is None:
-        raise KeyContinuityRefused(  # unreachable; never a bare `assert` (`-O` strips it)
+        raise KeyContinuityRefused(
             "SqliteEvidenceStore: rotation-pending permitted with no tip key generation "
             "— invariant violation, refusing"
         )
@@ -434,13 +203,7 @@ def _resolve_signing_key(
 
 
 def _create_evidence_schema(conn: sqlite3.Connection, fresh: bool) -> None:
-    """This store's own DDL, run by :func:`~tos_runtime.operations.schema_ledger
-    .open_or_create_schema` inside the genesis transaction — in exactly the order, and with
-    exactly the statements, ``__init__`` used to run inline.
-
-    ``fresh`` gates the covering index and nothing else: see
-    :data:`_CREATE_KIND_SEQ_INDEX_SQL`'s own "created at genesis, and NEVER on a boot".
-    """
+    """This store's own DDL, run by :func:`~tos_runtime.operations.schema_ledger"""
     conn.execute(_CREATE_ENTRIES_TABLE_SQL)
     if fresh:
         conn.execute(_CREATE_KIND_SEQ_INDEX_SQL)
@@ -450,14 +213,7 @@ def _create_evidence_schema(conn: sqlite3.Connection, fresh: bool) -> None:
 
 
 class SqliteEvidenceStore:
-    """The append-only, HMAC-chained, durable evidence log (design #40 D3.1).
-
-    One sqlite3 file (``journal_mode=WAL``, ``synchronous=FULL``). Every
-    write happens inside ``BEGIN IMMEDIATE`` ... ``COMMIT`` so a concurrent
-    writer is serialized rather than corrupting the file (SQLite's own
-    reserved-lock semantics), and every failure path issues ``ROLLBACK``
-    before propagating (contract ⑦).
-    """
+    """The append-only, HMAC-chained, durable evidence log (design #40 D3.1)."""
 
     def __init__(
         self,
@@ -470,47 +226,16 @@ class SqliteEvidenceStore:
         crash_hook: Callable[[str], None] | None = None,
         permit_rotation_pending_for_generation: int | None = None,
     ) -> None:
-        """Open (or create) the evidence store at ``path``.
-
-        Args:
-            path: The sqlite file path. Parent directory must already exist
-                (this module never creates directories — a runtime hermetic
-                test's ``tmp_path`` already does).
-            key_provider: Supplies the initial ``(key_generation, key_bytes)``
-                pair, consulted exactly once here.
-            secret_keys: Field names :func:`~tos.evidence.scrub_secret_fields`
-                masks, at any depth, before a payload is digested or stored.
-                Never a hard-coded literal set (design #40 D3-d) — always
-                caller-injected.
-            canonicalization_version: The registered
-                :mod:`tos.canonical` scheme version used to compute
-                ``entry_digest`` (see module docstring).
-            monotonic_ns: Injected monotonic-clock callable for
-                ``appended_at_monotonic_ns`` — never ``time.monotonic_ns``
-                read directly inline, so tests can inject a fake source.
-            crash_hook: Test-only crash-injection callable (contract ④); see
-                the module docstring's fault-contract table. ``None`` in
-                production.
-            permit_rotation_pending_for_generation: The ONE sanctioned override of the
-                deny-first continuity gate below — ``None`` (default) for every normal
-                caller, unchanged behaviour. See :func:`_rotation_permitted`'s own
-                docstring for the exact condition and the module docstring's "rotate-key
-                ordering" note for why this exists at all.
-        """
+        """Open (or create) the evidence store at ``path``."""
         self.path = path
         self._secret_keys = secret_keys
         self._canon_scheme = get_scheme(canonicalization_version)
         self._monotonic_ns = monotonic_ns
         self._crash_hook = crash_hook
         self._conn = sqlite3.connect(str(path), isolation_level=None)
-        # Construction from here on is guarded: a refused boot closes `self._conn` instead of
-        # leaving it to the exception's traceback. The rationale lives once, on the helper.
         with closing_on_failure(self._conn):
             enable_wal_journal(self._conn)
             self._conn.execute("PRAGMA synchronous=FULL")
-            # DDL, freshness decision and genesis stamp all inside ONE `BEGIN IMMEDIATE` (#801) —
-            # see `open_or_create_schema`'s own docstring for the two concurrent-first-boot races
-            # that closes.
             open_or_create_schema(
                 self._conn,
                 store_name="evidence",
@@ -519,11 +244,6 @@ class SqliteEvidenceStore:
                 shape_tables=("entries", "outbox"),
                 monotonic_ns=monotonic_ns,
             )
-            # TOS Phase 5 W4 plan §2 decision 4 — the key-generation continuity gate. Must run
-            # BEFORE `key_provider.current()` is ever consulted: a boot that is not CONTINUOUS
-            # must never select (let alone sign with) any key at all (see module docstring's own
-            # forward pointer and `tos_runtime.operations.key_rotation`'s module docstring for the
-            # gap this closes).
             provider_generations = key_provider.generations()
             continuity = verify_key_generation_continuity(
                 _tip_key_generation(self._conn),
@@ -543,20 +263,16 @@ class SqliteEvidenceStore:
                     f"SqliteEvidenceStore: key generation continuity refused "
                     f"({continuity.verdict}) for {path}: {continuity.reason}"
                 )
-            #: Boot-time continuity fact for a later reader (e.g. the operator projection's
-            #: ``operations.key_continuity``) — module docstring on why this can be ``ROTATION_PENDING``.
             self.key_continuity: KeyContinuityCheck = continuity
             key_generation, key = _resolve_signing_key(
                 continuity, self._conn, key_provider
             )
             self._scheme = Sha256HmacChainScheme(key=key, key_generation=key_generation)
-        # Issue #950: this thread keeps `self._conn`; any other thread gets its own connection.
         self._conns = ThreadConnections(path, lambda: self._conn)
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """The calling thread's sqlite3 connection (:mod:`~tos_runtime.evidence
-        .thread_connections`) — :mod:`tos_runtime.evidence.backup` reuses it."""
+        """The calling thread's sqlite3 connection (:mod:`~tos_runtime.evidence"""
         return self._conns.current()
 
     @property
@@ -569,13 +285,7 @@ class SqliteEvidenceStore:
         self._conns.close()
 
     def _read_tail(self) -> tuple[int, str]:
-        """Return ``(next_seq, last_chain_digest)``, read fresh from disk every call.
-
-        Deliberately uncached (never a Python-side running counter) so a
-        crash-injected instance and a freshly reopened instance observe
-        identical behaviour — the durable table is the only source of
-        truth for "what has already been committed".
-        """
+        """Return ``(next_seq, last_chain_digest)``, read fresh from disk every call."""
         row = (
             self._conns.current()
             .execute("SELECT seq, chain_digest FROM entries ORDER BY seq DESC LIMIT 1")
@@ -589,25 +299,7 @@ class SqliteEvidenceStore:
     def scrub_payload(
         self, payload: Mapping[str, object]
     ) -> tuple[dict[str, object], tuple[str, ...]]:
-        """Scrub ``payload`` with this store's OWN configured ``secret_keys``.
-
-        Exposed so a caller writing the SAME record to a second, non-sqlite
-        path (e.g. :mod:`tos_runtime.evidence.emergency`'s JSONL log) can
-        obtain byte-identical scrubbed content without re-implementing or
-        duplicating the secret-field list — :meth:`append` calls this exact
-        function internally too, so scrubbing a payload here and then
-        passing the ALREADY-scrubbed result into :meth:`append` is safe:
-        :func:`~tos.evidence.scrub_secret_fields` is idempotent (masking an
-        already-``"***REDACTED***"`` value under the same key re-masks it to
-        the identical value), so nothing is double-redacted or corrupted.
-
-        Args:
-            payload: The record's own fields, prior to scrubbing.
-
-        Returns:
-            The ``(scrubbed_payload, masked_keys)`` pair
-            :func:`~tos.evidence.scrub_secret_fields` returns.
-        """
+        """Scrub ``payload`` with this store's OWN configured ``secret_keys``."""
         return scrub_secret_fields(payload, self._secret_keys)
 
     def _compute_entry_digest(
@@ -645,31 +337,7 @@ class SqliteEvidenceStore:
         runtime_identity: RuntimeIdentity | None = None,
         outbox_targets: Sequence[str] = (),
     ) -> EvidenceAppendReceipt:
-        """Durably append one scrubbed, digested, chained entry (design #40 D3.1).
-
-        Order (module docstring / design #40 §D3.1 line 88): scrub -> canonical
-        digest -> chain link -> ``INSERT`` (+ same-transaction outbox enqueue)
-        -> ``COMMIT`` -> receipt. No :class:`~tos.evidence.EvidenceAppendReceipt`
-        is constructed on any failure path.
-
-        Args:
-            payload: The record's own fields, prior to scrubbing.
-            kind: The record kind (caller vocabulary).
-            record_class: The retention/durability class label.
-            segment_id: An optional caller-supplied grouping label — this
-                slice does not itself implement a segment-boundary policy
-                (time- or count-based rollover), so a caller either omits it
-                (implicit single segment, ``None``) or manages segmentation
-                itself.
-            runtime_identity: The issuing process's identity (design #40 D4),
-                bound into the digest so tampering with it is detected too.
-            outbox_targets: Target names to enqueue for at-least-once
-                delivery, in the SAME transaction as this append.
-
-        Returns:
-            The commit receipt — ``durable=True`` by construction, only ever
-            returned after ``COMMIT`` succeeds.
-        """
+        """Durably append one scrubbed, digested, chained entry (design #40 D3.1)."""
         return self._append_with_scheme(
             payload,
             kind=kind,
@@ -691,16 +359,7 @@ class SqliteEvidenceStore:
         outbox_targets: Sequence[str],
         scheme: Sha256HmacChainScheme,
     ) -> EvidenceAppendReceipt:
-        """The whole durable-append body, signed under an EXPLICIT ``scheme``.
-
-        :meth:`append` always passes ``self._scheme`` (the store's current,
-        already-committed-to generation). :meth:`rotate` is the one other
-        caller: it passes a LOCAL, not-yet-assigned scheme so the
-        rotation-commit entry is signed under the new generation while
-        ``self._scheme`` itself stays untouched until that append durably
-        succeeds — see :meth:`rotate`'s own docstring for why this
-        parameterization is what makes rotation atomic.
-        """
+        """The whole durable-append body, signed under an EXPLICIT ``scheme``."""
         scrubbed_payload, masked_keys = scrub_secret_fields(payload, self._secret_keys)
         entry_digest = self._compute_entry_digest(
             kind=kind,
@@ -711,7 +370,7 @@ class SqliteEvidenceStore:
             runtime_identity=runtime_identity,
         )
         appended_at_ns = self._monotonic_ns()
-        with self._conns.write_lock:  # issue #950: one writer at a time in-process
+        with self._conns.write_lock:
             conn = self._conns.current()
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -751,14 +410,6 @@ class SqliteEvidenceStore:
                     self._crash_hook("before_commit")
                 conn.execute("COMMIT")
             except BaseException as commit_error:
-                # LOW-6 (2026-09-08 independent review): if ROLLBACK itself
-                # raises, catching it here (rather than letting it propagate
-                # unguarded) stops it from REPLACING commit_error as the
-                # exception the caller sees. The rollback failure is recorded as
-                # a note on the ORIGINAL error instead, and the bare `raise`
-                # below re-raises `commit_error` — never the rollback failure —
-                # so the root cause always survives, and no receipt is ever
-                # constructed on this path either way.
                 try:
                     conn.execute("ROLLBACK")
                 except Exception as rollback_error:
@@ -779,31 +430,7 @@ class SqliteEvidenceStore:
             )
 
     def rotate(self, new_generation: int, new_key: bytes) -> EvidenceAppendReceipt:
-        """Rotate the signing key: append a rotation-commit entry under the new key.
-
-        **Atomic.** ``self._scheme`` is assigned the new generation ONLY
-        after the rotation-commit entry has durably committed and its
-        receipt has been built — never before. The new scheme is built
-        LOCALLY and passed straight to :meth:`_append_with_scheme` (which
-        signs the rotation-commit entry under it), so a failure anywhere in
-        that append (the same ``BEGIN IMMEDIATE``/``COMMIT``/``ROLLBACK``
-        discipline every other append uses) propagates BEFORE
-        ``self._scheme`` is ever touched: the store's generation, its
-        ``verify()`` behaviour against the OLD key, and every already-signed
-        entry are all left exactly as they were (design #40 D4.1 "겹침 0" —
-        no generation is ever live without a committed marker proving it).
-
-        Args:
-            new_generation: The new monotonic key-epoch (must be greater
-                than the current generation — enforced by
-                :class:`~tos.evidence.chain.Sha256HmacChainScheme`'s own
-                non-negative-generation construction check plus this
-                method's own strictly-increasing check).
-            new_key: The new HMAC key bytes.
-
-        Returns:
-            The receipt for the rotation-commit entry itself.
-        """
+        """Rotate the signing key: append a rotation-commit entry under the new key."""
         current_generation = self._scheme.key_generation
         if new_generation <= current_generation:
             raise ValueError(
@@ -824,9 +451,6 @@ class SqliteEvidenceStore:
             outbox_targets=(),
             scheme=new_scheme,
         )
-        # Only reached after the rotation-commit entry is durably committed —
-        # see this method's own docstring on why the assignment happens here
-        # and not before the append.
         self._scheme = new_scheme
         return receipt
 
@@ -843,31 +467,13 @@ class SqliteEvidenceStore:
             )
 
     def verify(self, keys_by_generation: Mapping[int, bytes]) -> bool:
-        """Re-verify the whole chain (contract ⑤); ``True`` iff every link re-derives.
-
-        See :meth:`verify_detailed` if the caller needs to tell an empty
-        store's vacuous ``True`` apart from a populated chain's genuine
-        ``True`` (LOW-4) — this method keeps its original plain-``bool``
-        contract unchanged for existing callers.
-        """
+        """Re-verify the whole chain (contract ⑤); ``True`` iff every link re-derives."""
         return verify_chain(tuple(self.replay()), keys_by_generation)
 
     def verify_detailed(
         self, keys_by_generation: Mapping[int, bytes]
     ) -> ChainVerification:
-        """Like :meth:`verify`, but reports how many links were actually verified.
-
-        Args:
-            keys_by_generation: The HMAC keys, keyed by ``key_generation``.
-
-        Returns:
-            A :class:`ChainVerification` — ``verified_links`` is the entry
-            count when ``ok`` is ``True`` (an empty store is ``ok=True,
-            verified_links=0`` — the vacuous case, now visible instead of
-            indistinguishable from a real N-link verification) and ``0``
-            when ``ok`` is ``False`` (never a partial/overclaimed count —
-            see this type's own docstring).
-        """
+        """Like :meth:`verify`, but reports how many links were actually verified."""
         entries = tuple(self.replay())
         ok = bool(verify_chain(entries, keys_by_generation))
         last_seq, _, _ = self.last_committed()
@@ -884,12 +490,7 @@ class SqliteEvidenceStore:
             )
 
     def last_committed(self) -> tuple[int | None, str, int | None]:
-        """Return ``(last_seq, last_chain_digest, last_key_generation)``.
-
-        ``last_seq``/``last_key_generation`` are ``None`` for an empty store;
-        ``last_chain_digest`` is the genesis value in that case. Used by
-        :mod:`tos_runtime.evidence.backup` to build a :class:`BackupManifest`.
-        """
+        """Return ``(last_seq, last_chain_digest, last_key_generation)``."""
         row = (
             self._conns.current()
             .execute(
@@ -906,25 +507,7 @@ class SqliteEvidenceStore:
     def last_committed_excluding(
         self, kinds: frozenset[str]
     ) -> tuple[int | None, str, int | None]:
-        """Same as :meth:`last_committed`, but ignores rows whose ``kind`` is in
-        ``kinds`` (W3.1 independent review HIGH-1).
-
-        Exists for a caller that BOTH observes this store's own tip AND writes to it
-        (e.g. a stall detector whose own alert-emission sink is this same store): reading
-        the unfiltered tip would see the caller's own writes as "the tip advanced",
-        self-perturbing the very observation the caller is making. Excluding the
-        caller's own write ``kind``(s) from the tip query breaks that loop.
-
-        Args:
-            kinds: The ``kind`` values to exclude from consideration — never a
-                caller-supplied SQL fragment (bound as ordinary parameters below).
-
-        Returns:
-            ``(last_seq, last_chain_digest, last_key_generation)`` over the entries NOT
-            in ``kinds``, or ``(None, _CHAIN_GENESIS, None)`` when no such entry exists
-            (mirrors :meth:`last_committed`'s own empty-store contract — indistinguishable
-            from "no entries at all" when every entry happens to be excluded).
-        """
+        """Same as :meth:`last_committed`, but ignores rows whose ``kind`` is in"""
         if not kinds:
             return self.last_committed()
         placeholders = ", ".join("?" for _ in kinds)
@@ -943,13 +526,7 @@ class SqliteEvidenceStore:
         return last_seq, last_chain_digest, last_key_generation
 
     def iter_entry_meta(self) -> Iterator[_EntryRow]:
-        """Yield every entry's meta fields (no payload) — :mod:`tos_runtime.evidence.retention`'s read shape.
-
-        A whole-table walk by construction (no ``WHERE``, ``ORDER BY seq ASC``): sqlite plans
-        it as ``SCAN entries`` and the ``entries_kind_seq`` index above cannot narrow it,
-        because there is no ``kind`` to narrow by. A caller that wants ONE row by ``seq``
-        must use :meth:`entry` instead, not filter this walk.
-        """
+        """Yield every entry's meta fields (no payload) — :mod:`tos_runtime.evidence.retention`'s read shape."""
         cur = self._conns.current().execute(
             f"SELECT {_ENTRY_META_COLUMNS_SQL} FROM entries ORDER BY seq ASC"
         )
@@ -957,33 +534,7 @@ class SqliteEvidenceStore:
             yield _EntryRow(*row)
 
     def entry(self, seq: int) -> _Entry | None:
-        """The ONE ``entries`` row ``seq`` names — meta fields AND ``payload_json``, read by
-        primary key instead of walked. ``None`` when no row carries that ``seq`` — a recorded
-        absence, never a guess (the caller decides what an absent row means).
-
-        ``seq`` is this table's ``INTEGER PRIMARY KEY`` (the ``CREATE TABLE`` above), so
-        sqlite plans this statement as ``SEARCH entries USING INTEGER PRIMARY KEY (rowid=?)``:
-        one row visited, independent of how long the history is.
-
-        Added for :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader
-        ._resolve_handling_started`, which wants exactly one row's ``kind``,
-        ``key_generation``, ``appended_at_monotonic_ns`` and ``payload_json`` and used to
-        reach them two ways at once: a walk of :meth:`iter_entry_meta` for the meta (a
-        ``kind``-less full scan measured at **≥130 s on a 365-day store** — evidence growth
-        plan ``docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md`` §2 A2-b, §7.1.12
-        "읽어야 할 것" 2) plus a second, hand-written ``SELECT payload_json`` issued from
-        :mod:`tos_runtime.riskstate` against :attr:`connection`. That second statement coupled
-        a riskstate module to this table's layout; returning both halves here is what lets it
-        go away, so the ``entries`` select lists live in this module only.
-
-        Meta and payload come back as ONE row because both resolvers want the SAME row: the
-        caller that needs only the timestamp still pays a single primary-key read, where
-        before it paid a full scan.
-
-        Read-only: no new PRAGMA, no schema change, no index — the primary key is already
-        there. :meth:`iter_entry_meta` keeps its own whole-table contract unchanged for
-        :mod:`tos_runtime.evidence.retention` and its other callers.
-        """
+        """The ONE ``entries`` row ``seq`` names — meta fields AND ``payload_json``, read by"""
         row = (
             self._conns.current()
             .execute(

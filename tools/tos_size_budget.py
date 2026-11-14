@@ -61,8 +61,6 @@ import yaml
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = Path("config/tos_size_budget.yaml")
 
-#: Directory names pruned from the scope walk by exact name (not full path), matching
-#: the firewall forward-scan convention documented in tos/CLAUDE.md.
 _PRUNED_DIR_NAMES = frozenset({"__pycache__", ".venv"})
 
 REQUIRED_ENTRY_FIELDS = (
@@ -76,11 +74,7 @@ REQUIRED_ENTRY_FIELDS = (
 
 
 class SizeBudgetConfigError(Exception):
-    """The config file is missing, unparseable, or fails top-level schema validation.
-
-    This is failure class (e) — a hard stop, not a collected violation, because the
-    checker cannot measure anything without a structurally valid config.
-    """
+    """The config file is missing, unparseable, or fails top-level schema validation."""
 
 
 @dataclass(frozen=True)
@@ -105,17 +99,7 @@ class BudgetConfig:
 
 @dataclass(frozen=True)
 class Measured:
-    """One module or function as measured from source, over-budget or not.
-
-    Attributes:
-        target: The module's scope-relative posix path, or ``"<path>::<qualname>"``
-            for a function (``qualname`` dotted through enclosing classes/functions).
-        kind: ``"module"`` or ``"function"`` — selects which configured threshold
-            applies.
-        lines: Physical line count. For a function this is
-            ``end_lineno - lineno + 1`` of the ``FunctionDef``/``AsyncFunctionDef``
-            node (decorators excluded, matching each decorator's own ``lineno``).
-    """
+    """One module or function as measured from source, over-budget or not."""
 
     target: str
     kind: str
@@ -136,26 +120,11 @@ def _parse_date(value: object, *, where: str) -> _dt.date:
 
 
 def _is_plain_int(value: object) -> bool:
-    # bool is an int subclass; a YAML "true"/"false" must not silently pass as 0/1.
     return isinstance(value, int) and not isinstance(value, bool)
 
 
 def load_config(config_path: Path) -> tuple[BudgetConfig, list[str]]:
-    """Load and schema-validate the size budget config.
-
-    Structural problems with the config *file itself* (missing, unreadable, invalid
-    YAML, root not a mapping, a required top-level key absent or mistyped) raise
-    :class:`SizeBudgetConfigError` immediately — failure class (e).
-
-    A malformed individual ``exceptions:`` entry (missing/mistyped field) does
-    *not* abort loading: it is excluded from the returned config's ``exceptions``
-    and reported as a ``"[malformed-entry] ..."`` string in the second return
-    value, so ``run_check`` can report it as a class-(d) violation alongside every
-    other well-formed entry's checks.
-
-    Returns:
-        ``(config, malformed_entry_messages)``.
-    """
+    """Load and schema-validate the size budget config."""
     if not config_path.is_file():
         raise SizeBudgetConfigError(f"config not found: {config_path}")
     try:
@@ -282,10 +251,6 @@ def _target_path(path: Path, root: Path) -> str:
     try:
         return resolved.relative_to(root.resolve()).as_posix()
     except ValueError as exc:
-        # A symlink under a scope directory that resolves outside --root is a
-        # measurement that cannot be honestly reported as a scope-relative path — fail
-        # closed with the checker's own error class instead of letting a bare ValueError
-        # (from pathlib) propagate as an unhandled crash.
         raise SizeBudgetConfigError(
             f"{path}: resolves to {resolved} which is outside --root {root} "
             "(a symlink escaping scope?)"
@@ -293,18 +258,7 @@ def _target_path(path: Path, root: Path) -> str:
 
 
 def _iter_functions(tree: ast.Module, *, target: str) -> Iterator[tuple[str, int, int]]:
-    """Yield ``(qualname, lineno, end_lineno)`` for every function, nested or a method.
-
-    ``qualname`` is dotted through enclosing ``ClassDef``/``FunctionDef`` scopes (e.g.
-    ``"Foo.bar"`` for method ``bar`` of class ``Foo``, ``"outer.inner"`` for a nested
-    function) so two same-named functions in different scopes never collide as budget
-    targets.
-
-    Args:
-        tree: The parsed module.
-        target: The module's scope-relative path, used only to name the source in a
-            :class:`SizeBudgetConfigError` if a function's span cannot be measured.
-    """
+    """Yield ``(qualname, lineno, end_lineno)`` for every function, nested or a method."""
 
     def walk(node: ast.AST, prefix: tuple[str, ...]) -> Iterator[tuple[str, int, int]]:
         for child in ast.iter_child_nodes(node):
@@ -312,12 +266,6 @@ def _iter_functions(tree: ast.Module, *, target: str) -> Iterator[tuple[str, int
                 qualname = ".".join((*prefix, child.name))
                 end_lineno = child.end_lineno
                 if end_lineno is None:
-                    # A measurement that cannot be taken is red, not silently skipped —
-                    # matching the sibling SyntaxError path in ``measure()`` below. This
-                    # should not happen for anything ``ast.parse`` itself produced (only a
-                    # hand-built/mutated AST node lacks ``end_lineno``), but a skip here
-                    # would silently under-count the module and hide a real function from
-                    # the budget entirely.
                     raise SizeBudgetConfigError(
                         f"{target}::{qualname}: cannot measure — end_lineno is None"
                     )
@@ -372,14 +320,9 @@ def run_check(
     *,
     today: _dt.date,
 ) -> list[str]:
-    """Run every check class (a)-(d) and return one violation string per hit.
+    """Run every check class (a)-(d) and return one violation string per hit."""
+    violations: list[str] = list(malformed_entries)
 
-    Class (e) is not handled here — it is a load-time hard failure (see
-    :func:`load_config`), never a member of this list.
-    """
-    violations: list[str] = list(malformed_entries)  # (d) malformed entries
-
-    # (d) duplicate decomposition_order across otherwise well-formed entries
     order_seen: dict[int, str] = {}
     for entry in config.exceptions:
         prior = order_seen.get(entry.decomposition_order)
@@ -396,7 +339,6 @@ def run_check(
     over = {m.target: m for m in over_budget(measured, config)}
     exceptions_by_target = {e.target: e for e in config.exceptions}
 
-    # (a) over-budget target with no exception entry
     for target in sorted(over):
         if target not in exceptions_by_target:
             m = over[target]
@@ -405,7 +347,6 @@ def run_check(
                 f"{_limit_for(m.kind, config)} with no exceptions entry"
             )
 
-    # (b) expired exception — fail-closed regardless of current over-budget status
     for entry in config.exceptions:
         if entry.expires_on < today:
             violations.append(
@@ -413,7 +354,6 @@ def run_check(
                 f"{entry.expires_on.isoformat()} (owner={entry.owner})"
             )
 
-    # (c) stale exception — target gone, or no longer over budget
     for entry in config.exceptions:
         if entry.target not in measured_by_target:
             violations.append(
@@ -427,9 +367,6 @@ def run_check(
                 "remove from exceptions"
             )
 
-    # (f) measured drift — the registered `measured` is decorative unless it is
-    # checked against what the target actually measures today (a target still
-    # present and still over budget can grow silently forever otherwise).
     for entry in config.exceptions:
         current = measured_by_target.get(entry.target)
         if current is not None and current.lines != entry.measured:

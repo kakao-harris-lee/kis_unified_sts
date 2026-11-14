@@ -1,8 +1,4 @@
-"""Hermetic tests for ``tos_runtime.time.config``.
-
-All fixtures are written under ``tmp_path`` per D1.4 (conftest.py's write
-guard refuses anything else).
-"""
+"""Hermetic tests for ``tos_runtime.time.config``."""
 
 from __future__ import annotations
 
@@ -81,9 +77,7 @@ def test_null_version_string_is_rejected(tmp_path: Path) -> None:
 
 
 def test_named_tbd_placeholder_version_string_is_rejected(tmp_path: Path) -> None:
-    """A version string literally ``"TBD"`` is a template placeholder an
-    operator typed in place of a real value, not a genuine version — never sealed
-    into a ``TimeHealthSnapshot`` as if it were concrete."""
+    """A version string literally ``"TBD"`` is a template placeholder an"""
     content = dict(_FULLY_VALUED)
     content["tz_db_version"] = "TBD"
     path = _write_yaml(tmp_path / "time.yaml", content)
@@ -100,13 +94,7 @@ def test_negative_bound_is_rejected(tmp_path: Path) -> None:
 
 
 def test_zero_send_result_wait_bound_is_rejected(tmp_path: Path) -> None:
-    """Every OTHER bound key accepts ``0``
-    (``MAX_process_suspension_ms`` above does), but ``MAX_send_result_wait_ms`` is the wait
-    ``EngineDriver``'s ``_TimeoutTracker`` uses before injecting a synthetic ``TIMEOUT`` — a
-    ``0`` value would time out every hand-off on the very next drain, mirroring
-    ``replay_window_events``'s own positive-int rule. Mutation companion: removing the
-    ``_STRICTLY_POSITIVE_KEYS`` branch (config.py) makes this pass with ``TimeConfigError``
-    never raised — red."""
+    """Every OTHER bound key accepts ``0``"""
     content = dict(_FULLY_VALUED)
     content["MAX_send_result_wait_ms"] = 0
     path = _write_yaml(tmp_path / "time.yaml", content)
@@ -124,10 +112,7 @@ def test_negative_send_result_wait_bound_is_also_rejected(tmp_path: Path) -> Non
 
 @pytest.mark.parametrize("value", [0, -1, "soon", True])
 def test_bad_snapshot_heartbeat_is_rejected(tmp_path: Path, value: object) -> None:
-    """``time_health_snapshot_heartbeat_ms`` is an operational key, not a VER-002 bound, and
-    takes a strictly-positive int: ``0`` is not a shorter heartbeat, it is "every cycle is
-    due" — the per-pass write this key exists to stop. ``True`` is rejected for the same
-    reason every other int key rejects a bool."""
+    """``time_health_snapshot_heartbeat_ms`` is an operational key, not a VER-002 bound, and"""
     content = dict(_FULLY_VALUED)
     content["time_health_snapshot_heartbeat_ms"] = value
     path = _write_yaml(tmp_path / "time.yaml", content)
@@ -177,12 +162,8 @@ def test_fully_valued_config_loads(tmp_path: Path) -> None:
 
 
 def test_example_yaml_shape_matches_loader_keys() -> None:
-    """The committed example file's keys must exactly match the loader's
-    required-key set (drift here means the example silently stops being an
-    accurate template)."""
+    """The committed example file's keys must exactly match the loader's"""
     example_path = Path(__file__).resolve().parents[2] / "config" / "time.example.yaml"
     raw = yaml.safe_load(example_path.read_text(encoding="utf-8"))
     assert set(raw) == set(_FULLY_VALUED)
-    # Every key in the committed example is still null (named-TBD) — approving
-    # real values is an operator/Bounds-Approver action, not this slice's.
     assert all(value is None for value in raw.values())

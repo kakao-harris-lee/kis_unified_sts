@@ -1,15 +1,4 @@
-"""Shared Aggregate Risk Policy / Action Flow Policy INSTANCE document builders (TOS risk
-state service wave, lane a; ``docs/plans/2026-09-16-tos-risk-state-service-plan.md``).
-
-Mirrors ``tests/venue/_documents.py`` exactly: each builder copies the FULL key set of
-``tos-spec/src/part-1-foundation/verification/AGGREGATE-RISK-POLICY-template.yaml`` /
-``ACTION-FLOW-POLICY-template.yaml`` (every rule-list key present as ``[]``,
-``authority``/``evidence``/``hard_safety_envelope``/``runtime_safety_profile`` present as
-their template-shaped mappings) plus the two sibling ``_model_view``/``_runtime`` blocks the
-loader actually reads kernel-typed content from.
-
-The YAML VALUES below are FIXTURE DATA for these test suites only — NOT the operator-signed
-production policy (plan §6 ②, an open operator decision, lane c/S)."""
+"""Shared Aggregate Risk Policy / Action Flow Policy INSTANCE document builders (TOS risk"""
 
 from __future__ import annotations
 
@@ -18,8 +7,6 @@ from pathlib import Path
 
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, CanonicalizationScheme, get_scheme
 
-#: The one registered kernel canonicalization scheme (mirrors
-#: ``tests.venue._documents``'s own ``SCHEME`` constant).
 SCHEME: CanonicalizationScheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 FIXTURE_ARE_POLICY_ID = "are-fixture-1"
@@ -307,10 +294,6 @@ def action_flow_policy_yaml(
             f"    basis_is_scheduler_priority_only: {basis_is_scheduler_priority_only}\n"
         )
     else:
-        # BLOCK MISSING entirely (lane a review HIGH, team-lead 2026-09-16) — as opposed to
-        # `test_afg_scope_independence_axis_null_refused`'s "present but one axis null" shape,
-        # this omits the whole `scope_independence:` key so the loader's own
-        # `require_mapping_key` absent-key refusal is exercised, not its null-axis refusal.
         scope_independence_block = ""
     runtime_tail = (
         f"  covered_scopes: {covered_scopes}\n"
@@ -325,15 +308,8 @@ def action_flow_policy_yaml(
             f"    duplicate_event_created_new_allowance: {duplicate_event_created_new_allowance}\n"
         )
     else:
-        # BLOCK MISSING entirely (lane a review HIGH, team-lead 2026-09-16) — the reviewer's
-        # own mutation scenario: "default to (False, False, True) when the block is absent"
-        # must be refused by `require_mapping_key`, not silently defaulted.
         deployment_facts_block = ""
     if include_side_tokens:
-        # Lane b addition (risk state service wave, plan §4.1 deviation) — the two
-        # recognized outbound-side tokens `EvidencePositionReader` needs, sourced from this
-        # SAME governed policy instance rather than a runtime literal (policies.py's own
-        # `LoadedActionFlowPolicy.side_tokens` docstring).
         side_tokens_block = (
             "  side_tokens:\n"
             f'    buy: "{buy_side_token}"\n'

@@ -1,96 +1,5 @@
 #!/usr/bin/env python3
-"""CP-3 §3.6 — the two session-derived inputs read from the durable stores.
-
-Plan ``docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md`` §3.6, PR-3
-row. It was written for the B3 comparison, which read three offline artifacts
-and therefore answered only "did the offline replay agree with the legacy
-rule" — it could not see the live session at all. That comparison retired on
-2026-11-13 (``docs/plans/2026-11-11-tos-platform-roadmap.md`` §7 결정 3); these
-two readings of the session's own durable stores did not, because
-``tools/tos_cp3/status_board.py`` is built on them:
-
-``consumed-ids``
-    The ``raw_event_id`` set the runtime really consumed, from the session
-    ``marketfeed.sqlite3``'s ``preimages(snapshot_id, raw_event_id)`` table —
-    one row per observation each issued snapshot covers. Given the producer's
-    own log (and the runner's boot snapshot, which is REQUIRED), it also says,
-    for every bar the offline stream has and the runtime did NOT consume,
-    WHY: the plan's pre-boot / ``skipped_behind`` / ``produce_error`` /
-    ``omitted_unusable`` reasons, each from the producer's own label rather
-    than from a guess here. It also carries plan §5 M5's first number, read
-    from each consumed snapshot's own field evaluations against its preimage
-    (:func:`consumed_field_states`) — NOT from a count of the persisted word
-    ``STALE``, which today's issuer never writes.
-
-``live-decisions``
-    One record per live decision, shaped like B1b's offline trace line, from
-    the session ``evidence.sqlite3``'s ``entries`` table — tied to its bar
-    through the session ``inbox.sqlite3`` (below).
-
-**Read-only, and no ``tos`` import.** The firewall is bidirectional —
-``tools/`` is in its reverse scan (``tools/tos_firewall_check.py`` TOS-FW-R) —
-so all three stores are opened as plain sqlite files in ``mode=ro``, and the
-runtime literals this needs (three file names, three schema versions, the
-field paths inside two stored payloads) are MIRRORED here with the constant
-each mirrors named beside it. A mirrored literal that drifts is caught rather
-than assumed: every read pins ``PRAGMA user_version`` against the mirrored
-version, and the committed hinge
-``tos/runtime/tests/fixtures/cp3-session-store-reads.json`` carries the exact
-``payload_json`` bytes the REAL stores write — produced and checked on the
-runtime side, replayed as input on this one.
-
-**How a live decision is tied to its bar.** By KEY, through three durable
-rows:
-
-1. the decision record names the capsule it consumed (``capsule_id``, copied
-   off the recorded input signature in ``tos/src/tos/engine/pipeline.py``);
-2. the inbox event that carried that tick names the same capsule and the
-   snapshot it bound (``decision_tick.capsule.capsule_id`` and
-   ``…capsule.critical_input_snapshot.snapshot_id``) — the driver admits every
-   event durably before processing it
-   (``tos_runtime.engine.driver.EngineDriver.enqueue_and_run``);
-3. ``preimages`` maps that snapshot to the bar's ``raw_event_id``.
-
-A ``DECISION_WITHHELD`` or ``COORDINATOR_PRECONDITION_REFUSED`` record names
-no capsule — the pipeline never reached a signature — so those are tied by the
-OTHER durable key the driver writes: the bracket of receipts around each
-event. ``EngineDriver._process_next`` appends ``EVENT_HANDLING_STARTED``,
-stamps its ``seq`` onto the inbox row, runs the handler (which writes this
-tick's decision records), appends ``EVENT_CONSUMED`` and stamps that ``seq``
-too; the loop is single-threaded and refuses re-entry. So a capsule-less
-record belongs to the unique tick whose ``(handling_started, consumed]``
-window contains its evidence ``seq`` — and a keyed record is cross-checked
-against that same window. Every record says which key attributed it in its
-``attributed_by`` field (``capsule_id`` / ``evidence_seq_range``).
-
-The first two cuts paired capsule-less records by POSITION (the k-th decision
-with the k-th unclaimed tick). That is an inference the stores can contradict
-silently: one tick queued and never run shifts every later unkeyed record onto
-the wrong bar with the counts still matching and nothing refused (Claude lane
-MEDIUM R1, 2026-10-14). Position is now used nowhere.
-
-**What is still refused, not guessed**: a capsule the inbox never admitted, a
-keyed record outside its own tick's window, a capsule-less record in no
-window or in more than one, two decisions on one tick, a tick whose snapshot
-the marketfeed store does not hold, two instruments in one session, and a
-snapshot without exactly one preimage row.
-
-Usage::
-
-    .venv/bin/python tools/tos_cp3/session_inputs.py consumed-ids \\
-        --data-dir   /path/session/data/A05611 \\
-        --producer-log /path/session/producer-log.jsonl \\
-        --boot-snapshot /path/session/boot-journal-snapshot.json \\
-        --out        /path/session/b3-inputs/consumed-ids.json
-
-    .venv/bin/python tools/tos_cp3/session_inputs.py live-decisions \\
-        --data-dir /path/session/data/A05611 \\
-        --out      /path/session/b3-inputs/live
-
-``live-decisions`` writes a directory holding ``live.jsonl`` and the
-``lineage.json`` sidecar B3 auto-discovers beside an artifact, the same layout
-B1a, B2 and B1b use.
-"""
+"""CP-3 §3.6 — the two session-derived inputs read from the durable stores."""
 
 from __future__ import annotations
 
@@ -106,71 +15,27 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-#: Repo root of the checkout this file belongs to, at the FRONT of
-#: ``sys.path`` for the same reason B1a/B2/B3 do it: an editable install of
-#: another checkout must not shadow this worktree's ``tools/``.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from tools.tos_cp3 import TOS_CP3_VERSION  # noqa: E402
 
-#: Stable identity stamped on every document this module writes.
 SOURCE_ID = f"tos-cp3-session-inputs/{TOS_CP3_VERSION}"
 
-#: Document schema version — bumped when a produced document changes shape, so
-#: a consumer reads "shaped differently" rather than "values differ".
-#:
-#: 2 (2026-10-14, Claude lane MEDIUM R1/R2 + BLOCKER R2′): ``consumed-ids``
-#: gained the ``consumed_field_states`` block that M5's first number now comes
-#: from (whose own key was renamed from ``…_with_a_stale_field_evaluation`` to
-#: ``…_with_a_present_value_refused_as_unknown`` within this same unreleased
-#: version — the first spelling never shipped), and ``consumed-ids`` now
-#: refuses without a boot snapshot; the live ``lineage.json``'s ``join``
-#: renamed its positional fallback to the ``evidence_seq_range`` key
-#: (``attributed_by`` values changed with it). Both
-#: documents were read by the retired B3 comparison only through
-#: keys that did not move, so a 1-shaped document still compares — the bump is
-#: so a reader of an old artifact knows which shape it is.
-#:
-#: 3 (2026-10-15): ``consumed-ids`` gained ``generated_from
-#: .producer_session_close`` and, with it, the
-#: :data:`REASON_PUBLISHED_AFTER_CLOSE` reason. The key is what makes a zero
-#: in that reason READABLE — without it, "no bar was published after the
-#: close" and "the producer log carried no seed record, so the question was
-#: never asked" are the same document.
 SCHEMA_VERSION = 3
 
-#: Mirrors ``tos_runtime.marketfeed.store.MARKETFEED_FILE_NAME`` and
-#: ``tos_runtime.operations.backup_set.EVIDENCE_FILE_NAME``. Mirrored, not
-#: imported: the firewall forbids importing either from here.
 MARKETFEED_FILE_NAME = "marketfeed.sqlite3"
 EVIDENCE_FILE_NAME = "evidence.sqlite3"
-#: Mirrors ``tos_runtime.operations.backup_set.INBOX_FILE_NAME``. The durable
-#: event queue is what carries the KEYED link from a decision to its bar
-#: (:func:`read_decision_ticks`).
 INBOX_FILE_NAME = "inbox.sqlite3"
 
-#: Mirrors ``tos_runtime.marketfeed.store.MARKETFEED_SCHEMA_VERSION``,
-#: ``tos_runtime.evidence.store.EVIDENCE_SCHEMA_VERSION`` and
-#: ``tos_runtime.engine.inbox.INBOX_SCHEMA_VERSION`` — each store stamps its
 #: own value into ``PRAGMA user_version``. Pinned rather than read-and-
-#: accepted: a bumped version means the tables changed shape, and reading a new
-#: shape with these queries would answer a question about a store that no
-#: longer exists (the migration note is runbook ``tos-paper-boot-history.md`` §4-A).
 PINNED_MARKETFEED_SCHEMA_VERSION = 1
 PINNED_EVIDENCE_SCHEMA_VERSION = 2
 PINNED_INBOX_SCHEMA_VERSION = 1
 
-#: The ``kind`` the inbox stores for a market tick
-#: (``tos.engine.EventKind.DECISION_TICK``).
 DECISION_TICK_EVENT_KIND = "DECISION_TICK"
 
-#: Where the capsule id and the snapshot id live inside one inbox event's
-#: ``payload_json`` (``EngineEvent.model_dump(mode="json")``:
-#: ``decision_tick`` is the ``DecisionTickPayload``, whose ``capsule`` is the
-#: issued ``DecisionContextCapsule`` and whose ``critical_input_snapshot`` is
-#: the ``SnapshotRef`` the capsule binds).
 TICK_CAPSULE_PATH: tuple[str, ...] = ("decision_tick", "capsule", "capsule_id")
 TICK_SNAPSHOT_PATH: tuple[str, ...] = (
     "decision_tick",
@@ -179,114 +44,31 @@ TICK_SNAPSHOT_PATH: tuple[str, ...] = (
     "snapshot_id",
 )
 
-#: The resolved Critical Input value surface for that tick
-#: (``DecisionTickPayload.value_view``). ``null`` means the resolver published
-#: no view at all; a view with ``values: []`` is the defined "the binding
-#: resolved and nothing was admissible" outcome
-#: (``tos.dsl.context_value.ContextValueView``'s own ∅-both-ways note).
-#:
-#: It is NOT the STALE count. ``tos.marketfeed.value._admit_one`` drops a
-#: candidate for nine other reasons as well (``OBSERVATION_AMBIGUOUS``,
-#: ``OBSERVATION_NOT_FOUND``, ``PAYLOAD_DIGEST_ABSENT``, ``AS_OF_ABSENT``,
-#: ``DIGEST_MISMATCH``, ``VALUE_NOT_IN_PAYLOAD``, ``NON_DETERMINISTIC_NUMERIC``,
-#: ``LINEAGE_NOT_REPRODUCIBLE``, ``WILDCARD_FIELD_KEY``), and its one
-#: state-shaped reason — ``FIELD_STATE_NOT_VALID`` — folds every non-VALID
-#: field state together. So an empty view says "nothing was admissible", never
-#: "stale": M5's first number is read from the snapshot's own field
-#: evaluations against its preimage (:func:`consumed_field_states`), and this
-#: surface is reported beside it as what the RESOLVER did (Claude lane MEDIUM
-#: R2 / BLOCKER R2′).
 TICK_VALUE_VIEW_PATH: tuple[str, ...] = ("decision_tick", "value_view")
 
-#: The two receipt stamps an inbox row carries, written by
-#: ``tos_runtime.engine.inbox.SqliteEventInbox.mark_handling_started`` and
-#: ``…mark_consumed``. The driver's loop
-#: (``tos_runtime.engine.driver.EngineDriver._process_next``) appends the
-#: ``EVENT_HANDLING_STARTED`` evidence entry and stamps its ``seq`` here,
-#: THEN calls ``core.handle`` (which appends this tick's decision and
-#: commitment-flow entries), THEN appends ``EVENT_CONSUMED`` and stamps that
-#: ``seq`` here. The loop is single-threaded and refuses re-entry (its own
-#: ``_draining`` guard), so one tick's decision entries are exactly the ones
-#: whose evidence ``seq`` lies in ``(handling_started, consumed]`` — the
-#: durable bracket :func:`_attribute` attributes by.
 INBOX_HANDLING_STARTED_COLUMN = "handling_started_evidence_seq"
 INBOX_CONSUMED_COLUMN = "consumed_evidence_seq"
 
-#: Inside one ``snapshots.snapshot_json`` (``CriticalInputSnapshot
-#: .model_dump_json()``): the two places a durable FieldState is written.
-#: ``tos.marketfeed.value.value_field_state`` takes the WORST of the
-#: observation's admission state, the observation's own ``field_state`` and
-#: every ``field_evaluations`` entry naming the field — so both are read here
-#: and reported apart, rather than one of them silently standing for both.
 SNAPSHOT_FIELD_EVALUATIONS_KEY = "field_evaluations"
 SNAPSHOT_OBSERVATIONS_KEY = "observations"
 FIELD_EVALUATION_STATE_KEY = "state"
 FIELD_EVALUATION_FIELD_REF_KEY = "field_ref"
 OBSERVATION_FIELD_STATE_KEY = "field_state"
 
-#: Inside one ``preimages.preimage_json`` (``RawPayloadPreimage
-#: .model_dump_json()``): the tokens the snapshot's observation attested.
-#: Measured on the real store's bytes (hinge ``marketfeed_snapshots``):
-#: ``{"entries":[{"key":"close","value":451250}, …]}``. This is what makes
-#: "the issuer HAD this value and refused it" decidable from the durable side
-#: (:func:`consumed_field_states`).
 PREIMAGE_ENTRIES_KEY = "entries"
 PREIMAGE_ENTRY_KEY_KEY = "key"
 PREIMAGE_ENTRY_VALUE_KEY = "value"
 
-#: ``tos.capsule.field_evaluation.FieldState`` members, as the model dumps
-#: them. VALID is the one state that is not a finding; UNKNOWN is the one the
-#: real issuer writes for an over-age field.
-#:
-#: ⚠ **STALE is never written by today's issuer.**
-#: ``tos_runtime.marketfeed.snapshot._derive_field_state`` returns
-#: ``(FieldState.UNKNOWN, "stale")`` for ``now_ms - as_of_ms >
-#: spec.max_age_ms``, and the reason string lives only on the in-memory
-#: ``IssuedSnapshot.field_reports`` — the persisted ``FieldEvaluation`` carries
-#: the state alone. Measured on the real issuer (hinge
-#: ``marketfeed_snapshots.stale_by_age``, policy ``max_age_ms`` 5000, issued at
-#: ``as_of + 5001``): persisted states ``['UNKNOWN', 'UNKNOWN']``. So a count
-#: of persisted ``STALE`` reads 0 on every real session however stale it was —
-#: the defect this constant's first use had (Claude lane BLOCKER R2′,
-#: 2026-10-14). STALE is still reported if it ever appears, under
-#: ``other_field_evaluation_states``, which is where a future issuer change
-#: would show up.
 STALE_FIELD_STATE = "STALE"
 VALID_FIELD_STATE = "VALID"
 UNKNOWN_FIELD_STATE = "UNKNOWN"
 
-#: The three causes this side can tell apart for one UNKNOWN field evaluation,
-#: from the durable bytes alone. ``_derive_field_state`` has exactly four, in
-#: this order: ``absent_from_payload`` (the key is not in the preimage),
-#: ``now_ms_unknown`` (no trustworthy clock), ``stale`` (over ``max_age_ms``)
-#: and ``unprojectable`` (``project_scalar`` refuses the token).
-#:
-#: Presence separates the first; projectability separates the last; the two in
-#: the middle are exactly the ones where the issuer HELD a usable value and
-#: refused it, and they are the ones plan §5 M5 asks about. They are reported
-#: together because no durable byte distinguishes them (the reason is not
-#: persisted) — see :data:`CAUSE_PRESENT_REFUSED`'s use.
 CAUSE_PRESENT_REFUSED = "present_value_refused"
 CAUSE_ABSENT_FROM_PAYLOAD = "absent_from_payload"
 CAUSE_UNPROJECTABLE = "unprojectable"
 
-#: The evidence store wraps every record: ``payload_json`` is
-#: ``{"payload": <the scrubbed record>, "masked_keys": [...]}``
-#: (``tos_runtime.evidence.store.SqliteEvidenceStore._append_with_scheme``), so
-#: the record's own fields are one level down. Reading the outer object instead
-#: finds ``outcome_type``/``capsule_id`` absent and silently turns every
-#: emitted no-action into an unmappable outcome — the first cut did exactly
-#: that, and its tests missed it because they wrote flat rows (Claude lane
-#: BLOCKER B1, 2026-10-14). The committed fixture in
-#: ``tos/runtime/tests/fixtures/cp3-session-store-reads.json`` now carries
-#: bytes the REAL store wrote, and both sides check against them.
 EVIDENCE_PAYLOAD_KEY = "payload"
 
-#: The engine evidence kinds that TERMINATE one decision pass — exactly one of
-#: these is recorded per ``DECISION_TICK`` (``tos.engine.vocabulary
-#: .EvidenceKind``; ``pipeline.py`` records ``DECISION_OUTCOME_EMITTED`` or
-#: ``DECISION_WITHHELD``, ``core.py`` the withheld pre-dispatch case, and the
-#: Coordinator gate its own refusal). They delimit the per-tick blocks.
 DECISION_KINDS: tuple[str, ...] = (
     "DECISION_OUTCOME_EMITTED",
     "DECISION_WITHHELD",
@@ -294,10 +76,6 @@ DECISION_KINDS: tuple[str, ...] = (
     "COORDINATOR_PRECONDITION_REFUSED",
 )
 
-#: The commitment-flow kinds that may follow a decision inside the same tick
-#: block. Anything else in ``entries`` (boot records, backup observations, key
-#: rotations, non-trade dispositions) is not part of a decision and is ignored
-#: by name rather than by position.
 FLOW_KINDS: tuple[str, ...] = (
     "FLOW_STEP_ADMITTED",
     "FLOW_HALTED",
@@ -307,40 +85,14 @@ FLOW_KINDS: tuple[str, ...] = (
     "RESULT_UNMATCHED",
 )
 
-#: ``tos.engine.vocabulary.HaltReason.AT_MOST_ONE_EXPOSURE_HELD`` — the one
-#: flow halt B1b calls ``capacity_denied`` (``tos/runtime/cp3/replay.py``'s own
-#: ``denied = flow_halt is HaltReason.AT_MOST_ONE_EXPOSURE_HELD``).
 CAPACITY_DENIAL_HALT_REASON = "AT_MOST_ONE_EXPOSURE_HELD"
 
-#: ``outcome_type`` (the emitted outcome's class name) -> the token this side
-#: reports. ``NoActionOutcome`` is exactly B1b's ``NO_ACTION``; every other
-#: emitted outcome is a Proposal, and whether that is B1b's ACTION or its FLAT
-#: turns on the proposal's ``position_effect``, which NO durable record carries
-#: — measured, not assumed: ``position_effect`` does not occur anywhere in
-#: ``tos/src/tos/engine/*.py``, so neither the decision record nor any
-#: commitment-flow record stores it.
-#:
-#: So the live side says :data:`PROPOSAL_KIND` — "an outcome was emitted and it
-#: was not a no-action" — instead of refusing the whole document over one bar
-#: (Claude lane MEDIUM M3) or guessing which of the two it was. B3 treats it as
-#: a KIND-ONLY match against an offline ACTION or FLAT and counts those bars
-#: separately, so the half that is known is used and the half that is not is
-#: visible.
 OUTCOME_TYPE_TO_KIND: Mapping[str, str] = {"NoActionOutcome": "NO_ACTION"}
 
-#: An emitted Proposal whose ACTION/FLAT half the durable record cannot say.
 PROPOSAL_KIND = "PROPOSAL"
 
-#: A tick that ended without an emitted outcome is not one of B1b's three
-#: decision kinds, and B1b itself refuses to call it a fourth
-#: (``replay.py::_attribute_rule``'s ``NO_OUTCOME``). The live side records the
-#: same token so the two sides disagree visibly rather than silently.
 NO_OUTCOME_KIND = "NO_OUTCOME"
 
-#: Producer log stages that DISPOSE of a bar, newest-wins, with ``published``
-#: overriding everything: a bar can miss its own boundary
-#: (``missing_no_successor``) and complete later (``late_completed``), so the
-#: last dispositive stage is the one that describes how the session left it.
 PRODUCER_DISPOSITION_STAGES: tuple[str, ...] = (
     "published",
     "skipped_behind",
@@ -352,52 +104,17 @@ PRODUCER_DISPOSITION_STAGES: tuple[str, ...] = (
     "clock_regression",
 )
 
-#: The reason recorded for a bar the producer DID publish, the runtime did not
-#: consume, and the runner's boot snapshot shows was already in the journal
-#: when the runtime booted. Plan §5 M5: those lines are structurally
-#: unconsumable (the scheduler takes only the newest observation of a poll), so
-#: they are excluded from the two M5 counts and recorded under their own name.
 REASON_PRE_BOOT = "pre_boot"
 
-#: A line the producer published AFTER boot that the runtime never consumed.
-#: This is the M5 defect shape and gets its own name — never folded into a
-#: benign reason, which is the whole point of counting by reason.
 REASON_UNCONSUMED_AFTER_BOOT = "published_not_consumed"
 
-#: A line the producer published at or after the session CLOSE. Structurally
-#: unconsumable, the same way :data:`REASON_PRE_BOOT` is, and for a reason at
-#: the other end of the day: the runtime's scheduler answers
-#: ``SKIPPED_SESSION_CLOSED`` for every pass whose session context is not open
-#: (``tos_runtime.marketfeed.scheduler.decide_tick``'s FIRST clause), so a bar
-#: that only exists after the close can never be ticked.
-#:
-#: The session's own last bar is exactly that bar, by construction and not by
-#: accident: it is complete only once the minute after it has elapsed
-#: (``live_producer/calendar.py::SessionWindow.end_boundary`` — "the 15:45 bar
-#: covers 15:45:00-15:45:59, so 15:46:00 is the session end time has elapsed"),
-#: so the producer publishes it one minute past the close, every day. Counted
-#: as :data:`REASON_UNCONSUMED_AFTER_BOOT` it put a permanent 1 in the number
-#: plan §5 M5 requires to be 0 (measured on the 2026-10-15 LONG genesis
-#: session: ``published_not_consumed: 1``, the 15:45 bar).
-#:
-#: ⚠ Decided from the PUBLISH stamp against the close, never from the bar's
-#: label and never from a literal 15:45: a bar published at 15:44:59 that the
-#: runtime did not consume is a real miss and keeps the defect name.
 REASON_PUBLISHED_AFTER_CLOSE = "published_after_session_close"
 
-#: An offline bar with no producer-log disposition at all. Not refused: a B3
-#: run whose producer log is missing or truncated still has something to say,
-#: and a silent drop is what the reason counts exist to prevent.
 REASON_UNEXPLAINED = "unexplained"
 
 
 class SessionInputsError(RuntimeError):
     """A refusal. Nothing is written when one is raised."""
-
-
-# ---------------------------------------------------------------------------
-# sqlite, read-only
-# ---------------------------------------------------------------------------
 
 
 def _connect_ro(path: Path, *, label: str, pinned_version: int) -> sqlite3.Connection:
@@ -441,11 +158,6 @@ def _file_ref(path: Path | None) -> dict[str, Any] | None:
     return {"path": str(path), "sha256": sha256_file(path)}
 
 
-# ---------------------------------------------------------------------------
-# The marketfeed side: snapshots and the ids they covered
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class Snapshot:
     """One issued snapshot and the single observation it covered."""
@@ -454,18 +166,8 @@ class Snapshot:
     instrument: str
     as_of_ms: int
     raw_event_id: str
-    #: ``(field_ref, state)`` per ``field_evaluations`` entry, in stored order
-    #: (plan §5 M5 — :func:`consumed_field_states`). Empty when the snapshot
-    #: carries no evaluations at all, which is itself counted rather than read
-    #: as VALID. The ``field_ref`` is load-bearing: it is the key looked up in
-    #: :attr:`payload_tokens` to tell WHY a field is UNKNOWN.
     field_evaluations: tuple[tuple[str, str], ...] = ()
-    #: ``observations[*].field_state`` as stored. The kernel's VALID gate takes
-    #: the worst of this and the matching evaluations, so a non-VALID here is
-    #: a degraded line too — counted apart, never folded in.
     observation_states: tuple[str, ...] = ()
-    #: The tokens this snapshot's one preimage attested, by key
-    #: (``preimages.preimage_json``). Empty when the row carries none.
     payload_tokens: Mapping[str, Any] = field(default_factory=dict)
 
     @property
@@ -475,47 +177,14 @@ class Snapshot:
 
 
 def _projectable(token: Any) -> bool:
-    """Would ``tos.marketfeed.value.project_scalar`` admit this token?
-
-    MIRRORED, not imported — the firewall is bidirectional. The kernel rule is
-    three admitted shapes and one refusal: ``bool``, ``int`` and ``str``
-    project; a ``float`` is refused (``NON_DETERMINISTIC_NUMERIC``), including
-    an integral-valued one, because the decimal → float projection rule is not
-    ratified. Anything else a JSON token could be (``null``, a list, an
-    object) is not a scalar the kernel would take either.
-
-    The hinge's ``unprojectable`` snapshot carries a real float token the real
-    issuer refused, so this mirror is checked against the issuer's own verdict
-    rather than against this file's reading of it.
-
-    A ``null`` token would be the one place this could disagree with the
-    issuer (which reads an absent LOOKUP as "absent from payload"), and it
-    cannot occur: ``PreimageEntry`` cannot carry ``None`` — the kernel's own
-    ``RawPayloadPreimage.lookup`` docstring relies on exactly that to make its
-    ``None`` unambiguous.
-    """
+    """Would ``tos.marketfeed.value.project_scalar`` admit this token?"""
     return isinstance(token, (bool, int, str))
 
 
 def _snapshot_states(
     snapshot_json: str, *, snapshot_id: str
 ) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
-    """The durable FieldStates inside one ``snapshots.snapshot_json``.
-
-    Returns:
-        ``(field evaluations as (field_ref, state), observation
-        field_states)``, each in stored order.
-
-    Raises:
-        SessionInputsError: the stored JSON is not an object, or an entry in
-            either list is not an object / carries a non-string state (or, for
-            a field evaluation, no string ``field_ref``). A missing state
-            would otherwise be counted as "not a finding" — the quiet
-            undercount M5 exists to prevent — and a missing ``field_ref``
-            would make its cause undecidable while still looking answered. A
-            snapshot with NO ``field_evaluations`` is not refused: that is a
-            real shape (nothing was evaluated) and gets its own count.
-    """
+    """The durable FieldStates inside one ``snapshots.snapshot_json``."""
     document = json.loads(snapshot_json)
     if not isinstance(document, dict):
         raise SessionInputsError(
@@ -572,15 +241,7 @@ def _snapshot_states(
 
 
 def _preimage_tokens(preimage_json: str, *, snapshot_id: str) -> dict[str, Any]:
-    """The tokens one ``preimages.preimage_json`` attested, by key.
-
-    Raises:
-        SessionInputsError: the row is not a ``RawPayloadPreimage`` dump — no
-            ``entries`` list, or an entry without a string ``key``. Read
-            permissively, a field would look ABSENT from the payload (its key
-            not found) when the payload is simply unreadable here, and
-            "absent" is the one UNKNOWN cause M5 excludes.
-    """
+    """The tokens one ``preimages.preimage_json`` attested, by key."""
     document = json.loads(preimage_json)
     entries = document.get(PREIMAGE_ENTRIES_KEY) if isinstance(document, dict) else None
     if not isinstance(entries, list):
@@ -605,30 +266,7 @@ def _preimage_tokens(preimage_json: str, *, snapshot_id: str) -> dict[str, Any]:
 
 
 def read_snapshots(data_dir: Path) -> tuple[Snapshot, ...]:
-    """Every issued snapshot of the session, in issue order, with its id.
-
-    Issue order is ``rowid`` order: ``snapshots`` has a TEXT primary key, so
-    sqlite keeps its own rowid and that is insertion order. Nothing is
-    attributed by that order — the attribution is keyed
-    (:func:`_attribute`) — but it is the order the session happened in, so
-    the ``bar_index`` on each live record and the ids listed in every count
-    below read in it rather than in sqlite's scan order.
-
-    Each snapshot also carries the FieldStates it recorded
-    (:func:`_snapshot_states`) AND the tokens its preimage attested
-    (:func:`_preimage_tokens`) — plan §5 M5's first number is the two read
-    together, because the state alone does not say why it is not VALID.
-
-    Raises:
-        SessionInputsError: A snapshot covers no preimage row, or more than
-            one. Both break the join: the first is the restore-path failure
-            the store's own docstring describes (a snapshot id in hand, every
-            value UNKNOWN), the second means a snapshot covered several
-            observations and "the bar this decision was about" is not a
-            question with one answer. Or its ``snapshot_json`` /
-            ``preimage_json`` is not a readable dump of what the store writes
-            (:func:`_snapshot_states`, :func:`_preimage_tokens`).
-    """
+    """Every issued snapshot of the session, in issue order, with its id."""
     conn = _connect_ro(
         data_dir / MARKETFEED_FILE_NAME,
         label="marketfeed",
@@ -695,11 +333,6 @@ def _assert_one_instrument(snapshots: Sequence[Snapshot]) -> str:
     return instruments[0]
 
 
-# ---------------------------------------------------------------------------
-# The producer side: why a bar was never consumed
-# ---------------------------------------------------------------------------
-
-
 def _iter_json_lines(path: Path, *, label: str) -> Iterator[dict[str, Any]]:
     for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
@@ -717,48 +350,13 @@ def _iter_json_lines(path: Path, *, label: str) -> Iterator[dict[str, Any]]:
 
 @dataclass(frozen=True)
 class ProducerLogFacts:
-    """What one pass over the producer's own log says about its bars.
-
-    Three facts, read together because they come from the same file and the
-    reason map needs all three:
-
-    * ``dispositions`` — ``raw_event_id -> the stage that disposed of it``;
-    * ``published_as_of_ms`` — the journal stamp the ``published`` event
-      recorded, i.e. WHEN the line became visible to the runtime. Not the
-      bar's label: the two differ by at least the boundary's own grace, and
-      the close question is about the stamp;
-    * ``session_close`` — the end of the session window the producer SEEDED
-      with, off its ``seed`` record's ``session_window`` (``08:45:00..15:45:00``
-      on 2026-10-15). Read from the record rather than written here: the
-      producer takes it from the tenant calendar the runtime also loads
-      (``live_producer/calendar.py``'s module docstring is explicit that a
-      hardcoded 15:45 would be a second source of truth), and ``None`` when
-      the log carries no seed record, which keeps every reason it would have
-      refined exactly as it was.
-    """
+    """What one pass over the producer's own log says about its bars."""
 
     dispositions: dict[str, str]
     published_as_of_ms: dict[str, int]
     session_close: _dt.time | None
 
 
-#: The producer's ``seed`` log stage and the key on it that carries the
-#: session window, as ``live_producer/seed_lineage.py`` writes them:
-#: ``"<start>..<end>"`` of ``datetime.time.isoformat()``.
-#:
-#: ⚠ **The assumption this rests on, written down (PR #904 review round 1 LOW
-#: 4).** That window is ONE phase of one session id — the producer is
-#: configured with exactly one (``calendar_session_id`` plus
-#: ``calendar_session_phase``, today ``krx-index-futures`` / ``CONTINUOUS``)
-#: and logs that phase's end. The runtime reads the same calendar file, but
-#: nothing here checks that it reads the same PHASE. If the runtime's session
-#: context were ever open past the producer's phase end — a tenant tree that
-#: adds an evening phase, or a runtime configured for a different session id —
-#: then a bar published after the producer's close could still have been
-#: ticked, and calling it :data:`REASON_PUBLISHED_AFTER_CLOSE` would EXCUSE a
-#: real miss. The excuse is therefore only as narrow as "one phase, the same
-#: one on both sides". If a second phase is ever configured, this reason has
-#: to read the runtime's own session facts instead of the producer's log.
 PRODUCER_SEED_STAGE = "seed"
 PRODUCER_SESSION_WINDOW_KEY = "session_window"
 
@@ -774,14 +372,7 @@ def _parse_session_close(value: Any) -> _dt.time | None:
 
 
 def producer_log_facts(producer_log: Path) -> ProducerLogFacts:
-    """One pass over the producer log — see :class:`ProducerLogFacts`.
-
-    ``published`` wins over everything; otherwise the LAST dispositive stage
-    wins, because a bar can miss its own boundary and complete afterwards. Only
-    events carrying a ``raw_event_id`` are read — the producer stamps one on
-    every per-bar event with B1a's own deriver, so nothing here reconstructs a
-    join key (plan §3.6).
-    """
+    """One pass over the producer log — see :class:`ProducerLogFacts`."""
     disposed: dict[str, str] = {}
     published_as_of_ms: dict[str, int] = {}
     session_close: _dt.time | None = None
@@ -812,16 +403,7 @@ def producer_log_facts(producer_log: Path) -> ProducerLogFacts:
 
 
 def read_boot_snapshot(path: Path) -> frozenset[str]:
-    """The ids already in the journal when the runtime booted (runner step 9b).
-
-    Raises:
-        SessionInputsError: The file does not carry the runner's own
-            ``pre_boot_raw_event_ids`` list. An empty list is a legitimate
-            value only if the runner wrote one; a MISSING key is a different
-            file, and reading it as "no pre-boot lines" would move every
-            pre-boot line into :data:`REASON_UNCONSUMED_AFTER_BOOT` — turning
-            the structurally-expected case into the defect shape.
-    """
+    """The ids already in the journal when the runtime booted (runner step 9b)."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     ids = payload.get("pre_boot_raw_event_ids") if isinstance(payload, dict) else None
     if not isinstance(ids, list) or not all(isinstance(value, str) for value in ids):
@@ -834,33 +416,16 @@ def read_boot_snapshot(path: Path) -> frozenset[str]:
     return frozenset(ids)
 
 
-#: The timeframe token :func:`tools.tos_cp3.produce_fields.derive_raw_event_id`
-#: puts between the symbol and the stamp, and the stamp's own format. Split on
-#: here rather than re-derived: the key is the producer's, and a second
-#: derivation of a join key is how two keys drift apart (that function's own
-#: docstring).
 _RAW_EVENT_ID_SEPARATOR = ":1m:"
 _RAW_EVENT_ID_STAMP_FORMAT = "%Y%m%dT%H%M%S%z"
 
-#: Session logic in this repo is KST-native (root CLAUDE.md). A bar id carries its own
-#: offset, so its date is only a SESSION day after conversion — see :func:`session_day_of`.
 _KST = ZoneInfo("Asia/Seoul")
 
 
 def _published_after_close(
     raw_event_id: str, as_of_ms: int | None, session_close: _dt.time | None
 ) -> bool:
-    """Was this bar's line STAMPED at or after its own session's close?
-
-    The close instant is built from the bar's OWN date (off the join key) and
-    the window end the producer seeded with — so a seed day's bar is measured
-    against that day's close, not against the target session's.
-
-    Unanswerable inputs are ``False``, never ``True``: without a stamp or a
-    window there is no evidence the line was unconsumable, and the caller's
-    fall-through is :data:`REASON_UNCONSUMED_AFTER_BOOT`, the defect name. A
-    missing input must not silently excuse a real miss.
-    """
+    """Was this bar's line STAMPED at or after its own session's close?"""
     if as_of_ms is None or session_close is None:
         return False
     try:
@@ -882,15 +447,7 @@ def unpaired_reasons(
     published_as_of_ms: Mapping[str, int] | None = None,
     session_close: _dt.time | None = None,
 ) -> dict[str, str]:
-    """Why each produced-but-unconsumed bar has no live counterpart.
-
-    Two of the reasons are structural rather than defects, one at each end of
-    the day: :data:`REASON_PRE_BOOT` for a line already in the journal when
-    the runtime booted, and :data:`REASON_PUBLISHED_AFTER_CLOSE` for a line
-    stamped at or after the session close, which the scheduler can never tick.
-    Everything else the producer published and the runtime did not consume is
-    :data:`REASON_UNCONSUMED_AFTER_BOOT` — the M5 defect shape.
-    """
+    """Why each produced-but-unconsumed bar has no live counterpart."""
     stamps = published_as_of_ms or {}
     reasons: dict[str, str] = {}
     for raw_event_id, stage in dispositions.items():
@@ -910,24 +467,7 @@ def unpaired_reasons(
 
 
 def session_day_of(raw_event_id: str) -> str | None:
-    """The **KST** ``YYYYMMDD`` a bar id belongs to, or ``None`` when the id is malformed.
-
-    ``A05611:1m:20261022T151200+0900`` -> ``"20261022"``. Reuses
-    :data:`_RAW_EVENT_ID_SEPARATOR`/:data:`_RAW_EVENT_ID_STAMP_FORMAT` so this and
-    :func:`_published_after_close` cannot drift into two id grammars.
-
-    ⚠ **Converted to KST before the date is taken** (independent review LOW-3; repo rule:
-    session logic is KST-native). The stamp carries its OWN offset, and taking the date off
-    the stamp as written would make ``...T151300+0000`` read as the 22nd when in Seoul it is
-    the 23rd — a silently wrong session day, which is the whole class of bug this function
-    was added to fix. Today every id is written ``+0900`` by one producer; that is a fact
-    about the current producer, not a property of the grammar.
-
-    Returns:
-        The KST date, or ``None`` when the id has no ``:1m:`` stamp or it does not parse.
-        Callers must treat ``None`` as an error, not as "skip" — see
-        :func:`_scope_to_session_day`.
-    """
+    """The **KST** ``YYYYMMDD`` a bar id belongs to, or ``None`` when the id is malformed."""
     try:
         stamp = raw_event_id.split(_RAW_EVENT_ID_SEPARATOR, 1)[1]
         parsed = _dt.datetime.strptime(stamp, _RAW_EVENT_ID_STAMP_FORMAT)
@@ -939,48 +479,7 @@ def session_day_of(raw_event_id: str) -> str | None:
 def derive_session_day(
     snapshots: Sequence[Snapshot], pre_boot: frozenset[str] = frozenset()
 ) -> str | None:
-    """The session day these snapshots were measured for.
-
-    **The boot snapshot decides when it says anything** (independent review MEDIUM-1), and the
-    newest consumed day is only the fallback. Failing case for newest-day-alone: the leaf
-    holds 10-22 snapshots, today's 10-23 session dies before consuming a single bar, and the
-    boot snapshot lists 10-23 pre-boot ids. Newest-day answers ``20261022`` — so 10-22's stale
-    count is reported as today's, and 10-22's own pre-boot ids (absent from today's boot
-    snapshot) are counted as post-boot refusals. Nothing else catches it: the snapshot list is
-    non-empty so an emptiness guard never fires, and ``--producer-log`` is optional.
-
-    A disagreement between the two is therefore an ERROR rather than a precedence rule: it
-    means this document is being built from a boot snapshot and a store that are not from the
-    same session, and no number below it would mean what it says.
-
-    ⛔ **Why this exists** (2026-10-22 evidence README §4). ``read_snapshots`` reads the whole
-    ``snapshots`` table, and its docstring's "every issued snapshot of the session" was true
-    only while each session had its own data dir. A tenant session writes into a NAMED DURABLE
-    LEAF that is never cleared, so the table accumulates: on 2026-10-22 it held the 10-15
-    genesis session too. The consequence was a silent miscount — the boot snapshot only lists
-    TODAY's pre-boot ids, so the 10-15 session's pre-boot line was counted as post-boot and
-    M5's number read 2 store-wide against 1 for the session. The measurement had to filter by
-    day BY HAND to get the real number.
-
-    Newest-day rather than an operator flag: the session being measured is the one that just
-    ran, the ids already carry their day, and a flag is one more thing to get wrong at 08:45.
-    A reader who needs to see the assumption gets ``session_day`` and ``days_present`` in the
-    document rather than having to know this rule.
-
-    Args:
-        snapshots: The store's snapshots, already read.
-        pre_boot: The boot snapshot's ``pre_boot_raw_event_ids``. Empty is legitimate (a
-            producer journal with nothing in it at boot), and then the fallback applies.
-
-    Returns:
-        The KST ``YYYYMMDD``, or ``None`` when neither side names a day (an empty store and an
-        empty boot snapshot — then nothing is scoped and every count is store-wide, reported
-        as such).
-
-    Raises:
-        SessionInputsError: The boot snapshot's pre-boot ids span more than one day, or name a
-            day the store's newest consumed bar disagrees with.
-    """
+    """The session day these snapshots were measured for."""
     consumed_days = {
         day
         for day in (session_day_of(snapshot.raw_event_id) for snapshot in snapshots)
@@ -1013,37 +512,15 @@ def derive_session_day(
 class SessionScope:
     """One session's slice of an accumulating durable leaf (:func:`scope_to_session_day`)."""
 
-    #: The KST ``YYYYMMDD`` every count in the document is about, or ``None`` when neither the
-    #: store nor the boot snapshot names a day (nothing is scoped; the counts are store-wide).
     session_day: str | None
-    #: Every day the STORE holds, so the accumulation stays visible beside the scoped numbers.
     days_present: tuple[str, ...]
-    #: How many snapshots the store holds in all, before scoping.
     all_days_total: int
 
 
 def scope_to_session_day(
     snapshots: Sequence[Snapshot], pre_boot: frozenset[str]
 ) -> tuple[list[Snapshot], SessionScope]:
-    """Cut ``snapshots`` down to the one session this document is about.
-
-    ⛔ **Applied ONCE, to everything** (independent review LOW-4). An earlier cut scoped only
-    :func:`consumed_field_states`, which left ``counts.snapshots``,
-    ``counts.consumed_raw_event_ids``, ``raw_event_ids`` and the consumed set behind
-    :func:`unpaired_reasons` store-wide — a document whose M5 block said "this session" while
-    the counts above it said "this leaf, all time". Two scopes in one document is worse than
-    one wrong scope: every reader has to know which number is which.
-
-    Scoping here also makes the document usable downstream without hand-filtering.
-    ``diff_decisions.py`` REFUSES a store-wide id set ("The runtime consumed bars this offline
-    trio does not cover") because the frozen frames cover one session — which is exactly why
-    the 2026-10-22 B3 run had to filter ``consumed-ids.json`` by day by hand (evidence README
-    §4).
-
-    Raises:
-        SessionInputsError: An id carries no readable day (MEDIUM-2 — it would vanish from
-            every count below with nothing saying so), or :func:`derive_session_day` refuses.
-    """
+    """Cut ``snapshots`` down to the one session this document is about."""
     unparseable = sorted(
         snapshot.raw_event_id
         for snapshot in snapshots
@@ -1084,79 +561,7 @@ def consumed_field_states(
     pre_boot: frozenset[str],
     scope: SessionScope,
 ) -> dict[str, Any]:
-    """M5's first count: lines the issuer HELD a value for and refused anyway.
-
-    **Why it is not a count of ``STALE``.** Plan §5 M5 asks for "lines
-    consumed STALE", and the durable side does not write that word.
-    ``tos_runtime.marketfeed.snapshot._derive_field_state`` returns
-    ``(FieldState.UNKNOWN, "stale")`` when ``now_ms - as_of_ms >
-    spec.max_age_ms``; only the STATE is persisted into
-    ``field_evaluations``, while the reason stays on the in-memory
-    ``IssuedSnapshot.field_reports``. A count of persisted ``STALE`` is
-    therefore 0 on every real session however stale its lines were (Claude
-    lane BLOCKER R2', 2026-10-14) — measured on the real issuer, in the hinge.
-
-    **What is counted instead.** ``_derive_field_state`` has exactly four
-    UNKNOWN causes, in this order: ``absent_from_payload`` (the key is not in
-    the preimage), ``now_ms_unknown`` (no trustworthy clock), ``stale`` (over
-    ``max_age_ms``), ``unprojectable`` (``project_scalar`` refuses the token).
-    Two of them are decidable from durable bytes — presence of the key in
-    ``preimages.preimage_json``, and whether its token projects
-    (:func:`_projectable`) — and what is left in the middle is exactly "the
-    issuer HAD a usable value for this field and refused it on age or on an
-    unestablished clock". That is
-
-    ``m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown``:
-    consumed ``raw_event_id``s with at least one ``field_evaluations`` entry
-    in state ``UNKNOWN`` whose ``field_ref`` IS a key of that snapshot's
-    preimage and whose token is projectable, counted once per id, excluding
-    ids the runner's boot snapshot lists as pre-boot (plan §5 M5 excludes
-    those from both of its counts). Read it as **"stale, or the evaluation
-    clock was unknown"**: an UPPER BOUND on STALE that, unlike a count of the
-    word, cannot read 0 when lines were consumed stale.
-
-    The two separated causes are reported under their own names
-    (:data:`CAUSE_ABSENT_FROM_PAYLOAD`, :data:`CAUSE_UNPROJECTABLE`), never
-    folded in: a field the payload never carried says nothing about freshness,
-    and a token the kernel would refuse to project is a different defect.
-
-    **The one gap, stated.** When ``now_ms`` is ``None`` the issuer returns at
-    its second check, before projection — so a field that is present but
-    UNPROJECTABLE could also be a clock refusal, and this side files it under
-    ``unprojectable``. It is visible rather than lost (that count sits beside
-    the number), and it cannot hide a clock failure on its own: with no
-    trustworthy clock EVERY declared field reads UNKNOWN, so any present,
-    projectable field in the same snapshot is counted.
-
-    **The criterion, as of 2026-10-23** (operator directive; measured on the
-    2026-10-22 session). It is no longer "0, and anything else is a finding":
-
-    1. **Scoped to one session day** (:func:`derive_session_day`). The durable
-       leaf accumulates sessions and the boot snapshot only lists TODAY's
-       pre-boot ids, so a store-wide count reads an older session's pre-boot
-       line as post-boot. 2026-10-22 measured 2 store-wide against 1 for the
-       session; only the second number means anything.
-    2. **A stale-refusal budget of <= 0.5% of ``post_boot_consumed_ids``.**
-       2026-10-22 measured 1 of 409 = 0.244%, caused by host scheduling
-       jitter, not by a late producer: the bar's own ``as_of`` was +2258 ms
-       after its minute close against a session p50 of 2221, while the
-       scheduler pass that read it ran 1280 ms into a 408 ms loop, so the line
-       was 922 ms old against ``max_age_ms`` 800. ``max_age_ms`` STAYS at 800
-       (operator decision 2026-10-09: 1000 kernel budget minus 200 delay) —
-       widening it to absorb host jitter would widen the window in which a
-       decision runs on an old price. A budget of 0.1% was considered and
-       rejected: the only session measured would have failed it.
-    3. **Any refusal for a reason other than staleness is a finding at any
-       count**, including one. The budget is for jitter, and nothing else.
-       That clause is checkable only because the runtime now records the
-       reason: ``MARKETFEED_FIELD_REFUSED``
-       (``tos_runtime.marketfeed.scheduler.TickScheduler._record_field_refusals``)
-       carries ``refused_by_reason`` plus both sides of the age comparison.
-       This function's own number cannot make the distinction — it is an
-       upper bound over "stale OR clock unknown" by construction.
-
-    The pre-boot key is where a non-zero count is unremarkable.
-    """
+    """M5's first count: lines the issuer HELD a value for and refused anyway."""
     post_boot_refused: list[str] = []
     pre_boot_refused: list[str] = []
     by_cause: dict[str, dict[str, int]] = {
@@ -1167,11 +572,6 @@ def consumed_field_states(
     by_state: dict[str, dict[str, int]] = {}
     observation_by_state: dict[str, dict[str, int]] = {}
     without_evaluations = 0
-    # ⛔ SCOPE (2026-10-22 README §4, :func:`derive_session_day`): the durable leaf accumulates
-    # sessions, so every count below is over THIS session's day only. Without it an older
-    # session's pre-boot line — absent from today's boot snapshot — reads as post-boot and
-    # inflates M5's number, which is exactly what happened on 2026-10-22 (2 store-wide, 1 for
-    # the session). `days_present` keeps the accumulation visible rather than hidden by the fix.
     in_session = list(snapshots)
     for snapshot in in_session:
         where = "pre_boot" if snapshot.raw_event_id in pre_boot else "post_boot"
@@ -1233,8 +633,6 @@ def consumed_field_states(
             "pre_boot_consumed_ids": sum(
                 1 for snapshot in in_session if snapshot.raw_event_id in pre_boot
             ),
-            # the denominator of the number above it, so "1 refused" is read
-            # against how many post-boot lines the session consumed at all
             "post_boot_consumed_ids": sum(
                 1 for snapshot in in_session if snapshot.raw_event_id not in pre_boot
             ),
@@ -1275,25 +673,7 @@ def consumed_field_states(
 def consumed_value_view_counts(
     *, data_dir: Path, by_snapshot: Mapping[str, str]
 ) -> dict[str, Any]:
-    """What the RESOLVER did on each consumed tick — reported beside M5, not as it.
-
-    Every admitted tick carries the resolver's ``value_view``, which is either
-    absent (no view published at all), explicitly empty (the binding resolved
-    and nothing was admissible) or populated. That is a useful second view of
-    the same session, and it is NOT the STALE count: ``tos.marketfeed.value
-    ._admit_one`` rejects a candidate for ten reasons, of which the only
-    state-shaped one (``FIELD_STATE_NOT_VALID``) folds STALE together with
-    UNKNOWN, CONFLICTED and INVALID. An earlier revision of this docstring
-    called ``empty_view + no_view`` M5's first count; that was both too broad
-    and backwards, and M5 now reads :func:`consumed_field_states` (Claude lane
-    MEDIUM R2).
-
-    **Expectation at genesis** with ③ live (plan §5 M5, M6 < 300 ms against
-    ``max_age_ms`` 800): values ARE expected to be admitted on post-boot
-    ticks, so ``values_admitted`` near the consumed count is the healthy
-    reading and a session of ``empty_view`` is the finding. The ids with
-    admitted values are listed because that list is the evidence for it.
-    """
+    """What the RESOLVER did on each consumed tick — reported beside M5, not as it."""
     ticks = read_decision_ticks(data_dir)
     counts = {"no_view": 0, "empty_view": 0, "values_admitted": 0}
     with_values: list[str] = []
@@ -1328,20 +708,7 @@ def build_consumed_ids_document(
     producer_log: Path | None = None,
     boot_snapshot: Path | None = None,
 ) -> dict[str, Any]:
-    """The ``consumed-ids`` document: the id filter plus the reason map.
-
-    Raises:
-        SessionInputsError: ``boot_snapshot`` is missing. Every document this
-            function writes carries the M5 block, and plan §5 M5 excludes
-            pre-boot lines from its counts — without the runner's own record
-            of what was already in the journal at boot, EVERY pre-boot line
-            would be counted as a post-boot one, in the number the acceptance
-            criterion is read off. The same omission also moves every pre-boot
-            unconsumed line into ``published_not_consumed`` (the second M5
-            count). An absent flag is not a legitimate "no pre-boot lines":
-            that is an empty list, which the runner writes (Claude lane LOW
-            L-a, 2026-10-14).
-    """
+    """The ``consumed-ids`` document: the id filter plus the reason map."""
     if boot_snapshot is None:
         raise SessionInputsError(
             "consumed-ids needs the runner's boot-journal snapshot "
@@ -1351,8 +718,6 @@ def build_consumed_ids_document(
             "number the criterion is read off. 'No pre-boot lines' is an "
             "empty pre_boot_raw_event_ids list, not a missing file"
         )
-    # `Sequence` 로 적는다 — `read_snapshots` 는 튜플을, 아래
-    # `scope_to_session_day` 는 리스트를 돌려주고 둘 다 같은 이름에 담긴다.
     snapshots: Sequence[Snapshot] = read_snapshots(data_dir)
     if not snapshots:
         raise SessionInputsError(
@@ -1361,8 +726,6 @@ def build_consumed_ids_document(
             "empty every comparison"
         )
     pre_boot = read_boot_snapshot(boot_snapshot)
-    # ⛔ ONE scope for the whole document (review LOW-4) — see :func:`scope_to_session_day`.
-    # Everything below this line is about the session, never about the accumulated leaf.
     snapshots, scope = scope_to_session_day(snapshots, pre_boot)
     if not snapshots:
         raise SessionInputsError(
@@ -1401,9 +764,6 @@ def build_consumed_ids_document(
             "marketfeed_schema_version": PINNED_MARKETFEED_SCHEMA_VERSION,
             "producer_log": _file_ref(producer_log),
             "boot_snapshot": _file_ref(boot_snapshot),
-            # null when the log carried no readable `seed` record — then
-            # REASON_PUBLISHED_AFTER_CLOSE could not be decided for ANY bar,
-            # and a zero in that reason means "not asked", not "none".
             "producer_session_close": (
                 facts.session_close.isoformat() if facts.session_close else None
             ),
@@ -1412,8 +772,6 @@ def build_consumed_ids_document(
         "days_present": list(scope.days_present),
         "counts": {
             "snapshots": len(snapshots),
-            # Every count in this document is this SESSION's (review LOW-4). The leaf's own
-            # total sits beside it so the accumulation is visible rather than hidden.
             "snapshots_all_days": scope.all_days_total,
             "consumed_raw_event_ids": len(consumed),
             "producer_disposed_bars": len(dispositions),
@@ -1421,16 +779,6 @@ def build_consumed_ids_document(
             "pre_boot_lines_at_boot": len(pre_boot),
         },
         "raw_event_ids": sorted(consumed),
-        # The runner's boot-journal snapshot, copied through by id and not just
-        # by count. `diff_decisions.py` holds exactly these bars out of its LIVE
-        # comparison — a bar already in the producer's journal at boot is stale
-        # at boot BY DESIGN, so the runtime can only withhold on it, and the
-        # withhold is not a decision disagreement. B3 takes no
-        # `--boot-snapshot` of its own (it reads files, not stores), so this
-        # document is the only place it can learn WHICH bars those are. An
-        # empty list is a measurement ("the journal was empty at boot"); the
-        # key is always written, because B3 reads an absent key as "this
-        # document does not say" and then holds nothing out.
         "pre_boot_raw_event_ids": sorted(pre_boot),
         "unpaired_reasons": dict(sorted(reasons.items())),
         "unpaired_reason_counts": dict(sorted(reason_counts.items())),
@@ -1446,11 +794,6 @@ def build_consumed_ids_document(
     }
 
 
-# ---------------------------------------------------------------------------
-# The evidence side: what the live runtime decided
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class DecisionBlock:
     """One tick's engine records: the decision, then its commitment flow."""
@@ -1462,28 +805,13 @@ class DecisionBlock:
 
     @property
     def capsule_id(self) -> str | None:
-        """The capsule this decision consumed, when the record names one.
-
-        ``DECISION_OUTCOME_EMITTED`` carries it (``pipeline.py`` copies it off
-        the recorded input signature); ``DECISION_WITHHELD`` and the
-        Coordinator's refusal do not — the pipeline never reached a signature.
-        That is why :func:`_attribute` has a SECOND durable key for the
-        records with no capsule: the driver's receipt bracket around the
-        event that wrote them.
-        """
+        """The capsule this decision consumed, when the record names one."""
         value = self.payload.get("capsule_id")
         return None if value is None else str(value)
 
 
 def _evidence_record(payload_json: str, *, seq: int, kind: str) -> dict[str, Any]:
-    """The engine record inside one ``entries.payload_json``.
-
-    The store wraps it: ``{"payload": …, "masked_keys": […]}``
-    (:data:`EVIDENCE_PAYLOAD_KEY`). Reading the wrapper as if it were the
-    record finds every field absent and says so nowhere — the BLOCKER this
-    refusal replaces. An entry without the wrapper is a store this extractor
-    was not written for, and that is a refusal, not a fallback.
-    """
+    """The engine record inside one ``entries.payload_json``."""
     outer = json.loads(payload_json)
     if not isinstance(outer, dict) or EVIDENCE_PAYLOAD_KEY not in outer:
         raise SessionInputsError(
@@ -1504,18 +832,7 @@ def _evidence_record(payload_json: str, *, seq: int, kind: str) -> dict[str, Any
 
 
 def read_decision_blocks(data_dir: Path) -> tuple[DecisionBlock, ...]:
-    """Group the session's engine records into one block per decision pass.
-
-    A block opens at a :data:`DECISION_KINDS` record and runs to the next one;
-    the :data:`FLOW_KINDS` records between them are that decision's commitment
-    flow, which is the order the engine writes them in (the proposal is
-    recorded before the flow it starts).
-
-    Raises:
-        SessionInputsError: A flow record appears before any decision record.
-            Nothing it could belong to has been seen, so attributing it to the
-            NEXT decision would attach one tick's send to another tick's bar.
-    """
+    """Group the session's engine records into one block per decision pass."""
     conn = _connect_ro(
         data_dir / EVIDENCE_FILE_NAME,
         label="evidence",
@@ -1572,15 +889,7 @@ def read_decision_blocks(data_dir: Path) -> tuple[DecisionBlock, ...]:
 
 
 def _live_outcome_kind(block: DecisionBlock) -> str:
-    """The token for one live decision block.
-
-    ``NO_OUTCOME`` for a pass that emitted nothing, ``NO_ACTION`` for an
-    emitted no-action, and :data:`PROPOSAL_KIND` for any other emitted outcome
-    — the durable record says an outcome was emitted and cannot say whether it
-    was B1b's ACTION or its FLAT, so this names exactly that much. Refusing
-    instead (the first cut) threw away the whole document over one bar; naming
-    ACTION or FLAT would be this module deciding what the engine decided.
-    """
+    """The token for one live decision block."""
     if block.kind != "DECISION_OUTCOME_EMITTED":
         return NO_OUTCOME_KIND
     outcome_type = block.payload.get("outcome_type")
@@ -1596,14 +905,7 @@ def _live_outcome_kind(block: DecisionBlock) -> str:
 
 
 def _flow_halt(block: DecisionBlock) -> tuple[str | None, str | None]:
-    """This block's first ``FLOW_HALTED`` row as ``(halt_reason, step)``.
-
-    Both come off the SAME row: a halt reason without the step it halted at
-    cannot tell step 4's ``STAGE_UNKNOWN`` (no independent approval decision)
-    from step 7's, and reading them with two walks would let them drift apart.
-    The replay trace line already carries both under these names
-    (``tos/runtime/cp3/replay.py::_trace_line``).
-    """
+    """This block's first ``FLOW_HALTED`` row as ``(halt_reason, step)``."""
     for kind, payload in block.flow:
         if kind == "FLOW_HALTED":
             reason = payload.get("halt_reason")
@@ -1622,29 +924,12 @@ class DecisionTick:
     seq: int
     capsule_id: str
     snapshot_id: str
-    #: How many Critical Input values the resolver ADMITTED for this tick, or
-    #: ``None`` when it published no view at all (see
-    #: :func:`consumed_value_view_counts`).
     admitted_values: int | None
-    #: This row's ``EVENT_HANDLING_STARTED`` evidence ``seq``, or ``None`` when
-    #: the driver never started handling it (a tick queued and never run).
     handling_started_evidence_seq: int | None = None
-    #: This row's ``EVENT_CONSUMED`` evidence ``seq``, or ``None`` when the
-    #: driver started and never finished (a crash inside handling).
     consumed_evidence_seq: int | None = None
 
     def brackets(self, evidence_seq: int) -> bool:
-        """Does this tick's durable handling window contain ``evidence_seq``?
-
-        ``(handling_started, consumed]`` — the open lower end is the
-        ``EVENT_HANDLING_STARTED`` receipt itself, which is not a decision
-        record; the closed upper end is the ``EVENT_CONSUMED`` receipt, also
-        not a decision record, and is written closed only to match the
-        interval this is documented as. A tick with no handling-started stamp
-        brackets nothing (it never ran). A started-but-unconsumed tick has an
-        OPEN upper end: everything after it is inside, which makes any later
-        decision ambiguous — :func:`_attribute` refuses rather than picking.
-        """
+        """Does this tick's durable handling window contain ``evidence_seq``?"""
         if self.handling_started_evidence_seq is None:
             return False
         if evidence_seq <= self.handling_started_evidence_seq:
@@ -1665,28 +950,7 @@ def _dig(payload: Mapping[str, Any], path: Sequence[str]) -> Any:
 
 
 def read_decision_ticks(data_dir: Path) -> tuple[DecisionTick, ...]:
-    """Every admitted market tick, in admission order, with its two ids.
-
-    This is the link the evidence store does not carry. The scheduler issues a
-    snapshot, binds it into a capsule and hands the engine ONE
-    ``DECISION_TICK`` event (``marketfeed/scheduler.py::tick_once``); the
-    driver admits that event durably before processing it
-    (``engine/driver.py::enqueue_and_run`` -> ``SqliteEventInbox.enqueue``),
-    and the stored ``payload_json`` is the whole event — capsule id and
-    ``SnapshotRef`` included. So ``decision.capsule_id -> tick.snapshot_id ->
-    preimages.raw_event_id`` is a keyed join over durable rows.
-
-    The row also carries the two receipt stamps
-    (:data:`INBOX_HANDLING_STARTED_COLUMN`, :data:`INBOX_CONSUMED_COLUMN`)
-    that bracket the window this tick's evidence was written in — the durable
-    key for the records that name no capsule (:meth:`DecisionTick.brackets`,
-    :func:`_attribute`).
-
-    Raises:
-        SessionInputsError: A tick event carries no capsule or snapshot id, or
-            two ticks share one capsule id. Both make the key useless, and a
-            key that is sometimes ambiguous is not a key.
-    """
+    """Every admitted market tick, in admission order, with its two ids."""
     conn = _connect_ro(
         data_dir / INBOX_FILE_NAME,
         label="inbox",
@@ -1746,55 +1010,11 @@ def read_decision_ticks(data_dir: Path) -> tuple[DecisionTick, ...]:
 def _attribute(
     blocks: Sequence[DecisionBlock], ticks: Sequence[DecisionTick]
 ) -> list[tuple[DecisionBlock, DecisionTick, str]]:
-    """Pair each decision with the tick it was about, by durable key only.
-
-    Two keys, both durable, neither positional:
-
-    ``capsule_id``
-        ``DECISION_OUTCOME_EMITTED`` names the capsule it consumed, and
-        exactly one inbox row admitted that capsule.
-
-    ``evidence_seq_range``
-        ``DECISION_WITHHELD`` and ``COORDINATOR_PRECONDITION_REFUSED`` name no
-        capsule — the pipeline never reached a signature — so they are
-        attributed by the bracket the driver itself writes around each event:
-        the ``EVENT_HANDLING_STARTED`` receipt's ``seq`` and the
-        ``EVENT_CONSUMED`` receipt's ``seq``, stamped onto the inbox row
-        (:data:`INBOX_HANDLING_STARTED_COLUMN`,
-        :data:`INBOX_CONSUMED_COLUMN`). The driver's loop is single-threaded
-        and refuses re-entry, so the records written during one event's
-        handling are exactly those whose evidence ``seq`` lies in
-        ``(handling_started, consumed]``, and the record is attributed to the
-        UNIQUE tick whose bracket contains it.
-
-    A keyed record is CROSS-CHECKED against the same bracket: if the capsule's
-    tick has a bracket and the record's ``seq`` is outside it, the two durable
-    keys disagree and that is a refusal, not a preference for one of them.
-
-    The first two cuts paired capsule-less records by POSITION (the k-th
-    unclaimed tick, in file order). That is an inference the stores can
-    contradict silently, and the reviewer's own sequence shows it: three ticks
-    c1–c3, evidence ``DECISION_WITHHELD{A on bar1}``,
-    ``DECISION_TICK_DROPPED_ON_RECOVERY`` (tick 2 never ran), ``DECISION_
-    WITHHELD{B on bar3}`` — positionally B lands on bar2, with every count
-    still matching and nothing refused (Claude lane MEDIUM R1, 2026-10-14).
-    Under the bracket, B's ``seq`` is inside c3's window and only c3's.
-
-    Raises:
-        SessionInputsError: a decision names a capsule the inbox never
-            admitted; a keyed record falls outside its own tick's bracket; a
-            keyed record's tick has no bracket at all (the receipts the
-            cross-check needs are missing); a capsule-less record is in no
-            tick's bracket, or in more than one; or two decisions land on one
-            tick.
-    """
+    """Pair each decision with the tick it was about, by durable key only."""
     by_capsule = {tick.capsule_id: (index, tick) for index, tick in enumerate(ticks)}
-    assigned: dict[int, tuple[int, str]] = {}  # block position -> (tick index, how)
-    used: dict[int, int] = {}  # tick index -> evidence seq
+    assigned: dict[int, tuple[int, str]] = {}
+    used: dict[int, int] = {}
 
-    # Pass 1 — every decision that names a capsule, by key, each cross-checked
-    # against its tick's own bracket. Keyed first and in their own pass, so a
-    # capsule-less record cannot take a tick a later keyed record names.
     for position, block in enumerate(blocks):
         capsule_id = block.capsule_id
         if capsule_id is None:
@@ -1832,9 +1052,6 @@ def _attribute(
         used[index] = block.seq
         assigned[position] = (index, "capsule_id")
 
-    # Pass 2 — the capsule-less records, each into the one bracket that holds
-    # it. No ordering, no leftovers, no "next unclaimed": a record the
-    # brackets cannot place is refused.
     for position, block in enumerate(blocks):
         if position in assigned:
             continue
@@ -1881,44 +1098,12 @@ def _attribute(
 
 @dataclass(frozen=True)
 class LiveScope:
-    """``live.jsonl``'s slice of an accumulating leaf (:func:`scope_live_decisions`).
+    """``live.jsonl``'s slice of an accumulating leaf (:func:`scope_live_decisions`)."""
 
-    The companion of :class:`SessionScope`, for the other session-derived input.
-    ⛔ **The 2026-10-22 scope fix covered only the consumed-ids document, and
-    that is why no session has ever produced a B3 summary.** Measured
-    2026-10-29 on the 10-28 LONG session's own stores (via its cold-backup
-    generation, taken after that session stopped): the five offline steps all
-    exited 0 and ``diff_decisions.py`` then refused —
-
-        1939 live decision(s) name bars that are not compared, first
-        ['A05611:1m:20261015T100100+0900', …]. The live session and the
-        offline artifacts are not about the same bars
-
-    — because ``live.jsonl`` carried every decision the leaf had accumulated
-    since the 10-15 genesis, while the offline three cover only the producer's
-    frozen frame. That refusal is correct and it cannot be waived: ``compare_live``
-    exists to catch two sides that are not about one session. The scope belongs
-    here, in the document, exactly as :func:`scope_to_session_day`'s docstring
-    says for the other one.
-
-    ⚠ Scoped by DAY and not by the consumed-id set, although the set is to hand
-    (step 1's artifact): filtering by it would make ``compare_live``'s "not
-    compared" check vacuous by construction, and that check is the only thing
-    that notices a live decision the offline frame does not cover.
-    """
-
-    #: The KST ``YYYYMMDD`` every record is about, or ``None`` when neither the
-    #: store nor the boot snapshot names a day (then nothing is scoped).
     session_day: str | None
-    #: Every day the STORE holds, so the accumulation stays visible.
     days_present: tuple[str, ...]
-    #: Live records before scoping.
     records_all_days: int
-    #: Admitted DECISION_TICKs before scoping.
     ticks_all_days: int
-    #: Ticks whose snapshot no longer names a readable day. Reported, not
-    #: refused: an unhandled tick is already allowed to have no decision, and a
-    #: count beside the scoped one is enough to see it.
     ticks_with_no_resolvable_day: int
 
 
@@ -1929,26 +1114,7 @@ def scope_live_decisions(
     snapshots: Sequence[Snapshot],
     pre_boot: frozenset[str],
 ) -> tuple[list[dict[str, Any]], int, LiveScope]:
-    """Cut live records and the tick count down to the one session day.
-
-    Pure — it takes what the three readers already returned. The day comes from
-    :func:`derive_session_day`, the same source of truth the consumed-ids
-    document uses, so the two session-derived inputs cannot be scoped to two
-    different sessions.
-
-    ``bar_index`` is re-numbered over the scoped records: the document is about
-    one session, so "the n-th decision" is the n-th of that session. Nothing is
-    attributed by it (the attribution is keyed) and ``diff_decisions.py`` does
-    not read it.
-
-    Returns:
-        ``(scoped records, scoped admitted tick count, the scope)``.
-
-    Raises:
-        SessionInputsError: A record's ``raw_event_id`` carries no readable day
-            (it would vanish from the output with nothing saying so), or
-            :func:`derive_session_day` refuses.
-    """
+    """Cut live records and the tick count down to the one session day."""
     unparseable = sorted(
         str(record["raw_event_id"])
         for record in records
@@ -1998,63 +1164,7 @@ def scope_live_decisions(
 
 
 def live_decision_records(data_dir: Path) -> list[dict[str, Any]]:
-    """One record per live decision, in B1b's trace shape.
-
-    ⚠ **Store-wide.** A tenant session writes into a durable leaf that is never
-    cleared, so this reads every session the leaf holds. The caller scopes the
-    result to one session day with :func:`scope_live_decisions`; the CLI always
-    does, and that is why ``live-decisions`` requires ``--boot-snapshot``.
-
-    The keys B3 reads from a trace line — ``raw_event_id``, ``as_of_ms``,
-    ``outcome_kind``, ``rule_id``, ``capacity_denied`` — are all present, and
-    each record also says WHICH durable key attributed it
-    (``attributed_by``): ``capsule_id`` for a record that names its capsule,
-    ``evidence_seq_range`` for one that cannot (:func:`_attribute`).
-
-    ``rule_id`` is always ``null`` and says so in the sidecar: B1b resolves it
-    from the emitted outcome's ``rationale`` through the authored policy's rule
-    index, and the rationale is on the in-memory outcome, not in the durable
-    record. B3's live comparison therefore compares the decision KIND and the
-    capacity denial, never the rule id.
-
-    ``as_of_ms`` is the snapshot's — the WRITE stamp the producer put on the
-    journal line — and is deliberately not comparable to B1a's label-derived
-    ``as_of_ms``; B3 does not compare them.
-
-    ⛔ **The three reads go in the REVERSE of the runtime's write order**, and
-    that is the whole reason this function reads the stores in the order it
-    does. Each is its own read-only connection taken at its own moment, so a
-    LIVE session keeps writing between them; the only order in which every
-    cross-store reference a read can see is already satisfied by the stores
-    read AFTER it is the reverse of the order the writes happen in. The runtime
-    writes one tick as: the snapshot and its preimages
-    (``marketfeed/store.py::SqliteSnapshotStore.put``, one
-    ``BEGIN IMMEDIATE``/``COMMIT``), then the inbox admission of the tick that
-    names it (``engine/inbox.py::SqliteEventInbox.enqueue``, likewise), then
-    the tick's ``handling_started`` stamp, the engine records of the decision
-    it caused, and last its ``consumed`` stamp (``engine/driver.py::
-    _process_next``) — a block read first therefore always finds its tick
-    already stamped as started — see
-    ``marketfeed/scheduler.py::tick_once``, where ``store.put`` precedes
-    ``driver.enqueue_and_run``. So: blocks, then ticks, then snapshots. Every
-    block read then has its tick in the later inbox read, and every tick has
-    its snapshot in the later marketfeed read.
-
-    **Measured.** On 2026-11-04 11:19:07 KST, with the LONG CP-3 session
-    running, the status board read snapshots FIRST and refused the whole leaf:
-    inbox seq 4138 named a snapshot (as_of 11:19:02.225) issued 5 s earlier but
-    after that first read — a tick and its decision written inside the window
-    between two reads. Nothing was lost; the same command read clean after the
-    close. The refusals below are NOT relaxed: after a reverse-order read a
-    tick whose snapshot is missing is a real loss and still raises.
-
-    The surplus this order leaves is benign and already handled: a snapshot or
-    a tick newer than the blocks read is simply unconsumed, and an unconsumed
-    tail is a normal session shape — :func:`_attribute` walks the BLOCKS, so a
-    tick with no decision is skipped here and counted in the sidecar
-    (``ticks_without_a_decision``), and a snapshot with no tick is what the
-    final pre-stop bar always looks like.
-    """
+    """One record per live decision, in B1b's trace shape."""
     blocks = read_decision_blocks(data_dir)
     ticks = read_decision_ticks(data_dir)
     snapshots = read_snapshots(data_dir)
@@ -2102,11 +1212,7 @@ def build_live_lineage(
     ticks: int,
     scope: LiveScope,
 ) -> dict[str, Any]:
-    """The sidecar B3 reads beside ``live.jsonl``.
-
-    ``scope`` is required, not defaulted: a sidecar that does not say which
-    session its counts are about is the defect :class:`LiveScope` documents.
-    """
+    """The sidecar B3 reads beside ``live.jsonl``."""
     kinds: dict[str, int] = {}
     attribution: dict[str, int] = {}
     for record in records:
@@ -2175,9 +1281,6 @@ def build_live_lineage(
             "live_jsonl_sha256": hashlib.sha256(payload).hexdigest(),
             "live_jsonl_lines": len(records),
         },
-        # ⛔ SCOPE (:class:`LiveScope`): the durable leaf accumulates sessions, so
-        # every count below is about ONE session day and the leaf-wide totals ride
-        # beside them under `*_all_days`.
         "session_scope": {
             "session_day": scope.session_day,
             "days_present": list(scope.days_present),
@@ -2194,11 +1297,6 @@ def build_live_lineage(
             "ticks_without_a_decision": ticks - len(records),
         },
     }
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 
 
 def render_jsonl(records: Sequence[Mapping[str, Any]]) -> bytes:

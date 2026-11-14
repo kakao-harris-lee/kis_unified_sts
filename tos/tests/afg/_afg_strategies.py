@@ -1,29 +1,4 @@
-"""Shared valid-artifact builders + strategies for the afg property tests (design #16 §7).
-
-Firewall-clean: imports only ``hypothesis`` and ``tos.*`` (design #16 §0.3). The builders
-enforce the §7 clean-vs-illegal fixture discipline (the #8 lesson — a "clean" fixture must
-be *genuinely* admissible, never a permissive shortcut):
-
-* a **clean** snapshot covers every required scope and carries positive five-axis
-  independence evidence per scope, with the local-counter / scheduler-priority bases
-  positively ``False``;
-* a **clean** amplification envelope declares **every** axis (an undeclared axis is
-  unbounded => denial, §5.8 line 141) and the clean observation sits strictly inside it;
-* a **clean** cause carries a concrete root identity, a non-empty attested parent lineage,
-  and all three defect witnesses positively ``False``;
-* a **clean** permit is structurally complete (generation + command identity + claim
-  nonce) and single-use, with an unclaimed / unambiguous / unlost / unconflicting
-  consumption state;
-* the **∅ strategies** deliberately generate empty sets / tuples so the ∅-void guards are
-  actually exercised (the #10 lesson — a strategy that never emits an empty set leaves the
-  ∅ branch untested).
-
-Every magnitude / bound is an explicit fixture value: nothing here is a *policy* number —
-the real rate / burst / queue / age / amplification bounds are Verification-Profile and
-Broker-Capability-Profile injected and are all null in Phase 1 (design #16 §8).
-
-The reserved ``"TBD"`` placeholder is excluded from required-field text.
-"""
+"""Shared valid-artifact builders + strategies for the afg property tests (design #16 §7)."""
 
 from __future__ import annotations
 
@@ -56,11 +31,8 @@ from tos.rcl import CapacityComponent, CapacityVector
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Text bound to a required-covered field must be concrete (never the reserved ``"TBD"``).
 REQUIRED_FIELD_TEXT = st.text(max_size=8).filter(lambda s: s != "TBD")
-#: Injected ``bool | None`` flag (fail-closed on ``None`` / ``False``).
 TRIBOOL = st.sampled_from([True, False, None])
-#: A finite non-negative magnitude (NaN / infinity are unconstructable, §3.1).
 FINITE_MAGNITUDE = st.decimals(
     min_value=Decimal("0"),
     max_value=Decimal("1000"),
@@ -69,7 +41,6 @@ FINITE_MAGNITUDE = st.decimals(
     places=2,
 )
 
-#: The applicable shared scopes used across the scope-graph tests.
 REQUIRED_SCOPES: frozenset[ActionFlowScopeKind] = frozenset(
     {
         ActionFlowScopeKind.BROKER,
@@ -80,41 +51,28 @@ REQUIRED_SCOPES: frozenset[ActionFlowScopeKind] = frozenset(
     }
 )
 
-#: The governed afg dimension used across the vector tests (Gap-1 namespace token).
 BROKER_REQUEST_DIM: str = action_flow_dimension_id(
     ActionFlowDimensionKind.BROKER_REQUEST
 )
 CANCEL_DIM: str = action_flow_dimension_id(ActionFlowDimensionKind.CANCEL_AMEND_REPLACE)
 
-# ---------------------------------------------------------------------------
-# Hypothesis strategies (∅ deliberately reachable — the #10 lesson)
-# ---------------------------------------------------------------------------
 
-#: Scope sets **including the empty set** (the ∅-void branch must be exercised).
 SCOPE_SETS: st.SearchStrategy[frozenset[ActionFlowScopeKind]] = st.one_of(
     st.just(frozenset()),
     st.frozensets(st.sampled_from(list(ActionFlowScopeKind)), min_size=0, max_size=5),
 )
-#: Action-class sets **including the empty set**.
 ACTION_CLASS_SETS: st.SearchStrategy[frozenset[ActionClassKind]] = st.one_of(
     st.just(frozenset()),
     st.frozensets(st.sampled_from(list(ActionClassKind)), min_size=0, max_size=4),
 )
-#: Documented-scope status tokens including ``None`` and non-verified members.
 DOCUMENTED_STATUSES = st.sampled_from(
     [
         None,
-        "VERIFIED_COMPLETE",  # a bare string is NOT the enum member (fail-closed)
+        "VERIFIED_COMPLETE",
     ]
 )
-#: Injected ``ActionFlowResult`` values (all three are truthy StrEnum members).
 ACTION_FLOW_RESULTS = st.sampled_from(list(ActionFlowResult))
 
-#: Values that are **not** the ``ActionFlowResult.GRANT`` member but which a fall-through
-#: gate would grant: the raw member *strings* (a ``StrEnum`` compares equal to its value
-#: but is not the member under ``is``), a nonsense token, and the falsy / ``None`` cases.
-#: Annotation says ``ActionFlowResult``; Python enforces nothing at runtime, so a caller
-#: bug or a forged payload can put any of these on the wire.
 NON_GRANT_FORGERIES: list[object] = [
     "GRANT",
     "DENY",
@@ -128,27 +86,14 @@ NON_GRANT_FORGERIES: list[object] = [
     [1],
 ]
 
-#: The real members **plus** the forgeries — used by the C1 regression property to prove
-#: that only the ``GRANT`` member itself can ever produce a ``GRANT`` decision.
 ACTION_FLOW_RESULT_OR_FORGERY = st.one_of(
     st.sampled_from(list(ActionFlowResult)),
     st.sampled_from(NON_GRANT_FORGERIES),
 )
 
-#: Truthy non-``bool`` values that pass an ``if not X:`` gate but are not the singleton
-#: ``True``. The five decision premises are ``bool``-annotated only, so an ``is not True``
-#: gate is the sole structural defence (design #16 §2.2-1 / M2 regression).
 TRUTHY_NON_BOOL: list[object] = ["UNKNOWN", "False", 1, 1.0, [1], {"a": 1}, object()]
 
-#: Values a forged (``model_construct``) authority flag can carry. Each is truthy but is
-#: not the singleton ``False``, so a ``is not True`` check would wrongly clear them
-#: (design #16 M3 regression).
 FORGED_AUTHORITY_VALUES: list[object] = [True, 1, 1.0, "yes", [1], {"granted": True}]
-
-
-# ---------------------------------------------------------------------------
-# Value-model builders
-# ---------------------------------------------------------------------------
 
 
 def independent_evidence(
@@ -282,11 +227,6 @@ def limit_vector(
     return CapacityVector(
         components=(CapacityComponent(dimension_id=dimension_id, magnitude=magnitude),)
     )
-
-
-# ---------------------------------------------------------------------------
-# Digest-bound artifact builders
-# ---------------------------------------------------------------------------
 
 
 def issue_policy(**overrides: Any) -> ActionFlowPolicy:

@@ -1,10 +1,4 @@
-"""``KisStockBrokerWitness`` tests — multi-page continuation walk (mirrors the measured
-P-BAL truncation-risk shape), futures refusal, independence, and secret hygiene.
-
-Fixture shape mirrors ``docs/broker-profiles/evidence/2026-09-11-p02-t3-campaign/
-P-BAL-20260911T002427Z.json``: 25 holdings across 2 pages (20 then 5), broker ``tr_cont``
-``'M'`` on page 0 and a non-more code (measured ``'D'``) on page 1.
-"""
+"""``KisStockBrokerWitness`` tests — multi-page continuation walk (mirrors the measured"""
 
 from __future__ import annotations
 
@@ -32,7 +26,7 @@ from ._witness_kis_fakes import (
 
 BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 ORDER_PATH = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
-ACCOUNT = "1234567801"  # CANO=12345678, ACNT_PRDT_CD=01
+ACCOUNT = "1234567801"
 
 
 @pytest.fixture
@@ -116,11 +110,6 @@ def _empty_order_response() -> dict[str, object]:
     return {"rt_cd": "0", "output1": []}
 
 
-# ---------------------------------------------------------------------------
-# Continuation walk — positions/cash
-# ---------------------------------------------------------------------------
-
-
 def test_multi_page_balance_walk_assembles_all_25_positions(
     server: FakeKisGetServer,
 ) -> None:
@@ -138,8 +127,6 @@ def test_multi_page_balance_walk_assembles_all_25_positions(
 
     balance_requests = server.requests_for(BALANCE_PATH)
     assert len(balance_requests) == 2
-    # Page 0 carries no tr_cont request header; page 1 carries 'N' and the cursor the
-    # broker returned on page 0 (probes_balance.py's own request-side convention).
     assert "tr_cont" not in balance_requests[0].headers
     assert balance_requests[1].headers["tr_cont"] == "N"
     assert balance_requests[1].query["CTX_AREA_FK100"] == "cursor-fk-1"
@@ -158,12 +145,11 @@ def test_independent_of_evidence_store_is_true(server: FakeKisGetServer) -> None
 def test_snapshot_reports_the_one_date_its_order_inquiry_covered(
     server: FakeKisGetServer,
 ) -> None:
-    """C-1 review: the order join needs the inquiry date (a KIS ODNO is a per-day sequence). The
-    snapshot must report the same date the inquiry sent as INQR_STRT_DT/INQR_END_DT."""
+    """C-1 review: the order join needs the inquiry date (a KIS ODNO is a per-day sequence). The"""
     _queue_two_page_balance(server)
     server.queue_response(ORDER_PATH, status=200, body=_empty_order_response())
     snapshot = _witness(server).observe(WitnessScope(account=ACCOUNT))
-    assert snapshot.order_inquiry_date == "20260917"  # FakeKstDateSource's default
+    assert snapshot.order_inquiry_date == "20260917"
     [order_request] = server.requests_for(ORDER_PATH)
     assert order_request.query["INQR_STRT_DT"] == snapshot.order_inquiry_date
     assert order_request.query["INQR_END_DT"] == snapshot.order_inquiry_date
@@ -186,11 +172,6 @@ def test_zero_and_negative_quantity_rows_are_excluded(server: FakeKisGetServer) 
     assert snapshot.positions == (("HELD", Decimal("3")),)
 
 
-# ---------------------------------------------------------------------------
-# Continuation walk — cannot-complete cases (never a partial result)
-# ---------------------------------------------------------------------------
-
-
 def test_more_follows_with_no_continuation_key_raises_witness_unavailable(
     server: FakeKisGetServer,
 ) -> None:
@@ -198,7 +179,7 @@ def test_more_follows_with_no_continuation_key_raises_witness_unavailable(
         BALANCE_PATH,
         status=200,
         body={"rt_cd": "0", "output1": [_balance_row("A")]},
-        headers={"tr_cont": "M"},  # more follows, but body carries no cursor at all
+        headers={"tr_cont": "M"},
     )
     witness = _witness(server)
     with pytest.raises(WitnessUnavailable, match="no continuation key"):
@@ -235,10 +216,7 @@ def test_broker_rejection_raises_witness_unavailable(server: FakeKisGetServer) -
 def test_non_200_http_status_raises_even_when_the_body_looks_successful(
     server: FakeKisGetServer,
 ) -> None:
-    """Review MEDIUM-1 (2026-09-17): a non-200 response (a proxy, a WAF, an
-    intermediary's own error page) whose body happens to parse as JSON shaped like a
-    successful KIS answer (``rt_cd="0"``) must never be read as a genuine broker success
-    just because the body parses and ``rt_cd`` looks right."""
+    """Review MEDIUM-1 (2026-09-17): a non-200 response (a proxy, a WAF, an"""
     server.queue_response(
         BALANCE_PATH,
         status=500,
@@ -252,10 +230,7 @@ def test_non_200_http_status_raises_even_when_the_body_looks_successful(
 def test_our_own_max_pages_cap_raises_rather_than_returning_a_partial_snapshot(
     server: FakeKisGetServer,
 ) -> None:
-    """This is the pin the task brief calls for: exceeding OUR cap while the broker still
-    signals more must raise — never silently return a lower bound (contrast
-    ``tools/broker_probes/probes_balance.py``, which IS allowed to report a lower bound;
-    a ``WitnessSnapshot`` may not, per ``ports.py``'s own two-outcome contract)."""
+    """This is the pin the task brief calls for: exceeding OUR cap while the broker still"""
     for index in range(3):
         server.queue_response(
             BALANCE_PATH,
@@ -266,16 +241,11 @@ def test_our_own_max_pages_cap_raises_rather_than_returning_a_partial_snapshot(
                 "ctx_area_fk100": f"cursor-{index}",
                 "ctx_area_nk100": f"cursor-{index}",
             },
-            headers={"tr_cont": "M"},  # always "more" — never terminates
+            headers={"tr_cont": "M"},
         )
     witness = _witness(server, max_pages=2)
     with pytest.raises(WitnessUnavailable, match="max_pages"):
         witness.observe(WitnessScope(account=ACCOUNT))
-
-
-# ---------------------------------------------------------------------------
-# Orders
-# ---------------------------------------------------------------------------
 
 
 def test_orders_are_parsed_with_attempt_id_always_none_for_orphan_detection(
@@ -320,8 +290,6 @@ def test_orders_are_parsed_with_attempt_id_always_none_for_orphan_detection(
         },
     )
     witness = _witness(server)
-    # attempt_ids names attempts already known — the witness must return the order
-    # regardless (ports.py: never filter by attempt_ids).
     snapshot = witness.observe(
         WitnessScope(account=ACCOUNT, attempt_ids=("some-other-attempt",))
     )
@@ -337,9 +305,7 @@ def test_orders_are_parsed_with_attempt_id_always_none_for_orphan_detection(
 def test_each_order_carries_the_brokers_own_order_date(
     server: FakeKisGetServer,
 ) -> None:
-    """Plan 2026-09-26 egress trading date T-4: ``ord_dt`` (KIS 주문일자) becomes the order's
-    date — the broker's, not this process's clock. Anything but YYYYMMDD digits is no date.
-    """
+    """Plan 2026-09-26 egress trading date T-4: ``ord_dt`` (KIS 주문일자) becomes the order's"""
     server.queue_response(BALANCE_PATH, status=200, body={"rt_cd": "0", "output1": []})
     rows = [
         ("0000004470", "20260917"),
@@ -381,7 +347,6 @@ def test_trusted_date_source_reads_the_injected_wall_clock_in_kst() -> None:
     from tos_runtime.calendar.ports import FixedWallClockReference
     from tos_runtime.recon.witness_kis import TrustedKstDateSource
 
-    # 2026-09-16 23:30 UTC == 2026-09-17 08:30 KST
     source = TrustedKstDateSource(FixedWallClockReference(1789601400000))
     assert source.today() == "20260917"
 
@@ -393,11 +358,6 @@ def test_trusted_date_source_refuses_without_a_reading() -> None:
 
     with pytest.raises(WitnessUnavailable):
         TrustedKstDateSource(AbsentWallClockReference()).today()
-
-
-# ---------------------------------------------------------------------------
-# Futures refusal
-# ---------------------------------------------------------------------------
 
 
 def test_futures_asset_is_refused_at_construction(server: FakeKisGetServer) -> None:
@@ -417,11 +377,6 @@ def test_futures_asset_is_refused_at_construction(server: FakeKisGetServer) -> N
         )
 
 
-# ---------------------------------------------------------------------------
-# Account shape
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "account",
     [
@@ -435,18 +390,11 @@ def test_futures_asset_is_refused_at_construction(server: FakeKisGetServer) -> N
 def test_a_non_8_2_account_raises_witness_unavailable(
     server: FakeKisGetServer, account: str
 ) -> None:
-    """The witness splits the account with the order codec's own parser
-    (``transport/kis_mock/account.py``, #932) — a shape the order path refuses is refused here
-    too, so a fill read can never target a different account than the order did."""
+    """The witness splits the account with the order codec's own parser"""
     witness = _witness(server)
     with pytest.raises(WitnessUnavailable, match="8-2"):
         witness.observe(WitnessScope(account=account))
-    assert server.all_requests == []  # refused before any GET
-
-
-# ---------------------------------------------------------------------------
-# Secret hygiene
-# ---------------------------------------------------------------------------
+    assert server.all_requests == []
 
 
 def test_secrets_appear_only_in_headers_never_in_query_params(
@@ -465,17 +413,13 @@ def test_secrets_appear_only_in_headers_never_in_query_params(
     for request in server.all_requests:
         for value in request.query.values():
             assert "TOP-SECRET" not in value
-        # The secrets DO appear as headers on every call (KIS's own wire convention —
-        # module docstring) — this assertion documents that as an accepted fact, not an
-        # oversight.
         assert request.headers.get("appkey") == "TOP-SECRET-KEY"
 
 
 def test_one_credential_block_per_request_and_none_left_open(
     server: FakeKisGetServer,
 ) -> None:
-    """C-2 decision (C): the key/secret are readable only inside a block wrapped around ONE
-    GET, and every block is closed when ``observe`` returns."""
+    """C-2 decision (C): the key/secret are readable only inside a block wrapped around ONE"""
     _queue_two_page_balance(server)
     server.queue_response(ORDER_PATH, status=200, body=_empty_order_response())
     credential_session = FakeCredentialSession()
@@ -498,9 +442,7 @@ def test_credential_session_failure_is_wrapped_without_leaking_the_secret(
 def test_non_ascii_credential_is_refused_without_keeping_its_bytes(
     server: FakeKisGetServer,
 ) -> None:
-    """Review finding (PR #806): a ``UnicodeDecodeError`` carries the whole plaintext in
-    ``.object``; chained onto ``WitnessUnavailable`` it would outlive the zeroed handle. The
-    refusal must keep no link to it (neither ``__cause__`` nor ``__context__``)."""
+    """Review finding (PR #806): a ``UnicodeDecodeError`` carries the whole plaintext in"""
     witness = _witness(
         server, credential_session=FakeCredentialSession(app_secret="SECRÉT-KEY")
     )
@@ -532,12 +474,6 @@ def test_http_rejection_message_never_contains_appkey_or_appsecret(
     assert "TOP-SECRET" not in message
 
 
-# ---------------------------------------------------------------------------
-# Negative greps — this module never touches the evidence store, never reads
-# os.environ, never builds its own token lifecycle
-# ---------------------------------------------------------------------------
-
-
 def test_module_never_touches_the_evidence_store() -> None:
     source = inspect.getsource(witness_kis)
     for needle in (
@@ -560,9 +496,7 @@ def test_module_reads_no_ambient_environment() -> None:
 def test_an_order_row_not_naming_the_queried_instrument_makes_the_read_unavailable(
     server: FakeKisGetServer, pdno: str | None
 ) -> None:
-    """PR-3b review HIGH 2: ODNO-only joining would let a row for another symbol (or naming
-    none) corroborate this instrument's fill. The witness keeps the conflict — the whole read is
-    unavailable — instead of filtering the row out."""
+    """PR-3b review HIGH 2: ODNO-only joining would let a row for another symbol (or naming"""
     from tos.engine.records import InstrumentKey
 
     row = {"odno": "0000004470", "tot_ccld_qty": "1", "rmn_qty": "0", "cncl_yn": "N"}
@@ -579,13 +513,6 @@ def test_an_order_row_not_naming_the_queried_instrument_makes_the_read_unavailab
         )
 
 
-# ---------------------------------------------------------------------------
-# Issue #981 — an order row the witness cannot read is never dropped (the #973 fail-open
-# class on the orders axis: a dropped row could be an orphan order, and an orphan is what
-# must BLOCK a capacity release).
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "body",
     [
@@ -599,17 +526,7 @@ def test_an_order_row_not_naming_the_queried_instrument_makes_the_read_unavailab
 def test_a_malformed_order_container_makes_the_whole_read_unavailable(
     server: FakeKisGetServer, body: dict[str, object]
 ) -> None:
-    """HTTP 200, ``rt_cd: "0"``, no more pages — but ``output1`` is absent, ``null``, or a
-    dict. The walk recorded that page as zero rows and the order read returned "no orders",
-    indistinguishable from a page that genuinely listed none; a row the page hid (the dict
-    case literally carries one) therefore stopped existing, and an orphan order that must
-    block a release stopped blocking it. All four shapes review-973 round 2 named for the
-    BALANCE container are covered here for the ORDER one; ``output1: []`` is the valid empty
-    control in :func:`test_an_empty_order_list_is_a_well_formed_read_with_no_rows`.
-
-    Mutation: iterate a ``None`` page as no rows again (the pre-#981 ``for row in rows if
-    rows is not None else ()``) -> no raise -> red.
-    """
+    """HTTP 200, ``rt_cd: "0"``, no more pages — but ``output1`` is absent, ``null``, or a"""
     server.queue_response(ORDER_PATH, status=200, body=body)
     with pytest.raises(WitnessUnavailable, match="carried no output1 list"):
         _witness(server).order_rows(
@@ -620,8 +537,7 @@ def test_a_malformed_order_container_makes_the_whole_read_unavailable(
 def test_an_empty_order_list_is_a_well_formed_read_with_no_rows(
     server: FakeKisGetServer,
 ) -> None:
-    """The positive control for the two tests around it: an empty LIST is a complete read of
-    an empty order book — it must stay a successful, empty answer, never a refusal."""
+    """The positive control for the two tests around it: an empty LIST is a complete read of"""
     server.queue_response(ORDER_PATH, status=200, body={"rt_cd": "0", "output1": []})
     date, rows = _witness(server).order_rows(
         WitnessScope(account=ACCOUNT), inquiry_date="20261023"
@@ -637,15 +553,7 @@ def test_an_empty_order_list_is_a_well_formed_read_with_no_rows(
 def test_an_unreadable_order_row_makes_the_whole_read_unavailable(
     server: FakeKisGetServer, bad_row: object
 ) -> None:
-    """One readable row beside one that is not an object at all. The unreadable row used to be
-    skipped, leaving a read that looked complete and carried only what happened to parse —
-    while the row it dropped could be the unattributed broker order the release must hold for.
-    The whole read is unavailable instead, the same answer a row naming the wrong instrument
-    already gets.
-
-    Mutation: ``continue`` on the non-dict row instead of raising -> the good row comes back
-    as the whole list -> red.
-    """
+    """One readable row beside one that is not an object at all. The unreadable row used to be"""
     good = {
         "pdno": "005930",
         "odno": "0000004470",
@@ -671,19 +579,7 @@ def test_an_unreadable_order_row_makes_the_whole_read_unavailable(
 def test_a_holdings_row_whose_pdno_is_not_a_string_is_not_a_complete_observation(
     server: FakeKisGetServer, pdno: object
 ) -> None:
-    """Issue #981, the holdings axis: only a STRING ``pdno`` names a symbol.
-
-    ``str(row.get("pdno") or "")`` fabricated a plausible-looking one out of anything (a
-    broker that renders the code as a JSON number answers ``pdno: 5930`` for ``005930``), so
-    the row read as some OTHER instrument — dropped by the scope filter, or kept under a
-    symbol the flatness check never compares against. Either way ``positions`` held no row for
-    the instrument being closed while the observation still claimed to be COMPLETE, which
-    :func:`~tos_runtime.posttrade.entry_discharge.broker_position_flat` reads as proven flat.
-    An unreadable ``pdno`` now makes the observation incomplete, exactly as an unreadable
-    ``hldg_qty`` already did (#966 review round 1).
-
-    Mutation: coerce with ``str(...)`` again -> ``positions_complete`` is ``True`` -> red.
-    """
+    """Issue #981, the holdings axis: only a STRING ``pdno`` names a symbol."""
     server.queue_response(
         BALANCE_PATH,
         status=200,
@@ -699,9 +595,7 @@ def test_a_holdings_row_whose_pdno_is_not_a_string_is_not_a_complete_observation
 def test_a_string_pdno_row_is_a_complete_observation(
     server: FakeKisGetServer,
 ) -> None:
-    """The positive control for the test above: the measured wire shape (all strings) is read,
-    attributed, and reported as a COMPLETE holdings observation — the #981 type check must not
-    turn an ordinary balance answer into an incomplete one."""
+    """The positive control for the test above: the measured wire shape (all strings) is read,"""
     server.queue_response(
         BALANCE_PATH,
         status=200,
@@ -747,24 +641,10 @@ def test_order_identifiers_keep_their_measured_string_form() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# The caller's deadline (#949 review HIGH): it stops the WALK, and what was read so far is
-# never returned. The fill observer owns the clock — this class has none.
-# ---------------------------------------------------------------------------
-
-
 def test_a_callers_deadline_stops_the_walk_and_returns_no_partial_list(
     server: FakeKisGetServer,
 ) -> None:
-    """Page 0 arrives with rows and ``tr_cont=M`` (more follows); the deadline then expires, so
-    page 1 is never requested and the read is unavailable — exactly the answer our own
-    ``max_pages`` cap gives, for the same reason (``_walk_continuation``'s own contract).
-
-    Mutations: return ``_WalkOutcome(pages=tuple(pages), ...)`` on the deadline instead of
-    raising -> the row from page 0 comes back as if it were the whole list -> the
-    ``WitnessUnavailable`` assertion goes red; drop the check entirely -> page 1 IS requested
-    -> the request-count assertion goes red.
-    """
+    """Page 0 arrives with rows and ``tr_cont=M`` (more follows); the deadline then expires, so"""
     server.queue_response(
         ORDER_PATH,
         status=200,
@@ -787,7 +667,6 @@ def test_a_callers_deadline_stops_the_walk_and_returns_no_partial_list(
     pages_seen = {"count": 0}
 
     def deadline_expired() -> bool:
-        # Fresh for the first page, past for every page after it.
         expired = pages_seen["count"] > 0
         pages_seen["count"] += 1
         return expired
@@ -804,12 +683,7 @@ def test_a_callers_deadline_stops_the_walk_and_returns_no_partial_list(
 def test_a_deadline_already_past_sends_no_request_at_all(
     server: FakeKisGetServer,
 ) -> None:
-    """The predicate is asked BEFORE the first page too, so the observer's date loop needs no
-    deadline logic of its own: handing the predicate down is enough to make a read that starts
-    too late cost nothing.
-
-    Mutation: ask it only from the second page on -> one GET is sent -> red.
-    """
+    """The predicate is asked BEFORE the first page too, so the observer's date loop needs no"""
     with pytest.raises(WitnessUnavailable, match="deadline"):
         _witness(server).order_rows(
             WitnessScope(account=ACCOUNT),
@@ -822,14 +696,7 @@ def test_a_deadline_already_past_sends_no_request_at_all(
 def test_a_pacer_refused_slot_is_witness_unavailable_with_no_request(
     server: FakeKisGetServer,
 ) -> None:
-    """Issue #970: the witness reads through the app key's REAL credential session, so its GET
-    takes a slot from the key's one pacer. The token POST just took the key's slot, and the
-    GET's slot is beyond the wait budget: the read fails closed as ``WitnessUnavailable`` and
-    nothing reaches the broker — the HOLD path, never a late send.
-
-    Mutation: catch nothing (let the pacer refusal escape as itself) -> not WitnessUnavailable
-    -> red; skip the pacer in ``app_credentials`` -> one GET is sent -> red.
-    """
+    """Issue #970: the witness reads through the app key's REAL credential session, so its GET"""
     from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
     from tos_runtime.transport.kis_mock.pacer import KisPacing
 

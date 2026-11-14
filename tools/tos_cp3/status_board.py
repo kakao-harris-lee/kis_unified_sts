@@ -68,75 +68,41 @@ KST = ZoneInfo("Asia/Seoul")
 BLOCK = "막힘"
 WARN = "확인"
 
-#: 러너가 정상 종료로 보는 rc — 0, 그리고 자기 정지 경로의 SIGTERM(143).
-#: ``run_tenant_session.sh`` 말미의 case 문과 같은 집합이다.
 NORMAL_END_RCS = frozenset({0, 143})
 
-#: stale 거절로 읽는 보류 사유(#931 운영자 지시). 그 밖의 사유는 1건이라도 막힘.
 STALE_HALT_REASON = "TIME_NOT_ADMITTED"
 
-#: 4단계(독립 승인) 흐름 정지를 가르는 두 값 — ``FLOW_HALTED`` 행의 ``halt_reason`` 과
-#: ``step``(런타임 ``engine.vocabulary.HaltReason`` / ``CommitmentStep`` 의 값).
 STAGE_UNKNOWN_HALT_REASON = "STAGE_UNKNOWN"
 INDEPENDENT_APPROVAL_STEP = "INDEPENDENT_APPROVAL"
-#: 「결정 전용」으로 보는 시장 — 러너가 session.log 에 적는 ``market=`` 값
-#: (``run_tenant_session.sh`` step 5b: 생산자 config 와 트리 RENDER.yaml 이 일치한 값).
 DECISION_ONLY_MARKET = "futures"
-#: 그 시장의 4단계 UNKNOWN 정지에 붙이는 이름 — :func:`_fmt_flow_halts` 참조.
 STEP4_UNKNOWN_EXPECTED_LABEL = "4단계 승인 없음(선물 결정 전용 — 예상)"
 
 FIELD_REFUSED_KIND = "MARKETFEED_FIELD_REFUSED"
-#: ``MARKETFEED_FIELD_REFUSED.refused_by_reason`` 의 stale 키(런타임 ``_derive_field_state``).
-#: 그 밖의 사유는 1건이라도 막힘(#931).
 STALE_FIELD_REASON = "stale"
 BAND_OBSERVED_KIND = "VENUE_BAND_OBSERVED"
-#: 런타임 ``marketfeed.scheduler._MARKETFEED_PASS_OVERRUN_KIND`` 의 거울(#949) — 한 pass(틱 +
-#: post-pass hook)가 ``poll_interval_ms + journal_pass_allowance_ms`` 창을 넘을 때만 쓰이는
-#: 진단 행. 날짜도 벽시계도 싣지 않으므로 band 행처럼 부팅 구간 seq 범위로만 세션에 묶인다.
 PASS_OVERRUN_KIND = "MARKETFEED_PASS_OVERRUN"
-#: 런타임 ``compose._authority_heartbeat.AUTHORITY_WITNESS_LOST_KIND`` 의 거울(#957) — 매 pass
-#: heartbeat 가 Safety Authority 증인을 present → absent 로 본 순간 한 행. 런타임은 이 행으로
-#: 멈추지 않고 기록만 한다. 다만 만료된 창은 회복되지 않으므로 이후 송신은 그 프로세스가 끝날
-#: 때까지 거절된다(fail-closed). 장 전에 부팅하는 트리(LONG/SHORT 크론 08:38/08:40)는 개장 때
-#: 설계상 잃는다 — 그래서 막힘이 아니라 확인이다.
 AUTHORITY_WITNESS_LOST_KIND = "AUTHORITY_WITNESS_LOST"
-#: 런타임 ``authority.standing._EVIDENCE_*`` 의 거울(#955) — standing 세션 승인 artifact 의
-#: 바인딩·사용·거절·미적용. 키는 상태판 JSON 의 키다.
 STANDING_APPROVAL_KINDS: Mapping[str, str] = {
     "bound": "APPROVAL_STANDING_BOUND",
     "consumed": "APPROVAL_STANDING_CONSUMED",
     "refused": "APPROVAL_STANDING_REFUSED",
     "not_covered": "APPROVAL_STANDING_NOT_COVERED",
 }
-#: 런타임 ``riskstate.flow_observation._SEND_SEALED_KIND`` 의 거울 — 송신이 봉인된 행.
-#: 이 행 뒤의 증인 상실은 «장 전 설계상 상실» 일 수 없다(그 뒤 송신이 거절된다).
 SEND_SEALED_KIND = "SEND_SEALED"
-#: 같은 파일의 ``_HANDLING_STARTED_KIND`` 거울 — 틱(봉 하나) 처리의 시작 행. paper 잎에서
-#: 세션의 첫 틱 seq 를 찾는 데 쓴다(tenant 는 이미 읽은 틱의 evidence seq 를 쓴다).
 HANDLING_STARTED_KIND = "EVENT_HANDLING_STARTED"
-#: 부팅 구간으로 세션에 묶어 세는 권한 행 전부.
 AUTHORITY_KINDS: tuple[str, ...] = (
     AUTHORITY_WITNESS_LOST_KIND,
     *STANDING_APPROVAL_KINDS.values(),
 )
-#: 부팅마다 한 번 쓰이는 행 — 누적 잎을 «부팅 구간» seq 범위로 나누는 경계다.
-#: band 행처럼 날짜를 싣지 않는 행(REFUSED 는 trading_date 가 없다)은 이 범위로만 세션에 묶인다.
 BOOT_KIND = "TIME_SERVICE_STARTUP"
 _SESSION_DIR_RE = re.compile(r"^(?P<label>[a-z0-9][a-z0-9-]*?)-(?P<day>\d{8})$")
 _PAPER_DIR_RE = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2})-(?P<hms>\d{6})-(?P<direction>[A-Z]+)$"
 )
-#: 상주 paper 드라이버가 런타임 부팅을 확인했을 때 bootproof.txt 첫 줄에 쓰는 문구.
 BOOTPROOF_OK = "boot proof: OK"
-#: 상주 paper 드라이버의 bootproof.txt — 첫 줄 끝 « · <종목>», 셋째 줄 «baseline_seq=<n>».
 _BOOTPROOF_INSTRUMENT_RE = re.compile(r"· (?P<instrument>[A-Z0-9]+)$")
 _BOOTPROOF_BASELINE_RE = re.compile(r"baseline_seq=(?P<seq>-?\d+)")
 _LOG_LINE_RE = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (?P<msg>.*)$")
-
-
-# ---------------------------------------------------------------------------
-# config
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -200,7 +166,6 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> BoardConfig:
     missing = [key for key in required if key not in raw]
     if missing:
         raise ValueError(f"{path}: 키가 없다 {missing}")
-    # 빈 needle 은 모든 cmdline 에 들어 있어 pid 재사용 방지를 끈다(#941).
     blank = [
         key
         for key in ("paper_runtime_cmdline_needle", "paper_driver_cmdline_needle")
@@ -244,7 +209,6 @@ def load_streak_config(raw: Any, *, path: Path) -> StreakConfig:
             f"{path}: clean_streak.target_days={target} 는 1 이상이어야 한다"
         )
     if window < target:
-        # 창이 목표보다 좁으면 목표를 채웠는지 영원히 알 수 없다.
         raise ValueError(
             f"{path}: clean_streak.window_days={window} 가 target_days={target} 보다 작다"
         )
@@ -290,11 +254,6 @@ def expand_path(value: str) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(value)))
 
 
-# ---------------------------------------------------------------------------
-# small helpers
-# ---------------------------------------------------------------------------
-
-
 def percentile(values: Sequence[int], p: int) -> int | None:
     """Nearest-rank 백분위. 빈 입력이면 ``None``."""
     if not values:
@@ -305,10 +264,7 @@ def percentile(values: Sequence[int], p: int) -> int | None:
 
 
 def bar_close_ms(raw_event_id: str) -> int | None:
-    """``A05611:1m:20261022T084500+0900`` → 그 1분봉 마감(시작 + 60s)의 epoch ms.
-
-    id 문법은 ``session_inputs`` 의 것을 그대로 쓴다(두 문법이 갈라지지 않게).
-    """
+    """``A05611:1m:20261022T084500+0900`` → 그 1분봉 마감(시작 + 60s)의 epoch ms."""
     try:
         stamp = raw_event_id.split(si._RAW_EVENT_ID_SEPARATOR, 1)[1]
         start = _dt.datetime.strptime(stamp, si._RAW_EVENT_ID_STAMP_FORMAT)
@@ -356,20 +312,12 @@ def _hhmmss(ts: str | None) -> str:
     return ts[11:] if ts else "—"
 
 
-# ---------------------------------------------------------------------------
-# tenant session — the runner's own log
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class RunnerLog:
     """``session.log`` (``run_tenant_session.sh`` 의 log() 흐름)에서 읽은 사실."""
 
     first_ts: str | None = None
     repo_commit: str | None = None
-    #: 러너 step 5b 가 적은 시장(``futures`` · ``stock``) — 생산자 config 와 트리
-    #: RENDER.yaml 이 **일치했을 때만** 적히므로 트리의 범위를 말하는 값이다. 그 줄이
-    #: 없는 옛 세션 로그(~2026-10-23)에서는 ``None`` 이고, 그때는 시장을 모른다.
     market: str | None = None
     instrument: str | None = None
     data_leaf: str | None = None
@@ -377,8 +325,6 @@ class RunnerLog:
     direction: str | None = None
     source_revision: str | None = None
     activation: str | None = None
-    #: 렌더가 band 원천 슬롯을 선언했나 — True/False, 줄이 없으면 None.
-    #: SHORT 트리처럼 band 를 끈 트리는 False 이고, 그때 band 부재는 소견이 아니다.
     band_declared: bool | None = None
     band_line_ok: bool = False
     band_digest: str | None = None
@@ -394,7 +340,6 @@ class RunnerLog:
 
 _RUNNER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("repo_commit", re.compile(r"checkout ok: .*repo_commit=(\w+)")),
-    # 줄 머리를 고정한다 — 러너의 다른 줄도 `market=` 토큰을 싣는다.
     ("market", re.compile(r"^market=(\w+) \(tree and producer agree\)")),
     ("data_leaf", re.compile(r"instrument=(\S+) · data leaf (\S+)")),
     ("render", re.compile(r"=== RENDER tree=(\S+) direction=(\S+)")),
@@ -417,7 +362,6 @@ def parse_runner_log(text: str) -> RunnerLog:
     for line in text.splitlines():
         stamped = _LOG_LINE_RE.match(line)
         if stamped is None:
-            # render 블록(타임스탬프 없는 들여쓴 줄)
             render = _RENDER_FIELD_RE.match(line)
             if render is not None:
                 setattr(out, render.group(1), render.group(2).strip())
@@ -432,8 +376,6 @@ def parse_runner_log(text: str) -> RunnerLog:
             if name == "repo_commit":
                 out.repo_commit = m.group(1)
             elif name == "market" and out.market is None:
-                # 첫 줄만 — 러너 5b 가 먼저 적는다. 같은 로그에 쓰는 자식 프로세스가
-                # 나중에 같은 꼴의 줄을 내도 덮지 못한다(review-1030 LOW-1).
                 out.market = m.group(1)
             elif name == "data_leaf":
                 out.instrument, out.data_leaf = m.group(1), m.group(2)
@@ -478,11 +420,6 @@ def expected_code_digest(config_dir: Path) -> str | None:
     return m.group(1) if m else None
 
 
-# ---------------------------------------------------------------------------
-# producer
-# ---------------------------------------------------------------------------
-
-
 def producer_facts(session_dir: Path, percentiles: Sequence[int]) -> dict[str, Any]:
     """journal 지연 분포 + producer-summary 카운터 + band 줄."""
     latencies: list[int] = []
@@ -515,11 +452,6 @@ def producer_facts(session_dir: Path, percentiles: Sequence[int]) -> dict[str, A
     }
 
 
-# ---------------------------------------------------------------------------
-# runtime stores (one accumulating leaf, many session days)
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class LeafFacts:
     """한 데이터 잎을 한 번 읽은 결과. 잎은 세션을 누적하므로 날짜로 자른다."""
@@ -528,7 +460,6 @@ class LeafFacts:
     snapshots: tuple[si.Snapshot, ...] | None = None
     extra_rows: list[tuple[int, str, dict[str, Any]]] = field(default_factory=list)
     code_digest_by_seq: dict[int, str | None] = field(default_factory=dict)
-    #: 부팅 행(:data:`BOOT_KIND`)의 seq, 오름차순.
     boot_seqs: list[int] = field(default_factory=list)
     error: str | None = None
 
@@ -555,11 +486,7 @@ def _kind_rows(
 def pass_overrun_summary(
     rows: Iterable[tuple[int, Mapping[str, Any]]],
 ) -> dict[str, Any]:
-    """``MARKETFEED_PASS_OVERRUN`` 행 수와 가장 긴 pass(``pass_ms`` 최대) 한 행.
-
-    필드 이름은 런타임 ``TickScheduler._record_pass_overrun`` 이 쓰는 그대로다.
-    ``pass_ms`` 가 정수가 아닌 행도 세지만 «최악» 후보에서는 뺀다.
-    """
+    """``MARKETFEED_PASS_OVERRUN`` 행 수와 가장 긴 pass(``pass_ms`` 최대) 한 행."""
     rows = list(rows)
     timed = [
         (seq, p)
@@ -582,17 +509,7 @@ def authority_summary(
     first_tick_seq: int | None,
     first_send_seq: int | None,
 ) -> dict[str, Any]:
-    """권한 행(:data:`AUTHORITY_KINDS`) 요약 — 증인 상실 수와 standing 승인 종류별 수·사유.
-
-    키는 런타임이 쓰는 그대로다: REFUSED·NOT_COVERED 는 ``reason``, CONSUMED 는 ``action``.
-
-    **증인 상실은 위치로 나눈다(#962 리뷰 MEDIUM).** 장 전에 부팅한 트리는 개장 때 설계상
-    증인을 잃는다(``_authority_heartbeat`` docstring) — 그 행은 세션의 첫 틱보다, 그리고 어떤
-    ``SEND_SEALED`` 보다 앞선다. 그 밖의 상실(첫 틱 뒤, 송신 봉인 뒤)은 장중 상실이라 이후
-    송신이 재부팅 전까지 거절된다(막힘). 트리 이름으로 가르지 않는다. 아직 틱이 없는 세션
-    (``first_tick_seq is None``)에서 송신 봉인보다 앞선 상실은 «첫 틱 전» 으로 따로 센다(확인,
-    #962 r2 LOW) — 장 전 부팅이면 설계상이지만, 첫 봉이 지나도 남아 있으면 볼 일이다.
-    """
+    """권한 행(:data:`AUTHORITY_KINDS`) 요약 — 증인 상실 수와 standing 승인 종류별 수·사유."""
     lost = 0
     mid_session: list[int] = []
     no_tick_yet: list[int] = []
@@ -613,7 +530,6 @@ def authority_summary(
                 mid_session.append(seq)
             elif first_tick_seq is None:
                 no_tick_yet.append(seq)
-            # 그 밖(첫 틱 전·송신 봉인 전)은 장 전 설계상 상실 — 수만 보인다.
         elif kind in names:
             key = names[kind]
             counts[key] += 1
@@ -691,10 +607,6 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
     """한 세션 날짜(KST ``YYYYMMDD``)로 자른 런타임 사실."""
     if leaf.error is not None or leaf.records is None or leaf.snapshots is None:
         return {"error": leaf.error or "store not read"}
-    # 날짜 한정은 session_inputs.scope_to_session_day 에 맡긴다 — 날짜를 읽을 수 없는 id 와
-    # 부팅 스냅샷·저장소의 날짜 불일치를 거부하는 것이 그 함수다. 다만 그 함수는 «넘겨받은
-    # 스냅샷 중 가장 새 날짜» 를 세션으로 보므로, 지난 날짜를 볼 때는 그 날 이후 스냅샷을 빼고
-    # 넘긴다(날짜를 읽을 수 없는 id 는 빼지 않는다 — 그래야 거부된다).
     passed = [
         snap
         for snap in leaf.snapshots
@@ -714,7 +626,6 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
                 "error": f"세션 범위 거부 — 저장소가 말하는 세션 날짜 {scope.session_day} ≠ {day}"
             }
     else:
-        # 아직 한 봉도 소비하지 않은 세션(부팅 직후) — 거부가 아니라 «틱 0» 이다.
         day_snaps = []
         scope = si.SessionScope(
             session_day=day,
@@ -741,7 +652,6 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
     flow_halts = Counter(
         r["flow_halt_reason"] for r in ticks if r.get("flow_halt_reason") is not None
     )
-    # 위 분포의 **부분집합** — 같은 틱 목록에서 세므로 STAGE_UNKNOWN 수를 넘지 못한다.
     step4_unknown = sum(
         1
         for r in ticks
@@ -785,7 +695,7 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
     band_rows: list[dict[str, Any]] | None
     pass_overrun: dict[str, Any] | None
     if seq_range is None:
-        band_rows = None  # 틱이 없어 이 세션의 부팅 구간을 정할 수 없다
+        band_rows = None
         pass_overrun = None
         authority = None
     else:
@@ -850,7 +760,6 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
         "handed_off": sum(1 for r in ticks if r.get("handed_off")),
         "stale_withheld_post_boot": stale,
         "other_withheld_post_boot": other,
-        # #931 운영자 판정: M5 ① / post_boot_consumed_ids ≤ stale_refusal_ratio_max
         "post_boot_consumed_ids": post_boot_consumed,
         "m5_present_value_refused_as_unknown": m5,
         "m5_ratio": (m5 / post_boot_consumed) if post_boot_consumed else None,
@@ -871,12 +780,7 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
 def session_seq_range(
     leaf: LeafFacts, ticks: Sequence[Mapping[str, Any]]
 ) -> tuple[int, int | None] | None:
-    """이 세션의 부팅 구간 ``[boot, 다음 boot)`` evidence seq 범위.
-
-    세션의 첫 틱보다 앞선 마지막 부팅 행이 시작이다. 틱이 없으면 잎의 마지막 부팅 구간에
-    어느 날의 틱도 없을 때만 그 구간을 쓴다(부팅 직후 아직 틱이 없는 세션). 그 밖에는 ``None``
-    — 추측해서 다른 세션의 행을 붙이지 않는다.
-    """
+    """이 세션의 부팅 구간 ``[boot, 다음 boot)`` evidence seq 범위."""
     if not leaf.boot_seqs:
         return None
     if ticks:
@@ -891,11 +795,6 @@ def session_seq_range(
             return None
     later = [b for b in leaf.boot_seqs if b > start]
     return start, (later[0] if later else None)
-
-
-# ---------------------------------------------------------------------------
-# one tenant session
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -952,7 +851,6 @@ def read_tenant_session(
     store: dict[str, Any] | None = None
     boot_snapshot_error: str | None = None
     if with_store and runner.boot_at and not runner.data_leaf:
-        # 부팅은 했는데 잎 경로를 모른다 — «부팅 전» 이 아니라 «상태 모름» 이다.
         store = {
             "error": "session.log 에 'instrument=… · data leaf …' 줄이 없어 저장소를 열 수 없다"
         }
@@ -1003,7 +901,6 @@ def _authority_issues(auth: Mapping[str, Any] | None) -> list[tuple[str, str]]:
     if not auth or "error" in auth:
         return []
     issues: list[tuple[str, str]] = []
-    # 장 전 설계상 상실은 확인 줄을 내지 않는다(본문에 수만 보인다). 장중 상실만 막힘.
     if auth["witness_lost_mid_session"]:
         seqs = ",".join(str(x) for x in auth["witness_lost_mid_session_seqs"])
         issues.append(
@@ -1144,7 +1041,6 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
                 issues.append((BLOCK, f"stale 이 아닌 필드 거절: {line}"))
             ratio = st["m5_ratio"]
             if ratio is not None and ratio > cfg.stale_refusal_ratio_max:
-                # 판정은 세션 전체 분모로 한다 — 진행 중에는 분모가 작아 확인으로만 올린다.
                 level = WARN if s.status in ("RUNNING", "PRE-BOOT") else BLOCK
                 suffix = " (진행 중 — 판정은 종료 뒤)" if level == WARN else ""
                 issues.append(
@@ -1206,11 +1102,6 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
     return issues
 
 
-# ---------------------------------------------------------------------------
-# resident paper
-# ---------------------------------------------------------------------------
-
-
 def _read_pid(path: Path) -> int | None:
     try:
         return int(path.read_text(encoding="utf-8").strip())
@@ -1224,16 +1115,7 @@ def paper_segment_rows(
     report: Mapping[str, Any] | None,
     kinds: Sequence[str],
 ) -> list[tuple[int, str, dict[str, Any]]] | dict[str, str] | None:
-    """상주 paper 세션 부팅 구간의 ``kinds`` 행. 잎이나 기준 seq 를 모르면 ``None``,
-    잎을 읽지 못하면 ``{"error": …}``.
-
-    범위는 드라이버가 부팅 전에 잡은 ``baseline_evidence_seq``(= 그때의 ``MAX(seq)``) 다음부터,
-    이 세션 부팅 행 다음의 부팅 행 전까지다 — 다음 날 세션의 행을 붙이지 않는다. 잎은
-    report.json 의 ``data_dir``, 진행 중(report 없음)이면 bootproof 의 종목으로
-    ``<state_dir>/<paper_data_subdir>/<종목>`` (래퍼가 잎을 고르는 규칙).
-    """
-    # 부팅 증명이 OK 가 아니면 이 세션의 부팅 행이 없을 수 있다 — 그때 «기준 뒤 두 번째 부팅»
-    # 은 다음 세션의 끝이라, 다음 세션의 행을 이 날짜에 붙이게 된다(#951 리뷰 LOW-1). 보지 않는다.
+    """상주 paper 세션 부팅 구간의 ``kinds`` 행. 잎이나 기준 seq 를 모르면 ``None``,"""
     if not bootproof or BOOTPROOF_OK not in bootproof[0]:
         return None
     report = report if isinstance(report, Mapping) else {}
@@ -1339,7 +1221,7 @@ def paper_facts(
     rows = paper_segment_rows(
         cfg, bootproof, report, (PASS_OVERRUN_KIND, SEND_SEALED_KIND, *AUTHORITY_KINDS)
     )
-    if isinstance(rows, dict):  # {"error": …} — 두 요약 모두 «읽지 못함»
+    if isinstance(rows, dict):
         facts["pass_overrun"] = facts["authority"] = rows
         facts["issues"].append(
             (WARN, f"{PASS_OVERRUN_KIND}·권한 행을 읽지 못했다 — {rows['error']}")
@@ -1382,12 +1264,6 @@ def paper_facts(
     return facts
 
 
-# ---------------------------------------------------------------------------
-# clean trading days, counted cumulatively — 2026-11-11 완화 §2 문장 1
-# ---------------------------------------------------------------------------
-
-#: 그날의 판정이 더 바뀌지 않는 세션 상태. 나머지(RUNNING · PRE-BOOT · NOT-BOOTED)는
-#: 아직 끝나지 않은 것이므로 **상태판 날짜에서만** 보류로 둔다(:func:`day_pending`).
 SETTLED_STATUSES = frozenset({"ENDED", "FAILED", "ABORT", "LOST"})
 
 
@@ -1401,17 +1277,7 @@ class TreeCalendar:
 
 
 def load_tree_calendar(path: Path) -> TreeCalendar:
-    """tenant 캘린더의 휴장일을 :mod:`tools.tos_cp3.session_day` 로 읽는다.
-
-    휴장일 키와 거래일 술어는 생산자(``live_producer/calendar.py``)와 **같은 함수**다 —
-    같은 파일을 두 번 해석하지 않기 위해서다. 날짜별 예외(``session_overrides``)는
-    런타임이 거부하는 모양을 여기서도 거부한다(#924): 읽히지 않는 캘린더로 «거래일
-    아님» 을 주장하지 않는다.
-
-    Raises:
-        OSError: 파일을 열 수 없다.
-        sd.SessionDayError: 모양이 다르다.
-    """
+    """tenant 캘린더의 휴장일을 :mod:`tools.tos_cp3.session_day` 로 읽는다."""
     import yaml
 
     text = path.read_text(encoding="utf-8")
@@ -1430,19 +1296,7 @@ def load_tree_calendar(path: Path) -> TreeCalendar:
 
 
 def day_clean(session: TenantSession | None, scfg: StreakConfig) -> str:
-    """깨끗한 거래일인가 — 깨끗하면 ``""``, 아니면 **왜 아닌지** 한 줄.
-
-    조건은 하나다: 세션이 기동해 ``clean_run_rcs`` 안의 rc 로 끝났다.
-
-    2026-11-11 완화(``docs/plans/2026-11-11-tos-paper-ready-relaxation.md`` §2
-    문장 1)가 B3 가 **무엇을 봤는지**를 판정에서 뺐고, 2026-11-13 의 B3 은퇴
-    (``docs/plans/2026-11-11-tos-platform-roadmap.md`` §7 결정 3 — P2-b 동등성이
-    626,745 셀 0 불일치로 끝났다)가 **돌았는지**까지 뺐다. 레거시 증인과의 대조는
-    더 돌지 않으므로 깨끗함은 런타임과 생산자만의 사실이다.
-
-    세션이 없는 것 · 끝나지 않은 것 · rc 가 다른 것은 깨끗하지 않다. 깨끗하지 않은
-    하루는 그날만 세지 않고 앞의 누적을 지우지 않는다(:func:`tree_streak`).
-    """
+    """깨끗한 거래일인가 — 깨끗하면 ``""``, 아니면 **왜 아닌지** 한 줄."""
     if session is None:
         return "세션 디렉터리 없음"
     r = session.runner
@@ -1455,17 +1309,7 @@ def day_clean(session: TenantSession | None, scfg: StreakConfig) -> str:
 
 
 def day_pending(session: TenantSession | None) -> str | None:
-    """상태판 날짜를 아직 판정할 수 없는 이유 — 없으면 ``None``.
-
-    아직 돌고 있는 오늘을 「깨끗하지 않다」로 적으면 장중에는 늘 오늘이 「마지막으로
-    깨진 날」로 올라간다. 그래서 보류는 **상태판 날짜(= 오늘)에만** 둔다: 세는 것은
-    끝난 거래일이고, 오늘은 끝나면 센다. 앞선 거래일에는 이 함수를 쓰지 않으므로 같은
-    모양이 어제의 것이면 :func:`day_clean` 이 그대로 「깨진 날」로 적는다 — 보류가
-    하루를 영구히 사면하지 않는다.
-
-    B3 대조가 은퇴한 뒤(2026-11-13) 정지와 장후 단계 사이의 창은 없다 — 세션이
-    SETTLED 상태에 이르면 그날의 판정에 필요한 사실은 모두 나와 있다.
-    """
+    """상태판 날짜를 아직 판정할 수 없는 이유 — 없으면 ``None``."""
     if session is None:
         return "세션 디렉터리 아직 없음"
     if session.status not in SETTLED_STATUSES:
@@ -1481,19 +1325,7 @@ def tree_streak(
     today: _dt.date,
     scfg: StreakConfig,
 ) -> dict[str, Any]:
-    """한 트리의 «창 안에서 깨끗한 거래일이 몇 날인가» — **누적**.
-
-    *day* 에서 하루씩 거꾸로 ``window_days`` 달력일을 걸으며 거래일만 판정한다.
-    비거래일(주말·휴장)은 세지도 깨지도 않고, **깨진 거래일은 그날만 세지 않는다** —
-    앞의 누적을 지우지 않는다(2026-11-11 완화,
-    ``docs/plans/2026-11-11-tos-paper-ready-relaxation.md`` §2 문장 1 «연속은 요구하지
-    않는다. 깨진 날(LOST·FAILED·세션 없음)은 그날만 세지 않고 앞의 기록을 지우지
-    않는다»). 목표에 닿으면 더 걷지 않는다.
-
-    마지막으로 깨진 거래일과 그 사유는 계속 보고한다 — 거꾸로 걷기 때문에 처음 만나는
-    깨진 날이 가장 최근이다. ``window_start`` 는 거꾸로 걸어 닿은 가장 오래된 달력일
-    (= 센 창의 시작)이고, 목표에 닿아 멈췄으면 거기서 멈춘 날짜다.
-    """
+    """한 트리의 «창 안에서 깨끗한 거래일이 몇 날인가» — **누적**."""
     out: dict[str, Any] = {
         "label": tree.label,
         "target_days": scfg.target_days,
@@ -1527,7 +1359,6 @@ def tree_streak(
                 where=calendar.path,
             )
         except sd.SessionDayError as exc:
-            # 거래일인지 모르는 날에 닿았다 — 센 수는 하한으로 남기고 사유를 올린다.
             out["error"] = str(exc)
             break
         walked = cursor
@@ -1553,11 +1384,6 @@ def tree_streak(
     out["start"] = start.isoformat() if start else None
     out["window_start"] = walked.isoformat() if walked else None
     return out
-
-
-# ---------------------------------------------------------------------------
-# the board
-# ---------------------------------------------------------------------------
 
 
 def _session_dirs(cfg: BoardConfig) -> list[Path]:
@@ -1612,8 +1438,6 @@ def build_board(
         }
         - {day_key},
     )
-    # 이력은 그 날짜를 포함해 history_days 개 날짜다. 앞선 날짜는 history_days - 1 개 —
-    # 0 이면 [-0:] 가 전부를 남기므로 따로 비운다.
     earlier = [d for d in history_days if d < day_key]
     keep = cfg.history_days - 1
     history_days = earlier[-keep:] if keep > 0 else []
@@ -1623,8 +1447,6 @@ def build_board(
         if _SESSION_DIR_RE.match(p.name).group("day") in history_days  # type: ignore[union-attr]
     ]
     paper = paper_facts(cfg, date_iso, proc_root=live_root)
-    # 깨끗한 날 누적은 이력 창(history_days)보다 멀리 볼 수 있다. 이미 읽은 세션을 다시
-    # 읽지 않고, 모자란 날짜만 저장소 없이(깨끗함 조건에 쓰지 않는다) 채운다.
     scfg = cfg.clean_streak
     by_key: dict[tuple[str, str], TenantSession] = {
         (s.day, s.label): s for s in history + on_day
@@ -1652,8 +1474,6 @@ def build_board(
     for s in on_day:
         issues.extend((level, s.name, text) for level, text in s.issues)
     issues.extend((level, "paper", text) for level, text in paper["issues"])
-    # 수가 목표보다 작은 것은 소견이 아니다(채우는 동안은 그게 정상). **셀 수 없는** 것만
-    # 올린다 — 캘린더를 읽지 못하면 깨끗한 날을 세지 못한 것이고 그 사실은 숨기지 않는다.
     for t in streak:
         if t["error"]:
             issues.append(
@@ -1734,11 +1554,6 @@ def _history_row(s: TenantSession) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# text rendering
-# ---------------------------------------------------------------------------
-
-
 def _fmt_counts(counts: Mapping[str, Any] | None) -> str:
     if not counts:
         return "없음"
@@ -1746,19 +1561,7 @@ def _fmt_counts(counts: Mapping[str, Any] | None) -> str:
 
 
 def _fmt_flow_halts(store: Mapping[str, Any], market: str | None) -> str:
-    """흐름 정지 사유 분포. 선물 트리의 4단계 UNKNOWN 은 떼어 이름을 붙인다.
-
-    상주 session 승인은 **설계상 MOCK 주식 전용**이고(``tos/runtime/src/tos_runtime/
-    authority/standing.py`` 모듈 docstring · ``provide()``), 선물 트리에 남는 원천은
-    건당 운영자 승인 파일뿐이다 — 그 파일은 제안이 생긴 뒤에만 쓸 수 있고 멈춘 제안을
-    다시 끌지 않으므로, 2·3 단계를 지난 선물 진입 제안은 4단계에서 UNKNOWN 으로 멈춘다.
-    운영자 판정 2026-11-05: **선물 트리는 결정 전용**이고 이 정지가 예상 종착이다
-    (LONG 실측 11 부팅 67 건 · 그중 2026-11-04 40 건, 4단계 admit 은 한 번도 없다).
-    그래서 소견(막힘/확인)을 새로 올리지 않고 줄에 이름만 붙인다.
-
-    시장을 모르는 세션(``market=`` 줄이 없는 옛 로그)과 주식 트리에서는 떼지 않는다 —
-    주식 4단계 UNKNOWN 은 standing 승인이 덮어야 하는 것이라 예상이 아니다.
-    """
+    """흐름 정지 사유 분포. 선물 트리의 4단계 UNKNOWN 은 떼어 이름을 붙인다."""
     counts = dict(store["flow_halts"])
     step4 = store.get("flow_halts_independent_approval_unknown") or 0
     if market != DECISION_ONLY_MARKET or not step4:
@@ -1968,11 +1771,6 @@ def render_text(board: Mapping[str, Any]) -> str:
     for i in board["issues"]:
         add(f"  [{i['level']}] {i['where']}: {i['text']}")
     return "\n".join(out) + "\n"
-
-
-# ---------------------------------------------------------------------------
-# entry point
-# ---------------------------------------------------------------------------
 
 
 def today_kst() -> _dt.date:

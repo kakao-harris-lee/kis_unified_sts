@@ -1,50 +1,4 @@
-"""The slim runtime monitor: evidence-chain continuity, tip stall, inbox backlog.
-
-What this owns, and what it no longer does (plan S2-a). It used to be the
-``tos.stm`` safety-mesh service: a coverage manifest, a conformance snapshot, a
-time-health observation and the egress verify item 10 ``monitoring_clear`` flag.
-Its coverage manifest was a static YAML constant in all four shipped tenant
-trees and verify item 10 never once denied. The kernel ``tos.stm`` package and
-verify item 10 are gone; monitoring is carried by the MONITORING currentness
-dimension alone.
-
-What it still does: read two injected self-observations once per call and judge
-THREE facts from them — report MONITORING's currentness verdict, and append one
-``STM_ALERT`` evidence row whenever that verdict is not positively healthy.
-
-1. **Evidence-chain continuity** (grade-A review, 2026-11-13: kept, not dropped).
-   The observer reports ``(seq, chain_digest)``. A ``seq`` that REGRESSES is
-   always a break; otherwise ``seq`` advancing and ``chain_digest`` changing must
-   AGREE — both (an ordinary append) or neither (an idle tick). Disagreement is
-   exactly a torn or rewritten chain: an append with no digest movement, or a
-   digest movement with no append. The failing inputs this exists for:
-   ``(10, A)`` then ``(9, B)``, and ``(10, A)`` then ``(11, A)``. Without it both
-   read as healthy and the send proceeds.
-2. **Evidence-tip freshness** — a stall past ``max_evidence_tip_stall_ms``.
-3. **Inbox backlog** — an unconsumed count past ``max_inbox_unconsumed``.
-
-**The first observation is UNKNOWN, not healthy.** Continuity needs a prior
-``(seq, chain_digest)`` pair to compare against, so the very first observation any
-instance makes reports ``None`` — MONITORING unestablished, which denies. That is
-the pre-S2-a behaviour, kept deliberately: an unestablished fact must not read as
-a positive one. ``tos_runtime.compose._monitor_wiring`` discharges that one
-unavoidable observation with a boot-time warm-up call, before any attempt is ever
-driven, so a healthy runtime's first real tick sees a baseline.
-
-Time health is deliberately NOT observed here: the Trustworthy Time service
-owns the TRUSTWORTHY_TIME currentness dimension, and judging the same fact a
-second time is what plan S2-a removed.
-
-Recorder failures propagate and are remembered for the next call, so a
-delivery failure cannot be silently treated as healthy. The evidence observer
-must exclude this service's own alert rows; otherwise its alerts would reset
-the stall detector. Ports stay injected so this module does not depend on the
-concrete evidence or engine services.
-
-Firewall (R1, runtime scope): stdlib + ``pyyaml`` (via the shared policy
-loader) + ``tos.cur`` (``DimensionKey``) + ``tos_runtime.*`` only. No
-``shared.*``.
-"""
+"""The slim runtime monitor: evidence-chain continuity, tip stall, inbox backlog."""
 
 from __future__ import annotations
 
@@ -71,11 +25,8 @@ __all__ = [
     "MonitoringService",
 ]
 
-#: The code-constant ``owner_identity`` this service stamps — a code constant, never
-#: configuration.
 _IDENTITY = "monitoring-service-v2"
 
-#: Deterministic, fixed-order reason tokens.
 _REASON_EVIDENCE_TIP_UNKNOWN = "evidence_tip_never_observed"
 _REASON_EVIDENCE_TIP_STALL = "evidence_tip_stalled"
 _REASON_CONTINUITY_UNESTABLISHED = "source_continuity_unestablished"
@@ -83,24 +34,17 @@ _REASON_CONTINUITY_BROKEN = "source_continuity_broken"
 _REASON_INBOX_BACKLOG = "inbox_unconsumed_over_bound"
 _REASON_ALERT_DELIVERY_FAILED = "stm_alert_delivery_failed"
 
-#: ``STM_ALERT`` evidence kind — the one kind this service emits. ``tos_runtime.safety.ack``
-#: acknowledges rows of this kind by ``seq``; the payload shape is this module's own.
 _EVIDENCE_KIND_STM_ALERT = "STM_ALERT"
 
 _NS_PER_MS = 1_000_000
 
 
 class MonitoringConfigError(Exception):
-    """The monitor-coverage policy document is missing, malformed, or still carries an
-    unfilled (named-TBD) required field — fail-closed at construction, never a lazily
-    discovered ``None`` inside :meth:`MonitoringService.healthy`."""
+    """The monitor-coverage policy document is missing, malformed, or still carries an"""
 
 
 class EvidenceTipObserver(Protocol):
-    """Port returning ``(last_seq, last_chain_digest, last_key_generation)``.
-
-    The compose layer must exclude this service's own ``STM_ALERT`` rows.
-    """
+    """Port returning ``(last_seq, last_chain_digest, last_key_generation)``."""
 
     def __call__(self) -> tuple[int | None, str, int | None]:
         """Return the evidence store's own tip observation."""
@@ -127,8 +71,7 @@ class AlertRecorder(Protocol):
     """Sink for one ``STM_ALERT`` evidence record."""
 
     def __call__(self, kind: str, fields: Mapping[str, Any]) -> None:
-        """Durably (from the caller's perspective) record one ``STM_ALERT`` evidence
-        entry — never a secret / bearer token in ``fields``."""
+        """Durably (from the caller's perspective) record one ``STM_ALERT`` evidence"""
         ...
 
 
@@ -142,14 +85,7 @@ class _LoadedCoverage:
 
 @dataclass(frozen=True)
 class _Observation:
-    """One :meth:`MonitoringService.healthy` call's raw self-observation results.
-
-    ``tip_ok`` is ``None`` only when the evidence tip has never been observed
-    (``seq is None``) — a genuine gap, never a fabricated pass. ``continuity_ok``
-    is ``None`` on the first real observation (no prior pair to compare against)
-    and is left unjudged when the tip itself was never observed, since that gap
-    already covers the call.
-    """
+    """One :meth:`MonitoringService.healthy` call's raw self-observation results."""
 
     tip_ok: bool | None
     continuity_ok: bool | None
@@ -193,12 +129,7 @@ class MonitoringService:
         monotonic_ns: MonotonicClock,
         evidence_recorder: AlertRecorder,
     ) -> None:
-        """Load the bounds and bind the injected self-observation ports.
-
-        Raises:
-            MonitoringConfigError: the policy document is missing, malformed, or carries
-                an unfilled required field.
-        """
+        """Load the bounds and bind the injected self-observation ports."""
         self._docs = _load_coverage(config_path)
         self._evidence_tip_observer = evidence_tip_observer
         self._inbox_unconsumed_observer = inbox_unconsumed_observer
@@ -206,8 +137,6 @@ class MonitoringService:
         self._evidence_recorder = evidence_recorder
         self._tip_last_seq: int | None = None
         self._tip_last_advance_ns: int | None = None
-        #: Raw previous ``(seq, chain_digest)``, updated on every observation — the
-        #: baseline the continuity judgement compares against (module docstring 1).
         self._continuity_last_seq: int | None = None
         self._continuity_last_chain_digest: str | None = None
         self._last_delivery_failure: str | None = None
@@ -226,8 +155,6 @@ class MonitoringService:
         """Read each self-observation port exactly once for this call."""
         seq, chain_digest, _key_generation = self._evidence_tip_observer()
         if seq is None:
-            # Never observed: a gap, not an unknown. Continuity is left unjudged
-            # because the gap already covers this call.
             tip_ok: bool | None = None
             continuity_ok: bool | None = None
         else:
@@ -239,14 +166,11 @@ class MonitoringService:
             tip_ok = stall_ms <= self._docs.max_evidence_tip_stall_ms
 
             if self._continuity_last_seq is None:
-                # First real observation: there is no prior pair to compare.
                 continuity_ok = None
             else:
                 seq_advanced = seq > self._continuity_last_seq
                 seq_regressed = seq < self._continuity_last_seq
                 digest_changed = chain_digest != self._continuity_last_chain_digest
-                # A regression is always a break; otherwise advanced and
-                # digest-changed must agree (both an append, neither an idle tick).
                 continuity_ok = (
                     False if seq_regressed else (seq_advanced == digest_changed)
                 )
@@ -263,19 +187,7 @@ class MonitoringService:
         )
 
     def healthy(self) -> bool | None:
-        """``True`` when every self-observation is positively within bounds, ``False``
-        when one is positively violated, ``None`` when a fact is merely unestablished
-        (never a fabricated pass).
-
-        An UNESTABLISHED fact (the tip never observed; continuity without a baseline)
-        yields ``None``; a POSITIVELY VIOLATED one (a stall, a broken chain, a
-        backlog, an undelivered prior alert) yields ``False`` and wins over any
-        unestablished fact beside it — a denial is never softened to an unknown.
-
-        Appends one ``STM_ALERT`` row on every non-``True`` result. A recorder failure
-        propagates and is remembered, so the NEXT call can never report ``True`` while a
-        prior alert went undelivered.
-        """
+        """``True`` when every self-observation is positively within bounds, ``False``"""
         unestablished: list[str] = []
         violated: list[str] = []
         if self._last_delivery_failure is not None:
@@ -316,7 +228,6 @@ class MonitoringService:
                 },
             )
         except Exception as exc:
-            # Propagate the failure now and expose it on the next call.
             self._last_delivery_failure = (
                 f"{_EVIDENCE_KIND_STM_ALERT}_delivery_failed: {exc!r}"
             )
@@ -325,13 +236,7 @@ class MonitoringService:
         return verdict
 
     def dimension_report(self) -> DimensionReport | None:
-        """This owner's currentness verdict for MONITORING.
-
-        ``restrictive_floor`` is ``0`` — a deliberate statement, not an invented default:
-        there is no floor-governance runtime (the same "an owner reporting 0 is that
-        owner's own choice" discipline :class:`~tos_runtime.currentness.vector
-        .DimensionReport`'s own docstring states).
-        """
+        """This owner's currentness verdict for MONITORING."""
         return DimensionReport(
             bound_generation=self._docs.coverage_generation,
             positively_established=self.healthy() is True,
@@ -339,8 +244,7 @@ class MonitoringService:
         )
 
     def describe(self) -> dict[str, Any]:
-        """Evidence-facing description of the loaded policy document — names, generations
-        and bounds only; never a secret / bearer token."""
+        """Evidence-facing description of the loaded policy document — names, generations"""
         return {
             "identity": self.identity,
             "config_path": str(self._docs.config_path),

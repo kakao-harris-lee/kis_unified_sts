@@ -1,26 +1,4 @@
-"""Decision Context Capsule artifact (design §2.7).
-
-Models ``DECISION-CONTEXT-CAPSULE-template.yaml`` (83 lines), classifying fields
-into three layers (design §2.7):
-
-* **Layer-0** — identity outputs, self-excluded from the digest (design §3.2):
-  ``capsule_id``, ``canonical_digest``, ``status`` (+ the ``canonicalization_version``
-  meta envelope).
-* **Layer-1** — context identity, digest-covered (design §2.7 / §3.3): every
-  field ADR §12 (line 317-326) enumerates.
-* **Layer-2** — downstream back-references, self-excluded and **not populated in
-  Phase 1** (design §2.7/§3.2/§4.3): ``venue_constraint_policy``,
-  ``venue_constraint_snapshot``, ``order_admissibility_decision``, ``bindings``.
-  They are declared (schema slots) but left ``None``; excluding them from the
-  digest breaks the §4.3 circular-embedding at the source.
-
-The layered issuance (design §4.3): the snapshot digest is computed first and
-embedded via ``critical_input_snapshot`` (a one-way snapshot -> capsule DAG,
-design §3.3), then the capsule digest/id is fixed without any downstream
-dependency. Layer-2 authoritative back-references are Phase B (out of scope).
-
-``authority.*`` is forced ``false`` (design §4.4). Pure module.
-"""
+"""Decision Context Capsule artifact (design §2.7)."""
 
 from __future__ import annotations
 
@@ -39,12 +17,7 @@ _CAPSULE_ID_PREFIX = "dcc"
 
 
 class SnapshotRef(FrozenModel):
-    """Content-addressed reference to a Critical Input Snapshot (template 12-14).
-
-    The design §4.2 recompute path: the ``canonical_digest`` reaches the grounded
-    observations / field evaluations; approvers follow this embedded reference
-    rather than bypassing the capsule.
-    """
+    """Content-addressed reference to a Critical Input Snapshot (template 12-14)."""
 
     snapshot_id: str | None = None
     canonical_digest: str | None = None
@@ -63,13 +36,7 @@ class CapsuleScope(FrozenModel):
 
 
 class SafetyCriticalFacts(FrozenModel):
-    """Proposer-asserted safety facts (template lines 34-43).
-
-    Neutral scalars only (design §0.3, §2.7 broker-agnostic). These are the
-    *claims* compared against the snapshot-derived facts in approval (design
-    §4.2 step 4); ``session_and_tradability`` is a Layer-1 fact (covered), so
-    venue facts themselves are part of capsule identity (design §2.7 note).
-    """
+    """Proposer-asserted safety facts (template lines 34-43)."""
 
     account: str | None = None
     instrument: str | None = None
@@ -96,11 +63,7 @@ class GenerationVector(FrozenModel):
 
 
 class IndependentValidation(FrozenModel):
-    """Independent-validation recompute surface (template lines 53-58).
-
-    Exposes what must be independently recomputed and the common-mode
-    dependencies that collapse corroboration independence (design §4.2, §5.2).
-    """
+    """Independent-validation recompute surface (template lines 53-58)."""
 
     required: bool = True
     required_facts: tuple[str, ...] = ()
@@ -110,11 +73,7 @@ class IndependentValidation(FrozenModel):
 
 
 class CapsuleValidity(FrozenModel):
-    """Capsule validity block (template lines 59-65).
-
-    ``issued_at`` is the capsule *wrap* time and is **not** the Validity Window
-    anchor (design §6.2 — the anchor is the observation ``source_event_time``).
-    """
+    """Capsule validity block (template lines 59-65)."""
 
     issued_at: int | None = None
     consumer_receipt_anchor: str | None = None
@@ -122,9 +81,6 @@ class CapsuleValidity(FrozenModel):
     expires_at: int | None = None
     invalidation_generation: int | None = None
     invalidation_conditions: tuple[str, ...] = ()
-
-
-# --- Layer-2 downstream reference schemas (declared, unpopulated in Phase 1) ---
 
 
 class VenueConstraintPolicyRef(FrozenModel):
@@ -151,11 +107,7 @@ class OrderAdmissibilityDecisionRef(FrozenModel):
 
 
 class Bindings(FrozenModel):
-    """Layer-2 downstream binding identifiers (template lines 66-74).
-
-    Forward references to downstream chain artifacts; Phase B authoritative
-    binding is out of scope (design §4.3), so these stay ``None`` in Phase 1.
-    """
+    """Layer-2 downstream binding identifiers (template lines 66-74)."""
 
     proposal_id: str | None = None
     approval_request_id: str | None = None
@@ -168,24 +120,10 @@ class Bindings(FrozenModel):
 
 
 class DecisionContextCapsule(IdDerivedArtifact):
-    """Immutable Decision Context Capsule (design §2.7).
-
-    Content-addressed: ``capsule_id = f(canonical_digest)`` and the digest covers
-    the Layer-1 set only; Layer-0 identity and Layer-2 downstream references are
-    excluded (design §3.2). Construction verifies both invariants (design §4.1),
-    so mutate / union / partial-refresh / digest-substitution are unconstructable
-    (CII-EV-007 core). Use :meth:`issue` to construct an issued capsule.
-    """
+    """Immutable Decision Context Capsule (design §2.7)."""
 
     _ID_FIELD: ClassVar[str] = "capsule_id"
     _ID_PREFIX: ClassVar[str] = _CAPSULE_ID_PREFIX
-    # Safety-load-bearing covered fields that MUST be concrete to issue (design
-    # §3.2). Derived from the ``DECISION-CONTEXT-CAPSULE-template.yaml`` markers:
-    # every path below is ``TBD`` (must-fill) in the template, whereas fields left
-    # ``null`` there (e.g. ``validity.*``, most ``generation_vector.*``,
-    # ``safety_critical_facts.expiration``) are optional and NOT required. Only the
-    # decision-/economic-effect-determining identity, policy, snapshot reference,
-    # scope, and core safety facts gate issuance.
     _REQUIRED_COVERED: ClassVar[tuple[str, ...]] = (
         "issuer_principal_id",
         "critical_input_policy.policy_id",
@@ -219,12 +157,8 @@ class DecisionContextCapsule(IdDerivedArtifact):
         }
     )
 
-    # ---- Layer-0 identity output (self-excluded, §3.2) ----
-    # canonical_digest / status / canonicalization_version inherited from
-    # DigestBoundArtifact (shared Layer-0 + meta envelope).
     capsule_id: str | None = None
 
-    # ---- Layer-1 covered context identity (ADR §12 line 317-326) ----
     artifact_type: str = _CAPSULE_ARTIFACT_TYPE
     schema_version: str = _CAPSULE_SCHEMA_VERSION
     issuer_principal_id: str | None = None
@@ -238,7 +172,6 @@ class DecisionContextCapsule(IdDerivedArtifact):
     validity: CapsuleValidity = CapsuleValidity()
     authority: CapsuleAuthority = CapsuleAuthority()
 
-    # ---- Layer-2 downstream back-references (self-excluded; Phase 1 = None) ----
     venue_constraint_policy: VenueConstraintPolicyRef | None = None
     venue_constraint_snapshot: VenueConstraintSnapshotRef | None = None
     order_admissibility_decision: OrderAdmissibilityDecisionRef | None = None

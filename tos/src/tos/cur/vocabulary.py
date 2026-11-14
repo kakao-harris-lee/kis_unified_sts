@@ -1,37 +1,4 @@
-"""Currentness-axis vocabulary — the CUR StrEnums (design #23 §2.2).
-
-Spec terms = code terms (design #23 §2.2; boundary design #1 §2.4). The enums are authored
-**verbatim** from ADR-002-024 (§12 proof result, §13 admission verdict, §9 dimension catalogue).
-
-**Truthy-sentinel structural seal (design #23 §2.2/§4.2 — #13/#14 M1 adopted from the start).**
-``ProofResult`` (CURRENT / RESTRICTED / UNKNOWN) and ``CurrentnessAdmission`` (ADMIT / DENY) are
-non-empty ``StrEnum`` strings, so ``if result:`` / ``bool(admission)`` would read a **denial**
-member (``RESTRICTED`` / ``UNKNOWN`` / ``DENY``) as **truthy** — a catastrophic silent fail-open
-that reads a *rejection* as an *admission* (ADR §6 CUR-INV-011 line 183 "Unknown ... blocks new
-risk"; §12 line 316 "Only ``CURRENT`` ... can satisfy this one conformance check"). Each subclasses
-:class:`_NonTruthyStrEnum`, whose :meth:`~_NonTruthyStrEnum.__bool__` **raises** ``TypeError``,
-making them *truthy-untestable*. The mandated consume gates are the explicit positive-identity
-comparison (``result is ProofResult.CURRENT`` / ``admission is CurrentnessAdmission.ADMIT``) —
-everything else is denial. Isomorphic to the iap ``_NonTruthyStrEnum`` seal (``iap/vocabulary.py:50``)
-and the egress seal (``egress/vocabulary.py:48``); authored locally-fresh here (sibling edge 0 — no
-iap / egress import).
-
-``DimensionKey`` is a **plain, closed** ``StrEnum`` (ADR §9 dimension catalogue): it is a structural
-identifier token consumed by set membership / subset checks
-(:func:`~tos.cur.predicates.policy_covers_mandated_dimensions`), never a gate result read with
-``if key:``, so it does not need the truthy seal. It is a **structural dimension identifier**, never
-a threshold / bound — hardcoding it is **not** a numeric hardcode (design #23 §2.2/§8; the ioc / spg
-field-enumeration precedent). ``CONTEXT`` is a **separate** dimension from ``CRITICAL_INPUT`` (ADR
-§9:259 / §26:617 — v1.1 MAJOR-2: omitting it would let a CONTEXT-absent vector vacuously pass
-:func:`~tos.cur.predicates.vector_complete`).
-
-This module names **no** concrete broker (broker-agnostic — project memory ``tos-spec-broker-
-agnostic``; design #23 §0.2) and hardcodes **no** numeric floor / age / bound (ADR §8): every bound
-is an injected Profile-INSTANCE value (design #23 §8). An enum member is a structural label, never a
-limit or a permission.
-
-Pure module: stdlib only; no ``shared.*``, no sibling ``tos.*`` (design #23 §0.3).
-"""
+"""Currentness-axis vocabulary — the CUR StrEnums (design #23 §2.2)."""
 
 from __future__ import annotations
 
@@ -48,28 +15,10 @@ __all__ = [
 
 
 class _NonTruthyStrEnum(StrEnum):
-    """A ``StrEnum`` that is deliberately **not truthy-testable** (design #23 §2.2/§4.2).
-
-    Every member is a non-empty string, so a bare ``if result:`` / ``bool(admission)`` would read a
-    denial member (``RESTRICTED`` / ``UNKNOWN`` / ``DENY``) as truthy — a catastrophic silent
-    fail-open that reads a rejection as an admission. :meth:`__bool__` therefore raises
-    ``TypeError`` on every member, so the misuse surfaces as a loud runtime error rather than a
-    silent pass. Consumers MUST use the explicit positive-identity gate (``x is ENUM.SAFE_VALUE``).
-    Isomorphic to the iap ``_NonTruthyStrEnum`` seal (``iap/vocabulary.py:50``) and the egress seal
-    (``egress/vocabulary.py:48``); authored locally-fresh here (sibling edge 0, no iap / egress
-    import — design #23 §0.4). ``is`` identity, ``.value``, hashing, set membership, and
-    ``model_dump`` are all unaffected (none calls ``__bool__``).
-    """
+    """A ``StrEnum`` that is deliberately **not truthy-testable** (design #23 §2.2/§4.2)."""
 
     def __bool__(self) -> bool:
-        """Reject truthiness testing outright (truthy-sentinel seal, design #23 §2.2/§4.2).
-
-        Raises:
-            TypeError: always — the enum is not truthy-testable. Use the explicit positive
-                identity gate (e.g. ``result is ProofResult.CURRENT``;
-                ``admission is CurrentnessAdmission.ADMIT``); a bare ``if result:`` /
-                ``bool(result)`` would fail open on the truthy denial strings.
-        """
+        """Reject truthiness testing outright (truthy-sentinel seal, design #23 §2.2/§4.2)."""
         raise TypeError(
             f"{type(self).__name__} is not truthy-testable — use an explicit positive "
             "identity gate (e.g. `result is ProofResult.CURRENT`; "
@@ -80,19 +29,7 @@ class _NonTruthyStrEnum(StrEnum):
 
 
 class ProofResult(_NonTruthyStrEnum):
-    """The Egress Currentness Proof conformance result (ADR-002-024 §12, non-truthy — critical seal).
-
-    §12 line 316 verbatim: "The proof result is ``CURRENT``, ``RESTRICTED``, or ``UNKNOWN``. **Only
-    ``CURRENT``**, together with every separately required authority and commitment, can satisfy
-    this one conformance check." **Truthy-untestable** (``__bool__`` raises): ``RESTRICTED`` /
-    ``UNKNOWN`` are non-empty strings, so ``if result:`` would read a *denial* as *conformance* —
-    the catastrophic fail-open this seal blocks (ADR §6 CUR-INV-011 line 183 "Unknown ... blocks new
-    risk"). Currentness is fundamentally DENY-biased: the mandated consume gate is
-    ``result is ProofResult.CURRENT`` — every other value is denial. ``CURRENT`` itself grants **no**
-    authority (§12 line 316; all-false :class:`~tos.cur._base.AllFalseCurrentnessAuthority`, §6.13);
-    this L1 model owns the **vocabulary** of the verdict, not its per-send runtime production
-    (design #23 §1/§6.6 over-realization boundary).
-    """
+    """The Egress Currentness Proof conformance result (ADR-002-024 §12, non-truthy — critical seal)."""
 
     CURRENT = "CURRENT"
     RESTRICTED = "RESTRICTED"
@@ -100,51 +37,15 @@ class ProofResult(_NonTruthyStrEnum):
 
 
 class CurrentnessAdmission(_NonTruthyStrEnum):
-    """The final currentness admission verdict (ADR-002-024 §13, non-truthy).
-
-    §13 resolves to admit or deny a per-send transmission on currentness grounds. **Truthy-
-    untestable** (``__bool__`` raises): ``DENY`` is a non-empty string, so ``if admission:`` would
-    read a *denial* as an *admission* (CUR-INV-001 line 143 "partial ... vectors are denial"). The
-    mandated consume gate is ``admission is CurrentnessAdmission.ADMIT`` — every other value is
-    denial. The actual per-send admission is an ADR-002-024 §13 runtime transaction (+Security,
-    design #23 §6c); this L1 model owns the **vocabulary** of that verdict, not its runtime
-    production.
-    """
+    """The final currentness admission verdict (ADR-002-024 §13, non-truthy)."""
 
     ADMIT = "ADMIT"
     DENY = "DENY"
 
 
 class DimensionKey(StrEnum):
-    """The Safety Currentness Vector dimension catalogue (ADR-002-024 §9, closed structural token).
+    """The Safety Currentness Vector dimension catalogue (ADR-002-024 §9, closed structural token)."""
 
-    §9 line 250-262 enumerates the dependency dimensions a complete action-scoped vector must carry.
-    A **plain, closed** ``StrEnum`` structural identifier consumed by set membership / subset checks
-    (:func:`~tos.cur.predicates.policy_covers_mandated_dimensions` /
-    :func:`~tos.cur.predicates.vector_complete`), never a gate result read with ``if key:``, so it is
-    deliberately **not** truthy-sealed. It is a **structural dimension identifier**, never a numeric
-    threshold / bound — enumerating it is **not** a numeric hardcode (design #23 §2.2/§8; the ioc /
-    spg field-enumeration precedent).
-
-    ``RESTRICTED_LIVE_TRIAL`` is the **conditional** dimension (§9:258; RLP-deferred content —
-    design #23 §0.4f); it and the plan-S2-b :data:`RETIRED_DIMENSION_KEYS` are the members outside
-    the :data:`MANDATED_DIMENSION_FLOOR`. The set is closed ("at least" floor — a policy may
-    require *more*, never fewer; §5.5).
-    """
-
-    #: **Removal condition for a member, measured before the plan-S2-a cut** (which took
-    #: SAFETY_ENVELOPE_PROFILE / DEVIATION / INCIDENT with the safety mesh that owned
-    #: them). A member reaches durable storage only inside an evidence payload's JSON,
-    #: as a plain string; the one place a stored token is re-validated into this enum is
-    #: ``tos_runtime.currentness.config``, which reads ``currentness.yaml``'s
-    #: ``required_dimensions`` — config, not storage — so a removed member must be
-    #: dropped from every tenant tree's ``currentness.yaml`` in the same change.
-    #: Removing one does NOT move an already-recorded row (measured on copies of the
-    #: four live leaves: 128,001/128,001 evidence payloads digest-identical,
-    #: 2,989/2,989 inbox events identical in ``event_id`` and bytes). It DOES move
-    #: :data:`MANDATED_DIMENSION_FLOOR`, and with it the canonical digest of any
-    #: ``CurrentnessPolicy`` whose covered ``mandated`` set is derived from the floor —
-    #: no deployment pins that digest today, which is why the three could go.
     ENVIRONMENT_SCOPE = "ENVIRONMENT_SCOPE"
     CURRENTNESS_POLICY = "CURRENTNESS_POLICY"
     COMMIT_LOG = "COMMIT_LOG"
@@ -163,29 +64,13 @@ class DimensionKey(StrEnum):
     ACTION_FLOW = "ACTION_FLOW"
     DECISION_PROOF_INTENT = "DECISION_PROOF_INTENT"
     EGRESS_IDENTITY = "EGRESS_IDENTITY"
-    #: Conditional (restricted-live trial only; §9:258) — the ONLY non-mandated member.
     RESTRICTED_LIVE_TRIAL = "RESTRICTED_LIVE_TRIAL"
 
 
-#: The conditional dimension keys (excluded from the mandated floor; §9:258 / design #23 §5.1).
 CONDITIONAL_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
     {DimensionKey.RESTRICTED_LIVE_TRIAL}
 )
 
-#: **Plan S2-b retirements** — members kept (a stored currentness vector names them as plain
-#: strings and the persisted-bytes rule keeps every member a stored row may name), but outside
-#: the mandated floor. Removal condition: none — keep them. Each one either re-read an earlier
-#: flow step's own verdict, which already halts the flow on anything but ADMIT before the send
-#: boundary is reached, or was a YAML constant:
-#:
-#: * ``CONSTRUCTION`` (step 2) · ``CONSTRAINT`` (step 3) · ``TRADING_APPROVAL`` (step 4) ·
-#:   ``AGGREGATE_RISK`` (step 6) · ``ACTION_FLOW`` (step 9) · ``DECISION_PROOF_INTENT``
-#:   (step 13 / verify ACTUAL_OUTBOUND_CONFORMANCE's ``exact_binding_holds``);
-#: * ``CONTEXT`` · ``CRITICAL_INPUT`` · ``EGRESS_IDENTITY`` — operator-attested
-#:   ``positively_established: true`` in every shipped ``currentness_dimensions.yaml``.
-#:
-#: A ``currentness.yaml`` that still lists one is refused at load
-#: (``tos_runtime.currentness.config``).
 RETIRED_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
     {
         DimensionKey.CONSTRUCTION,
@@ -200,9 +85,6 @@ RETIRED_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
     }
 )
 
-#: The §9 mandated floor: every non-conditional, non-retired ``DimensionKey`` member.
-#: :func:`~tos.cur.predicates.vector_complete` floors its ``mandated`` argument to at least this
-#: set — a caller can require *more* but **never fewer** (design #23 §5.1 v1.1 MINOR-1).
 MANDATED_DIMENSION_FLOOR: frozenset[DimensionKey] = (
     frozenset(DimensionKey) - CONDITIONAL_DIMENSION_KEYS - RETIRED_DIMENSION_KEYS
 )

@@ -1,10 +1,4 @@
-"""compiler_deterministic + numerical_safety (design #14 §4.2/§5.2; IOC-EV-003 substrate).
-
-The compiler-determinism property (the near-tautology digest equality, plus the load-bearing
-hermetic + denial-is-total + generation-fence discipline) and the numerical-safety axis. Closes
-no IOC-EV (§9 line 268 hidden-input absence is enforced by the §7.1 import-closure test, not
-here). Consume gate for ``numerical_safety`` is ``is ConformanceResult.CONFORMANT`` (§4.7).
-"""
+"""compiler_deterministic + numerical_safety (design #14 §4.2/§5.2; IOC-EV-003 substrate)."""
 
 from __future__ import annotations
 
@@ -30,11 +24,6 @@ from ._ioc_strategies import (
     issue_policy,
 )
 
-# ---------------------------------------------------------------------------
-# compiler determinism — same complete inputs => same canonical digest (§4.2)
-# ---------------------------------------------------------------------------
-
-#: Strategy over per-axis registry values so a random-but-valid intent/envelope agree on values.
 _AXIS_VALUE = st.text(
     alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789", min_size=1, max_size=6
 )
@@ -65,7 +54,7 @@ def test_compile_is_digest_deterministic(
         envelope=envelope,
         generation=generation,
         scheme=SCHEME,
-        command_id="cmd-b",  # different id — excluded from digest, so digest must still match
+        command_id="cmd-b",
     )
     assert first.canonical_digest is not None
     assert first.canonical_digest == second.canonical_digest
@@ -90,11 +79,6 @@ def test_compiler_deterministic_positive_side() -> None:
         )
         is True
     )
-
-
-# ---------------------------------------------------------------------------
-# denial is total (§9 line 270) — no best-effort / fallback
-# ---------------------------------------------------------------------------
 
 
 def test_missing_axis_denies_no_fallback() -> None:
@@ -158,7 +142,7 @@ def test_value_outside_envelope_denies() -> None:
         compile_command(
             intent=intent,
             policy=issue_policy(),
-            envelope=issue_envelope(),  # authorizes ACCT-1
+            envelope=issue_envelope(),
             generation=1,
             scheme=SCHEME,
             command_id="cmd-x",
@@ -169,11 +153,6 @@ def test_value_outside_envelope_denies() -> None:
         raise AssertionError(
             "a value outside the authorized envelope must be denied (§9)"
         )
-
-
-# ---------------------------------------------------------------------------
-# numerical_safety (§5.2 / §11 line 301 / §14 line 423)
-# ---------------------------------------------------------------------------
 
 
 def test_finite_consistent_magnitudes_are_conformant() -> None:
@@ -206,11 +185,6 @@ def test_none_magnitude_is_unknown() -> None:
     assert result is ConformanceResult.UNKNOWN
 
 
-# ---------------------------------------------------------------------------
-# MAJOR-1 regression — compile denies an ambiguous (duplicate-axis) envelope / intent
-# ---------------------------------------------------------------------------
-
-
 def _dup_bindings() -> tuple[AxisBinding, ...]:
     """The full clean bindings + a duplicate SIDE binding (an ambiguous authorization)."""
     return tuple(
@@ -221,11 +195,7 @@ def _dup_bindings() -> tuple[AxisBinding, ...]:
 
 
 def test_duplicate_envelope_axis_denies_compile() -> None:
-    """(§10 line 284 / denial-is-total) An ambiguous (duplicate-axis) envelope denies compilation.
-
-    Resolves the ``authorized_axes`` last-wins collapse: compile raises rather than silently
-    picking one authorized value.
-    """
+    """(§10 line 284 / denial-is-total) An ambiguous (duplicate-axis) envelope denies compilation."""
     dup_env = issue_envelope(authorized_axis_bindings=_dup_bindings())
     try:
         compile_command(

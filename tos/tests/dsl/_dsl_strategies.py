@@ -1,13 +1,4 @@
-"""Shared valid-artifact builders + hypothesis strategies for the DSL property tests.
-
-Firewall-clean: imports only ``hypothesis`` and ``tos.*`` (design §firewall). The
-``issue_*`` / ``*_required_kwargs`` builders populate every safety-load-bearing
-covered field each artifact's issuance guard demands, so a "valid" fixture is
-genuinely valid (never the all-null coverage illusion). The adversarial strategies
-actively *generate* escape / ambient / unknown / wildcard candidates so the checker
-is exercised against violations, not only positives (★ property strategy generates
-violation cases).
-"""
+"""Shared valid-artifact builders + hypothesis strategies for the DSL property tests."""
 
 from __future__ import annotations
 
@@ -48,16 +39,9 @@ from tos.dsl.vocabulary import ADMISSIBLE_KINDS, KIND_CONTEXT_REF
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 ENFORCEMENT_VERSION = "esc-checker-ev-l1-0"
 
-#: Text bound to a required-covered field must be concrete (never the reserved
-#: ``"TBD"`` placeholder the issuance guard rejects — design §3.2).
 REQUIRED_TEXT = st.text(max_size=8).filter(lambda s: s != "TBD")
 
 _AMBIENT_SOURCES = ("clock", "network", "filesystem", "env", "global", "builtin")
-
-
-# ---------------------------------------------------------------------------
-# Capsule (read-only evaluation input)
-# ---------------------------------------------------------------------------
 
 
 def issue_capsule(**overrides: Any) -> DecisionContextCapsule:
@@ -96,11 +80,6 @@ def capref(capsule: DecisionContextCapsule | None = None) -> DecisionContextCaps
     )
 
 
-# ---------------------------------------------------------------------------
-# Proposal
-# ---------------------------------------------------------------------------
-
-
 def proposal_required_kwargs(**overrides: Any) -> dict[str, Any]:
     """Proposal issuance kwargs with every required covered field concrete."""
     base: dict[str, Any] = {
@@ -125,11 +104,6 @@ def issue_proposal(**overrides: Any) -> Proposal:
     return Proposal.issue(scheme=SCHEME, **proposal_required_kwargs(**overrides))
 
 
-# ---------------------------------------------------------------------------
-# No-Action Outcome
-# ---------------------------------------------------------------------------
-
-
 def no_action_required_kwargs(**overrides: Any) -> dict[str, Any]:
     """No-Action issuance kwargs with every required covered field concrete."""
     base: dict[str, Any] = {
@@ -149,11 +123,6 @@ def issue_no_action(**overrides: Any) -> NoActionOutcome:
     return NoActionOutcome.issue(
         scheme=SCHEME, **no_action_required_kwargs(**overrides)
     )
-
-
-# ---------------------------------------------------------------------------
-# Portfolio Vector
-# ---------------------------------------------------------------------------
 
 
 def vector_required_kwargs(**overrides: Any) -> dict[str, Any]:
@@ -176,11 +145,6 @@ def vector_required_kwargs(**overrides: Any) -> dict[str, Any]:
 def issue_vector(**overrides: Any) -> PortfolioVector:
     """Issue a valid :class:`PortfolioVector`."""
     return PortfolioVector.issue(scheme=SCHEME, **vector_required_kwargs(**overrides))
-
-
-# ---------------------------------------------------------------------------
-# Authored Strategy (+ a simple config-driven policy)
-# ---------------------------------------------------------------------------
 
 
 def simple_policy() -> DecisionPolicy:
@@ -278,11 +242,7 @@ def vector_policy() -> DecisionPolicy:
 
 
 def multi_rule_policy() -> DecisionPolicy:
-    """A policy with two ordered rules plus the mandatory default (lowering fixture).
-
-    Exercises multi-``Rule`` lowering: :func:`tos.dsl.lowering.lower_strategy` must
-    emit one ``rule`` candidate node per authored ``Rule``, in authored order.
-    """
+    """A policy with two ordered rules plus the mandatory default (lowering fixture)."""
     action = Decision(
         kind=DecisionKind.ACTION,
         rationale="entry edge present",
@@ -334,9 +294,6 @@ def default_only_policy() -> DecisionPolicy:
     )
 
 
-#: Every distinct fixture-policy *shape* (NO_ACTION-only default, ACTION, FLAT,
-#: VECTOR, multi-rule), for parametrized "every fixture strategy lowers" coverage
-#: (design #31 §9-4 D-K-1).
 FIXTURE_POLICY_BUILDERS: tuple[Any, ...] = (
     simple_policy,
     flat_policy,
@@ -362,11 +319,6 @@ def issue_strategy(**overrides: Any) -> AuthoredStrategy:
     return AuthoredStrategy.issue(
         scheme=SCHEME, **strategy_required_kwargs(**overrides)
     )
-
-
-# ---------------------------------------------------------------------------
-# Enforcement-evidence records
-# ---------------------------------------------------------------------------
 
 
 def admissible_program() -> CandidateProgram:
@@ -435,22 +387,12 @@ def issue_bound_outcome(**overrides: Any) -> BoundOutcome:
     )
 
 
-# ---------------------------------------------------------------------------
-# Hypothesis strategies — candidate AST (admissible + adversarial)
-# ---------------------------------------------------------------------------
-
 _SAFE_SYMBOLS = st.sampled_from(["price", "vol", "edge", "regime", "atr"])
 
 
 @st.composite
 def admissible_nodes(draw: st.DrawFn, *, max_depth: int = 2) -> CandidateNode:
-    """Generate a node that IS inside the Authoring Surface Vocabulary.
-
-    With ``max_depth > 0`` the node may carry admissible children, so an admissible
-    program is a genuine *tree*, not a flat list — this exercises the recursive
-    ``iter_nodes`` walk (a flat top-level scan would still pass here, but see
-    :func:`programs_with_buried_escape` for the negative that requires recursion).
-    """
+    """Generate a node that IS inside the Authoring Surface Vocabulary."""
     kind = draw(st.sampled_from(sorted(ADMISSIBLE_KINDS)))
     children: tuple[CandidateNode, ...] = ()
     if max_depth > 0:
@@ -467,23 +409,22 @@ def admissible_nodes(draw: st.DrawFn, *, max_depth: int = 2) -> CandidateNode:
 def escape_nodes(draw: st.DrawFn) -> CandidateNode:
     """Generate a node that is NOT admissible: escape / ambient / wildcard / unknown."""
     which = draw(st.integers(min_value=0, max_value=4))
-    if which == 0:  # non-vocabulary escape kind
+    if which == 0:
         return CandidateNode(kind=draw(st.sampled_from(sorted(ESCAPE_KINDS))))
-    if which == 1:  # ambient read source on a context_ref
+    if which == 1:
         return CandidateNode(
             kind=KIND_CONTEXT_REF, source=draw(st.sampled_from(_AMBIENT_SOURCES))
         )
-    if which == 2:  # ambient symbol name (any node kind)
+    if which == 2:
         return CandidateNode(
             kind=draw(st.sampled_from(sorted(ADMISSIBLE_KINDS))),
             symbol=draw(st.sampled_from(sorted(AMBIENT_SYMBOLS))),
         )
-    if which == 3:  # wildcard / "latest" scope
+    if which == 3:
         return CandidateNode(
             kind=draw(st.sampled_from(sorted(ADMISSIBLE_KINDS))),
             scope=draw(st.sampled_from(sorted(WILDCARD_TOKENS))),
         )
-    # novel/unknown kind — fail-closed (DCE-INV-006)
     novel = draw(
         st.text(min_size=1, max_size=10).filter(
             lambda s: s not in ADMISSIBLE_KINDS and s not in ESCAPE_KINDS
@@ -505,7 +446,6 @@ def programs_with_escape(draw: st.DrawFn) -> CandidateProgram:
     good = draw(st.lists(admissible_nodes(), min_size=0, max_size=4))
     bad = draw(st.lists(escape_nodes(), min_size=1, max_size=3))
     combined = good + bad
-    # Interleave deterministically by a drawn permutation index list.
     order = draw(st.permutations(list(range(len(combined)))))
     ordered = tuple(combined[i] for i in order)
     return CandidateProgram(nodes=ordered)
@@ -513,14 +453,7 @@ def programs_with_escape(draw: st.DrawFn) -> CandidateProgram:
 
 @st.composite
 def programs_with_buried_escape(draw: st.DrawFn) -> CandidateProgram:
-    """Generate an admissible-rooted program with an escape node buried in children.
-
-    The escape sits ≥1 level below the root (wrapped in admissible ``const``
-    parents whose own fields are all clean), so *only* a recursive walk
-    (``iter_nodes`` descending into ``children``) can find it — a flat top-level
-    scan would wrongly admit it. This is the negative that would regress silently
-    if the walk ever stopped recursing (M-2 coverage).
-    """
+    """Generate an admissible-rooted program with an escape node buried in children."""
     escape = draw(escape_nodes())
     depth = draw(st.integers(min_value=1, max_value=3))
     node = escape

@@ -1,84 +1,4 @@
-"""Broker Scope loader + G-4 transport-nature/credential-route derivation
-(TOS Phase 4 plan §2 decisions 1-2,
-``docs/plans/2026-09-09-tos-phase4-scopes-and-verify-realization-plan.md``).
-
-A **scope** is a runtime-configured, named bundle of one or more kernel
-:class:`~tos.brokercap.routing.CapabilityTuple` values plus the
-transport/principal facts implied by how that scope reaches (or does not
-reach) a broker. The kernel (``tos.brokercap``) carries no concrete broker
-string at all (project memory ``tos-spec-broker-agnostic``); every concrete
-coordinate a scope carries (``profile_key``, ``environment_binding``,
-``asset_binding`` values) is **injected runtime configuration**, never a
-kernel constant — this module itself names no broker.
-
-**Decision 1 (scopes as runtime config).** :func:`load_broker_scopes` reads
-``tos/runtime/config/broker_scopes.example.yaml``-shaped YAML and builds
-each :class:`BrokerScope` by **validated** kernel construction —
-``CapabilityTuple(...)`` the normal way, never an unvalidated pydantic
-construction shortcut that skips model validators — so a config author
-cannot create a
-structurally-forbidden tuple (e.g. ``BROKER_PRODUCTION`` x order x
-``FUTURES``, kernel rule 4) merely by editing YAML: the kernel's own
-``pydantic.ValidationError`` is caught and re-raised as
-:class:`BrokerScopeConfigError`, naming the offending scope (this closes
-exit condition EC-3 — "futures REAL order capability is never created by
-config/env alone"). Every scope's ``admissibility`` is stamped by the loader
-via :func:`~tos.brokercap.routing.routing_admissibility`, taking the MOST
-RESTRICTIVE verdict across the scope's own tuples (``PROHIBITED`` >
-``REDUCED`` > ``ADMISSIBLE`` — any one ``PROHIBITED`` tuple makes the whole
-scope ``PROHIBITED``, never diluted by a sibling tuple's better verdict).
-
-The ``REAL_ORDER`` scope is **listed but always ``PROHIBITED``** — visibility
-of the permanent block (root ``CLAUDE.md`` "real-money futures order paths
-... are permanently blocked by policy"), never an opened path: no function in
-this module (or its callers) reads a ``PROHIBITED`` scope's
-``endpoint_class`` to route an actual call, and :func:`resolve_scope` never
-widens a request across scopes (EC-1, below).
-
-**Decision 2 (G-4 — transport identity derived from the active scope).**
-:func:`transport_nature` and :func:`credential_route_inventory` replace the
-three ``f"synthetic-paper-{environment_label}"`` literals
-``tos_runtime.compose._wiring`` used to carry (config-gap G-4) — the
-transport's own declared nature and the credential-route inventory are now
-STRUCTURALLY DERIVED from the active scope's ``endpoint_class``/
-``principal_class``, never a second, independently-typed literal that can
-drift from the scope table. :func:`refuse_principal_collision` generalizes
-the boot refusal ``_wiring.py`` used to hardcode as
-``_refuse_active_principal_matching_transport_identity`` (R2) — a workload's
-configured gateway ``active_principal`` colliding with ANY scope's own
-principal (not just the one literal) is refused fail-closed at boot.
-
-**A READ principal is GET-only (#999).** ``principal_class`` and the
-endpoint/method/tuple surface beside it used to be derived independently, so
-they could disagree: moving an order surface onto a scope that still declared
-``principal_class: READ`` loaded (measured, review-998 r1).
-:func:`_check_read_scopes_are_read_only` now refuses that at load — a READ
-scope carries ``endpoint_class: BROKER_GET``, ``GET`` methods and
-``NON_AUTHORIZING_READ`` read tuples with no economic effect, by allowlist —
-for every configured scope, not only the active one. The field layer those
-values are parsed by lives in :mod:`tos_runtime.brokercap.scope_fields`.
-
-**EC-1 — no rewriting.** :func:`resolve_scope` admits a requested
-:class:`~tos.brokercap.routing.CapabilityTuple` **only** when some configured scope carries a tuple
-that is EXACTLY EQUAL to it (pydantic model equality) — it never mutates ``requested``, never
-re-tries a different ``environment``, and never falls through to a different scope. A requested
-tuple absent from every scope is ``UNSUPPORTED_DENY`` with ``scope=None`` — never silently admitted
-through a wider (e.g. ``BROKER_PRODUCTION``) environment.
-
-Named-TBD discipline (mirrors ``tos_runtime.compose._egress_coordinates`` exactly): every scope's
-structural fields (``name``, ``principal_class``, ``principal``, ``endpoint_class``,
-``allowed_methods``, ``capability_tuples``) and the top-level ``active_scope``/
-``environment_binding``/``asset_binding`` fields refuse to load when still ``null`` — fail-closed,
-never a silent default. ``profile_evidence_ok`` is the ONE deliberate exception: ``null`` there is
-a legitimate, permanent value (evidence not established), passed straight through to
-:func:`~tos.brokercap.routing.routing_admissibility`, which already treats ``None``/``False``
-identically.
-
-This module reads no ambient process environment anywhere (pinned by a negative-grep test) and
-constructs no kernel model via an unvalidated pydantic construction shortcut (also pinned) — every
-kernel value here goes through validated construction, so a config-side attempt to bypass a kernel
-invariant fails at load, not silently.
-"""
+"""Broker Scope loader + G-4 transport-nature/credential-route derivation"""
 
 from __future__ import annotations
 
@@ -134,12 +54,8 @@ __all__ = [
     "transport_nature",
 ]
 
-#: The ONLY templating this loader performs on ``principal`` (mirrors
-#: ``tos_runtime.compose._egress_coordinates``'s ``active_principal`` rule).
 _ENVIRONMENT_LABEL_TOKEN = "{environment_label}"
 
-#: Most-restrictive-wins ordering for stamping one scope's admissibility
-#: across all of its own capability tuples.
 _RESTRICTIVENESS_RANK: dict[Admissibility, int] = {
     Admissibility.ADMISSIBLE: 0,
     Admissibility.REDUCED: 1,
@@ -156,9 +72,7 @@ class PrincipalClass(StrEnum):
 
 
 class EndpointClass(StrEnum):
-    """Where a scope's traffic actually goes (structurally derives
-    :class:`~tos.egressgw.TransportNature`'s reach flags, see
-    :func:`transport_nature`)."""
+    """Where a scope's traffic actually goes (structurally derives"""
 
     NONE = "NONE"
     BROKER_GET = "BROKER_GET"
@@ -175,10 +89,6 @@ class ScopeDisposition(StrEnum):
     PROHIBITED = "PROHIBITED"
 
 
-# Everything a ``PrincipalClass.READ`` scope may carry, one allowlist per axis of its
-# own surface (#999, :func:`_check_read_scopes_are_read_only`). Allowlists, not
-# denylists of order-shaped names: a kernel axis that gains a member later stays out of
-# a read scope until it is listed here on purpose.
 _READ_ENDPOINT_CLASSES: frozenset[EndpointClass] = frozenset({EndpointClass.BROKER_GET})
 _READ_METHODS: frozenset[str] = frozenset({"GET"})
 _READ_OPERATIONS: frozenset[OperationClass] = frozenset(
@@ -196,72 +106,29 @@ _READ_AUTHORIZATIONS: frozenset[AuthorizationClass] = frozenset(
 
 @dataclass(frozen=True)
 class ScopeInstanceBinding:
-    """A scope's optional binding to one Broker Capability Profile INSTANCE
-    document (plan §2 decision 4, 작업 5 items 6/12). ``environment`` is the
-    INSTANCE document's own ``profile_identity.environment`` scalar this
-    scope binds to — the loader refuses when it disagrees with
-    ``environment_binding[tuple.environment]`` for any of the scope's own
-    capability tuples (one source of truth, never two independently-typed
-    environment facts)."""
+    """A scope's optional binding to one Broker Capability Profile INSTANCE"""
 
     environment: str
-    #: Operator-attested drift signal (independent-review finding F5) — the
-    #: SAME discipline ``profile_evidence_ok`` already applies: ``None`` is a
-    #: legitimate, permanent "unknown until an authorization act exists"
-    #: value, threaded straight into the kernel
-    #: :func:`~tos.brokercap.predicates.profile_version_current` predicate's
-    #: ``degraded_since_authorization`` argument, which denies on anything
-    #: but ``False`` — never invented, never defaulted to a value that would
-    #: make the predicate's degradation gate unconditionally pass or fail.
     degraded_since_authorization: bool | None = None
 
 
 @dataclass(frozen=True)
 class BrokerScope:
-    """One named, runtime-configured Broker Capability scope (plan §2
-    decision 1). ``admissibility`` is the loader-stamped, most-restrictive
-    :func:`~tos.brokercap.routing.routing_admissibility` verdict across
-    every one of ``capability_tuples`` — never re-derived by a caller.
-
-    ``instance``/``required_capability_set`` (plan §2 decision 4, 작업 5
-    items 6/12) are both optional — ``None`` when this scope declares
-    neither block (e.g. the SYNTHETIC default scope, which needs no broker
-    INSTANCE binding at all)."""
+    """One named, runtime-configured Broker Capability scope (plan §2"""
 
     name: str
     capability_tuples: tuple[CapabilityTuple, ...]
     profile_key: ProfileKey
     principal_class: PrincipalClass
-    #: Already ``{environment_label}``-substituted by the loader.
     principal: str
     endpoint_class: EndpointClass
     allowed_methods: tuple[str, ...]
     admissibility: Admissibility
     provenance: tuple[CapabilityProvenance, ...]
-    #: Independent-review finding F1 — whether this scope's own principal is
-    #: inside the current workload's egress boundary (ADR-002-013 §8
-    #: "non-transferable workload identity" / "no authority outside the
-    #: committed set"). Required, never a hardcoded literal — feeds
-    #: :func:`credential_route_inventory`'s per-entry
-    #: ``CredentialRouteInventoryEntry.inside_boundary``, which the kernel's
-    #: :func:`~tos.egress.predicates.credential_route_authority_disjoint`
-    #: treats as the ONLY thing separating "this principal's usable
-    #: credential and broker route are fine" from "an outside/unknown
-    #: principal holds both" (a bypass candidate).
     inside_boundary: bool
-    #: Independent-review finding F4 — this scope's OWN resolved
-    #: (never-``None``) environment-axis binding table, used by
-    #: :func:`~tos_runtime.brokercap.derive.derive_item6_item12` instead of
-    #: the config-wide default when the scope's YAML declares its own
-    #: ``environment_binding`` override block; otherwise the config-wide
-    #: default, copied through unchanged.
     environment_binding: Mapping[BrokerEnvironment, str]
-    #: Independent-review finding F4 — the asset-axis sibling of
-    #: ``environment_binding`` (same override-or-default resolution).
     asset_binding: Mapping[AssetScope, str]
-    #: The INSTANCE document environment this scope binds to, or ``None``.
     instance: ScopeInstanceBinding | None = None
-    #: The kernel required-capability set for this scope's action, or ``None``.
     required_capability_set: RequiredCapabilitySet | None = None
 
 
@@ -271,31 +138,18 @@ class BrokerScopesConfig:
 
     scopes: tuple[BrokerScope, ...]
     active_scope: BrokerScope
-    #: Injected string-correspondence table (never a kernel constant) — see
-    #: :func:`~tos.brokercap.routing.endpoint_binding_from_profile_ok`.
     environment_binding: Mapping[BrokerEnvironment, str]
     asset_binding: Mapping[AssetScope, str]
-    #: The Broker Capability Profile INSTANCE file path (plan §2 decision 4)
-    #: — resolved relative to the config file's own directory when given as
-    #: a relative path in YAML. ``None`` only when no scope declares an
-    #: ``instance`` block (nothing would ever read this path).
     instance_path: Path | None = None
-    #: The render's sha256 pin on it (#958, :mod:`tos_runtime.brokercap.instance_pin`).
     instance_sha256: str | None = None
 
 
 @dataclass(frozen=True)
 class ScopeResolution:
-    """:func:`resolve_scope`'s result — ``scope`` is ``None`` iff
-    ``disposition is UNSUPPORTED_DENY``."""
+    """:func:`resolve_scope`'s result — ``scope`` is ``None`` iff"""
 
     scope: BrokerScope | None
     disposition: ScopeDisposition
-
-
-# ===========================================================================
-# Loader
-# ===========================================================================
 
 
 def _most_restrictive(admissibilities: list[Admissibility]) -> Admissibility:
@@ -305,10 +159,7 @@ def _most_restrictive(admissibilities: list[Admissibility]) -> Admissibility:
 def _build_scope_instance(
     raw: Mapping[str, Any] | None, context: str
 ) -> ScopeInstanceBinding | None:
-    """Parse the optional ``instance`` block (plan §2 decision 4) — absent
-    ⇒ ``None``; present but malformed ⇒ :class:`BrokerScopeConfigError`
-    (named-TBD discipline applied to ``instance.environment`` once the
-    block itself is present at all)."""
+    """Parse the optional ``instance`` block (plan §2 decision 4) — absent"""
     if raw is None:
         return None
     environment = raw.get("environment") if isinstance(raw, Mapping) else None
@@ -317,12 +168,6 @@ def _build_scope_instance(
             f"{context}: 'instance.environment' is still null (named-TBD) or "
             "not a string — refusing to load"
         )
-    # degraded_since_authorization is the ONE deliberate exception to
-    # named-TBD for this block (finding F5, mirrors profile_evidence_ok):
-    # `null` is a legitimate, permanent "no authorization act exists yet"
-    # value, passed straight through — never invented, never silently
-    # coerced to a value that would make the kernel's degradation gate
-    # unconditionally pass.
     degraded_raw = (
         raw.get("degraded_since_authorization") if isinstance(raw, Mapping) else None
     )
@@ -345,15 +190,7 @@ def _resolve_scope_binding(
     scope_name: str,
     path: Path,
 ) -> Mapping[Any, str]:
-    """Resolve one of a scope's OPTIONAL ``environment_binding``/
-    ``asset_binding`` override blocks (independent-review finding F4) — the
-    scope's own block when present (validated the SAME way as the
-    config-wide table), else ``default`` unchanged. This is how
-    :func:`~tos_runtime.brokercap.derive.derive_item6_item12` gets a map
-    that can actually discriminate a scope whose asset/environment axis
-    would otherwise collide with every other scope's under the shared
-    config-wide table (e.g. a SYNTHETIC scope sharing the KIS INSTANCE's
-    single stock+futures instrument-class string)."""
+    """Resolve one of a scope's OPTIONAL ``environment_binding``/"""
     override_raw = raw.get(field)
     if override_raw is None:
         return default
@@ -364,11 +201,7 @@ def _resolve_scope_binding(
 
 @dataclass(frozen=True)
 class _ScopeIdentity:
-    """The identity-bearing fields :func:`_build_scope_identity` parses —
-    split out of :func:`_build_scope` purely for the function size budget
-    (independent-review findings F1/F6 pushed ``_build_scope`` over the
-    100-line function cap); no behavioural difference from having this
-    inline."""
+    """The identity-bearing fields :func:`_build_scope_identity` parses —"""
 
     principal_class: PrincipalClass
     principal: str
@@ -379,9 +212,7 @@ class _ScopeIdentity:
 def _build_scope_identity(
     raw: Mapping[str, Any], *, environment_label: str, context: str
 ) -> _ScopeIdentity:
-    """Parse ``principal_class``/``principal``/``inside_boundary``/
-    ``endpoint_class`` — split out of :func:`_build_scope` purely for the
-    function size budget."""
+    """Parse ``principal_class``/``principal``/``inside_boundary``/"""
     principal_class_raw = require(
         raw.get("principal_class"), "principal_class", context
     )
@@ -460,9 +291,6 @@ def _build_scope(
         )
     capability_tuples = tuple(build_capability_tuple(t, name) for t in tuples_raw)
 
-    # profile_evidence_ok is the ONE deliberate exception to named-TBD: null
-    # is a legitimate, permanent "evidence not established" value, passed
-    # straight through (module docstring).
     profile_evidence_ok = raw.get("profile_evidence_ok")
 
     admissibility = _most_restrictive(
@@ -517,14 +345,7 @@ def _check_instance_bindings(
     scopes: tuple[BrokerScope, ...],
     path: Path,
 ) -> None:
-    """One source of truth (plan §2 decision 4; re-review follow-up to
-    finding F4): a scope's ``instance.environment`` must equal its OWN
-    resolved ``environment_binding[tuple.environment]`` — the scope's own
-    override when it declares one (F4), the config-wide default otherwise —
-    for EVERY one of its own capability tuples. Checking against the
-    config-wide table UNCONDITIONALLY (the pre-fix behavior) would let an
-    overriding scope's cross-check pass against a table that scope no
-    longer actually binds through, defeating "one source of truth"."""
+    """One source of truth (plan §2 decision 4; re-review follow-up to"""
     for scope in scopes:
         if scope.instance is None:
             continue
@@ -543,11 +364,7 @@ def _check_instance_bindings(
 def _resolve_instance_path(
     raw_value: Any, *, config_path: Path, scopes: tuple[BrokerScope, ...]
 ) -> Path | None:
-    """Resolve the top-level ``instance_path`` (plan §2 decision 4) —
-    relative to ``config_path``'s own directory when given as a relative
-    string, absolute paths pass through unchanged. ``None`` is legitimate
-    ONLY when no scope declares an ``instance`` block; a scope needing
-    INSTANCE data with no path configured fails closed."""
+    """Resolve the top-level ``instance_path`` (plan §2 decision 4) —"""
     any_scope_declares_instance = any(scope.instance is not None for scope in scopes)
     if raw_value is None:
         if any_scope_declares_instance:
@@ -567,8 +384,7 @@ def _resolve_instance_path(
 def _refuse_read_scope(
     path: Path, scope_name: str, field: str, value: object, allowed: frozenset[Any]
 ) -> BrokerScopeConfigError:
-    """The refusal :func:`_check_read_scopes_are_read_only` raises, naming the scope,
-    the offending field and the whole allowlist for that field."""
+    """The refusal :func:`_check_read_scopes_are_read_only` raises, naming the scope,"""
     return BrokerScopeConfigError(
         f"{path}: scope {scope_name!r} declares principal_class READ but its "
         f"{field} {str(value)!r} is not read-only — a READ scope may carry only "
@@ -579,24 +395,7 @@ def _refuse_read_scope(
 def _check_read_scopes_are_read_only(
     scopes: tuple[BrokerScope, ...], path: Path
 ) -> None:
-    """Refuse a ``principal_class: READ`` scope whose own surface is not read-only
-    (#999): ``endpoint_class: BROKER_GET``, ``GET``-only methods, and capability tuples
-    that are ``NON_AUTHORIZING_READ`` read operations with no economic effect. Every
-    configured scope, not only the active one — an operator reaching for an order
-    fallback edits the table before choosing what to activate.
-
-    Each axis is an ALLOWLIST of what READ may carry (:data:`_READ_ENDPOINT_CLASSES`,
-    :data:`_READ_METHODS`, :data:`_READ_OPERATIONS`, :data:`_READ_ECONOMIC_EFFECTS`,
-    :data:`_READ_AUTHORIZATIONS`), not a denylist of order-shaped names.
-
-    Measured before this existed (review-998 r1): deleting ``MOCK_STOCK_ORDER`` and
-    moving its ``BROKER_ORDER`` / ``SUBMIT`` / MOCK_VTS / order-tuple surface onto
-    ``REAL_READ`` loaded, and the kis-mock wiring accepted it. The refusals that closed
-    that input — :func:`_check_no_duplicate_tuples` against ``MOCK_STOCK_ORDER``'s own
-    tuples, and ``PROHIBITED`` for every other order tuple — hold only while that order
-    scope exists, which is why this one names no other scope. It runs after both, so
-    each keeps raising its own refusal for the inputs it already covered.
-    """
+    """Refuse a ``principal_class: READ`` scope whose own surface is not read-only"""
     for scope in scopes:
         if scope.principal_class is not PrincipalClass.READ:
             continue
@@ -638,16 +437,7 @@ def _check_read_scopes_are_read_only(
 
 
 def _check_principal_separation(scopes: tuple[BrokerScope, ...], path: Path) -> None:
-    """Refuse when two DISTINCT scopes share a ``principal`` (plan §2
-    decision 1; independent-review finding F2 generalizes this from
-    "different classes only" to EVERY pair, including two scopes of the
-    SAME ``principal_class``). The kernel
-    :func:`~tos.brokercap.routing.credential_principal_separation_ok`
-    predicate remains the documented anchor for the READ/ORDER pair
-    specifically — the one invariant it was written to check; every other
-    pair (same-class included) is refused by plain strict equality, so a
-    config author cannot recreate a shared-principal bypass merely by
-    giving two scopes matching classes."""
+    """Refuse when two DISTINCT scopes share a ``principal`` (plan §2"""
     for i, left in enumerate(scopes):
         for right in scopes[i + 1 :]:
             classes = {left.principal_class, right.principal_class}
@@ -664,12 +454,7 @@ def _check_principal_separation(scopes: tuple[BrokerScope, ...], path: Path) -> 
 
 
 def _check_no_duplicate_tuples(scopes: tuple[BrokerScope, ...], path: Path) -> None:
-    """Refuse when the SAME capability tuple appears in two different
-    scopes (independent-review finding F3). This is what makes
-    :func:`resolve_scope`'s single match structurally unique — without it, a
-    duplicate tuple listed in two scopes would resolve by YAML list order,
-    letting an earlier (evidenced) scope's verdict silently promote a
-    request a later scope would deny."""
+    """Refuse when the SAME capability tuple appears in two different"""
     seen: list[tuple[CapabilityTuple, str]] = []
     for scope in scopes:
         for candidate in scope.capability_tuples:
@@ -710,22 +495,7 @@ def _load_binding(
 
 
 def load_broker_scopes(path: Path, *, environment_label: str) -> BrokerScopesConfig:
-    """Load + fail-closed-validate the broker-scopes config from ``path``
-    (shaped like ``tos/runtime/config/broker_scopes.example.yaml``).
-
-    Args:
-        path: The config file (every named-TBD filled, at minimum ``active_scope``).
-        environment_label: Substituted for the ``{environment_label}`` token
-            in every scope's ``principal``, if present.
-
-    Raises:
-        BrokerScopeConfigError: The file is missing/unreadable/not valid
-            YAML/not a mapping, a structural field is still ``null``
-            (named-TBD), a READ scope is not read-only (#999), a capability
-            tuple is rejected by the kernel (EC-3), two scopes of different
-            principal classes share a principal, or ``active_scope`` does not
-            name a configured, non-``PROHIBITED`` scope.
-    """
+    """Load + fail-closed-validate the broker-scopes config from ``path``"""
     if not path.is_file():
         raise BrokerScopeConfigError(f"broker-scopes config file not found: {path}")
     try:
@@ -745,9 +515,6 @@ def load_broker_scopes(path: Path, *, environment_label: str) -> BrokerScopesCon
             f"broker-scopes config file must be a top-level mapping: {path}"
         )
 
-    # Global (config-wide) binding tables load FIRST — every scope's
-    # per-scope override (finding F4) resolves against these as its default,
-    # so scope construction below needs them already built.
     environment_binding = _load_binding(
         raw.get("environment_binding"), "environment_binding", BrokerEnvironment, path
     )
@@ -810,30 +577,10 @@ def load_broker_scopes(path: Path, *, environment_label: str) -> BrokerScopesCon
     )
 
 
-# ===========================================================================
-# EC-1 — resolution never rewrites a requested tuple
-# ===========================================================================
-
-
 def resolve_scope(
     config: BrokerScopesConfig, requested: CapabilityTuple
 ) -> ScopeResolution:
-    """Resolve ``requested`` against ``config`` (plan §4 EC-1).
-
-    Only a scope carrying a tuple EXACTLY EQUAL to ``requested`` can be
-    ``ADMITTED``/``REDUCED``/``PROHIBITED`` — this function never
-    constructs a new tuple, never inspects (let alone rewrites)
-    ``requested.environment``, and never falls through to a different
-    scope's tuple. A requested tuple present in no scope is
-    ``UNSUPPORTED_DENY`` with ``scope=None`` (never rewritten to something
-    an existing scope does admit).
-
-    Uniqueness across scopes is guaranteed by the loader
-    (:func:`_check_no_duplicate_tuples`, independent-review finding F3) — no
-    two scopes can carry the same tuple, so the first (and only) match this
-    loop finds is, structurally, the ONLY match; this function does not
-    itself need to guard against or pick among duplicates.
-    """
+    """Resolve ``requested`` against ``config`` (plan §4 EC-1)."""
     for scope in config.scopes:
         if requested not in scope.capability_tuples:
             continue
@@ -845,30 +592,13 @@ def resolve_scope(
     return ScopeResolution(scope=None, disposition=ScopeDisposition.UNSUPPORTED_DENY)
 
 
-# ===========================================================================
-# G-4 — transport nature / credential-route inventory derived from scopes
-# ===========================================================================
-
-#: Endpoint classes that actually reach a broker (structurally derives
-#: TransportNature's reach flags — module docstring decision 2).
 _BROKER_REACHING_ENDPOINT_CLASSES = frozenset(
     {EndpointClass.BROKER_GET, EndpointClass.BROKER_ORDER}
 )
 
 
 def transport_nature(scope: BrokerScope) -> TransportNature:
-    """Derive the active scope's :class:`~tos.egressgw.TransportNature`
-    (G-4) — replaces the ``_wiring.py`` literal
-    ``TransportNature(principal=f"synthetic-paper-{environment_label}", ...)``.
-
-    ``reaches_broker``/``credential_bearing``/``route_bearing`` are all
-    ``True`` for ``BROKER_GET``/``BROKER_ORDER``, all ``False`` for
-    ``SYNTHETIC``/``NONE``. ``risk_relevant_live`` is
-    ``authorization_class is REAL_ORDER`` for ANY of the scope's tuples,
-    regardless of endpoint class — the same structural fact
-    :func:`credential_route_inventory` and :func:`resolve_scope` already key
-    off, never a value type distinct from the scope's own tuples.
-    """
+    """Derive the active scope's :class:`~tos.egressgw.TransportNature`"""
     reaches = scope.endpoint_class in _BROKER_REACHING_ENDPOINT_CLASSES
     risk_relevant_live = any(
         t.authorization_class is AuthorizationClass.REAL_ORDER
@@ -886,24 +616,7 @@ def transport_nature(scope: BrokerScope) -> TransportNature:
 def credential_route_inventory(
     config: BrokerScopesConfig, *, active_principal: str
 ) -> tuple[CredentialRouteInventoryEntry, ...]:
-    """Derive the full credential-route inventory (G-4) — replaces the
-    ``_wiring.py`` literal pair of :class:`~tos.egress.CredentialRouteInventoryEntry`
-    values.
-
-    One entry per configured scope's own ``principal`` (``usable_credential``/
-    ``broker_route`` are ``True`` iff the scope's ``endpoint_class`` is
-    ``BROKER_GET``/``BROKER_ORDER``; ``inside_boundary`` is the scope's OWN
-    ``inside_boundary`` config field, independent-review finding F1 — never
-    a hardcoded literal, so a scope declared ``inside_boundary: false`` (an
-    externally-reachable principal outside this workload's committed set,
-    ADR-002-013 §8) is actually visible to the kernel's
-    :func:`~tos.egress.predicates.credential_route_authority_disjoint`
-    boundary check), PLUS the gateway's own ``active_principal`` entry —
-    kept byte-for-byte identical to what ``_wiring.py`` built for it before
-    (``usable_credential=False``, ``broker_route=False``,
-    ``inside_boundary=True`` — the gateway's own workload identity is, by
-    definition, always inside its own boundary).
-    """
+    """Derive the full credential-route inventory (G-4) — replaces the"""
     entries = tuple(
         CredentialRouteInventoryEntry(
             principal=scope.principal,
@@ -926,17 +639,7 @@ def credential_route_inventory(
 def refuse_principal_collision(
     config: BrokerScopesConfig, *, active_principal: str
 ) -> None:
-    """Fail-closed boot refusal generalizing the old R2 literal comparison
-    (``_wiring.py``'s ``_refuse_active_principal_matching_transport_identity``)
-    from ONE hardcoded transport identity to EVERY configured scope
-    principal (module docstring decision 2).
-
-    Raises:
-        BrokerScopeConfigError: ``active_principal`` equals some scope's own
-            principal — a workload cannot assume a scope's identity as its
-            own configured gateway principal (ADR-002-013 §8 non-transferable
-            workload identity).
-    """
+    """Fail-closed boot refusal generalizing the old R2 literal comparison"""
     for scope in config.scopes:
         if scope.principal == active_principal:
             raise BrokerScopeConfigError(

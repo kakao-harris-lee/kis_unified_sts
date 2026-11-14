@@ -1,11 +1,4 @@
-"""Regression for issue #1004: a stale consumed entry must not authorize an over-close.
-
-The counterexample's broker is already flat, but its local durable evidence still records the
-10-contract entry fill and the RCL still has the corresponding POSITION_CONSUMED reservation.
-The production risk-state service has no broker-position input, so it sees only those stale
-local facts. With the current unconditional ``-q`` CLOSE effect, it can project usage below zero
-and GRANT a 10-contract close even though the configured risk limit is 1.
-"""
+"""Regression for issue #1004: a stale consumed entry must not authorize an over-close."""
 
 from __future__ import annotations
 
@@ -115,8 +108,6 @@ def _set_effective_limit(config_dir: Path, limit: Decimal) -> str:
     raw["canonical_digest"] = "TBD"
     are_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
 
-    # Load it back so a malformed rewrite fails here rather than at boot. The activation
-    # digest re-sync this used to do went with plan S2-a along with safety_activation.yaml.
     load_aggregate_risk_policy(are_path, scheme=_SCHEME)
     return dimension_id
 
@@ -193,12 +184,7 @@ def test_flat_broker_and_stale_position_consumed_entry_do_not_admit_overclose(
     custody_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The broker-side position is 0, but local evidence/RCL still show the entry's 10.
-
-    The CLOSE's derived quantity is 10, greater than the 1-unit ARE limit. A negative effect
-    of -10 then turns ``10 + (-10)`` into zero and the actual production step 6 GRANTs; since
-    there is no broker-position input at pretrade, that GRANT would sell into a flat account.
-    """
+    """The broker-side position is 0, but local evidence/RCL still show the entry's 10."""
     _write_close_strategy(config_dir_with_risk_state, monkeypatch)
     dimension_id = _set_effective_limit(config_dir_with_risk_state, _ARE_LIMIT)
     runtime = compose_paper_runtime(
@@ -233,9 +219,6 @@ def test_flat_broker_and_stale_position_consumed_entry_do_not_admit_overclose(
         approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
 
-    # A separate broker provider answers flat, but RiskStateService/build_risk_state_service
-    # have no witness input. No corresponding egress result is added for the out-of-band
-    # flatten, so production step 6 only sees its stale local 10.
     broker_snapshot = _IndependentFlatBrokerWitness().observe(
         WitnessScope(
             account=_ACCOUNT,

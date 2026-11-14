@@ -1,28 +1,4 @@
-"""``_loader_probe`` — run every boot-blocking loader against one ``config_dir`` and report
-PASS/REFUSE per file, with the refusal verbatim.
-
-**Why this is committed (review-794 MEDIUM-4).** The W-A A-5 landing record
-(``docs/plans/2026-09-18-tos-config-adoption-and-carryover-plan.md`` §7.8) quotes a
-"N PASS / M REFUSE" partition as its diagnosis of what still blocks a ``run`` boot. The first
-cut of that record quoted the number from a scratch script that was never committed, so the
-number could not be re-derived by a reader — this repo's own rule is that evidence has to be
-re-runnable. This module is that script, committed, and
-``test_deploy_approved_values.py::test_loader_probe_partition_is_as_recorded`` pins the
-partition BY NAME (not merely by count), so the landing record's number cannot drift away from
-what the loaders actually do.
-
-``run`` itself stops at its own FIRST refusal (``construction.yaml``, ``_run_dispatch.py:94-99``),
-so a sequential boot can never enumerate what else is blocked. This probe calls each loader
-independently and therefore does.
-
-Run it directly to print the table::
-
-    PYTHONPATH=tos/src:tos/runtime/src python tos/runtime/tests/compose/_loader_probe.py \\
-        config/tos_runtime/paper
-
-Leading underscore: this is a helper, not a pytest module (pytest collects ``test_*.py`` only).
-Hermetic: every loader here only READS the files it is given; nothing is written.
-"""
+"""``_loader_probe`` — run every boot-blocking loader against one ``config_dir`` and report"""
 
 from __future__ import annotations
 
@@ -48,19 +24,11 @@ def _scheme() -> Any:
     return get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 
-#: The environment label the two ``{environment_label}``-templating loaders need. Any non-live
-#: label works for a load-only probe; this one matches the compose e2e suite's own fixture.
 _ENVIRONMENT_LABEL = "non-live-test"
 
 
 def _unreachable_observer() -> Any:
     raise AssertionError("observer must not be reached during a config load")
-
-
-# --------------------------------------------------------------------------
-# One callable per probed loader. Each takes the config DIRECTORY, because several
-# loaders read more than one file (the safety mesh reads three).
-# --------------------------------------------------------------------------
 
 
 def _time(d: Path) -> object:
@@ -233,9 +201,7 @@ def _strategies(d: Path) -> object:
 class ProbeSpec:
     """One probed loader."""
 
-    #: Stable label — the partition test pins these, so they are part of the contract.
     label: str
-    #: Called with the config DIRECTORY.
     load: Callable[[Path], object]
 
 
@@ -245,13 +211,9 @@ class ProbeOutcome:
 
     label: str
     passed: bool
-    #: ``""`` when it passed; otherwise ``"<ExcType>: <message>"``.
     refusal: str
 
 
-#: Every fixed config-dir name a ``run`` boot needs, in the order ``compose_paper_runtime``'s
-#: own wiring reaches them (the 18 this wave adopted, the 6 adopted earlier, plus the two the
-#: ``run`` CLI needs that have no adopted instance at all).
 PROBES: tuple[ProbeSpec, ...] = (
     ProbeSpec("time.yaml", _time),
     ProbeSpec("authority.yaml", _authority),
@@ -273,23 +235,13 @@ PROBES: tuple[ProbeSpec, ...] = (
     ProbeSpec("action_flow_policy.yaml", _action_flow),
     ProbeSpec("construction.yaml", _construction),
     ProbeSpec("strategies/", _strategies),
-    # The tick-source pair — adopted 2026-09-23 as boot-proof fixtures (design
-    # docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md §4 item 5).
-    # `marketfeed.yaml` carries coordinate slots and so refuses until rendered;
-    # `critical_input_policy.yaml` carries none and loads as committed.
     ProbeSpec("marketfeed.yaml", _marketfeed),
     ProbeSpec("critical_input_policy.yaml", _critical_input_policy),
 )
 
 
 def run_probes(config_dir: Path) -> tuple[ProbeOutcome, ...]:
-    """Run every :data:`PROBES` entry against ``config_dir``.
-
-    A loader that raises ANYTHING is reported as a refusal with its exception type and
-    message — the point is to surface whichever fail-closed check fired, never to guess which
-    exception types to enumerate (the same broad-catch rationale ``_run_dispatch.dispatch_run``
-    documents for itself).
-    """
+    """Run every :data:`PROBES` entry against ``config_dir``."""
     outcomes: list[ProbeOutcome] = []
     for spec in PROBES:
         try:

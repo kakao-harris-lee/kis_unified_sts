@@ -1,17 +1,4 @@
-"""Post-Trade Economic Obligations and Finality — pure models + predicates (ADR-002-030).
-
-What the runtime finality producer and release consumer use: the obligation record, the
-finality proof, its leg scope, and the five finality predicates. The rest of the package
-(commit idempotency, collateral, statement coverage, the disposition producer) had no
-runtime caller and was removed (plan ``docs/plans/2026-11-13-tos-code-halving-plan.md``
-§S2-c); it is in git history.
-
-**Finality proves the LEG, not the CONSEQUENCE**: every record carries an all-false
-:class:`AllFalsePostTradeConsequence`, unconstructable with any ``True`` flag.
-
-Pure package: ``pydantic`` + stdlib + ``tos.canonical`` only; no sibling ``tos.*``, no
-``shared.*``.
-"""
+"""Post-Trade Economic Obligations and Finality — pure models + predicates (ADR-002-030)."""
 
 from __future__ import annotations
 

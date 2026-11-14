@@ -1,9 +1,4 @@
-"""Final Quantity Proof recipe (design #10 §6.3; BC-EV-007; §15.2/§15.3/§15.4).
-
-Each of the 7 §15.3 prohibited proofs, alone, => not adequate; a complete §15.2 proof with a
-§15.4 terminal marker => adequate. This bool is the recon ``final_quantity_proof_token`` /
-orthostate FQP producer.
-"""
+"""Final Quantity Proof recipe (design #10 §6.3; BC-EV-007; §15.2/§15.3/§15.4)."""
 
 from __future__ import annotations
 
@@ -17,10 +12,6 @@ from tos.brokercap import (
 
 from ._brokercap_strategies import complete_fqp_evidence, fqp_rule
 
-# ---------------------------------------------------------------------------
-# Positive side
-# ---------------------------------------------------------------------------
-
 
 def test_complete_proof_is_adequate() -> None:
     """(§15.2 canary b) All conjuncts True + §15.4 terminal marker + no prohibited sole basis => True."""
@@ -33,15 +24,9 @@ def test_late_event_window_alternative_terminal_marker() -> None:
     assert fqp_adequate(rule, complete_fqp_evidence()) is True
 
 
-# ---------------------------------------------------------------------------
-# §15.3 prohibited proofs — each alone => not adequate
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("proof", list(ProhibitedProof), ids=lambda p: p.value)
 def test_each_prohibited_proof_alone_is_inadequate(proof: ProhibitedProof) -> None:
     """(§15.3 verbatim) Any of the 7 prohibited proofs as the sole basis => not adequate."""
-    # Even with every positive conjunct set, a sole prohibited basis fails closed.
     evidence = complete_fqp_evidence(sole_prohibited_basis=proof)
     assert fqp_adequate(fqp_rule(), evidence) is False
 
@@ -50,10 +35,6 @@ def test_all_seven_prohibited_proofs_covered() -> None:
     """(§15.3) The parametrization exercises exactly the 7 prohibited proofs."""
     assert len(list(ProhibitedProof)) == 7
 
-
-# ---------------------------------------------------------------------------
-# §15.2 required conjuncts — each missing => not adequate (drop-one)
-# ---------------------------------------------------------------------------
 
 _CONJUNCTS = (
     "broker_order_identity_or_bounded_effect",
@@ -78,11 +59,6 @@ def test_false_required_conjunct_is_inadequate(conjunct: str) -> None:
     """(§15.2) A required conjunct explicitly False => not adequate."""
     evidence = complete_fqp_evidence(**{conjunct: False})
     assert fqp_adequate(fqp_rule(), evidence) is False
-
-
-# ---------------------------------------------------------------------------
-# §15.4 terminal event required
-# ---------------------------------------------------------------------------
 
 
 def test_no_terminal_marker_is_inadequate() -> None:

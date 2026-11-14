@@ -1,8 +1,4 @@
-"""Predicate-only temporal / authority rules (design #13 §6.3-§6.7; ARE-EV-008/010/011/012).
-
-Both-ways canaries + the forbidden-verb canaries: "revive" (§6.6 non-revival), "release"
-(§6.6 economic continuity), "create" (§6.7 all-false authority). Closes no ARE-EV.
-"""
+"""Predicate-only temporal / authority rules (design #13 §6.3-§6.7; ARE-EV-008/010/011/012)."""
 
 from __future__ import annotations
 
@@ -26,10 +22,6 @@ from tos.are import (
 
 from ._are_strategies import cancellation_inputs, issue_decision
 
-# ---------------------------------------------------------------------------
-# non_cyclic_binding (§6.3 / §16) — forward-only
-# ---------------------------------------------------------------------------
-
 
 def test_decision_is_non_cyclic_forward_only() -> None:
     """(canary +) The forward-only decision carries no reservation-binding field => True."""
@@ -45,11 +37,6 @@ def test_decision_carries_no_reservation_coordinate() -> None:
         "bound_generation",
     ):
         assert forbidden not in fields
-
-
-# ---------------------------------------------------------------------------
-# concurrent_not_reservation (§6.3 / §18 line 448)
-# ---------------------------------------------------------------------------
 
 
 def test_rcl_serialization_is_the_only_reservation() -> None:
@@ -78,11 +65,6 @@ def test_observed_headroom_is_not_a_reservation() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# decision_generation_monotone (§3.2 ordering REUSE)
-# ---------------------------------------------------------------------------
-
-
 def test_generation_ordering_is_monotone() -> None:
     """(canary +) An earlier quorum index precedes a later one (append-only order)."""
     a = OrderingEvent(event_id="a", quorum_commit_index=1)
@@ -96,11 +78,6 @@ def test_ambiguous_ordering_fails_closed() -> None:
     a = OrderingEvent(event_id="a")
     b = OrderingEvent(event_id="b")
     assert decision_generation_monotone(a, b) is False
-
-
-# ---------------------------------------------------------------------------
-# currentness_invalidation (§6.4 / §17)
-# ---------------------------------------------------------------------------
 
 
 def test_material_change_invalidates() -> None:
@@ -143,19 +120,9 @@ def test_no_change_and_positive_currentness_stays_current() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# non_revival_holds (§6.6 / §21) — "revive" verb
-# ---------------------------------------------------------------------------
-
-
 def test_non_revival_is_unconditional() -> None:
     """(canary 'revive' §21 line 500) Nothing revives a prior decision — unconditionally True."""
     assert non_revival_holds() is True
-
-
-# ---------------------------------------------------------------------------
-# economic_effect_persists (§6.6 / §20) — "release" verb
-# ---------------------------------------------------------------------------
 
 
 def test_missing_ack_does_not_release_capacity() -> None:
@@ -167,11 +134,6 @@ def test_missing_ack_does_not_release_capacity() -> None:
 def test_proven_terminal_release_ends_persistence() -> None:
     """(§20 line 482) A positively proven defined RCL transition releases (persistence ends)."""
     assert economic_effect_persists(terminal_release_proven=True) is False
-
-
-# ---------------------------------------------------------------------------
-# protective_creates_nothing (§6.5 / ARE-INV-012)
-# ---------------------------------------------------------------------------
 
 
 def test_protective_label_creates_nothing() -> None:
@@ -213,11 +175,6 @@ def test_protective_unknown_creation_fails_closed() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# grants_no_authority + all-false (§6.7 / ARE-INV-009) — "create" verb
-# ---------------------------------------------------------------------------
-
-
 def test_default_authority_grants_nothing() -> None:
     """(canary +) A default all-false authority effect grants nothing => True."""
     assert grants_no_authority(AggregateRiskAuthorityEffect()) is True
@@ -239,11 +196,6 @@ def test_true_authority_flag_is_unconstructable() -> None:
         raise AssertionError(
             f"AggregateRiskAuthorityEffect({field}=True) must be unconstructable"
         )
-
-
-# ---------------------------------------------------------------------------
-# cancellation-arbiter produced flags (§3.4)
-# ---------------------------------------------------------------------------
 
 
 def test_cancellation_flags_polarity() -> None:

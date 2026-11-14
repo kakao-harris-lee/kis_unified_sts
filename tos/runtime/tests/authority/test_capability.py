@@ -80,8 +80,7 @@ def test_capability_valid_true_when_every_condition_holds(
 def test_capability_valid_false_when_time_not_trusted(
     epoch_service: SafetyAuthorityEpochService,
 ) -> None:
-    """No witness (time service never evaluated to TRUSTED) => not admissible
-    for a NORMAL_RISK_INCREASING capability, which requires an online witness."""
+    """No witness (time service never evaluated to TRUSTED) => not admissible"""
     _admit_epoch(epoch_service)
     capability = _issue_capability(epoch=1)
 
@@ -103,7 +102,6 @@ def test_capability_valid_false_when_epoch_stale(
     epoch_service: SafetyAuthorityEpochService, time_service: TrustworthyTimeService
 ) -> None:
     make_trusted(time_service)
-    # No transition ever issued => current_epoch_floor is None => fenced.
     capability = _issue_capability(epoch=1)
 
     assert (

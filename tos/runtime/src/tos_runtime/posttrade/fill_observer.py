@@ -1,73 +1,4 @@
-"""Post-ACK fill observer for the KIS 모의투자 stock order path (PR-3b, rescope plan §3 M2).
-
-``KisMockTransport`` maps an order reply to ``ACK``/``REJECT``/``UNKNOWN``/``TIMEOUT`` only; what
-happens to an ACKed order afterwards is only visible on 주식일별주문체결조회 (``VTTC0081R``, GET,
-mock host). This module polls that TR for the ODNOs this runtime holds an ACK for, and turns what
-it reads into ``PARTIAL_FILL``/``FULL_FILL``/``CANCEL_ACK``/``UNKNOWN`` results for the engine's
-normal result path (``EGRESS_RESULT`` through the durable inbox, then finality and release).
-
-**What it tracks comes from durable evidence, not memory.** An attempt is tracked when an
-``EGRESS_RESULT_CONSUMED`` row records its ``ACK`` with an ODNO and a trading date. What was already
-reported is the latest recorded result for that attempt, so a restart re-derives the same picture
-and an execution observed twice is reported once. An ACK missing either one is not tracked, and
-one ``FILL_OBSERVER_ACK_UNTRACKABLE`` row says why — never a silent skip (:meth:`_trackable`).
-
-**Two separate "done"s (PR-3b review HIGH 1).** The broker side is done when a terminal result
-(``FULL_FILL``/``CANCEL_ACK``/``EXPIRED``/``REJECT``) is recorded — the observer stops reading the
-broker for it. The capacity side is done only when the RCL holds the attempt's release command
-(:func:`~tos_runtime.posttrade.release_consumer.release_command_id`). Between the two — the process
-died after the engine consumed the result but before finality ran, or reconciliation / the RCL CAS
-refused the release — the observer re-runs finality from the recorded result every
-``finality_retry_interval_ms`` (``reproject``), never re-feeding the fill to the engine, until the
-release commits.
-
-**Only an engine that holds the reservation is fed.** The boot replay rebuilds the engine's
-projection (#944), so a pre-restart ACK's fill is fed and released once. One the projection still
-lacks (truncated replay window; send interrupted before its receipt) would be an orphan live and
-``APPLIED`` on the next replay (``EngineReplayDiverged``): it is not enqueued, one
-``FILL_OBSERVER_ENGINE_RESERVATION_ABSENT`` row records what the broker showed, the capacity stays
-held, and polling stops until a boot's projection holds it (``_apply_absent_rows``).
-
-**Each ACK is read under its own trading date (review MEDIUM).** VTTC0081R takes the date, so an
-ACK from an earlier day — the runtime was down across the KST date boundary — is still read, and
-reconciled, under its ``ord_dt``; a read that fails is recorded, and the attempt still goes
-overdue. Nothing is skipped silently.
-
-**Attribution.** A row belongs to an attempt only when its ``odno`` equals the ACK's ODNO (both
-sides canonicalized: whitespace and leading zeros dropped, ASCII digits only — measured
-encodings differ, ``tools/broker_probes/probes_order.py::odno_key``) AND its ``ord_dt`` equals the
-ACK's trading date (a KIS ODNO is a per-day sequence). The emitted result carries the ACK's ODNO
-and date verbatim, so every receipt of the attempt names one broker order. A row that matches no
-ACK this runtime recorded is recorded as ``FILL_OBSERVER_UNATTRIBUTED_ORDER`` and never enqueued —
-and the release reconciliation then sees it as an orphan broker order, which blocks release.
-
-**Fail closed.** A row that does not name this attempt's instrument (``pdno``; review HIGH 2 — the
-witness refuses such a read outright as well), a row whose ``ord_qty`` is not the attempt's sealed quantity
-(``SEND_SEALED``), whose quantities do not parse or do not add up (``tot_ccld_qty + rmn_qty !=
-ord_qty``), a rejected quantity, two rows for one ODNO, or a filled quantity smaller than one
-already reported → ``UNKNOWN`` (the engine quarantines). Never a guessed fill. No row for the ODNO
-yet is not evidence of anything: nothing is emitted, and after ``overdue_after_ms`` one
-``FILL_OBSERVER_OVERDUE`` row is recorded — a warning; reading continues.
-
-**Cancels are held, not released (Codex r2 HIGH 1, scope narrowed by the operator).** Any cancel
-— ``cncl_yn=Y`` on the order's row, or a separate row whose ``orgn_odno`` is the order — gets one
-durable ``FILL_OBSERVER_CANCEL_UNSUPPORTED`` row with the observed rows; nothing is fed to the
-engine or released, and polling stops. The cancel → non-execution proof → release path waits for a
-모의 cancel probe to measure the real row shape.
-
-GET only, mock host only: the reads go through
-:meth:`~tos_runtime.recon.witness_kis.KisStockBrokerWitness.order_rows`, whose host and TR id are
-sealed at load (mock ``V``-prefixed TR, the order transport's own mock host). This module never
-sends anything to a broker.
-
-**FETCH / APPLY (issue #950).** :meth:`KisMockFillObserver.poll_if_due` — the session loop's
-call — never waits on the broker: the reads run on one worker thread
-(:mod:`tos_runtime.posttrade.fill_fetch`, which also prefetches the release reconciliation's
-broker snapshot) and everything else above runs on the loop thread when the result comes back.
-:meth:`KisMockFillObserver.poll_once` runs the same steps back to back on the calling thread.
-
-Firewall: stdlib + ``tos.engine`` + ``tos_runtime.*`` only.
-"""
+"""Post-ACK fill observer for the KIS 모의투자 stock order path (PR-3b, rescope plan §3 M2)."""
 
 from __future__ import annotations
 
@@ -135,23 +66,12 @@ FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND = "FILL_OBSERVER_ENGINE_RESERVATION
 FILL_OBSERVER_ACK_UNTRACKABLE_KIND = "FILL_OBSERVER_ACK_UNTRACKABLE"
 FILL_OBSERVER_FINALITY_STUCK_KIND = "FILL_OBSERVER_FINALITY_STUCK"
 FILL_OBSERVER_CANCEL_UNSUPPORTED_KIND = "FILL_OBSERVER_CANCEL_UNSUPPORTED"
-#: One per reconciliation answered from (``served``) or refused by the age limit of
-#: (``expired``) a prefetched release snapshot — its real read instants and age (#969 r1 HIGH).
 FILL_OBSERVER_RELEASE_SNAPSHOT_KIND = "FILL_OBSERVER_RELEASE_SNAPSHOT"
 
-#: Classifier reasons that are a cancel (Codex r2 HIGH 1, operator-narrowed scope): an unfilled
-#: cancel, a cancel after a partial fill, and a separate row whose ``orgn_odno`` points at the
-#: order (how a KIS cancel/modify most likely arrives — unmeasured on 모의). The cancel →
-#: non-execution proof → release path is NOT built in PR-3b: such an attempt gets one durable
-#: ``FILL_OBSERVER_CANCEL_UNSUPPORTED`` hold with the observed rows — nothing is fed to the engine,
-#: nothing released, no retry — until a 모의 cancel probe measures the real row shape (issue #948).
 _CANCEL_REASONS = frozenset(
     {"cancelled_unfilled", "cancelled_after_fill", "derived_order_row"}
 )
 
-#: Release hold reasons a finality re-run cannot change (PR-3b r2 claim 1): the re-run stops and
-#: one ``FILL_OBSERVER_FINALITY_STUCK`` row names the reason. Every other hold — reconciliation
-#: unavailable or not corroborated, an RCL CAS/state refusal — is retried until it commits.
 _PERMANENT_HOLD_REASONS = frozenset(
     {
         "NO_WITNESS",
@@ -174,15 +94,10 @@ _TERMINAL_KINDS = frozenset(
 )
 
 
-#: Feeds one result into the engine and returns its disposition (compose supplies it).
 ResultSink = Callable[[EgressResultPayload], "ResultDisposition | None"]
-#: Re-runs finality for an already-recorded terminal result; ``True`` iff the RCL committed.
 Reprojector = Callable[[EgressResultPayload], "bool | None"]
-#: Whether the RCL holds ``attempt_id``'s release command.
 ReleaseCommitted = Callable[[str], bool]
-#: Whether the live engine holds ``attempt_id``'s reservation (module docstring).
 EngineHolds = Callable[[str], bool]
-#: Today's trusted KST trading date (``YYYYMMDD``), or ``None`` when untrusted.
 TradingDate = Callable[[], "str | None"]
 
 
@@ -199,18 +114,12 @@ class _Tracked:
     last_remaining: Decimal | None = None
     max_filled: Decimal = Decimal("0")
     terminal: bool = False
-    #: The RCL holds this attempt's release command (capacity side done).
     released: bool = False
-    #: A finality re-run hit a permanent hold; recorded once, never re-run again.
     stuck: bool = False
-    #: Terminal by a HOLD, not by an engine receipt — the engine held no reservation for it, or
-    #: the broker showed a cancel — so never re-projected (there is no receipt to project from).
     held_terminal: bool = False
-    #: ``(kind, filled, remaining)`` already recorded as ``ENGINE_RESERVATION_ABSENT``.
     absent_signatures: set[tuple[str, str | None, str | None]] = field(
         default_factory=set
     )
-    #: ``SEND_SEALED.send_seal.outbound_quantity`` — what was actually put on the wire.
     sealed_quantity: Decimal | None = None
 
 
@@ -222,9 +131,7 @@ class FillPollReport:
     emitted: tuple[tuple[str, EgressResultKind, ResultDisposition | None], ...] = ()
     unattributed: tuple[str, ...] = ()
     read_failed: bool = False
-    #: ``(attempt_id, rcl_released)`` for every finality re-run this poll made.
     reprojected: tuple[tuple[str, bool | None], ...] = ()
-    #: ``(attempt_id, kind)`` observed but NOT fed: the engine holds no such reservation.
     held: tuple[tuple[str, EgressResultKind], ...] = ()
 
 
@@ -239,8 +146,7 @@ def _decimal(value: object) -> Decimal | None:
 
 @dataclass
 class KisMockFillObserver:
-    """Polls ``VTTC0081R`` for ACKed ODNOs and feeds what it reads to the engine (module
-    docstring)."""
+    """Polls ``VTTC0081R`` for ACKed ODNOs and feeds what it reads to the engine (module"""
 
     config: FillObserverConfig
     orders: OrderRowsReader
@@ -253,23 +159,13 @@ class KisMockFillObserver:
     monotonic: MonotonicSource
     account: str
     instrument: str
-    #: The release reconciliation's snapshot prefetch (``fill_fetch`` module docstring);
-    #: ``None`` = no prefetch, the release path reads the broker live.
     snapshots: SnapshotPrefetcher | None = None
-    #: Optional stock CLOSE-proof polling path; compose supplies all three hooks only when the
-    #: configured cadence and cache are available. The cache remains loop-thread-owned.
     held_position_tip: Callable[[], tuple[int, int | None] | None] | None = None
-    #: Whether this stock scope currently has exactly one eligible POSITION_CONSUMED entry.
-    #: Missing/unreadable eligibility disables periodic risk reads.
     held_position_eligible: Callable[[], bool] | None = None
-    #: The cache invalidates its previous proof and returns a token at plan time; only the
-    #: result carrying this token may publish into that one-use cell.
     mark_held_position_pending: Callable[[WitnessScope | None], int | None] | None = (
         None
     )
     publish_held_position_snapshot: Callable[[HeldPositionSnapshot], None] | None = None
-    #: Deferred entry-discharge recovery (issue #1004). The resume callback runs only while an
-    #: exact release-scope snapshot is being served on this loop thread.
     pending_recovery_attempt_ids: Callable[[], tuple[str, ...]] | None = None
     resume_entry_discharge: Callable[[str], object] | None = None
     _last_poll_ms: int | None = field(default=None, init=False)
@@ -281,7 +177,6 @@ class KisMockFillObserver:
     _last_read_failed: bool = field(default=False, init=False)
     _runner: FetchRunner | None = field(default=None, init=False)
     _closed: bool = field(default=False, init=False)
-    #: Issue #971 re-read backoff state (``_record_snapshot_uses``).
     _reread_now: bool = field(default=False, init=False)
     _expired_run: int = field(default=0, init=False)
     _expired_run_date: str | None = field(default=None, init=False)
@@ -289,19 +184,8 @@ class KisMockFillObserver:
     _last_recovery_resume_ms: dict[str, int] = field(default_factory=dict, init=False)
     _preempted_for_fill: bool = field(default=False, init=False)
 
-    # -- entry points --------------------------------------------------------------------
-
     def poll_if_due(self) -> FillPollReport:
-        """The session loop's call (issue #950): never waits on the broker.
-
-        Per pass, in order: a FETCH that has finished is APPLIED here, on this (the loop's)
-        thread, and its report returned; a FETCH still in flight means nothing more this pass;
-        otherwise, once ``poll_interval_ms`` has passed since the last poll, the next
-        :class:`~tos_runtime.posttrade.fill_fetch.FetchPlan` is built from durable evidence and
-        handed to the FETCH worker. Only the broker reads leave this thread — every evidence
-        row, every engine call, finality and release stay on it. After :meth:`close` this does
-        nothing at all.
-        """
+        """The session loop's call (issue #950): never waits on the broker."""
         if self._closed:
             return FillPollReport(polled=False)
         if self._runner is None:
@@ -311,13 +195,9 @@ class KisMockFillObserver:
             return self._apply(done)
         if self._runner.busy:
             if preempt_risk_only_fetch(self, self._runner):
-                # Do not make newly durable fill work wait behind optional paced reads. The
-                # worker checks its abort predicate between pages; this loop performs no GET.
                 self._preempted_for_fill = True
             return FillPollReport(polled=False)
         if self._runner.has_job:
-            # The worker finished after ``take_done`` observed it running. Keep its result for
-            # the next pass instead of submitting over an un-applied Future.
             return FillPollReport(polled=False)
         now = self.monotonic.now_ms()
         preempted_for_fill, self._preempted_for_fill = self._preempted_for_fill, False
@@ -333,40 +213,24 @@ class KisMockFillObserver:
         return FillPollReport(polled=False)
 
     def poll_once(self) -> FillPollReport:
-        """One whole pass on the CALLING thread: plan, FETCH, APPLY — the same three steps
-        :meth:`poll_if_due` spreads over two threads, run back to back. No GET at all when no
-        ACKed attempt is outstanding on the broker side and no finality re-run is due.
-
-        **The read phase is bounded by ``poll_deadline_ms``** (#949 review HIGH). The deadline
-        is fixed when the plan is built and handed to every order read; the WITNESS asks it
-        before each page of each date's walk — page 0 included, so a date whose turn comes too
-        late costs nothing. Once it is past, nothing further is read and whatever was not read
-        is ``WitnessUnavailable`` — recorded once, fail-closed, retried at the next due poll. It
-        can never turn into a partial row list. A request already in flight is bounded by
-        ``witness_request_timeout_s``.
-        """
+        """One whole pass on the CALLING thread: plan, FETCH, APPLY — the same three steps"""
         plan = self._plan()
         if plan is None:
             return FillPollReport(polled=False)
         return self._apply(self._fetch(plan, lambda: False))
 
     def close(self) -> None:
-        """Stop the FETCH worker with the session (issue #950): the in-flight read stops at its
-        next page, the worker is joined, and its result is dropped — never applied. Idempotent;
-        :meth:`poll_if_due` is a no-op afterwards."""
+        """Stop the FETCH worker with the session (issue #950): the in-flight read stops at its"""
         self._closed = True
         if self._runner is not None:
             self._runner.close()
-
-    # -- plan (loop thread) / FETCH (worker) / APPLY (loop thread) ------------------------
 
     def _plan(self) -> FetchPlan | None:
         """Build the next worker plan from durable attempts and configured independent polls."""
         return build_fetch_plan(self)
 
     def _fetch(self, plan: FetchPlan, stop: Callable[[], bool]) -> FetchResult:
-        """FETCH: :func:`~tos_runtime.posttrade.fill_fetch.run_fetch` over this observer's
-        witness — network only, no observer state touched."""
+        """FETCH: :func:`~tos_runtime.posttrade.fill_fetch.run_fetch` over this observer's"""
         return run_fetch(
             plan,
             orders=self.orders,
@@ -376,16 +240,11 @@ class KisMockFillObserver:
         )
 
     def _apply(self, result: FetchResult) -> FillPollReport:
-        """APPLY one FETCH's result, on the calling (loop) thread. The durable picture is
-        re-derived first, so an attempt that turned terminal since the plan is left alone. The
-        prefetched snapshot is served to every reconciliation this APPLY triggers."""
+        """APPLY one FETCH's result, on the calling (loop) thread. The durable picture is"""
         if (
             result.held_position_snapshot is not None
             and self.publish_held_position_snapshot is not None
         ):
-            # Publish before recovery/finality/engine mutations in this APPLY. The receiver can
-            # compare the plan's RCL generation with the current tip; a later consumer must
-            # recheck it too. This callback is never invoked on the worker thread.
             self.publish_held_position_snapshot(result.held_position_snapshot)
         tracked = self._tracked_attempts()
         emitted: list[tuple[str, EgressResultKind, ResultDisposition | None]] = []
@@ -453,9 +312,7 @@ class KisMockFillObserver:
         )
 
     def _record_snapshot_uses(self, uses: list[SnapshotUse]) -> None:
-        """One row per snapshot use (read instants, age, ``read_ok``, run so far). Only a run's
-        FIRST expiry re-reads at once, the rest wait ``finality_retry_interval_ms`` (#971); only
-        a SUCCESSFUL served read ends a run; a new trading date starts one."""
+        """One row per snapshot use (read instants, age, ``read_ok``, run so far). Only a run's"""
         for use in uses:
             read_ok = not isinstance(use.snapshot.outcome, WitnessUnavailable)
             if use.snapshot.today != self._expired_run_date:
@@ -483,8 +340,7 @@ class KisMockFillObserver:
     def _read_failed(
         self, date: str, attempts: list[_Tracked], exc: WitnessUnavailable
     ) -> None:
-        """Record a failed read once per failure streak — and still run the overdue check: a
-        read that keeps failing must surface, never go quiet."""
+        """Record a failed read once per failure streak — and still run the overdue check: a"""
         if not self._last_read_failed:
             self._record(
                 FILL_OBSERVER_READ_FAILED_KIND,
@@ -527,7 +383,6 @@ class KisMockFillObserver:
                 },
             )
             if payload.kind in _TERMINAL_KINDS:
-                # The sink runs finality right now; the retry clock starts here, not at zero.
                 self._last_reproject_ms[attempt.attempt_id] = self.monotonic.now_ms()
             disposition = self.result_sink(payload)
             emitted.append((attempt.attempt_id, payload.kind, disposition))
@@ -536,8 +391,7 @@ class KisMockFillObserver:
     def _hold_cancel(
         self, attempt: _Tracked, rows: tuple[KisOrderRow, ...], reason: str
     ) -> None:
-        """One durable ``FILL_OBSERVER_CANCEL_UNSUPPORTED`` hold with what the broker showed
-        (the ``_CANCEL_REASONS`` note): the reservation stays held, polling stops."""
+        """One durable ``FILL_OBSERVER_CANCEL_UNSUPPORTED`` hold with what the broker showed"""
         key = odno_key(attempt.odno)
         observed = [
             {
@@ -570,9 +424,7 @@ class KisMockFillObserver:
     def _hold_absent(
         self, attempt: _Tracked, payload: EgressResultPayload, reason: str
     ) -> None:
-        """Record — once per distinct observation — what the broker showed for an attempt the
-        engine does not hold (module docstring). Nothing is enqueued, nothing released.
-        """
+        """Record — once per distinct observation — what the broker showed for an attempt the"""
         signature = (
             payload.kind.value,
             _text(payload.filled_quantity),
@@ -595,10 +447,7 @@ class KisMockFillObserver:
         attempt.absent_signatures.add(signature)
 
     def _due_reprojects(self, tracked: dict[str, _Tracked]) -> tuple[str, ...]:
-        """Attempts whose terminal result is recorded but whose release the RCL does not hold
-        yet, and whose ``finality_retry_interval_ms`` has passed (module docstring "Two
-        separate 'done's"). Their clock starts at planning, so a FETCH in flight is not
-        re-planned for them."""
+        """Attempts whose terminal result is recorded but whose release the RCL does not hold"""
         now = self.monotonic.now_ms()
         reread_now, self._reread_now = self._reread_now, False
         due = []
@@ -652,8 +501,6 @@ class KisMockFillObserver:
                 },
             )
             attempt.stuck = True
-
-    # -- durable picture -------------------------------------------------------------------
 
     def _tracked_attempts(self) -> dict[str, _Tracked]:
         placeholders = ",".join("?" for _ in _RESULT_KINDS)
@@ -722,12 +569,7 @@ class KisMockFillObserver:
         return tracked
 
     def _trackable(self, attempt_id: str, odno: str, trading_date: Any) -> bool:
-        """An ACK that cannot be joined to a broker row by ODNO is never tracked; one
-        ``FILL_OBSERVER_ACK_UNTRACKABLE`` row names the reason, so the hold is visible:
-        ``odno_no_digits`` (``odno_key`` is ``None``, e.g. all zeros — it would match every row
-        that also has none, Claude review LOW 3) or ``no_trading_date`` (an ODNO is a per-day
-        sequence; a silent guard dropped such an ACK until 2026-11-05, when the first stock MOCK
-        order's fill stayed unobserved 6.5 h). No date is invented in its place."""
+        """An ACK that cannot be joined to a broker row by ODNO is never tracked; one"""
         dated = isinstance(trading_date, str)
         if dated and odno_key(odno) is not None:
             return True
@@ -744,9 +586,7 @@ class KisMockFillObserver:
         return False
 
     def _apply_absent_rows(self, tracked: dict[str, _Tracked]) -> None:
-        """An ``ENGINE_RESERVATION_ABSENT`` row holds only while the engine lacks the attempt
-        (#944): once a rebuilt projection holds it, the fill is read again, fed, released once.
-        """
+        """An ``ENGINE_RESERVATION_ABSENT`` row holds only while the engine lacks the attempt"""
         rows = self.evidence_store.connection.execute(
             "SELECT payload_json FROM entries WHERE kind = ?",
             (FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND,),
@@ -827,8 +667,6 @@ class KisMockFillObserver:
             labels.add(f"{row.get('broker_execution_id')}@{row.get('order_date')}")
         return labels
 
-    # -- one attempt -------------------------------------------------------------------
-
     def _classify(
         self, attempt: _Tracked, rows: tuple[KisOrderRow, ...]
     ) -> tuple[EgressResultPayload | None, str]:
@@ -848,27 +686,19 @@ class KisMockFillObserver:
             return None, "not_visible"
         cancel_reason = self._cancel_reason(mine, derived)
         if cancel_reason is not None:
-            # Codex r3 MEDIUM: an attributed cancel is decided FIRST — before the ambiguity
-            # check and before the UNKNOWN de-duplication, either of which used to swallow it
-            # (a derived-only cancel read as "ambiguous"; a cancel after an earlier UNKNOWN
-            # produced no payload at all, so no hold was ever recorded).
             return self._cancel_marker(attempt), cancel_reason
         if len(mine) != 1:
             return self._unknown(attempt, "ambiguous_rows")
         if mine[0].pdno != self.instrument:
-            # Review HIGH 2: the ODNO and date say "ours", the instrument does not — a row for
-            # another symbol (or naming none) never proves this attempt's fill.
             return self._unknown(attempt, "instrument_mismatch")
         if (
             attempt.sealed_quantity is None
             or mine[0].ord_qty != attempt.sealed_quantity
         ):
-            # The row's 주문수량 must be what this attempt sealed and sent — otherwise it is not
-            # this order as we know it, whatever its number says.
             return self._unknown(attempt, "ordered_quantity_mismatch")
         kind, filled, remaining, reason = _fill_state(mine[0])
         if kind is None:
-            return None, reason  # still working, nothing executed yet
+            return None, reason
         if kind is EgressResultKind.UNKNOWN:
             return self._unknown(attempt, reason)
         if filled is not None and filled < attempt.max_filled:
@@ -884,9 +714,7 @@ class KisMockFillObserver:
     def _cancel_reason(
         self, mine: list[KisOrderRow], derived: list[KisOrderRow]
     ) -> str | None:
-        """Which ``_CANCEL_REASONS`` member the attributed rows show, or ``None``. Only rows
-        naming this attempt's instrument count — a row for another symbol is never a cancel of
-        this order (it stays the instrument-mismatch path)."""
+        """Which ``_CANCEL_REASONS`` member the attributed rows show, or ``None``. Only rows"""
         ours = [r for r in mine if r.pdno == self.instrument]
         cancelled = [r for r in ours if r.cancelled]
         if any(r.pdno == self.instrument for r in derived):
@@ -899,8 +727,7 @@ class KisMockFillObserver:
         return "cancelled_after_fill"
 
     def _cancel_marker(self, attempt: _Tracked) -> EgressResultPayload:
-        """A ``CANCEL_ACK``-shaped marker the emit step routes to the cancel hold — it is never
-        fed to the engine."""
+        """A ``CANCEL_ACK``-shaped marker the emit step routes to the cancel hold — it is never"""
         return self._payload(attempt, EgressResultKind.CANCEL_ACK, None, None)
 
     def _unknown(
@@ -928,8 +755,7 @@ class KisMockFillObserver:
         )
 
     def _check_overdue(self, attempt: _Tracked) -> None:
-        """One ``FILL_OBSERVER_OVERDUE`` row per attempt, ever: the wait clock is process-local,
-        the "already recorded" check is durable."""
+        """One ``FILL_OBSERVER_OVERDUE`` row per attempt, ever: the wait clock is process-local,"""
         now = self.monotonic.now_ms()
         first = self._first_pending_ms.setdefault(attempt.attempt_id, now)
         if now - first < self.config.overdue_after_ms:
@@ -975,9 +801,7 @@ def _reprojectable(attempt: _Tracked) -> bool:
 def _fill_state(
     row: KisOrderRow,
 ) -> tuple[EgressResultKind | None, Decimal | None, Decimal | None, str]:
-    """``(kind, filled, remaining, reason)`` for one attributed row (module docstring's
-    fail-closed list). ``kind is None`` means the order is still working with nothing executed.
-    """
+    """``(kind, filled, remaining, reason)`` for one attributed row (module docstring's"""
     ordered, filled, remaining = row.ord_qty, row.tot_ccld_qty, row.rmn_qty
     if ordered is None or filled is None or remaining is None:
         return EgressResultKind.UNKNOWN, None, None, "quantity_unparseable"

@@ -1,11 +1,4 @@
-"""ERI-EV-004 (core) — duplicate / conflict / continuity (design #4 §4.2, §12).
-
-The central ledger predicate: because ``evidence_record_id`` is orthogonal to
-``canonical_digest``, a same-id / different-bytes pair is a Critical integrity
-conflict (both observations preserved), a same-idempotency / same-bytes pair is
-an idempotent duplicate, and a same-idempotency / different-bytes pair is a
-divergent emission. This is exactly what ``id = f(digest)`` would make vacuous.
-"""
+"""ERI-EV-004 (core) — duplicate / conflict / continuity (design #4 §4.2, §12)."""
 
 from __future__ import annotations
 
@@ -58,8 +51,6 @@ def test_same_id_same_bytes_is_idempotent_dup() -> None:
     """(MINOR-1) Same record id + same bytes is a duplicate, not a false DISTINCT."""
     a = issue_envelope(evidence_record_id="er-1", idempotency_id="idem-A")
     b = issue_envelope(evidence_record_id="er-1", idempotency_id="idem-B")
-    # Same record id, identical canonical bytes, different idempotency id: a
-    # duplicate observation of one record (must not classify as DISTINCT).
     assert a.canonical_digest == b.canonical_digest
     assert classify_record_pair(a, b) is RecordPairKind.IDEMPOTENT_DUP
 
@@ -71,9 +62,7 @@ def test_draft_records_are_not_comparable() -> None:
     d1 = SafetyEvidenceEnvelope(evidence_record_id="er-1")
     d2 = SafetyEvidenceEnvelope(evidence_record_id="er-1")
     assert d1.canonical_digest is None
-    # Two DRAFTs sharing a record id must NOT be reported as a Critical conflict.
     assert classify_record_pair(d1, d2) is RecordPairKind.NOT_COMPARABLE
-    # A DRAFT vs an ISSUED record is likewise not comparable.
     issued = issue_envelope(evidence_record_id="er-1")
     assert classify_record_pair(d1, issued) is RecordPairKind.NOT_COMPARABLE
 
@@ -91,7 +80,6 @@ def test_conflict_preserves_both_observations() -> None:
     """A conflict contains + preserves both records; neither is merged/overwritten."""
     a = issue_envelope(evidence_record_id="er-1", record_class="INTENT")
     b = issue_envelope(evidence_record_id="er-1", record_class="APPROVAL")
-    # Frozen models: both remain independently inspectable (no last-write-wins merge).
     assert is_critical_conflict(a, b)
     assert a.record_class == "INTENT"
     assert b.record_class == "APPROVAL"
@@ -122,6 +110,5 @@ def test_continuity_reset_yields_distinct_identity() -> None:
             process_continuity_id="cont-2",
         ),
     )
-    # Different continuity is a covered change => different digest (not reconciled away).
     assert a.canonical_digest != b.canonical_digest
     assert classify_record_pair(a, b) is RecordPairKind.DISTINCT

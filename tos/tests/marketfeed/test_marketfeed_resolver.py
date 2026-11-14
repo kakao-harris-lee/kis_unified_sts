@@ -1,19 +1,4 @@
-"""§7.2-6/-11 — the resolver: binding integrity, ∅ both ways, and the D-E1 slot (design #32 §3.3).
-
-:class:`~tos.marketfeed.MarketFeedContextResolver` fills the plug D-E1 declared but deliberately
-left empty (``core.py:86-105`` — "the slot only"). These tests exercise the four gates that make it
-a resolver rather than an inventor:
-
-* it **binds exactly**: a snapshot whose id/digest disagree with the Capsule's ``SnapshotRef`` is
-  refused, never silently substituted with something more permissive (ADR-002-018 §15:386);
-* it **fails closed**: a store that produces nothing yields ``value_view=None``, and a ``None`` view
-  makes every value operand ``UNKNOWN`` — there is no last-known-good fallback (§14:367);
-* it **distinguishes ∅ both ways**: an explicit-empty view (bound, nothing admissible) and no view
-  at all are separate recorded dispositions, though both are equally restrictive;
-* it **invents nothing**: the payload it returns carries only what the injected surfaces supplied.
-
-Regime tag: authoring evidence only; closes no EV (design #32 §1.1).
-"""
+"""§7.2-6/-11 — the resolver: binding integrity, ∅ both ways, and the D-E1 slot (design #32 §3.3)."""
 
 from __future__ import annotations
 
@@ -61,11 +46,6 @@ def _resolver(
     )
 
 
-# ---------------------------------------------------------------------------
-# The D-E1 slot (design #32 §3.3; core.py:86-105)
-# ---------------------------------------------------------------------------
-
-
 def test_the_resolver_satisfies_the_shipped_engine_protocol() -> None:
     """(§3.3) ``(capsule, *, instrument_key) -> DecisionTickPayload`` — the declared slot, filled."""
     capsule, snapshot, candidates = one_bar()
@@ -92,11 +72,6 @@ def test_the_resolved_payload_carries_the_value_surface_d_e1_deferred() -> None:
     assert payload.value_view.snapshot_canonical_digest == snapshot.canonical_digest
 
 
-# ---------------------------------------------------------------------------
-# Binding integrity (design #32 §3.3 step 2; ADR-002-018 §15:386)
-# ---------------------------------------------------------------------------
-
-
 def test_a_snapshot_that_is_not_the_referenced_one_is_refused() -> None:
     """(§3.3 ★ mutation canary) A different snapshot body is never substituted for the bound one."""
     capsule, _, candidates = one_bar()
@@ -110,14 +85,7 @@ def test_a_snapshot_that_is_not_the_referenced_one_is_refused() -> None:
 
 
 def test_two_pre_issuance_artifacts_do_not_match_by_both_being_empty() -> None:
-    """(§3.3, review MINOR-2 N4) A DRAFT capsule against a DRAFT snapshot does not "agree".
-
-    Both artifacts are constructible pre-issuance through ordinary construction — ``status=DRAFT``
-    leaves ``snapshot_id`` and ``canonical_digest`` ``None`` on each — so "both sides are empty" is
-    a reachable input, not a hypothetical. It must not read as a match: an unissued snapshot is not
-    "exactly the referenced one" (ADR-002-018 §15:386). The reference-side concreteness guard is
-    what catches it, and the resolver turns it into a refused binding rather than an empty view.
-    """
+    """(§3.3, review MINOR-2 N4) A DRAFT capsule against a DRAFT snapshot does not "agree"."""
     from tos.capsule import CriticalInputSnapshot, DecisionContextCapsule
 
     draft_capsule = DecisionContextCapsule()
@@ -138,15 +106,7 @@ def test_two_pre_issuance_artifacts_do_not_match_by_both_being_empty() -> None:
 def test_a_pre_issuance_snapshot_against_a_concrete_reference_also_fails_closed() -> (
     None
 ):
-    """(§3.3, review MINOR-2 N4) The asymmetric half — and why its guard is an *equivalent* mutant.
-
-    Deleting the snapshot-side concreteness guard is provably behaviour-preserving: control reaches
-    it only once the reference side is concrete, and a concrete reference compared against any
-    ``None`` snapshot field is already unequal. This test therefore pins the *behaviour* (a DRAFT
-    body never binds) rather than pretending to kill a mutant that cannot be killed — the review's
-    N4 survivor is correctly classified as redundant defence, for this reason rather than for the
-    unreachability the review assumed. The source comment records the same proof.
-    """
+    """(§3.3, review MINOR-2 N4) The asymmetric half — and why its guard is an *equivalent* mutant."""
     from tos.capsule import CriticalInputSnapshot, DecisionContextCapsule
 
     capsule, snapshot, _ = one_bar()
@@ -189,11 +149,6 @@ def test_an_explicit_empty_view_is_published_and_distinguishable_from_no_view() 
     assert empty.value_surface_published is True
     assert ValueViewDisposition.EXPLICIT_EMPTY in ADMITTING_DISPOSITIONS
     assert ValueViewDisposition.BINDING_MISMATCH not in ADMITTING_DISPOSITIONS
-
-
-# ---------------------------------------------------------------------------
-# Injected time coordinates (design #32 §3.3 step 4)
-# ---------------------------------------------------------------------------
 
 
 def test_without_an_injected_projection_the_time_coordinates_deny() -> None:
@@ -261,11 +216,6 @@ def _admitting_time_inputs(as_of: int | None):
         uncertainty_interval=UncertaintyInterval(lo=anchor, hi=anchor + 100),
         health_state=HealthState.TRUSTED,
     )
-
-
-# ---------------------------------------------------------------------------
-# The resolver invents nothing (design #32 §3.3 ⚠; core.py:93-98)
-# ---------------------------------------------------------------------------
 
 
 def test_the_resolver_publishes_only_what_the_snapshot_governs() -> None:

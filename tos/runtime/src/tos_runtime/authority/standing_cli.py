@@ -1,20 +1,4 @@
-"""``tos-runtime write-standing-approval`` — writes the standing session approval artifact
-(:mod:`tos_runtime.authority.standing`) for one KIS MOCK stock tree and one trading date.
-
-Every bound except the operator's own choices (date, max quantity, which actions, uses per
-action) is derived from the RENDERED tree the runtime will boot from, never typed by hand:
-
-* MOCK class — ``broker_scopes.yaml`` active scope + its INSTANCE document through
-  :func:`~tos_runtime.brokercap.derive.is_mock_order_class`; any other tree is refused and
-  nothing is written;
-* ``code_digest`` — ``release.yaml``'s ``expected_code_digest`` (the release the runtime must be
-  admitted under);
-* ``trading_approval_policy_generation`` — ``authority.yaml``;
-* ``strategy_id`` — the tree's one admitted strategy (a content digest);
-* ``instrument`` / entry action — ``construction.yaml`` (instrument, action class, side);
-* exit side — the Order Construction Policy's ``(CLOSE, direction)`` shape; exit proposal
-  direction — the strategy's own ``CLOSE`` targets.
-"""
+"""``tos-runtime write-standing-approval`` — writes the standing session approval artifact"""
 
 from __future__ import annotations
 
@@ -178,11 +162,7 @@ def _action(
 
 
 def derive_standing_document(args: StandingApprovalArgs) -> dict[str, Any]:
-    """Build the artifact mapping for ``args`` (module docstring).
-
-    Raises:
-        StandingApprovalRefused: Not a MOCK tree, or a bound cannot be derived.
-    """
+    """Build the artifact mapping for ``args`` (module docstring)."""
     config_dir = args.config_dir
     scopes = load_broker_scopes(
         config_dir / _BROKER_SCOPES_CONFIG_NAME,
@@ -233,7 +213,7 @@ def write_standing_document(
         )
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     tmp = path.with_suffix(".yaml.tmp")
-    tmp.unlink(missing_ok=True)  # a stale tmp from an interrupted write; never followed
+    tmp.unlink(missing_ok=True)
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:

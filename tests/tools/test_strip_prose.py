@@ -15,6 +15,7 @@ import sys
 import textwrap
 from pathlib import Path
 
+import black
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -133,6 +134,44 @@ def test_docstring_with_a_backslash_keeps_its_value_exactly():
     assert sp.strip_source(stripped) == stripped
     assert ast.get_docstring(ast.parse(stripped).body[0]) == "Path C:\\\\x and more."  # type: ignore[arg-type]
     assert "prose" not in stripped
+
+
+@pytest.mark.parametrize(
+    "first",
+    [
+        '"real persistence" (VER line 151-153) is a filesystem fact.',
+        "``ObservationJournal`` terminates every row with ``\\n``.",
+        'outcome (the module docstring\'s own "held runtime" wording)',
+        '``optional_str``\'s "not isinstance(value, str)" branch',
+        'a line that ends with a quote: "so"',
+        "a line that ends with an apostrophe: 'so'",
+        'a line with """ in it',
+    ],
+)
+def test_the_emitted_literal_is_the_one_black_would_leave_alone(first):
+    """strip and black must agree on the quote, or they rewrite each other forever.
+
+    Black prefers ``"`` and switches to ``'`` only when ``"`` would need strictly more escapes,
+    and it inserts a space rather than let a quote sit against the opening delimiter. A literal
+    that disagrees survives one ``strip -> black`` round trip and comes back changed, which is
+    how the 2026-11-13 apply run found this.
+    """
+    literal = sp._literal(first)
+    assert ast.literal_eval(literal) == first
+    source = f"def f():\n    {literal}\n"
+    blackened = black.format_str(source, mode=black.Mode())
+    assert blackened == source, f"black rewrote {literal!r} to {blackened!r}"
+    assert sp.strip_source(blackened) == blackened
+
+
+def test_strip_and_black_settle_when_black_must_pad_a_trailing_quote():
+    """First line ``'"'"``: black flips to ``"`` and pads the closing quote with a space."""
+    source = 'def f():\n    """\'"\'"\n\n    more prose.\n    """\n'
+    once = black.format_str(sp.strip_source(source), mode=black.Mode())
+    twice = black.format_str(sp.strip_source(once), mode=black.Mode())
+    assert twice == once
+    assert sp.strip_source(once) == once
+    sp.verify_equivalent(source, once)
 
 
 def test_a_string_that_is_not_the_first_statement_is_untouched():

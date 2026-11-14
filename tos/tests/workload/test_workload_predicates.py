@@ -19,7 +19,7 @@ def test_mismatched_labels_are_inconsistent() -> None:
     [
         ("restricted-live", "production"),
         ("test", "paper"),
-        ("PAPER", "paper"),  # byte-exact only — no case-folding
+        ("PAPER", "paper"),
     ],
 )
 def test_distinct_labels_never_match(runtime_label: str, manifest_label: str) -> None:

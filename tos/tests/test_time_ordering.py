@@ -1,12 +1,4 @@
-"""Time ordering — REUSE promoted ``compare_order`` + MAJOR-1 frame separation.
-
-EV-L1 predicate substrate only; TIME-EV-007 remains NOT_IMPLEMENTED pending
-EV-L2/L3 fault injection. Time contributes NO new comparison logic; it maps
-snapshot coordinates onto ``tos.ordering.OrderingEvent`` with strict frame
-separation (time design §5). The MAJOR-1 property fixes that a monotonic-only
-cross-continuity pair is AMBIGUOUS — proving time never pushes the per-continuity
-monotonic frame onto the reference-frame interval branch.
-"""
+"""Time ordering — REUSE promoted ``compare_order`` + MAJOR-1 frame separation."""
 
 from __future__ import annotations
 
@@ -23,12 +15,7 @@ from tos.time import (
 
 @given(v1=st.integers(0, 10**6), v2=st.integers(0, 10**6))
 def test_major1_cross_continuity_monotonic_only_is_ambiguous(v1: int, v2: int) -> None:
-    """MAJOR-1: two cross-continuity monotonic-only events are always AMBIGUOUS.
-
-    The monotonic mapping leaves ``time_lo``/``time_hi`` None, so the un-guarded
-    reference-frame interval branch cannot order them — precisely the safety
-    property that stops monotonic values from being subtracted across continuities.
-    """
+    """MAJOR-1: two cross-continuity monotonic-only events are always AMBIGUOUS."""
     a = ordering_event_from_monotonic(
         MonotonicReading(monotonic_continuity_id="c1", local_monotonic_value=v1)
     )

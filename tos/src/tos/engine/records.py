@@ -1,24 +1,4 @@
-"""Engine models — events, injected coordinates, stage verdicts, the attempt request, evidence.
-
-The frozen data the single event core and the Execution Coordinator sequencer exchange (design
-#31 §5). Three shapes deserve attention:
-
-* :class:`InstrumentKey` — the **structurally derived** dispatch key (design #31 §3.3). It is
-  wildcard-free and ``None``-free by construction, mirroring the RFC-003 §9:279-283 Proposal
-  wildcard prohibition at the dispatch layer; the wildcard token set is *reused* from
-  :data:`tos.dsl.WILDCARD_TOKENS`, never re-authored.
-* :class:`EgressResultPayload` — carries a partial fill **as** a partial fill (RFC-005 §11:338-339,
-  §6:176-178). Its shape validator derives the fill/partial distinction from the magnitudes rather
-  than trusting the declared kind (구조 파생 > 자기신고).
-* :class:`AttemptRequest` — the Coordinator's only direct artifact (ADR-002-002 §11.3:599). Its
-  identity is **content-addressed** from (conformance-proof digest, Action Flow Permit identity,
-  injected reference coordinate); there is no uuid4 / timestamp nonce anywhere, so replay identity
-  survives (RFC-003 §10:360-363; design #31 §4.3 MAJOR-3).
-
-Every engine-emitted record carries :class:`~tos.engine._base.AllFalseCoordinatorAuthority`.
-
-Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #31 §0.3). No clock, no RNG.
-"""
+"""Engine models — events, injected coordinates, stage verdicts, the attempt request, evidence."""
 
 from __future__ import annotations
 
@@ -81,42 +61,20 @@ __all__ = [
     "event_identity",
 ]
 
-#: The content-addressed attempt-request id prefix (a design/config prefix, not a safety token —
-#: the ``tos.dsl`` ``prop`` / ``astrat`` precedent).
 ATTEMPT_ID_PREFIX = "attempt"
 
-#: The content-addressed event-identity prefix (Phase 3 A-K-1), the same
-#: ``derive_id(prefix, digest)`` binding as :data:`ATTEMPT_ID_PREFIX`.
 EVENT_ID_PREFIX = "event"
 
 
 def _is_wildcard_scope(value: str) -> bool:
-    """Whether a scope token is a wildcard / "latest" (RFC-003 §9:279-283 dispatch mirror).
-
-    Reuses :data:`tos.dsl.WILDCARD_TOKENS` — the shipped set the effect-free Proposal Builder
-    already rejects — rather than re-authoring one (design #31 §5.1 REUSE).
-
-    Args:
-        value: The scope token.
-
-    Returns:
-        ``True`` iff the token is a wildcard / "latest" form.
-    """
+    """Whether a scope token is a wildcard / "latest" (RFC-003 §9:279-283 dispatch mirror)."""
     if value in WILDCARD_TOKENS:
         return True
     return "*" in value or value.lower() == "latest"
 
 
 class InstrumentKey(FrozenModel):
-    """The structurally derived (account, instrument) dispatch key (design #31 §3.3 / D2).
-
-    Derived from the :class:`~tos.dsl.TargetSpec` an Authored Strategy declares — never
-    self-reported by a registrant (구조 파생 > 자기신고). ``account`` / ``instrument`` are
-    ``str | None`` on the TargetSpec (``vocabulary.py:204-205``); a ``None`` (wildcard) scope
-    cannot produce a key at all, which is why both fields here are required, non-empty, and
-    wildcard-free: the dispatch-layer mirror of the RFC-003 §9:279-283 Proposal wildcard
-    prohibition.
-    """
+    """The structurally derived (account, instrument) dispatch key (design #31 §3.3 / D2)."""
 
     account: str
     instrument: str
@@ -140,84 +98,39 @@ class InstrumentKey(FrozenModel):
 
 
 class TimeAdmissionInputs(FrozenModel):
-    """The injected time coordinates the §2.3 freshness gate consumes — never a clock read.
+    """The injected time coordinates the §2.3 freshness gate consumes — never a clock read."""
 
-    The engine never calls ``time`` / ``datetime``: every coordinate here rides in on the event
-    (a bar timestamp for a backtest, an injected clock reading placed on the event by D-E2 / D-E4
-    for paper). :mod:`tos.time` is itself clock-free (``time/__init__:7-9``), so the whole
-    freshness judgement is a pure function of these injected values (design #31 §2.3).
-
-    Absence is restrictive everywhere: a ``None`` bound, a missing session context, or a missing
-    health state denies admission — an unestablished threshold is not a threshold.
-    """
-
-    #: Conservatively-estimated source-event age (negative = future-dated; never clamped).
     source_age: int | None = None
-    #: The applicable injected delay-class upper bounds (ADR-002-008 §9).
     delay_bounds: tuple[int | None, ...] = ()
-    #: The injected freshness threshold.
     max_age_bound: int | None = None
-    #: The injected future-timestamp tolerance.
     future_tolerance: int | None = None
-    #: The effective snapshot age bound (cross-continuity composition is time-owned).
     snapshot_age_bound: int | None = None
-    #: The injected maximum consumer age.
     maximum_consumer_age_ms: int | None = None
-    #: The injected session context (calendar/session authority determined; §2.3).
     session_context: SessionContext | None = None
-    #: The reference-frame uncertainty interval for "now".
     uncertainty_interval: UncertaintyInterval | None = None
-    #: The injected time health state; only ``TRUSTED`` permits new normal risk.
     health_state: HealthState | None = None
 
 
 class DecisionTickPayload(FrozenModel):
-    """A ``DECISION_TICK`` payload (design #31 §2.2).
-
-    The resolved Decision Context Capsule for one bound instrument plus the injected reference
-    time coordinates. The Critical Input **value surface** — the admitted, provenance-bound scalar
-    values a policy actually compares — was D-E1's declared deferral (design #31 §3.2 (4)) and is
-    supplied by D-E2 through :attr:`value_view` (design #32 §3.2 (3)). The Capsule's ``SnapshotRef``
-    binding is unchanged.
-
-    ``value_view`` is typed :class:`~tos.dsl.ContextValueView` — a **dsl** type, deliberately. A
-    ``tos.marketfeed`` type here would drag ``tos.marketfeed`` into the engine's import closure,
-    breaching the committed fourteen-package allowlist
-    (``tos/tests/engine/test_engine_import_closure.py:59-76``) and creating an
-    ``engine -> marketfeed -> engine`` cycle. Riding the existing ``engine -> dsl`` edge (the import
-    block above) leaves the allowlist untouched and gives the cycle no origin (design #32 §2.2 F1).
-
-    ``None`` is the honest default and stays restrictive: with no view, the merged value namespace
-    is absent from the environment, every capsule-sourced value operand resolves to ``UNKNOWN``, and
-    every comparison against it is ``False`` (``vocabulary.py:337-340``) — the action set can only
-    narrow (RFC-008 §10:347-350).
-    """
+    """A ``DECISION_TICK`` payload (design #31 §2.2)."""
 
     instrument_key: InstrumentKey
     capsule: DecisionContextCapsule
     time: TimeAdmissionInputs = TimeAdmissionInputs()
-    #: The causal-ordering coordinates of this event (design #31 §2.1(ii)).
     reference: OrderingEvent = OrderingEvent()
-    #: The resolved Critical Input value surface for this tick (design #32 §3.2 (3)); ``None``
-    #: when no value view was published — restrictive, never permissive.
     value_view: ContextValueView | None = None
 
 
 def _omit_when_none(value: object) -> bool:
-    """``exclude_if`` predicate for fields added after records of their type were already
-    persisted: an unset field is left out of the dump, so a pre-existing record's dump — and
-    every digest/identity computed from it (:func:`event_identity`, the evidence ``entry_digest``)
-    — is byte-identical to what it was before the field existed."""
+    """``exclude_if`` predicate for fields added after records of their type were already"""
     return value is None
 
 
-#: ``YYYYMMDD`` — ASCII digits only (``str.isdigit`` would also accept non-ASCII digits).
 _TRADING_DATE_SHAPE = re.compile(r"[0-9]{8}")
 
 
 def _check_trading_date(value: str | None, owner: str) -> None:
-    """An injected KST trading-date token is ``YYYYMMDD`` digits or ``None`` — the kernel is
-    clock-free and never derives one, it only refuses a malformed token."""
+    """An injected KST trading-date token is ``YYYYMMDD`` digits or ``None`` — the kernel is"""
     if value is not None and _TRADING_DATE_SHAPE.fullmatch(value) is None:
         raise ArtifactIntegrityError(
             f"{owner}.trading_date must be YYYYMMDD digits or None, got {value!r}"
@@ -225,32 +138,7 @@ def _check_trading_date(value: str | None, owner: str) -> None:
 
 
 class EgressResultPayload(FrozenModel):
-    """An ``EGRESS_RESULT`` payload re-injected from the D-E4 send boundary (design #31 §2.2).
-
-    A **partial fill is represented as a partial fill**: both the filled and the remaining
-    magnitude are carried, and the already-filled part is never re-requested (RFC-005 §11:338-339,
-    §6:176-178). The shape validator derives the fill/partial distinction from the magnitudes,
-    so a producer cannot label a partial as a full fill (구조 파생 > 자기신고).
-
-    ``attempt_id`` is a mandatory positive identity: a result is applied **only** to the exact
-    attempt it names, so a late / reordered result can never transition someone else's
-    reservation (design #31 §2.1(ii)).
-
-    ``broker_execution_id`` carries the ADR-002-002 §15.3:725 "broker execution identity or a
-    broker-specific deterministic composite identity" the DUPLICATE detection keys on (Phase 3
-    K2-p3-#6) — never the driver's own ``reference`` coordinate, which is re-stamped on every
-    re-enqueue and therefore cannot identify a genuine broker resend. It is ``None`` for a result
-    that never reached a broker (e.g. a synthetic ``TIMEOUT`` injection).
-
-    ``resolution_generation`` (kernel round #3 §2 decision 5 ⓖ) is the extra duplicate-detection
-    axis :class:`~tos.engine.state.ProvisionalReservationLedger`'s dedup signature adds: when a
-    quarantine-resolution consumer resolves a TIMEOUT/UNKNOWN and the SAME result later arrives
-    again (byte-identical in every other field) at a *different* generation, that is a genuinely
-    new result, not the same one resent twice. ``None`` means "no generation tracked" — the honest
-    default for every producer that does not yet stamp one, and behaves exactly as the pre-round-3
-    5-tuple signature did (two ``None`` results with otherwise-identical fields still compare
-    equal, so ordinary producers are unaffected).
-    """
+    """An ``EGRESS_RESULT`` payload re-injected from the D-E4 send boundary (design #31 §2.2)."""
 
     instrument_key: InstrumentKey
     attempt_id: str
@@ -260,11 +148,6 @@ class EgressResultPayload(FrozenModel):
     broker_execution_id: str | None = None
     resolution_generation: int | None = None
     reference: OrderingEvent = OrderingEvent()
-    #: The KST trading date the broker acknowledged this result on (``YYYYMMDD``), injected by the
-    #: runtime transport from trusted time; ``None`` when it could not be established. A broker
-    #: execution id such as a KIS ODNO is a per-day sequence, so reconciliation joins on it only
-    #: within one trading date (plan 2026-09-26 egress trading date). Not part of the duplicate
-    #: signature. Omitted from the dump when ``None`` (:func:`_omit_when_none`).
     trading_date: str | None = Field(default=None, exclude_if=_omit_when_none)
 
     @model_validator(mode="after")
@@ -296,7 +179,6 @@ class EgressResultPayload(FrozenModel):
             raise ArtifactIntegrityError(
                 "EgressResultPayload.remaining_quantity must not be negative"
             )
-        # ★ structural derivation: partial vs full follows the magnitudes, not the label.
         partial_by_magnitude = self.remaining_quantity > 0
         declared_partial = self.kind is EgressResultKind.PARTIAL_FILL
         if partial_by_magnitude != declared_partial:
@@ -309,26 +191,11 @@ class EgressResultPayload(FrozenModel):
 
 
 class EngineEvent(FrozenModel):
-    """One event of the closed vocabulary (design #31 §2.2).
-
-    Exactly one payload, matching ``kind``. A kind with the wrong (or a missing) payload is
-    unconstructable — the closed-vocabulary discipline applies to the payload shape too, so a
-    dispatcher can never reach a ``None`` payload.
-    """
+    """One event of the closed vocabulary (design #31 §2.2)."""
 
     kind: EventKind
     decision_tick: DecisionTickPayload | None = None
     egress_result: EgressResultPayload | None = None
-    #: **Deserialization compatibility only** (S2-c, 2026-11-13). The ``CORPORATE_ACTION``
-    #: kind and its payload type are gone, but every durable inbox row written before that
-    #: carries ``"corporate_action": null`` — and :class:`~tos.canonical.FrozenModel` is
-    #: ``extra="forbid"``, so dropping the key outright makes
-    #: :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.next_unconsumed` refuse every
-    #: pre-existing row (measured 2026-11-13: 125,644/125,644 rows across the three live CP-3
-    #: leaves). Keeping the key ALSO keeps ``model_dump`` byte-identical, which is what makes
-    #: :func:`event_identity` — the inbox's duplicate-admission key — stable across this
-    #: change. Typed ``None``, so a non-null value is unconstructable rather than merely
-    #: unread. Remove once every leaf has been rotated to a genesis written without the key.
     corporate_action: None = None
 
     @model_validator(mode="after")
@@ -355,15 +222,7 @@ class EngineEvent(FrozenModel):
     def payload(
         self,
     ) -> DecisionTickPayload | EgressResultPayload:
-        """Return the single payload ``_payload_matches_kind`` guarantees is present.
-
-        Returns:
-            The ``DECISION_TICK`` or ``EGRESS_RESULT`` payload.
-
-        Raises:
-            ArtifactIntegrityError: If neither payload is present — unreachable through normal
-                construction, kept as a fail-closed backstop rather than an unchecked ``None``.
-        """
+        """Return the single payload ``_payload_matches_kind`` guarantees is present."""
         if self.decision_tick is not None:
             return self.decision_tick
         if self.egress_result is not None:
@@ -380,74 +239,28 @@ class EngineEvent(FrozenModel):
 
 
 def event_identity(event: EngineEvent, *, scheme: CanonicalizationScheme) -> str:
-    """The content-addressed identity of one engine event (Phase 3 A-K-1; design #31 §2.1(ii)).
-
-    Measured first (2026-09-09 survey): no ``event_id`` exists anywhere in :mod:`tos.engine` —
-    :class:`EngineEvent` carries no id field and no scheme. Adding one *as a field* would need the
-    canonicalization scheme at construction time, which :class:`EngineEvent` — a plain
-    :class:`~tos.canonical.FrozenModel`, not an :class:`~tos.canonical.IdDerivedArtifact` — does
-    not hold. So the identity is instead a **pure helper function** computed by the caller that
-    *does* hold a scheme, exactly the seam :func:`~tos.engine.sequencer.reference_coordinate_digest`
-    already uses for the attempt identity's reference-coordinate component.
-
-    ``derive_id("event", digest)`` mirrors :data:`ATTEMPT_ID_PREFIX`'s binding
-    (:func:`~tos.engine.sequencer.build_attempt_request`): no ``uuid4``, no timestamp, no RNG — the
-    same event bytes always reproduce the same identity, and a single differing field (kind, payload,
-    or reference) changes the whole digest.
-
-    Args:
-        event: The engine event.
-        scheme: The injected canonicalization scheme.
-
-    Returns:
-        The derived, content-addressed event identity.
-    """
+    """The content-addressed identity of one engine event (Phase 3 A-K-1; design #31 §2.1(ii))."""
     return derive_id(
         EVENT_ID_PREFIX, scheme.compute_digest(event.model_dump(mode="json"))
     )
 
 
 class StageVerdict(FrozenModel):
-    """A stage's native verdict wrapped as a positive-admit judgement (design #31 §4.1).
-
-    The sequencer advances **only** on ``outcome is StageOutcome.ADMIT``. The native sibling
-    verdict is *not* stored as a typed field: the ioc / venue / are / afg / cur result enums all
-    share member names (``UNKNOWN`` in five of them), so a pydantic union would smart-coerce one
-    into another and mis-attribute the evidence. Instead the wrapping adapters in
-    :mod:`tos.engine.adapters` record the native type name and its digest/identity **structurally**
-    from the artifact they were handed (design #31 §5.2).
-
-    ``authority_class`` labels where the stage logic came from; a
-    ``NON_AUTHORITATIVE_PROVISIONAL`` verdict closes no capacity or approval EV (design #31 §4.4).
-    """
+    """A stage's native verdict wrapped as a positive-admit judgement (design #31 §4.1)."""
 
     step: CommitmentStep
     outcome: StageOutcome
     authority_class: StageAuthorityClass
-    #: The native sibling verdict type name, derived via ``type(artifact).__name__``.
     native_verdict_type: str | None = None
-    #: The native verdict's own value (for the result enums), recorded as a plain string.
     native_verdict_value: str | None = None
-    #: The native artifact's canonical digest, when it is a digest-bound artifact.
     bound_digest: str | None = None
-    #: The native artifact's independent identity, when it has one (e.g. a permit id).
     bound_identity: str | None = None
     reason: str | None = None
     authority: AllFalseCoordinatorAuthority = AllFalseCoordinatorAuthority()
 
 
 class AttemptRequest(FrozenModel):
-    """The Coordinator's step-12 unique attempt request (ADR-002-002 §11.3:599; design #31 §4.3).
-
-    The Execution Coordinator's **only** direct action in the whole flow. Bound to the exact
-    Order Conformance Proof and the exact Action Flow Permit, and identified by a
-    **content-addressed** derivation over (proof digest, permit identity, reference coordinate
-    digest) — never a uuid4 or a timestamp nonce, so the same three inputs always reproduce the
-    same attempt identity and replay identity is preserved (RFC-003 §10:360-363).
-
-    Creating an attempt request grants nothing: it mutates no capacity, issues no Transmission
-    Capability, and constructs no broker command (all-false authority block).
-    """
+    """The Coordinator's step-12 unique attempt request (ADR-002-002 §11.3:599; design #31 §4.3)."""
 
     attempt_id: str
     conformance_proof_digest: str
@@ -474,63 +287,27 @@ class AttemptRequest(FrozenModel):
 
 
 class StageRequest(FrozenModel):
-    """The input one injected stage receives (design #31 §4.1 / §12-2).
-
-    The sequencer passes the accumulating flow context; a stage returns a
-    :class:`StageVerdict`. The sequencer does **not** know which of the three
-    :class:`~tos.engine.vocabulary.StageAuthorityClass` sources implements the stage — that
-    ignorance is exactly what makes backtest / paper / test-double parity possible (design #31
-    §4.1/§12).
-    """
+    """The input one injected stage receives (design #31 §4.1 / §12-2)."""
 
     step: CommitmentStep
     instrument_key: InstrumentKey
     proposal: Proposal
     reference: OrderingEvent = OrderingEvent()
     prior_verdicts: tuple[StageVerdict, ...] = ()
-    #: Present from step 13 onward (the Coordinator's step-12 artifact).
     attempt: AttemptRequest | None = None
-    #: The tick's resolved Critical Input value surface, carried through so a stage can size
-    #: against **the values the decision was made on** rather than an injected scalar
-    #: (design #35 §4.2). ``None`` when the tick published no view — restrictive, never
-    #: permissive: a stage that needs a value and finds none must stop, not substitute.
     value_view: ContextValueView | None = None
-    #: The magnitude of the position outstanding for this scope, read off the engine's own
-    #: reservation projection (design #35 §5.2). It is an **observation**, not a capability: the
-    #: projection creates no headroom (RFC-002 §9.1:558), releases nothing, and the real Risk
-    #: Capacity Ledger remains the sole serialization and mutation authority (§9.1:557).
-    #: ``None`` when nothing is outstanding.
     held_position_magnitude: CanonicalDecimal | None = None
 
 
 class SendHandoff(FrozenModel):
-    """The immediate return of the injected ``Transmit`` interface (design #31 §4.5).
-
-    The core hands the bound attempt over and returns at once — it never blocks on the network
-    (design #31 §2.1 D5). This value is an acknowledgement **of the hand-off**, not an order
-    result: the order result arrives later as an ``EGRESS_RESULT`` event. Its polarity is
-    positive: only ``accepted_for_transmission is True`` records an accepted hand-off. Either way
-    the reservation projection is already conservatively ``POTENTIALLY_LIVE`` — the projection is
-    advanced *before* the call, mirroring ADR-002-002 §11.4 step 16 ("durably records
-    ``SEND_STARTED`` before the external call") and INV-005:168.
-    """
+    """The immediate return of the injected ``Transmit`` interface (design #31 §4.5)."""
 
     accepted_for_transmission: bool | None = None
     handoff_reference: str | None = None
 
 
 class ProvisionalReservation(FrozenModel):
-    """The engine's **non-authoritative** reservation projection (design #31 §2.4/§4.4).
-
-    A projection of the ADR-002-002 §10.1 capacity-state vocabulary (:class:`~tos.rcl.CapacityState`)
-    onto one (account, instrument) scope, held only so the core can observe an outstanding
-    exposure. It is **not** the ledger: the real Risk Capacity Ledger is the sole serialization and
-    mutation authority (RFC-002 §9.1:557; ADR-002-002 §8.1:403 linearizability, §8.3:434 fencing
-    epoch, §8.4:449 CAS), and this record claims none of that.
-
-    ``knowledge`` carries UNKNOWN as an **explicit member**, never a missing field
-    (RFC-002 §12.1:1231; design #31 §2.4).
-    """
+    """The engine's **non-authoritative** reservation projection (design #31 §2.4/§4.4)."""
 
     instrument_key: InstrumentKey
     capacity_state: CapacityState
@@ -539,74 +316,19 @@ class ProvisionalReservation(FrozenModel):
     attempt_id: str | None = None
     filled_quantity: CanonicalDecimal | None = None
     remaining_quantity: CanonicalDecimal | None = None
-    #: The capacity state held immediately **before** an ``UNKNOWN`` / ``TIMEOUT`` first forced
-    #: this reservation into ``QUARANTINED_UNKNOWN`` (Phase 3 wave 2 re-review finding R2 /
-    #: kernel disposition KW2c-R2). Invariant: non-``None`` **iff** ``capacity_state is
-    #: CapacityState.QUARANTINED_UNKNOWN`` — set once on the first entry into quarantine, left
-    #: untouched by a repeated ``UNKNOWN`` / ``TIMEOUT`` while already quarantined, and cleared
-    #: back to ``None`` the moment positive evidence resolves the quarantine. It is the floor a
-    #: :data:`~tos.engine.state.QUARANTINE_RESOLUTION_EDGES` resolution may never rank below —
-    #: "escaping quarantine requires evidence" licenses *leaving* quarantine, it does not license
-    #: unwinding a settlement that was already proven before the quarantine began.
     pre_quarantine_capacity: CapacityState | None = None
     authority: AllFalseCoordinatorAuthority = AllFalseCoordinatorAuthority()
 
 
 class UnsentDiscardRef(FrozenModel):
-    """The typed token gating :meth:`~tos.engine.state.ProvisionalReservationLedger
-    .discard_unsent` (2026-11-01 unsent-reservation-release plan §3.2; issue #974).
-
-    It lives here, beside the :class:`ProvisionalReservation` it names, because it is also the
-    payload shape of the durable
-    :data:`~tos.engine.vocabulary.RESERVATION_DISCARDED_UNSENT_KIND` record — the runtime writes
-    exactly these fields and a boot replay validates them back into this same type, so replay
-    re-makes the identical call.
-
-    **Why a token at all, and why not :class:`~tos.engine.state.FinalityProofRef`.** Those two
-    methods are the only ways a scope's occupancy is ever given back, so both refuse anything but
-    their own type (``TypeError``) rather than accept a bare string a caller derived from
-    somewhere. They are deliberately *distinct* types — passing one where the other belongs is a
-    type error, not a silently-wrong mutation — and they key on different identities for a
-    structural reason: a finality proof resolves one *attempt*, so it keys on ``attempt_id``; a
-    never-sent reservation may hold no attempt at all (``COMMITTED_UNBOUND`` is reached at step 9,
-    five steps before step 14 binds one), so the only identity spanning the whole discardable
-    window is the ``proposal_id`` ``commit_unbound`` recorded. ``FinalityProofRef``'s evidence
-    coordinates have no counterpart here on purpose: the kernel verifies no evidence (it reads no
-    store), and the runtime predicate that does (plan §3.1) belongs to the caller.
-
-    Attributes:
-        proposal_id: The proposal whose reservation this discards — matched across every scope the
-            ledger holds, so the caller need not re-derive which one holds it.
-        reason: The closed :class:`~tos.engine.vocabulary.UnsentDiscardReason` cause. Carried into
-            evidence, never consulted by the gates: a reason explains a discard, it never licenses
-            one.
-    """
+    """The typed token gating :meth:`~tos.engine.state.ProvisionalReservationLedger"""
 
     proposal_id: str
     reason: UnsentDiscardReason
 
 
 class EgressResultOutcome(FrozenModel):
-    """The covered content of one applied ``EGRESS_RESULT`` outcome (Phase 3 wave 3 KW3-RD).
-
-    **Not** a stored/evidence artifact and not digest-bound in the
-    :class:`~tos.canonical.DigestBoundArtifact` sense — no DRAFT/ISSUED lifecycle, no derived id.
-    A transient, purely computed record whose only job is handing tos.canonical's existing
-    canonicalize+hash machinery (:func:`egress_result_outcome_digest`) exactly the facts a replay
-    must reproduce for one re-injected result: the recorded
-    :class:`~tos.engine.vocabulary.ResultDisposition`, the reservation's capacity/knowledge axes
-    *after* the result was applied (or left exactly where they were on a non-``APPLIED``
-    disposition), the fill magnitudes, and the quarantine floor if one is held.
-
-    Before Phase 3 wave 3 KW3-RD, ``EventResult.outcome_digest`` was unconditionally ``None`` for
-    every ``EGRESS_RESULT`` (design #31 §7.1's replay-identity property was only measured for
-    ``DECISION_TICK``), which made both the backtest=paper parity comparison and the runtime
-    replay comparison vacuous for result events (``None == None`` reads as "uncompared", not
-    "verified identical"). All fields here are ``None`` for a disposition that produced no
-    reservation at all (``ORPHAN_NO_RESERVATION``) — an absent observation, not a hashed zero
-    standing in for one — which still yields a deterministic digest: the same orphaned payload
-    against the same (empty) scope always redigests to the same value.
-    """
+    """The covered content of one applied ``EGRESS_RESULT`` outcome (Phase 3 wave 3 KW3-RD)."""
 
     disposition: ResultDisposition
     capacity_state: CapacityState | None = None
@@ -622,31 +344,7 @@ def egress_result_outcome_digest(
     *,
     scheme: CanonicalizationScheme,
 ) -> str:
-    """The content-addressed digest of one applied ``EGRESS_RESULT`` outcome (Phase 3 KW3-RD).
-
-    The same seam :func:`event_identity` and
-    :func:`~tos.engine.sequencer.reference_coordinate_digest` already use: canonicalize + hash
-    under the injected scheme — no new hashing primitive, no re-derivation of the covered facts
-    from anything but the caller's own already-computed :class:`~tos.engine.state.
-    ResultApplication` (``disposition`` + ``projection``). The same outcome (same disposition,
-    same resulting — or unchanged — projection state) always reproduces the same digest; a
-    different disposition for the byte-identical payload (e.g. ``APPLIED`` the first time,
-    ``DUPLICATE`` the second) or a different resulting capacity/knowledge/quantity changes the
-    digest, because it changes what :class:`EgressResultOutcome` covers.
-
-    Deliberately **not** a stored field on ``ResultApplication`` / ``ProvisionalReservation`` —
-    it is derived on demand from whichever of the two the caller already holds, so nothing
-    upstream is re-hashed and no additional mutable state is introduced.
-
-    Args:
-        disposition: The recorded :class:`~tos.engine.vocabulary.ResultDisposition`.
-        projection: The resulting (or unchanged) reservation projection, or ``None`` when the
-            disposition is ``ORPHAN_NO_RESERVATION`` (no reservation exists to report).
-        scheme: The injected canonicalization scheme.
-
-    Returns:
-        The hex digest of the canonicalized outcome.
-    """
+    """The content-addressed digest of one applied ``EGRESS_RESULT`` outcome (Phase 3 KW3-RD)."""
     outcome = EgressResultOutcome(
         disposition=disposition,
         capacity_state=None if projection is None else projection.capacity_state,
@@ -663,44 +361,19 @@ def egress_result_outcome_digest(
 
 
 class RegisteredStrategy(FrozenModel):
-    """One admitted Authored Strategy plus its authored configuration (design #31 §3.3/§3.5).
-
-    ``config.bindings`` carries **authored constants only** — the band multiplier, the period, the
-    thresholds the author chose. A market-derived value here would be the RFC-008 §10:327-331 /
-    RFC-003 §8:236-237 relabelling prohibition (design #31 §3.2 (2)); the engine's typed admission
-    partially seals that by requiring at least one capsule-sourced operand in every
-    outcome-gating comparison (design #31 §3.2 (3)/§3.5).
-    """
+    """One admitted Authored Strategy plus its authored configuration (design #31 §3.3/§3.5)."""
 
     strategy: AuthoredStrategy
     config: EvaluationConfig
-    #: The key derived structurally from the strategy's own declared TargetSpec scope.
     instrument_key: InstrumentKey
 
 
 class EngineConfiguration(FrozenModel):
-    """Every injected scalar the engine consumes (design #31 §8 — hardcoded numbers: 0).
+    """Every injected scalar the engine consumes (design #31 §8 — hardcoded numbers: 0)."""
 
-    | value | owner | state |
-    | --- | --- | --- |
-    | ``dsl_evaluation_budget_steps`` | DCE-INV-007 | key absent from VERIFICATION-PROFILE-002 — **provisional** |
-    | ``max_unresolved_send_per_scope`` | limits (``MAX_unresolved_send_per_scope``) | register-fixed at 1, injected here |
-    | ``canonicalization_version`` | ADR-002-018 OQ1 | ``ev-l1-provisional-0`` is non-production |
-    | ``enforcement_mechanism_version`` | ADR-DEV-001 §7 | injected, recorded, never hard-coded |
-
-    Because several of these bounds are unapproved (register §8-1) the whole slice output is
-    provisional and closes no EV (design #31 §1.1/§8).
-    """
-
-    #: The symbolic DSL-evaluation budget (``budget_steps``); compared against a statically derived
-    #: work count. Symbolic integer accounting — never a wall-time interrupt (design #31 §3.4).
     dsl_evaluation_budget_steps: int
-    #: ``MAX_unresolved_send_per_scope`` (design #31 §4.4/§8). The engine observes the projection
-    #: restrictively against it; it never creates headroom (RFC-002 §9.1:558).
     max_unresolved_send_per_scope: int
-    #: The canonicalization scheme version to resolve (``tos.canonical.get_scheme``).
     canonicalization_version: str
-    #: The recorded escape-checker / enforcement-mechanism version passed to ``evaluate``.
     enforcement_mechanism_version: str
 
     @model_validator(mode="after")
@@ -722,84 +395,25 @@ class EngineConfiguration(FrozenModel):
 
 
 class EngineEvidenceRecord(FrozenModel):
-    """One provisional evidence record (design #31 §5.1/§12-5).
-
-    Deliberately **not** a :class:`~tos.evidence.SafetyEvidenceEnvelope`: the full Evidence Store
-    runtime (ADR-002-016) is deferred (design #31 §9-3), and issuing an envelope whose custody,
-    integrity policy, and commitment chain do not exist would be exactly the over-realization the
-    design forbids. This is an engine-local record consumed by an injected
-    :class:`~tos.engine.sink.EvidenceSink`.
-
-    A halt is always recorded **with** its reason, and a bounded-evaluation degradation is recorded
-    under its own ``DECISION_DEGRADED`` kind so it stays distinguishable from an ordinary no-action
-    (design #31 §3.4).
-
-    ⚠ This is a plain :class:`~tos.canonical.FrozenModel`, **not** a
-    :class:`~tos.canonical.DigestBoundArtifact` — it carries no ``canonical_digest`` and no
-    covered-content set (design #4 §3.1: evidence records have independent identity, never a
-    derived one). Every field added here, including ``event_id`` / ``bound_identity`` /
-    ``bound_digest`` below, is therefore a plain observation with no digest implication of any
-    kind — there is no covered set for them to join.
-    """
+    """One provisional evidence record (design #31 §5.1/§12-5)."""
 
     kind: EvidenceKind
     instrument_key: InstrumentKey | None = None
     step: CommitmentStep | None = None
-    #: The content-addressed identity of the event whose handling produced this record (Phase 3
-    #: wave 3 KW3-EV; :func:`event_identity`). Populated by the sequencer
-    #: (:func:`~tos.engine.sequencer.run_commitment_flow`) on every per-step record it emits for a
-    #: ``DECISION_TICK`` flow — ``ATTEMPT_REQUEST_CREATED``, ``FLOW_STEP_ADMITTED``,
-    #: ``FLOW_HALTED``, ``SEND_HANDED_OFF`` — so a replay can correlate every record belonging to
-    #: one flow instance by the event that produced it, rather than by encounter order (fragile
-    #: under a truncated replay window; Phase 3 wave 3 lane C-R finding). ``None`` for evidence
-    #: kinds this pass did not touch (e.g. ``DECISION_WITHHELD``,
-    #: ``COORDINATOR_PRECONDITION_REFUSED``, the ``EGRESS_RESULT`` kinds) and for a sequencer call
-    #: with no event to offer (a unit test exercising it directly).
     event_id: str | None = None
     halt_reason: HaltReason | None = None
     stage_outcome: StageOutcome | None = None
     authority_class: StageAuthorityClass | None = None
-    #: The step verdict's bound identity/digest, copied verbatim from the
-    #: :class:`StageVerdict` that produced this ``FLOW_STEP_ADMITTED`` record (Phase 3 wave 3
-    #: KW3-EV). Steps 9 (``ATOMIC_COMMIT``) and 11 (``ORDER_CONFORMANCE_PROOF``) are the only
-    #: ones whose ADMIT verdict carries a non-``None`` value here today —
-    #: :func:`~tos.engine.sequencer._bindings_from` reads exactly
-    #: ``ORDER_CONFORMANCE_PROOF.bound_digest`` (the Order Conformance Proof digest) and
-    #: ``ATOMIC_COMMIT.bound_identity`` (the Action Flow Permit identity), the step-12 attempt
-    #: identity's two content-addressed inputs — but every step's verdict fields are copied
-    #: uniformly rather than special-cased by step number. Before this fix these values existed
-    #: only on the in-memory :class:`StageVerdict`; a rebooted replay could not reconstruct the
-    #: live ``attempt_id`` from durable evidence alone, so every later ``EGRESS_RESULT`` looked
-    #: orphaned against a freshly composed ledger.
     bound_identity: str | None = None
     bound_digest: str | None = None
     egress_result_kind: EgressResultKind | None = None
-    #: The conservative disposition of a re-injected egress result (Phase 3 A-K-2); populated
-    #: alongside ``EvidenceKind.RESULT_UNMATCHED`` (non-APPLIED) and ``EGRESS_RESULT_CONSUMED``
-    #: (APPLIED) — never inferred from ``halt_reason`` alone.
     result_disposition: ResultDisposition | None = None
-    #: **Deserialization compatibility only** (S2-c, 2026-11-13) — see
-    #: :attr:`EngineEvent.corporate_action` for the full reason. Stored evidence rows written
-    #: before S2-c carry ``"nontrade_disposition": null``, and
-    #: :func:`~tos_runtime.backtest.calibration_report` re-validates stored rows through THIS
-    #: model, so dropping the key would make every such row fail ``extra="forbid"``. Typed
-    #: ``None`` — unconstructable non-null, never read.
     nontrade_disposition: None = None
     capacity_state: CapacityState | None = None
     knowledge: EgressKnowledge | None = None
-    #: The re-injected egress result's own reported magnitudes and broker execution identity
-    #: (Phase 3 wave 2 review finding #13 / kernel disposition KW2b-#13). Populated from the
-    #: incoming :class:`EgressResultPayload` — never from the (possibly unchanged) reservation —
-    #: so a non-``APPLIED`` ``RESULT_UNMATCHED`` record still carries *what the refused result
-    #: itself reported*. Before this fix a cancel-crossing fill's magnitude survived only in the
-    #: transport-local inbox queue row, never in this hash-chained evidence store, so a
-    #: reconciler reading only the evidence chain could not see the size of the fact that was
-    #: refused. ``None`` for every non-fill-bearing kind and every kind that never reached a
-    #: broker (design #31 §2.2 — absence, never a zero standing in for one).
     filled_quantity: CanonicalDecimal | None = None
     remaining_quantity: CanonicalDecimal | None = None
     broker_execution_id: str | None = None
-    #: Copied verbatim from :attr:`EgressResultPayload.trading_date` (same omission rule).
     trading_date: str | None = Field(default=None, exclude_if=_omit_when_none)
     outcome_type: str | None = None
     outcome_digest: str | None = None

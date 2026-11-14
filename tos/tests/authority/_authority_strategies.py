@@ -1,11 +1,4 @@
-"""Shared valid-artifact builders + strategies for the Safety Authority tests.
-
-Firewall-clean: imports only ``hypothesis`` and ``tos.*`` (design §0.3). The
-``issue_*`` / ``*_required_kwargs`` builders populate every safety-load-bearing covered
-field each artifact's issuance guard demands, so a "valid" fixture is genuinely valid
-(never the all-null coverage illusion). The reserved ``"TBD"`` placeholder is excluded
-from required-field text (a past flaky-test lesson).
-"""
+"""Shared valid-artifact builders + strategies for the Safety Authority tests."""
 
 from __future__ import annotations
 
@@ -27,26 +20,13 @@ from tos.time import TimeContinuityIdentity
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Text bound to a required-covered field must be concrete (never the reserved
-#: ``"TBD"`` placeholder the issuance guard rejects — design §2.2/§3.2).
 REQUIRED_FIELD_TEXT = st.text(max_size=8).filter(lambda s: s != "TBD")
 
-#: A non-negative integer coordinate strategy (epochs / sequences / bounds; no float).
 NON_NEGATIVE_INT = st.integers(min_value=0, max_value=1000)
 
 
-# ---------------------------------------------------------------------------
-# Safety Authority Capability
-# ---------------------------------------------------------------------------
-
-
 def capability_required_kwargs(**overrides: Any) -> dict[str, Any]:
-    """Capability issuance kwargs with every required covered field concrete.
-
-    Includes the two numeric claims (``maximum_quantity`` / risk-vector link) so a
-    fixture is *consumption*-valid, not just ISSUED-reachable — the validity predicate's
-    numeric-claim precondition (§5.2 Gap) needs them present.
-    """
+    """Capability issuance kwargs with every required covered field concrete."""
     base: dict[str, Any] = {
         "capability_id": "cap-1",
         "capability_type": CapabilityType.NORMAL_RISK_INCREASING,
@@ -75,11 +55,6 @@ def issue_capability(**overrides: Any) -> SafetyAuthorityCapability:
     )
 
 
-# ---------------------------------------------------------------------------
-# Authority Epoch Transition Record
-# ---------------------------------------------------------------------------
-
-
 def transition_required_kwargs(**overrides: Any) -> dict[str, Any]:
     """Transition issuance kwargs with every required covered field concrete."""
     base: dict[str, Any] = {
@@ -99,11 +74,6 @@ def issue_transition(**overrides: Any) -> AuthorityEpochTransitionRecord:
     return AuthorityEpochTransitionRecord.issue(
         scheme=SCHEME, **transition_required_kwargs(**overrides)
     )
-
-
-# ---------------------------------------------------------------------------
-# Degraded Lease Ownership Record
-# ---------------------------------------------------------------------------
 
 
 def anchor(**overrides: Any) -> TimeContinuityIdentity:
@@ -135,12 +105,7 @@ def lease_required_kwargs(**overrides: Any) -> dict[str, Any]:
 
 
 def issue_lease(**overrides: Any) -> DegradedLeaseOwnershipRecord:
-    """Issue a valid :class:`DegradedLeaseOwnershipRecord`.
-
-    Populates the RCL scalar references + monotonic anchor a validity check needs;
-    callers override the exclusivity key (``exclusive_scope`` /
-    ``referenced_capacity_lease_id``) and anchor to exercise the guards.
-    """
+    """Issue a valid :class:`DegradedLeaseOwnershipRecord`."""
     base: dict[str, Any] = {
         "local_monotonic_anchor": anchor(),
         "referenced_protective_pool_identity": "rcl-pool-1",
@@ -152,11 +117,6 @@ def issue_lease(**overrides: Any) -> DegradedLeaseOwnershipRecord:
     return DegradedLeaseOwnershipRecord.issue(
         scheme=SCHEME, **lease_required_kwargs(**base)
     )
-
-
-# ---------------------------------------------------------------------------
-# Injected predicate-input helpers
-# ---------------------------------------------------------------------------
 
 
 def epoch_state(
@@ -195,8 +155,6 @@ def valid_inputs(**overrides: Any) -> CapabilityValidityInputs:
     return CapabilityValidityInputs(**base)
 
 
-#: The additive-term kwargs feeding ``conservative_usable_lifetime`` with a positive
-#: remaining lifetime (usable) — callers override to exercise the negative-term guard.
 def positive_lifetime_terms(**overrides: Any) -> dict[str, Any]:
     """Time-term kwargs yielding a positive usable lifetime (a lease still usable)."""
     base: dict[str, Any] = {

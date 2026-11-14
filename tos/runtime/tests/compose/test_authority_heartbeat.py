@@ -1,20 +1,4 @@
-"""B5 — the per-pass Safety Authority witness heartbeat, and the stock tree's approved bound.
-
-Measured incident (2026-10-24 stock MOCK dry-run): ``authority.yaml::containment_bound_ms`` was
-1000 and the witness was checked at boot and next at the send boundary, so any signal more than a
-second after boot reached item 16 with SAFETY_AUTHORITY unestablished — CURRENTNESS UNKNOWN, send
-refused. Operator decision 2026-10-24, option (A): re-verify the witness every pass, and set the
-STOCK tree's bound to 90000 (the 60 s closed-session evaluation cadence + one pass). paper, LONG
-and SHORT keep 1000.
-
-Each scenario boots the fixture tree with a COMMITTED tree's own ``authority.yaml`` copied in —
-the value under test is the one that ships, never a number typed here. "Passes" are driven the
-way the scheduler drives them: advance the clock by the pass gap, evaluate time (what the pacer
-does: every pass while open, every ``time_evaluate_closed_interval_ms`` while closed), then the
-heartbeat. The send boundary is the kis-mock dry_run path ``test_kis_mock_e2e_honesty.py`` drives.
-The clock is :class:`~.test_compose_root.FakeMonotonicSource`, the one the time service and the
-epoch service both read, so a session's worth of passes runs in seconds.
-"""
+"""B5 — the per-pass Safety Authority witness heartbeat, and the stock tree's approved bound."""
 
 from __future__ import annotations
 
@@ -62,7 +46,6 @@ def _tree_value(tree: str, name: str, key: str) -> int:
     return value
 
 
-#: Every CP-3 tree's pacing, read from the stock tree (the scenarios' timeline).
 _PASS_MS = _tree_value(_STOCK, "marketfeed.yaml", "poll_interval_ms")
 _CLOSED_CADENCE_MS = _tree_value(
     _STOCK, "marketfeed.yaml", "time_evaluate_closed_interval_ms"
@@ -81,9 +64,7 @@ def server() -> Iterator[FakeKisServer]:
 
 
 def _boot(tree, tmp_path, config_dir, data_dir, custody_root, server, monkeypatch):
-    """The fixture MOCK deployment (dry_run, fake KIS host) with ``tree``'s own
-    ``authority.yaml`` — byte-copied, so its ``containment_bound_ms`` is the shipped one.
-    """
+    """The fixture MOCK deployment (dry_run, fake KIS host) with ``tree``'s own"""
     _sealed_mock_deployment(
         config_dir, custody_root, server, monkeypatch, mode="dry_run"
     )
@@ -111,8 +92,7 @@ def _passes(runtime, clock, *, total_ms: int, gap_ms: int, heartbeat=None) -> No
 
 
 def _morning(runtime, clock, heartbeat=None) -> None:
-    """08:55 boot -> five closed minutes at the closed cadence -> 09:00 open -> five open
-    minutes at the poll interval -> the 09:05 signal is driven by the caller."""
+    """08:55 boot -> five closed minutes at the closed cadence -> 09:00 open -> five open"""
     _passes(
         runtime,
         clock,
@@ -136,11 +116,6 @@ def _close(runtime) -> None:
     runtime.evidence_store.close()
 
 
-# ---------------------------------------------------------------------------
-# the committed values
-# ---------------------------------------------------------------------------
-
-
 def test_the_stock_bound_covers_the_closed_cadence_plus_one_pass() -> None:
     """The approved value's own justification, checked against the tree it ships in."""
     bound = _tree_value(_STOCK, "authority.yaml", "containment_bound_ms")
@@ -151,11 +126,6 @@ def test_the_stock_bound_covers_the_closed_cadence_plus_one_pass() -> None:
 @pytest.mark.parametrize("tree", _OTHER_TREES)
 def test_paper_long_and_short_keep_1000(tree: str) -> None:
     assert _tree_value(tree, "authority.yaml", "containment_bound_ms") == 1000
-
-
-# ---------------------------------------------------------------------------
-# the stock tree (90000) with the heartbeat
-# ---------------------------------------------------------------------------
 
 
 def test_stock_boot_at_0855_signal_at_0905_is_7_of_7(
@@ -195,8 +165,7 @@ def test_red_stock_the_same_morning_without_the_heartbeat_is_refused(
 def test_stock_a_slow_send_pass_inside_the_session_keeps_authority(
     tmp_path, config_dir, data_dir, custody_root, server, monkeypatch, slow_pass_ms: int
 ) -> None:
-    """One pass that ran ``slow_pass_ms`` (the kis-mock send pacing sleeps up to
-    ``min_send_interval_ms`` 2000; the request timeout is 10 s) — inside the bound."""
+    """One pass that ran ``slow_pass_ms`` (the kis-mock send pacing sleeps up to"""
     runtime, clock = _boot(
         _STOCK, tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
     )
@@ -217,9 +186,7 @@ def test_stock_a_slow_send_pass_inside_the_session_keeps_authority(
 def test_stock_a_heartbeat_missed_past_90_s_refuses_and_stays_refused(
     tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
 ) -> None:
-    """One gap past the bound expires the witness. On-time heartbeats afterwards do not revive
-    it (the 2026-09-08 one-way door is intact): every later send is refused, loss recorded once.
-    """
+    """One gap past the bound expires the witness. On-time heartbeats afterwards do not revive"""
     runtime, clock = _boot(
         _STOCK, tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
     )
@@ -237,18 +204,11 @@ def test_stock_a_heartbeat_missed_past_90_s_refuses_and_stays_refused(
     _close(runtime)
 
 
-# ---------------------------------------------------------------------------
-# paper / LONG / SHORT (1000): unchanged
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("tree", _OTHER_TREES)
 def test_other_trees_a_pre_open_boot_still_loses_authority_at_the_open(
     tree, tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
 ) -> None:
-    """Pinned as unchanged: at 1000 the 60 s closed cadence expires the witness even with the
-    heartbeat, so a pre-open boot of these trees refuses at item 16 exactly as on main. Their
-    bound is a separate decision once their step-4 path exists (operator 2026-10-24)."""
+    """Pinned as unchanged: at 1000 the 60 s closed cadence expires the witness even with the"""
     runtime, clock = _boot(
         tree, tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
     )
@@ -263,10 +223,7 @@ def test_other_trees_a_pre_open_boot_still_loses_authority_at_the_open(
 def test_long_a_mid_session_boot_now_keeps_authority_at_1000(
     tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
 ) -> None:
-    """The one behaviour change for the 1000 trees (#957 review LOW-1): booted INSIDE an open
-    session, 400 ms passes keep every gap under 1000, so the witness holds — before the
-    heartbeat it was lost ~1 s after boot. Production boots LONG/SHORT pre-open (cron 08:38 /
-    08:40), where the previous test shows nothing changed."""
+    """The one behaviour change for the 1000 trees (#957 review LOW-1): booted INSIDE an open"""
     runtime, clock = _boot(
         "cp3-setup-d-long",
         tmp_path,
@@ -314,9 +271,7 @@ class _Rows:
 
 
 def test_no_loss_row_for_a_witness_the_heartbeat_never_saw_held() -> None:
-    """#957 review LOW-2: the held state is seeded by the first reading, not assumed. Absent
-    from the first heartbeat on -> no row; held then absent -> exactly one row per loss.
-    """
+    """#957 review LOW-2: the held state is seeded by the first reading, not assumed. Absent"""
     never = _Rows()
     heartbeat = AuthorityWitnessHeartbeat(_ScriptedWitness([False, False]), never)
     assert heartbeat() is False and heartbeat() is False
@@ -333,11 +288,6 @@ def test_no_loss_row_for_a_witness_the_heartbeat_never_saw_held() -> None:
         "witness_source": "test",
         "within_containment_bound": False,
     }
-
-
-# ---------------------------------------------------------------------------
-# wiring
-# ---------------------------------------------------------------------------
 
 
 def test_the_hook_beats_first_and_then_runs_the_wrapped_post_pass() -> None:
@@ -378,9 +328,7 @@ def _stop_after_one():
 def test_the_composed_scheduler_pass_calls_the_composed_witness_once(
     tmp_path, config_dir, data_dir, custody_root, monkeypatch
 ) -> None:
-    """Production wiring: one pass of the real ``run_forever`` loop calls the witness of the
-    SAME epoch service instance the send boundary reads, once (synthetic transport — the
-    heartbeat is transport-independent, so paper / LONG / SHORT get it too)."""
+    """Production wiring: one pass of the real ``run_forever`` loop calls the witness of the"""
     journal_path = tmp_path / "journal.jsonl"
     _write_journal(journal_path, [])
     _write_critical_input_policy(config_dir)

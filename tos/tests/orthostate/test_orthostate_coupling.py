@@ -1,14 +1,4 @@
-"""Cross-dimension coupling CPL-1..7 — static detect-and-flag, never normalize (§5).
-
-The three clean §14 fixtures pass under a positive side; the two coupling-negative §14
-fixtures are BOTH constructible AND flag CPL-5 (the representable-but-coupling-flagged
-class, design #8 §5.0 — two separate claims, not a contradiction). Each CPL fires on its
-antecedent and clears when satisfied (both-ways). Satisfiable overlap: Broker=UNKNOWN ∧
-Capacity=POTENTIALLY_LIVE is illegal (CPL-5 dominates via the rcl comparator). Contradictory
-overlap: Knowledge=CONFLICTED ∧ trapped=True is illegal for ALL nine capacity values and
-NO CPL is dropped. Side-flags fail closed. coupling_violations never mutates the composite.
-[STATE-EV-003 slice — /3 runtime coupling enforcement deferred]
-"""
+"""Cross-dimension coupling CPL-1..7 — static detect-and-flag, never normalize (§5)."""
 
 from __future__ import annotations
 
@@ -49,11 +39,6 @@ def _c(**dims: object) -> CompositeState:
     return issue_composite(**base)
 
 
-# ---------------------------------------------------------------------------
-# §14 fixtures: three clean positives + two representable-but-coupling-flagged
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "fixture", CLEAN_POSITIVE_FIXTURES, ids=lambda c: c.composite_state_id
 )
@@ -69,23 +54,10 @@ def test_clean_positive_fixtures_have_no_violation(fixture: CompositeState) -> N
 def test_coupling_negative_fixtures_are_representable_and_flagged(
     fixture: CompositeState,
 ) -> None:
-    """(C1 representable-but-coupling-flagged) 14_2 / 14_4 construct AND flag CPL-5.
-
-    Two separate claims hold simultaneously (design #8 §5.0): the composite is
-    constructible (STATE-EV-001 representability) AND its coupling violation set includes
-    CPL-5 (STATE-EV-003) — regardless of the injected side (the flag is inherent, not a
-    side artifact). It is HELD and flagged, never silently normalized.
-    """
-    # Claim 1: representable (a real issued frozen product).
+    """(C1 representable-but-coupling-flagged) 14_2 / 14_4 construct AND flag CPL-5."""
     assert fixture.canonical_digest is not None
-    # Claim 2: coupling-flagged with CPL-5, under BOTH the positive and fail-closed sides.
     assert "CPL-5" in coupling_violations(fixture, clean_side())
     assert "CPL-5" in coupling_violations(fixture, fail_closed_side())
-
-
-# ---------------------------------------------------------------------------
-# CPL-1 — potential effect => capacity at least POTENTIALLY_LIVE
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -107,11 +79,6 @@ def test_cpl1_clears_when_capacity_conservative_enough() -> None:
         capacity_state=CapacityState.PARTIALLY_CONSUMED,
     )
     assert "CPL-1" not in coupling_violations(c, clean_side())
-
-
-# ---------------------------------------------------------------------------
-# CPL-2 — no release without proof (fail-closed on side flags)
-# ---------------------------------------------------------------------------
 
 
 def test_cpl2_fires_on_release_without_proof() -> None:
@@ -149,11 +116,6 @@ def test_cpl2_consistent_release_needs_proof_rule() -> None:
     assert "CPL-2" not in coupling_violations(c, with_rule)
 
 
-# ---------------------------------------------------------------------------
-# CPL-3 — fill => consumed capacity (static consistency)
-# ---------------------------------------------------------------------------
-
-
 def test_cpl3_filled_requires_position_consumed() -> None:
     """(CPL-3) Broker=FILLED requires Capacity=POSITION_CONSUMED."""
     bad = _c(
@@ -180,11 +142,6 @@ def test_cpl3_partially_filled_requires_partially_consumed() -> None:
     assert "CPL-3" in coupling_violations(bad, clean_side())
 
 
-# ---------------------------------------------------------------------------
-# CPL-4 — cancel is not release (subsumed by CPL-2 in the static view)
-# ---------------------------------------------------------------------------
-
-
 def test_cpl4_cancel_pending_blocks_release() -> None:
     """(CPL-4) Broker=CANCEL_PENDING with Capacity=RELEASED violates CPL-4."""
     c = _c(
@@ -204,11 +161,6 @@ def test_cpl4_bare_cancel_ack_blocks_release() -> None:
     assert "CPL-4" in coupling_violations(c, bare)
 
 
-# ---------------------------------------------------------------------------
-# CPL-5 — unknown quarantine (exact value)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "trigger",
     [
@@ -223,11 +175,6 @@ def test_cpl5_fires_unless_quarantined_unknown(trigger: dict) -> None:
     assert "CPL-5" in coupling_violations(bad, clean_side())
     good = _c(capacity_state=CapacityState.QUARANTINED_UNKNOWN, **trigger)
     assert "CPL-5" not in coupling_violations(good, clean_side())
-
-
-# ---------------------------------------------------------------------------
-# CPL-6 — authority gate on transmission (fail-closed)
-# ---------------------------------------------------------------------------
 
 
 def test_cpl6_requires_current_epoch_for_send_started_plus() -> None:
@@ -249,11 +196,6 @@ def test_cpl6_absent_before_send_started() -> None:
     """(CPL-6) A pre-send attempt (CAPABILITY_ISSUED) never triggers CPL-6."""
     c = _c(transmission_attempt_state=TransmissionAttemptState.CAPABILITY_ISSUED)
     assert "CPL-6" not in coupling_violations(c, fail_closed_side())
-
-
-# ---------------------------------------------------------------------------
-# CPL-7 — trapped exposure (exact value)
-# ---------------------------------------------------------------------------
 
 
 def test_cpl7_requires_trapped_consumed() -> None:
@@ -278,11 +220,6 @@ def test_cpl7_pending_exit_intent_cannot_reduce_it() -> None:
     assert "CPL-7" in coupling_violations(c, side)
 
 
-# ---------------------------------------------------------------------------
-# §5.3a satisfiable overlap — CPL-1 ∧ CPL-5 (more-conservative exact dominates)
-# ---------------------------------------------------------------------------
-
-
 def test_cpl1_cpl5_dominance_potentially_live_is_illegal() -> None:
     """(canary §5.3a) Broker=UNKNOWN ∧ Capacity=POTENTIALLY_LIVE is illegal (CPL-5 dominates)."""
     c = _c(
@@ -290,7 +227,7 @@ def test_cpl1_cpl5_dominance_potentially_live_is_illegal() -> None:
         capacity_state=CapacityState.POTENTIALLY_LIVE,
     )
     violations = coupling_violations(c, clean_side())
-    assert "CPL-5" in violations  # CPL-1 alone would admit it; CPL-5 forbids it
+    assert "CPL-5" in violations
 
 
 def test_cpl1_cpl5_dominance_quarantined_unknown_is_clean() -> None:
@@ -314,19 +251,9 @@ def test_rcl_comparator_backs_the_dominance() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# §5.3b contradictory overlap — CPL-5 ∧ CPL-7 illegal for ALL nine capacity values
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("cap", list(CapacityState), ids=lambda s: s.value)
 def test_contradictory_overlap_sweep_all_capacity_illegal(cap: CapacityState) -> None:
-    """(canary §5.3b M1) Knowledge=CONFLICTED ∧ trapped=True => nonempty for every capacity.
-
-    CPL-5 forces QUARANTINED_UNKNOWN, CPL-7 forces TRAPPED_CONSUMED — exact-vs-exact on
-    different values, unsatisfiable by any capacity, so the composite is illegal for all
-    nine values.
-    """
+    """(canary §5.3b M1) Knowledge=CONFLICTED ∧ trapped=True => nonempty for every capacity."""
     side = CouplingSideConditions(
         non_reducible_exposure=True, authority_epoch_current=True
     )
@@ -343,7 +270,6 @@ def test_contradictory_overlap_no_cpl_dropped() -> None:
     side = CouplingSideConditions(
         non_reducible_exposure=True, authority_epoch_current=True
     )
-    # cap=QUARANTINED_UNKNOWN satisfies CPL-5 but must still fail CPL-7 (trapped signal kept).
     at_quarantine = _c(
         knowledge_state=KnowledgeState.CONFLICTED,
         broker_order_state=BrokerOrderState.WORKING,
@@ -351,7 +277,6 @@ def test_contradictory_overlap_no_cpl_dropped() -> None:
     )
     v_q = coupling_violations(at_quarantine, side)
     assert "CPL-7" in v_q and "CPL-5" not in v_q
-    # cap=TRAPPED_CONSUMED satisfies CPL-7 but must still fail CPL-5 (quarantine signal kept).
     at_trapped = _c(
         knowledge_state=KnowledgeState.CONFLICTED,
         broker_order_state=BrokerOrderState.WORKING,
@@ -361,19 +286,14 @@ def test_contradictory_overlap_no_cpl_dropped() -> None:
     assert "CPL-5" in v_t and "CPL-7" not in v_t
 
 
-# ---------------------------------------------------------------------------
-# never-normalize (§5.5)
-# ---------------------------------------------------------------------------
-
-
 def test_coupling_violations_does_not_mutate_composite() -> None:
     """(canary §5.5) Detecting violations returns a set and leaves the composite unchanged."""
     c = COMPOSITE_14_2_SENT_UNKNOWN
     before = c.model_dump()
     result = coupling_violations(c, clean_side())
     assert isinstance(result, frozenset)
-    assert c.model_dump() == before  # no silent normalization
-    assert c.capacity_state is CapacityState.POTENTIALLY_LIVE  # still the flagged value
+    assert c.model_dump() == before
+    assert c.capacity_state is CapacityState.POTENTIALLY_LIVE
 
 
 def test_no_coupling_violation_matches_emptiness() -> None:

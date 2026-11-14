@@ -1,12 +1,4 @@
-"""Fault ⑤ replay coverage of ``committed_vector`` (carryover plan W-B B-1, 2026-09-25).
-
-Before B-1 the kernel round #4 K-4 ``committed_vector`` was written only to the
-``reservations.committed_vector_json`` column, so ``verify_replay`` could not see a value
-altered there. These tests pin that it now does, that "no vector" and "explicitly empty vector"
-stay distinct, and that an entry written before B-1 (payload without the key) never produces a
-false corruption on a legitimate existing log — its vector has no append-only source, so it is
-excluded from the comparison until the reservation's next transition.
-"""
+"""Fault ⑤ replay coverage of ``committed_vector`` (carryover plan W-B B-1, 2026-09-25)."""
 
 from __future__ import annotations
 
@@ -79,15 +71,10 @@ def test_legitimate_log_replays_clean(
 @pytest.mark.parametrize(
     ("vector", "tampered"),
     [
-        # value changed
         (_ONE_CONTRACT, CapacityVector().model_dump_json()),
-        # a vector erased to "no vector"
         (_ONE_CONTRACT, None),
-        # "no vector" turned into an explicitly empty vector — must NOT be conflated
         (None, CapacityVector().model_dump_json()),
-        # an explicitly empty vector turned into "no vector"
         (CapacityVector(), None),
-        # unparseable text
         (_ONE_CONTRACT, "{not json"),
     ],
     ids=["value", "erased", "none-to-empty", "empty-to-none", "garbage"],
@@ -108,8 +95,7 @@ def test_committed_vector_column_tamper_raises(
 def test_decimal_spelling_is_not_a_disagreement(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """``"1.0"`` and ``"1"`` are the same magnitude — both sides are re-validated before
-    comparison, so a re-spelled but equal column must not raise."""
+    """``"1.0"`` and ``"1"`` are the same magnitude — both sides are re-validated before"""
     _commit(log, identity, _ONE_CONTRACT)
     _set_column(log, _ONE_CONTRACT.model_dump_json().replace('"1"', '"1.0"'))
     log.verify_replay()
@@ -129,8 +115,7 @@ def test_payload_carries_the_key_explicitly_even_when_none(
 
 
 def _rewrite_as_pre_b1(log: SqliteCommitLog) -> None:
-    """Make the committed entry look like one written before B-1: payload without the key.
-    ``entries`` is append-only, so the trigger is dropped for this simulation only."""
+    """Make the committed entry look like one written before B-1: payload without the key."""
     conn = log._conn
     conn.execute("DROP TRIGGER entries_no_update")
     seq, payload_json = conn.execute(
@@ -161,8 +146,7 @@ def test_pre_b1_entry_folds_to_the_unrecorded_marker(
 def test_pre_b1_entry_replays_clean_whatever_the_column_holds(
     log: SqliteCommitLog, identity: RuntimeIdentity, vector: CapacityVector | None
 ) -> None:
-    """The regression B-1 must not introduce: a post-K-4, pre-B-1 log legitimately holds a
-    vector in the column that its entry never recorded. That is not corruption."""
+    """The regression B-1 must not introduce: a post-K-4, pre-B-1 log legitimately holds a"""
     _commit(log, identity, vector)
     _rewrite_as_pre_b1(log)
     log.verify_replay()
@@ -209,11 +193,6 @@ def test_coverage_resumes_with_the_next_transition(
         log.verify_replay()
 
 
-# ============================================================================
-# #972 — a lifecycle transition with no vector keeps the committed one
-# ============================================================================
-
-
 def _advance_without_vector(log: SqliteCommitLog, identity: RuntimeIdentity) -> None:
     result = log.apply_reservation_transition(
         CapacityReservationTransition(
@@ -235,8 +214,7 @@ def _advance_without_vector(log: SqliteCommitLog, identity: RuntimeIdentity) -> 
 def test_a_later_transition_without_a_vector_keeps_the_committed_one(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """Step 9 records the vector; the release consumer's later transitions carry none. Both
-    the column and the replay fold keep the committed vector, so replay stays clean."""
+    """Step 9 records the vector; the release consumer's later transitions carry none. Both"""
     _commit(log, identity, _ONE_CONTRACT)
     _advance_without_vector(log, identity)
     assert log.reservation_committed_vector("res-1") == _ONE_CONTRACT

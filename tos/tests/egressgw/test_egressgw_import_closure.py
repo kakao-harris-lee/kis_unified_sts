@@ -1,45 +1,4 @@
-"""§0.3 import-closure + determinism canaries for ``tos.egressgw`` — allowlist form.
-
-The design's declared closure is a **direct-import allowlist**::
-
-    {tos, tos.canonical, tos.ordering, tos.ioc, tos.venue, tos.cur, tos.egress,
-     tos.brokercap, tos.rcl, tos.capsule, tos.evidence, tos.engine, tos.egressgw}
-
-**⚠ ``tos.capsule`` / ``tos.evidence`` are deliberately absent from the allowlist this test
-enforces** (adversarial review MINOR-3). Design §0.3 declares them — for a future evidence-sink
-edge — but no shipped source imports either, and the previous form of this file kept them on the
-allowlist while *exempting* them from the "every declared edge is really taken" check. That is
-the phantom-edge defect refracted: an anti-phantom test that carves out its own exception proves
-nothing about the two names it excuses. The test now enforces the **actual** state, so re-adding
-either package is required at the moment it is really consumed. The design text is unchanged —
-an unused declared edge is sealed as an absence, not as an exemption.
-
-Two distinct claims are proven separately, because conflating them is how a closure test quietly
-becomes weaker than it reads:
-
-1. **Static (the strict claim).** No egressgw source imports any ``tos.*`` module outside the
-   eleven currently taken. This is the load-bearing seal and it is asserted with no widening and
-   no per-name exemption at all.
-2. **Runtime (the honest consequence).** The runtime closure is the declared set **plus whatever
-   the declared ``tos.engine`` edge itself pulls in** — ``tos.engine`` is an integrator whose own
-   §0.3 allowlist (locked by its own ``test_engine_import_closure.py``) legitimately includes
-   ``tos.dsl`` / ``tos.time`` / ``tos.are`` / ``tos.afg``. Rather than hand-widening the list,
-   the bound is *computed*: a child process imports ``tos.engine`` alone and reports its closure,
-   and egressgw's closure must be a subset of ``declared ∪ closure(tos.engine)``. A leak that is
-   not reachable through the declared engine edge still fails loudly.
-
-Beyond the closure this module asserts, by AST scan of the shipped sources: no operational
-package, no ambient env, no dynamic escape, **no network stdlib**, no wall clock, and no
-RNG / nonce source (design #34 §0.3/§12.1-8 — attempt identities are content-addressed).
-
-``tos.brokeradapter`` is asserted **absent** in both directions: the transport arrives by
-injection through a structural port, never by import (design #34 §0.3).
-
-Planted-leak and planted-escape canaries prove the checker catches what it claims to, so green is
-evidence the pipeline works rather than evidence it was neutered.
-
-Regime tag: authoring evidence only; closes no EV (design #34 §1.1).
-"""
+"""§0.3 import-closure + determinism canaries for ``tos.egressgw`` — allowlist form."""
 
 from __future__ import annotations
 
@@ -57,20 +16,6 @@ import tos.egressgw.seal
 import tos.egressgw.venuefacts
 import tos.egressgw.vocabulary
 
-#: The §0.3 allowlist **as actually taken** — the only top-level ``tos.*`` packages the sources
-#: may import. ``tos.capsule`` / ``tos.evidence`` are declared by design §0.3 for a future
-#: evidence-sink edge but are imported by nothing today, so they are held out here rather than
-#: exempted from the phantom-edge check (adversarial review MINOR-3): re-add each at the moment
-#: it is really consumed.
-#:
-#: ``tos.dsl`` was added by design #35 §0.3 / §6-C9 (the single sanctioned widening of this list).
-#: It is **not a new runtime-closure member** — ``tos.dsl`` already rides along inside
-#: ``closure(tos.engine)``, as :func:`test_runtime_closure_is_bounded_by_the_declared_set_plus_the_engine_edge`
-#: computes rather than assumes — so what changed is only the *direct naming* permission:
-#: ``construction.py`` now names ``ContextValueView`` (the D-E2 value surface a price is projected
-#: from) and ``FLAT_QUANTITY_BASIS`` (the single source of truth for the flat basis token, rather
-#: than a duplicated constant). The edge is really taken, which
-#: :func:`test_every_declared_edge_is_really_taken` proves from the other side.
 _ALLOWED_TOS_PACKAGES = frozenset(
     {
         "tos",
@@ -88,18 +33,8 @@ _ALLOWED_TOS_PACKAGES = frozenset(
     }
 )
 
-#: The two design-§0.3 names deferred out of :data:`_ALLOWED_TOS_PACKAGES` (MINOR-3). Named so
-#: the hold-out is itself asserted rather than merely implied by an omission.
 _DECLARED_BUT_NOT_TAKEN = frozenset({"tos.capsule", "tos.evidence"})
 
-#: Siblings that must stay outside the closure entirely — including the D-E4 twin, which is
-#: reached only through the injected structural transport port (design #34 §0.3/§5.1).
-#: ``tos.orthostate`` and (kernel round #3 §2 결정 1, 2026-09-12) ``tos.nontrade`` are
-#: deliberately absent: ``tos.engine`` now directly realizes both
-#: (``engine/orthostate_projection.py``; ``engine/_corporate_action.py``), so each reaches
-#: every ``tos.engine`` consumer, this package included, through the already ratified
-#: ``tos.engine`` edge — the ``bound = _ALLOWED_TOS_PACKAGES | set(engine["tos_tops"])``
-#: subset tests below already account for it and stay green unedited.
 _FORBIDDEN_SIBLINGS = frozenset(
     {
         "tos.brokeradapter",
@@ -339,20 +274,11 @@ def _run_child(target) -> dict:
     return result
 
 
-#: ``mesh.py``'s own fully-qualified containing package, for resolving a relative import in it.
 _MESH_PACKAGE_BITS = ("tos", "egressgw")
 
 
 def _resolve_relative_import_prefix(module: str, level: int) -> str | None:
-    """Resolve one ``ImportFrom(module, level)`` in ``mesh.py`` to the absolute dotted prefix it
-    names, mirroring CPython's own ``importlib._bootstrap._resolve_name`` (a relative import
-    resolves against ``package.rsplit('.', level - 1)[0]``, then appends ``module`` if given).
-
-    Returns ``None`` if ``level`` escapes ``tos.egressgw``'s own two-component package path —
-    not reachable in practice: Python itself refuses such an import ("attempted relative import
-    beyond top-level package") before this pin ever runs, which is its own red signal (the same
-    shape as an absolute circular import — a collection-time ``ImportError``).
-    """
+    """Resolve one ``ImportFrom(module, level)`` in ``mesh.py`` to the absolute dotted prefix it"""
     if level > len(_MESH_PACKAGE_BITS):
         return None
     base = ".".join(_MESH_PACKAGE_BITS[: len(_MESH_PACKAGE_BITS) - level + 1])
@@ -360,31 +286,7 @@ def _resolve_relative_import_prefix(module: str, level: int) -> str | None:
 
 
 def test_mesh_never_imports_gateway() -> None:
-    """(kernel round #2 §2 decision 1 — mutation M5) ``mesh.py`` must not import ``gateway.py``.
-
-    ``gateway.py`` imports ``mesh.py`` (:func:`~tos.egressgw.mesh.resolve_broker_applicability` /
-    :func:`~tos.egressgw.mesh.deferred_item_verdict`); the reverse edge would be circular. This
-    is an **intra-package** edge, so the package-level allowlist checks above (which operate at
-    ``tos.*`` top-level granularity, and would not flag ``tos.egressgw.gateway`` — it is already
-    inside the allowed ``tos.egressgw`` package) cannot catch it; this AST scan checks it
-    directly against ``mesh.py``'s own source.
-
-    Covers absolute forms (``import tos.egressgw.gateway`` / ``from tos.egressgw import
-    gateway`` / ``from tos.egressgw.gateway import ...``, at module scope or lazily inside a
-    function — the ``ast.walk`` traversal does not distinguish) and **every relative form**, by
-    resolving ``(module, level)`` to an absolute dotted prefix via
-    :func:`_resolve_relative_import_prefix` rather than pattern-matching each level by hand:
-    ``from . import gateway`` (level 1, module ``None``), ``from .gateway import ...`` (level 1,
-    module ``"gateway"``), and ``from ..egressgw import gateway`` (level 2, module
-    ``"egressgw"``) all resolve to the same absolute name and are all caught the same way.
-
-    Independent review round #1 MEDIUM-1: the first version of this pin guarded on
-    ``node.module`` truthiness, which silently dropped every relative form. Independent review
-    round #1 LOW-8: the MEDIUM-1 fix itself only pattern-matched levels 1 and 2 by hand and
-    missed ``from ..egressgw import gateway`` — replaced with the general resolver above, which
-    handles any level up to this package's own depth (and a level beyond that is Python's own
-    ``ImportError``, not a case this pin needs to reach).
-    """
+    """(kernel round #2 §2 decision 1 — mutation M5) ``mesh.py`` must not import ``gateway.py``."""
     mesh_path = _SRC / "mesh.py"
     tree = ast.parse(mesh_path.read_text(encoding="utf-8"), filename=str(mesh_path))
     offenders: list[str] = []
@@ -426,10 +328,7 @@ def test_mesh_never_imports_gateway() -> None:
 
 
 def _module_imports_gateway(path: Path) -> list[str]:
-    """The same gateway-import scan :func:`test_mesh_never_imports_gateway` runs against
-    ``mesh.py``, generalized to any module at this package's own depth (kernel round #3 §2
-    decision 4 / mutation M4 — ``venuefacts.py`` must not import ``gateway.py`` either, for the
-    same circularity reason: ``gateway.py`` imports ``venuefacts.py``)."""
+    """The same gateway-import scan :func:`test_mesh_never_imports_gateway` runs against"""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     offenders: list[str] = []
     for node in ast.walk(tree):
@@ -470,10 +369,7 @@ def _module_imports_gateway(path: Path) -> list[str]:
 
 
 def test_venuefacts_never_imports_gateway() -> None:
-    """(kernel round #3 §2 decision 4 — mutation M4) ``venuefacts.py`` must not import
-    ``gateway.py``, mirroring :func:`test_mesh_never_imports_gateway`: ``gateway.py`` imports
-    :func:`~tos.egressgw.venuefacts.venue_generation_item_verdict`, so the reverse edge would be
-    circular."""
+    """(kernel round #3 §2 decision 4 — mutation M4) ``venuefacts.py`` must not import"""
     offenders = _module_imports_gateway(_SRC / "venuefacts.py")
     assert (
         offenders == []
@@ -517,8 +413,6 @@ def test_every_declared_edge_is_really_taken() -> None:
         f"allowlist entries are never imported: {sorted(unused)} — an unused allowlist "
         "entry is a phantom edge (anti-phantom: existence claims are grepped too)"
     )
-    # (MINOR-3) …and the hold-out is asserted from the other side: the two design-§0.3 names
-    # really are unconsumed today, so nothing was quietly dropped from a live edge.
     assert _DECLARED_BUT_NOT_TAKEN & imported == set(), (
         f"{sorted(_DECLARED_BUT_NOT_TAKEN & imported)} is now imported — add it back to "
         "_ALLOWED_TOS_PACKAGES; the design §0.3 declaration is only honoured once the edge is "
@@ -527,12 +421,7 @@ def test_every_declared_edge_is_really_taken() -> None:
 
 
 def test_runtime_closure_is_bounded_by_the_declared_set_plus_the_engine_edge() -> None:
-    """(§0.3, the honest consequence) closure(egressgw) ⊆ declared ∪ closure(tos.engine).
-
-    The bound is **computed**, not hand-widened: ``tos.engine`` is a declared edge and an
-    integrator, so its own §0.3-locked closure (``tos.dsl`` / ``tos.time`` / ``tos.are`` /
-    ``tos.afg`` …) legitimately rides along. Anything reachable *outside* that union is a leak.
-    """
+    """(§0.3, the honest consequence) closure(egressgw) ⊆ declared ∪ closure(tos.engine)."""
     result = _run_child(_closure_child)
     engine = _run_child(_engine_only_child)
     bound = _ALLOWED_TOS_PACKAGES | set(engine["tos_tops"])
@@ -592,7 +481,7 @@ def test_allowlist_classifier_canaries() -> None:
     assert _is_forbidden_non_tos("services.dashboard") is True
     assert _is_forbidden_non_tos("numpy") is True
     assert _is_forbidden_non_tos("pydantic") is False
-    assert _is_forbidden_non_tos("click") is False  # must not false-match "cli"
+    assert _is_forbidden_non_tos("click") is False
 
 
 def _ast_offenders(path: Path) -> list[str]:

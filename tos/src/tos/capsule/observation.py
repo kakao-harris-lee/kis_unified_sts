@@ -1,18 +1,4 @@
-"""Critical Input Observation element schema (design §2.2 — gap 1).
-
-``CRITICAL-INPUT-SNAPSHOT-template.yaml:observations: []`` (line 27) leaves the
-element schema empty. This module authors it from ADR-002-018 §5.2 (line
-114-116) and §9 (line 249-272). Field groups follow the design §2.2 table
-verbatim (spec term == code term, design §2.4).
-
-Neutrality (design §0.3, §2.7 broker-agnostic): identity/mapping fields are
-neutral scalars (``str``/``int``/``bool``); no ``shared.models`` trading types.
-``trust_identity.credential_ref`` holds a *reference only*, never a secret
-(design §2.2 no-secret invariant) — reinforced structurally by the firewall
-excluding ``shared.config`` (-> ``shared.config.secrets``, §0.3 C1).
-
-Pure module: ``pydantic`` + stdlib only.
-"""
+"""Critical Input Observation element schema (design §2.2 — gap 1)."""
 
 from __future__ import annotations
 
@@ -50,13 +36,7 @@ class TrustIdentity(FrozenModel):
 
 
 class Continuity(FrozenModel):
-    """Source continuity facts (ADR §9 line 255, 272).
-
-    ``continuity_gap`` defaults ``True``-safe semantics via the predicate layer:
-    continuity is never *inferred* from TCP health, uptime, credential validity,
-    identical payload, or cached sequence (ADR §9 line 272). An unestablished
-    continuity is modelled with ``continuity_gap=True``.
-    """
+    """Source continuity facts (ADR §9 line 255, 272)."""
 
     source_continuity_id: str | None = None
     connection_session_id: str | None = None
@@ -75,12 +55,7 @@ class RawRef(FrozenModel):
 
 
 class ObservationTime(FrozenModel):
-    """Time anchors and uncertainties (ADR §9 line 257).
-
-    ``source_event_time`` is the as-of / production time that anchors the
-    Validity Window (design §6.2, EXV-INV-002) — never the capsule wrap time.
-    Times are neutral integer epoch-milliseconds.
-    """
+    """Time anchors and uncertainties (ADR §9 line 257)."""
 
     source_event_time: int | None = None
     receipt_trustworthy_time_anchor: int | None = None
@@ -96,13 +71,7 @@ class Semantics(FrozenModel):
 
 
 class Mapping(FrozenModel):
-    """Instrument/venue/unit/scale/sign mapping (ADR §9 line 259).
-
-    ``unit``, ``scale``, ``multiplier`` and ``sign`` are economically significant
-    *distinct* safety fields (ADR §9 line 259, 268; §12 line 323): the design
-    §3.4 magnitude normalization never folds them together. Kept as neutral
-    scalars.
-    """
+    """Instrument/venue/unit/scale/sign mapping (ADR §9 line 259)."""
 
     instrument: str | None = None
     contract: str | None = None
@@ -116,11 +85,7 @@ class Mapping(FrozenModel):
 
 
 class CorrectionLinks(FrozenModel):
-    """Links to superseded/corrected records (ADR §9 line 260).
-
-    A correction is a new immutable observation linked to prior records, not a
-    destructive overwrite (design §4.5, ADR §17 line 415).
-    """
+    """Links to superseded/corrected records (ADR §9 line 260)."""
 
     correction_of: str | None = None
     retraction_of: str | None = None
@@ -146,12 +111,7 @@ class Admission(FrozenModel):
 
 
 class Observation(FrozenModel):
-    """A single admitted-or-rejected critical-input observation (design §2.2).
-
-    Frozen element of ``CriticalInputSnapshot.observations``. Groups mirror the
-    design §2.2 table; ``field_state`` carries the five-valued evaluation
-    (ADR §11 line 302).
-    """
+    """A single admitted-or-rejected critical-input observation (design §2.2)."""
 
     source: SourceIdentity = SourceIdentity()
     trust_identity: TrustIdentity = TrustIdentity()

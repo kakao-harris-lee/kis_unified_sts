@@ -1,9 +1,4 @@
-"""``ComposedRuntime.shutdown()`` compose e2e tests (TOS Phase 5 W3.2 plan §2 decision 9,
-lane d3). Hermetic — a real composed runtime, real sqlite files under ``tmp_path``, real
-custody files (``tests/compose/conftest.py``'s autouse guards enforce this); no transport
-call is ever made (this suite never calls :meth:`~tos_runtime.compose._types.ComposedRuntime
-.run_once`).
-"""
+"""``ComposedRuntime.shutdown()`` compose e2e tests (TOS Phase 5 W3.2 plan §2 decision 9,"""
 
 from __future__ import annotations
 
@@ -24,8 +19,7 @@ _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 def test_shutdown_proves_every_step_with_zero_transport_calls(
     config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
 ) -> None:
-    """A nominal shutdown on a freshly composed (never-run) runtime proves all six steps
-    and never touches the transport this suite's own docstring promises."""
+    """A nominal shutdown on a freshly composed (never-run) runtime proves all six steps"""
     runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
 
     outcome = runtime.shutdown(reason="compose-e2e-nominal-shutdown")
@@ -33,7 +27,6 @@ def test_shutdown_proves_every_step_with_zero_transport_calls(
     assert outcome.all_steps_proven is True
     assert len(outcome.steps) == 5
     assert all(step.completed is True for step in outcome.steps)
-    # the one ordering property this procedure exists to hold.
     assert outcome.latched_before_close is True
     assert len(runtime.transport.requests) == 0
 
@@ -41,12 +34,7 @@ def test_shutdown_proves_every_step_with_zero_transport_calls(
 def test_reboot_after_shutdown_sees_the_durable_new_risk_halt_latch(
     config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
 ) -> None:
-    """Deny-before-stop is durable: a SECOND compose over the SAME ``data_dir`` — a fresh
-    process boot, in every way this test can express without literally forking a new
-    Python process — still sees the latch the first runtime's shutdown set. Boot itself
-    is not refused by a held latch (only per-event send admission is, driver-side) —
-    this is exactly the "boots with the latch held" contract lane d3's plan §4 entry
-    describes."""
+    """Deny-before-stop is durable: a SECOND compose over the SAME ``data_dir`` — a fresh"""
     runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
     first_outcome = runtime.shutdown(reason="compose-e2e-reboot-first-boot")
     assert first_outcome.latched_before_close is True
@@ -63,11 +51,7 @@ def test_reboot_after_shutdown_sees_the_durable_new_risk_halt_latch(
 def test_shutdown_evidence_and_latch_are_durable_after_the_instance_is_closed(
     config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
 ) -> None:
-    """The recovery-handoff package is durably recorded as evidence BEFORE the store
-    closes — a FRESH reader (never the closed instance under test, and never the same
-    process's cached handle) over the SAME evidence/inbox files sees it, exactly what the
-    next boot's W1 recovery barrier would read to decide acceptance (plan §4 lane d3:
-    "record the package for the barrier to consume, do not fake acceptance")."""
+    """The recovery-handoff package is durably recorded as evidence BEFORE the store"""
     runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
     outcome = runtime.shutdown(reason="compose-e2e-handoff-evidence")
     assert outcome.handoff_id is not None

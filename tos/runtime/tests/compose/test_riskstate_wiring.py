@@ -1,77 +1,4 @@
-"""``tos_runtime.riskstate.service.RiskStateService`` /
-``tos_runtime.compose._riskstate_wiring.build_risk_state_service`` (TOS risk state service
-wave, lane b; ``docs/plans/2026-09-16-tos-risk-state-service-plan.md``).
-
-Two layers, deliberately NOT sharing fixtures across suites (mirrors
-``tests/riskstate/conftest.py``'s own "cross-suite imports are forbidden" convention):
-
-* **Unit layer** — :class:`RiskStateService` exercised directly over the SAME hermetic
-  evidence/inbox/rcl-log doubles :mod:`tests.riskstate.conftest` uses (re-implemented here,
-  not imported, per that module's own convention) plus the SAME
-  ``aggregate_risk_policy.yaml``/``action_flow_policy.yaml`` builders from
-  :mod:`tests.riskstate._documents` (plain string builders, not pytest fixtures — importing
-  those is not a fixture-sharing violation). ``StageRequest``/``Proposal`` are built via
-  ``model_construct`` (bypasses pydantic validation) rather than the real decision pipeline —
-  a ``Proposal`` is a DRAFT-invariant ``IdDerivedArtifact`` that refuses a non-``None``
-  ``proposal_id``/``canonical_digest`` unless properly ``.issue()``-d through a full capsule,
-  which this suite's own attempt-identity needs are too shallow to justify building.
-* **Wiring layer** — :func:`build_risk_state_service`'s five cross-checks, against a MINIMAL
-  config directory this file owns alone (NOT ``tests/compose/conftest.py``'s shared
-  ``config_dir``, which serves ~400 other compose e2e tests; extending it here would risk
-  a regression this suite has no way to detect until CI runs the whole compose suite).
-* One ``compose_paper_runtime``-level boot-refusal test (``RiskStateConfigError``) using the
-  shared ``config_dir`` fixture UNMODIFIED (it never carries the two risk-state policy files,
-  so it is the correct fixture for "files absent" cases).
-* **E2E layer (``TestComposeE2E``)** — the plan's own acceptance criterion (§1: "합성 paper
-  e2e 에서 step 6/7 GRANT 가 손으로 지은 리터럴 없이 도달"): the FULL compose stack, driven
-  through the SAME 2-``run_once``-call pattern ``test_compose_root.py``'s own ADMIT tests use
-  (first call discovers the proposal digest and writes the operator approval file; second call
-  reaches the steps this wave's own service feeds), with BOTH
-  ``aggregate_risk_inputs_provider``/``action_flow_inputs_provider`` left ``None`` — the
-  production :class:`~tos_runtime.riskstate.service.RiskStateService` default. Uses
-  ``config_dir_with_risk_state`` (:mod:`tests.compose.conftest`), an OPT-IN layered fixture
-  built on top of the shared ``config_dir`` (mirroring that module's own
-  ``mismatched_release_config_dir`` idiom) — the ~400 other compose e2e tests requesting
-  ``config_dir`` directly are completely unaffected.
-
-  **Resolved (2026-09-16), TOS action-flow observation completion wave
-  (``docs/plans/2026-09-16-tos-action-flow-observation-plan.md``): step 7
-  (ACTION_FLOW_DECISION) now reaches a real ``GRANT``, not ``UNKNOWN``.** The prior gap was
-  structural, not a wiring bug: ``amplification_bounded``
-  (``tos/src/tos/afg/predicates.py:311-353``) requires a concrete bound AND a concrete
-  observed count on every one of 11 axes; two of those —
-  ``duplicate_redelivery_expansion``/``failover_reconnect_replay_expansion`` — had no durable
-  per-root-cause read surface anywhere in ``tos_runtime``. This wave's lane a closed both with
-  ZERO schema change:
-  :func:`~tos_runtime.riskstate.flow_observation.count_duplicate_dispositions` counts kernel
-  ``RESULT_UNMATCHED`` rows whose ``result_disposition`` is ``DUPLICATE`` and whose
-  ``attempt_id`` traces to the root cause;
-  :func:`~tos_runtime.riskstate.flow_observation.count_recovery_markers` counts durable
-  restart-recovery marker rows keyed to the root event's own content-addressed identity — an
-  accepted, disclosed-under-count proxy
-  (:attr:`~tos_runtime.riskstate.flow_observation.FlowObservation.replays_definition`). See
-  :mod:`tos_runtime.riskstate.flow_observation`'s own module docstring for the full
-  derivation.
-
-  **Honest scope correction (unchanged from the review of PR #704, 2026-09-16, LOW — still
-  applies now that step 7 reaches ``GRANT``):** this docstring makes no claim that this suite
-  independently confirms the other four ``action_flow_decision`` witnesses
-  (``scope_graph_complete``, ``cause_lineage_complete``, ``envelope_not_enlarged``,
-  ``atomic_economic_flow_coverage``) beyond what ``amplification_bounded``'s own ``GRANT``
-  outcome already implies — :class:`~tos.afg.records.ActionFlowDecision` (kernel,
-  ``tos.afg.predicates.action_flow_decision``) carries no per-witness boolean in its issued,
-  immutable shape (only digests and the final ``result``), so no assertion in this file
-  inspects those four witnesses individually.
-
-  **A real fix landed alongside the prior wave's finding, still in effect:**
-  :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe`'s own
-  ``this_attempt_lineage_found`` falls back to "the root event's own durable presence at a
-  positively resolved inbox seq" (via the SAME ``current_seq_reader`` this wave already wired)
-  when NO sealed row exists yet for a brand-new attempt being evaluated at step 7, strictly
-  BEFORE step 15 ever seals anything for it — the SEND_SEALED-tracing check still stands,
-  unchanged, for an ALREADY-sealed attempt whose seal does NOT trace to its claimed root (a
-  genuine inconsistency).
-"""
+"""``tos_runtime.riskstate.service.RiskStateService`` /"""
 
 from __future__ import annotations
 
@@ -156,8 +83,7 @@ _AFG_DIM_ID = "afg.ORDER"
 
 
 class _FixedKeyProvider:
-    """Mirrors ``tests/riskstate/conftest.py``'s own re-declared double (that module's own
-    docstring: cross-suite imports are forbidden)."""
+    """Mirrors ``tests/riskstate/conftest.py``'s own re-declared double (that module's own"""
 
     def current(self) -> tuple[int, bytes]:
         return (1, b"test-fixed-key-bytes-riskstate-wiring-suite")
@@ -204,8 +130,7 @@ def _seed_send_sealed(
     quantity: str,
     event_id: str = "root-event-1",
 ) -> None:
-    """Mirrors ``tests/riskstate/conftest.py::seed_send_sealed`` exactly (cross-suite import
-    forbidden by that module's own convention)."""
+    """Mirrors ``tests/riskstate/conftest.py::seed_send_sealed`` exactly (cross-suite import"""
     payload = {
         "kind": "SEND_SEALED",
         "attempt_id": attempt_id,
@@ -228,9 +153,7 @@ def _seed_egress_result(
     filled_quantity: str | None,
     result_disposition: str | None = None,
 ) -> None:
-    """Mirrors ``tests/riskstate/conftest.py::seed_egress_result`` exactly (including
-    ``result_disposition`` — ``tos/src/tos/engine/core.py:705-720``'s own ``RESULT_UNMATCHED``
-    payload shape)."""
+    """Mirrors ``tests/riskstate/conftest.py::seed_egress_result`` exactly (including"""
     payload = {
         "attempt_id": attempt_id,
         "instrument_key": {"account": _ACCOUNT, "instrument": _INSTRUMENT},
@@ -249,13 +172,7 @@ def _seed_recovery_marker(
     event_id: str,
     handling_started_evidence_seq: int | None = None,
 ) -> None:
-    """Mirrors ``tests/riskstate/conftest.py::seed_recovery_marker`` exactly — the
-    ``{"event_id": ..., "handling_started_evidence_seq": ...}`` shape
-    ``EngineDriver._handle_interrupted_event`` durably appends
-    (``tos_runtime/engine/driver.py:517-535`` — ``record_halt``'s own payload for
-    ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND``, and the plain ``evidence_store.append`` for
-    ``DECISION_TICK_DROPPED_ON_RECOVERY``, both carry ``event_id``; only the former also
-    carries ``handling_started_evidence_seq`` — omitted (``None``) for the latter)."""
+    """Mirrors ``tests/riskstate/conftest.py::seed_recovery_marker`` exactly — the"""
     payload: dict[str, object] = {"event_id": event_id}
     if handling_started_evidence_seq is not None:
         payload["handling_started_evidence_seq"] = handling_started_evidence_seq
@@ -265,8 +182,7 @@ def _seed_recovery_marker(
 def _stage_request(
     *, step: CommitmentStep, proposal_id: str = "prop-1", event_id: str = "root-event-1"
 ) -> StageRequest:
-    """A ``StageRequest`` built via ``model_construct`` (module docstring) — the proposal's
-    ``proposal_id`` is the only field :class:`RiskStateService` reads off it."""
+    """A ``StageRequest`` built via ``model_construct`` (module docstring) — the proposal's"""
     proposal = Proposal.model_construct(proposal_id=proposal_id)
     key = InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT)
     reference = OrderingEvent.model_construct(
@@ -379,11 +295,6 @@ def _service(
     )
 
 
-# ===========================================================================
-# Unit layer — RiskStateService
-# ===========================================================================
-
-
 class TestAggregateInputsFor:
     def test_empty_evidence_yields_zero_usage_cells(
         self,
@@ -396,16 +307,13 @@ class TestAggregateInputsFor:
         request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
         inputs = service.aggregate_inputs_for(request)
         assert inputs is not None
-        assert (
-            len(inputs.cells) == 1
-        )  # one (scope, dimension) x one required scenario kind
+        assert len(inputs.cells) == 1
         cell = inputs.cells[0]
         assert cell.conservative_current_usage == Decimal("0")
         assert cell.conservative_current_usage_already_committed == Decimal("0")
         assert cell.required_concurrent_overlap_effect == Decimal("0")
         assert cell.effective_limit == Decimal("1")
-        assert cell.max_credible_command_effect is None  # no construction yet
-        # attestation-only fields are never authored by the service:
+        assert cell.max_credible_command_effect is None
         assert inputs.all_fields_attributed is None
         assert inputs.numerically_safe is None
         assert inputs.valuation_ok is None
@@ -442,9 +350,7 @@ class TestAggregateInputsFor:
         inbox: SqliteEventInbox,
         rcl_log: SqliteCommitLog,
     ) -> None:
-        """Plan §5 실증 (3): a ``RESULT_UNMATCHED`` attempt's full sealed quantity counts in
-        full as never-netted overlap (the position-observation boundary GRANT→DENY case).
-        """
+        """Plan §5 실증 (3): a ``RESULT_UNMATCHED`` attempt's full sealed quantity counts in"""
         _seed_send_sealed(evidence_store, attempt_id="a1", side="BUY", quantity="5")
         _seed_egress_result(
             evidence_store,
@@ -489,10 +395,7 @@ class TestAggregateInputsFor:
         inbox: SqliteEventInbox,
         rcl_log: SqliteCommitLog,
     ) -> None:
-        """Plan §5 실증 (4)'s own position-side half: a sealed send with NO terminal result
-        contributes to ``required_concurrent_overlap_effect``, never
-        ``conservative_current_usage`` (position.py's own ``in_flight_overlap_effect`` vs
-        ``conservative_current_usage`` split)."""
+        """Plan §5 실증 (4)'s own position-side half: a sealed send with NO terminal result"""
         _seed_send_sealed(evidence_store, attempt_id="a1", side="BUY", quantity="2")
         service = _service(tmp_path, evidence_store, inbox, rcl_log)
         request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
@@ -592,10 +495,6 @@ class TestAggregateInputsFor:
         construction = CandidateConstruction.model_construct(
             derivation=QuantityDerivation.model_construct(quantity=Decimal("60"))
         )
-        # Since #1012 L3 the broker holding is only ONE of the two caps: the close must
-        # also fit what remains of the TOS entry, so this suite's proof-cell test states that
-        # entry explicitly (80 bought by TOS, nothing closed yet). The durable derivation of
-        # this pair is covered in ``tests/riskstate/test_close_bound.py``.
         entry_bound = EntryCloseBound(
             account=_ACCOUNT,
             instrument=_INSTRUMENT,
@@ -626,9 +525,6 @@ class TestAggregateInputsFor:
         assert inputs is not None
         assert inputs.cells[0].max_credible_command_effect == Decimal("-60")
         fence = service.take_close_fence(request)
-        # The broker-held authority must mint the BROKER fence, never the synthetic one
-        # (#1011 made the return a union). Narrowing here is the assertion, not a formality:
-        # the three fields below exist only on `CloseProofCommitFence`.
         assert isinstance(fence, CloseProofCommitFence)
         assert fence.proposal_id == "prop-1"
         assert fence.as_of_generation == 9
@@ -660,15 +556,7 @@ class TestAggregateInputsFor:
         inbox: SqliteEventInbox,
         rcl_log: SqliteCommitLog,
     ) -> None:
-        """HIGH-3 (review of PR #704, 2026-09-16): every OTHER test in this suite sets the HSE
-        ``envelope_max`` and the policy's ``effective_limit`` to the SAME value, so a mutation
-        that swaps ``injected_envelope_max`` (``service.py``, plan §2.1's own "ARE
-        ``injected_envelope_max`` comes from the already-loaded HSE") for
-        ``self._are_policy.effective_limits`` (bypassing the ceiling entirely) stays green.
-        This test separates the two sources: ``_runtime.envelope_max=5``, policy
-        ``effective_limit_value=100`` — a policy document that (incorrectly) tries to claim a
-        limit twenty times its own declared ceiling.
-        """
+        """HIGH-3 (review of PR #704, 2026-09-16): every OTHER test in this suite sets the HSE"""
         service = _service(
             tmp_path,
             evidence_store,
@@ -680,17 +568,10 @@ class TestAggregateInputsFor:
         request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
         inputs = service.aggregate_inputs_for(request)
         assert inputs is not None
-        # The declared ceiling, not the policy's own (inflated) effective-limit claim:
         assert inputs.injected_envelope_max is not None
         assert inputs.injected_envelope_max.magnitude(_ARE_DIM_ID) == Decimal("5")
-        # The policy's own claim is carried too (untouched, for the predicate to compare
-        # against) — proving the two sources really are independent in this service, not
-        # silently unified upstream:
         assert inputs.effective_limit is not None
         assert inputs.effective_limit.magnitude(_ARE_DIM_ID) == Decimal("100")
-        # The real kernel predicate this separation exists to feed: even if some other layer
-        # mistakenly asserted `limit_source_is_injected_envelope=True`, a 100-vs-5 mismatch is
-        # correctly refused — the safety invariant this field separation protects.
         from tos.are.predicates import envelope_bound_not_enlarged
 
         assert (
@@ -712,7 +593,7 @@ class TestActionFlowInputsFor:
         rcl_log: SqliteCommitLog,
     ) -> None:
         service = _service(tmp_path, evidence_store, inbox, rcl_log)
-        service._rcl_tip_reader = lambda: None  # simulate a read failure
+        service._rcl_tip_reader = lambda: None
         request = _stage_request(step=CommitmentStep.ACTION_FLOW_DECISION)
         assert service.action_flow_inputs_for(request) is None
 
@@ -736,8 +617,7 @@ class TestActionFlowInputsFor:
         inbox: SqliteEventInbox,
         rcl_log: SqliteCommitLog,
     ) -> None:
-        """#960 — the attempt's own action class decides step 7's kind: a CLOSE is an
-        ``ORDINARY_REDUCE_OR_EXIT``, not the boot ``NEW_LONG``'s ``NORMAL_NEW_RISK``."""
+        """#960 — the attempt's own action class decides step 7's kind: a CLOSE is an"""
         service = _service(
             tmp_path,
             evidence_store,
@@ -758,8 +638,7 @@ class TestActionFlowInputsFor:
         inbox: SqliteEventInbox,
         rcl_log: SqliteCommitLog,
     ) -> None:
-        """#960 fail-closed: an attempt whose class the policy does not map is UNKNOWN, never
-        the mapped boot class's grant."""
+        """#960 fail-closed: an attempt whose class the policy does not map is UNKNOWN, never"""
         service = _service(
             tmp_path,
             evidence_store,
@@ -784,7 +663,7 @@ class TestActionFlowInputsFor:
         assert inputs is not None
         assert inputs.action_class is ActionClassKind.NORMAL_NEW_RISK
         assert inputs.decision_generation == 1
-        assert inputs.generation_current is False  # always re-derived by the wrapper
+        assert inputs.generation_current is False
         assert inputs.producer_self_declared_scope is False
         assert inputs.economic_ref == f"resv-{_ACCOUNT}-{_INSTRUMENT}"
         assert inputs.committed_flow_vectors == ()
@@ -792,12 +671,9 @@ class TestActionFlowInputsFor:
         assert inputs.flow_vector.magnitude(_AFG_DIM_ID) == Decimal("1")
         assert inputs.cause is not None
         assert inputs.cause.root_cause_identity == "root-event-1"
-        assert (
-            inputs.cause.forked_beyond_bound is False
-        )  # attempts_for_cause(1) <= max(4)
+        assert inputs.cause.forked_beyond_bound is False
         assert inputs.snapshot is not None
         assert inputs.snapshot.snapshot_generation == 1
-        # attestation-only fields are never authored by the service:
         assert inputs.limit_source_is_injected_envelope is None
         assert inputs.economic_commitment_exclusive is None
         assert inputs.flow_commitment_exclusive is None
@@ -823,13 +699,7 @@ class TestActionFlowInputsFor:
         inbox: SqliteEventInbox,
         rcl_log: SqliteCommitLog,
     ) -> None:
-        """HIGH-1 (review of PR #704, 2026-09-16): every OTHER test in this suite (and every
-        e2e fixture) fixes ``rcl_tip_reader=lambda: 1``, so a mutation that hardcodes
-        ``decision_generation=1`` (``service.py``, instead of the real ``rcl_tip``) stays
-        green. ``_risk_attestations.py``'s own ``wrap_action_flow_inputs_provider`` feeds this
-        value straight into ``generation_fenced`` to detect stale/replayed commits — a
-        constant here silently disables that detection. This test uses a reader whose return
-        value CHANGES between two calls and asserts the field tracks it both times."""
+        """HIGH-1 (review of PR #704, 2026-09-16): every OTHER test in this suite (and every"""
         tip_values = iter([7, 8])
         service = _service(
             tmp_path,
@@ -858,20 +728,7 @@ class TestActionFlowInputsFor:
         inbox: SqliteEventInbox,
         rcl_log: SqliteCommitLog,
     ) -> None:
-        """Re-review residual of HIGH-4 (review of PR #704, 2026-09-16): the earlier fix pinned
-        ``InboxFlowReader`` resolving ``handling_started_monotonic`` from a real inbox row
-        (``tests/riskstate/test_flow_observation.py``), but nothing pinned
-        :class:`RiskStateService` actually CONSUMING that value into
-        ``ActionFlowDecisionInputs.observed_amplification.elapsed_monotonic`` via
-        :meth:`RiskStateService._elapsed_monotonic_ms` — a mutation making that method always
-        return ``None`` stayed green across the full suite. This test enqueues a real
-        ``EngineEvent``, marks it handling-started with a real ``EVENT_HANDLING_STARTED``
-        evidence receipt, reads back that receipt's OWN real
-        ``appended_at_monotonic_ns`` (the SAME column the service itself reads — never a
-        hand-typed literal standing in for it), and supplies a ``monotonic_reader`` fixed at a
-        KNOWN offset past it, so the expected millisecond difference is exact and
-        deterministic despite the receipt's own timestamp being a real wall-clock read.
-        """
+        """Re-review residual of HIGH-4 (review of PR #704, 2026-09-16): the earlier fix pinned"""
         payload = EgressResultPayload(
             instrument_key=InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),
             attempt_id="prop-1",
@@ -912,18 +769,8 @@ class TestActionFlowInputsFor:
         )
 
 
-# ===========================================================================
-# HIGH-2 (review of PR #704, 2026-09-16) — RISK_STATE_OBSERVED.absent_fields honesty
-# ===========================================================================
-
-
 def _read_last_observed_absent_fields(evidence_store: SqliteEvidenceStore) -> list[str]:
-    """Reads the most recently appended ``RISK_STATE_OBSERVED`` row's own ``absent_fields``
-    list straight off the durable store (the SAME ``entries.payload_json`` shape
-    ``tos_runtime.evidence.store.SqliteEvidenceStore.append`` itself writes — ``{"payload":
-    ..., "masked_keys": [...]}`` — mirroring how this file's own ``_evidence_kind_counts``
-    already reads the ``entries`` table directly rather than through a decrypt/query API this
-    store does not expose)."""
+    """Reads the most recently appended ``RISK_STATE_OBSERVED`` row's own ``absent_fields``"""
     import json
 
     row = evidence_store.connection.execute(
@@ -938,10 +785,7 @@ def _read_last_observed_absent_fields(evidence_store: SqliteEvidenceStore) -> li
 
 
 def _read_last_risk_state_observed(evidence_store: SqliteEvidenceStore) -> dict:
-    """Reads the most recently appended ``RISK_STATE_OBSERVED`` row's FULL payload dict —
-    sibling of :func:`_read_last_observed_absent_fields` for tests that need more than just
-    ``absent_fields`` (e.g. ``flow.duplicates_rejected``/``flow.replays_definition``).
-    """
+    """Reads the most recently appended ``RISK_STATE_OBSERVED`` row's FULL payload dict —"""
     import json
 
     row = evidence_store.connection.execute(
@@ -962,19 +806,7 @@ class TestAbsentFieldsHonesty:
         inbox: SqliteEventInbox,
         rcl_log: SqliteCommitLog,
     ) -> None:
-        """HIGH-2, isolated form: calls the private ``_record_observation`` directly (module
-        docstring's own "split out ... purely for that method's own 100-line size budget" —
-        it is the SAME code path :meth:`RiskStateService.aggregate_inputs_for` calls) with a
-        hand-built, REALISTIC :class:`FlowObservation` — ``duplicates_rejected``/``replays``
-        are concrete ``0``s (TOS action-flow observation completion wave, 2026-09-16:
-        :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe` never returns
-        ``None`` for either once a scan ran), ``root_event_seq``/``handling_started_monotonic``/
-        ``lineage_found`` are also concrete, and only ``committed_vectors`` is empty —
-        isolating the claim from step 6's OWN absent fields
-        (``max_credible_command_effect``/``effect_digest``, present whenever
-        construction/effect-envelope readers return ``None``, exercised separately below). A
-        mutation hardcoding ``absent_fields=[]`` (the review's own M5 finding) must fail this
-        exact assertion."""
+        """HIGH-2, isolated form: calls the private ``_record_observation`` directly (module"""
         service = _service(tmp_path, evidence_store, inbox, rcl_log)
         flow_obs = FlowObservation(
             queue_depth=0,
@@ -1015,16 +847,7 @@ class TestAbsentFieldsHonesty:
         inbox: SqliteEventInbox,
         rcl_log: SqliteCommitLog,
     ) -> None:
-        """HIGH-2, realistic form: drives the SAME real ``aggregate_inputs_for`` path a brand
-        new first attempt takes (real inbox row, real ``EVENT_HANDLING_STARTED`` marker, real
-        ``current_seq_reader``) and asserts the ONE remaining structurally-unobservable name
-        (``committed_flow_vectors``) is present while EVERY flow name this wave now observes
-        (``duplicates_rejected``/``replays``/``root_event_seq``/``handling_started_monotonic``/
-        ``lineage_found``) is NOT — documenting, honestly, that step 6's own construction-time
-        absent fields (``max_credible_command_effect``/``effect_digest``, since this suite's
-        ``_service`` fixes ``construction_stage_reader``/``effect_envelope_reader`` to
-        ``lambda: None``) are ALSO present here, same as the isolated test above avoids by
-        calling ``_record_observation`` directly."""
+        """HIGH-2, realistic form: drives the SAME real ``aggregate_inputs_for`` path a brand"""
         payload = EgressResultPayload(
             instrument_key=InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),
             attempt_id="prop-1",
@@ -1061,11 +884,6 @@ class TestAbsentFieldsHonesty:
         assert "lineage_found" not in absent
 
 
-# ===========================================================================
-# Wiring layer — build_risk_state_service cross-checks
-# ===========================================================================
-
-
 def _write_riskstate_wiring_config(
     tmp_path: Path,
     *,
@@ -1076,10 +894,7 @@ def _write_riskstate_wiring_config(
     sell_side_token: str = "SELL",
     omit_envelope_max: bool = False,
 ) -> Path:
-    """A minimal, self-contained config directory for
-    :func:`~tos_runtime.compose._riskstate_wiring.build_risk_state_service`'s own cross-check
-    tests — deliberately NOT the shared ``tests/compose/conftest.py::config_dir`` fixture
-    (module docstring)."""
+    """A minimal, self-contained config directory for"""
     directory = tmp_path / "riskstate-config"
     directory.mkdir()
     (directory / "aggregate_risk_policy.yaml").write_text(
@@ -1171,10 +986,7 @@ class TestBuildRiskStateServiceCrossChecks:
         inbox: SqliteEventInbox,
         rcl_log: SqliteCommitLog,
     ) -> None:
-        """Plan S2-a: the "every ARE-governed dimension has a real envelope ceiling"
-        refusal moved from this wiring (against the spg HSE) into the policy loader
-        (against the policy's own ``_runtime.envelope_max``). An ARE document whose
-        ceiling map is missing its one dimension still refuses at boot."""
+        'Plan S2-a: the "every ARE-governed dimension has a real envelope ceiling"'
         directory = _write_riskstate_wiring_config(tmp_path, omit_envelope_max=True)
         with pytest.raises(VenuePolicyConfigError, match="envelope_max"):
             _build_service_from_wiring_config(
@@ -1242,18 +1054,10 @@ class TestBuildRiskStateServiceCrossChecks:
             )
 
 
-# ===========================================================================
-# compose_paper_runtime level — (9) run/boot rule
-# ===========================================================================
-
-
 def test_compose_paper_runtime_refuses_when_files_absent_and_a_provider_is_none(
     config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """Plan §3 "run 차단 목록" — the shared ``config_dir`` fixture never carries
-    ``aggregate_risk_policy.yaml``/``action_flow_policy.yaml``, so leaving either provider
-    ``None`` must refuse at boot rather than silently admit a permanently-UNKNOWN runtime.
-    """
+    """Plan §3 "run 차단 목록" — the shared ``config_dir`` fixture never carries"""
     fx.write_band_strategy_file(config_dir)
     with pytest.raises(RiskStateConfigError):
         compose_paper_runtime(
@@ -1270,9 +1074,7 @@ def test_compose_paper_runtime_refuses_when_files_absent_and_a_provider_is_none(
 def test_compose_paper_runtime_with_explicit_providers_leaves_risk_state_none(
     config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """Plan §5 실증 (8): explicit providers are still honored when the two policy files are
-    absent — ``ComposedRuntime.risk_state`` stays ``None`` (the pre-existing test seam).
-    """
+    """Plan §5 실증 (8): explicit providers are still honored when the two policy files are"""
     from tos_runtime.risk.aggregate import AggregateRiskDecisionInputs
     from tos_runtime.risk.flow import ActionFlowDecisionInputs
 
@@ -1297,17 +1099,8 @@ def test_compose_paper_runtime_with_explicit_providers_leaves_risk_state_none(
     assert runtime.risk_state is None
 
 
-# ===========================================================================
-# E2E layer — the plan's own acceptance criterion (module docstring)
-# ===========================================================================
-
-
 def _fresh_risk_state_dirs(root: Path) -> tuple[Path, Path, Path]:
-    """One independent ``(config_dir_with_risk_state, data_dir, custody_root)`` triple under
-    ``root`` — mirrors ``test_symmetry.py::_fresh_compose_dirs``'s own ``__wrapped__`` idiom
-    (pytest refuses a fixture function called directly; the plain function each decorator
-    wraps is reachable via ``__wrapped__``), extended one layer to also apply
-    ``config_dir_with_risk_state`` on top of the base ``config_dir``."""
+    """One independent ``(config_dir_with_risk_state, data_dir, custody_root)`` triple under"""
     root.mkdir(parents=True, exist_ok=True)
     config_dir = call_wrapped_fixture(_config_dir_fixture, root)
     config_dir = call_wrapped_fixture(_config_dir_with_risk_state_fixture, config_dir)
@@ -1317,10 +1110,7 @@ def _fresh_risk_state_dirs(root: Path) -> tuple[Path, Path, Path]:
 
 
 def _drive_two_calls(runtime, custody_root: Path, event):
-    """The SAME two-``run_once``-call pattern ``test_compose_root.py``'s own ADMIT tests use
-    (first call discovers the proposal digest and writes the approval file; second call
-    reaches the steps this wave's service feeds) — returns the second call's own
-    ``FlowResult``."""
+    """The SAME two-``run_once``-call pattern ``test_compose_root.py``'s own ADMIT tests use"""
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
     construction = runtime.construction_stage.construction
@@ -1348,9 +1138,7 @@ def _evidence_kind_counts(runtime) -> dict[str, int]:
 
 
 class TestComposeE2E:
-    """The plan's own acceptance criterion, driven through the FULL compose stack with no
-    explicit providers (module docstring's own "E2E layer" section — read that first for the
-    honest step 7 finding this class's own assertions reflect)."""
+    """The plan's own acceptance criterion, driven through the FULL compose stack with no"""
 
     def test_first_attempt_reaches_aggregate_risk_grant(
         self,
@@ -1358,23 +1146,7 @@ class TestComposeE2E:
         data_dir: Path,
         custody_root: Path,
     ) -> None:
-        """Plan §5 실증 (1) — no explicit providers, the production
-        :class:`~tos_runtime.riskstate.service.RiskStateService` supplies both steps 6/7's
-        inputs. Step 6 (AGGREGATE_RISK_DECISION) reaches a real ``GRANT``/``ADMIT`` with no
-        hand-built literal cell anywhere in this test. Step 7 (ACTION_FLOW_DECISION) ALSO
-        reaches a real ``GRANT``/``ADMIT`` (TOS action-flow observation completion wave,
-        2026-09-16 — this test previously asserted the honest ``amplification_bounded`` gap
-        this suite's own module docstring used to document; that gap is now closed, see the
-        module docstring's own "Resolved" section). Both ``*_POLICY_BOUND`` rows and exactly
-        one ``RISK_STATE_OBSERVED`` row are recorded, with no ``duplicates_rejected``/
-        ``replays`` absence (a brand-new, first-ever attempt still gets concrete ``0``s on
-        both axes — a completed scan finding nothing is a real fact, not a gap). Also asserts
-        (re-review residual of HIGH-4, 2026-09-16) that the REAL first attempt's own step-7
-        inputs carry a non-``None`` ``observed_amplification.elapsed_monotonic`` — captured via
-        a spy on ``runtime.risk_state.action_flow_inputs_for`` (an instance-attribute override
-        shadows the bound method for the SAME object the compose thunks already close over,
-        per ``root.py``'s own ``risk_state_cell`` — never a second, separately-built service).
-        """
+        """Plan §5 실증 (1) — no explicit providers, the production"""
         fx.write_band_strategy_file(config_dir_with_risk_state)
         runtime = compose_paper_runtime(
             config_dir_with_risk_state,
@@ -1420,10 +1192,6 @@ class TestComposeE2E:
         first_attempt_inputs = captured_action_flow_inputs[0]
         assert first_attempt_inputs.observed_amplification is not None
         assert first_attempt_inputs.observed_amplification.elapsed_monotonic is not None
-        # M1 pin (plan §5): the two amplification axes this wave observes are concrete ``0``s
-        # for a brand-new first attempt, never ``None`` — reverting either to a literal
-        # ``None`` (module docstring's pre-fix state) collapses this to UNKNOWN, failing the
-        # ADMIT/GRANT assertions above.
         assert (
             first_attempt_inputs.observed_amplification.duplicate_redelivery_expansion
             == 0
@@ -1452,34 +1220,7 @@ class TestComposeE2E:
         data_dir: Path,
         custody_root: Path,
     ) -> None:
-        """Plan §5 실증 (2) — a durable prior fill large enough to exceed the policy's own
-        effective limit (``_RISK_STATE_ENVELOPE_MAX``, ``tests/compose/conftest.py``) flips
-        step 6 from ``GRANT`` to ``DENY`` on the very next attempt, via the REAL
-        ``tos.are.adverse_increment`` headroom check over the position observation's own
-        durable-evidence fold — no hand-built cell anywhere in this test either.
-
-        The prior fill is DERIVED from this attempt's own real derived quantity
-        (``construction.derivation.quantity``, read off the FIRST ``run_once`` call — the
-        same discovery call ``_drive_two_calls`` always makes first, before any approval file
-        exists), never a literal restating what that quantity happens to be today. This wave
-        has already been bitten twice by exactly that coupling (a hardcoded expectation
-        silently invalidated by an unrelated fixture-bound change elsewhere — lane C's own
-        instance, and this test's prior ``quantity="99990"`` against a ``max_quantity``
-        lane A later raised for the sizing cross-check, 2026-09-16). Computing the prior fill
-        from the real derived quantity means a future bound change moves this test with it.
-
-        ⚠ **What this test does and does not guarantee** (code-review MEDIUM, 2026-09-16): the
-        prior fill is computed as ``envelope_max - derived_quantity + 1``, which makes
-        ``prior_fill + derived_quantity == envelope_max + 1`` true BY CONSTRUCTION — this test
-        proves step 6 correctly flips ``GRANT`` -> ``DENY`` off whatever real derived quantity
-        the runtime produces (the plumbing), but it does NOT independently prove that derived
-        quantity is itself the RIGHT number (a derivation that deterministically returned 0, or
-        any other fixed value, would still make this test pass — the ``derived_quantity > 0``
-        assertion below only catches an absent or degenerate value, not a wrong one). Quantity
-        CORRECTNESS — that the derived value matches what the governed sizing bound actually
-        authorizes — is lane C's job, pinned by its own invariant tests against the derivation's
-        output; that coverage exists, it is just not duplicated here.
-        """
+        """Plan §5 실증 (2) — a durable prior fill large enough to exceed the policy's own"""
         fx.write_band_strategy_file(config_dir_with_risk_state)
         runtime = compose_paper_runtime(
             config_dir_with_risk_state,
@@ -1492,20 +1233,15 @@ class TestComposeE2E:
             wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
         )
 
-        # First call (the SAME discovery call _drive_two_calls makes): no approval file exists
-        # yet, so this denies at step 4 IAP, but step 2 construction — and its real derivation
-        # — already ran, giving us the one real fact this test's arithmetic depends on.
         event = fx.crossing_event()
         results = runtime.run_once((event,))
         pipeline = results[0].pipeline
         assert pipeline is not None and pipeline.proposal is not None
         proposal_digest = pipeline.proposal.canonical_digest
-        assert (
-            proposal_digest is not None
-        )  # an ISSUED proposal always has a concrete digest
+        assert proposal_digest is not None
         construction = runtime.construction_stage.construction
         assert construction is not None and construction.intent is not None
-        assert construction.intent.canonical_digest is not None  # ISSUED, same as above
+        assert construction.intent.canonical_digest is not None
         derived_quantity = construction.derivation.quantity
         assert (
             derived_quantity is not None
@@ -1522,11 +1258,6 @@ class TestComposeE2E:
             approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
 
-        # A durable prior fill that sits just UNDER the effective limit given THIS attempt's
-        # own derived quantity — adding the real derived quantity must cross the limit,
-        # regardless of what that derived quantity happens to be. The SAME durable
-        # evidence-row SHAPE the real synthetic transport would produce (module docstring's
-        # own unit-layer helpers, reused here against the real evidence store).
         envelope_max = Decimal(_RISK_STATE_ENVELOPE_MAX)
         prior_fill = envelope_max - derived_quantity + 1
         assert prior_fill > 0, (
@@ -1547,9 +1278,6 @@ class TestComposeE2E:
             filled_quantity=str(prior_fill),
         )
 
-        # Second call: the prior fill plus THIS attempt's own real derived quantity together
-        # exceed the effective limit by construction (prior_fill + derived_quantity ==
-        # envelope_max + 1), so step 6 must flip to DENY.
         results2 = runtime.run_once((event,))
         flow = results2[0].flow
         assert flow is not None
@@ -1564,33 +1292,7 @@ class TestComposeE2E:
         data_dir: Path,
         custody_root: Path,
     ) -> None:
-        """Plan §5 실증 (2), CORRECTED against the real kernel composer (finding, reported —
-        the plan text says "DENY"; the kernel says otherwise, see below) — ``RESULT_UNMATCHED
-        {DUPLICATE}`` rows for an attempt sealed against THIS tick's own root event (traced
-        via ``SEND_SEALED`` lineage, the SAME set
-        :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader._scan_sealed_lineage`
-        builds), seeded BEYOND the fixture's own ``max_duplicate_redelivery_expansion`` (2,
-        ``tests/compose/conftest.py``), flip step 7 from ``GRANT`` to ``UNKNOWN`` — never
-        ``DENY`` — through the REAL ``tos.afg.predicates._decide_action_flow_result`` composer:
-        ``if amplification_ok is not True: return ActionFlowResult.UNKNOWN``
-        (``tos/src/tos/afg/predicates.py:584-585``) is evaluated BEFORE any of the composer's
-        two ``DENY`` branches (empty requested scope; ``envelope_ok is not True``) even run —
-        an unbounded/exceeded amplification axis is restrictive-UNKNOWN by kernel design
-        ("every unproven premise resolves to UNKNOWN... before any DENY/GRANT conclusion is
-        drawn", same module's own docstring), not a proven denial. No hand-built cell anywhere
-        in this test. A tiny sealed quantity (``"1"``) keeps step 6's own conservative-usage
-        check at ``GRANT`` (unlike the prior-fill test above, which deliberately exceeds it).
-
-        **Seeding mechanics**: ``EngineDriver.enqueue_and_run``'s own ``_stamp`` DISCARDS the
-        event's caller-supplied ``reference`` and re-stamps a fresh one from its own internal
-        counter on every admission (``driver.py:396-403``, "the caller-supplied reference is
-        discarded entirely") — so the REAL ``root_event_id`` this attempt's step 6/7 evaluate
-        against is only known at the moment
-        :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe` is actually
-        invoked, never derivable in advance from the fixture's own ``event`` object. This test
-        wraps ``runtime.risk_state._flow_reader.observe`` to seed using the REAL
-        ``root_event_id`` it is called with, then delegates to the original implementation —
-        never a guessed or pre-computed identifier."""
+        """Plan §5 실증 (2), CORRECTED against the real kernel composer (finding, reported —"""
         fx.write_band_strategy_file(config_dir_with_risk_state)
         runtime = compose_paper_runtime(
             config_dir_with_risk_state,
@@ -1617,8 +1319,6 @@ class TestComposeE2E:
                     quantity="1",
                     event_id=root_event_id,
                 )
-                # 3 DUPLICATE rows for the SAME attempt — exceeds
-                # max_duplicate_redelivery_expansion=2.
                 for _ in range(3):
                     _seed_egress_result(
                         runtime.evidence_store,
@@ -1655,24 +1355,7 @@ class TestComposeE2E:
         data_dir: Path,
         custody_root: Path,
     ) -> None:
-        """Plan §5 실증 (3), CORRECTED against the real kernel composer (same finding as the
-        DUPLICATE test above) — restart-recovery marker rows keyed to THIS tick's own
-        content-addressed root event identity, seeded BEYOND the fixture's own
-        ``max_failover_reconnect_replay_expansion`` (2), flip step 7 from ``GRANT`` to
-        ``UNKNOWN`` — never ``DENY`` — for the SAME reason: ``amplification_ok is not True``
-        resolves to ``UNKNOWN`` before the composer's own ``DENY`` branches ever run
-        (``tos/src/tos/afg/predicates.py:584-585``).
-
-        **Seeding mechanics**: as in the DUPLICATE test above, ``EngineDriver.enqueue_and_run``
-        re-stamps a fresh reference on every admission, so the exact content-addressed
-        ``event_id`` this attempt's own ``EVENT_HANDLING_STARTED`` marker carries cannot be
-        derived in advance from the fixture's own ``event`` object — it is only knowable via
-        :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader
-        ._resolve_handling_started` at the moment ``observe`` actually runs (the SAME method
-        production code calls — it returns the marker row's ``content_event_id`` alongside
-        its timestamp, both read from one row). This test wraps ``observe`` to resolve the
-        REAL content identity via that exact method, seed against it, then delegate to the
-        original implementation — never a guessed or pre-computed identifier."""
+        """Plan §5 실증 (3), CORRECTED against the real kernel composer (same finding as the"""
         fx.write_band_strategy_file(config_dir_with_risk_state)
         runtime = compose_paper_runtime(
             config_dir_with_risk_state,
@@ -1698,14 +1381,6 @@ class TestComposeE2E:
                     "the root row's own content-addressed event_id could not be resolved — "
                     "nothing to seed against"
                 )
-                # 2 markers of EACH recovery kind (4 total) for THIS tick's own
-                # content-addressed event — exceeds max_failover_reconnect_replay_expansion=2.
-                # Deliberately a MIX, not one kind repeated: dropping either
-                # `DECISION_TICK_DROPPED_ON_RECOVERY` or
-                # `HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND` from
-                # `_RECOVERY_MARKER_KINDS` would still leave 2 of the other kind — exactly
-                # AT the bound, no longer exceeding it — so this test goes RED under either
-                # single-kind-removed mutation (review HIGH, PR #707).
                 for _ in range(2):
                     _seed_recovery_marker(
                         runtime.evidence_store,
@@ -1744,26 +1419,7 @@ class TestComposeE2E:
     def test_new_short_mirrors_new_long_at_aggregate_risk_grant(
         self, tmp_path: Path
     ) -> None:
-        """Plan §5 실증 (7) — the NEW_SHORT mirror (:mod:`tests.compose._symmetry_fixtures`,
-        TOS Phase 5 W5 plan §2 decision 8) reaches the SAME step 6 ``GRANT``/``ADMIT`` as the
-        NEW_LONG case, through the real ``EvidencePositionReader`` — position sign flips
-        (``SELL`` vs ``BUY``), usage MAGNITUDE (and therefore the decision) does not. Also
-        reaches the SAME step 7 ``GRANT``/``ADMIT`` (plan §2 decision 4, TOS action-flow
-        observation completion wave, 2026-09-16 — the mirror path exercises the SAME
-        :class:`~tos_runtime.riskstate.service.RiskStateService` observation code, so it must
-        reach the same outcome as the NEW_LONG case above).
-
-        Also pins DIRECTION/SIDE self-consistency on the INTEGRATED path (code-review MEDIUM,
-        2026-09-16): the shared OCP document's own ``DIRECTION`` axis says ``LONG`` (lane A's
-        ``ocp_yaml()`` default), yet this composition's ``action_class`` is ``NEW_SHORT`` — the
-        exact mismatch ``resolve_construction_direction`` exists to resolve. Before that fix,
-        this composition could not derive a SIDE at all; before the envelope self-consistency
-        fix, it could derive SIDE=SELL while the envelope's own DIRECTION binding stayed at the
-        policy's LONG. Only one hermetic unit test
-        (``tests/compose/test_envelope_wiring.py::test_envelope_replaces_the_direction_binding
-        _with_the_resolved_direction``) pinned that until now — this asserts the SAME fact on
-        the real composed attempt, so deleting the replacement fails here too, not only beside
-        the code that implements it."""
+        """Plan §5 실증 (7) — the NEW_SHORT mirror (:mod:`tests.compose._symmetry_fixtures`,"""
         config_dir, data_dir, custody_root = _fresh_risk_state_dirs(tmp_path / "short")
         sfx.write_mirrored_strategy_file(config_dir)
         runtime = compose_paper_runtime(

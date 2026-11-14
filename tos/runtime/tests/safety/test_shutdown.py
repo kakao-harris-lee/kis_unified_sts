@@ -1,10 +1,4 @@
-"""Tests for :mod:`tos_runtime.safety.shutdown` — latch first, then close, then
-record. Fixtures are local to this file, never shared via ``conftest.py`` or
-another test module: ``tos/runtime/tests/safety/`` is a shared worktree where
-several lanes land tests concurrently (this file is lane d3's own), so a
-fixture this file alone needs stays here rather than risking a merge
-conflict or an accidental cross-lane dependency in a file another lane also
-edits."""
+"""Tests for :mod:`tos_runtime.safety.shutdown` — latch first, then close, then"""
 
 from __future__ import annotations
 
@@ -38,9 +32,7 @@ _SCOPE = ReservationScope(account="acct-1", instrument="101S06")
 
 
 class _FixedKeyProvider:
-    """A minimal :class:`~tos_runtime.evidence.store.KeyProvider` double — fixed bytes,
-    shared across every fixture in this file so a REOPENED store (built with a fresh
-    instance of this same class) reads back the identical signing key."""
+    """A minimal :class:`~tos_runtime.evidence.store.KeyProvider` double — fixed bytes,"""
 
     def __init__(
         self, key_generation: int = 1, key: bytes = b"shutdown-test-key"
@@ -160,18 +152,12 @@ def _commit_reservation(
 
 
 def _entry_kinds(evidence_path: Path) -> list[str]:
-    """Reopen ``evidence_path`` fresh and return every committed entry's ``kind`` —
-    proves durability independent of the (already-closed) instance under test."""
+    """Reopen ``evidence_path`` fresh and return every committed entry's ``kind`` —"""
     reopened = SqliteEvidenceStore(evidence_path, key_provider=_FixedKeyProvider())
     try:
         return [row.kind for row in reopened.iter_entry_meta()]
     finally:
         reopened.close()
-
-
-# ---------------------------------------------------------------------------
-# nominal shutdown — every step proven, resources durably closed
-# ---------------------------------------------------------------------------
 
 
 def test_nominal_shutdown_proves_every_step(
@@ -186,8 +172,6 @@ def test_nominal_shutdown_proves_every_step(
     assert outcome.latched_before_close is True
     assert outcome.steps[0].step_kind == STEP_LATCH_NEW_RISK_HALT
 
-    # the new-risk-halt latch is durable — a FRESH inbox instance over the same file
-    # sees it, independent of the (closed) instance under test.
     reopened_inbox = SqliteEventInbox(inbox_path, scheme=_SCHEME)
     try:
         assert reopened_inbox.new_risk_halt() is not None
@@ -207,11 +191,6 @@ def test_no_obligations_when_no_reservation_is_outstanding(
     assert outcome.obligations == ()
 
 
-# ---------------------------------------------------------------------------
-# obligations_survive_shutdown is disclosed as never-called (module docstring)
-# ---------------------------------------------------------------------------
-
-
 def test_unresolved_reservation_becomes_an_ongoing_obligation(
     shutdown: ControlledShutdown, rcl_log: SqliteCommitLog
 ) -> None:
@@ -227,11 +206,6 @@ def test_unresolved_reservation_becomes_an_ongoing_obligation(
 def test_released_reservation_is_not_an_obligation(
     shutdown: ControlledShutdown, rcl_log: SqliteCommitLog
 ) -> None:
-    # Reaching RELEASED through the real gated transition path needs a full finality-
-    # witness/proof chain (see tos/runtime/tests/rcl/test_finality_witness.py) unrelated
-    # to what this test asserts — inserted directly against the reservations PROJECTION
-    # table instead (the exact row shape SqliteReservationProjectionReader reads,
-    # tos_runtime/rcl/schema.py::CREATE_RESERVATIONS_TABLE_SQL).
     rcl_log._conn.execute(  # noqa: SLF001 — see comment above
         "INSERT INTO reservations (reservation_id, state, last_seq, scope_account, "
         "scope_instrument) VALUES ('res-released', 'RELEASED', 1, 'acct-1', '101S06')"
@@ -242,16 +216,10 @@ def test_released_reservation_is_not_an_obligation(
     assert outcome.obligations == ()
 
 
-# ---------------------------------------------------------------------------
-# recovery handoff — honestly NOT accepted at shutdown time (M4's production side)
-# ---------------------------------------------------------------------------
-
-
 def test_the_handoff_id_comes_from_the_started_evidence_row(
     shutdown: ControlledShutdown,
 ) -> None:
-    """A real, unique coordinate — never a fabricated id. The next boot's recovery
-    barrier owns acceptance, so this shutdown records no acceptance of its own."""
+    """A real, unique coordinate — never a fabricated id. The next boot's recovery"""
     outcome = shutdown.run(reason="test-handoff-honesty")
 
     assert outcome.handoff_id is not None
@@ -269,49 +237,33 @@ def test_inbox_close_raising_halts_later_steps_but_still_records(
     outcome = shutdown.run(reason="test-inbox-close-raises")
     steps = outcome.steps
 
-    assert steps[0].completed is True  # latch — ran before the failure
-    assert steps[1].completed is True  # obligation transfer — ran before the failure
-    assert steps[2].completed is False  # close inbox — raised
-    assert steps[3].completed is None  # close rcl log — never attempted (halted)
-    assert steps[4].completed is True  # record + close evidence — ALWAYS attempted
+    assert steps[0].completed is True
+    assert steps[1].completed is True
+    assert steps[2].completed is False
+    assert steps[3].completed is None
+    assert steps[4].completed is True
     assert outcome.all_steps_proven is False
 
-    # step 5 still recorded evidence despite the halt (module docstring "stop and record").
     assert "CONTROLLED_SHUTDOWN_STEPS" in _entry_kinds(evidence_path)
 
 
 def test_pending_inbox_event_leaves_disposition_unestablished(
     shutdown: ControlledShutdown, inbox: SqliteEventInbox
 ) -> None:
-    """Step 3 is honestly incomplete (no exception needed) when an admitted event was
-    never consumed — closing the connection regardless does not retroactively decide
-    anything about it. A row is inserted directly against the inbox's own ``events``
-    table (never a full :class:`~tos.engine.records.EngineEvent`, which needs unrelated
-    capsule/time fixture machinery this suite has no reason to depend on) — the ONLY
-    fact :meth:`ControlledShutdown._close_inbox` reads is
-    :attr:`~tos_runtime.engine.inbox.SqliteEventInbox.unconsumed_count`, which is a
-    direct ``COUNT(*) ... WHERE consumed_evidence_seq IS NULL`` query this row alone
-    satisfies."""
+    """Step 3 is honestly incomplete (no exception needed) when an admitted event was"""
     inbox._conn.execute(  # noqa: SLF001 — see docstring: the minimal honest row shape
         "INSERT INTO events (seq, event_id, kind, account, instrument, reference_json, "
         "payload_json, payload_digest, consumed_evidence_seq, consumed_generation) "
         "VALUES (1, 'ev-pending-1', 'DECISION_TICK', 'acct-1', '101S06', '{}', '{}', "
         "'digest-1', NULL, NULL)"
-    )  # isolation_level=None (autocommit) — the row is durable as soon as execute() returns
+    )
     assert inbox.unconsumed_count == 1
 
     outcome = shutdown.run(reason="test-pending-inbox-event")
     steps = outcome.steps
 
-    assert steps[2].completed is False  # one event still pending
-    assert steps[3].completed is None  # halted — rcl log close never attempted
-
-
-# ---------------------------------------------------------------------------
-# secret hygiene — no evidence payload this module writes carries anything
-# credential-shaped (this shutdown never reads custody at all — see the
-# module docstring's "close custody" section)
-# ---------------------------------------------------------------------------
+    assert steps[2].completed is False
+    assert steps[3].completed is None
 
 
 def test_no_evidence_payload_carries_a_credential_shaped_field(

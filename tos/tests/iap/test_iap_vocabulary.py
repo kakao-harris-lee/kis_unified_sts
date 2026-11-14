@@ -1,10 +1,4 @@
-"""Vocabulary invariants — verbatim members + coordinate non-collapse (design #15 §2.2).
-
-The four approval-axis enums carry the ADR-002-023 verbatim members (§1 line 17 / §11 line 289 /
-§12 / §5.7). Token overlap with orthostate ``IntentState`` is possible, but the values are
-distinct types on distinct axes (§2.2(4)/§2.3) — asserted structurally (a distinct type, never a
-sibling import).
-"""
+"""Vocabulary invariants — verbatim members + coordinate non-collapse (design #15 §2.2)."""
 
 from __future__ import annotations
 
@@ -47,14 +41,7 @@ def test_consumption_outcome_members() -> None:
 
 
 def test_approval_result_deny_is_not_intent_state_denied() -> None:
-    """(§2.2(4)/§3.5) ApprovalResult.DENY is a distinct type/axis from orthostate IntentState.DENIED.
-
-    The critical non-collapse: the two share the value token family "DEN…" but are distinct types
-    on distinct axes (a decision-result vs an Intent lifecycle state). ``tos.iap`` never imports
-    ``tos.orthostate`` (sibling edge 0), so a value from one can never be coerced onto the other.
-    The causal boundary (DENY causes no Intent transition) is asserted in test_seam_orthostate.
-    """
-    # A distinct enum type — not the orthostate IntentState (which iap does not import here).
+    """(§2.2(4)/§3.5) ApprovalResult.DENY is a distinct type/axis from orthostate IntentState.DENIED."""
     assert type(ApprovalResult.DENY).__name__ == "ApprovalResult"
-    assert ApprovalResult.DENY.value == "DENY"  # not "DENIED"
+    assert ApprovalResult.DENY.value == "DENY"
     assert ApprovalResult.DENY.value != "DENIED"

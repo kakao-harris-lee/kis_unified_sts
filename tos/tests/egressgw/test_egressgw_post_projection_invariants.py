@@ -1,34 +1,4 @@
-"""§4.6/§5.4 — post-``POTENTIALLY_LIVE_OBSERVED`` exception invariants (dev plan Phase 1 작업 3).
-
-Once step 17's ``POTENTIALLY_LIVE_OBSERVED`` record has been written, the reservation is
-conservatively possibly-live regardless of what :meth:`BrokerEgressGateway.__call__` does next
-(design #34 §4.6 — the authoritative projection is D-E1's, advanced *before* this interface was
-even called). What THIS file proves is that the gateway's own remaining work — steps 18-19 — keeps
-three invariants no matter which collaborator raises after that point:
-
-* **I1** — the attempt stays claimed/consumed (a re-call of the same attempt is refused, never a
-  blind resubmit — RFC-005 §11:326-328, §12:362 item 6);
-* **I2** — at most one *disposition-bearing* evidence record is produced for the attempt
-  (``SEND_REFUSED`` with a true recorded reason, or ``EGRESS_RESULT_RECORDED``), and it is never
-  fabricated to misrepresent what actually happened (design #34 §4.2's "a restrictive termination
-  without a recorded reason is a silent stop, not a fail-closed one", read in both directions: a
-  *false* SEND_REFUSED for a send that genuinely went out is exactly such a silent lie);
-* **I3** — the injected transport's ``send_once`` is called **at most once** (single-shot by
-  construction, §5.4 — "no blind resubmission").
-
-Two fault sites — the evidence sink raising while recording a **known-good** outcome
-(``EGRESS_RESULT_RECORDED`` or the supplementary ``UNCERTAIN_SEND`` ladder) — deliberately do
-**not** convert to a halt: the send already happened, so recording ``SEND_REFUSED`` in its place
-would fabricate a refusal for something that was, in fact, accepted (RFC-005 §11:322-323's
-"a missing acknowledgement is NOT a non-acceptance", applied here to a missing evidence write
-instead of a missing send acknowledgement). Those propagate uncaught instead — the caller sees a
-crash, which design #34 §4.6 treats as the deliberate, expected outcome from this point on ("a
-crash from here on is deliberately treated as possibly-live"). Every other post-projection fault
-site *can* honestly resolve to a halt, because at the point it is detected the gateway does not
-yet know the send succeeded (or, for a derivation fault, the transport was never even called).
-
-Regime tag: authoring evidence only; closes no EV (design #34 §1.1).
-"""
+"""§4.6/§5.4 — post-``POTENTIALLY_LIVE_OBSERVED`` exception invariants (dev plan Phase 1 작업 3)."""
 
 from __future__ import annotations
 
@@ -52,10 +22,6 @@ from tos.engine import (
 )
 
 from ._egressgw_fixtures import build_gateway, full_fill_transport, happy_context
-
-# ---------------------------------------------------------------------------
-# test doubles
-# ---------------------------------------------------------------------------
 
 
 class _UnreachableTransport:
@@ -159,11 +125,7 @@ class _RaisingFilledQuantityResult:
 
 
 class _RaisingOnKindSink:
-    """A sink that raises for chosen evidence kinds and otherwise delegates (records) normally.
-
-    Used to simulate the provisional evidence sink itself failing at a specific, chosen point in
-    the step-19 sequence, without disturbing the steps that come before it.
-    """
+    """A sink that raises for chosen evidence kinds and otherwise delegates (records) normally."""
 
     def __init__(self, *, raise_on: frozenset[str]) -> None:
         self._delegate = RecordingGatewayEvidenceSink()
@@ -191,11 +153,6 @@ def _declared(kind: EgressResultKind) -> SyntheticPaperTransport:
     return SyntheticPaperTransport(SyntheticFillPolicy(declared_kind=kind))
 
 
-# ---------------------------------------------------------------------------
-# control: the happy path is unaffected by the added guards
-# ---------------------------------------------------------------------------
-
-
 def test_the_happy_path_still_records_the_exact_step_order() -> None:
     """(§1.3/§4.6, hypothesis-free control) verify -> SEALED -> STARTED -> LIVE -> result."""
     attempt, context = happy_context()
@@ -217,20 +174,10 @@ def test_the_happy_path_still_records_the_exact_step_order() -> None:
     assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True
 
 
-# ---------------------------------------------------------------------------
-# fault site: deriving the outbound coordinates raises before send_once is ever called
-# ---------------------------------------------------------------------------
-
-
 def test_a_coordinate_derivation_fault_halts_under_its_own_reason_before_any_send(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """(Phase 4 작업 6) Absorbed into SEND_SEAL_UNCONSTRUCTABLE — this now runs before any claim.
-
-    Misattributing this to TRANSPORT_RAISED would hide that the transport was never reached;
-    tagging it with the old OUTBOUND_COORDINATE_DERIVATION_RAISED reason would misreport *where*
-    it happened now that coordinate derivation runs at seal-build time, before the step-16 claim.
-    """
+    """(Phase 4 작업 6) Absorbed into SEND_SEAL_UNCONSTRUCTABLE — this now runs before any claim."""
     attempt, context = happy_context()
     transport = _UnreachableTransport()
     sink = RecordingGatewayEvidenceSink()
@@ -248,22 +195,13 @@ def test_a_coordinate_derivation_fault_halts_under_its_own_reason_before_any_sen
     handoff = gateway(attempt)
 
     assert handoff.accepted_for_transmission is None
-    assert transport.calls == 0  # I3
-    assert (
-        gateway.ledger.attempt_consumed(attempt.attempt_id) is False
-    )  # nothing claimed
+    assert transport.calls == 0
+    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is False
     assert gateway.ledger.claims == ()
-    assert sink.records[-1].kind == "SEND_REFUSED"  # I2
+    assert sink.records[-1].kind == "SEND_REFUSED"
     assert sink.records[-1].halt_reason is SendHaltReason.SEND_SEAL_UNCONSTRUCTABLE
-    # A second call still refuses without ever reaching the transport — nothing was ever
-    # consumed, so this is a fresh evaluation each time, not a "consumed" replay refusal.
     assert gateway(attempt).accepted_for_transmission is None
     assert transport.calls == 0
-
-
-# ---------------------------------------------------------------------------
-# fault site: the transport call itself raises
-# ---------------------------------------------------------------------------
 
 
 def test_a_raised_transport_after_projection_leaves_the_attempt_consumed_and_resubmits_nothing() -> (
@@ -280,17 +218,12 @@ def test_a_raised_transport_after_projection_leaves_the_attempt_consumed_and_res
     handoff = gateway(attempt)
 
     assert handoff.accepted_for_transmission is None
-    assert transport.calls == 1  # I3
-    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True  # I1
-    assert sink.records[-1].kind == "SEND_REFUSED"  # I2
+    assert transport.calls == 1
+    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True
+    assert sink.records[-1].kind == "SEND_REFUSED"
     assert sink.records[-1].halt_reason is SendHaltReason.TRANSPORT_RAISED
     assert gateway(attempt).accepted_for_transmission is None
     assert transport.calls == 1
-
-
-# ---------------------------------------------------------------------------
-# fault site: the transport returns, but the result cannot be read
-# ---------------------------------------------------------------------------
 
 
 def test_a_result_whose_attempt_id_is_unreadable_halts_as_result_unreadable() -> None:
@@ -305,13 +238,11 @@ def test_a_result_whose_attempt_id_is_unreadable_halts_as_result_unreadable() ->
     handoff = gateway(attempt)
 
     assert handoff.accepted_for_transmission is None
-    assert transport.calls == 1  # I3 — the single send_once call already happened
-    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True  # I1
-    assert sink.records[-1].kind == "SEND_REFUSED"  # I2
+    assert transport.calls == 1
+    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True
+    assert sink.records[-1].kind == "SEND_REFUSED"
     assert sink.records[-1].halt_reason is SendHaltReason.RESULT_UNREADABLE
     assert sink.records[-1].step is CommitmentStep.EVIDENCE_RECORD
-    # the unreadable result is never registered — ``self.results`` only appends after the
-    # EGRESS_RESULT_RECORDED evidence is built (gateway.py — well past this halt).
     assert gateway.results == ()
     assert gateway(attempt).accepted_for_transmission is None
     assert transport.calls == 1
@@ -329,12 +260,12 @@ def test_a_result_whose_kind_is_unreadable_halts_as_result_unreadable() -> None:
     handoff = gateway(attempt)
 
     assert handoff.accepted_for_transmission is None
-    assert transport.calls == 1  # I3
-    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True  # I1
-    assert sink.records[-1].kind == "SEND_REFUSED"  # I2
+    assert transport.calls == 1
+    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True
+    assert sink.records[-1].kind == "SEND_REFUSED"
     assert sink.records[-1].halt_reason is SendHaltReason.RESULT_UNREADABLE
     assert sink.records[-1].step is CommitmentStep.EVIDENCE_RECORD
-    assert gateway.results == ()  # the unreadable result is never registered
+    assert gateway.results == ()
 
 
 def test_a_result_whose_filled_quantity_is_unreadable_halts_as_result_unreadable() -> (
@@ -351,12 +282,12 @@ def test_a_result_whose_filled_quantity_is_unreadable_halts_as_result_unreadable
     handoff = gateway(attempt)
 
     assert handoff.accepted_for_transmission is None
-    assert transport.calls == 1  # I3
-    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True  # I1
-    assert sink.records[-1].kind == "SEND_REFUSED"  # I2
+    assert transport.calls == 1
+    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True
+    assert sink.records[-1].kind == "SEND_REFUSED"
     assert sink.records[-1].halt_reason is SendHaltReason.RESULT_UNREADABLE
     assert sink.records[-1].step is CommitmentStep.EVIDENCE_RECORD
-    assert gateway.results == ()  # the unreadable result is never registered
+    assert gateway.results == ()
 
 
 def test_a_result_naming_another_attempt_is_refused_without_transitioning_this_one() -> (
@@ -373,17 +304,12 @@ def test_a_result_naming_another_attempt_is_refused_without_transitioning_this_o
     handoff = gateway(attempt)
 
     assert handoff.accepted_for_transmission is None
-    assert transport.calls == 1  # I3
-    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True  # I1
-    assert sink.records[-1].kind == "SEND_REFUSED"  # I2
+    assert transport.calls == 1
+    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True
+    assert sink.records[-1].kind == "SEND_REFUSED"
     assert (
         sink.records[-1].halt_reason is SendHaltReason.RESULT_ATTEMPT_IDENTITY_MISMATCH
     )
-
-
-# ---------------------------------------------------------------------------
-# fault site: the evidence sink itself raises while recording a KNOWN-GOOD outcome
-# ---------------------------------------------------------------------------
 
 
 def test_a_sink_failure_recording_the_result_propagates_and_fabricates_no_refusal() -> (
@@ -400,15 +326,10 @@ def test_a_sink_failure_recording_the_result_propagates_and_fabricates_no_refusa
     with pytest.raises(RuntimeError, match="EGRESS_RESULT_RECORDED"):
         gateway(attempt)
 
-    assert (
-        gateway.ledger.attempt_consumed(attempt.attempt_id) is True
-    )  # I1 survives the crash
-    assert "SEND_REFUSED" not in sink.kinds  # no fabricated refusal
-    assert (
-        "EGRESS_RESULT_RECORDED" not in sink.kinds
-    )  # the failed write was not silently faked
-    assert len(transport.requests) == 1  # I3
-    # A re-call still refuses cleanly (the ledger claim already blocks it) and sends nothing again.
+    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True
+    assert "SEND_REFUSED" not in sink.kinds
+    assert "EGRESS_RESULT_RECORDED" not in sink.kinds
+    assert len(transport.requests) == 1
     assert gateway(attempt).accepted_for_transmission is None
     assert len(transport.requests) == 1
 
@@ -428,19 +349,12 @@ def test_a_sink_failure_recording_the_uncertain_ladder_propagates_after_the_resu
         gateway(attempt)
 
     assert "EGRESS_RESULT_RECORDED" in sink.kinds
-    assert (
-        sink.kinds[-1] == "EGRESS_RESULT_RECORDED"
-    )  # no fabricated record was appended after it
-    assert "SEND_REFUSED" not in sink.kinds  # no fabricated refusal either
-    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True  # I1
-    assert len(transport.requests) == 1  # I3
+    assert sink.kinds[-1] == "EGRESS_RESULT_RECORDED"
+    assert "SEND_REFUSED" not in sink.kinds
+    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True
+    assert len(transport.requests) == 1
     assert gateway(attempt).accepted_for_transmission is None
     assert len(transport.requests) == 1
-
-
-# ---------------------------------------------------------------------------
-# fault site: _halt itself cannot record, because the sink is broken for SEND_REFUSED too
-# ---------------------------------------------------------------------------
 
 
 def test_halt_propagates_when_the_sink_cannot_even_record_the_halt_itself() -> None:
@@ -455,12 +369,6 @@ def test_halt_propagates_when_the_sink_cannot_even_record_the_halt_itself() -> N
     with pytest.raises(RuntimeError, match="SEND_REFUSED"):
         gateway(attempt)
 
-    assert (
-        gateway.ledger.attempt_consumed(attempt.attempt_id) is True
-    )  # I1 survives the crash
-    assert (
-        transport.calls == 1
-    )  # I3 — no retry was attempted despite the double failure
-    assert (
-        "SEND_REFUSED" not in sink.kinds
-    )  # the halt truly was not recorded — not faked either
+    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True
+    assert transport.calls == 1
+    assert "SEND_REFUSED" not in sink.kinds

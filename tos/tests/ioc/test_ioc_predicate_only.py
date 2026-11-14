@@ -1,9 +1,4 @@
-"""Predicate-only rules (design #14 §6.1-§6.6; IOC-EV-007..012 substrate).
-
-Both-ways canaries + the forbidden-verb canaries: "mutate" (§6.2 mutation fence), "revive"
-(§6.6 non-revival), "expire" (§6.6 economic continuity), "headroom" (§6.5 all-false authority).
-Closes no IOC-EV.
-"""
+"""Predicate-only rules (design #14 §6.1-§6.6; IOC-EV-007..012 substrate)."""
 
 from __future__ import annotations
 
@@ -28,10 +23,6 @@ from tos.ioc import (
 
 from ._ioc_strategies import issue_command, issue_proof
 
-# ---------------------------------------------------------------------------
-# canonicalization_deterministic (§6.1 / §14 line 406)
-# ---------------------------------------------------------------------------
-
 
 def test_command_recanonicalizes_to_its_digest() -> None:
     """(canary +) An issued command recanonicalizes to its bound digest => True."""
@@ -41,11 +32,6 @@ def test_command_recanonicalizes_to_its_digest() -> None:
 def test_none_command_fails_closed() -> None:
     """(fail-closed) A None command => False."""
     assert canonicalization_deterministic(None) is False
-
-
-# ---------------------------------------------------------------------------
-# mutation_fence_holds (§6.2 / §15 line 414) — "mutate" verb
-# ---------------------------------------------------------------------------
 
 
 def test_proof_fences_the_exact_command() -> None:
@@ -80,11 +66,6 @@ def test_command_is_structurally_unmutable_post_proof() -> None:
     raise AssertionError(
         "a frozen command must reject post-proof mutation (§15 line 414)"
     )
-
-
-# ---------------------------------------------------------------------------
-# derived_command_conformance (§6.3 / §16) — no blind retry
-# ---------------------------------------------------------------------------
 
 
 def test_new_child_with_own_identity_is_conformant() -> None:
@@ -163,7 +144,7 @@ def test_derived_missing_identity_is_unknown() -> None:
     parent = issue_command(command_id="cmd-parent")
     from tos.ioc import CanonicalBrokerCommand
 
-    draft = CanonicalBrokerCommand()  # DRAFT — no id / digest
+    draft = CanonicalBrokerCommand()
     assert (
         derived_command_conformance(parent, draft, MutationClass.CANCEL)
         is ConformanceResult.UNKNOWN
@@ -171,11 +152,7 @@ def test_derived_missing_identity_is_unknown() -> None:
 
 
 def test_derived_duplicate_axis_is_non_conformant() -> None:
-    """(MAJOR-1 §14 line 406) A derived command repeating a semantic axis => NON_CONFORMANT.
-
-    The lineage predicate inherits the command_conforms duplicate-axis structural guard; the
-    surplus-vs-envelope check is command_conforms's domain (a derived command gets its own pass).
-    """
+    """(MAJOR-1 §14 line 406) A derived command repeating a semantic axis => NON_CONFORMANT."""
     parent = issue_command(command_id="cmd-parent")
     dup_bindings = tuple(
         AxisBinding(axis=axis, value=str(i))
@@ -184,11 +161,6 @@ def test_derived_duplicate_axis_is_non_conformant() -> None:
     derived = issue_command(command_id="cmd-child", axis_bindings=dup_bindings)
     result = derived_command_conformance(parent, derived, MutationClass.REPLACE)
     assert result is ConformanceResult.NON_CONFORMANT
-
-
-# ---------------------------------------------------------------------------
-# protective_creates_nothing (§6.4 / §19 line 481)
-# ---------------------------------------------------------------------------
 
 
 def test_protective_label_bypasses_nothing() -> None:
@@ -230,29 +202,14 @@ def test_protective_unknown_bypass_fails_closed() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# construction_grants_no_authority (§6.5 / IOC-INV-011) — "headroom" verb
-# ---------------------------------------------------------------------------
-
-
 def test_default_authority_grants_nothing() -> None:
     """(canary + 'headroom') A default all-false effect grants no authority / creates no headroom => True."""
     assert construction_grants_no_authority(OrderConstructionAuthorityEffect()) is True
 
 
-# ---------------------------------------------------------------------------
-# recovery_revives_nothing (§6.6 / §21 line 515) — "revive" verb
-# ---------------------------------------------------------------------------
-
-
 def test_non_revival_is_unconditional() -> None:
     """(canary 'revive' §21 line 515) Nothing revives a prior proof / capability — unconditionally True."""
     assert recovery_revives_nothing() is True
-
-
-# ---------------------------------------------------------------------------
-# economic_effect_outlives (§6.6 / §18 / IOC-INV-012) — "expire" verb
-# ---------------------------------------------------------------------------
 
 
 def test_expiry_does_not_expire_economic_effect() -> None:
@@ -264,11 +221,6 @@ def test_expiry_does_not_expire_economic_effect() -> None:
 def test_proven_terminal_release_ends_effect() -> None:
     """(§20 line 482) A positively proven defined RCL transition ends persistence."""
     assert economic_effect_outlives(terminal_release_proven=True) is False
-
-
-# ---------------------------------------------------------------------------
-# construction_generation_fences (§5.7 / §3.2 ordering REUSE)
-# ---------------------------------------------------------------------------
 
 
 def test_newer_generation_fences_older() -> None:

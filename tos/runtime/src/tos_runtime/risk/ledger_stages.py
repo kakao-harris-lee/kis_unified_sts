@@ -1,117 +1,4 @@
-"""Engine ``Stage`` realizations for steps 6-10 of the ADR-002-002 §11 Normal
-Commitment Flow (design #40 §5 order 5 item 3; slice plan §2 item 3),
-replacing ``tos.engine.standins.ProvisionalStandIn`` for those five steps —
-the ``tos_runtime.authority.stages.IndependentApprovalStage`` precedent (step
-4, lane P): every stage here routes a :class:`~tos.engine.records.StageRequest`
-into a real kernel judgement call and wraps the result as a
-:class:`~tos.engine.records.StageVerdict`; none of them judges itself, and
-none ever emits
-:data:`~tos.engine.vocabulary.StageAuthorityClass.NON_AUTHORITATIVE_PROVISIONAL`.
-
-Steps realized here:
-
-* **6** :class:`AggregateRiskDecisionStage` — routes into
-  :meth:`tos_runtime.risk.aggregate.AggregateRiskService.decide`.
-* **7** :class:`ActionFlowDecisionStage` — routes into
-  :meth:`tos_runtime.risk.flow.ActionFlowGovernor.decide`.
-* **8** :class:`LedgerVerificationStage` — ``read_linearizable`` (writer-epoch
-  fencing) + the RCL reservation projection, verifying the instrument scope is
-  a *fresh* scope eligible to originate a ``COMMITTED_UNBOUND`` reservation
-  (:data:`tos_runtime.rcl.gates.INITIAL_RESERVATION_STATES` — a real,
-  independent re-check of the ledger, never a self-comparison against this
-  stage's own prior output or the engine's separate provisional projection).
-* **9** :class:`AtomicCommitStage` — commits the reservation transition AND
-  binds the Action Flow Permit's single-use commitment coordinate in ONE
-  ``apply_reservation_transition`` call (see this module's own "atomicity"
-  section below, and ``tos_runtime.risk.flow``'s module docstring for why a
-  literal single-entry full-content merge is not achievable without editing
-  ``tos_runtime/rcl/log.py``, out of this lane's write surface).
-* **10** :class:`CommitmentUnavailabilityStage` — positively re-confirms step
-  9's commit is durable/reachable; never assumes durability from step 9's own
-  ADMIT (a genuinely independent re-read).
-
-**Atomicity (step 9, AFG-INV-005 / §13 line 330).** ``AtomicCommitStage`` calls
-``SqliteCommitLog.apply_reservation_transition`` exactly ONCE, with
-``command_id = permit.claim_nonce`` and ``command_digest = permit.canonical_digest``
-(:func:`tos_runtime.risk.flow.permit_reservation_binding`) — the SAME
-``BEGIN IMMEDIATE`` ... ``COMMIT`` transaction that commits the reservation
-transition ALSO durably claims the permit's single-use nonce (the log's own
-``entries.command_id`` ``UNIQUE`` constraint) and fixes its exact digest.
-There is **no** second ``append_cas``/transaction for the permit in this
-stage — never split into two transactions, per the design directive. The
-tradeoff, reported precisely (not silently papered over): the permit's full
-field content is NOT itself inside this entry's ``payload_json`` (that shape
-is fixed by ``apply_reservation_transition``, out of this lane's write
-surface) — it lives in the evidence store instead
-(``ActionFlowGovernor.build_permit`` callers are expected to evidence the
-built permit separately, e.g. via a caller-side ``evidence.append`` before
-invoking this stage, or via ``ActionFlowGovernor.issue_permit``'s own
-STANDALONE evidencing when that path is used instead of this fold). What
-genuinely IS atomic with the reservation commit — the exclusive claim of the
-nonce and the binding digest — is, in the literal sense of "one transaction,
-never two".
-
-**Reported ``CommandType`` choice (step 9).** :data:`~tos.rcl.CommandType.COMMIT_RESERVATION`
-is an exact match for "commit a reservation" (ADR-002-012 §10 line 294-311) —
-no gap to report for this one, unlike ``tos_runtime.risk.flow``'s STANDALONE
-permit-issuance path.
-
-**Fault contract (slice plan §2 item 3 "장애 계약"):**
-
-=======================================  ====================================
-Contract                                  How this module satisfies it
-=======================================  ====================================
-RCL log file inaccessible                 Steps 8, 9, 10 catch ``sqlite3.Error``
-                                           / ``OSError`` around every log call
-                                           and return ``UNKNOWN`` — never a
-                                           denial by omission.
-stale writer epoch                        Steps 8/9 catch
-                                           ``tos_runtime.rcl.log.StaleEpochRead``
-                                           (step 8: ``UNKNOWN``; step 9: the
-                                           commit itself is refused —
-                                           ``UNKNOWN``, the log is unreachable
-                                           at the fenced epoch, not a proven
-                                           denial).
-scenario config null                      Refused at ``AggregateRiskService``
-                                           construction time
-                                           (``tos_runtime.risk.aggregate.load_adverse_scenario_set``),
-                                           before any stage runs.
-permit claimed twice                      Step 9's ``apply_reservation_transition``
-                                           returns ``AppendRefusal`` with
-                                           ``DUPLICATE_COMMAND_ID`` /
-                                           ``COMMAND_BYTES_MISMATCH`` for a
-                                           reused ``claim_nonce`` (the log's own
-                                           ``command_id`` ``UNIQUE`` constraint)
-                                           — mapped to ``DENY`` here (§13 line
-                                           342 "single-use": even an idempotent-
-                                           shaped replay of the SAME permit is
-                                           refused, never silently re-admitted).
-permit state after restart                Only via replay: step 8/10 read
-                                           EXCLUSIVELY through
-                                           ``ReservationProjectionReader``/
-                                           ``read_linearizable`` — no
-                                           in-process cache anywhere in this
-                                           module.
-=======================================  ====================================
-
-**Time gate.** Steps 6, 7, and 9 (the three steps that would admit *new* risk)
-each take an injected ``time_permits_new_risk: Callable[[], bool]`` and refuse
-with ``UNKNOWN`` when it is not ``True`` — the composition root wires this to
-``tos.time.state_permits_new_normal_risk(time_service.current_snapshot().health_state)``
-(never computed in this module — a pure routing concern, per every other
-stage's own "the stage does not judge" discipline). Steps 8 and 10 are
-verification-only (they admit or refuse an ALREADY-decided commitment, never a
-*new* risk) and do not take this gate.
-
-Firewall: stdlib (``sqlite3``) + ``pydantic`` (transitively) + ``tos.engine``
-(``records``/``vocabulary`` only) + ``tos.rcl`` + ``tos_runtime.evidence`` +
-``tos_runtime.rcl`` (``log``/``gates``/``projection``) +
-``tos_runtime.risk`` (self — ``aggregate``/``flow`` siblings) only (R1
-allowlist). No ``tos_runtime.authority`` / ``tos_runtime.currentness`` /
-``tos_runtime.release`` import (slice plan §5 cross-lane isolation) — any
-cross-lane fact this module needs (e.g. the time gate) is received as an
-injected callable.
-"""
+"""Engine ``Stage`` realizations for steps 6-10 of the ADR-002-002 §11 Normal"""
 
 from __future__ import annotations
 
@@ -176,14 +63,8 @@ __all__ = [
     "verdict_for_scope",
 ]
 
-#: Step 9's exact ``CommandType`` match (module docstring — no gap).
 _COMMIT_RESERVATION_KIND = CommandType.COMMIT_RESERVATION
 
-#: Refusal reasons that mean "the log itself could not be reached/fenced at
-#: this moment" — mapped to ``UNKNOWN`` (never a proven denial). Everything
-#: else (``DUPLICATE_COMMAND_ID`` / ``COMMAND_BYTES_MISMATCH`` /
-#: ``INTEGRITY_VIOLATION``) is a structural refusal of THIS specific attempt —
-#: mapped to ``DENY``.
 _CAS_UNKNOWN_REASONS: frozenset[AppendRefusalReason] = frozenset(
     {
         AppendRefusalReason.STALE_EPOCH,
@@ -196,28 +77,14 @@ _CAS_UNKNOWN_REASONS: frozenset[AppendRefusalReason] = frozenset(
 AggregateInputsProvider = Callable[[StageRequest], AggregateRiskDecisionInputs | None]
 ActionFlowInputsProvider = Callable[[StageRequest], ActionFlowDecisionInputs | None]
 PermitProvider = Callable[[StageRequest], ActionFlowPermit | None]
-#: #966: the reservation id is derived from the permit this commit binds, so the provider is
-#: handed that permit rather than being left to re-derive an identity from the scope alone (the
-#: pre-#966 shape, which gave every attempt in a scope the same reservation — see
-#: :mod:`tos_runtime.rcl.reservation_identity`).
 ReservationIdProvider = Callable[[StageRequest, ActionFlowPermit], str | None]
 GenerationProvider = Callable[[StageRequest], int]
-#: #972: the current attempt's step-5 Economic Effect Envelope (``tos.ioc.EconomicEffectEnvelope``
-#: is :class:`~tos.rcl.CapacityVector` itself), or ``None`` when step 5 derived none.
 EffectEnvelopeReader = Callable[[], CapacityVector | None]
-#: Either step-6 CLOSE fence a composition can hand step 9 — the broker-held proof fence a KIS
-#: stock boot consumes, or the synthetic bound fence a ``SYNTHETIC_FUTURES_ORDER`` boot derives
-#: from its own durable evidence (#1011). Which one a boot produces is decided once, at the
-#: composition root, by transport kind; this stage dispatches on the record's exact type and
-#: never widens either one's checks to cover the other.
 CloseProofFenceProvider = Callable[
     [StageRequest], "CloseProofCommitFence | SyntheticCloseEntryFence | None"
 ]
 
 
-#: The two ``AttemptArm.position_effect`` tokens step 8 admits (#966) — the same spellings
-#: ``config/.../order_construction_policy.yaml``'s ``action_class_shape`` declares and
-#: ``tos_runtime.compose._attempt_shape`` selects by.
 _OPEN_EFFECT = "OPEN"
 _CLOSE_EFFECT = "CLOSE"
 
@@ -250,12 +117,7 @@ def _admit(step: CommitmentStep, reason: str) -> StageVerdict:
 def _time_gate(
     time_permits_new_risk: Callable[[], bool], step: CommitmentStep
 ) -> StageVerdict | None:
-    """Refuse to admit new risk unless the injected time gate reports ``True``.
-
-    Returns:
-        A restrictive ``UNKNOWN`` verdict if the gate is not ``True``, else
-        ``None`` to let the caller proceed.
-    """
+    """Refuse to admit new risk unless the injected time gate reports ``True``."""
     if time_permits_new_risk() is not True:
         return _unknown(
             step,
@@ -268,8 +130,7 @@ def _time_gate(
 def _find_verdict(
     verdicts: tuple[StageVerdict, ...], step: CommitmentStep
 ) -> StageVerdict | None:
-    """Read one prior step's verdict structurally off the flow so far (구조
-    파생 > 자기신고 — the ``tos.engine.sequencer._bindings_from`` precedent)."""
+    """Read one prior step's verdict structurally off the flow so far (구조"""
     for verdict in verdicts:
         if verdict.step is step:
             return verdict
@@ -277,8 +138,7 @@ def _find_verdict(
 
 
 class AggregateRiskDecisionStage:
-    """Step 6 (``AGGREGATE_RISK_DECISION``) over a real
-    :class:`~tos_runtime.risk.aggregate.AggregateRiskService`."""
+    """Step 6 (``AGGREGATE_RISK_DECISION``) over a real"""
 
     def __init__(
         self,
@@ -339,8 +199,7 @@ class AggregateRiskDecisionStage:
 
 
 class ActionFlowDecisionStage:
-    """Step 7 (``ACTION_FLOW_DECISION``) over a real
-    :class:`~tos_runtime.risk.flow.ActionFlowGovernor`."""
+    """Step 7 (``ACTION_FLOW_DECISION``) over a real"""
 
     def __init__(
         self,
@@ -385,10 +244,7 @@ class ActionFlowDecisionStage:
 
 
 def _outcome_for_result(result_value: str | None) -> StageOutcome:
-    """Map a kernel ``RiskDecisionResult``/``ActionFlowResult`` (both StrEnums
-    sharing the same ``GRANT``/``DENY``/``UNKNOWN`` member names) to a
-    :class:`~tos.engine.vocabulary.StageOutcome` — by exact string identity,
-    never a bare truthiness check (both kernel enums are truthy StrEnums)."""
+    """Map a kernel ``RiskDecisionResult``/``ActionFlowResult`` (both StrEnums"""
     if result_value == "GRANT":
         return StageOutcome.ADMIT
     if result_value == "DENY":
@@ -397,34 +253,7 @@ def _outcome_for_result(result_value: str | None) -> StageOutcome:
 
 
 class LedgerVerificationStage:
-    """Step 8 (``LEDGER_VERIFICATION``) — ``read_linearizable`` + the RCL
-    reservation projection (module docstring).
-
-    **#966 — admission depends on the attempt's position effect.** Before #966 this step denied
-    any scope holding a reservation row at all, in any state. That kept pyramiding out, but it
-    also meant a filled entry sealed its scope forever: the row stayed at ``POSITION_CONSUMED``
-    (forward-only, no re-arm), so no exit could ever be committed, and a ``RELEASED`` row
-    blocked a later re-entry too. The admission table now reads the scope's OUTSTANDING
-    (non-``RELEASED``) rows and the arm step 2 selected for this attempt:
-
-    ===========  =========================================  =======================
-    effect       outstanding reservations in scope          verdict
-    ===========  =========================================  =======================
-    ``OPEN``     0                                          ADMIT
-    ``OPEN``     >= 1                                       DENY (no pyramiding)
-    ``CLOSE``    exactly 1, state ``POSITION_CONSUMED``     ADMIT
-    ``CLOSE``    0, or >= 2, or 1 in any other state        DENY (states listed)
-    (no arm)     —                                          DENY
-    read failure —                                          UNKNOWN
-    ===========  =========================================  =======================
-
-    ``CLOSE`` admits over exactly one ``POSITION_CONSUMED`` row and nothing else: that is the
-    one shape in which a position is known to be held and no order of this scope is still in
-    flight. A row mid-flight (``COMMITTED_UNBOUND``/``ATTEMPT_BOUND``/``POTENTIALLY_LIVE``) or
-    ``QUARANTINED_UNKNOWN`` denies — closing against an unresolved order is how a scope ends up
-    short. The position effect is read from the live arm, never from the proposal: the arm is
-    what step 2 actually selected and what the command being committed was built from.
-    """
+    """Step 8 (``LEDGER_VERIFICATION``) — ``read_linearizable`` + the RCL"""
 
     def __init__(
         self,
@@ -464,14 +293,7 @@ class LedgerVerificationStage:
 def verdict_for_scope(
     position_effect: str | None, rows: Sequence[ScopeReservation]
 ) -> StageVerdict:
-    """:class:`LedgerVerificationStage`'s own admission table, as a pure function.
-
-    Takes the scope's FULL row set and drops the ``RELEASED`` ones itself
-    (:func:`~tos_runtime.rcl.projection.outstanding_reservations`) — the exclusion is part of
-    the rule, not something a call site is trusted to have done, so no caller can reach a
-    verdict by handing in a pre-filtered set. Public (not a private method) so each row of the
-    table is directly testable against a concrete input, with no log and no stage.
-    """
+    """:class:`LedgerVerificationStage`'s own admission table, as a pure function."""
     outstanding = outstanding_reservations(rows)
     held = ", ".join(f"{row.reservation_id}={row.state.value}" for row in outstanding)
     if position_effect is None:
@@ -518,14 +340,10 @@ def verdict_for_scope(
 
 
 class AtomicCommitLogPort(Protocol):
-    """The narrow read/write surface :class:`AtomicCommitStage` needs off a
-    :class:`~tos_runtime.rcl.log.SqliteCommitLog` (mypy stage 3 §1.3 rule 3 port
-    introduction) — only :meth:`read_linearizable` and
-    :meth:`apply_reservation_transition`, never any other commit-log member."""
+    """The narrow read/write surface :class:`AtomicCommitStage` needs off a"""
 
     def read_linearizable(self, *, writer_epoch: WriterEpoch) -> LogView:
-        """See :meth:`~tos_runtime.rcl.log.SqliteCommitLog.read_linearizable`'s own
-        docstring."""
+        """See :meth:`~tos_runtime.rcl.log.SqliteCommitLog.read_linearizable`'s own"""
         ...
 
     def apply_reservation_transition(
@@ -539,15 +357,12 @@ class AtomicCommitLogPort(Protocol):
         expected_seq: int,
         finality_witness: bool | None = None,
     ) -> AppendReceipt | AppendRefusal:
-        """See :meth:`~tos_runtime.rcl.log.SqliteCommitLog.apply_reservation_transition`'s
-        own docstring."""
+        """See :meth:`~tos_runtime.rcl.log.SqliteCommitLog.apply_reservation_transition`'s"""
         ...
 
 
 class AtomicCommitStage:
-    """Step 9 (``ATOMIC_COMMIT``) — reservation + permit in ONE
-    ``apply_reservation_transition`` transaction (module docstring's
-    atomicity section)."""
+    """Step 9 (``ATOMIC_COMMIT``) — reservation + permit in ONE"""
 
     def __init__(
         self,
@@ -577,19 +392,7 @@ class AtomicCommitStage:
         *,
         position_effect: str | None,
     ) -> CapacityReservationTransition | StageVerdict:
-        """The ``COMMITTED_UNBOUND`` transition this commit writes, carrying step 5's envelope
-        as its ``committed_vector`` (#972) — or the UNKNOWN verdict when there is none.
-
-        Before #972 every reservation was committed with no vector, so the ARE snapshot summed
-        nothing and read an open position as zero usage. A reservation committed without one
-        now counts as UNKNOWN usage for as long as it is outstanding
-        (:meth:`~tos_runtime.risk.aggregate.AggregateRiskService.snapshot`), so step 9 refuses
-        to create it instead. ``None`` and an empty vector are both refused: step 5 itself
-        admits neither (``tos.egressgw.economic_effect_envelope_verdict``), so either one here
-        means the envelope is not this attempt's. A CLOSE keeps that positive step-5 envelope
-        but stores its committed vector as negative exposure, so the ARE snapshot nets it against
-        the open position instead of counting both sides.
-        """
+        """The ``COMMITTED_UNBOUND`` transition this commit writes, carrying step 5's envelope"""
         envelope = self._effect_envelope_reader()
         if envelope is None or not envelope.components:
             return _unknown(
@@ -676,8 +479,6 @@ class AtomicCommitStage:
                 CommitmentStep.ATOMIC_COMMIT,
                 "RCL epoch/tip changed since the step-6 CLOSE proof was observed",
             )
-        # Use the proof's captured tip as the CAS coordinate. A same-epoch writer that commits
-        # after this read therefore yields SEQ_MISMATCH instead of authorizing a stale close.
         if type(fence.verified_rcl_last_seq) is not int:
             return _unknown(
                 CommitmentStep.ATOMIC_COMMIT,
@@ -775,9 +576,6 @@ class AtomicCommitStage:
         claim_nonce, permit_digest = binding
         reservation_id = self._reservation_id_provider(request, permit)
         if reservation_id is None:
-            # #966: the reservation is named by the permit's own identity, so a permit that
-            # carries none cannot name one. UNKNOWN, never a scope-level fallback id — that is
-            # exactly the shared identity this issue removed.
             return _unknown(
                 CommitmentStep.ATOMIC_COMMIT,
                 "the bound permit carries no identity — this attempt's reservation cannot "
@@ -812,9 +610,7 @@ class AtomicCommitStage:
 
 
 class CommitmentUnavailabilityStage:
-    """Step 10 (``COMMITMENT_UNAVAILABILITY``) — a genuinely independent
-    re-read confirming step 9's commit is durable/reachable (module
-    docstring); never a self-comparison against step 9's own verdict alone."""
+    """Step 10 (``COMMITMENT_UNAVAILABILITY``) — a genuinely independent"""
 
     def __init__(
         self,
@@ -834,13 +630,6 @@ class CommitmentUnavailabilityStage:
                 CommitmentStep.COMMITMENT_UNAVAILABILITY,
                 "no admitted step-9 commit to confirm",
             )
-        # #966: re-read THIS attempt's own reservation row, not "the scope's reservation".
-        # A scope may now hold two rows at once (a filled entry plus the exit closing it), so a
-        # scope-keyed read could confirm a different attempt's commit as if it were this one's.
-        # The id comes from step 9's own admitted verdict (its bound_identity IS the Action Flow
-        # Permit identity the commit was bound to) — the row is then re-read from the log
-        # independently, which is what this step verifies; it never trusts step 9's own claim
-        # that the row is durable.
         reservation_id = reservation_id_in_scope(
             request.instrument_key, commit_verdict.bound_identity
         )
@@ -881,20 +670,7 @@ class CommitmentUnavailabilityStage:
 def item15_fields(
     permit: ActionFlowPermit | None, *, commitment_current: bool | None
 ) -> Mapping[str, object]:
-    """The gateway ``SendBoundaryContext`` item-15 fields for one attempt.
-
-    Args:
-        permit: The permit bound to this attempt, or ``None`` if none was
-            issued/admitted.
-        commitment_current: Whether the permit's RCL commitment is currently
-            confirmed (``None`` when genuinely unknown — never coerced to
-            ``False``).
-
-    Returns:
-        A mapping with exactly ``action_flow_permit_identity`` and
-        ``action_flow_commitment_current`` (``tos/src/tos/egressgw/records.py``
-        item-15 field names).
-    """
+    """The gateway ``SendBoundaryContext`` item-15 fields for one attempt."""
     return {
         "action_flow_permit_identity": None if permit is None else permit.permit_id,
         "action_flow_commitment_current": commitment_current,

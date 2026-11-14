@@ -1,30 +1,4 @@
-"""``IndependentApprovalStage`` — the engine ``Stage`` realization of step 4
-(design #40 §5 order 4 item 4), replacing
-``tos.engine.standins.ProvisionalStandIn`` for
-``CommitmentStep.INDEPENDENT_APPROVAL``.
-
-This stage never emits :data:`~tos.engine.vocabulary.StageAuthorityClass.NON_AUTHORITATIVE_PROVISIONAL`
-— it is backed by a real :class:`~tos_runtime.authority.iap.IntentRegistry`
-whose consumption is an actual RCL commit, not a wiring-only stand-in.
-:data:`~tos.engine.vocabulary.StageAuthorityClass.AVAILABLE_PURE_PREDICATE` is
-the closest of the three sanctioned
-:class:`~tos.engine.vocabulary.StageAuthorityClass` members (the sequencer
-recognizes only ``AVAILABLE_PURE_PREDICATE`` / ``NON_AUTHORITATIVE_PROVISIONAL``
-/ ``DEFERRED_SEND_BOUNDARY``, ``tos/src/tos/engine/vocabulary.py`` :292-307);
-this stage is neither a stand-in nor the D-E4 send boundary, so
-``AVAILABLE_PURE_PREDICATE`` — "an already-shipped pure sibling predicate" —
-is used in its broader sense of "a real, already-shipped kernel judgement
-call, not a provisional placeholder", consistent with how every kernel
-predicate this stage calls (``exact_binding_holds``/``consumption_transition``)
-already is exactly that.
-
-``StageOutcome.ADMIT`` is returned only when
-:meth:`~tos_runtime.authority.iap.IntentRegistry.consume` reports
-``CONSUMED_NEW`` or ``IDEMPOTENT_REPLAY`` (an already-fully-legitimate replay
-of the SAME consuming command) — never for any rejection, and never by
-default when no decision is available (``StageOutcome.UNKNOWN``, restrictive,
-per the sequencer's own rule 1: only positive membership advances).
-"""
+"""``IndependentApprovalStage`` — the engine ``Stage`` realization of step 4"""
 
 from __future__ import annotations
 
@@ -38,16 +12,10 @@ from tos_runtime.authority.iap import ConsumeResult, IntentRegistry, LoadedAppro
 
 __all__ = ["IndependentApprovalStage", "item14_fields"]
 
-#: Outcomes that admit the sequencer to advance past step 4 (module docstring).
 _ADMISSIBLE_OUTCOMES: frozenset[ConsumptionOutcome] = frozenset(
     {ConsumptionOutcome.CONSUMED_NEW, ConsumptionOutcome.IDEMPOTENT_REPLAY}
 )
 
-#: Kernel round #1 §2.2 re-review finding #3 (MEDIUM): the provider now
-#: resolves a :class:`~tos_runtime.authority.iap.LoadedApproval` (decision +
-#: receipt-time facts) rather than a bare decision, so this stage can thread
-#: the SAME receipt into both ``decision_current`` and ``consume`` — never
-#: re-derived, never dropped on the floor between the two calls.
 DecisionProvider = Callable[[StageRequest], LoadedApproval | None]
 CommandFieldProvider = Callable[[StageRequest, IndependentApprovalDecision], str]
 BoolFieldProvider = Callable[[StageRequest, IndependentApprovalDecision], bool | None]
@@ -57,16 +25,7 @@ DecisionCurrentProvider = Callable[
 
 
 class IndependentApprovalStage:
-    """Step 4 (``INDEPENDENT_APPROVAL``) realized over a real
-    :class:`~tos_runtime.authority.iap.IntentRegistry` (design #40 §5 order 4
-    item 4).
-
-    Every input the registry's ``consume`` needs is collected through injected
-    callables — this stage itself makes no judgement, it only routes the
-    sequencer's :class:`~tos.engine.records.StageRequest` into
-    ``IntentRegistry.consume`` and wraps the result as a
-    :class:`~tos.engine.records.StageVerdict`.
-    """
+    """Step 4 (``INDEPENDENT_APPROVAL``) realized over a real"""
 
     def __init__(
         self,
@@ -78,33 +37,7 @@ class IndependentApprovalStage:
         envelope_equivalent_provider: BoolFieldProvider,
         decision_current_provider: DecisionCurrentProvider | None = None,
     ) -> None:
-        """Configure the stage.
-
-        Args:
-            registry: The real, RCL-backed Intent Registry.
-            decision_provider: Resolves the :class:`~tos_runtime.authority.iap.LoadedApproval`
-                (decision + receipt-time facts) bound to this request's
-                proposal, or ``None`` when no decision is available yet
-                (restrictive ``UNKNOWN``, never a pass). The SAME
-                ``LoadedApproval`` is threaded as ``receipt`` into both
-                ``decision_current_provider`` and ``registry.consume`` below
-                (kernel round #1 §2.2 re-review finding #3) — this stage
-                never re-resolves or re-loads it.
-            command_identity_provider: The consuming command's own identity,
-                given the request and its resolved decision.
-            command_digest_provider: The consuming command's canonical digest.
-            envelope_equivalent_provider: Whether the approved-Intent envelope
-                is byte-for-byte equivalent (``None``/``False`` => not
-                consumable).
-            decision_current_provider: Whether the decision is current/
-                unexpired/unrevoked (``None``/``False`` => not consumable),
-                given the request, the decision, and its resolved receipt (or
-                ``None``). Defaults to ``registry.decision_current(decision,
-                receipt=receipt)`` (2026-09-08 — the composition root need
-                not supply a lambda; see
-                :meth:`~tos_runtime.authority.iap.IntentRegistry.decision_current`'s
-                own docstring for exactly what it checks).
-        """
+        """Configure the stage."""
         self._registry = registry
         self._decision_provider = decision_provider
         self._command_identity_provider = command_identity_provider
@@ -164,8 +97,7 @@ class IndependentApprovalStage:
 
 
 def _stage_outcome_for(result: ConsumeResult) -> tuple[StageOutcome, str]:
-    """Map an :class:`~tos_runtime.authority.iap.ConsumeResult` to a
-    :class:`~tos.engine.vocabulary.StageOutcome` + reason (module docstring)."""
+    """Map an :class:`~tos_runtime.authority.iap.ConsumeResult` to a"""
     if result.outcome is None:
         return (
             StageOutcome.UNKNOWN,
@@ -183,19 +115,7 @@ def _stage_outcome_for(result: ConsumeResult) -> tuple[StageOutcome, str]:
 
 
 def item14_fields(result: ConsumeResult) -> Mapping[str, object]:
-    """The gateway ``SendBoundaryContext`` item-14 fields for this consumption.
-
-    Args:
-        result: The :meth:`~tos_runtime.authority.iap.IntentRegistry.consume`
-            result for this attempt.
-
-    Returns:
-        A mapping with exactly ``approval_consumed_for_this_intent`` (``None``
-        when the log itself could not be reached — genuinely unknown, never
-        coerced to ``False``) and ``approval_intent_binding_digest`` (the
-        consumption record's own ``decision_digest``, or ``None`` when
-        consumption was not admitted).
-    """
+    """The gateway ``SendBoundaryContext`` item-14 fields for this consumption."""
     if result.outcome is None:
         return {
             "approval_consumed_for_this_intent": None,

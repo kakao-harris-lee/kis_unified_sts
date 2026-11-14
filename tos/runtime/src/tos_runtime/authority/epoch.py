@@ -1,16 +1,4 @@
-"""Runtime owner for Safety Authority epoch and currentness state.
-
-The service collects committed RCL entries, trusted-time observations, and a
-configured containment bound, then delegates epoch and capability judgements
-to kernel predicates. RCL writer epochs fence access to the log; Safety
-Authority epochs identify capability issuance. They are distinct coordinates.
-
-Authority transitions use a command-id prefix and the dedicated
-``CommandType.ADVANCE_AUTHORITY_EPOCH`` member, so a matching entry with the
-wrong kind is corruption rather than an entry to ignore. Current state is
-derived by scanning the log, without payload readback or a process-local
-cache.
-"""
+"""Runtime owner for Safety Authority epoch and currentness state."""
 
 from __future__ import annotations
 
@@ -41,11 +29,8 @@ __all__ = [
     "load_authority_config",
 ]
 
-#: Command-id prefix for every authority-epoch-transition entry. It is not
-#: reused for another log entry type.
 _EPOCH_TRANSITION_PREFIX = "authority-epoch-transition"
 
-#: The command kind shared by the transition writer and log reader.
 _EPOCH_TRANSITION_KIND = CommandType.ADVANCE_AUTHORITY_EPOCH
 
 _EVIDENCE_KIND = "AUTHORITY_EPOCH_TRANSITION"
@@ -53,13 +38,7 @@ _EVIDENCE_RECORD_CLASS = "AUTHORITY_EPOCH_TRANSITION"
 
 
 class AuthorityEpochTransitionRefused(RuntimeError):
-    """Raised by :meth:`SafetyAuthorityEpochService.transition` on an RCL refusal.
-
-    Carries the log's own :class:`~tos.rcl.AppendRefusal` verbatim — this
-    service invents no refusal vocabulary of its own for the CAS-append
-    mechanics (stale epoch / seq mismatch / duplicate / store unavailable are
-    all the log's closed ``AppendRefusalReason`` already).
-    """
+    """Raised by :meth:`SafetyAuthorityEpochService.transition` on an RCL refusal."""
 
     def __init__(self, refusal: AppendRefusal) -> None:
         super().__init__(f"authority epoch transition refused: {refusal.reason}")
@@ -72,34 +51,7 @@ def _epoch_transition_command_id(authority_domain: str, new_epoch: int) -> str:
 
 
 class AuthorityRuntimeConfig:
-    """The fully-valued Safety Authority runtime config (slice plan §1 item 1).
-
-    ``containment_bound_ms`` is the online-currentness-witness containment
-    bound (module docstring; ADR-002-003 §12.1). No VER-002 profile key names
-    this specific bound today (grepped 2026-09-08: the VER-002-001 evidence
-    spec names ``B_authority_partition_detect`` and the *egress*-currentness
-    bounds ``MAX_egress_currentness_proof_age_ms`` /
-    ``MAX_currentness_vector_age_ms``, but no ``MAX_*`` bound for the Safety
-    Authority epoch's own online witness) — this is therefore a
-    ``named-TBD`` key per slice plan §5, and a configured ``null`` value is a
-    fail-closed refusal to start (:func:`load_authority_config`), never a
-    silent default.
-
-    ``trading_approval_policy_generation`` is the currently-loaded Trading
-    Approval Policy's own ``policy_generation`` (:class:`tos.iap.TradingApprovalPolicy`
-    field name, "spec terms = code terms") —
-    :meth:`~tos_runtime.authority.iap.IntentRegistry.decision_current` (added
-    2026-09-08) compares a decision's own
-    ``trading_approval_policy_generation`` against this value (equality of
-    generation identifiers is the ONLY comparison authored there; no kernel
-    predicate judges decision currency — ADR-002-023 §12 item 2 only NAMES
-    the fact, ``tos.iap.predicates`` takes it as an injected ``bool | None``).
-    Unlike ``containment_bound_ms`` this is not a VER-002 bound at all (no
-    threshold to approve) — it is an operational value (which policy
-    generation is currently active) — but it is still configuration, not a
-    code constant, and a ``null`` value is still a fail-closed refusal to
-    start (:func:`load_authority_config`).
-    """
+    """The fully-valued Safety Authority runtime config (slice plan §1 item 1)."""
 
     __slots__ = ("containment_bound_ms", "trading_approval_policy_generation")
 
@@ -109,21 +61,7 @@ class AuthorityRuntimeConfig:
         containment_bound_ms: int | None,
         trading_approval_policy_generation: int | None = None,
     ) -> None:
-        """Args:
-        containment_bound_ms: The bound in milliseconds.
-            :func:`load_authority_config` never returns an instance with
-            this ``None`` (it refuses to load first) — a direct caller
-            MAY still construct one with ``None`` to exercise
-            :meth:`SafetyAuthorityEpochService.witness`'s own
-            ``containment_bound_unconfigured`` fail-closed branch (e.g. in
-            tests), which is exactly why this stays ``int | None`` rather
-            than a plain ``int``.
-        trading_approval_policy_generation: The currently-loaded Trading
-            Approval Policy's own generation. :func:`load_authority_config`
-            never returns an instance with this ``None`` either — a direct
-            caller MAY still omit it (default ``None``) for tests that do
-            not exercise :meth:`~tos_runtime.authority.iap.IntentRegistry.decision_current`.
-        """
+        """Args:"""
         self.containment_bound_ms = containment_bound_ms
         self.trading_approval_policy_generation = trading_approval_policy_generation
 
@@ -147,20 +85,7 @@ def _resolve_positive_int_key(
 
 
 def load_authority_config(path: Path) -> AuthorityRuntimeConfig:
-    """Load + fail-closed-validate ``authority.example.yaml``-shaped config.
-
-    Args:
-        path: The YAML config file.
-
-    Returns:
-        The fully-valued :class:`AuthorityRuntimeConfig`.
-
-    Raises:
-        AuthorityConfigError: The file is unreadable, not YAML, not a mapping,
-            or either ``containment_bound_ms`` / ``trading_approval_policy_generation``
-            is absent/``null``/non-positive — an unresolved key is a refusal
-            to start, never a silent default (module docstring; slice plan §5).
-    """
+    """Load + fail-closed-validate ``authority.example.yaml``-shaped config."""
     try:
         raw_text = path.read_text()
     except OSError as exc:
@@ -197,13 +122,7 @@ def load_authority_config(path: Path) -> AuthorityRuntimeConfig:
 
 
 class SafetyAuthorityEpochService:
-    """The Safety Authority epoch service (design #40 §5 order 4 item 1).
-
-    Every authority-making transition (epoch issue/advance) is one RCL
-    ``append_cas`` entry — never memory, never a separate file (slice plan §0).
-    :meth:`current_state` re-derives the epoch floor from
-    ``log.read_linearizable`` on every call (no cache, module docstring).
-    """
+    """The Safety Authority epoch service (design #40 §5 order 4 item 1)."""
 
     def __init__(
         self,
@@ -216,34 +135,7 @@ class SafetyAuthorityEpochService:
         config: AuthorityRuntimeConfig,
         canonicalization_version: str = EV_L1_PROVISIONAL_VERSION,
     ) -> None:
-        """Compose the service over its injected ports.
-
-        Args:
-            log: The Safety Commit Log this service's transitions are
-                committed through (``append_cas`` only — never
-                ``apply_reservation_transition``, which is a different,
-                concurrently-changing lane's surface, slice plan lane
-                contract).
-            time: The injected Trustworthy Time health service —
-                :meth:`witness` reads its ``current_snapshot()``; this
-                service never reads a raw clock itself.
-            evidence: The durable append port
-                (:class:`~tos_runtime.evidence.ports.EvidenceAppendPort`)
-                this service's own domain-labelled records are committed
-                through, in addition to whatever the log's own internal
-                evidence port already records for the RCL entry itself.
-            authority_domain: The Safety Authority domain this instance owns
-                (ADR-002-003 §5.1 — a domain is required-concrete for
-                ``authority_epoch_current`` to ever hold).
-            writer_epoch: The RCL Writer Epoch this instance's ``append_cas``
-                calls are fenced under (acquired once, by the composition
-                root, via ``log.acquire_epoch`` — never re-acquired here;
-                module docstring "writer epoch != Safety Authority epoch").
-            config: The fully-valued :class:`AuthorityRuntimeConfig`.
-            canonicalization_version: The registered ``tos.canonical`` scheme
-                version used to digest every issued
-                :class:`~tos.authority.AuthorityEpochTransitionRecord`.
-        """
+        """Compose the service over its injected ports."""
         self._log = log
         self._time = time
         self._evidence = evidence
@@ -251,23 +143,10 @@ class SafetyAuthorityEpochService:
         self._writer_epoch = writer_epoch
         self._config = config
         self._scheme: CanonicalizationScheme = get_scheme(canonicalization_version)
-        #: High-water mark of the last successfully-verified "now" (module
-        #: docstring's :meth:`witness` design) — ``None`` until the first
-        #: successful online verification.
         self._last_verified_monotonic_ms: int | None = None
 
     def current_state(self) -> AuthorityEpochState:
-        """Derive the current :class:`~tos.authority.AuthorityEpochState`.
-
-        Re-reads ``log.read_linearizable`` every call — never cached. A
-        stale-epoch read (this instance's ``writer_epoch`` has been usurped)
-        or any other log-read failure (e.g. the underlying sqlite file being
-        locked/unreachable — ``sqlite3.Error``, 2026-09-08 independent-review
-        MEDIUM fix) yields the fully-``None`` (fenced) state — the kernel's
-        own ``authority_epoch_current`` already treats ``None`` coordinates
-        as fenced, so this is the honest, fail-closed answer rather than a
-        raised exception for a routine currentness check.
-        """
+        """Derive the current :class:`~tos.authority.AuthorityEpochState`."""
         try:
             view = self._log.read_linearizable(writer_epoch=self._writer_epoch)
         except (StaleEpochRead, sqlite3.Error):
@@ -278,8 +157,6 @@ class SafetyAuthorityEpochService:
             if entry.command_id is None or not entry.command_id.startswith(prefix):
                 continue
             if entry.kind is not _EPOCH_TRANSITION_KIND:
-                # A prefix-matching entry under another kind is corruption;
-                # skipping it could regress the derived epoch floor to None.
                 raise CommitLogCorruption(
                     "SafetyAuthorityEpochService.current_state: entry "
                     f"{entry.command_id!r} matches the epoch-transition prefix "
@@ -292,7 +169,7 @@ class SafetyAuthorityEpochService:
             try:
                 candidate = int(suffix)
             except ValueError:
-                continue  # malformed id from an unrelated caller — never trusted
+                continue
             if max_epoch is None or candidate > max_epoch:
                 max_epoch = candidate
         if max_epoch is None:
@@ -305,50 +182,8 @@ class SafetyAuthorityEpochService:
         """Convenience accessor: :meth:`current_state`'s epoch floor, or ``None``."""
         return self.current_state().current_epoch_floor
 
-    # -- online currentness witness ---------------------------------------
-
     def witness(self) -> CurrentnessWitness:
-        """The online currentness witness (ADR-002-003 §12.1; slice plan §1 item 1).
-
-        **The baseline is the monotonic instant of the last call that returned
-        ``present=True`` — never anything else.** ``present=True`` only when
-        (a) the injected time service's snapshot is currently
-        ``HealthState.TRUSTED``, (b) the containment bound is configured,
-        (c) a fresh ``read_linearizable`` on this instance's log succeeds, and
-        (d) the elapsed monotonic time since that baseline is within
-        ``config.containment_bound_ms`` (first-ever successful verification
-        establishes the baseline at age 0).
-
-        **Every ``present=False`` path leaves the baseline COMPLETELY
-        UNTOUCHED** (2026-09-08 independent-review MEDIUM fix) — it is never
-        reset to "now" and never cleared to ``None``. This closes a fail-open
-        this module previously had: resetting the baseline to "now" on an
-        expired-window return meant a second, immediately-following call (same
-        time-service snapshot, no further ``evaluate()``) computed age 0
-        against that just-reset baseline and reported ``present=True`` again —
-        the containment gate was measuring call *cadence*, not a genuine
-        online re-verification (ADR-002-003 :183 "a cached grant SHALL NOT
-        authorize after online verification is lost"). With the baseline
-        frozen at the last TRUE instant, a caller that lets the window expire
-        gets ``present=False`` on every subsequent call, indefinitely, until a
-        read that is *itself* within ``containment_bound_ms`` of that frozen
-        baseline succeeds — which is exactly why a **transient** failure (the
-        log briefly unreachable, or time briefly not ``TRUSTED``, resolved
-        before real time has moved past the bound) recovers to ``True`` on
-        the next successful read, while a **caller that simply stops polling
-        long enough for real time to exceed the bound** does not recover on
-        its own — the window is a one-way door once genuinely violated,
-        deliberately (a Safety Authority currentness bound is not a self-
-        healing cache-refresh timer; a real re-establishment event, e.g. a
-        fresh epoch ``transition``, is what the design otherwise consults).
-        A ``containment_bound_ms`` of ``0`` (never returned by
-        :func:`load_authority_config`, which requires a positive int, but
-        directly constructible via :class:`AuthorityRuntimeConfig` — e.g. in
-        a test) is therefore ``present=True`` only at the exact read instant
-        that establishes/re-confirms the baseline (age exactly ``0``) and
-        ``False`` on every subsequent call once monotonic time has moved on
-        at all.
-        """
+        """The online currentness witness (ADR-002-003 §12.1; slice plan §1 item 1)."""
         try:
             snapshot = self._time.current_snapshot()
         except TimeServiceNotStarted:
@@ -368,43 +203,29 @@ class SafetyAuthorityEpochService:
         except StaleEpochRead:
             return CurrentnessWitness(present=False, witness_source="stale_epoch_read")
         except sqlite3.Error:
-            # The underlying log file is locked or unreachable; a routine
-            # currentness check reports absence rather than raising.
             return CurrentnessWitness(present=False, witness_source="log_unreachable")
         now_ms = snapshot.evaluated_monotonic_anchor.monotonic_anchor_value
         if now_ms is None:
-            # The snapshot itself carries no concrete monotonic reading — an
-            # unestablished coordinate is never treated as fresh (fail-closed,
-            # mirrors the kernel's own None-coordinate discipline).
             return CurrentnessWitness(
                 present=False, witness_source="snapshot_monotonic_value_absent"
             )
         previous = self._last_verified_monotonic_ms
         if previous is None:
-            # First-ever successful online verification — establish the
-            # baseline now, at age 0.
             self._last_verified_monotonic_ms = now_ms
             return CurrentnessWitness(
                 present=True, within_containment_bound=True, witness_source="rcl_log"
             )
         age_ms = now_ms - previous
         if age_ms < 0 or age_ms > self._config.containment_bound_ms:
-            # A regression, or a genuinely expired window: never treat as
-            # fresh, and — critically — never touch the baseline (it stays
-            # frozen at `previous`; see the method docstring).
             return CurrentnessWitness(
                 present=False,
                 within_containment_bound=False,
                 witness_source="rcl_log",
             )
-        # A successful, still-within-bound re-verification: ratchet the
-        # baseline forward to this instant.
         self._last_verified_monotonic_ms = now_ms
         return CurrentnessWitness(
             present=True, within_containment_bound=True, witness_source="rcl_log"
         )
-
-    # Authority-making transitions are committed through the RCL.
 
     def transition(
         self,
@@ -412,21 +233,7 @@ class SafetyAuthorityEpochService:
         leader_identity: str,
         transition_reason: AuthorityTransitionReason,
     ) -> AuthorityEpochTransitionRecord:
-        """Issue + durably commit the next Safety Authority epoch transition.
-
-        Args:
-            leader_identity: The identity claiming the new epoch (§10 line
-                370).
-            transition_reason: One of the 8 §10.2 epoch-advancement triggers.
-
-        Returns:
-            The issued, digest-verified :class:`AuthorityEpochTransitionRecord`.
-
-        Raises:
-            AuthorityEpochTransitionRefused: The RCL append was refused (stale
-                writer epoch, seq mismatch, duplicate, or store unavailable —
-                the log's own closed vocabulary, never invented here).
-        """
+        """Issue + durably commit the next Safety Authority epoch transition."""
         current = self.current_state()
         old_epoch = current.current_epoch_floor or 0
         new_epoch = old_epoch + 1

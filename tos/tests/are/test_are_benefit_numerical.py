@@ -1,8 +1,4 @@
-"""No-unproven-benefit + numerical safety / determinism (design #13 §4.2/§4.3/§6.1/§6.2).
-
-Both-ways canaries + the ∅-void hunt (an empty benefit proof proves nothing). ARE-EV-005/006/007
-substrate — closes no ARE-EV.
-"""
+"""No-unproven-benefit + numerical safety / determinism (design #13 §4.2/§4.3/§6.1/§6.2)."""
 
 from __future__ import annotations
 
@@ -19,10 +15,6 @@ from tos.are import (
 )
 
 from ._are_strategies import conservative_valuation, full_benefit_proof
-
-# ---------------------------------------------------------------------------
-# benefit_admissible — both-ways + ∅ + "broker-margin-only is not proof"
-# ---------------------------------------------------------------------------
 
 
 def test_full_proof_is_admissible() -> None:
@@ -47,11 +39,6 @@ def test_broker_margin_number_is_not_proof() -> None:
     assert benefit_admissible(BenefitProof(proof_reference="broker-margin-42")) is False
 
 
-# ---------------------------------------------------------------------------
-# numerical_safety — both-ways (NaN / infinity / unit mismatch => UNKNOWN)
-# ---------------------------------------------------------------------------
-
-
 def test_finite_consistent_magnitudes_are_safe() -> None:
     """(canary +) Finite magnitudes + consistent units => True."""
     assert (
@@ -60,11 +47,7 @@ def test_finite_consistent_magnitudes_are_safe() -> None:
 
 
 def test_empty_magnitudes_is_unknown_not_vacuous() -> None:
-    """(∅-seal §4.7 / MAJOR-1) An empty magnitude sequence is not vacuously safe => UNKNOWN.
-
-    Symmetric with the module's other empty-input reductions (all fail closed); the guard
-    fires on ``[]`` even when the units flag is positively ``True``.
-    """
+    """(∅-seal §4.7 / MAJOR-1) An empty magnitude sequence is not vacuously safe => UNKNOWN."""
     assert numerical_safety([], units_consistent=True) is RiskDecisionResult.UNKNOWN
 
 
@@ -114,11 +97,6 @@ def test_scale_normalized_equal_still_safe() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# valuation_conservative — both-ways
-# ---------------------------------------------------------------------------
-
-
 def test_valuation_all_true_is_conservative() -> None:
     """(canary +) Every valuation flag positively True => conservative."""
     assert valuation_conservative(conservative_valuation()) is True
@@ -141,11 +119,6 @@ def test_valuation_missing_flag_fails_closed() -> None:
 def test_empty_valuation_inputs_fails_closed() -> None:
     """(∅-seal) A bare ValuationInputs (all None) is not conservative."""
     assert valuation_conservative(ValuationInputs()) is False
-
-
-# ---------------------------------------------------------------------------
-# numerical_determinism — both-ways
-# ---------------------------------------------------------------------------
 
 
 def test_determinism_all_true() -> None:

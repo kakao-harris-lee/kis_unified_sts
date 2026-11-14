@@ -1,13 +1,4 @@
-"""Shared synthetic-input builders for the CP-3 B1b suite.
-
-Deterministic and clock-free: no ``time`` / ``datetime`` / ``random`` / ``uuid``
-anywhere, because the runner forbids them and a suite must not model something
-the code under test forbids (the ``tos/tests/backtest`` suite's own rule).
-
-The synthetic bars are **not** market data and do not pretend to be: they are
-the minimum shape that exercises the loader, the value seam, the policy, and
-the capacity cap. Real-data numbers come from the real run, not from here.
-"""
+"""Shared synthetic-input builders for the CP-3 B1b suite."""
 
 from __future__ import annotations
 
@@ -15,38 +6,21 @@ import json
 from pathlib import Path
 from typing import Any
 
-#: The instrument the committed strategy file declares. A synthetic stream must
-#: use it, because the runner refuses a replay whose JSONL instrument disagrees
-#: with the strategy's dispatch scope.
 INSTRUMENT = "101S6000"
 
-#: The committed strategy content, relative to the package root.
-#:
-#: ``load_strategy_content`` refuses a ``strategies/`` directory holding more
-#: than the one requested file ("this replay drives one scope through one
-#: core"), so the LONG file is alone at the package root. The SHORT render went
-#: with the B3 comparison (2026-11-13); its inspect coverage is the LONG one.
 _PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 STRATEGY_PATH = _PACKAGE_ROOT / "strategies" / "setup_d_long.strategy.yaml"
 BINDINGS_PATH = _PACKAGE_ROOT / "strategy_bindings.yaml"
 
-#: One minute in milliseconds — the bar cadence B1a produces.
 MINUTE_MS = 60_000
 
-#: The first bar's ``as_of_ms``. An arbitrary injected constant, not a clock
-#: read; only the strict increase matters to ``validate_bar_stream``.
 BASE_AS_OF_MS = 1_765_151_100_000
 
-#: The base price in hundredths of an index point (B1a's ``*_x100`` encoding).
 BASE_CLOSE_X100 = 58_000
 
 
 def neutral_fields(index: int) -> dict[str, Any]:
-    """One bar's fields with every gate FALSE — the default no-action shape.
-
-    ``vwap_reverted`` is false here (``abs(z) > 0.2`` at ``z_x1000 = -300``), so
-    a neutral bar fires no rule at all and takes the policy default.
-    """
+    """One bar's fields with every gate FALSE — the default no-action shape."""
     close = BASE_CLOSE_X100 + index
     return {
         "open_x100": close,
@@ -68,12 +42,7 @@ def neutral_fields(index: int) -> dict[str, Any]:
 
 
 def entry_fields(index: int) -> dict[str, Any]:
-    """One bar's fields satisfying every conjunct of R1-ENTRY-LONG.
-
-    ``z_x1000 = -1800`` sits exactly ON the threshold, which is the boundary the
-    ``LE`` operator admits — the inclusive edge is deliberately the one the
-    fixture exercises.
-    """
+    """One bar's fields satisfying every conjunct of R1-ENTRY-LONG."""
     fields = neutral_fields(index)
     fields.update(
         {
@@ -88,12 +57,7 @@ def entry_fields(index: int) -> dict[str, Any]:
 
 
 def near_miss_entry_fields(index: int) -> dict[str, Any]:
-    """Every entry gate true but ``z_x1000`` one unit SHORT of the threshold.
-
-    The red half of the threshold's proof: ``-1799 <= -1800`` is false, so this
-    bar must take the default. Without it, a binding of ``0`` (or any value the
-    stream never crosses) would be indistinguishable from the authored one.
-    """
+    """Every entry gate true but ``z_x1000`` one unit SHORT of the threshold."""
     fields = entry_fields(index)
     fields["z_x1000"] = -1_799
     return fields
@@ -137,17 +101,7 @@ def write_jsonl(path: Path, lines: list[dict[str, Any]]) -> Path:
 def synthetic_stream(
     *, bar_count: int = 50, entry_at: tuple[int, ...] = (), special: Any = None
 ) -> list[dict[str, Any]]:
-    """A ``bar_count``-bar synthetic stream, neutral except where told otherwise.
-
-    Args:
-        bar_count: How many bars the stream carries.
-        entry_at: Bar indices whose fields satisfy the entry rule.
-        special: Optional ``{index: builder}`` mapping, applied after
-            ``entry_at`` so a test can place a FLAT-firing bar precisely.
-
-    Returns:
-        The JSONL lines, in bar order.
-    """
+    """A ``bar_count``-bar synthetic stream, neutral except where told otherwise."""
     overrides = dict(special or {})
     lines: list[dict[str, Any]] = []
     for index in range(bar_count):

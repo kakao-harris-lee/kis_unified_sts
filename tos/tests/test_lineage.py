@@ -1,9 +1,4 @@
-"""CII-EV-004 transformation-lineage reproducibility -> INVALID (design §2.3).
-
-A derived input that is non-reproducible, or has a missing exact parent, or is a
-stochastic transform lacking both a seed and a nondeterminism declaration, is
-``INVALID`` for new risk (ADR §10 line 285, 288).
-"""
+"""CII-EV-004 transformation-lineage reproducibility -> INVALID (design §2.3)."""
 
 from __future__ import annotations
 

@@ -1,36 +1,4 @@
-"""``tos_runtime.compose._riskstate_wiring`` — boots :class:`~tos_runtime.riskstate.service
-.RiskStateService` (TOS risk state service wave, lane b; plan §2.4/§4/§4.1).
-
-**Mirrors ``_venue_wiring.py``'s own idiom exactly** (module docstring there): load both
-governed policy YAMLs, run every boot-time cross-check BEFORE the service is constructed (so a
-refusal here surfaces before this function writes any evidence of its own), then construct the
-service and let it record its own two ``*_POLICY_BOUND`` boot rows.
-
-**Cross-checks (plan §2.4, all ``RiskPolicyScopeMismatch`` — a governance-authoring bug,
-refused at boot, never silently narrowed):**
-
-1. The ARE policy's own ``account_scope``/``instrument_scope`` equal ``construction.account``/
-   ``.instrument`` (the SAME scope discipline :func:`~tos_runtime.compose._venue_wiring
-   ._cross_check_scope` already applies to the venue policy).
-2. (retired by plan S2-a) The ARE ceiling cross-check moved INTO the policy loader: step 6's
-   ``injected_envelope_max`` now comes from the ARE policy's own ``_runtime.envelope_max``,
-   which :func:`~tos_runtime.riskstate.policies.load_aggregate_risk_policy` refuses to load
-   unless every governed dimension id has a declared ceiling.
-3. ``required_scenario_kinds`` (``risk.yaml``) is a subset of the loaded ``AdverseScenarioSet``'s
-   own ``covered_scenario_kinds`` — a required kind the scenario set does not cover would make
-   ``tos.are.adverse_increment`` UNKNOWN forever for that kind (dishonest coverage, not merely
-   absent).
-4. The AFG policy's own ``action_class_map`` contains this composition's fixed
-   ``construction.action_class`` — otherwise :meth:`~tos_runtime.riskstate.service
-   .RiskStateService.action_flow_inputs_for` would return ``None`` (UNKNOWN) on every single
-   attempt this deployment ever drives, a silent permanent gap rather than a boot refusal.
-5. The AFG policy's own ``side_tokens`` (both) are members of ``venue_allowed_sides`` (the
-   venue policy's own ``VenueShapeConstraints.allowed_sides``) — an unrecognized side token
-   would make :class:`~tos_runtime.riskstate.position.EvidencePositionReader` classify every
-   sealed send as UNKNOWN-in-both-directions, silently maximizing conservative usage forever.
-
-Firewall (R1, runtime scope): stdlib + ``tos.*`` + ``tos_runtime.*`` only. No ``shared.*``.
-"""
+"""``tos_runtime.compose._riskstate_wiring`` — boots :class:`~tos_runtime.riskstate.service"""
 
 from __future__ import annotations
 
@@ -73,11 +41,7 @@ __all__ = ["RiskPolicyScopeMismatch", "build_risk_state_service"]
 
 
 class RiskPolicyScopeMismatch(RuntimeError):
-    """Either governed policy's own declared coordinates disagree with this compose root's
-    configured facts, or a governed dimension/scenario/action-class/side token the policy
-    names has no counterpart the runtime can actually bound (module docstring's numbered
-    cross-check list) — a governance-authoring bug, refused at boot, never silently narrowed
-    or worked around."""
+    """Either governed policy's own declared coordinates disagree with this compose root's"""
 
 
 def _cross_check_are_scope(
@@ -101,7 +65,7 @@ def _cross_check_scenario_coverage(
     *,
     scenario_set: AdverseScenarioSet,
 ) -> None:
-    del are_policy  # required_scenario_kinds is risk.yaml's own floor, not the ARE policy's
+    del are_policy
     covered = set(scenario_set.covered_scenario_kinds)
     missing = sorted(k.value for k in required_scenario_kinds - covered)
     if missing:
@@ -137,16 +101,7 @@ def _cross_check_side_tokens(
 def _cross_check_ocp_side_tokens(
     ocp_sides: frozenset[str], *, venue_allowed_sides: frozenset[str]
 ) -> None:
-    """Sibling of :func:`_cross_check_side_tokens`, same subset-and-refuse shape, for the
-    Order Construction Policy's own side declarations ((a′) wave, lane B interaction check).
-
-    ``action_class_shape`` makes the OCP a THIRD declarant of the side-token fact ``(b′)``
-    already moved to policy declaration (module docstring item 5: the AFG policy's
-    ``_runtime.side_tokens`` are already cross-checked against the venue policy's own
-    ``allowed_sides``). Every side an OCP ``ActionClassShape`` yields must be a member of that
-    same ``allowed_sides`` set, or boot is refused here — never a silent pass-through that lets
-    the OCP name a side the venue never declared admissible.
-    """
+    """Sibling of :func:`_cross_check_side_tokens`, same subset-and-refuse shape, for the"""
     unknown = sorted(ocp_sides - venue_allowed_sides)
     if unknown:
         raise RiskPolicyScopeMismatch(
@@ -159,20 +114,7 @@ def _cross_check_ocp_side_tokens(
 def _cross_check_ocp_sizing_bound(
     sizing_bound: SizingBound, *, venue_quantity_constraint: VenueQuantityConstraint
 ) -> None:
-    """Sibling of :func:`_cross_check_side_tokens` / :func:`_cross_check_ocp_side_tokens`: the
-    OCP's own comment (``order_construction_policy.yaml:120-122``) says its ``sizing``
-    ``max_quantity``/``min_quantity``/``lot_size`` are DERIVED from the venue policy's own
-    ``lot_size``/``min_quantity`` (and an aggregate-risk effective limit) — a fact nothing
-    pins. This checks the SUBSET direction only, never equality (a narrower OCP is legitimate,
-    a wider one is a document defect): OCP ``max_quantity`` must not exceed the venue's,
-    OCP ``min_quantity`` must not be below the venue's, and OCP's ``lot_size`` must be a whole
-    multiple of the venue's (never a finer grain than the venue itself grants). A field left
-    ``None`` on either side is skipped — an absent bound is UNKNOWN, not "unlimited", so there
-    is nothing to compare it against, not evidence the OCP may claim anything it likes.
-    ``derive_order_size`` (``egressgw/construction.py:449-523``) already ANDs both bounds
-    independently at every attempt, so a real mismatch here only ever narrows what an attempt
-    can do — this check exists to catch the DOCUMENT drift at boot, not a correctness gap.
-    """
+    """Sibling of :func:`_cross_check_side_tokens` / :func:`_cross_check_ocp_side_tokens`: the"""
     offenses: list[str] = []
     ocp_max, venue_max = (
         sizing_bound.max_quantity,
@@ -206,9 +148,7 @@ def _cross_check_ocp_sizing_bound(
 def _load_and_activate(
     *, config_dir: Path, scheme: CanonicalizationScheme
 ) -> tuple[LoadedAggregateRiskPolicy, LoadedActionFlowPolicy, str, str]:
-    """Load both policies and return their canonical digests — split out of
-    :func:`build_risk_state_service` purely for that function's own 100-line size budget.
-    """
+    """Load both policies and return their canonical digests — split out of"""
     are_policy = load_aggregate_risk_policy(
         config_dir / AGGREGATE_RISK_POLICY_CONFIG_NAME, scheme=scheme
     )
@@ -219,10 +159,6 @@ def _load_and_activate(
     assert p.policy_id is not None and p.policy_generation is not None
     assert p.canonical_digest is not None and a.canonical_digest is not None
     assert a.policy_id is not None and a.policy_generation is not None
-    # The two ``*_POLICY_BOUND`` evidence rows record WHICH policy document this boot
-    # bound. Before plan S2-a that digest came back from ``safety_activation.yaml``, which
-    # only ever matched when it equalled the policy's own ``canonical_digest``; reading it
-    # straight off the policy is the same value with no second document to keep in sync.
     return are_policy, afg_policy, p.canonical_digest, a.canonical_digest
 
 
@@ -254,18 +190,7 @@ def build_risk_state_service(
     close_authority: CloseAuthoritySource = CloseAuthoritySource.BROKER_HELD_PROOF,
     entry_close_bound_reader: Callable[[], EntryCloseBound] | None = None,
 ) -> RiskStateService:
-    """Load, activate, cross-check, and construct the production
-    :class:`~tos_runtime.riskstate.service.RiskStateService` (module docstring).
-
-    ``close_authority`` is the boot's transport-kind decision about what a CLOSE's quantity
-    bound may rest on (#1011); ``entry_close_bound_reader`` supplies the durable entry/proven-
-    close magnitudes both authorities read. Neither is derived here — the composition root owns
-    the transport fact and passes it down, so this function never guesses from a config path.
-
-    Raises:
-        tos_runtime.riskstate.VenuePolicyConfigError: either policy YAML is missing/malformed.
-        RiskPolicyScopeMismatch: any of the module docstring's five cross-checks fails.
-    """
+    """Load, activate, cross-check, and construct the production"""
     are_policy, afg_policy, are_digest, afg_digest = _load_and_activate(
         config_dir=config_dir, scheme=scheme
     )
@@ -315,10 +240,7 @@ def build_risk_state_service(
 
 
 def _current_seq_reader_for(inbox: SqliteEventInbox) -> Callable[[], int | None]:
-    """The inbox row CURRENTLY being handled, or ``None`` when nothing is pending — the
-    engine driver handles exactly one row at a time (module docstring's own "resolved
-    structurally" cross-check note), so this is a genuine structural fact, never a guess.
-    """
+    """The inbox row CURRENTLY being handled, or ``None`` when nothing is pending — the"""
 
     def _reader() -> int | None:
         pulled = inbox.next_unconsumed()

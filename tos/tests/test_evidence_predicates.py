@@ -1,10 +1,4 @@
-"""Predicate-only evidence surfaces (design #4 §5.3/§2.5B/§4.6/§3.5/§2.2/§2.0).
-
-EV-L1 predicate-only (no "EV-L1-complete" claim, §7 discipline): causal closure
-(ERI-EV-001), redaction preservation (ERI-EV-009), repair non-revival
-(ERI-EV-012), plus the always-on authority-absence invariant (ERI-INV-001/014)
-and the EIP / receipt binding + substitution-rejection predicates.
-"""
+"""Predicate-only evidence surfaces (design #4 §5.3/§2.5B/§4.6/§3.5/§2.2/§2.0)."""
 
 from __future__ import annotations
 
@@ -39,10 +33,6 @@ from ._evidence_strategies import (
     issue_replay,
     make_gap,
 )
-
-# ===========================================================================
-# ERI-EV-001 — causal closure / gap-on-omission (predicate-only, §5.3)
-# ===========================================================================
 
 
 def _env_with_links(*links: CausalLink):
@@ -82,7 +72,6 @@ def test_child_before_parent_is_incomplete() -> None:
 def test_unknown_edge_type_is_fail_closed() -> None:
     """An unregistered edge type is unconstructable (fail-closed, §2.5 A)."""
     with pytest.raises(ValueError):
-        # Deliberately illegal per the (non-str) signature — fail-closed proof.
         CausalLink(
             edge_type=cast(EdgeType, "NOT_A_REAL_EDGE"),
             target_id="x",
@@ -94,11 +83,6 @@ def test_timestamp_only_link_is_forbidden() -> None:
     """A causal link needs a concrete immutable target (no placeholder) (§2.5 A)."""
     with pytest.raises(ValueError):
         CausalLink(edge_type=EdgeType.INTENT, target_id="TBD", target_digest="d")
-
-
-# ===========================================================================
-# ERI-EV-009 — redaction preservation (predicate-only, §2.5 B / ERI-INV-010)
-# ===========================================================================
 
 
 def test_valid_redaction_preserves_all_safety_properties() -> None:
@@ -116,7 +100,7 @@ def test_profile_dropping_a_safety_property_is_invalid() -> None:
     """A profile that fails to preserve a safety property is INVALID (§22 528)."""
     profile = RedactionProfile(
         profile_id="p2",
-        preserves=(PreservedProperty.SCOPE,),  # drops ORDERING/QUANTITIES/...
+        preserves=(PreservedProperty.SCOPE,),
     )
     assert not redaction_profile_valid(profile)
 
@@ -129,11 +113,6 @@ def test_profile_not_preserving_digest_is_invalid() -> None:
         preserves_canonical_digest=False,
     )
     assert not redaction_profile_valid(profile)
-
-
-# ===========================================================================
-# ERI-EV-012 — repair non-revival (predicate-only, §4.7/§7)
-# ===========================================================================
 
 
 def test_repaired_gap_preserves_uncertainty() -> None:
@@ -155,11 +134,6 @@ def test_repaired_gap_claiming_resolved_uncertainty_violates() -> None:
     assert not repair_preserves_uncertainty(gap)
 
 
-# ===========================================================================
-# ERI-INV-001/014 — authority absence across all artifacts (always-on)
-# ===========================================================================
-
-
 def test_all_artifacts_grant_no_authority() -> None:
     """Every artifact's authority block grants nothing (ERI-INV-001/014, §4.6)."""
     assert grants_no_authority(issue_envelope().authority_effect)
@@ -174,11 +148,6 @@ def test_true_envelope_authority_is_unconstructable() -> None:
 
     with pytest.raises(ValueError):
         EnvelopeAuthorityEffect(may_transmit_to_broker=True)
-
-
-# ===========================================================================
-# §3.5 — EIP binding / policy substitution
-# ===========================================================================
 
 
 def test_eip_binding_ok_when_matching() -> None:
@@ -204,24 +173,14 @@ def test_eip_binding_rejects_digest_substitution() -> None:
 
 
 def test_eip_binding_fails_closed_on_null_envelope_generation() -> None:
-    """(MINOR-2) A null envelope generation cannot mask concrete-policy generation drift.
-
-    ``generation`` is excluded from the EIP ``content_digest``, so an envelope that
-    binds the right id + digest but leaves the generation null must NOT bind to a
-    policy that carries a concrete generation (same-body generation drift).
-    """
+    """(MINOR-2) A null envelope generation cannot mask concrete-policy generation drift."""
     eip = issue_eip(policy_id="eip-1", generation=2)
     env = issue_envelope(
         evidence_integrity_policy_id="eip-1",
-        evidence_integrity_policy_generation=None,  # omitted
+        evidence_integrity_policy_generation=None,
         evidence_integrity_policy_digest=eip.canonical_digest,
     )
     assert not eip_binding_ok(env, eip)
-
-
-# ===========================================================================
-# §2.2 — receipt binding + substitution rejection (predicate-only)
-# ===========================================================================
 
 
 def test_receipt_binds_matching_record() -> None:
@@ -284,11 +243,6 @@ def test_receipt_rejected_on_stale_policy_generation() -> None:
     )
 
 
-# ===========================================================================
-# §2.0 — derived correction back-reference (forward scan)
-# ===========================================================================
-
-
 def test_corrected_by_derives_forward_correction() -> None:
     """A correcting record (supersedes + CORRECTION edge) is found by forward scan (§2.0)."""
     from tos.evidence.envelope import Causality, Lifecycle
@@ -307,7 +261,6 @@ def test_corrected_by_derives_forward_correction() -> None:
         ),
     )
     assert corrected_by("er-1", [original, corrector]) == ("er-2",)
-    # The original stores no back-reference (append-only; derived only).
     assert corrected_by("er-2", [original, corrector]) == ()
 
 

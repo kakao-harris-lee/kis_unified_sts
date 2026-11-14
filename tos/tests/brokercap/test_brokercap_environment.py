@@ -1,9 +1,4 @@
-"""Environment binding + credential scope (design #10 §6.4; BC-EV-020/015; BC-INV-009).
-
-Cross-environment (sandbox/paper) evidence SHALL NOT establish live capability; same,
-non-inherited environment => bound; a requested credential scope must be within the declared
-scope.
-"""
+"""Environment binding + credential scope (design #10 §6.4; BC-EV-020/015; BC-INV-009)."""
 
 from __future__ import annotations
 
@@ -12,10 +7,6 @@ from hypothesis import given
 from tos.brokercap import credential_scope_declared_ok, environment_binding_ok
 
 from ._brokercap_strategies import issue_profile, profile_key
-
-# ---------------------------------------------------------------------------
-# environment_binding_ok both-ways (BC-INV-009)
-# ---------------------------------------------------------------------------
 
 
 def test_same_environment_not_inherited_ok() -> None:
@@ -71,11 +62,6 @@ def test_environment_binding_definition(
         and inherited is False
     )
     assert environment_binding_ok(ev_env, scope_env, inherited) == expected
-
-
-# ---------------------------------------------------------------------------
-# credential_scope_declared_ok
-# ---------------------------------------------------------------------------
 
 
 def test_matching_credential_scope_ok() -> None:

@@ -177,7 +177,6 @@ class _PacedSnapshots(_Snapshots):
         self.scopes.append(scope)
         self.started.set()
         try:
-            # A balance grant, then a second request after the 2s app-key pacing interval.
             self.clock.ms += 4_000
             return SnapshotRead(
                 outcome=WitnessSnapshot(
@@ -390,7 +389,6 @@ def test_periodic_snapshot_runs_off_loop_without_any_ack_or_order_read(
         assert result.tip == (7, 41)
         assert result.generation == 41
         assert result.token == 23
-        # A first-request timestamp must never stand in for the balance grant.
         assert isinstance(result.first, WitnessSnapshot)
         assert isinstance(result.confirmation, WitnessSnapshot)
         assert result.first == result.confirmation
@@ -495,7 +493,6 @@ def test_recovery_resume_uses_only_the_prefetched_release_snapshot(
         assert len(snapshots.prefetch_threads) == 1
         assert snapshots.prefetch_threads[0] != loop_thread
         assert orders.calls == 0
-        # The configured retry cadence prevents a second recovery plan on every loop pass.
         observer.poll_if_due()
         assert len(snapshots.prefetch_threads) == 1
     finally:

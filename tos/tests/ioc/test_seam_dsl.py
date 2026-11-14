@@ -1,15 +1,4 @@
-"""MANDATED test-only seam cross-check: ioc <-> dsl (design #14 §3.4/§0.4d; IOC-INV-001).
-
-ioc binds the dsl ``Proposal`` (the immutable Intent proposal identity) by ``proposal_id`` +
-``proposal_digest`` **scalar** (IOC-INV-001) — it does NOT import ``tos.dsl`` at runtime, nor
-redefine the content-addressed ``Proposal``. This file imports the real dsl ``Proposal`` builder
-(``proposal.py:68``) as a **test** to lock the digest-binding polarity: an
-``ApprovedIntentContract`` that binds the exact ``(proposal_id, canonical_digest)`` of a proposal
-references that proposal, and a tampered digest does not.
-
-A test-only cross-import is NOT a runtime package edge (design #14 §3.4/§7.1); dsl is one of the
-twelve siblings ioc never imports at runtime (the §7.1 closure test asserts its absence).
-"""
+"""MANDATED test-only seam cross-check: ioc <-> dsl (design #14 §3.4/§0.4d; IOC-INV-001)."""
 
 from __future__ import annotations
 
@@ -56,8 +45,6 @@ def test_intent_binds_exact_proposal_scalar() -> None:
 def test_proposal_is_content_addressed_id_equals_f_digest() -> None:
     """(§0.4d) The dsl Proposal is IdDerived (id = f(digest)); ioc references it, never redefines it."""
     proposal = _real_proposal()
-    # content-addressed: the id is derived from the digest (a distinct polarity from the ioc
-    # IndependentIdArtifact contract, which keeps id ⊥ digest for forgery detection).
     assert proposal.proposal_id is not None
     assert proposal.canonical_digest is not None
     assert proposal.canonical_digest in proposal.proposal_id
@@ -77,6 +64,5 @@ def test_ioc_contract_id_is_independent_not_derived() -> None:
     contract = issue_intent()
     assert contract.intent_id is not None
     assert contract.canonical_digest is not None
-    # id is NOT f(digest) — the digest is not a substring of the injected governance id.
     assert contract.canonical_digest not in contract.intent_id
     assert issubclass(ApprovedIntentContract, IndependentIdArtifact)

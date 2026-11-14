@@ -1,9 +1,4 @@
-"""The release-admission verdict: the one piece of the retired kernel ``tos.sci`` package
-the boot path ever called (plan ``docs/plans/2026-11-13-tos-code-halving-plan.md`` §S2-c).
-
-:func:`software_deployment_ok_verdict` is the ``ReleaseAdmissionRefused`` gate: a stale
-``expected_code_digest`` makes ``runtime_attestation_matches`` ``False`` and this refuses.
-"""
+"""The release-admission verdict: the one piece of the retired kernel ``tos.sci`` package"""
 
 from __future__ import annotations
 
@@ -18,11 +13,7 @@ __all__ = [
 
 
 class AdmissionResult(StrEnum):
-    """``ADMIT`` / ``DENY`` / ``UNKNOWN`` for one deployed artifact.
-
-    Not truthy-testable: every member is a non-empty string, so ``if result:`` would read
-    ``DENY`` as a go. Compare with ``result is AdmissionResult.ADMIT``.
-    """
+    """``ADMIT`` / ``DENY`` / ``UNKNOWN`` for one deployed artifact."""
 
     ADMIT = "ADMIT"
     DENY = "DENY"
@@ -62,12 +53,7 @@ def software_deployment_ok_verdict(
     restriction_present: bool | None,
     restriction_state_resolved: bool | None,
 ) -> bool:
-    """``True`` only when the restriction lookup resolved, the admission is ``ADMIT``, the
-    runtime artifact matches, currentness is current, and no restriction is present.
-
-    Every input is gated by identity (``is True`` / ``is False``), so ``None`` (unknown)
-    always denies. Even ``True`` is a negative gate only — it grants no authority.
-    """
+    """``True`` only when the restriction lookup resolved, the admission is ``ADMIT``, the"""
     if restriction_state_resolved is not True:
         return False
     if admission_result is not AdmissionResult.ADMIT:

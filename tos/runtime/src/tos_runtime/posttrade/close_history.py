@@ -1,18 +1,4 @@
-"""Fail-closed reconstruction of completed close quantities for one RCL entry.
-
-The scope's mutable reservation projection cannot answer which attempts were committed between
-an entry and a close. This reader uses the RCL's discriminated transition history, replays the
-complete scope, joins each later reservation through its own permit to one attempt, and only
-counts an attempt with a final FULL_FILL receipt plus its own committed RELEASED transition.
-Prior attempts must also carry durable evidence naming the entry reservation they discharged or
-held against; scope coincidence alone never attaches a close to an entry.
-
-No store is mutated. Any missing, ambiguous, malformed, cross-scope, or unproven fact returns a
-typed refusal and no usable quantity. In particular, a cancel or partial attempt without a
-proven terminal FULL_FILL remains held and cannot be treated as zero or skipped.
-
-Firewall: stdlib + ``tos.engine``/``tos.rcl`` + ``tos_runtime.evidence``/``.rcl``/``.recon`` only.
-"""
+"""Fail-closed reconstruction of completed close quantities for one RCL entry."""
 
 from __future__ import annotations
 
@@ -47,14 +33,6 @@ __all__ = [
 _RELEASE_INTENT_KIND = "CAPACITY_RELEASE_INTENT"
 _RELEASE_HELD_KIND = "CAPACITY_RELEASE_HELD"
 _RELEASE_COMMAND_PREFIX = "release-"
-#: #974 Q2 — the cause and RCL command-id prefix :mod:`tos_runtime.posttrade.unsent_release`
-#: writes for a reservation whose flow halted before the Send Boundary. Redeclared as literals
-#: rather than imported, the SAME lockstep-literal convention this module already uses for its
-#: own kind strings (and :mod:`~tos_runtime.posttrade.release_currentness` for the pair above);
-#: ``tests/posttrade/test_unsent_release.py`` asserts the two spellings against that module's own
-#: public constants. Such a release names NO attempt and NO finality proof — there is neither,
-#: because nothing was ever sent — so it is read here as "this reservation closed nothing",
-#: never as a malformed release record.
 _UNSENT_RELEASE_CAUSE = "UNSENT_FLOW_NON_EXECUTION"
 _UNSENT_RELEASE_COMMAND_PREFIX = "release-unsent-"
 _FINAL_QUANTITY_PROOF = TransitionCause.FINAL_QUANTITY_PROOF
@@ -261,13 +239,6 @@ def _release_evidence(store: SqliteEvidenceStore) -> tuple[_ReleaseEvidence, ...
         if kind == _RELEASE_INTENT_KIND and payload.get("cause") == (
             _UNSENT_RELEASE_CAUSE
         ):
-            # #974 Q2 (see the constant): a never-sent reservation's release carries no attempt
-            # and no proof, so it cannot be decoded as an attempt-keyed release outcome. Skipped
-            # BEFORE the two checks below, which it would otherwise fail — turning every later
-            # CLOSE in the scope into RELEASE_UNPROVEN. Skipping cannot turn a refusal into a
-            # proof: every consumer of these rows filters them by an attempt id this row does
-            # not carry, so a decoded one could only ever have been ignored or fatal.
-            # :func:`_never_sent_release_ids` reads the same rows for the one thing they DO say.
             continue
         if not isinstance(attempt_id, str) or not attempt_id:
             raise ValueError("release evidence has no attempt id")
@@ -325,12 +296,7 @@ def _release_evidence(store: SqliteEvidenceStore) -> tuple[_ReleaseEvidence, ...
 
 
 def _never_sent_release_ids(store: SqliteEvidenceStore) -> frozenset[str]:
-    """Reservation ids a ``CAPACITY_RELEASE_INTENT`` names as a #974 never-sent release.
-
-    Half of the two-source proof :func:`_never_sent_release_proven` needs; the other half is the
-    committed RCL transition itself. Read strictly, exactly like :func:`_release_evidence`: a
-    malformed row raises, and the caller turns that into a refusal rather than a smaller set.
-    """
+    """Reservation ids a ``CAPACITY_RELEASE_INTENT`` names as a #974 never-sent release."""
     ids: set[str] = set()
     for (payload_json,) in store.connection.execute(
         "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
@@ -357,21 +323,7 @@ def _never_sent_release_proven(
     account: str,
     instrument: str,
 ) -> bool:
-    """Whether ``reservation_id`` is PROVEN to be a #974 reservation that never sent anything.
-
-    Such a reservation closed no quantity — it reached the venue in no form — so counting it as
-    a prior close would be inventing one, and refusing the whole history because it carries no
-    FULL_FILL would re-seal exactly the scope #974's release path exists to re-open.
-
-    Both halves are required, and both are positive. The RCL transition must be this scope's
-    single ``RELEASED`` one under ``FINAL_QUANTITY_PROOF`` with a witness AND under
-    :data:`_UNSENT_RELEASE_COMMAND_PREFIX`'s idempotency key, which only
-    :func:`tos_runtime.posttrade.unsent_release.unsent_release_command_id` ever writes; and the
-    evidence store must carry the matching intent row. Direction matters: this exclusion REMOVES
-    quantity from the prior-close total, so an unproven one would hand a later CLOSE more
-    headroom than the entry justifies — which is why neither half alone is enough and why a real
-    ``release-{attempt_id}`` release can never reach it.
-    """
+    """Whether ``reservation_id`` is PROVEN to be a #974 reservation that never sent anything."""
     if reservation_id not in never_sent_ids:
         return False
     releases = tuple(
@@ -417,8 +369,6 @@ def _final_full_fill_quantity(
         return None
     if not quantity.is_finite() or quantity <= 0 or remaining != 0:
         return None
-    # A repeated terminal receipt is safe to dedupe only when every FULL_FILL says the same
-    # final quantity. A later/earlier conflicting terminal magnitude is ambiguous, not a pick.
     full_fills = tuple(
         row
         for row in matching
@@ -483,8 +433,6 @@ def _release_proven(
         for row in intents
         if row.destination == _RELEASED.value and row.proof_id
     }
-    # An intent with a different destination or no proof makes the attempt's release record
-    # ambiguous even when one other intent looks usable.
     return (
         bool(intents)
         and all(row.destination == _RELEASED.value and row.proof_id for row in intents)
@@ -548,9 +496,6 @@ def _attempt_for_reservation(
         attempt_id = attempt_id_for_reservation(evidence_store, permit_identity)
         if attempt_id is None:
             return None
-        # The inverse join alone can return this attempt even when another durable event binds
-        # that same attempt to a different permit. Require the forward lookup to resolve back to
-        # this exact permit before counting the reservation.
         if permit_identity_for_attempt(evidence_store, attempt_id) != permit_identity:
             return None
         return attempt_id
@@ -690,7 +635,7 @@ def _prove_candidates(
             account=account,
             instrument=instrument,
         ):
-            continue  # #974 Q2 — see that function: it closed nothing, so it counts nothing
+            continue
         attempt_id = _attempt_for_reservation(
             evidence_store,
             reservation_id=reservation_id,
@@ -867,18 +812,7 @@ def durable_close_history(
     current_attempt_id: str | None = None,
     current_reservation_id: str | None = None,
 ) -> CloseHistoryResult:
-    """Reconstruct proven completed closes attached to ``entry_reservation_id``.
-
-    With no current IDs, every later reservation in scope is treated as a prior candidate and
-    must be proven. For post-trade discharge, pass both current IDs: that exact reservation is
-    included in ``current_quantity`` and may not yet have an entry-specific HELD/INTENT outcome
-    because this call is deciding whether to write one. The current reservation still needs its
-    own terminal FULL_FILL, release intent, and committed RCL release transition.
-
-    Returns a refusal with all quantities set to ``None`` if any reservation committed after the
-    entry cannot be proven as a distinct completed close linked to this entry. Reads one fenced
-    RCL history snapshot and never accesses a private RCL connection or writes either store.
-    """
+    """Reconstruct proven completed closes attached to ``entry_reservation_id``."""
     if bool(current_attempt_id) != bool(current_reservation_id):
         return _refused(CloseHistoryRefusal.CURRENT_ATTEMPT_UNPROVEN)
     context = _scope_context(

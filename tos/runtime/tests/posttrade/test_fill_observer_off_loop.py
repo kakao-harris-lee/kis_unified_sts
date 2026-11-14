@@ -1,23 +1,4 @@
-"""Issue #950 — the fill observer's broker reads run off the session loop's thread.
-
-:meth:`~tos_runtime.posttrade.fill_observer.KisMockFillObserver.poll_if_due` is what the session
-loop calls every pass. These tests drive it with an injected SLOW broker (a reader that holds the
-GET until the test lets it go) and pin:
-
-* §1 cadence: while a GET is in flight for seconds, every ``poll_if_due`` returns at once;
-* §2 APPLY happens on the loop thread only — engine feed, finality re-run, every evidence row
-  the observer writes — while the GET itself ran on another thread;
-* §3 the release reconciliation's broker read is prefetched on the FETCH thread and served on
-  the loop thread (``fill_fetch`` module docstring);
-* §4 fail-closed behaviour is unchanged through the async path (#939's
-  ``FILL_OBSERVER_ENGINE_RESERVATION_ABSENT``; a failed read is recorded);
-* §5 shutdown: the worker stops with the session, is joined, and a FETCH in flight at shutdown
-  is never applied;
-* §6 issue #971: a run of expired release snapshots gets ONE immediate re-read, then the
-  ``finality_retry_interval_ms`` cadence — and a fresh snapshot ends the run.
-
-Hermetic: no network at all — the broker is an in-process fake; the store is a ``tmp_path`` file.
-"""
+"""Issue #950 — the fill observer's broker reads run off the session loop's thread."""
 
 from __future__ import annotations
 
@@ -60,9 +41,7 @@ _DATE = "20260914"
 _ODNO = "0000012345"
 _ATTEMPT = "attempt-1"
 _QTY = Decimal(3)
-#: Long enough that a blocking design visibly fails, short enough for a hermetic suite.
 _SLOW_GET_S = 3.0
-#: What one loop pass may spend in the hook — far below the slow GET.
 _PASS_BUDGET_S = 0.1
 
 
@@ -121,9 +100,7 @@ def _filled_row() -> KisOrderRow:
 
 
 class _SlowBroker:
-    """``order_rows`` that holds the GET until :attr:`release` is set (or ``_SLOW_GET_S``
-    passes), asking the caller's deadline predicate between "pages" like the real witness.
-    """
+    """``order_rows`` that holds the GET until :attr:`release` is set (or ``_SLOW_GET_S``"""
 
     def __init__(self, rows: tuple[KisOrderRow, ...]) -> None:
         self.rows = rows
@@ -155,8 +132,7 @@ class _SlowBroker:
 
 
 class _Snapshots:
-    """A :class:`~tos_runtime.posttrade.fill_fetch.SnapshotPrefetcher` that records which
-    thread read and which thread was served."""
+    """A :class:`~tos_runtime.posttrade.fill_fetch.SnapshotPrefetcher` that records which"""
 
     def __init__(self) -> None:
         self.prefetch_threads: list[int] = []
@@ -268,16 +244,8 @@ def _no_fetch_thread_alive() -> bool:
     return not [t for t in threading.enumerate() if t.name.startswith("tos-fill-fetch")]
 
 
-# ===========================================================================
-# §1 + §2 cadence and thread placement
-# ===========================================================================
-
-
 def test_a_slow_get_never_stretches_a_loop_pass(store: SqliteEvidenceStore) -> None:
-    """Issue #950 acceptance: a broker GET held for seconds does not hold the loop. Every
-    ``poll_if_due`` while it is in flight returns inside one pass's budget, and nothing is
-    applied until the result is back. Mutation: run the FETCH inline (``poll_once`` from
-    ``poll_if_due``) -> the first call blocks ~3 s -> red."""
+    """Issue #950 acceptance: a broker GET held for seconds does not hold the loop. Every"""
     broker = _SlowBroker((_filled_row(),))
     engine = _Engine()
     observer = _observer(store, broker, engine)
@@ -304,9 +272,7 @@ def test_a_slow_get_never_stretches_a_loop_pass(store: SqliteEvidenceStore) -> N
 def test_apply_runs_on_the_loop_thread_and_fetch_does_not(
     store: SqliteEvidenceStore,
 ) -> None:
-    """Issue #950 acceptance: the GET ran on the FETCH worker; the engine feed and the
-    observer's evidence row happened on the calling (loop) thread. Mutation: apply inside the
-    worker -> the engine's recorded thread is the worker's -> red."""
+    """Issue #950 acceptance: the GET ran on the FETCH worker; the engine feed and the"""
     loop_thread = threading.get_ident()
     broker = _SlowBroker((_filled_row(),))
     broker.release.set()
@@ -328,9 +294,7 @@ def test_apply_runs_on_the_loop_thread_and_fetch_does_not(
 def test_a_due_finality_rerun_runs_on_the_loop_thread(
     store: SqliteEvidenceStore,
 ) -> None:
-    """The ``_reproject_unreleased`` path (#949 r2 MEDIUM-1's 60 s term): the re-run itself —
-    finality, release — runs on the loop thread, with its snapshot prefetched by the worker.
-    """
+    """The ``_reproject_unreleased`` path (#949 r2 MEDIUM-1's 60 s term): the re-run itself —"""
     store.append(
         {
             "attempt_id": _ATTEMPT,
@@ -370,17 +334,10 @@ def test_a_due_finality_rerun_runs_on_the_loop_thread(
     )
 
 
-# ===========================================================================
-# §3 the release path's broker read moves to FETCH
-# ===========================================================================
-
-
 def test_the_release_snapshot_is_read_on_fetch_and_served_on_the_loop(
     store: SqliteEvidenceStore,
 ) -> None:
-    """A full fill reaches release reconciliation; its broker snapshot was read on the worker
-    and is being served while the engine runs (so ``witness.observe`` there costs no network).
-    Mutation: drop the prefetch -> ``served`` is False -> red."""
+    """A full fill reaches release reconciliation; its broker snapshot was read on the worker"""
     loop_thread = threading.get_ident()
     broker = _SlowBroker((_filled_row(),))
     broker.release.set()
@@ -402,8 +359,7 @@ def test_the_release_snapshot_is_read_on_fetch_and_served_on_the_loop(
 def test_no_snapshot_is_read_when_nothing_can_release(
     store: SqliteEvidenceStore,
 ) -> None:
-    """A still-working order (nothing filled) reaches no release, so the worker does not pay
-    for a balance read."""
+    """A still-working order (nothing filled) reaches no release, so the worker does not pay"""
     working = KisOrderRow(
         odno=_ODNO,
         orgn_odno=None,
@@ -427,16 +383,10 @@ def test_no_snapshot_is_read_when_nothing_can_release(
     assert snapshots.prefetch_threads == []
 
 
-# ===========================================================================
-# §4 fail-closed paths are unchanged through the async split
-# ===========================================================================
-
-
 def test_engine_reservation_absent_still_holds_through_the_async_path(
     store: SqliteEvidenceStore,
 ) -> None:
-    """#939: the engine holds no reservation -> nothing fed, one ABSENT row, recorded by the
-    loop thread at APPLY."""
+    """#939: the engine holds no reservation -> nothing fed, one ABSENT row, recorded by the"""
     broker = _SlowBroker((_filled_row(),))
     broker.release.set()
     engine = _Engine()
@@ -454,24 +404,19 @@ def test_engine_reservation_absent_still_holds_through_the_async_path(
 def test_an_earlier_boots_terminal_absent_hold_resumes_once_the_engine_holds(
     store: SqliteEvidenceStore,
 ) -> None:
-    """#944: a terminal ABSENT hold from a boot whose engine held nothing stops the polling only
-    while the engine still lacks the reservation. Once the rebuilt projection holds the attempt,
-    the fill is read again and fed exactly once; a boot that still lacks it stays held.
-    """
+    """#944: a terminal ABSENT hold from a boot whose engine held nothing stops the polling only"""
     broker = _SlowBroker((_filled_row(),))
     broker.release.set()
     before = _observer(store, broker, _Engine(), engine_holds=False)
     try:
         assert before.poll_once().held == ((_ATTEMPT, EgressResultKind.FULL_FILL),)
-        assert before.poll_once().polled is False  # terminal hold: polling stopped
+        assert before.poll_once().polled is False
     finally:
         before.close()
 
     still_absent = _observer(store, broker, _Engine(), engine_holds=False)
     try:
-        assert (
-            still_absent.poll_once().polled is False
-        )  # still held, nothing re-recorded
+        assert still_absent.poll_once().polled is False
     finally:
         still_absent.close()
     assert _kinds(store).count(FILL_OBSERVER_ENGINE_RESERVATION_ABSENT_KIND) == 1
@@ -495,8 +440,7 @@ def test_an_earlier_boots_terminal_absent_hold_resumes_once_the_engine_holds(
 def test_a_read_cut_by_the_deadline_is_recorded_at_apply(
     store: SqliteEvidenceStore,
 ) -> None:
-    """``poll_deadline_ms`` still bounds the FETCH's order reads, and the cut read is an
-    absence recorded once by APPLY — never rows."""
+    """``poll_deadline_ms`` still bounds the FETCH's order reads, and the cut read is an"""
     broker = _SlowBroker((_filled_row(),))
     engine = _Engine()
     observer = _observer(store, broker, engine, poll_deadline_ms=50)
@@ -511,18 +455,10 @@ def test_a_read_cut_by_the_deadline_is_recorded_at_apply(
     assert _kinds(store).count(FILL_OBSERVER_READ_FAILED_KIND) == 1
 
 
-# ===========================================================================
-# §5 shutdown
-# ===========================================================================
-
-
 def test_close_stops_the_worker_and_drops_the_in_flight_fetch(
     store: SqliteEvidenceStore,
 ) -> None:
-    """Issue #950 acceptance: a FETCH in flight at shutdown stops at its next page, the worker
-    is joined (no orphan thread), and nothing it read is ever applied — not by ``close`` and
-    not by a later ``poll_if_due``. Mutation: let ``close`` skip the join or keep the future ->
-    a live ``tos-fill-fetch`` thread or an applied FULL_FILL -> red."""
+    """Issue #950 acceptance: a FETCH in flight at shutdown stops at its next page, the worker"""
     broker = _SlowBroker((_filled_row(),))
     engine = _Engine()
     observer = _observer(store, broker, engine)
@@ -541,21 +477,13 @@ def test_close_stops_the_worker_and_drops_the_in_flight_fetch(
         assert observer.poll_if_due().polled is False
     assert engine.calls == []
     assert _kinds(store) == before
-    observer.close()  # idempotent
+    observer.close()
 
 
-# ===========================================================================
-# §6 issue #971 — the immediate re-read after an expiry is once per run
-# ===========================================================================
-
-#: The fixture's age limit and finality re-run cadence; the read times below derive from them.
 _MAX_AGE_MS = 2_000
 _RETRY_MS = 60_000
-#: A broker whose balance + order snapshot read outlasts the age limit, every time.
 _SLOW_SNAPSHOT_MS = _MAX_AGE_MS + 500
-#: A recovered broker: a read well inside the age limit.
 _FAST_SNAPSHOT_MS = _MAX_AGE_MS // 20
-#: One session-loop pass (``marketfeed.yaml`` poll_interval_ms 400 + allowance 100).
 _PASS_MS = 500
 
 
@@ -570,23 +498,18 @@ class _ManualClock:
 
 
 class _AgingSnapshots:
-    """A prefetcher whose read takes ``read_ms`` of (fake) time, and a serving side that, like
-    compose's ``DeferredKisWitness``, refuses a snapshot older than ``max_age_ms`` from its
-    read's start (``expired``) and otherwise answers from it (``served``)."""
+    """A prefetcher whose read takes ``read_ms`` of (fake) time, and a serving side that, like"""
 
     def __init__(self, clock: _ManualClock, read_ms: int) -> None:
         self.clock = clock
         self.read_ms = read_ms
         self.reads = 0
-        #: When set, every EVEN-numbered read (2nd, 4th, ...) fails fast instead.
         self.alternate_fast_failure = False
         self._serving: tuple[PrefetchedSnapshot, int, list[SnapshotUse]] | None = None
 
     def prefetch(
         self, scope: WitnessScope, *, today: str, abort: Callable[[], bool]
     ) -> SnapshotRead:
-        # first_request_ms=None: aged from the prefetch call, as this fake's clock model
-        # (the whole read is ``read_ms`` of age) assumes.
         del scope, today, abort
         self.reads += 1
         if self.alternate_fast_failure and self.reads % 2 == 0:
@@ -633,14 +556,12 @@ class _AgingSnapshots:
             yield uses
 
     def observe(self) -> bool:
-        """The release reconciliation's read: ``True`` iff the snapshot was served (the
-        release may proceed), ``False`` = refused as expired (the release HOLDS)."""
+        """The release reconciliation's read: ``True`` iff the snapshot was served (the"""
         assert self._serving is not None, "a re-run without a prefetched snapshot"
         prefetched, max_age_ms, uses = self._serving
         age = self.clock.ms - prefetched.read_started_ms
         verdict = "expired" if age > max_age_ms else "served"
         uses.append(SnapshotUse(verdict, prefetched, age, max_age_ms))
-        # A served FAILED read raises in compose's witness: the release holds as well.
         return verdict == "served" and not isinstance(
             prefetched.outcome, WitnessUnavailable
         )
@@ -671,9 +592,7 @@ def _aging_observer(
     snapshots: _AgingSnapshots,
     trading_date: list[str] | None = None,
 ) -> tuple[KisMockFillObserver, list[bool]]:
-    """An observer whose finality re-run releases iff the reconciliation was served. The RCL
-    never commits here, so the attempt stays re-projectable and the cadence is all we see.
-    """
+    """An observer whose finality re-run releases iff the reconciliation was served. The RCL"""
     outcomes: list[bool] = []
 
     def _reproject(_payload: EgressResultPayload) -> bool:
@@ -731,12 +650,7 @@ def _snapshot_rows(store: SqliteEvidenceStore) -> list[dict[str, Any]]:
 def test_a_broker_slower_than_the_age_limit_is_re_read_once_then_at_the_retry_cadence(
     filled_store: SqliteEvidenceStore,
 ) -> None:
-    """Issue #971's failing input: every snapshot read outlasts the age limit, so
-    every snapshot expires and every release HOLDS. Over 10 simulated minutes the observer
-    re-reads at once after the FIRST expiry only, then once per ``finality_retry_interval_ms``
-    — not every 2-3 s. Mutation: set ``_reread_now`` on every expiry (the #969 behaviour) ->
-    ~200 reads and rows -> red.
-    """
+    """Issue #971's failing input: every snapshot read outlasts the age limit, so"""
     clock = _ManualClock()
     snapshots = _AgingSnapshots(clock, _SLOW_SNAPSHOT_MS)
     observer, outcomes = _aging_observer(filled_store, clock, snapshots)
@@ -744,18 +658,15 @@ def test_a_broker_slower_than_the_age_limit_is_re_read_once_then_at_the_retry_ca
 
     _run_passes(observer, clock, clock.ms + duration_ms)
 
-    # The first due re-run, the one immediate re-read, then one per retry interval.
     bound = 2 + duration_ms // _RETRY_MS
     assert 2 <= snapshots.reads <= bound, snapshots.reads
     rows = _snapshot_rows(filled_store)
     assert len(rows) == snapshots.reads
-    # Release decisions are unchanged: every expired snapshot held, none released.
     assert outcomes == [False] * snapshots.reads
     assert {r["verdict"] for r in rows} == {"expired"}
     assert [r["consecutive_expired"] for r in rows] == list(
         range(1, snapshots.reads + 1)
     )
-    # The immediate re-read happened (one pass later), and the rest kept the cadence.
     starts = [r["read_started_monotonic_ms"] for r in rows]
     assert starts[1] - starts[0] < _RETRY_MS
     assert all(b - a >= _RETRY_MS for a, b in zip(starts[1:], starts[2:]))
@@ -764,18 +675,14 @@ def test_a_broker_slower_than_the_age_limit_is_re_read_once_then_at_the_retry_ca
 def test_a_fresh_snapshot_after_a_run_releases_and_resets_the_run(
     filled_store: SqliteEvidenceStore,
 ) -> None:
-    """A run of expiries ends when a snapshot is served fresh: that re-run releases, its row
-    carries the length of the run it ended, and the NEXT expiry gets its own immediate re-read
-    again. Mutation: never reset the run -> the post-reset expiry waits 60 s -> red."""
+    """A run of expiries ends when a snapshot is served fresh: that re-run releases, its row"""
     clock = _ManualClock()
     snapshots = _AgingSnapshots(clock, _SLOW_SNAPSHOT_MS)
     observer, outcomes = _aging_observer(filled_store, clock, snapshots)
 
-    # A run of three: first, immediate re-read, one retry interval later.
     _run_until(observer, clock, lambda: len(outcomes) == 3)
     assert outcomes == [False, False, False]
 
-    # The broker recovers: the next due re-run is served and releases.
     snapshots.read_ms = _FAST_SNAPSHOT_MS
     _run_until(observer, clock, lambda: len(outcomes) == 4)
     assert outcomes[3] is True
@@ -783,8 +690,6 @@ def test_a_fresh_snapshot_after_a_run_releases_and_resets_the_run(
     assert served["verdict"] == "served"
     assert served["consecutive_expired"] == 3
 
-    # Slow again (the RCL never committed here, so re-runs continue): a NEW run, and its first
-    # expiry is re-read at once — within a few passes, not a retry interval.
     snapshots.read_ms = _SLOW_SNAPSHOT_MS
     _run_until(observer, clock, lambda: len(outcomes) == 5)
     expired_at = clock.ms
@@ -799,11 +704,7 @@ def test_a_fresh_snapshot_after_a_run_releases_and_resets_the_run(
 def test_a_fast_failed_read_does_not_end_the_run_or_re_arm_the_re_read(
     filled_store: SqliteEvidenceStore,
 ) -> None:
-    """#978 review LOW 1: a prefetch that FAILS fast is ``served`` by age, but it proves
-    nothing and the release still holds — so it must not end the run. Failing input: a broker
-    alternating slow successful reads with fast failed ones. Mutation: reset the run on every
-    ``served`` -> each slow read is a run's first expiry again -> ~2 reads per retry interval
-    (~20 in 10 minutes) -> red."""
+    """#978 review LOW 1: a prefetch that FAILS fast is ``served`` by age, but it proves"""
     clock = _ManualClock()
     snapshots = _AgingSnapshots(clock, _SLOW_SNAPSHOT_MS)
     snapshots.alternate_fast_failure = True
@@ -818,7 +719,6 @@ def test_a_fast_failed_read_does_not_end_the_run_or_re_arm_the_re_read(
     failed = [r for r in rows if not r["read_ok"]]
     assert failed and all(r["verdict"] == "served" for r in failed)
     assert all(r["read_ok"] for r in rows if r["verdict"] == "expired")
-    # The run never ends: its count only grows across the failed reads.
     runs = [r["consecutive_expired"] for r in rows]
     assert runs == sorted(runs) and runs[-1] == len(rows) - len(failed)
 
@@ -826,9 +726,7 @@ def test_a_fast_failed_read_does_not_end_the_run_or_re_arm_the_re_read(
 def test_a_new_trading_date_starts_a_new_run(
     filled_store: SqliteEvidenceStore,
 ) -> None:
-    """#978 review LOW 2: a run does not carry over a trading-date change — the first expiry
-    under the new date is ``consecutive_expired`` 1 and is re-read at once again. Mutation:
-    keep the count across dates -> 4 and a 60 s wait -> red."""
+    """#978 review LOW 2: a run does not carry over a trading-date change — the first expiry"""
     clock = _ManualClock()
     snapshots = _AgingSnapshots(clock, _SLOW_SNAPSHOT_MS)
     trading_date = [_DATE]

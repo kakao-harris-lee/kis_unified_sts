@@ -1,23 +1,4 @@
-"""Hermetic tests for :mod:`tos_runtime.posttrade.unsent_release` (#974 Q2; plan §5 ②④⑤).
-
-Three layers, each answering a different question.
-
-1. **The predicate, condition by condition** — a real :class:`~tos_runtime.evidence.store
-   .SqliteEvidenceStore` holding exactly the rows a halted flow writes, with ONE of plan §3.1's
-   five conditions removed per test. Writing the rows rather than deriving them is what makes a
-   single-condition input constructible at all: a real sequencer cannot, for instance, produce a
-   step-13 halt that also carries a ``SEND_SEALED`` row. :func:`test_a_real_halted_flow_is_the
-   _shape_these_tests_write` is what keeps that honest — it drives a real
-   :class:`~tos_runtime.engine.driver.EngineDriver` through a real halt and shows the predicate
-   accepts the rows IT wrote.
-2. **The trap review-1022 item 3 names** — a flow whose only send attempt ended in
-   ``TRANSMIT_RAISED``, with no ``SEND_HANDED_OFF`` anywhere, which the kernel's own gates accept
-   (asserted directly, so the test fails if the predicate ever stops being what refuses it).
-3. **The release action** — RCL before engine, the row only on a ``True``, the boot-retry resume,
-   and review-1022 item 4's same-reservation cross-check under a ``proposal_id`` collision.
-
-Hermetic: ``tmp_path`` sqlite only, no network, no ambient env (D1.4).
-"""
+"""Hermetic tests for :mod:`tos_runtime.posttrade.unsent_release` (#974 Q2; plan §5 ②④⑤)."""
 
 from __future__ import annotations
 
@@ -81,22 +62,13 @@ _INSTRUMENT = "101U12"
 _KEY = InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT)
 _EVENT_ID = "event-unsent-1"
 _PERMIT = "afg-permit-unsent-1"
-#: A ``DECISION_TICK``'s ``EVENT_CONSUMED`` carries the emitted Proposal's canonical digest, and
-#: a Proposal is content-addressed, so this is the id the predicate must reconstruct from it.
 _OUTCOME_DIGEST = "d" * 64
 _PROPOSAL_ID = f"prop-{_OUTCOME_DIGEST}"
 _RESERVATION_ID = permit_reservation_id(_ACCOUNT, _INSTRUMENT, _PERMIT)
-#: Step 14 — the last step before the Send Boundary, and the one plan §5 ③ injects a failure at.
 _HALT_STEP = CommitmentStep.TRANSMISSION_CAPABILITY.value
-#: Step 18 — AFTER the send boundary. ``TRANSMIT_RAISED``'s own step (review-1022 item 3).
 _NETWORK_CALL_STEP = CommitmentStep.NETWORK_CALL.value
 _NO_TIMEOUT_WITHIN_TEST = 10**12
 _COMMITTED = CapacityState.COMMITTED_UNBOUND
-
-
-# ===========================================================================
-# fixtures + the row writer
-# ===========================================================================
 
 
 @pytest.fixture
@@ -148,13 +120,7 @@ def _write_halted_flow(
     unreadable_event_id: bool = False,
     halt_row: bool = True,
 ) -> None:
-    """Append the rows one pre-send halt leaves behind, in the order the live run writes them.
-
-    Every default is the five-condition shape plan §3.1 admits; each keyword removes or changes
-    exactly one of them. The field names are the ones the live writers use:
-    ``tos.engine.records.EngineEvidenceRecord`` for the two kernel kinds and
-    :meth:`tos_runtime.engine.driver.EngineDriver._record_consumed` for the receipt.
-    """
+    """Append the rows one pre-send halt leaves behind, in the order the live run writes them."""
     key = {"account": account, "instrument": instrument}
     if permit_identity is not None:
         store.append(
@@ -234,11 +200,6 @@ def _candidate(store: SqliteEvidenceStore) -> Any:
     )
 
 
-# ===========================================================================
-# plan §5 ② — the five conditions, one missing at a time
-# ===========================================================================
-
-
 def test_the_five_conditions_together_are_what_admits_a_release(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
@@ -256,8 +217,7 @@ def test_the_five_conditions_together_are_what_admits_a_release(
 def test_condition_1_without_the_step_9_commit_nothing_is_released(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    """No ``FLOW_STEP_ADMITTED(ATOMIC_COMMIT)``: no reservation is attributable to this flow,
-    so there is nothing this evidence can say about one."""
+    """No ``FLOW_STEP_ADMITTED(ATOMIC_COMMIT)``: no reservation is attributable to this flow,"""
     _write_halted_flow(evidence_store, permit_identity=None)
     assert _candidate(evidence_store) is None
 
@@ -265,21 +225,16 @@ def test_condition_1_without_the_step_9_commit_nothing_is_released(
 @pytest.mark.parametrize(
     "halt_step",
     [
-        CommitmentStep.LEDGER_VERIFICATION.value,  # 8 — before the commit
-        CommitmentStep.SEND_BOUNDARY_VERIFICATION.value,  # 15 — TRANSMIT_UNAVAILABLE
-        _NETWORK_CALL_STEP,  # 18 — TRANSMIT_RAISED, possibly live
-        CommitmentStep.EVIDENCE_RECORD.value,  # 19
+        CommitmentStep.LEDGER_VERIFICATION.value,
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION.value,
+        _NETWORK_CALL_STEP,
+        CommitmentStep.EVIDENCE_RECORD.value,
     ],
 )
 def test_condition_2_a_halt_outside_steps_10_to_14_is_never_a_release(
     evidence_store: SqliteEvidenceStore, halt_step: str
 ) -> None:
-    """Only the five steps between the atomic commit and the Send Boundary prove non-execution.
-
-    Steps 15 and 18 are the two that matter in practice: ``TRANSMIT_UNAVAILABLE`` and
-    ``TRANSMIT_RAISED`` both leave a ``NOT_SENT`` reservation the kernel would discard, and
-    neither is evidence that nothing was sent.
-    """
+    """Only the five steps between the atomic commit and the Send Boundary prove non-execution."""
     _write_halted_flow(evidence_store, halt_step=halt_step)
     assert _candidate(evidence_store) is None
 
@@ -305,8 +260,7 @@ def test_condition_3_any_send_record_in_the_flow_window_refuses(
 def test_condition_3_a_receipt_whose_fingerprint_says_handed_off_refuses(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    """The receipt's own flow fingerprint is the second, independent source for condition 3 —
-    it comes off the live ``EventResult``, not off the rows the sink wrote."""
+    """The receipt's own flow fingerprint is the second, independent source for condition 3 —"""
     _write_halted_flow(evidence_store, handed_off=True)
     assert _candidate(evidence_store) is None
 
@@ -339,9 +293,7 @@ def test_condition_4_a_possibly_live_send_halt_row_for_this_event_refuses(
 def test_condition_5_without_the_consumption_receipt_nothing_is_released(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    """No ``EVENT_CONSUMED``: the flow was not recorded to its end, so nothing is concluded —
-    and writing the discard row here would sort it ahead of its own event on the next boot.
-    """
+    """No ``EVENT_CONSUMED``: the flow was not recorded to its end, so nothing is concluded —"""
     _write_halted_flow(evidence_store, consumed=False)
     assert _candidate(evidence_store) is None
 
@@ -361,11 +313,6 @@ def test_a_receipt_with_no_outcome_digest_releases_nothing(
     assert _candidate(evidence_store) is None
 
 
-# ===========================================================================
-# plan §5 ② — an evidence read failure releases nothing
-# ===========================================================================
-
-
 def test_an_unreadable_evidence_store_releases_nothing(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
@@ -379,24 +326,15 @@ def test_an_unreadable_evidence_store_releases_nothing(
 def test_an_unreadable_anchor_row_releases_nothing(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    """Ambiguity is not an absence of send evidence. The scope's newest step-9 commit carries no
-    readable ``event_id``, so nothing downstream of it can be correlated — and the answer is a
-    refusal, never a fall-through to an older commit that is no longer the one being held.
-    """
+    """Ambiguity is not an absence of send evidence. The scope's newest step-9 commit carries no"""
     _write_halted_flow(evidence_store, unreadable_event_id=True)
     assert _candidate(evidence_store) is None
-
-
-# ===========================================================================
-# plan §5 ⑤ + review-1022 item 3 — the two shapes that look discardable to the kernel
-# ===========================================================================
 
 
 def test_a_halt_after_the_send_was_sealed_releases_nothing(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    """Plan §5 ⑤. The realistic shape: the gateway sealed the send, the transport wrote its row,
-    and the call then failed at step 18. TWO independent conditions refuse it."""
+    """Plan §5 ⑤. The realistic shape: the gateway sealed the send, the transport wrote its row,"""
     _write_halted_flow(
         evidence_store,
         attempt_id="attempt-unsent-sealed",
@@ -412,19 +350,7 @@ def test_the_transmit_raised_trap_is_refused_although_the_kernel_would_accept_it
     emergency_log: EmergencyAppendLog,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """review-1022 item 3, on the real store a raising transmit leaves behind.
-
-    Concrete input: a live flow whose ``transmit`` raised. The store then holds ``FLOW_HALTED``
-    at step 18 (``TRANSMIT_RAISED``) and NO ``SEND_HANDED_OFF`` row anywhere — so a boot replay
-    installs no recorded transmit at all (``any_recorded_hand_off`` is false) and rebuilds that
-    reservation as ``ATTEMPT_BOUND``/``NOT_SENT``, which is the ledger built below. The order may
-    be live at the broker.
-
-    Concrete result: the kernel accepts a discard of that rebuilt reservation (asserted last — so
-    this test fails the day the predicate stops being what refuses), the predicate returns no
-    candidate, and the whole pass — RCL reservation present, so nothing else can be what stops it
-    — releases nothing.
-    """
+    """review-1022 item 3, on the real store a raising transmit leaves behind."""
 
     def _raising_transmit(attempt: Any) -> Any:
         raise RuntimeError("the socket died mid-call")
@@ -441,9 +367,6 @@ def test_the_transmit_raised_trap_is_refused_although_the_kernel_would_accept_it
     assert held is not None and held.proposal_id is not None
     assert held.attempt_id is not None
 
-    # What a boot replay rebuilds from exactly that store: no hand-off recorded, so the replay
-    # core is built with transmit=None and the flow stops at step 15 — never reaching
-    # mark_potentially_live, which is why this is ATTEMPT_BOUND/NOT_SENT and not POTENTIALLY_LIVE.
     rebuilt = ProvisionalReservationLedger(max_unresolved_send_per_scope=1)
     rebuilt.commit_unbound(fx.instrument_key(), proposal_id=held.proposal_id)
     rebuilt.bind_attempt(fx.instrument_key(), attempt_id=held.attempt_id)
@@ -475,7 +398,6 @@ def test_the_transmit_raised_trap_is_refused_although_the_kernel_would_accept_it
         is False
     )
     assert rebuilt.outstanding(fx.instrument_key()) is not None
-    # The kernel's own gates: nothing here refuses, which is the whole point of item 3.
     assert (
         rebuilt.discard_unsent(
             UnsentDiscardRef(
@@ -485,11 +407,6 @@ def test_the_transmit_raised_trap_is_refused_although_the_kernel_would_accept_it
         )
         is True
     )
-
-
-# ===========================================================================
-# the real driver — the shapes above, and review-1022 item 1's write order
-# ===========================================================================
 
 
 def _driver(
@@ -571,16 +488,7 @@ def test_a_real_halted_flow_is_the_shape_these_tests_write_and_the_row_follows_i
     emergency_log: EmergencyAppendLog,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """review-1022 item 1, on the real seam, plus the pin for the written-row tests above.
-
-    Concrete input: a tick whose step-14 stage answers UNKNOWN, driven through a real
-    ``EngineDriver`` with the pass bound to ``bind_after_turn``; then a second tick. Concrete
-    result: the predicate accepts the rows the REAL run wrote, and the
-    ``RESERVATION_DISCARDED_UNSENT`` row lands strictly after the halting event's own
-    ``EVENT_CONSUMED`` and strictly before the next event's — the window
-    :mod:`tos_runtime.engine.replay_discards` re-applies it in. The second tick is then admitted
-    past step 8, which is the #974 block clearing.
-    """
+    """review-1022 item 1, on the real seam, plus the pin for the written-row tests above."""
     core = _halting_core(evidence_store, step=CommitmentStep.TRANSMISSION_CAPABILITY)
     reservation_id = permit_reservation_id(
         fx.ACCOUNT, fx.INSTRUMENT, fx.PERMIT_IDENTITY
@@ -618,15 +526,8 @@ def test_a_real_halted_flow_is_the_shape_these_tests_write_and_the_row_follows_i
     consumed = _seqs(evidence_store, "EVENT_CONSUMED")
     assert len(consumed) == 2
     assert first_consumed < discard_seq < consumed[1]
-    # The second tick reached step 14 — so step 8 admitted it. Before the release it would have
-    # stopped at LEDGER_VERIFICATION with AT_MOST_ONE_EXPOSURE_HELD, which is the #974 block.
     assert second.flow is not None
     assert second.flow.halt_step is CommitmentStep.TRANSMISSION_CAPABILITY
-
-
-# ===========================================================================
-# the release action — order, idempotency, and the same-reservation cross-check
-# ===========================================================================
 
 
 def _ledger(
@@ -708,8 +609,7 @@ def _payloads(store: SqliteEvidenceStore, kind: str) -> list[dict[str, Any]]:
 def test_a_repeated_run_after_the_discard_writes_no_second_row(
     evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
 ) -> None:
-    """review-1022 item 5's idempotency half, in one process: the scope holds nothing any more,
-    so every later turn stops before the kernel is asked a second time."""
+    """review-1022 item 5's idempotency half, in one process: the scope holds nothing any more,"""
     _write_halted_flow(evidence_store)
     _open_rcl_reservation(
         rcl_log,
@@ -731,11 +631,7 @@ def test_a_repeated_run_after_the_discard_writes_no_second_row(
 def test_a_boot_whose_rcl_release_already_committed_finishes_the_engine_half_only(
     evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
 ) -> None:
-    """review-1022 item 5's crash half. The RCL release committed, then the process died before
-    the engine discard — the durable state a ``kill -9`` in that window leaves. A fresh boot
-    rebuilds the engine ledger (the replay does), finds the RCL already ``RELEASED``, skips the
-    RCL step, and does the engine half: exactly one release transition, exactly one row.
-    """
+    """review-1022 item 5's crash half. The RCL release committed, then the process died before"""
     _write_halted_flow(evidence_store)
     _open_rcl_reservation(
         rcl_log,
@@ -767,20 +663,10 @@ def test_without_an_rcl_reservation_row_nothing_is_released(
     assert ledger.outstanding(_KEY) is not None
 
 
-# -- review-1022 item 4 ------------------------------------------------------
-
-
 def test_a_proposal_id_collision_releases_no_other_scope_s_reservation(
     evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
 ) -> None:
-    """review-1022 item 4 / LOW-1, as a probe.
-
-    ``discard_unsent`` resolves a ``proposal_id`` across EVERY scope and removes the first match.
-    Here the judged scope has moved on to another proposal while a sibling scope still holds the
-    judged one — so the kernel, asked, would delete the sibling's entry. The cross-check refuses
-    before the kernel is asked at all: nothing is released, in either scope, and the RCL commits
-    no transition.
-    """
+    """review-1022 item 4 / LOW-1, as a probe."""
     _write_halted_flow(evidence_store)
     _open_rcl_reservation(
         rcl_log,
@@ -804,8 +690,7 @@ def test_a_proposal_id_collision_releases_no_other_scope_s_reservation(
 def test_an_attempt_binding_the_evidence_does_not_name_refuses(
     evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
 ) -> None:
-    """The other half of item 4: the scope's reservation is bound to an attempt this flow's
-    evidence never created, so the judgement is not about this reservation."""
+    """The other half of item 4: the scope's reservation is bound to an attempt this flow's"""
     _write_halted_flow(evidence_store, attempt_id="attempt-from-evidence")
     _open_rcl_reservation(
         rcl_log,
@@ -822,8 +707,7 @@ def test_an_attempt_binding_the_evidence_does_not_name_refuses(
 def test_a_matching_attempt_binding_is_released(
     evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
 ) -> None:
-    """The positive control for the test above — a step-13/14 halt binds an attempt, and the
-    same attempt on both sides is admitted."""
+    """The positive control for the test above — a step-13/14 halt binds an attempt, and the"""
     _write_halted_flow(evidence_store, attempt_id="attempt-both-sides")
     _open_rcl_reservation(
         rcl_log,
@@ -840,17 +724,15 @@ def test_a_matching_attempt_binding_is_released(
 def test_an_empty_scope_is_the_cheap_short_circuit(
     evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
 ) -> None:
-    """Nothing outstanding: the pass answers without reading the evidence store at all, which
-    is what makes binding it to every drained turn affordable."""
+    """Nothing outstanding: the pass answers without reading the evidence store at all, which"""
     _write_halted_flow(evidence_store)
     ledger = ProvisionalReservationLedger(max_unresolved_send_per_scope=1)
-    evidence_store.connection.close()  # any read at all would raise through
+    evidence_store.connection.close()
     assert _pass(rcl_log, evidence_store, ledger).run() is False
 
 
 def test_the_close_history_literals_stay_in_lockstep_with_this_module() -> None:
-    """``close_history`` redeclares both strings (its own lockstep-literal convention); this is
-    the test its comment points at."""
+    """``close_history`` redeclares both strings (its own lockstep-literal convention); this is"""
     assert _UNSENT_RELEASE_CAUSE == UNSENT_RELEASE_CAUSE
     assert _UNSENT_RELEASE_COMMAND_PREFIX == UNSENT_RELEASE_COMMAND_PREFIX
     assert UnsentDiscardReason.UNSENT_FLOW_NON_EXECUTION.value == UNSENT_RELEASE_CAUSE
@@ -859,10 +741,7 @@ def test_the_close_history_literals_stay_in_lockstep_with_this_module() -> None:
 def test_the_kernel_at_most_one_retention_is_what_anchors_the_predicate(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    """The anchor is the NEWEST step-9 commit for the scope, and the kernel guarantees there can
-    be only one unresolved reservation behind it — a later tick that halts at step 8 against it
-    records no commit of its own, so it cannot move the anchor. That is the #974 shape itself.
-    """
+    """The anchor is the NEWEST step-9 commit for the scope, and the kernel guarantees there can"""
     _write_halted_flow(evidence_store)
     ledger = _ledger()
     with pytest.raises(ArtifactIntegrityError):
@@ -877,21 +756,10 @@ def test_the_kernel_at_most_one_retention_is_what_anchors_the_predicate(
     assert candidate is not None and candidate.event_id == _EVENT_ID
 
 
-# ===========================================================================
-# review-1023 LOW-1 — the ledger's own two axes, read before the RCL write
-# ===========================================================================
-
-
 def test_a_held_reservation_past_not_sent_is_refused_before_the_rcl_write(
     evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
 ) -> None:
-    """review-1023 LOW-1. The RCL release commits first by design, so without this the kernel's
-    gates would only get their say after capacity had already been given back.
-
-    Concrete input: the evidence predicate is satisfied, but the scope's held reservation has
-    moved past ``NOT_SENT`` (a hand-off marked it ``POTENTIALLY_LIVE``/``SENT_UNCONFIRMED``).
-    Concrete result: no RCL transition at all, and the entry is still held.
-    """
+    """review-1023 LOW-1. The RCL release commits first by design, so without this the kernel's"""
     _write_halted_flow(evidence_store)
     _open_rcl_reservation(
         rcl_log,
@@ -917,14 +785,7 @@ def _discard_ref() -> UnsentDiscardRef:
 
 
 def test_the_pre_check_states_are_exactly_the_ones_the_kernel_discards() -> None:
-    """The local copy of the kernel's discardable pair, pinned against the kernel itself.
-
-    ``_DISCARDABLE_CAPACITY`` is private in ``tos.engine.state``, so this module spells the two
-    states out for its pre-RCL check. This drives
-    :meth:`~tos.engine.state.ProvisionalReservationLedger.discard_unsent` over the states a
-    never-sent scope can actually reach and asserts the set the kernel accepts is exactly the
-    set the pre-check admits — a kernel-side change to the pair cannot pass silently here.
-    """
+    """The local copy of the kernel's discardable pair, pinned against the kernel itself."""
     accepted: set[CapacityState] = set()
     for state, attempt_id in (
         (CapacityState.COMMITTED_UNBOUND, None),
@@ -939,11 +800,6 @@ def test_the_pre_check_states_are_exactly_the_ones_the_kernel_discards() -> None
     live.mark_potentially_live(_KEY)
     assert live.discard_unsent(_discard_ref()) is False
     assert accepted == set(_DISCARDABLE_CAPACITY_STATES)
-
-
-# ===========================================================================
-# review-1023 M2 — the verdict is computed at most once per held reservation
-# ===========================================================================
 
 
 def _counting_evaluator(monkeypatch: pytest.MonkeyPatch) -> list[int]:
@@ -964,11 +820,7 @@ def test_a_settled_verdict_is_scanned_once_however_many_turns_follow(
     rcl_log: SqliteCommitLog,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """review-1023 M2. The ordinary case: a reservation that WAS sent and awaits finality.
-
-    Concrete input: such a scope, with a history the predicate refuses, driven through ten
-    turns. Concrete result: ONE evidence scan, not ten — and the same answer every time.
-    """
+    """review-1023 M2. The ordinary case: a reservation that WAS sent and awaits finality."""
     _write_halted_flow(evidence_store, send_kind="SEND_HANDED_OFF")
     _open_rcl_reservation(
         rcl_log,
@@ -990,12 +842,7 @@ def test_a_settled_verdict_is_not_rescanned_even_as_evidence_grows(
     rcl_log: SqliteCommitLog,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Rows keep landing every turn, which is why a tip comparison alone would not help.
-
-    The window ``(commit_seq, consumed_seq)`` is closed once the anchor's receipt exists, so a
-    settled verdict is never re-derived — including when later ticks halt at step 8 and append
-    the very ``FLOW_STEP_ADMITTED`` rows that made the scan linear in the first place.
-    """
+    """Rows keep landing every turn, which is why a tip comparison alone would not help."""
     _write_halted_flow(evidence_store, send_kind="SEND_HANDED_OFF")
     _open_rcl_reservation(
         rcl_log,
@@ -1022,12 +869,7 @@ def test_a_settled_verdict_is_not_rescanned_even_as_evidence_grows(
 def test_a_second_pass_with_no_new_rows_issues_no_scan_query(
     evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
 ) -> None:
-    """The same claim measured at the sqlite boundary rather than at the Python call.
-
-    Counts statements executed on the evidence connection. A SETTLED verdict needs nothing at
-    all — not even the tip read — so the second pass issues zero queries where the first issued
-    the predicate's whole sequence.
-    """
+    """The same claim measured at the sqlite boundary rather than at the Python call."""
     _write_halted_flow(evidence_store, send_kind="SEND_HANDED_OFF")
     _open_rcl_reservation(
         rcl_log,
@@ -1057,11 +899,7 @@ def test_a_second_pass_with_no_new_rows_issues_no_scan_query(
 def test_an_unsettled_verdict_costs_one_indexed_tip_read_per_turn(
     evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
 ) -> None:
-    """The only case that re-reads anything: the anchor's receipt is not durable yet.
-
-    Even then the repeat is a single ``MAX(seq)`` on an INTEGER PRIMARY KEY — one B-tree seek,
-    not a scan — so the per-turn cost does not grow with history in this case either.
-    """
+    """The only case that re-reads anything: the anchor's receipt is not durable yet."""
     _write_halted_flow(evidence_store, consumed=False)
     _open_rcl_reservation(
         rcl_log,
@@ -1088,12 +926,7 @@ def test_an_unsettled_verdict_is_re_asked_once_the_receipt_lands(
     rcl_log: SqliteCommitLog,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The one state a later append can move: the anchor's receipt is not durable yet.
-
-    Concrete input: a halted flow whose ``EVENT_CONSUMED`` has not been written. Concrete
-    result: the verdict is NOT remembered as settled — a repeat with no new rows is still cheap
-    (no re-scan), and once the receipt lands the pass re-asks and releases.
-    """
+    """The one state a later append can move: the anchor's receipt is not durable yet."""
     _write_halted_flow(evidence_store, consumed=False)
     _open_rcl_reservation(
         rcl_log,
@@ -1106,21 +939,15 @@ def test_an_unsettled_verdict_is_re_asked_once_the_receipt_lands(
     calls = _counting_evaluator(monkeypatch)
 
     assert release.run() is False
-    assert release.run() is False  # no new rows -> not re-scanned
+    assert release.run() is False
     assert len(calls) == 1
 
-    # Only the receipt lands — no second anchor, no second halt row.
     _write_halted_flow(
         evidence_store, permit_identity=None, halt_row=False, consumed=True
     )
     assert release.run() is True
     assert len(calls) == 2
     assert ledger.outstanding(_KEY) is None
-
-
-# ===========================================================================
-# review-1023 LOW-2 — close_history needs BOTH markers, never one
-# ===========================================================================
 
 
 def _unsent_rcl_transition(
@@ -1167,23 +994,12 @@ def test_both_markers_together_exclude_the_reservation_from_the_close_history() 
 
 
 def test_the_rcl_marker_alone_does_not_exclude_the_reservation() -> None:
-    """review-1023 LOW-2, half one. An RCL ``release-unsent-*`` transition with NO intent row
-    naming that reservation must still be proven as an ordinary close — the exclusion REMOVES
-    quantity from the prior-close total, so one source can never be enough.
-
-    Mutation guard: delete ``if reservation_id not in never_sent_ids: return False`` from
-    ``_never_sent_release_proven`` and this test fails.
-    """
+    """review-1023 LOW-2, half one. An RCL ``release-unsent-*`` transition with NO intent row"""
     assert _proven((_unsent_marker(),), frozenset()) is False
 
 
 def test_the_intent_row_alone_does_not_exclude_the_reservation() -> None:
-    """review-1023 LOW-2, half two. An intent row naming the reservation, with the RCL release
-    committed under the ORDINARY ``release-{attempt_id}`` key, must still be proven as a close.
-
-    Mutation guard: delete the ``command_id`` comparison from ``_never_sent_release_proven``
-    and this test fails.
-    """
+    """review-1023 LOW-2, half two. An intent row naming the reservation, with the RCL release"""
     assert (
         _proven(
             (_unsent_rcl_transition(command_id="release-attempt-that-really-sent"),),
@@ -1227,9 +1043,7 @@ def test_a_second_released_transition_for_the_same_reservation_refuses() -> None
 def test_the_intent_ids_reader_only_collects_cause_tagged_rows(
     evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
 ) -> None:
-    """``_never_sent_release_ids`` is the evidence half, and an ordinary finality intent is not
-    one. Driven through the real release action, so the row it collects is the row this path
-    actually writes."""
+    """``_never_sent_release_ids`` is the evidence half, and an ordinary finality intent is not"""
     evidence_store.append(
         {
             "attempt_id": "attempt-a-real-release",

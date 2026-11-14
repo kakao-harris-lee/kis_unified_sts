@@ -91,7 +91,7 @@
 ### S4 — 산문 걷어내기 (마지막, 등급 B)
 
 - 범위: `tos/src` · `tos/runtime/src` · `tools/tos_cp3` · `tools/tos_*.py` · 세 테스트 트리. `shared/` 는 건드리지 않는다.
-- 규칙: docstring 은 **첫 줄만** 남긴다. 주석만 있는 줄은 지운다(`noqa`·`type:`·`pragma`·`fmt:`·shebang 만 남김).
+- 규칙: docstring 은 **첫 줄만** 남긴다. 주석만 있는 줄은 지운다(`noqa`·`type:`·`pragma`·`fmt:`·`direct-core-call:`·shebang 만 남김).
   AST/토큰 기반 도구 `tools/strip_prose.py` 로 기계적으로 — 다시 돌려도 같은 결과(멱등).
 - 같은 PR 에서: `black` · `tos_redigest --write`(네 `release.yaml`) · 크기 예산 예외 재측정(대부분 삭제) ·
   named-TBD 가드 재측정.

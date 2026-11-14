@@ -1,20 +1,4 @@
-"""§5.1 finality-dimension orthogonality + obligation-leg set completeness (PTF-EV-001).
-
-The property IMPLEMENTATION-PLAN-002 line 221 names explicitly. Both directions of every
-guard (design #24 §4.1 / §5.1 canaries):
-
-* **guard fires** — an ``ORDER_FQP``-only proof map makes none of the other nine dimensions
-  final; an empty map or an absent claim is ``False``; a ``None`` / ``False`` / truthy
-  non-``bool`` entry is not proof;
-* **legitimate pass** — a dimension carrying its own proof is final, and proving it changes
-  **nothing** about any other dimension.
-
-Non-implication is asserted structurally as well as behaviourally: the verdict for a claimed
-dimension is invariant under **every** rearrangement of the other nine entries, which is only
-possible if the function never reads them.
-
-[PTF-EV-001 coordinate; ``/2``, ``/3``, and ``+Broker`` remain open. Closing PTF-EV = 0.]
-"""
+"""§5.1 finality-dimension orthogonality + obligation-leg set completeness (PTF-EV-001)."""
 
 from __future__ import annotations
 
@@ -39,9 +23,6 @@ from ._posttrade_strategies import (
 )
 
 _ALL_DIMENSIONS = list(FinalityDimensionKind)
-
-
-# --- §5.1 finality_dimensions_orthogonal -------------------------------------
 
 
 @pytest.mark.parametrize("dimension", _ALL_DIMENSIONS)
@@ -78,11 +59,7 @@ def test_other_dimensions_cannot_influence_the_verdict(
     claimed_proof: bool | None,
     others: dict[FinalityDimensionKind, bool | None],
 ) -> None:
-    """(PTF-INV-002 structural) Rearranging the other nine entries changes nothing.
-
-    This is the non-implication proof: if any other dimension's proof could reach the
-    verdict, some rearrangement would flip it.
-    """
+    """(PTF-INV-002 structural) Rearranging the other nine entries changes nothing."""
     proof_map = {**others, claimed: claimed_proof}
     baseline = finality_dimensions_orthogonal(claimed, proof_map)
     all_others_true: dict[FinalityDimensionKind, bool | None] = dict.fromkeys(
@@ -127,9 +104,6 @@ def test_all_unknown_map_proves_nothing() -> None:
     )
     for member in FinalityDimensionKind:
         assert finality_dimensions_orthogonal(member, unknown_map) is False
-
-
-# --- §5.1 obligation_leg_set_complete ----------------------------------------
 
 
 def test_complete_leg_set_passes() -> None:
@@ -184,13 +158,7 @@ def test_negative_magnitude_is_a_sign_error() -> None:
 
 
 def test_zero_magnitude_is_accepted_as_a_declared_gross_value() -> None:
-    """(positive side) A *declared* zero leg is concrete; an *absent* one is not.
-
-    §13 line 355 distinguishes them precisely: "a missing line item **or zero estimate** is
-    not proof of zero" governs the monetary-leg conservatism predicate, while set
-    completeness asks only whether every applicable leg was enumerated with a concrete gross
-    value.
-    """
+    """(positive side) A *declared* zero leg is concrete; an *absent* one is not."""
     required = frozenset({ObligationLegDirection.CONTINGENT})
     present = frozenset({ObligationLegDirection.CONTINGENT})
     assert (

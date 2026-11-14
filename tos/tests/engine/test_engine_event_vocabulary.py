@@ -1,21 +1,4 @@
-"""§7.2-7 — the event vocabulary is closed and an unknown kind is a fail-closed error (§2.2).
-
-The design's target: *"미지 event kind → fail-closed 오류(silent drop 아님)"*. Silently dropping an
-unrecognised event is the archetypal wiring fail-open: the system keeps running while a whole class
-of event disappears.
-
-This module also covers the vocabulary's two neighbours:
-
-* **partial fills stay partial** (design #31 §2.2 MINOR-3; RFC-005 §11:338-339, §6:176-178). The
-  fill/partial distinction is derived from the magnitudes, so a producer cannot label a partial as
-  a full fill, and the already-filled quantity is never re-requested;
-* **causal order** (§2.1(ii)). A positively-established reversal is refused; an *ambiguous* pair is
-  recorded and admitted, because "cannot order" is not "proven backwards" — over-rejecting it would
-  be the #26 WDR MAJOR-1 defect, and the risk it might carry is separately sealed by the
-  at-most-one retention and the positive attempt-identity match.
-
-Regime tag: orchestration authoring evidence only; closes no EV.
-"""
+"""§7.2-7 — the event vocabulary is closed and an unknown kind is a fail-closed error (§2.2)."""
 
 from __future__ import annotations
 
@@ -48,13 +31,7 @@ from ._engine_fixtures import (
 
 
 class _BogusEvent:
-    """An object shaped like an event but carrying a kind outside the closed vocabulary.
-
-    A bare **string** is never admitted: :func:`admit_kind` checks positive membership of the
-    exact enum object, never string equality (the SAME distinction
-    :func:`test_a_string_that_merely_matches_a_member_value_is_not_admitted` locks for
-    ``"DECISION_TICK"``).
-    """
+    """An object shaped like an event but carrying a kind outside the closed vocabulary."""
 
     kind = "CANCEL"
 
@@ -80,10 +57,7 @@ def test_an_unknown_kind_is_a_fail_closed_error(bogus) -> None:
 
 @pytest.mark.parametrize("value", ["DECISION_TICK", "EGRESS_RESULT"])
 def test_a_string_that_merely_matches_a_member_value_is_not_admitted(value) -> None:
-    """(§2.2) Admission is positive **membership**, not string equality — no coercion path.
-
-    Parametrized over both real member values — a bare string identical to either is refused.
-    """
+    """(§2.2) Admission is positive **membership**, not string equality — no coercion path."""
     with pytest.raises(UnknownEventKindError):
         admit_kind(value)
 
@@ -124,11 +98,6 @@ def test_an_event_may_not_carry_the_other_kinds_payload() -> None:
                 kind=EgressResultKind.ACK,
             ),
         )
-
-
-# ---------------------------------------------------------------------------
-# partial fills stay partial (§2.2 MINOR-3)
-# ---------------------------------------------------------------------------
 
 
 def test_a_partial_fill_carries_both_magnitudes() -> None:
@@ -204,11 +173,6 @@ def test_an_egress_result_without_an_attempt_identity_is_unconstructable() -> No
         EgressResultPayload(
             instrument_key=instrument_key(), attempt_id="  ", kind=EgressResultKind.ACK
         )
-
-
-# ---------------------------------------------------------------------------
-# causal order (§2.1(ii))
-# ---------------------------------------------------------------------------
 
 
 def test_the_first_event_is_monotone_by_definition() -> None:

@@ -1,8 +1,4 @@
-"""Build the fill observer's asynchronous broker-read plan on the session-loop thread.
-
-The observer itself owns the evidence classifications and APPLY mutations. This helper only
-gathers due work, records its monotonic scheduling state, and returns immutable FETCH inputs.
-"""
+"""Build the fill observer's asynchronous broker-read plan on the session-loop thread."""
 
 from __future__ import annotations
 
@@ -169,11 +165,7 @@ def _held_position_request(
     today: str | None,
     instrument_key: InstrumentKey,
 ) -> tuple[WitnessScope | None, int | None, tuple[int, int | None] | None, int | None]:
-    """Capture the atomic RCL tip and reserve the one-use cache's refresh token before FETCH.
-
-    Reserving the token does not burn the proof already cached — that is the cache's own rule
-    (issue #1010); it expires on its configured age, not on this plan.
-    """
+    """Capture the atomic RCL tip and reserve the one-use cache's refresh token before FETCH."""
     raw_tip = (
         None
         if not due or source.held_position_tip is None
@@ -257,7 +249,6 @@ def build_fetch_plan(source: _PlanSource) -> FetchPlan | None:
     if pending:
         source._last_poll_ms = now
     if held_position_due:
-        # Mark at planning, not completion: a slow FETCH cannot enqueue another read.
         source._last_held_position_poll_ms = now
 
     instrument_key = InstrumentKey(account=source.account, instrument=source.instrument)

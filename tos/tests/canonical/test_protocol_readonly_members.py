@@ -1,29 +1,4 @@
-"""Pin tests for the kernel half of the read-only-member Protocol sweep
-(docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md §2/§3).
-
-``CanonicalizationScheme.version`` and ``SegmentCommitmentScheme.version`` were
-converted from plain (settable) attributes to read-only ``@property`` members so a
-frozen implementation (dataclass ``frozen=True`` / pydantic frozen model) can satisfy
-either Protocol structurally — today's implementers are all mutable, so nothing here
-regressed a real caller, but nothing mechanical prevented a future frozen implementer
-from hitting the same break the runtime half of this sweep found already latent
-(``_RecoveryVerdictLike`` / ``_ComposedForDrill``, see the runtime pin file). This
-file pins the conversion two ways (plan §3 — one alone is not enough):
-
-(i) **mypy conformance functions** — module-level, fully annotated, never called;
-checked only by the test-tree mypy step
-(``mypy tos/tests --disable-error-code=no-untyped-def``).
-(ii) **runtime data-descriptor check** — reverting ``version`` to a plain attribute
-leaves no class-level descriptor (only ``__annotations__``), so
-``inspect.getattr_static`` raises ``AttributeError``.
-
-Both Protocols are ``@runtime_checkable``, so this file also pins that ``isinstance``
-still sees the frozen doubles as conforming (existence-only check — this is exactly
-why (ii) is needed: ``isinstance`` alone would NOT catch a plain-attribute regression,
-per the plan's mutation ③).
-
-Kernel test — does not import ``tos_runtime`` (import firewall, ``tos/CLAUDE.md``).
-"""
+"""Pin tests for the kernel half of the read-only-member Protocol sweep"""
 
 from __future__ import annotations
 
@@ -39,10 +14,6 @@ from tos.evidence import (
     SegmentCommitmentScheme,
     Sha256HmacChainScheme,
 )
-
-# ===========================================================================
-# (i) mypy conformance functions — real implementers
-# ===========================================================================
 
 
 def _real_canonicalization(x: EVL1ProvisionalCanonicalizer) -> CanonicalizationScheme:
@@ -61,16 +32,9 @@ def _real_segment_commitment_sha256_hmac(
     return x
 
 
-# ===========================================================================
-# (i) mypy conformance functions — frozen doubles
-# ===========================================================================
-
-
 @dataclass(frozen=True)
 class _FrozenCanonicalizationScheme:
-    """A frozen double for :class:`CanonicalizationScheme` — every real implementer
-    today is mutable, so only this double would have caught a regression to a plain
-    attribute for ``version``."""
+    """A frozen double for :class:`CanonicalizationScheme` — every real implementer"""
 
     version: str
 
@@ -89,9 +53,7 @@ def _frozen_canonicalization(
 
 @dataclass(frozen=True)
 class _FrozenSegmentCommitmentScheme:
-    """A frozen double for :class:`SegmentCommitmentScheme` — every real implementer
-    today is mutable, so only this double would have caught a regression to a plain
-    attribute for ``version``."""
+    """A frozen double for :class:`SegmentCommitmentScheme` — every real implementer"""
 
     version: str
 
@@ -131,14 +93,6 @@ def _frozen_segment_commitment(
     return x
 
 
-# ===========================================================================
-# (ii) runtime data-descriptor check
-# ===========================================================================
-
-#: The plan §1 inventory of kernel Protocol / member pairs converted to read-only
-#: properties (2 Protocols, 2 members — the runtime's 5 Protocols / 8 members are
-#: pinned separately in
-#: ``tos/runtime/tests/operations/test_protocol_readonly_members.py``).
 _PROPERTY_MEMBERS = (
     (CanonicalizationScheme, "version"),
     (SegmentCommitmentScheme, "version"),
@@ -146,19 +100,9 @@ _PROPERTY_MEMBERS = (
 
 
 def test_members_are_read_only_properties() -> None:
-    """Reverting ``version`` back to a plain ``version: str`` annotation on either
-    Protocol leaves no class-level descriptor at all (only ``__annotations__``), so
-    ``inspect.getattr_static`` raises ``AttributeError`` instead of returning a
-    ``property``."""
+    """Reverting ``version`` back to a plain ``version: str`` annotation on either"""
     for protocol, member in _PROPERTY_MEMBERS:
         assert inspect.isdatadescriptor(inspect.getattr_static(protocol, member))
-
-
-# ===========================================================================
-# @runtime_checkable isinstance — existence-only, does not by itself catch a
-# plain-attribute regression (plan §3 mutation ③); kept as a companion pin, not a
-# substitute for (ii) above.
-# ===========================================================================
 
 
 def test_frozen_canonicalization_scheme_satisfies_protocol_isinstance() -> None:

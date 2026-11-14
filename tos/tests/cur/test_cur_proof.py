@@ -1,14 +1,4 @@
-"""proof_admissible multi fail-closed + structural completeness (design #23 §6.5/§6.6).
-
-``proof_admissible`` (CUR-EV-004 substrate) admits **only** on the full positive conjunction:
-structurally complete AND ``result is CURRENT`` AND ``single_use_consumed is False`` AND
-``is_expired is False`` AND ``local_latch_clear is True``. The v1.1 MAJOR-3 seal is central: the
-single-use / expiry gates require **explicit ``is False``** — a ``None`` (unknown-consumed /
-unknown-expiry) must NOT be admitted (``is not True`` would fail open — the #22 MAJOR-2 re-seal).
-
-Regime tag: predicate substrate only; CUR-EV-004 NOT_IMPLEMENTED (≥ EV-L2 component-fault +
-+Security; per-send transaction / wall-clock age are runtime); EV-L1-complete claim forbidden.
-"""
+"""proof_admissible multi fail-closed + structural completeness (design #23 §6.5/§6.6)."""
 
 from __future__ import annotations
 
@@ -41,7 +31,6 @@ def test_non_current_result_is_inadmissible() -> None:
 def test_consumed_proof_is_inadmissible_including_none() -> None:
     """(§6.6 v1.1 MAJOR-3) single_use_consumed must be explicit False — True AND None both deny."""
     assert proof_admissible(clean_proof(single_use_consumed=True)) is False
-    # the #22 MAJOR-2 re-seal: a None (unknown-consumed) is NOT admitted.
     assert proof_admissible(clean_proof(single_use_consumed=None)) is False
     assert proof_admissible(clean_proof(single_use_consumed=False)) is True
 

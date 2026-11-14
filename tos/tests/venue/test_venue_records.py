@@ -1,7 +1,4 @@
-"""venue records — id ⊥ digest, substitution detection, all-false authority (design #19 §2.1/§2.4).
-
-Regime tag: predicate / model substrate only; VTG-EV-006 substrate; EV-L1-complete claim forbidden.
-"""
+"""venue records — id ⊥ digest, substitution detection, all-false authority (design #19 §2.1/§2.4)."""
 
 from __future__ import annotations
 
@@ -25,17 +22,12 @@ from ._venue_strategies import (
     clean_snapshot,
 )
 
-# ---------------------------------------------------------------------------
-# id ⊥ digest — the three core artifacts are IndependentIdArtifact
-# ---------------------------------------------------------------------------
-
 
 def test_three_core_artifacts_are_id_independent() -> None:
     """(§2.1) policy / snapshot / decision are issued-identity (id != f(digest))."""
     policy = clean_policy()
     snapshot = clean_snapshot()
     decision = clean_decision()
-    # The id is separately injected, NOT derived from the digest.
     assert policy.policy_id == "venue-policy-1"
     assert policy.canonical_digest is not None
     assert policy.policy_id != policy.canonical_digest
@@ -46,7 +38,6 @@ def test_three_core_artifacts_are_id_independent() -> None:
 def test_issued_artifact_requires_concrete_id() -> None:
     """(canonical §3.1) An ISSUED artifact with a null id is unconstructable."""
     with pytest.raises((ArtifactIntegrityError, ValueError)):
-        # Force ISSUED status with a null id — the independent-id validator rejects it.
         VenueConstraintPolicy(
             policy_id=None,
             policy_generation=3,
@@ -59,7 +50,6 @@ def test_issued_artifact_requires_concrete_id() -> None:
 def test_digest_covers_decision_result_substitution_is_detectable() -> None:
     """(§14 line 342-343) A same-id / different-result decision is a CRITICAL_CONFLICT."""
     admissible = clean_decision(result=OrderAdmissibilityResult.ADMISSIBLE)
-    # Same decision_id, different bytes (INADMISSIBLE) — a forged substitution.
     inadmissible = clean_decision(result=OrderAdmissibilityResult.INADMISSIBLE)
     assert admissible.decision_id == inadmissible.decision_id
     assert admissible.canonical_digest != inadmissible.canonical_digest
@@ -81,11 +71,6 @@ def test_same_content_decision_is_idempotent_dup() -> None:
         d1.decision_id, d1.canonical_digest, d2.decision_id, d2.canonical_digest
     )
     assert kind is RecordPairKind.IDEMPOTENT_DUP
-
-
-# ---------------------------------------------------------------------------
-# all-false VenueGateAuthorityEffect (§2.2(4) / §6.7 / VTG-INV-011)
-# ---------------------------------------------------------------------------
 
 
 def test_default_authority_effect_is_all_false() -> None:
@@ -121,11 +106,6 @@ def test_decision_carries_all_false_authority() -> None:
     assert decision.authority_effect.approves is False
     assert decision.authority_effect.transmits is False
     assert decision.authority_effect.rearms is False
-
-
-# ---------------------------------------------------------------------------
-# frozen / extra-forbid discipline
-# ---------------------------------------------------------------------------
 
 
 def test_records_are_frozen_and_extra_forbid() -> None:

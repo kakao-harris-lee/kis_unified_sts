@@ -1,72 +1,4 @@
-"""``KisStockBrokerWitness`` — the real KIS 모의투자 ``BrokerWitness`` (W3 lane,
-``docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md`` §0.4/§2 decision 5/§4
-W3/§6.1 처분③).
-
-**Why this class exists.** :class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness`
-reads the SAME sqlite evidence store the evidence-receipt path reads, so it hardcodes
-``independent_of_evidence_store=False`` (that module's own docstring, independent-review
-finding F2) — a ``CORROBORATED`` verdict built from it is a structural label, not
-substantive corroboration. This class reads an actual broker (KIS 모의투자) over the
-network, so it can honestly set ``independent_of_evidence_store=True`` (never touches the
-evidence store — verified structurally by this module's own test suite, a negative-grep
-mirroring ``test_witness_synthetic.py::test_module_never_writes_to_the_evidence_store``).
-
-**Scope — both axes of ``WitnessSnapshot`` (operator disposition ③, 2026-09-17).**
-
-* ``positions``/``cash`` — 주식 잔고조회 (stock balance inquiry), mock TR ``VTTC8434R``,
-  ``/uapi/domestic-stock/v1/trading/inquire-balance``. Measured:
-  ``docs/broker-profiles/evidence/2026-09-11-p02-t3-campaign/P-BAL-20260911T002427Z.json``
-  (``measurements.target``, ``measurements.truncation_risk``) — a 25-row account observed
-  across 2 pages (20 + 5) under a page size of 20, ``verdict:
-  TRUNCATION_RISK_DEMONSTRATED``. **This is exactly why :meth:`observe` walks the
-  continuation keys to completion (or raises) rather than reading one page** — the legacy
-  runtime (``shared/kis/client.py:931-932``, reference only, not imported here — firewall-
-  denied) reads page 1 only, and ``services/trading/broker_verification.py:187-190``
-  (reference only) then DESTROYS a position absent from that possibly-truncated read. A
-  witness that reproduced the same truncation would be worse than useless for
-  reconciliation: it would corroborate the very defect it exists to catch.
-* ``orders`` — 주식일별주문체결조회 (stock daily execution inquiry), mock TR
-  ``VTTC0081R``, ``/uapi/domestic-stock/v1/trading/inquire-daily-ccld``. Sourced from
-  ``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:1548-1575`` (§ "체결조회로
-  독립 확인") and, with the exact wire parameter set this module mirrors,
-  ``tools/broker_probes/probes_order.py:1079-1150`` (``MockTradingClient.stock_daily_ccld``,
-  reference only — a probes-harness module, not imported here). Both TR ids are 모의
-  (``V``-prefixed) — this witness is 모의투자-only, structurally
-  (:mod:`tos_runtime.recon.witness_kis_config`'s host seal + TR-id shape check).
-
-**Futures — refused outright, at construction, not at ``observe()`` time.**
-:class:`~tos_runtime.recon.ports.WitnessScope` carries no asset-class field (only
-``account``/``instrument_keys``/``attempt_ids``), so there is no way to route a "futures"
-scope through :meth:`observe` even if one arrived — this class simply never queries a
-futures endpoint. :func:`~tos_runtime.recon.witness_kis_config.refuse_futures_asset` is
-still called at construction (with the constant ``"stock"``) so the refusal is one
-structurally testable code path rather than an implicit absence — see that function's own
-docstring for the two independent reasons (mock server support, root ``CLAUDE.md``
-Non-Negotiable Rules).
-
-**Token/credentials — injected, no lifecycle owned here (task instruction).** This class
-does not issue, cache, or reissue a bearer token, and does not itself hold the KIS app
-key/secret. It takes a :class:`KisWitnessCredentialSession` (see that Protocol's own
-docstring for the shape, and why — C-2 decision (C)) as a constructor dependency and opens one
-``request_credentials()`` block per page of every walk — "ask again every request, let the
-session decide freshness", never this class's own cooldown/expiry math.
-
-**Never claims more than it verified.** Every :class:`~tos_runtime.recon.ports.WitnessSnapshot`
-this class returns carries ``provenance="kis-mock-stock"`` and
-``independent_of_evidence_store=True`` — the latter is honest here (unlike
-``witness_synthetic.py``) because this class's only I/O is the two HTTP GETs described
-above; it holds no reference to any evidence store at all.
-
-Firewall (RUNTIME scope R1): stdlib (``dataclasses``, ``datetime``, ``decimal``, ``re``,
-``typing``, ``zoneinfo``) + this package's own sibling modules
-(:mod:`~tos_runtime.recon.ports`, :mod:`~tos_runtime.recon.witness_kis_config`,
-:mod:`~tos_runtime.recon.witness_kis_client`) plus the stdlib-only KIS account parser
-:mod:`tos_runtime.transport.kis_mock.account` (PR-3b — one 8-2 parser for order and fill reads) —
-no ``os.environ``, no ``shared.*``, no
-evidence-store import, no direct ``tos.*`` import at all (this module only ever sees
-``InstrumentKey``/``WitnessScope`` etc. through :mod:`tos_runtime.recon.ports`'s own
-re-exports, so it opens no new commons edge beyond the one that module already has).
-"""
+"""``KisStockBrokerWitness`` — the real KIS 모의투자 ``BrokerWitness`` (W3 lane,"""
 
 from __future__ import annotations
 
@@ -104,33 +36,17 @@ __all__ = [
     "TrustedKstDateSource",
 ]
 
-#: KIS's own "more follows" tr_cont response codes (measured:
-#: ``tools/broker_probes/probes_balance.py:174-186``, itself measured against
-#: ``shared/kis/client.py:354`` and KIS's official ``inquire_balance`` example). Any
-#: NON-EMPTY value outside this pair is the broker's end-of-set signal.
 _TR_CONT_MORE_CODES = ("M", "F")
 
-#: ``YYYYMMDD`` as KIS writes ``ord_dt`` — ASCII digits only.
 _YYYYMMDD = re.compile(r"[0-9]{8}")
 
-#: Request-side continuation header for a follow-up page (``probes_balance.py:189``).
 _TR_CONT_REQUEST_NEXT = "N"
 
-#: ``EgressResultKind``-shaped mapping is not applicable here — this is the
-#: 체결조회(execution-inquiry) row -> :class:`WitnessOrderState` mapping instead, derived
-#: from the same three row fields P-11 measured (``cncl_yn``, ``tot_ccld_qty``,
-#: ``rmn_qty`` — ``docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/
-#: P-11-20260805T000653Z.json`` ``measurements.fill_case.execution_inquiry.row``).
 _CANCELLED = "Y"
 
 
 def _decimal_or_none(value: Any) -> Decimal | None:
-    """Best-effort ``Decimal`` coercion for a JSON-decoded numeric/string field.
-
-    Fail-closed: ``None`` and any unparseable value pass through as ``None`` rather than
-    a fabricated zero standing in for an absent magnitude (mirrors
-    ``witness_synthetic.py``'s own ``_to_decimal``).
-    """
+    """Best-effort ``Decimal`` coercion for a JSON-decoded numeric/string field."""
     if value is None:
         return None
     if isinstance(value, Decimal):
@@ -144,15 +60,11 @@ def _decimal_or_none(value: Any) -> Decimal | None:
 
 
 def _header_value(secret: bytes) -> str:
-    """ASCII-decode one credential for its header. A non-ASCII credential is refused WITHOUT
-    chaining the decode error: ``UnicodeDecodeError.object`` holds the whole plaintext, which
-    would outlive the zeroed handle on the chained ``WitnessUnavailable`` (review finding, PR #806).
-    """
+    """ASCII-decode one credential for its header. A non-ASCII credential is refused WITHOUT"""
     try:
         return secret.decode("ascii")
     except UnicodeDecodeError:
         pass
-    # Raised OUTSIDE the except block so neither __cause__ nor __context__ carries the bytes.
     raise ValueError("KIS credential is not ASCII — refusing to send it")
 
 
@@ -167,36 +79,13 @@ class KisWitnessRequestCredentials(Protocol):
         ...
 
     def app_secret(self) -> bytes:
-        """The KIS app secret bytes for the ``appsecret`` header (raises once the block
-        exits)."""
+        """The KIS app secret bytes for the ``appsecret`` header (raises once the block"""
         ...
 
 
 @runtime_checkable
 class KisWitnessCredentialSession(Protocol):
-    """The injected credential owner this witness asks for one request's credentials
-    (C-2 decision (C): ``docs/plans/2026-09-23-tos-kis-credential-ownership-decision-c2.md`` §4).
-
-    Satisfied structurally by
-    :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSession` — this
-    module does not import it (the firewall lets a ``recon`` module import only its siblings);
-    only the compose root connects the two. The session keeps owning everything about the
-    token (issuance, expiry, the reissue cooldown) and the custody loads; this witness never
-    holds a ``CredentialCustody`` reference.
-
-    **Why a context, not three getters.** The earlier shape (``access_token()`` /
-    ``app_key_header()`` / ``app_secret_header()``) returned the plaintext key and secret as
-    ``str`` return values whose lifetime nothing bounded. Here the key and secret are readable
-    only inside the ``with`` block wrapped around one GET, and the session zeroes the
-    underlying handles when the block exits — the same lifetime the order transport and the
-    quote intake give them. The HTTP header values themselves are still ``str`` for the length
-    of the request (C-2 §1.1 L4 — unavoidable in every option).
-
-    Any exception :meth:`request_credentials` raises (a stale token inside the reissue
-    cooldown, a custody refusal) becomes this witness's own
-    :class:`~tos_runtime.recon.ports.WitnessUnavailable` at the :meth:`KisStockBrokerWitness
-    .observe` boundary.
-    """
+    """The injected credential owner this witness asks for one request's credentials"""
 
     def request_credentials(
         self,
@@ -207,11 +96,7 @@ class KisWitnessCredentialSession(Protocol):
 
 @runtime_checkable
 class KstDateSource(Protocol):
-    """Supplies "today" in KST as ``YYYYMMDD`` — the one ambient-time fact 주식일별
-    주문체결조회 needs (``INQR_STRT_DT``/``INQR_END_DT``). Injected, per this package's
-    "everything ambient is a seam" discipline (mirrors
-    :mod:`tos_runtime.time.sources`'s own ``MonotonicSource`` — a Protocol wrapping the
-    one real-clock read, rather than this module calling ``datetime.now()`` inline)."""
+    """Supplies "today" in KST as ``YYYYMMDD`` — the one ambient-time fact 주식일별"""
 
     def today(self) -> str:
         """Return today's KST calendar date as ``YYYYMMDD``."""
@@ -219,10 +104,7 @@ class KstDateSource(Protocol):
 
 
 class SystemKstDateSource:
-    """Reads the real wall clock UNGATED by trusted time — kept for standalone measurement only.
-    A composition root wires :class:`TrustedKstDateSource` instead (plan 2026-09-26 egress
-    trading date §2 decision 4). Test suites inject a fixed :class:`KstDateSource` double.
-    """
+    """Reads the real wall clock UNGATED by trusted time — kept for standalone measurement only."""
 
     _KST = ZoneInfo("Asia/Seoul")
 
@@ -236,20 +118,13 @@ class _UnixMsReading(Protocol):
 
 
 class _WallClockLike(Protocol):
-    """Structural stand-in for :class:`tos_runtime.calendar.ports.WallClockReference` — kept
-    local so this module opens no import edge beyond its siblings (module docstring firewall).
-    """
+    """Structural stand-in for :class:`tos_runtime.calendar.ports.WallClockReference` — kept"""
 
     def read(self) -> _UnixMsReading | None: ...
 
 
 class TrustedKstDateSource:
-    """``today()`` from a :class:`~tos_runtime.calendar.ports.WallClockReference` — in production
-    a :class:`~tos_runtime.calendar.ports.FreshTrustedWallClockReference` (trusted AND fresh; the
-    plain trusted reference serves the last evaluated snapshot, which can be days old — review
-    finding 1) — so the witness never queries a date the runtime does not trust.
-    An absent reading raises :class:`~tos_runtime.recon.ports.WitnessUnavailable`, the port's own
-    "could not answer" outcome, rather than guessing a date."""
+    """``today()`` from a :class:`~tos_runtime.calendar.ports.WallClockReference` — in production"""
 
     _KST = ZoneInfo("Asia/Seoul")
 
@@ -268,18 +143,6 @@ class TrustedKstDateSource:
         )
 
 
-#: The KIS wire field-name spelling a continuation key arrives under — lowercase, exactly.
-#: ``probes_balance.py``'s own ``_read_ctx_key`` defensively also checks an uppercase
-#: spelling, but every P-BAL artifact this repo has ever recorded — 2026-07-29 campaign
-#: (``P-BAL-20260731T081805Z.json``, ``:083102Z``, ``:084147Z``, ``:084238Z``,
-#: ``P-BAL-20260805T000827Z.json``) through the 2026-09-11 campaign
-#: (``P-BAL-20260911T002427Z.json``) — reports ``found_at: "body:ctx_area_fk100"`` /
-#: ``"body:ctx_area_nk100"`` and NEVER once an uppercase ``found_at``. Review MEDIUM-2
-#: (2026-09-17): an untested defensive branch resting on no evidence is exactly the
-#: phantom this repo's own lesson warns about ("필드를 제거하라, 무시하지 말고" —
-#: [[injected-literals-hide-dead-paths]]) — removed rather than kept-and-unexercised. If a
-#: future measurement ever observes an uppercase key, add it back WITH the artifact that
-#: demonstrates it and a test that exercises that exact branch.
 def _read_ctx_key(body: Mapping[str, Any], suffix: str, kind: str) -> str:
     name = f"ctx_area_{kind}{suffix}"
     return str(body.get(name) or "").strip()
@@ -287,19 +150,8 @@ def _read_ctx_key(body: Mapping[str, Any], suffix: str, kind: str) -> str:
 
 @dataclass(frozen=True)
 class _WalkOutcome:
-    """The rows and (for the balance walk only) the ``output2`` block accumulated across
-    a completed continuation walk."""
+    """The rows and (for the balance walk only) the ``output2`` block accumulated across"""
 
-    #: One entry per page: that page's ``output1`` list, or ``None`` when the page did not
-    #: carry a list at all — ``output1`` missing, ``null``, or a non-list such as a dict
-    #: (review-973 round 2 HIGH). The distinction matters because a malformed container used
-    #: to be flattened to ``[]``, making it indistinguishable from a page that genuinely
-    #: listed no rows: the balance read then saw an empty, "complete" holdings account and
-    #: called it flat. An empty LIST is well-formed — a flat KIS account really does answer
-    #: ``output1: []``. Neither consumer may read a ``None`` page as "no rows":
-    #: :meth:`KisStockBrokerWitness._read_balance` records it as an incomplete holdings
-    #: picture, and the order walk refuses the whole read
-    #: (:func:`_order_rows_or_refuse` — issue #981, the same class on the orders axis).
     pages: tuple[list[dict[str, Any]] | None, ...]
     output2_first: dict[str, Any] | None
 
@@ -310,15 +162,7 @@ class _WalkOutcome:
 
 
 def _refuse_instrument_conflict(row: KisOrderRow, *, queried: str) -> None:
-    """A row must name the instrument it was asked for (PR-3b review HIGH 2). The witness
-    carries no instrument on :class:`~tos_runtime.recon.ports.WitnessOrder`, so a row for another
-    symbol — or one naming none — would otherwise be joined by ODNO alone and corroborate a fill
-    it says nothing about. Never filtered out: the whole read is unavailable, so the conflict
-    surfaces as "not corroborated" instead of disappearing.
-
-    Raises:
-        WitnessUnavailable: ``row.pdno`` is absent, or differs from ``queried`` (when one was).
-    """
+    """A row must name the instrument it was asked for (PR-3b review HIGH 2). The witness"""
     if row.pdno is None or (queried and row.pdno != queried):
         raise WitnessUnavailable(
             f"KisStockBrokerWitness: order row {row.odno!r} names instrument {row.pdno!r}, "
@@ -330,28 +174,7 @@ def _refuse_instrument_conflict(row: KisOrderRow, *, queried: str) -> None:
 def _order_rows_or_refuse(
     outcome: _WalkOutcome, *, queried: str
 ) -> tuple[dict[str, Any], ...]:
-    """Every row of a completed order walk, or refuse the whole read (issue #981).
-
-    Two shapes the order walk used to drop silently, both of which make a row the broker
-    showed disappear from :attr:`~tos_runtime.recon.ports.WitnessSnapshot.orders`:
-
-    * a PAGE whose ``output1`` was not a list at all — missing, ``null``, or a dict
-      (:attr:`_WalkOutcome.pages`), which contributed zero rows;
-    * a ROW that is not a dict, which was skipped by itself.
-
-    On the holdings axis the equivalent drops only make the observation incomplete
-    (:meth:`KisStockBrokerWitness._read_balance`), because a balance read is still useful for
-    the rows it could attribute. The orders axis has no such partial value: an order this
-    witness cannot read might BE an unattributed broker order, and an orphan is exactly what
-    must BLOCK a capacity release (``service.py``'s ``_join_orders_by_execution_id`` ->
-    ``capacity_flags.append(False)``). Dropping it left the release resting on the rows that
-    happened to parse — the #973 fail-open class, one axis over. So the whole read is
-    unavailable, the same answer :func:`_refuse_instrument_conflict` already gives for a row
-    that names the wrong instrument, and for the same stated reason.
-
-    Raises:
-        WitnessUnavailable: A page carried no ``output1`` list, or a row is not a dict.
-    """
+    """Every row of a completed order walk, or refuse the whole read (issue #981)."""
     if not outcome.containers_wellformed:
         raise WitnessUnavailable(
             f"KisStockBrokerWitness: an order page for {queried or '(any)'!r} carried no "
@@ -374,14 +197,7 @@ def _order_rows_or_refuse(
 
 @dataclass(frozen=True)
 class KisOrderRow:
-    """One 주식일별주문체결조회 (``VTTC0081R``) ``output1`` row, typed — the ONE parse of that row
-    this runtime has. :meth:`KisStockBrokerWitness.observe` folds it into a
-    :class:`~tos_runtime.recon.ports.WitnessOrder`; the post-ACK fill observer
-    (:mod:`tos_runtime.posttrade.fill_observer`) reads the extra fields it needs to fail closed
-    (``ord_qty``, ``rjct_qty``, ``orgn_odno``). Field names are KIS's own (official
-    ``COLUMN_MAPPING``, open-trading-api ``inquire_daily_ccld``); a magnitude that does not parse
-    is ``None``, never a fabricated zero.
-    """
+    """One 주식일별주문체결조회 (``VTTC0081R``) ``output1`` row, typed — the ONE parse of that row"""
 
     odno: str | None
     orgn_odno: str | None
@@ -405,7 +221,6 @@ class KisOrderRow:
         return cls(
             odno=_text("odno"),
             orgn_odno=_text("orgn_odno"),
-            # KIS 주문일자 — anything but YYYYMMDD digits is no date at all.
             ord_dt=ord_dt if _YYYYMMDD.fullmatch(ord_dt) is not None else None,
             pdno=_text("pdno"),
             ord_qty=_decimal_or_none(row.get("ord_qty")),
@@ -417,8 +232,7 @@ class KisOrderRow:
 
 
 class KisStockBrokerWitness:
-    """A :class:`~tos_runtime.recon.ports.BrokerWitness` over the real KIS 모의투자 stock
-    balance + execution-inquiry TRs (module docstring)."""
+    """A :class:`~tos_runtime.recon.ports.BrokerWitness` over the real KIS 모의투자 stock"""
 
     def __init__(
         self,
@@ -429,29 +243,12 @@ class KisStockBrokerWitness:
         date_source: KstDateSource,
         asset: str = "stock",
     ) -> None:
-        """Wire this witness's dependencies (all injected — no ambient state beyond the
-        one isolated wall-clock read in :class:`SystemKstDateSource`).
-
-        Args:
-            config: The fail-closed-loaded :class:`KisWitnessConfig`.
-            client: The GET-only stdlib HTTP shim.
-            credential_session: See :class:`KisWitnessCredentialSession`'s own docstring.
-            date_source: Supplies "today" in KST for the execution-inquiry TR's date
-                window.
-            asset: MUST be ``"stock"`` — any other value is refused immediately
-                (module docstring "Futures — refused outright").
-
-        Raises:
-            ~tos_runtime.recon.witness_kis_config.FuturesAssetRefused: ``asset`` is not
-                ``"stock"``.
-        """
+        """Wire this witness's dependencies (all injected — no ambient state beyond the"""
         refuse_futures_asset(asset)
         self._config = config
         self._client = client
         self._credential_session = credential_session
         self._date_source = date_source
-
-    # -- BrokerWitness port -------------------------------------------------------------
 
     def observe(
         self,
@@ -461,44 +258,10 @@ class KisStockBrokerWitness:
         deadline_expired: Callable[[], bool] | None = None,
         before_balance: Callable[[], None] | None = None,
     ) -> WitnessSnapshot:
-        """Observe this account's stock positions/cash and today's stock order fills.
-
-        **Read order: older dates, then the balance, then today** (review-979 r1 HIGH). The
-        fill observer ages a prefetched release snapshot from the balance read's first request
-        (``before_balance``), so the only reads before that window are the order walks of
-        EARLIER trading days. Two premises make that safe, and both must stay true: (1) an
-        earlier day is closed — a KRX day order dies with its day, so a closed day's rows no
-        longer change; (2) the window covers everything that can still move: the balance (a
-        release reading "position 0" reads it inside the window) and today's walk, read LAST,
-        where an unattributed new order (an orphan, which must block the release) appears.
-        Earlier, today was read right after the balance and older days after it; with every
-        request paced on the app key (#970), each older date pushed the snapshot past its age
-        limit.
-
-        Args:
-            scope: Account, instrument and extra order dates to observe.
-            today: The trading date to read as "today"; ``None`` asks the date source. The
-                fill observer's FETCH thread passes the date its plan was built under (issue
-                #950), so the date source is only ever read on the loop thread.
-            deadline_expired: Asked before every page of every walk, like
-                :meth:`order_rows`'s. The fill observer's FETCH passes only its SHUTDOWN flag
-                here — never a time deadline, for the release-semantics reason
-                :meth:`order_rows`'s own note gives. ``None``: unbounded as before.
-            before_balance: Called once, right before the balance read's first request — the
-                caller's mark for where the age window opens (above). ``None``: no mark.
-
-        Raises:
-            WitnessUnavailable: ``scope.account`` is not a 10-digit KIS account number,
-                the credential session raised, a request failed/was rejected, or a
-                continuation walk could not be completed (module docstring — never a
-                silently truncated snapshot).
-        """
+        """Observe this account's stock positions/cash and today's stock order fills."""
         try:
             cano, acnt_prdt_cd = self._split_account(scope.account)
             today = today or self._date_source.today()
-            # Any older date the caller names (PR-3b: an ACK from a previous trading day is still
-            # reconcilable — its order lives under its own 주문일자), BEFORE the balance; today
-            # after it, last (docstring: read order).
             older_dates = sorted(set(scope.order_dates) - {today})
             dates = (today, *older_dates)
             rows: tuple[KisOrderRow, ...] = ()
@@ -520,14 +283,6 @@ class KisStockBrokerWitness:
         except WitnessUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001 - the port's own two-outcome contract
-            # ports.py's contract is exactly two outcomes: a genuine WitnessSnapshot, or
-            # WitnessUnavailable. Any other exception (a token-session failure, an HTTP
-            # client fault, an unexpected KeyError on a malformed body) is wrapped here
-            # rather than left to propagate as a THIRD, undocumented outcome. The
-            # wrapped message never repeats `exc`'s own text if that text could carry a
-            # secret (it cannot: this witness's own exceptions below are already
-            # secret-free by construction, and `KisWitnessClientError`'s own messages
-            # never format a header value).
             raise WitnessUnavailable(
                 f"KisStockBrokerWitness.observe: could not complete — {type(exc).__name__}"
             ) from exc
@@ -536,17 +291,10 @@ class KisStockBrokerWitness:
             observed_at_generation=scope.as_of_generation,
             orders=tuple(self._order_from_row(row) for row in rows),
             positions=positions,
-            # #966 review round 1: only a holdings read with every row attributed proves
-            # flatness; a dropped row must not read as "no position".
             positions_complete=positions_complete,
             cash=cash,
             provenance="kis-mock-stock",
-            # Honest True: this class holds no evidence-store reference at all (module
-            # docstring) — unlike witness_synthetic.py, there is nothing here to be
-            # non-independent OF.
             independent_of_evidence_store=True,
-            # One inquiry per date (INQR_STRT_DT == INQR_END_DT); a single-date snapshot records
-            # it, a multi-date one records None (the field's own contract).
             order_inquiry_date=today if len(dates) == 1 else None,
         )
 
@@ -557,37 +305,7 @@ class KisStockBrokerWitness:
         inquiry_date: str | None = None,
         deadline_expired: Callable[[], bool] | None = None,
     ) -> tuple[str, tuple[KisOrderRow, ...]]:
-        """One date's 주식일별주문체결조회 rows — no balance read (the post-ACK fill observer's
-        GET: one TR, ``VTTC0081R``, not two).
-
-        Args:
-            scope: Account and instrument to inquire.
-            inquiry_date: ``YYYYMMDD`` to inquire; ``None`` is today (trusted date source). An
-                ACK from an earlier trading day is read under its own date — VTTC0081R serves the
-                last three months (open-trading-api ``inquire_daily_ccld``, ``pd_dv=inner``).
-            deadline_expired: Asked before every page (:meth:`_walk_continuation`) — the
-                caller's own bound on how long this read may take in total. A walk it stops is
-                ``WitnessUnavailable`` with no rows, never a partial list. ``None`` = unbounded
-                by anything but ``max_pages`` and the per-GET timeout.
-
-                :meth:`observe` gets no TIME deadline on the release path: a deadline there
-                would make a slow-but-working broker HOLD capacity rather than release it, a
-                release-semantics change. Issue #950 moved that read off the loop thread
-                instead: the fill observer's FETCH prefetches the release reconciliation's
-                snapshot (:mod:`tos_runtime.posttrade.fill_fetch`) and the loop serves it. A
-                reconciliation the prefetch did not anticipate still reads live, bounded by
-                ``request_timeout_s`` x ``max_pages`` as before.
-
-        Returns:
-            ``(date, rows)`` — the KST date the inquiry covered (``INQR_STRT_DT ==
-            INQR_END_DT``) and every row the completed continuation walk returned, never filtered
-            by attempt or order number (the caller attributes; an unattributable row is its
-            finding, not something to drop here).
-
-        Raises:
-            WitnessUnavailable: Exactly as :meth:`observe` — a malformed account, a credential
-                failure, a rejected or incomplete walk.
-        """
+        """One date's 주식일별주문체결조회 rows — no balance read (the post-ACK fill observer's"""
         try:
             cano, acnt_prdt_cd = self._split_account(scope.account)
             date = inquiry_date or self._date_source.today()
@@ -603,24 +321,9 @@ class KisStockBrokerWitness:
                 f"KisStockBrokerWitness.order_rows: could not complete — {type(exc).__name__}"
             ) from exc
 
-    # -- account -----------------------------------------------------------------------
-
     @staticmethod
     def _split_account(account: str) -> tuple[str, str]:
-        """Split ``scope.account`` into KIS's ``(CANO, ACNT_PRDT_CD)`` pair.
-
-        **Assumption, stated plainly (report this if wrong):** this witness assumes
-        ``WitnessScope.account`` IS the 10-digit KIS account number (CANO + product code
-        concatenated) — the same convention
-        ``tools/broker_probes/common.py:266-270``'s ``ProbeCredentials.cano``/
-        ``.acnt_prdt_cd`` properties use. The kernel's own ``WitnessScope.account`` is an
-        opaque ``str`` (``ports.py``) with no KIS-specific shape mandated — if a real
-        compose-root wiring uses a different (runtime-internal) account identifier, the
-        translation to a KIS account number belongs at that wiring layer, not invented
-        here as a guess.
-        """
-        # PR-3b (#932 dde3fbce): the SAME parser the order codec and the balance facts use, so a
-        # fill read targets exactly the account the order went to — never a looser reading.
+        """Split ``scope.account`` into KIS's ``(CANO, ACNT_PRDT_CD)`` pair."""
         try:
             parsed = split_kis_account(account)
         except KisAccountError as exc:
@@ -629,8 +332,6 @@ class KisStockBrokerWitness:
                 "witness cannot answer for a non-KIS-shaped account identifier."
             ) from None
         return parsed.cano, parsed.acnt_prdt_cd
-
-    # -- HTTP --------------------------------------------------------------------------
 
     @staticmethod
     def _headers(
@@ -651,9 +352,6 @@ class KisStockBrokerWitness:
     def _get_page(
         self, *, path: str, tr_id: str, params: Mapping[str, str], tr_cont: str
     ) -> RawGetResponse:
-        # One credential block per GET (KisWitnessCredentialSession docstring): the session
-        # decides token freshness every page, and the key/secret handles are zeroed the moment
-        # this one request returns.
         with self._credential_session.request_credentials() as credentials:
             try:
                 return self._client.get(
@@ -667,8 +365,6 @@ class KisStockBrokerWitness:
                     f"{type(exc).__name__}"
                 ) from exc
 
-    # -- generic continuation walk (module docstring's central discipline) -------------
-
     def _walk_continuation(
         self,
         *,
@@ -677,25 +373,7 @@ class KisStockBrokerWitness:
         build_params: Any,
         deadline_expired: Callable[[], bool] | None = None,
     ) -> _WalkOutcome:
-        """Walk ``CTX_AREA_FK100``/``NK100`` to completion, or raise.
-
-        ``build_params(fk, nk)`` returns this page's full query-parameter mapping — the
-        caller supplies every field except the two continuation keys, which this method
-        owns exclusively.
-
-        ``deadline_expired`` (optional) is asked BEFORE every page, including the first: a
-        caller that is waited on — the fill observer's poll, inside the session loop's
-        tick-to-tick window (#949 review HIGH) — bounds the whole walk that way. It owns the
-        clock; this class has none. ``True`` stops the walk and raises, exactly like our own
-        ``max_pages`` cap: what was read so far is NEVER returned (see below), so a deadline
-        can only produce "unavailable", never "these are all the rows".
-
-        Never returns a partial result: any of a broker rejection, a "more follows"
-        signal with no usable cursor, a non-advancing cursor, exhausting
-        ``config.max_pages`` while the broker still signals more, or the caller's deadline,
-        raises :class:`~tos_runtime.recon.ports.WitnessUnavailable` instead of returning what
-        was read so far (module docstring's central reason this class exists).
-        """
+        """Walk ``CTX_AREA_FK100``/``NK100`` to completion, or raise."""
         pages: list[list[dict[str, Any]] | None] = []
         output2_first: dict[str, Any] | None = None
         fk = nk = ""
@@ -710,11 +388,6 @@ class KisStockBrokerWitness:
             response = self._get_page(
                 path=path, tr_id=tr_id, params=build_params(fk, nk), tr_cont=tr_cont
             )
-            # Review MEDIUM-1 (2026-09-17): the HTTP status is checked BEFORE the body is
-            # trusted at all — a non-200 response that happens to carry a JSON body shaped
-            # like a successful KIS answer (rt_cd="0") — a proxy, a WAF, an intermediary's
-            # own error page — must never be read as a genuine broker success just because
-            # its body parses.
             if response.status != 200:
                 raise WitnessUnavailable(
                     f"KisStockBrokerWitness: page {index} of {tr_id} returned HTTP "
@@ -770,8 +443,6 @@ class KisStockBrokerWitness:
             "which is allowed to report a lower bound — a WitnessSnapshot may not)"
         )
 
-    # -- balance -------------------------------------------------------------------------
-
     def _read_balance(
         self,
         cano: str,
@@ -780,27 +451,7 @@ class KisStockBrokerWitness:
         *,
         deadline_expired: Callable[[], bool] | None = None,
     ) -> tuple[tuple[tuple[str, Decimal], ...], Decimal | None, bool]:
-        """주식 잔고조회 — mirrors ``tools/broker_probes/probes_balance.py``'s own
-        ``_balance_params`` for the stock target (module docstring).
-
-        Returns ``(positions, cash, positions_complete)``. The third element is ``False`` as
-        soon as anything in this read could not be fully taken in:
-
-        * a holdings ROW that could not be read — a non-dict row, a ``pdno`` that is blank or
-          not a string at all (issue #981), or an ``hldg_qty`` that does not parse (#966
-          review round 1, Codex HIGH), since such a row is silently dropped from ``positions``
-          below;
-        * a holdings PAGE whose ``output1`` was not a list at all — missing, ``null``, or a
-          dict (review-973 round 2 HIGH), since that page contributes zero rows.
-
-        Either way the result would otherwise be indistinguishable from a flat account (see
-        :attr:`~tos_runtime.recon.ports.WitnessSnapshot.positions_complete`). An empty list is
-        well-formed: a genuinely flat account answers ``output1: []``.
-
-        Page-level truncation needs no flag: the continuation walk raises
-        :class:`~tos_runtime.recon.ports.WitnessUnavailable` rather than return a partial page
-        set (:meth:`_walk_continuation`).
-        """
+        """주식 잔고조회 — mirrors ``tools/broker_probes/probes_balance.py``'s own"""
 
         def build_params(fk: str, nk: str) -> dict[str, str]:
             return {
@@ -826,32 +477,18 @@ class KisStockBrokerWitness:
 
         instruments = {key.instrument for key in scope.instrument_keys}
         positions: list[tuple[str, Decimal]] = []
-        # review-973 round 2 HIGH: a page whose `output1` was not a list contributed zero rows
-        # and would otherwise read as "this account holds nothing".
         complete = outcome.containers_wellformed
         for rows in outcome.pages:
             for row in rows if rows is not None else ():
                 if not isinstance(row, dict):
                     complete = False
                     continue
-                # Issue #981: only a STRING pdno names a symbol. `str(...)` on anything else
-                # fabricates a plausible-looking one (a broker that renders the code as a
-                # JSON number answers `pdno: 5930` for 005930 — the leading zeros are gone),
-                # and the row then reads as some OTHER instrument: filtered out below, or
-                # kept under a symbol the flatness check never compares against. Either way
-                # `positions` ends up with no row for the instrument being closed while the
-                # observation still claims to be complete — flat, on a row we could not read.
                 raw_symbol = row.get("pdno")
                 symbol = raw_symbol.strip() if isinstance(raw_symbol, str) else ""
                 qty = _decimal_or_none(row.get("hldg_qty"))
                 if not symbol or qty is None:
-                    # Unreadable: the row is dropped, so record that this holdings account
-                    # is NOT complete rather than let the drop read as "no position".
                     complete = False
                     continue
-                # Positive-quantity filter mirrors the runtime consumer's own convention
-                # (shared/kis/client.py:1002, reference only) — a flattened (qty<=0) row
-                # is not a held position, and IS a fully-read row.
                 if qty <= 0:
                     continue
                 if instruments and symbol not in instruments:
@@ -865,8 +502,6 @@ class KisStockBrokerWitness:
         )
         return tuple(positions), cash, complete
 
-    # -- orders --------------------------------------------------------------------------
-
     def _read_order_rows(
         self,
         cano: str,
@@ -876,18 +511,7 @@ class KisStockBrokerWitness:
         *,
         deadline_expired: Callable[[], bool] | None = None,
     ) -> tuple[KisOrderRow, ...]:
-        """주식일별주문체결조회 — mirrors ``tools/broker_probes/probes_order.py``'s own
-        ``stock_daily_ccld`` params exactly (module docstring).
-
-        Never filters by ``scope.attempt_ids`` (ports.py's own orphan-detection
-        requirement) — and in fact CANNOT: the broker's own row shape carries no
-        attempt-id field at all, so :attr:`~tos_runtime.recon.ports.WitnessOrder
-        .attempt_id` is always ``None`` for every order this witness returns. Every
-        order this witness reports is, from this witness's own perspective alone,
-        indistinguishable from an "orphan" — that is an honest limitation, not a filter
-        this class applies (the module docstring's "never claims more than it verified"
-        note).
-        """
+        """주식일별주문체결조회 — mirrors ``tools/broker_probes/probes_order.py``'s own"""
         symbols = [key.instrument for key in scope.instrument_keys] or [""]
 
         orders: list[KisOrderRow] = []
@@ -945,14 +569,10 @@ class KisStockBrokerWitness:
             state = WitnessOrderState.UNKNOWN
 
         return WitnessOrder(
-            # The broker's own row carries no attempt-id concept at all (method
-            # docstring) — always None, never guessed from ODNO.
             attempt_id=None,
             broker_execution_id=row.odno,
             quantity=filled_qty,
             remaining=remaining_qty,
             state=state,
-            # KIS 주문일자 — the broker's own date for this ODNO (plan 2026-09-26 egress trading
-            # date §2 decision 4).
             order_date=row.ord_dt,
         )

@@ -1,13 +1,4 @@
-"""§3.1 — the pure ``Bar`` model + ∅-both-ways stream validation (design #33 §3.1/§13).
-
-A bar is pure typed data with no loader behind it: parquet / duckdb ingestion is out-of-tree
-because ``numpy`` / ``pandas`` are outside the firewall (design #33 §0.2-8). What this module proves
-is that the *model* refuses the shapes a fill model could otherwise exploit — an inverted range, a
-close outside its own range, a negative volume — and that the stream discipline distinguishes a
-**missing** stream from an **explicitly empty** one in both directions (the #17/#26 ∅ defect class).
-
-Regime tag: orchestration authoring evidence only; closes no EV (design #33 §1.1).
-"""
+"""§3.1 — the pure ``Bar`` model + ∅-both-ways stream validation (design #33 §3.1/§13)."""
 
 from __future__ import annotations
 
@@ -87,11 +78,7 @@ def test_an_unlabelled_session_is_not_a_session() -> None:
 
 
 def test_a_missing_stream_is_fail_closed_but_an_empty_stream_is_a_defined_run() -> None:
-    """(§13 ∅ 양방향) MISSING and EXPLICIT_EMPTY are distinguished in **both** directions.
-
-    Over-rejecting an explicit empty is exactly as wrong as vacuously admitting a missing one — the
-    #17/#26 defect class the series has now hit twice.
-    """
+    """(§13 ∅ 양방향) MISSING and EXPLICIT_EMPTY are distinguished in **both** directions."""
     with pytest.raises(BacktestIntegrityError, match="missing"):
         validate_bar_stream(None)
     assert validate_bar_stream([]) == ()

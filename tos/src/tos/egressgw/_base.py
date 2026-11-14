@@ -1,43 +1,4 @@
-"""egressgw-local base — reused canonical substrate + the two all-false authority blocks.
-
-The digest-binding substrate (``FrozenModel``, ``ArtifactStatus``, ``ArtifactIntegrityError``,
-``derive_id``, ``CanonicalizationScheme``, ``get_scheme``, ``CanonicalDecimal``) is reused
-verbatim from :mod:`tos.canonical` — the series "재정의 금지" discipline (design #34 §8.1 REUSE).
-This module adds only the two egressgw-local authority blocks:
-
-* :class:`AllFalseConstructionCoordinatorAuthority` — carried by every **Order Construction**
-  record. RFC-002 §9.1:553 verbatim: "Order Construction Service SHALL NOT approve, mutate
-  capacity, classify protection, issue authority, transmit, or arm live scope" (design #34 §3.3).
-  Note ``transmits`` is present and false here: construction never transmits.
-* :class:`AllFalseGatewayAuthority` — carried by every **Broker Egress Gateway** record. The
-  gateway is the *final enforcement point* (RFC-002 §10.8), so it deliberately carries **no**
-  ``transmits`` flag — claiming "this record does not transmit" on the boundary that delegates
-  step 18 would be a dishonest flag rather than a seal. What it does claim, and what any ``True``
-  makes unconstructable, is that a gateway record approves nothing, mutates no capacity, issues
-  no authority, classifies no protection, chooses no admissibility, arms no live scope, clears no
-  halt, re-arms nothing, and widens no authority (ADR-002-013 §1; RFC-005 §12:352-373).
-
-Both blocks are the ioc ``OrderConstructionAuthorityEffect`` / egress ``AllFalseEgressAuthority``
-isomorph, authored locally rather than imported so a sibling's flag-set drift cannot silently
-change what this package claims (the series' local-authorship discipline).
-
-This module also holds ``_positive`` — the shared positive-polarity read of an injected
-stand-in flag (``None`` / ``False`` ⇒ not admitted) that both ``gateway.py`` and ``mesh.py``
-import (kernel round #2 §2 decision 1 — a single definition, never duplicated). The sibling
-helper ``_verdict`` (which assembles a :class:`~tos.egressgw.records.VerifyItemVerdict`) lives
-in ``records.py`` itself instead, next to the class it returns: it needs
-:data:`~tos.egressgw.vocabulary.REALIZED_ITEMS` / :data:`~tos.egressgw.vocabulary.
-PROVISIONAL_ITEMS` *and* :class:`~tos.egressgw.records.VerifyItemVerdict`, and putting it here
-would recreate the very base<->records cycle a prior revision of this module worked around with
-a function-body import (independent review round #1 LOW-1: fixed by moving the function instead
-of hiding the cycle).
-
-Firewall (design #1 §3.2 / design #34 §0.3): ``pydantic`` + stdlib + ``tos.*`` only. No
-``importlib`` / ``exec`` / ``eval`` / ``compile``, no ``os.environ`` / ``getenv``, no network
-stdlib, no ``shared.*``, no ``numpy`` / ``pandas``, no wall clock (``time`` / ``datetime``) and
-no ``random`` / ``secrets`` / ``uuid`` — every identity on this path is content-addressed or
-injected (design #34 §0.3/§12.1-8).
-"""
+"""egressgw-local base — reused canonical substrate + the two all-false authority blocks."""
 
 from __future__ import annotations
 
@@ -77,7 +38,6 @@ def _positive(flag: bool | None) -> bool:
     return flag is True
 
 
-#: RFC-002 §9.1:553 verbatim — the six things an Order Construction Service SHALL NOT do.
 CONSTRUCTION_SHALL_NOT_FLAGS: tuple[str, ...] = (
     "approves",
     "mutates_capacity",
@@ -87,9 +47,6 @@ CONSTRUCTION_SHALL_NOT_FLAGS: tuple[str, ...] = (
     "arms_live_scope",
 )
 
-#: The gateway's SHALL NOT set (ADR-002-013 §1; RFC-005 §12:352-373). ``transmits`` is
-#: deliberately **absent**: the gateway is the boundary that delegates step 18, and a false
-#: "does not transmit" flag there would be a lie rather than a seal (design #34 §0.4 E5).
 GATEWAY_SHALL_NOT_FLAGS: tuple[str, ...] = (
     "approves",
     "mutates_capacity",
@@ -104,16 +61,7 @@ GATEWAY_SHALL_NOT_FLAGS: tuple[str, ...] = (
 
 
 class AllFalseConstructionCoordinatorAuthority(FrozenModel):
-    """Order Construction authority block — every flag forced ``false`` (design #34 §3.3).
-
-    RFC-002 §9.1:553 verbatim: "Order Construction Service SHALL NOT approve, mutate capacity,
-    classify protection, issue authority, transmit, or arm live scope." Approval is step 4's
-    (iap), capacity is steps 8-10's (RCL), and transmission is step 18's (the Broker Adapter) —
-    construction produces a *candidate*, an envelope, and a proof, and nothing else.
-
-    Any ``True`` value raises :class:`~tos.canonical.ArtifactIntegrityError`, so an
-    authority-claiming construction record is unconstructable.
-    """
+    """Order Construction authority block — every flag forced ``false`` (design #34 §3.3)."""
 
     approves: bool = False
     mutates_capacity: bool = False
@@ -139,16 +87,7 @@ class AllFalseConstructionCoordinatorAuthority(FrozenModel):
 
 
 class AllFalseGatewayAuthority(FrozenModel):
-    """Broker Egress Gateway authority block — every flag forced ``false`` (design #34 §4).
-
-    A gateway verdict is *verified data about a send*, never permission: the gateway enforces
-    the RFC-002 §10.8:741-759 verify list and refuses, it does not originate, approve, or widen
-    anything. Holding a satisfied verification is not authority — the capability, the permit, the
-    approval, and the currentness proof are each produced elsewhere and only *consumed* here
-    (ADR-002-013 §4.3 isomorph).
-
-    Any ``True`` value raises :class:`~tos.canonical.ArtifactIntegrityError`.
-    """
+    """Broker Egress Gateway authority block — every flag forced ``false`` (design #34 §4)."""
 
     approves: bool = False
     mutates_capacity: bool = False

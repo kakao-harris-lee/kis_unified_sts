@@ -1,16 +1,4 @@
-"""Boot replay reproduces a never-sent discard (2026-11-01 plan §3.2 / §5 ①, last row; #974).
-
-The live runtime drops a reservation whose flow halted between step 9's atomic commit and the Send
-Boundary (``tos.engine.state.ProvisionalReservationLedger.discard_unsent``) and records the fact
-as a ``RESERVATION_DISCARDED_UNSENT`` row. A replay that did not re-apply that row would rebuild a
-projection in which the scope is still occupied, so the *next* tick halts at the step-8 capacity
-pre-check in the replay while it was admitted live — a divergence, and the #994 "every boot
-rebuilds the same block" half of #974.
-
-The wiring that decides *when* to discard (plan §3.3) is Q2; these tests stand in for it by
-calling the kernel directly and appending the row the way the Q2 writer will, which is exactly
-what the replay reader has to cope with.
-"""
+"""Boot replay reproduces a never-sent discard (2026-11-01 plan §3.2 / §5 ①, last row; #974)."""
 
 from __future__ import annotations
 
@@ -40,7 +28,6 @@ SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
 _NO_TIMEOUT_WITHIN_TEST = 10**12
-#: The flow halts here — step 10, after step 9's commit and before any send step (plan §1 F1).
 _HALT_STEP = CommitmentStep.COMMITMENT_UNAVAILABILITY
 
 
@@ -119,9 +106,7 @@ def test_a_replay_of_a_log_containing_the_discard_reproduces_the_same_ledger(
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
 ) -> None:
-    """Live: tick 1 halts pre-send, the reservation is discarded, tick 2 is admitted past step 8.
-    The replay must reach the identical projection — same halt for tick 1, same admission for
-    tick 2 — and record no divergence."""
+    """Live: tick 1 halts pre-send, the reservation is discarded, tick 2 is admitted past step 8."""
     live = _core()
     driver = _driver(live, inbox, evidence_store, emergency_log)
     key = fx.instrument_key()
@@ -132,8 +117,6 @@ def test_a_replay_of_a_log_containing_the_discard_reproduces_the_same_ledger(
     assert live.ledger.admits_new_exposure(key) is True
 
     driver.enqueue_and_run(fx.decision_tick_event(seq=2))
-    # Tick 2 got past the capacity stage and reached the (absent) send boundary, so it holds the
-    # scope again — the live fact the replay has to reproduce.
     held = live.ledger.outstanding(key)
     assert held is not None
 
@@ -156,9 +139,7 @@ def test_without_the_record_the_same_log_diverges(
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
 ) -> None:
-    """The control that makes the test above load-bearing: discard live but record nothing, and
-    the replay rebuilds the blocked projection — tick 2 halts at step 8 where it was admitted
-    live."""
+    """The control that makes the test above load-bearing: discard live but record nothing, and"""
     live = _core()
     driver = _driver(live, inbox, evidence_store, emergency_log)
 
@@ -187,8 +168,7 @@ def test_a_row_the_replayed_projection_refuses_is_a_divergence(
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
 ) -> None:
-    """The kernel's own gate is this reader's corroboration: a row naming a proposal the replayed
-    projection does not hold as discardable is never applied, and is reported."""
+    """The kernel's own gate is this reader's corroboration: a row naming a proposal the replayed"""
     live = _core()
     driver = _driver(live, inbox, evidence_store, emergency_log)
     driver.enqueue_and_run(fx.decision_tick_event(seq=1))
@@ -223,8 +203,7 @@ def test_a_malformed_row_is_a_divergence_and_never_applied(
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
 ) -> None:
-    """A row whose payload is not an ``UnsentDiscardRef`` (here: a reason outside the closed
-    vocabulary) is refused without ever reaching the ledger."""
+    """A row whose payload is not an ``UnsentDiscardRef`` (here: a reason outside the closed"""
     live = _core()
     driver = _driver(live, inbox, evidence_store, emergency_log)
     driver.enqueue_and_run(fx.decision_tick_event(seq=1))

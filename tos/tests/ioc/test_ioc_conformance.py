@@ -1,9 +1,4 @@
-"""command_conforms — §10-§12 exact-axis conformance (design #14 §5.1; IOC-EV-001/002 substrate).
-
-Both-ways canaries + per-axis drop-one + ∅ (empty envelope / absent input) + the forbidden-verb
-canaries (default / alias / substitute — IOC-INV-003 line 165). The consume gate is
-``result is ConformanceResult.CONFORMANT`` (truthy-sentinel, §4.7). Closes no IOC-EV.
-"""
+"""command_conforms — §10-§12 exact-axis conformance (design #14 §5.1; IOC-EV-001/002 substrate)."""
 
 from __future__ import annotations
 
@@ -31,22 +26,12 @@ def _with_duplicate_side() -> tuple[AxisBinding, ...]:
     return _full_bindings() + (AxisBinding(axis=ConformanceAxis.SIDE, value="BUY"),)
 
 
-# ---------------------------------------------------------------------------
-# positive side — the clean fixture is genuinely CONFORMANT
-# ---------------------------------------------------------------------------
-
-
 def test_exact_match_on_every_axis_is_conformant() -> None:
     """(canary +) Intent / command / envelope agree on every axis => CONFORMANT."""
     result = command_conforms(
         issue_intent(), issue_command(), issue_policy(), issue_envelope()
     )
     assert result is ConformanceResult.CONFORMANT
-
-
-# ---------------------------------------------------------------------------
-# negative side — a definite mismatch on any axis is NON_CONFORMANT
-# ---------------------------------------------------------------------------
 
 
 def test_side_flip_is_non_conformant() -> None:
@@ -89,11 +74,6 @@ def test_symbol_alias_is_non_conformant() -> None:
     assert result is ConformanceResult.NON_CONFORMANT
 
 
-# ---------------------------------------------------------------------------
-# UNKNOWN — a missing determination input on any axis (drop-one, per axis)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("axis", list(AUTHORIZED_AXES))
 def test_drop_one_command_axis_is_unknown(axis: ConformanceAxis) -> None:
     """(drop-one per axis) A command with one axis value dropped to None => UNKNOWN."""
@@ -132,11 +112,6 @@ def test_none_intent_or_command_is_unknown() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# ∅ both-ways — absent / open-ended envelope + empty axis set
-# ---------------------------------------------------------------------------
-
-
 def test_absent_envelope_permits_no_construction() -> None:
     """(∅ §5.3 line 125) A None envelope => NON_CONFORMANT (permits no construction)."""
     result = command_conforms(issue_intent(), issue_command(), issue_policy(), None)
@@ -159,18 +134,8 @@ def test_mismatch_dominates_missing_axis() -> None:
     assert result is ConformanceResult.NON_CONFORMANT
 
 
-# ---------------------------------------------------------------------------
-# MAJOR-1 regression — surplus axis outside the envelope (§5.3 / §12 line 321)
-# ---------------------------------------------------------------------------
-
-
 def test_surplus_axis_outside_envelope_is_non_conformant() -> None:
-    """(canary - MAJOR-1) A command declaring POST_ONLY outside the closed envelope => NON_CONFORMANT.
-
-    Regression: the envelope-only iteration never inspected an out-of-envelope axis, so a surplus
-    POST_ONLY silently passed as CONFORMANT (a fail-open widening, §12 line 321). The subset guard
-    now denies it.
-    """
+    """(canary - MAJOR-1) A command declaring POST_ONLY outside the closed envelope => NON_CONFORMANT."""
     surplus = issue_command({**AUTHORIZED_AXES, ConformanceAxis.POST_ONLY: "YES"})
     result = command_conforms(issue_intent(), surplus, issue_policy(), issue_envelope())
     assert result is ConformanceResult.NON_CONFORMANT
@@ -187,17 +152,8 @@ def test_command_declaring_subset_of_axes_is_unknown_not_surplus() -> None:
     assert result is ConformanceResult.UNKNOWN
 
 
-# ---------------------------------------------------------------------------
-# MAJOR-1 regression — duplicate semantic axis (§14 line 406 / §10 line 284)
-# ---------------------------------------------------------------------------
-
-
 def test_duplicate_axis_on_command_is_non_conformant() -> None:
-    """(canary - MAJOR-1 §14 line 406) A command repeating SIDE (BUY + BUY) => NON_CONFORMANT.
-
-    Regression: a first-match ``axis_value`` read silently returned the first value and passed
-    (even SIDE=BUY + SIDE=SELL would pass reading BUY). The duplicate-axis guard now denies it.
-    """
+    """(canary - MAJOR-1 §14 line 406) A command repeating SIDE (BUY + BUY) => NON_CONFORMANT."""
     dup = issue_command(axis_bindings=_with_duplicate_side())
     result = command_conforms(issue_intent(), dup, issue_policy(), issue_envelope())
     assert result is ConformanceResult.NON_CONFORMANT
@@ -223,11 +179,7 @@ def test_duplicate_axis_on_intent_is_non_conformant() -> None:
 
 
 def test_duplicate_axis_on_envelope_is_non_conformant() -> None:
-    """(canary - §10 line 284 ambiguity) An envelope repeating an authorized axis => NON_CONFORMANT.
-
-    Resolves the ``authorized_axes`` last-wins asymmetry: an ambiguous authorization is denial,
-    caught before the dict collapse.
-    """
+    """(canary - §10 line 284 ambiguity) An envelope repeating an authorized axis => NON_CONFORMANT."""
     dup_env = issue_envelope(authorized_axis_bindings=_with_duplicate_side())
     result = command_conforms(issue_intent(), issue_command(), issue_policy(), dup_env)
     assert result is ConformanceResult.NON_CONFORMANT

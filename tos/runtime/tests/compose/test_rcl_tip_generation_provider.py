@@ -1,9 +1,4 @@
-"""``tos_runtime.compose._wiring._rcl_tip_generation_provider`` unit tests
-(re-review finding F2, 2026-09-08). Hermetic: a real
-:class:`~tos_runtime.rcl.log.SqliteCommitLog` under ``tmp_path``, never a
-double/mock of the log itself (per this repo's own anti-phantom discipline
-— the failure mode under test is a REAL log's real fault contract).
-"""
+"""``tos_runtime.compose._wiring._rcl_tip_generation_provider`` unit tests"""
 
 from __future__ import annotations
 
@@ -24,8 +19,7 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 
 class _FakeEvidencePort:
-    """A minimal ``EvidenceAppendPort`` double — this test exercises the RCL
-    log's own tip/epoch mechanics, not evidence chaining."""
+    """A minimal ``EvidenceAppendPort`` double — this test exercises the RCL"""
 
     def append(
         self, payload: Mapping[str, object], *, kind: str, record_class: str
@@ -47,7 +41,7 @@ def _append_one(log: SqliteCommitLog, *, writer_epoch: int, expected_seq: int) -
         entry, expected_seq=expected_seq, writer_epoch=writer_epoch
     )
     assert isinstance(receipt, AppendReceipt)
-    assert receipt.seq is not None  # a successful append never returns a None seq
+    assert receipt.seq is not None
     return receipt.seq
 
 
@@ -64,13 +58,7 @@ def test_empty_log_yields_zero(tmp_path: Path) -> None:
 
 
 def test_committed_entries_advance_and_reflect_the_real_tip(tmp_path: Path) -> None:
-    """(ii) After N committed entries the provider returns the real
-    ``last_seq`` and advances after one more append — never a constant.
-
-    Mutation-kill note (verified manually, not committed): reverting this
-    function's body to a hardcoded ``return 0`` makes this test fail with
-    ``assert 0 == 1`` at the first post-commit assertion below.
-    """
+    """(ii) After N committed entries the provider returns the real"""
     log = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=_FakeEvidencePort())
     try:
         identity = RuntimeIdentity(cell_id="test-cell", process_nonce="n1")
@@ -90,16 +78,14 @@ def test_committed_entries_advance_and_reflect_the_real_tip(tmp_path: Path) -> N
 
 
 def test_second_handle_acquiring_epoch_raises_stale_epoch_read(tmp_path: Path) -> None:
-    """(iii) A second handle acquiring a new Writer Epoch on the SAME log
-    file makes the first handle's provider raise ``StaleEpochRead`` —
-    never a silently-returned ``0`` (re-review finding F2)."""
+    """(iii) A second handle acquiring a new Writer Epoch on the SAME log"""
     log_path = tmp_path / "rcl.sqlite3"
     first = SqliteCommitLog(log_path, evidence_port=_FakeEvidencePort())
     second = SqliteCommitLog(log_path, evidence_port=_FakeEvidencePort())
     try:
         identity = RuntimeIdentity(cell_id="test-cell", process_nonce="n1")
         stale_epoch = first.acquire_epoch(identity)
-        second.acquire_epoch(identity)  # invalidates `first`'s epoch
+        second.acquire_epoch(identity)
 
         provider = _rcl_tip_generation_provider(first, stale_epoch)
         with pytest.raises(StaleEpochRead):
@@ -110,13 +96,7 @@ def test_second_handle_acquiring_epoch_raises_stale_epoch_read(tmp_path: Path) -
 
 
 def test_provider_ignores_the_request_entirely(tmp_path: Path) -> None:
-    """(mypy stage 3 §1.2) The returned callable's own signature is
-    ``Callable[[StageRequest], int]`` but its body never reads ``_request``
-    (``_wiring.py``'s ``_provider`` names the parameter with a leading
-    underscore for exactly this reason) — the generation comes only from the
-    RCL log's own tip. Two structurally different ``StageRequest`` instances
-    (different ``step``) must yield the identical result for the same log
-    state, proving no field of the request participates in the answer."""
+    """(mypy stage 3 §1.2) The returned callable's own signature is"""
     log = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=_FakeEvidencePort())
     try:
         identity = RuntimeIdentity(cell_id="test-cell", process_nonce="n1")

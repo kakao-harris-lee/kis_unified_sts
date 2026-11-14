@@ -1,17 +1,4 @@
-"""Package-level structure: exports, honest scope declarations, and the sibling-kernel seals.
-
-Two things this file locks that nothing else does:
-
-* **``tos.egress`` is consumed, never encroached upon** (design #34 §0.3/§11-3). Not merely
-  "egressgw does not modify the kernel", but "egressgw's own namespaces expose no kernel
-  production symbol" — the #27 FD lesson that locking the export surface alone leaves the
-  submodules open, so every module's ``vars()`` is swept.
-* **The honest scope is stated where a reader will hit it.** The package docstring must carry the
-  "closes no EV / admits no live send" declaration; a slice whose over-realization warning lives
-  only in a design document is one refactor away from losing it.
-
-Regime tag: authoring evidence only; closes no EV (design #34 §1.1).
-"""
+"""Package-level structure: exports, honest scope declarations, and the sibling-kernel seals."""
 
 from __future__ import annotations
 
@@ -45,24 +32,18 @@ def test_every_exported_name_resolves() -> None:
 
 
 def test_no_module_exposes_a_sibling_kernel_production_symbol() -> None:
-    """(§0.3 / §11-3, author-level) The kernels are consumed; their productions are not re-hosted.
-
-    ``compile_command`` is deliberately **absent** from this list: Order Construction is exactly
-    the runtime that is *supposed* to call it (design #34 §3.2). What must not appear is a
-    re-hosted kernel *production* — a locally defined quorum certificate builder, a capability
-    issuer, a capacity mutation, or a currentness vector producer.
-    """
+    """(§0.3 / §11-3, author-level) The kernels are consumed; their productions are not re-hosted."""
     forbidden = (
-        "apply_committed",  # rcl — capacity mutation
-        "apply_benefit",  # rcl
-        "claim_capability",  # rcl — the capability nonce ledger is rcl's
-        "fold_commands",  # rcl
-        "vector_complete",  # cur — the per-send currentness production
-        "quorum_commit_certificate_structurally_complete",  # egress — QCC production
-        "quorum_threshold_structurally_met",  # egress
-        "quorum_coordinates_current",  # egress
-        "risk_decision",  # are
-        "action_flow_decision",  # afg
+        "apply_committed",
+        "apply_benefit",
+        "claim_capability",
+        "fold_commands",
+        "vector_complete",
+        "quorum_commit_certificate_structurally_complete",
+        "quorum_threshold_structurally_met",
+        "quorum_coordinates_current",
+        "risk_decision",
+        "action_flow_decision",
     )
     for module_name, module in _MODULES.items():
         for name in forbidden:

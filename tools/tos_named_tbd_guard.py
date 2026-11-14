@@ -110,9 +110,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = Path("config/tos_named_tbd_guard.yaml")
 DEFAULT_SCOPE = Path("tos/runtime/src/tos_runtime")
 
-#: A file is a "candidate" — a config loader that reads a raw value out of YAML/TOML — if
-#: it contains any of these substrings (module docstring's "what this scan is,
-#: precisely" section explains what is deliberately excluded, and why).
 _CANDIDATE_SIGNALS: tuple[str, ...] = (
     "yaml.safe_load(",
     "yaml.safe_load_all(",
@@ -123,9 +120,6 @@ _CANDIDATE_SIGNALS: tuple[str, ...] = (
     "_policy_primitives import",
 )
 
-#: A candidate file PASSES if it references any of these guard idioms (module
-#: docstring) — the full set of named-TBD-rejection mechanisms this codebase's loaders
-#: actually use, as surveyed by W-A A-0 round 2.
 _GUARD_TOKENS: tuple[str, ...] = (
     "reject_named_tbd",
     "is_named_tbd_placeholder",
@@ -144,8 +138,7 @@ _PRUNED_DIR_NAMES = frozenset({"__pycache__", ".venv"})
 
 
 class NamedTbdGuardConfigError(Exception):
-    """The registry config is missing, unparseable, or fails schema validation —
-    failure class (e), a hard stop distinct from a collected violation."""
+    """The registry config is missing, unparseable, or fails schema validation —"""
 
 
 @dataclass(frozen=True)
@@ -222,11 +215,7 @@ def load_config(config_path: Path) -> tuple[ExemptEntry, ...]:
 def check(
     *, repo_root: Path, scope_dir: Path, config_path: Path
 ) -> tuple[list[str], list[str]]:
-    """Run every failure class (a)-(d) — returns ``(candidates, violations)``.
-
-    ``candidates`` is every file this scan judged a config loader (for reporting);
-    ``violations`` is one string per failure, empty when clean.
-    """
+    """Run every failure class (a)-(d) — returns ``(candidates, violations)``."""
     exempt_by_path = {e.path: e for e in load_config(config_path)}
     candidates: list[str] = []
     guarded_candidates: set[str] = set()
@@ -251,10 +240,6 @@ def check(
                     "a reason"
                 )
             continue
-        # Registered — check for staleness (classes c/d). Class (c) (no longer a
-        # candidate) cannot happen here since we only reach this branch for files the
-        # loop already proved ARE candidates; a path that is no longer a candidate at
-        # all is instead caught below, after the scan, as "registered path never seen".
         if guarded:
             violations.append(
                 f"[stale-exemption] {rel_path}: registered in {config_path} as unguarded, "

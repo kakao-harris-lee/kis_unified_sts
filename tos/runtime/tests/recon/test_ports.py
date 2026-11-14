@@ -78,11 +78,7 @@ def test_witness_order_carries_quantities() -> None:
 
 
 def test_ports_module_imports_no_os_environ_or_time() -> None:
-    """Negative-grep: this package's ports carry no ambient env/clock reads.
-
-    Checks actual imports/usages, not the module docstring's own prose (which
-    legitimately mentions ``os.environ`` while disclaiming it).
-    """
+    """Negative-grep: this package's ports carry no ambient env/clock reads."""
     source = inspect.getsource(ports)
     assert "import os" not in source
     assert "import time" not in source

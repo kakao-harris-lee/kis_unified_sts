@@ -1,13 +1,4 @@
-"""Canonical JSON set ordering — the single-process pins (plan §3).
-
-The cross-process pins (five ``PYTHONHASHSEED`` values, real subprocesses) live in
-``tests/tools/test_tos_canonical_set_order.py``: ``subprocess`` is firewall-
-forbidden under ``tos/`` (``tools/tos_firewall_check.py`` TOS-FW-B), so the seed
-sweep has to be driven from outside the kernel. Everything that does **not** need
-a second process is pinned here.
-
-Plan: ``docs/plans/2026-09-24-tos-canonical-set-order-plan.md``.
-"""
+"""Canonical JSON set ordering — the single-process pins (plan §3)."""
 
 from __future__ import annotations
 
@@ -30,26 +21,10 @@ from ._set_order_builders import (
     digest_map,
 )
 
-#: Digests of the two models that still sort their own sets (it was six before
-#: plans S2-a and S2-c removed the rest), measured on
-#: ``origin/main`` ``153c8fd0`` (before this change) with the builders in
-#: ``_set_order_builders.py``. The mixed-length elements matter: with same-length
-#: elements a length-first sort key and a lexicographic one agree, and the "wrong
-#: key" mutation would pass (review-798 2차 M-3(a)).
-#:
-#: To re-derive after a deliberate field change on one of these models, run the
-#: worker against the model tree and read the printed digest:
-#:     PYTHONPATH=tos/src python -m tests.canonical._set_order_worker   # from tos/
 _PRE_HOOK_GOLDEN: dict[str, str] = {
-    # Re-derived after plan S2-a removed three DimensionKey members from the mandated
-    # floor this policy's covered `mandated` set enumerates.
     "CurrentnessPolicy": "36a05f3e3fe38892aaac0b2b209484030dacae698d453b97334b5efc7ec5785c",
     "RestrictiveFenceRecord": "85c35e3f7a2d0714772bba563c18572b78428867a1c46e7da6bfca504c77a313",
 }
-
-# --------------------------------------------------------------------------
-# Synthetic models — the hook's contract, independent of any kernel artifact
-# --------------------------------------------------------------------------
 
 
 class _Leaf(FrozenModel):
@@ -89,11 +64,7 @@ class _PlainNoSets(BaseModel):
 
 
 class _PlainNoSetsToo(BaseModel):
-    """A second, identical copy of ``_PlainNoSets`` — the noise floor's other side.
-
-    Two classes with no hook on either, so any ratio this pair reads other than
-    1.00 is the runner's, not the hook's (``_noise_floor``).
-    """
+    """A second, identical copy of ``_PlainNoSets`` — the noise floor's other side."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
@@ -126,11 +97,6 @@ class _Incomparable(FrozenModel):
     mixed: frozenset[str | None] = frozenset()
 
 
-# --------------------------------------------------------------------------
-# Hook behaviour
-# --------------------------------------------------------------------------
-
-
 def test_json_mode_sorts_sets_in_every_container_shape() -> None:
     """Every originally-set node comes out sorted; sequences keep their order."""
     elements = MIXED_LENGTH_ELEMENTS[:6]
@@ -152,7 +118,6 @@ def test_json_mode_sorts_sets_in_every_container_shape() -> None:
     assert dumped["in_tuple"][0] == expected
     assert dumped["in_dict"]["k"] == expected
     assert dumped["leaf"]["leaf_set"] == expected
-    # A tuple is order-significant to the canonicalizer and must NOT be sorted.
     assert dumped["ordered"] == ["z", "a", "m"]
 
 
@@ -220,25 +185,13 @@ def _find_container_types(node: Any, seen: set[type] | None = None) -> set[type]
 
 
 def test_incomparable_set_elements_raise_without_a_fallback_key() -> None:
-    """``frozenset[str | None]`` is hashable but not sortable — the hook must raise.
-
-    A ``key=str`` fallback would make the digest a function of the key rather
-    than of the content, so there deliberately is none. A ``frozenset`` of nested
-    models cannot exercise this (it dies earlier, unhashable) — review-798 2차
-    M-3(b). pydantic re-raises the hook's ``TypeError`` wrapped in a
-    ``PydanticSerializationError`` (a ``ValueError``), naming it in the message.
-    """
+    """``frozenset[str | None]`` is hashable but not sortable — the hook must raise."""
     model = _Incomparable(mixed=frozenset({"a", None}))
     with pytest.raises(ValueError) as raised:
         model.model_dump(mode="json")
     message = str(raised.value)
     assert "TypeError" in message
     assert "not supported between" in message
-
-
-# --------------------------------------------------------------------------
-# Conditional attachment
-# --------------------------------------------------------------------------
 
 
 def test_hook_attaches_only_to_set_bearing_classes() -> None:
@@ -256,13 +209,7 @@ def test_frozen_model_itself_carries_no_hook() -> None:
 
 
 def test_each_set_bearing_class_owns_its_serialization_node() -> None:
-    """No two classes share the schema node the hook installs — review-802 LOW-5.
-
-    pydantic may annotate a core-schema node in place; a node shared by every
-    set-bearing class would spread that annotation to all of them at once. The
-    node is a per-class copy, and the copy must still carry the same FUNCTION,
-    which is what :func:`_is_this_hook` recognises an earlier attachment by.
-    """
+    """No two classes share the schema node the hook installs — review-802 LOW-5."""
     mine = _WithSet.__pydantic_core_schema__["serialization"]
     theirs = _Nested.__pydantic_core_schema__["serialization"]
     assert mine is not theirs
@@ -271,15 +218,7 @@ def test_each_set_bearing_class_owns_its_serialization_node() -> None:
 
 
 def test_a_cached_schema_re_entered_through_a_union_stays_idempotent() -> None:
-    """A set-bearing model reached again as a union member must not be refused.
-
-    pydantic hands back the class's CACHED core schema the second time it is
-    reached, with this hook's ``serialization`` already on it. If the hook did
-    not recognise its own attachment — the copy above changes object identity,
-    so recognition has to be by function — it would read it as a foreign
-    ``model_serializer`` and raise the conflict ``TypeError`` at class-definition
-    time. Defining the holder below is the whole assertion.
-    """
+    """A set-bearing model reached again as a union member must not be refused."""
 
     class _UnionHolder(FrozenModel):
         first: _WithSet | _Nested | None = None
@@ -311,31 +250,12 @@ def test_set_bearing_class_with_its_own_model_serializer_is_refused() -> None:
                 return dict(handler(self))
 
 
-#: Paired-measurement shape. 21 rounds so the median has a unique middle; 500
-#: calls per round so a round is short enough that a scheduler excursion hits one
-#: round, not the whole measurement.
 _COST_ROUNDS = 21
 _COST_CALLS = 500
 
 
 def _dump_cost_ratio(model: BaseModel, baseline: BaseModel, mode: str) -> float:
-    """Median of per-round cost ratios — ``model`` over ``baseline``.
-
-    review-802 MEDIUM-1: the previous shape measured each side to completion and
-    divided the two minima, which made the ratio a function of what the runner
-    was doing BETWEEN the two measurements. Measured over 60 repetitions on an
-    idle host, a control of ``_PlainNoSets`` against an identical second plain
-    class — no hook on either side, so the true ratio is 1.00 — spread 0.42 to
-    2.73 and crossed the old 1.6 bound 1-2 times in 60. The bound was therefore
-    not measuring the hook.
-
-    Two changes fix it. The two sides are measured in the SAME round, adjacent in
-    time, so a frequency or scheduler excursion moves both. And the per-round
-    ratios are reduced by MEDIAN, not by taking a minimum of each side
-    independently, so a single bad round cannot move the answer. Same 60
-    repetitions with this shape: control 0.910-1.073, set-free 0.895-1.097,
-    set-bearing 1.683-2.683.
-    """
+    """Median of per-round cost ratios — ``model`` over ``baseline``."""
     ratios = []
     for _ in range(_COST_ROUNDS):
         hooked = timeit.timeit(lambda: model.model_dump(mode=mode), number=_COST_CALLS)
@@ -347,28 +267,13 @@ def _dump_cost_ratio(model: BaseModel, baseline: BaseModel, mode: str) -> float:
 
 
 def _noise_floor(mode: str) -> float:
-    """The same measurement run against two classes that are genuinely identical.
-
-    Whatever this reads above 1.00 is the runner's own asymmetry, not a hook.
-    """
+    """The same measurement run against two classes that are genuinely identical."""
     return _dump_cost_ratio(_PlainNoSets(), _PlainNoSetsToo(), mode)
 
 
 @pytest.mark.parametrize("mode", ["python", "json"])
 def test_classes_without_sets_pay_nothing_for_the_hook(mode: str) -> None:
-    """A set-free ``FrozenModel`` dumps as fast as the same model without the mixin.
-
-    This is the plan §2.1 exit condition. The GATE is structural and has a
-    concrete failing input: attaching the hook unconditionally — the shape the
-    plan rejects — leaves a ``serialization`` entry on a set-free class's core
-    schema, and that is a fact about the schema, not about a stopwatch.
-
-    The cost bound corroborates it, and is stated relative to a measured noise
-    floor (control = plain against an identical plain class) so a loaded runner
-    loosens it instead of failing it. Both halves are RED under the unconditional
-    attachment mutation: the structural one always, and the cost one because the
-    set-free ratio then lands in the set-bearing band (>= 1.68 measured).
-    """
+    """A set-free ``FrozenModel`` dumps as fast as the same model without the mixin."""
     assert _NoSets.__pydantic_core_schema__.get("serialization") is None, (
         "a set-free FrozenModel kept a serialization entry — the hook attached "
         "where it must not, and every dump of every such class now pays for a "
@@ -386,20 +291,9 @@ def test_classes_without_sets_pay_nothing_for_the_hook(mode: str) -> None:
 
 @pytest.mark.parametrize("mode", ["python", "json"])
 def test_the_cost_pin_can_actually_see_the_hook(mode: str) -> None:
-    """Positive control: the set-bearing model IS measurably slower.
-
-    Without this, ``test_classes_without_sets_pay_nothing_for_the_hook`` could be
-    green because the measurement is blind rather than because the hook is
-    absent — the failure shape this repo keeps meeting. Lowest of 60 repetitions
-    with the paired estimator: 1.68 (python) / 2.40 (json).
-    """
+    """Positive control: the set-bearing model IS measurably slower."""
     ratio = _dump_cost_ratio(_WithSet(), _PlainWithSet(), mode)
     assert ratio > 1.3, f"the hook costs nothing measurable ({ratio:.2f}x)"
-
-
-# --------------------------------------------------------------------------
-# Digest pins
-# --------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -408,12 +302,7 @@ def test_the_cost_pin_can_actually_see_the_hook(mode: str) -> None:
 def test_previously_sorted_models_are_bit_compatible(
     model_cls: type[DigestBoundArtifact],
 ) -> None:
-    """The models that already sorted keep their exact pre-hook digest.
-
-    RED when the hook orders sets by anything other than ``sorted()`` — the
-    per-model sorters this change deleted used plain ``sorted()``, so any other
-    key (a length-first canonical token, say) moves these bytes.
-    """
+    """The models that already sorted keep their exact pre-hook digest."""
     scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
     instance = build_instance(model_cls)
     digest = scheme.compute_digest(instance.covered_content())
@@ -434,16 +323,7 @@ def test_digest_map_covers_every_pinned_surface() -> None:
         CONTROL_KEY,
     }
     assert set(digests) == expected
-    # Five: the original 17 less the seven safety-mesh models (plan S2-a), the two
-    # nontrade Trial* models, and the sbr trio + StatementCoverageManifest (plan
-    # S2-c). Measured against the tuple, not hand-counted -- a removal that forgets
-    # this line is what the number catches.
     assert len(COVERED_SET_MODELS) == 5
-
-
-# --------------------------------------------------------------------------
-# Alias ban — the hook's one silent-miss case that new code could introduce
-# --------------------------------------------------------------------------
 
 
 def _aliased_set_fields(model_cls: type[BaseModel]) -> list[str]:
@@ -474,12 +354,7 @@ def _all_frozen_model_subclasses() -> list[type[FrozenModel]]:
 
 
 def test_no_set_field_carries_an_alias() -> None:
-    """``by_alias=True`` would dump the alias as the key and skip the sort.
-
-    The walk pairs the dumped key with ``getattr(model, key)``, so an aliased set
-    field is simply not found and stays unsorted, with no warning. Forbidding the
-    alias is cheaper than teaching the hook about them (there are zero today).
-    """
+    """``by_alias=True`` would dump the alias as the key and skip the sort."""
     offenders = {
         f"{cls.__module__}.{cls.__qualname__}": aliased
         for cls in _all_frozen_model_subclasses()

@@ -1,10 +1,4 @@
-"""tos/runtime/tests/compose — hermetic fixtures (D1.4: tmp_path only, no
-external network, no ambient env). Builds a fully-valued config directory, a
-D4 custody directory (manifest + scope files + generation-numbered evidence
-key + an approvals/ directory), and a data directory — everything
-:func:`tos_runtime.compose.root.compose_paper_runtime` needs to construct
-successfully.
-"""
+"""tos/runtime/tests/compose — hermetic fixtures (D1.4: tmp_path only, no"""
 
 from __future__ import annotations
 
@@ -26,39 +20,18 @@ from ..venue._documents import ocp_yaml, venue_policy_yaml
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: This suite's single scope coordinates for the governed venue/OCP policies (TOS venue
-#: constraint service wave, plan §2 decision 9) — MUST match ``_fixtures.py``'s own
-#: ACCOUNT/INSTRUMENT/INSTRUMENT_CLASS constants and this fixture's own ``environment_label``
-#: ("non-live-test") and ``calendar.yaml`` (below): the loader's scope cross-check requires an
-#: exact match, and the admitting-phase tokens must be ones ``calendar.yaml`` actually declares
-#: for that instrument class.
 _VENUE_POLICY_ENVIRONMENT = "non-live-test"
 _VENUE_POLICY_ACCOUNT = "88888888-01"
 _VENUE_POLICY_INSTRUMENT = "ES"
 _VENUE_POLICY_INSTRUMENT_CLASS = "krx-index-futures"
-#: The ONE session-phase token this fixture's ``calendar.yaml`` (below) declares for
-#: ``krx-index-futures`` — the ONLY token an admitting-phase rule may legally name.
 _VENUE_POLICY_ADMITTING_PHASE = "CONTINUOUS"
 
-#: The shipped example (TOS Phase 4 plan §2 decisions 1-2, G-4) — this
-#: fixture only fills the one named-TBD field (``active_scope``), never
-#: hand-retypes the scope table, so the compose e2e suite exercises the SAME
-#: config a real deployment would start from.
 _BROKER_SCOPES_EXAMPLE_PATH = (
     Path(__file__).resolve().parents[2] / "config" / "broker_scopes.example.yaml"
 )
 
-#: The digest compose_paper_runtime computes for its own RuntimeIdentity.code_digest
-#: (tos_runtime.compose._wiring._build_identity: the installed source-tree digest,
-#: tos_runtime.operations.dependency_admission.observe_source_tree_digest). Reproduced
-#: here (pure function, same measurement, same installed tree the test process itself
-#: runs from) so release.yaml can match it exactly.
 EXPECTED_CODE_DIGEST = observe_source_tree_digest()
 
-#: The digest compose_paper_runtime computes for its STAGE A/B dependency-set
-#: observation (tos_runtime.operations.dependency_admission
-#: .observe_dependency_set_digest) — the installed distribution set this test process
-#: itself is running under.
 EXPECTED_DEPENDENCY_SET_DIGEST = observe_dependency_set_digest()
 
 
@@ -71,32 +44,7 @@ def _chmod_600(path: Path) -> None:
 
 
 def call_wrapped_fixture(fixture_func: object, *args: object) -> Path:
-    """Call the plain function a ``@pytest.fixture``-decorated callable wraps, bypassing
-    pytest's own guard against calling a fixture directly. ``config_dir``/``data_dir``/
-    ``custody_root``/``config_dir_with_risk_state`` below are each parametrized only by plain
-    arguments (verified by reading their signatures), so a caller building an independent root
-    can drive the SAME fixture-writing logic every other e2e test in this package relies on,
-    just against a fresh root. ``__wrapped__`` reaches that original function.
-
-    The ignore below is a **choice, not a necessity** — pytest 9.0.2's
-    ``FixtureFunctionDefinition._get_wrapped_function()`` returns the same function and type-checks
-    clean without it. It is not used because it is a private method on a class that pytest does not
-    export (``pytest.FixtureFunctionDefinition`` does not exist; the class lives in the top-level
-    private ``_pytest.fixtures``), so depending on it would break on any internal refactor.
-    ``__wrapped__`` rests on the ``functools.update_wrapper`` convention instead, which is a far
-    more stable contract — at the cost of one ignore, kept here as this module's single place for
-    the gap so call sites stay clean. **If pytest ever exports the accessor, prefer it and drop
-    the ignore.**
-
-    ``fixture_func`` is deliberately typed ``object`` rather than ``Callable[..., Path]``:
-    ``FixtureFunctionDefinition.__call__`` is defined to ``fail()``, so a callable annotation would
-    be a type the object does not actually honour. That looseness is also why the ``isinstance``
-    below earns its keep: a caller can always pass a fixture returning something other than
-    ``Path`` — Python does not enforce annotations — and with ``object`` mypy will not flag it
-    either, so this check is the only thing between a wrong fixture and a confusing downstream
-    failure. It does fire (verified by passing a real ``@pytest.fixture``-decorated ``str``
-    fixture); that is a runtime fact, not a mypy-reachability one.
-    """
+    """Call the plain function a ``@pytest.fixture``-decorated callable wraps, bypassing"""
     result = fixture_func.__wrapped__(*args)  # type: ignore[attr-defined]
     assert isinstance(result, Path)
     return result
@@ -138,11 +86,6 @@ def config_dir(tmp_path: Path) -> Path:
         directory / "authority.yaml",
         {
             "containment_bound_ms": 60_000,
-            # Matches write_approval_file's own
-            # trading_approval_policy_generation=1 below, so
-            # IntentRegistry.decision_current's generation-equality check
-            # (tos_runtime.authority.iap, landed by lane P 2026-09-08) holds
-            # for every approval file this fixture module writes.
             "trading_approval_policy_generation": 1,
         },
     )
@@ -172,27 +115,11 @@ def config_dir(tmp_path: Path) -> Path:
         directory / "currentness.yaml",
         {
             "B_capability_claim_to_send": 500,
-            # MEDIUM-3: the operator-declared CURRENTNESS_POLICY dimension set — the
-            # full mandated floor, same as production would declare correctly.
             "required_dimensions": sorted(
                 key.value for key in MANDATED_DIMENSION_FLOOR
             ),
         },
     )
-    # TOS Phase 5 W5 (plan §2 decisions 1-4): egress_attestations.yaml is retired to
-    # zero -- venue_session_account_facts_current now has a real runtime owner
-    # (tos_runtime.calendar.owner.SessionFactsOwner via calendar.yaml below), so this
-    # file is deliberately NOT written here any more (a leftover file refuses boot --
-    # RetiredConfigPresent, tests/compose/test_session_wiring.py). This fixture's
-    # calendar is deliberately permissive (one full-day CONTINUOUS window, every
-    # day of the week, no holidays) so every OTHER compose e2e test's happy path keeps
-    # reaching an ADMISSIBLE step 3 / SATISFIED item 12 (for the non-broker-reaching
-    # SYNTHETIC_FUTURES_ORDER scope this suite activates below) regardless of which
-    # instant the test's own wall-clock fixture injects -- see the window's own `end`
-    # comment below for what "full-day" costs to actually mean; tests/compose/
-    # test_session_wiring.py exercises the interesting negative paths (holiday,
-    # after-hours, absent wall clock, calendar-version mismatch) with their OWN,
-    # narrower calendar configs.
     _write_yaml(
         directory / "calendar.yaml",
         {
@@ -204,34 +131,6 @@ def config_dir(tmp_path: Path) -> Path:
                     {
                         "phase": "CONTINUOUS",
                         "start": "00:00",
-                        # END-EXCLUSIVE: tos_runtime.calendar.phase._active_window_at
-                        # matches `start_dt <= instant_local < end_dt`, and an instant is
-                        # always built from an integer unix MILLISECOND (`_to_local`), so
-                        # this value admits every instant of the day a composed runtime can
-                        # observe (the largest is 23:59:59.999000 local).
-                        #
-                        # It used to read "23:59", which left 23:59:00.000-23:59:59.999 KST
-                        # CLOSED while this comment claimed a full-day window -- a suite that
-                        # was green except for one minute a day. tos-firewall CI run
-                        # 38755871346 ran through that minute and two compose e2e tests that
-                        # boot the PRODUCTION-DEFAULT wall clock went red:
-                        # test_session_wiring.py::test_production_default_wall_clock_boots_
-                        # with_real_session_facts (step 3 folded CLOSED) and test_run_e2e.py::
-                        # test_cli_main_run_argv_path_composes_and_actually_ticks (the tick
-                        # scheduler skips every pass while `session_context.is_open` is false).
-                        # Both now PIN that instant (_fixtures.LAST_MINUTE_OF_DAY_UNIX_MS), and
-                        # test_session_wiring.py::test_shared_compose_calendar_admits_every_
-                        # instant_of_the_day states this window's claim at the instants that
-                        # can falsify it.
-                        #
-                        # Not "24:00": `_parse_time_field` parses with
-                        # `datetime.time.fromisoformat`, which refuses it ("hour must be in
-                        # 0..23", measured), and a non-crossing window additionally requires
-                        # end > start. Not a `crosses_midnight` pair either: `trading_date_at`
-                        # returns None for a crossing window BY DESIGN (plan 2026-09-26 egress
-                        # trading date §2 decision 3), which would make the egress trading date
-                        # present or absent depending on the time of day -- trading one
-                        # wall-time dependence for another.
                         "end": "23:59:59.999999",
                         "days": ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"],
                         "crosses_midnight": False,
@@ -242,15 +141,6 @@ def config_dir(tmp_path: Path) -> Path:
             "futures_expiry": {},
         },
     )
-    # TOS venue constraint service wave (plan §2 decisions 1/2/6/9) — the two governed policy
-    # YAMLs `build_venue_service` loads. Every numeric shape bound below reproduces this
-    # suite's OWN pre-wave fixture values (formerly `_fixtures.py::venue_shape_constraints`) so
-    # every existing e2e test's happy path keeps folding the SAME admissible shape at step 3:
-    # the crossing event's own "close" value (4_499_000, `_fixtures.CROSSING_CLOSE`) is the
-    # price step 3 actually resolves (shape_price_field_key="close" projects off the tick's own
-    # value view, never the injected `order_shape().price` stand-in — see
-    # `tos.egressgw.construction.VenueConstraintStage._shape_for`'s own docstring), and
-    # 1_000 <= 4_499_000 <= 9_000_000 with (4_499_000 - 1_000) % 500 == 0.
     (directory / "venue_constraint_policy.yaml").write_text(
         venue_policy_yaml(
             environment=_VENUE_POLICY_ENVIRONMENT,
@@ -265,14 +155,8 @@ def config_dir(tmp_path: Path) -> Path:
             lot_size="2",
             min_quantity="2",
             max_quantity="100",
-            # Both NEW_LONG and NEW_SHORT admit the SAME token — one shared config_dir
-            # fixture serves both the LONG (test_compose_root.py) and SHORT
-            # (test_symmetry.py) e2e suites (plan §2 decision 8 mirroring).
             admitting_phases=f'["{_VENUE_POLICY_ADMITTING_PHASE}"]',
             admitting_phases_short=f'["{_VENUE_POLICY_ADMITTING_PHASE}"]',
-            # CLOSE too, as every shipped tenant tree declares it (#960): an exit's action
-            # class is CLOSE from step 2 on, and an unenumerated action is INADMISSIBLE at
-            # step 3. Same token again — the one this calendar.yaml declares.
             action_classes='["NEW_LONG", "NEW_SHORT", "CLOSE"]',
             admitting_phases_close=f'["{_VENUE_POLICY_ADMITTING_PHASE}"]',
         ),
@@ -283,15 +167,10 @@ def config_dir(tmp_path: Path) -> Path:
             environment=_VENUE_POLICY_ENVIRONMENT,
             account=_VENUE_POLICY_ACCOUNT,
             instrument=_VENUE_POLICY_INSTRUMENT,
-            # synthetic transport (this suite's default) requires wire_codec: null.
             wire_codec="null",
         ),
         encoding="utf-8",
     )
-    # The slim monitor's own bounds (tos_runtime.compose._monitor_wiring) — a minimal
-    # fixture so every compose e2e test's happy path exercises a genuinely healthy
-    # monitor, not a fabricated one. The four safety-mesh policy documents that used to
-    # sit here went with plan S2-a along with the services that read them.
     _write_yaml(
         directory / "monitor_coverage.yaml",
         {
@@ -307,9 +186,6 @@ def config_dir(tmp_path: Path) -> Path:
     _write_yaml(
         directory / "egress_coordinates.yaml",
         {
-            # Mirrors the literals _wiring.py's _build_context_resolver used
-            # to hardcode (kernel round #1 §7.2 survey) — see
-            # tos_runtime.compose._egress_coordinates's own module docstring.
             "endpoint": {"value": "synthetic://paper/order"},
             "action": {"value": "NEW_ORDER"},
             "method": {"value": "SUBMIT"},
@@ -324,10 +200,6 @@ def config_dir(tmp_path: Path) -> Path:
     broker_scopes_raw = yaml.safe_load(
         _BROKER_SCOPES_EXAMPLE_PATH.read_text(encoding="utf-8")
     )
-    # The example's ONE named-TBD field (module docstring) — this compose
-    # e2e suite activates the same SYNTHETIC scope _wiring.py's old
-    # hardcoded transport literal represented (G-4, now structurally
-    # derived instead — tos_runtime.brokercap.scopes).
     broker_scopes_raw["active_scope"] = "SYNTHETIC_FUTURES_ORDER"
     _write_yaml(directory / "broker_scopes.yaml", broker_scopes_raw)
     _write_yaml(
@@ -351,45 +223,23 @@ def config_dir(tmp_path: Path) -> Path:
     _write_yaml(
         directory / "engine_driver.yaml",
         {
-            # TOS Phase 3 Wave 1 Lane A-R — a boot-time cost bound, not a
-            # safety threshold (tos_runtime.compose._engine_wiring's own
-            # module docstring); large enough to cover every event this
-            # suite's compose end-to-end tests ever admit in one process.
             "replay_window_events": 1000,
         },
     )
     _write_yaml(
         directory / "coordinator_preconditions.yaml",
         {
-            # TOS Phase 3 Wave 2 Lane B-R (design #31 §9-10; plan §2.1) — the
-            # ONLY governance posture tos_runtime.compose._preconditions has
-            # wiring for today (ADR-002-025; tos-spec's own
-            # AUTHORITY-STATUS.csv "restricted_live,NOT_AUTHORIZED" row).
-            # This compose e2e suite's synthetic (reaches_broker=False)
-            # transport is exactly the case this posture admits.
             "live_authorization_state": "NOT_AUTHORIZED",
-            # T2 lane B (plan §2 decision 7 / §7 operator disposition row 1)
-            # — this compose e2e suite's active scope is the SYNTHETIC one
-            # (reaches_broker=False), which never reaches this posture at
-            # all (gate ② already admits it), so the value here is inert for
-            # every existing e2e test; `false` is the honest "not
-            # operator-admitted" default, never a silent grant.
             "nonlive_broker_consuming": {"admitted": False},
         },
     )
     _write_yaml(
         directory / "finality.yaml",
         {
-            # TOS Phase 3 Wave 2 Lane C-R follow-up (team-lead CR-4 dispatch,
-            # plan §2.2) — the SYNTHETIC post-trade finality policy every
-            # SyntheticFinalityProducer this compose root wires needs.
             "currency": "KRW",
             "value_date": "2026-09-09",
             "source_revision": "compose-e2e-rev-1",
             "proof_recipe_id": "compose-e2e-recipe-1",
-            # TOS Phase 5 W2-R (plan §10 row ④) — large enough that no compose e2e test's
-            # synchronous run ever crosses it, so the obligation-expiry evidence stays absent
-            # unless a test deliberately advances the injected clock past it.
             "release_proof_wait_ms": 3_600_000,
         },
     )
@@ -413,9 +263,7 @@ def config_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def mismatched_release_config_dir(config_dir: Path) -> Path:
-    """A copy of ``config_dir`` whose ``release.yaml`` carries a code digest
-    that does NOT match ``RuntimeIdentity.code_digest`` — for the release-
-    admission-refusal test (scenario 7)."""
+    """A copy of ``config_dir`` whose ``release.yaml`` carries a code digest"""
     _write_yaml(
         config_dir / "release.yaml",
         {
@@ -434,34 +282,13 @@ def mismatched_release_config_dir(config_dir: Path) -> Path:
     return config_dir
 
 
-#: The TOS risk state service wave's own governed dimension id — see
-#: :func:`config_dir_with_risk_state`'s own docstring for why this lives on a SEPARATE,
-#: opt-in fixture rather than mutating ``config_dir`` itself.
 _RISK_STATE_DIMENSION_ID = "ACCOUNT::GROSS_NOTIONAL"
 _RISK_STATE_ENVELOPE_MAX = "100000"
 
 
 @pytest.fixture()
 def config_dir_with_risk_state(config_dir: Path) -> Path:
-    """``config_dir`` PLUS the two TOS risk state service wave governed policy instances
-    (TOS risk state service wave, plan §1 "합성 paper e2e" acceptance) — an OPT-IN layered
-    fixture, mirroring :func:`mismatched_release_config_dir`'s own "copy of config_dir with
-    one more thing written into it" idiom, so the ~400 OTHER compose e2e tests that request
-    ``config_dir`` directly are completely unaffected (each test's own ``config_dir``
-    invocation is a fresh ``tmp_path``-scoped directory; this fixture only ever mutates the
-    ONE instance a test that actually depends on it receives).
-
-    Adds, on top of the base fixture:
-
-    * ``aggregate_risk_policy.yaml`` / ``action_flow_policy.yaml`` scoped to this suite's own
-      ``fx.ACCOUNT``/``fx.INSTRUMENT``, covering both ``NEW_LONG``/``NEW_SHORT`` action
-      classes (plan §5 실증 (7) NEW_SHORT mirror), with generous limits
-      (``_RISK_STATE_ENVELOPE_MAX`` / ``100`` afg.ORDER) so a single crossing-event attempt's
-      real derived quantity has ample headroom, and
-      ``concurrent_consumers_share_one_envelope: true`` — REQUIRED (not the lane a fixture
-      builder's own ``false`` default) for ``tos.afg.amplification_bounded`` to ever GRANT
-      (§11 line 294's own positive-``True`` requirement).
-    """
+    """``config_dir`` PLUS the two TOS risk state service wave governed policy instances"""
     are_path = config_dir / "aggregate_risk_policy.yaml"
     are_path.write_text(
         aggregate_risk_policy_yaml(
@@ -499,7 +326,7 @@ def custody_root(tmp_path: Path) -> Path:
     directory = tmp_path / "custody"
     directory.mkdir()
     uid = os.getuid()
-    del uid  # files are owned by the test process itself already
+    del uid
 
     _write_yaml(
         directory / "custody.manifest.yaml",
@@ -533,10 +360,6 @@ def custody_root(tmp_path: Path) -> Path:
         scope_path.write_bytes(content)
         _chmod_600(scope_path)
 
-    # tos_runtime.custody.key_provider.FileKeyProvider scans for
-    # evidence.key.<generation> files directly under custody_root — a
-    # DIFFERENT convention from the manifest-driven "evidence.key" scope
-    # file above (see tos_runtime/custody/key_provider.py's own docstring).
     key_path = directory / "evidence.key.1"
     key_path.write_bytes(b"compose-hmac-signing-key-generation-1")
     _chmod_600(key_path)
@@ -552,23 +375,7 @@ def write_approval_file(
     environment_label: str,
     approved_intent_envelope_digest: str,
 ) -> Path:
-    """Write one operator-authored IAP decision file
-    (``approvals/<proposal_digest>.yaml`` — see
-    ``tos_runtime.authority.iap.load_operator_approval_file``).
-
-    ``approved_intent_envelope_digest`` MUST be the REAL
-    ``tos.ioc.ApprovedIntentContract.canonical_digest`` step 2
-    (``OrderConstructionStage``) built for this exact attempt (e.g.
-    ``runtime.construction_stage.construction.intent.canonical_digest``,
-    read AFTER the run that produced it) — never a placeholder string.
-    ``ComposeContextResolver``'s ``_envelope_equivalent_provider``
-    (``tos_runtime.compose._wiring``) structurally compares this field
-    against that live digest via ``tos.iap.exact_binding_holds``, so a
-    placeholder here would make step 4 (``INDEPENDENT_APPROVAL``) DENY
-    every time (a mismatch, not a permissive default) — matching this
-    fixture's own digest to a real one is required for the honest ADMIT
-    path, not for any weakened check.
-    """
+    """Write one operator-authored IAP decision file"""
     path = custody_root / "approvals" / f"{proposal_digest}.yaml"
     _write_yaml(
         path,

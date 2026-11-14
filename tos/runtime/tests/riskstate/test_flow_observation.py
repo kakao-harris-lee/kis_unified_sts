@@ -1,5 +1,4 @@
-"""Tests for :mod:`tos_runtime.riskstate.flow_observation` (TOS risk state service wave,
-lane a)."""
+"""Tests for :mod:`tos_runtime.riskstate.flow_observation` (TOS risk state service wave,"""
 
 from __future__ import annotations
 
@@ -57,9 +56,6 @@ def test_empty_ports_yield_all_zero_observation(
     assert obs.queue_depth == 0
     assert obs.in_flight == 0
     assert obs.attempts_for_cause == 0
-    # TOS action-flow observation completion wave (2026-09-16): a completed durable-evidence
-    # scan with no matches is a genuine 0, never None (module docstring's own "Two dedup
-    # layers"/"replays" sections) — never None-by-omission.
     assert obs.duplicates_rejected == 0
     assert obs.replays == 0
     assert obs.replays_definition == REPLAYS_DEFINITION
@@ -86,7 +82,7 @@ def test_attempt_traced_to_root_via_event_id(
     obs = reader.observe(root_event_id=_ROOT, attempt_id="a1")
     assert obs.lineage_found is True
     assert obs.attempts_for_cause == 1
-    assert obs.in_flight == 1  # sealed, no terminal result
+    assert obs.in_flight == 1
 
 
 def test_attempt_traced_to_root_via_causal_predecessor(
@@ -135,8 +131,7 @@ def test_absent_attempt_id_is_lineage_none(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """M2's own scenario: an attempt this reader never saw sealed at all stays UNKNOWN, never
-    fabricated ``True``."""
+    """M2's own scenario: an attempt this reader never saw sealed at all stays UNKNOWN, never"""
     reader = InboxFlowReader(inbox, evidence_store, rcl_log)
     obs = reader.observe(root_event_id=_ROOT, attempt_id="never-sealed")
     assert obs.lineage_found is None
@@ -175,19 +170,9 @@ def test_queue_depth_reflects_inbox_unconsumed_count(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    # A real EngineEvent needs a full DecisionContextCapsule (many required fields); rather
-    # than construct one just to exercise `unconsumed_count`, this test asserts the READER
-    # surfaces whatever the inbox itself reports — verified against the inbox's own public
-    # counter directly (a real read, no EngineEvent construction needed for the empty case).
     reader = InboxFlowReader(inbox, evidence_store, rcl_log)
     obs = reader.observe(root_event_id=_ROOT, attempt_id="a1")
     assert obs.queue_depth == inbox.unconsumed_count == 0
-
-
-# ===========================================================================
-# count_duplicate_dispositions / count_recovery_markers (pure helpers, TOS
-# action-flow observation completion wave, 2026-09-16)
-# ===========================================================================
 
 
 def test_count_duplicate_dispositions_empty_scan_is_zero() -> None:
@@ -220,17 +205,9 @@ def test_count_recovery_markers_ignores_unrelated_event_id() -> None:
 
 
 def test_count_recovery_markers_counts_each_recovery_kind() -> None:
-    """Both marker kinds (module docstring's own :data:`_RECOVERY_MARKER_KINDS`) count when
-    keyed to a matching ``event_id`` — the helper itself is kind-agnostic (the caller reads
-    both kinds into one combined list), so this pins that neither kind is silently dropped.
-    """
+    """Both marker kinds (module docstring's own :data:`_RECOVERY_MARKER_KINDS`) count when"""
     payloads: list[dict[str, object]] = [{"event_id": "root-1"}, {"event_id": "root-1"}]
     assert count_recovery_markers(payloads, root_event_ids=frozenset({"root-1"})) == 2
-
-
-# ===========================================================================
-# InboxFlowReader.observe — real evidence-store integration (dedup/replay axes)
-# ===========================================================================
 
 
 def test_observe_counts_duplicate_disposition_from_real_evidence_store(
@@ -238,11 +215,7 @@ def test_observe_counts_duplicate_disposition_from_real_evidence_store(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """Integration pin: a REAL ``RESULT_UNMATCHED`` row shaped exactly like
-    ``tos/src/tos/engine/core.py:705-720``'s own emission (``result_disposition="DUPLICATE"``,
-    ``attempt_id``) durably yields ``duplicates_rejected == 1`` — never ``None`` — for a cause
-    the attempt traces to via ``SEND_SEALED`` lineage. ``replays`` stays a genuine ``0`` (no
-    recovery marker was ever seeded, and no ``root_event_seq`` was supplied either)."""
+    """Integration pin: a REAL ``RESULT_UNMATCHED`` row shaped exactly like"""
     seed_send_sealed(
         evidence_store,
         attempt_id="a1",
@@ -272,9 +245,7 @@ def test_observe_ignores_duplicate_disposition_outside_cause(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """A ``DUPLICATE``-disposition row for an attempt that never sealed against THIS root
-    (never a member of ``cause_attempts``) is never counted — the scan still completes and
-    returns a genuine ``0``, not ``None``."""
+    """A ``DUPLICATE``-disposition row for an attempt that never sealed against THIS root"""
     seed_egress_result(
         evidence_store,
         kind="RESULT_UNMATCHED",
@@ -294,12 +265,7 @@ def test_observe_counts_recovery_marker_for_resolved_root_event(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """Integration pin: a REAL restart-recovery marker keyed to the CURRENT row's own
-    content-addressed ``event_id`` (read back via
-    :meth:`InboxFlowReader._resolve_handling_started`'s own ``EVENT_HANDLING_STARTED``
-    lookup, the SAME write-ahead idiom ``EngineDriver._process_next`` uses) durably yields
-    ``replays >= 1`` — never ``None``, never silently zero for a genuinely matching marker.
-    """
+    """Integration pin: a REAL restart-recovery marker keyed to the CURRENT row's own"""
     payload = EgressResultPayload(
         instrument_key=InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),
         attempt_id="a1",
@@ -335,8 +301,7 @@ def test_observe_ignores_recovery_marker_for_a_different_event(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """A recovery marker keyed to an unrelated ``event_id`` is never counted for this root —
-    the scan still completes and returns a genuine ``0``, not ``None``."""
+    """A recovery marker keyed to an unrelated ``event_id`` is never counted for this root —"""
     seed_recovery_marker(
         evidence_store,
         kind="HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND",
@@ -350,13 +315,7 @@ def test_observe_ignores_recovery_marker_for_a_different_event(
 def _seed_real_handling_started(
     inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore, *, attempt_id: str
 ) -> tuple[str, int]:
-    """Enqueues one real ``EgressResultPayload`` event and durably marks it "handling
-    started" — the SAME write-ahead idiom :meth:`test_observe_counts_recovery_marker_for_
-    resolved_root_event` above already exercises, split out so the two new
-    ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND``-kind tests below (review HIGH, PR #707: the
-    prior suite never seeded this SECOND marker kind at all — removing it from
-    ``_RECOVERY_MARKER_KINDS`` stayed green) don't repeat the setup. Returns the row's own
-    ``(content-addressed event_id, inbox seq)``."""
+    """Enqueues one real ``EgressResultPayload`` event and durably marks it "handling"""
     payload = EgressResultPayload(
         instrument_key=InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),
         attempt_id=attempt_id,
@@ -382,14 +341,7 @@ def test_observe_counts_handling_interrupted_possibly_live_send_marker(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """Review HIGH (PR #707): pins the SECOND recovery marker kind specifically —
-    ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND`` (the halt path,
-    ``tos_runtime/engine/driver.py:517-528``, ``record_halt``'s own payload shape, which also
-    carries ``handling_started_evidence_seq`` alongside ``event_id`` — cited and reproduced by
-    :func:`~tests.riskstate.conftest.seed_recovery_marker`'s own ``handling_started_evidence_
-    seq`` argument). A mutation dropping this kind from ``_RECOVERY_MARKER_KINDS`` must fail
-    this exact assertion (the prior suite only ever seeded the OTHER kind,
-    ``DECISION_TICK_DROPPED_ON_RECOVERY``, so that mutation previously stayed green)."""
+    """Review HIGH (PR #707): pins the SECOND recovery marker kind specifically —"""
     event_id, seq = _seed_real_handling_started(inbox, evidence_store, attempt_id="a1")
     seed_recovery_marker(
         evidence_store,
@@ -407,11 +359,7 @@ def test_observe_counts_both_recovery_marker_kinds_together(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """Review HIGH (PR #707): one marker of EACH kind for the SAME root event durably sums
-    to ``replays == 2`` — pins that :func:`count_recovery_markers` is kind-agnostic once fed
-    both kinds' payloads (:meth:`InboxFlowReader._count_amplification_axes` reads both kinds
-    into one combined list before counting), not merely tolerant of either kind alone.
-    """
+    """Review HIGH (PR #707): one marker of EACH kind for the SAME root event durably sums"""
     event_id, seq = _seed_real_handling_started(inbox, evidence_store, attempt_id="a1")
     seed_recovery_marker(
         evidence_store,
@@ -429,11 +377,6 @@ def test_observe_counts_both_recovery_marker_kinds_together(
     assert obs.replays == 2
 
 
-# ===========================================================================
-# committed_flow_vectors
-# ===========================================================================
-
-
 def test_committed_flow_vectors_empty_when_no_permit_entries(
     rcl_log: SqliteCommitLog,
 ) -> None:
@@ -443,9 +386,7 @@ def test_committed_flow_vectors_empty_when_no_permit_entries(
 def test_committed_flow_vectors_reports_unknown_magnitude_per_committed_permit(
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """A real ``CommandType.ISSUE_ACTION_FLOW_PERMIT`` entry is proven to exist but its
-    magnitude cannot be read back (module docstring's own extensive gap disclosure) — this
-    function reports it as an UNKNOWN-magnitude component, never a fabricated number."""
+    """A real ``CommandType.ISSUE_ACTION_FLOW_PERMIT`` entry is proven to exist but its"""
     identity = RuntimeIdentity(cell_id="test-cell", process_nonce="test-nonce-1")
     epoch = rcl_log.acquire_epoch(identity)
     entry = CommitEntry(
@@ -474,11 +415,6 @@ def test_committed_flow_vectors_ignores_non_permit_entries(
     )
     rcl_log.append_cas(entry, expected_seq=-1, writer_epoch=epoch)
     assert committed_flow_vectors(rcl_log, flow_dimension_id="afg.ORDER") == ()
-
-
-# ===========================================================================
-# to_observed_amplification (M3: queries pin)
-# ===========================================================================
 
 
 def test_to_observed_amplification_queries_always_zero() -> None:
@@ -529,9 +465,7 @@ def test_to_observed_amplification_none_attempts_propagate() -> None:
 
 
 def test_declares_every_bound_pin_still_requires_full_envelope() -> None:
-    """Regression pin: :class:`~tos.afg.ActionAmplificationEnvelope` still requires every axis
-    declared (unrelated to this module's own pure functions, but exercised so a future change
-    to the kernel envelope shape is caught here too)."""
+    """Regression pin: :class:`~tos.afg.ActionAmplificationEnvelope` still requires every axis"""
     envelope = ActionAmplificationEnvelope(
         max_fan_out=1,
         max_depth=1,
@@ -546,11 +480,6 @@ def test_declares_every_bound_pin_still_requires_full_envelope() -> None:
         max_amplification_per_cause=Decimal(1),
     )
     assert envelope.declares_every_bound() is True
-
-
-# ===========================================================================
-# to_action_cause
-# ===========================================================================
 
 
 def test_to_action_cause_lineage_attested_follows_lineage_found_true() -> None:
@@ -583,8 +512,7 @@ def test_to_action_cause_lineage_attested_follows_lineage_found_true() -> None:
 
 
 def test_to_action_cause_lineage_none_is_inconsistent_unknown_never_attested() -> None:
-    """M2's own red scenario: an attempt not found in the inbox at all is ``inconsistent=None``
-    (UNKNOWN) and NEVER ``lineage_attested=True`` without a real inbox read."""
+    """M2's own red scenario: an attempt not found in the inbox at all is ``inconsistent=None``"""
     obs = FlowObservation(
         queue_depth=0,
         in_flight=0,
@@ -707,23 +635,7 @@ def test_handling_started_monotonic_resolves_from_a_real_inbox_row(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """HIGH-4 (review of PR #704, 2026-09-16): every existing test above only exercises
-    ``root_event_seq=None`` (8 instances). None pins the structural fix (team-lead
-    disposition, same date) that resolves ``handling_started_monotonic`` from a REAL,
-    currently-handled inbox row via ``current_seq_reader``/``next_unconsumed`` rather than an
-    identity-recomputation match. This test enqueues a real ``EngineEvent``, marks it
-    "handling started" with a real ``EVENT_HANDLING_STARTED`` evidence receipt — the SAME
-    write-ahead idiom ``tos_runtime.engine.driver.EngineDriver._process_next`` itself uses
-    (``driver.py``'s own ``_EVENT_HANDLING_STARTED_KIND``/``_EVENT_HANDLING_STARTED_RECORD_CLASS``
-    constants) — and supplies that row's own ``seq`` via ``observe(root_event_seq=...)``,
-    mirroring how :class:`~tos_runtime.riskstate.service.RiskStateService`'s
-    ``current_seq_reader`` feeds this in production (built from
-    ``SqliteEventInbox.next_unconsumed()`` in ``tos_runtime.compose._riskstate_wiring``).
-
-    A mutation that hardcodes :meth:`InboxFlowReader._resolve_handling_started` (or
-    ``RiskStateService._elapsed_monotonic_ms``) to always return ``None`` must fail exactly
-    this assertion — the review's own M11 finding.
-    """
+    """HIGH-4 (review of PR #704, 2026-09-16): every existing test above only exercises"""
     scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
     payload = EgressResultPayload(
         instrument_key=InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),
@@ -751,24 +663,10 @@ def test_handling_started_monotonic_resolves_from_a_real_inbox_row(
     assert isinstance(obs.handling_started_monotonic, int)
 
 
-# ============================================================================
-# A2-b — the handling-started row is fetched by primary key, not walked
-# (evidence growth plan docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md
-#  §2 A2-b · §7.1.12 "읽어야 할 것" 2)
-# ============================================================================
-
-
 def _walk_handling_started_monotonic(
     evidence_store: SqliteEvidenceStore, evidence_seq: int
 ) -> int | None:
-    """The PRE-A2-b resolution, reproduced verbatim: walk the whole table and take the first
-    row matching both ``seq`` and the handling-started kind.
-
-    Kept as the oracle the new primary-key lookup is compared against, so "faster" is held to
-    "same answer" on the shapes where the answer is meant to be the same. The one shape where
-    it is deliberately NOT the same — a row from another key generation — has its own test
-    below, which asserts this oracle and the new resolution DISAGREE.
-    """
+    """The PRE-A2-b resolution, reproduced verbatim: walk the whole table and take the first"""
     for entry in evidence_store.iter_entry_meta():
         if entry.seq == evidence_seq and entry.kind == "EVENT_HANDLING_STARTED":
             return entry.appended_at_monotonic_ns
@@ -786,15 +684,7 @@ def _seed_handling_started_pointing_at(
     *,
     shape: str,
 ) -> tuple[int, int]:
-    """Enqueue one real event, append some unrelated evidence rows around it, and point the
-    inbox row's handling-started receipt at ``shape``'s evidence row.
-
-    Returns ``(inbox seq, the evidence seq that receipt names)``. The shapes are the ones the
-    resolution can meet: the real marker row, a row of ANOTHER kind at that seq, a seq no row
-    carries at all, and a marker row written under a DIFFERENT key generation than the one
-    the receipt recorded (``stale_generation`` — what a restore from an older evidence backup
-    under a surviving inbox looks like).
-    """
+    """Enqueue one real event, append some unrelated evidence rows around it, and point the"""
     payload = EgressResultPayload(
         instrument_key=InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),
         attempt_id="a1",
@@ -803,8 +693,6 @@ def _seed_handling_started_pointing_at(
     event = EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
     receipt = inbox.enqueue(event)
 
-    # Rows on both sides of the target, so a walk that stopped early or late would differ
-    # from a lookup that goes straight to the row.
     evidence_store.append({"n": 0}, kind="NOISE", record_class="NOISE")
     marker_kind = (
         "SOME_OTHER_KIND" if shape == "kind_mismatch" else "EVENT_HANDLING_STARTED"
@@ -823,10 +711,6 @@ def _seed_handling_started_pointing_at(
     if shape == "absent":
         evidence_seq = 10_000
     elif shape == "stale_generation":
-        # The evidence file was replaced under a surviving inbox: the receipt still names a
-        # seq, but the row now AT that seq was signed under a later generation — a different
-        # event's marker. Rotating and re-appending reproduces that without mutating a row
-        # (the append-only triggers forbid mutation, which is why this is the real shape).
         evidence_store.rotate(marker.key_generation + 1, b"rotated-key-bytes-riskstate")
         replacement = evidence_store.append(
             {"event_id": "some-other-events-identity"},
@@ -850,10 +734,7 @@ def test_handling_started_lookup_agrees_with_the_pre_a2b_walk(
     rcl_log: SqliteCommitLog,
     shape: str,
 ) -> None:
-    """A2-b replaced a full-table walk with a primary-key lookup. Behaviour on the shapes the
-    walk could meet must be byte-identical, absence included — the resolution's contract is a
-    RECORDED absence (``None``), never a guessed timestamp, and a faster wrong answer would
-    be worse than the slow one it replaced."""
+    """A2-b replaced a full-table walk with a primary-key lookup. Behaviour on the shapes the"""
     inbox_seq, evidence_seq = _seed_handling_started_pointing_at(
         inbox, evidence_store, shape=shape
     )
@@ -874,27 +755,12 @@ def test_a_marker_row_from_another_key_generation_is_a_recorded_absence(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """``mark_handling_started`` stores ``(evidence_seq, generation)`` TOGETHER, and the
-    generation is the half that says WHICH row the seq meant. Checking only ``kind`` accepts
-    any handling-started row that happens to sit at that seq — so an evidence file restored
-    from an older backup, or re-seeded, under a surviving inbox hands back ANOTHER event's
-    timestamp and content identity as if they were this cause's. That is precisely the
-    guessed fact this module's contract forbids, and it is silent.
-
-    Both facts must come back absent, not merely the timestamp: ``content_event_id`` feeds
-    ``count_recovery_markers``'s ``root_event_ids``, so a wrong identity there would count
-    another event's recovery markers as this cause's replays.
-
-    This test is red before the generation check: the assertion below shows the pre-A2-b
-    walk — which also matched on ``kind`` alone — DOES return a value for this store, so the
-    two disagree by design here, unlike the three shapes in the equality test above.
-    """
+    """``mark_handling_started`` stores ``(evidence_seq, generation)`` TOGETHER, and the"""
     inbox_seq, evidence_seq = _seed_handling_started_pointing_at(
         inbox, evidence_store, shape="stale_generation"
     )
     reader = InboxFlowReader(inbox, evidence_store, rcl_log)
 
-    # The row IS there and IS a handling-started row — kind alone accepts it.
     assert _walk_handling_started_monotonic(evidence_store, evidence_seq) is not None
     assert reader._resolve_handling_started(inbox_seq) is None
 
@@ -904,15 +770,7 @@ def test_handling_started_resolution_never_scans_the_evidence_table(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """The A2-b regression guard: the resolution must reach its row by primary key.
-
-    Equality with the old walk (the test above) cannot catch a reintroduced scan — the walk
-    returns the right answer, it just reads the whole history to get it, which is the ≥130 s
-    per-proposal cost on a 365-day store that §2 A2-b exists to remove. So this asserts the
-    PLAN instead: every statement the resolution issues against ``entries`` must seek the
-    integer primary key, and none may scan. Red before A2-b: the walk's own
-    ``SELECT … FROM entries ORDER BY seq ASC`` plans as ``SCAN entries``.
-    """
+    """The A2-b regression guard: the resolution must reach its row by primary key."""
     inbox_seq, _evidence_seq = _seed_handling_started_pointing_at(
         inbox, evidence_store, shape="present"
     )
@@ -936,12 +794,7 @@ def test_handling_started_resolution_reads_its_row_exactly_once(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """Both facts come from ONE row, so one statement reads it. Before the merge, ``observe``
-    read the same row twice per attempt — meta through the store, payload through a
-    hand-written ``SELECT payload_json`` against the raw connection — and that second
-    statement coupled this package to the ``entries`` column layout. Counting the statements
-    pins the merge, which the plan guard above cannot see (two PK seeks both plan fine).
-    """
+    """Both facts come from ONE row, so one statement reads it. Before the merge, ``observe``"""
     inbox_seq, _evidence_seq = _seed_handling_started_pointing_at(
         inbox, evidence_store, shape="present"
     )

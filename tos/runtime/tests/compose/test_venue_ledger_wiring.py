@@ -1,12 +1,4 @@
-"""The venue ledger's compose wiring: one config key, one transport kind (#1011 P2).
-
-Every test here drives the REAL :func:`~tos_runtime.compose.root.compose_paper_runtime` (or the
-real :func:`~tos_runtime.compose._venue_ledger_wiring.build_synthetic_venue_ledger` /
-:func:`~tos_runtime.compose._transport_wiring.build_transport`), never a double — the whole
-point of P2 is which objects a BOOT actually ends up holding.
-
-Hermetic: ``tmp_path`` only, no network, no ambient env (D1.4).
-"""
+"""The venue ledger's compose wiring: one config key, one transport kind (#1011 P2)."""
 
 from __future__ import annotations
 
@@ -43,17 +35,11 @@ from .test_compose_root import _compose
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
-#: The exact one-line YAML the operator's switch-on PR adds to a tree (plan §4 P2).
 _WITNESS_ON = {"witness": "synthetic_venue_ledger"}
 
 
 def turn_the_venue_ledger_on(config_dir: Path) -> Path:
-    """Write ``witness: synthetic_venue_ledger`` into this tree's ``finality.yaml``.
-
-    Shared with the e2e suite: the key is set EXACTLY as a shipped tree would set it — one
-    key appended to the already-valid document the fixture wrote — so no test can pass by
-    turning the ledger on through a route an operator does not have.
-    """
+    """Write ``witness: synthetic_venue_ledger`` into this tree's ``finality.yaml``."""
     path = config_dir / FINALITY_CONFIG_NAME
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     raw.update(_WITNESS_ON)
@@ -65,20 +51,10 @@ def _ledger_path(data_dir: Path) -> Path:
     return data_dir / VENUE_LEDGER_FILE_NAME
 
 
-# ===========================================================================
-# the key absent — today's behaviour, byte for byte
-# ===========================================================================
-
-
 def test_without_the_key_the_boot_has_no_ledger_and_the_old_witness(
     config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
 ) -> None:
-    """No key ⇒ no ledger file, no venue witness, and the store-derived one still wired.
-
-    This is the control for every test below, and it is also the state of all four shipped
-    trees: ``config/tos_runtime/{paper,cp3-setup-d-long,cp3-setup-d-short}`` carry no
-    ``witness`` key, so merging P2 changes nothing about how they boot.
-    """
+    """No key ⇒ no ledger file, no venue witness, and the store-derived one still wired."""
     runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
     try:
         assert runtime.venue_ledger.enabled is False
@@ -94,24 +70,13 @@ def test_without_the_key_the_boot_has_no_ledger_and_the_old_witness(
         runtime.evidence_store.close()
 
 
-# ===========================================================================
-# the key on — what a synthetic boot then holds
-# ===========================================================================
-
-
 def test_the_key_on_wires_the_venue_witness_everywhere_the_old_one_was(
     config_dir_with_risk_state: Path,
     data_dir: Path,
     custody_root: Path,
     tmp_path: Path,
 ) -> None:
-    """One key ⇒ the recording transport, the ledger file at 0600, and the venue witness.
-
-    The witness assertion is made against the RELEASE consumer's own reconciliation service —
-    the object the release path, the ``entry_discharge`` flat check and the entry-discharge
-    recovery pass all read through — so this pins the swap where it actually decides whether
-    capacity is released, not merely that a witness object exists somewhere.
-    """
+    """One key ⇒ the recording transport, the ledger file at 0600, and the venue witness."""
     turn_the_venue_ledger_on(config_dir_with_risk_state)
     runtime = _compose(tmp_path, config_dir_with_risk_state, data_dir, custody_root)
     try:
@@ -129,8 +94,6 @@ def test_the_key_on_wires_the_venue_witness_everywhere_the_old_one_was(
         assert isinstance(witness, SyntheticVenueLedgerWitness)
         assert witness is runtime.venue_ledger.witness
 
-        # ...and the transport actually writes into it: the kernel transport is WRAPPED,
-        # not replaced (`inner` is the send-count evidence the P1 suite reads).
         assert type(runtime.transport).__name__ == "RecordingSyntheticTransport"
     finally:
         runtime.venue_ledger.close()
@@ -144,12 +107,7 @@ def test_the_venue_witness_declares_itself_independent_of_the_evidence_store(
     custody_root: Path,
     tmp_path: Path,
 ) -> None:
-    """The one field the whole release path turns on, read off the COMPOSED witness.
-
-    Concrete result: ``independent_of_evidence_store=True`` and
-    ``provenance="synthetic-venue-ledger"`` — distinct on sight from ``"synthetic-ledger"``,
-    which is what makes the reason split (#1011 §3.5) observable in an evidence row.
-    """
+    """The one field the whole release path turns on, read off the COMPOSED witness."""
     turn_the_venue_ledger_on(config_dir_with_risk_state)
     runtime = _compose(tmp_path, config_dir_with_risk_state, data_dir, custody_root)
     try:
@@ -163,8 +121,6 @@ def test_the_venue_witness_declares_itself_independent_of_the_evidence_store(
         )
         assert snapshot.independent_of_evidence_store is True
         assert snapshot.provenance == SYNTHETIC_VENUE_LEDGER_PROVENANCE
-        # Nothing has traded yet, and an empty ledger is a COMPLETE observation of a venue
-        # that holds nothing — never "nothing legible".
         assert (snapshot.orders, snapshot.positions) == ((), ())
         assert snapshot.positions_complete is True
     finally:
@@ -173,24 +129,10 @@ def test_the_venue_witness_declares_itself_independent_of_the_evidence_store(
         runtime.evidence_store.close()
 
 
-# ===========================================================================
-# boot refusals — the key is not usable everywhere
-# ===========================================================================
-
-
 def test_the_key_on_with_a_kis_mock_transport_refuses_the_boot(
     config_dir_with_risk_state: Path, data_dir: Path
 ) -> None:
-    """The ledger is the SYNTHETIC venue's own record — a broker-reaching boot must not hold it.
-
-    Concrete failing input: ``finality.yaml::witness: synthetic_venue_ledger`` on a boot whose
-    transport is ``kis-mock``. If this were allowed, the runtime would write a file describing
-    orders it sent to a REAL mock broker and then read that file back as "independent
-    corroboration" of those same orders — the fail-open shape plan §2 rejects option B for.
-
-    No file is left behind: the refusal happens before anything durable is created, so a
-    retried boot after fixing the config does not inherit a half-made ledger.
-    """
+    """The ledger is the SYNTHETIC venue's own record — a broker-reaching boot must not hold it."""
     turn_the_venue_ledger_on(config_dir_with_risk_state)
 
     with pytest.raises(VenueLedgerWiringError, match="kis-mock"):
@@ -208,13 +150,7 @@ def test_the_key_on_with_a_kis_mock_transport_refuses_the_boot(
 def test_build_transport_also_refuses_to_wrap_a_broker_reaching_transport(
     tmp_path: Path,
 ) -> None:
-    """The same refusal restated where the wrapping would happen (defence in depth).
-
-    A future caller that builds a ledger by hand and hands it to ``build_transport`` cannot
-    get a ``kis-mock`` transport wrapped in it. Asserted with ``transport_config=None``, which
-    would otherwise be the FIRST thing that branch refuses — so this proves the venue-ledger
-    refusal is reached first, not merely that something raised.
-    """
+    """The same refusal restated where the wrapping would happen (defence in depth)."""
     ledger = SyntheticVenueLedger(tmp_path / VENUE_LEDGER_FILE_NAME)
     try:
         with pytest.raises(TransportWiringError, match="SYNTHETIC venue's own record"):
@@ -236,13 +172,7 @@ def test_build_transport_also_refuses_to_wrap_a_broker_reaching_transport(
 def test_a_venue_ledger_without_a_trusted_trading_date_refuses_the_boot(
     tmp_path: Path,
 ) -> None:
-    """A ledger with no date source is refused, not silently written undated.
-
-    Concrete failing input: ``build_transport(SYNTHETIC, venue_ledger=<ledger>,
-    trading_date_now=None)``. An undated row carries no ``order_date``, which is half of the
-    witness's ``(broker_execution_id, order_date)`` cross-reference join — such a row could
-    never be joined to its receipt, so the whole ledger would silently stop corroborating.
-    """
+    """A ledger with no date source is refused, not silently written undated."""
     ledger = SyntheticVenueLedger(tmp_path / VENUE_LEDGER_FILE_NAME)
     try:
         with pytest.raises(TransportWiringError, match="trading-date"):
@@ -265,14 +195,7 @@ def test_a_venue_ledger_without_a_trusted_trading_date_refuses_the_boot(
 def test_the_key_on_without_the_governed_side_tokens_refuses_the_boot(
     config_dir: Path, data_dir: Path
 ) -> None:
-    """A witness that cannot sign a fill cannot net a position — so it is not built at all.
-
-    Concrete failing input: the key on in a tree with no ``action_flow_policy.yaml``. The two
-    outbound side tokens are REQUIRED arguments of
-    :class:`~tos_runtime.recon.witness_synthetic_venue.SyntheticVenueLedgerWitness` precisely
-    so no runtime module spells one; guessing ``"BUY"``/``"SELL"`` here would be the
-    long/short-symmetry break the repo-wide side-literal pin forbids.
-    """
+    """A witness that cannot sign a fill cannot net a position — so it is not built at all."""
     turn_the_venue_ledger_on(config_dir)
     assert not (config_dir / "action_flow_policy.yaml").exists()
 
@@ -291,12 +214,7 @@ def test_the_key_on_without_the_governed_side_tokens_refuses_the_boot(
 def test_a_misspelled_witness_key_refuses_the_boot(
     config_dir: Path, data_dir: Path
 ) -> None:
-    """``witness: synthetic-venue-ledger`` (hyphens) is refused, never read as "absent".
-
-    Silently ignoring it would boot the tree on the store-derived witness while its own config
-    says otherwise — and the two have opposite ``independent_of_evidence_store``, which is the
-    field that decides whether capacity is ever released.
-    """
+    """``witness: synthetic-venue-ledger`` (hyphens) is refused, never read as "absent"."""
     path = config_dir / FINALITY_CONFIG_NAME
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     raw["witness"] = "synthetic-venue-ledger"
@@ -314,23 +232,12 @@ def test_a_misspelled_witness_key_refuses_the_boot(
     assert not _ledger_path(data_dir).exists()
 
 
-# ===========================================================================
-# the shipped trees stay OFF (plan §4 P2: "shipped trees are not turned on here")
-# ===========================================================================
-
-
 @pytest.mark.parametrize(
     "tree",
     ["paper", "cp3-setup-d-long", "cp3-setup-d-short", "cp3-setup-d-stock-005930"],
 )
 def test_no_shipped_tree_carries_the_witness_key(tree: str) -> None:
-    """The deploy guard for this PR.
-
-    The resident trees boot from ``origin/main`` every morning, so a merged ON value would
-    switch the ledger on BEFORE the operator's chosen day (the first trading day after
-    11-13). This test is what makes "merging P2 changes nothing operationally" checkable
-    rather than asserted in a PR body.
-    """
+    """The deploy guard for this PR."""
     path = (
         Path(__file__).resolve().parents[4]
         / "config"

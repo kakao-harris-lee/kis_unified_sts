@@ -62,18 +62,12 @@ def test_valid_config_loads(tmp_path: Path) -> None:
 
 
 def test_example_file_is_all_named_tbd() -> None:
-    """The shipped example file must itself refuse to load (every value is
-    null/named-TBD) — it is a template, not a usable config."""
+    """The shipped example file must itself refuse to load (every value is"""
     example = (
         Path(__file__).resolve().parents[2] / "config" / "currentness.example.yaml"
     )
     with pytest.raises(CurrentnessConfigError):
         load_currentness_config(example)
-
-
-# ============================================================================
-# required_dimensions (W3.1 independent review MEDIUM-3)
-# ============================================================================
 
 
 def test_required_dimensions_missing_key_refuses(tmp_path: Path) -> None:

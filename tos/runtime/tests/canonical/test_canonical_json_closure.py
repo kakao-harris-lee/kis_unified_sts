@@ -1,28 +1,4 @@
-"""Tree closure for the canonical JSON set-ordering hook (plan §3, "목록 폐쇄").
-
-The hook on :class:`tos.canonical.FrozenModel` orders a model's own sets. A
-nested pydantic model that is **not** a ``FrozenModel`` has no hook of its own,
-so a set it holds would be dumped in iteration order and silently re-open the
-non-determinism this plan closed (review-798 3차 M-2, silent-miss case 2). This
-file is the guard: it enumerates every pydantic model in **both** distributions
-and refuses any set-bearing model that is not a ``FrozenModel`` subclass.
-
-It carries the hook's other whole-tree bans for the same reason — each one is a
-shape the hook would leave partly or wholly unsorted, **silently**, and each is
-zero today: a set field carrying an alias, a set nested inside a set, and a
-stdlib dataclass / NamedTuple / TypedDict in a model's field tree (review-802
-MEDIUM-2). They live here rather than in the kernel test tree because a ban is
-only worth having if it sees ``tos_runtime`` too.
-
-Why this file lives in the runtime test tree: it has to see ``tos`` *and*
-``tos_runtime``, and a kernel-scope file importing ``tos_runtime`` is firewall
-rule (g)/TOS-FW-G. Why the imports below are written out one by one: dynamic
-import (``importlib.import_module`` / ``__import__``) is firewall rule
-(d)/TOS-FW-D, and an enumeration that silently fails to import a module reports
-"no offenders" for the wrong reason. :func:`test_every_module_is_imported`
-compares the written-out list against the source tree, so a new module is a
-RED here rather than a silent gap.
-"""
+"""Tree closure for the canonical JSON set-ordering hook (plan §3, "목록 폐쇄")."""
 
 from __future__ import annotations
 
@@ -120,14 +96,6 @@ from tos_runtime.compose import _construction_config as r_compose_construction_c
 from tos_runtime.compose import _migrate_paths as r_compose_migrate_paths
 from tos_runtime.compose import _run_dispatch as r_compose_run_dispatch
 from tos_runtime.compose import cli as r_compose_cli
-
-# Listed by name because ``tos_runtime.recon``'s own ``__init__`` deliberately does
-# NOT re-export it (that edge would close an import cycle through
-# ``tos_runtime.venue_ledger``), so walking the ``recon`` package alone never reaches
-# it. Without this line the walk's verdict would depend on whether some other test
-# file in the session happened to import it first — exactly the session-order
-# dependence the first assertion in ``test_every_module_is_imported`` exists to rule
-# out (review-802 LOW-3).
 from tos_runtime.recon import (
     witness_synthetic_venue as r_recon_witness_synthetic_venue,
 )
@@ -215,13 +183,6 @@ from tos import (
     workload as k_workload,
 )
 
-#: Every module under ``tos`` and ``tos_runtime``, imported by name.
-#:
-#: The two distribution ROOTS are deliberately absent. Importing ``tos.x`` binds
-#: ``x`` as an attribute of the ``tos`` package object, so seeding the
-#: reachability walk with ``tos`` itself would make every module any other test
-#: happened to import "reachable" and empty the guard out (measured: the
-#: review-802 LOW-3 mutation went green with the roots in the list).
 _IMPORTED_MODULES: tuple[ModuleType, ...] = (
     k_afg,
     k_are,
@@ -286,37 +247,17 @@ _IMPORTED_MODULES: tuple[ModuleType, ...] = (
     r_safety_ack,
 )
 
-#: The two source trees this closure covers, located from an imported module of
-#: each so the paths follow the installed distribution rather than a guess.
 _SRC_ROOTS: dict[str, Path] = {
     "tos": Path(k_canonical.__file__).resolve().parent.parent,
     "tos_runtime": Path(r_operations.__file__).resolve().parent.parent,
 }
 
-#: Lower bounds measured on this branch (2026-09-24). Asserted as bounds, not
-#: equalities, so adding a model is not a spurious RED — but an import that
-#: silently fails and leaves the enumeration near zero still goes RED.
-#: Re-measured 2026-11-13 after plans S2-c (the two set-bearing ``tos.nontrade``
-#: records, one of them carrying a ``__canonical_set_fields__`` declaration) and
-#: S2-a (the seven safety-mesh model modules) each removed their own models, on top
-#: of the S1-a drop. Deliberate drops, measured against the tree rather than left to
-#: read as a silent import failure. Re-measured again (22/16/9 -> 15/10/5) after the
-#: S2-c remainder deleted `tos.sci`, `tos.sbr` and the unused part of `tos.posttrade`.
 _MIN_TREE_SET_MODELS = 15
 _MIN_DIRECT_SET_MODELS = 10
 _MIN_COVERED_SET_MODELS = 5
 
-#: Models allowed to hold a set without being a ``FrozenModel``. Empty today;
-#: every entry needs a one-line reason for why its sets never reach a digest.
 _NON_FROZEN_ALLOWLIST: frozenset[str] = frozenset()
 
-#: Submodules whose own package imports them, but whose attribute on that
-#: package is SHADOWED by a same-named export — ``tos_runtime.evidence``
-#: re-exports a *function* called ``backup`` out of the module ``backup``, so
-#: ``vars(tos_runtime.evidence)["backup"]`` is the function and the attribute
-#: walk in :func:`_names_reachable_from_the_import_list` cannot see the module.
-#: The bare ``import tos_runtime.evidence.backup`` at the top of this file is
-#: what imports them; this names them so the walk counts them as reached.
 _SHADOWED_SUBMODULE_NAMES: tuple[str, ...] = ("tos_runtime.evidence.backup",)
 
 
@@ -335,14 +276,7 @@ def _module_names_on_disk() -> set[str]:
 
 
 def _names_reachable_from_the_import_list() -> set[str]:
-    """Module names reached by :data:`_IMPORTED_MODULES` **alone**.
-
-    Importing ``a.b`` binds ``b`` as an attribute of package ``a``, so walking
-    each listed module's own attributes transitively yields exactly the modules
-    this file's explicit imports pull in — with no dependence on what any other
-    test in the session happened to import, which is what ``sys.modules`` cannot
-    tell apart.
-    """
+    """Module names reached by :data:`_IMPORTED_MODULES` **alone**."""
     reached: set[str] = set()
     pending: list[ModuleType] = [
         *_IMPORTED_MODULES,
@@ -405,33 +339,9 @@ def _qualified(model_cls: type[BaseModel]) -> str:
 
 
 def test_every_module_is_imported() -> None:
-    """The written-out import list covers the whole source tree.
-
-    A new module that nothing imports would leave its models invisible to the
-    closure below, which would then report "no offenders" without having looked.
-
-    Two assertions, and the ORDER matters (review-802 LOW-3). The first compares
-    the source tree against what :data:`_IMPORTED_MODULES` reaches **on its
-    own**, so a new module that some *other* test file happens to import cannot
-    satisfy it — measured: the LOW-3 mutation (a new ``tos`` subpackage holding
-    a set-bearing ``BaseModel``, imported only from a conftest) leaves the
-    ``sys.modules`` assertion green and this one RED. A plain name-set
-    comparison would not do: the list names packages and the tree names every
-    file, so the comparison has to be against what the list *reaches*.
-
-    The ``sys.modules`` assertion stays as the weaker second one — it is the
-    only check that would catch a module reached through a path the walk cannot
-    see at all.
-    """
-    # Re-measured 2026-11-13: S2-c removed `tos.nontrade`, `tos_runtime.nontrade` and
-    # `tos_runtime.compose._nontrade_eval_dispatch`; S2-a removed the seven safety-mesh
-    # kernel packages and the runtime safety modules that went with them; the S2-c
-    # remainder removed `tos.sci` and `tos.sbr` (63 -> 61).
+    """The written-out import list covers the whole source tree."""
     assert len(_IMPORTED_MODULES) >= 61
     on_disk = _module_names_on_disk()
-    # The two distribution roots are imported by construction — every name in
-    # the list is a submodule of one of them — and are not walk seeds
-    # (:data:`_IMPORTED_MODULES`).
     unreached = sorted(
         on_disk - _names_reachable_from_the_import_list() - set(_SRC_ROOTS)
     )
@@ -500,11 +410,7 @@ def test_no_set_field_anywhere_carries_an_alias() -> None:
 
 
 def _reaches_a_set_without_crossing_a_model(annotation: object) -> bool:
-    """Whether an annotation reaches a set without entering a nested model.
-
-    A set held by a nested model is that model's own hook's business. A set held
-    by a plain container (list/tuple/dict/union) is still this field's.
-    """
+    """Whether an annotation reaches a set without entering a nested model."""
     if typing.get_origin(annotation) in (set, frozenset):
         return True
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
@@ -524,18 +430,7 @@ def _nested_set_annotations(annotation: object) -> bool:
 
 
 def test_no_set_is_nested_inside_a_set() -> None:
-    """A set inside a set escapes the sort silently, in the seed-dependent direction.
-
-    ``_with_sorted_sets`` sorts a set's dumped list and stops: a set has no order
-    to pair the dumped elements back by, so it cannot recurse into them. The
-    inner lists therefore keep PYTHONHASHSEED order and the outer ``sorted()``
-    then orders seed-dependent values. Concrete input and the measured two-seed
-    output are in ``tos/src/tos/canonical/_canonical_json.py``'s module
-    docstring; the shape is ``frozenset[frozenset[str]]``.
-
-    Zero today, and banned rather than handled — the fix would have to give the
-    pairing an order the type does not have.
-    """
+    """A set inside a set escapes the sort silently, in the seed-dependent direction."""
     offenders: dict[str, list[str]] = {}
     for model_cls in _tos_models():
         nested = sorted(
@@ -578,20 +473,7 @@ def _opaque_leaves(annotation: object) -> list[str]:
 
 
 def test_no_model_field_tree_holds_a_stdlib_aggregate() -> None:
-    """A stdlib dataclass / NamedTuple / TypedDict field is a double blind spot.
-
-    ``_schema_declares_set`` treats a ``dataclass`` core-schema node as OPAQUE
-    and does not descend, so a set inside one never puts the owning field into
-    ``__canonical_set_fields__`` and never gets sorted. And none of the three is
-    a ``BaseModel`` subclass, so ``_all_models()`` — which enumerates by walking
-    ``BaseModel.__subclasses__`` — never sees it either, which means
-    :func:`test_every_set_bearing_model_is_a_frozen_model` above would report
-    "no offenders" without having looked at it.
-
-    Zero today. Each model is scanned against its OWN annotations only; a nested
-    ``BaseModel`` is enumerated separately and scanned in its own right, so not
-    crossing model boundaries loses nothing.
-    """
+    """A stdlib dataclass / NamedTuple / TypedDict field is a double blind spot."""
     offenders: dict[str, dict[str, list[str]]] = {}
     for model_cls in _tos_models():
         found = {

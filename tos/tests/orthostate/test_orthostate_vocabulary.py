@@ -1,11 +1,4 @@
-"""Dimension vocabulary — verbatim enums, membership, global string distinctness (§2.2/§4.1).
-
-Each dimension enum matches its ADR-002-005 cardinality; ``RECONCILED`` is a Knowledge
-value only and ``UNKNOWN`` a Broker value only (§1 line 27); the five dimension enums
-(the four local + rcl ``CapacityState``) share NO string value, which is what makes a
-dimension-swap fail StrEnum coercion (design #8 §2.2/§4.2 dimension-swap substrate).
-[STATE-EV-001 slice]
-"""
+"""Dimension vocabulary — verbatim enums, membership, global string distinctness (§2.2/§4.1)."""
 
 from __future__ import annotations
 
@@ -36,7 +29,7 @@ def test_dimension_cardinalities_match_adr() -> None:
     assert len(list(TransmissionAttemptState)) == 8
     assert len(list(BrokerOrderState)) == 9
     assert len(list(KnowledgeState)) == 7
-    assert len(list(CapacityState)) == 9  # rcl REUSE
+    assert len(list(CapacityState)) == 9
 
 
 def test_reconciled_is_knowledge_only() -> None:
@@ -67,7 +60,6 @@ def test_global_string_value_pairwise_disjoint_across_five_dimensions() -> None:
                 f"{enum.__name__} and {seen[member.value]} — dimension-swap fail-open"
             )
             seen[member.value] = enum.__name__
-    # 7 + 8 + 9 + 7 + 9 = 40 globally distinct values.
     assert len(seen) == 40
 
 
@@ -96,7 +88,6 @@ def test_weak_bases_are_wider_than_rcl_weak_causes() -> None:
         "OPERATOR_ASSERTION",
         "RECOVERY_RECONNECT",
     }
-    # LOCAL_CACHE / RECOVERY_RECONNECT are the deliberate additions absent from rcl.
     assert "LOCAL_CACHE" in weak_values and "LOCAL_CACHE" not in rcl_weak_values
     assert (
         "RECOVERY_RECONNECT" in weak_values

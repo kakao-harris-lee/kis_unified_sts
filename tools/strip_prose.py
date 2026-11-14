@@ -144,12 +144,40 @@ def _first_line(text: str) -> str:
 
 
 def _literal(first: str) -> str:
-    """A one-line string literal holding ``first``, stable under a second pass."""
+    """A one-line string literal holding ``first``, stable under a second pass AND under black.
+
+    A first line that starts or ends with a double quote goes to ``repr``. Ending with one
+    would close the literal early. STARTING with one parses fine, but black then inserts a
+    space after the opening delimiter to keep the quotes readable -- which adds a leading
+    space to the docstring's VALUE, so the next strip takes it out again and the two tools
+    oscillate forever (measured on 7 files, 2026-11-13).
+    """
     if not first:
-        return repr("")
-    if '"""' in first or "\\" in first or first.endswith('"'):
-        return repr(first)
-    return f'"""{first}"""'
+        return '""'
+    if (
+        '"""' not in first
+        and "\\" not in first
+        and not first.startswith('"')
+        and not first.endswith('"')
+    ):
+        return f'"""{first}"""'
+    # Pick the quote black would pick, or the two tools rewrite each other forever: black
+    # prefers `"` and switches to `'` only when `"` would need strictly more escapes. A content
+    # ending in a quote takes the other one so no escape lands against the closing delimiter.
+    if first.endswith('"'):
+        quote = "'"
+    elif first.endswith("'"):
+        quote = '"'
+    else:
+        quote = '"' if first.count('"') <= first.count("'") else "'"
+    escaped = (
+        first.replace("\\", "\\\\")
+        .replace(quote, "\\" + quote)
+        .replace("\t", "\\t")
+        .replace("\r", "\\r")
+    )
+    candidate = f"{quote}{escaped}{quote}"
+    return candidate if ast.literal_eval(candidate) == first else repr(first)
 
 
 def _runtime_doc_targets(tree: ast.Module) -> tuple[bool, set[str]]:
@@ -217,7 +245,12 @@ def _docstring_edits(
         assert isinstance(constant, ast.Constant)
         text = constant.value
         assert isinstance(text, str)
-        replacement = _literal(_first_line(text))
+        first = _first_line(text)
+        # black pads a one-line docstring ending in its own quote with a space; that form is
+        # already stripped, or strip and black rewrite each other forever.
+        if text == first + " " and first.endswith(('"', "'")):
+            continue
+        replacement = _literal(first)
         start = offsets[stmt.lineno - 1] + stmt.col_offset
         assert stmt.end_lineno is not None and stmt.end_col_offset is not None
         end = offsets[stmt.end_lineno - 1] + stmt.end_col_offset

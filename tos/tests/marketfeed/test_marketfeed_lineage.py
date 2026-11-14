@@ -1,27 +1,4 @@
-"""§7.2-10 — derived indicators: lineage reproducibility and the look-ahead boundary (design #32 §5).
-
-RFC-008 §9:290-301 puts every derived value *outside and before* DSL evaluation: the DSL algebra has
-no arithmetic node and no bar history, so a band or a moving average is computed upstream and
-arrives as an admitted observation carrying a ``TransformationLineage`` (design #32 §5.1). Two
-independent judgements then decide whether it may be exposed:
-
-* **reproducibility**, delegated verbatim to the shipped
-  :func:`tos.capsule.predicates.derive_lineage_state` (design #32 §12.1 REUSE — the predicate is
-  *not* re-authored here). Non-reproducible, empty parent set, or a parent missing its id/digest ⇒
-  ``INVALID`` (ADR-002-018 §10:288);
-* **causality**, owned here: every recorded parent's as-of must be at or before the derived value's
-  as-of (RFC-004 §6:162-165 — "no forward-fill or last-known-good substitution").
-
-The two failure polarities are deliberately different, and that difference is asserted: a parent
-*later* than its child is a proven look-ahead (``INVALID``), while a parent that cannot be resolved
-at all is merely unestablished (``UNKNOWN``). Both block; only one is an accusation.
-
-⚠ **Honest boundary** (design #32 §5.4). This checks what the lineage **records**. Runtime
-enforcement that a producer did not peek at a future bar while computing is D-E3's
-(``LookaheadGuard``), and design #32 says so rather than claiming it here.
-
-Regime tag: authoring evidence only; closes no EV (design #32 §1.1).
-"""
+"""§7.2-10 — derived indicators: lineage reproducibility and the look-ahead boundary (design #32 §5)."""
 
 from __future__ import annotations
 
@@ -96,11 +73,6 @@ def _reasons(resolution) -> set[ValueRejectionReason]:
     return {entry.reason for entry in resolution.rejected}
 
 
-# ---------------------------------------------------------------------------
-# A derived value with sound lineage publishes
-# ---------------------------------------------------------------------------
-
-
 def test_a_reproducible_derived_value_publishes() -> None:
     """(§5.1/§5.2) A band computed upstream reaches the DSL as an admitted Critical Input."""
     _, resolution = _derived_bar()
@@ -117,12 +89,7 @@ def test_a_parent_strictly_before_its_child_is_sound_causality() -> None:
 
 
 def test_a_direct_observation_needs_no_lineage_at_all() -> None:
-    """(§5, ∅ discipline) A non-derived value has no derivation to be unreproducible about.
-
-    This is *not* the vacuous-∅ case §2.2 seals: the applicable side ("is this value derived?") is
-    checked before the empty set is interpreted, which is the #26 WDR MAJOR-1 lesson — an
-    over-rejecting fail-closed guard is its own defect class.
-    """
+    """(§5, ∅ discipline) A non-derived value has no derivation to be unreproducible about."""
     payload = preimage(close=CLOSE_BAR_ONE)
     obs = observation(raw_event_id="raw-1", payload=payload, as_of=BAR_ONE_AS_OF)
     snapshot = issue_snapshot(
@@ -132,11 +99,6 @@ def test_a_direct_observation_needs_no_lineage_at_all() -> None:
     state, reason = lineage_state_for_output("raw-1", BAR_ONE_AS_OF, (), observations)
     assert state is FieldState.VALID
     assert reason is None
-
-
-# ---------------------------------------------------------------------------
-# Reproducibility (REUSE — design #32 §12.1)
-# ---------------------------------------------------------------------------
 
 
 def test_a_non_reproducible_lineage_blocks_the_value() -> None:
@@ -174,11 +136,6 @@ def test_a_blocking_lineage_field_state_propagates() -> None:
     assert resolution.rejected
 
 
-# ---------------------------------------------------------------------------
-# Look-ahead (design #32 §5.4) — and its polarity
-# ---------------------------------------------------------------------------
-
-
 def test_a_parent_later_than_its_child_is_look_ahead() -> None:
     """(§5.4 ★) A band claiming a parent from the future is refused, named as look-ahead."""
     _, resolution = _derived_bar(
@@ -189,11 +146,7 @@ def test_a_parent_later_than_its_child_is_look_ahead() -> None:
 
 
 def test_look_ahead_is_invalid_while_an_unresolvable_parent_is_only_unknown() -> None:
-    """(§5.4 ★ polarity) A proven violation and an unestablished one are different facts.
-
-    Both block. Collapsing them would either slander an incomplete snapshot as a look-ahead
-    violation, or downgrade a real violation to mere uncertainty.
-    """
+    """(§5.4 ★ polarity) A proven violation and an unestablished one are different facts."""
     snapshot, _ = _derived_bar()
     observations, _ = index_observations(snapshot)
 
@@ -250,17 +203,7 @@ def test_a_parent_with_no_as_of_blocks_the_value() -> None:
 
 
 def test_a_contested_parent_identity_is_unresolvable_not_arbitrarily_resolved() -> None:
-    """(§5.4/§6 ★ review MINOR-2 L7) The ambiguous-id pop is load-bearing on the lineage path.
-
-    :func:`~tos.marketfeed.index_observations` drops any ``raw_event_id`` carried by more than one
-    observation. For the publication path that is defence in depth — ``_admit_one`` checks the
-    returned ambiguous set directly. For **this** path it is the only seal:
-    :func:`~tos.marketfeed.lineage_state_for_output` resolves parents through the index alone and
-    never sees the ambiguous set, so leaving a contested id in place would hand it the *first*
-    observation under that identity. Here that first observation is the innocent one and the second
-    is future-dated: an arbitrary fold would silently clear a look-ahead. Popping makes the parent
-    unresolvable, so causality fails closed instead.
-    """
+    """(§5.4/§6 ★ review MINOR-2 L7) The ambiguous-id pop is load-bearing on the lineage path."""
     close_payload = preimage(close=CLOSE_BAR_ONE)
     late_payload = preimage(close=CLOSE_BAR_ONE + 1)
     band_payload = preimage(lower_band=_BAND)

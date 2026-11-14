@@ -1,14 +1,4 @@
-"""Hermetic tests for :mod:`tos_runtime.compose.cli` (TOS Phase 5 W4 plan §2 decision 10).
-
-No filesystem/network access needed here beyond ``tmp_path``-rooted ``Path`` objects that are
-never actually opened — every operations function this module dispatches to is monkeypatched, so
-these tests pin ARGUMENT PARSING and DISPATCH shape only, never the underlying operations'
-own behaviour (that is ``tests/operations/*``'s scope).
-
-The two backup subcommands' dispatch moved to
-:mod:`tos_runtime.compose._backup_dispatch` (``cli.py``'s own size budget — that module's
-docstring), so their fakes are installed THERE; everything else is still patched on ``cli``.
-"""
+"""Hermetic tests for :mod:`tos_runtime.compose.cli` (TOS Phase 5 W4 plan §2 decision 10)."""
 
 from __future__ import annotations
 
@@ -34,9 +24,6 @@ from tos_runtime.operations.schema_migrations import (
 )
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
-
-
-# -- `run`: no subcommand token given (backward compatibility) ----------------
 
 
 def test_run_default_parsing_with_no_subcommand_token(tmp_path: Path) -> None:
@@ -133,24 +120,13 @@ def test_run_accepts_the_two_new_optional_flags(tmp_path: Path) -> None:
 def test_run_main_refuses_without_construction_config_and_never_calls_an_operations_function(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``run`` now actually composes (TOS ``run`` 구동 아크 plan §4 W1 lane B) — against an empty
-    ``--config-dir`` (no ``construction.yaml`` at all, as here) it refuses with exit code ``1``
-    rather than silently returning ``0``, and it STILL never reaches for a ``backup-set``/
-    ``restore-drill``/``migrate``/``print-digests`` operations function — those remain
-    exclusively their own subcommands' dispatch (module docstring's own invariant, unchanged by
-    this wave)."""
+    """``run`` now actually composes (TOS ``run`` 구동 아크 plan §4 W1 lane B) — against an empty"""
 
     def _must_not_be_called(name: str, *_args: object, **_kwargs: object) -> None:
         raise AssertionError(f"{name} must not be called for `run`")
 
-    # `backup_set` is reached through `_backup_dispatch` now (that module's own docstring —
-    # `cli.py`'s size budget), so the sentinel goes where the name actually lives; the
-    # invariant this pins ("`run` reaches NO operations function") is unchanged.
     for module, name in (
         (_backup_dispatch, "backup_set"),
-        # `cold_backup` is reachable from this CLI as of the cold-backup wave, so the
-        # invariant has to cover it too — otherwise a future "back up on shutdown"
-        # convenience could route `run` straight into it and this test would stay green.
         (_backup_dispatch, "cold_backup"),
         (cli, "restore_set"),
         (cli, "apply_migrations"),
@@ -177,12 +153,8 @@ def test_run_main_refuses_without_construction_config_and_never_calls_an_operati
     assert "construction" in capsys.readouterr().err
 
 
-# -- `run`: _dispatch_run itself (TOS `run` 구동 아크 plan §4 W1 lane B) -------------------------
-
-
 class _FakeTickScheduler:
-    """A ``TickScheduler``-shaped stub — only ``run_forever``'s own keyword-only ``stop``
-    contract matters here (lane C's e2e test drives the real one)."""
+    """A ``TickScheduler``-shaped stub — only ``run_forever``'s own keyword-only ``stop``"""
 
     def __init__(self, *, calls_before_stop: int = 1) -> None:
         self.calls_before_stop = calls_before_stop
@@ -196,17 +168,12 @@ class _FakeTickScheduler:
         while not stop():
             n += 1
             if n >= self.calls_before_stop:
-                # Simulate the signal arriving between passes (module docstring: checked only
-                # BETWEEN passes, never mid-tick) by flipping the SAME predicate a real signal
-                # handler would flip, rather than a scheduler-internal shortcut.
                 break
 
 
 class _FakeComposed:
     def __init__(self, marketfeed: object) -> None:
         self.marketfeed = marketfeed
-        # `_run_dispatch` stops the fill observer's FETCH worker after the loop (issue #950);
-        # a non-stock boot has none.
         self.fill_observer = None
 
 
@@ -246,9 +213,7 @@ def test_dispatch_run_refuses_on_a_bad_construction_config(
 def test_dispatch_run_refuses_and_relays_whichever_compose_exception_fired(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """No common base class exists across this codebase's dozen-plus config/custody/policy
-    loader exceptions (``_dispatch_run``'s own docstring) — this pins that ANY of them (an
-    arbitrary one, here) is relayed verbatim rather than only a hardcoded subset."""
+    """No common base class exists across this codebase's dozen-plus config/custody/policy"""
 
     class _SomeUnrelatedLoaderError(RuntimeError):
         pass
@@ -341,22 +306,13 @@ def test_dispatch_run_passes_the_loaded_construction_config_through(
 
 
 def _install_fresh_process_stop_handlers() -> None:
-    """Pin ``SIGINT``/``SIGTERM`` to what a FRESH process has, as the baseline the three tests
-    below measure ``restore()`` against.
-
-    They cannot read the ambient handlers instead: ``install_run_stop_signal_handlers``'s own
-    ``restore()`` leaves its flag handler installed once a stop signal has arrived (that
-    function's docstring), so under ``pytest -n auto`` whatever ran before on this xdist worker
-    decides what is installed now. ``conftest.py``'s autouse ``_stop_signal_handlers`` fixture
-    puts the real handlers back afterwards, so pinning them here leaks nothing.
-    """
+    """Pin ``SIGINT``/``SIGTERM`` to what a FRESH process has, as the baseline the three tests"""
     signal.signal(signal.SIGINT, signal.default_int_handler)
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
 
 def test_install_run_stop_signal_handlers_restores_without_a_stop_signal() -> None:
-    """``restore()``'s whole reason to exist: a caller — or a test driving several
-    ``dispatch_run`` calls in one process — never leaks a stale handler."""
+    """``restore()``'s whole reason to exist: a caller — or a test driving several"""
     _install_fresh_process_stop_handlers()
 
     stop, restore = _run_dispatch.install_run_stop_signal_handlers()
@@ -365,7 +321,6 @@ def test_install_run_stop_signal_handlers_restores_without_a_stop_signal() -> No
 
     restore()
 
-    # The default Python SIGINT handler (raises KeyboardInterrupt) is back.
     assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
     assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
     with pytest.raises(KeyboardInterrupt):
@@ -373,10 +328,7 @@ def test_install_run_stop_signal_handlers_restores_without_a_stop_signal() -> No
 
 
 def test_install_run_stop_signal_handlers_flips_stop_then_ignores_repeats() -> None:
-    """A stop signal flips the predicate, and after that ``restore()`` must leave the flag
-    handler installed so the duplicates one requested stop delivers are no-ops (regression,
-    CP-3 SHORT 2026-11-03 rc=143 — ``install_run_stop_signal_handlers``'s own docstring).
-    """
+    """A stop signal flips the predicate, and after that ``restore()`` must leave the flag"""
     _install_fresh_process_stop_handlers()
 
     stop, restore = _run_dispatch.install_run_stop_signal_handlers()
@@ -386,9 +338,6 @@ def test_install_run_stop_signal_handlers_flips_stop_then_ignores_repeats() -> N
 
     restore()
 
-    # Asserted BEFORE the repeats are delivered: with SIG_DFL back for SIGTERM the second
-    # signal would kill the whole pytest session instead of failing this test (the lesson
-    # `test_run_e2e.py`'s module-level docstring records about real-signal tests).
     assert signal.getsignal(signal.SIGTERM) is not signal.SIG_DFL
     assert signal.getsignal(signal.SIGINT) is not signal.default_int_handler
     os.kill(os.getpid(), signal.SIGTERM)
@@ -399,17 +348,7 @@ def test_install_run_stop_signal_handlers_flips_stop_then_ignores_repeats() -> N
 def test_dispatch_run_survives_a_second_stop_signal_during_shutdown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Regression: the CP-3 SHORT session of 2026-11-03 ended ``run`` with rc=143 instead of 0
-    at its scheduled 15:50 stop. One requested stop delivers the stop signal two or three
-    times — ``stop_supervised`` SIGTERMs ``run``'s process group and GNU ``timeout``, in that
-    same group, forwards it to its child and re-signals the group — and a late duplicate
-    landing after the ``finally``'s ``restore()`` had put ``SIG_DFL`` back killed the process
-    by default action.
-
-    Shaped like the real arc rather than by setting a flag: the stop arrives as a real
-    ``SIGTERM`` from inside ``run_forever``, the duplicate as a real ``SIGTERM`` from inside
-    ``close_fill_observer`` — i.e. during the ``finally``, after ``restore()`` has run.
-    """
+    """Regression: the CP-3 SHORT session of 2026-11-03 ended ``run`` with rc=143 instead of 0"""
     _install_fresh_process_stop_handlers()
     second_signal_window: list[object] = []
 
@@ -421,8 +360,6 @@ def test_dispatch_run_survives_a_second_stop_signal_during_shutdown(
     def _close_fill_observer_and_signal_again(_composed: object) -> None:
         handler = signal.getsignal(signal.SIGTERM)
         second_signal_window.append(handler)
-        # Checked before delivering, for the reason the test above states: a regression must
-        # fail THIS test, not kill the pytest session with signal 15.
         assert handler is not signal.SIG_DFL
         os.kill(os.getpid(), signal.SIGTERM)
 
@@ -443,9 +380,6 @@ def test_dispatch_run_survives_a_second_stop_signal_during_shutdown(
     assert len(second_signal_window) == 1
     assert exit_code == 0
     assert "stopped" in capsys.readouterr().out
-
-
-# -- backup-set ----------------------------------------------------------------
 
 
 def test_backup_set_dispatches_with_the_right_args(
@@ -523,8 +457,7 @@ def test_backup_set_forwards_readiness_verdict(
 def test_backup_set_without_archive_dir_never_reaches_the_archive_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The archive is opt-in (evidence growth plan §2 A3): the default invocation must behave
-    exactly as it did before, which means not calling ``archive_backup_set`` at all."""
+    """The archive is opt-in (evidence growth plan §2 A3): the default invocation must behave"""
 
     class _FakeManifest:
         generation = 1
@@ -606,9 +539,6 @@ def test_backup_set_archive_dir_forwards_manifest_path_and_preset(
     assert exit_code == 0
     assert len(calls) == 1
     manifest_path, archive_dir, verify_dir, key_provider, preset = calls[0]
-    # The manifest path is derived from the generation backup_set just wrote, never guessed
-    # from the CLI's own --generation (they agree today; a mismatch would be a silent archive
-    # of the wrong generation).
     assert manifest_path == dest / "gen7.set.manifest.json"
     assert (archive_dir, verify_dir, preset) == (
         tmp_path / "cold",
@@ -622,8 +552,7 @@ def test_backup_set_archive_dir_forwards_manifest_path_and_preset(
 def test_backup_set_archive_dir_without_its_companions_exits_nonzero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, omitted: str
 ) -> None:
-    """The snapshot itself still succeeds — the refusal is about the archive only, and says so
-    rather than leaving the operator to guess whether a backup was taken."""
+    """The snapshot itself still succeeds — the refusal is about the archive only, and says so"""
 
     class _FakeManifest:
         generation = 1
@@ -703,9 +632,6 @@ def test_backup_set_reports_an_archive_refusal_as_a_nonzero_exit(
     )
 
 
-# -- restore-drill --------------------------------------------------------------
-
-
 @pytest.mark.parametrize("live_label", ["paper", "restricted-live", "production"])
 def test_restore_drill_refuses_live_labels_before_doing_anything(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live_label: str
@@ -775,9 +701,6 @@ def test_restore_drill_dispatches_to_restore_set_for_a_non_live_label(
     assert key_provider is not None
 
 
-# -- migrate --------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("outcome", "expected"),
     [
@@ -797,16 +720,10 @@ def test_restore_drill_dispatches_to_restore_set_for_a_non_live_label(
             MigrationOutcome("evidence", 1, 2, (2,), (), ()),
             "not re-recorded (append-only)",
         ),
-        # The repair suffix itself, pinned. It used to read "the file was running unindexed",
-        # which became false once `repaired` could also name a schema_ledger trigger; with no
-        # case on it the wording could be reverted and the suite would stay green (LOW-4).
         (
             MigrationOutcome("evidence", 2, 2, (), (), ("entries_kind_seq",)),
             "the file was running without it",
         ),
-        # `applied` AND `repaired` together — unreachable before the ledger-trigger repair
-        # existed, because `repaired` was assigned only inside `if not applied`. It is a real
-        # outcome now: a ledger that lost its triggers on a file also behind on versions.
         (
             MigrationOutcome(
                 "evidence",
@@ -823,15 +740,12 @@ def test_restore_drill_dispatches_to_restore_set_for_a_non_live_label(
 def test_migrate_report_names_what_it_did(
     outcome: MigrationOutcome, expected: str
 ) -> None:
-    """`migrate` printed "is current" for three materially different outcomes — nothing to do,
-    versions applied, and an index rebuilt — so a repair was indistinguishable from a no-op in
-    the one place an operator looks (review L3)."""
+    """`migrate` printed "is current" for three materially different outcomes — nothing to do,"""
     assert expected in cli._migrate_report(outcome)
 
 
 def _noop_outcome(store_name: str) -> MigrationOutcome:
-    """A `MigrationOutcome` for a store that was already current — what `apply_migrations`
-    returns when there is nothing to do."""
+    """A `MigrationOutcome` for a store that was already current — what `apply_migrations`"""
     return MigrationOutcome(
         store_name=store_name,
         from_version=1,
@@ -890,19 +804,8 @@ def test_migrate_rejects_an_unregistered_store_at_parse_time(tmp_path: Path) -> 
 
 
 def test_migrate_path_map_never_drifts_from_store_migrations() -> None:
-    """Pins the defect fixed alongside this test: ``b131f382`` added ``"marketfeed"`` to
-    :data:`STORE_MIGRATIONS` (``schema_migrations.py``) but ``migrate``'s path resolution was a
-    separately hand-maintained dict (then in ``compose/cli.py``, now extracted to
-    :mod:`tos_runtime.compose._migrate_paths` — see that module's own docstring for why) that
-    still only listed ``evidence``/``rcl``/``inbox`` — the two had drifted apart, and ``migrate``
-    (with no ``--store`` given) raised a bare ``KeyError`` for ``marketfeed`` instead of running.
-    This asserts the two key sets stay equal so the same class of drift fails loudly here instead
-    of resurfacing as a ``KeyError`` deep in dispatch the next time a store is registered.
-    """
+    """Pins the defect fixed alongside this test: ``b131f382`` added ``"marketfeed"`` to"""
     assert set(MIGRATE_PATH_BY_STORE) == set(STORE_MIGRATIONS)
-
-
-# -- print-digests ----------------------------------------------------------------
 
 
 def test_print_digests_dispatches_and_prints_the_exact_text(
@@ -928,9 +831,6 @@ def test_print_digests_dispatches_and_prints_the_exact_text(
 def test_print_digests_takes_no_extra_arguments(tmp_path: Path) -> None:
     args = cli.parse_args(["print-digests"])
     assert isinstance(args, cli.PrintDigestsArgs)
-
-
-# -- rotate-key -----------------------------------------------------------------
 
 
 def _write_key(root: Path, generation: int, data: bytes) -> None:
@@ -1133,8 +1033,7 @@ def test_rotate_key_reports_a_rotation_refusal_and_still_closes_handles(
 def test_rotate_key_real_end_to_end_gen1_then_place_gen2_then_rotate_then_reopen(
     tmp_path: Path,
 ) -> None:
-    """The exact scenario team-lead's directive names: gen 1 → place gen 2 file 0600 →
-    rotate → reopen succeeds."""
+    """The exact scenario team-lead's directive names: gen 1 → place gen 2 file 0600 →"""
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     custody_root = tmp_path / "custody"
@@ -1171,9 +1070,6 @@ def test_rotate_key_real_end_to_end_gen1_then_place_gen2_then_rotate_then_reopen
         reopened.close()
 
 
-# -- rearm / ack-alert (runtime operations wiring plan §2 decisions 4/5) ----------------------
-
-
 def _write_rearm_files(
     approvals_dir: Path,
     *,
@@ -1181,12 +1077,7 @@ def _write_rearm_files(
     approvals: list[dict[str, str]] | None = None,
     environment_label: str = "non-live-test",
 ) -> None:
-    """Write one ``approvals/rearm/<seq>.yaml`` operator decision file.
-
-    Defaults to a genuinely satisfying SINGLE ``APPROVE`` (plan S2-a replaced the ``tos.hag``
-    two-person quorum with one custody-gated principal); the roster this used to write went
-    with it.
-    """
+    """Write one ``approvals/rearm/<seq>.yaml`` operator decision file."""
     if approvals is None:
         approvals = [{"principal_id": "alice", "decision": "APPROVE"}]
     rearm_dir = approvals_dir / "rearm"
@@ -1235,10 +1126,7 @@ def test_rearm_real_end_to_end_operator_approval_clears_the_latch(
     custody_root: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Team-lead follow-up: ``rearm`` is a complete operator door — an APPROVED operator
-    decision must actually clear the storage-layer latch
-    (``compose/_cli_ops.rearm_and_clear``), not merely report that a live runtime would.
-    """
+    """Team-lead follow-up: ``rearm`` is a complete operator door — an APPROVED operator"""
     approvals_dir = tmp_path / "approvals"
     seq = 7
 
@@ -1302,10 +1190,7 @@ def test_rearm_refused_quorum_never_calls_the_storage_clear_and_exits_nonzero(
     custody_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mutation-shaped pin (team-lead follow-up): a refused operator approval must never reach the
-    storage-layer clear at all — spies on ``SqliteEventInbox.clear_new_risk_halt`` itself, and
-    monkeypatches ``prepare_new_risk_halt_clear`` (via ``tos_runtime.compose._cli_ops``, the
-    module ``rearm_and_clear`` calls it from) to force a refusal deterministically."""
+    """Mutation-shaped pin (team-lead follow-up): a refused operator approval must never reach the"""
     from tos_runtime.compose import _cli_ops
     from tos_runtime.safety.rearm import NewRiskHaltDoorDecision
 
@@ -1408,13 +1293,7 @@ def test_rearm_refuses_when_no_approval_file_exists(
 def test_rearm_refuses_two_approvers_surfaced_through_the_cli(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """An approval file naming TWO principals is refused rather than quietly reduced to one
-    — pinned at the predicate level by
-    ``tests/safety/test_rearm.py::test_two_entries_are_refused_rather_than_reduced_to_one``;
-    this test proves the SAME refusal surfaces through the CLI end to end.
-
-    (Before plan S2-a this was the mirror case — one approver refused against a two-person
-    ``tos.hag`` quorum.)"""
+    """An approval file naming TWO principals is refused rather than quietly reduced to one"""
     approvals_dir = tmp_path / "approvals"
     seq = 7
     inbox = SqliteEventInbox(
@@ -1453,9 +1332,6 @@ def test_rearm_refuses_two_approvers_surfaced_through_the_cli(
     )
 
     assert exit_code == 1
-
-
-# -- ack-alert -------------------------------------------------------------------------------
 
 
 def test_ack_alert_parses_args(tmp_path: Path) -> None:
@@ -1580,8 +1456,6 @@ def test_ack_alert_refuses_a_bogus_seq(
     assert exit_code == 1
 
 
-# -- _cli_ops.py structural pin (team-lead follow-up: second approval-gated door) ----------------
-
 _CLI_OPS_PATH = (
     Path(__file__).resolve().parents[2]
     / "src"
@@ -1592,10 +1466,7 @@ _CLI_OPS_PATH = (
 
 
 def _clear_new_risk_halt_calls(tree: ast.Module) -> list[ast.Call]:
-    """Every ``Call`` node whose function is an attribute access named
-    ``clear_new_risk_halt`` (matches ``inbox.clear_new_risk_halt(...)`` regardless of the
-    receiver expression — mirrors ``tests/engine/test_no_direct_latch_clear.py``'s own
-    receiver-shape tolerance, at the AST level instead of regex)."""
+    """Every ``Call`` node whose function is an attribute access named"""
     calls = []
     for node in ast.walk(tree):
         if (
@@ -1608,11 +1479,7 @@ def _clear_new_risk_halt_calls(tree: ast.Module) -> list[ast.Call]:
 
 
 def _is_refusal_guard(node: ast.stmt) -> bool:
-    """Whether ``node`` is a guard clause shaped like
-    ``if decision.refusal is not None: return ...`` — an ``If`` whose test mentions
-    ``refusal`` and whose body contains a ``Return`` (the guard-clause pattern
-    ``rearm_and_clear`` mirrors from ``compose/_types.py``'s own early-return shape, rather
-    than a nested ``if``)."""
+    """Whether ``node`` is a guard clause shaped like"""
     if not isinstance(node, ast.If):
         return False
     test_dump = ast.dump(node.test)
@@ -1624,17 +1491,7 @@ def _is_refusal_guard(node: ast.stmt) -> bool:
 def test_cli_ops_has_exactly_one_clear_call_reachable_only_past_a_refusal_guard() -> (
     None
 ):
-    """Pragmatic AST pin (team-lead follow-up): ``_cli_ops.py`` must contain exactly ONE
-    ``clear_new_risk_halt(`` call site, and it must be reachable only AFTER a guard clause
-    that already returned on any non-``APPROVED`` HAG-quorum outcome — i.e. the storage clear
-    can only ever execute on the approved path, never unconditionally.
-
-    ``rearm_and_clear`` uses a guard-clause (early-return) shape, not a nested ``if`` block, to
-    mirror ``ComposedRuntime.clear_new_risk_halt``'s own real control flow
-    (``compose/_types.py:419-420``) — so this check looks for "a refusal guard with an earlier
-    line number than the call", the guard-clause equivalent of "nested under the approved
-    branch", rather than literally requiring AST nesting.
-    """
+    """Pragmatic AST pin (team-lead follow-up): ``_cli_ops.py`` must contain exactly ONE"""
     tree = ast.parse(_CLI_OPS_PATH.read_text(encoding="utf-8"))
 
     calls = _clear_new_risk_halt_calls(tree)
@@ -1663,9 +1520,7 @@ def test_cli_ops_has_exactly_one_clear_call_reachable_only_past_a_refusal_guard(
 
 
 def test_the_refusal_guard_detector_rejects_an_unguarded_call(tmp_path: Path) -> None:
-    """Proves :func:`_is_refusal_guard` is not vacuous: a scratch module with an UNGUARDED
-    ``clear_new_risk_halt(`` call (no preceding refusal-checking ``If``) would fail the pin
-    above."""
+    """Proves :func:`_is_refusal_guard` is not vacuous: a scratch module with an UNGUARDED"""
     scratch = tmp_path / "scratch_unguarded.py"
     scratch.write_text(
         "def rearm_and_clear(inbox):\n"

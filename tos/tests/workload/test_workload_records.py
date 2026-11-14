@@ -22,9 +22,7 @@ def test_runtime_identity_constructs_with_all_scalars() -> None:
 
 
 def test_runtime_identity_constructs_with_all_none() -> None:
-    """Every field is optional at the type level (∅-both-ways — a bare instance
-    is representable; required-ness is enforced at the point of use, matching
-    this codebase's convention for injected-scalar records)."""
+    """Every field is optional at the type level (∅-both-ways — a bare instance"""
     identity = RuntimeIdentity()
     assert identity.cell_id is None
     assert identity.runtime_generation is None
@@ -60,7 +58,6 @@ def test_runtime_identity_rejects_blank_process_nonce(nonce: str) -> None:
 
 
 def test_runtime_identity_process_nonce_none_is_representable() -> None:
-    """process_nonce=None (not yet injected) is distinct from a blank string and
-    does not raise — only a present-but-blank nonce is rejected."""
+    """process_nonce=None (not yet injected) is distinct from a blank string and"""
     identity = RuntimeIdentity(process_nonce=None)
     assert identity.process_nonce is None

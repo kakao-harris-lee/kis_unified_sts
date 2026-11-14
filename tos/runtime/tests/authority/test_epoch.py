@@ -25,10 +25,6 @@ from tos_runtime.time.sources import ReferenceObservation
 
 from .conftest import FakeEvidenceAppendPort, FakeMonotonicSource, make_trusted
 
-# ============================================================================
-# current_state() — derived from the log, no cache
-# ============================================================================
-
 
 def test_current_state_is_all_none_before_any_transition(
     epoch_service: SafetyAuthorityEpochService,
@@ -104,18 +100,13 @@ def test_current_state_is_domain_scoped(
 def test_epoch_current_helper_reads_through_current_state(
     epoch_service: SafetyAuthorityEpochService,
 ) -> None:
-    assert epoch_service.epoch_current(1) is False  # no epoch issued yet — fenced
+    assert epoch_service.epoch_current(1) is False
     epoch_service.transition(
         leader_identity="leader-1",
         transition_reason=AuthorityTransitionReason.SAFETY_AUTHORITY_FAILOVER,
     )
     assert epoch_service.epoch_current(1) is True
-    assert epoch_service.epoch_current(0) is False  # stale
-
-
-# ============================================================================
-# fault: epoch read failure -> UNKNOWN/fenced state
-# ============================================================================
+    assert epoch_service.epoch_current(0) is False
 
 
 def test_stale_epoch_read_yields_fenced_state_not_a_raised_exception(
@@ -136,13 +127,11 @@ def test_stale_epoch_read_yields_fenced_state_not_a_raised_exception(
         config=authority_config,
     )
     make_trusted(time_service)
-    # A second handle acquires a strictly-greater writer epoch, invalidating
-    # `service`'s own `writer_epoch` for every subsequent read.
     second = SqliteCommitLog(log_path, evidence_port=FakeEvidenceAppendPort())
     try:
         second.acquire_epoch(identity)
         state = service.current_state()
-        assert state == AuthorityEpochState()  # fenced, not a raised exception
+        assert state == AuthorityEpochState()
 
         witness = service.witness()
         assert witness.present is False
@@ -178,11 +167,6 @@ def test_transition_raises_on_stale_writer_epoch(
             )
     finally:
         second.close()
-
-
-# ============================================================================
-# witness() — online currentness (fault: snapshot expired -> present False)
-# ============================================================================
 
 
 def test_witness_present_false_before_time_service_started(
@@ -248,7 +232,7 @@ def test_witness_present_false_when_time_not_yet_trusted(
         writer_epoch=writer_epoch,
         config=authority_config,
     )
-    time_service.evaluate()  # UNINITIALIZED -> SYNCHRONIZING only
+    time_service.evaluate()
     witness = service.witness()
     assert witness.present is False
     assert witness.witness_source == "time_health_not_trusted"
@@ -291,10 +275,8 @@ def test_witness_expires_beyond_the_containment_bound(
 ) -> None:
     make_trusted(time_service)
     first = epoch_service.witness()
-    assert first.present is True  # baseline established
+    assert first.present is True
 
-    # Advance the clock well beyond the configured 500ms bound and re-evaluate
-    # so the time service's own snapshot reflects the new "now".
     time_monotonic.value += 10_000
     time_service.evaluate()
 
@@ -312,7 +294,7 @@ def test_witness_stays_present_within_the_containment_bound(
     first = epoch_service.witness()
     assert first.present is True
 
-    time_monotonic.value += 100  # well inside the 500ms bound
+    time_monotonic.value += 100
     time_service.evaluate()
 
     second = epoch_service.witness()
@@ -325,11 +307,7 @@ def test_witness_stays_false_on_an_immediate_repeat_call_after_expiry(
     time_service: TrustworthyTimeService,
     time_monotonic: FakeMonotonicSource,
 ) -> None:
-    """2026-09-08 independent-review MEDIUM repro: expiring the window must
-    NOT reset the baseline to "now" — an immediate second call (same
-    time-service snapshot, no further ``evaluate()``) must stay ``False``,
-    never flip back to ``True`` merely because the prior call reset the
-    baseline against itself."""
+    """2026-09-08 independent-review MEDIUM repro: expiring the window must"""
     make_trusted(time_service)
     first = epoch_service.witness()
     assert first.present is True
@@ -340,7 +318,7 @@ def test_witness_stays_false_on_an_immediate_repeat_call_after_expiry(
     second = epoch_service.witness()
     assert second.present is False
 
-    third = epoch_service.witness()  # immediately again — same snapshot
+    third = epoch_service.witness()
     assert third.present is False
     assert third.within_containment_bound is False
 
@@ -350,9 +328,7 @@ def test_witness_stays_false_forever_after_a_genuine_expiry(
     time_service: TrustworthyTimeService,
     time_monotonic: FakeMonotonicSource,
 ) -> None:
-    """The frozen baseline never self-heals just because more time passes —
-    a Safety Authority currentness bound is a one-way door once genuinely
-    violated (method docstring)."""
+    """The frozen baseline never self-heals just because more time passes —"""
     make_trusted(time_service)
     assert epoch_service.witness().present is True
 
@@ -360,9 +336,6 @@ def test_witness_stays_false_forever_after_a_genuine_expiry(
     time_service.evaluate()
     assert epoch_service.witness().present is False
 
-    # Advancing further (and evaluating again) does not recover it — the
-    # baseline is frozen at the original TRUE instant, and real elapsed time
-    # only grows relative to it.
     time_monotonic.value += 10_000
     time_service.evaluate()
     assert epoch_service.witness().present is False
@@ -373,17 +346,11 @@ def test_witness_recovers_after_a_transient_log_failure(
     time_service: TrustworthyTimeService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A locked/unreachable log (``sqlite3.Error``) is a genuine failure —
-    present=False while it lasts — but recovers to ``True`` once a read
-    succeeds again, provided real elapsed time never exceeded the bound
-    while the log was unreachable (2026-09-08 independent-review MEDIUM
-    fix's "successful read after failure" contract)."""
+    """A locked/unreachable log (``sqlite3.Error``) is a genuine failure —"""
     make_trusted(time_service)
     real_read = epoch_service._log.read_linearizable  # noqa: SLF001
     calls = {"n": 0}
 
-    # `Any`, not `object`: this spy stands in for `read_linearizable`'s own signature and must
-    # forward every call unchanged (plan §1.1 A-rt boundary use of `Any`).
     def failing_read(*args: Any, **kwargs: Any) -> object:
         calls["n"] += 1
         if calls["n"] <= 2:
@@ -399,9 +366,9 @@ def test_witness_recovers_after_a_transient_log_failure(
     assert first.witness_source == "log_unreachable"
 
     second = epoch_service.witness()
-    assert second.present is False  # still failing — stays False, not reset
+    assert second.present is False
 
-    third = epoch_service.witness()  # the log becomes reachable again
+    third = epoch_service.witness()
     assert third.present is True
 
 
@@ -411,12 +378,7 @@ def test_witness_zero_bound_is_true_only_at_the_exact_read_instant(
     evidence_port: FakeEvidenceAppendPort,
     writer_epoch: int,
 ) -> None:
-    """``containment_bound_ms=0`` (never returned by
-    :func:`load_authority_config`, which requires a positive int — see the
-    config tests below; directly constructible here) is ``True`` only when
-    age is exactly ``0`` (the read instant that established/re-confirmed the
-    baseline) and ``False`` on every later call once monotonic time has
-    moved on at all — the method docstring's documented ``bound=0`` shape."""
+    """``containment_bound_ms=0`` (never returned by"""
     make_trusted(time_service)
     zero_bound = AuthorityRuntimeConfig(containment_bound_ms=0)
     service = SafetyAuthorityEpochService(
@@ -427,13 +389,8 @@ def test_witness_zero_bound_is_true_only_at_the_exact_read_instant(
         writer_epoch=writer_epoch,
         config=zero_bound,
     )
-    assert service.witness().present is True  # establishes the baseline, age 0
-    assert service.witness().present is True  # same snapshot -> still age 0
-
-
-# ============================================================================
-# load_authority_config — named-TBD null containment_bound_ms refuses to start
-# ============================================================================
+    assert service.witness().present is True
+    assert service.witness().present is True
 
 
 def test_load_authority_config_null_bound_refuses_to_start(tmp_path: Path) -> None:
@@ -484,18 +441,10 @@ def test_example_config_ships_with_a_null_named_tbd_bound() -> None:
         load_authority_config(example)
 
 
-# ============================================================================
-# kernel round #1 §2.1 — CommandType switch + legacy-kind fail-closed refusal
-# ============================================================================
-
-
 def test_current_state_uses_the_new_advance_authority_epoch_command_type(
     epoch_service: SafetyAuthorityEpochService,
 ) -> None:
-    """A freshly-committed transition is written under the new, dedicated
-    ``ADVANCE_AUTHORITY_EPOCH`` member (kernel round #1 §1.1/§2.1) — the
-    reported-gap ``ADVANCE_RESTORE_GENERATION`` reuse is resolved, not merely
-    relabeled in a docstring."""
+    """A freshly-committed transition is written under the new, dedicated"""
     epoch_service.transition(
         leader_identity="leader-1",
         transition_reason=AuthorityTransitionReason.SAFETY_AUTHORITY_FAILOVER,
@@ -515,11 +464,7 @@ def test_current_state_raises_on_a_legacy_kind_entry_under_the_epoch_prefix(
     writer_epoch: int,
     authority_config: AuthorityRuntimeConfig,
 ) -> None:
-    """A prefix-matching entry committed under the OLD, legacy
-    ``ADVANCE_RESTORE_GENERATION`` kind must never be silently skipped by
-    :meth:`SafetyAuthorityEpochService.current_state` — skipping it would let
-    the epoch floor regress toward 0 (fail-open). It must instead raise
-    :class:`CommitLogCorruption` (kernel round #1 §2.1)."""
+    """A prefix-matching entry committed under the OLD, legacy"""
     legacy_entry = CommitEntry(
         command_id="authority-epoch-transition:acct-main:1",
         command_digest="legacy-digest",

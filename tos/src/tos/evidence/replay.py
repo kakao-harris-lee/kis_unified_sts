@@ -1,23 +1,4 @@
-"""Replay Capsule + divergence result (design #4 §2.5 D, §6, template SoT).
-
-Models ``REPLAY-CAPSULE-template.yaml`` (89 lines). A digest-bound artifact
-(``content_digest == H_ver(canonicalize(baseline + inputs + determinism +
-expected))``, design §3.2) with an **independent** ``replay_capsule_id``.
-
-**Interpretations (design deviations, reported):** the inherited
-``canonical_digest`` realizes the template ``content_digest``; covered =
-{baseline, inputs, determinism, expected} (design §3.2). ``isolation`` (runtime
-environment assertion), ``result`` (outcome), ``version`` / ``created_by`` /
-``review`` (meta) are self-excluded from the digest.
-
-Divergence (design §6.1, ERI-INV-009): :func:`compute_replay_result` is a pure
-function whose result is **never** ``MATCH`` if any of {unsupported baseline,
-missing/corrupt input, digest mismatch, schema incompatibility, unbounded
-nondeterminism} holds. A tolerance can never turn a safety-relevant DIVERGED into
-a MATCH (design §6); "MATCH establishes reproducibility, not adequacy" (§6.3).
-
-Pure module: ``pydantic`` + stdlib only; no ``shared.*`` (design §0.3).
-"""
+"""Replay Capsule + divergence result (design #4 §2.5 D, §6, template SoT)."""
 
 from __future__ import annotations
 
@@ -35,8 +16,8 @@ from tos.evidence.elements import (
     Tolerance,
 )
 
-_ISOLATION_ENV_DEFAULT = "non-live-replay"  # template line 61
-_REVIEW_RESULT_DEFAULT = "NOT_REVIEWED"  # template line 85
+_ISOLATION_ENV_DEFAULT = "non-live-replay"
+_REVIEW_RESULT_DEFAULT = "NOT_REVIEWED"
 _ISOLATION_LIVE_FLAGS = (
     "live_credentials_present",
     "live_broker_route_reachable",
@@ -66,27 +47,7 @@ def compute_replay_result(
     expected_state_digest: str | None,
     actual_state_digest: str | None,
 ) -> ReplayResultState:
-    """Compute a replay result from declared fields (design §6.1, ERI-INV-009).
-
-    Pure function. The result is ``MATCH`` only when the baseline is supported,
-    inputs are complete, the schema is compatible, all nondeterminism is bounded,
-    and the expected/actual state digests are present and equal. Any single
-    failure yields a non-``MATCH`` result — so an unsupported baseline, a
-    missing/corrupt input, a digest mismatch, a schema incompatibility, or
-    unbounded nondeterminism can never be reported as reproduced.
-
-    Args:
-        baseline_supported: Whether the exact baseline is supported (§6.2).
-        input_complete: Whether every required raw input is present.
-        schema_compatible: Whether the record/migration schema is compatible.
-        nondeterminism_bounded: Whether every declared boundary is bounded (§2.5 D).
-        expected_state_digest: The expected end-state digest (``None`` if absent).
-        actual_state_digest: The actual end-state digest (``None`` if not run to
-            completion).
-
-    Returns:
-        The conservative :class:`ReplayResultState`.
-    """
+    """Compute a replay result from declared fields (design §6.1, ERI-INV-009)."""
     if not baseline_supported:
         return ReplayResultState.UNSUPPORTED_BASELINE
     if not input_complete:
@@ -165,13 +126,7 @@ class ReplayDeterminism(FrozenModel):
 
 
 class ReplayIsolation(FrozenModel):
-    """Isolation assertion (template lines 60-65, design §6.3, ERI-INV-008).
-
-    Every ``live_*`` reachability flag is forced ``false``: the replay principal
-    can reach no live credential, broker route, production mutation endpoint, or
-    consumable authorization. The full "no live path" proof over a real topology
-    is EV-L2+/Security (design §6.3).
-    """
+    """Isolation assertion (template lines 60-65, design §6.3, ERI-INV-008)."""
 
     environment_id: str = _ISOLATION_ENV_DEFAULT
     live_credentials_present: bool = False
@@ -201,11 +156,7 @@ class ReplayExpected(FrozenModel):
 
 
 class ReplayResult(FrozenModel):
-    """Result block (template lines 74-80, design §6.3).
-
-    ``state`` defaults ``NOT_RUN``. Authority flags are forced ``false``:
-    "MATCH establishes reproducibility, not adequacy" (§6.3).
-    """
+    """Result block (template lines 74-80, design §6.3)."""
 
     state: ReplayResultState = ReplayResultState.NOT_RUN
     actual_state_digest: str | None = None
@@ -235,21 +186,9 @@ class ReplayReview(FrozenModel):
 
 
 class ReplayCapsule(EvidenceArtifact):
-    """A digest-bound Replay Capsule (design #4 §2.5 D, §6).
-
-    Binds baseline + inputs + determinism + expected under ``content_digest``;
-    ``replay_capsule_id`` is the independent id. The divergence/baseline predicates
-    (:func:`compute_replay_result`,
-    :func:`tos.evidence.predicates.replay_baseline_supported`) are pure EV-L1
-    functions over the declared fields.
-    """
+    """A digest-bound Replay Capsule (design #4 §2.5 D, §6)."""
 
     _ID_FIELD: ClassVar[str] = "replay_capsule_id"
-    # Exact-bind requirement (§6.2/§15, ERI-EV-008): an issued capsule must bind a
-    # concrete baseline commit and an expected end-state digest. The non-empty
-    # input binding is enforced in ``_replay_issuance_invariants`` (a required
-    # covered path cannot express tuple non-emptiness). Sibling artifacts
-    # (Envelope/Receipt/EIP) likewise carry a real ``_REQUIRED_COVERED``.
     _REQUIRED_COVERED: ClassVar[tuple[str, ...]] = (
         "baseline.repository_commit_sha",
         "expected.state_digest",
@@ -258,41 +197,22 @@ class ReplayCapsule(EvidenceArtifact):
         {"baseline", "inputs", "determinism", "expected"}
     )
 
-    # ---- Layer-0 identity + meta (self-excluded) ----
-    # canonical_digest (= template content_digest) / status / canonicalization_version
-    # inherited.
     replay_capsule_id: str | None = None
     version: str | None = None
     created_by: str | None = None
 
-    # ---- Covered content ----
     baseline: ReplayBaseline = ReplayBaseline()
     inputs: ReplayInputs = ReplayInputs()
     determinism: ReplayDeterminism = ReplayDeterminism()
     expected: ReplayExpected = ReplayExpected()
 
-    # ---- Excluded runtime/outcome/meta ----
     isolation: ReplayIsolation = ReplayIsolation()
     result: ReplayResult = ReplayResult()
     review: ReplayReview = ReplayReview()
 
     @model_validator(mode="after")
     def _replay_issuance_invariants(self) -> ReplayCapsule:
-        """Enforce exact input binding + fail-closed stored MATCH (§6.2/§15, ERI-INV-009).
-
-        Cross-field checks that ``ReplayResult`` alone cannot make (it has no
-        access to the capsule's baseline / inputs / determinism):
-
-        * **MAJOR-1** — an issued capsule must bind at least one raw-evidence
-          record digest (an exact input binding is what makes replay meaningful;
-          §6.2/§15/ERI-EV-008). A degenerate empty capsule is rejected.
-        * **MAJOR-2** — a stored ``result.state == MATCH`` is fail-closed: it is
-          rejected unless every declared nondeterministic boundary is bounded and
-          the expected end-state digest + baseline commit are present. This binds
-          the (correct) pure divergence predicate to the stored outcome so a false
-          MATCH under unbounded nondeterminism / missing binding is unconstructable
-          (ERI-INV-009), closing the bypass for consumers that trust ``result``.
-        """
+        """Enforce exact input binding + fail-closed stored MATCH (§6.2/§15, ERI-INV-009)."""
         if self.status == ArtifactStatus.DRAFT:
             return self
         if not self.inputs.raw_evidence_record_digests:

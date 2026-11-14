@@ -1,11 +1,4 @@
-"""exact_instrument_route_bound — exact identity / route binding (design #19 §5.2; VTG-EV-003 substrate).
-
-Alias / contract-month / account / env / route substitution is rejected; every scalar must
-match exactly; the alias set is compared both-ways (missing under-count + spurious substitution).
-
-Regime tag: predicate / model substrate only; VTG-EV-003 NOT_IMPLEMENTED (`/3` + Security
-residue); EV-L1-complete claim forbidden.
-"""
+"""exact_instrument_route_bound — exact identity / route binding (design #19 §5.2; VTG-EV-003 substrate)."""
 
 from __future__ import annotations
 
@@ -62,12 +55,10 @@ def test_missing_routing_field_is_rejected() -> None:
 def test_alias_set_both_ways_missing_and_spurious() -> None:
     """(§4.7 both-ways set) A missing alias (under) and a spurious alias (over) both reject."""
     decision = clean_decision(route=clean_instrument_route())
-    # under-count: a missing alias
     missing_alias = clean_instrument_route().model_copy(
         update={"routing_relevant_aliases": frozenset({"ALIAS-A"})}
     )
     assert exact_instrument_route_bound(decision, missing_alias) is False
-    # over-count: a spurious alias substitution
     spurious_alias = clean_instrument_route().model_copy(
         update={
             "routing_relevant_aliases": frozenset({"ALIAS-A", "ALIAS-B", "ALIAS-C"})

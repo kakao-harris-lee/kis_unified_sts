@@ -1,9 +1,4 @@
-"""Shared builders for the ``tos.engine`` authoring-evidence suite (design #31 §7).
-
-Every builder is deterministic and clock-free: no ``time`` / ``datetime`` / ``random`` / ``uuid``
-appears anywhere, including here, because the §7.1 determinism canary scans the *sources* and the
-tests must not model something the shipped package forbids.
-"""
+"""Shared builders for the ``tos.engine`` authoring-evidence suite (design #31 §7)."""
 
 from __future__ import annotations
 
@@ -55,9 +50,6 @@ ACCOUNT = "acct-1"
 INSTRUMENT = "ES"
 DECISION_CLASS = "entry"
 
-#: Every bound the engine consumes is injected here — the package hardcodes none (design #31 §8).
-#: These are **provisional** values: the DSL-evaluation budget key does not exist in
-#: VERIFICATION-PROFILE-002 and the register's Phase-0 bounds approval is incomplete.
 PROVISIONAL_BUDGET_STEPS = 64
 PROVISIONAL_MAX_UNRESOLVED_SEND_PER_SCOPE = 1
 
@@ -104,12 +96,7 @@ def capsule_gated_policy(
     account: str | None = ACCOUNT,
     instrument: str | None = INSTRUMENT,
 ) -> DecisionPolicy:
-    """A policy whose single guard reads a **capsule-sourced** operand (design #31 §3.2 (3)).
-
-    The guard compares ``capsule.scope.decision_class`` against a literal, so it has the ≥1
-    capsule-sourced operand admission requires. ``fires=False`` compares against a different
-    literal so the default no-action is selected instead.
-    """
+    """A policy whose single guard reads a **capsule-sourced** operand (design #31 §3.2 (3))."""
     action = Decision(
         kind=DecisionKind.ACTION,
         rationale="capsule-sourced guard fired",
@@ -315,13 +302,7 @@ class RecordingTransmit:
 
 
 class AllTruePreconditions:
-    """A :class:`~tos.engine.CoordinatorPreconditions` test double that always admits.
-
-    Both gates report the injected values (default ``True``/``True``) so the pre-existing
-    suite — authored before the Phase 3 wave 2 KW2-B Coordinator gate existed — keeps
-    exercising exactly the behaviour it always exercised. A test that wants to exercise the
-    gate itself constructs one with an explicit ``False`` / ``None``.
-    """
+    """A :class:`~tos.engine.CoordinatorPreconditions` test double that always admits."""
 
     def __init__(
         self,

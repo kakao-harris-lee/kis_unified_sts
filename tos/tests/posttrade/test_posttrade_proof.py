@@ -1,24 +1,4 @@
-"""§5.7 finality-proof class specificity, non-transferability, currency + grants-nothing.
-
-The §4.5-B monotonicity truth table, cell by cell — and in particular its ninth row, the one
-that makes "finality is monotone" mean something other than "once proven, always proven":
-
-* rows 1-3 (``UNKNOWN -> PROVEN`` with proof; without proof; cross-dimension implication) are
-  :func:`finality_dimensions_orthogonal`'s and live in ``test_posttrade_finality.py``;
-* row 4 (``PROVEN`` does not imply a consequence) is
-  :func:`post_trade_consequence_all_false`, asserted here with **no positive side** — no
-  input ever grants a consequence;
-* rows 5-6 (generation monotone, no revert) are the ``tos.ordering`` coordinate, asserted in
-  ``test_posttrade_state.py``;
-* rows 7-8 (destructive overwrite; non-destructive supersede) are
-  :func:`obligation_commit_idempotent`'s, in ``test_posttrade_commit.py``;
-* **row 9** (a correction advances the generation, so the prior proof is no longer current —
-  finality **reopens**) is :func:`finality_proof_current`, asserted here.
-
-Plus PTF-INV-005 (a global ``SETTLED`` / confidence score / statement flag / operator
-decision cannot replace exact per-field proof — realized by structural absence plus the
-class-specific conjunction) and §11 line 328 (non-transferable and non-unionable).
-"""
+"""§5.7 finality-proof class specificity, non-transferability, currency + grants-nothing."""
 
 from __future__ import annotations
 
@@ -54,9 +34,6 @@ _SCOPE_COMPONENTS = (
 )
 
 
-# --- §11 line 320-326 finality_proof_class_specific --------------------------
-
-
 def test_an_exact_class_specific_proof_passes() -> None:
     """(positive side) Identity, version, full scope, amount, class, generation, limits."""
     assert finality_proof_class_specific(clean_finality_proof()) is True
@@ -69,8 +46,7 @@ def test_an_absent_proof_proves_nothing() -> None:
 
 @pytest.mark.parametrize("component", _SCOPE_COMPONENTS)
 def test_each_of_the_six_scope_components_is_load_bearing(component: str) -> None:
-    """(§11 line 328) An under-specified scope describes a *set* of legs — the union the
-    ADR forbids."""
+    """(§11 line 328) An under-specified scope describes a *set* of legs — the union the"""
     under_specified = clean_finality_proof(leg_scope=clean_scope(**{component: None}))
     assert finality_proof_class_specific(under_specified) is False
 
@@ -113,11 +89,7 @@ def test_a_class_that_disagrees_with_its_scope_is_incoherent() -> None:
 
 
 def test_an_absent_bound_generation_is_rejected() -> None:
-    """(§11 line 330) Without a bound generation the reopen rule has nothing to compare.
-
-    ``bound_generation`` is in ``_REQUIRED_COVERED``, so an unbound proof cannot reach
-    ISSUED at all; the guard is exercised on a genuinely pre-issuance DRAFT.
-    """
+    """(§11 line 330) Without a bound generation the reopen rule has nothing to compare."""
     unbound = PostTradeFinalityProof(
         proof_id=None,
         status=ArtifactStatus.DRAFT,
@@ -139,27 +111,18 @@ def test_an_absent_or_negative_amount_is_rejected(amount: Decimal | None) -> Non
 
 
 def test_an_empty_does_not_prove_is_rejected() -> None:
-    """(§11 line 320-326) The negative space is **part of the proof**.
-
-    A proof that never declared its own limits is exactly how a single-dimension proof gets
-    read as global finality.
-    """
+    """(§11 line 320-326) The negative space is **part of the proof**."""
     assert (
         finality_proof_class_specific(clean_finality_proof(does_not_prove=())) is False
     )
 
 
 def test_the_global_flag_substitution_fails_the_conjunction() -> None:
-    """(PTF-INV-005) What a "global ``SETTLED``" looks like here: no class, no scope, no
-    declared limits. It has no field to travel in and it fails the conjunction anyway.
-    """
+    """(PTF-INV-005) What a "global ``SETTLED``" looks like here: no class, no scope, no"""
     global_claim = clean_finality_proof(
         finality_class=None, leg_scope=None, does_not_prove=()
     )
     assert finality_proof_class_specific(global_claim) is False
-
-
-# --- §11 line 328 finality_proof_non_transferable ----------------------------
 
 
 def test_a_proof_applies_to_its_own_scope() -> None:
@@ -189,11 +152,7 @@ def test_each_component_blocks_a_cross_scope_transfer(
 
 
 def test_two_under_specified_scopes_do_not_match() -> None:
-    """(∅ guard) Agreeing only by being equally undescribed is not the same leg.
-
-    Without this guard a pair of empty scopes would compare equal and certify the transfer of
-    a proof about nothing onto anything.
-    """
+    """(∅ guard) Agreeing only by being equally undescribed is not the same leg."""
     empty = ObligationLegScope()
     proof = clean_finality_proof(leg_scope=empty)
     assert finality_proof_non_transferable(proof, empty) is False
@@ -206,12 +165,7 @@ def test_an_absent_proof_or_target_is_rejected() -> None:
 
 
 def test_a_scope_tuple_does_not_name_the_obligation() -> None:
-    """(§11 line 320; v1.2 erratum) The premise behind the cross-obligation seal.
-
-    Two distinct obligations can legitimately share one six-component scope — the same account
-    settling the same currency on the same value date. The scope names a **leg**, not an
-    obligation, which is exactly why a scope-only comparison was insufficient.
-    """
+    """(§11 line 320; v1.2 erratum) The premise behind the cross-obligation seal."""
     first = clean_finality_proof(obligation_ref="OBL-1")
     second = clean_finality_proof(obligation_ref="OBL-2")
     assert first.leg_scope == second.leg_scope
@@ -236,7 +190,7 @@ def test_a_supplied_obligation_identity_narrows_the_verdict() -> None:
 @pytest.mark.parametrize(
     ("target_ref", "target_version", "expected"),
     [
-        (None, None, True),  # legacy scope-only call — backwards compatible
+        (None, None, True),
         ("OBL-1", None, True),
         (None, "V1", True),
         ("OBL-1", "V1", True),
@@ -262,11 +216,7 @@ def test_the_cross_obligation_gate_truth_table(
 
 
 def test_an_unbound_proof_cannot_be_waved_onto_a_named_obligation() -> None:
-    """(§11 line 320) A proof that carries no obligation identity matches no supplied one.
-
-    ``None != "OBL-1"``, so the mismatch branch fires rather than the comparison being
-    skipped — the failure mode a "compare only when both are present" reading would create.
-    """
+    """(§11 line 320) A proof that carries no obligation identity matches no supplied one."""
     from tos.canonical import ArtifactStatus
 
     unbound = PostTradeFinalityProof(
@@ -300,8 +250,7 @@ def test_the_cross_obligation_arguments_are_keyword_only() -> None:
 
 
 def test_transferability_is_symmetric_in_its_scope_comparison() -> None:
-    """(structural) A proof scoped to X applies to X and to nothing else, whichever way the
-    caller frames the target."""
+    """(structural) A proof scoped to X applies to X and to nothing else, whichever way the"""
     proof_on_credit = clean_finality_proof(
         leg_scope=clean_scope(leg=ObligationLegDirection.CREDIT)
     )
@@ -319,30 +268,20 @@ def test_transferability_is_symmetric_in_its_scope_comparison() -> None:
     )
 
 
-# --- §4.5-B row 9: finality_proof_current ------------------------------------
-
-
 def test_a_proof_bound_to_the_active_generation_is_current() -> None:
     """(positive side) The proof binds the generation that is still active."""
     assert finality_proof_current(clean_finality_proof(bound_generation=7), 7) is True
 
 
 def test_a_correction_that_advances_the_generation_reopens_finality() -> None:
-    """(§4.5-B row 9 / §11 line 330 / PTF-INV-013) The stale-proof seal.
-
-    "A later correction supersedes the proof, **advances generation** ... it does not erase
-    history." So "finality is monotone" is emphatically **not** "once proven, always proven".
-    """
+    """(§4.5-B row 9 / §11 line 330 / PTF-INV-013) The stale-proof seal."""
     proof = clean_finality_proof(bound_generation=1)
     assert finality_proof_current(proof, 1) is True
-    # a correction lands; the active generation advances
     assert finality_proof_current(proof, 2) is False
 
 
 def test_a_proof_ahead_of_the_active_generation_is_also_not_current() -> None:
-    """(§11 line 330) Currency is an equality, not a "at least as new as" ordering: a proof
-    claiming a generation that is not the active one is not current in either direction.
-    """
+    """(§11 line 330) Currency is an equality, not a "at least as new as" ordering: a proof"""
     assert finality_proof_current(clean_finality_proof(bound_generation=3), 2) is False
 
 
@@ -372,6 +311,3 @@ def test_currency_is_exactly_generation_equality(bound: int, active: int) -> Non
     assert finality_proof_current(
         clean_finality_proof(bound_generation=bound), active
     ) is (bound == active)
-
-
-# --- §10 line 312 post_trade_consequence_all_false ---------------------------

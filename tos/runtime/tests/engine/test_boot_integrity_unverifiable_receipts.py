@@ -1,19 +1,4 @@
-"""Hermetic test for :func:`tos_runtime.compose._boot_integrity.verify_engine_replay_or_halt`'s
-own re-review finding R1 (2026-09-09) addition: a NON-halt ``REPLAY_RECEIPTS_UNVERIFIABLE``
-evidence row, appended when the boot proceeds but at least one receipt's flow fingerprint could
-not be verified.
-
-Placed alongside :mod:`tos_runtime.engine`'s own tests (not under ``tests/compose/``) purely for
-fixture reuse — this function needs only the same low-level ``inbox``/``evidence_store``/
-``emergency_log`` fixtures :mod:`test_replay_stage` already uses, not the full compose stack
-(``config_dir``/``data_dir``/``custody_root``) ``tests/compose/conftest.py`` provides.
-
-Re-review #2 finding S3 (2026-09-09): ``_replay_build_core`` used to be copied a third time here
-(alongside :mod:`test_replay_stage`'s own copy and the shipped ``_engine_wiring.py::
-_replay_core_factory``) — imported from :mod:`test_replay_stage` instead, so a future drift in
-that shape cannot make this file silently verify a DIFFERENT boot-time core construction than the
-shipped one.
-"""
+"""Hermetic test for :func:`tos_runtime.compose._boot_integrity.verify_engine_replay_or_halt`'s"""
 
 from __future__ import annotations
 
@@ -52,8 +37,6 @@ def _driver(
     transmit: object = None,
     preconditions: object = None,
 ) -> EngineDriver:
-    # `build_core`'s own `preconditions` parameter is `Any` (fixture boundary) — matching
-    # that here, not a blanket widening (plan §1.1 A-rt).
     kwargs: dict[str, Any] = (
         {} if preconditions is None else {"preconditions": preconditions}
     )
@@ -83,11 +66,7 @@ def test_boot_proceeds_and_records_a_non_halt_evidence_row_for_an_unverifiable_r
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
 ) -> None:
-    """Re-review finding R1: a fingerprint-less (pre-CR6) ``DECISION_TICK`` receipt must not
-    block the boot (its digest half was verified; a legacy receipt is not evidence of
-    divergence) — but the fact that its flow half is unverifiable must be durably, visibly
-    recorded, never silently discarded.
-    """
+    """Re-review finding R1: a fingerprint-less (pre-CR6) ``DECISION_TICK`` receipt must not"""
     gateway = fx.FakeGateway()
     driver = _driver(inbox, evidence_store, emergency_log, transmit=gateway)
     tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
@@ -109,7 +88,7 @@ def test_boot_proceeds_and_records_a_non_halt_evidence_row_for_an_unverifiable_r
         scheme=SCHEME,
         window_events=100,
     )
-    assert verdict.ok  # boot proceeds — never raises EngineReplayDiverged
+    assert verdict.ok
     assert verdict.has_unverifiable_receipts is True
 
     (row,) = evidence_store.connection.execute(
@@ -125,9 +104,7 @@ def test_boot_records_no_unverifiable_row_when_every_receipt_carries_a_fingerpri
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
 ) -> None:
-    """Control: an untampered boot (every receipt carries its fingerprint) must NOT record the
-    ``REPLAY_RECEIPTS_UNVERIFIABLE`` evidence row at all — it is not a routine, always-present
-    marker; it only appears when something is genuinely unverifiable."""
+    """Control: an untampered boot (every receipt carries its fingerprint) must NOT record the"""
     gateway = fx.FakeGateway()
     driver = _driver(inbox, evidence_store, emergency_log, transmit=gateway)
     tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
@@ -155,13 +132,7 @@ def test_p12_a_coordinator_refused_tick_is_never_misattributed_as_unverifiable(
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
 ) -> None:
-    """Re-review #2 finding S1, reproduced exactly. Two ticks coexist: tick 1 is refused by the
-    Coordinator gate (uncompared for reason ``"AUTHORITY_NOT_CURRENT"`` — the pipeline never ran
-    for it at all); tick 2 hands off normally and has its ``flow_fingerprint`` disabled
-    afterward (the P9 tamper). Only tick 2 is a genuine ``RECEIPT_FINGERPRINT_MISSING`` case —
-    the evidence row must name EXACTLY tick 2's event id, with ``count == len(event_ids) == 1``,
-    never inflating to ``count=2`` by conflating the two DIFFERENT ``uncompared`` reasons.
-    """
+    """Re-review #2 finding S1, reproduced exactly. Two ticks coexist: tick 1 is refused by the"""
     refused_driver = _driver(
         inbox,
         evidence_store,
@@ -178,16 +149,10 @@ def test_p12_a_coordinator_refused_tick_is_never_misattributed_as_unverifiable(
     assert (
         handed_off_result.flow is not None and handed_off_result.flow.handed_off is True
     )
-    # The driver re-stamps `reference` on admission (its own yield-order counter), so the
-    # caller-supplied `seq` above cannot be matched back — admission ORDER is what distinguishes
-    # the two ticks instead: tick 1 (refused) was admitted first, tick 2 (handed off) second.
     admitted_events = [event for _seq, event in inbox.replay()]
     assert len(admitted_events) == 2
     handed_off_event_id = _event_id_of(admitted_events[1])
 
-    # Disable ONLY tick 2's flow_fingerprint — tick 1's is irrelevant either way (it is refused
-    # before the fingerprint check is ever reached), but targeting tick 2 specifically keeps this
-    # test's premise ("exactly one genuinely unverifiable receipt") unambiguous.
     evidence_store.connection.execute("DROP TRIGGER IF EXISTS entries_no_update")
     updated = evidence_store.connection.execute(
         "UPDATE entries SET payload_json = "
@@ -206,8 +171,8 @@ def test_p12_a_coordinator_refused_tick_is_never_misattributed_as_unverifiable(
         window_events=100,
     )
     assert verdict.ok
-    assert verdict.uncompared == 1  # the refused tick only
-    assert verdict.total_compared == 1  # the handed-off tick's digest
+    assert verdict.uncompared == 1
+    assert verdict.total_compared == 1
     assert verdict.has_unverifiable_receipts is True
 
     (row,) = evidence_store.connection.execute(
@@ -223,17 +188,7 @@ def test_the_unverifiable_row_still_lands_when_a_different_event_diverges(
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
 ) -> None:
-    """Re-review #2 finding S2, reproduced exactly. A boot with BOTH a genuine divergence (tick
-    2's recorded digest is corrupted) AND a legacy, fingerprint-less receipt (tick 1) must still
-    durably record the ``REPLAY_RECEIPTS_UNVERIFIABLE`` row for tick 1 — the diagnostic case that
-    most needs every available fact must not lose one just because
-    ``verify_engine_replay_or_halt`` raises ``EngineReplayDiverged`` before returning.
-    """
-    # Both ticks are denied EARLY (well before step 9/ATOMIC_COMMIT) so neither ever touches the
-    # reservation ledger — avoiding the DIFFERENT, already-documented "window_events path-
-    # dependency" cross-tick interaction a shared replay ledger would otherwise introduce here
-    # (module docstring of tos_runtime.engine.replay), which would confound this test's own,
-    # narrower point.
+    """Re-review #2 finding S2, reproduced exactly. A boot with BOTH a genuine divergence (tick"""
     denied_stages = fx.admitting_stages(
         denied_steps={CommitmentStep.VENUE_ADMISSIBILITY_DECISION: "denied for S2 test"}
     )
@@ -279,7 +234,6 @@ def test_the_unverifiable_row_still_lands_when_a_different_event_diverges(
     }
 
     evidence_store.connection.execute("DROP TRIGGER IF EXISTS entries_no_update")
-    # Tick 1: disable its flow_fingerprint (the legacy-receipt half of this scenario).
     updated_fp = evidence_store.connection.execute(
         "UPDATE entries SET payload_json = "
         "REPLACE(payload_json, '\"flow_fingerprint\":', '\"flow_fingerprint_DISABLED\":') "
@@ -287,7 +241,6 @@ def test_the_unverifiable_row_still_lands_when_a_different_event_diverges(
         (f"%{event_ids[1]}%",),
     )
     assert updated_fp.rowcount == 1
-    # Tick 2: corrupt its recorded outcome_digest directly (the divergence half).
     (row,) = evidence_store.connection.execute(
         "SELECT rowid, payload_json FROM entries WHERE kind = 'EVENT_CONSUMED' "
         "AND payload_json LIKE ?",
@@ -311,12 +264,10 @@ def test_the_unverifiable_row_still_lands_when_a_different_event_diverges(
             window_events=100,
         )
 
-    # The halt record for the divergence exists...
     diverged_rows = evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = 'REPLAY_DIVERGED'"
     ).fetchone()
     assert diverged_rows[0] == 1
-    # ...AND the unverifiable-receipt fact is NOT lost just because the boot also diverged.
     unverifiable_rows = evidence_store.connection.execute(
         "SELECT payload_json FROM entries WHERE kind = 'REPLAY_RECEIPTS_UNVERIFIABLE'"
     ).fetchall()
