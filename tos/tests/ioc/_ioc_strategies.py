@@ -1,18 +1,4 @@
-"""Shared valid-artifact builders + strategies for the ioc property tests.
-
-Firewall-clean: imports only ``hypothesis`` and ``tos.*`` (design #14 §0.3). The builders
-enforce the §7 clean-vs-illegal fixture discipline (the #8 REJECT lesson):
-
-* a **CONFORMANT** fixture has intent / command / envelope carrying the *same* concrete
-  authorized axis value on every axis, so a CONFORMANT verdict is genuinely earned;
-* a **NON_CONFORMANT** fixture flips one named axis (e.g. SIDE ``BUY`` -> ``SELL``) so the
-  mismatch is a real, identified mismatch — the test states which axis;
-* an **UNKNOWN** fixture drops one axis value to ``None`` (a genuine missing determination input);
-* a **dominating** committed vector strictly exceeds the envelope on every governed dimension;
-  an under-dominating one is strictly below on one dimension.
-
-The reserved ``"TBD"`` placeholder is excluded from required-field text.
-"""
+"""Shared valid-artifact builders + strategies for the ioc property tests."""
 
 from __future__ import annotations
 
@@ -34,11 +20,8 @@ from tos.rcl import CapacityComponent, CapacityVector
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Text bound to a required-covered field must be concrete (never the reserved ``"TBD"``).
 REQUIRED_FIELD_TEXT = st.text(max_size=8).filter(lambda s: s != "TBD")
-#: Injected ``bool | None`` flag (fail-closed on ``None`` / ``False``).
 TRIBOOL = st.sampled_from([True, False, None])
-#: A finite decimal magnitude (never NaN / infinity — those are unconstructable, §14 line 423).
 FINITE_MAGNITUDE = st.decimals(
     min_value=Decimal("0"),
     max_value=Decimal("1000"),
@@ -47,7 +30,6 @@ FINITE_MAGNITUDE = st.decimals(
     places=2,
 )
 
-#: The authorized axis set used across the conformance tests (the identity + direction axes).
 AUTHORIZED_AXES: dict[ConformanceAxis, str | None] = {
     ConformanceAxis.ENVIRONMENT: "PAPER",
     ConformanceAxis.ACCOUNT: "ACCT-1",
@@ -64,11 +46,6 @@ def _bindings(values: dict[ConformanceAxis, str | None]) -> tuple[AxisBinding, .
         AxisBinding(axis=axis, value=values[axis])
         for axis in sorted(values, key=lambda a: a.value)
     )
-
-
-# ---------------------------------------------------------------------------
-# Digest-bound artifact builders
-# ---------------------------------------------------------------------------
 
 
 def issue_policy(**overrides: Any) -> OrderConstructionPolicy:
@@ -138,11 +115,6 @@ def issue_proof(**overrides: Any) -> OrderConformanceProof:
     }
     base.update(overrides)
     return OrderConformanceProof.issue(scheme=SCHEME, **base)
-
-
-# ---------------------------------------------------------------------------
-# Value-model builders
-# ---------------------------------------------------------------------------
 
 
 def capacity_vector(

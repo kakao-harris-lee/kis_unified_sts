@@ -1,14 +1,4 @@
-"""request_is_complete — complete exact request (design #15 §5.1; IAP-EV-001 substrate, core L1 slice).
-
-both-ways canary (§4.1/§4.7): a complete request earns APPROVE (positive side — a lawful request
-is not blocked); an omitted / empty / wildcard / UNKNOWN / not-single-use / no-independent-facts
-field cannot yield APPROVE (guard fires). ∅ both-ways: absent field => DENY; missing scope =>
-DENY (never zero / wildcard / unconstrained). Forbidden-verb canary: default / wildcard /
-substitute-by-omission cannot preserve APPROVE.
-
-Regime tag: predicate / model substrate only; IAP-EV-001 NOT_IMPLEMENTED (`/3` residue);
-EV-L1-complete claim forbidden.
-"""
+"""request_is_complete — complete exact request (design #15 §5.1; IAP-EV-001 substrate, core L1 slice)."""
 
 from __future__ import annotations
 

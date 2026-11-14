@@ -52,18 +52,6 @@ def _projection_path() -> Path:
     return path if path.is_absolute() else _REPO_ROOT / path
 
 
-class ServiceClearance(BaseModel):
-    """Per-service safety-mesh clearance (spg/wdr/sir/stm)."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    clear: bool | None = None
-    #: ``None`` means "the runtime had no source for this list", which is NOT the
-    #: same fact as an empty list ("evaluated, nothing to report"). The producer
-    #: passes its reader's value through verbatim, so both shapes reach here.
-    reasons: list[str] | None = None
-
-
 class _RuntimeIdentity(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -93,13 +81,6 @@ class _TimeFacts(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     health: str | None = None
-
-
-class _SafetyMeshFacts(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    snapshot_generation: int | None = None
-    services: dict[str, ServiceClearance] | None = None
 
 
 class _CurrentnessFacts(BaseModel):
@@ -135,41 +116,6 @@ class _ReleaseFacts(BaseModel):
 
     admitted: bool | None = None
     software_deployment_ok: bool | None = None
-
-
-class _ProtectiveVerdict(BaseModel):
-    """One ``ProtectiveActionService`` verdict as the producer renders it.
-
-    Pinned by the producer at ``tos/runtime/src/tos_runtime/compose/
-    _operations_wiring.py::_read_protective`` and by its own test
-    ``tos/runtime/tests/compose/test_operations_wiring.py`` (the key set is
-    asserted there).
-
-    Every leaf is declared nullable, but for two different reasons. Four of
-    them (``derestriction_admissible``, ``capacity_exhausted``,
-    ``classification``, ``protective_classification_digest``) really are
-    ``None`` whenever the runtime has no source for that fact. The other two
-    (``unevaluated``, ``reasons``) are always lists today —
-    ``ProtectiveVerdict`` declares them ``tuple[str, ...]`` and the producer
-    renders them with ``list(...)``, so ``None`` there is tolerated for
-    forward compatibility rather than expected.
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    derestriction_admissible: bool | None = None
-    capacity_exhausted: bool | None = None
-    #: ``ProtectiveActionOutcome.value`` (a plain string) or ``None``.
-    classification: str | None = None
-    unevaluated: list[str] | None = None
-    reasons: list[str] | None = None
-    protective_classification_digest: str | None = None
-
-
-class _ProtectiveFacts(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    last_verdict: _ProtectiveVerdict | None = None
 
 
 class _LastBackupFacts(BaseModel):
@@ -227,13 +173,11 @@ class TosOperatorProjection(BaseModel):
     recovery: _RecoveryFacts | None = None
     driver: _DriverFacts | None = None
     time: _TimeFacts | None = None
-    safety_mesh: _SafetyMeshFacts | None = None
     currentness: _CurrentnessFacts | None = None
     rcl: _RclFacts | None = None
     inbox: _InboxFacts | None = None
     evidence: _EvidenceFacts | None = None
     release: _ReleaseFacts | None = None
-    protective: _ProtectiveFacts | None = None
     operations: _OperationsFacts | None = None
     alerts: _AlertsFacts | None = None
     export: _ExportFacts | None = None

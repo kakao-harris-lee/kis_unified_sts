@@ -13,21 +13,27 @@
 #     from its own durable evidence, DR-0003 §2.2). No notional / margin
 #     dimension: no mark source exists, and a dimension with no source would
 #     make every evaluation UNKNOWN.
-#   * The Hard Safety Envelope this deployment boots with MUST declare the
-#     same dimension id with an envelope_max ≥ 1 — the compose root refuses
-#     to boot (RiskPolicyScopeMismatch) when the policy governs a dimension the
-#     HSE does not carry, and the kernel's envelope_bound_not_enlarged denies
-#     when the policy limit exceeds the HSE maximum. No paper HSE instance is
-#     committed yet (safety_envelope.yaml is still an .example.yaml).
+#   * The ARE ceiling is this file's own `_runtime.envelope_max` since plan S2-a
+#     (2026-11-13, docs/plans/2026-11-13-tos-code-halving-plan.md). Before that it
+#     was the Hard Safety Envelope's `governed_dimensions[].envelope_max`, checked
+#     against this policy at boot by the compose root; `safety_envelope.yaml`, its
+#     example and that cross-check are all gone. The VALUE is unchanged (measured
+#     before the cut: "1" in all four shipped trees) and so is the refusal —
+#     `load_aggregate_risk_policy` requires a ceiling for every id in
+#     `dimension_ids`, so an ARE-governed dimension with no declared bound is
+#     refused at load instead of at wiring. The kernel's
+#     `envelope_bound_not_enlarged` still denies when an effective limit exceeds
+#     the ceiling declared below.
 #   * required_scenario_kinds = risk.yaml's set (ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ).
 #   * The position observation is single-source (no broker witness);
 #     all_fields_attributed stays the operator attestation in
 #     risk_attestations.yaml (DR-0003 §2.2) — this file never asserts it.
 #
 # OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"): account_scope,
-# instrument_scope (same values as venue_constraint_policy.yaml), then
-# `tos-runtime print-policy-digests --config-dir <dir>` → safety_activation.yaml
-# `members:` (kind AGGREGATE_RISK_POLICY).
+# instrument_scope (same values as venue_constraint_policy.yaml). The
+# `tos-runtime print-policy-digests --config-dir <dir>` line is a RECORD only since
+# plan S2-a: `safety_activation.yaml` is deleted, so there is no `members:` list to
+# transcribe the digest into. Boot still records it in the `*_POLICY_BOUND` evidence.
 # =============================================================================
 
 artifact_type: AGGREGATE_RISK_POLICY
@@ -108,6 +114,12 @@ _runtime:
       scope: "INSTRUMENT"
       dimension: "LONG_SHORT_DELTA_DIRECTIONAL"
   effective_limits:
+    "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL": 1
+  # `envelope_max` — 6단계 `injected_envelope_max` 상한. 2026-11-13 S2-a 이전까지는
+  # `safety_envelope.yaml::envelope.governed_dimensions[].envelope_max` 에 있었고
+  # 값은 그대로다(안전망 제거 전 실측: 네 트리 모두 "1"). 로더는 `dimension_ids` 의
+  # 모든 id 에 대해 이 값을 요구한다 — 상한 없는 차원은 부팅 거부.
+  envelope_max:
     "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL": 1
   required_scenario_kinds: ["ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ"]
   required_scopes: ["INSTRUMENT"]

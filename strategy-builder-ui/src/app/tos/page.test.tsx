@@ -20,6 +20,14 @@ vi.mock('@/lib/dashboard/tos', async () => {
     isAcceptedProjection: (p: unknown) => (shared.accept ?? actual.isAcceptedProjection)(p as TosProjection),
   };
 });
+// The bar panel is a SECOND read model with its own query, its own banner
+// (`role=status`/`alert`) and its own button, and it has its own suite
+// (BarsPanel.test.tsx). Stubbed here so this file keeps asserting the
+// projection page: without it `findByRole('status')` and
+// `getAllByRole('button')` below match two independent components and fail on
+// ambiguity rather than on anything about the projection.
+vi.mock('./BarsPanel', () => ({ default: () => null }));
+
 let client: QueryClient;
 function mount(response?: Partial<TosProjectionResponse>) {
   if (response) vi.mocked(tosApi.getProjection).mockImplementation(async () => ({
@@ -36,7 +44,7 @@ describe('TOS read-only page', () => {
     mount({});
     await screen.findByText('최근 상태를 조회했습니다');
     expect(within(screen.getByRole('region', { name: '위험 원장과 증거' })).getByText('0')).toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: '릴리스와 보호 상태' })).getByText('거부')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: '릴리스 상태' })).getByText('거부')).toBeInTheDocument();
     expect(screen.getAllByRole('button').map(b => b.textContent)).toEqual(['새로고침']);
   });
   it('renders whole null groups as unknown, including alert counts', async () => {
@@ -54,7 +62,7 @@ describe('TOS read-only page', () => {
     mount({ available: false, reason, projection: null });
     expect(await screen.findByText(label)).toBeInTheDocument();
     expect(screen.queryByText(/private/)).not.toBeInTheDocument();
-    expect(screen.queryByRole('region', { name: '릴리스와 보호 상태' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '릴리스 상태' })).not.toBeInTheDocument();
   });
   it('reports authentication failure without treating it as missing data', async () => {
     const error = new AxiosError('Unauthorized');
@@ -70,33 +78,6 @@ describe('TOS read-only page', () => {
     await act(() => client.refetchQueries({ queryKey: ['tos-operator-projection'] }));
     expect(await screen.findByText('상태 조회 연결 오류')).toBeInTheDocument();
     expect(screen.getByText(/마지막 조회 기록/)).toBeInTheDocument();
-  });
-  it('renders the protective verdict object as facts, never [object Object]', async () => {
-    mount({});
-    const card = within(await screen.findByRole('region', { name: '릴리스와 보호 상태' }));
-    // Fixture verdict: derestriction false, capacity null, classification null,
-    // reasons ['derestriction_admissible'], unevaluated ['capacity_exhausted'].
-    expect(card.getByText('불허')).toBeInTheDocument();
-    expect(card.getByText('derestriction_admissible')).toBeInTheDocument();
-    expect(card.getByText('capacity_exhausted')).toBeInTheDocument();
-    expect(card.queryByText(/\[object Object\]/)).not.toBeInTheDocument();
-  });
-  // The element type is declared, not inferred: `as const` would make `[]` a
-  // `readonly []`, which does not fit the DTO's mutable `string[] | null` and
-  // fails `tsc --noEmit` even though vitest (no type check) runs it green.
-  it.each<[string[] | null, string]>([
-    [null, '해소 · 알 수 없음'],
-    [[], '해소 · 없음'],
-    [['stale snapshot'], '해소 · stale snapshot'],
-  ])('renders a safety-mesh reason list of %s distinctly', async (reasons, expected) => {
-    // 지적 4: the old `reasons?.length ? … : ''` rendered null and [] the same.
-    // '없음' is a substring of '알 수 없음', so compare the whole cell text.
-    mount({ projection: { ...fixture, safety_mesh: {
-      snapshot_generation: null, services: { spg: { clear: true, reasons } },
-    } } });
-    const card = within(await screen.findByRole('region', { name: '안전 서비스' }));
-    const cell = card.getByText(/해소/);
-    expect(cell.textContent?.replace(/\s+/g, ' ').trim()).toBe(expected);
   });
   it('shows an absent reason list as unknown, never as none', async () => {
     mount({ projection: { ...fixture, recovery: { readiness_verdict: 'READY', reasons: null } } });
@@ -118,7 +99,7 @@ describe('TOS read-only page', () => {
     mount({ projection });
     await screen.findByRole('status').catch(() => screen.findByRole('alert'));
     await waitFor(() =>
-      expect(screen.queryByRole('region', { name: '릴리스와 보호 상태' }) !== null)
+      expect(screen.queryByRole('region', { name: '릴리스 상태' }) !== null)
         .toBe(isAcceptedProjection(projection)));
   });
   it.each([
@@ -130,7 +111,7 @@ describe('TOS read-only page', () => {
     shared.accept = () => accept;
     mount({});
     await screen.findByText('최근 상태를 조회했습니다');
-    expect(screen.queryByRole('region', { name: '릴리스와 보호 상태' }) !== null).toBe(rendered);
+    expect(screen.queryByRole('region', { name: '릴리스 상태' }) !== null).toBe(rendered);
   });
   it('ages into stale while the next request is still pending', async () => {
     mount({ age_seconds: config.staleAfterSeconds - 1 });

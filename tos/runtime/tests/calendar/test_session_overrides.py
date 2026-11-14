@@ -1,12 +1,4 @@
-"""Dated session overrides (issue #924) — loader shape, phase shift, digest.
-
-The override date used in the tmp_path fixtures (2026-12-03, a Thursday) is
-FICTITIOUS: no KRX notice moves that day. The SHIPPED entry is the real one,
-2026-11-19 (2027학년도 수능) — asserted against the deployed files at the end of this
-module.
-
-Hermetic (D1.4): every case writes its own YAML under tmp_path.
-"""
+"""Dated session overrides (issue #924) — loader shape, phase shift, digest."""
 
 from __future__ import annotations
 
@@ -27,9 +19,9 @@ from tos_runtime.calendar.phase import (
 )
 
 KST = zoneinfo.ZoneInfo("Asia/Seoul")
-DAY = datetime.date(2026, 12, 3)  # Thursday — fictitious override day
-NEXT = datetime.date(2026, 12, 4)  # Friday — a regular day
-EXPIRY = datetime.date(2026, 12, 10)  # second Thursday of December
+DAY = datetime.date(2026, 12, 3)
+NEXT = datetime.date(2026, 12, 4)
+EXPIRY = datetime.date(2026, 12, 10)
 
 _BASE = """calendar_version: "t-924"
 tz_id: "Asia/Seoul"
@@ -75,7 +67,6 @@ def cfg(tmp_path):
 
 
 def test_override_day_opens_and_closes_late_per_market(cfg) -> None:
-    # stock: 09:30 is closed (would have been CONTINUOUS), 10:00 opens, 16:29 still open
     at_0930 = session_phase_at(_ms(DAY, 9, 30), "krx-stock", cfg)
     assert (at_0930.phase, at_0930.is_open) == ("CLOSED", False)
     assert at_0930.boundary_unix_ms == _ms(DAY, 10, 0)
@@ -83,7 +74,6 @@ def test_override_day_opens_and_closes_late_per_market(cfg) -> None:
     late = session_phase_at(_ms(DAY, 16, 29), "krx-stock", cfg)
     assert late.is_open and late.boundary_unix_ms == _ms(DAY, 16, 30)
     assert session_phase_at(_ms(DAY, 16, 30), "krx-stock", cfg).is_open is False
-    # futures shift differently: 09:45-16:45
     assert session_phase_at(_ms(DAY, 9, 0), "krx-index-futures", cfg).is_open is False
     assert session_phase_at(_ms(DAY, 9, 45), "krx-index-futures", cfg).is_open is True
     assert session_phase_at(_ms(DAY, 16, 44), "krx-index-futures", cfg).is_open is True
@@ -138,12 +128,8 @@ def test_an_override_changes_the_digest(tmp_path, cfg) -> None:
     assert calendar_bind_digest(cfg) != calendar_bind_digest(plain)
 
 
-#: The shipped exam-day entry (#924): 2026-11-19, 2027학년도 수능. A Thursday, and NOT
-#: the November mini expiry (that is the second Thursday, 2026-11-12 — asserted below).
 SHIPPED_EXAM_DAY = datetime.date(2026, 11, 19)
-#: The regular weekday right before it, the control in every comparison here.
 SHIPPED_REGULAR_DAY = datetime.date(2026, 11, 18)
-#: November's mini expiry under ``futures_expiry`` (second Thursday).
 SHIPPED_NOV_EXPIRY = datetime.date(2026, 11, 12)
 
 _SHIPPED_TREES = (
@@ -160,13 +146,7 @@ def _shipped(tree: str):
 
 
 def test_shipped_tenant_calendars_carry_the_exam_day_override() -> None:
-    """The four shipped trees declare 2026-11-19 (#924) and nothing else.
-
-    Replaces the earlier "``session_overrides: {}`` until KRX publishes a notice"
-    assertion: the dated entry is shipped on the values of the KRX notice of
-    2026-11-05, so the guard is that the ONE declared date is that one — a second
-    undeclared date, or the entry quietly dropped, is the failure this catches.
-    """
+    """The four shipped trees declare 2026-11-19 (#924) and nothing else."""
     for tree in _SHIPPED_TREES:
         loaded = _shipped(tree)
         assert sorted(str(k) for k in loaded.session_overrides) == [
@@ -178,8 +158,7 @@ def test_shipped_tenant_calendars_carry_the_exam_day_override() -> None:
 def test_shipped_exam_day_moves_both_classes_and_the_day_before_does_not(
     tree: str,
 ) -> None:
-    """2026-11-18 keeps the regular windows; 2026-11-19 carries the late ones — for
-    the stock class (all three phases) and the futures class alike (#924 수용 기준 ③)."""
+    """2026-11-18 keeps the regular windows; 2026-11-19 carries the late ones — for"""
     cfg = _shipped(tree)
 
     def windows(day, cls):
@@ -196,7 +175,6 @@ def test_shipped_exam_day_moves_both_classes_and_the_day_before_does_not(
     assert windows(SHIPPED_REGULAR_DAY, "krx-index-futures") == [
         ("CONTINUOUS", "08:45:00", "15:45:00"),
     ]
-    # the exam day: every regular window of each class, each an hour late
     assert windows(SHIPPED_EXAM_DAY, "krx-stock") == [
         ("PRE_OPEN", "09:30:00", "09:40:00"),
         ("CONTINUOUS", "10:00:00", "16:30:00"),
@@ -205,8 +183,6 @@ def test_shipped_exam_day_moves_both_classes_and_the_day_before_does_not(
     assert windows(SHIPPED_EXAM_DAY, "krx-index-futures") == [
         ("CONTINUOUS", "09:45:00", "16:45:00"),
     ]
-    # the phase gate agrees: 09:10 stock trades on a regular day and is shut on the exam
-    # day (its PRE_OPEN has not started yet); 16:00 futures is the mirror image.
     assert (
         session_phase_at(_ms(SHIPPED_REGULAR_DAY, 9, 10), "krx-stock", cfg).phase
         == "CONTINUOUS"
@@ -225,16 +201,13 @@ def test_shipped_exam_day_moves_both_classes_and_the_day_before_does_not(
 
 
 def test_shipped_exam_day_is_not_the_november_expiry() -> None:
-    """``futures_expiry`` (second Thursday) puts November's mini expiry on 11-12, so the
-    notice's "last-trading-day series closes 16:20" does not apply to 11-19.
-    """
+    """``futures_expiry`` (second Thursday) puts November's mini expiry on 11-12, so the"""
     cfg = _shipped("paper")
     assert SHIPPED_NOV_EXPIRY.weekday() == 3 and SHIPPED_EXAM_DAY.weekday() == 3
     assert (
         maturity_at(_ms(SHIPPED_NOV_EXPIRY, 15, 50), "krx-index-futures", cfg).expired
         is True
     )
-    # 11-19 after its own (shifted) close is still not an expiry flip
     assert (
         maturity_at(_ms(SHIPPED_EXAM_DAY, 16, 50), "krx-index-futures", cfg).expired
         is False
@@ -302,9 +275,7 @@ _WIN = '[{phase: CONTINUOUS, start: "%s", end: "%s", crosses_midnight: false}]'
 
 @pytest.mark.parametrize("second_key", ["2026-12-03", '"2026-12-03"'])
 def test_a_repeated_override_date_is_refused(tmp_path, second_key: str) -> None:
-    """Review #963 MEDIUM: ``"2026-12-03"`` and unquoted ``2026-12-03`` survive YAML
-    loading as two keys (str and date); an identical key twice is collapsed by the
-    loader. Either way the two readers could pick different entries — refuse."""
+    """Review #963 MEDIUM: ``"2026-12-03"`` and unquoted ``2026-12-03`` survive YAML"""
     text = (
         "session_overrides:\n"
         '  "2026-12-03":\n    reason: a\n    sessions:\n      krx-stock: '

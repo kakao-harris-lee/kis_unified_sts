@@ -1,16 +1,4 @@
-"""Focused tests for the tos kernel size budget checker (Phase 1 작업 6).
-
-One test per failure class the checker enforces -- (a) unregistered over-budget
-target, (b) expired exception, (c) stale exception, (d) malformed entry / duplicate
-decomposition_order, (e) missing/unparseable config, (f) registered ``measured``
-drifted from the actual count -- each proven live on a synthetic fixture (a checker
-that never goes red is a dead checker; see the module docstring of
-``tools/tos_size_budget.py``), plus a control-group passing case, a
-measurement-mechanics test for nested/method qualnames, and previously-untested red
-paths (an unmeasurable AST node, an absent scope directory, an unparseable source
-file, a symlink escaping ``--root``). The final test is a smoke test against the
-real ``config/tos_size_budget.yaml`` / ``tos/src/tos`` tree.
-"""
+"""Focused tests for the tos kernel size budget checker (Phase 1 작업 6)."""
 
 from __future__ import annotations
 
@@ -67,10 +55,7 @@ def _write_module_lines(path: Path, n_lines: int) -> None:
 
 
 def _write_function_module(path: Path, func_name: str, n_lines: int) -> None:
-    """Write a module whose sole top-level function spans exactly ``n_lines`` lines.
-
-    ``n_lines`` counts the ``def`` line itself, matching ``end_lineno - lineno + 1``.
-    """
+    """Write a module whose sole top-level function spans exactly ``n_lines`` lines."""
     if n_lines < 2:
         raise ValueError("n_lines must be >= 2 (def line + at least one body line)")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -92,13 +77,8 @@ def _exception_entry(target: str, measured: int, **overrides: object) -> dict:
     return entry
 
 
-# ---------------------------------------------------------------------------
-# Control group: nothing over budget, no exceptions needed -> PASS.
-# ---------------------------------------------------------------------------
-
-
 def test_control_group_under_budget_passes(tmp_path: Path) -> None:
-    _write_module_lines(tmp_path / "pkg" / "small.py", 3)  # under module_max_lines=5
+    _write_module_lines(tmp_path / "pkg" / "small.py", 3)
     config_path = tmp_path / "budget.yaml"
     _write_config(config_path, _base_config())
 
@@ -121,13 +101,8 @@ def test_control_group_under_budget_passes(tmp_path: Path) -> None:
     assert rc == 0
 
 
-# ---------------------------------------------------------------------------
-# (a) over-budget target with no exception entry.
-# ---------------------------------------------------------------------------
-
-
 def test_class_a_unregistered_over_budget_target(tmp_path: Path) -> None:
-    _write_module_lines(tmp_path / "pkg" / "big.py", 6)  # over module_max_lines=5
+    _write_module_lines(tmp_path / "pkg" / "big.py", 6)
     config_path = tmp_path / "budget.yaml"
     _write_config(config_path, _base_config())
 
@@ -149,12 +124,6 @@ def test_class_a_unregistered_over_budget_target(tmp_path: Path) -> None:
         ]
     )
     assert rc == 1
-
-
-# ---------------------------------------------------------------------------
-# (b) exception whose expires_on has passed -- fail-closed regardless of
-# whether the target is still over budget.
-# ---------------------------------------------------------------------------
 
 
 def test_class_b_expired_exception(tmp_path: Path) -> None:
@@ -189,22 +158,9 @@ def test_class_b_expired_exception(tmp_path: Path) -> None:
     assert rc == 1
 
 
-# ---------------------------------------------------------------------------
-# (c) stale exception -- target no longer exists, or is no longer over budget.
-# The register must not rot: both are red.
-# ---------------------------------------------------------------------------
-
-
 def test_class_c_stale_exception(tmp_path: Path) -> None:
-    # sub-case 1: registered target file no longer exists.
     (tmp_path / "pkg").mkdir(parents=True, exist_ok=True)
-    # sub-case 2: registered target now measures under budget (shrunk since registration).
-    # ``measured`` is kept at the file's *current* 3 lines so this case tests only the
-    # class-(c) staleness axis in isolation — a registration whose ``measured`` still
-    # matches the actual count but is simply no longer over budget. A registration whose
-    # ``measured`` itself has drifted from the actual count is the separate class-(f) case
-    # (test_class_f_measured_drift below).
-    _write_module_lines(tmp_path / "pkg" / "shrunk.py", 3)  # under module_max_lines=5
+    _write_module_lines(tmp_path / "pkg" / "shrunk.py", 3)
 
     config_path = tmp_path / "budget.yaml"
     _write_config(
@@ -237,20 +193,14 @@ def test_class_c_stale_exception(tmp_path: Path) -> None:
     assert rc == 1
 
 
-# ---------------------------------------------------------------------------
-# (d) malformed exception entry, and a duplicate decomposition_order across
-# two otherwise well-formed entries.
-# ---------------------------------------------------------------------------
-
-
 def test_class_d_malformed_entry(tmp_path: Path) -> None:
     config_path = tmp_path / "budget.yaml"
     entry = _exception_entry("pkg/big.py", 6)
-    del entry["owner"]  # missing required field
+    del entry["owner"]
     _write_config(config_path, _base_config(exceptions=[entry]))
 
     config, malformed = sb.load_config(config_path)
-    assert config.exceptions == ()  # malformed entry excluded, not crashed on
+    assert config.exceptions == ()
     assert len(malformed) == 1
     assert malformed[0].startswith("[malformed-entry]")
     assert "owner" in malformed[0]
@@ -290,18 +240,8 @@ def test_class_d_duplicate_decomposition_order(tmp_path: Path) -> None:
     assert rc == 1
 
 
-# ---------------------------------------------------------------------------
-# (f) a registered `measured` that no longer matches the target's actual line
-# count -- the register is a ratchet, not a decorative snapshot: growth (or
-# shrinkage) under an unchanged `measured` must be visible, not silently green.
-# ---------------------------------------------------------------------------
-
-
 def test_class_f_measured_drift(tmp_path: Path) -> None:
-    # big.py is written at 7 lines but registered as if it were still 6 -- the
-    # registration is stale even though the target is (still, correctly) over budget
-    # and (still, correctly) registered under a live decomposition_order.
-    _write_module_lines(tmp_path / "pkg" / "big.py", 7)  # over module_max_lines=5
+    _write_module_lines(tmp_path / "pkg" / "big.py", 7)
     config_path = tmp_path / "budget.yaml"
     _write_config(
         config_path,
@@ -329,8 +269,6 @@ def test_class_f_measured_drift(tmp_path: Path) -> None:
     )
     assert rc == 1
 
-    # Re-registering deliberately (measured corrected to the actual 7) clears the
-    # drift -- the fix is a conscious edit to the register, not automatic.
     _write_config(
         config_path,
         _base_config(exceptions=[_exception_entry("pkg/big.py", 7)]),
@@ -351,11 +289,6 @@ def test_class_f_measured_drift(tmp_path: Path) -> None:
         ]
     )
     assert rc == 0
-
-
-# ---------------------------------------------------------------------------
-# (e) the config file itself is missing or unparseable -- never silently pass.
-# ---------------------------------------------------------------------------
 
 
 def test_class_e_missing_config_file(tmp_path: Path) -> None:
@@ -379,23 +312,15 @@ def test_class_e_unparseable_config_file(tmp_path: Path) -> None:
 
 def test_class_e_config_missing_required_top_level_key(tmp_path: Path) -> None:
     config_path = tmp_path / "budget.yaml"
-    _write_config(
-        config_path, {"module_max_lines": 5, "function_max_lines": 3}
-    )  # no scope
+    _write_config(config_path, {"module_max_lines": 5, "function_max_lines": 3})
     with pytest.raises(sb.SizeBudgetConfigError, match="scope"):
         sb.load_config(config_path)
-
-
-# ---------------------------------------------------------------------------
-# Function-length budget and AST measurement mechanics: nested functions and
-# methods get "path::qualname" targets, decorators are excluded from the span.
-# ---------------------------------------------------------------------------
 
 
 def test_function_over_budget_and_qualname_nesting(tmp_path: Path) -> None:
     _write_function_module(tmp_path / "pkg" / "funcs.py", "long_function", 4)
     config_path = tmp_path / "budget.yaml"
-    _write_config(config_path, _base_config())  # function_max_lines=3
+    _write_config(config_path, _base_config())
 
     config, malformed = sb.load_config(config_path)
     violations = sb.run_check(tmp_path, config, malformed, today=TODAY)
@@ -428,31 +353,13 @@ def test_measure_nested_and_method_qualnames(tmp_path: Path) -> None:
     targets = {m.target: m.lines for m in measured if m.kind == "function"}
     assert "pkg/nested.py::Outer.method" in targets
     assert "pkg/nested.py::Outer.method.inner" in targets
-    # decorated() spans exactly its own def+body, decorator line excluded (lineno
-    # points at "def decorated():", not at "@staticmethod").
     assert targets["pkg/nested.py::decorated"] == 2
-
-
-# ---------------------------------------------------------------------------
-# Previously-untested red paths (Low-2, Low-3): a fail-open skip, a missing scope
-# directory, an unparseable source file, and a symlink escaping --root. All four
-# must exit non-zero (or raise SizeBudgetConfigError directly) with a clear message
-# -- never a silent skip or a bare, unexplained exception type.
-# ---------------------------------------------------------------------------
 
 
 def test_function_with_unmeasurable_end_lineno_raises_not_skips(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """(Low-2) A function whose ``end_lineno`` cannot be read is red, not silently skipped.
-
-    This should not happen for anything ``ast.parse`` itself produces -- only a
-    hand-mutated AST node lacks ``end_lineno`` -- so the fixture monkeypatches
-    ``ast.parse`` (as seen by the checker module) to hand back a real parse tree with
-    one function's ``end_lineno`` cleared, proving the measurement helper treats that
-    as a hard failure rather than under-counting the module by silently dropping the
-    function from measurement.
-    """
+    """(Low-2) A function whose ``end_lineno`` cannot be read is red, not silently skipped."""
     _write_function_module(tmp_path / "pkg" / "funcs.py", "some_func", 2)
     config_path = tmp_path / "budget.yaml"
     _write_config(config_path, _base_config())
@@ -521,11 +428,7 @@ def test_unparseable_source_file_raises_config_error(tmp_path: Path) -> None:
 
 
 def test_symlink_escaping_root_raises_config_error(tmp_path: Path) -> None:
-    """(Low-3) A scope-directory symlink that resolves outside --root fails closed.
-
-    Previously ``_target_path`` let ``Path.relative_to``'s bare ``ValueError`` escape
-    uncaught; this exercises the same scenario end to end through ``--check``.
-    """
+    """(Low-3) A scope-directory symlink that resolves outside --root fails closed."""
     outside_dir = tmp_path / "outside"
     outside_dir.mkdir()
     _write_module_lines(outside_dir / "external.py", 3)
@@ -553,11 +456,6 @@ def test_symlink_escaping_root_raises_config_error(tmp_path: Path) -> None:
         ]
     )
     assert rc == 1
-
-
-# ---------------------------------------------------------------------------
-# Smoke test: the real tree must pass --check against the committed register.
-# ---------------------------------------------------------------------------
 
 
 def test_check_real_config_smoke() -> None:

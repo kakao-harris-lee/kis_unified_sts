@@ -28,11 +28,6 @@ from .conftest import (
     write_fixture_venue_policy,
 )
 
-#: The shipped production paper OCP instance — same coordinate as
-#: ``tests/compose/test_deploy_policies.py``'s own ``_REAL_OCP`` (parallel depth:
-#: ``tos/runtime/tests/venue/test_config.py`` and
-#: ``tos/runtime/tests/compose/test_deploy_policies.py`` are both 4 ``parents[]`` from the repo
-#: root).
 _REAL_OCP_PATH = (
     Path(__file__).resolve().parents[4]
     / "config"
@@ -41,10 +36,6 @@ _REAL_OCP_PATH = (
     / "order_construction_policy.yaml"
 )
 
-#: The shipped production ARP instance — the RCL capacity lookup's actual source of truth for
-#: dimension_id spelling (``tos_runtime/riskstate/service.py:145-151``). Read alongside
-#: ``_REAL_OCP_PATH`` so a spelling drift between the two documents is caught by a single test
-#: rather than trusted by inspection (OCP effect_dimensions proposal §2.1's own warning).
 _REAL_ARP_PATH = (
     Path(__file__).resolve().parents[4]
     / "config"
@@ -52,10 +43,6 @@ _REAL_ARP_PATH = (
     / "paper"
     / "aggregate_risk_policy.yaml"
 )
-
-# ===========================================================================
-# venue_constraint_policy.yaml — happy path
-# ===========================================================================
 
 
 def test_load_venue_constraint_policy_happy_path(tmp_path: Path) -> None:
@@ -103,10 +90,7 @@ def test_load_venue_constraint_policy_all_shape_bounds_null(tmp_path: Path) -> N
 def test_load_venue_constraint_policy_canonical_digest_tbd_accepted_and_reload_matches(
     tmp_path: Path,
 ) -> None:
-    """``canonical_digest: TBD`` (the fixture default) passes; reloading the
-    SAME document with the freshly computed digest substituted in must also
-    pass and produce the identical digest (module docstring's tamper/stale
-    cross-check, positive side)."""
+    """``canonical_digest: TBD`` (the fixture default) passes; reloading the"""
     path = write_fixture_venue_policy(tmp_path)
     loaded = load_venue_constraint_policy(path, scheme=SCHEME)
     text_with_real_digest = venue_policy_yaml().replace(
@@ -116,11 +100,6 @@ def test_load_venue_constraint_policy_canonical_digest_tbd_accepted_and_reload_m
     path2.write_text(text_with_real_digest, encoding="utf-8")
     loaded2 = load_venue_constraint_policy(path2, scheme=SCHEME)
     assert loaded2.policy.canonical_digest == loaded.policy.canonical_digest
-
-
-# ===========================================================================
-# venue_constraint_policy.yaml — negative / fail-closed cases
-# ===========================================================================
 
 
 def test_load_venue_constraint_policy_missing_file(tmp_path: Path) -> None:
@@ -137,13 +116,7 @@ def test_load_venue_constraint_policy_not_a_mapping(tmp_path: Path) -> None:
 def test_load_venue_constraint_policy_old_scalar_scope_shape_refused(
     tmp_path: Path,
 ) -> None:
-    """Team-lead review, 2026-09-15: the pre-correction singular-scalar
-    ``scope`` shape (``environment: "paper"`` etc, the v1 §4.1 draft this
-    module no longer speaks) must be REJECTED outright, never silently
-    accepted alongside the template's own plural-list shape — the loader
-    reads ONLY ``environments``/``brokers``/.../``instruments`` (explicit
-    lists), so a document still carrying the old singular keys is missing
-    every required plural key and refuses on the first one."""
+    """Team-lead review, 2026-09-15: the pre-correction singular-scalar"""
     text = venue_policy_yaml().replace(
         (
             "scope:\n"
@@ -205,9 +178,7 @@ def test_load_order_construction_policy_old_scalar_scope_shape_refused(
 def test_load_venue_constraint_policy_missing_effective_from_refused(
     tmp_path: Path,
 ) -> None:
-    """Team-lead review MEDIUM, 2026-09-15: ``effective_from`` (may be
-    ``null``, but the KEY must be present per DR-0002 §2.1 "every template
-    key is present") was previously unchecked."""
+    """Team-lead review MEDIUM, 2026-09-15: ``effective_from`` (may be"""
     text = venue_policy_yaml().replace('effective_from: "2026-09-15"\n', "")
     path = write_fixture_venue_policy(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="effective_from"):
@@ -305,10 +276,7 @@ def test_load_venue_constraint_policy_scope_two_entry_singleton_refused(
 def test_load_venue_constraint_policy_scope_named_tbd_singleton_refused(
     tmp_path: Path, marker: str
 ) -> None:
-    """An operator-fill gate: a scope coordinate still at the template's
-    ``TBD`` marker (or empty) must not boot as a phantom scope — the real
-    deploy files under ``config/tos_runtime/paper/`` ship exactly this way
-    until the operator fills them."""
+    """An operator-fill gate: a scope coordinate still at the template's"""
     text = venue_policy_yaml().replace('accounts: ["acct-1"]', f"accounts: [{marker}]")
     path = write_fixture_venue_policy(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="named-TBD"):
@@ -327,8 +295,7 @@ def test_load_venue_constraint_policy_scope_action_classes_unknown_token_refused
 def test_load_venue_constraint_policy_action_outside_declared_scope_refused(
     tmp_path: Path,
 ) -> None:
-    """The cross-check: an ``admitting_phase_rules`` action not present in
-    ``scope.action_classes`` must refuse (a scope-declaration bug)."""
+    """The cross-check: an ``admitting_phase_rules`` action not present in"""
     text = venue_policy_yaml(action_classes='["NEW_SHORT"]')
     path = write_fixture_venue_policy(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="not in scope.action_classes"):
@@ -484,11 +451,6 @@ def test_load_venue_constraint_policy_missing_authority_mapping_refused(
         load_venue_constraint_policy(path, scheme=SCHEME)
 
 
-# ===========================================================================
-# order_construction_policy.yaml — happy path
-# ===========================================================================
-
-
 def test_load_order_construction_policy_happy_path(tmp_path: Path) -> None:
     path = write_fixture_ocp(tmp_path)
     loaded = load_order_construction_policy(path, scheme=SCHEME)
@@ -515,10 +477,7 @@ def test_load_order_construction_policy_null_construction_generation_accepted(
 def test_load_order_construction_policy_digest_matches_kernel_issuance(
     tmp_path: Path,
 ) -> None:
-    """The loader's own OCP digest must equal the digest a bare kernel
-    ``OrderConstructionPolicy.issue`` call from the same three coordinates
-    produces — classify_record_pair on the pair must be IDEMPOTENT_DUP,
-    never CRITICAL_CONFLICT (plan §2 decision 6)."""
+    """The loader's own OCP digest must equal the digest a bare kernel"""
     path = write_fixture_ocp(tmp_path)
     loaded = load_order_construction_policy(path, scheme=SCHEME)
     kernel_issued = OrderConstructionPolicy.issue(
@@ -544,14 +503,7 @@ def test_load_order_construction_policy_digest_matches_kernel_issuance(
 def test_load_order_construction_policy_none_identity_fields_digest_is_pinned(
     tmp_path: Path,
 ) -> None:
-    """(kernel round #4 K-3 no-regression pin, M5) The default fixture's ``signer_identity``/
-    ``approval_identity``/``evidence_package_ref`` are all ``null`` — the issued policy's
-    ``canonical_digest`` is pinned to its EXACT value from before this round. A change to what
-    ``OrderConstructionPolicy._COVERED_FIELDS`` covers (or how a ``None`` value folds into the
-    digest) would silently shift every existing deployment's digest without this pin catching
-    it — the two live-computation comparisons elsewhere in this file (loader vs. a fresh kernel
-    call with the SAME inputs) cannot catch that, because both sides would drift together.
-    """
+    """(kernel round #4 K-3 no-regression pin, M5) The default fixture's ``signer_identity``/"""
     path = write_fixture_ocp(tmp_path)
     loaded = load_order_construction_policy(path, scheme=SCHEME)
     assert (
@@ -563,11 +515,7 @@ def test_load_order_construction_policy_none_identity_fields_digest_is_pinned(
 def test_load_order_construction_policy_digest_matches_kernel_issuance_when_identity_fields_are_filled(
     tmp_path: Path,
 ) -> None:
-    """(kernel round #4 K-3) With ``signer_identity``/``approval_identity``/
-    ``evidence_package_ref`` FILLED (not ``null``), the loader's digest still matches a bare
-    kernel ``OrderConstructionPolicy.issue`` call from the same three values — the loader
-    threads them through unchanged (M4: a loader that drops them before ``.issue()`` would
-    diverge from this exact assertion)."""
+    """(kernel round #4 K-3) With ``signer_identity``/``approval_identity``/"""
     text = ocp_yaml(
         signer_identity='"signer-1"',
         approval_identity='"approval-1"',
@@ -601,9 +549,7 @@ def test_load_order_construction_policy_digest_matches_kernel_issuance_when_iden
 def test_load_venue_constraint_policy_dependency_closure_named_tbd_dependent_refused(
     tmp_path: Path,
 ) -> None:
-    """W-A A-0 round 2: a dependency-closure edge's own ``dependents`` list is a free
-    string list with no enum backstop (unlike ``node``, which already had
-    ``require_filled_str``) — an operator-typed ``"TBD"`` must never pass."""
+    """W-A A-0 round 2: a dependency-closure edge's own ``dependents`` list is a free"""
     text = venue_policy_yaml().replace(
         "edges: []", 'edges: [{"node": "n1", "dependents": ["TBD"]}]'
     )
@@ -615,11 +561,7 @@ def test_load_venue_constraint_policy_dependency_closure_named_tbd_dependent_ref
 def test_load_order_construction_policy_named_tbd_policy_version_refused(
     tmp_path: Path,
 ) -> None:
-    """W-A A-0 round 2 (kernel round #4 재심 후속 조사): ``policy_version`` is a
-    ``_REQUIRED_COVERED`` field sealed straight into the issued policy's own
-    ``canonical_digest`` (module docstring) — this loader used the plain ``require_str``
-    helper for it (no TBD check), unlike ``policy_id``'s own ``require_filled_str``.
-    Fixed by swapping to ``require_filled_str``."""
+    """W-A A-0 round 2 (kernel round #4 재심 후속 조사): ``policy_version`` is a"""
     text = ocp_yaml(policy_version="TBD")
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="template placeholder"):
@@ -627,14 +569,7 @@ def test_load_order_construction_policy_named_tbd_policy_version_refused(
 
 
 def _ocp_yaml_with_identity_field(field: str, value: str) -> str:
-    """Set exactly one of :func:`ocp_yaml`'s three identity fields by (dynamic) name.
-
-    A caller-side ``ocp_yaml(**{field: value})`` with a non-literal ``field: str`` cannot
-    type-check against :func:`ocp_yaml`'s heterogeneously-typed parameters (plan §1.1 A-rt
-    fallback — "그 헬퍼만 명시 키워드"): ``policy_generation``/``model_view_policy_generation``
-    are ``int``-typed, so ``dict[str, str]`` is incompatible with them even though the actual
-    key is always one of these three ``str`` fields. Dispatch by literal branch keeps each
-    call to :func:`ocp_yaml` precisely, individually typed."""
+    """Set exactly one of :func:`ocp_yaml`'s three identity fields by (dynamic) name."""
     if field == "signer_identity":
         return ocp_yaml(signer_identity=value)
     if field == "approval_identity":
@@ -650,14 +585,7 @@ def _ocp_yaml_with_identity_field(field: str, value: str) -> str:
 def test_load_order_construction_policy_named_tbd_identity_field_refused(
     tmp_path: Path, field: str
 ) -> None:
-    """(review finding ③, round #4) Each of the three ``optional_str``-loaded identity
-    fields must refuse the template's own ``"TBD"`` placeholder the same way
-    ``scope.instruments: ["TBD"]`` already does above (``named-TBD`` idiom) — a ``null``
-    value is the honest not-yet-filled state (see the happy-path test), but the literal
-    string ``"TBD"`` is an operator typing the template's OTHER placeholder convention
-    into a field this loader was letting through unchecked before this fix, which would
-    have sealed ``"TBD"`` into the ``canonical_digest`` as if it were a real identity.
-    """
+    """(review finding ③, round #4) Each of the three ``optional_str``-loaded identity"""
     text = _ocp_yaml_with_identity_field(field, '"TBD"')
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="named-TBD|template placeholder"):
@@ -670,11 +598,7 @@ def test_load_order_construction_policy_named_tbd_identity_field_refused(
 def test_load_order_construction_policy_missing_identity_key_refused(
     tmp_path: Path, field: str
 ) -> None:
-    """(review finding ⑤, round #4) ``optional_str``'s "key not in raw" branch was
-    untested for all three identity fields — only the ``null``-default and filled-value
-    paths had coverage. A MISSING key (never a silently-defaulted ``None``) must refuse,
-    same "no silently-dropped key" discipline as every other primitive in
-    ``_policy_primitives.py``."""
+    """(review finding ⑤, round #4) ``optional_str``'s "key not in raw" branch was"""
     text = ocp_yaml().replace(f"{field}: null\n", "")
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match=f"missing required key '{field}'"):
@@ -687,9 +611,7 @@ def test_load_order_construction_policy_missing_identity_key_refused(
 def test_load_order_construction_policy_non_string_identity_value_refused(
     tmp_path: Path, field: str
 ) -> None:
-    """(review finding ⑤, round #4) ``optional_str``'s "not isinstance(value, str)"
-    branch was untested for all three identity fields — a YAML integer (never quoted
-    into a string) must refuse rather than being coerced or silently accepted."""
+    '(review finding ⑤, round #4) ``optional_str``\'s "not isinstance(value, str)"'
     text = _ocp_yaml_with_identity_field(field, "12345")
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="must be a string or null"):
@@ -702,11 +624,6 @@ def test_load_order_construction_policy_wire_codec_mapping(tmp_path: Path) -> No
     loaded = load_order_construction_policy(path, scheme=SCHEME)
     assert loaded.wire_codec_kind == "kis-order-cash-v1"
     assert loaded.wire_fields == frozenset({"a", "b"})
-
-
-# ===========================================================================
-# order_construction_policy.yaml — negative / fail-closed cases
-# ===========================================================================
 
 
 def test_load_order_construction_policy_missing_file(tmp_path: Path) -> None:
@@ -736,9 +653,7 @@ def test_load_order_construction_policy_missing_review_due_refused(
 def test_load_order_construction_policy_scope_action_classes_null_refused(
     tmp_path: Path,
 ) -> None:
-    """Team-lead review MEDIUM, 2026-09-15: ``scope.action_classes`` was
-    previously unvalidated on the OCP loader entirely (the VCP loader always
-    validated it) — a ``null`` value must refuse, not silently pass."""
+    """Team-lead review MEDIUM, 2026-09-15: ``scope.action_classes`` was"""
     text = ocp_yaml().replace("action_classes: []\n", "action_classes: null\n")
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="action_classes"):
@@ -862,17 +777,6 @@ def test_load_order_construction_policy_missing_template_list_key_refused(
         load_order_construction_policy(path, scheme=SCHEME)
 
 
-# ===========================================================================
-# order_construction_policy.yaml — (a′) wave, lane A: _runtime.construction
-# ===========================================================================
-#
-# ``ocp_yaml()``'s default construction block (tos_runtime/tests/venue/_documents.py) is
-# well-formed FIXTURE DATA (max_quantity=100 etc — NOT the operator-adopted production values,
-# see that module's own docstring). Every mutation test below starts from that default text and
-# breaks exactly one leaf via ``.replace()``/regex, mirroring this file's existing idiom for
-# every other OCP negative case above.
-
-
 def test_load_order_construction_policy_construction_happy_path(tmp_path: Path) -> None:
     path = write_fixture_ocp(tmp_path)
     loaded = load_order_construction_policy(path, scheme=SCHEME)
@@ -884,9 +788,7 @@ def test_load_order_construction_policy_construction_happy_path(tmp_path: Path) 
     assert rules.sizing_bound.risk_budget == Decimal(100)
     assert rules.sizing_bound.per_unit_risk == Decimal(10)
     assert rules.sizing_bound.max_notional is None
-    assert (
-        rules.sizing_bound.quantity_unit is None
-    )  # not OCP's data source — see loader docstring
+    assert rules.sizing_bound.quantity_unit is None
     assert rules.sizing_bound.admitted_quantity_bases == frozenset({"RISK"})
     assert rules.admitted_quantity_bases == frozenset({"RISK"})
     assert rules.authorized_axes == (
@@ -904,7 +806,6 @@ def test_load_order_construction_policy_construction_happy_path(tmp_path: Path) 
         (ActionClass.NEW_SHORT, "SHORT"): ActionClassShape(
             side="SELL", position_effect="OPEN"
         ),
-        # Both CLOSE arms, as the fixture (and every shipped OCP) declares them (#960).
         (ActionClass.CLOSE, "LONG"): ActionClassShape(
             side="SELL", position_effect="CLOSE"
         ),
@@ -968,9 +869,8 @@ def test_load_order_construction_policy_construction_sizing_null_leaf_refused(
 def test_load_order_construction_policy_construction_max_notional_null_accepted(
     tmp_path: Path,
 ) -> None:
-    """Team-lead directive: an optional ceiling — ``null`` is legitimate, NOT a refusal
-    (``egressgw/construction.py:525`` guards it ``is not None``)."""
-    path = write_fixture_ocp(tmp_path)  # default already carries max_notional: null
+    """Team-lead directive: an optional ceiling — ``null`` is legitimate, NOT a refusal"""
+    path = write_fixture_ocp(tmp_path)
     loaded = load_order_construction_policy(path, scheme=SCHEME)
     assert loaded.construction_rules.sizing_bound.max_notional is None
 
@@ -1009,8 +909,7 @@ def test_load_order_construction_policy_construction_lot_rounding_null_refused(
 def test_load_order_construction_policy_construction_admitted_quantity_bases_tbd_refused(
     tmp_path: Path,
 ) -> None:
-    """The load-bearing rule: ``admitted_quantity_bases: ["TBD"]`` must refuse the same way
-    ``scope.accounts: ["TBD"]`` already does (team-lead directive)."""
+    """The load-bearing rule: ``admitted_quantity_bases: ["TBD"]`` must refuse the same way"""
     text = ocp_yaml().replace(
         'admitted_quantity_bases: ["RISK"]', 'admitted_quantity_bases: ["TBD"]'
     )
@@ -1022,9 +921,7 @@ def test_load_order_construction_policy_construction_admitted_quantity_bases_tbd
 def test_load_order_construction_policy_construction_admitted_quantity_bases_empty_accepted(
     tmp_path: Path,
 ) -> None:
-    """An empty (but present, non-TBD) admitted set is a LOADABLE, always-denying state
-    (SizingBound's own docstring: "∅ authorizes nothing") — not a load-time refusal; only the
-    literal template placeholder ``"TBD"`` refuses at load."""
+    """An empty (but present, non-TBD) admitted set is a LOADABLE, always-denying state"""
     text = ocp_yaml().replace(
         'admitted_quantity_bases: ["RISK"]', "admitted_quantity_bases: []"
     )
@@ -1037,9 +934,7 @@ def test_load_order_construction_policy_construction_admitted_quantity_bases_emp
 def test_load_order_construction_policy_construction_axes_derived_axis_refused(
     tmp_path: Path, axis_token: str
 ) -> None:
-    """A :data:`~tos.egressgw.DERIVED_AXES` member declared under ``axes`` refuses at load
-    (team-lead directive: catch it here, not only later at the kernel envelope validator).
-    """
+    """A :data:`~tos.egressgw.DERIVED_AXES` member declared under ``axes`` refuses at load"""
     text = ocp_yaml().replace(
         '    axes:\n      - axis: "TIF"\n        value: "DAY"\n',
         f'    axes:\n      - axis: "{axis_token}"\n        value: "5"\n',
@@ -1061,10 +956,7 @@ def test_load_order_construction_policy_construction_axes_derived_axis_refused(
 def test_load_order_construction_policy_construction_axes_restated_refused(
     tmp_path: Path, axis_token: str, value: str
 ) -> None:
-    """ENVIRONMENT/ORDER_TYPE/ACCOUNT/INSTRUMENT are derived from ``scope`` — restating any of
-    them under ``_runtime.construction.axes`` refuses rather than risk the two silently drifting
-    apart. ACCOUNT/INSTRUMENT joined this set in the review round (PR #719) that caught
-    DIRECTION missing entirely — the same audit found these two silently absent."""
+    """ENVIRONMENT/ORDER_TYPE/ACCOUNT/INSTRUMENT are derived from ``scope`` — restating any of"""
     text = ocp_yaml().replace(
         '    axes:\n      - axis: "TIF"\n        value: "DAY"\n',
         f'    axes:\n      - axis: "{axis_token}"\n        value: "{value}"\n',
@@ -1077,11 +969,7 @@ def test_load_order_construction_policy_construction_axes_restated_refused(
 def test_load_order_construction_policy_construction_axes_tbd_value_refused(
     tmp_path: Path,
 ) -> None:
-    """An authored axis (e.g. ``DIRECTION``, which has no ``scope.*`` home) left at the
-    template's ``"TBD"`` placeholder refuses, the same discipline every other operator-fill leaf
-    in this loader already follows — this is what makes the shipped paper instance's own
-    ``DIRECTION: "TBD"`` an operator-fill gate rather than a silent single-direction commitment.
-    """
+    """An authored axis (e.g. ``DIRECTION``, which has no ``scope.*`` home) left at the"""
     text = ocp_yaml().replace(
         '    axes:\n      - axis: "TIF"\n        value: "DAY"\n',
         '    axes:\n      - axis: "TIF"\n        value: "DAY"\n'
@@ -1113,9 +1001,7 @@ def test_load_order_construction_policy_construction_action_class_shape_unknown_
 def test_load_order_construction_policy_construction_action_class_shape_not_a_mapping_refused(
     tmp_path: Path,
 ) -> None:
-    """``action_class_shape.<ActionClass>`` must itself be a mapping (direction -> shape), not
-    a flattened ``{side, position_effect}`` — the (ActionClass, direction) key shape (contract
-    amendment 2026-09-16) requires the extra nesting level."""
+    """``action_class_shape.<ActionClass>`` must itself be a mapping (direction -> shape), not"""
     text = ocp_yaml().replace(
         '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n',
         '      NEW_LONG: {side: "BUY", position_effect: "OPEN"}\n',
@@ -1128,10 +1014,7 @@ def test_load_order_construction_policy_construction_action_class_shape_not_a_ma
 def test_load_order_construction_policy_construction_action_class_shape_new_long_without_new_short_refused(
     tmp_path: Path,
 ) -> None:
-    """Long/short symmetry is a repo non-negotiable (CLAUDE.md) — a mapping with
-    ``(NEW_LONG, LONG)`` but no ``(NEW_SHORT, SHORT)`` mirror refuses, naming both (team-lead
-    directive). This is the CROSS-class mirror: NEW_LONG/NEW_SHORT are separate ActionClass
-    members, each single-direction by construction."""
+    """Long/short symmetry is a repo non-negotiable (CLAUDE.md) — a mapping with"""
     text = ocp_yaml().replace(
         '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n',
         "",
@@ -1156,13 +1039,7 @@ def test_load_order_construction_policy_construction_action_class_shape_new_shor
 def test_load_order_construction_policy_construction_action_class_shape_close_long_without_close_short_refused(
     tmp_path: Path,
 ) -> None:
-    """The WITHIN-class mirror (contract amendment 2026-09-16, the fix for lane A's original
-    finding): ``ActionClass.CLOSE`` has one member for both a long-close and a short-close, so a
-    document declaring ``(CLOSE, LONG)`` without its ``(CLOSE, SHORT)`` mirror must refuse too —
-    this mirror pair did not exist to violate before the amendment (mutation proof).
-
-    The mutation DELETES the fixture's own ``(CLOSE, SHORT)`` arm (#960 — the default now
-    declares both, as every shipped OCP does), leaving the one-sided document."""
+    """The WITHIN-class mirror (contract amendment 2026-09-16, the fix for lane A's original"""
     text, count = re.subn(
         r'^ +SHORT: \{side: "BUY", position_effect: "CLOSE"\}\n',
         "",
@@ -1179,8 +1056,7 @@ def test_load_order_construction_policy_construction_action_class_shape_close_lo
 def test_load_order_construction_policy_construction_action_class_shape_close_both_directions_accepted(
     tmp_path: Path,
 ) -> None:
-    """Both CLOSE arms load, with the side each direction actually acts on — the fixture's own
-    default since #960 (no mutation needed), as every shipped OCP declares it."""
+    """Both CLOSE arms load, with the side each direction actually acts on — the fixture's own"""
     path = write_fixture_ocp(tmp_path)
     loaded = load_order_construction_policy(path, scheme=SCHEME)
     assert loaded.construction_rules.action_class_shape[
@@ -1194,16 +1070,7 @@ def test_load_order_construction_policy_construction_action_class_shape_close_bo
 def test_load_order_construction_policy_construction_action_class_shape_one_sided_increase_refused(
     tmp_path: Path,
 ) -> None:
-    """PR #719 independent review mutation: a one-sided ``INCREASE`` entry (no per-class
-    allowlist table names it) must still refuse. Proves the within-class mirror check is
-    GENERIC over every ``ActionClass`` member other than ``NEW_LONG``/``NEW_SHORT`` — not a
-    table someone has to remember to extend, which is exactly the bug this reproduces: the
-    original ``_ACTION_CLASS_SHAPE_MIRROR_PAIRS`` table named only ``CLOSE`` alongside
-    ``NEW_LONG``/``NEW_SHORT``, so a one-sided ``INCREASE`` (or ``DECREASE``, ``REVERSAL``,
-    ``CANCEL``, ``AMEND``, ``REPLACE``, ``REDUCE_ONLY``, ``PROTECTIVE``, ``EMERGENCY``,
-    ``ROUTING_ALTERNATIVE``) loaded OK. ``INCREASE`` is not a repo enum member ``ocp_yaml()``'s
-    default declares, so this test adds it fresh rather than mutating an existing entry.
-    """
+    """PR #719 independent review mutation: a one-sided ``INCREASE`` entry (no per-class"""
     text = ocp_yaml().replace(
         "    action_class_shape:\n"
         '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
@@ -1220,9 +1087,6 @@ def test_load_order_construction_policy_construction_action_class_shape_one_side
         load_order_construction_policy(path, scheme=SCHEME)
 
 
-#: The default fixture's own single ``effect_dimensions`` entry (adopted proposal value,
-#: ``tests/venue/_documents.py``'s own ``ocp_yaml()`` docstring) — the stable substring the two
-#: tests below replace, independent of the surrounding comment block.
 _DEFAULT_EFFECT_DIMENSION_ENTRY = (
     '      - dimension_id: "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"\n'
     '        basis: "QUANTITY"\n'
@@ -1247,10 +1111,7 @@ def test_load_order_construction_policy_construction_effect_dimensions_unknown_b
 def test_load_order_construction_policy_construction_effect_dimensions_well_formed(
     tmp_path: Path,
 ) -> None:
-    """A second, differently-shaped ``effect_dimensions`` entry parses generically — the
-    default fixture's own adopted-proposal entry (asserted in the happy-path test) already
-    covers the QUANTITY basis; this proves NOTIONAL round-trips too, independent of whether the
-    document declares it (the real deploy file does not — proposal §3)."""
+    """A second, differently-shaped ``effect_dimensions`` entry parses generically — the"""
     text = ocp_yaml().replace(
         _DEFAULT_EFFECT_DIMENSION_ENTRY,
         '      - dimension_id: "notional-test"\n        basis: "NOTIONAL"\n'
@@ -1271,9 +1132,7 @@ def test_load_order_construction_policy_construction_effect_dimensions_well_form
 def test_load_order_construction_policy_scope_order_types_empty_refused(
     tmp_path: Path,
 ) -> None:
-    """``order_types`` joined the OCP single-live-scope singleton set in the (a′) wave — the
-    ``ORDER_TYPE`` authorized axis is derived from it, so it needs exactly one value like
-    ``environments``/``accounts`` already do."""
+    """``order_types`` joined the OCP single-live-scope singleton set in the (a′) wave — the"""
     text = ocp_yaml(order_types="[]")
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="EXACTLY one"):
@@ -1299,19 +1158,10 @@ def test_load_order_construction_policy_scope_order_types_named_tbd_refused(
 
 
 def test_real_paper_ocp_carries_the_new_generation(tmp_path: Path) -> None:
-    """Pins the (a′) wave's generation bump on the shipped file itself (mirrors
-    ``tests/compose/test_deploy_policies.py``'s own "real policy files" pins). Generation 3:
-    effect_dimensions proposal (2026-09-16), on top of generation 2's sizing proposal.
-    """
+    """Pins the (a′) wave's generation bump on the shipped file itself (mirrors"""
     raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
     assert raw["policy_generation"] == 3
     assert raw["_model_view"]["policy_generation"] == 3
-    # W-A / A-5 (2026-09-23, operator choice (가)): the operator-fill gate this line used to
-    # pin as ``["TBD"]`` is SETTLED — the deployed boot-proof strategy file's own
-    # ``quantity_basis`` is what proposal §4 ② was waiting for. Filling an operator-fill leaf
-    # is the pre-activation act the document's own header prescribes, so the generation stays
-    # 3 (asserted above); the value itself is pinned in
-    # ``tests/compose/test_deploy_approved_values.py`` against the strategy file.
     assert raw["_runtime"]["construction"]["sizing"]["admitted_quantity_bases"] == [
         "RISK"
     ]
@@ -1320,9 +1170,7 @@ def test_real_paper_ocp_carries_the_new_generation(tmp_path: Path) -> None:
 def test_real_paper_ocp_effect_dimensions_matches_the_adopted_proposal(
     tmp_path: Path,
 ) -> None:
-    """Pins the effect_dimensions proposal's adopted table on the shipped file: single
-    dimension, all four fields, no notional dimension (proposal §3 — rejected, no approved
-    mark source)."""
+    """Pins the effect_dimensions proposal's adopted table on the shipped file: single"""
     raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
     dims = raw["_runtime"]["construction"]["effect_dimensions"]
     assert dims == [
@@ -1338,13 +1186,7 @@ def test_real_paper_ocp_effect_dimensions_matches_the_adopted_proposal(
 def test_real_paper_ocp_effect_dimension_id_matches_the_real_arp_capacity_lookup_spelling(
     tmp_path: Path,
 ) -> None:
-    """The strongest form of the proposal §2.1 measurement: reads BOTH shipped files and
-    asserts the OCP's declared ``dimension_id`` equals the exact composed-id spelling the ARP's
-    own ``_runtime.dimension_ids`` mapping carries — the same key
-    ``tos_runtime/riskstate/service.py:145-151`` builds the RCL capacity vector from. A future
-    edit that drifts either file's spelling apart fails HERE, not only downstream at a capacity
-    lookup that silently finds nothing (the exact phantom the withdrawn fixture-injected values
-    already were)."""
+    """The strongest form of the proposal §2.1 measurement: reads BOTH shipped files and"""
     ocp_raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
     arp_raw = yaml.safe_load(_REAL_ARP_PATH.read_text(encoding="utf-8"))
     ocp_dimension_id = ocp_raw["_runtime"]["construction"]["effect_dimensions"][0][
@@ -1352,23 +1194,11 @@ def test_real_paper_ocp_effect_dimension_id_matches_the_real_arp_capacity_lookup
     ]
     arp_dimension_ids = arp_raw["_runtime"]["dimension_ids"]
     assert ocp_dimension_id in arp_dimension_ids
-    # The unprefixed governed_dimensions spelling is a DIFFERENT id — proposal §2.1's own
-    # warning that the two ARP spellings must not be confused.
     assert ocp_dimension_id not in arp_raw["_model_view"]["governed_dimensions"]
 
 
 def test_real_paper_ocp_refuses_on_scope_accounts_tbd(tmp_path: Path) -> None:
-    """The shipped ``config/tos_runtime/paper/order_construction_policy.yaml`` pins its own
-    intentional not-yet-bootable state: as committed it refuses, on the ONE operator-fill gate
-    that is still open — ``scope.accounts`` (the account coordinate is never committed;
-    ``scripts/tos/render_paper_config.py`` fills it off-repo).
-
-    W-A / A-5 (2026-09-23) closed the other two gates this test used to walk down
-    (``admitted_quantity_bases``, then the ``DIRECTION`` axis): both are committed values now,
-    pinned by ``test_real_paper_ocp_carries_the_new_generation`` above and by
-    ``tests/compose/test_deploy_approved_values.py``. Walking a chain of gates that no longer
-    exists would be a dead pin, so the chain is replaced by the one live gate plus the
-    "filled scope still loads" assertion below."""
+    """The shipped ``config/tos_runtime/paper/order_construction_policy.yaml`` pins its own"""
     raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
     assert raw["scope"]["accounts"] == ["TBD"]
     assert raw["scope"]["instruments"] == ["TBD"]
@@ -1382,13 +1212,7 @@ def test_real_paper_ocp_refuses_on_scope_accounts_tbd(tmp_path: Path) -> None:
 def test_real_paper_ocp_loads_once_only_the_scope_coordinates_are_filled(
     tmp_path: Path,
 ) -> None:
-    """The other half of the gate above, and the pin that keeps it honest: filling ONLY the
-    two scope coordinates — exactly what the render script does — is now sufficient for the
-    shipped document to load, carrying the committed ``RISK`` basis and ``LONG`` direction.
-
-    Without this, the refusal test above would pass equally well if some NEW named-TBD leaf
-    appeared behind it, and the fact that the document is otherwise complete would go
-    unrecorded."""
+    """The other half of the gate above, and the pin that keeps it honest: filling ONLY the"""
     raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
     raw["scope"]["accounts"] = ["acct-x"]
     raw["scope"]["instruments"] = ["inst-x"]

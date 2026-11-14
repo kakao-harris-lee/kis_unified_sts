@@ -314,209 +314,6 @@ def test_redis_client_cert_reqs_mapping(clean_env, monkeypatch):
 
 
 # =============================================================================
-# RedisRateLimiter Tests (shared/execution/rate_limiter.py)
-# =============================================================================
-
-
-@pytest.mark.skipif(not redis_available(), reason="Redis not available")
-@pytest.mark.asyncio
-async def test_rate_limiter_non_tls_connection(clean_env, monkeypatch, redis_url):
-    """Test RedisRateLimiter connects without TLS by default."""
-    from shared.execution.rate_limiter import RedisRateLimiter
-
-    monkeypatch.setenv("REDIS_TLS_ENABLED", "false")
-
-    limiter = RedisRateLimiter(
-        redis_url=redis_url,
-        key_prefix="test-non-tls",
-        requests_per_second=10.0,
-        window_size=1.0,
-    )
-
-    try:
-        # Should connect successfully
-        result = await limiter.acquire(timeout=1.0)
-        assert result is True, "Should acquire rate limit slot without TLS"
-
-        # Verify metrics work
-        metrics = await limiter.get_metrics()
-        assert metrics["current_usage"] >= 1, "Should track usage"
-
-    finally:
-        await limiter.reset()
-        await limiter.close()
-
-
-@pytest.mark.skipif(not redis_available(), reason="Redis not available")
-@pytest.mark.asyncio
-async def test_rate_limiter_tls_settings_applied(clean_env, monkeypatch, redis_url):
-    """Test RedisRateLimiter applies TLS settings when enabled."""
-    from shared.execution.rate_limiter import RedisRateLimiter
-
-    monkeypatch.setenv("REDIS_TLS_ENABLED", "true")
-    monkeypatch.setenv("REDIS_TLS_CERT_REQS", "none")  # Use "none" for testing
-
-    limiter = RedisRateLimiter(
-        redis_url=redis_url,
-        key_prefix="test-tls",
-        requests_per_second=10.0,
-        window_size=1.0,
-    )
-
-    try:
-        # Try to connect - may fail if Redis doesn't support TLS
-        try:
-            result = await limiter.acquire(timeout=1.0)
-
-            # If we get here, verify connection works
-            assert result is True, "Should acquire rate limit slot with TLS"
-
-            # Verify metrics work
-            metrics = await limiter.get_metrics()
-            if metrics.get("current_usage", 0) < 1:
-                pytest.skip(
-                    "Redis TLS connected but usage tracking not working (TLS not truly active)"
-                )
-
-        except Exception as e:
-            # Connection may fail if Redis doesn't support TLS
-            error_str = str(e).lower()
-            if any(
-                kw in error_str
-                for kw in (
-                    "ssl",
-                    "certificate",
-                    "connection",
-                    "timeout",
-                    "timed out",
-                    "refused",
-                    "auth",
-                )
-            ):
-                pytest.skip(f"Redis TLS not available in test environment: {e}")
-            else:
-                # Check if fallback limiter is working
-                metrics = await limiter.get_metrics()
-                if metrics.get("using_fallback"):
-                    pytest.skip(
-                        "Rate limiter fell back to in-memory mode (Redis TLS not available)"
-                    )
-                raise
-    finally:
-        await limiter.reset()
-        await limiter.close()
-
-
-@pytest.mark.skipif(not redis_available(), reason="Redis not available")
-@pytest.mark.asyncio
-async def test_rate_limiter_fallback_on_tls_failure(clean_env, monkeypatch):
-    """Test RedisRateLimiter falls back to in-memory mode when TLS connection fails."""
-    from shared.execution.rate_limiter import RedisRateLimiter
-
-    # Configure TLS with invalid settings to force failure
-    monkeypatch.setenv("REDIS_TLS_ENABLED", "true")
-    monkeypatch.setenv("REDIS_TLS_CERT_REQS", "required")
-    monkeypatch.setenv("REDIS_TLS_CA_CERTS", "/nonexistent/ca.crt")
-
-    limiter = RedisRateLimiter(
-        redis_url="redis://localhost:6379/1",
-        key_prefix="test-fallback",
-        requests_per_second=10.0,
-        window_size=1.0,
-    )
-
-    try:
-        # Should fall back to in-memory limiter
-        try:
-            result = await limiter.acquire(timeout=1.0)
-            assert result is True, "Should acquire slot using fallback limiter"
-
-            # Verify we're using fallback
-            metrics = await limiter.get_metrics()
-            if not metrics.get("using_fallback"):
-                pytest.skip(
-                    "Redis connected without TLS enforcement; fallback not triggered"
-                )
-        except Exception as e:
-            error_str = str(e).lower()
-            if any(
-                kw in error_str
-                for kw in (
-                    "ssl",
-                    "certificate",
-                    "timeout",
-                    "timed out",
-                    "connection",
-                    "refused",
-                    "auth",
-                )
-            ):
-                pytest.skip(f"Redis TLS not available in test environment: {e}")
-            raise
-
-    finally:
-        await limiter.reset()
-        await limiter.close()
-
-
-@pytest.mark.skipif(not redis_available(), reason="Redis not available")
-@pytest.mark.asyncio
-async def test_rate_limiter_url_parsing_with_tls(clean_env, monkeypatch):
-    """Test RedisRateLimiter correctly parses redis:// and rediss:// URLs."""
-    from shared.execution.rate_limiter import RedisRateLimiter
-
-    test_cases = [
-        ("redis://localhost:6379/1", False),
-        ("rediss://localhost:6379/1", True),
-        ("redis://:password@localhost:6379/2", False),
-        ("rediss://:password@localhost:6379/2", True),
-    ]
-
-    for url, should_use_tls in test_cases:
-        # Set TLS enabled if URL uses rediss://
-        if should_use_tls:
-            monkeypatch.setenv("REDIS_TLS_ENABLED", "true")
-            monkeypatch.setenv("REDIS_TLS_CERT_REQS", "none")
-        else:
-            monkeypatch.setenv("REDIS_TLS_ENABLED", "false")
-
-        limiter = RedisRateLimiter(
-            redis_url=url,
-            key_prefix=f"test-parse-{should_use_tls}",
-            requests_per_second=10.0,
-            window_size=1.0,
-        )
-
-        try:
-            # Try to connect - may fail if Redis doesn't support TLS
-            try:
-                result = await limiter.acquire(timeout=1.0)
-                assert result is True, f"Should handle URL: {url}"
-
-            except Exception as e:
-                error_str = str(e).lower()
-                if any(
-                    kw in error_str
-                    for kw in (
-                        "ssl",
-                        "certificate",
-                        "timeout",
-                        "timed out",
-                        "connection",
-                        "refused",
-                        "auth",
-                    )
-                ):
-                    pytest.skip(f"Redis TLS not available for {url}")
-                elif not should_use_tls:
-                    # Non-TLS should work
-                    raise
-        finally:
-            await limiter.reset()
-            await limiter.close()
-
-
-# =============================================================================
 # Backward Compatibility Tests
 # =============================================================================
 
@@ -548,36 +345,6 @@ def test_backward_compatibility_no_env_vars(clean_env, monkeypatch):
         RedisClient.close()
 
 
-@pytest.mark.skipif(not redis_available(), reason="Redis not available")
-@pytest.mark.asyncio
-async def test_backward_compatibility_existing_code(clean_env, monkeypatch, redis_url):
-    """Test that existing code continues to work without modifications."""
-    from shared.execution.rate_limiter import RedisRateLimiter
-
-    # Don't set TLS env vars - simulate existing deployment
-    monkeypatch.delenv("REDIS_TLS_ENABLED", raising=False)
-
-    # This is how existing code creates rate limiters
-    limiter = RedisRateLimiter(
-        redis_url=redis_url,
-        key_prefix="existing-code",
-        requests_per_second=10.0,
-    )
-
-    try:
-        # Should work exactly as before
-        for _ in range(5):
-            result = await limiter.acquire(timeout=1.0)
-            assert result is True, "Existing code should continue working"
-
-        metrics = await limiter.get_metrics()
-        assert metrics["current_usage"] == 5, "Metrics should work"
-
-    finally:
-        await limiter.reset()
-        await limiter.close()
-
-
 # =============================================================================
 # End-to-End Validation
 # =============================================================================
@@ -590,7 +357,6 @@ async def test_e2e_all_redis_clients_respect_tls_disabled(
 ):
     """End-to-end test: all Redis clients work with TLS disabled."""
     from shared.config.secrets import SecretsManager
-    from shared.execution.rate_limiter import RedisRateLimiter
     from shared.streaming.client import RedisClient
 
     # Explicitly disable TLS
@@ -612,23 +378,6 @@ async def test_e2e_all_redis_clients_respect_tls_disabled(
         assert client.ping(), "RedisClient should connect"
         client.set("test-key", "test-value")
         assert client.get("test-key") == "test-value", "Should read/write data"
-
-        # 3. RedisRateLimiter should work
-        limiter = RedisRateLimiter(
-            redis_url=redis_url,
-            key_prefix="e2e-test",
-            requests_per_second=10.0,
-        )
-
-        result = await limiter.acquire(timeout=1.0)
-        assert result is True, "RedisRateLimiter should work"
-
-        metrics = await limiter.get_metrics()
-        assert metrics["current_usage"] >= 1, "Metrics should work"
-        assert not metrics["using_fallback"], "Should not use fallback"
-
-        await limiter.reset()
-        await limiter.close()
 
     finally:
         RedisClient.close()

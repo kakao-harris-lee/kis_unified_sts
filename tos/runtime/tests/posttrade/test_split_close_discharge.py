@@ -1,11 +1,4 @@
-"""Regression for one entry discharged by two separately filled close attempts.
-
-Each close is a complete order fill. The broker reports six units remaining after
-the first close, then reports a complete flat position after the second. The
-cycle uses the production release consumer, durable per-attempt permit joins,
-the RCL projection, and the real reconciliation service with an independent
-broker witness.
-"""
+"""Regression for one entry discharged by two separately filled close attempts."""
 
 from __future__ import annotations
 
@@ -301,13 +294,7 @@ def test_two_fully_filled_closes_discharge_the_entry_when_the_broker_is_flat(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """Entry 10 -> close 4 (broker holds 6) -> close 6 (broker flat) releases entry.
-
-    Both close attempts have distinct durable permit bindings and their own fully
-    filled receipts. A close order's remaining quantity is zero in each case; the
-    position remainder after the first close is independently reported by the
-    broker witness.
-    """
+    """Entry 10 -> close 4 (broker holds 6) -> close 6 (broker flat) releases entry."""
     first_close = cycle._arrange_close(
         rcl_log,
         evidence_store,
@@ -315,8 +302,6 @@ def test_two_fully_filled_closes_discharge_the_entry_when_the_broker_is_flat(
         close_filled=Decimal("4"),
         close_remaining=Decimal("0"),
     )
-    # The broker confirms the first order was fully filled but the position is
-    # still 6, so only the close's own reservation can be released.
     first_consumer = cycle._cycle_consumer(
         rcl_log=rcl_log,
         evidence_store=evidence_store,
@@ -354,8 +339,6 @@ def test_two_fully_filled_closes_discharge_the_entry_when_the_broker_is_flat(
     assert _states(rcl_log)[entry_reservation_id] is CapacityState.POSITION_CONSUMED
     assert _states(rcl_log)[first_close_reservation_id] is CapacityState.RELEASED
 
-    # A second, separately bound close sells the remaining 6. The final witness
-    # includes every order and reports the instrument affirmatively flat.
     second_close = _record_second_close(
         evidence_store=evidence_store, inbox=inbox, rcl_log=rcl_log
     )
@@ -498,13 +481,7 @@ def test_missing_close_fill_evidence_holds_the_entry_after_flat_report(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """A payload and finality proof do not replace the missing durable close receipt.
-
-    Reconciliation is deliberately supplied a permitting, complete-flat report so
-    this test reaches the close-discharge evidence gate instead of turning into an
-    early reconciliation failure. The real SQLite stores, reservation projection,
-    and production release consumer remain in the path.
-    """
+    """A payload and finality proof do not replace the missing durable close receipt."""
     cycle._record_join(
         evidence_store,
         attempt_id=cycle._ENTRY_ATTEMPT,
@@ -554,7 +531,6 @@ def test_missing_close_fill_evidence_holds_the_entry_after_flat_report(
         record_class="POSTTRADE_FINALITY_PROOF",
     )
     inbox.record_finality_witness(cycle._CLOSE_ATTEMPT, True)
-    # Deliberately no EGRESS_RESULT_CONSUMED row for the close attempt.
 
     consumer = _consumer_with_permitting_reconciliation(
         rcl_log=rcl_log,

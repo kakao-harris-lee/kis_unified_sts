@@ -1,21 +1,4 @@
-"""MANDATED test-only seam cross-check: venue -> iap + shared closure property (design #19 §3.4(d)/§0.4d/§7).
-
-venue **produces** two digests the iap ``ProposalApprovalRequest`` consumes by injection
-(``venue_snapshot_digest`` ``iap/records.py:256`` / ``venue_admissibility_decision_digest``
-``iap/records.py:257``) — iap does not import ``tos.venue``. **admissibility ≠ approval** (§30
-item 12): iap binds the venue digests into an approval request, but admissibility is only one
-input to approval, never approval itself.
-
-It also locks the **shared closure property contract** (§0.4d / MINOR-5): the venue
-``material_change_closure`` and the iap ``invalidation_closure`` (``iap/predicates.py:347``) are
-structurally isomorphic pure graph reachability. venue re-authors the closure **locally** (no
-``tos.iap`` import — sibling edge 0); the DRY is preserved by this property contract, not by code
-sharing. This file imports the real iap ``invalidation_closure`` as a **test** to prove the
-isomorphism — and the import-closure test separately proves ``tos.iap`` is **absent** from the
-venue package closure.
-
-Regime tag: predicate / model substrate only; VTG-EV substrate; EV-L1-complete claim forbidden.
-"""
+"""MANDATED test-only seam cross-check: venue -> iap + shared closure property (design #19 §3.4(d)/§0.4d/§7)."""
 
 from __future__ import annotations
 
@@ -52,7 +35,6 @@ def test_venue_digests_fill_the_iap_slots_admissibility_is_not_approval() -> Non
         venue_snapshot_digest=snap_digest,
         venue_admissibility_decision_digest=dec_digest,
     )
-    # iap binds the venue digests — but admissibility is only an INPUT to approval, not approval.
     assert request.venue_snapshot_digest == snapshot.canonical_digest
     assert request.venue_admissibility_decision_digest == decision.canonical_digest
 

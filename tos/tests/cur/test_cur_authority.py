@@ -1,15 +1,4 @@
-"""All-false currentness authority (design #23 §6.13/§7; CUR-INV-005).
-
-``AllFalseCurrentnessAuthority`` forces every permissive flag ``False`` at construction (any ``True``
-⇒ ``ArtifactIntegrityError``): a vector / proof / fence / policy is verified ordering data, not
-permission (§1 line 21 "a currentness sequencer ... does not invent facts, decide business safety,
-mutate capacity, issue Live Authorization, classify protection, or transmit"). The
-``all_false_currentness_authority`` predicate re-derives the property so a ``model_construct`` bypass
-cannot smuggle a permissive block past a consumer (defence in depth, §2.3).
-
-Regime tag: predicate substrate only; CUR-EV-009 NOT_IMPLEMENTED (≥ EV-L2 + +Security);
-EV-L1-complete claim forbidden.
-"""
+"""All-false currentness authority (design #23 §6.13/§7; CUR-INV-005)."""
 
 from __future__ import annotations
 
@@ -70,7 +59,6 @@ def test_all_false_predicate_both_ways() -> None:
 
 def test_all_false_predicate_catches_model_construct_bypass() -> None:
     """(§2.3 defence-in-depth) A model_construct block with a True flag is caught by the predicate."""
-    # model_construct skips the validator — the predicate re-derives the all-false property.
     smuggled = AllFalseCurrentnessAuthority.model_construct(transmits=True)
     assert all_false_currentness_authority(smuggled) is False
 

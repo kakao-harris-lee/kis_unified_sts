@@ -1,20 +1,4 @@
-"""SQLite implementation of the Safety Commit Log.
-
-The log implements the kernel ``CommitLog`` protocol over its own WAL/FULL
-SQLite file, separate from the evidence store. Append and reservation updates
-use ``BEGIN IMMEDIATE``; linearizable reads use an explicit transaction and
-writer-epoch fencing. Acquiring a writer epoch establishes the writer fence.
-Command IDs provide idempotency and byte-mismatch detection; SQLite errors
-inside a transaction become explicit refusal outcomes.
-
-Reservation transitions validate the held ``from_state`` in the same
-transaction and mark transition rows with an internal discriminator so replay
-cannot infer them from caller-controlled payload shape. Evidence is appended
-before the RCL commit, so a later rollback may over-record evidence but never
-leaves a committed RCL row without its evidence. Replay verification folds
-only discriminated transition rows. The optional OS file lock is advisory;
-correctness comes from SQLite fencing and writer epochs.
-"""
+"""SQLite implementation of the Safety Commit Log."""
 
 from __future__ import annotations
 
@@ -84,16 +68,8 @@ __all__ = [
     "StaleEpochRead",
 ]
 
-#: See the module docstring's "canonicalization version note" analog in
-#: ``tos_runtime.evidence.store`` — same convention, same reason: no Phase-2
-#: canonicalization scheme is registered yet, so this reuses the one existing
-#: registered EV-L1 provisional scheme for the reservations-state digest
-#: :meth:`SqliteCommitLog.verify_replay` folds and compares.
 _CANONICALIZATION_VERSION = EV_L1_PROVISIONAL_VERSION
 
-#: ``(reservation_id, claimed_from_state, to_state, scope, committed_vector)``, or ``None`` for
-#: a plain :meth:`SqliteCommitLog.append_cas` call. ``committed_vector`` (kernel round #4 K-4)
-#: is ``None`` when the transition carries no vector — never a zero vector.
 _ReservationUpdate = (
     tuple[str, CapacityState, CapacityState, ReservationScope, CapacityVector | None]
     | None
@@ -105,22 +81,11 @@ class CommitLogCorruption(RuntimeError):
 
 
 class InjectedCrash(RuntimeError):
-    """Raised by a test-supplied ``crash_hook`` to simulate a process death (fault ④).
-
-    Never raised by production code paths — this module only *calls* the
-    injected hook; the hook itself decides whether, and with what, to raise.
-    """
+    """Raised by a test-supplied ``crash_hook`` to simulate a process death (fault ④)."""
 
 
 class StaleEpochRead(RuntimeError):
-    """Raised by :meth:`SqliteCommitLog.read_linearizable` on a stale epoch (fault ①).
-
-    The kernel ``CommitLog.read_linearizable`` Protocol signature returns
-    only ``LogView`` (no ``AppendRefusal`` union) — a stale read therefore
-    cannot be represented as a return value and must be an exception instead
-    (slice plan §1 item 3: "stale epoch 는 읽기도 거부 (``AppendRefusal``
-    반환 또는 전용 예외 — Protocol 시그니처를 따른다)").
-    """
+    """Raised by :meth:`SqliteCommitLog.read_linearizable` on a stale epoch (fault ①)."""
 
     def __init__(self, reason: AppendRefusalReason) -> None:
         super().__init__(f"read_linearizable refused: {reason}")
@@ -257,14 +222,7 @@ def _reservation_transition_record_from_row(
 
 
 class SqliteCommitLog:
-    """The linearizable Safety Commit Log (design #40 D2.1) — satisfies ``tos.rcl.CommitLog``.
-
-    One sqlite3 file (``journal_mode=WAL``, ``synchronous=FULL``, separate
-    from the evidence store's own file). Every mutation happens inside
-    ``BEGIN IMMEDIATE`` ... ``COMMIT`` so a concurrent writer is serialized
-    rather than corrupting the file, and every failure path issues
-    ``ROLLBACK`` before returning a refusal (fault ⑦).
-    """
+    """The linearizable Safety Commit Log (design #40 D2.1) — satisfies ``tos.rcl.CommitLog``."""
 
     def __init__(
         self,
@@ -276,30 +234,7 @@ class SqliteCommitLog:
         canonicalization_version: str = _CANONICALIZATION_VERSION,
         sqlite_timeout_s: float = 5.0,
     ) -> None:
-        """Open (or create) the commit log at ``path``.
-
-        Args:
-            path: The sqlite file path — MUST be a different file from any
-                evidence store the caller also opens (design #40 D3.1 "장애
-                도메인 분리"; this module does not itself check that, the
-                caller is responsible for passing distinct paths).
-            evidence_port: The injected durable-append seam every committed
-                transition is evidenced through, inside the same RCL
-                transaction (slice plan §1 item 1 (f)).
-            monotonic_ns: Injected monotonic-clock callable for
-                ``epochs.issued_at_monotonic_ns`` — record-only, never used
-                to order anything (fault ⑥).
-            crash_hook: Test-only crash-injection callable (fault ④); see
-                the module docstring's fault-contract table. ``None`` in
-                production.
-            canonicalization_version: The registered ``tos.canonical``
-                scheme version used by :meth:`verify_replay`'s digest.
-            sqlite_timeout_s: sqlite3's own busy-timeout — how long a write
-                retries against a file another connection holds locked
-                before raising :class:`sqlite3.OperationalError` (fault ③).
-                Lowered to ``0`` in tests so a locked-file refusal is
-                observed immediately instead of after the 5s stdlib default.
-        """
+        """Open (or create) the commit log at ``path``."""
         self.path = path
         self._evidence_port = evidence_port
         self._monotonic_ns = monotonic_ns
@@ -309,17 +244,10 @@ class SqliteCommitLog:
         self._conn = sqlite3.connect(
             str(path), isolation_level=None, timeout=sqlite_timeout_s
         )
-        # Construction from here on is guarded: a refused boot closes `self._conn` instead of
-        # leaving it to the exception's traceback. The rationale lives once, on the helper.
         with closing_on_failure(self._conn):
             enable_wal_journal(self._conn)
             self._conn.execute("PRAGMA synchronous=FULL")
-            # This log's DDL, the freshness decision and the genesis stamp all inside ONE
-            # `BEGIN IMMEDIATE` (#801) — `tos_runtime.rcl.schema` owns the statements, and
-            # `open_or_create_schema`'s own docstring names the two races that closes.
             apply_schema_ledger(self._conn, monotonic_ns=monotonic_ns)
-
-    # -- lifecycle -------------------------------------------------------
 
     def close(self) -> None:
         """Close the underlying sqlite3 connection (and any advisory lock fd)."""
@@ -331,15 +259,7 @@ class SqliteCommitLog:
         self._conn.close()
 
     def try_acquire_advisory_flock(self) -> bool:
-        """Best-effort, non-blocking ``fcntl.flock`` on this log's file (D2.1 "보조").
-
-        Never relied upon for correctness — see the module docstring.
-        Returns ``False`` (never raises) on any failure, including a
-        platform with no ``fcntl`` module.
-
-        Returns:
-            ``True`` iff the advisory exclusive lock was acquired.
-        """
+        """Best-effort, non-blocking ``fcntl.flock`` on this log's file (D2.1 "보조")."""
         try:
             import fcntl
             import os
@@ -353,26 +273,10 @@ class SqliteCommitLog:
         self._advisory_lock_fd = fd
         return True
 
-    # -- writer fencing (D2.1 item 2) ------------------------------------
-
     def acquire_epoch(
         self, identity: RuntimeIdentity, *, runtime_generation: int | None = None
     ) -> WriterEpoch:
-        """Atomically issue a new, strictly-greater Writer Epoch (fault ①).
-
-        Args:
-            identity: The acquiring process's :class:`RuntimeIdentity` —
-                recorded (not equated with the epoch) on the new row.
-            runtime_generation: Design #40 §3's own D4 workload generation,
-                recorded alongside the epoch in the SAME row without being
-                equated with it (design #40 v1.1 note ②: "두 epoch 를
-                증명 없이 결합하지 않는다"). :meth:`latest_runtime_generation`
-                reads this column back for ``tos_runtime.time.generation``'s
-                ``seed_from`` helper.
-
-        Returns:
-            The newly acquired :data:`~tos.rcl.WriterEpoch`.
-        """
+        """Atomically issue a new, strictly-greater Writer Epoch (fault ①)."""
         issued_at_ns = self._monotonic_ns()
         identity_json = json.dumps(identity.model_dump(mode="json"), sort_keys=True)
         self._conn.execute("BEGIN IMMEDIATE")
@@ -400,24 +304,13 @@ class SqliteCommitLog:
         return int(row[0])
 
     def latest_runtime_generation(self) -> int | None:
-        """The ``runtime_generation`` recorded on the most recent ``epochs`` row.
-
-        Used by ``tos_runtime.time.generation.seed_from`` (slice plan §3) —
-        NEVER equated with :meth:`current_epoch`'s own value (design #40
-        v1.1 note ②).
-
-        Returns:
-            The most recent recorded generation, or ``None`` if no epoch was
-            ever acquired, or the most recent acquisition did not record one.
-        """
+        """The ``runtime_generation`` recorded on the most recent ``epochs`` row."""
         row = self._conn.execute(
             "SELECT runtime_generation FROM epochs ORDER BY epoch DESC LIMIT 1"
         ).fetchone()
         if row is None or row[0] is None:
             return None
         return int(row[0])
-
-    # -- append / read (kernel CommitLog Protocol) ------------------------
 
     def append_cas(
         self,
@@ -427,26 +320,7 @@ class SqliteCommitLog:
         writer_epoch: WriterEpoch,
         payload_json: str | None = None,
     ) -> AppendReceipt | AppendRefusal:
-        """Compare-and-set append (kernel ``CommitLog.append_cas``; faults ①②③④⑥⑦).
-
-        Args:
-            entry: The command to append. ``entry.command_id`` is required
-                (fail-closed if absent — nothing to key idempotency on).
-            expected_seq: The log's current tip, as the caller last observed
-                it (``-1`` for an empty log) — the CAS fence (fault ⑦'s
-                sibling "부분 커밋" concern's positive-admission half).
-            writer_epoch: The Writer Epoch this write is fenced under.
-            payload_json: Optional caller-supplied raw payload, stored
-                alongside the entry (an extra keyword-only argument beyond
-                the kernel Protocol's three — a wider signature is still a
-                satisfying implementation of the narrower Protocol, same
-                convention as ``tos_runtime.evidence.store``'s ``append``).
-
-        Returns:
-            An :class:`~tos.rcl.AppendReceipt` on durable commit, or a
-            structural :class:`~tos.rcl.AppendRefusal` — never both, never
-            neither.
-        """
+        """Compare-and-set append (kernel ``CommitLog.append_cas``; faults ①②③④⑥⑦)."""
         if entry.command_id is None:
             return AppendRefusal(
                 reason=AppendRefusalReason.COMMAND_BYTES_MISMATCH,
@@ -466,12 +340,7 @@ class SqliteCommitLog:
         )
 
     def read_linearizable(self, *, writer_epoch: WriterEpoch) -> LogView:
-        """Linearizable read snapshot (kernel ``CommitLog.read_linearizable``; fault ①).
-
-        Raises:
-            StaleEpochRead: If ``writer_epoch`` is not the current epoch,
-                checked in the same transaction as the ``seq`` snapshot.
-        """
+        """Linearizable read snapshot (kernel ``CommitLog.read_linearizable``; fault ①)."""
         self._conn.execute("BEGIN")
         try:
             current = self.current_epoch()
@@ -541,19 +410,7 @@ class SqliteCommitLog:
     def reservation_transition_history(
         self, *, writer_epoch: WriterEpoch
     ) -> ReservationTransitionHistory:
-        """Read every committed, discriminated reservation transition in one snapshot.
-
-        Unlike :meth:`reservation_rows`, this preserves the append sequence and transition
-        payload needed to reconstruct reservation identity, scope, and state at a historical
-        boundary. The returned records are decoded only from rows whose internal discriminator
-        is set; a plain append whose payload happens to resemble a transition is never admitted
-        into the history.
-
-        The snapshot is fenced by ``writer_epoch`` and verifies the held projection against a
-        replay inside that same read transaction. Any stale epoch, replay mismatch, unreadable
-        row, or malformed transition fails by raising; consumers must hold rather than consume a
-        partial history.
-        """
+        """Read every committed, discriminated reservation transition in one snapshot."""
         self._conn.execute("BEGIN")
         try:
             current = self.current_epoch()
@@ -589,8 +446,6 @@ class SqliteCommitLog:
         for row in rows:
             yield row_to_commit_entry(row)
 
-    # -- reservation lifecycle (D2.1 item 4) ------------------------------
-
     def apply_reservation_transition(
         self,
         transition: CapacityReservationTransition,
@@ -602,41 +457,7 @@ class SqliteCommitLog:
         expected_seq: int,
         finality_witness: bool | None = None,
     ) -> AppendReceipt | AppendRefusal:
-        """Commit one reservation-lifecycle transition (D2.1 item 4).
-
-        Gates through :func:`~tos_runtime.rcl.gates.reservation_lifecycle_refusal`
-        (structural whitelist, cause admissibility, finality-witness — moved
-        to ``gates.py`` for the 100-line function size budget, laneO
-        port-fix round, 2026-09-08).
-
-        Args:
-            transition: The proposed transition (``reservation_id``,
-                ``from_state``, ``to_state``, ``writer_epoch``, ``scope`` —
-                all required, checked here; ``committed_vector`` — kernel
-                round #4 K-4 — is OPTIONAL; a vector, an empty one included,
-                is persisted as-is, while ``None`` keeps the reservation's
-                previously committed vector (#972 carry-forward,
-                :func:`~tos_runtime.rcl.gates.upsert_reservation_projection`)
-                and is never defaulted to a zero vector).
-            cause: The :class:`~tos.rcl.TransitionCause` driving it.
-            command_type: The ``CommandType`` recorded as the entry's
-                ``kind`` (caller-supplied — this module does not infer a
-                command type from the state pair; see the module docstring).
-            command_id: The idempotency key for this transition command.
-            command_digest: The canonical digest of the command bytes.
-            expected_seq: The log's current tip, as the caller last observed it.
-            finality_witness: The broker-truth / evidence witness for a
-                finality destination, or ``None``.
-
-        Returns:
-            An :class:`~tos.rcl.AppendReceipt` or CAS-level
-            :class:`~tos.rcl.AppendRefusal` (mechanics, not lifecycle gates).
-
-        Raises:
-            ReservationTransitionRefusal: If any of the three lifecycle
-                gates refuses (see the module docstring's anti-phantom note
-                on why these are not ``AppendRefusal``).
-        """
+        """Commit one reservation-lifecycle transition (D2.1 item 4)."""
         gate_failure = reservation_lifecycle_refusal(
             transition, cause, finality_witness
         )
@@ -652,8 +473,6 @@ class SqliteCommitLog:
             or from_state is None
             or to_state is None
         ):
-            # from_state/to_state None is unreachable (the gate above always
-            # refuses it first) — kept so mypy narrows both to non-None below.
             return AppendRefusal(
                 reason=AppendRefusalReason.COMMAND_BYTES_MISMATCH,
                 detail=(
@@ -684,13 +503,7 @@ class SqliteCommitLog:
         )
 
     def committed_command(self, command_id: str) -> tuple[int, str | None] | None:
-        """``(seq, command_digest)`` of the COMMITTED entry for ``command_id``, or ``None``.
-
-        The ``entries`` table only ever holds committed rows (an append that fails rolls back
-        with its transaction), so this is the authoritative "did it commit" answer — unlike the
-        ``RCL_*`` evidence row, which is written inside the transaction BEFORE ``COMMIT`` and
-        survives a rollback (PR-3b Codex r3: boot replay reads this, not the evidence).
-        """
+        """``(seq, command_digest)`` of the COMMITTED entry for ``command_id``, or ``None``."""
         row = self._conn.execute(
             "SELECT seq, command_digest FROM entries WHERE command_id = ?",
             (command_id,),
@@ -698,39 +511,24 @@ class SqliteCommitLog:
         return None if row is None else (int(row[0]), row[1])
 
     def command_committed(self, command_id: str) -> bool:
-        """Whether an entry with ``command_id`` is committed (PR-3b: the fill observer asks
-        whether an attempt's release transition actually landed, not whether one was intended).
-        """
+        """Whether an entry with ``command_id`` is committed (PR-3b: the fill observer asks"""
         row_exists, _digest = existing_command_row(self._conn, command_id)
         return row_exists
 
     def reservation_rows(
         self,
     ) -> Iterator[tuple[str, CapacityState, int, ReservationScope]]:
-        """Yield every held ``(reservation_id, state, last_seq, scope)`` — the projection's read
-        shape (delegates to :func:`~tos_runtime.rcl.gates.reservation_rows`, moved there for
-        this module's own 1000-line size budget, kernel round #4 K-4 decomposition)."""
+        """Yield every held ``(reservation_id, state, last_seq, scope)`` — the projection's read"""
         return gates_reservation_rows(self._conn)
 
     def reservation_committed_vector(
         self, reservation_id: str
     ) -> CapacityVector | None:
-        """The committed Capacity Vector last written for ``reservation_id``, if any (delegates
-        to :func:`~tos_runtime.rcl.gates.reservation_committed_vector`, kernel round #4 K-4).
-        """
+        """The committed Capacity Vector last written for ``reservation_id``, if any (delegates"""
         return gates_reservation_committed_vector(self._conn, reservation_id)
 
-    # -- replay / corruption detection (fault ⑤) --------------------------
-
     def verify_replay(self) -> None:
-        """Independently re-fold entries and compare against the held projection (fault ⑤).
-
-        Raises:
-            CommitLogCorruption: If the replayed reservations-state digest
-                disagrees with the ``reservations`` table's own digest
-                (:func:`tos.rcl.replay_reproduces_state` — fail-closed on
-                any disagreement, never a partial pass).
-        """
+        """Independently re-fold entries and compare against the held projection (fault ⑤)."""
         held = held_reservation_map(self._conn)
         replayed = fold_reservations_from_entries(self._conn)
         align_unrecorded_vectors(held, replayed)
@@ -744,15 +542,8 @@ class SqliteCommitLog:
                 "disposition is the caller's responsibility, ADR-002-012 :491)"
             )
 
-    # -- internals ---------------------------------------------------------
-
     def _current_seq_tip(self) -> int:
-        """The current log tip: the last committed ``seq``, or ``-1`` if empty.
-
-        Deliberately re-read from disk every call (never a Python-side
-        counter) — the durable table is the only source of truth, matching
-        ``tos_runtime.evidence.store``'s own ``_read_tail`` discipline.
-        """
+        """The current log tip: the last committed ``seq``, or ``-1`` if empty."""
         row = self._conn.execute("SELECT MAX(seq) FROM entries").fetchone()
         return -1 if row is None or row[0] is None else int(row[0])
 
@@ -771,21 +562,7 @@ class SqliteCommitLog:
         command_digest: str | None,
         reservation_update: _ReservationUpdate,
     ) -> AppendRefusal | None:
-        """Fence + CAS + duplicate + reservation-gate checks, in that order.
-
-        Split out of :meth:`_commit_entry` for the 100-line function size
-        budget (operator size-budget decomposition, 2026-09-08) — the
-        transaction boundary is UNCHANGED: this must still be called from
-        inside the same ``BEGIN IMMEDIATE`` transaction :meth:`_commit_entry`
-        holds (every read here — ``current_epoch()``, ``_current_seq_tip()``,
-        the ``reservations`` lookup — is consistent only within that one
-        transaction), and nothing is written by this method itself (faults
-        ①②, HIGH-1).
-
-        Returns:
-            An :class:`~tos.rcl.AppendRefusal` the instant any check fails
-            (nothing yet written), or ``None`` to proceed with the insert.
-        """
+        """Fence + CAS + duplicate + reservation-gate checks, in that order."""
         current = self.current_epoch()
         stale_reason = stale_writer_epoch(current, writer_epoch)
         if stale_reason is not None:
@@ -829,18 +606,7 @@ class SqliteCommitLog:
         payload_json: str | None,
         reservation_update: _ReservationUpdate,
     ) -> None:
-        """``INSERT`` the ``entries`` row (+ ``UPSERT`` ``reservations``, if applicable).
-
-        Split out of :meth:`_commit_entry` for the 100-line function size
-        budget — the transaction boundary is UNCHANGED: this must still run
-        inside the same ``BEGIN IMMEDIATE`` transaction as the rest of
-        :meth:`_commit_entry`; it neither begins nor commits/rolls back
-        anything itself. ``is_reservation_transition`` is derived ONLY from
-        ``reservation_update`` — never from ``payload_json``/``kind``, and
-        never settable by a public caller (independent review MEDIUM-4; see
-        the module docstring's "replay fold is discriminated, not
-        payload-shape-matched" section).
-        """
+        """``INSERT`` the ``entries`` row (+ ``UPSERT`` ``reservations``, if applicable)."""
         self._conn.execute(
             "INSERT INTO entries (seq, writer_epoch, command_id, command_digest, "
             "kind, payload_digest, payload_json, is_reservation_transition) "
@@ -871,23 +637,7 @@ class SqliteCommitLog:
         evidence_kind: str,
         evidence_record_class: str,
     ) -> AppendRefusal | None:
-        """Durably evidence this append; on failure, roll back and refuse (D2.1 item 1(f)).
-
-        Split out of :meth:`_commit_entry` for the 100-line function size
-        budget — the transaction boundary is UNCHANGED: this must still run
-        inside the same ``BEGIN IMMEDIATE`` transaction as the rest of
-        :meth:`_commit_entry`, strictly BEFORE that method's own ``COMMIT``.
-        Durably committed to the EVIDENCE STORE'S OWN, separate file/
-        connection (D3.1 domain separation) — a later failure in THIS
-        transaction rolls back only the RCL side, so evidence may
-        over-record an attempt this log itself never holds, but never the
-        reverse (independent review LOW, 2026-09-08; see the module
-        docstring's "evidence may over-record" section).
-
-        Returns:
-            An :class:`~tos.rcl.AppendRefusal` (already rolled back) if the
-            evidence append raised, else ``None`` to proceed to ``COMMIT``.
-        """
+        """Durably evidence this append; on failure, roll back and refuse (D2.1 item 1(f))."""
         try:
             self._evidence_port.append(
                 {
@@ -927,23 +677,7 @@ class SqliteCommitLog:
         evidence_record_class: str,
         reservation_update: _ReservationUpdate,
     ) -> AppendReceipt | AppendRefusal:
-        """The whole durable-append body: fence, CAS, insert, evidence, commit (faults ①②③④⑥⑦).
-
-        Delegates to :meth:`_pre_insert_checks`,
-        :meth:`_insert_entry_and_reservation`, and
-        :meth:`_append_evidence_or_refuse` (a size-budget decomposition,
-        2026-09-08) — but the ``BEGIN IMMEDIATE`` ... ``COMMIT`` transaction
-        boundary is exactly what it always was: all three run synchronously,
-        in this order, inside the ONE ``try`` block below, on the same
-        connection, before this method's own ``COMMIT``. No transaction
-        boundary changed.
-
-        Args:
-            reservation_update: See :data:`_ReservationUpdate`. When
-                present, :meth:`_pre_insert_checks` gates the claimed
-                ``from_state`` against the held record before anything is
-                written (independent review HIGH-1, 2026-09-08).
-        """
+        """The whole durable-append body: fence, CAS, insert, evidence, commit (faults ①②③④⑥⑦)."""
         try:
             self._conn.execute("BEGIN IMMEDIATE")
         except sqlite3.Error as exc:

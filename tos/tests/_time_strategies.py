@@ -1,9 +1,4 @@
-"""Shared builders for the Trustworthy Time property tests (time design §7).
-
-Firewall-clean: imports only ``tos.canonical`` / ``tos.time`` (time design §0.3).
-The ``issue_time_snapshot`` builder populates every required-covered field so a
-"valid" fixture is genuinely issuable (not a coverage illusion).
-"""
+"""Shared builders for the Trustworthy Time property tests (time design §7)."""
 
 from __future__ import annotations
 

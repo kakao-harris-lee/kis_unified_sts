@@ -1,36 +1,4 @@
-"""Static-admissibility property tests — DCE-EV-001/003/004/006 (design §6.1).
-
-Each property produces *authoring evidence* for an EV static facet; none completes
-an EV (design §1/§6). DCE-EV-002 (layered non-self-trust) and DCE-EV-005 (mechanism
-verification) have **no L1 property** (design §1/§6) and are intentionally absent.
-
-DCE-EV → property map:
-
-* **DCE-EV-001** (default-deny = absent-from-surface): the closed typed algebra
-  cannot *express* a forbidden construct (a non-member ``DecisionKind``/``CompareOp``
-  is unconstructable), and a metamorphic flip — an admissible program plus one
-  escape node — turns ADMISSIBLE → INADMISSIBLE.
-* **DCE-EV-003** (no ambient authority, static naming): any ambient
-  clock/rand/net/fs/global/builtin *source* or *symbol* reference is INADMISSIBLE;
-  hypothesis injects the ambient names.
-* **DCE-EV-004** (escape-closure): import / dynamic-eval / reflection / FFI /
-  extension nodes are INADMISSIBLE by default-deny node-membership. (Source-form
-  scanning is a Phase-0 concern the design defers; design §3.2.)
-* **DCE-EV-006** (fail-closed / conservative): a novel/unknown kind, an empty
-  candidate, and any ``programs_with_escape`` sample are INADMISSIBLE — never
-  optimistically admitted.
-
-★ fail-open guards realized here (see also ``test_dsl_required_covered.py``):
-
-* **★2 producer-optimism**: an ``AdmissibilityResult`` cannot store a verdict the
-  pure predicate did not yield (forged ADMISSIBLE / forged INADMISSIBLE / dropped
-  reasons all reject).
-* **★3 vacuous-True**: an empty ``CandidateProgram`` is unconstructable, and a
-  validation-bypassed empty program fails closed in ``analyze``.
-* **★4 real violations**: ``programs_with_escape`` / ``escape_nodes`` /
-  novel-kind strategies actively *generate* inadmissible inputs, so the negatives
-  are non-vacuous (not a positive-only coverage illusion).
-"""
+"""Static-admissibility property tests — DCE-EV-001/003/004/006 (design §6.1)."""
 
 from __future__ import annotations
 
@@ -82,11 +50,6 @@ _AMBIENT_SOURCES = (
 )
 
 
-# ---------------------------------------------------------------------------
-# DCE-EV-001 — default-deny is absent-from-surface, not a blocklist
-# ---------------------------------------------------------------------------
-
-
 def test_non_member_decision_kind_is_unconstructable() -> None:
     """A forbidden outcome kind is not a vocabulary member — the type rejects it (DCE-EV-001)."""
     with pytest.raises(ValidationError):
@@ -109,7 +72,7 @@ def test_adding_escape_node_flips_admissible_to_inadmissible(
     prog: CandidateProgram, esc: CandidateNode
 ) -> None:
     """Metamorphic: an admissible program + one escape node flips to INADMISSIBLE (DCE-EV-001)."""
-    assert is_admissible(prog)  # baseline is genuinely admissible (non-vacuous)
+    assert is_admissible(prog)
     flipped = CandidateProgram(nodes=(*prog.nodes, esc))
     assert not is_admissible(flipped)
 
@@ -126,15 +89,9 @@ def test_admissible_programs_are_admissible_without_reasons(
     assert is_admissible(prog)
 
 
-# ---------------------------------------------------------------------------
-# DCE-EV-003 — no ambient authority (static naming facet)
-# ---------------------------------------------------------------------------
-
-
 @given(symbol=st.sampled_from(sorted(AMBIENT_SYMBOLS)))
 def test_ambient_symbol_reference_is_inadmissible(symbol: str) -> None:
     """Any ambient symbol on an otherwise-admissible node is INADMISSIBLE (DCE-EV-003)."""
-    # kind=const is admissible, so the ambient symbol is the *only* rejection cause.
     prog = CandidateProgram(nodes=(CandidateNode(kind="const", symbol=symbol),))
     analysis = analyze(prog)
     assert analysis.verdict is AdmissibilityVerdict.INADMISSIBLE
@@ -162,11 +119,6 @@ def test_wildcard_scope_is_inadmissible(token: str) -> None:
     assert any(r.startswith("wildcard_scope:") for r in analysis.reasons)
 
 
-# ---------------------------------------------------------------------------
-# DCE-EV-004 — escape-closure (candidate node-membership)
-# ---------------------------------------------------------------------------
-
-
 @given(kind=st.sampled_from(sorted(ESCAPE_KINDS)))
 def test_escape_kind_is_inadmissible(kind: str) -> None:
     """import / dynamic-eval / reflection / FFI / extension kinds are INADMISSIBLE (DCE-EV-004)."""
@@ -176,28 +128,18 @@ def test_escape_kind_is_inadmissible(kind: str) -> None:
     assert f"non_vocabulary_kind:{kind}" in analysis.reasons
 
 
-# ---------------------------------------------------------------------------
-# DCE-EV-006 — inadmissible is conservative (fail-closed) + ★3 vacuous-True
-# ---------------------------------------------------------------------------
-
-
 @given(prog=programs_with_escape())
 @settings(deadline=None, max_examples=75)
 def test_any_program_with_an_escape_is_inadmissible(prog: CandidateProgram) -> None:
     """A program carrying ≥1 escape is never optimistically admitted (DCE-EV-006, ★4)."""
     assert not is_admissible(prog)
-    assert analyze(prog).reasons  # non-empty reasons for an inadmissible program
+    assert analyze(prog).reasons
 
 
 @given(prog=programs_with_buried_escape())
 @settings(deadline=None, max_examples=75)
 def test_escape_buried_in_children_is_inadmissible(prog: CandidateProgram) -> None:
-    """An escape nested below the root is caught by the recursive walk (DCE-EV-006, M-2).
-
-    The root and its wrapping parents are all admissible; the only cause is the
-    escape buried in ``children``, so this fails unless ``iter_nodes`` recurses —
-    guarding against a silent regression to a top-level-only scan.
-    """
+    """An escape nested below the root is caught by the recursive walk (DCE-EV-006, M-2)."""
     assert not is_admissible(prog)
     assert analyze(prog).reasons
 
@@ -225,11 +167,6 @@ def test_bypassed_empty_program_fails_closed_in_analyze() -> None:
     analysis = analyze(bypassed)
     assert analysis.verdict is AdmissibilityVerdict.INADMISSIBLE
     assert "empty_candidate" in analysis.reasons
-
-
-# ---------------------------------------------------------------------------
-# ★2 producer-optimism — AdmissibilityResult cannot outrun the pure predicate
-# ---------------------------------------------------------------------------
 
 
 def test_admissibility_result_rejects_forged_admissible_verdict() -> None:
@@ -273,7 +210,7 @@ def test_admissibility_result_rejects_dropped_reasons() -> None:
             result_id="drop-reasons",
             candidate=bad,
             verdict=AdmissibilityVerdict.INADMISSIBLE,
-            reasons=(),  # predicate yields a non-empty reason set
+            reasons=(),
             enforcement_mechanism_version=ENFORCEMENT_VERSION,
             dsl_version="dsl-0",
         )
@@ -322,17 +259,6 @@ def test_honest_admissibility_result_round_trips() -> None:
     assert rec.reasons == ()
 
 
-# ---------------------------------------------------------------------------
-# G12 binding — strategy_id/strategy_digest are covered (digest-sensitive)
-# ---------------------------------------------------------------------------
-#
-# design #31 §3.5/§9-4; DSL spike memo G12 ("a degenerate 1-node mirror of any
-# policy also reads ADMISSIBLE — the verdict cannot be traced to a real artifact").
-# ``strategy_id``/``strategy_digest`` are now covered fields on
-# ``AdmissibilityResult`` (evidence.py), so a record's own digest is sensitive to
-# *which* strategy it is attributed to, not only to the candidate shape.
-
-
 def test_analyze_candidate_without_a_strategy_identity_defaults_both_fields_null() -> (
     None
 ):
@@ -364,9 +290,7 @@ def test_binding_a_strategy_identity_is_recorded_verbatim() -> None:
 
 
 class _CandidateKwargs(TypedDict):
-    """1:1 with :func:`analyze_candidate`'s signature minus ``result_id`` (plan §1.1
-    A-fn) — a ``**kwargs`` splat is checked key-by-key and type-by-type, not swallowed
-    by an untyped ``dict`` literal."""
+    """1:1 with :func:`analyze_candidate`'s signature minus ``result_id`` (plan §1.1"""
 
     candidate: CandidateProgram
     scheme: CanonicalizationScheme
@@ -389,20 +313,13 @@ def test_same_strategy_identity_twice_yields_the_same_digest() -> None:
     first = analyze_candidate(result_id="r1", **kwargs)
     second = analyze_candidate(result_id="r2", **kwargs)
     assert first.canonical_digest == second.canonical_digest
-    # result_id (independent identity) is NOT covered — it may legitimately differ.
     assert first.result_id != second.result_id
 
 
 def test_a_different_strategy_identity_over_the_same_candidate_changes_the_digest() -> (
     None
 ):
-    """The G12 fix: an identical lowered candidate attributed to two strategies does not collide.
-
-    Before this binding, a degenerate/coincidental candidate shape shared by two
-    different strategies would produce byte-identical ``AdmissibilityResult``
-    records — the exact G12 defect (spike memo). With ``strategy_id``/
-    ``strategy_digest`` covered, they now diverge.
-    """
+    """The G12 fix: an identical lowered candidate attributed to two strategies does not collide."""
     same_candidate = admissible_program()
     rec_a = analyze_candidate(
         same_candidate,
@@ -428,12 +345,7 @@ def test_a_different_strategy_identity_over_the_same_candidate_changes_the_diges
 def test_a_changed_strategy_digest_over_the_same_lowered_program_changes_the_admissibility_digest() -> (
     None
 ):
-    """A strategy rule change (different digest, same lowered candidate shape) is now distinguishable.
-
-    Uses two genuinely different fixture strategies (``simple_policy`` vs
-    ``flat_policy``) run through the real ``lower_strategy`` -> ``analyze_candidate``
-    pipeline end-to-end, not synthetic strategy-id strings.
-    """
+    """A strategy rule change (different digest, same lowered candidate shape) is now distinguishable."""
     from tos.dsl.lowering import lower_strategy
 
     from ._dsl_strategies import flat_policy, issue_strategy, simple_policy

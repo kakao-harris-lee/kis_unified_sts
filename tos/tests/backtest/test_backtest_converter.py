@@ -1,19 +1,4 @@
-"""§8-5 — the converter's structural no-look-ahead + the D-E2 / time slots (design #33 §3.3/§3.5/§3.6).
-
-ADR-DEV-010 BTE-INV-004:137-139 requires every indicator and input to be bounded by the current
-context timestamp, and §8:182-184 makes look-ahead a **disqualifier**. The design's answer is not a
-rule the converter follows but a shape it has: it is a generator that pulls one bar, emits that
-bar's tick, and keeps no reference to any bar. The tests here measure that mechanically — how many
-bars had been pulled from the source when tick *k* was yielded, and what the converter is holding
-afterwards — so a mutation that materialises the stream (``bars = tuple(bars)``) or peeks ahead is
-caught rather than argued about.
-
-The two injected slots are also pinned: the D-E2 resolver slot resolves **no value** in slice #1
-(the mechanism runs, the decision starves — design #33 §3.5), and every time coordinate is derived
-from the bar's own opaque coordinate with no clock call anywhere (§3.3).
-
-Regime tag: orchestration authoring evidence only; closes no EV (design #33 §1.1).
-"""
+"""§8-5 — the converter's structural no-look-ahead + the D-E2 / time slots (design #33 §3.3/§3.5/§3.6)."""
 
 from __future__ import annotations
 
@@ -59,13 +44,7 @@ class _CountingSource:
 
 
 def test_the_converter_consumes_a_strict_prefix() -> None:
-    """(§3.6/§8-5) When tick *k* is yielded, exactly *k+1* bars have been pulled — never more.
-
-    This is the structural form of "bounded by the current context timestamp": the converter cannot
-    have used bar *t+1* to build bar *t*'s decision input, because bar *t+1* has not been read yet.
-    A mutation that buffers the stream first (``tuple(bars)``) pulls every bar before the first
-    tick and fails here immediately.
-    """
+    """(§3.6/§8-5) When tick *k* is yielded, exactly *k+1* bars have been pulled — never more."""
     source = _CountingSource(reference_bars(5))
     converter = build_converter()
     for index, tick in enumerate(converter.stream(source)):
@@ -107,13 +86,7 @@ def test_exactly_one_tick_per_bar_in_stream_order() -> None:
 
 
 def test_the_converter_leaves_the_causal_coordinate_to_the_driver() -> None:
-    """(§3.4 MAJOR-1) The converter stamps no ordering coordinate — the driver owns it.
-
-    Binding the coordinate here, to anything bar-derived, is the defect the v1.1 revision removed:
-    the engine's global ``_last_reference`` gate compares against the last *admitted event*, not the
-    triggering tick, so a bar-coupled coordinate produces a false ``REVERSED`` on next-bar
-    settlement (design #33 §3.4).
-    """
+    """(§3.4 MAJOR-1) The converter stamps no ordering coordinate — the driver owns it."""
     ticks = list(build_converter().stream(reference_bars(3)))
     assert all(tick.payload.reference == OrderingEvent() for tick in ticks)
 
@@ -121,13 +94,7 @@ def test_the_converter_leaves_the_causal_coordinate_to_the_driver() -> None:
 def test_the_provisional_resolver_satisfies_the_engine_slot_and_resolves_no_value() -> (
     None
 ):
-    """(§3.5) The D-E2 plug is honoured structurally, and slice #1 binds the SnapshotRef only.
-
-    Anti-phantom (design #33 §0.5): the absence claim is read off the shipped structure rather than
-    asserted in prose — a slice-1 payload reaches the snapshot only through
-    :class:`~tos.capsule.SnapshotRef`, whose entire surface is ``snapshot_id`` +
-    ``canonical_digest``.
-    """
+    """(§3.5) The D-E2 plug is honoured structurally, and slice #1 binds the SnapshotRef only."""
     resolver = ProvisionalContextResolver()
     assert isinstance(resolver, DecisionContextResolver)
 

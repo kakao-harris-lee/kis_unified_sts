@@ -1,21 +1,4 @@
-"""Shared valid-artifact builders + strategies for the iap property tests (design #15 §7).
-
-Firewall-clean: imports only ``hypothesis`` and ``tos.*`` (design #15 §0.3). The builders enforce
-the §7 clean-vs-illegal fixture discipline (the #8 REJECT lesson):
-
-* a **complete** request carries every §9 binding field concrete, non-wildcard, non-``UNKNOWN``,
-  with ``required_scope_complete`` / ``single_use`` / ``exact_intent_only`` ``True`` and the
-  required-independent-facts / common-mode declarations non-empty — so an ``APPROVE`` verdict is
-  genuinely earned;
-* the illegal variants each flip **one** named field (a wildcard account, an ``UNKNOWN`` action
-  class, a dropped scope field, ``required_scope_complete=False``) so the denial is a real,
-  identified incompleteness — the test states which field;
-* a **dominating** decision carries every injected fact positively ``True``; an illegal one flips
-  one fact to ``False`` / ``None``.
-
-The reserved ``"TBD"`` placeholder is excluded from required-field text. Every age / bound is an
-injected opaque ``int`` (design #15 §8 — hardcoded numeric 0 in the model); iap reads no clock.
-"""
+"""Shared valid-artifact builders + strategies for the iap property tests (design #15 §7)."""
 
 from __future__ import annotations
 
@@ -35,18 +18,13 @@ from tos.iap import (
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Text bound to a required-covered field must be concrete (never the reserved ``"TBD"``).
 REQUIRED_FIELD_TEXT = st.text(min_size=1, max_size=8).filter(
     lambda s: s.strip() != "" and s != "TBD" and "*" not in s and s.upper() != "UNKNOWN"
 )
-#: Injected ``bool | None`` flag (fail-closed on ``None`` / ``False``).
 TRIBOOL = st.sampled_from([True, False, None])
-#: The three approval results (for conflicting-evaluator / vocabulary property tests).
 APPROVAL_RESULTS = st.sampled_from(list(ApprovalResult))
-#: The two consumption statuses.
 CONSUMPTION_STATUSES = st.sampled_from(list(ConsumptionStatus))
 
-#: The concrete §9 scalar scope + artifact-ref values used across the request tests.
 _COMPLETE_SCOPE: dict[str, str] = {
     "proposer_identity": "strat-1",
     "environment": "PAPER",
@@ -148,7 +126,6 @@ def ordering_event(sequence: int, *, continuity: str = "cont-1") -> OrderingEven
     )
 
 
-#: The full injected-facts kwargs for a positively-APPROVE ``approval_decision``.
 APPROVE_FACTS: dict[str, Any] = {
     "independent_validation_passed": True,
     "all_bindings_current": True,

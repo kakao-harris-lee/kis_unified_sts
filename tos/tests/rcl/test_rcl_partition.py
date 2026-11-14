@@ -1,9 +1,4 @@
-"""Partition deny-table + worst-credible union + non-revival (§6.5; RCLP-EV-004/012).
-
-Under (loss of) quorum every operational action is denied while committed effects
-are preserved; disaster-recovery union covers unbounded histories conservatively;
-and no generation increase revives an invalidation.
-"""
+"""Partition deny-table + worst-credible union + non-revival (§6.5; RCLP-EV-004/012)."""
 
 from __future__ import annotations
 
@@ -58,12 +53,8 @@ def test_quorum_restoration_does_not_auto_rearm() -> None:
     """Quorum restoration never automatically re-arms (§1 line 37) — always denied."""
     verdict = partition_verdict(True)
     assert verdict.automatic_rearm_denied is True
-    # But normal operational actions are permitted with quorum.
     assert verdict.new_mutation_denied is False
     assert verdict.capability_authorization_denied is False
-
-
-# ---- worst-credible union / no last-write-wins (§18 line 472) --------------
 
 
 def test_all_bounded_union_is_worst_case_max() -> None:
@@ -73,7 +64,7 @@ def test_all_bounded_union_is_worst_case_max() -> None:
         CredibleHistory(history_id="h2", capacity=vec(d=9), bounded=True),
     ]
     union = credible_union_capacity(histories)
-    assert union.magnitude("d") == 9  # worst credible union, not last-write-wins
+    assert union.magnitude("d") == 9
 
 
 def test_unbounded_history_forces_unknown_never_dropped() -> None:
@@ -83,7 +74,7 @@ def test_unbounded_history_forces_unknown_never_dropped() -> None:
         CredibleHistory(history_id="h2", capacity=vec(d=3), bounded=False),
     ]
     union = credible_union_capacity(histories)
-    assert union.magnitude("d") is None  # UNKNOWN, capacity-consuming
+    assert union.magnitude("d") is None
 
 
 def test_empty_histories_is_fail_closed() -> None:
@@ -99,12 +90,8 @@ def test_conflicting_branches_both_contribute_no_merge() -> None:
         CredibleHistory(history_id="h2", capacity=vec(a=1, b=8), bounded=True),
     ]
     union = credible_union_capacity(histories)
-    # Neither branch overwrites the other: each dimension is the max across both.
     assert union.magnitude("a") == 5
     assert union.magnitude("b") == 8
-
-
-# ---- non-revival (RCLP-INV-011) --------------------------------------------
 
 
 def test_generation_increase_revives_nothing() -> None:
@@ -124,11 +111,7 @@ def test_generation_increase_revives_nothing() -> None:
 
 
 def test_no_revive_operation_exists() -> None:
-    """The model exposes no 'generation increase => validity restored' operation.
-
-    The only name mentioning revival is ``recovery_generation_revives_nothing`` — the
-    predicate that *documents* the absence (returns True) — not a revive operation.
-    """
+    """The model exposes no 'generation increase => validity restored' operation."""
     import tos.rcl as rcl
 
     revive_names = [

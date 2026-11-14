@@ -1,10 +1,4 @@
-"""MAJOR-2 stored ``validity.result`` conservatism (design §5.1, CII-INV-005).
-
-A snapshot must not store a ``validity.result`` less restrictive than the
-intrinsic conservative aggregate of its own evaluations/cut/common-mode — closing
-the fail-open gap where a snapshot carrying a blocking INVALID field could still
-claim ``result=VALID``.
-"""
+"""MAJOR-2 stored ``validity.result`` conservatism (design §5.1, CII-INV-005)."""
 
 from __future__ import annotations
 
@@ -60,18 +54,14 @@ def test_conservative_result_allowed() -> None:
 def test_issuance_iff_result_conservative(
     evaluations: list, stored: FieldState
 ) -> None:
-    """A snapshot issues iff its stored result is >= the intrinsic aggregate (§5.1).
-
-    The intrinsic aggregate is computed on a DRAFT twin (whose conservatism check
-    is skipped) so the prediction never depends on the guard under test.
-    """
+    """A snapshot issues iff its stored result is >= the intrinsic aggregate (§5.1)."""
     evals = tuple(evaluations)
     kwargs = snapshot_required_kwargs(
         field_evaluations=evals,
         consistency_cut=COMPATIBLE_CUT,
         validity=SnapshotValidity(result=stored),
     )
-    draft = CriticalInputSnapshot(**kwargs)  # status defaults to DRAFT
+    draft = CriticalInputSnapshot(**kwargs)
     intrinsic = aggregate_snapshot_validity(draft, required_independent_paths=0)
     conservative = restrictiveness(stored) >= restrictiveness(intrinsic)
 

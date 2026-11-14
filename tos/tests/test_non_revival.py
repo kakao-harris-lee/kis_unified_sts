@@ -1,9 +1,4 @@
-"""CII-EV-012 (core) non-revival + context-generation ordering (design §4.4/§7).
-
-A restricted (invalidated/superseded) capsule cannot be revived under the same
-identity by restart/restore; new risk requires a new capsule. An older context
-generation cannot authorize new risk after a newer restrictive generation.
-"""
+"""CII-EV-012 (core) non-revival + context-generation ordering (design §4.4/§7)."""
 
 from __future__ import annotations
 
@@ -41,8 +36,6 @@ def test_restricted_status_cannot_authorize(status: ArtifactStatus) -> None:
 
 def test_draft_cannot_authorize() -> None:
     """A DRAFT capsule cannot ground new risk (pre-issuance, fail-closed)."""
-    # A DRAFT legitimately has no digest/id (MINOR-3), so build a clean draft
-    # rather than demoting an issued capsule (which MINOR-3 now forbids).
     draft = DecisionContextCapsule(status=ArtifactStatus.DRAFT)
     assert capsule_can_authorize_new_risk(draft) is False
 
@@ -66,7 +59,6 @@ def test_non_revival_of_same_identity_detected() -> None:
     """Restoring a restricted capsule under its old id is a revival (blocked)."""
     cap = issue_capsule()
     invalidated = _with_status(cap, ArtifactStatus.INVALIDATED)
-    # Restoring the *same identity* to an authorizing state violates non-revival.
     assert non_revival_holds(invalidated, cap) is False
 
 
@@ -77,9 +69,6 @@ def test_new_capsule_respects_non_revival() -> None:
     fresh = issue_capsule(issuer_principal_id="iss-new")
     assert fresh.capsule_id != invalidated.capsule_id
     assert non_revival_holds(invalidated, fresh) is True
-
-
-# ---- context-generation ordering (design §2.8/§5.7) ------------------------
 
 
 @given(subject=st.integers(0, 100), latest=st.integers(0, 100))

@@ -1,6 +1,4 @@
-"""Hermetic tests for :class:`tos_runtime.operator.projection.OperatorProjection` (TOS Phase 5
-W4 plan §2 decision 7; JSON schema plan §2.7).
-"""
+"""Hermetic tests for :class:`tos_runtime.operator.projection.OperatorProjection` (TOS Phase 5"""
 
 from __future__ import annotations
 
@@ -21,13 +19,11 @@ _GROUP_KEYS = (
     "recovery",
     "driver",
     "time",
-    "safety_mesh",
     "currentness",
     "rcl",
     "inbox",
     "evidence",
     "release",
-    "protective",
     "operations",
 )
 
@@ -50,8 +46,7 @@ def _all_none_projection(
     resolved_seqs=lambda: None,
     export_status=None,
 ) -> OperatorProjection:
-    """A projection where every group reader legitimately returns ``None`` — the "nothing has a
-    source yet" baseline (module docstring's OBS-INV-003 discipline)."""
+    """A projection where every group reader legitimately returns ``None`` — the "nothing has a"""
     readers: dict[str, Callable[[], Any]] = {
         f"read_{name}": (lambda: None) for name in _GROUP_KEYS
     }
@@ -71,9 +66,6 @@ def _populated_projection() -> OperatorProjection:
         read_resolved_stm_alert_seqs=lambda: (2,),
         **readers,
     )
-
-
-# -- schema shape -------------------------------------------------------------
 
 
 def test_schema_version_constant_is_1() -> None:
@@ -104,9 +96,6 @@ def test_export_group_shape() -> None:
     assert set(document["export"]) == {"failures", "last_error"}
 
 
-# -- projection_generation / exported_at_monotonic_ns -------------------------
-
-
 def test_projection_generation_increments_monotonically_per_build() -> None:
     projection = _all_none_projection()
     first = projection.build()
@@ -127,9 +116,6 @@ def test_exported_at_monotonic_ns_is_a_nonnegative_int() -> None:
     assert value >= 0
 
 
-# -- OBS-INV-002/006: no literal True except the marker (mutation M6) --------
-
-
 def _assert_no_stray_true(value: Any, path: str, offenders: list[str]) -> None:
     if value is True:
         offenders.append(path)
@@ -144,8 +130,7 @@ def _assert_no_stray_true(value: Any, path: str, offenders: list[str]) -> None:
 
 
 def test_all_none_readers_produce_no_true_literal_except_non_authorizing() -> None:
-    """Mutation lens M6 (plan §5): if any group field were ever hardcoded to a literal ``True``
-    instead of genuinely sourced, this test goes red."""
+    """Mutation lens M6 (plan §5): if any group field were ever hardcoded to a literal ``True``"""
     document = _all_none_projection().build()
     assert document["non_authorizing"] is True
 
@@ -162,9 +147,6 @@ def test_all_none_readers_produce_null_groups() -> None:
     for name in _GROUP_KEYS:
         assert document[name] is None
     assert document["alerts"]["unresolved_stm_alert_seqs"] is None
-
-
-# -- read-callable failure surfacing -----------------------------------------
 
 
 def test_a_raising_group_reader_yields_none_for_its_own_field_only() -> None:
@@ -227,9 +209,6 @@ def test_multiple_raising_readers_are_all_counted() -> None:
     assert document["alerts"]["unresolved_stm_alert_seqs"] is None
 
 
-# -- alert unresolved-seq derivation -----------------------------------------
-
-
 def test_unresolved_excludes_resolved_seqs() -> None:
     document = _populated_projection().build()
     assert document["alerts"]["unresolved_stm_alert_seqs"] == [3, 1]
@@ -244,9 +223,7 @@ def test_unresolved_is_none_when_candidate_reader_fails() -> None:
 
 
 def test_unresolved_does_not_assume_resolution_when_resolved_reader_fails() -> None:
-    """Plan §2 decision 7: "the projection must not assume resolution" — a failing
-    resolved-seq reader must not cause any candidate seq to be silently treated as resolved.
-    """
+    """Plan §2 decision 7: "the projection must not assume resolution" — a failing"""
 
     def _boom() -> None:
         raise RuntimeError("no resolved source")
@@ -258,9 +235,7 @@ def test_unresolved_does_not_assume_resolution_when_resolved_reader_fails() -> N
 
 
 def test_unresolved_when_nothing_has_ever_been_resolved() -> None:
-    """The honest "no STM_ALERT_RESOLVED producer exists yet" wiring (plan §6 ⑧): a resolved
-    reader returning an explicit empty tuple, not a failure — everything stays unresolved.
-    """
+    """The honest "no STM_ALERT_RESOLVED producer exists yet" wiring (plan §6 ⑧): a resolved"""
     document = _all_none_projection(
         candidate_seqs=lambda: (1, 2), resolved_seqs=lambda: ()
     ).build()
@@ -277,13 +252,8 @@ def test_unresolved_seqs_are_truncated_to_the_export_cap() -> None:
     assert unresolved == list(many[:MAX_UNRESOLVED_STM_ALERT_SEQS])
 
 
-# -- read_export_status: folding an exporter's write-side failures into export.* -------------
-
-
 def test_no_read_export_status_supplied_behaves_exactly_as_before() -> None:
-    """The default (``None``) — every existing standalone construction's behaviour — must be
-    unchanged: ``export.failures``/``export.last_error`` reflect only this build's own reads.
-    """
+    """The default (``None``) — every existing standalone construction's behaviour — must be"""
     document = _all_none_projection().build()
     assert document["export"] == {"failures": 0, "last_error": None}
 
@@ -295,7 +265,6 @@ def test_read_export_status_failures_are_summed_with_read_failures() -> None:
     document = _all_none_projection(
         candidate_seqs=_boom, export_status=lambda: (2, None)
     ).build()
-    # 1 own read failure (the candidate reader) + 2 supplied exporter failures = 3.
     assert document["export"]["failures"] == 3
 
 
@@ -349,12 +318,6 @@ def test_shared_product_contract_fixture(
 
     import tos_runtime.operator.projection as module
 
-    # Owned by this distribution (review note e, #861): the projection document
-    # is produced by ``tos_runtime.operator.projection``, so the contract fixture
-    # lives in the tos tree and the product-side readers (the dashboard API test
-    # and the UI test) read it from here. Anchored at this tests package, never
-    # at the repo root, so nothing under ``tos/`` depends on the legacy tree
-    # surviving the planned repo split.
     fixture = Path(__file__).resolve().parents[1] / "fixtures" / name
     expected = json.loads(fixture.read_text())
     monkeypatch.setattr(

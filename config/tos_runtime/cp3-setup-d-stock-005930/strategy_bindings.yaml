@@ -33,8 +33,29 @@
 # ⚠ quantization 은 truncate_toward_zero 이므로 -1800 은 **보수적**이다:
 # 레거시가 z = -1.7999 를 진입으로 보지 않는 것과 같이, x1000 정수 -1799 는
 # -1800 보다 크므로 LE 가 거짓이다.
+#
+# ── m2_probe_entry_enabled = true 의 근거 ─────────────────────────────────
+# 운영자 지시 2026-11-11: 「정확한 시그널을 기다리지 말라; 시그널이 완벽하다는 보장도
+# 없다 — 되게 해라」. 목적은 rescope 계획 §2 문장 2 / 마일스톤 M2(기한 11-20) 하나다:
+# 주식 MOCK 주문이 TOS 경계(결정 → 승인 → RCL 예약 → verify → kis_mock 전송 → 결과 →
+# finality)를 **끝까지** 한 번 통과하는 것. 주식 잎이 11-06 에 태어난 뒤 Setup D R1 의
+# 진입 제안은 **0건**이라(다섯 게이트 동시 성립이 드물다) 그 경계의 송신 쪽 절반이 한
+# 번도 돈 적이 없다. 이 값은 그 절반을 태우는 전략 파일의 R4 프로브 규칙을 켠다.
+#
+# ⚠ **되돌리기**: MOCK 체결 1건 + finality 가 관측되면 이 값을 `false` 로 바꾸는 **1줄
+# PR** 로 끈다. 키를 **지우지는 말 것** — 전략 파일의 R4 가 이 키를 참조하는 동안 키가
+# 없으면 resolve.py 규칙 3(해소 불가 config ref)으로 **부팅이 거부된다**. `false` 면
+# R4 의 두 번째 비교가 거짓이 되어 규칙이 발화하지 않는다(전략 파일 R4 블록의 ⚠ 문단).
+#
+# ⚠ **bool 이어야 한다**(정수 1 이 아니다). tos.dsl.vocabulary.eval_compare 의 EQ 는
+# `type(left) is type(right)` 를 먼저 보므로, capsule 의 `entry_window`(bool)와 맞대는
+# 비교에서 정수 `1` 은 같지 않다 — 그러면 R4 는 조용히 죽은 규칙이 된다. 바인딩 로더는
+# bool 을 그대로 받는다(`tos.dsl.vocabulary.ScalarValue = bool | int | float | str`,
+# tos_runtime/strategy/bindings.py 의 `bindings: dict[str, ScalarValue]`).
 strategies:
   setup_d_long.strategy:
     config_binding_version: cp3-b1b-bind-1
     bindings:
       z_entry_max_x1000: -1800
+      # 운영자 지시 2026-11-11 · 목적 M2 · MOCK 체결+finality 관측 뒤 1줄 PR 로 false.
+      m2_probe_entry_enabled: true

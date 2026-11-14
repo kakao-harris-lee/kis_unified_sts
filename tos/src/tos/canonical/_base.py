@@ -1,40 +1,4 @@
-"""Shared digest-binding substrate for tos artifacts (design #4 §3.1 PROMOTE).
-
-Promoted to ``tos.canonical`` so both ``tos.capsule`` and ``tos.evidence`` share
-one digest-binding substrate (design #4 §0.4/§3.1). ``tos.capsule._base`` remains
-a thin re-export shim (plus the capsule-local authority/policy blocks), so
-existing ``from tos.capsule._base import ...`` paths are unchanged.
-
-Every artifact is a **pydantic v2 frozen model** (``ConfigDict(frozen=True)``),
-the model realization of "an artifact is immutable" (ADR-002-018 §12 / design #2
-§4.1): no field is mutable in place, so any change forces a new object -> new
-digest (design §4.1/§4.2).
-
-This module provides the two id-strategy subclasses of ``DigestBoundArtifact``
-(design #4 §3.1 (b) — split digest verification from id derivation), side by side
-so the whole id-binding substrate lives in one core home:
-
-* :class:`DigestBoundArtifact` — the **base**: enforces
-  ``canonical_digest == H_ver(canonicalize(covered))`` and required-covered
-  completeness. It does **not** derive an id.
-* :class:`IdDerivedArtifact` — the **content-addressed** subclass: additionally
-  enforces ``id = derive_id(prefix, digest)``. ``tos.capsule`` capsule/snapshot
-  inherit this because they are immutable content-addressed artifacts (design #2
-  §4.1).
-* :class:`IndependentIdArtifact` — the **id-independent** subclass: the id is an
-  INDEPENDENT injected field, not ``f(digest)``, so a same-id/different-bytes
-  conflict stays representable and detectable (``classify_record_pair``
-  CRITICAL_CONFLICT — design #4 §2.1/§3.1). ``tos.evidence`` inherits
-  ``DigestBoundArtifact`` directly for the same reason; ``tos.rcl``, ``tos.dsl``,
-  and ``tos.authority`` inherit this promoted base (design #6 §0.4c PROMOTE —
-  ``tos.rcl._base`` / ``tos.dsl._base`` re-export it as thin shims, no sibling
-  import edge; the ordering / canonicalization / classify PROMOTE precedent).
-* :class:`ArtifactStatus` — lifecycle marker (excluded from the digest, §3.2).
-* :class:`ArtifactIntegrityError` — construction-time integrity violation
-  (``tos.capsule`` re-exports it as ``CapsuleIntegrityError``).
-
-Pure module: ``pydantic`` + stdlib only; no ``shared.*`` (design §0.3).
-"""
+"""Shared digest-binding substrate for tos artifacts (design #4 §3.1 PROMOTE)."""
 
 from __future__ import annotations
 
@@ -48,21 +12,11 @@ from tos.canonical.canonicalization import CanonicalizationScheme, get_scheme
 
 
 class ArtifactIntegrityError(ValueError):
-    """A frozen artifact violates a construction-time integrity invariant.
-
-    Subclasses ``ValueError`` so pydantic surfaces it as a validation failure,
-    making malformed artifacts *unconstructable* (design §4.1/§4.2).
-    """
+    """A frozen artifact violates a construction-time integrity invariant."""
 
 
 class ArtifactStatus(StrEnum):
-    """Lifecycle marker for a digest-bound artifact (design §3.2 item 2).
-
-    Excluded from the digest preimage so that identity is stable across the
-    issuance lifecycle (a single "same exact digest" bound must span states).
-    ``DRAFT`` is the pre-issuance state in which the digest (and, for id-derived
-    artifacts, the id) is not yet computed (design §3.2/§3.3 TBD/null handling).
-    """
+    """Lifecycle marker for a digest-bound artifact (design §3.2 item 2)."""
 
     DRAFT = "DRAFT"
     ISSUED = "ISSUED"
@@ -71,96 +25,36 @@ class ArtifactStatus(StrEnum):
 
 
 class FrozenModel(CanonicalJsonMixin, BaseModel):
-    """Immutable, schema-strict base for every tos artifact model (design §2).
-
-    ``allow_inf_nan=False`` is pinned **explicitly**, not inherited from whatever
-    pydantic's default happens to be (EV-L2 pilot design §5 H-1). ADR-002-014 §11
-    step 3 (line 304) SHALL-validates "precision, rounding, overflow, underflow,
-    NaN, infinity, and boundary inclusion", so the *enforcement owner* of the
-    non-finite rejection is **tos**, not a third-party default a future release
-    could flip open. With the pin a ``NaN`` / ``±Infinity`` ``float`` / ``Decimal``
-    bound is *unconstructable* on every tos artifact — structurally stronger than
-    a post-hoc validation reason; without it the same behaviour holds today only by
-    coincidence (design §5 H-1 / OQ-1: "기본이 미래 변경되면 fail-open").
-    """
+    """Immutable, schema-strict base for every tos artifact model (design §2)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
 
 def derive_id(prefix: str, digest: str) -> str:
-    """Derive an artifact id from its digest (``id = f(digest)``; design #2 §4.1).
-
-    Deterministic ``{prefix}-{digest}`` binding so that arbitrary id reattachment
-    or digest substitution fails the :class:`IdDerivedArtifact` check. Used only
-    by content-addressed artifacts (capsule/snapshot); evidence records take an
-    INDEPENDENT id (design #4 §3.1). The external-assignment alternative is
-    deferred to Phase-0 (design #2 §9.2 item 6).
-
-    Args:
-        prefix: The artifact-type prefix (e.g. ``"dcc"``, ``"cis"``).
-        digest: The canonical digest.
-
-    Returns:
-        The derived id string.
-    """
+    """Derive an artifact id from its digest (``id = f(digest)``; design #2 §4.1)."""
     return f"{prefix}-{digest}"
 
 
 class DigestBoundArtifact(FrozenModel):
-    """Base enforcing ``canonical_digest == H_ver(canonicalize(covered))`` (§4.1).
-
-    Subclasses declare, as class variables, the covered (digest-preimage)
-    top-level field names (``_COVERED_FIELDS`` — the Layer-1 set, design §3.3) and
-    must expose ``canonical_digest``/``status``/``canonicalization_version``
-    fields (all inherited here).
-
-    On every construction with a non-``DRAFT`` status the ``after`` validator
-    recomputes the digest over the covered content and rejects any mismatch —
-    this is what makes mutate / union / partial-refresh / digest-substitution
-    unconstructable. ``DRAFT`` artifacts are pre-issuance and skip verification
-    (their digest is not yet computed, design §3.2/§3.3).
-
-    This base derives **no** id. :class:`IdDerivedArtifact` overrides the id hooks
-    to bind ``id = derive_id(prefix, digest)``; evidence artifacts leave the hooks
-    as no-ops and carry an independent, non-derived id (design #4 §3.1).
-    """
+    """Base enforcing ``canonical_digest == H_ver(canonicalize(covered))`` (§4.1)."""
 
     _COVERED_FIELDS: ClassVar[frozenset[str]]
-    # Dotted paths of the safety-load-bearing covered fields that MUST be concrete
-    # for an artifact to reach a non-DRAFT (ISSUED) status (design §3.2: a covered
-    # field left ``TBD``/``null`` keeps the artifact pre-issuance). Subclasses fix
-    # this set; the derivation from the canonical template's ``TBD`` (must-fill)
-    # vs ``null`` (optional) markers is documented on each subclass.
     _REQUIRED_COVERED: ClassVar[tuple[str, ...]] = ()
 
-    # Layer-0 meta, shared by every digest-bound artifact and excluded from the
-    # covered digest preimage (design §3.2/§3.3). Subclasses add their own
-    # id field(s) and Layer-1 covered content.
     canonical_digest: str | None = None
     status: ArtifactStatus = ArtifactStatus.DRAFT
     canonicalization_version: str | None = None
 
-    # ---- id hooks (no-op in the base; overridden by IdDerivedArtifact) --------
-
     def _verify_id_binding(self, expected_digest: str) -> None:
         """Hook: verify the id binding for an ISSUED artifact (base: no id)."""
-        del expected_digest  # base derives no id; IdDerivedArtifact overrides
+        del expected_digest
 
     def _verify_draft_id_null(self) -> None:
         """Hook: verify a DRAFT artifact's id is unset (base: no id)."""
         return None
 
     def missing_required_fields(self) -> list[str]:
-        """Return the ``_REQUIRED_COVERED`` dotted paths that are not concrete.
-
-        A path is *missing* when any component along it is absent, ``None``, or
-        the literal ``"TBD"`` template placeholder (design §3.2). This is the
-        completeness predicate both the construction guard and any fail-closed
-        authorization predicate consume, so the two can never diverge.
-
-        Returns:
-            The unmet required dotted paths (empty when all are concrete).
-        """
+        """Return the ``_REQUIRED_COVERED`` dotted paths that are not concrete."""
         missing: list[str] = []
         for path in self._REQUIRED_COVERED:
             value: Any = self
@@ -173,26 +67,13 @@ class DigestBoundArtifact(FrozenModel):
         return missing
 
     def covered_content(self) -> dict[str, Any]:
-        """Return the digest preimage: the Layer-1 covered fields (design §3.3).
-
-        The §3.2/§3.3 self-exclusion set (identity outputs, ``status``,
-        ``canonicalization_version`` meta, and any Layer-2 back-references) is
-        excluded simply by not being listed in ``_COVERED_FIELDS``. The result is
-        JSON-native (``mode="json"``) so the canonicalizer sees only
-        ``None``/``bool``/number/``str``/list/dict.
-
-        Returns:
-            A plain, JSON-native mapping of covered field name to value.
-        """
+        """Return the digest preimage: the Layer-1 covered fields (design §3.3)."""
         return self.model_dump(mode="json", include=set(self._COVERED_FIELDS))
 
     @model_validator(mode="after")
     def _verify_digest_identity(self) -> DigestBoundArtifact:
         """Enforce digest + required-covered (+ id hooks) (design §4.1/§4.2/§3.2)."""
         if self.status == ArtifactStatus.DRAFT:
-            # Pre-issuance: the digest is not yet computed and MUST be null so a
-            # DRAFT cannot smuggle a forged digest past the ISSUED-only checks.
-            # Required-covered completeness is deferred to issuance.
             if self.canonical_digest is not None:
                 raise ArtifactIntegrityError(
                     "DRAFT artifact must have null canonical_digest "
@@ -230,25 +111,7 @@ class DigestBoundArtifact(FrozenModel):
         status: ArtifactStatus = ArtifactStatus.ISSUED,
         **content: Any,
     ) -> Self:
-        """Issue an artifact: compute its digest over the covered content (§4.1).
-
-        Builds a transient ``DRAFT`` to extract the covered content, computes the
-        digest with ``scheme``, then constructs the final artifact — which
-        re-runs :meth:`_verify_digest_identity`. This base does not touch any id
-        field (evidence identity is injected via ``content``); id-derived
-        artifacts override this to also derive the id.
-
-        Args:
-            scheme: The canonicalization scheme to bind (its ``version`` is
-                recorded as ``canonicalization_version``).
-            status: The issued lifecycle status (default ``ISSUED``).
-            **content: The Layer-1 (and Phase-1-null Layer-2) field values plus,
-                for evidence artifacts, the independent id field, excluding
-                ``canonical_digest`` and ``canonicalization_version``.
-
-        Returns:
-            The issued, digest-verified artifact.
-        """
+        """Issue an artifact: compute its digest over the covered content (§4.1)."""
         draft_kwargs: dict[str, Any] = dict(content)
         draft_kwargs["canonical_digest"] = None
         draft_kwargs["status"] = ArtifactStatus.DRAFT
@@ -265,15 +128,7 @@ class DigestBoundArtifact(FrozenModel):
 
 
 class IdDerivedArtifact(DigestBoundArtifact):
-    """Digest-bound artifact whose id is derived: ``id = f(digest)`` (design #2 §4.1).
-
-    Adds, as class variables, the name of the id field (``_ID_FIELD``) and the id
-    prefix (``_ID_PREFIX``). Construction rejects any id that is not
-    ``derive_id(prefix, digest)`` (and requires a null id while ``DRAFT``), so
-    arbitrary id reattachment or digest substitution is unconstructable. Used by
-    the immutable content-addressed capsule/snapshot artifacts; evidence records
-    do NOT use this (design #4 §3.1 — independent identity).
-    """
+    """Digest-bound artifact whose id is derived: ``id = f(digest)`` (design #2 §4.1)."""
 
     _ID_FIELD: ClassVar[str]
     _ID_PREFIX: ClassVar[str]
@@ -305,19 +160,7 @@ class IdDerivedArtifact(DigestBoundArtifact):
         status: ArtifactStatus = ArtifactStatus.ISSUED,
         **content: Any,
     ) -> Self:
-        """Issue an id-derived artifact: compute the digest and derive the id (§4.1).
-
-        Args:
-            scheme: The canonicalization scheme to bind.
-            status: The issued lifecycle status (default ``ISSUED``; may be a
-                later non-``DRAFT`` state such as ``SUPERSEDED``).
-            **content: The Layer-1 (and Phase-1-null Layer-2) field values,
-                excluding the id, ``canonical_digest`` and
-                ``canonicalization_version`` fields.
-
-        Returns:
-            The issued, digest-verified artifact.
-        """
+        """Issue an id-derived artifact: compute the digest and derive the id (§4.1)."""
         id_field = cls._ID_FIELD
         draft_kwargs: dict[str, Any] = dict(content)
         draft_kwargs[id_field] = None
@@ -337,25 +180,7 @@ class IdDerivedArtifact(DigestBoundArtifact):
 
 
 class IndependentIdArtifact(DigestBoundArtifact):
-    """Digest-bound artifact with an INDEPENDENT (non-derived) id (design #4 §3.1).
-
-    The symmetric counterpart of :class:`IdDerivedArtifact`: it reuses the
-    ``canonical_digest == H_ver(canonicalize(covered))`` verification and the
-    required-covered completeness of :class:`DigestBoundArtifact`, but does **not**
-    derive its id from the digest. The subclass names its independent id field via
-    ``_ID_FIELD``; once issued (non-``DRAFT``) that id must be concrete (non-null,
-    not the ``"TBD"`` template placeholder). Keeping identity orthogonal to the
-    digest is what lets an append-only ledger represent and detect a "duplicate
-    identity with different content" conflict (``classify_record_pair`` =>
-    ``CRITICAL_CONFLICT``) — a fact ``id = f(digest)`` would make vacuous
-    (design #4 §2.1/§3.1; ADR-002-012 §9 line 270).
-
-    Promoted to ``tos.canonical`` (design #6 §0.4c) so ``tos.rcl``, ``tos.dsl``,
-    and ``tos.authority`` share one id-independent base beside
-    :class:`IdDerivedArtifact`; ``tos.rcl._base`` and ``tos.dsl._base`` re-export it
-    as thin shims (no new sibling import edge — the ordering / canonicalization /
-    classify PROMOTE precedent).
-    """
+    """Digest-bound artifact with an INDEPENDENT (non-derived) id (design #4 §3.1)."""
 
     _ID_FIELD: ClassVar[str]
 

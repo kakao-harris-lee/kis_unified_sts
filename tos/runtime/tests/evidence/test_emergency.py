@@ -83,9 +83,6 @@ def test_record_halt_raises_and_does_not_report_success_when_emergency_log_write
         record_halt(
             store, log, payload={"reason": "X"}, kind="FLOW_HALTED", record_class="HALT"
         )
-    # the sqlite side is already durably committed (irreversible) even though
-    # record_halt raised overall — the whole point is the CALLER never
-    # receives a receipt claiming both paths succeeded.
     last_seq, _, _ = store.last_committed()
     assert last_seq == 0
 
@@ -108,18 +105,8 @@ def test_record_halt_raises_when_store_append_fails_before_touching_emergency_lo
     assert not (tmp_path / "emergency.jsonl").exists()
 
 
-# ============================================================================
-# HIGH-1 (2026-09-08 independent review) — the JSONL copy must be scrubbed too
-# ============================================================================
-
-
 def test_emergency_log_never_contains_the_raw_secret_bytes(tmp_path: Path) -> None:
-    """The secret must be absent from the RAW JSONL file bytes, not just sqlite.
-
-    An earlier revision wrote the caller's raw ``payload`` straight to the
-    JSONL line — only the sqlite side was ever scrubbed. This greps the
-    emergency log's own file bytes (never the store) for the secret.
-    """
+    """The secret must be absent from the RAW JSONL file bytes, not just sqlite."""
     secret_value = "sk-emergency-secret-marker-13579246800"
     scrubbing_store = SqliteEvidenceStore(
         tmp_path / "scrubbing_evidence.sqlite3",

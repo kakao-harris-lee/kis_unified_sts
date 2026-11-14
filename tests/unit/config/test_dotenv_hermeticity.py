@@ -668,7 +668,7 @@ def test_scrub_keeps_redis_connection_variables():
 #: A gated module from ``_LIVE_INFRA_TEST_PATHS``. Pointed at a closed port on
 #: purpose: both gate states are observable without ever reaching a real
 #: Redis, and this host's DB 1 is shared with the paper runtime.
-_GATED_MODULE = "tests/integration/test_rate_limiter_redis.py"
+_GATED_MODULE = "tests/integration/test_redis_tls.py"
 
 
 def _run_gated_module(*, flag: str | None, args: tuple[str, ...] = ()) -> str:

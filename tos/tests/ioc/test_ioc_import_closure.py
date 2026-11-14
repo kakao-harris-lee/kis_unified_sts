@@ -1,31 +1,4 @@
-"""§7.1 import-closure verification for ``tos.ioc`` (design #14 §0.3/§7.1).
-
-Isomorphic to the are closure test, with the **one allowed sibling edge**: ``tos.rcl`` IS
-permitted in the closure (the ``CapacityVector`` REUSE for the ``EconomicEffectEnvelope``, design
-#14 §0.4c). It imports every ``tos.ioc`` submodule in a **fresh, spawned interpreter``
-(``subprocess`` / ``os`` are firewall-forbidden even in tests) and asserts:
-
-  1. No design #1 §2.3 operational package is in the closure (``shared.execution`` / ``kis`` /
-     ``streaming`` / ``llm`` / ``storage`` / ``backtest``, ``services.*``, ``cli.*``).
-  2. Neither ``shared.config`` nor ``shared.config.secrets`` is present (the transitive
-     ambient-credential intake), nor ``shared.determinism``.
-  3. ``numpy`` / ``pandas`` / ``yaml`` are absent (bounds are injected; YAML parsing is the
-     harness's concern — design #14 §0.3/§7.1).
-  4. **All twelve other siblings are absent** — ``tos.are`` / ``tos.dsl`` / ``tos.capsule`` /
-     ``tos.orthostate`` / ``tos.brokercap`` / ``tos.spg`` / ``tos.liveauth`` / ``tos.authority`` /
-     ``tos.time`` / ``tos.evidence`` / ``tos.protective`` / ``tos.recon`` (design #14 §3.4/§3.5 —
-     the dsl / are / capsule / orthostate / brokercap / venue / spg seams are consumed / produced
-     scalars / digests, so those edges stay 0). ``tos.rcl`` is **NOT** here — it is the single
-     allowed edge.
-  5. **``tos.canonical`` AND ``tos.ordering`` AND ``tos.rcl`` ARE present** — the two core
-     substrates plus the one allowed sibling (§3.1/§3.2/§0.4c) are explicitly ALLOWED.
-  6. No ``tos.ioc`` source references ``os.environ`` / ``os.getenv`` or a dynamic escape
-     (``exec`` / ``eval`` / ``__import__`` / ``importlib``) or a real clock (``time`` /
-     ``datetime``).
-
-A planted-leak canary proves the spawn+scan pipeline actually catches a leak, and a planted-AST-
-escape canary proves the static scan catches an escape, so "green" is evidence the checker works.
-"""
+"""§7.1 import-closure verification for ``tos.ioc`` (design #14 §0.3/§7.1)."""
 
 from __future__ import annotations
 
@@ -49,7 +22,6 @@ _FORBIDDEN_EXACT = frozenset(
         "numpy",
         "pandas",
         "yaml",
-        # the twelve forbidden siblings (rcl is the ONE allowed edge, §0.4c)
         "tos.are",
         "tos.dsl",
         "tos.capsule",
@@ -96,7 +68,6 @@ _IOC_SRC = Path(__file__).resolve().parent.parent.parent / "src" / "tos" / "ioc"
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
-#: Real-clock modules that must never be imported by a clock-free ioc source (§0.2).
 _CLOCK_MODULES = frozenset({"time", "datetime"})
 
 
@@ -227,16 +198,15 @@ def test_is_forbidden_classifier_canaries() -> None:
     ):
         assert _is_forbidden(sibling) is True
         assert _is_forbidden(sibling + ".predicates") is True
-    # Allowed: self, the one sibling edge (rcl), the core substrate, third-party.
     assert _is_forbidden("tos.ioc") is False
     assert _is_forbidden("tos.ioc.predicates") is False
-    assert _is_forbidden("tos.rcl") is False  # the ONE allowed sibling edge (§0.4c)
+    assert _is_forbidden("tos.rcl") is False
     assert _is_forbidden("tos.rcl.vector") is False
     assert _is_forbidden("tos.canonical") is False
     assert _is_forbidden("tos.ordering") is False
     assert _is_forbidden("pydantic") is False
     assert _is_forbidden("decimal") is False
-    assert _is_forbidden("click") is False  # must not false-match the "cli" prefix
+    assert _is_forbidden("click") is False
 
 
 def _ast_escape_offenders(path: Path) -> list[str]:

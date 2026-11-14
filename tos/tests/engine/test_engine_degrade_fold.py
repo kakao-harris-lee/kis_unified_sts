@@ -1,22 +1,4 @@
-"""§7.2-3 — bounded-evaluation degradation folds to a **distinctly recorded** no-action (§3.4).
-
-The design's target: *"bound exhausted → NO_ACTION + 구별 degradation 증거·commitment flow 미진입"*.
-
-Three things must hold together, and the third is the one a careless implementation loses:
-
-1. an exhausted budget produces a No-Action Outcome (DCE-INV-007 — never a stall, never a partial
-   unrecorded action);
-2. the commitment flow is not entered at all (defence in depth: a no-action starts no flow, and a
-   degradation is a no-action);
-3. the degradation is recorded **distinctly** from an ordinary no-action — the two have different
-   causes, and collapsing them destroys the only evidence that a bound was hit.
-
-The budget gate is also asserted to be a genuine *pre*-evaluation gate: ``resolve_bound`` is
-symbolic integer accounting and cannot interrupt ``evaluate`` mid-run (design #31 §3.4, MINOR-2), so
-the work count must be derived statically from the policy structure.
-
-Regime tag: orchestration authoring evidence only; closes no EV.
-"""
+"""§7.2-3 — bounded-evaluation degradation folds to a **distinctly recorded** no-action (§3.4)."""
 
 from __future__ import annotations
 
@@ -58,7 +40,6 @@ def _exhausted_core(sink=None):
 def test_work_steps_are_derived_statically_from_the_policy_structure() -> None:
     """(§3.4 MINOR-2) The work count is a structural walk, not a runtime measurement."""
     policy = capsule_gated_policy()
-    # one rule + one compare + two operands
     assert policy_work_steps(policy) == 1 + 1 + 2
     assert policy_work_steps(capsule_gated_policy(fires=False)) == policy_work_steps(
         policy
@@ -105,7 +86,6 @@ def test_the_degradation_is_recorded_distinctly_from_an_ordinary_no_action() -> 
         r for r in sink.records if r.kind is EvidenceKind.DECISION_OUTCOME_EMITTED
     ] == []
 
-    # ... and an ordinary no-action is recorded under the *other* kind and reason.
     ordinary_core, ordinary_sink = build_core(
         registry=registry_with(issue_strategy(capsule_gated_policy(fires=False))),
         transmit=RecordingTransmit(),

@@ -1,19 +1,4 @@
-"""§7.2-1 — the sequencer stops fail-closed at **every** step (design #31 §4.2).
-
-This is the design's own target: *"임의의 stage가 deny/None/UNKNOWN/예외 반환 시 시퀀스가 그 지점에서
-중단·send 미발생·중단 사유 기록"*, with the positive-admit gate mutation
-(``is ADMIT`` → ``is not DENY``) killed.
-
-The suite is exhaustive rather than illustrative: **every** injected step (2-11, 13, 14) × **every**
-failure mode (explicit deny, restrictive UNKNOWN, a missing stage, an absent verdict, a verdict
-answering someone else's step, and a raising stage) is asserted to stop the flow *at that step*,
-leave the send boundary untouched, and record the halt with a named reason.
-
-It also covers §7.2-6 (the Coordinator holds no authority) at the structural level: step 1 and
-step 12 are not injectable, and steps 15-19 are not hostable at all.
-
-Regime tag: orchestration authoring evidence only; closes no EV.
-"""
+"""§7.2-1 — the sequencer stops fail-closed at **every** step (design #31 §4.2)."""
 
 from __future__ import annotations
 
@@ -52,10 +37,6 @@ from ._engine_fixtures import (
     instrument_key,
     ordering,
 )
-
-# ---------------------------------------------------------------------------
-# helpers
-# ---------------------------------------------------------------------------
 
 
 def _emit_proposal():
@@ -96,16 +77,10 @@ class _RaisingStage:
     """A stage that raises — an exception is a restrictive stop, never a skip."""
 
     def __call__(self, request: StageRequest) -> StageVerdict:  # noqa: ARG002
-        """Raise instead of judging.
-
-        The parameter is named to match ``Stage.__call__`` exactly (mypy's structural
-        Protocol match checks the keyword name, not just position); it is unused because
-        this double always raises.
-        """
+        """Raise instead of judging."""
         raise RuntimeError("stage exploded")
 
 
-#: Sentinel distinguishing "use the default transmit" from the deliberate ``transmit=None`` case.
 _DEFAULT = object()
 
 
@@ -129,11 +104,6 @@ def _run_flow(stages, *, transmit=_DEFAULT, ledger=None, sink=None):
         ),
         proposal,
     )
-
-
-# ---------------------------------------------------------------------------
-# §7.2-1 — exhaustive fail-closed
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("failing_step", list(INJECTED_STAGE_STEPS))
@@ -232,11 +202,7 @@ def test_a_raising_stage_stops_the_flow(failing_step) -> None:
 
 
 def test_the_positive_admit_gate_is_identity_not_negation() -> None:
-    """(§7.2-1 mutation target) A verdict that is merely "not DENY" does **not** advance.
-
-    This is the ``is ADMIT`` → ``is not DENY`` mutation, expressed as behaviour: a stage returning
-    UNKNOWN would pass a negated gate and must not pass this one.
-    """
+    """(§7.2-1 mutation target) A verdict that is merely "not DENY" does **not** advance."""
     transmit = RecordingTransmit()
     first_injected = INJECTED_STAGE_STEPS[0]
     stages = admitting_stages(unknown_steps=frozenset({first_injected}))
@@ -281,11 +247,6 @@ def test_a_clean_flow_admits_every_step_in_the_normative_order() -> None:
     assert flow.verdicts[0].bound_identity == proposal.proposal_id
 
 
-# ---------------------------------------------------------------------------
-# §7.2-6 — the Coordinator holds no authority (structural seals)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "sealed_step",
     [CommitmentStep.DECISION_PROPOSAL, CommitmentStep.ATTEMPT_REQUEST],
@@ -317,11 +278,6 @@ def test_the_sequenced_range_is_steps_one_to_fourteen() -> None:
     assert len(COMMITMENT_FLOW_ORDER) == 14 + 5
     assert [step_number(s) for s in SEQUENCED_STEPS] == list(range(1, 15))
     assert sorted(step_number(s) for s in SEND_BOUNDARY_STEPS) == [15, 16, 17, 18, 19]
-
-
-# ---------------------------------------------------------------------------
-# step 12 — content-addressed attempt identity (§4.3, MAJOR-3)
-# ---------------------------------------------------------------------------
 
 
 def test_attempt_identity_is_content_addressed_and_reproducible() -> None:

@@ -1,14 +1,4 @@
-"""Structural + negative-grep proof that ``tos_runtime.operator`` holds zero write ports (TOS
-Phase 5 W4 plan §2 decision 8a).
-
-Mirrors ``tos/runtime/tests/engine/test_no_direct_latch_clear.py``'s two-part idiom: (1) a
-receiver-shape regex over every real file under ``operator/`` — with NO allowlist here (unlike
-that test's single permitted caller-file carve-out): this package must never contain a write
-receiver shape, full stop — and (2) a synthetic-string self-test proving the regex actually
-catches every real receiver shape it claims to, rather than passing vacuously because the regex
-itself is too narrow. Also asserts, via an AST import scan, that no file under ``operator/``
-imports any of the five write-capable modules plan §2 decision 8a names.
-"""
+"""Structural + negative-grep proof that ``tos_runtime.operator`` holds zero write ports (TOS"""
 
 from __future__ import annotations
 
@@ -20,8 +10,6 @@ _OPERATOR_SRC_ROOT = (
     Path(__file__).resolve().parents[2] / "src" / "tos_runtime" / "operator"
 )
 
-#: plan §2 decision 8a — the five write-capable modules ``tos_runtime.operator`` must never
-#: import, directly or as a submodule of these prefixes.
 _FORBIDDEN_IMPORT_PREFIXES: tuple[str, ...] = (
     "tos_runtime.transport",
     "tos_runtime.rcl",
@@ -30,13 +18,6 @@ _FORBIDDEN_IMPORT_PREFIXES: tuple[str, ...] = (
     "tos.egressgw",
 )
 
-#: plan §2 decision 8b's exact receiver-shape regex: any of these method names, called on
-#: anything (``[\w.]*`` — a bare name, an attribute chain, ``self._x.y``, etc.), immediately
-#: followed by ``(``. Deliberately NOT a naive substring match (a prose mention or a ``def``
-#: line for one of these names must not trip it) and deliberately NOT anchored with ``\b`` at the
-#: front (independent-review finding MEDIUM-7 on the sibling
-#: ``test_no_direct_latch_clear.py`` test: ``\b`` does not fire between ``_`` and a following
-#: word character, silently missing ``self._inbox.clear_new_risk_halt(``).
 _WRITE_RECEIVER = re.compile(
     r"[\w.]*\.(append|reserve|commit|send|rotate|mark_\w+|clear_new_risk_halt|enqueue\w*"
     r"|run_once|run_until_idle)\("
@@ -58,15 +39,9 @@ def _is_forbidden_module(module: str) -> bool:
     )
 
 
-# -- sanity: the package actually exists and has files to scan --------------
-
-
 def test_operator_package_has_python_files_to_scan() -> None:
     files = _operator_python_files()
     assert files, f"expected .py files under {_OPERATOR_SRC_ROOT}"
-
-
-# -- (a) AST import scan ------------------------------------------------------
 
 
 def test_no_forbidden_write_port_imports_under_operator() -> None:
@@ -88,9 +63,6 @@ def test_no_forbidden_write_port_imports_under_operator() -> None:
     )
 
 
-# -- (b) negative-grep over real files ----------------------------------------
-
-
 def test_no_write_receiver_call_shapes_under_operator() -> None:
     offenders: list[str] = []
     for path in _operator_python_files():
@@ -101,9 +73,6 @@ def test_no_write_receiver_call_shapes_under_operator() -> None:
         "tos_runtime.operator must hold zero write ports (plan §2 decision 8b); "
         "offending call shapes:\n" + "\n".join(offenders)
     )
-
-
-# -- (c) synthetic-string self-test: prove the regex is not vacuous ----------
 
 
 def test_the_receiver_shape_regex_catches_every_real_write_shape() -> None:

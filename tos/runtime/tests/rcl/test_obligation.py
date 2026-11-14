@@ -1,12 +1,4 @@
-"""``CapacityObligationRecorder`` tests (kernel round #1 §3, lane B).
-
-Real components throughout: a real :class:`SqliteEvidenceStore`, a real
-:class:`EmergencyAppendLog`, a real :class:`SqliteCommitLog` +
-:class:`SqliteReservationProjectionReader`, and the real kernel
-``tos.cur.obligation_preserved`` predicate (never a stand-in for the
-predicate itself — only the reservation-id resolver, which this recorder's
-own caller injects, is test-doubled here).
-"""
+"""``CapacityObligationRecorder`` tests (kernel round #1 §3, lane B)."""
 
 from __future__ import annotations
 
@@ -75,12 +67,7 @@ def _commit_reservation(
     state: CapacityState,
     writer_epoch: int,
 ) -> None:
-    """Commit ``reservation_id`` to ``state`` via a real, gate-admissible
-    transition path (test setup only) — ``COMMITTED_UNBOUND ->
-    POTENTIALLY_LIVE`` (a strongly-authorized command) for a live
-    consuming state, or that SAME setup followed by ``POTENTIALLY_LIVE ->
-    RELEASED`` (``FINAL_QUANTITY_PROOF`` + a positive finality witness,
-    the kernel's own required release gate) for ``RELEASED``."""
+    """Commit ``reservation_id`` to ``state`` via a real, gate-admissible"""
     setup = log.apply_reservation_transition(
         CapacityReservationTransition(
             reservation_id=reservation_id,
@@ -102,8 +89,6 @@ def _commit_reservation(
         raise AssertionError(
             f"_commit_reservation only supports POTENTIALLY_LIVE/RELEASED, got {state!r}"
         )
-    # A successful append (AppendReceipt, never AppendRefusal) always carries a real seq —
-    # the log's own construction site (`log.py:999`) never leaves it None.
     assert setup.seq is not None
     result = log.apply_reservation_transition(
         CapacityReservationTransition(
@@ -124,13 +109,7 @@ def _commit_reservation(
 
 
 class _FixedStateProjection:
-    """A minimal :class:`~tos_runtime.rcl.projection.ReservationProjectionReader`
-    test double reporting one fixed state for one fixed reservation id — used
-    only where the test's own point is the recorder's per-state DECISION
-    (which must agree with the kernel predicate for every
-    :class:`~tos.rcl.CapacityState` member), not rcl's own transition-gate
-    mechanics (already covered by ``tos_runtime.rcl.test_log_reservations``
-    and exercised for real by the two dedicated tests above)."""
+    """A minimal :class:`~tos_runtime.rcl.projection.ReservationProjectionReader`"""
 
     def __init__(self, reservation_id: str, state: CapacityState) -> None:
         self._reservation_id = reservation_id
@@ -165,13 +144,7 @@ def test_capacity_consuming_state_values_excludes_only_released() -> None:
 
 
 def test_no_obligation_appends_no_evidence_and_never_resolves(tmp_path: Path) -> None:
-    """``preserved_worst_credible_capacity is None`` AND
-    ``preserved_obligation_magnitude_unknown`` is ``False`` (the field's own
-    default — left implicit here) => no-op (no evidence, no resolver call).
-    kernel round #1 review #4: the no-op condition is now two-part; see
-    ``test_magnitude_unknown_obligation_is_not_a_no_op_appends_evidence_and_halts``
-    for the case where ``obligation is None`` but the flag is ``True`` and
-    the no-op must NOT fire."""
+    """``preserved_worst_credible_capacity is None`` AND"""
     store = _store(tmp_path)
     emergency_log = _emergency_log(tmp_path)
     log = _log(tmp_path, store)
@@ -206,15 +179,7 @@ def test_no_obligation_appends_no_evidence_and_never_resolves(tmp_path: Path) ->
 def test_magnitude_unknown_obligation_is_not_a_no_op_appends_evidence_and_halts(
     tmp_path: Path,
 ) -> None:
-    """(kernel round #1 review #4) ``preserved_worst_credible_capacity is
-    None`` but ``preserved_obligation_magnitude_unknown`` is ``True`` MUST
-    NOT no-op — this is the fifth, most dangerous case (a concrete halt
-    whose obligation size was never observed), not "no obligation was ever
-    asserted". The resolver IS called, the kernel predicate is asked (which
-    forces ``False`` unconditionally for ``magnitude_unknown`` regardless of
-    the reservation's actual state — CUR-INV-011:183), evidence is appended
-    with ``magnitude_unknown: true``, and the recorder ALWAYS halts, even
-    against a reservation that is still safely capacity-consuming."""
+    """(kernel round #1 review #4) ``preserved_worst_credible_capacity is"""
     store = _store(tmp_path)
     emergency_log = _emergency_log(tmp_path)
     log = _log(tmp_path, store)
@@ -252,9 +217,6 @@ def test_magnitude_unknown_obligation_is_not_a_no_op_appends_evidence_and_halts(
     metas = list(store.iter_entry_meta())
     kinds = [m.kind for m in metas]
     assert kinds.count("CAPACITY_OBLIGATION_PRESERVED") == 1
-    # ALWAYS halts, even though the reservation is still POTENTIALLY_LIVE
-    # (safely capacity-consuming) — magnitude_unknown overrides the state
-    # check entirely (CUR-INV-011:183).
     assert kinds.count("CAPACITY_OBLIGATION_VIOLATION_ALERT") == 1
     assert emergency_log.path.exists()
     store.close()
@@ -403,13 +365,7 @@ def test_attempt_id_none_never_calls_the_resolver(tmp_path: Path) -> None:
 
 
 class _MutableStateProjection:
-    """A :class:`~tos_runtime.rcl.projection.ReservationProjectionReader`
-    test double whose ONE reservation's state can be advanced mid-test —
-    used only to demonstrate the resolver's own limitation (independent
-    review finding #5): every attempt sharing this account+instrument
-    resolves to the SAME reservation id, so the recorder reads whatever
-    state that ONE shared reservation holds AT CALL TIME, never a
-    per-attempt snapshot."""
+    """A :class:`~tos_runtime.rcl.projection.ReservationProjectionReader`"""
 
     def __init__(self, reservation_id: str, state: CapacityState) -> None:
         self._reservation_id = reservation_id
@@ -436,17 +392,7 @@ class _MutableStateProjection:
 def test_resolver_is_not_attempt_scoped_reads_the_shared_reservations_current_state(
     tmp_path: Path,
 ) -> None:
-    """(module docstring, independent review finding #5) The injected
-    resolver is per-(account, instrument), not per-attempt: TWO different
-    attempts sharing this compose root's one account+instrument BOTH
-    resolve to the SAME reservation id. Attempt "a1" is refused while the
-    shared reservation is still POTENTIALLY_LIVE (consuming — obligation
-    holds, no halt). Before the recorder ever sees attempt "a2"'s refusal,
-    the SAME shared reservation legitimately advances to RELEASED. The
-    recorder for "a2" reads the reservation's state AS OF NOW, not as of
-    "a2"'s own refusal moment — there is no attempt-scoped snapshot to read
-    instead. This is the resolver's real, still-live limitation: it always
-    reads "the latest" shared state, never an attempt-bound one."""
+    """(module docstring, independent review finding #5) The injected"""
     store = _store(tmp_path)
     emergency_log = _emergency_log(tmp_path)
     reservation_id = "resv-acct-1-ES"
@@ -456,8 +402,6 @@ def test_resolver_is_not_attempt_scoped_reads_the_shared_reservations_current_st
         store=store,
         emergency_log=emergency_log,
         projection=projection,
-        # The SAME resolver formula for every attempt, exactly as wired in
-        # production (_wiring.py) — it discards attempt_id entirely.
         reservation_id_resolver=lambda _attempt_id: reservation_id,
     )
 
@@ -473,9 +417,6 @@ def test_resolver_is_not_attempt_scoped_reads_the_shared_reservations_current_st
     assert kinds_after_a1.count("CAPACITY_OBLIGATION_PRESERVED") == 1
     assert "CAPACITY_OBLIGATION_VIOLATION_ALERT" not in kinds_after_a1
 
-    # The SAME shared reservation legitimately advances — nothing to do
-    # with attempt "a1" specifically; this is what "not attempt-scoped"
-    # means in practice.
     projection.state = CapacityState.RELEASED
 
     recorder(
@@ -488,10 +429,6 @@ def test_resolver_is_not_attempt_scoped_reads_the_shared_reservations_current_st
     )
     kinds_after_a2 = [m.kind for m in store.iter_entry_meta()]
     assert kinds_after_a2.count("CAPACITY_OBLIGATION_PRESERVED") == 2
-    # "a2" halts because the SHARED reservation is now RELEASED — the
-    # recorder has no way to tell this apart from "a2" itself having
-    # caused or witnessed that release; it only ever reads the current
-    # shared state.
     assert kinds_after_a2.count("CAPACITY_OBLIGATION_VIOLATION_ALERT") == 1
     store.close()
 

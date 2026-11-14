@@ -1,11 +1,4 @@
-"""capacity != authority — the central invariant (RCL design §4.1; RCLP-INV-001/012).
-
-Four layers: (1) grant/decision/capability/snapshot authority flags are all-false
-construction invariants; (2) only a committed transition mutates capacity (no
-mutate method exists on a grant/decision/snapshot); (3) a grant authorizes only the
-exact committed reservation; (4) documentation/projection is not an authorization
-input.
-"""
+"""capacity != authority — the central invariant (RCL design §4.1; RCLP-INV-001/012)."""
 
 from __future__ import annotations
 
@@ -19,8 +12,6 @@ from tos.rcl import (
 )
 
 from ._rcl_strategies import committed_reservation, issue_capability, issue_snapshot
-
-# ---- layer 1: all-false authority flags ------------------------------------
 
 
 def test_default_authority_effect_grants_nothing() -> None:
@@ -70,9 +61,6 @@ def test_capability_with_true_authority_flag_rejected() -> None:
         )
 
 
-# ---- layer 2: only a committed transition mutates capacity -----------------
-
-
 def test_grant_and_snapshot_have_no_capacity_mutation_method() -> None:
     """No grant / decision / snapshot exposes a method returning mutated capacity."""
     grant = GrantDecisionRef()
@@ -94,9 +82,6 @@ def test_grant_and_snapshot_have_no_capacity_mutation_method() -> None:
             )
         ]
         assert mutating == [], f"unexpected capacity-mutation surface: {mutating}"
-
-
-# ---- layer 3: a grant authorizes only the exact committed reservation ------
 
 
 def test_grant_binds_exact_reservation() -> None:

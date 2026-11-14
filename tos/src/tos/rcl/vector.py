@@ -1,15 +1,4 @@
-"""Capacity Vector + dimension descriptor + benefit proof (ADR-002-002 §6).
-
-Risk capacity is a **vector**, not one scalar notional (§6.1 line 220). Arithmetic
-is integer / :class:`~decimal.Decimal` only — no float accumulation, no ``numpy``
-(RCL design §0.3 closure minimisation). A missing / ``None`` dimension magnitude is
-**UNKNOWN** and propagates conservatively (fail-closed at the consuming predicate,
-§5.3); it is never silently treated as ``0``.
-
-Pure module: ``pydantic`` + stdlib (``decimal``) + ``tos.canonical`` (the promoted
-``CanonicalDecimal``, design #9 §0.4c) + ``tos.rcl._base`` only; no ``shared.*``
-(RCL design §0.3).
-"""
+"""Capacity Vector + dimension descriptor + benefit proof (ADR-002-002 §6)."""
 
 from __future__ import annotations
 
@@ -19,11 +8,6 @@ from decimal import Decimal
 from tos.canonical import CanonicalDecimal
 from tos.rcl._base import FrozenModel
 
-#: ``CanonicalDecimal`` is re-exported from ``tos.canonical`` (promoted out of this
-#: module, design #9 §0.4c) as a **courtesy back-compat shim** so existing
-#: ``from tos.rcl.vector import CanonicalDecimal`` paths (and the ``test_rcl_digest``
-#: docstring reference) stay valid. RCL's own code sources it from ``tos.canonical``;
-#: this name is not a load-bearing definition site.
 __all__ = [
     "CanonicalDecimal",
     "DimensionDescriptor",
@@ -37,12 +21,7 @@ __all__ = [
 
 
 class DimensionDescriptor(FrozenModel):
-    """Per-dimension descriptor (ADR-002-002 §6.1 line 240-248).
-
-    Every capacity dimension SHALL have these (line 242-248). All optional at the
-    model level (Phase-1 bounds are injected / may be null, §8); a consuming
-    predicate fails closed on a missing magnitude, not on a missing descriptor.
-    """
+    """Per-dimension descriptor (ADR-002-002 §6.1 line 240-248)."""
 
     unit: str | None = None
     sign_convention: str | None = None
@@ -54,15 +33,7 @@ class DimensionDescriptor(FrozenModel):
 
 
 class CapacityComponent(FrozenModel):
-    """One dimension's magnitude within a Capacity Vector (ADR-002-002 §6.1).
-
-    ``magnitude`` is a :class:`~decimal.Decimal` (canonicalized by
-    ``tos.canonical`` ``_num_token`` when the enclosing record is digest-bound) or
-    ``None`` for an UNKNOWN / unbounded dimension (INV-006 — UNKNOWN consumes
-    capacity, so a ``None`` magnitude fails the within-limit check, §5.3). The
-    ``scale`` / ``unit`` metadata stay distinct string fields (never folded into the
-    magnitude — canonical §3.4 safety-significant-distinction preservation).
-    """
+    """One dimension's magnitude within a Capacity Vector (ADR-002-002 §6.1)."""
 
     dimension_id: str | None = None
     magnitude: CanonicalDecimal | None = None
@@ -72,13 +43,7 @@ class CapacityComponent(FrozenModel):
 
 
 class CapacityVector(FrozenModel):
-    """A Capacity Vector over named dimensions (ADR-002-002 §6.1 line 218-248).
-
-    Order-significant tuple of :class:`CapacityComponent`. A dimension not declared
-    is absent (contributes nothing); a declared dimension with ``magnitude=None`` is
-    UNKNOWN (capacity-consuming, §5.3). Used both as an adverse-increment / usage
-    vector and — via :func:`effective_limit` — as an Effective Limit vector.
-    """
+    """A Capacity Vector over named dimensions (ADR-002-002 §6.1 line 218-248)."""
 
     components: tuple[CapacityComponent, ...] = ()
 
@@ -101,21 +66,7 @@ class CapacityVector(FrozenModel):
 
 
 def aggregate_usage(vectors: Sequence[CapacityVector]) -> CapacityVector:
-    """Sum a sequence of Capacity Vectors dimension-wise (INV-001 aggregate usage).
-
-    For each declared dimension the magnitudes are summed. If **any** contributing
-    magnitude on a declared dimension is ``None`` (UNKNOWN), the aggregate for that
-    dimension is ``None`` (UNKNOWN propagates — fail-closed, §5.3; INV-006). A
-    dimension not declared by a vector contributes nothing to that dimension. Pure
-    integer / ``Decimal`` arithmetic; no float, no ``numpy``.
-
-    Args:
-        vectors: The Capacity Vectors to aggregate (e.g. committed reservations).
-
-    Returns:
-        The dimension-wise aggregate Capacity Vector.
-    """
-    # Deterministic dimension order: first-seen across the input sequence.
+    """Sum a sequence of Capacity Vectors dimension-wise (INV-001 aggregate usage)."""
     order: list[str] = []
     for vector in vectors:
         for dim in vector.dimension_ids():
@@ -129,7 +80,7 @@ def aggregate_usage(vectors: Sequence[CapacityVector]) -> CapacityVector:
                 continue
             magnitude = vector.magnitude(dim)
             if magnitude is None:
-                total = None  # UNKNOWN propagates conservatively (INV-006)
+                total = None
                 break
             total = total + magnitude  # type: ignore[operator]
         components.append(CapacityComponent(dimension_id=dim, magnitude=total))
@@ -137,21 +88,7 @@ def aggregate_usage(vectors: Sequence[CapacityVector]) -> CapacityVector:
 
 
 def effective_limit(hard: CapacityVector, runtime: CapacityVector) -> CapacityVector:
-    """Return ``EffectiveLimit[c] = min(Hard[c], Runtime[c])`` (INV-001 line 127-150).
-
-    "The Runtime Safety Profile may reduce but never enlarge the Hard Safety
-    Envelope" (§5 line 150): each dimension's Effective Limit is the minimum of the
-    Hard Envelope and Runtime Profile bound. A dimension missing (``None``) on
-    either side yields ``None`` (UNKNOWN => fail-closed downstream, §5.3), never the
-    other side's (potentially larger) value.
-
-    Args:
-        hard: The Hard Safety Envelope bound vector.
-        runtime: The Runtime Safety Profile bound vector.
-
-    Returns:
-        The Effective Limit Capacity Vector.
-    """
+    """Return ``EffectiveLimit[c] = min(Hard[c], Runtime[c])`` (INV-001 line 127-150)."""
     dims: list[str] = []
     for vector in (hard, runtime):
         for dim in vector.dimension_ids():
@@ -167,26 +104,14 @@ def effective_limit(hard: CapacityVector, runtime: CapacityVector) -> CapacityVe
 
 
 class BenefitClaim(FrozenModel):
-    """A claimed netting / hedge / diversification / correlation benefit (§5.1/§6.3).
-
-    ``reduction`` is the per-dimension capacity reduction the claim asserts. The
-    ``kind`` names the benefit category. A claim alone reduces nothing — it must be
-    accompanied by a **positive** :class:`BenefitProof` (§5.1 rule 2).
-    """
+    """A claimed netting / hedge / diversification / correlation benefit (§5.1/§6.3)."""
 
     kind: str | None = None
     reduction: CapacityVector = CapacityVector()
 
 
 class BenefitProof(FrozenModel):
-    """A positive proof token authorizing a benefit reduction (§5.1 rule 2, §6.5).
-
-    A benefit reduces adverse capacity **only when positively proven** — the Broker
-    Capability Profile proves the enforcement scope and behavior (§6.5 line 316) and
-    the scope is proven. Absence of a proof (``proof=None`` at the call site) — or a
-    proof that is not positive — reduces nothing (the "no-benefit flag absent" case
-    is NOT a proof, RCL design §5.1 canary).
-    """
+    """A positive proof token authorizing a benefit reduction (§5.1 rule 2, §6.5)."""
 
     broker_profile_proven: bool = False
     scope_proven: bool = False

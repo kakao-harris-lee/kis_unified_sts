@@ -1,10 +1,4 @@
-"""Issue #970 — one request pacer per KIS app key (``tos_runtime.transport.kis_mock.pacer``),
-owned by the app key's credential session and taken by every request on the key: order POST,
-witness GET, token POST.
-
-The fake clock advances only when the pacer sleeps (``time.sleep`` is patched in the pacer
-module), so every wait is exact and every grant instant is deterministic, even from two threads.
-"""
+"""Issue #970 — one request pacer per KIS app key (``tos_runtime.transport.kis_mock.pacer``),"""
 
 from __future__ import annotations
 
@@ -122,9 +116,6 @@ def _session(
     )
 
 
-# -- the pacer itself -------------------------------------------------------------------------
-
-
 def test_the_first_slot_is_immediate_and_the_next_waits_out_the_interval(
     clock: _SleepClock,
 ) -> None:
@@ -153,9 +144,7 @@ def test_no_wait_once_the_interval_has_passed(clock: _SleepClock) -> None:
 def test_a_slot_beyond_the_budget_is_refused_without_waiting_or_taking_it(
     clock: _SleepClock,
 ) -> None:
-    """Fail closed, never send late: the refusal does not sleep and does not move the next
-    caller's slot (mutation: record the grant before the budget check -> the later acquire
-    waits again -> red)."""
+    """Fail closed, never send late: the refusal does not sleep and does not move the next"""
     pacer = KisAppKeyPacer(
         pacing=KisPacing(min_interval_ms=2_000, wait_budget_ms=1_000), monotonic=clock
     )
@@ -164,7 +153,7 @@ def test_a_slot_beyond_the_budget_is_refused_without_waiting_or_taking_it(
         pacer.acquire()
     assert clock.sleeps_ms == []
 
-    clock.advance(1_200)  # 800 ms left now — inside the budget
+    clock.advance(1_200)
     assert pacer.acquire() == first + 2_000
     assert clock.sleeps_ms == [800]
 
@@ -179,20 +168,10 @@ def test_pacing_terms_must_be_positive(
         KisPacing(min_interval_ms=min_interval_ms, wait_budget_ms=wait_budget_ms)
 
 
-# -- through the credential session (the app key's one owner) ---------------------------------
-
-
 def test_concurrent_order_post_and_witness_get_never_closer_than_the_interval(
     clock: _SleepClock, grants: list[int]
 ) -> None:
-    """Issue #970 acceptance: the loop thread's order POSTs (``app_credentials()``, as
-    ``KisMockTransport`` takes it) and the FETCH worker's witness GETs (``request_credentials()``,
-    as ``KisStockBrokerWitness`` takes it) run at the same time on one app key. Every request —
-    the token POST included — starts at least the interval after the previous one.
-
-    Mutation: drop ``self._pacer.acquire()`` from ``app_credentials`` -> 11 requests, 1 grant
-    -> red; release the pacer lock before the sleep -> two grants share an instant -> red.
-    """
+    """Issue #970 acceptance: the loop thread's order POSTs (``app_credentials()``, as"""
     session = _session(clock, min_interval_ms=2_000, wait_budget_ms=4_000)
     sent: list[tuple[str, int]] = []
     errors: list[BaseException] = []
@@ -226,7 +205,7 @@ def test_concurrent_order_post_and_witness_get_never_closer_than_the_interval(
 
     assert errors == []
     assert sorted(kind for kind, _ in sent) == ["order"] * 5 + ["witness"] * 5
-    assert len(grants) == 11  # ten requests and the witness's one token POST
+    assert len(grants) == 11
     ordered = sorted(grants)
     assert all(b - a >= 2_000 for a, b in zip(ordered, ordered[1:], strict=False))
 
@@ -234,12 +213,7 @@ def test_concurrent_order_post_and_witness_get_never_closer_than_the_interval(
 def test_two_threads_on_the_real_clock_are_spaced_by_the_grants_themselves(
     grants: list[int],
 ) -> None:
-    """The same race on the process clock with a real sleep (50 ms interval, ~0.5 s). The fake
-    clock above sums every sleep, so it cannot see two threads sleeping AT THE SAME TIME; this
-    one can. Grants are clock readings taken under the pacer lock after the wait, so correct
-    code spaces them by at least the interval exactly (whole-ms truncation cannot shrink a gap
-    that the sleep already covered). Mutation: release the lock around the sleep -> both
-    threads wait out the same previous grant and are granted together -> red."""
+    """The same race on the process clock with a real sleep (50 ms interval, ~0.5 s). The fake"""
     pacer = KisAppKeyPacer(
         pacing=KisPacing(min_interval_ms=50, wait_budget_ms=5_000),
         monotonic=ProcessMonotonicSource(),
@@ -270,9 +244,7 @@ def test_two_threads_on_the_real_clock_are_spaced_by_the_grants_themselves(
 def test_the_token_post_takes_a_slot_before_it_is_sent(
     clock: _SleepClock, grants: list[int]
 ) -> None:
-    """A token POST is a request on the key: it gets a slot, and the request it was fetched
-    for waits the interval after it (mutation: drop the lifecycle's ``acquire`` -> one grant,
-    no sleep -> red)."""
+    """A token POST is a request on the key: it gets a slot, and the request it was fetched"""
     client = _TokenClient(clock)
     session = _session(clock, min_interval_ms=2_000, client=client)
 
@@ -304,9 +276,7 @@ def test_a_refused_request_loads_nothing_from_custody(clock: _SleepClock) -> Non
 def test_a_refused_token_slot_does_not_start_the_reissue_cooldown(
     clock: _SleepClock,
 ) -> None:
-    """Nothing was POSTed, so the next ask after the interval issues the token instead of
-    raising ``TokenStale`` for a minute (mutation: record the issue attempt before the slot ->
-    ``TokenStale`` below -> red)."""
+    """Nothing was POSTed, so the next ask after the interval issues the token instead of"""
     client = _TokenClient(clock)
     session = _session(
         clock, min_interval_ms=2_000, wait_budget_ms=1_000, client=client
@@ -326,11 +296,7 @@ def test_a_refused_token_slot_does_not_start_the_reissue_cooldown(
 
 
 def test_a_token_issue_in_flight_elsewhere_refuses_after_the_wait_budget() -> None:
-    """review-979 r1 MEDIUM: while the FETCH worker's token issue holds the lifecycle lock (its
-    pacer wait plus the POST), a loop-thread caller waits at most the pacer's wait budget for it
-    and is then refused unsent — not blocked for the worker's whole POST before its own budget
-    even starts. Mutation: an unbounded ``with self._lock`` -> the second caller blocks until
-    the release below -> red on the elapsed bound."""
+    """review-979 r1 MEDIUM: while the FETCH worker's token issue holds the lifecycle lock (its"""
     clock = _SleepClock()
     entered, release = threading.Event(), threading.Event()
 
@@ -358,6 +324,4 @@ def test_a_token_issue_in_flight_elsewhere_refuses_after_the_wait_budget() -> No
         worker.join(5.0)
 
     assert 0.15 <= elapsed < 2.0
-    assert (
-        session.ensure_token_string() == "tok-slow"
-    )  # the worker's issue still landed
+    assert session.ensure_token_string() == "tok-slow"

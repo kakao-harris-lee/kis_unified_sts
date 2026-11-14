@@ -77,10 +77,7 @@ def test_evaluate_with_null_minimum_is_never_deletable(
 def test_evaluate_with_mixed_null_and_valued_minimums_only_valued_class_is_deletable(
     store: SqliteEvidenceStore,
 ) -> None:
-    """A null-valued class stays refused even inside a policy that ALSO holds
-    a real per-class minimum for another class — proving the null-filtering
-    fix for the kernel's ``Mapping[str, int] | None`` signature does not
-    corrupt or drop the valued entries it keeps."""
+    """A null-valued class stays refused even inside a policy that ALSO holds"""
     store.append({"a": 1}, kind="TEST", record_class="NAMED_TBD_CLASS")
     store.append({"b": 2}, kind="TEST", record_class="VALUED_CLASS")
     policy = RetentionPolicy({"NAMED_TBD_CLASS": None, "VALUED_CLASS": 1})
@@ -91,8 +88,8 @@ def test_evaluate_with_mixed_null_and_valued_minimums_only_valued_class_is_delet
         open_or_live={0: False, 1: False},
     )
     verdicts_by_seq = {verdict.seq: verdict for verdict in verdicts}
-    assert verdicts_by_seq[0].deletable is False  # NAMED_TBD_CLASS, null minimum
-    assert verdicts_by_seq[1].deletable is True  # VALUED_CLASS, aged past minimum
+    assert verdicts_by_seq[0].deletable is False
+    assert verdicts_by_seq[1].deletable is True
 
 
 def test_evaluate_with_active_hold_is_never_deletable(

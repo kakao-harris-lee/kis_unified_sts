@@ -1,28 +1,4 @@
-"""Tests for the Broker Capability Profile INSTANCE loader (plan §2 decision 3).
-
-Loads the REAL, byte-immutable KIS draft instance
-(``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml``) via a
-repo-relative path resolved from this test file's own location — never a
-hardcoded absolute path, never a copy checked into the runtime distribution
-(plan §2 decision 3: "YAML 은 docs/broker-profiles/ 에 그대로 ... 이동 금지").
-
-**Both documents now load end-to-end (2026-09-10 instance-authoring act,
-operator-approved).** The REAL_PROD document used to be missing BOTH
-`profile_identity._model_view` and `live_scope._model_view` (this suite
-used to pin that gap as an expected `BrokerInstanceConfigError`). The
-operator approved adding exactly those two annotation blocks to the
-byte-immutable draft — every value is a re-spelling of a value REAL_PROD's
-own template already carried, never a newly declared value — so
-`load_instance_documents(_DRAFT_PATH)` now returns both documents. REAL_PROD
-stays `status: DRAFT` with `approvers: []`, so `verified_dimensions ==
-frozenset()`, `instance_version_current` is `False`, and
-`capability_admissible` is `PROHIBITED` for it — a template annotation is
-not an approval act, and this suite exercises that honest, unapproved
-verdict directly rather than pinning a load failure. The rest of this suite
-exercises full instance-document semantics against the MOCK_VTS document,
-sliced out of the same real file's bytes with no edits
-(`_mock_vts_only_text`), unaffected by this change.
-"""
+"""Tests for the Broker Capability Profile INSTANCE loader (plan §2 decision 3)."""
 
 from __future__ import annotations
 
@@ -48,7 +24,6 @@ from tos_runtime.brokercap.instance import (
     select_document,
 )
 
-# tos/runtime/tests/brokercap/test_instance.py -> repo root is 4 parents up.
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _DRAFT_PATH = (
     _REPO_ROOT / "docs" / "broker-profiles" / "KIS-BROKER-CAPABILITY-PROFILE-draft.yaml"
@@ -60,15 +35,7 @@ def _sha256(path: Path) -> str:
 
 
 def _mock_vts_only_text() -> str:
-    """Slice out just the MOCK_VTS YAML document from the real draft file's bytes.
-
-    No content is edited — this is a byte-range slice between the file's two
-    ``---`` document separators, used so the rest of this suite can exercise
-    full instance-document semantics against MOCK_VTS alone (single-document
-    scenarios, e.g. ``select_document``) without depending on REAL_PROD's own
-    declaration set, and without ever writing back to the byte-immutable
-    source file.
-    """
+    """Slice out just the MOCK_VTS YAML document from the real draft file's bytes."""
     lines = _DRAFT_PATH.read_text(encoding="utf-8").splitlines(keepends=True)
     separator_indices = [
         i for i, line in enumerate(lines) if line.rstrip("\n") == "---"
@@ -83,11 +50,7 @@ def _mock_vts_only_text() -> str:
 
 
 def _independent_declared_dimension_count(yaml_text: str) -> int:
-    """Recompute the expected declared-dimension count directly from YAML.
-
-    Independent of `instance.py`'s own logic: counts capability blocks that
-    carry a `_model_view` whose `dimension` is not null.
-    """
+    """Recompute the expected declared-dimension count directly from YAML."""
     raw = yaml.safe_load(yaml_text)
     count = 0
     for block in raw["capabilities"].values():
@@ -145,11 +108,6 @@ def mock_vts_document(tmp_path: Path) -> InstanceDocument:
     return documents[0]
 
 
-# ===========================================================================
-# The real file: 2 raw YAML documents, sha256 unchanged, both documents load
-# ===========================================================================
-
-
 def test_real_file_has_exactly_two_raw_yaml_documents() -> None:
     raw_docs = list(yaml.safe_load_all(_DRAFT_PATH.read_text(encoding="utf-8")))
     assert len(raw_docs) == 2
@@ -164,10 +122,7 @@ def test_real_file_has_exactly_two_raw_yaml_documents() -> None:
 
 
 def test_real_file_loads_both_documents_via_load_instance_documents() -> None:
-    """2026-09-10 instance-authoring act (module docstring): REAL_PROD now
-    carries both `_model_view` blocks, so the real file's both documents
-    load end-to-end through the strict, "every document must be valid"
-    loader — no partial-success path is exercised any more."""
+    """2026-09-10 instance-authoring act (module docstring): REAL_PROD now"""
     documents = load_instance_documents(_DRAFT_PATH)
     assert len(documents) == 2
     mock_doc, real_doc = documents
@@ -178,11 +133,7 @@ def test_real_file_loads_both_documents_via_load_instance_documents() -> None:
 
 
 def test_real_prod_document_is_draft_with_zero_verified_dimensions() -> None:
-    """The new `_model_view` blocks re-spell REAL_PROD's own existing
-    template values in kernel vocabulary — they declare no new value and are
-    not an approval act. REAL_PROD therefore stays `status: DRAFT`,
-    `approvers: ()`, and `verified_dimensions == frozenset()` (plan §2
-    decision 3's VERIFIED-0 honesty), exactly like MOCK_VTS."""
+    """The new `_model_view` blocks re-spell REAL_PROD's own existing"""
     real_doc = load_instance_document(_DRAFT_PATH, environment="REAL_PROD")
     assert real_doc.status == "DRAFT"
     assert real_doc.approvers == ()
@@ -201,9 +152,7 @@ def test_real_prod_instance_version_current_is_false() -> None:
 
 
 def test_real_prod_capability_admissible_is_prohibited() -> None:
-    """REAL_PROD now loads, but DRAFT + approvers=[] + VERIFIED-0 still make
-    every broker-reaching admissibility check PROHIBITED — the honest
-    verdict for an unapproved draft (module docstring), not a defect."""
+    """REAL_PROD now loads, but DRAFT + approvers=[] + VERIFIED-0 still make"""
     from tos.brokercap.vocabulary import Admissibility
 
     real_doc = load_instance_document(_DRAFT_PATH, environment="REAL_PROD")
@@ -239,11 +188,6 @@ def test_real_file_sha256_unchanged_after_successful_slice_load(tmp_path: Path) 
     assert before == after
 
 
-# ===========================================================================
-# The MOCK_VTS document (complete, loads cleanly)
-# ===========================================================================
-
-
 def test_mock_vts_identity_fields(mock_vts_document: InstanceDocument) -> None:
     assert mock_vts_document.artifact_id == "KIS-BCP-MOCK-VTS-DRAFT-0001"
     assert mock_vts_document.environment == "MOCK_VTS"
@@ -262,7 +206,7 @@ def test_mock_vts_declared_dimensions_matches_independent_yaml_count(
     mock_vts_document: InstanceDocument,
 ) -> None:
     expected = _independent_declared_dimension_count(_mock_vts_only_text())
-    assert expected == 17  # all 17 CapabilityDimension members are declared
+    assert expected == 17
     assert len(mock_vts_document.declared_dimensions) == expected
     assert mock_vts_document.declared_dimensions == frozenset(CapabilityDimension)
 
@@ -287,8 +231,6 @@ def test_mock_vts_capability_admissible_prohibited_regardless_of_version_current
     )
     assert verdict_natural is Admissibility.PROHIBITED
 
-    # Even force-feeding version_current=True must still PROHIBIT — VERIFIED 0
-    # means no declaration can ever authorize, independent of version currency.
     verdict_forced_current = capability_admissible(
         mock_vts_document.profile, "ORDER_SEND", required, version_current=True
     )
@@ -298,11 +240,7 @@ def test_mock_vts_capability_admissible_prohibited_regardless_of_version_current
 def test_mock_vts_instance_version_current_is_false(
     mock_vts_document: InstanceDocument,
 ) -> None:
-    """DRAFT + approvers=[] => no approved active version => not current,
-    regardless of ``degraded_since_authorization`` (independent-review
-    finding F5): with no approved version at all, the predicate's
-    ``active_version is None`` branch already denies before the
-    degradation gate is even reached."""
+    """DRAFT + approvers=[] => no approved active version => not current,"""
     assert (
         instance_version_current(mock_vts_document, degraded_since_authorization=None)
         is False
@@ -316,15 +254,7 @@ def test_mock_vts_instance_version_current_is_false(
 def test_instance_version_current_degraded_flag_is_load_bearing(
     tmp_path: Path,
 ) -> None:
-    """Independent-review finding F5 mutation M6: before this fix,
-    ``degraded_since_authorization`` was hardcoded ``None`` inside
-    ``instance_version_current``, making the kernel predicate's
-    degradation gate unconditionally deny — the approvers gate was
-    therefore dead code (M6: 0 tests ever went red for it). With a
-    document that DOES carry an approved version (non-empty ``approvers``,
-    so ``active_version == presented_version``), the degraded flag is now
-    the ONLY thing separating ``True`` from ``False`` — proving it is
-    genuinely consumed, not a decorative parameter."""
+    """Independent-review finding F5 mutation M6: before this fix,"""
     text = _minimal_document_yaml(environment="ENV_APPROVED", artifact_id="APPROVED-1")
     text = text.replace(
         "approvers: []\n  profile_version: 0.0.1",
@@ -363,11 +293,6 @@ def test_mock_vts_select_document_unknown_environment_errors(
         select_document((mock_vts_document,), environment="REAL_PROD")
 
 
-# ===========================================================================
-# Provenance mapping (closed AssuranceSource -> ProvenanceClass table)
-# ===========================================================================
-
-
 def test_official_specification_sources_map_to_official_document(
     mock_vts_document: InstanceDocument,
 ) -> None:
@@ -390,15 +315,8 @@ def test_produced_provenance_never_admits_real_order_capability(
 def test_controlled_sandbox_test_source_is_reported_unmapped(
     mock_vts_document: InstanceDocument,
 ) -> None:
-    """`credentials_and_revocation` cites CONTROLLED_SANDBOX_TEST (an order-emitting
-    dedup probe) — the closed table refuses to launder it into CONTROLLED_GET_PROBE
-    (module docstring: that class's ProbeManifest asserts `emits_orders: False`)."""
+    """`credentials_and_revocation` cites CONTROLLED_SANDBOX_TEST (an order-emitting"""
     assert "CONTROLLED_SANDBOX_TEST" in mock_vts_document.unmapped_sources
-
-
-# ===========================================================================
-# select_document — synthetic multi-document scenarios
-# ===========================================================================
 
 
 def test_select_document_zero_matches(tmp_path: Path) -> None:
@@ -438,11 +356,6 @@ def test_select_document_exact_match_among_several(tmp_path: Path) -> None:
     documents = load_instance_documents(path)
     selected = select_document(documents, environment="ENV_B")
     assert selected.artifact_id == "B-1"
-
-
-# ===========================================================================
-# Fail-closed refusals — synthetic, deliberately malformed documents
-# ===========================================================================
 
 
 def test_capability_block_missing_model_view_is_refused(tmp_path: Path) -> None:
@@ -501,11 +414,6 @@ def test_non_mapping_document_is_refused(tmp_path: Path) -> None:
         load_instance_documents(path)
 
 
-# ===========================================================================
-# Negative-grep — module discipline (no os.environ, no validator bypasses)
-# ===========================================================================
-
-
 def test_module_never_reads_os_environ() -> None:
     source = Path(instance_module.__file__).read_text(encoding="utf-8")
     assert "os.environ" not in source
@@ -517,13 +425,6 @@ def test_module_never_bypasses_pydantic_validators() -> None:
     source = Path(instance_module.__file__).read_text(encoding="utf-8")
     assert "model_construct" not in source
     assert "model_copy(update=" not in source
-
-
-# ===========================================================================
-# rest_base (T2 lane C) — the host-seal fact tos_runtime.compose._transport_wiring
-# reads off InstanceDocument. Independent review MEDIUM-4: neither the positive read nor
-# any of _read_rest_base's shape-deviation -> None paths had a test before this.
-# ===========================================================================
 
 
 def test_mock_vts_document_rest_base_is_read_from_kis_endpoints() -> None:
@@ -566,8 +467,7 @@ def test_real_prod_document_rest_base_is_read_from_kis_endpoints() -> None:
 def test_read_rest_base_returns_none_for_every_shape_deviation(
     profile_identity: dict[str, object],
 ) -> None:
-    """Never invented (module docstring) — every shape deviation returns ``None``, never a
-    fabricated or default host string."""
+    """Never invented (module docstring) — every shape deviation returns ``None``, never a"""
     assert instance_module._read_rest_base(profile_identity) is None
 
 

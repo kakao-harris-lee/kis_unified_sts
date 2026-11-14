@@ -1,17 +1,4 @@
-"""§1.2 커널 라운드 #1 — ``decision_unexpired`` 결정 만료 술어 (iap/predicates.py).
-
-ADR-002-023 §12 항목 2 "unexpired" 는 Consumption Fencing 이 증명해야 하는 두 긍정 사실 중
-하나이며, §18 은 "expiry prevents future consumption or send, releases nothing" 라 명시한다.
-``tos.iap`` 는 여전히 clock-free — age bound 는 ``tos.time`` 이 만든 주입값이다. 동형 모델은
-``tos.time.snapshot_age_admissible``: 어느 한쪽이라도 ``None`` ⇒ ``False`` (fail-closed), 음수
-bound ⇒ ``False``, ``bound <= max`` 일 때만 ``True``.
-
-``IndependentApprovalDecision`` 레코드는 이 아크에서 무편집 — covered 집합 변경은 기존 digest
-픽스처를 전부 붕괴시키고, 발행시각은 소비 시점의 런타임 사실이라 §12 "receipt time" 대로
-Consumption 증거 소관이다(design #40 §1.2).
-
-Regime tag: authoring evidence only; closes no IAP-EV item (design #15 §1).
-"""
+"""§1.2 커널 라운드 #1 — ``decision_unexpired`` 결정 만료 술어 (iap/predicates.py)."""
 
 from __future__ import annotations
 

@@ -1,20 +1,4 @@
-"""``KisBandSourceReader`` — CP-3 band 원천 웨이브 plan §8 items 3, 4d (the timeout half) and 8
-(``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4.2/§4.5).
-
-**One test per validation CLAUSE** (#838): each input below differs from a band the reader
-ACCEPTS in exactly one respect, and :meth:`TestValidationSet.test_the_measured_band_is_accepted`
-pins that baseline. Without the baseline, a clause test proves only "this returns None", which
-a broken fixture also satisfies.
-
-**The band values are measured, not invented** — the 2026-10-08 모의 P-VL run
-(``docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/P-VL-20261008T010822Z.json``).
-Inventing round numbers here would have hidden the one thing this reader has to get right: the
-broker quotes index points with two decimals, so every band is a non-integer that only becomes
-the kernel's opaque int through an EXACT ``Decimal`` multiply.
-
-Hermetic (``tos/runtime/tests/conftest.py`` D1.4): no socket is ever opened — the client is a
-double, and the autouse network guard would refuse a real one anyway.
-"""
+"""``KisBandSourceReader`` — CP-3 band 원천 웨이브 plan §8 items 3, 4d (the timeout half) and 8"""
 
 from __future__ import annotations
 
@@ -47,7 +31,6 @@ from ._documents import (
 )
 
 _TRADING_DATE = "20261008"
-#: ``1159.18 × 100`` and ``987.46 × 100`` — the exact scaled ints the measured band becomes.
 _SCALED_UPPER = 115918
 _SCALED_LOWER = 98746
 _SCALED_BASIS = 107332
@@ -104,15 +87,11 @@ def _ok_body(
 
 
 class _FakeClient:
-    """A ``get_quote``-shaped double. Records every call so the request's own shape (TR id,
-    path, query) can be asserted — the band GET must reuse the transport's path, never invent
-    one."""
+    """A ``get_quote``-shaped double. Records every call so the request's own shape (TR id,"""
 
     def __init__(self, responses: list[Any]) -> None:
         self._responses = list(responses)
         self.calls: list[dict[str, Any]] = []
-        #: The exact body text handed back, so a test can digest the same bytes the reader
-        #: did (L2) rather than re-deriving them.
         self.bodies: list[str] = []
 
     def get_quote(
@@ -147,16 +126,7 @@ class _FakeCredentials:
 
 
 class _FakeSession:
-    """A :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSession`
-    double. ``tokens`` is consumed one per read, so a test can hand the reader a REISSUED token
-    and watch the continuity id advance. An ``Exception`` in the list is RAISED instead of
-    returned — that is how the stale-token path is reached, hence the union element type rather
-    than ``Any`` (which would also let the ``str`` return slip through unchecked).
-
-    ``credentials_error`` is raised from :meth:`app_credentials` instead of yielding — the real
-    session loads the app key/secret out of custody there, so this is how the 2026-10-15 plan
-    §1 B2 leak is reached.
-    """
+    """A :class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSession`"""
 
     def __init__(
         self,
@@ -220,10 +190,6 @@ def _reader(
     reader = KisBandSourceReader(
         band_source=band_source if band_source is not None else _band_source(),
         transport_config=_transport_config(),
-        # The two ignores are for CONCRETE classes the reader names (``KisMockHttpClient`` /
-        # ``KisCredentialSession``) — a double cannot be their subclass without inheriting
-        # real I/O. ``monotonic`` needs none: ``MonotonicSource`` is a Protocol and
-        # ``_FakeMonotonic`` satisfies it structurally, which mypy checks here.
         client=client,  # type: ignore[arg-type]
         credential_session=session,  # type: ignore[arg-type]
         monotonic=_FakeMonotonic(),
@@ -250,7 +216,6 @@ class TestValidationSet:
         assert observation.basis == _SCALED_BASIS
         assert observation.trading_date == _TRADING_DATE
         assert observation.instrument == "A05610"
-        # The request is the transport's path and the POLICY's TR id / contract.
         assert client.calls == [
             {
                 "tr_id": "FHMIF10000000",
@@ -261,8 +226,6 @@ class TestValidationSet:
         row = sink.only()
         assert row["outcome"] == "OBSERVED"
         assert row["band_digest"] == observation.record_digest
-        # L2: the payload digest is over the BROKER'S BYTES, not over a re-serialization of
-        # the parsed block — so it changes when the body changes and nothing else.
         assert (
             observation.raw_payload_digest
             == hashlib.sha256(client.bodies[0].encode("utf-8")).hexdigest()
@@ -271,8 +234,7 @@ class TestValidationSet:
         assert row["critical_input_snapshot_digest_role"] == "stand-in"
 
     def test_a_non_integral_scaled_bound_is_refused_not_rounded(self) -> None:
-        """Plan §4.2 "반올림 금지". ``1159.185 × 100 = 115918.5`` is not a whole number; a
-        reader that rounded would hand the kernel a band the broker never quoted."""
+        """Plan §4.2 "반올림 금지". ``1159.185 × 100 = 115918.5`` is not a whole number; a"""
         reader, sink, _ = _reader([_ok_body(upper="1159.185")])
 
         assert reader.read() is None
@@ -280,9 +242,7 @@ class TestValidationSet:
 
     @pytest.mark.parametrize("value", ["Infinity", "-Infinity", "NaN"])
     def test_a_non_finite_bound_is_refused_not_raised(self, value: str) -> None:
-        """Independent review M1: ``Decimal`` accepts these, they survive the multiply and
-        the integral comparison, and only blow up at ``int()`` with an ``OverflowError`` that
-        would escape ``read()`` entirely."""
+        """Independent review M1: ``Decimal`` accepts these, they survive the multiply and"""
         reader, sink, _ = _reader([_ok_body(upper=value)])
 
         assert reader.read() is None
@@ -299,10 +259,10 @@ class TestValidationSet:
     @pytest.mark.parametrize(
         ("lower", "upper"),
         [
-            (PVL_A05610_UPPER, PVL_A05610_LOWER),  # min > max
-            (PVL_A05610_UPPER, PVL_A05610_UPPER),  # min == max
-            ("0.00", PVL_A05610_UPPER),  # min == 0
-            ("-10.00", PVL_A05610_UPPER),  # min < 0
+            (PVL_A05610_UPPER, PVL_A05610_LOWER),
+            (PVL_A05610_UPPER, PVL_A05610_UPPER),
+            ("0.00", PVL_A05610_UPPER),
+            ("-10.00", PVL_A05610_UPPER),
         ],
     )
     def test_an_unordered_or_non_positive_band_is_refused(
@@ -314,10 +274,7 @@ class TestValidationSet:
         assert sink.only()["reason"] == "band_not_ordered"
 
     def test_a_band_off_the_policy_tick_grid_is_refused(self) -> None:
-        """Plan §4.2/§3: a tree still carrying ``tick_size: 5`` is caught HERE. The measured
-        band sits on the mini contract's 0.02 grid (scaled: multiples of 2), and
-        ``115918 % 5 == 3`` — which is exactly why the tick correction is a precondition of
-        enabling, stated as code rather than as prose."""
+        """Plan §4.2/§3: a tree still carrying ``tick_size: 5`` is caught HERE. The measured"""
         reader, sink, _ = _reader([_ok_body()], tick_size=5)
 
         assert reader.read() is None
@@ -366,14 +323,11 @@ class TestTradingDateStamp:
 
         assert reader.read() is None
         assert sink.only()["reason"] == "trading_date_unavailable"
-        # Nothing was asked of the broker: a band that cannot be bound to a date could never
-        # be invalidated when the date turns, so there is no point spending the GET.
         assert client.calls == []
 
 
 class TestTimeoutMs:
-    """Plan §8 4d's other half — the policy's ``timeout_ms`` is what the band client is built
-    with, and exceeding it is a named refusal, not an exception out of ``read``."""
+    """Plan §8 4d's other half — the policy's ``timeout_ms`` is what the band client is built"""
 
     def test_the_client_is_built_with_the_policy_timeout_not_the_transport_one(
         self,
@@ -405,10 +359,7 @@ class TestTimeoutMs:
         assert sink.only()["reason"] == "token_stale"
 
     def test_an_unusable_token_response_is_a_named_refusal(self) -> None:
-        """Plan §4.6 / independent review M1: ``KisTokenLifecycle`` raises this when the token
-        endpoint answers without a usable ``access_token``/``expires_in``. Uncaught it would
-        leave ``read()`` by exception and reach ``snapshot()``/``decide()`` — the one thing
-        this wave promises cannot happen."""
+        """Plan §4.6 / independent review M1: ``KisTokenLifecycle`` raises this when the token"""
         reader, sink, _ = _reader(
             [_ok_body()], tokens=[TokenResponseError("missing access_token")]
         )
@@ -419,9 +370,7 @@ class TestTimeoutMs:
         assert "access_token" in row["detail"]
 
     def test_a_token_request_that_never_completed_is_a_named_refusal(self) -> None:
-        """Same review finding: the token call uses the same HTTP client the quote does, so
-        it raises the same timeout/connection errors — from a DIFFERENT call site than the
-        quote GET, hence its own reason token."""
+        """Same review finding: the token call uses the same HTTP client the quote does, so"""
         reader, sink, _ = _reader(
             [_ok_body()], tokens=[KisMockTimeoutError("token endpoint timed out")]
         )
@@ -433,24 +382,7 @@ class TestTimeoutMs:
 
 
 class TestCustodyFailuresFoldToBandNone:
-    """2026-10-15 plan §1 B2 / §L L1 — the leak this PR closes.
-
-    ``KisCredentialSession.app_credentials`` loads the app key/secret through
-    ``custody.load()``, and :class:`~tos_runtime.custody.ports.CustodyError` was OUTSIDE the
-    exception set :meth:`KisBandSourceReader.read` caught. It therefore escaped through
-    ``snapshot()``/``decide()`` rather than folding to band ``None`` — contradicting band plan
-    2026-10-08 §4.6's "모든 실패는 band None → 커널 UNKNOWN → 송신 0", which is the whole
-    reason the worst case of that wave is "exactly today's behaviour".
-
-    **Reachable, not hypothetical**: the tenant session's custody (``paper-custody``) carries
-    ``read.principal``/``evidence.key``/``replay.params`` and NEITHER ``kis_mock.app_key`` nor
-    ``kis_mock.app_secret``, so a ``kis_quote_get`` boot there raises
-    :class:`~tos_runtime.custody.ports.CustodyScopeNotProvisioned` on the first read (plan §1
-    B2, measured 2026-10-15).
-
-    **Red proof**: delete either ``except CustodyError`` clause and the matching test below
-    ERRORS with the exception escaping ``read()`` instead of returning ``None``.
-    """
+    """2026-10-15 plan §1 B2 / §L L1 — the leak this PR closes."""
 
     def test_an_unprovisioned_custody_scope_is_a_named_refusal(self) -> None:
         reader, sink, _ = _reader(
@@ -464,9 +396,7 @@ class TestCustodyFailuresFoldToBandNone:
         assert "kis_mock.app_key" in row["detail"]
 
     def test_a_custody_failure_on_the_TOKEN_step_is_also_folded(self) -> None:
-        """``KisTokenLifecycle._issue_token`` loads the SAME two scopes, so the leak has a
-        twin one step earlier. It gets its own reason token because it is a different call
-        site — the same discipline ``token_transport_error`` already follows."""
+        """``KisTokenLifecycle._issue_token`` loads the SAME two scopes, so the leak has a"""
         reader, sink, _ = _reader(
             [_ok_body()], tokens=[CustodyError("manifest unreadable")]
         )
@@ -507,15 +437,7 @@ class TestSourceContinuity:
 
 
 class TestSymmetricAboutBasis:
-    """Plan §4.5 / module docstring — the field records SYMMETRY and claims nothing about
-    which price-limit stage is in force.
-
-    Symmetry about the basis is a NECESSARY condition of 제56조의2's stage-1 band
-    (``기준가격 × (1 ± r)``) — and of stage 2 and stage 3, which use the same ± form with a
-    larger ``r``. So it cannot discriminate stage 1, which is why the field is no longer
-    called ``stage_hint`` (independent review L3); the stage-1 judgement is made offline from
-    the ``basis``/``price_min``/``price_max`` the same evidence row carries.
-    """
+    """Plan §4.5 / module docstring — the field records SYMMETRY and claims nothing about"""
 
     def test_the_measured_band_is_symmetric_about_its_basis(self) -> None:
         reader, sink, _ = _reader([_ok_body()])
@@ -530,9 +452,7 @@ class TestSymmetricAboutBasis:
 
         observation = reader.read()
 
-        assert (
-            observation is not None
-        )  # NOT dropped — plan §4.4a residual-risk paragraph
+        assert observation is not None
         assert observation.symmetric_about_basis is False
         assert sink.only()["symmetric_about_basis"] is False
 
@@ -574,9 +494,7 @@ class TestNarrowedIntraday:
         assert [row[1]["narrowed_intraday"] for row in sink.rows] == [False, False]
 
     def test_a_narrowing_across_trading_dates_is_not_flagged(self) -> None:
-        """The flag is about §2's SAME-DAY monotonicity claim. Across a date the reference
-        price moves, so a narrower band is ordinary — flagging it would bury the one
-        observation that actually contradicts the argument."""
+        """The flag is about §2's SAME-DAY monotonicity claim. Across a date the reference"""
         sink = _Sink()
         reader, _, _ = _reader(
             [_ok_body(), _ok_body(upper="1100.00", lower="1000.00")],

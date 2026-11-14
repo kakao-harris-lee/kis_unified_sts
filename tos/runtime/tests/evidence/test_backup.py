@@ -96,7 +96,6 @@ def test_restore_with_live_store_detects_divergence_after_further_live_appends(
 ) -> None:
     store.append({"a": 1}, kind="TEST", record_class="TESTCLASS")
     backup(store, tmp_path, generation=1)
-    # the live store keeps moving after the snapshot was taken
     store.append({"b": 2}, kind="TEST", record_class="TESTCLASS")
 
     result = restore(
@@ -117,25 +116,11 @@ def test_restore_with_live_store_detects_divergence_after_further_live_appends(
 
 
 def test_a_failed_verification_closes_the_restored_store(tmp_path: Path, store) -> None:
-    """A restore that refuses must not hand back an exception holding an OPEN connection.
-
-    ``restore`` constructs the store first and verifies it second, so a corrupt chain raises
-    with the store fully built and nobody holding a reference to close it. The raising frame is
-    kept alive by the exception's traceback, so the connection and its ``-wal``/``-shm`` live as
-    long as the caller keeps the exception — unbounded for an operator CLI that catches and
-    reports (review round-3 F2, the same leak class the store constructors close one frame down).
-
-    The corruption is made the way a real one would show: a row of the restored copy is rewritten
-    after the backup, so the chain digest no longer matches. The connection is then reached
-    through the traceback, which is the only reference a raising call leaves behind.
-    """
+    """A restore that refuses must not hand back an exception holding an OPEN connection."""
     store.append({"a": 1}, kind="TEST", record_class="TESTCLASS")
     manifest_path = tmp_path / "evidence-backup-gen1.manifest.json"
     manifest = backup(store, tmp_path, generation=1)
 
-    # Corrupt the BACKUP file, so the restored copy fails its own verification. The append-only
-    # trigger has to go first — which is the point: this is tampering with a file at rest, the
-    # thing the chain digest exists to detect, not a write through the store's own API.
     tamper = sqlite3.connect(manifest.backup_path, isolation_level=None)
     try:
         tamper.execute("DROP TRIGGER entries_no_update")

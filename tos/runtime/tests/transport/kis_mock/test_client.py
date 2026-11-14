@@ -69,12 +69,6 @@ def _config(**overrides: object) -> KisMockTransportConfig:
     return KisMockTransportConfig(**base)  # type: ignore[arg-type]
 
 
-# ---------------------------------------------------------------------------
-# build_client — the one sanctioned way to construct a client for real use (review F3):
-# always from a validated KisMockTransportConfig, never a caller-supplied URL.
-# ---------------------------------------------------------------------------
-
-
 def test_build_client_uses_the_configs_own_endpoint_and_timeout_and_plaintext_flag(
     server: FakeKisServer,
 ) -> None:
@@ -98,11 +92,6 @@ def test_build_client_rejects_http_when_the_config_forbids_it() -> None:
     )
     with pytest.raises(KisMockClientError, match="allow_plaintext_for_tests"):
         build_client(config)
-
-
-# ---------------------------------------------------------------------------
-# scheme guard
-# ---------------------------------------------------------------------------
 
 
 def test_https_scheme_is_accepted_without_the_test_flag() -> None:
@@ -129,11 +118,6 @@ def test_unsupported_scheme_refuses() -> None:
             request_timeout_s=1.0,
             allow_plaintext_for_tests=True,
         )
-
-
-# ---------------------------------------------------------------------------
-# issue_token
-# ---------------------------------------------------------------------------
 
 
 def test_issue_token_performs_exactly_one_request(server: FakeKisServer) -> None:
@@ -176,11 +160,6 @@ def test_issue_token_with_a_non_json_body_raises_client_error(
     client = _client(server)
     with pytest.raises(KisMockClientError, match="did not parse"):
         client.issue_token(b"k", b"s", path="/oauth2/tokenP")
-
-
-# ---------------------------------------------------------------------------
-# post_order
-# ---------------------------------------------------------------------------
 
 
 def test_post_order_performs_exactly_one_request(server: FakeKisServer) -> None:
@@ -287,11 +266,6 @@ def test_post_order_with_a_malformed_body_returns_json_none(
     assert response.json is None
 
 
-# ---------------------------------------------------------------------------
-# fault mapping
-# ---------------------------------------------------------------------------
-
-
 def test_a_socket_timeout_raises_the_typed_timeout_error(server: FakeKisServer) -> None:
     order_path = "/uapi/domestic-stock/v1/trading/order-cash"
     server.set_response(order_path, status=200, body={"rt_cd": "0"}, delay_s=0.5)
@@ -325,8 +299,6 @@ def test_a_connection_reset_raises_the_typed_connection_error(
 
 
 def test_a_connection_to_a_closed_port_raises_the_typed_connection_error() -> None:
-    # Bind, discover the free port, then close it before connecting — the port is very likely
-    # still refused right after close (no other process has had time to bind it).
     import socket
 
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -348,11 +320,6 @@ def test_a_connection_to_a_closed_port_raises_the_typed_connection_error() -> No
             app_secret=b"s",
             path="/x",
         )
-
-
-# ---------------------------------------------------------------------------
-# negative-grep — no retry/loop primitive anywhere in this module
-# ---------------------------------------------------------------------------
 
 
 def _retry_primitive_offenders(source: str) -> list[str]:
@@ -391,19 +358,15 @@ def test_the_client_source_has_no_retry_or_loop_primitive() -> None:
 
 
 def _code_only(source: str) -> str:
-    """Strip every string literal (docstrings included) from ``source`` via the AST — a
-    negative-grep must catch a real usage, not a docstring that merely *names* the forbidden
-    thing (this module's own module docstring says "no ``os.environ``")."""
+    """Strip every string literal (docstrings included) from ``source`` via the AST — a"""
     tree = ast.parse(source)
     spans: list[tuple[int, int]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             if node.end_lineno is None or node.lineno != node.end_lineno:
-                continue  # multi-line string — handled by line-range blanking below
+                continue
             spans.append((node.lineno, node.lineno))
     lines = source.splitlines(keepends=True)
-    # Blank out every line that is entirely inside a string constant's own span, plus any
-    # docstring (Expr-statement string) regardless of span, to keep this simple and conservative.
     for node in ast.walk(tree):
         if (
             isinstance(

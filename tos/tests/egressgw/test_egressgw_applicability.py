@@ -1,19 +1,4 @@
-"""§4.2 — the broker-applicability positive gate (design #34 MAJOR-2).
-
-The gate has to avoid **two** failures at once, which is what makes it the design's most
-delicate seal:
-
-* a **silent skip** of the six deferred safety-governance items would be a fail-open;
-* an **unconditional deny** would also block the synthetic path §2.1 says the slice runs.
-
-So the deferred mesh is required — and therefore UNKNOWN-denying — for anything broker-reaching,
-risk-relevant-live, or simply unresolved, and explicitly ``NOT_APPLICABLE`` only for a
-*positively established* synthetic non-broker send. The justification is "**no broker route was
-reached**", not "no live scope was armed": a real paper-account API call is non-live and still
-broker-resource-consuming, and these tests assert it is denied.
-
-Regime tag: authoring evidence only; closes no EV (design #34 §1.1).
-"""
+"""§4.2 — the broker-applicability positive gate (design #34 MAJOR-2)."""
 
 from __future__ import annotations
 
@@ -53,11 +38,6 @@ def _deferred_outcomes(**context_overrides) -> set[VerifyOutcome]:
     return {v.outcome for v in verification.verdicts if v.item in DEFERRED_ITEMS}
 
 
-# ---------------------------------------------------------------------------
-# the positive path
-# ---------------------------------------------------------------------------
-
-
 def test_the_synthetic_baseline_is_positively_established_as_non_broker() -> None:
     """(§4.2 (iii)) Declaration + inventory corroboration + disjointness + environment."""
     assert _applicability() is BrokerApplicability.NON_BROKER_SYNTHETIC
@@ -69,27 +49,13 @@ def test_the_synthetic_baseline_is_positively_established_as_non_broker() -> Non
     [
         "safety_authority_epoch_current",
         "live_scope_valid",
-        "safety_profile_current",
-        "deviation_clear",
-        "incident_clear",
-        "monitoring_clear",
     ],
 )
 def test_an_explicit_false_deferred_flag_is_still_not_applicable_under_synthetic(
     field: str,
 ) -> None:
-    """(§2 decision 2 ordering — independent review round #1 LOW-6) The NON_BROKER_SYNTHETIC
-    branch runs unconditionally before the item->field table lookup: even an explicit ``False``
-    on one of the six deferred fields is still NOT_APPLICABLE under a positively established
-    synthetic send, never DENIED. Every existing synthetic-baseline test leaves the six fields
-    ``None``, which would also read as NOT_APPLICABLE if the branch order were reversed — this
-    is the one case (an explicit, non-None value) a reordering could not hide behind."""
+    """(§2 decision 2 ordering — independent review round #1 LOW-6) The NON_BROKER_SYNTHETIC"""
     assert _deferred_outcomes(**{field: False}) == {VerifyOutcome.NOT_APPLICABLE}
-
-
-# ---------------------------------------------------------------------------
-# a declaration alone never establishes it (the 자기신고 refusal)
-# ---------------------------------------------------------------------------
 
 
 def test_a_self_declaration_without_inventory_corroboration_is_unresolved() -> None:
@@ -172,11 +138,6 @@ def test_an_empty_inventory_proves_no_disjointness() -> None:
     assert _applicability(credential_route_inventory=()) is BrokerApplicability.UNKNOWN
 
 
-# ---------------------------------------------------------------------------
-# negative polarity: only an explicit False establishes anything
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "field",
     ["reaches_broker", "credential_bearing", "route_bearing", "risk_relevant_live"],
@@ -218,11 +179,6 @@ def test_an_anonymous_transport_principal_is_unresolved() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# environment binding (§4.7)
-# ---------------------------------------------------------------------------
-
-
 def test_a_scope_outside_the_injected_non_live_test_token_is_unresolved() -> None:
     """(§4.7) The synthetic path binds to the injected non-live-test scope, positively."""
     assert _applicability(scope_environment="live") is BrokerApplicability.UNKNOWN
@@ -247,19 +203,8 @@ def test_an_uninjected_environment_token_is_unresolved() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# the honest consequence: a real paper API call would be denied here
-# ---------------------------------------------------------------------------
-
-
 def test_a_real_paper_broker_call_is_denied_even_though_it_is_non_live() -> None:
-    """(§2.2 MAJOR-1 / §4.7) The axis is broker-reached / synthetic, not live / non-live.
-
-    This is the design's load-bearing correction in mechanical form: a transport that reaches a
-    real broker's paper endpoint is ``environment: non-live-test`` **and** broker-resource-
-    consuming, so RFC-002 §10.8:741 triggers the whole verify list for it and the not-landed
-    safety-governance mesh makes the required facts unverifiable ⇒ §10.8:761 rejection.
-    """
+    """(§2.2 MAJOR-1 / §4.7) The axis is broker-reached / synthetic, not live / non-live."""
     real_paper = synthetic_nature(
         reaches_broker=True, credential_bearing=True, route_bearing=True
     )
@@ -272,7 +217,7 @@ def test_a_real_paper_broker_call_is_denied_even_though_it_is_non_live() -> None
     assert verification.applicability is BrokerApplicability.BROKER_RESOURCE_CONSUMING
     assert verification.admitted is not True
     assert verification.halt_reason is SendHaltReason.VERIFY_ITEM_UNKNOWN
-    assert verification.halt_item is SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH
+    assert verification.halt_item is SendVerifyItem.VALID_LIVE_SCOPE
     assert "unverifiable" in (verification.detail or "")
 
 
@@ -293,35 +238,17 @@ def test_a_broker_consuming_send_also_loses_the_brokercap_allowance_item() -> No
     assert "PROHIBITED" in (allowance.reason or "")
 
 
-# ---------------------------------------------------------------------------
-# kernel round #2 §2 decision 2 — the deferred-6 injection polarity table
-# ---------------------------------------------------------------------------
-
-#: item -> the SendBoundaryContext field it reads (mirrors mesh._DEFERRED_ITEM_FIELDS —
-#: transcribed independently here, not imported, so a drift between the two is caught).
 _DEFERRED_FIELD_BY_ITEM = {
-    SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH: "safety_authority_epoch_current",
     SendVerifyItem.VALID_LIVE_SCOPE: "live_scope_valid",
-    SendVerifyItem.HARD_SAFETY_ENVELOPE_VERSIONS: "safety_profile_current",
-    SendVerifyItem.SAFETY_DEVIATION: "deviation_clear",
-    SendVerifyItem.SAFETY_INCIDENT: "incident_clear",
-    SendVerifyItem.SAFETY_MONITORING: "monitoring_clear",
 }
 
-#: Hoisted out of the ``@pytest.mark.parametrize(...)`` call sites below: inlining
-#: ``sorted(DEFERRED_ITEMS, key=lambda i: i.value)`` directly in the decorator lets mypy's
-#: bidirectional inference for ``parametrize``'s dynamically-typed ``argvalues`` widen the
-#: lambda's parameter to ``object`` (verified: the same ``sorted()`` call type-checks cleanly
-#: assigned to an annotated name, but not inside the decorator expression) — an explicitly
-#: annotated module-level constant sidesteps that widening.
 _SORTED_DEFERRED_ITEMS: list[SendVerifyItem] = sorted(
     DEFERRED_ITEMS, key=lambda i: i.value
 )
 
 
 def _deferred_verdict_for(item: SendVerifyItem, **field_overrides) -> VerifyOutcome:
-    """The one named ``item``'s outcome under a BROKER_RESOURCE_CONSUMING send (so the deferred
-    mesh is required, never NOT_APPLICABLE) with the given field(s) overridden."""
+    """The one named ``item``'s outcome under a BROKER_RESOURCE_CONSUMING send (so the deferred"""
     attempt, context = happy_context(
         transport_nature=synthetic_nature(reaches_broker=True), **field_overrides
     )
@@ -340,25 +267,20 @@ def test_a_positively_supplied_deferred_flag_is_satisfied(item: SendVerifyItem) 
 def test_an_explicitly_denied_deferred_flag_is_denied_not_unknown(
     item: SendVerifyItem,
 ) -> None:
-    """(§2 decision 2 / §3 기각 대안) ``False`` -> DENIED — an explicit negative signal from the
-    owning runtime service is a denial, never folded into UNKNOWN."""
+    """(§2 decision 2 / §3 기각 대안) ``False`` -> DENIED — an explicit negative signal from the"""
     field = _DEFERRED_FIELD_BY_ITEM[item]
     assert _deferred_verdict_for(item, **{field: False}) is VerifyOutcome.DENIED
 
 
 @pytest.mark.parametrize("item", _SORTED_DEFERRED_ITEMS)
 def test_an_unsupplied_deferred_flag_is_unknown(item: SendVerifyItem) -> None:
-    """(§2 decision 2, unchanged wording) ``None`` -> UNKNOWN — the owning runtime has not
-    landed the fact yet."""
+    """(§2 decision 2, unchanged wording) ``None`` -> UNKNOWN — the owning runtime has not"""
     field = _DEFERRED_FIELD_BY_ITEM[item]
     assert _deferred_verdict_for(item, **{field: None}) is VerifyOutcome.UNKNOWN
 
 
 def test_deferred_item_verdict_rejects_an_item_outside_the_closed_six() -> None:
-    """(§2 decision 2 — mutation M6) An item outside the closed six-item table is a structural
-    error, never a silent UNKNOWN, whenever the send actually requires the mesh (a
-    NON_BROKER_SYNTHETIC send never reaches the table lookup at all — see the synthetic-baseline
-    test above)."""
+    """(§2 decision 2 — mutation M6) An item outside the closed six-item table is a structural"""
     from tos.egressgw import ArtifactIntegrityError
     from tos.egressgw.mesh import deferred_item_verdict
 
@@ -367,7 +289,7 @@ def test_deferred_item_verdict_rejects_an_item_outside_the_closed_six() -> None:
         ArtifactIntegrityError, match="deferred safety-governance mesh items"
     ):
         deferred_item_verdict(
-            SendVerifyItem.ORDER_CONSTRUCTION,  # item 13 — not one of the six
+            SendVerifyItem.ORDER_CONSTRUCTION,
             BrokerApplicability.BROKER_RESOURCE_CONSUMING,
             context,
         )

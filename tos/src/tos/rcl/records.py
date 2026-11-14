@@ -1,24 +1,4 @@
-"""RCL ledger-citizen records (ADR-002-002 §9/§12/§19/§28; ADR-002-012 §9/§17).
-
-Every record is a digest-bound :class:`~tos.rcl._base.IndependentIdArtifact` with an
-independent, service-assigned identity (``id != f(digest)``, §3.1) so an
-append-only Safety Commit Log can represent and detect a "duplicate identity with
-different content" conflict (ADR-012 §9 line 270; RCLP-INV-006). There is **no**
-update / delete / mutate method on any record — lifecycle change is expressed by
-appending a new committed command / transition (append-only, §4.2). ``covered`` is
-the Layer-1 digest preimage; identity outputs, ``status``, meta, and
-ledger-placement fields (``current_reservation_revision`` is owned by the
-transition, §2.6) are self-excluded (§3.3). ``_REQUIRED_COVERED`` lists **structural
-identity / scope / version / epoch** fields only — numeric bounds are excluded so a
-reservation is ISSUED-reachable under Phase-1 null bounds (§2.2); a missing
-magnitude fails closed at the consuming predicate instead (§5.3).
-
-Spec terms = code terms (boundary design #1 §2.4).
-
-Pure module: ``pydantic`` + stdlib (``decimal``) + ``tos.canonical`` (the promoted
-``CanonicalDecimal``, design #9 §0.4c) + ``tos.rcl`` only; no ``shared.*``, no
-``tos.evidence`` / ``tos.capsule`` (RCL design §0.3).
-"""
+"""RCL ledger-citizen records (ADR-002-002 §9/§12/§19/§28; ADR-002-012 §9/§17)."""
 
 from __future__ import annotations
 
@@ -33,15 +13,7 @@ from tos.rcl.vocabulary import CapacityState, CommandType
 
 
 class ReservationRecord(IndependentIdArtifact):
-    """Reservation / Commitment Record (ADR-002-002 §9 line 473-503).
-
-    ``reservation_id`` is immutable, globally unique, and never reused after
-    terminal release (§9 line 475/502) — it is independent of the digest (§3.1).
-    The inherited ``canonical_digest`` is this record's canonical record digest.
-    ``current_reservation_revision`` is self-excluded from the preimage (it is set by
-    the owning transition at ledger placement, §2.6); ``creation_revision`` (part of
-    "ledger epoch and creation revision", §9 line 492) is covered.
-    """
+    """Reservation / Commitment Record (ADR-002-002 §9 line 473-503)."""
 
     _ID_FIELD: ClassVar[str] = "reservation_id"
     _REQUIRED_COVERED: ClassVar[tuple[str, ...]] = (
@@ -84,10 +56,8 @@ class ReservationRecord(IndependentIdArtifact):
         }
     )
 
-    # ---- Layer-0 identity (independent; excluded from the digest, §3.1) --------
     reservation_id: str | None = None
 
-    # ---- Layer-1 covered content (ADR-002-002 §9 line 479-500) ----
     parent_intent_id: str | None = None
     account_and_portfolio_scope: str | None = None
     instrument_and_underlying_scope: str | None = None
@@ -112,22 +82,11 @@ class ReservationRecord(IndependentIdArtifact):
     audit_causation_identity: str | None = None
     audit_actor_identity: str | None = None
 
-    # ---- ledger-placement (self-excluded from the digest, §2.6/§3.3) ----
     current_reservation_revision: int | None = None
 
 
 class LedgerCommandRecord(IndependentIdArtifact):
-    """Ledger Command Record (ADR-002-012 §9 line 253-277; ADR-002-002 §27).
-
-    ``command_identity`` is independent of the ``canonical_digest`` (the command's
-    canonical command digest) so a same-identity / different-content command is a
-    detectable Critical conflict (§9 line 270). ``fence`` carries the currentness
-    coordinates (§9 line 259-260). ``proposed_adverse_increment`` is the Capacity
-    Vector a ``CommitReservation`` would commit; ``producer_local_counter`` /
-    ``scheduler_priority`` are producer-local metadata that create **no** headroom
-    (§11.2 step 10 line 594) — they are covered (part of the command bytes) but the
-    reducer never reads them for capacity.
-    """
+    """Ledger Command Record (ADR-002-012 §9 line 253-277; ADR-002-002 §27)."""
 
     _ID_FIELD: ClassVar[str] = "command_identity"
     _REQUIRED_COVERED: ClassVar[tuple[str, ...]] = (
@@ -189,13 +148,7 @@ class LedgerCommandRecord(IndependentIdArtifact):
 
 
 class RclTransitionRecord(IndependentIdArtifact):
-    """RCL Transition Record (ADR-002-002 §28 line 1216-1229; ADR-012 §19 line 489).
-
-    An element of the append-only transition sequence. Its ``new_revision`` is the
-    ``new_authoritative_revision`` that sets the reservation's current revision
-    (§2.6). Emission of this record to the downstream Evidence Store is design #4's
-    concern — RCL leaves only a scalar reference.
-    """
+    """RCL Transition Record (ADR-002-002 §28 line 1216-1229; ADR-012 §19 line 489)."""
 
     _ID_FIELD: ClassVar[str] = "transition_id"
     _REQUIRED_COVERED: ClassVar[tuple[str, ...]] = (
@@ -247,16 +200,7 @@ class RclTransitionRecord(IndependentIdArtifact):
 
 
 class TransmissionCapability(IndependentIdArtifact):
-    """Transmission Capability — a non-mutating single-use token (ADR-002-002 §12).
-
-    Holding / issuing a capability mutates no capacity (``capacity != authority``,
-    §4.1); only a committed ``ClaimCapabilityAndMarkSendStarted`` consumes its
-    ``nonce`` exactly once (§6.4; ADR-012 §12). Bound to one reservation + attempt,
-    account / instrument / side / max-qty, ledger epoch, live authorization or
-    protective lease, and Hard / Runtime versions (§12 line 619-625); §6.4 adds the
-    committed ``bound_reservation_revision``, the exact ``worst_case_effect``, and the
-    generation ``fence``. ``authority_effect`` is all-false.
-    """
+    """Transmission Capability — a non-mutating single-use token (ADR-002-002 §12)."""
 
     _ID_FIELD: ClassVar[str] = "capability_id"
     _REQUIRED_COVERED: ClassVar[tuple[str, ...]] = (
@@ -313,11 +257,7 @@ class TransmissionCapability(IndependentIdArtifact):
 
 
 class ProtectivePool(IndependentIdArtifact):
-    """Parent Protective Pool (ADR-002-002 §19.1 line 862-874).
-
-    Removed from normal available headroom, represented as a Capacity Vector, not
-    borrowable by normal strategy, and visible in aggregate accounting (INV-009).
-    """
+    """Parent Protective Pool (ADR-002-002 §19.1 line 862-874)."""
 
     _ID_FIELD: ClassVar[str] = "pool_id"
     _REQUIRED_COVERED: ClassVar[tuple[str, ...]] = (
@@ -346,13 +286,7 @@ class ProtectivePool(IndependentIdArtifact):
 
 
 class ProtectiveLease(IndependentIdArtifact):
-    """Protective Lease (ADR-002-002 §19.2 line 877-891).
-
-    Bound to one parent pool, owner identity, lease owner epoch, monotonic
-    authorization lifetime, Safety Authority epoch, and Hard / Runtime versions. A
-    consumed lease never causes capacity release merely because its authorization
-    lifetime ended (§12 line 633; §19.4).
-    """
+    """Protective Lease (ADR-002-002 §19.2 line 877-891)."""
 
     _ID_FIELD: ClassVar[str] = "lease_id"
     _REQUIRED_COVERED: ClassVar[tuple[str, ...]] = (
@@ -394,15 +328,7 @@ class ProtectiveLease(IndependentIdArtifact):
 
 
 class SnapshotCompleteness(FrozenModel):
-    """Completeness elements an authoritative snapshot must bind (ADR-012 §17.1/§21).
-
-    Each element is ``None`` when **missing** — the admissibility predicate rejects a
-    snapshot missing any of them (RCLP-INV-009; §21 line 528 "Snapshot missing
-    idempotency or capability-use state => reject snapshot for authoritative
-    restore"). ``_ELEMENTS`` names the required set so
-    :func:`tos.rcl.predicates.snapshot_admissible_for_restore` and any construction
-    check consume one list.
-    """
+    """Completeness elements an authoritative snapshot must bind (ADR-012 §17.1/§21)."""
 
     _ELEMENTS: ClassVar[tuple[str, ...]] = (
         "non_terminal_reservations",
@@ -426,14 +352,7 @@ class SnapshotCompleteness(FrozenModel):
 
 
 class AuthoritativeSnapshot(IndependentIdArtifact):
-    """Authoritative Snapshot (ADR-012 §17.1 line 423-433).
-
-    Binds cluster / domain / generation identity, last included revision, the
-    :class:`SnapshotCompleteness` set, profile + Hard Envelope generations, and an
-    integrity commitment. ``authority_effect`` is all-false — a restored older
-    snapshot never becomes authoritative merely because it is the newest backup (§17.4
-    line 455); re-arm is out of scope (§5.6).
-    """
+    """Authoritative Snapshot (ADR-012 §17.1 line 423-433)."""
 
     _ID_FIELD: ClassVar[str] = "snapshot_id"
     _REQUIRED_COVERED: ClassVar[tuple[str, ...]] = (

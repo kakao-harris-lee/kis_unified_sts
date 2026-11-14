@@ -1,73 +1,4 @@
-"""tos_runtime.venue.band_source — the declared broker price-band source (CP-3 band 원천
-웨이브, ``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4.1/§4.2/§4.5).
-
-**What this module is.** One GET against the KIS 모의투자 quotations TR the active venue
-policy's own ``_runtime.band_source`` block declares (``FHMIF10000000``'s ``futs_mxpr``/
-``futs_llam``), validated into a :class:`BandObservation` the venue service folds into the
-EFFECTIVE shape constraints' ``price_min``/``price_max``. Every failure — transport, custody,
-broker rejection, scaling, ordering, tick grid, trading-date stamp — returns ``None`` plus an
-evidence row, never a partially trusted band (plan §4.6: "모든 실패는 band None → 커널 UNKNOWN
-→ 송신 0", so the worst case of this wave is exactly today's behaviour).
-
-**The band kinds are one per module.** This one owns ``kis_quote_get``;
-:mod:`tos_runtime.venue.band_journal` owns ``producer_journal``, the kind the CP-3 tenant trees
-actually enable (``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §3.3). The two
-share :class:`BandObservation`, :data:`BandReader`, :data:`VENUE_BAND_OBSERVED_KIND` and
-:func:`band_source_digest`, which live here; nothing here imports the journal module.
-
-**Reused, never re-built (plan §4.2).** The host seal and the token lifecycle are the
-``kis_quote`` transport's own: this module takes an already-loaded, already-host-sealed
-:class:`~tos_runtime.transport.kis_quote.config.KisQuoteTransportConfig` for the REST base /
-quote path / market-div code / plaintext flag, builds its client through
-:func:`build_band_client` (the same ``KisMockHttpClient`` the quote intake uses), and
-authenticates through the boot's one
-:class:`~tos_runtime.transport.kis_mock.credential_session.KisCredentialSession` (C-2 decision
-(C) — one app key, one token lifecycle). It opens no second HTTP client class, provisions no
-second credential path, and reads no ``os.environ``.
-
-**The one thing that is NOT the transport's.** ``request_timeout_s`` comes from
-``band_source.timeout_ms``, not from the transport document's own ``request_timeout_s``: the
-band GET is a boot-path call whose stall budget is a venue-policy decision (plan §4.1's
-``timeout_ms`` paragraph — a named-TBD the enabling deployment's operator adopts), while the
-intake's timeout governs a per-tick poll. :func:`build_band_client` is the only place that
-conversion happens.
-
-**The trading date is a LOCAL STAMP, not a response field (plan §4.2 ⚠).** The response body
-carries no business date (``docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/`` —
-``futs_sdpr == futs_prdy_clpr``, so even the basis cannot distinguish the day). The
-``trading_date`` on an observation is this runtime's own
-:meth:`~tos_runtime.calendar.owner.SessionFactsOwner.trading_date_now` reading taken at the GET
-instant. It therefore catches "a band held in memory across a trading date" (the §4.4a bond the
-venue service applies) and does NOT catch "a stale RESPONSE" — plan §2's unmeasured premise,
-registered there as residual risk, not closed here. A read whose stamp is ``None`` (the calendar
-cannot say which trading date this instant belongs to) is REFUSED outright rather than stamped
-with a guess: a band that cannot be bound to a date cannot be invalidated when the date turns.
-
-**``symmetric_about_basis`` names exactly what it measures — it does NOT identify stage 1.**
-시행세칙 제56조의2's stage-1 band is ``기준가격 × (1 ± r)``, which is symmetric about the basis;
-so is stage 2 and so is stage 3, because every stage uses the same ± form with a larger ``r``.
-Symmetry is therefore a NECESSARY condition of the stage-1 formula and not a sufficient one, and
-calling the field ``stage_hint`` (as this module first did, and as plan §4.5 originally
-worded it — corrected there 2026-10-09 with an implementation-time note)
-claimed a discrimination it cannot make. The field records the measurement and nothing more: the
-observed band is symmetric about the observed basis (the 2026-10-08 모의 measurement satisfies
-it — basis 1073.32, band 987.46/1159.18, both legs 85.86 wide). **The stage-1 judgement is made
-OFFLINE**, from the raw ``basis``/``price_min``/``price_max`` the same evidence row carries, once
-an approved source for ``r`` exists (plan §9 4); this module has none and inventing one would be
-the hardcoded-threshold defect this repo's CLAUDE.md forbids. A ``False`` (or ``None``, when the
-basis did not scale exactly) value NEVER drops a band: plan §4.4a's residual-risk paragraph says
-the response-side check waits until the first enabled session's rows are measured.
-
-**Source continuity (ADR-002-019 §9: 재시작·재접속·자격 교체는 새 연속성).** The continuity id is
-``<boot_continuity_seed>:<token_epoch>``. The seed is minted once per reader construction (so a
-restart is a new continuity by construction), and ``token_epoch`` advances whenever the bearer
-token this reader is handed differs from the previous read's — a reissue, which is exactly the
-"자격 교체" case. The token itself is never stored, compared, or recorded: only a SHA-256 digest
-of it is held in memory for that comparison, and that digest never reaches an evidence row.
-
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos_runtime.*`` only —
-no ``shared.*``, no ``os.environ``.
-"""
+"""tos_runtime.venue.band_source — the declared broker price-band source (CP-3 band 원천"""
 
 from __future__ import annotations
 
@@ -115,55 +46,20 @@ __all__ = [
     "validate_band_values",
 ]
 
-#: Evidence kind string (runtime vocabulary — never a kernel ``EvidenceKind`` member, the same
-#: idiom :mod:`tos_runtime.venue.service` already uses for ``VENUE_POLICY_BOUND`` &c).
 VENUE_BAND_OBSERVED_KIND = "VENUE_BAND_OBSERVED"
 
-#: The one ``band_source.kind`` this package can actually read (plan §4.1's YAML block). A
-#: document naming anything else is refused by the loader rather than silently ignored — an
-#: unreadable source declaration would otherwise boot as "band_source declared, band always
-#: None", indistinguishable from a transport outage.
 BAND_SOURCE_KIND_KIS_QUOTE_GET = "kis_quote_get"
 
-#: The one implemented ``band_source.bound`` (plan §4.4a — the venue service's trading-date
-#: bond is the only invalidation this wave implements).
 BAND_SOURCE_BOUND_TRADING_DATE_KST = "trading_date_kst"
 
-#: The one admitted ``band_source.failure`` (plan §4.1/§4.6 — every failure is ``band None`` and
-#: therefore kernel ``UNKNOWN``; no other failure response exists to declare).
 BAND_SOURCE_FAILURE_UNKNOWN = "unknown"
 
-#: The two admitted ``band_source.read_on`` tokens (plan §4.3 "읽는 시점"). A document naming a
-#: third token would declare a read instant nothing implements.
 BAND_SOURCE_READ_ON_TOKENS: frozenset[str] = frozenset({"boot", "phase_change"})
 
 
 @dataclass(frozen=True)
 class BandSourceConfig:
-    """What EVERY ``_runtime.band_source`` kind declares, parsed and fail-closed-validated by
-    :func:`~tos_runtime.venue.config.load_venue_constraint_policy` (plan §4.1).
-
-    **Why a base class rather than one flat record with optional leaves** (CP-3 band 원천 경로
-    변경 plan ``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §3.3: "로더는 kind
-    마다 필수 키를 따로 요구한다"). The 2026-10-15 enabling attempt measured what a flat record
-    costs: ``kis_quote.yaml`` carried four values (``tr_id``/``field_mapping``/``source_id``/
-    ``request_timeout_s``) that NOTHING on the band path read, and a reader could not tell a
-    declared-but-unread value from a value it had forgotten to use. A per-kind record makes
-    "this key is required" and "this key is read" the same statement, checked by the type.
-
-    Attributes:
-        kind: :data:`BAND_SOURCE_KIND_KIS_QUOTE_GET` or
-            :data:`~tos_runtime.venue.band_journal.BAND_SOURCE_KIND_PRODUCER_JOURNAL`.
-        instrument: The contract this band is for — the SINGLE source of the requested contract
-            (plan §4.1 "GET 의 종목은 한 출처에서만 온다"). The loader binds it to the policy's
-            own ``scope.instruments`` sole element (§4.4b).
-        price_scale: The exact integer multiplier from the broker's quoted index points to the
-            kernel's opaque scaled ints. Must equal ``_runtime.price_scale`` (plan §4.1's price
-            scale paragraph — the loader refuses a mismatch).
-        bound: :data:`BAND_SOURCE_BOUND_TRADING_DATE_KST`.
-        read_on: A subset of :data:`BAND_SOURCE_READ_ON_TOKENS`.
-        failure: :data:`BAND_SOURCE_FAILURE_UNKNOWN`.
-    """
+    """What EVERY ``_runtime.band_source`` kind declares, parsed and fail-closed-validated by"""
 
     kind: str
     instrument: str
@@ -175,23 +71,7 @@ class BandSourceConfig:
 
 @dataclass(frozen=True)
 class KisQuoteGetBandSource(BandSourceConfig):
-    """``kind: "kis_quote_get"`` — the runtime does the GET itself (plan §4.1's YAML block).
-
-    ⚠ **No shipped tree declares this kind** (2026-10-15 plan §1): the band reader factory
-    reads the host seal off the ACTIVE order scope's INSTANCE binding, and all three trees'
-    active scope is ``SYNTHETIC_FUTURES_ORDER``, which has none. The kind is kept rather than
-    deleted because a MOCK quotation scope separated from the order scope would make it usable
-    again (2026-10-15 plan §L L2).
-
-    Attributes:
-        tr_id: The KIS quotations TR id to GET (``FHMIF10000000``).
-        upper_field: The response ``output`` key carrying the upper limit (``futs_mxpr``).
-        lower_field: The response ``output`` key carrying the lower limit (``futs_llam``).
-        basis_field: The response ``output`` key carrying the reference price (``futs_sdpr``) —
-            recorded as evidence and used for
-            :attr:`BandObservation.symmetric_about_basis` only, NEVER for admissibility.
-        timeout_ms: The band GET's own per-request stall budget (module docstring).
-    """
+    """``kind: "kis_quote_get"`` — the runtime does the GET itself (plan §4.1's YAML block)."""
 
     tr_id: str
     upper_field: str
@@ -202,37 +82,7 @@ class KisQuoteGetBandSource(BandSourceConfig):
 
 @dataclass(frozen=True)
 class BandObservation:
-    """One validated band reading (plan §4.2).
-
-    Attributes:
-        instrument: The contract this band was requested for (``BandSourceConfig.instrument``
-            — the request's own ``FID_INPUT_ISCD``, never a response echo: the body carries no
-            contract identifier, which is why the contract bond is a LOADER rule, plan §4.4b).
-        price_min: The lower limit, scaled to the kernel's opaque int by an EXACT
-            :class:`~decimal.Decimal` multiply.
-        price_max: The upper limit, same scaling.
-        trading_date: A ``YYYYMMDD`` KST stamp, never a broker response field and never
-            ``None`` on a successful observation. WHOSE stamp depends on the kind: this
-            module's reader takes the runtime's own at the GET instant (module docstring);
-            :mod:`tos_runtime.venue.band_journal` carries the LINE's stamp through unchanged,
-            because re-stamping it would make the service's trading-date bond unable to fire
-            on a stale line (2026-10-15 plan §3.3, review MEDIUM-1).
-        raw_payload_digest: SHA-256 over the response body's RAW bytes, exactly as received —
-            a direct binding to what the broker sent (plan §6 (A): this is the reason the GET
-            lives in the runtime at all). Deliberately not a digest of the PARSED ``output``
-            block: any re-serialization is a digest of this runtime's rendering, not of the
-            broker's bytes, and an earlier cut that stringified the parsed values made
-            ``"1159.18"`` and ``1159.18`` collide. On the ``producer_journal`` kind the digest
-            is the PRODUCER's — of the bytes IT saw — and the evidence row says so with
-            ``raw_payload_digest_source``.
-        source_continuity_id: Module docstring's "source continuity".
-        as_of_ms: The monotonic reading taken immediately before the request went out.
-        basis: The scaled reference price, or ``None`` when the basis field was absent or did
-            not scale exactly (evidence only — never admissibility).
-        symmetric_about_basis: Module docstring's own section — ``None`` when :attr:`basis`
-            is ``None`` (nothing to be symmetric about), never a judgement about which
-            price-limit stage is in force.
-    """
+    """One validated band reading (plan §4.2)."""
 
     instrument: str
     price_min: int
@@ -246,10 +96,7 @@ class BandObservation:
 
     @property
     def record_digest(self) -> str:
-        """The canonical digest of this observation record — what the venue service binds into
-        the snapshot's ``critical_input_snapshot_digest`` STAND-IN slot (plan §4.3 M3: the
-        kernel field is capsule-owned; what goes in is this runtime record's digest, and both
-        the policy header and every evidence row say so)."""
+        """The canonical digest of this observation record — what the venue service binds into"""
         return _canonical_digest(
             {
                 "instrument": self.instrument,
@@ -264,9 +111,6 @@ class BandObservation:
         )
 
 
-#: What :class:`~tos_runtime.venue.service.VenueConstraintService` is injected with — the
-#: narrowest possible surface over :meth:`KisBandSourceReader.read` (one zero-arg call), so a
-#: test double is a plain lambda and the service never depends on the transport package.
 BandReader = Callable[[], BandObservation | None]
 
 
@@ -289,9 +133,7 @@ class BandRefusal:
 
 
 def _rung_tick(price: int, table: tuple[PriceBandTick, ...]) -> int | None:
-    """The tick of the row whose inclusive band covers ``price`` — the same absolute lookup
-    as the kernel's ``tos.venue.predicates._resolved_tick`` (private there, so restated).
-    """
+    """The tick of the row whose inclusive band covers ``price`` — the same absolute lookup"""
     for row in table:
         if row.band_min <= price <= row.band_max:
             return row.tick
@@ -309,44 +151,7 @@ def validate_band_values(
     upper_label: str,
     price_band_ticks: tuple[PriceBandTick, ...] | None = None,
 ) -> BandBounds | BandRefusal:
-    """Plan §4.2's validation set, in order — the ONE place it exists.
-
-    Both band kinds run this identical set over values that arrived as strings: the
-    ``kis_quote_get`` reader over a broker ``output`` block, the
-    :mod:`tos_runtime.venue.band_journal` reader over a producer line's three copied strings.
-    Keeping it in one function is 2026-10-15 plan §6's rejected alternative read forwards —
-    "생산자가 척도 변환·검증까지 → 검증이 두 곳에 생긴다" — and the same reasoning rejects a
-    second copy inside the runtime.
-
-    The clauses, each with the concrete input that fires it:
-
-    * ``non_integral_scale`` — a value that is absent, unparseable, non-finite, out of the
-      decimal context's exponent range (``"1e999999999"``), or whose ``× price_scale`` is not
-      a whole number. Never rounded (plan §4.2: "반올림 금지").
-    * ``band_not_ordered`` — ``0 < min < max`` violated.
-    * ``tick_size_absent`` — the active policy sources no tick; an ungridded band cannot be
-      validated and the kernel would answer ``UNKNOWN`` on the tick predicate anyway.
-    * ``off_tick_grid`` — a bound off the policy's grid. A tree still carrying ``tick_size: 5``
-      is caught HERE, which is why the tick correction is a precondition of enabling.
-
-    Args:
-        lower_raw: The lower limit, as it arrived (a string on both paths).
-        upper_raw: The upper limit, as it arrived.
-        basis_raw: The reference price — EVIDENCE only, so a basis that does not scale exactly
-            yields ``basis=None`` rather than a refusal.
-        price_scale: The exact integer multiplier to the kernel's opaque ints.
-        tick_size: The ACTIVE policy's ``shape_constraints.tick_size``.
-        price_band_ticks: The ACTIVE policy's per-price-band tick table, or ``None``. When
-            declared, each bound must sit on the tick of ITS OWN rung — a KRX stock band
-            (기준가 ±30 %) can straddle a rung, e.g. 189,000원/351,000원 around 270,000원 —
-            and a bound no row covers is ``tick_unresolved`` (the kernel's own
-            ``_resolved_tick`` rule: a declared table is never widened, never falls back to
-            the flat tick).
-        lower_label: What to call ``lower_raw`` in a refusal detail (the response key, or the
-            band line's key) — the reader's own vocabulary, so a row names a leaf its operator
-            can find.
-        upper_label: Same, for ``upper_raw``.
-    """
+    """Plan §4.2's validation set, in order — the ONE place it exists."""
     lower = _scaled(lower_raw, price_scale)
     upper = _scaled(upper_raw, price_scale)
     if lower is None or upper is None:
@@ -387,30 +192,14 @@ def validate_band_values(
 
 
 def _canonical_digest(payload: Mapping[str, Any]) -> str:
-    """SHA-256 over a key-sorted, separator-pinned JSON serialization — the same
-    order-independence discipline :meth:`~tos_runtime.transport.kis_quote.adapter
-    .KisQuoteObservationIntake._content_digest` already applies, so declaration order never
-    changes a digest."""
+    """SHA-256 over a key-sorted, separator-pinned JSON serialization — the same"""
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
 
 
 def band_source_digest(config: BandSourceConfig) -> str:
-    """The canonical digest of a declared ``band_source`` block — recorded on
-    ``VENUE_POLICY_BOUND`` (plan §4.5 / §6 (B)).
-
-    Activation compares the kernel ``canonical_digest``, which covers ``_model_view`` only, so a
-    ``_runtime`` block is outside it. The operator's 2026-10-08 disposition on §6 (B) was
-    "증거 digest + GOV-001 후보 등재만" — this function is the evidence half.
-
-    Folded from the record's OWN dataclass fields rather than a hand-written key list, so a
-    per-kind subclass (:class:`KisQuoteGetBandSource`,
-    :class:`~tos_runtime.venue.band_journal.ProducerJournalBandSource`) cannot grow a leaf the
-    evidence digest silently stops covering. ``read_on`` is sorted for declaration-order
-    independence; every other tuple is listed in its declared order, because for
-    ``approved_source_prefixes`` the order IS the document's.
-    """
+    """The canonical digest of a declared ``band_source`` block — recorded on"""
     payload: dict[str, Any] = {}
     for field in fields(config):
         value = getattr(config, field.name)
@@ -425,16 +214,7 @@ def band_source_digest(config: BandSourceConfig) -> str:
 def build_band_client(
     transport_config: KisQuoteTransportConfig, band_source: KisQuoteGetBandSource
 ) -> KisMockHttpClient:
-    """The one sanctioned way to build the band GET's client (mirrors
-    :func:`~tos_runtime.transport.kis_quote.adapter.build_quote_client`'s own "one sanctioned
-    construction path" discipline).
-
-    The host and the plaintext escape hatch come from ``transport_config`` — the document whose
-    loader already proved the REST base byte-matches the INSTANCE MOCK_VTS ``rest_base`` and is
-    not the REAL one. This function never takes a URL, so a band reader cannot be pointed
-    anywhere that seal did not already validate. The timeout is the ONE value that comes from
-    the policy instead (module docstring).
-    """
+    """The one sanctioned way to build the band GET's client (mirrors"""
     return KisMockHttpClient(
         rest_base=transport_config.endpoint_rest_base,
         request_timeout_s=band_source.timeout_ms / 1000,
@@ -443,8 +223,7 @@ def build_band_client(
 
 
 class KisBandSourceReader:
-    """Reads the declared band source once per call, validates it completely, and records one
-    ``VENUE_BAND_OBSERVED`` row either way (module docstring; plan §4.2/§4.5)."""
+    """Reads the declared band source once per call, validates it completely, and records one"""
 
     def __init__(
         self,
@@ -459,25 +238,7 @@ class KisBandSourceReader:
         tick_size: int | None,
         price_band_ticks: tuple[PriceBandTick, ...] | None = None,
     ) -> None:
-        """Wire this reader's dependencies (all injected — no ambient state).
-
-        Args:
-            band_source: The policy's own declared source block.
-            transport_config: The host-sealed ``kis_quote`` transport document (module
-                docstring — host/path/market-div/plaintext only; its own timeout is NOT used).
-            client: Build it with :func:`build_band_client` for real use.
-            credential_session: The boot's one ``kis_mock.*`` session (C-2 decision (C)).
-            monotonic: The process's monotonic source — :attr:`BandObservation.as_of_ms`.
-            evidence_sink: Records ``VENUE_BAND_OBSERVED``.
-            trading_date_reader: The calendar owner's own KST trading-date reading (module
-                docstring's "LOCAL STAMP" note).
-            tick_size: The ACTIVE policy's ``shape_constraints.tick_size`` — the grid both
-                bounds must sit on (plan §4.2: a tree still carrying ``tick_size: 5`` is caught
-                HERE, which is why the §3 tick correction is a precondition of enabling).
-                ``None`` (a policy with no tick source) refuses every read: an ungridded band
-                cannot be validated, and the kernel would answer ``UNKNOWN`` on the tick check
-                anyway.
-        """
+        """Wire this reader's dependencies (all injected — no ambient state)."""
         self._band_source = band_source
         self._transport_config = transport_config
         self._client = client
@@ -487,34 +248,18 @@ class KisBandSourceReader:
         self._trading_date_reader = trading_date_reader
         self._tick_size = tick_size
         self._price_band_ticks = price_band_ticks
-        #: Minted once per reader — a restart is a new continuity by construction (module
-        #: docstring). ``secrets.token_hex`` rather than a counter: two processes booting in the
-        #: same millisecond must not claim the same continuity.
         self._boot_continuity_seed = secrets.token_hex(16)
         self._token_epoch = 0
-        #: SHA-256 of the bearer token the previous read used — never the token itself, never
-        #: recorded (module docstring).
         self._token_digest: str | None = None
-        #: The previous SUCCESSFUL observation, for the same-trading-date narrowing flag
-        #: (plan §4.5 / §8 8).
         self._last_observation: BandObservation | None = None
 
     def read(self) -> BandObservation | None:
-        """One GET + full validation. ``None`` on ANY failure, always with one
-        ``VENUE_BAND_OBSERVED`` row naming the reason (plan §4.2's validation set)."""
+        """One GET + full validation. ``None`` on ANY failure, always with one"""
         as_of_ms = self._monotonic.now_ms()
         trading_date = self._trading_date_reader()
         if trading_date is None:
             self._refuse("trading_date_unavailable")
             return None
-        # The token step has FOUR distinct failure modes, not one (independent review M1; the
-        # fourth is the 2026-10-15 plan §1 B2 custody leak, below):
-        # the held token is stale and the cooldown has not elapsed (`TokenStale`), the token
-        # endpoint answered with an unusable body (`TokenResponseError`), or the token request
-        # never completed (`KisMockClientError` — `KisTokenLifecycle._issue_token` calls the
-        # same HTTP client this module does). Letting the last two propagate would carry a
-        # transport fault out through `snapshot()`/`decide()` instead of into band `None`,
-        # which is the one outcome plan §4.6 promises.
         try:
             access_token = self._credential_session.ensure_token_string()
         except TokenStale as exc:
@@ -526,13 +271,9 @@ class KisBandSourceReader:
         except KisMockClientError as exc:
             self._refuse("token_transport_error", detail=str(exc))
             return None
-        # Issuing a token loads the SAME app key/secret out of custody
-        # (`KisTokenLifecycle._issue_token`), so the §1 B2 leak below has a twin on this step.
         except CustodyError as exc:
             self._refuse("token_custody_error", detail=str(exc))
             return None
-        # Issue #970: the app key's pacer refused the token POST's slot (wait budget) — nothing
-        # was sent; band None like every other failure here.
         except KisPacingRefused as exc:
             self._refuse("token_pacing_refused", detail=str(exc))
             return None
@@ -542,25 +283,15 @@ class KisBandSourceReader:
         except KisMockClientError as exc:
             self._refuse("transport_error", detail=str(exc))
             return None
-        # The app key/secret come out of custody INSIDE `_fetch` (the narrowest possible `with`
-        # block, wrapped around the one GET), and `custody.load()` raises
-        # `CustodyError` — a manifest that does not parse, a scope this deployment never
-        # provisioned (`CustodyScopeNotProvisioned`), a refused load. That exception was
-        # outside the set this method caught, so it escaped through `snapshot()`/`decide()`
-        # instead of folding to band `None`, contradicting band plan §4.6's "모든 실패는 band
-        # None → 커널 UNKNOWN → 송신 0" (2026-10-15 plan §1 B2 / §L L1 — measured on the
-        # tenant trees, whose `paper-custody` carries three scopes and neither
-        # `kis_mock.app_key` nor `kis_mock.app_secret`).
         except CustodyError as exc:
             self._refuse("custody_error", detail=str(exc))
             return None
-        # Issue #970: the GET's pacer slot was refused before `_fetch` loaded anything.
         except KisPacingRefused as exc:
             self._refuse("pacing_refused", detail=str(exc))
             return None
         output = self._parse_output(response)
         if output is None:
-            return None  # _parse_output already recorded its own refusal
+            return None
         return self._validate(
             output,
             raw_text=response.text,
@@ -569,12 +300,8 @@ class KisBandSourceReader:
             as_of_ms=as_of_ms,
         )
 
-    # -- request -------------------------------------------------------------
-
     def _fetch(self, access_token: str) -> RawResponse:
-        """(mirrors ``KisQuoteObservationIntake._fetch_quote``) The app key/secret are loaded
-        inside the narrowest possible ``with`` block, wrapped directly around the one GET.
-        """
+        """(mirrors ``KisQuoteObservationIntake._fetch_quote``) The app key/secret are loaded"""
         query = (
             f"FID_COND_MRKT_DIV_CODE={self._transport_config.market_div_code}"
             f"&FID_INPUT_ISCD={self._band_source.instrument}"
@@ -595,8 +322,6 @@ class KisBandSourceReader:
             self._token_epoch += 1
         self._token_digest = digest
         return f"{self._boot_continuity_seed}:{self._token_epoch}"
-
-    # -- validation ----------------------------------------------------------
 
     def _parse_output(self, response: RawResponse) -> dict[str, Any] | None:
         if response.json is None:
@@ -626,9 +351,7 @@ class KisBandSourceReader:
         continuity_id: str,
         as_of_ms: int,
     ) -> BandObservation | None:
-        """Plan §4.2's validation set, in order. A refusal here has already passed ``rt_cd``,
-        so the band exists and is merely unusable — each reason names which clause rejected it.
-        """
+        """Plan §4.2's validation set, in order. A refusal here has already passed ``rt_cd``,"""
         outcome = validate_band_values(
             lower_raw=output.get(self._band_source.lower_field),
             upper_raw=output.get(self._band_source.upper_field),
@@ -657,13 +380,8 @@ class KisBandSourceReader:
         self._last_observation = observation
         return observation
 
-    # -- evidence ------------------------------------------------------------
-
     def _narrowed_intraday(self, observation: BandObservation) -> bool:
-        """Plan §4.5 / §2's 단서: a band that NARROWS within one trading date contradicts the
-        monotonicity this wave's "boot-once is safe all day" argument rests on. It is recorded,
-        never acted on — the band is still used, because a narrower band is the conservative
-        direction; what matters is that the counter-observation leaves a row."""
+        """Plan §4.5 / §2's 단서: a band that NARROWS within one trading date contradicts the"""
         previous = self._last_observation
         if previous is None or previous.trading_date != observation.trading_date:
             return False
@@ -687,8 +405,6 @@ class KisBandSourceReader:
                 "band_digest": observation.record_digest,
                 "symmetric_about_basis": observation.symmetric_about_basis,
                 "narrowed_intraday": self._narrowed_intraday(observation),
-                # Plan §4.3 M3 / §4.5: the stand-in label travels with the row, in the same
-                # idiom `egress_coordinates.yaml::capsule_terminus_fields` uses.
                 "critical_input_snapshot_digest_role": "stand-in",
             },
         )
@@ -707,36 +423,18 @@ class KisBandSourceReader:
 
 
 def _scaled(raw: Any, scale: int) -> int | None:
-    """``raw × scale`` as an EXACT integer, or ``None``.
-
-    Never rounds (plan §4.2: "반올림 금지 — 커널 §12 'silent rounding' 원칙과 같은 이유"). A
-    value that is absent, unparseable as a decimal, out of the decimal context's exponent
-    range, or whose scaled form is not a whole number is ``None`` — the caller turns that into
-    a named refusal, never into a nearby integer and never into an exception.
-    """
+    """``raw × scale`` as an EXACT integer, or ``None``."""
     if raw is None or isinstance(raw, bool):
         return None
     try:
         parsed = Decimal(str(raw))
     except (InvalidOperation, ValueError, ArithmeticError):
         return None
-    # `Decimal` accepts "Infinity"/"-Infinity"/"NaN" (independent review M1): they survive the
-    # multiply and the integral comparison, and only blow up at `int()` with an OverflowError
-    # that would escape `read()` entirely. Refused here, as a named reason like any other
-    # unusable value.
     if not parsed.is_finite():
         return None
     try:
         value = parsed * scale
     except DecimalException:
-        # ⚠ The MULTIPLY, not the construction (PR #907 review MEDIUM-1). `"1e999999999"`
-        # builds a `Decimal` fine — the `try` above sees nothing — and `is_finite()` is
-        # `True`; it is only the `× scale` that pushes the exponent past the context's `Emax`
-        # and signals `decimal.Overflow`, one of the three signals the default context TRAPS.
-        # So it RAISED, out of `validate_band_values` and out of the band reader's `read()`
-        # entirely. Caught at the arithmetic that signals it rather than anywhere wider: the
-        # clause's claim is "this value does not scale to an exact integer", and which signal
-        # said so is not information the caller's refusal carries.
         return None
     if value != value.to_integral_value():
         return None

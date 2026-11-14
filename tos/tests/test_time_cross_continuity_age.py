@@ -1,10 +1,4 @@
-"""Cross-continuity snapshot age — §8 5-step receipt-anchor path (time design §3(4)).
-
-EV-L1 predicate substrate only; TIME-EV-010 remains NOT_IMPLEMENTED pending
-EV-L2/L3 (+Security) fault injection. The issuer monotonic value is never
-subtracted from a consumer clock; age is purely additive over injected bounds
-plus consumer-local elapsed (§8 220).
-"""
+"""Cross-continuity snapshot age — §8 5-step receipt-anchor path (time design §3(4))."""
 
 from __future__ import annotations
 
@@ -95,16 +89,10 @@ def test_unknown_age_or_max_is_inadmissible() -> None:
     assert snapshot_age_admissible(100, None) is False
 
 
-# ---- v1.2 MAJOR: a negative additive term must not shrink cross-host age ----
-
-
 @given(term=st.sampled_from(_TERMS), neg=st.integers(-(10**6), -1))
 def test_negative_additive_term_is_unknown(term: str, neg: int) -> None:
     """A negative additive term => None; it must NOT shrink the cross-host age bound."""
     assert _age(**{term: neg}) is None
-
-
-# ---- MEDIUM-2: anchor_valid composition wrapper closes the injected-bool seam ----
 
 
 def _continuity(**overrides: object) -> TimeContinuityIdentity:

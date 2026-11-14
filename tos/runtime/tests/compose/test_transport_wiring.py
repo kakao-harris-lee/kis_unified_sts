@@ -1,12 +1,4 @@
-"""``tos_runtime.compose._transport_wiring`` tests — TOS KIS MOCK transport plan T2 lane C
-(compose wiring, ``docs/plans/2026-09-10-tos-kis-mock-transport-plan.md`` §4 row T2, §8 "T2
-must").
-
-Hermetic (D1.4): every write stays under ``tmp_path``/the fixture ``custody_root``/``config_dir``
-directories; the Broker Capability Profile INSTANCE document is loaded READ-ONLY from
-``docs/broker-profiles/`` (never written) — the same pattern
-``tos/runtime/tests/brokercap/test_exit_conditions.py`` already uses.
-"""
+"""``tos_runtime.compose._transport_wiring`` tests — TOS KIS MOCK transport plan T2 lane C"""
 
 from __future__ import annotations
 
@@ -60,19 +52,12 @@ _BROKER_SCOPES_EXAMPLE_PATH = (
 _ENVIRONMENT_LABEL = "non-live-test"
 
 
-# ===========================================================================
-# Shared fixture helpers
-# ===========================================================================
-
-
 def _load_scopes(
     tmp_path: Path, *, active_scope: str, mock_evidence_ok: bool = False
 ) -> BrokerScopesConfig:
     raw = yaml.safe_load(_BROKER_SCOPES_EXAMPLE_PATH.read_text(encoding="utf-8"))
     raw["active_scope"] = active_scope
-    raw["instance_path"] = os.path.relpath(
-        _DRAFT_PATH, tmp_path
-    )  # relative, as committed trees (#958)
+    raw["instance_path"] = os.path.relpath(_DRAFT_PATH, tmp_path)
     if mock_evidence_ok:
         for scope in raw["scopes"]:
             if scope["name"] == "MOCK_STOCK_ORDER":
@@ -83,14 +68,10 @@ def _load_scopes(
 
 
 def _activate_mock_stock_order(config_dir: Path) -> None:
-    """Rewrite the standard ``config_dir`` fixture's ``broker_scopes.yaml`` to activate
-    MOCK_STOCK_ORDER (REDUCED, real evidence flag) bound to the real MOCK_VTS INSTANCE document —
-    mirrors ``test_exit_conditions.py``'s own ``_ec5_config_dir``."""
+    """Rewrite the standard ``config_dir`` fixture's ``broker_scopes.yaml`` to activate"""
     raw = yaml.safe_load(_BROKER_SCOPES_EXAMPLE_PATH.read_text(encoding="utf-8"))
     raw["active_scope"] = "MOCK_STOCK_ORDER"
-    raw["instance_path"] = os.path.relpath(
-        _DRAFT_PATH, config_dir
-    )  # relative, as committed trees (#958)
+    raw["instance_path"] = os.path.relpath(_DRAFT_PATH, config_dir)
     for scope in raw["scopes"]:
         if scope["name"] == "MOCK_STOCK_ORDER":
             scope["profile_evidence_ok"] = True
@@ -120,11 +101,6 @@ def synthetic_scopes(tmp_path: Path) -> BrokerScopesConfig:
 @pytest.fixture()
 def real_read_scopes(tmp_path: Path) -> BrokerScopesConfig:
     return _load_scopes(tmp_path, active_scope="REAL_READ")
-
-
-# ===========================================================================
-# load_transport_config — host seal (plan §2 decision 5)
-# ===========================================================================
 
 
 def test_load_transport_config_synthetic_returns_none(
@@ -174,9 +150,7 @@ def test_load_transport_config_kis_mock_refuses_when_instance_path_is_none(
 def test_load_transport_config_kis_mock_attests_codec_bound(
     tmp_path: Path, mock_stock_order_scopes: BrokerScopesConfig
 ) -> None:
-    """The compose wiring's own attestation that it binds KisWireCodecDigest — proven here by
-    the fact ``mode: live`` (never used in this suite otherwise) loads successfully through this
-    call site alone."""
+    """The compose wiring's own attestation that it binds KisWireCodecDigest — proven here by"""
     fx.write_kis_mock_transport_config(tmp_path, mode="live")
     config = load_transport_config(
         TransportKind.KIS_MOCK, tmp_path, mock_stock_order_scopes
@@ -188,9 +162,7 @@ def test_load_transport_config_kis_mock_attests_codec_bound(
 def _documents_with_rest_base_cleared(
     instance_path: Path, *, environment: str
 ) -> tuple:
-    """The real, loaded INSTANCE documents, with ``environment``'s own ``rest_base`` cleared to
-    ``None`` — never a hand-built document (independent review MEDIUM-4's own "never invented"
-    concern applies to test fixtures too)."""
+    """The real, loaded INSTANCE documents, with ``environment``'s own ``rest_base`` cleared to"""
     return tuple(
         (
             dataclasses.replace(document, rest_base=None)
@@ -206,9 +178,7 @@ def test_load_transport_config_kis_mock_refuses_when_mock_document_rest_base_is_
     mock_stock_order_scopes: BrokerScopesConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Independent review MEDIUM-4: the mock-document host-seal guard had never actually gone
-    red — every fixture's real document always carries ``rest_base``. Clearing it (never
-    inventing a replacement) must refuse boot."""
+    """Independent review MEDIUM-4: the mock-document host-seal guard had never actually gone"""
     fx.write_kis_mock_transport_config(tmp_path)
     assert mock_stock_order_scopes.instance_path is not None
     doctored = _documents_with_rest_base_cleared(
@@ -227,8 +197,7 @@ def test_load_transport_config_kis_mock_refuses_when_real_document_rest_base_is_
     mock_stock_order_scopes: BrokerScopesConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Symmetric to the MOCK-document case above — the REAL_PROD exclusion fact must be
-    provable too, never assumed present."""
+    """Symmetric to the MOCK-document case above — the REAL_PROD exclusion fact must be"""
     fx.write_kis_mock_transport_config(tmp_path)
     assert mock_stock_order_scopes.instance_path is not None
     doctored = _documents_with_rest_base_cleared(
@@ -242,25 +211,16 @@ def test_load_transport_config_kis_mock_refuses_when_real_document_rest_base_is_
         load_transport_config(TransportKind.KIS_MOCK, tmp_path, mock_stock_order_scopes)
 
 
-# ===========================================================================
-# refuse_transport_scope_mismatch — one source of truth (plan §2 decisions 5/7)
-# ===========================================================================
-
-
 def test_refuse_transport_scope_mismatch_kis_mock_with_mock_stock_order_admits(
     mock_stock_order_scopes: BrokerScopesConfig,
 ) -> None:
-    refuse_transport_scope_mismatch(
-        TransportKind.KIS_MOCK, mock_stock_order_scopes
-    )  # no raise
+    refuse_transport_scope_mismatch(TransportKind.KIS_MOCK, mock_stock_order_scopes)
 
 
 def test_refuse_transport_scope_mismatch_synthetic_with_synthetic_scope_admits(
     synthetic_scopes: BrokerScopesConfig,
 ) -> None:
-    refuse_transport_scope_mismatch(
-        TransportKind.SYNTHETIC, synthetic_scopes
-    )  # no raise
+    refuse_transport_scope_mismatch(TransportKind.SYNTHETIC, synthetic_scopes)
 
 
 def test_refuse_transport_scope_mismatch_kis_mock_with_synthetic_scope_refuses(
@@ -282,20 +242,14 @@ def test_refuse_transport_scope_mismatch_synthetic_with_mock_stock_order_refuses
 def test_refuse_transport_scope_mismatch_kis_mock_with_real_scope_refuses(
     real_read_scopes: BrokerScopesConfig,
 ) -> None:
-    # REAL_READ's own tuples are NON_AUTHORIZING_READ but under BROKER_PRODUCTION, not
-    # BROKER_SIMULATION — condition 3's MOCK-shape check still fails it.
     with pytest.raises(TransportWiringError, match="broker-reaching"):
         refuse_transport_scope_mismatch(TransportKind.KIS_MOCK, real_read_scopes)
 
 
 def test_full_sweep_every_scope_x_both_kinds(tmp_path: Path) -> None:
-    """The team-lead spec's own full sweep: only (SYNTHETIC_FUTURES_ORDER, synthetic) and
-    (MOCK_STOCK_ORDER with profile_evidence_ok, kis-mock) ever admit; every REAL_* scope refuses
-    kis-mock, naming the broker-reaching/MOCK-shape reason."""
+    """The team-lead spec's own full sweep: only (SYNTHETIC_FUTURES_ORDER, synthetic) and"""
     raw = yaml.safe_load(_BROKER_SCOPES_EXAMPLE_PATH.read_text(encoding="utf-8"))
-    raw["instance_path"] = os.path.relpath(
-        _DRAFT_PATH, tmp_path
-    )  # relative, as committed trees (#958)
+    raw["instance_path"] = os.path.relpath(_DRAFT_PATH, tmp_path)
     for scope in raw["scopes"]:
         if scope["name"] == "MOCK_STOCK_ORDER":
             scope["profile_evidence_ok"] = True
@@ -305,9 +259,6 @@ def test_full_sweep_every_scope_x_both_kinds(tmp_path: Path) -> None:
     admitted_a_case = False
     for scope_name in (s["name"] for s in raw["scopes"]):
         if scope_name == "REAL_ORDER":
-            # Always PROHIBITED admissibility — load_broker_scopes itself never sets
-            # active_scope to a PROHIBITED scope; skip (module docstring: "listed but always
-            # PROHIBITED", never an activatable scope at all).
             continue
         raw["active_scope"] = scope_name
         path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
@@ -319,17 +270,12 @@ def test_full_sweep_every_scope_x_both_kinds(tmp_path: Path) -> None:
                 or scope_name == "MOCK_STOCK_ORDER"
                 and kind is TransportKind.KIS_MOCK
             ):
-                refuse_transport_scope_mismatch(kind, config)  # admits
+                refuse_transport_scope_mismatch(kind, config)
                 admitted_a_case = True
             else:
                 with pytest.raises(TransportWiringError):
                     refuse_transport_scope_mismatch(kind, config)
     assert admitted_a_case
-
-
-# ===========================================================================
-# refuse_custody_principal_mismatch — plan §2 decision 4
-# ===========================================================================
 
 
 def test_refuse_custody_principal_mismatch_synthetic_is_a_noop(
@@ -343,7 +289,7 @@ def test_refuse_custody_principal_mismatch_synthetic_is_a_noop(
     )
     refuse_custody_principal_mismatch(
         TransportKind.SYNTHETIC, custody, mock_stock_order_scopes.active_scope
-    )  # never touches custody at all — no raise even though scopes aren't provisioned
+    )
 
 
 def test_refuse_custody_principal_mismatch_matching_principal_admits(
@@ -358,7 +304,7 @@ def test_refuse_custody_principal_mismatch_matching_principal_admits(
     )
     refuse_custody_principal_mismatch(
         TransportKind.KIS_MOCK, custody, mock_stock_order_scopes.active_scope
-    )  # no raise
+    )
 
 
 def test_refuse_custody_principal_mismatch_wrong_principal_refuses(
@@ -380,10 +326,7 @@ def test_refuse_custody_principal_mismatch_wrong_principal_refuses(
 def test_refuse_custody_principal_mismatch_checks_both_scopes_independently(
     custody_root: Path, mock_stock_order_scopes: BrokerScopesConfig
 ) -> None:
-    """Independent review MEDIUM-2: corrupt ONLY ``kis_mock.app_secret``'s manifest principal —
-    proves both scopes are actually checked (never just whichever happens to appear first in
-    ``_KIS_MOCK_CUSTODY_SCOPES``); a mutation dropping either scope from that tuple would make
-    this test wrongly pass without raising."""
+    """Independent review MEDIUM-2: corrupt ONLY ``kis_mock.app_secret``'s manifest principal —"""
     _build_custody(custody_root)
     manifest_path = custody_root / "custody.manifest.yaml"
     raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
@@ -406,13 +349,8 @@ class _NullEvidence:
     def append(
         self, payload: Mapping[str, object], *, kind: str, record_class: str
     ) -> EvidenceAppendReceipt:  # noqa: ARG002
-        del payload, kind, record_class  # a no-op evidence double
+        del payload, kind, record_class
         return EvidenceAppendReceipt()
-
-
-# ===========================================================================
-# SealRegistry — single-use SendSeal capture/lookup
-# ===========================================================================
 
 
 def test_seal_registry_captures_from_send_sealed_and_pops_single_use() -> None:
@@ -428,18 +366,11 @@ def test_seal_registry_captures_from_send_sealed_and_pops_single_use() -> None:
     )
 
     assert registry("attempt-x") is seal
-    assert registry("attempt-x") is None  # single-use — second lookup is None
+    assert registry("attempt-x") is None
 
 
 def test_seal_registry_ignores_non_send_sealed_records() -> None:
-    """Independent review LOW-2: the kernel's own ``GatewayEvidenceRecord`` construction-time
-    validator (``_seal_fields_match_their_kind``, ``tos/src/tos/egressgw/records.py``) already
-    rejects a non-``None`` ``send_seal`` on any kind other than ``SEND_SEALED`` — so a
-    ``kind == "SEND_SEALED"`` mutation in :meth:`SealRegistry.capture` is unfalsifiable through
-    any record this suite (or production) can actually construct; the ``send_seal is not None``
-    guard alone already carries the whole load for every REACHABLE record. This test still pins
-    the OBSERVABLE behaviour (a kind-less-seal record captures nothing), not a claim that the
-    kind check itself is load-bearing."""
+    """Independent review LOW-2: the kernel's own ``GatewayEvidenceRecord`` construction-time"""
     registry = SealRegistry()
     seal = seal_fx.build_seal(attempt_id="attempt-y")
     registry.capture(
@@ -462,9 +393,7 @@ def test_seal_registry_ignores_non_send_sealed_records() -> None:
 
 
 def test_seal_registry_evicts_on_a_later_send_refused_for_the_same_attempt() -> None:
-    """HIGH-1's bounding half: a ``SEND_REFUSED`` recorded for an attempt this registry already
-    holds a captured seal for means that seal will never be consumed — evict it rather than let
-    it survive past the attempt's own terminal record."""
+    """HIGH-1's bounding half: a ``SEND_REFUSED`` recorded for an attempt this registry already"""
     registry = SealRegistry()
     seal = seal_fx.build_seal(attempt_id="attempt-z")
     registry.capture(
@@ -497,13 +426,7 @@ def test_synthetic_compose_never_wires_the_seal_registry_observer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Independent review HIGH-1: under the DEFAULT ``synthetic`` transport,
-    ``SealRegistry.capture`` must never be wired as the gateway evidence sink's ``on_record``
-    observer at all — ``SyntheticPaperTransport`` never calls the lookup, so wiring it
-    unconditionally (the pre-fix behaviour) retained every ``SendSeal`` for the whole process
-    lifetime. Proven by spying on ``SealRegistry.capture`` itself and driving a REAL synthetic
-    hand-off (the same scenario ``test_compose_root.py::test_one_synthetic_transport_handoff``
-    drives) through the actual compose root — the spy must never fire."""
+    """Independent review HIGH-1: under the DEFAULT ``synthetic`` transport,"""
     calls: list[object] = []
     original_capture = SealRegistry.capture
 
@@ -527,17 +450,12 @@ def test_synthetic_compose_never_wires_the_seal_registry_observer(
         approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     runtime.run_once((event,))
-    assert len(runtime.transport.requests) == 1  # the hand-off genuinely happened
+    assert len(runtime.transport.requests) == 1
 
-    assert calls == []  # ...but the (unwired) SealRegistry observer never fired
+    assert calls == []
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()
-
-
-# ===========================================================================
-# build_transport
-# ===========================================================================
 
 
 def test_build_transport_synthetic_builds_a_synthetic_paper_transport() -> None:
@@ -575,11 +493,6 @@ def test_build_transport_kis_mock_builds_a_kis_mock_transport(
         credential_sessions=_null_credential_sessions(),
     )
     assert isinstance(transport, KisMockTransport)
-    # Independent review MEDIUM-2: pin the exact custody scope names build_transport wires the
-    # adapter with — a mutation swapping app_key_scope/app_secret_scope (or dropping one from
-    # _KIS_MOCK_CUSTODY_SCOPES) previously went undetected, because dry_run never loads a
-    # credential.
-    # C-2 decision (C): the scopes now live on the transport's credential session.
     session = transport._credential_session  # noqa: SLF001
     assert session._app_key_scope == "kis_mock.app_key"  # noqa: SLF001
     assert session._app_secret_scope == "kis_mock.app_secret"  # noqa: SLF001
@@ -605,19 +518,10 @@ class _NullMonotonic:
 
 
 class _NullEvidenceStore(SqliteEvidenceStore):
-    """Never invoked in these two tests — ``build_transport`` only ever builds the
-    ``_evidence_recorder`` closure over it, never calls it (mypy stage 3 §1.3 rule 3: the
-    real ``SqliteEvidenceStore.append`` signature ``_evidence_recorder`` forwards to has a
-    wider surface than ``EvidenceAppendPort`` — ``runtime_identity`` — so the double
-    subclasses the concrete class rather than getting its own port)."""
+    """Never invoked in these two tests — ``build_transport`` only ever builds the"""
 
-    def __init__(self) -> None:  # real __init__ deliberately skipped — never invoked
+    def __init__(self) -> None:
         pass
-
-
-# ===========================================================================
-# resolve_transport_boot — the ONE call site _wiring.py uses
-# ===========================================================================
 
 
 def test_resolve_transport_boot_synthetic(
@@ -654,19 +558,12 @@ def test_resolve_transport_boot_kis_mock(
     assert result.extra_config_files == (tmp_path / KIS_MOCK_TRANSPORT_CONFIG_NAME,)
 
 
-# ===========================================================================
-# compose_paper_runtime(transport_kind=KIS_MOCK) — e2e boot
-# ===========================================================================
-
-
 def test_e2e_boot_wires_a_kis_mock_transport_and_codec_digest_source(
     config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
 ) -> None:
     _activate_mock_stock_order(config_dir)
     fx.write_kis_mock_transport_config(config_dir)
     _build_custody(custody_root)
-    # Coordinator posture stays False — this test is about WIRING, not admission (that's the
-    # crossing-event test below).
     runtime = _compose(
         tmp_path,
         config_dir,
@@ -755,20 +652,10 @@ def test_e2e_boot_records_kis_mock_transport_config_as_an_attested_input(
     runtime.evidence_store.close()
 
 
-# ===========================================================================
-# The "정직 deny" crossing event — Coordinator PASSES, gateway denies honestly
-# ===========================================================================
-
-
 def test_crossing_event_coordinator_passes_gateway_denies_honestly(
     config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
 ) -> None:
-    """Plan §4 T3's first half, landed here since it falls out of the wiring: with
-    MOCK_STOCK_ORDER active (``profile_evidence_ok: true``), kis-mock (dry_run) transport, and
-    ``nonlive_broker_consuming.admitted: true``, the Coordinator gate admits (no
-    ``LIVE_SCOPE_NOT_AUTHORIZED`` halt) — but the gateway's own deferred safety-governance mesh
-    (Phase 5, not yet wired) still denies honestly at the SEND_BOUNDARY_VERIFICATION step, before
-    the transport is EVER called."""
+    """Plan §4 T3's first half, landed here since it falls out of the wiring: with"""
     _activate_mock_stock_order(config_dir)
     fx.write_kis_mock_transport_config(config_dir)
     _build_custody(custody_root)
@@ -793,9 +680,7 @@ def test_crossing_event_coordinator_passes_gateway_denies_honestly(
 
     event = fx.crossing_event()
     results = runtime.run_once((event,))
-    assert (
-        results[0].pipeline is not None
-    )  # Coordinator PASSED — the pipeline actually ran
+    assert results[0].pipeline is not None
     proposal_digest = results[0].pipeline.proposal.canonical_digest
     assert proposal_digest is not None
     construction = runtime.construction_stage.construction
@@ -810,21 +695,15 @@ def test_crossing_event_coordinator_passes_gateway_denies_honestly(
     results2 = runtime.run_once((event,))
     flow = results2[0].flow
     assert flow is not None
-    assert (
-        flow.handed_off is True
-    )  # steps 1-14 admitted; the attempt reached the gateway
+    assert flow.handed_off is True
     assert flow.handoff is not None
-    assert (
-        flow.handoff.accepted_for_transmission is not True
-    )  # the gateway itself denied
+    assert flow.handoff.accepted_for_transmission is not True
 
-    # No LIVE_SCOPE_NOT_AUTHORIZED halt was ever recorded for this event.
     live_scope_halts = runtime.evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE payload_json LIKE '%LIVE_SCOPE_NOT_AUTHORIZED%'"
     ).fetchone()[0]
     assert live_scope_halts == 0
 
-    # The gateway itself refused (SEND_REFUSED), never the transport.
     send_refused_rows = runtime.evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = 'SEND_REFUSED'"
     ).fetchone()[0]
@@ -838,11 +717,6 @@ def test_crossing_event_coordinator_passes_gateway_denies_honestly(
     runtime.evidence_store.close()
 
 
-# ===========================================================================
-# Negative-grep — host/TR literals + os.environ over tos_runtime.compose
-# ===========================================================================
-
-
 def _compose_package_files() -> list[Path]:
     import tos_runtime.compose as pkg
 
@@ -850,9 +724,7 @@ def _compose_package_files() -> list[Path]:
 
 
 def _code_only(source: str) -> str:
-    """Blank out every module/class/function docstring — mirrors
-    ``tos/runtime/tests/transport/kis_mock/test_adapter.py``'s own helper of the same name.
-    """
+    """Blank out every module/class/function docstring — mirrors"""
     tree = ast.parse(source)
     lines = source.splitlines(keepends=True)
     for node in ast.walk(tree):
@@ -890,11 +762,6 @@ def test_the_planted_violation_scan_actually_catches_something() -> None:
     assert "koreainvestment" in code_only
 
 
-# ---------------------------------------------------------------------------
-# price_scale — ONE scale for the wire price (PR #927 review M1)
-# ---------------------------------------------------------------------------
-
-
 def _set_scales(config_dir: Path, *, transport: int, policy: int | None) -> None:
     transport_path = config_dir / "kis_mock_transport.yaml"
     raw = yaml.safe_load(transport_path.read_text(encoding="utf-8"))
@@ -914,9 +781,7 @@ def _set_scales(config_dir: Path, *, transport: int, policy: int | None) -> None
 @pytest.mark.parametrize(
     ("transport", "policy"),
     [
-        # The review's failing input: 27000000 / 1000 = 27000 sent for a 270,000원 close.
         (1000, 100),
-        # No policy scale at all — nothing to check the transport against.
         (100, None),
     ],
 )

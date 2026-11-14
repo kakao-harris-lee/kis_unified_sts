@@ -1,12 +1,4 @@
-"""∅-void both-ways canaries across the venue predicates (design #19 §4.7).
-
-Every empty-input guard is checked in BOTH directions: the forbidden (vacuous-permissive)
-direction fires, and the legitimate positive direction is NOT blocked. A vacuous-ADMISSIBLE is a
-safety violation; a vacuous-INADMISSIBLE is an availability violation — both are defects (#12
-both-ways lesson).
-
-Regime tag: predicate / model substrate only; VTG-EV substrate; EV-L1-complete claim forbidden.
-"""
+"""∅-void both-ways canaries across the venue predicates (design #19 §4.7)."""
 
 from __future__ import annotations
 
@@ -125,17 +117,13 @@ def test_empty_observations_unknown_but_resolution_decides() -> None:
 
 def test_none_inputs_block_but_clean_inputs_pass() -> None:
     """(∅ both-ways) None facts / route / continuity / effect fail closed; clean ones pass."""
-    # account facts
     assert account_constraint_conservative(None, None) is False
     assert account_constraint_conservative(clean_account_facts(), None) is True
-    # instrument route
     route = clean_instrument_route()
     assert exact_instrument_route_bound(None, route) is False
     assert exact_instrument_route_bound(clean_decision(route=route), route) is True
-    # continuity
     assert unknown_continuity_invalidates(None) is True
     assert unknown_continuity_invalidates(clean_continuity()) is False
-    # authority
     assert gate_authority_separated(None, False) is False
     assert gate_authority_separated(VenueGateAuthorityEffect(), False) is True
 

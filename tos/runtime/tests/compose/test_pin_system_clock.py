@@ -1,9 +1,4 @@
-"""``_fixtures.pin_system_clock`` itself (issue #914).
-
-The fixture used to capture whatever ``LocalSystemClockReader.read`` was installed at call
-time, so a second call in one test shifted an already-shifted reader: two calls with ``T``
-read about ``2T - now`` while the returned ``now_ms()`` reported about ``T``.
-"""
+"""``_fixtures.pin_system_clock`` itself (issue #914)."""
 
 from __future__ import annotations
 
@@ -12,8 +7,6 @@ from tos_runtime.time.sources import LocalSystemClockReader
 
 from . import _fixtures as fx
 
-#: Generous slack for the wall time that passes between pinning and reading. The bug this
-#: guards is off by ``T - now`` (weeks for these constants), so any honest slack works.
 _SLACK_MS = 60_000
 
 

@@ -1,9 +1,4 @@
-"""``write-standing-approval`` — Monday is one command, and it refuses every non-MOCK tree.
-
-Runs against copies of the committed tenant trees with the deployment coordinates the renderer
-would fill (account / instrument), so the derived ``strategy_id`` is a real content digest of
-the tree's own strategy. Nothing outside ``tmp_path`` is written.
-"""
+"""``write-standing-approval`` — Monday is one command, and it refuses every non-MOCK tree."""
 
 from __future__ import annotations
 
@@ -45,8 +40,6 @@ def _rendered_copy(tree: str, tmp_path: Path) -> Path:
             text = text.replace('instrument: "TBD"', f'instrument: "{_INSTRUMENT}"')
         if path.name == "broker_scopes.yaml":
             raw = yaml.safe_load(text)
-            # Relative to the copy's own directory: an ABSOLUTE instance_path with no
-            # RENDERED.json beside it is refused as a render that lost its pin (#958).
             instance = os.path.relpath(
                 (_TREES / tree / raw["instance_path"]).resolve(), path.parent
             )
@@ -86,8 +79,6 @@ def test_writes_the_artifact_for_the_mock_stock_tree(tmp_path: Path, capsys) -> 
     assert approval.strategy_id.startswith("astrat-")
     release = yaml.safe_load((tree / "release.yaml").read_text(encoding="utf-8"))
     assert approval.code_digest == release["expected_code_digest"]
-    # entry = construction.yaml's own side; exit = the OCP's (CLOSE, LONG) shape and the
-    # strategy's own CLOSE target direction — one use each.
     construction = yaml.safe_load(
         (tree / "construction.yaml").read_text(encoding="utf-8")
     )
@@ -102,11 +93,6 @@ def test_writes_the_artifact_for_the_mock_stock_tree(tmp_path: Path, capsys) -> 
     assert [a.max_uses for a in approval.actions] == [1, 1]
     out = capsys.readouterr().out
     assert approval.digest in out
-    # The command used to print "exit row cannot match until #960 (CLOSE commands are built as
-    # BUY)" next to this artifact. #960 landed (step 2 now builds the command from the
-    # proposal's own effect/direction) and #1025 measured the exit row MATCHING end to end
-    # (``test_flat_exit_held_quantity.py``), so the note is gone rather than reworded — a
-    # standing caveat about a closed defect reads as a live limitation.
     assert "#960" not in out
 
 

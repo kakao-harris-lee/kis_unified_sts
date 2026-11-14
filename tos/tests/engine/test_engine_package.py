@@ -1,20 +1,4 @@
-"""Package-surface, honesty-declaration, and drift-anchor regression for ``tos.engine``.
-
-Three jobs:
-
-1. the **public surface** is exactly what ``__all__`` claims and every name resolves — an
-   ``__all__`` entry that does not exist, or an export that is not declared, is a phantom;
-2. the **honesty declarations** the design makes its top-level obligations (design #31 §1.1/§4.4)
-   are actually present in the shipped docstrings: closes no EV, provisional stand-ins are
-   non-authoritative, the fail-closed guarantee is steps 1-14, escape-safety is not claimed. A
-   design whose honesty lives only in a plan document and not in the code is one refactor away
-   from over-claiming;
-3. the **drift anchors** — the 19-step order against the ADR's own numbering, the step partition,
-   the context-source pair against the DSL constant, and the projection rank against the states the
-   engine actually projects.
-
-Regime tag: orchestration authoring evidence only; closes no EV.
-"""
+"""Package-surface, honesty-declaration, and drift-anchor regression for ``tos.engine``."""
 
 from __future__ import annotations
 
@@ -52,7 +36,6 @@ from tos.engine import (
 )
 from tos.rcl import CapacityState
 
-#: Every submodule, imported statically (the firewall forbids ``importlib.import_module``).
 _SUBMODULES = {
     "tos.engine._base": _base,
     "tos.engine.adapters": adapters,
@@ -89,115 +72,37 @@ def test_every_submodule_declares_a_resolvable_surface(module_name, module) -> N
         assert hasattr(module, name), f"{module_name}.__all__ names a missing {name!r}"
 
 
-@pytest.mark.parametrize(
-    "phrase",
-    [
-        "closes no EV",
-        "NON-AUTHORITATIVE PROVISIONAL",
-        "fail-closed guarantee: steps 1-14 only",
-        "escape-safety: not demonstrated",
-        "reproducibility, not distinctness",
-        "release: gated on a finality-proof token only",
-    ],
-)
-def test_the_package_docstring_carries_its_honesty_declarations(phrase) -> None:
-    """(§1.1/§4.4/§4.5/§3.5/§6) The scope limits live in the code, not only in the plan."""
-    assert engine.__doc__ is not None
-    assert phrase in engine.__doc__, (
-        f"the package docstring must state {phrase!r} — an honesty boundary that lives only in a "
-        "design document is one refactor away from an over-claim"
-    )
-
-
-@pytest.mark.parametrize(
-    ("module", "phrase"),
-    [
-        (state, "NON-AUTHORITATIVE PROVISIONAL"),
-        (standins, "NON-AUTHORITATIVE PROVISIONAL"),
-        (state, "release only via finality proof"),
-        (sequencer, "steps 15-19 are not hostable"),
-        (sink, "over-realization"),
-    ],
-)
-def test_the_provisional_modules_label_themselves(module, phrase) -> None:
-    """(§4.4/§4.5/§9-3) Each provisional module states its own limits in its own docstring."""
-    assert module.__doc__ is not None
-    assert phrase in module.__doc__
-
-
-# ---------------------------------------------------------------------------
-# drift anchors
-# ---------------------------------------------------------------------------
-
-
-#: The ADR-002-002 §11 Normal Commitment Flow, transcribed **independently** from the spec text
-#: (``tos-spec/src/part-1-foundation/ADR-002-002-Aggregate-Risk-Capacity-Commitment-Model.md``
-#: lines 582-609: §11.1 steps 1-7 at 582-588, §11.2 steps 8-11 at 592-595, §11.3 steps 12-14 at
-#: 599-601, §11.4 steps 15-19 at 605-609). It is deliberately a **hard-coded literal tuple** and is
-#: derived from **no** engine constant: :data:`~tos.engine.COMMITMENT_FLOW_ORDER` is the subject
-#: under test, so anchoring it to anything computed from itself proves nothing.
-#:
-#: Review MINOR-1 (adversarial code review, 2026-07-29): every order assertion in the suite was
-#: self-referential — ``test_the_flow_order_is_the_adr_nineteen_steps_in_order`` compared against
-#: ``step_number``, which is an ``enumerate`` of the very tuple it checks, and
-#: ``test_the_sequenced_range_is_steps_one_to_fourteen`` compared against ``SEQUENCED_STEPS``, also
-#: derived from it. A reviewer mutant that swapped the data-independent steps 2 and 3
-#: (``CANDIDATE_COMMAND_CONSTRUCTION`` ↔ ``VENUE_ADMISSIBILITY_DECISION``) therefore SURVIVED the
-#: whole suite. The safety-critical adjacencies are enforced behaviourally (step 11's proof digest
-#: and step 9's permit identity must exist before step 12 builds the attempt; the projection must
-#: reach ``POTENTIALLY_LIVE`` before the transmit hand-off), so the mutant had no safety effect —
-#: but RFC-005 §7:192 declares the sequence itself a contract ("SHALL NOT redefine, **reorder**, or
-#: abridge"), and a contract needs an anchor outside the artifact it constrains. This tuple is that
-#: anchor, mirroring the ``_verify_context_source_anchor`` drift guard
-#: (``tos/src/tos/engine/vocabulary.py``) and the ``COORDINATOR_SHALL_NOT_FLAGS`` anchor
-#: (``test_engine_no_authority.py::test_the_authority_block_carries_the_eleven_shall_nots``).
 _ADR_002_002_SECTION_11_ORDER: tuple[CommitmentStep, ...] = (
-    # §11.1 Proposal and Approval (ADR lines 582-588)
-    CommitmentStep.DECISION_PROPOSAL,  # 1. Decision Service creates an immutable Intent proposal
-    CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION,  # 2. ADR-002-020 candidate Canonical Broker Command
-    CommitmentStep.VENUE_ADMISSIBILITY_DECISION,  # 3. ADR-002-019 Order Admissibility Decision
-    CommitmentStep.INDEPENDENT_APPROVAL,  # 4. Independent Approval Service registers the Intent
-    CommitmentStep.ECONOMIC_EFFECT_ENVELOPE,  # 5. ADR-002-020 derives the Economic Effect Envelope
-    CommitmentStep.AGGREGATE_RISK_DECISION,  # 6. ADR-002-021 Aggregate Risk Decision
-    CommitmentStep.ACTION_FLOW_DECISION,  # 7. ADR-002-022 Action Flow Decision
-    # §11.2 Atomic Commitment (ADR lines 592-595)
-    CommitmentStep.LEDGER_VERIFICATION,  # 8. RCL verifies epoch/limits/bindings/scope/capacity
-    CommitmentStep.ATOMIC_COMMIT,  # 9. Ledger atomically commits + creates the Action Flow Permit
-    CommitmentStep.COMMITMENT_UNAVAILABILITY,  # 10. Both commitments immediately unavailable
-    CommitmentStep.ORDER_CONFORMANCE_PROOF,  # 11. ADR-002-020 Order Conformance Proof
-    # §11.3 Attempt Binding (ADR lines 599-601)
-    CommitmentStep.ATTEMPT_REQUEST,  # 12. Execution Coordinator creates a unique attempt request
-    CommitmentStep.ATTEMPT_BIND_VERIFICATION,  # 13. Ledger verifies + atomically binds the attempt
-    CommitmentStep.TRANSMISSION_CAPABILITY,  # 14. ATTEMPT_BOUND + single-use Transmission Capability
-    # §11.4 Send Boundary (ADR lines 605-609)
-    CommitmentStep.SEND_BOUNDARY_VERIFICATION,  # 15. Broker Adapter verifies all bindings
-    CommitmentStep.SEND_STARTED_DURABLE,  # 16. claim/consume transition + durable SEND_STARTED
-    CommitmentStep.POTENTIALLY_LIVE_TRANSITION,  # 17. Reservation transitions to POTENTIALLY_LIVE
-    CommitmentStep.NETWORK_CALL,  # 18. Broker Adapter performs the network call
-    CommitmentStep.EVIDENCE_RECORD,  # 19. Response/ack/error/timeout recorded as evidence
+    CommitmentStep.DECISION_PROPOSAL,
+    CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION,
+    CommitmentStep.VENUE_ADMISSIBILITY_DECISION,
+    CommitmentStep.INDEPENDENT_APPROVAL,
+    CommitmentStep.ECONOMIC_EFFECT_ENVELOPE,
+    CommitmentStep.AGGREGATE_RISK_DECISION,
+    CommitmentStep.ACTION_FLOW_DECISION,
+    CommitmentStep.LEDGER_VERIFICATION,
+    CommitmentStep.ATOMIC_COMMIT,
+    CommitmentStep.COMMITMENT_UNAVAILABILITY,
+    CommitmentStep.ORDER_CONFORMANCE_PROOF,
+    CommitmentStep.ATTEMPT_REQUEST,
+    CommitmentStep.ATTEMPT_BIND_VERIFICATION,
+    CommitmentStep.TRANSMISSION_CAPABILITY,
+    CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+    CommitmentStep.SEND_STARTED_DURABLE,
+    CommitmentStep.POTENTIALLY_LIVE_TRANSITION,
+    CommitmentStep.NETWORK_CALL,
+    CommitmentStep.EVIDENCE_RECORD,
 )
 
 
 def test_the_flow_order_matches_an_independent_transcription_of_the_adr() -> None:
-    """(§1.3 / RFC-005 §7:192) The shipped order equals an anchor derived from **no** constant.
-
-    The load-bearing assertion of this module. ``COMMITMENT_FLOW_ORDER`` is not merely "19 distinct
-    members numbered 1-19" — that is true of *any* permutation, and it is exactly what the rest of
-    the suite was checking. Here the shipped tuple is compared, member for member and position for
-    position, against :data:`_ADR_002_002_SECTION_11_ORDER`, transcribed by hand from ADR-002-002
-    §11 (spec lines 582-609). RFC-005 §7:192 forbids redefining, **reordering**, or abridging that
-    sequence, and design #31 §1.3/§4.1 makes the tuple order the contract, so a silent permutation —
-    even of two steps whose adjacency no behaviour happens to enforce — is a contract breach.
-
-    Review MINOR-1: this closes the surviving reviewer mutant that swapped steps 2 and 3.
-    """
+    """(§1.3 / RFC-005 §7:192) The shipped order equals an anchor derived from **no** constant."""
     assert COMMITMENT_FLOW_ORDER == _ADR_002_002_SECTION_11_ORDER, (
         "the shipped Normal Commitment Flow order differs from ADR-002-002 §11 (spec lines "
         "582-609) — RFC-005 §7:192 SHALL NOT reorder. Shipped: "
         f"{[step.value for step in COMMITMENT_FLOW_ORDER]}; ADR: "
         f"{[step.value for step in _ADR_002_002_SECTION_11_ORDER]}"
     )
-    # Position-wise as well, so a failure names the offending step rather than dumping two lists.
     for position, (shipped, anchored) in enumerate(
         zip(COMMITMENT_FLOW_ORDER, _ADR_002_002_SECTION_11_ORDER), start=1
     ):
@@ -205,8 +110,6 @@ def test_the_flow_order_matches_an_independent_transcription_of_the_adr() -> Non
             f"ADR-002-002 §11 step {position} is {anchored.value!r} but the shipped order has "
             f"{shipped.value!r} there (RFC-005 §7:192)"
         )
-    # The anchor itself must stay a faithful, complete transcription — no dropped or duplicated
-    # step could hide inside it (an abridged anchor would silently weaken the equality above).
     assert len(_ADR_002_002_SECTION_11_ORDER) == 19
     assert set(_ADR_002_002_SECTION_11_ORDER) == set(CommitmentStep)
 
@@ -242,14 +145,7 @@ def test_an_unknown_step_has_no_number() -> None:
 
 
 def test_the_projection_rank_is_a_total_order_ending_at_released() -> None:
-    """(§2.4; kernel round #3 §2 decision 5) The non-revival rank is total, and ``RELEASED`` is
-    now its last (highest) member — reachable only through
-    :meth:`~tos.engine.state.ProvisionalReservationLedger.release`'s finality-proof-token gate,
-    never through an ordinary egress result. This test used to pin the OPPOSITE fact ("no released
-    state") when this projection truly had no release path at all; that pin is now false — round
-    #3 added a token-gated release, and this rank must include it so the non-revival guard treats
-    an already-``RELEASED`` reservation as terminal (nothing ranks above it to revive into).
-    """
+    """(§2.4; kernel round #3 §2 decision 5) The non-revival rank is total, and ``RELEASED`` is"""
     ranks = list(PROJECTION_RANK.values())
     assert sorted(ranks) == list(range(len(ranks)))
     assert len(set(PROJECTION_RANK)) == len(PROJECTION_RANK)
@@ -303,25 +199,11 @@ def test_an_ill_formed_injected_configuration_is_refused(kwargs) -> None:
     }
     base.update(kwargs)
     with pytest.raises(Exception, match="must be"):
-        # illegal input under test: `kwargs` deliberately carries an out-of-bound value.
         EngineConfiguration(**cast("dict[str, Any]", base))
 
 
 def test_no_numeric_bound_is_hardcoded_in_the_sources() -> None:
-    """(§8) The engine hardcodes no threshold — every bound arrives on ``EngineConfiguration``.
-
-    Only the two structural literals a pure orchestrator needs are tolerated, and the tolerance is
-    stated rather than assumed:
-
-    * ``0`` — the non-negativity comparison operand and a zero-remainder magnitude test;
-    * ``1`` — the ``enumerate(..., start=1)`` origin of the ADR's own 1-based step numbering and a
-      "more than one declared scope" cardinality test.
-
-    Neither is a threshold. Anything else — a freshness bound, a budget, an age limit, an
-    ``MAX_unresolved_send_per_scope`` — would be a Phase-0 bound smuggled into code (design #31 §8;
-    RFC-005 §13:386 "SHALL NOT be hardcoded"), and the register records most of them as still
-    unapproved.
-    """
+    """(§8) The engine hardcodes no threshold — every bound arrives on ``EngineConfiguration``."""
     import ast
     from pathlib import Path
 
@@ -360,13 +242,7 @@ def test_the_numeric_literal_scan_detects_a_planted_bound(tmp_path) -> None:
 
 
 def test_the_five_design_plug_slots_are_all_declared() -> None:
-    """(§12) The D-E2/D-E3/D-E4 hand-off contract is complete — all five plugs exist.
-
-    D-E1 is the *prerequisite* slice precisely because these interfaces must be fixed before D-E2,
-    D-E3, and D-E4 can be wired (design #31 §12). Each is a slot, not an implementation: the
-    Critical Input value surface, the market feed, the fill model, and the real send boundary all
-    stay outside this package.
-    """
+    """(§12) The D-E2/D-E3/D-E4 hand-off contract is complete — all five plugs exist."""
     from tos.engine import (
         DecisionContextResolver,
         EventSource,

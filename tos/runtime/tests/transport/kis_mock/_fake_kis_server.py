@@ -1,10 +1,4 @@
-"""A hermetic, ``127.0.0.1``-only fake KIS server (``http.server``) for the client/adapter
-suites (plan §4 슬라이스 T1). No third-party dependency; stdlib only.
-
-Records every request it receives (method, path, headers, body) so a test can assert exactly
-how many requests were made and inspect their contents (e.g. "the seal digest never appears on
-the wire", "the app secret never appears in a header").
-"""
+"""A hermetic, ``127.0.0.1``-only fake KIS server (``http.server``) for the client/adapter"""
 
 from __future__ import annotations
 
@@ -34,33 +28,13 @@ class _Route:
     body: dict[str, Any] | None
     delay_s: float = 0.0
     reset: bool = False
-    #: Called on the server thread while this route is being served, after the request has
-    #: been recorded and before any response byte is written (see :meth:`FakeKisServer
-    #: .set_response`).
     on_request: Callable[[], None] | None = None
 
 
 class FakeKisServer:
-    """A threaded HTTP server bound to ``127.0.0.1`` with per-path scripted responses.
-
-    Handles both POST (order/token) and GET (quote) requests. A GET route is matched by its
-    FULL path, query string included (``set_response("/…/inquire-price?FID_INPUT_ISCD=005930",
-    ...)``) — a test that wants to distinguish two quote calls scripts two distinct full paths,
-    the same way it would script two distinct POST bodies via two separate assertions.
-
-    Usage::
-
-        server = FakeKisServer()
-        server.set_response("/oauth2/tokenP", status=200, body={...})
-        server.start()
-        ...
-        server.stop()
-    """
+    """A threaded HTTP server bound to ``127.0.0.1`` with per-path scripted responses."""
 
     def __init__(self) -> None:
-        #: When set (:meth:`require_account`), a request whose ``CANO``/``ACNT_PRDT_CD`` are
-        #: not exactly these is REJECTED the way KIS rejects it (``rt_cd`` "1") — so a test
-        #: cannot ACK an order or a balance read carrying a malformed account.
         self._account: tuple[str, str] | None = None
         self._requests: list[RecordedRequest] = []
         self._routes: dict[str, _Route] = {}
@@ -85,23 +59,7 @@ class FakeKisServer:
         reset: bool = False,
         on_request: Callable[[], None] | None = None,
     ) -> None:
-        """Script one route.
-
-        Args:
-            path: The FULL path (query string included) this route answers.
-            status: The HTTP status to return.
-            body: The JSON body, or ``None`` for an empty one.
-            delay_s: A REAL ``time.sleep`` before the response — a genuine wall-clock wait, so
-                it belongs only to tests about timeouts and connection behaviour.
-            reset: Abort the socket instead of answering.
-            on_request: Called on the server thread once the request has been recorded and
-                before any response byte is written. This is how a test injects a transport
-                delay it wants to MEASURE rather than wait out: the callback advances the
-                test's own scripted clocks by the delay, the client's "after" reading picks it
-                up through the response, and no real time passes (``tests/transport/kis_quote
-                /test_adapter.py``'s own deterministic FRESH/STALE pair). It must not raise —
-                an exception here surfaces as a broken connection, not as a test failure.
-        """
+        """Script one route."""
         self._routes[path] = _Route(
             status=status,
             body=body,
@@ -111,10 +69,7 @@ class FakeKisServer:
         )
 
     def require_account(self, cano: str, acnt_prdt_cd: str) -> None:
-        """Reject any order POST body or GET query whose account fields are not exactly
-        ``cano`` (8 digits) / ``acnt_prdt_cd`` (2 digits) — #932 Codex r1 HIGH: the fake used
-        to ACK whatever CANO it was sent, so a whole ``8-2`` string in CANO passed the e2e.
-        """
+        """Reject any order POST body or GET query whose account fields are not exactly"""
         assert len(cano) == 8 and cano.isdigit(), cano
         assert len(acnt_prdt_cd) == 2 and acnt_prdt_cd.isdigit(), acnt_prdt_cd
         self._account = (cano, acnt_prdt_cd)
@@ -161,8 +116,6 @@ class FakeKisServer:
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
 
-            # Overrides BaseHTTPRequestHandler.log_message (fixed signature) to silence
-            # per-request stderr logging in the test run.
             def log_message(self, format: str, *_args: Any) -> None:  # noqa: A002
                 del format
                 return
@@ -173,11 +126,6 @@ class FakeKisServer:
                 self._handle("POST", self.path, raw_body)
 
             def do_GET(self) -> None:  # noqa: N802
-                # A quote GET carries no body — recorded with an empty one for symmetry with
-                # RecordedRequest's shape. Route lookup, like recording, uses the FULL path
-                # (query string included): a quote adapter's own routing distinguishes requests
-                # by their query string (e.g. a different FID_INPUT_ISCD), unlike the order
-                # transport's POST routes, which never carry one.
                 self._handle("GET", self.path, b"")
 
             def _handle(self, method: str, path: str, raw_body: bytes) -> None:
@@ -209,7 +157,6 @@ class FakeKisServer:
                 if route.delay_s:
                     time.sleep(route.delay_s)
                 if route.reset:
-                    # Force a connection reset — no response, abort the socket.
                     self.close_connection = True
                     try:
                         self.connection.shutdown(1)

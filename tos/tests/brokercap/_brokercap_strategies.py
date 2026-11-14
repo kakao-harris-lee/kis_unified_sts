@@ -1,17 +1,4 @@
-"""Shared valid-artifact builders + strategies for the brokercap property tests.
-
-Firewall-clean: imports only ``hypothesis`` and ``tos.*`` (design #10 §0.3). The builders
-enforce the §7 clean-vs-illegal fixture discipline (the #8 REJECT lesson):
-
-* a ``VERIFIED`` declaration built here carries a real ``evidence_reference`` +
-  ``assurance_level`` (never the "VERIFIED with empty evidence" illegal fixture);
-* an **undeclared** dimension is genuinely absent from the ``declarations`` tuple (the
-  ``undeclared_required`` helper), **not** a ``status=UNKNOWN`` declaration — the two are
-  treated the same by the predicate but are distinct fixtures and are built distinctly;
-* a ``CONTRADICTORY`` fixture carries a real conflicting observation pair.
-
-The reserved ``"TBD"`` placeholder is excluded from required-field text.
-"""
+"""Shared valid-artifact builders + strategies for the brokercap property tests."""
 
 from __future__ import annotations
 
@@ -41,19 +28,14 @@ from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Text bound to a required-covered field must be concrete (never the reserved ``"TBD"``).
 REQUIRED_FIELD_TEXT = st.text(max_size=8).filter(lambda s: s != "TBD")
 
-# ---------------------------------------------------------------------------
-# Enum / scalar strategies
-# ---------------------------------------------------------------------------
 
 STATUSES = st.sampled_from(list(CapabilityStatus))
 DIMENSIONS = st.sampled_from(list(CapabilityDimension))
 LEVELS = st.sampled_from(list(AssuranceLevel))
 CLASSES = st.sampled_from(list(ConformanceClass))
 PROHIBITED_PROOFS = st.sampled_from(list(ProhibitedProof))
-#: The five non-authorizing statuses (§5.3 line 146 — never authorize).
 NON_AUTHORIZING_STATUSES = st.sampled_from(
     [
         CapabilityStatus.DOCUMENTED_NOT_VERIFIED,
@@ -63,15 +45,8 @@ NON_AUTHORIZING_STATUSES = st.sampled_from(
         CapabilityStatus.EXPIRED,
     ]
 )
-#: Injected bool | None flag (fail-closed on None / False).
 TRIBOOL = st.sampled_from([True, False, None])
-#: An injected non-negative integer bound (+ None for the fail-closed direction; §8).
 OPT_BOUND = st.none() | st.integers(min_value=0, max_value=1000)
-
-
-# ---------------------------------------------------------------------------
-# Value builders
-# ---------------------------------------------------------------------------
 
 
 def verified_declaration(
@@ -189,11 +164,6 @@ def observed_drift(
     return ObservedBehavior(**base)
 
 
-# ---------------------------------------------------------------------------
-# RequiredCapabilitySet
-# ---------------------------------------------------------------------------
-
-
 def required_set(
     dimensions: frozenset[CapabilityDimension] = frozenset(
         {CapabilityDimension.ORDER_IDENTITY}
@@ -209,11 +179,6 @@ def required_set(
     }
     base.update(overrides)
     return RequiredCapabilitySet(**base)
-
-
-# ---------------------------------------------------------------------------
-# BrokerCapabilityProfile
-# ---------------------------------------------------------------------------
 
 
 def profile_required_kwargs(**overrides: Any) -> dict[str, Any]:

@@ -1,33 +1,4 @@
-"""GET-only KIS 모의투자 (VTS) account / tradability facts for item 12 (PR-3a, option (a)).
-
-Operator decision 2026-10-23 ("K"): for a scope whose every capability tuple is a mock order or
-read with no position/cash effect (:func:`tos.brokercap.mock_order_without_position_or_cash`),
-item 12's three broker-side facts come from two GETs against the SAME mock host the order
-transport is sealed to, never from a profile approval act that does not exist for the mock
-profile:
-
-* ``account_facts_current`` — 주식잔고조회 (``VTTC8434R``, ``/uapi/domestic-stock/v1/trading/
-  inquire-balance``) answered ``rt_cd == "0"`` for this account. KIS open-trading-api
-  ``examples_llm/domestic_stock/inquire_balance`` (``tr_id`` demo branch, params).
-* ``tradability_facts_current`` — 주식현재가 시세 (``FHKST01010100``, ``/uapi/domestic-stock/v1/
-  quotations/inquire-price``) answered ``output.temp_stop_yn == "N"`` (임시 정지 여부) for this
-  instrument. ``examples_llm/domestic_stock/inquire_price`` (``chk_inquire_price``
-  ``COLUMN_MAPPING``). ``"Y"`` is a halted instrument -> ``False``; anything else is no answer.
-* ``generation_current`` (``broker_constraint_generation_current``) — BOTH reads succeeded in the
-  current observation.
-
-**Freshness.** An observation is current for ``max_age_ms`` (config). A reader asked for a fact
-when the last observation is older refreshes first — so one attempt's three item-12 reads share
-one pair of GETs, and a fact is never older than the bound. Absence, a failed GET, an
-unparseable answer or a stale observation all read as "not current" — ``None`` (never observed)
-or ``False`` — and the kernel refuses the send.
-
-**GET only.** :meth:`KisMockHttpClient.get_quote` is the one HTTP call this module makes; it
-issues a GET and nothing else. One ``BROKER_FACTS_OBSERVED`` evidence row per refresh names the
-outcome; no credential, token or account number is ever written into it.
-
-Firewall: stdlib + PyYAML + this package's siblings. No ``shared.*``.
-"""
+"""GET-only KIS 모의투자 (VTS) account / tradability facts for item 12 (PR-3a, option (a))."""
 
 from __future__ import annotations
 
@@ -57,9 +28,7 @@ __all__ = [
     "load_broker_facts_config",
 ]
 
-#: The tree file this module's config lives in.
 BROKER_FACTS_CONFIG_NAME = "broker_facts.yaml"
-#: The evidence row each refresh writes.
 BROKER_FACTS_OBSERVED_KIND = "BROKER_FACTS_OBSERVED"
 
 _KEYS = (
@@ -83,7 +52,6 @@ class BrokerFactsConfig:
 
     balance_tr_id: str
     balance_path: str
-    #: The balance GET's fixed query parameters other than ``CANO``/``ACNT_PRDT_CD``.
     balance_params: tuple[tuple[str, str], ...]
     quote_tr_id: str
     quote_path: str
@@ -92,13 +60,7 @@ class BrokerFactsConfig:
 
 
 def load_broker_facts_config(path: Path) -> BrokerFactsConfig:
-    """Read and validate ``broker_facts.yaml``.
-
-    Raises:
-        BrokerFactsConfigError: The file is absent/unreadable, a key is missing or unknown, a
-            value has the wrong type, the balance TR is not a 모의 (``V``-prefixed) TR, or a
-            path does not start with ``/``.
-    """
+    """Read and validate ``broker_facts.yaml``."""
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
@@ -175,7 +137,6 @@ class BrokerFactsObservation:
 
     as_of_ms: int
     account_ok: bool
-    #: ``True`` tradable, ``False`` halted (``temp_stop_yn == "Y"``), ``None`` no answer.
     tradable: bool | None
     reason: str
 
@@ -203,8 +164,6 @@ class KisMockBrokerFacts:
         self._instrument = instrument
         self._observation: BrokerFactsObservation | None = None
 
-    # -- the three readers ---------------------------------------------------
-
     def account_facts_current(self) -> bool | None:
         observation = self._current()
         return None if observation is None else observation.account_ok
@@ -221,15 +180,10 @@ class KisMockBrokerFacts:
             return None
         return observation.account_ok and observation.tradable is not None
 
-    # -- refresh -------------------------------------------------------------
-
     def _current(self) -> BrokerFactsObservation | None:
         observation = self._observation
         if observation is None or self._expired(observation):
             observation = self.refresh()
-            # #932 Codex r1 MEDIUM: the timestamp is taken BEFORE the two GETs (conservative),
-            # so slow GETs can age a fresh observation past the bound by the time it returns.
-            # Re-check: an observation already older than max_age_ms is not handed out.
             if self._expired(observation):
                 return None
         return observation
@@ -248,10 +202,6 @@ class KisMockBrokerFacts:
             if reason == "ok":
                 reason = quote_reason
         except Exception as exc:  # noqa: BLE001 - fail closed, never crash the resolver
-            # ANY failure — the four named ones (stale/invalid token, transport, custody) or
-            # one nobody listed (#932 review LOW 3) — is "no facts": both reset, even when the
-            # first GET had already succeeded, and the type name is the evidence reason. A
-            # raise here would escape through the send-boundary resolver instead.
             account_ok, tradable = False, None
             reason = type(exc).__name__
         observation = BrokerFactsObservation(
@@ -285,8 +235,6 @@ class KisMockBrokerFacts:
         return response.json
 
     def _read_account(self, token: str) -> tuple[bool, str]:
-        # The SAME parser the order codec uses (#932 Codex r1 HIGH), so the account this read
-        # verifies is the account the order is sent for.
         try:
             account = split_kis_account(self._account)
         except KisAccountError:
@@ -304,8 +252,6 @@ class KisMockBrokerFacts:
         if not isinstance(body, dict):
             return False, "balance_malformed"
         if body.get("rt_cd") != "0":
-            # A fixed category, never the server's value (#932 Codex r1 MEDIUM — a malformed
-            # rt_cd can carry anything, a header echo included, into the evidence row).
             return False, "balance_rt_cd_not_ok"
         return True, "ok"
 

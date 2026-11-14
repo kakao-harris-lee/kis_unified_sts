@@ -90,9 +90,7 @@ def test_artifact_name_cannot_leave_the_readme_directory(tmp_path: Path) -> None
 
 
 def test_the_729_claim_would_have_failed(tmp_path: Path) -> None:
-    """#729: the README attributed a holding (``017670``) to ``P-BAL-20260916T233126Z.json``,
-    whose rows carry no ``pdno`` field. Written as a citation, that claim cannot pass.
-    """
+    """#729: the README attributed a holding (``017670``) to ``P-BAL-20260916T233126Z.json``,"""
     artifact = "P-BAL-20260916T233126Z.json"
     shutil.copy(T3 / artifact, tmp_path / artifact)
     readme = _campaign(tmp_path, f"`{artifact}:observations[0].pdno=017670`\n")

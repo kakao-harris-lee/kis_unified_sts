@@ -1,31 +1,4 @@
-"""Long/short structural symmetry through the ``tos.backtest`` driver (TOS Phase 5 W5 plan
-§2 decision 8, backtest half; lane f4).
-
-Phase 3's own load-bearing premise is "backtest = paper, same core" (``driver.py`` module
-docstring §2/§3 — single-core parity, no re-authored sequencer step). This suite drives **the
-same synthetic bar feed** through **the same kernel wiring** twice — once with a ``LONG``/``BUY``
-entry, once with the mirrored ``SHORT``/``SELL`` entry — and asserts the two runs are
-structurally indistinguishable except for the side itself and the content-addressed digests that
-side legitimately changes.
-
-This module is deliberately **self-contained**, mirroring ``tos/tests/backtest/
-_backtest_fixtures.py``'s own stated discipline ("a harness suite that depended on another
-package's test internals would couple two independent authoring-evidence lanes") — extended one
-step further here: a *runtime* test suite building its own kernel-facing fixtures rather than
-importing a kernel test package's private module at all (the same "runtime tests build their own
-fixtures too" convention ``tos/runtime/tests/compose/_fixtures.py`` states for itself). Every
-builder below is a direct, much smaller re-derivation against the same public kernel surface
-(``tos.dsl`` / ``tos.capsule`` / ``tos.engine`` / ``tos.backtest`` / ``tos.time`` /
-``tos.canonical``) the kernel suite uses — it constructs no ``EngineCore``/ledger/registry outside
-what ``tos.backtest`` itself hands back, and re-authors no sequencer step.
-
-Side is a **scenario parameter** on both axes exercised here, exactly as the packages that own it
-say: ``tos.dsl.records.TargetSpec.direction`` is an opaque author-declared string (never derived,
-never compared against a literal by this harness) and ``tos.backtest.vocabulary.FillSide`` is
-"the injected side a scenario's single order takes" (``vocabulary.py`` docstring) — a scenario
-parameter, not flow-derived. Mirroring the two together is what this suite calls "the mirrored
-scenario"; it introduces no third side concept of its own.
-"""
+"""Long/short structural symmetry through the ``tos.backtest`` driver (TOS Phase 5 W5 plan"""
 
 from __future__ import annotations
 
@@ -90,14 +63,9 @@ CONTINUITY_ID_PREFIX = "symmetry-stream"
 PROOF_DIGEST = "proof-digest-symmetry"
 PERMIT_IDENTITY = "permit-symmetry"
 
-#: Every bound this harness injects is provisional (design #33 §10) — the same values
-#: ``tos/tests/backtest/_backtest_fixtures.py`` uses, re-derived locally rather than imported.
 PROVISIONAL_BUDGET_STEPS = 64
 PROVISIONAL_MAX_UNRESOLVED_SEND_PER_SCOPE = 1
 
-#: The mirrored sides this suite drives. ``LONG``/``BUY`` and ``SHORT``/``SELL`` are the two
-#: halves of one mirrored pair — never three, never a fourth "flat" combination here (that is
-#: rows outside decision 8's scope).
 _LONG = ("LONG", FillSide.BUY)
 _SHORT = ("SHORT", FillSide.SELL)
 
@@ -134,9 +102,7 @@ def _issue_capsule(direction: str) -> DecisionContextCapsule:
 
 
 def _capsule_source(direction: str) -> Any:
-    """The injected per-bar Capsule source for one side (same content on every bar — design #33
-    §3.5, D-E2 Gap-1: the slice claims reproducibility, never per-bar identity distinctness).
-    """
+    """The injected per-bar Capsule source for one side (same content on every bar — design #33"""
 
     def _source(
         bar: Any,
@@ -147,9 +113,7 @@ def _capsule_source(direction: str) -> Any:
 
 
 def _mirrored_policy(direction: str) -> DecisionPolicy:
-    """A single-rule policy whose fired decision opens the mirrored ``direction`` — the SHORT/SELL
-    half of decision 8's mirror is this function with ``direction="SHORT"``, never a copy-pasted
-    second policy builder that could silently drift from the LONG one."""
+    """A single-rule policy whose fired decision opens the mirrored ``direction`` — the SHORT/SELL"""
     entry = Decision(
         kind=DecisionKind.ACTION,
         rationale=f"{direction} entry — W5 symmetry harness",
@@ -229,9 +193,7 @@ def _time_projection() -> BarTimeProjection:
 
 
 def _fill_parameters(side: FillSide) -> FillParameters:
-    """A settled fill, mirrored only in ``side`` — every magnitude/price/cost value is the exact
-    same injected constant on both sides, so a divergence anywhere else in the run is a real
-    asymmetry, not an artifact of two differently-parameterised fixtures."""
+    """A settled fill, mirrored only in ``side`` — every magnitude/price/cost value is the exact"""
     return FillParameters(
         mode=FillMode.SETTLE,
         side=side,
@@ -261,10 +223,6 @@ def _run_side(direction: str, side: FillSide) -> BacktestRun:
     driver = BacktestDriver(
         converter=converter,
         fill_model=fill_model,
-        # The SAME continuity id on both sides deliberately: each side runs on its own
-        # independent driver/core pair (no shared ledger), so a shared continuity label
-        # introduces no cross-talk, and it keeps `reference` (the yield-order coordinate)
-        # out of the "genuinely side-derived" field set the digest test isolates below.
         continuity_id=CONTINUITY_ID_PREFIX,
     )
     core = EngineCore(
@@ -282,11 +240,6 @@ def _run_side(direction: str, side: FillSide) -> BacktestRun:
     return driver.run(core, reference_bars(1))
 
 
-#: The :class:`~tos.backtest.records.TraceEntry` fields that legitimately carry side-specific
-#: content — the two content-addressed digests the Decision/TargetSpec's ``direction`` feeds
-#: into. ``attempt_id`` is deliberately NOT in this set — measured below, it is scope-derived
-#: (same account/instrument/bar slot) rather than digest-derived, so it is identical on both
-#: sides and belongs in the structural-identity comparison, not excluded from it.
 _SIDE_BEARING_TRACE_FIELDS = frozenset({"proposal_digest", "outcome_digest"})
 
 
@@ -300,8 +253,7 @@ def _structural_view(entry: TraceEntry) -> dict[str, Any]:
 
 
 def test_mirrored_sides_yield_the_same_event_and_evidence_shape() -> None:
-    """(decision 8) Same feed, mirrored side: every trace entry matches field-for-field except
-    the side-bearing digests, which the next test requires to actually differ."""
+    """(decision 8) Same feed, mirrored side: every trace entry matches field-for-field except"""
     long_run = _run_side(*_LONG)
     short_run = _run_side(*_SHORT)
 
@@ -323,12 +275,7 @@ def test_mirrored_sides_yield_the_same_event_and_evidence_shape() -> None:
 
 
 def test_mirrored_sides_digests_actually_differ_side_is_bound_into_them() -> None:
-    """(decision 8, mutation M6's mirror) The digests are *supposed* to differ — direction is
-    genuine decision content the canonical digest covers. If a future change made the digest
-    computation side-blind (the flip side of an ``if side == "BUY"`` branch: side quietly
-    dropped from what is hashed), this would go red by *equality* where the pin expects
-    inequality, catching the regression from the opposite direction of the other symmetry pins.
-    """
+    """(decision 8, mutation M6's mirror) The digests are *supposed* to differ — direction is"""
     long_run = _run_side(*_LONG)
     short_run = _run_side(*_SHORT)
 
@@ -348,21 +295,13 @@ def test_mirrored_sides_digests_actually_differ_side_is_bound_into_them() -> Non
     assert [e.outcome_digest for e in long_run.trace.entries] != [
         e.outcome_digest for e in short_run.trace.entries
     ]
-    # attempt_id is scope-derived, not digest-derived (measured directly) — it stays identical
-    # across the mirrored sides, and that equality is asserted as part of the structural-identity
-    # test above rather than here.
     assert [e.attempt_id for e in long_run.trace.entries] == [
         e.attempt_id for e in short_run.trace.entries
     ]
 
 
 def test_fill_records_are_identical_except_the_side_field() -> None:
-    """(decision 8) The settled fill's quantity/cost apparatus never reads ``side`` for anything
-    but labelling and the one place slippage legitimately does — ``execution_price``, which the
-    fill model's own docstring states is "always applied against the taker" (§4.3): a BUY fills
-    worse (higher) than reference, a SELL fills worse (lower). That is a real, symmetric,
-    side-derived difference, not an asymmetry — this test isolates it from everything else on
-    the record, which must match exactly."""
+    """(decision 8) The settled fill's quantity/cost apparatus never reads ``side`` for anything"""
     long_run = _run_side(*_LONG)
     short_run = _run_side(*_SHORT)
 
@@ -376,10 +315,6 @@ def test_fill_records_are_identical_except_the_side_field() -> None:
         "it stays identical across the mirrored sides"
     )
 
-    # The one legitimately side-derived numeric field: slippage always moves execution_price
-    # AWAY from reference_price on the taker's disadvantaged side — symmetric in magnitude,
-    # opposite in sign, never the same value for both sides (an "equal execution_price on both
-    # sides" bug would be a phantom price-improvement that ignores which way the taker trades).
     assert long_fill.reference_price == short_fill.reference_price
     assert long_fill.execution_price is not None
     assert long_fill.reference_price is not None

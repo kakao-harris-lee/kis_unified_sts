@@ -38,9 +38,8 @@
 #      alias them, which keeps that invariant unchanged — and a missed alias is caught by the
 #      runtime loader's own named-TBD scan after render, not by a new guard.
 #
-# `safety_activation.yaml::members` is deliberately absent — it is ALWAYS derived from
-# `print-policy-digests` against the already-coordinate-filled copy, never hand-written
-# (plan §2.1, adoption plan §2 decision 3).
+# `safety_activation.yaml` went with plan S2-a (2026-11-13): the activation document and the
+# safety mesh it activated are deleted, so there is no `members:` slot to derive any more.
 #
 # The slot list below is pinned as FULL (file, key, anchor, replacement) tuples by
 # `tests/unit/scripts/test_render_tenant_trees.py` (plan §4.2) — a key-name pin would let a

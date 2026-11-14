@@ -1,15 +1,4 @@
-"""``tos_runtime.compose._envelope_wiring`` — unit tests (hermetic, no I/O).
-
-Pure unit tests of the (a′) wave's lane B module: envelope construction from a
-:class:`~tos_runtime.venue.construction_rules.ConstructionRules`, the two OCP/venue boot
-cross-checks (side tokens, sizing bound), identity derivation, and the
-:func:`~tos_runtime.compose._envelope_wiring.build_construction_inputs` call-site wrapper.
-Every fixture is built directly from kernel/runtime dataclasses (never through the YAML loader,
-and never through a real :class:`~tos_runtime.venue.VenueConstraintService` — a lightweight
-stand-in stub carries just the two attributes ``build_construction_inputs`` reads) — this
-suite owns its own inputs, the same "each package's fixtures stay in its own suite" discipline
-``compose/_fixtures.py``'s own module docstring states.
-"""
+"""``tos_runtime.compose._envelope_wiring`` — unit tests (hermetic, no I/O)."""
 
 from __future__ import annotations
 
@@ -75,13 +64,11 @@ def _sizing_bound(
         min_quantity=min_quantity,
         max_quantity=max_quantity,
         max_notional=None,
-        quantity_unit=None,  # lane A's own contract — never set here.
+        quantity_unit=None,
         admitted_quantity_bases=frozenset({"RISK"}),
     )
 
 
-#: The (action_class, direction) this suite's default fixtures agree on throughout — matches
-#: the default ``sides``/``direction`` in :func:`_construction_rules` below.
 _ACTION_CLASS = ActionClass.NEW_LONG
 
 
@@ -91,8 +78,7 @@ def _construction_rules(
     sizing_bound: SizingBound | None = None,
     direction: str | None = "LONG",
 ) -> ConstructionRules:
-    """``direction`` is ``None`` builds a ``ConstructionRules`` with NO ``DIRECTION`` axis
-    binding at all — the SIDE-derivation refusal path's own fixture."""
+    """``direction`` is ``None`` builds a ``ConstructionRules`` with NO ``DIRECTION`` axis"""
     sides = sides if sides is not None else {(ActionClass.NEW_LONG, "LONG"): "BUY"}
     action_class_shape = {
         key: ActionClassShape(side=side, position_effect="OPEN")
@@ -145,18 +131,10 @@ def _loaded_ocp(
     )
 
 
-# ===========================================================================
-# build_construction_envelope — quantity_unit sourcing
-# ===========================================================================
-
-
 def test_envelope_sources_quantity_unit_from_the_venue_not_the_ocp() -> None:
-    """The load-bearing decision (module docstring): ``sizing_bound.quantity_unit`` on the
-    built envelope is the INJECTED venue unit, never anything the OCP-derived
-    ``ConstructionRules.sizing_bound`` itself carries (which is always ``None`` — lane A's own
-    ``_parse_sizing`` leaves it unset by design)."""
+    """The load-bearing decision (module docstring): ``sizing_bound.quantity_unit`` on the"""
     rules = _construction_rules()
-    assert rules.sizing_bound.quantity_unit is None  # lane A's own contract
+    assert rules.sizing_bound.quantity_unit is None
     envelope = build_construction_envelope(
         rules,
         loaded_ocp=_loaded_ocp(),
@@ -166,16 +144,12 @@ def test_envelope_sources_quantity_unit_from_the_venue_not_the_ocp() -> None:
     )
     assert envelope.sizing_bound is not None
     assert envelope.sizing_bound.quantity_unit is QuantityUnitKind.CONTRACTS
-    # Every OTHER sizing_bound field passes through unchanged from the OCP's own rules.
     assert envelope.sizing_bound.risk_budget == rules.sizing_bound.risk_budget
     assert envelope.sizing_bound.lot_rounding == rules.sizing_bound.lot_rounding
 
 
 def test_envelope_quantity_unit_none_flows_through_uncorrected() -> None:
-    """Mutation (team-lead brief's own required mutation): with no venue unit, the built
-    envelope's ``sizing_bound.quantity_unit`` is ``None`` — never silently defaulted — so
-    ``derive_order_size`` is the one that denies ("the sizing bound declares no quantity
-    unit"), not this module."""
+    """Mutation (team-lead brief's own required mutation): with no venue unit, the built"""
     envelope = build_construction_envelope(
         _construction_rules(),
         loaded_ocp=_loaded_ocp(),
@@ -199,20 +173,10 @@ def test_envelope_identity_and_axes_come_from_the_ocp() -> None:
     )
     assert envelope.envelope_generation == 7
     assert envelope.policy_binding_id == "ocp-test-1"
-    # authorized_axis_bindings carries rules.authorized_axes with DIRECTION resolved (here
-    # unchanged in value, since NEW_LONG resolves "LONG" and the policy axis already said
-    # "LONG" too) plus the derived SIDE binding — never a second, independently-authored SIDE
-    # declaration. See test_envelope_replaces_the_direction_binding_with_the_resolved_direction
-    # for the case where the resolved and policy-axis values actually differ.
     assert envelope.authorized_axis_bindings == rules.authorized_axes + (
         AxisBinding(axis=ConformanceAxis.SIDE, value="BUY"),
     )
     assert envelope.effect_dimensions == rules.effect_dimensions
-
-
-# ===========================================================================
-# build_construction_envelope — side cross-check
-# ===========================================================================
 
 
 def test_envelope_refuses_when_an_ocp_side_is_not_venue_allowed() -> None:
@@ -223,7 +187,6 @@ def test_envelope_refuses_when_an_ocp_side_is_not_venue_allowed() -> None:
             loaded_ocp=_loaded_ocp(),
             action_class=_ACTION_CLASS,
             venue_quantity_constraint=_venue_quantity_constraint(),
-            # venue only admits SELL — the OCP's BUY is unknown to it.
             venue_allowed_sides=frozenset({"SELL"}),
         )
 
@@ -243,11 +206,6 @@ def test_envelope_admits_when_every_ocp_side_is_venue_allowed() -> None:
         venue_allowed_sides=frozenset({"BUY", "SELL"}),
     )
     assert envelope.sizing_bound is not None
-
-
-# ===========================================================================
-# build_construction_envelope — sizing-bound subset cross-check (team-lead follow-up)
-# ===========================================================================
 
 
 def test_envelope_refuses_when_ocp_max_quantity_exceeds_the_venue() -> None:
@@ -310,8 +268,7 @@ def test_envelope_admits_an_ocp_sizing_bound_narrower_than_the_venue() -> None:
 
 
 def test_envelope_sizing_check_skips_a_field_the_venue_leaves_absent() -> None:
-    """An absent venue bound is UNKNOWN, not "unlimited" — nothing to compare against, so no
-    refusal (matches the real paper venue policy's own ``max_quantity: null``)."""
+    """An absent venue bound is UNKNOWN, not "unlimited" — nothing to compare against, so no"""
     rules = _construction_rules(sizing_bound=_sizing_bound(max_quantity=Decimal(999)))
     envelope = build_construction_envelope(
         rules,
@@ -323,10 +280,6 @@ def test_envelope_sizing_check_skips_a_field_the_venue_leaves_absent() -> None:
     assert envelope.sizing_bound is not None
 
 
-# ===========================================================================
-# resolve_construction_direction (integration follow-up, 2026-09-16)
-# ===========================================================================
-
 _MIRRORED_SIDES = {
     (ActionClass.NEW_LONG, "LONG"): "BUY",
     (ActionClass.NEW_SHORT, "SHORT"): "SELL",
@@ -335,8 +288,7 @@ _MIRRORED_SIDES_WITH_CLOSE = {**_MIRRORED_SIDES, (ActionClass.CLOSE, "LONG"): "S
 
 
 def test_resolve_direction_uses_the_action_class_for_direction_named_classes() -> None:
-    """The class itself is the most specific per-attempt direction fact available — read
-    BEFORE the policy's own axis, not instead of it only when the axis agrees."""
+    """The class itself is the most specific per-attempt direction fact available — read"""
     rules = _construction_rules(sides=_MIRRORED_SIDES, direction="LONG")
     assert (
         resolve_construction_direction(rules, action_class=ActionClass.NEW_SHORT)
@@ -360,27 +312,15 @@ def test_resolve_direction_falls_back_to_the_policy_axis_for_direction_agnostic_
 def test_resolve_direction_refuses_for_a_direction_agnostic_class_with_no_axis() -> (
     None
 ):
-    """Mutation-equivalent for the DIRECTION-absent path: never defaults, refuses — matches
-    the ``construction_generation`` discipline :func:`build_construction_identities` already
-    follows for its own missing-input case. Narrower than before: this only fires for a
-    DIRECTION-AGNOSTIC class now, never for NEW_LONG/NEW_SHORT."""
+    """Mutation-equivalent for the DIRECTION-absent path: never defaults, refuses — matches"""
     rules = _construction_rules(sides=_MIRRORED_SIDES_WITH_CLOSE, direction=None)
-    assert not any(
-        b.axis is ConformanceAxis.DIRECTION for b in rules.authorized_axes
-    )  # fixture sanity
+    assert not any(b.axis is ConformanceAxis.DIRECTION for b in rules.authorized_axes)
     with pytest.raises(SideDerivationRefused, match="direction-agnostic"):
         resolve_construction_direction(rules, action_class=ActionClass.CLOSE)
 
 
-# ===========================================================================
-# build_construction_envelope — SIDE axis derivation (team-lead follow-up)
-# ===========================================================================
-
-
 def test_envelope_derives_side_from_action_class_shape() -> None:
-    """The whole point (module docstring): SIDE is never authored in the OCP document, it is
-    read off ``action_class_shape[(action_class, direction)].side`` and appended to
-    ``authorized_axis_bindings`` — the one source ``ActionClassShape`` already is."""
+    """The whole point (module docstring): SIDE is never authored in the OCP document, it is"""
     rules = _construction_rules(
         sides={(ActionClass.NEW_LONG, "LONG"): "BUY"}, direction="LONG"
     )
@@ -400,11 +340,7 @@ def test_envelope_derives_side_from_action_class_shape() -> None:
 def test_envelope_derives_short_side_even_when_the_policy_direction_axis_says_long() -> (
     None
 ):
-    """The exact defect the integration run caught (team-lead follow-up, 2026-09-16): a
-    ``NEW_SHORT`` composition against a policy whose ``DIRECTION`` axis says ``LONG`` must
-    still derive SELL — direction comes from the action class for a direction-named class,
-    the policy axis is never even consulted. Before this fix, a policy fixed at ``LONG`` was
-    permanently unable to serve a short attempt, backwards from long/short symmetry."""
+    """The exact defect the integration run caught (team-lead follow-up, 2026-09-16): a"""
     rules = _construction_rules(sides=_MIRRORED_SIDES, direction="LONG")
     envelope = build_construction_envelope(
         rules,
@@ -420,12 +356,7 @@ def test_envelope_derives_short_side_even_when_the_policy_direction_axis_says_lo
 
 
 def test_envelope_replaces_the_direction_binding_with_the_resolved_direction() -> None:
-    """Second integration finding, same day (team-lead follow-up): the envelope's own
-    DIRECTION binding must carry the RESOLVED direction, never the policy's original axis
-    value left unmodified — a NEW_SHORT composition against a DIRECTION: LONG policy must
-    produce an envelope whose own DIRECTION binding reads SHORT, matching its SELL SIDE, not
-    an internally inconsistent DIRECTION=LONG/SIDE=SELL envelope. Exactly one DIRECTION
-    binding survives, never two."""
+    """Second integration finding, same day (team-lead follow-up): the envelope's own"""
     rules = _construction_rules(sides=_MIRRORED_SIDES, direction="LONG")
     envelope = build_construction_envelope(
         rules,
@@ -447,8 +378,7 @@ def test_envelope_replaces_the_direction_binding_with_the_resolved_direction() -
 def test_envelope_derives_side_for_a_direction_agnostic_class_from_the_policy_axis() -> (
     None
 ):
-    """CLOSE names no direction of its own, so this exercises the fallback arm of
-    :func:`resolve_construction_direction`."""
+    """CLOSE names no direction of its own, so this exercises the fallback arm of"""
     rules = _construction_rules(sides=_MIRRORED_SIDES_WITH_CLOSE, direction="LONG")
     envelope = build_construction_envelope(
         rules,
@@ -466,10 +396,7 @@ def test_envelope_derives_side_for_a_direction_agnostic_class_from_the_policy_ax
 def test_envelope_refuses_when_action_class_shape_has_no_arm_for_the_resolved_direction() -> (
     None
 ):
-    """The document declares a shape for (NEW_LONG, LONG) only; this composition's own
-    ``action_class`` is NEW_SHORT, which resolves its OWN direction (SHORT) — no
-    (NEW_SHORT, SHORT) arm exists, so this refuses rather than silently falling back to some
-    other declared side."""
+    """The document declares a shape for (NEW_LONG, LONG) only; this composition's own"""
     rules = _construction_rules(
         sides={(ActionClass.NEW_LONG, "LONG"): "BUY"}, direction="LONG"
     )
@@ -481,11 +408,6 @@ def test_envelope_refuses_when_action_class_shape_has_no_arm_for_the_resolved_di
             venue_quantity_constraint=_venue_quantity_constraint(),
             venue_allowed_sides=frozenset({"BUY", "SELL"}),
         )
-
-
-# ===========================================================================
-# build_construction_identities
-# ===========================================================================
 
 
 def test_identities_are_deterministic_over_the_same_inputs() -> None:
@@ -500,9 +422,7 @@ def test_identities_are_deterministic_over_the_same_inputs() -> None:
 
 
 def test_identities_change_across_ocp_generations() -> None:
-    """The exact defect the prior ``generation=1`` literal had (module docstring): an identity
-    template that does not vary with the OCP's own generation makes generation-fencing vacuous.
-    Every identity derived here must differ once ``construction_generation`` changes."""
+    """The exact defect the prior ``generation=1`` literal had (module docstring): an identity"""
     gen1 = build_construction_identities(
         account="acct-1",
         instrument="ES",
@@ -558,10 +478,7 @@ def test_identities_change_across_accounts_or_instruments() -> None:
 def test_absent_construction_generation_refuses_rather_than_defaulting_to_a_literal() -> (
     None
 ):
-    """``construction_generation: null`` is an accepted loader state
-    (``tests/venue/test_config.py::test_load_order_construction_policy_null_construction_generation_accepted``)
-    but this module's own identity derivation has no fallback for it — a missing Construction
-    Generation is a refusal here, never a silent ``generation=1``."""
+    """``construction_generation: null`` is an accepted loader state"""
     with pytest.raises(AssertionError, match="construction_generation"):
         build_construction_identities(
             account="acct-1",
@@ -571,11 +488,6 @@ def test_absent_construction_generation_refuses_rather_than_defaulting_to_a_lite
         )
 
 
-# ===========================================================================
-# build_construction_inputs — the one call-site wrapper
-# ===========================================================================
-
-
 @dataclass(frozen=True)
 class _StubShapeConstraints:
     allowed_sides: frozenset[str]
@@ -583,11 +495,7 @@ class _StubShapeConstraints:
 
 @dataclass(frozen=True)
 class _StubVenueService:
-    """Carries only the two attributes ``build_construction_inputs`` reads off a real
-    :class:`~tos_runtime.venue.VenueConstraintService` — that type needs an
-    :class:`~tos_runtime.evidence.store.SqliteEvidenceStore` plus several more services to
-    construct, which this hermetic unit-test suite has no business standing up (module
-    docstring)."""
+    """Carries only the two attributes ``build_construction_inputs`` reads off a real"""
 
     quantity_constraint: VenueQuantityConstraint
     shape_constraints: _StubShapeConstraints
@@ -595,8 +503,7 @@ class _StubVenueService:
 
 @dataclass(frozen=True)
 class _StubConstruction:
-    """Carries only the three attributes ``build_construction_inputs`` reads off a real
-    :class:`~tos_runtime.compose._types.ConstructionConfig`."""
+    """Carries only the three attributes ``build_construction_inputs`` reads off a real"""
 
     account: str
     instrument: str
@@ -626,7 +533,6 @@ def test_inputs_bundles_both_builders_plus_ocp_identity_for_the_one_call_site() 
     assert inputs.policy_id == "ocp-test-1"
     assert inputs.policy_version == "1.0.0"
     assert inputs.policy_generation == 1
-    # Same as calling the two builders directly.
     envelope = build_construction_envelope(
         loaded_ocp.construction_rules,
         loaded_ocp=loaded_ocp,

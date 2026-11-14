@@ -1,5 +1,4 @@
-"""Loader happy-path + negative tests for
-:mod:`tos_runtime.riskstate.policies` (TOS risk state service wave, lane a)."""
+"""Loader happy-path + negative tests for"""
 
 from __future__ import annotations
 
@@ -26,11 +25,6 @@ def _write(tmp_path: Path, name: str, text: str) -> Path:
     path = tmp_path / name
     path.write_text(text, encoding="utf-8")
     return path
-
-
-# ===========================================================================
-# Aggregate Risk Policy — happy path
-# ===========================================================================
 
 
 def test_load_aggregate_risk_policy_happy_path(tmp_path: Path) -> None:
@@ -72,11 +66,6 @@ def test_load_aggregate_risk_policy_digest_recomputed_on_reload(tmp_path: Path) 
     assert second.policy.canonical_digest == real_digest
 
 
-# ===========================================================================
-# Aggregate Risk Policy — negatives
-# ===========================================================================
-
-
 def test_are_named_tbd_policy_id_refused(tmp_path: Path) -> None:
     path = _write(tmp_path, "are.yaml", aggregate_risk_policy_yaml(policy_id="TBD"))
     with pytest.raises(VenuePolicyConfigError, match="policy_id"):
@@ -84,9 +73,7 @@ def test_are_named_tbd_policy_id_refused(tmp_path: Path) -> None:
 
 
 def test_are_named_tbd_policy_version_refused(tmp_path: Path) -> None:
-    """W-A A-0 round 2: ``policy_version`` used the plain ``require_str`` helper (no
-    TBD check), unlike ``policy_id``'s own ``require_filled_str`` — fixed by swapping
-    to ``require_filled_str``."""
+    """W-A A-0 round 2: ``policy_version`` used the plain ``require_str`` helper (no"""
     path = _write(
         tmp_path, "are.yaml", aggregate_risk_policy_yaml(policy_version="TBD")
     )
@@ -153,7 +140,7 @@ def test_are_dimension_id_scope_outside_governed_scopes_refused(tmp_path: Path) 
         tmp_path,
         "are.yaml",
         aggregate_risk_policy_yaml(
-            governed_scopes='["ACCOUNT"]',  # dimension_ids still declares scope INSTRUMENT
+            governed_scopes='["ACCOUNT"]',
         ),
     )
     with pytest.raises(VenuePolicyConfigError, match="governed_scopes"):
@@ -199,11 +186,6 @@ def test_are_missing_file_refused(tmp_path: Path) -> None:
         load_aggregate_risk_policy(tmp_path / "missing.yaml", scheme=SCHEME)
 
 
-# ===========================================================================
-# Action Flow Policy — happy path
-# ===========================================================================
-
-
 def test_load_action_flow_policy_happy_path(tmp_path: Path) -> None:
     path = _write(tmp_path, "afg.yaml", action_flow_policy_yaml())
     loaded = load_action_flow_policy(path, scheme=SCHEME)
@@ -236,11 +218,6 @@ def test_load_action_flow_policy_happy_path(tmp_path: Path) -> None:
     )
 
 
-# ===========================================================================
-# Action Flow Policy — negatives
-# ===========================================================================
-
-
 def test_afg_named_tbd_policy_id_refused(tmp_path: Path) -> None:
     path = _write(tmp_path, "afg.yaml", action_flow_policy_yaml(policy_id="TBD"))
     with pytest.raises(VenuePolicyConfigError, match="policy_id"):
@@ -248,8 +225,7 @@ def test_afg_named_tbd_policy_id_refused(tmp_path: Path) -> None:
 
 
 def test_afg_named_tbd_bundle_member_kind_refused(tmp_path: Path) -> None:
-    """W-A A-0 round 2: ``bundle_member_kind`` used the plain ``require_str`` helper
-    (no TBD check) — fixed by swapping to ``require_filled_str``."""
+    """W-A A-0 round 2: ``bundle_member_kind`` used the plain ``require_str`` helper"""
     path = _write(
         tmp_path, "afg.yaml", action_flow_policy_yaml(bundle_member_kind="TBD")
     )
@@ -258,11 +234,7 @@ def test_afg_named_tbd_bundle_member_kind_refused(tmp_path: Path) -> None:
 
 
 def test_afg_named_tbd_signer_identity_refused(tmp_path: Path) -> None:
-    """W-A A-0 round 2 (kernel round #4 재심 후속 조사): signer_identity/
-    approval_identity/evidence_package_ref used an inline null-or-string check with no
-    TBD guard — fixed by reusing ``optional_str`` (the SAME helper
-    ``venue/_order_construction_policy_loader.py``'s own identical three fields
-    already use)."""
+    """W-A A-0 round 2 (kernel round #4 재심 후속 조사): signer_identity/"""
     text = action_flow_policy_yaml().replace(
         "signer_identity: null", 'signer_identity: "TBD"'
     )
@@ -346,11 +318,7 @@ def test_afg_scope_independence_axis_null_refused(tmp_path: Path) -> None:
 
 
 def test_afg_deployment_facts_block_missing_refused(tmp_path: Path) -> None:
-    """Review HIGH (team-lead 2026-09-16): the reviewer's own mutation — "default to
-    (False, False, True) when ``_runtime.deployment_facts`` is absent entirely" — must be
-    refused by ``require_mapping_key``'s absent-key check, distinct from
-    :func:`test_afg_deployment_facts_null_refused`'s "present but one axis null" shape.
-    """
+    """Review HIGH (team-lead 2026-09-16): the reviewer's own mutation — "default to"""
     path = _write(
         tmp_path,
         "afg.yaml",
@@ -361,8 +329,7 @@ def test_afg_deployment_facts_block_missing_refused(tmp_path: Path) -> None:
 
 
 def test_afg_scope_independence_block_missing_refused(tmp_path: Path) -> None:
-    """Same shape as :func:`test_afg_deployment_facts_block_missing_refused`, for
-    ``_runtime.scope_independence`` — an absent block, not merely one null axis."""
+    """Same shape as :func:`test_afg_deployment_facts_block_missing_refused`, for"""
     path = _write(
         tmp_path,
         "afg.yaml",
@@ -373,9 +340,7 @@ def test_afg_scope_independence_block_missing_refused(tmp_path: Path) -> None:
 
 
 def test_afg_side_tokens_block_missing_refused(tmp_path: Path) -> None:
-    """Lane b addition — ``_runtime.side_tokens`` absent entirely is refused (same
-    ``require_mapping_key`` discipline as ``deployment_facts``/``scope_independence``).
-    """
+    """Lane b addition — ``_runtime.side_tokens`` absent entirely is refused (same"""
     path = _write(
         tmp_path,
         "afg.yaml",
@@ -441,9 +406,7 @@ def test_afg_action_class_map_value_outside_governed_action_classes_refused(
 def test_afg_account_scope_named_tbd_or_not_singleton_refused(
     tmp_path: Path, marker: str
 ) -> None:
-    """The operator-fill gate for the ONE deployment coordinate this policy binds: the real
-    deploy file ships ``account_scope: ["TBD"]`` and must not boot as a phantom scope; two
-    entries or none is not a single live scope (v1, plan §2.1) either."""
+    """The operator-fill gate for the ONE deployment coordinate this policy binds: the real"""
     text = action_flow_policy_yaml().replace(
         'account_scope: ["acct-1"]', f"account_scope: {marker}"
     )
@@ -453,9 +416,7 @@ def test_afg_account_scope_named_tbd_or_not_singleton_refused(
 
 
 def test_afg_account_scope_not_explicit_list_refused(tmp_path: Path) -> None:
-    """A missing-but-required explicit-list scope array (never null) is refused — the venue
-    primitives' own ``require_list`` discipline ("a missing key or null is a named-TBD gap").
-    """
+    """A missing-but-required explicit-list scope array (never null) is refused — the venue"""
     text = action_flow_policy_yaml().replace(
         'account_scope: ["acct-1"]', "account_scope: null"
     )

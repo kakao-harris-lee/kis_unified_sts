@@ -1,24 +1,4 @@
-"""The engine-admission escape-checker gate (design #31 §3.5/§9-4 seam closure).
-
-Design #31 §3.5 explicitly deferred this: Slice #1 accepted in-process typed
-``AuthoredStrategy`` objects without ever calling the DSL escape-checker
-(``tos.dsl.admissibility.analyze``), because there was no ``lower_strategy``
-function to bridge the typed algebra into the candidate-AST domain the checker
-consumes (DSL spike memo G11). ``tos.dsl.lowering.lower_strategy`` (lane D-K-1)
-closes that gap; this module proves ``tos.engine.admission.strategy_admissible``
-actually calls it — both for the in-process typed path and for a strategy built
-through ``tos.dsl.serialization.parse_strategy`` (the "두 경로 동형" claim,
-design #31 §1.2).
-
-Because the typed authoring algebra cannot itself express an escape (that is the
-whole point of design #31 §3.5's "admissible by construction"), a genuinely
-escaping ``AuthoredStrategy`` is unconstructable — the ``lower_strategy`` seam is
-exercised here two ways: (1) end-to-end with real (escape-free) fixture strategies,
-proving the gate runs and passes them, and (2) with ``lower_strategy`` monkeypatched
-to return an adversarial program, proving the gate actually consumes whatever
-``lower_strategy`` hands it and refuses on the checker's own reasons — the only way
-to observe the gate reject anything, short of forging module-private state.
-"""
+"""The engine-admission escape-checker gate (design #31 §3.5/§9-4 seam closure)."""
 
 from __future__ import annotations
 
@@ -51,7 +31,7 @@ def test_the_bound_admissibility_result_names_the_exact_strategy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """(iii) G12 binding: the bound record's ``strategy_id``/``strategy_digest`` match the strategy."""
-    del monkeypatch  # not used — kept for signature symmetry with the escape test below
+    del monkeypatch
     strategy = issue_strategy(capsule_gated_policy())
     result = strategy_admissible(strategy)
     assert result.admissibility_result is not None
@@ -62,13 +42,7 @@ def test_the_bound_admissibility_result_names_the_exact_strategy(
 def test_a_lowered_program_carrying_an_escape_is_refused_with_the_checkers_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """(ii) A strategy whose lowered program carries an escape is INADMISSIBLE with the checker's reason.
-
-    The typed algebra cannot construct an escaping strategy, so ``lower_strategy``
-    is monkeypatched to hand back an adversarial candidate for this one call —
-    the only way to observe the gate actually reject on the escape-checker's own
-    output rather than merely trust that it would.
-    """
+    """(ii) A strategy whose lowered program carries an escape is INADMISSIBLE with the checker's reason."""
     strategy = issue_strategy(capsule_gated_policy())
 
     def _adversarial_lowering(_: object) -> CandidateProgram:
@@ -88,26 +62,7 @@ def test_a_lowered_program_carrying_an_escape_is_refused_with_the_checkers_reaso
 def test_an_ambient_sourced_context_ref_in_the_lowered_program_is_still_caught(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """([K2-p3-#10] finding #10) The escape-checker independently catches an ambient ``context_ref``.
-
-    Before this lane, ``Operand._exactly_one`` (``tos/src/tos/dsl/vocabulary.py``) validated only
-    "exactly one of const/ref, and ref non-empty" — it never checked ``ref[0]`` against
-    ``ADMISSIBLE_CONTEXT_SOURCES``, despite the field's own docstring claiming "there is no way to
-    name an ambient source here (DCE-INV-003)". ``tos/tests/dsl/test_dsl_operand_ref_source.py``
-    now proves the constructor itself refuses ``Operand(ref=("ambient", "now"))`` directly — which
-    also means an *end-to-end* probe through the real lowering path can no longer even construct
-    the adversarial input (pydantic v2 revalidates a nested ``model_construct``-bypassed instance
-    the moment it is embedded in a normally-constructed parent, so the bypass does not survive
-    assembly into a ``Compare``/``Rule``/``DecisionPolicy`` at all).
-
-    This test is therefore the **second, independent** gate on its own terms, exercised the same
-    way ``test_a_lowered_program_carrying_an_escape_is_refused_with_the_checkers_reason`` above
-    exercises it: ``lower_strategy`` is monkeypatched to hand back exactly the
-    ``CandidateNode(kind=KIND_CONTEXT_REF, source="ambient")`` shape a genuinely-bypassed
-    ``Operand(ref=("ambient", "now"))`` would lower to (``lowering.py:90``), proving
-    ``strategy_admissible`` refuses it on the escape-checker's own ``ambient_source:`` reason
-    regardless of how a lowered program came to carry that shape.
-    """
+    """([K2-p3-#10] finding #10) The escape-checker independently catches an ambient ``context_ref``."""
     strategy = issue_strategy(capsule_gated_policy())
 
     def _adversarial_lowering(_: object) -> CandidateProgram:
@@ -124,15 +79,7 @@ def test_an_ambient_sourced_context_ref_in_the_lowered_program_is_still_caught(
 def test_removing_the_escape_checker_call_would_make_this_test_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mutation-testing canary: an admission gate that ignores the lowered analysis passes an escape.
-
-    This test does not mutate the source; it documents the RED this lane captured
-    by hand (report body quotes the actual pytest RED output from a
-    temporarily-commented-out escape-checker call). Kept here as a permanent,
-    always-green positive so a future regression that silently drops the gate is
-    caught by ``test_a_lowered_program_carrying_an_escape_is_refused_with_the_
-    checkers_reason`` above, not only by a one-time manual RED capture.
-    """
+    """Mutation-testing canary: an admission gate that ignores the lowered analysis passes an escape."""
     strategy = issue_strategy(capsule_gated_policy())
 
     def _adversarial_lowering(_: object) -> CandidateProgram:
@@ -140,21 +87,11 @@ def test_removing_the_escape_checker_call_would_make_this_test_fail(
 
     monkeypatch.setattr(admission_module, "lower_strategy", _adversarial_lowering)
     result = strategy_admissible(strategy)
-    # If the gate stopped calling analyze() over the lowered program, this would
-    # read ADMISSIBLE (the capsule-operand walk and key derivation alone still
-    # pass for `capsule_gated_policy()`) — the assertion below is the live tripwire.
     assert result.verdict is AdmissionVerdict.INADMISSIBLE
 
 
 def test_a_non_issued_strategy_never_reaches_get_scheme_and_does_not_raise() -> None:
-    """A DRAFT strategy with a policy set is refused via the status reason, not a get_scheme(None) crash.
-
-    ``strategy.canonicalization_version`` is null on a manually-constructed DRAFT
-    instance; the escape-checker gate must not attempt to resolve a canonicalization
-    scheme for it (that would raise ``ArtifactIntegrityError`` from
-    ``tos.canonical.get_scheme``, turning admission into an uncaught exception
-    instead of a returned ``AdmissionResult``).
-    """
+    """A DRAFT strategy with a policy set is refused via the status reason, not a get_scheme(None) crash."""
     from tos.dsl import AuthoredStrategy
 
     draft_with_policy = AuthoredStrategy(
@@ -163,7 +100,7 @@ def test_a_non_issued_strategy_never_reaches_get_scheme_and_does_not_raise() -> 
         policy=capsule_gated_policy(),
     )
     assert draft_with_policy.canonicalization_version is None
-    result = strategy_admissible(draft_with_policy)  # must not raise
+    result = strategy_admissible(draft_with_policy)
     assert result.verdict is AdmissionVerdict.INADMISSIBLE
     assert any("strategy status is" in reason for reason in result.reasons)
 

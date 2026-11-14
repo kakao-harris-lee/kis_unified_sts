@@ -1,9 +1,4 @@
-"""Unit tests for ``tools/tos_recovery_drill.py``'s pure ``judge`` (TOS rescope M3).
-
-The drill itself runs as its own CI job (``tos-recovery-drill``); these cases pin that the
-judge actually fails each property the drill claims, so a green drill cannot come from a judge
-that never says no.
-"""
+"""Unit tests for ``tools/tos_recovery_drill.py``'s pure ``judge`` (TOS rescope M3)."""
 
 from __future__ import annotations
 

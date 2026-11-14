@@ -1,9 +1,4 @@
-"""``tos_runtime.marketfeed.snapshot`` — ``SnapshotIssuer`` derivation + real-gate publication
-(TOS tick-source wave, plan §2 decisions 2/5; lane A).
-
-Hermetic (D1.4): every case writes its own policy YAML under ``tmp_path``; no network, no clock
-(``now_ms`` is always injected).
-"""
+"""``tos_runtime.marketfeed.snapshot`` — ``SnapshotIssuer`` derivation + real-gate publication"""
 
 from __future__ import annotations
 
@@ -61,18 +56,8 @@ def _candidate(obs, issued, field_key: str) -> AdmittedValue:
     )
 
 
-# ===========================================================================
-# End-to-end through the REAL kernel gate — the M1/M6 proof surface
-# ===========================================================================
-
-
 def test_fresh_observation_publishes_through_real_gate(tmp_path: Path) -> None:
-    """The full path: issued snapshot -> issued capsule -> the kernel's own
-    ``publish_context_value_view`` -> a RESOLVED view carrying both declared values.
-
-    Guards mutation M1 (a stamped-constant-VALID FieldEvaluation would let a STALE field through
-    the real kernel gate too, not just this module's own report) and M6 (a broken binding would
-    never reach RESOLVED at all)."""
+    """The full path: issued snapshot -> issued capsule -> the kernel's own"""
     issuer = _issuer(tmp_path)
     obs = observation()
     issued = issuer.issue(obs, now_ms=BAR_ONE_AS_OF + 500)
@@ -92,13 +77,10 @@ def test_fresh_observation_publishes_through_real_gate(tmp_path: Path) -> None:
 
 
 def test_stale_field_is_dropped_by_the_real_gate(tmp_path: Path) -> None:
-    """M1's literal proof: a field older than its policy ``max_age_ms`` must be dropped by the
-    REAL ``publish_context_value_view`` gate, not merely reported UNKNOWN by this module. A
-    mutation stamping ``FieldEvaluation(state=VALID)`` unconditionally would make this pass a
-    value the policy's own freshness ceiling forbids."""
-    issuer = _issuer(tmp_path)  # close: max_age_ms=5000
+    """M1's literal proof: a field older than its policy ``max_age_ms`` must be dropped by the"""
+    issuer = _issuer(tmp_path)
     obs = observation()
-    stale_now_ms = BAR_ONE_AS_OF + 10_000  # 10s > 5000ms ceiling
+    stale_now_ms = BAR_ONE_AS_OF + 10_000
     issued = issuer.issue(obs, now_ms=stale_now_ms)
 
     capsule = _capsule_issuer(issued.snapshot.critical_input_policy).issue(
@@ -116,22 +98,12 @@ def test_stale_field_is_dropped_by_the_real_gate(tmp_path: Path) -> None:
     assert resolution.rejected[0].reason == ValueRejectionReason.FIELD_STATE_NOT_VALID
 
 
-# ===========================================================================
-# Correction 1 (team-lead review) — Observation.field_state must not aggregate
-# per-field verdicts. Literal end-to-end reproduction + inverted positive proof.
-# ===========================================================================
-
-
 def test_fresh_field_publishes_when_a_sibling_declared_field_is_absent(
     tmp_path: Path,
 ) -> None:
-    """The literal Correction 1 repro, as a positive assertion: policy declares ``close`` +
-    ``session``; payload carries only a fresh ``close``. Before the fix, aggregating
-    ``Observation.field_state`` over every declared field dragged a fresh, individually-VALID
-    ``close`` down to ``EXPLICIT_EMPTY`` / ``FIELD_STATE_NOT_VALID`` just because ``session`` was
-    absent. ``close`` must now publish on its own."""
+    """The literal Correction 1 repro, as a positive assertion: policy declares ``close`` +"""
     issuer = _issuer(tmp_path)
-    obs = observation(fields=(("close", CLOSE_BAR_ONE),))  # "session" absent
+    obs = observation(fields=(("close", CLOSE_BAR_ONE),))
     issued = issuer.issue(obs, now_ms=BAR_ONE_AS_OF + 100)
 
     capsule = _capsule_issuer(issued.snapshot.critical_input_policy).issue(
@@ -152,9 +124,7 @@ def test_fresh_field_publishes_when_a_sibling_declared_field_is_absent(
 def test_fresh_field_publishes_when_a_sibling_declared_field_is_stale(
     tmp_path: Path,
 ) -> None:
-    """``close`` (max_age_ms=10000) and ``session`` (max_age_ms=2000) both present at age 6000ms:
-    ``close`` is individually fresh, ``session`` is individually stale. ``close`` must publish;
-    ``session`` alone must be dropped — a pre-fix aggregate would have dropped both."""
+    """``close`` (max_age_ms=10000) and ``session`` (max_age_ms=2000) both present at age 6000ms:"""
     fields_block = (
         "fields:\n"
         "  - field_key: close\n"
@@ -172,7 +142,7 @@ def test_fresh_field_publishes_when_a_sibling_declared_field_is_stale(
     )
     policy = loaded_policy(tmp_path, policy_yaml(fields_block=fields_block))
     issuer = SnapshotIssuer(policy=policy, scheme=SCHEME, account=ACCOUNT)
-    obs = observation()  # close + session both present, as_of=BAR_ONE_AS_OF
+    obs = observation()
     issued = issuer.issue(obs, now_ms=BAR_ONE_AS_OF + 6_000)
 
     capsule = _capsule_issuer(issued.snapshot.critical_input_policy).issue(
@@ -190,9 +160,7 @@ def test_fresh_field_publishes_when_a_sibling_declared_field_is_stale(
 
 
 def test_record_field_state_reflects_only_well_formedness(tmp_path: Path) -> None:
-    """Direct check of :func:`tos_runtime.marketfeed.snapshot._derive_observation_state`'s
-    contract via its observable effect: a well-formed record is VALID/ADMITTED regardless of
-    which declared fields the payload happens to carry."""
+    """Direct check of :func:`tos_runtime.marketfeed.snapshot._derive_observation_state`'s"""
     issuer = _issuer(tmp_path)
     only_close = issuer.issue(
         observation(fields=(("close", CLOSE_BAR_ONE),)), now_ms=BAR_ONE_AS_OF + 100
@@ -207,16 +175,9 @@ def test_record_field_state_reflects_only_well_formedness(tmp_path: Path) -> Non
     assert both.snapshot.observations[0].admission.result == AdmissionResult.ADMITTED
 
 
-# ===========================================================================
-# Per-field derivation — direct on IssuedSnapshot.field_reports
-# ===========================================================================
-
-
 def test_absent_policy_field_derives_unknown(tmp_path: Path) -> None:
     issuer = _issuer(tmp_path)
-    obs = observation(
-        fields=(("close", CLOSE_BAR_ONE),)
-    )  # "session" absent from payload
+    obs = observation(fields=(("close", CLOSE_BAR_ONE),))
     issued = issuer.issue(obs, now_ms=BAR_ONE_AS_OF + 100)
 
     reports = {r.field_key: r for r in issued.field_reports}
@@ -226,8 +187,7 @@ def test_absent_policy_field_derives_unknown(tmp_path: Path) -> None:
 
 
 def test_now_ms_none_derives_unknown_for_every_declared_field(tmp_path: Path) -> None:
-    """An unestablishable freshness bound is never a satisfied one — ``now_ms=None`` must not be
-    silently treated as fresh."""
+    """An unestablishable freshness bound is never a satisfied one — ``now_ms=None`` must not be"""
     issuer = _issuer(tmp_path)
     obs = observation()
     issued = issuer.issue(obs, now_ms=None)
@@ -237,22 +197,10 @@ def test_now_ms_none_derives_unknown_for_every_declared_field(tmp_path: Path) ->
 
 
 def test_future_dated_as_of_is_not_refused_at_this_layer(tmp_path: Path) -> None:
-    """Review closure (확인 불가 pinned): a future-dated ``as_of_ms`` (negative age,
-    ``now_ms < as_of_ms``) must publish VALID through the real kernel gate at this layer.
-
-    This is correct, not a fail-open. The freshness check here is
-    ``now_ms - as_of_ms > spec.max_age_ms``, which is ``False`` for a negative age, so this
-    layer has no opinion on future-dating by construction. The actual defense lives one layer
-    later, on the time-admission path: ``tos.time.freshness_verdict``
-    (``tos/src/tos/time/predicates.py:375-408``) treats a negative ``source_age`` as legitimate
-    future-dating — never clamped to zero — and returns ``CONFLICTED`` both when there is no
-    ``future_tolerance`` at all and when the skew exceeds it. Do NOT "fix" this into a
-    fail-closed check here — that would duplicate a bound (``MAX_future_timestamp_tolerance_ms``)
-    the kernel already owns, applied at a different layer, which is its own defect class.
-    """
+    """Review closure (확인 불가 pinned): a future-dated ``as_of_ms`` (negative age,"""
     issuer = _issuer(tmp_path)
     obs = observation(fields=(("close", CLOSE_BAR_ONE),))
-    future_now_ms = obs.as_of_ms - 60_000  # now is 60s BEFORE as_of -> negative age
+    future_now_ms = obs.as_of_ms - 60_000
     issued = issuer.issue(obs, now_ms=future_now_ms)
 
     reports = {r.field_key: r for r in issued.field_reports}
@@ -274,8 +222,7 @@ def test_future_dated_as_of_is_not_refused_at_this_layer(tmp_path: Path) -> None
 
 
 def test_unprojectable_value_derives_unknown(tmp_path: Path) -> None:
-    """A ``float`` is refused by the kernel's own ``project_scalar`` (non-deterministic numeric,
-    design #32 §2.5) — this module reuses that rule rather than re-deciding it."""
+    """A ``float`` is refused by the kernel's own ``project_scalar`` (non-deterministic numeric,"""
     issuer = _issuer(tmp_path)
     obs = observation(fields=(("close", 4512.5), ("session", "REGULAR")))
     issued = issuer.issue(obs, now_ms=BAR_ONE_AS_OF + 100)
@@ -289,8 +236,7 @@ def test_unprojectable_value_derives_unknown(tmp_path: Path) -> None:
 def test_undeclared_field_present_in_payload_drops_only_that_field(
     tmp_path: Path,
 ) -> None:
-    """A key the policy does not declare gets no FieldEvaluation at all (drops via the kernel's
-    own UNKNOWN floor), while the declared keys still publish."""
+    """A key the policy does not declare gets no FieldEvaluation at all (drops via the kernel's"""
     issuer = _issuer(tmp_path)
     obs = observation(
         fields=(("close", CLOSE_BAR_ONE), ("session", "REGULAR"), ("volume", 100))
@@ -298,7 +244,7 @@ def test_undeclared_field_present_in_payload_drops_only_that_field(
     issued = issuer.issue(obs, now_ms=BAR_ONE_AS_OF + 100)
 
     reported_keys = {r.field_key for r in issued.field_reports}
-    assert reported_keys == {"close", "session"}  # "volume" is not policy-declared
+    assert reported_keys == {"close", "session"}
 
     capsule = _capsule_issuer(issued.snapshot.critical_input_policy).issue(
         issued.snapshot
@@ -313,17 +259,10 @@ def test_undeclared_field_present_in_payload_drops_only_that_field(
     assert rejected["volume"] == ValueRejectionReason.FIELD_STATE_NOT_VALID
 
 
-# ===========================================================================
-# Structural distinctness / preimage completeness
-# ===========================================================================
-
-
 def test_one_observation_yields_exactly_one_snapshot_observation(
     tmp_path: Path,
 ) -> None:
-    """Structural guarantee that ``SnapshotIssuer.issue`` can never produce the "two observations
-    share one raw_event_id" ambiguity within a single snapshot (one observation in, one
-    observation out, by construction — see module docstring)."""
+    """Structural guarantee that ``SnapshotIssuer.issue`` can never produce the "two observations"""
     issuer = _issuer(tmp_path)
     issued = issuer.issue(observation(), now_ms=BAR_ONE_AS_OF + 100)
     assert len(issued.snapshot.observations) == 1
@@ -373,22 +312,12 @@ def test_admission_rejected_for_empty_payload(tmp_path: Path) -> None:
     assert issued.snapshot.observations[0].field_state == FieldState.UNKNOWN
 
 
-# ===========================================================================
-# Correction 2 (team-lead review) — mapping unit/scale/multiplier/sign: filled
-# only when unambiguous, never "first field wins".
-# ===========================================================================
-
-
 def test_mapping_slot_is_none_when_present_declared_fields_disagree(
     tmp_path: Path,
 ) -> None:
-    """Default fixture policy: ``close`` (unit=KRW, scale=minor) and ``session`` (unit=token,
-    scale=none) disagree on unit/scale but AGREE on multiplier="1"/sign="1" — decided per slot,
-    not all-or-nothing."""
+    """Default fixture policy: ``close`` (unit=KRW, scale=minor) and ``session`` (unit=token,"""
     issuer = _issuer(tmp_path)
-    issued = issuer.issue(
-        observation(), now_ms=BAR_ONE_AS_OF + 100
-    )  # close + session present
+    issued = issuer.issue(observation(), now_ms=BAR_ONE_AS_OF + 100)
 
     mapping = issued.snapshot.observations[0].mapping
     assert mapping.instrument == INSTRUMENT
@@ -457,8 +386,7 @@ def test_mapping_all_none_when_no_declared_field_present(tmp_path: Path) -> None
 def test_receipt_trustworthy_time_anchor_is_none_when_collector_recorded_none(
     tmp_path: Path,
 ) -> None:
-    """``received_ms=None`` must stay ``None`` — never silently substituted with ``as_of_ms``
-    (module docstring / ports.py's own ``RawObservation.received_ms`` docstring)."""
+    """``received_ms=None`` must stay ``None`` — never silently substituted with ``as_of_ms``"""
     issuer = _issuer(tmp_path)
     obs = observation(received_ms=None)
     issued = issuer.issue(obs, now_ms=BAR_ONE_AS_OF + 100)

@@ -1,8 +1,4 @@
-"""``tos_runtime.compose._construction_config`` tests (TOS ``run`` 구동 아크 plan
-``docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md`` §4 W1 lane A).
-
-Hermetic — real config files under ``tmp_path``.
-"""
+"""``tos_runtime.compose._construction_config`` tests (TOS ``run`` 구동 아크 plan"""
 
 from __future__ import annotations
 
@@ -51,7 +47,6 @@ def test_a_valid_file_loads_with_price_always_none(tmp_path: Path) -> None:
     assert config.outbound_side == "BUY"
     assert config.price_field_key == "close"
     assert config.shape_price_field_key == "close"
-    # Plan §2 decision 2, binding: the loader never expresses `price`.
     assert config.price is None
 
 
@@ -167,15 +162,7 @@ def test_wrong_type_refuses_to_load(tmp_path: Path) -> None:
 def test_shipped_example_file_is_all_null_and_therefore_refuses(
     tmp_path: Path,
 ) -> None:
-    """The shipped ``construction.example.yaml`` is a template, not an approved config — every
-    leaf ``null`` means it must refuse to load as-is (module docstring).
-
-    A ``pytest.raises`` alone cannot tell a value-only refusal (this test's own name) apart from
-    a STRUCTURAL one (a required key entirely missing from the document — the shape of bug
-    ``test_shipped_example_integrity.py`` exists to catch; see that module's own docstring for
-    why ``safety_activation.example.yaml`` shipped broken despite an identical narrow test having
-    passed the whole time) — so this also pins every required key path is explicitly present.
-    """
+    """The shipped ``construction.example.yaml`` is a template, not an approved config — every"""
     example_path = (
         Path(__file__).resolve().parents[2] / "config" / "construction.example.yaml"
     )

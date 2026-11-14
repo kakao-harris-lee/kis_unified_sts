@@ -1,16 +1,4 @@
-"""PR-3b Codex round-2 reproductions (the run died on capacity; its three claims are pinned here).
-
-1. **An interrupted proof write must not loop forever.** The proof rows are written before the
-   witness row, and a finality re-run decides by the proof ROWS, not the witness flag — so the
-   state an interruption leaves (in either write order) converges to exactly one release. A hold
-   no re-run can change ends in one durable ``FILL_OBSERVER_FINALITY_STUCK`` row instead.
-2. **Replay must equal live after a release.** The live engine's projection release is recorded
-   (``ENGINE_PROJECTION_RELEASED``) and the boot replay re-applies it at the same point, so a
-   replay core's step-8 ``admits_new_exposure`` answer equals the live one; the next boot is sound.
-3. **An earlier day's receipt must not block today's release.** Release reconciliation inquires
-   every trading date the scope's receipts carry; an earlier-day order the broker can no longer
-   answer for is an explicit hold, not a silent one.
-"""
+"""PR-3b Codex round-2 reproductions (the run died on capacity; its three claims are pinned here)."""
 
 from __future__ import annotations
 
@@ -73,11 +61,6 @@ class _Interrupted(Exception):
     """The process 'dies' mid-write."""
 
 
-# ===========================================================================
-# 1. interrupted proof write
-# ===========================================================================
-
-
 @pytest.mark.parametrize("witness_written_first", [False, True])
 def test_an_interrupted_proof_write_converges_to_one_release(
     witness_written_first,
@@ -88,8 +71,7 @@ def test_an_interrupted_proof_write_converges_to_one_release(
     monkeypatch,
     server,
 ) -> None:
-    """``witness_written_first`` reproduces the pre-fix write order's leftover (witness True, no
-    proof) — the state that used to loop on ``PROOF_NOT_RELOADED`` forever."""
+    """``witness_written_first`` reproduces the pre-fix write order's leftover (witness True, no"""
     runtime, attempt_id, date, qty = _acked(
         tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
     )
@@ -131,9 +113,7 @@ def test_an_interrupted_proof_write_converges_to_one_release(
 def test_a_hold_no_rerun_can_change_ends_in_one_stuck_row(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
-    """Fault-injected: the durable-proof check claims rows that are not there, so the consumer
-    holds ``PROOF_NOT_RELOADED`` — a hold no re-run changes. One stuck row, then no more re-runs
-    (across a restart too)."""
+    """Fault-injected: the durable-proof check claims rows that are not there, so the consumer"""
     runtime, attempt_id, date, qty = _acked(
         tmp_path,
         config_dir,
@@ -150,7 +130,7 @@ def test_a_hold_no_rerun_can_change_ends_in_one_stuck_row(
         patch.setattr(
             "tos_runtime.engine.driver.project_finality", lambda *_a, **_k: None
         )
-        observer.poll_once()  # FULL_FILL applied, finality never ran
+        observer.poll_once()
     monkeypatch.setattr(
         "tos_runtime.engine.finality_projection._fill_proof_durable",
         lambda *_a, **_k: True,
@@ -170,16 +150,10 @@ def test_a_hold_no_rerun_can_change_ends_in_one_stuck_row(
     _close(runtime2)
 
 
-# ===========================================================================
-# 2. replay equals live after a release
-# ===========================================================================
-
-
 def _replayed_core(
     runtime, *, window_events: int | None = None, expect_ok: bool = True
 ) -> EventCorrelatingCore:
-    """A boot-replay core over ``runtime``'s durable stores — the same recipe
-    ``_engine_wiring.verify_replay_or_halt`` (and ``recovery/test_drill.py``) uses."""
+    """A boot-replay core over ``runtime``'s durable stores — the same recipe"""
     built: list[EventCorrelatingCore] = []
 
     def _build():
@@ -250,23 +224,16 @@ def test_replay_reproduces_the_live_release(
 
     key = fx.instrument_key()
     live = runtime.core.ledger.admits_new_exposure(key)
-    assert live is True  # the live projection released the scope
+    assert live is True
     assert _replayed_core(runtime).ledger.admits_new_exposure(key) is live
 
-    # A further decision tick, then a restart: the boot replay is sound.
     runtime.run_once((fx.crossing_event(seq=60),))
-    # A windowed replay that no longer contains the attempt has nothing to reproduce for it —
-    # the recorded release is skipped, not reported as a divergence.
     _replayed_core(runtime, window_events=1)
     _close(runtime)
     runtime2 = _boot(tmp_path, config_dir, data_dir, custody_root)
     assert runtime2.recovery is not None and runtime2.recovery.ready is True
     _close(runtime2)
 
-
-# ===========================================================================
-# 3. an earlier day's receipt in the same scope
-# ===========================================================================
 
 _EARLIER_ATTEMPT = "attempt-earlier-day"
 _EARLIER_ODNO = "0000003000"
@@ -281,12 +248,7 @@ _EARLIER_EVENT = "evt-earlier-day"
 
 
 def _commit_earlier_day_reservation(runtime) -> str:
-    """Commit the earlier attempt's own reservation and the evidence join that names it.
-
-    The reservation goes straight to ``RELEASED`` under ``FINAL_QUANTITY_PROOF`` with a
-    positive witness — the state a completed, discharged attempt leaves behind — so it is NOT
-    outstanding and cannot affect today's attempt's own step-8 verdict or release path.
-    """
+    """Commit the earlier attempt's own reservation and the evidence join that names it."""
     log = runtime.rcl_log
     epoch = log.current_epoch()
     view = log.read_linearizable(writer_epoch=epoch)
@@ -330,21 +292,7 @@ def _commit_earlier_day_reservation(runtime) -> str:
 
 
 def _record_earlier_day_attempt(runtime, date: str, qty: Decimal) -> None:
-    """An attempt completed on an earlier trading day in the same scope.
-
-    Its applied ``FULL_FILL`` receipt and its fill proof (the two rows reconciliation reads),
-    plus — #966 — the three rows that make it a REAL completed attempt rather than evidence
-    with nothing behind it: the ``ATTEMPT_REQUEST_CREATED``/``FLOW_STEP_ADMITTED`` pair that
-    binds its attempt id to the permit its reservation is named after
-    (:mod:`tos_runtime.rcl.reservation_lookup`), and that reservation itself, terminal at
-    ``RELEASED``.
-
-    Before #966 every attempt in a scope shared ONE reservation id, so this fixture could omit
-    all three and still have reconciliation resolve the earlier attempt onto *today's*
-    reservation row — a different attempt's. With per-attempt ids that shortcut is gone, which
-    is the point: a completed attempt's own row is what proves it existed, and a real one
-    always has it (rows are never deleted, only advanced to ``RELEASED``).
-    """
+    """An attempt completed on an earlier trading day in the same scope."""
     _commit_earlier_day_reservation(runtime)
     runtime.evidence_store.append(
         {
@@ -390,7 +338,7 @@ def test_an_earlier_day_receipt_does_not_block_todays_release(
     assert observer is not None
     observer.poll_once()
 
-    assert server.requests_for(earlier_orders)  # the earlier date was inquired
+    assert server.requests_for(earlier_orders)
     assert _rows(runtime, "CAPACITY_RELEASE_HELD") == []
     assert _rcl_releases(runtime, attempt_id=attempt_id) == 1
     _close(runtime)
@@ -418,11 +366,6 @@ def test_an_earlier_day_the_broker_cannot_answer_for_is_an_explicit_hold(
     _close(runtime)
 
 
-# ===========================================================================
-# Codex r2 verdict — HIGH 1: a cancel is held, never released (scope narrowed)
-# ===========================================================================
-
-
 @pytest.mark.parametrize(
     "case",
     [
@@ -435,8 +378,7 @@ def test_an_earlier_day_the_broker_cannot_answer_for_is_an_explicit_hold(
 def test_a_cancel_is_one_durable_hold_no_retry_no_release(
     case, config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
-    """``unfilled_cancel`` is the review's input: same ODNO/date/symbol, ``cncl_yn=Y``,
-    ``ord_qty`` = sealed, ``tot_ccld_qty=0``, ``rmn_qty=0``."""
+    """``unfilled_cancel`` is the review's input: same ODNO/date/symbol, ``cncl_yn=Y``,"""
     runtime, attempt_id, date, qty = _acked(
         tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
     )
@@ -450,7 +392,7 @@ def test_a_cancel_is_one_durable_hold_no_retry_no_release(
                 date=date, ord_qty=qty, filled=Decimal(1), remaining=zero, cancelled="Y"
             )
         ],
-        "derived_only_cancel": [  # Codex r3 MEDIUM (1): no row under our own ODNO
+        "derived_only_cancel": [
             _row(
                 odno="0000004471",
                 orgn_odno=_ODNO,
@@ -483,13 +425,11 @@ def test_a_cancel_is_one_durable_hold_no_retry_no_release(
     assert len(report.held) == 1
     (hold,) = _rows(runtime, "FILL_OBSERVER_CANCEL_UNSUPPORTED")
     assert hold["attempt_id"] == attempt_id and hold["observed_rows"]
-    # Nothing reached the engine, nothing proven or released, the reservation is kept.
     assert [
         r["egress_result_kind"] for r in _rows(runtime, "EGRESS_RESULT_CONSUMED")
     ] == ["ACK"]
     assert _rows(runtime, "POSTTRADE_FINALITY_PROOF") == []
     assert _rcl_releases(runtime) == 0
-    # No retry loop: no further read, no second hold, no finality re-run.
     reads = len(server.requests_for(orders))
     later = observer.poll_once()
     assert later.polled is False and later.reprojected == ()
@@ -505,21 +445,14 @@ def test_a_cancel_is_one_durable_hold_no_retry_no_release(
     _close(runtime2)
 
 
-# ===========================================================================
-# Codex r2 verdict — HIGH 2: a release row replay cannot corroborate is a divergence
-# ===========================================================================
-
-
 @pytest.mark.parametrize(
     "forged",
     [
-        # the review's input
         {
             "proof_digest": "nonexistent-proof",
             "evidence_seq": 999999,
             "resolution_generation": -9,
         },
-        # well-formed, pointing at evidence that is not the claimed chain
         {
             "proof_digest": "nonexistent-proof",
             "evidence_seq": 1,
@@ -535,7 +468,7 @@ def test_an_uncorroborated_release_row_is_a_replay_divergence(
     )
     _script_broker(server, config_dir, date, [_full(date, qty)])
     balance, _orders = _witness_paths(config_dir, date)
-    server.set_response(balance, status=500, body=None)  # release held, not committed
+    server.set_response(balance, status=500, body=None)
     observer = runtime.fill_observer
     assert observer is not None
     observer.poll_once()
@@ -549,7 +482,7 @@ def test_an_uncorroborated_release_row_is_a_replay_divergence(
         record_class="ENGINE_PROJECTION_RELEASED",
     )
     replayed = _replayed_core(runtime, expect_ok=False)
-    assert replayed.ledger.admits_new_exposure(key) is False  # never applied
+    assert replayed.ledger.admits_new_exposure(key) is False
     halts = [
         r
         for r in _rows(runtime, "REPLAY_DIVERGED")
@@ -563,9 +496,7 @@ def test_an_uncorroborated_release_row_is_a_replay_divergence(
 def test_a_cancel_after_an_earlier_unknown_is_still_one_hold(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
-    """Codex r3 MEDIUM (2): the attempt is already UNKNOWN (an inconsistent row was fed), then
-    its valid ``cncl_yn=Y`` row with a partial fill shows — a hold, not a silent no-op.
-    """
+    """Codex r3 MEDIUM (2): the attempt is already UNKNOWN (an inconsistent row was fed), then"""
     runtime, attempt_id, date, qty = _acked(
         tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
     )
@@ -603,19 +534,12 @@ def test_a_cancel_after_an_earlier_unknown_is_still_one_hold(
     _close(runtime2)
 
 
-# ===========================================================================
-# Codex r3 HIGH: replay reads the RCL's COMMITTED release, not pre-commit evidence
-# ===========================================================================
-
-
 class _CommitFails(sqlite3.OperationalError):
     """The RCL's COMMIT fails after its transition evidence row was already written."""
 
 
 def _fail_next_commits(runtime, times: int) -> list[int]:
-    """Make the RCL's next ``times`` commits fail at ``before_commit`` — the transition evidence
-    row is already appended (inside the transaction, before COMMIT) and the entry rolls back.
-    """
+    """Make the RCL's next ``times`` commits fail at ``before_commit`` — the transition evidence"""
     left = [times]
 
     def _hook(stage: str) -> None:
@@ -643,22 +567,20 @@ def test_a_rolled_back_release_then_a_committed_retry_replays_as_one_release(
     observer = runtime.fill_observer
     assert observer is not None
     left = _fail_next_commits(runtime, 1)
-    observer.poll_once()  # FULL_FILL -> intent I1 -> transition evidence T1 -> COMMIT fails
+    observer.poll_once()
     assert left == [0]
     assert _rcl_releases(runtime) == 0
     (held,) = _rows(runtime, "CAPACITY_RELEASE_HELD")
     assert held["reason"] == "RCL_TRANSITION_REFUSED"
 
-    assert observer.poll_once().reprojected == (
-        (attempt_id, True),
-    )  # I2 -> T2 -> COMMIT
+    assert observer.poll_once().reprojected == ((attempt_id, True),)
     assert _rcl_releases(runtime) == 1
     transitions = [
         r
         for r in _rows(runtime, "RCL_RESERVATION_TRANSITION")
         if r.get("command_id") == f"release-{attempt_id}"
     ]
-    assert len(transitions) == 2  # T1 (rolled back) and T2 (committed)
+    assert len(transitions) == 2
     assert len(_rows(runtime, "CAPACITY_RELEASE_INTENT")) == 2
 
     key = fx.instrument_key()
@@ -679,14 +601,12 @@ def test_a_release_row_over_an_uncommitted_transition_is_a_divergence(
     observer = runtime.fill_observer
     assert observer is not None
     _fail_next_commits(runtime, 1)
-    observer.poll_once()  # I1 -> T1 -> COMMIT fails; nothing committed
+    observer.poll_once()
     assert _rcl_releases(runtime) == 0
     (intent,) = _rows(runtime, "CAPACITY_RELEASE_INTENT")
     seq = runtime.evidence_store.connection.execute(
         "SELECT seq FROM entries WHERE kind = 'CAPACITY_RELEASE_INTENT'"
     ).fetchone()[0]
-    # A release row whose every evidence pointer is genuine — except that the RCL never
-    # committed the transition it rests on.
     runtime.evidence_store.append(
         {
             "attempt_id": attempt_id,
@@ -699,7 +619,7 @@ def test_a_release_row_over_an_uncommitted_transition_is_a_divergence(
     )
     key = fx.instrument_key()
     replayed = _replayed_core(runtime, expect_ok=False)
-    assert replayed.ledger.admits_new_exposure(key) is False  # never applied
+    assert replayed.ledger.admits_new_exposure(key) is False
     (halt,) = [
         r
         for r in _rows(runtime, "REPLAY_DIVERGED")
@@ -707,11 +627,6 @@ def test_a_release_row_over_an_uncommitted_transition_is_a_divergence(
     ]
     assert "no committed release" in halt["reason"]
     _close(runtime)
-
-
-# ===========================================================================
-# Final review LOW: the restore drill checks releases against the restored RCL too
-# ===========================================================================
 
 
 class _RclStateWithheld:
@@ -785,7 +700,7 @@ def test_the_restore_drill_reads_the_restored_rcl_for_a_recorded_release(
     if rcl_state == "given":
         assert verdict.result == "PASSED", verdict
     else:
-        assert verdict.result == "FAILED"  # a release it cannot check is never trusted
+        assert verdict.result == "FAILED"
     composed = box["runtime"]
     composed.rcl_log.close()  # type: ignore[attr-defined]
     composed.evidence_store.close()  # type: ignore[attr-defined]

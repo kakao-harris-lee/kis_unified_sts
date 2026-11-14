@@ -1,29 +1,4 @@
-"""`witness_independence_collapsed` against the REAL ``ReconciliationService`` (review-1018 M1).
-
-**What M1 found.** :meth:`~tos_runtime.recon.service.ReconciliationService._reason_for` stamps
-``WITNESS_NOT_INDEPENDENT`` on any uncleared report whose witness declared itself store-derived,
-and it decides that BEFORE looking at orphans or conflicted fields. So the reason alone means
-"store-derived and not cleared". Mapping it straight onto the softer hold reason recorded a
-GENUINE disagreement as an independence hold, which the POST_TRADE currentness dimension then
-reads as conflict-free — the opposite of plan §5 ④'s "진짜 충돌 → False 유지". Measured at the
-service level: a store-derived witness reporting qty 5 / rem 5 against a receipt of 10 / 0.
-
-**Why these tests drive the service.** ``test_witness_not_independent_reason.py`` pins the
-mapping and the dimension from hold rows written directly, so nothing there ever reaches the
-predicate with a report the service actually built. Every case below runs a real
-:class:`~tos_runtime.recon.service.ReconciliationService` and asks
-:func:`~tos_runtime.posttrade.release_hold.uncorroborated_hold_reason` what the release path
-would record.
-
-(b) and (c) use a witness DOUBLE declaring ``independent_of_evidence_store=False`` with rows
-that diverge from the receipts. That is deliberate, and it is the finding: the only shipped
-store-derived witness
-(:class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness`) reads the same evidence
-rows as the receipt path and so CANNOT diverge from it. The guarantee has to live in the code
-rather than in how that one class happens to be built.
-
-Hermetic: ``tmp_path`` sqlite only, no network, no ambient env (D1.4).
-"""
+"""`witness_independence_collapsed` against the REAL ``ReconciliationService`` (review-1018 M1)."""
 
 from __future__ import annotations
 
@@ -83,12 +58,7 @@ def _receipt(filled: str = "10") -> EgressReceiptObservation:
 
 
 def _store_derived_double(orders: tuple[WitnessOrder, ...]) -> FakeWitness:
-    """A witness declaring itself store-derived, with rows the caller chooses.
-
-    ``independent_of_evidence_store=False`` is the ONE field
-    :meth:`ReconciliationService._reason_for` keys the independence collapse on, so this
-    double reaches exactly the branch under test.
-    """
+    """A witness declaring itself store-derived, with rows the caller chooses."""
     return FakeWitness(
         WitnessSnapshot(
             observed_at_generation=1,
@@ -129,21 +99,10 @@ def _append_consumed_result(
     )
 
 
-# ===========================================================================
-# (a) store-derived, clean — the independence collapse IS the only failure
-# ===========================================================================
-
-
 def test_a_clean_store_derived_report_is_an_independence_hold(
     store: SqliteEvidenceStore, fresh_marker: FreshnessMarker
 ) -> None:
-    """The REAL ``SyntheticLedgerWitness`` on facts that agree: hold ``WITNESS_NOT_INDEPENDENT``.
-
-    Concrete input: one ``EGRESS_RESULT_CONSUMED`` row of 10/0, the matching receipt, and an
-    open RCL reservation. Concrete result: MATCHED, no conflicted field, the report names the
-    independence collapse, no capacity released — and the release path records the softer
-    reason, so the POST_TRADE dimension does not report a conflict this scope never had.
-    """
+    """The REAL ``SyntheticLedgerWitness`` on facts that agree: hold ``WITNESS_NOT_INDEPENDENT``."""
     _append_consumed_result(store, filled="10", remaining="0")
 
     report = _report(
@@ -169,29 +128,10 @@ def test_a_clean_store_derived_report_is_an_independence_hold(
     )
 
 
-# ===========================================================================
-# (b) store-derived + a quantity conflict — a conflict, not an independence hold
-# ===========================================================================
-
-
 def test_a_store_derived_report_with_a_quantity_conflict_is_a_conflict(
     fresh_marker: FreshnessMarker,
 ) -> None:
-    """M1's own failing input, at the service level.
-
-    Concrete input: a store-derived witness order of 5 filled / 5 remaining against a receipt
-    of 10 / 0. Concrete result BEFORE the fix: ``report.reason == WITNESS_NOT_INDEPENDENT``,
-    hold ``WITNESS_NOT_INDEPENDENT``, POST_TRADE ``True`` — a real disagreement reported as
-    conflict-free. Now the report carries NO reason at all, which every caller already maps to
-    "not corroborated".
-
-    Note which check catches it, because it is not the obvious one: with a store-derived
-    witness BOTH paths carry the same independence class, so ``classify_field`` degrades the
-    disagreement to ``SINGLE_SOURCE`` and the fields are NOT ``CONFLICTED`` (asserted below —
-    that is the measurement that made the field scan alone insufficient). What catches it is
-    ``_reason_for``'s new ``any_path_disagreed``, fed from the observations'
-    ``agrees_within_tolerance``.
-    """
+    """M1's own failing input, at the service level."""
     conflicting = WitnessOrder(
         attempt_id=ATTEMPT,
         broker_execution_id=EXECUTION_ID,
@@ -209,7 +149,6 @@ def test_a_store_derived_report_with_a_quantity_conflict_is_a_conflict(
     )
 
     assert report.reason is None
-    # The measurement behind the fix: a store-derived disagreement is NOT conflicted.
     assert not any(
         confidence.confidence_class is FieldConfidenceClass.CONFLICTED
         for confidence in report.field_confidences
@@ -220,22 +159,10 @@ def test_a_store_derived_report_with_a_quantity_conflict_is_a_conflict(
     assert uncorroborated_hold_reason(report) is ReleaseHoldReason.NOT_CORROBORATED
 
 
-# ===========================================================================
-# (c) store-derived + an orphan order — also a conflict
-# ===========================================================================
-
-
 def test_a_store_derived_report_with_an_orphan_order_is_a_conflict(
     fresh_marker: FreshnessMarker,
 ) -> None:
-    """An order nothing accounts for is the §3.4 crash-before-evidence catch — never "softer".
-
-    Concrete input: the matched attempt PLUS a second witness order for an attempt with no RCL
-    reservation and no receipt. Nothing DISAGREES here — no magnitude contradicts another — so
-    the report still names the independence collapse; what catches the orphan is the
-    predicate's own "every classification MATCHED" condition. The two conditions cover
-    different shapes, which is why both exist.
-    """
+    """An order nothing accounts for is the §3.4 crash-before-evidence catch — never "softer"."""
     matched = WitnessOrder(
         attempt_id=ATTEMPT,
         broker_execution_id=EXECUTION_ID,
@@ -269,21 +196,10 @@ def test_a_store_derived_report_with_an_orphan_order_is_a_conflict(
     assert uncorroborated_hold_reason(report) is ReleaseHoldReason.NOT_CORROBORATED
 
 
-# ===========================================================================
-# (d) the independent venue witness + a conflict — unchanged, still a conflict
-# ===========================================================================
-
-
 def test_the_venue_witness_with_a_conflict_is_a_conflict(
     tmp_path: Path, fresh_marker: FreshnessMarker
 ) -> None:
-    """The key-ON control: an independent witness never reaches the independence reason at all.
-
-    Concrete input: a REAL venue ledger holding a 5-contract fill against a receipt of 10.
-    Concrete result: ``reason`` is ``None`` (nothing collapsed — the witness IS independent),
-    the field conflicts, and the release path records ``NOT_CORROBORATED``. That is the
-    behaviour plan §5 ④ asks to keep, and it is unchanged by M1.
-    """
+    """The key-ON control: an independent witness never reaches the independence reason at all."""
     path = tmp_path / "venue_ledger.sqlite3"
     ledger = SyntheticVenueLedger(path)
     try:
@@ -324,11 +240,6 @@ def test_the_venue_witness_with_a_conflict_is_a_conflict(
     assert uncorroborated_hold_reason(report) is ReleaseHoldReason.NOT_CORROBORATED
 
 
-# ===========================================================================
-# the narrowing itself, stated as a table
-# ===========================================================================
-
-
 @pytest.mark.parametrize(
     ("orders", "expected"),
     [
@@ -354,11 +265,7 @@ def test_only_an_all_matched_conflict_free_report_earns_the_softer_reason(
     expected: ReleaseHoldReason,
     fresh_marker: FreshnessMarker,
 ) -> None:
-    """The boundary in one table: an attempt the witness does not report at all is
-    ``STALE_RESERVATION``, not MATCHED, so it is a conflict too — the one-sided shapes are
-    narrowed away alongside the orphan, because "the witness is merely not independent" is a
-    claim about a report where everything else lined up.
-    """
+    """The boundary in one table: an attempt the witness does not report at all is"""
     report = _report(
         _store_derived_double(orders),
         receipts=(_receipt("10"),),

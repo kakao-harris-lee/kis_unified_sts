@@ -37,9 +37,36 @@ export const exactPathRoots = new Map<string, ReadonlySet<string>>([
   ["tos", new Set(["tos/projection"])],
 ]);
 
+// The same allowlist discipline for a surface that carries one caller-supplied
+// segment. `*` matches EXACTLY ONE non-empty segment, so the pattern widens the
+// proxy by one path shape and nothing else: `tos/sessions/<id>/bars` resolves,
+// while `tos/sessions`, `tos/sessions/<id>`, `tos/sessions/<id>/bars/extra` and
+// `tos/sessions//bars` all still reach null.
+//
+// A pattern rather than a prefix on purpose. `startsWith("tos/sessions/")`
+// would forward every future path under that prefix the moment the dashboard
+// grew one, which is the silent widening `exactPathRoots` exists to prevent.
+// The segment is also validated on the other side
+// (services/dashboard/routes/tos_bars.py matches it against a positive
+// pattern), so a traversal attempt fails twice rather than once.
+export const patternPathRoots = new Map<string, readonly string[]>([
+  ["tos", ["tos/sessions/*/bars"]],
+]);
+
+/** Whether `path` matches `pattern`, with `*` standing for one non-empty segment. */
+export function matchesPathPattern(path: string[], pattern: string): boolean {
+  const parts = pattern.split("/");
+  if (parts.length !== path.length) return false;
+  return parts.every((part, index) =>
+    part === "*" ? path[index].length > 0 : part === path[index],
+  );
+}
+
 // Roots this proxy forwards only as GET. The dashboard's TOS surface is
 // read-only: services/dashboard/routes/tos_projection.py declares
-// `@router.get("/projection")` and nothing else, and FastAPI's APIRoute — unlike
+// `@router.get("/projection")` and tos_bars.py declares
+// `@router.get("/sessions/{session_id}/bars")`, and nothing else, and
+// FastAPI's APIRoute — unlike
 // Starlette's Route — does not add HEAD to a GET route, so the dashboard itself
 // answers 405 to HEAD and to every mutating method there. Refusing them here
 // keeps the proxy's answer identical to the dashboard's instead of relaying a
@@ -64,8 +91,13 @@ export function targetPathFor(path: string[]): string | null {
   // prefix, so a trailing empty segment, a deeper path, or a differently cased
   // segment all fall through to null rather than reaching the dashboard.
   const allowedPaths = exactPathRoots.get(root);
-  if (allowedPaths && !allowedPaths.has(path.join("/"))) {
-    return null;
+  const allowedPatterns = patternPathRoots.get(root);
+  if (allowedPaths || allowedPatterns) {
+    const joined = path.join("/");
+    const allowed =
+      (allowedPaths?.has(joined) ?? false) ||
+      (allowedPatterns?.some((pattern) => matchesPathPattern(path, pattern)) ?? false);
+    if (!allowed) return null;
   }
   if (!isDirectPath(path)) {
     return null;

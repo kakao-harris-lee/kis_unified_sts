@@ -1,18 +1,4 @@
-"""Phase 3 wave 2 KW2-C1 — ``CANCEL_ACK`` / ``EXPIRED`` egress result kinds (plan §2.2).
-
-Two new closed-vocabulary members, ADR-002-002 §16.2 / ADR-002-005 §7 verbatim: a **bare**
-broker cancel acknowledgement moves the projection to ``RELEASE_PENDING_PROOF``, never
-further — "cancel is not release" (CPL-4) — and an ``EXPIRED`` broker-observed order is
-governed by the identical rule per the plan's own explicit instruction. Both are
-knowledge-establishing but never capacity-releasing, exactly like ``REJECT`` before them.
-
-This file also pins the full 8-member result-kind transition table (the "전수" the wave 1
-finding named as a gap for the 6-member vocabulary — see
-``test_engine_unknown_restrictive.py`` for the pre-existing six) and the specific
-cancel-crossing-fill probe (ADR-002-002 §15.2) the plan calls out by name.
-
-Regime tag: orchestration authoring evidence only; closes no EV.
-"""
+"""Phase 3 wave 2 KW2-C1 — ``CANCEL_ACK`` / ``EXPIRED`` egress result kinds (plan §2.2)."""
 
 from __future__ import annotations
 
@@ -67,11 +53,6 @@ def _egress_event(
     )
 
 
-# ---------------------------------------------------------------------------
-# vocabulary shape
-# ---------------------------------------------------------------------------
-
-
 def test_cancel_ack_and_expired_are_closed_vocabulary_members() -> None:
     """(§2.2) The two new kinds exist and are distinct from every existing member."""
     assert EgressResultKind.CANCEL_ACK in set(EgressResultKind)
@@ -95,20 +76,13 @@ def test_neither_new_kind_carries_a_fill_magnitude() -> None:
             )
 
 
-# ---------------------------------------------------------------------------
-# ADR-002-002 §16.2 / CPL-4 — cancel is not release
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "kind", [EgressResultKind.CANCEL_ACK, EgressResultKind.EXPIRED]
 )
 def test_cancel_ack_and_expired_advance_to_release_pending_proof_never_further(
     kind,
 ) -> None:
-    """(ADR-002-002 §16.2; CPL-4) Both land at RELEASE_PENDING_PROOF — the projection's own
-    last, least-settled position — never at a released state (which does not exist here).
-    """
+    """(ADR-002-002 §16.2; CPL-4) Both land at RELEASE_PENDING_PROOF — the projection's own"""
     core, _, _, attempt_id = _sent_core()
     result = core.handle(_egress_event(kind, attempt_id))
 
@@ -157,30 +131,10 @@ def test_expired_reaches_the_projection_through_a_live_core() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# ADR-002-002 §15.2 — the specific "cancel-crossing-fill" probe the plan names
-# ---------------------------------------------------------------------------
-
-
 def test_cancel_ack_then_late_full_fill_does_not_crash_and_is_recorded_non_monotonic() -> (
     None
 ):
-    """(plan §2.2 "CANCEL_ACK 후 late FULL_FILL"; ADR-002-002 §15.2 "cancel-crossing-fill")
-
-    ``RELEASE_PENDING_PROOF`` outranks ``POSITION_CONSUMED`` in the projection's own
-    conservatism order (design #31 §2.4 — it sits last because a proven rejection/cancel
-    still awaits the RCL-owned release proof). A late ``FULL_FILL`` arriving after a
-    ``CANCEL_ACK`` would therefore revive the projection *backwards* by that order, which the
-    existing non-revival guard refuses exactly as it already does for REJECT -> late FULL_FILL
-    (``test_engine_unknown_restrictive.py``). The decision recorded here, honestly: this is
-    the *provisional projection's own* conservatism ordering refusing a rank move, not a
-    verdict that the fact itself is discarded — ADR-002-002 §15.2 "the Ledger SHALL accept
-    valid late evidence" is a **real RCL** obligation (this package is explicitly
-    non-authoritative, see ``tos/src/tos/engine/state.py`` module docstring); what this
-    projection guarantees is only that the fact is never silently lost — it surfaces as
-    ``RESULT_UNMATCHED`` evidence (``EvidenceKind.RESULT_UNMATCHED``) for a real reconciler to
-    consume, and the projection never crashes and never re-releases capacity on it.
-    """
+    """(plan §2.2 "CANCEL_ACK 후 late FULL_FILL"; ADR-002-002 §15.2 "cancel-crossing-fill")"""
     core, _, _, attempt_id = _sent_core()
     cancel = core.handle(
         _egress_event(EgressResultKind.CANCEL_ACK, attempt_id, sequence=2)
@@ -199,7 +153,6 @@ def test_cancel_ack_then_late_full_fill_does_not_crash_and_is_recorded_non_monot
             remaining_quantity=Decimal("0"),
         )
     )
-    # must not raise, and must not silently apply either:
     assert late_fill.halt_reason is HaltReason.RESULT_UNMATCHED
     assert late_fill.result_disposition is ResultDisposition.NON_MONOTONIC_PROJECTION
     assert core.ledger.outstanding(instrument_key()).capacity_state is (
@@ -208,13 +161,7 @@ def test_cancel_ack_then_late_full_fill_does_not_crash_and_is_recorded_non_monot
 
 
 def test_the_cancel_crossing_fills_magnitude_reaches_the_evidence_store() -> None:
-    """([KW2b-#13]; Phase 3 wave 2 review finding #13) The refused fill's own quantity is not
-    lost to the hash-chained evidence store just because the projection itself could not move.
-
-    Before this fix ``RESULT_UNMATCHED`` recorded only ``kind`` / ``disposition`` / ``attempt_id``
-    — a reconciler reading the evidence chain alone could see *that* a fill crossed a cancel, but
-    not *how much*. The magnitude survived only in the transport-local inbox queue row.
-    """
+    """([KW2b-#13]; Phase 3 wave 2 review finding #13) The refused fill's own quantity is not"""
     core, sink, _, attempt_id = _sent_core()
     core.handle(_egress_event(EgressResultKind.CANCEL_ACK, attempt_id, sequence=2))
 
@@ -239,26 +186,11 @@ def test_the_cancel_crossing_fills_magnitude_reaches_the_evidence_store() -> Non
 
 
 def test_mutation_cancel_ack_treated_as_released_is_a_cpl4_violation() -> None:
-    """Mutation guard (plan §2.2 "뮤테이션: CANCEL_ACK ⇒ RELEASED 위반 red").
-
-    ``RELEASE_PENDING_PROOF`` is not, and must never become, ``RELEASED`` through
-    ``apply_egress_result``'s ordinary rank-advance path — the ONLY way to reach ``RELEASED`` is
-    now :meth:`~tos.engine.state.ProvisionalReservationLedger.release`'s dedicated, typed
-    finality-proof-token gate (kernel round #3 §2 decision 5; ``PROJECTION_ORDER``'s own
-    docstring), which an ordinary ``core.handle(...)`` call never reaches. This test would go
-    **red** under the mutation the plan names: if a future edit made ``CANCEL_ACK`` skip straight
-    to ``RELEASED`` inside ``_RESULT_TRANSITIONS`` — bypassing the token gate entirely — the
-    assertion below fails.
-    """
+    """Mutation guard (plan §2.2 "뮤테이션: CANCEL_ACK ⇒ RELEASED 위반 red")."""
     core, _, _, attempt_id = _sent_core()
     result = core.handle(_egress_event(EgressResultKind.CANCEL_ACK, attempt_id))
     assert result.reservation.capacity_state is CapacityState.RELEASE_PENDING_PROOF
     assert result.reservation.capacity_state is not CapacityState.RELEASED
-
-
-# ---------------------------------------------------------------------------
-# full 8-member transition table (the "전수" this wave adds to the 6-member table)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -312,13 +244,7 @@ def test_mutation_cancel_ack_treated_as_released_is_a_cpl4_violation() -> None:
 def test_the_full_eight_member_transition_table(
     kind, fills, expected_capacity, expected_knowledge
 ) -> None:
-    """(§2.2, full 전수; [KW2b-#2]) Every one of the eight ``EgressResultKind`` members transitions
-    exactly as declared. Capacity ``None`` (``ACK`` only) means "no explicit target, unchanged,
-    still ``POTENTIALLY_LIVE``" — distinct from ``UNKNOWN`` / ``TIMEOUT``, whose target is now the
-    unconditional, explicit ``QUARANTINED_UNKNOWN`` (ADR-002-005 §7 "until resolved"; before this
-    fix both were also ``None``, which under-claimed the fact and produced a false CPL-5 coupling
-    violation downstream — Phase 3 wave 2 review finding #2).
-    """
+    """(§2.2, full 전수; [KW2b-#2]) Every one of the eight ``EgressResultKind`` members transitions"""
     core, _, _, attempt_id = _sent_core()
     result = core.handle(_egress_event(kind, attempt_id, **fills))
 

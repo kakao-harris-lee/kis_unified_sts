@@ -1,15 +1,4 @@
-"""Step 9's SYNTHETIC CLOSE branch — the dispatch and the races (#1011, review-1015 M1).
-
-``test_close_proof_commit_fence.py`` covers the broker-held fence; this file covers the
-``SyntheticCloseEntryFence`` branch :meth:`~tos_runtime.risk.ledger_stages.AtomicCommitStage
-._expected_seq` takes BEFORE it, driving the real stage against a real
-:class:`~tos_runtime.rcl.log.SqliteCommitLog`. Until this file existed, nothing drove step 9
-with a synthetic fence at all: the only coverage was a direct call to the predicate.
-
-The stage helpers come from the sibling broker-fence module (same package), so both branches
-are exercised through the SAME stage construction and the same concurrent-writer double — a
-difference in outcome is then a difference in the branch, not in the harness.
-"""
+"""Step 9's SYNTHETIC CLOSE branch — the dispatch and the races (#1011, review-1015 M1)."""
 
 from __future__ import annotations
 
@@ -84,13 +73,7 @@ def test_synthetic_close_refuses_when_the_tip_moved_after_the_fence_was_read(
     instrument_key: InstrumentKey,
     afg_governor: ActionFlowGovernor,
 ) -> None:
-    """Anything committed between the bound re-read and step 9's view refuses the commit.
-
-    Concrete input: the fence names tip 0, the log is at tip 1 when step 9 reads it. The PR
-    body claims a tip advance is tolerated only when the fence itself was re-read at the newer
-    tip; this is the other half of that claim — a fence carrying the OLDER tip is refused, so a
-    reservation that landed in between can never be closed over.
-    """
+    """Anything committed between the bound re-read and step 9's view refuses the commit."""
     _append_approval_entry(log, writer_epoch=writer_epoch, seq=0)
     _append_approval_entry(log, writer_epoch=writer_epoch, seq=1)
     request = _request(instrument_key, effect="CLOSE")
@@ -116,12 +99,7 @@ def test_synthetic_close_cas_refuses_a_later_same_epoch_writer(
     instrument_key: InstrumentKey,
     afg_governor: ActionFlowGovernor,
 ) -> None:
-    """A commit that lands AFTER step 9's view loses the CAS rather than overwriting it.
-
-    The fence's tip is the CAS coordinate, so a same-epoch writer that slips in between the
-    view and the append yields ``SEQ_MISMATCH`` → UNKNOWN. Same double, same assertion shape
-    as the broker fence's own race test.
-    """
+    """A commit that lands AFTER step 9's view loses the CAS rather than overwriting it."""
     _append_approval_entry(log, writer_epoch=writer_epoch, seq=0)
     request = _request(instrument_key, effect="CLOSE")
     raced_log = _ConcurrentWriterLog(log, writer_epoch=writer_epoch)
@@ -187,13 +165,7 @@ def test_a_synthetic_fence_never_satisfies_the_broker_branch(
     instrument_key: InstrumentKey,
     afg_governor: ActionFlowGovernor,
 ) -> None:
-    """The two fence records are dispatched by exact type, not by duck typing.
-
-    A ``SyntheticCloseEntryFence`` carries none of the broker fence's currentness fields, so if
-    step 9 ever fell through to the broker branch with one, the attribute reads would be the
-    only thing standing between it and a commit. This pins the branch instead: an object that
-    is neither exact type is UNKNOWN, with the broker branch's own wording.
-    """
+    """The two fence records are dispatched by exact type, not by duck typing."""
     _append_approval_entry(log, writer_epoch=writer_epoch, seq=0)
     request = _request(instrument_key, effect="CLOSE")
     stage = _stage(

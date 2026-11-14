@@ -1,6 +1,4 @@
-"""``load_kis_witness_config`` tests — host seal, TR-id shape, named-TBD, futures refusal
-(mirrors ``tos/runtime/tests/transport/kis_mock/test_config.py``'s own shape for the
-sibling order-transport config)."""
+"""``load_kis_witness_config`` tests — host seal, TR-id shape, named-TBD, futures refusal"""
 
 from __future__ import annotations
 
@@ -97,9 +95,7 @@ def test_a_named_tbd_null_field_refuses_to_load(tmp_path: Path) -> None:
 
 
 def test_named_tbd_placeholder_balance_path_refuses_to_load(tmp_path: Path) -> None:
-    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): this file's own stdlib-only
-    firewall discipline means it duplicates the ``"TBD"`` literal locally rather than
-    importing ``tos_runtime._named_tbd`` — pin that the local check actually fires."""
+    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): this file's own stdlib-only"""
     path = _write(tmp_path, balance_path="TBD")
     with pytest.raises(KisWitnessConfigError, match="template placeholder"):
         _load(path)
@@ -117,8 +113,6 @@ def test_plaintext_http_requires_the_test_only_flag(tmp_path: Path) -> None:
         endpoint_rest_base="http://127.0.0.1:1",
         allow_plaintext_for_tests=False,
     )
-    # http:// also fails the mock-host-match check first — assert on the actual error
-    # this loader raises, not a guessed one.
     with pytest.raises(KisWitnessConfigError):
         _load(path)
 
@@ -129,14 +123,12 @@ def test_instance_real_rest_base_none_is_refused(tmp_path: Path) -> None:
         load_kis_witness_config(
             path,
             instance_mock_rest_base=MOCK_BASE,
-            # Deliberately illegal per the (REQUIRED, non-Optional) signature — this
-            # test's whole point is proving the fail-closed refusal fires.
             instance_real_rest_base=cast(str, None),
         )
 
 
 def test_refuse_futures_asset_accepts_stock() -> None:
-    refuse_futures_asset("stock")  # does not raise
+    refuse_futures_asset("stock")
 
 
 def test_refuse_futures_asset_rejects_futures() -> None:

@@ -1,9 +1,4 @@
-"""Negative evidence: omission is not proof of non-existence (§5.3; RECON-EV-002).
-
-Absence (``is_absence=True``) may lower confidence but SHALL NOT establish
-``NONE`` / ``CANCELLED`` / ``released``, narrow a bound, or produce a release proof
-(ADR §7 line 102). Both-ways: real positive observations are still reflected.
-"""
+"""Negative evidence: omission is not proof of non-existence (§5.3; RECON-EV-002)."""
 
 from __future__ import annotations
 
@@ -48,7 +43,7 @@ def test_absence_does_not_narrow_bound() -> None:
     with_absence = conservative_bound_of(
         positive + (observation(is_absence=True, asserted_bound=_b(40, 60)),)
     )
-    assert with_absence.covers(base)  # never narrower
+    assert with_absence.covers(base)
     assert with_absence.lower == Decimal(10) and with_absence.upper == Decimal(100)
 
 
@@ -63,7 +58,6 @@ def test_absence_only_is_unknown_not_terminal() -> None:
 
 def test_absence_never_produces_release_proof() -> None:
     """(§5.3) A field whose confidence comes only from absence has no release proof."""
-    # An UNKNOWN field (absence-only) can never be released.
     unknown_conf = field_confidence(field=_CAP, confidence_class=_C.UNKNOWN)
     assert (
         field_specific_release_proof_ok(_CAP, unknown_conf, release_inputs()) is False
@@ -102,5 +96,4 @@ def test_adding_absence_never_raises_class_property(obs: list) -> None:
     )
     before = classify_field(tuple(obs), fresh_marker())
     after = classify_field(tuple(obs) + (absence,), fresh_marker())
-    # Absence is excluded from the usable set, so the classification is unchanged.
     assert after is before

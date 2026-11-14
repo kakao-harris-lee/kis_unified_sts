@@ -1,10 +1,4 @@
-"""#966 — the RCL reservation identity formula and its inverse.
-
-One reservation per ATTEMPT, named by the Action Flow Permit identity
-(:mod:`tos_runtime.rcl.reservation_identity`). These pin the formula itself, the ``None``-safe
-forms steps 10/14 use, and the inverse parse the post-trade lookup needs — including the one
-input that makes a naive parse wrong: a KIS account number contains ``-``.
-"""
+"""#966 — the RCL reservation identity formula and its inverse."""
 
 from __future__ import annotations
 
@@ -17,8 +11,6 @@ from tos_runtime.rcl.reservation_identity import (
     scope_reservation_id,
 )
 
-#: A real KIS account number shape — it contains a ``-``, which is what makes
-#: :func:`permit_identity_of` a prefix strip rather than a split (P-11 measured account form).
 _ACCOUNT = "88888888-01"
 _INSTRUMENT = "005930"
 _KEY = InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT)
@@ -35,11 +27,7 @@ def _attempt(permit_identity: str = _PERMIT) -> AttemptRequest:
 
 
 def test_two_attempts_in_one_scope_get_two_reservation_ids() -> None:
-    """The whole point of #966: the id is per attempt, not per scope.
-
-    Before this, both attempts resolved onto ``resv-{account}-{instrument}``, so the second
-    could never commit (forward-only, no re-arm) and no exit could ever be sent.
-    """
+    """The whole point of #966: the id is per attempt, not per scope."""
     first = permit_reservation_id(_ACCOUNT, _INSTRUMENT, "afg-permit-entry")
     second = permit_reservation_id(_ACCOUNT, _INSTRUMENT, "afg-permit-exit")
     assert first != second
@@ -63,8 +51,7 @@ def test_scope_id_is_the_prefix_of_every_per_attempt_id() -> None:
 
 
 def test_reservation_id_in_scope_refuses_an_absent_permit_identity() -> None:
-    """Steps 10 and 14 must not invent an id for an unbound permit — they read back whatever
-    id they are given against the log, so a fabricated one would confirm nothing."""
+    """Steps 10 and 14 must not invent an id for an unbound permit — they read back whatever"""
     assert reservation_id_in_scope(_KEY, None) is None
     assert reservation_id_in_scope(_KEY, "") is None
     assert reservation_id_in_scope(_KEY, _PERMIT) == permit_reservation_id(
@@ -80,11 +67,7 @@ def test_attempt_request_reservation_id_reads_the_permit_the_attempt_carries() -
 
 
 def test_permit_identity_of_round_trips_through_an_account_containing_a_dash() -> None:
-    """The concrete failing input a split-based parse gets wrong.
-
-    ``resv-88888888-01-005930-afg-permit-0a1b2c3d`` split on ``-`` gives ``88888888`` as the
-    account; stripping the known prefix gives the permit identity back exactly.
-    """
+    """The concrete failing input a split-based parse gets wrong."""
     reservation_id = permit_reservation_id(_ACCOUNT, _INSTRUMENT, _PERMIT)
     assert (
         permit_identity_of(reservation_id, account=_ACCOUNT, instrument=_INSTRUMENT)

@@ -1,13 +1,4 @@
-"""Group reconcile order-independence (design #23 §4.4 / #22 MAJOR-1 seal).
-
-The #22 MAJOR-1 lesson: when many entries map to one group / scope / dimension, the verdict must
-reconcile **all** entries conservatively, never the first. cur's reconcile points —
-``restrictive_floor_reconciled`` (MAX floor), ``multi_domain_no_union`` (any-restriction-wins),
-``conflicting_owner_restricts`` / ``restrictive_union_scope`` (union of credible scopes) — are all
-order-independent and the most-restrictive entry dominates.
-
-Regime tag: predicate substrate only; reconcile seal; EV-L1-complete claim forbidden.
-"""
+"""Group reconcile order-independence (design #23 §4.4 / #22 MAJOR-1 seal)."""
 
 from __future__ import annotations
 
@@ -25,17 +16,11 @@ from tos.cur import (
     restrictive_union_scope,
 )
 
-# ---------------------------------------------------------------------------
-# restrictive_floor_reconciled — MAX (not first), order-independent (§6.2)
-# ---------------------------------------------------------------------------
-
 
 def test_floor_reconciled_takes_the_max_not_the_first() -> None:
     """(§6.2 / MAJOR-1) The reconciled floor is the MAX (most restrictive), not the first entry."""
     assert restrictive_floor_reconciled([3, 9, 5]) == 9
-    assert (
-        restrictive_floor_reconciled([9, 3, 5]) == 9
-    )  # first-entry would wrongly give 9 or 3
+    assert restrictive_floor_reconciled([9, 3, 5]) == 9
 
 
 def test_floor_reconciled_empty_and_none_deny() -> None:
@@ -53,11 +38,6 @@ def test_floor_reconciled_is_order_independent(floors: list[int]) -> None:
         shuffled
     )
     assert restrictive_floor_reconciled(floors) == max(floors)
-
-
-# ---------------------------------------------------------------------------
-# multi_domain_no_union — any-restriction-wins, order-independent (§6.7)
-# ---------------------------------------------------------------------------
 
 
 def _domain(name: str, result: ProofResult | None) -> DomainProof:
@@ -103,11 +83,6 @@ def test_multi_domain_is_order_independent_and_any_restriction_wins(
     assert multi_domain_no_union(proofs) is expected
 
 
-# ---------------------------------------------------------------------------
-# conflicting_owner_restricts + restrictive_union_scope — union, order-independent (§6.3)
-# ---------------------------------------------------------------------------
-
-
 def test_conflicting_owner_restricts_any_conflict() -> None:
     """(§6.3) Any conflicting / forked / regressed owner ⇒ restrict; a clean set does not."""
     clean = [
@@ -127,7 +102,7 @@ def test_conflicting_owner_restricts_any_conflict() -> None:
 
 def test_conflicting_owner_none_flag_is_conservative_restrict() -> None:
     """(§6.3 / §4.3) A None conflict flag is UNKNOWN ⇒ conservatively restrictive (negative polarity)."""
-    unknown = [OwnerSubmission(owner_identity="o1")]  # all flags None
+    unknown = [OwnerSubmission(owner_identity="o1")]
     assert conflicting_owner_restricts(unknown) is True
 
 
@@ -143,7 +118,6 @@ def test_restrictive_union_scope_unions_credible_scopes() -> None:
             owner_identity="o1", affected_scope=("a", "b"), is_conflicting=True
         ),
         OwnerSubmission(owner_identity="o2", affected_scope=("b", "c"), is_fork=True),
-        # a non-restrictive submission contributes nothing.
         OwnerSubmission(
             owner_identity="o3",
             affected_scope=("z",),

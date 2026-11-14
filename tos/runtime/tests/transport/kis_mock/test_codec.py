@@ -1,7 +1,4 @@
-"""Tests for ``KisOrderWireCodec``.
-
-These tests pin the exact serialization recipe so callers can reproduce the wire body
-byte-for-byte."""
+"""Tests for ``KisOrderWireCodec``."""
 
 from __future__ import annotations
 
@@ -81,7 +78,6 @@ def test_encode_produces_deterministic_sorted_no_whitespace_json() -> None:
         ensure_ascii=True,
     ).encode("utf-8")
     assert body == expected
-    # No incidental whitespace anywhere.
     assert b" " not in body
 
 
@@ -102,8 +98,7 @@ def test_digest_is_sha256_hex() -> None:
 
 
 def test_account_is_read_from_the_sealed_account_coordinate() -> None:
-    """(F2) The 'account' dynamic source is ``seal.account`` — the sealed outbound
-    coordinate — never a custody-loaded value and never ``instrument_key.account``."""
+    """(F2) The 'account' dynamic source is ``seal.account`` — the sealed outbound"""
     seal = build_seal(
         field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS, account="33333333-01"
     )
@@ -111,17 +106,12 @@ def test_account_is_read_from_the_sealed_account_coordinate() -> None:
         seal, field_map=FIELD_MAP, price_scale=1, static_body_fields=STATIC_FIELDS
     )
     decoded = json.loads(body)
-    # CANO is the sealed account's first 8 digits (#932 Codex r1 HIGH); the seal keeps it whole.
     assert seal.account == "33333333-01"
     assert decoded["CANO"] == "33333333"
 
 
 def test_account_is_the_seal_field_never_instrument_key_account() -> None:
-    """The codec must use ``seal.account`` even when
-    ``instrument_key.account`` differs. Every OTHER fixture in this suite builds
-    ``instrument_key.account`` equal to ``seal.account``, so a mutation swapping
-    ``seal.account`` for ``seal.instrument_key.account`` inside the codec would silently
-    survive every other test here."""
+    """The codec must use ``seal.account`` even when"""
     seal = build_seal(
         field_map=FIELD_MAP,
         static_body_fields=STATIC_FIELDS,
@@ -139,8 +129,6 @@ def test_account_is_the_seal_field_never_instrument_key_account() -> None:
 
 
 def test_missing_a_required_field_refuses() -> None:
-    # Build a seal using a VALID field_map/static_body_fields (so seal construction itself
-    # succeeds) — the broken map is exercised only against the encode() call under test.
     seal = build_seal(field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS)
     incomplete_static = dict(STATIC_FIELDS)
     del incomplete_static["CNDT_PRIC"]
@@ -176,9 +164,7 @@ def test_an_unrecognized_dynamic_source_refuses() -> None:
 
 
 def test_encode_delegates_to_encode_fields_with_the_seals_own_four_values() -> None:
-    """(T2 lane A) ``encode(seal, ...)`` must equal ``encode_fields`` called directly with the
-    SAME four values a resolver reads before a seal exists — pinning that ``encode`` is a thin
-    wrapper, never a diverging second implementation."""
+    """(T2 lane A) ``encode(seal, ...)`` must equal ``encode_fields`` called directly with the"""
     seal = build_seal(
         field_map=FIELD_MAP,
         static_body_fields=STATIC_FIELDS,
@@ -209,8 +195,6 @@ def test_quantity_and_price_are_plain_decimal_strings_never_scientific_notation(
         field_map=FIELD_MAP,
         static_body_fields=STATIC_FIELDS,
         quantity=Decimal("100"),
-        # A Decimal in exponent form (the shape the sealed payload carries, e.g. 4.499E+6):
-        # the scaled quotient must still go out as plain digits.
         price=Decimal("1.5E+7"),
     )
     body = KisOrderWireCodec.encode(
@@ -222,16 +206,8 @@ def test_quantity_and_price_are_plain_decimal_strings_never_scientific_notation(
     assert "E" not in decoded["ORD_UNPR"] and "e" not in decoded["ORD_UNPR"]
 
 
-# ---------------------------------------------------------------------------
-# price_scale — the 100× defect (rescope M2, 2026-10-22)
-# ---------------------------------------------------------------------------
-
-
 def test_a_x100_sealed_price_goes_out_as_whole_krw() -> None:
-    """The defect this pins: every CP-3 tree prices off ``close_x100``, so a 270,000원 close
-    is sealed as ``27000000``. Before ``price_scale`` the codec sent that integer verbatim as
-    ``ORD_UNPR`` — a limit price 100× the market. Concrete failing input on the old codec:
-    this seal → ``"ORD_UNPR":"27000000"``."""
+    """The defect this pins: every CP-3 tree prices off ``close_x100``, so a 270,000원 close"""
     seal = build_seal(
         field_map=FIELD_MAP,
         static_body_fields=STATIC_FIELDS,
@@ -276,10 +252,6 @@ def test_price_scale_must_be_a_positive_int(scale: object) -> None:
         )
 
 
-# The default decimal context carries 28 significant digits — a quotient wider than that was
-# ROUNDED before the whole-KRW check ever saw it (PR #927 review L1). Both failing inputs below
-# are 31-digit prices at scale 100: the first passed the check and went out as 10**28 (its
-# exact quotient ends in .5); the second went out as 10**28, losing its last 1원.
 _WIDE = 10**30
 
 
@@ -311,18 +283,11 @@ def test_a_price_wider_than_the_decimal_context_goes_out_exact() -> None:
     assert body["ORD_UNPR"] == str(10**28 + 1)
 
 
-# ---------------------------------------------------------------------------
-# The account: one 8-2 number sealed, two KIS fields on the wire (#932 Codex r1 HIGH)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("account", ["88888888-01", "8888888801"])
 def test_the_sealed_8_2_account_goes_out_as_cano_8_and_the_matching_product_code(
     account: str,
 ) -> None:
-    """KIS official example (order_cash): ``"CANO": "12345678", "ACNT_PRDT_CD": "01"``. Before
-    this fix the codec sent the whole sealed string as CANO (``"88888888-01"``) — VTS rejects
-    that, and the e2e's fake server and oracle both repeated it."""
+    """KIS official example (order_cash): ``"CANO": "12345678", "ACNT_PRDT_CD": "01"``. Before"""
     body = json.loads(
         KisOrderWireCodec.encode_fields(
             account=account,
@@ -341,10 +306,10 @@ def test_the_sealed_8_2_account_goes_out_as_cano_8_and_the_matching_product_code
 @pytest.mark.parametrize(
     "account",
     [
-        "88888888",  # no product code: nothing to check ACNT_PRDT_CD against
-        "888888888-1",  # hyphen in the wrong place
-        "88888888-01-",  # two hyphens
-        "８８８８８８８８０１",  # full-width digits
+        "88888888",
+        "888888888-1",
+        "88888888-01-",
+        "８８８８８８８８０１",
         "acct-compose",
     ],
 )

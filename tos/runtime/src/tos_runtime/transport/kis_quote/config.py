@@ -1,65 +1,4 @@
-"""``KisQuoteTransportConfig`` — fail-closed boot config for the KIS 모의투자 QUOTE intake (TOS
-tick-source wave, W2 lane, plan
-``docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md`` §4 W2).
-
-Mirrors :mod:`tos_runtime.transport.kis_mock.config`'s own fail-closed idiom over a QUOTE-shaped
-document: every field is named-TBD (``null``) in the shipped ``.example.yaml``, and a still-null
-or missing required leaf refuses to load, naming the offending key.
-
-**Host seal (same shape as the order transport, decision 5 there).** ``endpoint_rest_base`` must
-equal the INSTANCE MOCK_VTS document's own ``rest_base`` literal exactly — this loader takes both
-the MOCK and REAL facts as caller-supplied, never reads the broker-capability-profile YAML itself.
-This is a STRUCTURAL guard, not documentation: the measured broker behavior
-(``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:4348-4361``) is that KIS enforces
-environment separation *per TR family*, not *per domain* — "모의 앱키로 실전 도메인 시세를 읽는
-구성은 조용히 동작한다" ("a config reading REAL-domain quotes with a MOCK app key works silently").
-A config value alone cannot be trusted to keep this transport pointed at MOCK.
-
-**Two checks, both needed.** :func:`_validate_endpoint` refuses an endpoint that is not
-byte-exact the MOCK fact (the allowlist) AND, before that, any endpoint or MOCK fact naming the
-REAL hostname after normalization (:func:`tos_runtime.transport.endpoint.real_host_problem`).
-The allowlist alone is not enough: when the MOCK fact itself is a REAL spelling (``…:9443/``,
-``OpenAPI.…``, implicit port, trailing dot) a byte-exact echo of it passed (#932 final review
-MEDIUM, superseding the 2026-09-17 note that the REAL check was redundant).
-
-**Quote TR id shape (measured, NOT the order transport's ``V``-prefix rule).** Four independently
-observed KIS quotations TR ids —
-``FHKST01010100`` (stock current price, ``shared/kis/client.py:600``),
-``FHMIF10000000`` (futures/index current price, ``shared/kis/client.py:661``),
-``FHPPG04600001``/``FHKST03030200`` (quote TRs the broker profile records as answered for a MOCK
-app key even against the REAL domain,
-``KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:4351``) — share one shape: ``FH`` + 3 uppercase letters
-+ 8 digits, 13 characters total. This is a DIFFERENT TR family from the order transport's
-``V[A-Z]{3}\\d{4}[A-Z]`` shape (module docstring there) — applying that rule here would be wrong,
-not merely stricter, since a quote TR id is never ``V``-prefixed at all. ``tr_id`` must match
-``^FH[A-Z]{3}\\d{8}$`` exactly (case-sensitive) — refused otherwise, naming the measured shape and
-its citations so a future reader can re-verify rather than trust this comment blindly.
-
-**One source of truth for pacing (deliberate omission).** This config carries NO poll-interval /
-min-request-spacing field of its own. :class:`~tos_runtime.marketfeed.scheduler.TickScheduler`'s
-own ``poll_interval_ms`` (``marketfeed.yaml``) already governs how often ``ObservationIntake.poll``
-is ever called at all — a second, independent pacing knob here could disagree with it (one config
-saying "every 500ms", the other "every 2s"), and disagreement between two rate governors for the
-SAME call site is worse than having only one. ``token_reissue_min_interval_s`` is the one
-exception: it governs the TOKEN endpoint specifically, a different call site with its own
-independent KIS-side rate limit (N-15's own finding, cited in
-:mod:`tos_runtime.transport.kis_mock.token`'s module docstring), not a duplicate of the poll
-pacing. The two ``app_key_*`` pacing terms are a second exception of the same kind (issue #970):
-they do not pace the poll, they pace every request on the ``kis_mock.*`` app key this intake
-shares with the order transport, the witness and the band reader (KIS throttles per second
-across endpoints). They must equal the other consumers' terms — the credential registry refuses
-a mismatch at boot, so the two governors cannot disagree silently.
-
-**No ``mode`` field (deliberate, unlike the order transport).** A quote poll is a GET-only read
-with no dry-run/live distinction to make — there is no "would-be order" to hold back from the
-network the way ``dry_run`` holds back a POST. Every quote poll always reaches the (host-sealed
-MOCK) network; refusing to build this intake at all is the fail-closed lever, not a mode flag.
-
-Firewall: stdlib (``dataclasses``, ``pathlib``, ``re``) + ``pyyaml`` only — no
-``tos``/``tos_runtime`` sibling import (same reasoning as ``kis_mock/config.py``'s own firewall
-note: this module has nothing to seal against yet). No ``os.environ``/``os.getenv`` anywhere
-(TOS-FW-C) — every fact here is caller-supplied or file-sourced.
-"""
+"""``KisQuoteTransportConfig`` — fail-closed boot config for the KIS 모의투자 QUOTE intake (TOS"""
 
 from __future__ import annotations
 
@@ -81,61 +20,18 @@ __all__ = [
     "read_declared_instrument",
 ]
 
-#: The exact measured KIS quotations TR id shape (module docstring): ``FH`` + 3 uppercase
-#: letters + 8 digits. Distinct from — and never confusable with — the order transport's
-#: ``V``-prefixed shape (``kis_mock/config.py``'s ``_TR_ID_PATTERN``).
 _QUOTE_TR_ID_PATTERN = re.compile(r"^FH[A-Z]{3}\d{8}$")
 
-#: The template's reserved not-yet-filled placeholder — the SAME token
-#: ``tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`` names, duplicated here (never imported)
-#: per this module's own stdlib-only firewall discipline (module docstring): an operator
-#: typing this literal into a free string field (``instrument``/``source_id``/``quote_path``/
-#: ``token_path``/``market_div_code``/a ``field_mapping`` value) must never be sealed in as a
-#: real value the way a bare ``null`` already refuses.
 _TBD_STR = "TBD"
 
 
 class KisQuoteTransportConfigError(Exception):
-    """The KIS QUOTE transport config is missing, malformed, still named-TBD, or names an
-    unrecognized/forbidden value — fail-closed at load, never a silent default."""
+    """The KIS QUOTE transport config is missing, malformed, still named-TBD, or names an"""
 
 
 @dataclass(frozen=True)
 class KisQuoteTransportConfig:
-    """The fully-valued, fail-closed-loaded KIS QUOTE transport config (module docstring).
-
-    Attributes:
-        endpoint_rest_base: The host-sealed KIS MOCK REST base (module docstring).
-        quote_path: The quotations endpoint's path (e.g.
-            ``/uapi/domestic-stock/v1/quotations/inquire-price``).
-        token_path: The token endpoint's path (e.g. ``/oauth2/tokenP``).
-        tr_id: The KIS quotations TR id — ``FH`` + 3 letters + 8 digits (module docstring).
-        instrument: The single instrument this config quotes — MUST equal the instrument string
-            :meth:`~tos_runtime.transport.kis_quote.adapter.KisQuoteObservationIntake.poll` is
-            called with (checked at poll time, not here — this loader has no independent access
-            to what ``marketfeed.yaml`` will pass).
-        market_div_code: KIS's own ``FID_COND_MRKT_DIV_CODE`` query value (``"J"`` for stock,
-            ``"F"`` for futures/index — ``shared/kis/client.py:602``/``:665``, cited as an
-            existing-code shape reference only).
-        field_mapping: KIS wire field name -> the ``critical_input_policy.yaml``-admitted
-            ``field_key`` it feeds (e.g. ``{"stck_prpr": "last_price"}``). A response field NOT
-            named here is dropped by this adapter before it ever reaches
-            :class:`~tos_runtime.marketfeed.ports.RawObservation` — never guessed, never passed
-            through wholesale (module docstring's own "configured mapping, not hardcoded
-            branches" discipline).
-        source_id: The ``RawObservation.source_id`` this intake stamps on every observation it
-            emits.
-        token_reissue_min_interval_s: Forwarded to :class:`~tos_runtime.transport.kis_mock.token
-            .KisTokenLifecycle` — the token endpoint's own reissue-rate pacing (module
-            docstring's "one source of truth for pacing" note — this is the ONE exception).
-        request_timeout_s: The per-request socket timeout, in seconds.
-        allow_plaintext_for_tests: Whether an ``http://`` scheme is admitted (test-only escape
-            hatch, same discipline as the order transport's own field).
-        app_key_min_request_interval_ms: The app key pacer's spacing (module docstring) — must
-            equal ``kis_mock_transport.yaml::min_send_interval_ms`` when both are loaded.
-        app_key_request_wait_budget_ms: The app key pacer's wait budget — must equal
-            ``kis_mock_transport.yaml::app_key_request_wait_budget_ms`` when both are loaded.
-    """
+    """The fully-valued, fail-closed-loaded KIS QUOTE transport config (module docstring)."""
 
     endpoint_rest_base: str
     quote_path: str
@@ -267,20 +163,13 @@ def _validate_endpoint(
     allow_plaintext_for_tests: bool,
     path: Path,
 ) -> None:
-    """Same host-seal shape as ``kis_mock.config._validate_endpoint`` (module docstring). The
-    REAL-host exclusion is the shared normalized one
-    (:func:`tos_runtime.transport.endpoint.real_host_problem`); the rest mirrors by hand.
-    """
-    if (
-        instance_real_rest_base is None
-    ):  # runtime guard for a caller ignoring the type hint
+    """Same host-seal shape as ``kis_mock.config._validate_endpoint`` (module docstring). The"""
+    if instance_real_rest_base is None:
         raise KisQuoteTransportConfigError(
             "REAL rest_base must be known (instance_real_rest_base was None) to be excluded — "
             "a caller that cannot state the REAL_PROD host cannot honestly prove this config "
             "excludes it"
         )
-    # Normalized REAL-host exclusion (#932 final review MEDIUM): a REAL host spelled
-    # differently (trailing "/", case, implicit port, trailing-dot FQDN) is still the REAL host.
     problem = real_host_problem(
         endpoint_rest_base,
         instance_mock_rest_base=instance_mock_rest_base,
@@ -333,24 +222,7 @@ def _read_yaml_mapping(path: Path) -> dict[str, Any]:
 
 
 def read_declared_instrument(path: Path) -> str | None:
-    """This document's own ``instrument`` leaf, or ``None`` when the document does not exist.
-
-    The ONE fact the venue policy loader's band-source config-consistency rule needs
-    (``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4.4b) — and it needs it at a
-    point in compose where the two INSTANCE host-seal facts
-    :func:`load_kis_quote_transport_config` requires have not been resolved yet. This reader
-    therefore answers that one question and NOTHING else: it performs no host seal, builds no
-    config object, and must never be used to start a transport. A deployment with no
-    ``kis_quote.yaml`` at all gets ``None``, which the venue loader turns into a boot refusal
-    *only* when a band source is actually declared.
-
-    Raises:
-        KisQuoteTransportConfigError: The file exists but is unreadable, is not valid YAML, is
-            not a top-level mapping, or its ``instrument`` is absent/null/not a non-empty
-            string/still the ``"TBD"`` placeholder — the same fail-closed treatment
-            :func:`load_kis_quote_transport_config` gives that leaf. A present-but-broken
-            document is never silently read as "absent".
-    """
+    """This document's own ``instrument`` leaf, or ``None`` when the document does not exist."""
     if not path.is_file():
         return None
     return _require_str(_read_yaml_mapping(path), "instrument", path)
@@ -362,25 +234,7 @@ def load_kis_quote_transport_config(
     instance_mock_rest_base: str,
     instance_real_rest_base: str,
 ) -> KisQuoteTransportConfig:
-    """Load + fail-closed-validate the KIS QUOTE transport config from ``path``.
-
-    Args:
-        path: The config file (shaped like
-            ``tos/runtime/config/kis_quote.example.yaml``).
-        instance_mock_rest_base: The INSTANCE MOCK_VTS document's own ``rest_base`` literal —
-            the one value ``endpoint_rest_base`` is allowed to equal.
-        instance_real_rest_base: The INSTANCE REAL_PROD document's own ``rest_base`` — REQUIRED,
-            and must differ from ``instance_mock_rest_base`` (module docstring's host-seal note).
-
-    Returns:
-        The fully-valued config.
-
-    Raises:
-        KisQuoteTransportConfigError: The file is missing/unreadable/not valid YAML/not a
-            mapping, an entry is absent or still ``null`` (named-TBD), ``tr_id`` does not match
-            the measured quotations TR id shape, ``endpoint_rest_base`` does not match the MOCK
-            instance (or matches the REAL one), or ``field_mapping`` is empty/malformed.
-    """
+    """Load + fail-closed-validate the KIS QUOTE transport config from ``path``."""
     raw = _read_yaml_mapping(path)
 
     allow_plaintext_for_tests = _require_bool(raw, "allow_plaintext_for_tests", path)

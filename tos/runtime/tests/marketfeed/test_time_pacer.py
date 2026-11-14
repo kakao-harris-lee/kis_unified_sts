@@ -1,10 +1,4 @@
-"""Hermetic unit tests for ``tos_runtime.marketfeed.time_pacer`` (plan
-``docs/plans/2026-09-26-tos-periodic-time-eval-and-witness-wiring-plan.md`` §2 W1, operator
-disposition §6.1-1 = option (나): evaluate every pass while the session is open, once per
-``closed_interval_ms`` while it is closed; a failed evaluation skips that pass's tick).
-
-Every collaborator is a fake — the monotonic clock is a counter this module advances by hand.
-"""
+"""Hermetic unit tests for ``tos_runtime.marketfeed.time_pacer`` (plan"""
 
 from __future__ import annotations
 
@@ -17,7 +11,6 @@ class _Harness:
         self, *, is_open: bool | None, closed_interval_ms: int = 60_000
     ) -> None:
         self.now_ms = 0
-        #: True open · False closed · None unknown (no trusted reading, no session context)
         self.is_open = is_open
         self.evaluations = 0
         self.fail_next = 0
@@ -49,40 +42,34 @@ def test_open_session_evaluates_before_every_pass() -> None:
 def test_closed_session_evaluates_once_per_interval() -> None:
     """Mutation: drop the closed-interval gate -> 60 evaluations -> red."""
     h = _Harness(is_open=False)
-    for _ in range(60):  # 60 one-second passes
+    for _ in range(60):
         assert h.pacer.before_decide() is True
         h.advance_ms(1_000)
-    # First pass (never evaluated) plus the pass at t=60 s is outside this window.
     assert h.evaluations == 1
-    assert h.pacer.before_decide() is True  # t = 60 s
+    assert h.pacer.before_decide() is True
     assert h.evaluations == 2
 
 
 def test_closed_to_open_is_seen_within_one_closed_interval() -> None:
-    """The opening is noticed by the first evaluation after it — at most one closed interval
-    late — and from then on every pass evaluates. Mutation: never evaluate while closed ->
-    the opening is never seen -> red."""
+    """The opening is noticed by the first evaluation after it — at most one closed interval"""
     h = _Harness(is_open=False, closed_interval_ms=60_000)
-    h.pacer.before_decide()  # t = 0, evaluated, closed
-    # The venue opens at t = 30 s, but the session judgement reads the last evaluation, so the
-    # harness keeps answering "closed" until an evaluation runs.
+    h.pacer.before_decide()
     h.advance_ms(30_000)
     h.pacer.before_decide()
     assert h.evaluations == 1
-    h.advance_ms(30_000)  # t = 60 s — due
-    h.is_open = True  # what the fresh evaluation now reports
+    h.advance_ms(30_000)
+    h.is_open = True
     h.pacer.before_decide()
     assert h.evaluations == 2
     h.advance_ms(1_000)
     h.pacer.before_decide()
-    assert h.evaluations == 3  # open: every pass
+    assert h.evaluations == 3
 
 
 def test_failed_evaluation_skips_the_tick_and_retries_next_pass(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Never tick on a stale reading; never stop the loop. Mutation: return True on failure ->
-    red."""
+    """Never tick on a stale reading; never stop the loop. Mutation: return True on failure ->"""
     h = _Harness(is_open=True)
     h.fail_next = 1
     assert h.pacer.before_decide() is False
@@ -114,10 +101,7 @@ def test_non_positive_or_non_int_interval_is_refused(bad: object) -> None:
 
 
 def test_unknown_session_is_paced_like_open_not_closed() -> None:
-    """Review finding (PR #806): a degraded evaluation leaves no trusted reading, so no session
-    context. Treating that as closed backed off to the 60 s interval while recovery needs
-    consecutive evaluations — ticks stopped for minutes mid-session. Unknown evaluates every
-    pass. Mutation: treat ``None`` as closed -> 1 evaluation -> red."""
+    """Review finding (PR #806): a degraded evaluation leaves no trusted reading, so no session"""
     h = _Harness(is_open=None)
     for _ in range(5):
         assert h.pacer.before_decide() is True

@@ -1,9 +1,4 @@
-"""``BrokerCapabilityProfile.environment_class`` (#932 Codex r2).
-
-The egress gateway's option (a) item-6 relaxation reads exactly this field, so it is the
-profile's OWN declaration (from its INSTANCE document, never a send-time context), it is
-digest-covered, and a profile cannot claim the simulation class while describing live trading.
-"""
+"""``BrokerCapabilityProfile.environment_class`` (#932 Codex r2)."""
 
 from __future__ import annotations
 
@@ -26,10 +21,10 @@ def test_a_simulation_profile_with_a_non_live_scope_constructs() -> None:
 @pytest.mark.parametrize(
     "scope",
     [
-        live_scope(mode="LIVE", action_classes=()),  # a live mode
-        live_scope(mode="NON_LIVE", action_classes=("entry",)),  # live action classes
-        live_scope(mode=None, action_classes=()),  # undeclared mode
-        None,  # no scope at all
+        live_scope(mode="LIVE", action_classes=()),
+        live_scope(mode="NON_LIVE", action_classes=("entry",)),
+        live_scope(mode=None, action_classes=()),
+        None,
     ],
 )
 def test_a_profile_cannot_claim_simulation_while_describing_live_trading(

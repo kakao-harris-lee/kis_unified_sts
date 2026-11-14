@@ -1,12 +1,4 @@
-"""The one per-boot decision of where post-trade facts come from (PR-3b).
-
-A stock MOCK order boot — ``kis-mock`` transport and an active scope in the mock-order class
-:func:`tos.brokercap.mock_order_without_position_or_cash` admits (PR-3a's own test for item 12) —
-takes its fills from the broker: the KIS witness and the broker finality producer
-(:mod:`tos_runtime.compose._broker_posttrade_wiring`). Every other boot is synthetic. Kept in its
-own import-light module so the engine wiring and the release wiring can both ask it without an
-import cycle.
-"""
+"""The one per-boot decision of where post-trade facts come from (PR-3b)."""
 
 from __future__ import annotations
 
@@ -34,8 +26,7 @@ def broker_posttrade_enabled(
 def finality_producer_for(
     broker_sourced: bool, config: FinalityConfig, scheme: CanonicalizationScheme
 ) -> SyntheticFinalityProducer | BrokerFinalityProducer:
-    """The boot's finality producer. The driver and the release consumer both call this with the
-    same ``broker_sourced``, so the consumer re-loads the family the driver wrote."""
+    """The boot's finality producer. The driver and the release consumer both call this with the"""
     if broker_sourced:
         return BrokerFinalityProducer(config=config, scheme=scheme)
     return SyntheticFinalityProducer(config=config, scheme=scheme)

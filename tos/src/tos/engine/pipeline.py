@@ -1,31 +1,4 @@
-"""Decision-pipeline orchestration — the RFC-003 §7 four-phase span (design #31 §3).
-
-The pipeline **drives** the already-shipped evaluator; it never re-authors it (design #31 §0.2-1 /
-§3.1). RFC-003 §7:199-215 phases, realized here:
-
-1. **Accept context** (§7:201-204). A missing / stale / incomplete / invalid Capsule forbids a
-   decision and yields a restrictive no-action. So the Capsule's issuance, digest, required-covered
-   completeness (``tos.capsule.capsule`` lines 189-204), scope agreement, and the injected
-   :mod:`tos.time` freshness verdicts are all confirmed **positively** *before* ``evaluate`` is
-   called; if any fails, ``evaluate`` is not called at all.
-2. **Interpret** (§7:205-207). :func:`tos.dsl.evaluate` — a pure function whose signature exposes
-   no ambient source and no fetch callable, so "no hidden state, default, or out-of-context fetch"
-   is structural, not promised.
-3. **Decide** (§7:208-212). The returned ``DecisionKind`` outcome. Slice #1 is per-instrument
-   (RFC-003 §9:327-339), so a ``VECTOR`` outcome is **fail-closed**: no progress, restrictive
-   no-action, recorded. The vector folding rule belongs to a later multi-symbol cycle.
-4. **Bind and emit** (§7:213-215). The outcome already binds the exact Capsule identity + digest
-   through ``RecordedInputSignature``; "binding does not create authority". Emission ends the
-   pipeline (§7:217-220) — approval, commitment, and transmission are the sequencer's downstream.
-
-**Bounded evaluation (design #31 §3.4 / D3).** :func:`tos.dsl.resolve_bound` is symbolic integer
-accounting, not a runtime interrupt: it cannot stop ``evaluate`` mid-run and ``evaluate`` reports
-no step count. So the budget is a **pre-evaluation gate** over a statically derived work count
-(:func:`~tos.engine.admission.policy_work_steps`), and an exhausted budget folds to a *distinctly
-recorded* degradation no-action that never enters the commitment flow.
-
-Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #31 §0.3). No clock, no RNG.
-"""
+"""Decision-pipeline orchestration — the RFC-003 §7 four-phase span (design #31 §3)."""
 
 from __future__ import annotations
 
@@ -71,8 +44,6 @@ __all__ = [
     "time_admits",
 ]
 
-#: The rationale recorded on a bounded-evaluation degradation. A recorded decision states why it
-#: followed from the context (RFC-008 §7); a degradation's "why" is the exhausted bound.
 _DEGRADED_RATIONALE = (
     "bounded evaluation exhausted its injected symbolic budget before evaluation — degraded to "
     "no-action for the strategy scope (DCE-INV-007; design #31 §3.4)"
@@ -81,13 +52,7 @@ _DEGRADED_RATIONALE = (
 
 @dataclass(frozen=True)
 class PipelineResult:
-    """The outcome of one decision-pipeline run (design #31 §3).
-
-    ``proposal`` is populated **only** when the run produced a single per-instrument Proposal that
-    passed the scope cross-check; it is what the sequencer consumes. Every other terminal shape —
-    a withheld decision, an ordinary no-action, a degradation, an unsupported vector — leaves it
-    ``None`` and records a named :class:`~tos.engine.vocabulary.HaltReason`.
-    """
+    """The outcome of one decision-pipeline run (design #31 §3)."""
 
     instrument_key: InstrumentKey
     halt_reason: HaltReason | None = None
@@ -110,28 +75,7 @@ class PipelineResult:
 
 
 def time_admits(inputs: TimeAdmissionInputs) -> tuple[bool, str | None]:
-    """Whether the injected time coordinates positively admit a decision (design #31 §2.3).
-
-    Four positive checks, each delegated to the shipped clock-free :mod:`tos.time` predicates —
-    the engine recomputes none of them:
-
-    * :func:`~tos.time.freshness_verdict` is ``FRESH`` (UNKNOWN / STALE / CONFLICTED deny);
-    * :func:`~tos.time.snapshot_age_admissible` is ``True`` (an unknown age bound or an
-      unestablished maximum denies);
-    * :func:`~tos.time.session_open_positively` is ``True`` (unknown phase, missing calendar,
-      tz conflict, ambiguous local time, or a boundary inside the uncertainty interval all deny);
-    * :func:`~tos.time.state_permits_new_normal_risk` is ``True`` — only ``TRUSTED`` permits new
-      normal risk.
-
-    A missing session context, uncertainty interval, or health state denies: absence is not
-    permission.
-
-    Args:
-        inputs: The injected time coordinates carried by the event.
-
-    Returns:
-        ``(admitted, reason)`` — ``reason`` is ``None`` only when admitted.
-    """
+    """Whether the injected time coordinates positively admit a decision (design #31 §2.3)."""
     verdict = freshness_verdict(
         source_age=inputs.source_age,
         delay_bounds=inputs.delay_bounds,
@@ -173,23 +117,7 @@ def time_admits(inputs: TimeAdmissionInputs) -> tuple[bool, str | None]:
 def capsule_admitted(
     payload: DecisionTickPayload,
 ) -> tuple[HaltReason | None, str | None]:
-    """Whether the bound Decision Context Capsule may be used (RFC-003 §7:201-204).
-
-    A missing, stale, incomplete, or invalid Capsule forbids a decision. Every check is positive:
-
-    * the Capsule is ``ISSUED`` and carries a concrete canonical digest (a ``DRAFT`` capsule is
-      pre-issuance — its digest is not yet computed);
-    * its ``_REQUIRED_COVERED`` set is complete (``missing_required_fields()`` is empty);
-    * its declared scope agrees exactly with the event's instrument key — the third leg of the
-      event ↔ strategy ↔ capsule agreement (design #31 §3.3);
-    * the injected time coordinates admit (:func:`time_admits`).
-
-    Args:
-        payload: The ``DECISION_TICK`` payload.
-
-    Returns:
-        ``(halt_reason, detail)`` — ``(None, None)`` when the Capsule is admitted.
-    """
+    """Whether the bound Decision Context Capsule may be used (RFC-003 §7:201-204)."""
     capsule = payload.capsule
     if capsule.status is not ArtifactStatus.ISSUED:
         return HaltReason.CAPSULE_NOT_ISSUED, f"capsule status is {capsule.status}"
@@ -249,22 +177,9 @@ def run_decision_pipeline(
     scheme: CanonicalizationScheme,
     sink: EvidenceSink,
 ) -> PipelineResult:
-    """Run the RFC-003 §7 four-phase decision pipeline for one registered strategy.
-
-    Args:
-        entry: The admitted strategy + its authored configuration + its derived key.
-        payload: The ``DECISION_TICK`` payload.
-        configuration: The injected engine configuration (budget, versions).
-        scheme: The resolved canonicalization scheme bound into emitted artifacts.
-        sink: The provisional evidence sink.
-
-    Returns:
-        The :class:`PipelineResult`. ``proposal`` is set only when a single per-instrument Proposal
-        was emitted and its scope matched the key.
-    """
+    """Run the RFC-003 §7 four-phase decision pipeline for one registered strategy."""
     key = payload.instrument_key
 
-    # --- phase 1: accept context (RFC-003 §7:201-204) ----------------------------------------
     if entry.instrument_key != key:
         return _withheld(
             sink,
@@ -277,7 +192,6 @@ def run_decision_pipeline(
     if halt is not None:
         return _withheld(sink, key, halt, detail)
 
-    # --- bounded-evaluation pre-gate (design #31 §3.4) ---------------------------------------
     policy = entry.strategy.policy
     if policy is None:  # pragma: no cover - admission refuses a policy-less strategy
         return _withheld(
@@ -326,13 +240,6 @@ def run_decision_pipeline(
             work_steps=work_steps,
         )
 
-    # --- phases 2-4: interpret / decide / bind and emit (RFC-003 §7:205-215) ------------------
-    # The resolved Critical Input value view rides through unconditionally (design #32 §3.2 (3)):
-    # ``payload.value_view`` is ``None`` for a value-free tick, and ``evaluate_resolved`` with
-    # ``resolved_context=None`` reproduces the shipped ``evaluate`` exactly — same environment,
-    # same outcome, same signature. When a view *is* present its canonical digest is appended to
-    # the recorded signature, so two bars that differ only in their values are distinguishable on
-    # replay (RFC-008 §9:302-306).
     result: EvaluationResult = evaluate_resolved(
         entry.strategy,
         payload.capsule,
@@ -382,8 +289,6 @@ def run_decision_pipeline(
             work_steps=work_steps,
         )
 
-    # A Proposal (action or explicit flat). Its scope must be the dispatch key — a structural
-    # cross-check, not a trusted claim (design #31 §3.3 삼자 일치).
     if outcome.account != key.account or outcome.instrument != key.instrument:
         return _withheld(
             sink,
@@ -431,12 +336,7 @@ def _withheld(
     bound_state: BoundState | None = None,
     work_steps: int | None = None,
 ) -> PipelineResult:
-    """Record a withheld decision and return the restrictive :class:`PipelineResult`.
-
-    A withheld decision is a *recorded* restrictive no-action: the pipeline neither evaluates nor
-    proposes, and it never constructs a No-Action artifact bound to a Capsule it just rejected
-    (RFC-003 §7:203-204; design #31 §3.1).
-    """
+    """Record a withheld decision and return the restrictive :class:`PipelineResult`."""
     sink.record(
         EngineEvidenceRecord(
             kind=EvidenceKind.DECISION_WITHHELD,

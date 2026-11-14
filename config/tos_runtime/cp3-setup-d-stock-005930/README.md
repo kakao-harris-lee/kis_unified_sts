@@ -1,5 +1,15 @@
 # config/tos_runtime/cp3-setup-d-stock-005930/
 
+> **2026-11-13 — S2-a 계획이 아래 문서가 가리키는 파일 다섯 개를 지웠다**
+> (`docs/plans/2026-11-13-tos-code-halving-plan.md`): `safety_envelope.yaml` ·
+> `safety_profile.yaml` · `safety_activation.yaml` · `safety_deviations.yaml` ·
+> `safety_incidents.yaml`. 그들을 읽던 안전망 서비스가 사라졌다 — 판정 입력이 모든
+> 출하 트리에서 정적 YAML 상수였고 한 번도 송신을 거부하지 않았다.
+> `monitor_coverage.yaml` 은 남았지만 축소판 모니터가 실제로 읽는 두 경계값만 남겼다.
+> ARE 상한(`envelope_max`)은 같은 값으로
+> `aggregate_risk_policy.yaml::_runtime.envelope_max` 로 옮겼다.
+> **아래에서 지워진 다섯 파일을 가리키는 문장은 현재 절차가 아니라 이력이다.**
+
 CP-3 **주식 tenant** 설정 트리 — rescope 계획 §3 M2(`docs/plans/2026-10-22-tos-rescope-plan.md`).
 운영자 결정 2026-10-22: **종목 005930(삼성전자) · 규칙 Setup D VWAP 되돌림 LONG 그대로 ·
 수량 1주 고정 · 주식 정규장 09:00~15:30 KST.**
@@ -23,8 +33,40 @@ README 가 정본이다. 여기에는 **다른 것만** 적는다.
 | `order_construction_policy.yaml` | `policy_generation: 4` · `_runtime.wire_codec: kis-order-cash-v1`(9 필드) · `approved_by` 4번째 줄 | B3(2026-10-24): kis-mock 부팅은 이 선언을 요구한다. 값은 코덱 모듈에서 옮겼다 — 파일 헤더 PROVENANCE |
 | `action_flow_policy.yaml` · `aggregate_risk_policy.yaml` · `order_construction_policy.yaml` · `critical_input_policy.yaml` | `policy_id` | 내용이 달라졌으니 id 도 다르다(LONG VCP 헤더의 규칙) |
 
-나머지 파일은 LONG 과 **바이트 동일**이다(전략 파일 포함 — 규칙 재사용). 이 분류는
-`tos/runtime/tests/compose/test_tenant_tree_stock.py` 가 파일·키 경로 단위로 고정한다.
+| `strategies/setup_d_long.strategy.yaml` · `strategy_bindings.yaml` | 네 번째 규칙 `R4-M2-PROBE-ENTRY-LONG` + 바인딩 `m2_probe_entry_enabled: true` | **M2 경계 관통 프로브**(운영자 지시 2026-11-11) — 아래 절 |
+
+나머지 파일은 LONG 과 **바이트 동일**이다. 이 분류는
+`tos/runtime/tests/compose/test_tenant_tree_stock.py` 가 파일·키 경로 단위로 고정한다
+(전략 파일은 LONG 의 세 규칙과 default 가 그대로인지 + R4 하나가 뒤에 붙었는지로 고정).
+
+## M2 경계 관통 프로브 R4 (운영자 지시 2026-11-11)
+
+운영자: 「정확한 시그널을 기다리지 말라; 시그널이 완벽하다는 보장도 없다 — 되게 해라」.
+rescope 계획 §2 문장 2 / 마일스톤 M2(기한 11-20)는 **주식 MOCK 주문이 TOS 경계를 끝까지
+통과하는 것**이고, 주식 잎이 11-06 에 태어난 뒤 Setup D R1 의 진입 제안은 **0건**이다
+(다섯 게이트 동시 성립이 드물다 · FLOW_HALTED 48건은 잎이 flat 인데 들어온 FLAT 제안이
+CANDIDATE_COMMAND_CONSTRUCTION 에서 거부된 것). 그래서 전략 파일에 네 번째 규칙을 뒀다.
+
+- **R4 는 Setup D 시그널이 아니다.** 조건은 `entry_window == true` + 토글뿐이고,
+  rationale 이 그렇게 적는다. 발화하면 R1 과 **같은** target(LONG · OPEN · RISK · 같은
+  계좌/종목 앵커)을 제안한다.
+- **R1·R2·R3 뒤에 있다.** `tos.dsl.vocabulary.evaluate_policy` 는 first-match 라
+  `vwap_reverted`/`eod` 청산이 R4 를 항상 이긴다. 올리지 말 것.
+- **토글은 `strategy_bindings.yaml::m2_probe_entry_enabled`(bool)** 하나다. `false` 면
+  R4 의 두 번째 비교가 거짓이 되어 발화하지 않는다. **키를 지우면 부팅이 거부된다**
+  (resolve.py 규칙 3) — M2 달성 뒤에는 `false` 로 바꾸는 1줄 PR 로 끈다.
+- 토글을 `config.<키> EQ 1` 같은 **config 단독 비교**로 쓸 수는 없다: 커널의 D1↔D4 규칙이
+  비교마다 capsule 피연산자를 요구하므로(`tos.engine.admission.strategy_admissible` 검사 2)
+  전략 전체가 INADMISSIBLE 이 되고 부팅이 `STRATEGY_REFUSED` 로 멈춘다(실측 2026-11-11).
+- **세션당 송신 한도는 R4 가 바꾸지 않는다** — 상시 승인(`write-standing-approval`)의
+  `--max-uses-per-action` 기본값 1 이라 거래일당 entry 1회 · exit 1회가 끝이고, 그 밖에
+  `aggregate_risk_policy` 1주(`unknown_disposition: DENY_NEW_RISK`) ·
+  `action_flow_policy` afg.ORDER 한도 1 · `engine.yaml::max_unresolved_send_per_scope: 1` ·
+  `risk.yaml::max_in_flight: 1` · OCP `min/max_quantity: 1` 이 겹쳐 있다. 청산 뒤 R4 가
+  같은 날 재진입하려 해도 entry 슬롯이 이미 소비돼 4단계에서 `UNKNOWN` 으로 선다.
+- 장후 B3 대조는 `config/tos_cp3_b3.yaml::markets: ["futures"]` 라 주식 세션에서는
+  `verdict: "skipped"` 다 — R4 는 B3 증인(`shared/decision/setups/vwap_reversion.py`)과
+  만나지 않는다. 선물 세 트리(paper · LONG · SHORT)는 바이트 그대로다.
 
 ## 무엇을 하고 무엇을 하지 않는가 (PR-3a, 2026-10-23)
 

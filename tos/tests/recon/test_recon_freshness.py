@@ -1,9 +1,4 @@
-"""freshness_ok / freshness_lost: horizon + time-confidence + generation (§6.3).
-
-RECON-EV-004 predicate substrate. Both-ways: fresh + time-held + same-generation => ok;
-aged / time-lost / generation-changed / any-None => not ok. A time service that recovers
-to a NEW generation does not auto-refresh an old marker. No hardcoded horizon — all injected.
-"""
+"""freshness_ok / freshness_lost: horizon + time-confidence + generation (§6.3)."""
 
 from __future__ import annotations
 

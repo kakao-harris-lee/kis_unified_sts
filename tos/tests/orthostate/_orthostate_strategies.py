@@ -1,13 +1,4 @@
-"""Shared valid-artifact builders + strategies for the Orthogonal Trading State tests.
-
-Firewall-clean: imports only ``hypothesis`` and ``tos.*`` (design #8 §0.3). The ``issue_*``
-/ ``*_required_kwargs`` builders populate every safety-load-bearing covered field each
-record's issuance guard demands, so a "valid" fixture is genuinely valid (never the
-all-null coverage illusion). The five §14 named fixtures (design #8 §7; ADR-002-005 §14
-line 207-211 verbatim) are exported as module constants; ``clean_side`` is the positive
-(all-proof) side-condition, ``fail_closed_side`` the all-``None`` default. The reserved
-``"TBD"`` placeholder is excluded from required-field text (a past flaky-test lesson).
-"""
+"""Shared valid-artifact builders + strategies for the Orthogonal Trading State tests."""
 
 from __future__ import annotations
 
@@ -30,24 +21,14 @@ from tos.rcl import CapacityState
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Text bound to a required-covered field must be concrete (never the reserved ``"TBD"``
-#: placeholder the issuance guard rejects — design #8 §2.2/§3.2).
 REQUIRED_FIELD_TEXT = st.text(max_size=8).filter(lambda s: s != "TBD")
 
-# ---------------------------------------------------------------------------
-# Per-dimension enum strategies
-# ---------------------------------------------------------------------------
 
 INTENT_STATES = st.sampled_from(list(IntentState))
 ATTEMPT_STATES = st.sampled_from(list(TransmissionAttemptState))
 BROKER_STATES = st.sampled_from(list(BrokerOrderState))
 KNOWLEDGE_STATES = st.sampled_from(list(KnowledgeState))
 CAPACITY_STATES = st.sampled_from(list(CapacityState))
-
-
-# ---------------------------------------------------------------------------
-# CompositeState builders
-# ---------------------------------------------------------------------------
 
 
 def composite_required_kwargs(**overrides: Any) -> dict[str, Any]:
@@ -82,11 +63,6 @@ def composites(draw: st.DrawFn) -> CompositeState:
     )
 
 
-# ---------------------------------------------------------------------------
-# DimensionTransitionRecord builders
-# ---------------------------------------------------------------------------
-
-
 def transition_required_kwargs(**overrides: Any) -> dict[str, Any]:
     """Transition-record issuance kwargs with every required covered field concrete."""
     base: dict[str, Any] = {
@@ -108,11 +84,6 @@ def issue_transition_record(**overrides: Any) -> DimensionTransitionRecord:
     )
 
 
-# ---------------------------------------------------------------------------
-# Injected coupling side-conditions
-# ---------------------------------------------------------------------------
-
-
 def clean_side(**overrides: Any) -> CouplingSideConditions:
     """A positive side: every proof / epoch present, no trapped exposure (guard True side)."""
     base: dict[str, Any] = {
@@ -130,11 +101,6 @@ def fail_closed_side() -> CouplingSideConditions:
     return CouplingSideConditions()
 
 
-# ---------------------------------------------------------------------------
-# The five §14 named composite fixtures (ADR-002-005 §14 line 207-211 verbatim)
-# ---------------------------------------------------------------------------
-
-#: §14 row 1 — coupling-clean positive (design #8 §7).
 COMPOSITE_14_1_CAPABILITY_ISSUED: CompositeState = issue_composite(
     composite_state_id="cs-14-1",
     intent_state=IntentState.APPROVED,
@@ -144,7 +110,6 @@ COMPOSITE_14_1_CAPABILITY_ISSUED: CompositeState = issue_composite(
     capacity_state=CapacityState.ATTEMPT_BOUND,
 )
 
-#: §14 row 2 — representable BUT coupling-negative (Broker=UNKNOWN fires CPL-5).
 COMPOSITE_14_2_SENT_UNKNOWN: CompositeState = issue_composite(
     composite_state_id="cs-14-2",
     intent_state=IntentState.ACTIVE,
@@ -154,7 +119,6 @@ COMPOSITE_14_2_SENT_UNKNOWN: CompositeState = issue_composite(
     capacity_state=CapacityState.POTENTIALLY_LIVE,
 )
 
-#: §14 row 3 — coupling-clean positive (design #8 §7).
 COMPOSITE_14_3_PARTIAL_FILL: CompositeState = issue_composite(
     composite_state_id="cs-14-3",
     intent_state=IntentState.ACTIVE,
@@ -164,7 +128,6 @@ COMPOSITE_14_3_PARTIAL_FILL: CompositeState = issue_composite(
     capacity_state=CapacityState.PARTIALLY_CONSUMED,
 )
 
-#: §14 row 4 — representable BUT coupling-negative (Knowledge=CONFLICTED fires CPL-5).
 COMPOSITE_14_4_SUPERSEDED_CANCEL: CompositeState = issue_composite(
     composite_state_id="cs-14-4",
     intent_state=IntentState.ACTIVE,
@@ -174,7 +137,6 @@ COMPOSITE_14_4_SUPERSEDED_CANCEL: CompositeState = issue_composite(
     capacity_state=CapacityState.RELEASE_PENDING_PROOF,
 )
 
-#: §14 row 5 — coupling-clean positive (design #8 §7).
 COMPOSITE_14_5_FILLED_RECONCILED: CompositeState = issue_composite(
     composite_state_id="cs-14-5",
     intent_state=IntentState.ACTIVE,
@@ -184,20 +146,17 @@ COMPOSITE_14_5_FILLED_RECONCILED: CompositeState = issue_composite(
     capacity_state=CapacityState.POSITION_CONSUMED,
 )
 
-#: The three coupling-clean positive §14 fixtures (design #8 §7 — clean under clean_side).
 CLEAN_POSITIVE_FIXTURES: tuple[CompositeState, ...] = (
     COMPOSITE_14_1_CAPABILITY_ISSUED,
     COMPOSITE_14_3_PARTIAL_FILL,
     COMPOSITE_14_5_FILLED_RECONCILED,
 )
 
-#: The two coupling-negative §14 fixtures (design #8 §7 — coupling_violations ⊇ {CPL-5}).
 COUPLING_NEGATIVE_FIXTURES: tuple[CompositeState, ...] = (
     COMPOSITE_14_2_SENT_UNKNOWN,
     COMPOSITE_14_4_SUPERSEDED_CANCEL,
 )
 
-#: All five §14 fixtures (all constructible — STATE-EV-001 representability slice).
 ALL_14_FIXTURES: tuple[CompositeState, ...] = (
     COMPOSITE_14_1_CAPABILITY_ISSUED,
     COMPOSITE_14_2_SENT_UNKNOWN,

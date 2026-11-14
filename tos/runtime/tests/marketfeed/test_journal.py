@@ -1,8 +1,4 @@
-"""Hermetic tests for tos_runtime.marketfeed.journal (TOS 틱 원천 웨이브 §2 decision 4, lane C).
-
-D1.4 hermetic: every write goes through ``tmp_path`` (the suite's own autouse write guard,
-``tos/runtime/tests/conftest.py``, refuses anything else); no network, no ambient env.
-"""
+"""Hermetic tests for tos_runtime.marketfeed.journal (TOS 틱 원천 웨이브 §2 decision 4, lane C)."""
 
 from __future__ import annotations
 
@@ -13,14 +9,9 @@ import pytest
 from tos_runtime.marketfeed.journal import JournalError, JsonLinesObservationJournal
 from tos_runtime.marketfeed.ports import RawObservation
 
-# ----------------------------------------------------------------------------
-# helpers
-# ----------------------------------------------------------------------------
-
 
 def _write_lines(path: Path, lines: list[object]) -> None:
-    """Write ``lines`` as JSON Lines — a ``str`` line is written verbatim (for malformed-input
-    tests), any other object is ``json.dumps``-ed first."""
+    """Write ``lines`` as JSON Lines — a ``str`` line is written verbatim (for malformed-input"""
     rendered = [line if isinstance(line, str) else json.dumps(line) for line in lines]
     path.write_text("\n".join(rendered) + "\n", encoding="utf-8")
 
@@ -46,20 +37,10 @@ def _observation(
     return payload
 
 
-# ----------------------------------------------------------------------------
-# missing file
-# ----------------------------------------------------------------------------
-
-
 def test_missing_file_is_a_typed_refusal_not_an_empty_poll(tmp_path: Path) -> None:
     journal = JsonLinesObservationJournal(path=tmp_path / "does-not-exist.jsonl")
     with pytest.raises(JournalError, match="does not exist"):
         journal.poll(instrument="005930", after_as_of_ms=None)
-
-
-# ----------------------------------------------------------------------------
-# strictly-newer filter
-# ----------------------------------------------------------------------------
 
 
 def test_after_as_of_ms_is_strictly_newer_not_gte(tmp_path: Path) -> None:
@@ -104,11 +85,6 @@ def test_no_new_observations_is_an_empty_sequence_not_a_refusal(tmp_path: Path) 
     assert result == ()
 
 
-# ----------------------------------------------------------------------------
-# instrument filter
-# ----------------------------------------------------------------------------
-
-
 def test_instrument_filter_excludes_other_instruments(tmp_path: Path) -> None:
     path = tmp_path / "journal.jsonl"
     _write_lines(
@@ -123,11 +99,6 @@ def test_instrument_filter_excludes_other_instruments(tmp_path: Path) -> None:
     result = journal.poll(instrument="005930", after_as_of_ms=None)
 
     assert [o.raw_event_id for o in result] == ["e-samsung"]
-
-
-# ----------------------------------------------------------------------------
-# ordering
-# ----------------------------------------------------------------------------
 
 
 def test_result_is_ordered_oldest_first_regardless_of_file_order(
@@ -147,11 +118,6 @@ def test_result_is_ordered_oldest_first_regardless_of_file_order(
     result = journal.poll(instrument="005930", after_as_of_ms=None)
 
     assert [o.raw_event_id for o in result] == ["e-early", "e-mid", "e-late"]
-
-
-# ----------------------------------------------------------------------------
-# malformed input — fail-closed on the WHOLE poll, never a partial skip
-# ----------------------------------------------------------------------------
 
 
 def test_invalid_json_line_refuses_the_whole_poll(tmp_path: Path) -> None:
@@ -195,10 +161,7 @@ def test_null_field_value_refuses_the_whole_poll(tmp_path: Path) -> None:
 def test_line_is_a_json_array_not_an_object_refuses_the_whole_poll(
     tmp_path: Path,
 ) -> None:
-    """Covers the ``not isinstance(payload, dict)`` refusal (``journal.py``'s
-    ``_parse_line``) — a syntactically valid JSON value that is nonetheless not an object.
-    A surviving, well-formed record on line 1 proves the refusal is wholesale: it is never
-    returned, only ever raised past."""
+    """Covers the ``not isinstance(payload, dict)`` refusal (``journal.py``'s"""
     path = tmp_path / "journal.jsonl"
     _write_lines(path, [_observation(raw_event_id="e-1"), [1, 2, 3]])
     journal = JsonLinesObservationJournal(path=path)
@@ -225,9 +188,7 @@ def test_blank_required_string_field_refuses_the_whole_poll(
 
 
 def test_non_string_required_field_refuses_the_whole_poll(tmp_path: Path) -> None:
-    """The same ``_require_nonblank_str`` refusal, triggered by the wrong TYPE rather than a
-    blank value — a collector that emits a numeric id is refused exactly like a blank one.
-    """
+    """The same ``_require_nonblank_str`` refusal, triggered by the wrong TYPE rather than a"""
     path = tmp_path / "journal.jsonl"
     bad = _observation(raw_event_id="e-2")
     bad["instrument"] = 5930
@@ -255,8 +216,7 @@ def test_non_int_as_of_ms_refuses_the_whole_poll(tmp_path: Path) -> None:
 
 
 def test_non_int_received_ms_refuses_the_whole_poll(tmp_path: Path) -> None:
-    """The same ``_require_int`` refusal via the OPTIONAL ``received_ms`` call site — proves
-    both required and optional int fields route through the identical guard."""
+    """The same ``_require_int`` refusal via the OPTIONAL ``received_ms`` call site — proves"""
     path = tmp_path / "journal.jsonl"
     bad = _observation(raw_event_id="e-2")
     bad["received_ms"] = 12.5
@@ -272,8 +232,7 @@ def test_non_int_received_ms_refuses_the_whole_poll(tmp_path: Path) -> None:
 def test_fields_value_is_not_a_json_object_refuses_the_whole_poll(
     tmp_path: Path,
 ) -> None:
-    """Covers ``_require_fields``'s "not a JSON object" refusal — ``fields`` present but a
-    JSON array rather than an object."""
+    """Covers ``_require_fields``'s "not a JSON object" refusal — ``fields`` present but a"""
     path = tmp_path / "journal.jsonl"
     bad = _observation(raw_event_id="e-2")
     bad["fields"] = [1, 2, 3]
@@ -287,11 +246,7 @@ def test_fields_value_is_not_a_json_object_refuses_the_whole_poll(
 
 
 def test_blank_field_key_refuses_the_whole_poll(tmp_path: Path) -> None:
-    """Covers ``_require_fields``'s per-key refusal — JSON permits an empty-string object key
-    (``{"": 5}``), which is exactly the blank case this guard exists to catch (a non-string
-    key is not reachable through ``json.loads`` — JSON object keys are always strings — so the
-    blank-string half of the check is the only half a real journal line can ever exercise).
-    """
+    """Covers ``_require_fields``'s per-key refusal — JSON permits an empty-string object key"""
     path = tmp_path / "journal.jsonl"
     bad = _observation(raw_event_id="e-2", fields={"": 5})
     _write_lines(path, [_observation(raw_event_id="e-1"), bad])
@@ -306,9 +261,7 @@ def test_blank_field_key_refuses_the_whole_poll(tmp_path: Path) -> None:
 def test_malformed_line_for_a_different_instrument_still_refuses(
     tmp_path: Path,
 ) -> None:
-    """A journal is one shared fault domain — a malformed line for an instrument NOT being
-    polled still refuses the call (module docstring: the whole file is validated before any
-    instrument filtering happens)."""
+    """A journal is one shared fault domain — a malformed line for an instrument NOT being"""
     path = tmp_path / "journal.jsonl"
     _write_lines(
         path,
@@ -324,10 +277,7 @@ def test_malformed_line_for_a_different_instrument_still_refuses(
 
 
 def test_malformed_trailing_line_is_not_treated_specially(tmp_path: Path) -> None:
-    """Pins the module docstring's explicit decision: a malformed LAST line (the shape a
-    non-atomic concurrent writer could produce) refuses the poll exactly like a malformed line
-    anywhere else — this journal does not guess that a trailing malformed line is merely
-    "not yet fully written"."""
+    """Pins the module docstring's explicit decision: a malformed LAST line (the shape a"""
     path = tmp_path / "journal.jsonl"
     _write_lines(
         path,
@@ -357,11 +307,6 @@ def test_blank_lines_are_skipped_not_treated_as_malformed(tmp_path: Path) -> Non
     result = journal.poll(instrument="005930", after_as_of_ms=None)
 
     assert [o.raw_event_id for o in result] == ["e-1", "e-2"]
-
-
-# ----------------------------------------------------------------------------
-# field shape — fields are carried as a flat, order-independent tuple of (key, value)
-# ----------------------------------------------------------------------------
 
 
 def test_fields_are_carried_as_key_value_pairs(tmp_path: Path) -> None:

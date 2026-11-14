@@ -1,10 +1,4 @@
-"""Central capability_admissible fail-closed + status gate (design #10 §5.1; BC-EV-001).
-
-The middle of the contract (ADR §1 line 32): missing / unknown / contradictory / expired /
-unsupported / undeclared => reduce or prohibit, never a vacuous ADMISSIBLE. Both-ways
-canaries + a drop-one over the non-authorizing statuses, plus the §10 line 584 canary that a
-conformance class cannot override a failed mandatory dimension.
-"""
+"""Central capability_admissible fail-closed + status gate (design #10 §5.1; BC-EV-001)."""
 
 from __future__ import annotations
 
@@ -35,11 +29,6 @@ _OID = CapabilityDimension.ORDER_IDENTITY
 _L3 = AssuranceLevel.LEVEL_3_RESTRICTED_PRODUCTION
 
 
-# ---------------------------------------------------------------------------
-# Positive side (both-ways canary a)
-# ---------------------------------------------------------------------------
-
-
 def test_all_verified_is_admissible() -> None:
     """(§5.1 canary b) Required dim VERIFIED ∧ level ∧ current ∧ gate => ADMISSIBLE."""
     profile = issue_profile(declarations=(verified_declaration(dimension=_OID),))
@@ -48,11 +37,6 @@ def test_all_verified_is_admissible() -> None:
     )
     assert verdict is Admissibility.ADMISSIBLE
     assert broker_capability_sufficient(profile, required_set(), version_current=True)
-
-
-# ---------------------------------------------------------------------------
-# Fail-closed side (both-ways canary a): undeclared / unknown / status / level / version
-# ---------------------------------------------------------------------------
 
 
 def test_undeclared_dimension_is_prohibited() -> None:
@@ -95,7 +79,7 @@ def test_unapproved_restriction_is_prohibited() -> None:
         assurance_level=_L3,
         evidence_reference="ev",
         restriction="serialized-only",
-        restriction_approved=None,  # not approved => fail-closed
+        restriction_approved=None,
     )
     profile = issue_profile(declarations=(decl,))
     assert (
@@ -182,11 +166,6 @@ def test_none_profile_or_required_is_prohibited() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Conformance class cannot override a failed mandatory dimension (§10 line 584)
-# ---------------------------------------------------------------------------
-
-
 def test_class_a_cannot_override_unsupported_dimension() -> None:
     """(§10 line 584) CLASS_A with a mandatory dimension UNSUPPORTED => still PROHIBITED."""
     decl = CapabilityDeclaration(
@@ -203,11 +182,6 @@ def test_class_a_cannot_override_unsupported_dimension() -> None:
         capability_admissible(profile, "entry", required_set(), version_current=True)
         is Admissibility.PROHIBITED
     )
-
-
-# ---------------------------------------------------------------------------
-# broker_capability_added (§14.1 expansion)
-# ---------------------------------------------------------------------------
 
 
 def test_broker_capability_added_positive() -> None:
@@ -235,12 +209,6 @@ def test_broker_capability_added_deficient_delta_fails_closed() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Property: no injected combination yields a vacuous ADMISSIBLE when a required
-# dimension is undeclared (structural fail-closed).
-# ---------------------------------------------------------------------------
-
-
 @given(
     level=LEVELS,
     version_current=st.sampled_from([True, False, None]),
@@ -250,7 +218,7 @@ def test_undeclared_never_admissible(
     level: AssuranceLevel, version_current: bool | None, gate: bool | None
 ) -> None:
     """No injected level / version / gate lifts an undeclared required dimension to ADMISSIBLE."""
-    profile = issue_profile(declarations=())  # nothing declared
+    profile = issue_profile(declarations=())
     req = RequiredCapabilitySet(
         required_dimensions=frozenset({_OID}),
         required_level=level,
@@ -260,13 +228,6 @@ def test_undeclared_never_admissible(
         profile, "entry", req, version_current=version_current
     )
     assert verdict is not Admissibility.ADMISSIBLE
-
-
-# ---------------------------------------------------------------------------
-# §5.1 unspecified-required doctrine: an EMPTY required_dimensions set is
-# fail-closed (treated as all 17 dimensions at the highest level), never a
-# vacuous ADMISSIBLE from a zero-iteration loop (code-review MAJOR regression).
-# ---------------------------------------------------------------------------
 
 
 def _all_dimensions_declared(
@@ -286,7 +247,7 @@ def _all_dimensions_declared(
 
 def _empty_required(**overrides: object) -> RequiredCapabilitySet:
     base: dict[str, object] = {
-        "required_dimensions": frozenset(),  # explicitly empty = unspecified
+        "required_dimensions": frozenset(),
         "required_level": None,
         "minimum_live_gate_satisfied": True,
     }
@@ -295,11 +256,7 @@ def _empty_required(**overrides: object) -> RequiredCapabilitySet:
 
 
 def test_empty_required_no_declarations_is_prohibited() -> None:
-    """(§5.1 MAJOR) Empty required + a declaration-less profile + all positive injections => PROHIBITED.
-
-    The pre-fix zero-iteration loop returned a vacuous ADMISSIBLE here; the doctrine
-    substitution (empty => all 17 dimensions at the highest level) forecloses it.
-    """
+    """(§5.1 MAJOR) Empty required + a declaration-less profile + all positive injections => PROHIBITED."""
     profile = issue_profile(declarations=())
     assert (
         capability_admissible(profile, "entry", _empty_required(), version_current=True)
@@ -329,11 +286,7 @@ def test_empty_required_partial_coverage_is_prohibited() -> None:
 
 
 def test_empty_required_all_seventeen_verified_top_level_is_admissible() -> None:
-    """(§5.1 MAJOR positive side) Empty required + all 17 VERIFIED at LEVEL_4 + current => ADMISSIBLE.
-
-    The doctrine substitution (all dimensions at the highest level) does not block a genuinely
-    complete profile — both-ways is preserved.
-    """
+    """(§5.1 MAJOR positive side) Empty required + all 17 VERIFIED at LEVEL_4 + current => ADMISSIBLE."""
     profile = issue_profile(
         declarations=_all_dimensions_declared(
             AssuranceLevel.LEVEL_4_CONTINUOUSLY_MONITORED

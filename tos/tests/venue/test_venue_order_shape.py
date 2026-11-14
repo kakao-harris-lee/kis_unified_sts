@@ -1,12 +1,4 @@
-"""order_shape_admissible — venue-admissibility of the exact order shape (design #19 §5.3; VTG-EV-004).
-
-Band / tick / lot / qty / order-type / TIF are checked with NO permissive rounding; all bounds
-are injected (nothing hardcoded); silent rounding => INADMISSIBLE; missing/invalid bound =>
-UNKNOWN. This is venue-admissibility, distinct from ioc intent-conformance (§3.5 핵심 판정 (a)).
-
-Regime tag: predicate / model substrate only; VTG-EV-004 NOT_IMPLEMENTED (`/3` + Broker
-residue); EV-L1-complete claim forbidden.
-"""
+"""order_shape_admissible — venue-admissibility of the exact order shape (design #19 §5.3; VTG-EV-004)."""
 
 from __future__ import annotations
 
@@ -47,7 +39,7 @@ def test_price_out_of_band_is_inadmissible() -> None:
 
 def test_invalid_tick_is_inadmissible() -> None:
     """(§12 line 299) A price off the injected tick grid is INADMISSIBLE."""
-    off_tick = clean_shape().model_copy(update={"price": 103})  # 103 - 100 = 3, tick=5
+    off_tick = clean_shape().model_copy(update={"price": 103})
     assert (
         order_shape_admissible(off_tick, clean_shape_constraints())
         is OrderAdmissibilityResult.INADMISSIBLE
@@ -56,7 +48,7 @@ def test_invalid_tick_is_inadmissible() -> None:
 
 def test_odd_lot_is_inadmissible() -> None:
     """(§12 line 299) An odd-lot quantity (off the injected lot) is INADMISSIBLE."""
-    odd = clean_shape().model_copy(update={"quantity": 15})  # lot=10
+    odd = clean_shape().model_copy(update={"quantity": 15})
     assert (
         order_shape_admissible(odd, clean_shape_constraints())
         is OrderAdmissibilityResult.INADMISSIBLE
@@ -147,10 +139,7 @@ def test_none_shape_or_constraints_is_unknown() -> None:
 
 
 def test_price_band_table_admits_the_measured_datapoint() -> None:
-    """(kernel round #4 K-1) With a declared price-band table, the ONE measured KRX datapoint
-    (005930 · 232,500원 · tick 500 · P-11-20260730T002715Z.json) resolves ADMISSIBLE via the
-    table — even though the flat ``tick_size`` on the same constraints (3) would put this price
-    off-grid (M1: reverting to the flat field flips this to INADMISSIBLE)."""
+    """(kernel round #4 K-1) With a declared price-band table, the ONE measured KRX datapoint"""
     assert (
         order_shape_admissible(price_band_table_shape(), price_band_table_constraints())
         is OrderAdmissibilityResult.ADMISSIBLE
@@ -158,10 +147,7 @@ def test_price_band_table_admits_the_measured_datapoint() -> None:
 
 
 def test_price_band_table_uncovered_price_is_unknown() -> None:
-    """(kernel round #4 K-1) A price inside the overall band but NOT covered by any declared
-    price-band row is UNKNOWN — the table is not silently extrapolated to a neighboring row, and
-    a declared-but-incomplete table does not fall back to the flat ``tick_size`` either (a
-    declared table is a stronger fact than "no table")."""
+    """(kernel round #4 K-1) A price inside the overall band but NOT covered by any declared"""
     uncovered = price_band_table_shape().model_copy(update={"price": 150_000})
     assert MEASURED_KRX_PRICE_BAND_ROW.band_min > 150_000 or (
         MEASURED_KRX_PRICE_BAND_ROW.band_max < 150_000
@@ -173,9 +159,7 @@ def test_price_band_table_uncovered_price_is_unknown() -> None:
 
 
 def test_no_table_and_no_flat_tick_is_unknown() -> None:
-    """(§8.0) With no price-band table AND no flat ``tick_size`` injected, the tick is
-    unresolvable => UNKNOWN (M2: an ``ADMISSIBLE`` here would be a fail-open regression).
-    """
+    """(§8.0) With no price-band table AND no flat ``tick_size`` injected, the tick is"""
     no_tick = clean_shape_constraints().model_copy(
         update={"tick_size": None, "price_band_ticks": None}
     )
@@ -186,8 +170,7 @@ def test_no_table_and_no_flat_tick_is_unknown() -> None:
 
 
 def test_futures_flat_tick_path_is_unchanged() -> None:
-    """(§0.3 무회귀) A constraints artifact with no ``price_band_ticks`` (the futures / existing
-    path) behaves exactly as before this kernel round — flat ``tick_size`` governs."""
+    """(§0.3 무회귀) A constraints artifact with no ``price_band_ticks`` (the futures / existing"""
     constraints = clean_shape_constraints()
     assert constraints.price_band_ticks is None
     assert (
@@ -199,7 +182,7 @@ def test_futures_flat_tick_path_is_unchanged() -> None:
 @given(price=st.integers(min_value=0, max_value=400))
 def test_property_price_admissible_iff_in_band_and_on_tick(price: int) -> None:
     """(property) A price is ADMISSIBLE only when inside [100,200] and on the tick=5 grid."""
-    constraints = clean_shape_constraints()  # band [100,200], tick 5
+    constraints = clean_shape_constraints()
     shape = clean_shape().model_copy(update={"price": price})
     result = order_shape_admissible(shape, constraints)
     in_band_on_tick = 100 <= price <= 200 and (price - 100) % 5 == 0

@@ -1,17 +1,4 @@
-"""CLOSE quantity bounds for a SYNTHETIC transport tree, and the stock entry cap (#1011, L3).
-
-A ``SYNTHETIC_FUTURES_ORDER`` tree has no broker to ask for a held position, so before #1011
-``RiskStateService`` answered every CLOSE with ``PROVIDER_NOT_CONFIGURED`` and step 6 stayed
-``UNKNOWN`` — a filled synthetic entry sealed its scope until the contract month rolled. For
-that transport the durable evidence store IS the broker, so the bound here is
-``close_within_entry(entry FULL_FILL, proven prior closes, q)`` read off the RCL + evidence
-store, and the step-9 fence is a second, independent read of the same facts.
-
-The stock (``kis-mock``) path keeps its broker-held proof and additionally caps the close at
-what remains of the TOS entry (#1012 L3): shares held outside TOS are not TOS capacity.
-
-Everything here is hermetic: ``tmp_path`` SQLite only, no network, no ambient env.
-"""
+"""CLOSE quantity bounds for a SYNTHETIC transport tree, and the stock entry cap (#1011, L3)."""
 
 from __future__ import annotations
 
@@ -35,7 +22,6 @@ from tos.rcl import (
     ReservationScope,
     TransitionCause,
 )
-from tos.spg import GovernedDimensionLimit, HardSafetyEnvelope
 from tos.venue import ActionClass
 from tos.workload import RuntimeIdentity
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -74,11 +60,6 @@ _PRIOR_CLOSE_ATTEMPT = "attempt-close-bound-prior"
 _PRIOR_CLOSE_PERMIT = "afg-permit-close-bound-prior"
 _PROPOSAL_ID = "prop-close-bound-1"
 _TRADING_DATE = "20261030"
-
-
-# ===========================================================================
-# Durable seeding — the exact rows the production path writes
-# ===========================================================================
 
 
 def _entry_reservation_id() -> str:
@@ -150,11 +131,7 @@ def _commit(
 
 
 def _commit_other_scope(rcl_log: SqliteCommitLog) -> None:
-    """Advance the log's tip with a reservation of a DIFFERENT scope.
-
-    The tip is log-wide, the bound is scope-wide: this is the shape of advance that must NOT
-    withdraw a fence, because nothing about this scope's proven entry changed.
-    """
+    """Advance the log's tip with a reservation of a DIFFERENT scope."""
     identity = RuntimeIdentity(
         cell_id="close-bound-test-cell", process_nonce="close-bound-test-nonce"
     )
@@ -295,21 +272,6 @@ def _seed_prior_close(
         _record_full_fill(store, attempt_id=_PRIOR_CLOSE_ATTEMPT, filled=quantity)
 
 
-# ===========================================================================
-# Service construction
-# ===========================================================================
-
-
-def _hse() -> HardSafetyEnvelope:
-    return HardSafetyEnvelope(
-        governed_dimensions=(
-            GovernedDimensionLimit(
-                dimension=_ARE_DIM_ID, envelope_max=Decimal("100"), unit="CONTRACTS"
-            ),
-        )
-    )
-
-
 def _scenario_set() -> AdverseScenarioSet:
     scenario_set = AdverseScenarioSet.issue(
         scheme=_SCHEME,
@@ -386,7 +348,6 @@ def _service(
         are_policy=are_policy,
         afg_policy=afg_policy,
         scheme=_SCHEME,
-        hse_envelope=_hse(),
         scenario_set=_scenario_set(),
         required_scenario_kinds=are_policy.required_scenario_kinds,
         position_reader=EvidencePositionReader(
@@ -435,11 +396,6 @@ def _close_effect(service: RiskStateService) -> tuple[Decimal | None, dict]:
     return effects.pop(), audit
 
 
-# ===========================================================================
-# #1011 — SYNTHETIC transport: the durable evidence store is the broker
-# ===========================================================================
-
-
 def test_synthetic_close_of_a_whole_entry_passes_step6_and_the_step9_fence(
     tmp_path: Path,
     evidence_store: SqliteEvidenceStore,
@@ -471,7 +427,6 @@ def test_synthetic_close_of_a_whole_entry_passes_step6_and_the_step9_fence(
     assert synthetic_close_fence_valid(
         fence, request, writer_epoch=fence.rcl_writer_epoch, view=view
     )
-    # The fence is one-use: a second take has nothing left to hand step 9.
     assert service.take_close_fence(request) is None
 
 
@@ -583,11 +538,6 @@ def test_synthetic_close_stays_unknown_without_any_consumed_entry(
     assert audit["entry_bound_refusal"] == "ENTRY_NOT_SOLE_CONSUMED_POSITION"
 
 
-# ===========================================================================
-# #1012 L3 — the stock path caps at what remains of the TOS entry
-# ===========================================================================
-
-
 def _held_proof(quantity: Decimal) -> HeldPositionProof:
     return HeldPositionProof(
         scope=WitnessScope(
@@ -611,12 +561,7 @@ def test_stock_close_is_capped_by_the_tos_entry_not_the_whole_holding(
     inbox: SqliteEventInbox,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """Broker holds 5 shares, the TOS entry is 1: a CLOSE of 2 is refused (#1012 L3).
-
-    Before this cap, ``close_within_entry(held, 0, q)`` admitted any ``q <= 5``, so TOS could
-    sell four shares it never bought — and the entry then refused to discharge
-    (``CLOSED_OVER_ENTRY``), sealing the scope.
-    """
+    """Broker holds 5 shares, the TOS entry is 1: a CLOSE of 2 is refused (#1012 L3)."""
     _seed_filled_entry(rcl_log, evidence_store, quantity=Decimal("1"))
     service = _service(
         tmp_path,
@@ -722,11 +667,6 @@ def test_close_authority_source_is_a_closed_two_member_vocabulary(
     assert len(CloseAuthoritySource) == 2
 
 
-# ===========================================================================
-# review-1015 M1/L1 — what happens to the step-6 stash between step 6 and step 9
-# ===========================================================================
-
-
 def _granted_close(
     tmp_path: Path,
     evidence_store: SqliteEvidenceStore,
@@ -754,13 +694,7 @@ def test_a_competing_reservation_committed_after_step6_withdraws_the_fence(
     inbox: SqliteEventInbox,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """A second outstanding reservation lands between step 6 and step 9: no fence is minted.
-
-    Concrete input: step 6 grants, then another attempt commits its own reservation into the
-    same scope. The fence re-read now sees two outstanding rows, which is not the shape a
-    CLOSE may be bounded in, so step 9 gets ``None`` and answers UNKNOWN. Nothing about the
-    already-granted step-6 effect can resurrect it.
-    """
+    """A second outstanding reservation lands between step 6 and step 9: no fence is minted."""
     service = _granted_close(tmp_path, evidence_store, inbox, rcl_log)
     _record_join(
         evidence_store,
@@ -792,12 +726,7 @@ def test_an_approval_only_tip_advance_still_mints_a_fence_at_the_new_tip(
     inbox: SqliteEventInbox,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """The one tolerated advance: the log moved, but the proven entry facts did not.
-
-    This is exactly the claim the PR body makes — a tip advance is tolerated *because* the
-    fence carries the RE-READ tip, which step 9 then requires to equal its own view. A commit
-    that changes this scope's reservations is the previous test; this one does not.
-    """
+    """The one tolerated advance: the log moved, but the proven entry facts did not."""
     service = _granted_close(tmp_path, evidence_store, inbox, rcl_log)
     epoch = rcl_log.current_epoch()
     assert epoch is not None
@@ -835,12 +764,7 @@ def test_the_fence_is_minted_under_the_step6_proposal_not_the_step9_request(
     inbox: SqliteEventInbox,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """review-1015 L1 — the stash carries step 6's proposal id, so the check can fail.
-
-    Before this binding, ``synthetic_close_fence`` copied the step-9 request's own id into the
-    fence and ``synthetic_close_fence_valid`` then compared that value with itself. Here step 9
-    arrives under a DIFFERENT proposal than the one step 6 credited, and gets nothing.
-    """
+    """review-1015 L1 — the stash carries step 6's proposal id, so the check can fail."""
     service = _granted_close(tmp_path, evidence_store, inbox, rcl_log)
     other = StageRequest.model_construct(
         step=CommitmentStep.ATOMIC_COMMIT,
@@ -858,11 +782,6 @@ def test_the_fence_is_minted_under_the_step6_proposal_not_the_step9_request(
     assert service.take_close_fence(other) is None
 
 
-# ===========================================================================
-# issue #1025 — what this reader hands STEP 2, for each shape that refuses
-# ===========================================================================
-
-
 def _reader(rcl_log: SqliteCommitLog, evidence_store: SqliteEvidenceStore):
     return DurableEntryCloseBoundReader(
         rcl_log=rcl_log,
@@ -876,11 +795,7 @@ def _reader(rcl_log: SqliteCommitLog, evidence_store: SqliteEvidenceStore):
 def _bind_a_close_in_flight(
     rcl_log: SqliteCommitLog, store: SqliteEvidenceStore
 ) -> None:
-    """A second reservation of this scope bound to an attempt and left POTENTIALLY_LIVE.
-
-    The durable state between a CLOSE's send and its fill — the first half of
-    :func:`_seed_prior_close`, without the release that ends it.
-    """
+    """A second reservation of this scope bound to an attempt and left POTENTIALLY_LIVE."""
     _record_join(
         store, attempt_id=_PRIOR_CLOSE_ATTEMPT, permit_identity=_PRIOR_CLOSE_PERMIT
     )
@@ -910,21 +825,7 @@ def test_remaining_is_absent_for_every_shape_that_refuses(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    """``read().remaining`` is ``None`` whenever the bound is not proven — step 2's input (#1025).
-
-    Since #1025 this reader also sizes a FLAT exit proposal at step 2
-    (``tos_runtime/compose/_attempt_shape.py``), which consumes nothing but
-    :attr:`~tos_runtime.riskstate.close_bound.EntryCloseBound.remaining`. The three refusal
-    shapes the plan names are driven here against real stores so the step-2 side — which
-    asserts "a refused bound denies the FLAT at rule 4", in
-    ``tos/runtime/tests/compose/test_attempt_shape.py`` — is bound to the reasons this reader
-    actually produces rather than to invented ones.
-
-    ``no-entry`` and ``close-in-flight`` share a reason on purpose: the fail-closed clause is
-    "EXACTLY ONE outstanding row, at POSITION_CONSUMED", and both violate it. Pinning them as
-    two cases keeps "a CLOSE in flight refuses" from quietly becoming untrue if that clause is
-    ever relaxed to "at least one consumed entry".
-    """
+    """``read().remaining`` is ``None`` whenever the bound is not proven — step 2's input (#1025)."""
     if shape != "no-entry":
         _seed_filled_entry(rcl_log, evidence_store, quantity=Decimal("2"))
     if shape == "close-in-flight":
@@ -941,11 +842,7 @@ def test_remaining_is_absent_for_every_shape_that_refuses(
 def test_remaining_is_the_proven_entry_less_its_proven_closes(
     evidence_store: SqliteEvidenceStore, rcl_log: SqliteCommitLog
 ) -> None:
-    """The positive half: a proven entry with a proven partial close leaves the difference.
-
-    This is the quantity step 2 now sizes a FLAT exit at, so "remaining" being the remainder
-    rather than the whole entry is what keeps a second exit from over-closing.
-    """
+    """The positive half: a proven entry with a proven partial close leaves the difference."""
     _seed_filled_entry(rcl_log, evidence_store, quantity=Decimal("2"))
     _seed_prior_close(rcl_log, evidence_store, quantity=Decimal("1"), proven=True)
     bound = _reader(rcl_log, evidence_store).read()

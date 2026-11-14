@@ -1,9 +1,4 @@
-"""Core §5.7 — exact binding, no substitution (design #22; EGRESS-EV-005).
-
-Regime tag: structural / coordinate predicate substrate only; EGRESS-EV-005 substrate;
-EV-L1-complete claim forbidden. Over-realization boundary: byte-level reconstruction / route /
-env enforcement is +Security; L1 is injected coordinate equality + the ioc verdict only.
-"""
+"""Core §5.7 — exact binding, no substitution (design #22; EGRESS-EV-005)."""
 
 from __future__ import annotations
 

@@ -1,14 +1,4 @@
-"""Spawn-child targets for the cycle-0 measurement (design #32 §3.4/§7.2-13).
-
-**Why this is a separate module.** ``multiprocessing`` "spawn" pickles a target by qualified name,
-so the child imports the module the target lives in. If these children lived in the test module,
-that module's own ``import tos.marketfeed`` would already have populated ``sys.modules`` in the
-child and the measurement would be vacuously false — it would measure the test harness rather than
-the package graph.
-
-This module therefore imports **nothing** at module scope. Each child imports exactly the one
-package under measurement and reports whether ``tos.marketfeed`` came along with it.
-"""
+"""Spawn-child targets for the cycle-0 measurement (design #32 §3.4/§7.2-13)."""
 
 from __future__ import annotations
 

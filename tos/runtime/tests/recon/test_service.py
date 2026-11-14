@@ -1,9 +1,4 @@
-"""``ReconciliationService`` tests (Phase 5 W1 — plan §2 decision 3).
-
-Uses plain in-memory Protocol doubles for the RCL / evidence-receipt / broker-witness
-ports — this service never touches a real sqlite file itself (pure judgement; see the
-negative-grep test at the bottom).
-"""
+"""``ReconciliationService`` tests (Phase 5 W1 — plan §2 decision 3)."""
 
 from __future__ import annotations
 
@@ -90,10 +85,7 @@ def fresh() -> FreshnessMarker:
 
 
 class _ReceiptKwargs(TypedDict):
-    """1:1 with :class:`EgressReceiptObservation`'s dataclass fields (plan §1.1 A-rt) — a
-    runtime ``@dataclass``, not a pydantic model, so ``**fields``/``**overrides`` are checked
-    key-by-key and type-by-type instead of swallowed by a ``**dict[str, object]`` splat.
-    """
+    """1:1 with :class:`EgressReceiptObservation`'s dataclass fields (plan §1.1 A-rt) — a"""
 
     attempt_id: str | None
     account: str | None
@@ -107,8 +99,7 @@ class _ReceiptKwargs(TypedDict):
 
 
 class _ReceiptKwargsPartial(TypedDict, total=False):
-    """Same fields as :class:`_ReceiptKwargs`, all optional — the override-kwargs shape for
-    :func:`_matched_receipt`."""
+    """Same fields as :class:`_ReceiptKwargs`, all optional — the override-kwargs shape for"""
 
     attempt_id: str | None
     account: str | None
@@ -150,8 +141,7 @@ class _WitnessOrderKwargs(TypedDict):
 
 
 class _WitnessOrderKwargsPartial(TypedDict, total=False):
-    """Same fields as :class:`_WitnessOrderKwargs`, all optional — the override-kwargs shape
-    for :func:`_matched_witness_order`."""
+    """Same fields as :class:`_WitnessOrderKwargs`, all optional — the override-kwargs shape"""
 
     attempt_id: str | None
     broker_execution_id: str | None
@@ -174,11 +164,6 @@ def _matched_witness_order(
     return WitnessOrder(**fields)
 
 
-# ============================================================================
-# Protocol conformance
-# ============================================================================
-
-
 def test_fake_rcl_reader_satisfies_protocol() -> None:
     assert isinstance(FakeRclReader(), ReservationProjectionReader)
 
@@ -191,18 +176,8 @@ def test_fake_witness_satisfies_protocol() -> None:
     assert isinstance(FakeWitness(), BrokerWitness)
 
 
-# ============================================================================
-# Matched set — the happy path
-# ============================================================================
-
-
 def test_matched_set_yields_positive_confidence_and_both_permits_true(fresh) -> None:
-    """Independent-review finding F2: full corroboration requires a witness that is genuinely
-    independent of the evidence-receipt path — ``independent_of_evidence_store=True`` here
-    stands in for a real (non-store-derived) broker witness; see
-    ``test_synthetic_witness_never_permits_capacity_release`` below for the OTHER half (a
-    store-derived witness, ``SyntheticLedgerWitness``'s own shape, can never fully clear).
-    """
+    """Independent-review finding F2: full corroboration requires a witness that is genuinely"""
     rcl = FakeRclReader({"a1": CapacityState.POSITION_CONSUMED})
     evidence = FakeEvidenceReader((_matched_receipt(),))
     witness = FakeWitness(
@@ -236,14 +211,7 @@ def test_matched_set_yields_positive_confidence_and_both_permits_true(fresh) -> 
 
 
 def test_synthetic_witness_never_permits_capacity_release(fresh) -> None:
-    """Independent-review finding F2 (HIGH): the SAME MATCHED setup as the test above, but the
-    witness declares itself store-derived (``independent_of_evidence_store=False``, the
-    ``SyntheticLedgerWitness`` shape) — the quantity fields' witness observation is stamped
-    with the SAME independence class as the evidence-receipt path, so they can never reach
-    ``CORROBORATED`` (only two byte-identical-source observations, never sufficiently
-    independent), and ``permits_capacity_release`` is permanently ``False``. A mutation that
-    unconditionally stamped the witness path with ``BROKER_WITNESS`` regardless of
-    ``independent_of_evidence_store`` would turn this red."""
+    """Independent-review finding F2 (HIGH): the SAME MATCHED setup as the test above, but the"""
     rcl = FakeRclReader({"a1": CapacityState.POSITION_CONSUMED})
     evidence = FakeEvidenceReader((_matched_receipt(),))
     witness = FakeWitness(
@@ -273,11 +241,6 @@ def test_synthetic_witness_never_permits_capacity_release(fresh) -> None:
     )
 
 
-# ============================================================================
-# One stale reservation (RCL-only)
-# ============================================================================
-
-
 def test_stale_reservation_yields_both_permits_false_and_is_classified(fresh) -> None:
     rcl = FakeRclReader({"a1": CapacityState.COMMITTED_UNBOUND})
     evidence = FakeEvidenceReader(())
@@ -297,11 +260,6 @@ def test_stale_reservation_yields_both_permits_false_and_is_classified(fresh) ->
         report.classifications[0].classification
         is ReconciliationClass.STALE_RESERVATION
     )
-
-
-# ============================================================================
-# One orphan broker order (witness-only)
-# ============================================================================
 
 
 def test_orphan_broker_order_yields_both_permits_false_and_is_classified(fresh) -> None:
@@ -330,11 +288,6 @@ def test_orphan_broker_order_yields_both_permits_false_and_is_classified(fresh) 
     assert classification.attempt_id is None
 
 
-# ============================================================================
-# Receipt-only (evidence-only)
-# ============================================================================
-
-
 def test_receipt_only_is_classified_and_does_not_permit(fresh) -> None:
     rcl = FakeRclReader({})
     evidence = FakeEvidenceReader((_matched_receipt(),))
@@ -350,11 +303,6 @@ def test_receipt_only_is_classified_and_does_not_permit(fresh) -> None:
     assert report.permits_rearm is False
     assert report.permits_capacity_release is False
     assert report.classifications[0].classification is ReconciliationClass.RECEIPT_ONLY
-
-
-# ============================================================================
-# Witness unavailable
-# ============================================================================
 
 
 def test_witness_unavailable_yields_both_permits_false_with_reason(fresh) -> None:
@@ -375,11 +323,6 @@ def test_witness_unavailable_yields_both_permits_false_with_reason(fresh) -> Non
     assert "unavailable" in report.reason
 
 
-# ============================================================================
-# Empty everything — vacuous truth forbidden
-# ============================================================================
-
-
 def test_empty_scope_is_not_positive(fresh) -> None:
     rcl = FakeRclReader({})
     evidence = FakeEvidenceReader(())
@@ -395,11 +338,6 @@ def test_empty_scope_is_not_positive(fresh) -> None:
     assert report.field_confidences == ()
     assert report.classifications == ()
     assert report.reason == "no observations in scope"
-
-
-# ============================================================================
-# Conflicting quantities (even when all three paths report the attempt)
-# ============================================================================
 
 
 def test_matched_attempt_with_conflicting_quantities_does_not_permit(fresh) -> None:
@@ -435,17 +373,8 @@ def test_matched_attempt_with_conflicting_quantities_does_not_permit(fresh) -> N
     )
 
 
-# ============================================================================
-# Negative greps — pure judgement, mutates nothing
-# ============================================================================
-
-
 def test_service_module_imports_no_writer_apis_or_ambient_state() -> None:
-    """Negative-grep: pure judgement, mutates nothing.
-
-    ``list.append`` (building an in-memory report) is fine; only durable-writer calls
-    and ambient env/clock reads are forbidden.
-    """
+    """Negative-grep: pure judgement, mutates nothing."""
     source = inspect.getsource(service_module)
     for forbidden in (
         "import os",

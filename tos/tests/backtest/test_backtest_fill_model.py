@@ -1,29 +1,4 @@
-"""§8-2 — the deterministic fill model, all six result kinds (design #33 §4.2/§4.3/§4.4).
-
-Four properties carry the design's weight here.
-
-**Determinism.** No ``random`` / ``secrets`` / ``uuid`` / clock exists on this path, so the same
-``(bar, injected parameters)`` always produce the same payload and the same D-E3-local record. The
-seed slot RFC-003 §10:360-363 would demand for a stochastic slippage model is a forward seam and
-stays unused — but the discipline is already stated in the module docstring, which is the point of
-writing it before it is needed.
-
-**Structural derivation over self-report** (design #33 §4.2 / §13). The model computes the filled and
-remaining magnitudes and lets *them* decide full versus partial; ``EgressResultPayload`` then
-re-derives the same distinction independently (``records.py:221-229``) and rejects a contradiction.
-Two independent derivations and no label to trust — which is why the relabelling mutation cannot
-survive: it is caught at construction, not by a comparison someone remembered to write.
-
-**The execution price is D-E3-local** (design #33 §4.3 B4). The engine's ``EgressResultPayload`` has
-no price field at all, and this suite asserts that absence directly rather than describing it
-(anti-phantom §0.5), then shows the price living in the harness's own record instead.
-
-**Cost realism, never optimism.** Slippage is applied *against* the taker and costs are added; a
-negative slippage or cost is refused, because an optimistic execution assumption is an
-ADR-DEV-010 §8:189-190 disqualifier.
-
-Regime tag: orchestration authoring evidence only; closes no EV (design #33 §1.1).
-"""
+"""§8-2 — the deterministic fill model, all six result kinds (design #33 §4.2/§4.3/§4.4)."""
 
 from __future__ import annotations
 
@@ -95,11 +70,6 @@ def _stage_and_settle(
     return settled[0].payload, settled[0].record
 
 
-# ---------------------------------------------------------------------------
-# the six result kinds
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("mode", "expected"),
     [
@@ -131,14 +101,10 @@ def test_a_quantity_within_the_participation_cap_is_a_full_fill() -> None:
 
 
 def test_a_quantity_beyond_the_participation_cap_is_a_partial_fill() -> None:
-    """(§4.2 row 2) ``Q > cap × volume`` ⇒ PARTIAL_FILL, filled = the cap, remaining > 0.
-
-    Nothing already filled is ever re-requested: the remaining magnitude is carried *as* remaining
-    (RFC-005 §11:338-339), which is what makes the partial stay a partial downstream.
-    """
+    """(§4.2 row 2) ``Q > cap × volume`` ⇒ PARTIAL_FILL, filled = the cap, remaining > 0."""
     payload, record = _stage_and_settle(_settle(scenario_quantity=Decimal(800)))
     assert payload.kind is EgressResultKind.PARTIAL_FILL
-    assert payload.filled_quantity == Decimal(500)  # 1000 volume × 0.5 cap
+    assert payload.filled_quantity == Decimal(500)
     assert payload.remaining_quantity == Decimal(300)
     assert record.filled_quantity == Decimal(500)
     assert record.remaining_quantity == Decimal(300)
@@ -154,11 +120,7 @@ def test_a_basis_outside_the_injected_band_is_a_deterministic_reject() -> None:
 
 
 def test_the_reject_predicate_is_a_real_boundary_not_a_constant() -> None:
-    """(§4.2) Widening the injected band turns the same bar from REJECT into a fill.
-
-    The honest form of "injected, not hard-coded": if the model had a baked-in rejection it would
-    not respond to the parameter.
-    """
+    """(§4.2) Widening the injected band turns the same bar from REJECT into a fill."""
     rejecting, _ = _stage_and_settle(
         _settle(limit_reference_price=Decimal(50), price_band_fraction=Decimal("0.05"))
     )
@@ -170,11 +132,7 @@ def test_the_reject_predicate_is_a_real_boundary_not_a_constant() -> None:
 
 
 def test_every_egress_result_kind_is_reachable_from_some_mode() -> None:
-    """(§4.2 / §5.1 MINOR-2) All six members of the closed vocabulary are produced — 전수.
-
-    Anti-phantom in its *existence* direction (design #33 §0.5): the coverage claim is computed
-    from the shipped enum, so adding a member without a producing mode fails here.
-    """
+    """(§4.2 / §5.1 MINOR-2) All six members of the closed vocabulary are produced — 전수."""
     produced: set[EgressResultKind] = set()
     for mode in FillMode:
         produced |= settleable_result_kinds(mode)
@@ -192,18 +150,8 @@ def test_a_mode_may_not_produce_a_kind_outside_its_closed_set() -> None:
     assert EgressResultKind.ACK not in settleable_result_kinds(FillMode.SETTLE)
 
 
-# ---------------------------------------------------------------------------
-# structural derivation (구조 파생 > 자기신고)
-# ---------------------------------------------------------------------------
-
-
 def test_a_relabelled_partial_is_unconstructable() -> None:
-    """(§4.2/§13) A remaining quantity > 0 recorded as FULL_FILL is refused at construction.
-
-    The engine derives the distinction from the magnitudes (``records.py:221-229``), so a fill model
-    that *declared* the kind could not smuggle a partial past it. This is why the relabelling
-    mutation dies immediately rather than requiring a bespoke comparison test.
-    """
+    """(§4.2/§13) A remaining quantity > 0 recorded as FULL_FILL is refused at construction."""
     with pytest.raises(Exception, match="contradicts the magnitudes"):
         EgressResultPayload(
             instrument_key=instrument_key(),
@@ -216,7 +164,7 @@ def test_a_relabelled_partial_is_unconstructable() -> None:
 
 def test_the_magnitudes_decide_the_kind_across_the_boundary() -> None:
     """(§4.2) Sweeping Q across the cap flips the derived kind exactly at the boundary."""
-    boundary = Decimal(500)  # 1000 volume × 0.5 cap
+    boundary = Decimal(500)
     below, _ = _stage_and_settle(_settle(scenario_quantity=boundary - 1))
     at, _ = _stage_and_settle(_settle(scenario_quantity=boundary))
     above, _ = _stage_and_settle(_settle(scenario_quantity=boundary + 1))
@@ -235,11 +183,6 @@ def test_the_magnitude_is_labelled_as_a_scenario_parameter() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# the price lives in D-E3, not in the engine (B4)
-# ---------------------------------------------------------------------------
-
-
 def test_the_engine_egress_payload_has_no_price_field() -> None:
     """(§4.3 B4, anti-phantom §0.5) The absence claim is read off the shipped model, not asserted."""
     field_names = set(EgressResultPayload.model_fields)
@@ -252,7 +195,6 @@ def test_the_engine_egress_payload_has_no_price_field() -> None:
         "broker_execution_id",
         "resolution_generation",
         "reference",
-        # plan 2026-09-26 egress trading date — an injected KST date token, not a price
         "trading_date",
     }
     assert not [name for name in field_names if "price" in name.lower()]
@@ -263,9 +205,9 @@ def test_the_execution_price_lives_in_the_d_e3_local_record() -> None:
     payload, record = _stage_and_settle(_settle())
     assert not hasattr(payload, "execution_price")
     assert record.reference_price == Decimal(100)
-    assert record.slippage_component == Decimal("0.05")  # 100 × 5bps
+    assert record.slippage_component == Decimal("0.05")
     assert record.execution_price == Decimal("100.05")
-    assert record.cost_component == Decimal("0.2")  # 0.02 × 10 filled
+    assert record.cost_component == Decimal("0.2")
     assert record.settlement_bar_close == Decimal(100)
 
 
@@ -293,11 +235,6 @@ def test_a_negative_slippage_or_cost_is_refused() -> None:
     for field in ("slippage_bps", "cost_per_unit", "price_band_fraction"):
         with pytest.raises(INTEGRITY_ERRORS, match="must be non-negative"):
             _settle(**{field: Decimal(-1)})
-
-
-# ---------------------------------------------------------------------------
-# parameter completeness + settlement discipline
-# ---------------------------------------------------------------------------
 
 
 def test_a_settle_mode_missing_any_injected_parameter_is_refused() -> None:
@@ -380,11 +317,6 @@ def test_a_settlement_bar_with_no_participation_capacity_is_refused() -> None:
     model(_attempt())
     with pytest.raises(INTEGRITY_ERRORS, match="no participation capacity"):
         model.settle_due(empty_bar)
-
-
-# ---------------------------------------------------------------------------
-# determinism (§4.4)
-# ---------------------------------------------------------------------------
 
 
 def test_the_same_inputs_always_produce_the_same_fill() -> None:

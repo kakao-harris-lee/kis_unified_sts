@@ -1,14 +1,4 @@
-"""The render's pin on the INSTANCE profile file is checked at boot (#958).
-
-The failing input from the issue: a rendered tree's ``instance_path`` points into a mutable source
-checkout, and an edit there (MOCK_VTS ``rest_base``), made after the render, was booted as a host
-fact. Each test builds a RENDERED tree in ``tmp_path`` the way ``render_paper_config.py`` lays it
-out — the committed stock tree's ``broker_scopes.yaml`` with an ABSOLUTE ``instance_path`` and a
-``RENDERED.json`` carrying ``broker_profile_instance`` — over a copy of the committed profile, then
-drives the two boot-time reads: the active scope's bound document
-(:func:`~tos_runtime.brokercap.derive.load_active_instance_document`) and the #932 host seal
-(:func:`~tos_runtime.compose._transport_wiring.instance_rest_bases`).
-"""
+"""The render's pin on the INSTANCE profile file is checked at boot (#958)."""
 
 from __future__ import annotations
 
@@ -38,10 +28,7 @@ def _render(
     with_manifest: bool = True,
     relative: bool = False,
 ) -> tuple[Path, Path]:
-    """A rendered tree over a private copy of the profile. Returns ``(scopes, profile)``.
-
-    ``relative=True`` writes ``instance_path`` relative to the tree, the way every committed
-    tree does (``../../../docs/…``) — the shape of an UNRENDERED tree."""
+    """A rendered tree over a private copy of the profile. Returns ``(scopes, profile)``."""
     profile = tmp_path / "source" / "docs" / _PROFILE.name
     profile.parent.mkdir(parents=True)
     profile.write_bytes(_PROFILE.read_bytes())
@@ -84,8 +71,7 @@ def test_a_rendered_tree_carries_the_pin_and_boots_on_the_bound_bytes(
 def test_an_edit_to_the_profile_after_the_render_refuses_the_boot(
     tmp_path: Path,
 ) -> None:
-    """The issue's failing input: MOCK_VTS ``rest_base`` changed in the source checkout between
-    the render and the boot. Both boot-time reads refuse it."""
+    """The issue's failing input: MOCK_VTS ``rest_base`` changed in the source checkout between"""
     scopes, profile = _render(tmp_path)
     config = _load(scopes)
     text = profile.read_text(encoding="utf-8")
@@ -100,8 +86,7 @@ def test_an_edit_to_the_profile_after_the_render_refuses_the_boot(
 def test_a_symlink_on_the_pinned_path_refuses_the_boot_even_with_the_same_bytes(
     tmp_path: Path,
 ) -> None:
-    """The render pinned the RESOLVED file; a link appearing at that path later names some
-    other file, so it is refused before its bytes are even compared."""
+    """The render pinned the RESOLVED file; a link appearing at that path later names some"""
     scopes, profile = _render(tmp_path)
     elsewhere = tmp_path / "elsewhere.yaml"
     elsewhere.write_bytes(profile.read_bytes())
@@ -114,8 +99,7 @@ def test_a_symlink_on_the_pinned_path_refuses_the_boot_even_with_the_same_bytes(
 def test_a_render_with_an_absolute_instance_path_and_no_pin_is_refused(
     tmp_path: Path,
 ) -> None:
-    """A render from before #958 (or one that skipped the pin) points into the source checkout
-    with nothing binding it."""
+    """A render from before #958 (or one that skipped the pin) points into the source checkout"""
     scopes, _ = _render(tmp_path, pin=None)
     with pytest.raises(
         BrokerInstanceConfigError, match="no 'broker_profile_instance' pin"
@@ -147,9 +131,7 @@ def test_a_malformed_pin_is_refused(tmp_path: Path, pin: object, message: str) -
 
 
 def test_a_rendered_tree_that_lost_its_manifest_is_refused(tmp_path: Path) -> None:
-    """#988 review MEDIUM: render → ``RENDERED.json`` deleted → MOCK_VTS ``rest_base`` edited in
-    the source → boot. Without the manifest there is no pin, and an ABSOLUTE ``instance_path`` is
-    a render's reach into a source checkout — so it is refused, not booted unpinned."""
+    """#988 review MEDIUM: render → ``RENDERED.json`` deleted → MOCK_VTS ``rest_base`` edited in"""
     scopes, profile = _render(tmp_path)
     (scopes.parent / RENDERED_MANIFEST_NAME).unlink()
     text = profile.read_text(encoding="utf-8")
@@ -159,8 +141,7 @@ def test_a_rendered_tree_that_lost_its_manifest_is_refused(tmp_path: Path) -> No
 
 
 def test_an_unrendered_tree_is_unpinned_and_unchanged(tmp_path: Path) -> None:
-    """No ``RENDERED.json`` and a RELATIVE ``instance_path``: the committed trees. Nothing to
-    pin, behaviour unchanged."""
+    """No ``RENDERED.json`` and a RELATIVE ``instance_path``: the committed trees. Nothing to"""
     scopes, profile = _render(tmp_path, with_manifest=False, relative=True)
     config = _load(scopes)
     assert config.instance_sha256 is None
@@ -171,10 +152,7 @@ def test_an_unrendered_tree_is_unpinned_and_unchanged(tmp_path: Path) -> None:
 def test_the_attested_inputs_row_records_the_pin_not_a_second_read(
     tmp_path: Path,
 ) -> None:
-    """#988 review LOW: the boot's attested-inputs evidence row for the INSTANCE file must carry
-    the digest the boot actually verified. Re-hashing the file there is a second read outside the
-    pin — an edit landing after the pinned load would be recorded as if it had been booted.
-    """
+    """#988 review LOW: the boot's attested-inputs evidence row for the INSTANCE file must carry"""
     scopes, profile = _render(tmp_path)
     config = _load(scopes)
     document = load_active_instance_document(config)

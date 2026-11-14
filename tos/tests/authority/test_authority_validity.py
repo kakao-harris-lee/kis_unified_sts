@@ -1,11 +1,4 @@
-"""Permissive capability validity — 6-part, type-gated (M2), numeric-claim (Gap) (§5.2).
-
-The central fail-open seams the v1.1 design closed: (M2) a NORMAL_RISK_INCREASING
-capability requires an ONLINE currentness witness — a degraded lease cannot substitute;
-(Gap) a capability with a null numeric claim is invalid at consumption even though it is
-ISSUED-reachable. The egress condition 6 is NOT claimed — a ``True`` here is necessary,
-not sufficient (§0.2/§4.1). SA-EV-001/003 substrate.
-"""
+"""Permissive capability validity — 6-part, type-gated (M2), numeric-claim (Gap) (§5.2)."""
 
 from __future__ import annotations
 
@@ -26,10 +19,7 @@ STATE = epoch_state(authority_domain="acct-1", current_epoch_floor=5)
 
 
 def test_valid_normal_capability_with_online_witness() -> None:
-    """A complete NORMAL_RISK_INCREASING capability + current epoch + fresh witness is valid.
-
-    Guard-not-const-False: the positive path returns True (necessary conditions 1-5 met).
-    """
+    """A complete NORMAL_RISK_INCREASING capability + current epoch + fresh witness is valid."""
     cap = issue_capability(capability_type=CapabilityType.NORMAL_RISK_INCREASING)
     assert (
         permissive_capability_valid(cap, STATE, valid_inputs(), lease_ok=False) is True
@@ -37,11 +27,7 @@ def test_valid_normal_capability_with_online_witness() -> None:
 
 
 def test_m2_normal_risk_increasing_lease_cannot_substitute_for_witness() -> None:
-    """(canary M2) NORMAL_RISK_INCREASING + lease_ok=True + witness absent => INVALID.
-
-    A degraded lease NEVER satisfies condition 4 for a normal risk-increasing capability
-    (§9.4 line 366; SA-INV-005) — the online-currentness-only gate removes the fail-open.
-    """
+    """(canary M2) NORMAL_RISK_INCREASING + lease_ok=True + witness absent => INVALID."""
     cap = issue_capability(capability_type=CapabilityType.NORMAL_RISK_INCREASING)
     inputs = valid_inputs(currentness=fresh_witness(present=False))
     assert permissive_capability_valid(cap, STATE, inputs, lease_ok=True) is False
@@ -104,7 +90,7 @@ def test_condition1_revoked_or_unknown_issuer_key_invalid() -> None:
 
 def test_condition2_stale_epoch_invalid_even_with_all_else_valid() -> None:
     """(canary §1-2) A stale epoch invalidates even when every other claim is present."""
-    cap = issue_capability(safety_authority_epoch=3)  # below floor 5
+    cap = issue_capability(safety_authority_epoch=3)
     assert (
         permissive_capability_valid(cap, STATE, valid_inputs(), lease_ok=False) is False
     )
@@ -154,11 +140,7 @@ def test_draft_capability_is_invalid() -> None:
 
 
 def test_possession_without_currentness_is_invalid() -> None:
-    """(canary §4.1) A fully-signed ISSUED capability with witness absent is invalid.
-
-    Holding / signing is not current authority (§1 line 17; §5.3 line 121) — currentness
-    comes only from the injected witness, never from possession.
-    """
+    """(canary §4.1) A fully-signed ISSUED capability with witness absent is invalid."""
     cap = issue_capability(capability_type=CapabilityType.NORMAL_RISK_INCREASING)
     inputs = valid_inputs(currentness=fresh_witness(present=False))
     assert permissive_capability_valid(cap, STATE, inputs, lease_ok=False) is False

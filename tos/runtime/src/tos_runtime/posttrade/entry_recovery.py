@@ -1,10 +1,4 @@
-"""Crash recovery for the close-own-release / entry-discharge boundary.
-
-Pending rows discover work only. Exact committed RCL transitions, reservation
-versions, quantity history, fresh proof/report gates, and a snapshot-fenced CAS
-authorize completion. The caller serves a prefetched snapshot; no broker I/O
-runs here.
-"""
+"""Crash recovery for the close-own-release / entry-discharge boundary."""
 
 from __future__ import annotations
 
@@ -78,13 +72,7 @@ class RecoveryInputs:
 def _transition_for_command(
     consumer: FinalityReleaseConsumer, command_id: str
 ) -> tuple[ReservationTransitionRecord, int, str | None] | None:
-    """The committed transition for ``command_id``, read through the pass cache (#1008).
-
-    The discovery scan asks this once per pending row per release leg, which is where the
-    repeated full history read came from. The cache serves the SAME snapshot only while
-    the RCL has committed nothing (:mod:`tos_runtime.posttrade.rcl_history_cache`), so
-    the verdict below is the verdict a fresh read would give.
-    """
+    """The committed transition for ``command_id``, read through the pass cache (#1008)."""
     try:
         commit = consumer.rcl_log.committed_command(command_id)
         if commit is None:
@@ -744,10 +732,6 @@ def _report_and_quantity_admit(
             signature=signature,
         ):
             return False
-        # #1011 §3.5: the recovery pass records the SAME split the release path does
-        # (`release_consumer.uncorroborated_hold_reason`), through the one shared
-        # predicate — a split that reached only the release path would leave this pass
-        # reporting a conflict the witness never found.
         if report is None:
             reason = "RECONCILIATION_UNAVAILABLE"
         elif witness_independence_collapsed(report):

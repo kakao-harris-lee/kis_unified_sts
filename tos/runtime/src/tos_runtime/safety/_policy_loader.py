@@ -1,19 +1,4 @@
-"""Shared YAML-policy loading helpers for the W3-a1 safety-mesh services
-(:mod:`tos_runtime.safety.profile`, :mod:`tos_runtime.safety.deviation`).
-
-Both services load an operator policy document and fail closed at
-construction — never a lazily-discovered ``None`` deep inside ``clear()`` —
-mirroring the "null == named-TBD ⇒ boot refusal" discipline every
-``tos_runtime.*.config`` loader in this codebase already applies
-(:mod:`tos_runtime.posttrade.config`, :mod:`tos_runtime.compose
-._egress_attestations`). This module is a **private** helper: it holds no
-policy-specific field name, so it stays reusable across the two lane files
-without becoming a shared cross-lane surface (plan §4 file-ownership rule —
-this file belongs to W3-a1 alone).
-
-Pure module: stdlib + ``yaml`` only; no ``shared.*``, no ``tos.*`` import (a
-generic mapping/scalar reader has no reason to know a kernel record shape).
-"""
+"""Shared YAML-policy loading helpers for the W3-a1 safety-mesh services"""
 
 from __future__ import annotations
 
@@ -36,29 +21,11 @@ __all__ = [
 
 
 class PolicyLoadError(Exception):
-    """Raised by a caller when a loaded document is missing, malformed, or
-    still carries an unfilled (named-TBD ``null``) required field. Each
-    service module raises its own subclass so a test / operator can tell
-    ``SafetyProfileService`` config errors from ``DeviationService`` ones by
-    type; this base class exists only so shared helper functions below have
-    one signature to raise via a caller-supplied subclass."""
+    """Raised by a caller when a loaded document is missing, malformed, or"""
 
 
 def load_yaml_document(path: Path, error_cls: type[Exception]) -> dict[str, Any]:
-    """Read + parse ``path`` as a top-level YAML mapping, fail-closed.
-
-    Args:
-        path: Path to a YAML file.
-        error_cls: The caller's own error type to raise on any failure (so
-            each service's boot-refusal exception type is preserved).
-
-    Returns:
-        The parsed top-level mapping.
-
-    Raises:
-        error_cls: The file is missing, unreadable, not valid YAML, or its
-            top-level value is not a mapping.
-    """
+    """Read + parse ``path`` as a top-level YAML mapping, fail-closed."""
     if not path.is_file():
         raise error_cls(f"policy config file not found: {path}")
     try:
@@ -148,12 +115,7 @@ def require_str_field(
 def require_list_field(
     raw: dict[str, Any], key: str, path: Path, error_cls: type[Exception]
 ) -> list[Any]:
-    """Return ``raw[key]`` as an explicit (possibly empty) ``list``.
-
-    ``null`` refuses to load — an *explicit empty list* (``[]``) is the only
-    spelling of "nothing here" a policy document may use (plan §2 decisions
-    2/3: "명시적 빈 리스트 허용" for the deviation / incident active sets).
-    """
+    """Return ``raw[key]`` as an explicit (possibly empty) ``list``."""
     if key not in raw:
         raise error_cls(f"{path}: missing required list key {key!r}")
     value = raw[key]

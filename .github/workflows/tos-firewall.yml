@@ -29,8 +29,10 @@
 # artifact a previous step produced. They are now three jobs that run at the
 # same time:
 #
-#   tos-firewall-gates   the enforcement layers + the contract/spec/size
-#                        checkers + the Layer 4 mutation battery
+#   tos-firewall-gates   the enforcement layers + the spec/size/digest
+#                        checkers (the Layer 4 mutation battery that used to
+#                        set this job's floor was retired 2026-11-12 —
+#                        docs/plans/2026-11-12-phase0-retirement-plan.md)
 #   tos-firewall-tests   the four pytest suites (now under pytest-xdist)
 #   tos-firewall-static  Black + the five mypy invocations
 #
@@ -61,8 +63,7 @@ on:
 
 jobs:
   # ===========================================================================
-  # Enforcement layers + governance checkers. Longest step is the Layer 4
-  # mutation battery (131s measured), which sets this job's floor.
+  # Enforcement layers + governance checkers.
   # ===========================================================================
   tos-firewall-gates:
     runs-on: ubuntu-latest
@@ -80,22 +81,18 @@ jobs:
         name: Checkout code
         uses: actions/checkout@v4
         with:
-          # **전체 이력이 필요하다** — 아래 Layer 4 검사기의 `C2UP`(측정 출처 검증)은
-          # 래칫 기준선이 기록한 커밋에서 `git show <commit>:<path>` 로 blob 을 **다시
-          # 재어** 기준선이 그 내용에서 나왔음을 확인한다.  기본 `fetch-depth: 1` 은
-          # 얕은 클론이라 그 커밋이 없고, 검사기는 재측정 실패를 **fail-closed** 로
-          # 처분한다(rc=128 → `TOS-CC-C2UP` red).
+          # **전체 이력(+태그).**  소비자는 둘 다 사라졌다: Layer 4 검사기의
+          # `C2UP` 측정 출처 검증은 2026-11-12 퇴역
+          # (docs/plans/2026-11-12-phase0-retirement-plan.md §2) 에, 태그
+          # `legacy-final` 의 blob 을 `git cat-file` 로 읽던
+          # `tests/tools/test_cp3_emit_legacy_decisions.py` 는 2026-11-13 B3
+          # 은퇴에 지워졌다.  남은 체커들은 `ls-files`/`rev-parse` 만 쓰므로
+          # 이력 깊이를 요구하지 않는다.  그래도 여기서 얕게 바꾸지 않는 것은
+          # CI 체크아웃 동작 변경이 이 PR 의 범위가 아니기 때문이다 — 줄이려면
+          # 따로 재어 보고 바꾼다.
           #
-          # 에라타 32차가 `--full-history` lockstep 을 하네스·정본 블록·live sha 핀에
-          # 걸쳐 이행했으나 **검사기를 «실행하는» 이 체크아웃에는 닿지 않았다.**
-          # 로컬은 전체 이력을 갖고 있어 영원히 green 이었고, 게이트가 CI 에서 처음
-          # 실행된 PR #637 에서야 관측됐다 — `tos-gate.yml` 은 같은 이유로 이미
-          # `fetch-depth: 0` 이다.
-          #
-          # The tests job needs it too (tests/tools ancestry-derivation checkers
-          # fail-closed to PROVENANCE_UNVERIFIABLE on a shallow clone), and the
-          # static job costs ~1s extra for it — so all three share this anchor
-          # rather than each deciding for itself.
+          # The static job costs ~1s extra for it — so all three share this
+          # anchor rather than each deciding for itself.
           fetch-depth: 0
 
       - &setup-python
@@ -191,56 +188,13 @@ jobs:
         # config/tos_size_budget.yaml exceptions register — Phase 1 작업 6.
         run: python tools/tos_size_budget.py --check
 
-      # tos-spec/book.toml is a byte-empty file (0 bytes) — mdbook defaults apply
-      # and the build was verified locally to succeed with them (homebrew mdbook
-      # v0.5.4, same tag as pinned below): rc=0, two "unclosed HTML tag" warnings
-      # + one "search index is very large" warning, none of which fail the build.
-      # rust-lang/mdbook publishes no separate .sha256 asset for this release, so
-      # the digest below is a locally-computed pin against the official GitHub
-      # release tarball (same pattern as the yq pin in the tests job — download
-      # once, verify forever), not an independently-published checksum.
-      - name: Pin mdBook v0.5.4 (tos-spec build)
-        run: |
-          set -euo pipefail
-          curl -sSL --fail --retry 3 --retry-all-errors -o /tmp/mdbook.tar.gz \
-            https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz
-          echo "3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7  /tmp/mdbook.tar.gz" | sha256sum -c -
-          tar -xzf /tmp/mdbook.tar.gz -C /tmp
-          sudo install -m 0755 /tmp/mdbook /usr/local/bin/mdbook
-          mdbook --version
-
-      - name: mdBook build (tos-spec)
-        run: mdbook build tos-spec --dest-dir /tmp/tos-spec-book
-
-      # §12.2 (완료 계약 F-9): 코퍼스 무결성 검사기와 완료 계약 검사기를 CI 에
-      # 편입한다 — Phase 1 로 미루면 Phase 0 산출물이 회귀 방어 없이 병합된다.
-      # 두 검사기의 git-이력 파생(U-12 트리거·U-15 조상성·U-16 진 조상)은 얕은
-      # 클론에서 전부 PROVENANCE_UNVERIFIABLE 로 떨어지므로 위 checkout 의
-      # `fetch-depth: 0` 이 전제다 (§12.2 체크아웃 깊이 행).
-      - name: tos-spec corpus integrity (tos_spec_status --check)
-        run: python tools/tos_spec_status.py --check
-
-      - name: phase0 completion contract checks (tos_completion_status --check)
-        run: python tools/tos_completion_status.py --check
-
-      # Layer 4 — Phase 0 완료 계약의 «자기참조 stale» 게이트.
-      #
-      # 이 잡은 경로 게이팅 없이 모든 PR·main push 에서 돌므로(위 헤더 주석)
-      # 계약 문서만 고치는 PR 도 반드시 통과한다.  별도 «체크 이름» 이 생기지
-      # 않는다는 원래의 규율은 맨 아래 `tos-firewall` 집계 잡이 그대로 지킨다.
-      #
-      # 근거: 레인 B 재심 R-F3/R-F4 — 「규칙 신설 = 전수 적용까지가 한 단위」가
-      # 이 아크에서 다섯 번 깨졌고, 그때마다 문서 내 «수동 census» 였다.
-      # 산문 선언은 소비자가 없으면 산문이다(K-10).
-      - name: Layer 4 — phase0 contract self-reference gate
-        run: python tools/tos_contract_check.py
-
-      # 검사기 자신이 «죽은 검사»가 아님을 매 실행 증명한다.  9차의
-      # 「(4) 열거 7==7」 불변식이 세 자리 중 둘만 보고 green 을 낸 것이
-      # addendum-5 A-F5 였다 — 통과하는 검사와 «지고 있는» 검사는 다르다.
-      # 131s 측정 — 이 잡에서 가장 긴 스텝이고 이 잡의 바닥이다.
-      - name: Layer 4 self-test — mutation battery (dead-check 0)
-        run: python tools/tos_contract_check.py --self-test
+      # 2026-11-13 (docs/plans/2026-11-13-tos-code-halving-plan.md §S3): four
+      # steps stood here — an mdBook v0.5.4 pin, `mdbook build tos-spec`, and
+      # before them `tos_completion_status --check` / `tos_contract_check`
+      # (retired 2026-11-12). The corpus they built and judged, `tos-spec/`
+      # (66k lines) and `tos-evidence/` (25k), is retired: no runtime, cron or
+      # deploy path read either, and `tos_spec_status.py` went with them. The
+      # content stays in git history.
 
   # ===========================================================================
   # Every pytest suite this workflow owns, all four under pytest-xdist.
@@ -254,28 +208,12 @@ jobs:
       - *setup-python
       - *install
 
-      - name: Pin mikefarah yq v4.48.1 (WFCANON M-4 parser gate)
-        # tools/wfcanon-v222.py [M-4] pins the judgment parser to
-        # `yq (mikefarah) v4.48.x` (YQ_FLAVOR/YQ_MAJMIN) and fails closed
-        # (WF-P0 PREVENTION_UNVERIFIABLE) on any other version. ubuntu-latest
-        # preinstalls a newer yq at /usr/bin/yq, and
-        # tests/tools/test_u17_verify.py::_run_script drives tools/u17-verify.sh
-        # (which shells out to wfcanon-v222.py) under a from-scratch,
-        # non-inherited env with a literal PATH where /usr/bin is FIRST — so
-        # the pin must overwrite /usr/bin/yq itself (installing to
-        # /usr/local/bin would be shadowed). Condensed from the identical
-        # rationale in .github/workflows/test.yml (source of this step, now
-        # moved here with tests/tools/test_u17_verify.py — see below).
-        #
-        # It lives in THIS job and not the gates job because only the
-        # governance batteries below drive u17-verify.sh.
-        run: |
-          set -euo pipefail
-          curl -sSL --fail --retry 3 --retry-all-errors -o /tmp/yq_linux_amd64 \
-            https://github.com/mikefarah/yq/releases/download/v4.48.1/yq_linux_amd64
-          echo "99df6047f5b577a9d25f969f7c3823ada3488de2e2115b30a0abb10d9324fd9f  /tmp/yq_linux_amd64" | sha256sum -c -
-          sudo install -m 0755 /tmp/yq_linux_amd64 /usr/bin/yq
-          yq --version
+      # 2026-11-12 (docs/plans/2026-11-12-phase0-retirement-plan.md §2): a
+      # mikefarah-yq v4.48.1 pin step stood here, installed over /usr/bin/yq
+      # because `tests/tools/test_u17_verify.py` drove `tools/u17-verify.sh`
+      # (which shelled out to `tools/wfcanon-v222.py`, whose M-4 parser gate
+      # failed closed on any other yq). All three files were retired with that
+      # plan, and nothing else in this workflow calls yq.
 
       # `-n auto` = one worker per runner CPU (4 on this hosted image).
       # Measured locally against this commit's tree (16-core host, `-n 4` to
@@ -321,10 +259,10 @@ jobs:
         run: pytest tos/runtime/cp3/tests
 
       # tos governance test batteries — these test the checker scripts run as
-      # steps in the `tos-firewall-gates` job (tools/tos_completion_status.py,
-      # tools/tos_contract_check.py, tools/tos_spec_status.py,
-      # tools/tos_firewall_check.py) plus tools/u17-verify.sh (needs the yq pin
-      # above) and the EV-L3 crash/restart battery under tests/tos_l3/. They
+      # steps in the `tos-firewall-gates` job (tools/tos_firewall_check.py,
+      # tools/tos_redigest.py,
+      # tools/tos_size_budget.py) and the EV-L3 crash/restart battery under
+      # tests/tos_l3/. They
       # need no runtime stack (imports are stdlib + pytest + pyyaml only —
       # already installed above) and no Redis, so they live here rather than in
       # the legacy `test` job in .github/workflows/test.yml, which is now
@@ -357,11 +295,11 @@ jobs:
         # between them without breaking a line continuation.
         run: |
           set -euo pipefail
-          pytest tests/tools/test_tos_*.py tests/tools/test_u17_verify.py \
+          pytest tests/tools/test_tos_*.py \
             tests/tos_l3 -q -p no:cacheprovider -n auto -m "not serial"
           # Second pass: the `serial` marker. Exactly one test carries it today,
           # so this pass exits 5 (red) if it ever disappears — see step header.
-          pytest tests/tools/test_tos_*.py tests/tools/test_u17_verify.py \
+          pytest tests/tools/test_tos_*.py \
             tests/tos_l3 -q -p no:cacheprovider -m serial
 
   # ===========================================================================
@@ -462,7 +400,7 @@ jobs:
       # the original nine that flag a real mismatch rather than a missing annotation
       # (measured to 0 in both trees by the commit that added this step), plus four
       # more added by the test-tree mypy ratchet plan's stage 1
-      # (`docs/plans/2026-09-18-tos-test-tree-mypy-ratchet-plan.md` §3.1) — `misc`,
+      # (test-tree mypy ratchet plan §3.1, retired 2026-11-13) — `misc`,
       # `index`, `operator`, `union-attr` — fixed by adding real None-checks/type
       # narrowing at each call site, never by loosening a type or an assertion.
       #
@@ -733,9 +671,9 @@ jobs:
           --disable-error-code=no-untyped-def
 
       # The tos GOVERNANCE TOOLING under `tools/` — the checkers this very job
-      # runs as steps (`tos_firewall_check` / `tos_contract_check` /
-      # `tos_completion_status` / `tos_spec_status` / `tos_redigest` /
-      # `tos_size_budget`) plus the CP-3 producer package `tools/tos_cp3/`.
+      # runs as steps (`tos_firewall_check` /
+      # `tos_redigest` / `tos_size_budget`) plus the CP-3 producer package
+      # `tools/tos_cp3/`.
       # Until now NOTHING type-checked them: the five steps above cover
       # `tos/**` only, and `type-check` in `.github/workflows/test.yml` runs
       # `mypy shared/ ... || true` — a different path, and advisory. A type
@@ -750,8 +688,8 @@ jobs:
       # same PR — no baseline file, no `|| true`.
       #
       # `--explicit-package-bases` is required, not cosmetic. `tools/` has no
-      # `__init__.py` (deliberately — see the comment at the top of
-      # `tools/tos_contract_index.py`), so without it mypy maps
+      # `__init__.py` (deliberately — the directory is a bag of scripts, not a
+      # package), so without it mypy maps
       # `tools/tos_x.py` to the module `tos_x` while the sibling imports inside
       # the tree say `tools.tos_x`, and the run ABORTS on "Source file found
       # twice under different module names" after checking nothing.
@@ -763,10 +701,12 @@ jobs:
       # follows from it: a `# type: ignore[...]` that local stubs make
       # NECESSARY is dead weight in CI and fails this step as `unused-ignore`
       # (`warn_unused_ignores = true` in the root pyproject). Write such a
-      # suppression so both environments accept it, the way
-      # `tools/tos_contract_check.py:480` does —
+      # suppression so both environments accept it —
       # `# type: ignore[assignment, unused-ignore]`, naming `unused-ignore`
       # alongside the real code — rather than tuning it to one environment.
+      # (The worked example this note used to cite,
+      # `tools/tos_contract_check.py:480`, was retired 2026-11-12 —
+      # docs/plans/2026-11-12-phase0-retirement-plan.md.)
       #
       # Reproducing this locally: run it from a checkout whose venv was
       # `pip install -e .`-ed FROM THAT SAME checkout (what the install step
@@ -783,13 +723,13 @@ jobs:
       # list — a tool added under either path joins the gate automatically
       # (`tos_recovery_drill.py` and `tos_cp3/status_board.py`, both landed
       # while this PR was open, were picked up and are clean).
-      # The rest of `tools/` is NOT covered: at 06051fc3 that is 28 of the 69
-      # files, carrying 141 errors / 13 files under these same flags —
-      # `tools/spikes/phase0_contract/` (91, throwaway Phase-0 prototypes),
-      # `tools/broker_probes/` (20, the real-broker probe harness) and three
-      # loose scripts (`wfcanon-v222.py` 12, `ladder-v222e5.py` 12,
-      # `pagelimb-v222e5.py` 6). Widening to all of `tools/` is a follow-up,
-      # and the broker-probe part of it touches real-order paths.
+      # The rest of `tools/` is NOT covered. The 2026-11-12 Phase-0 retirement
+      # (docs/plans/2026-11-12-phase0-retirement-plan.md) deleted most of that
+      # remainder — `tools/spikes/phase0_contract/` and the three loose v222
+      # scripts — so what is left uncovered is `tools/broker_probes/` (14
+      # files, 20 errors at 06051fc3 under these same flags) plus
+      # `tools/bcp_digest.py`. Widening to all of `tools/` is a follow-up, and
+      # the broker-probe part of it touches real-order paths.
       - name: mypy (tos tooling)
         run: >-
           mypy tools/tos_*.py tools/tos_cp3 --ignore-missing-imports

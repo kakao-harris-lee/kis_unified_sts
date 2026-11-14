@@ -1,9 +1,4 @@
-"""Item 5 — ``live_scope_valid`` (PR-3 option (a), operator decision 2026-10-22).
-
-Each rule of :mod:`tos_runtime.brokercap.live_scope` has its own failing input below; the
-valid case is the MOCK_STOCK_ORDER scope bound to the real MOCK_VTS INSTANCE draft, sealed to
-the kis-mock transport's own endpoint.
-"""
+"""Item 5 — ``live_scope_valid`` (PR-3 option (a), operator decision 2026-10-22)."""
 
 from __future__ import annotations
 
@@ -38,9 +33,7 @@ def _scopes(
 ) -> BrokerScopesConfig:
     raw = yaml.safe_load(_EXAMPLE.read_text(encoding="utf-8"))
     raw["active_scope"] = active
-    raw["instance_path"] = os.path.relpath(
-        _DRAFT, tmp_path
-    )  # relative, as committed trees (#958)
+    raw["instance_path"] = os.path.relpath(_DRAFT, tmp_path)
     for scope in raw["scopes"]:
         if scope["name"] == "MOCK_STOCK_ORDER":
             scope["profile_evidence_ok"] = evidence_ok
@@ -116,8 +109,7 @@ def test_a_non_broker_scope_is_not_judged(tmp_path: Path) -> None:
 
 
 def test_a_scope_that_no_longer_resolves_is_invalid(tmp_path: Path) -> None:
-    """The boot loader refuses a PROHIBITED active scope; item 5 is the per-attempt check that
-    the same scope, as judged now, still resolves to itself and not to PROHIBITED."""
+    """The boot loader refuses a PROHIBITED active scope; item 5 is the per-attempt check that"""
     config = _scopes(tmp_path, "MOCK_STOCK_ORDER")
     prohibited = dataclasses.replace(
         config.active_scope, admissibility=Admissibility.PROHIBITED

@@ -1,24 +1,4 @@
-"""MANDATED test-only seam cross-check: brokercap <-> orthostate (design #10 §3.4; v1.1 MAJOR-1).
-
-brokercap does NOT import ``tos.orthostate`` at runtime (the import-closure test asserts its
-absence); this file imports **both** as a **test** to lock two produced-value seams:
-
-* **BROKER_ORDER (enum-basis, v1.1 MAJOR-1 correction).** The orthostate BROKER_ORDER
-  dimension consumes not an injected ``bool | None`` but a
-  ``basis: ConservatismBasis | TransitionCause | None`` at ``conservative_direction_ok``
-  (``orthostate/predicates.py:302``). The caller maps brokercap's
-  ``broker_evidence_admissible_under_profile`` bool to a basis: ``True`` ->
-  ``ConservatismBasis.BROKER_EVIDENCE_UNDER_PROFILE`` (a **strong** basis, not in
-  ``WEAK_BASES``, that alone may reduce conservatism from ``UNKNOWN`` to a definite state);
-  ``False`` / ``None`` -> ``None`` (weak / absent => the reduction is blocked, fail-closed —
-  ``predicates.py:352-355``).
-* **KnowledgeState -> RECONCILED (bool|None).** brokercap ``fqp_adequate`` produces the
-  ``bool`` orthostate consumes as
-  ``knowledge_transition_allowed(..., final_quantity_proof_where_broker_involved=...)``
-  (``orthostate/predicates.py:503``).
-
-This test is NOT a package edge (design #10 §3.4/§7.1).
-"""
+"""MANDATED test-only seam cross-check: brokercap <-> orthostate (design #10 §3.4; v1.1 MAJOR-1)."""
 
 from __future__ import annotations
 
@@ -50,11 +30,6 @@ def _basis(admissible: bool) -> ConservatismBasis | None:
     return ConservatismBasis.BROKER_EVIDENCE_UNDER_PROFILE if admissible else None
 
 
-# ---------------------------------------------------------------------------
-# Seam (i): BROKER_ORDER enum-basis (UNKNOWN -> definite reduction)
-# ---------------------------------------------------------------------------
-
-
 def test_admissible_evidence_enables_broker_order_reduction() -> None:
     """brokercap admissible True -> BROKER_EVIDENCE_UNDER_PROFILE basis -> UNKNOWN->WORKING allowed."""
     profile = issue_profile()
@@ -62,7 +37,6 @@ def test_admissible_evidence_enables_broker_order_reduction() -> None:
         profile, broker_evidence(), required_set(), version_current=True
     )
     assert admissible is True
-    # UNKNOWN (rank 6) -> WORKING (rank 2) is a REDUCTION in conservatism: needs a strong basis.
     assert (
         conservative_direction_ok(
             StateDimension.BROKER_ORDER,
@@ -77,7 +51,6 @@ def test_admissible_evidence_enables_broker_order_reduction() -> None:
 def test_inadmissible_evidence_blocks_broker_order_reduction() -> None:
     """brokercap admissible False -> None basis -> UNKNOWN->WORKING blocked (fail-closed)."""
     profile = issue_profile()
-    # No evidence reference => not admissible.
     admissible = broker_evidence_admissible_under_profile(
         profile, None, required_set(), version_current=True
     )
@@ -109,11 +82,6 @@ def test_non_current_version_blocks_broker_order_reduction() -> None:
         )
         is False
     )
-
-
-# ---------------------------------------------------------------------------
-# Seam (ii): FQP -> KnowledgeState RECONCILED (bool|None)
-# ---------------------------------------------------------------------------
 
 
 def test_fqp_adequate_enables_reconciled() -> None:

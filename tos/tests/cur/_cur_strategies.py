@@ -1,20 +1,4 @@
-"""Shared valid-artifact builders + strategies for the cur property tests (design #23 §7).
-
-Firewall-clean: imports only ``hypothesis`` and ``tos.*`` (design #23 §0.3). The builders enforce
-the §7 clean-vs-illegal fixture discipline (the #8 lesson — a "clean" fixture must be *genuinely*
-complete / established, never a permissive shortcut):
-
-* a **clean** vector carries **every** mandated dimension positively established at **one** revision,
-  a matching policy, and a concrete ``vector_digest``, so a genuine ``vector_complete`` is achievable;
-* a **clean** proof is genuinely admissible (result CURRENT, single-use unconsumed, unexpired, latch
-  clear), so ``proof_admissible`` is genuinely satisfiable (not a shortcut);
-* the **polarity strategies** deliberately generate ``None`` / ``False`` / ``True`` tri-bools so the
-  polarity seals (the #22 MAJOR-2 lesson) are actually exercised across every ``bool | None`` field.
-
-Every generation / floor value is an explicit fixture int — nothing here is a *policy* number; the
-real cur bounds are Verification-Profile injected and all null in Phase 1 (design #23 §8). The
-reserved ``"TBD"`` placeholder is excluded from required-field text.
-"""
+"""Shared valid-artifact builders + strategies for the cur property tests (design #23 §7)."""
 
 from __future__ import annotations
 
@@ -33,13 +17,10 @@ from tos.cur import (
     SafetyCurrentnessVector,
 )
 
-#: The injected provisional canonicalizer (REUSE, design #23 §3.1 — no new scheme).
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Injected ``bool | None`` flag (fail-closed on ``None`` / ``False`` per polarity).
 TRIBOOL = st.sampled_from([True, False, None])
 
-#: The clean single revision every clean dimension sits at.
 _CLEAN_COMMIT_INDEX = 10
 
 
@@ -51,11 +32,7 @@ def clean_revision(
 
 
 def dimension_key(dimension: CurrentnessDimension) -> DimensionKey:
-    """``dimension.dimension_key``, asserted present — every dimension built by
-    :func:`clean_dimension`/:func:`clean_dimensions` below sets it explicitly (the field is
-    ``| None`` only for a genuinely absent/removed coordinate, never for one this module's own
-    builders produce). Callers reuse a clean dimension's own key to build a mutated sibling.
-    """
+    """``dimension.dimension_key``, asserted present — every dimension built by"""
     key = dimension.dimension_key
     assert key is not None
     return key
@@ -171,11 +148,7 @@ def clean_proof(
     status: ArtifactStatus = ArtifactStatus.ISSUED,
     **overrides: object,
 ) -> EgressCurrentnessProof:
-    """A digest-verified, genuinely admissible Egress Currentness Proof (§12).
-
-    ``single_use_consumed`` / ``is_expired`` (mutable lifecycle) and ``egress_coordinates`` (the
-    injected latch carrier) are NOT covered by the digest (§2.3), so they are set directly.
-    """
+    """A digest-verified, genuinely admissible Egress Currentness Proof (§12)."""
     rev = revision if revision is not None else clean_revision()
     coords = coordinates if coordinates is not None else clean_coordinates()
     return EgressCurrentnessProof.issue(
