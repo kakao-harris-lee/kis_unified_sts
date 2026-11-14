@@ -19,7 +19,7 @@ from tos_runtime.operations.backup_set import (
 )
 
 from . import _fixtures as fx
-from .conftest import write_approval_file
+from .conftest import approve_constructed_intent
 from .test_compose_root import (
     _action_flow_inputs_for,
     _aggregate_inputs,
@@ -88,13 +88,10 @@ def _reach_admitted_send(runtime, custody_root: Path) -> None:
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
     assert proposal_digest is not None
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=proposal_digest,
-        environment_label="non-live-test",
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     runtime.run_once((event,))
 

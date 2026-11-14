@@ -373,6 +373,42 @@ def _kind_seq(evidence_store: SqliteEvidenceStore, kind: str) -> list[int]:
     return [seq for (seq,) in rows]
 
 
+def _full_fill_payload() -> EgressResultPayload:
+    """This suite's one FULL_FILL egress result — 10 filled, nothing outstanding."""
+    return EgressResultPayload(
+        instrument_key=_KEY,
+        attempt_id=_ATTEMPT_ID,
+        kind=EgressResultKind.FULL_FILL,
+        filled_quantity=Decimal("10"),
+        remaining_quantity=Decimal("0"),
+    )
+
+
+def _append_obligation(evidence_store: SqliteEvidenceStore, produced: object) -> None:
+    """Durably record one produced obligation record AND its finality proof."""
+    evidence_store.append(
+        produced.record.model_dump(mode="json"),  # type: ignore[attr-defined]
+        kind="ECONOMIC_OBLIGATION",
+        record_class="ECONOMIC_OBLIGATION",
+    )
+    evidence_store.append(
+        produced.proof.model_dump(mode="json"),  # type: ignore[attr-defined]
+        kind="POSTTRADE_FINALITY_PROOF",
+        record_class="POSTTRADE_FINALITY_PROOF",
+    )
+
+
+def _seed_full_fill_obligation(
+    evidence_store: SqliteEvidenceStore,
+) -> tuple[EgressResultPayload, object]:
+    """Produce this suite's FULL_FILL obligation and record it with its proof."""
+    payload = _full_fill_payload()
+    produced = _producer().produce(payload)
+    assert produced is not None
+    _append_obligation(evidence_store, produced)
+    return payload, produced
+
+
 def test_release_consumer_imports_cleanly_after_a_cold_cache_eviction() -> None:
     """TOS Phase 5 W2-R re-review finding NEW-1 (2026-09-10): ``import"""
     evicted_prefixes = ("tos_runtime.engine",)
@@ -402,26 +438,7 @@ def test_full_fill_with_independent_witness_releases_to_position_consumed(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    producer = _producer()
-    payload = EgressResultPayload(
-        instrument_key=_KEY,
-        attempt_id=_ATTEMPT_ID,
-        kind=EgressResultKind.FULL_FILL,
-        filled_quantity=Decimal("10"),
-        remaining_quantity=Decimal("0"),
-    )
-    produced = producer.produce(payload)
-    assert produced is not None
-    evidence_store.append(
-        produced.record.model_dump(mode="json"),
-        kind="ECONOMIC_OBLIGATION",
-        record_class="ECONOMIC_OBLIGATION",
-    )
-    evidence_store.append(
-        produced.proof.model_dump(mode="json"),
-        kind="POSTTRADE_FINALITY_PROOF",
-        record_class="POSTTRADE_FINALITY_PROOF",
-    )
+    payload, produced = _seed_full_fill_obligation(evidence_store)
     inbox.record_finality_witness(_ATTEMPT_ID, True)
     _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
     _open_reservation(rcl_log)
@@ -459,26 +476,7 @@ def test_full_fill_release_outcome_feeds_a_real_kernel_ledger_release(
     """The full kernel round #3 §2 decision 5 / W2-K chain, end to end at the unit level (the"""
     from tos.engine.state import FinalityProofRef, ProvisionalReservationLedger
 
-    producer = _producer()
-    payload = EgressResultPayload(
-        instrument_key=_KEY,
-        attempt_id=_ATTEMPT_ID,
-        kind=EgressResultKind.FULL_FILL,
-        filled_quantity=Decimal("10"),
-        remaining_quantity=Decimal("0"),
-    )
-    produced = producer.produce(payload)
-    assert produced is not None
-    evidence_store.append(
-        produced.record.model_dump(mode="json"),
-        kind="ECONOMIC_OBLIGATION",
-        record_class="ECONOMIC_OBLIGATION",
-    )
-    evidence_store.append(
-        produced.proof.model_dump(mode="json"),
-        kind="POSTTRADE_FINALITY_PROOF",
-        record_class="POSTTRADE_FINALITY_PROOF",
-    )
+    payload, produced = _seed_full_fill_obligation(evidence_store)
     inbox.record_finality_witness(_ATTEMPT_ID, True)
     _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
     _open_reservation(rcl_log)
@@ -560,26 +558,7 @@ def test_report_not_permitting_capacity_release_holds_even_with_witness_and_proo
     monotonic_source: FakeMonotonicSource,
 ) -> None:
     """A ``ReconciliationService`` whose report never permits capacity release (fake PORTS"""
-    producer = _producer()
-    payload = EgressResultPayload(
-        instrument_key=_KEY,
-        attempt_id=_ATTEMPT_ID,
-        kind=EgressResultKind.FULL_FILL,
-        filled_quantity=Decimal("10"),
-        remaining_quantity=Decimal("0"),
-    )
-    produced = producer.produce(payload)
-    assert produced is not None
-    evidence_store.append(
-        produced.record.model_dump(mode="json"),
-        kind="ECONOMIC_OBLIGATION",
-        record_class="ECONOMIC_OBLIGATION",
-    )
-    evidence_store.append(
-        produced.proof.model_dump(mode="json"),
-        kind="POSTTRADE_FINALITY_PROOF",
-        record_class="POSTTRADE_FINALITY_PROOF",
-    )
+    payload, produced = _seed_full_fill_obligation(evidence_store)
     inbox.record_finality_witness(_ATTEMPT_ID, True)
     _open_reservation(rcl_log)
 
@@ -607,26 +586,7 @@ def test_full_fill_with_non_independent_witness_holds(
 ) -> None:
     from tos_runtime.recon.witness_synthetic import SyntheticLedgerWitness
 
-    producer = _producer()
-    payload = EgressResultPayload(
-        instrument_key=_KEY,
-        attempt_id=_ATTEMPT_ID,
-        kind=EgressResultKind.FULL_FILL,
-        filled_quantity=Decimal("10"),
-        remaining_quantity=Decimal("0"),
-    )
-    produced = producer.produce(payload)
-    assert produced is not None
-    evidence_store.append(
-        produced.record.model_dump(mode="json"),
-        kind="ECONOMIC_OBLIGATION",
-        record_class="ECONOMIC_OBLIGATION",
-    )
-    evidence_store.append(
-        produced.proof.model_dump(mode="json"),
-        kind="POSTTRADE_FINALITY_PROOF",
-        record_class="POSTTRADE_FINALITY_PROOF",
-    )
+    payload, produced = _seed_full_fill_obligation(evidence_store)
     inbox.record_finality_witness(_ATTEMPT_ID, True)
     _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
     _open_reservation(rcl_log)
@@ -1017,26 +977,7 @@ def test_gate4_holds_when_the_rcl_persisted_scope_diverges_from_the_proof(
     monotonic_source: FakeMonotonicSource,
 ) -> None:
     """Independent-review finding H1: ``target_leg_scope``'s account now comes from the RCL"""
-    producer = _producer()
-    payload = EgressResultPayload(
-        instrument_key=_KEY,
-        attempt_id=_ATTEMPT_ID,
-        kind=EgressResultKind.FULL_FILL,
-        filled_quantity=Decimal("10"),
-        remaining_quantity=Decimal("0"),
-    )
-    produced = producer.produce(payload)
-    assert produced is not None
-    evidence_store.append(
-        produced.record.model_dump(mode="json"),
-        kind="ECONOMIC_OBLIGATION",
-        record_class="ECONOMIC_OBLIGATION",
-    )
-    evidence_store.append(
-        produced.proof.model_dump(mode="json"),
-        kind="POSTTRADE_FINALITY_PROOF",
-        record_class="POSTTRADE_FINALITY_PROOF",
-    )
+    payload, produced = _seed_full_fill_obligation(evidence_store)
     inbox.record_finality_witness(_ATTEMPT_ID, True)
     _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
     _open_reservation_under_scope(
@@ -1066,26 +1007,7 @@ def test_gate4_holds_when_a_newer_obligation_generation_supersedes_the_proof(
     monotonic_source: FakeMonotonicSource,
 ) -> None:
     """Independent-review finding H1: ``active_generation`` now comes from the NEWEST"""
-    producer = _producer()
-    payload = EgressResultPayload(
-        instrument_key=_KEY,
-        attempt_id=_ATTEMPT_ID,
-        kind=EgressResultKind.FULL_FILL,
-        filled_quantity=Decimal("10"),
-        remaining_quantity=Decimal("0"),
-    )
-    produced = producer.produce(payload)
-    assert produced is not None
-    evidence_store.append(
-        produced.record.model_dump(mode="json"),
-        kind="ECONOMIC_OBLIGATION",
-        record_class="ECONOMIC_OBLIGATION",
-    )
-    evidence_store.append(
-        produced.proof.model_dump(mode="json"),
-        kind="POSTTRADE_FINALITY_PROOF",
-        record_class="POSTTRADE_FINALITY_PROOF",
-    )
+    payload, produced = _seed_full_fill_obligation(evidence_store)
     inbox.record_finality_witness(_ATTEMPT_ID, True)
     _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
     _open_reservation(rcl_log)
@@ -1372,26 +1294,7 @@ def test_release_reads_from_state_dynamically_not_a_hardcoded_constant(
     )
     assert _reservation_state(rcl_log) is CapacityState.ATTEMPT_BOUND
 
-    producer = _producer()
-    payload = EgressResultPayload(
-        instrument_key=_KEY,
-        attempt_id=_ATTEMPT_ID,
-        kind=EgressResultKind.FULL_FILL,
-        filled_quantity=Decimal("10"),
-        remaining_quantity=Decimal("0"),
-    )
-    produced = producer.produce(payload)
-    assert produced is not None
-    evidence_store.append(
-        produced.record.model_dump(mode="json"),
-        kind="ECONOMIC_OBLIGATION",
-        record_class="ECONOMIC_OBLIGATION",
-    )
-    evidence_store.append(
-        produced.proof.model_dump(mode="json"),
-        kind="POSTTRADE_FINALITY_PROOF",
-        record_class="POSTTRADE_FINALITY_PROOF",
-    )
+    payload, produced = _seed_full_fill_obligation(evidence_store)
     inbox.record_finality_witness(_ATTEMPT_ID, True)
     _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
 
@@ -1659,16 +1562,7 @@ def _arrange_close(
     payload = _close_payload(filled=close_filled, remaining=close_remaining)
     produced = _producer().produce(payload)
     assert produced is not None
-    evidence_store.append(
-        produced.record.model_dump(mode="json"),
-        kind="ECONOMIC_OBLIGATION",
-        record_class="ECONOMIC_OBLIGATION",
-    )
-    evidence_store.append(
-        produced.proof.model_dump(mode="json"),
-        kind="POSTTRADE_FINALITY_PROOF",
-        record_class="POSTTRADE_FINALITY_PROOF",
-    )
+    _append_obligation(evidence_store, produced)
     inbox.record_finality_witness(_CLOSE_ATTEMPT, True)
     return payload
 

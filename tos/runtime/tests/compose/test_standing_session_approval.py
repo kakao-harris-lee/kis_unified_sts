@@ -5,7 +5,6 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -40,7 +39,6 @@ from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.risk.ledger_stages import AggregateRiskDecisionStage
 from tos_runtime.strategy.loader import load_strategies
 
-from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
 from .test_compose_root import _compose, _reach_trusted
 from .test_kis_mock_e2e_honesty import _boot
@@ -61,16 +59,6 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 _ENV = "non-live-test"
 _FIXTURE_QTY = 10
-
-
-@pytest.fixture()
-def server() -> Iterator[FakeKisServer]:
-    srv = FakeKisServer()
-    srv.start()
-    try:
-        yield srv
-    finally:
-        srv.stop()
 
 
 def _strategy_id(config_dir: Path) -> str:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -20,7 +19,6 @@ from tos_runtime.posttrade.fill_observer import (
 )
 from tos_runtime.posttrade.release_consumer import release_command_id
 
-from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
 from .test_kis_mock_e2e_honesty import (
     _ORDER_PATH,
@@ -33,16 +31,6 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 _ODNO = "0000004470"
 _FOREIGN_ODNO = "0000009999"
-
-
-@pytest.fixture()
-def server() -> Iterator[FakeKisServer]:
-    srv = FakeKisServer()
-    srv.start()
-    try:
-        yield srv
-    finally:
-        srv.stop()
 
 
 def _deploy(config_dir, custody_root, server, monkeypatch) -> None:

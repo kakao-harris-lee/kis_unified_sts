@@ -28,7 +28,7 @@ from tos_runtime.venue_ledger.synthetic import (
 )
 
 from . import _fixtures as fx
-from .conftest import write_approval_file
+from .conftest import approve_constructed_intent, write_approval_file
 from .test_compose_root import _compose, _reach_trusted
 from .test_synthetic_close_bound_inert import _hand_off_a_filled_entry
 from .test_venue_ledger_wiring import turn_the_venue_ledger_on
@@ -358,13 +358,10 @@ def _approve_and_run(runtime, custody_root: Path, event):
     """Discover, write the operator approval for that exact proposal, then run it for real."""
     (discovery,) = runtime.run_once((event,))
     assert discovery.pipeline is not None and discovery.pipeline.proposal is not None
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=discovery.pipeline.proposal.canonical_digest,
-        environment_label="non-live-test",
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     (result,) = runtime.run_once((event,))
     return discovery, result

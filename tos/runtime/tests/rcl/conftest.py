@@ -7,6 +7,13 @@ from pathlib import Path
 
 import pytest
 from tos.evidence import EvidenceAppendReceipt
+from tos.rcl import (
+    AppendReceipt,
+    AppendRefusal,
+    CapacityReservationTransition,
+    CommandType,
+    TransitionCause,
+)
 from tos.workload import RuntimeIdentity
 from tos_runtime.rcl.log import SqliteCommitLog
 
@@ -78,3 +85,22 @@ def log(
     )
     yield instance
     instance.close()
+
+
+def bind_attempt(
+    log: SqliteCommitLog,
+    transition: CapacityReservationTransition,
+    *,
+    command_id: str = "cmd-1",
+    command_digest: str = "dig-1",
+    expected_seq: int = -1,
+) -> AppendReceipt | AppendRefusal:
+    """Commit ``transition`` as this suite's standard strongly-authorized BIND_ATTEMPT."""
+    return log.apply_reservation_transition(
+        transition,
+        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        command_type=CommandType.BIND_ATTEMPT,
+        command_id=command_id,
+        command_digest=command_digest,
+        expected_seq=expected_seq,
+    )

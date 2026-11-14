@@ -26,7 +26,6 @@ from tos_runtime.transport.kis_mock.pacer import KisPacing
 from ..recon._fake_kis_get_server import FakeKisGetServer
 from ..recon._witness_kis_fakes import FakeKstDateSource
 from ..recon.test_witness_kis import ACCOUNT, BALANCE_PATH, ORDER_PATH, _config
-from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from ..transport.kis_mock._fakes import InMemoryCredentialCustody, RecordingEvidenceSink
 from .test_kis_mock_e2e_honesty import _boot, _sealed_mock_deployment
 
@@ -329,16 +328,6 @@ def test_an_expiry_says_whether_the_read_itself_outran_the_limit() -> None:
         [("expired", "read_span_exceeds_max_age")],
         [("expired", "aged_before_apply")],
     ]
-
-
-@pytest.fixture
-def server() -> Iterator[FakeKisServer]:
-    srv = FakeKisServer()
-    srv.start()
-    try:
-        yield srv
-    finally:
-        srv.stop()
 
 
 def test_a_snapshot_age_limit_below_two_intervals_refuses_the_boot(

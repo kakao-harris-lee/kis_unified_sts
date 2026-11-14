@@ -11,7 +11,7 @@ from tos_runtime.compose._request_digest import CapsuleStandInDigest, KisWireCod
 from tos_runtime.transport.kis_mock.codec import KisOrderWireCodec
 
 from . import _fixtures as fx
-from .conftest import write_approval_file
+from .conftest import approve_constructed_intent
 from .test_compose_root import _compose, _reach_trusted
 from .test_send_seal import _durable_rows_in_order
 
@@ -44,13 +44,10 @@ def _run_to_send_boundary(
     event = fx.crossing_event()
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=proposal_digest,
-        environment_label="non-live-test",
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     runtime.run_once((event,))
     return runtime
@@ -120,13 +117,10 @@ def test_capsule_stand_in_digest_does_not_satisfy_the_codec_comparison(
     event = fx.crossing_event()
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=proposal_digest,
-        environment_label="non-live-test",
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     runtime.run_once((event,))
 

@@ -20,6 +20,8 @@ from tos_runtime.rcl.log import (
     SqliteCommitLog,
 )
 
+from .conftest import bind_attempt
+
 DEFAULT_SCOPE = ReservationScope(account="acct-1", instrument="101S06")
 
 
@@ -41,14 +43,7 @@ def test_legal_transition_under_strong_cause_commits_and_updates_projection(
         scope=DEFAULT_SCOPE,
     )
 
-    result = log.apply_reservation_transition(
-        transition,
-        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
-        command_type=CommandType.BIND_ATTEMPT,
-        command_id="cmd-1",
-        command_digest="dig-1",
-        expected_seq=-1,
-    )
+    result = bind_attempt(log, transition)
 
     assert isinstance(result, AppendReceipt)
     rows = {rid: state for rid, state, _seq, _scope in log.reservation_rows()}
