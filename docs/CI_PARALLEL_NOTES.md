@@ -4,6 +4,25 @@
 parallel pass + a serial pass for `serial`-marked tests. Previously local-only
 (2026-05-09) pending the parallel-unsafe-test fixes described below.
 
+## Update 2026-11-15 — the `tos-firewall` serial pass has no members
+
+`tools/tos_evidence_scan_measure.py` and its test were retired (no CI step,
+cron, runner script or runbook called the tool). That test was the **only**
+`serial`-marked test in the `tos-firewall` governance corpus, so the second
+pass there now collects nothing and pytest exits 5 (`no tests ran`).
+
+The pass was kept rather than deleted: the `-m "not serial"` filter on the
+first pass would otherwise silently skip the next `serial` test anyone adds
+under `tests/tools/test_tos_*.py` or `tests/tos_l3`. The step accepts exit 5
+and **only** exit 5 — a real serial-pass failure still turns it red.
+
+The `test` workflow's serial pass is unaffected; `tests/tools/test_cp3_*.py`,
+`test_bcp_digest.py` and `test_broker_probes_ca.py` still carry `serial`
+markers and still run there.
+
+Everything below this section is the historical record of earlier changes and
+refers to the retired test by name.
+
 ## Update 2026-06-03 — enabled via parallel + serial split
 
 The `test` job's "Run tests" step now runs:

@@ -48,6 +48,7 @@ from typing import Any
 
 import pytest
 
+from tests.support.probe_auth import StubAuth, install_stub_auth
 from tools.broker_probes import probes_order
 from tools.broker_probes.common import (
     ProbeCredentials,
@@ -118,15 +119,10 @@ def unpaced_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(time, "sleep", lambda _s: None)
 
 
-class _StubAuth:
-    def get_auth_headers(self) -> dict[str, str]:
-        return {"authorization": "Bearer stub"}
-
-
 def _client(creds: ProbeCredentials) -> MockTradingClient:
     """A client with pacing disabled — these tests assert bodies, not intervals."""
     run = ProbeRun(probe_id="P-11", title="t", mode="live", environment="MOCK_VTS")
-    return MockTradingClient(creds, _StubAuth(), run, pace_s=0.0)
+    return MockTradingClient(creds, StubAuth(), run, pace_s=0.0)
 
 
 def _args(**overrides: object) -> argparse.Namespace:
@@ -280,9 +276,7 @@ def _install_recorder(
         return 200, payload, 1.0, "{}"
 
     monkeypatch.setattr(probes_order, "http_json", _recorder)
-    monkeypatch.setattr(
-        "shared.kis.auth.KISAuthManager", lambda *a, **k: _StubAuth(), raising=True
-    )
+    install_stub_auth(monkeypatch)
     return calls
 
 

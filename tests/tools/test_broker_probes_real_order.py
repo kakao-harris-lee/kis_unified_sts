@@ -45,7 +45,7 @@ from typing import Any
 import pytest
 import yaml
 
-from tools.broker_probes import probes_order, probes_real
+from tools.broker_probes import common, probes_order, probes_real
 from tools.broker_probes import probes_real_order as pro
 from tools.broker_probes.common import (
     ENV_REAL,
@@ -1825,3 +1825,78 @@ def test_the_order_stage_prerequisites_name_the_live_gate_bypass() -> None:
     assert "futures_live.yaml" in joined
     assert "suspend" in joined
     assert "two order sources" in joined
+
+
+# ---------------------------------------------------------------------------
+# the live-futures interlock itself
+#
+# CLAUDE.md Non-Negotiable Rule: every futures order probe calls
+# `assert_no_live_futures_config()`, which refuses while
+# `config/futures_live.yaml::enabled` is true. Until now only the registry
+# PREREQUISITE STRING above was asserted — nothing exercised the refusal, so a
+# parser change that stopped matching `enabled: true` would have passed CI.
+# ---------------------------------------------------------------------------
+
+
+def _futures_live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> None:
+    """Point the interlock at a scratch ``config/futures_live.yaml`` holding ``body``."""
+    config = tmp_path / "config"
+    config.mkdir(parents=True, exist_ok=True)
+    (config / "futures_live.yaml").write_text(body, encoding="utf-8")
+    monkeypatch.setattr(common, "_REPO_ROOT", tmp_path)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "enabled: true\n",
+        "enabled: True\n",
+        "enabled: yes\n",
+        "enabled: 1\n",
+        "enabled:   true\n",
+        "enabled: true   # armed for the trial\n",
+        # Indented is still armed. The guard strips each line before matching,
+        # so an `enabled: true` nested under any key refuses too — fail-closed
+        # is the right direction for this one, and pinning it keeps a future
+        # "only match at column 0" tidy-up from quietly widening the gate.
+        "futures:\n  enabled: true\n",
+    ],
+)
+def test_an_armed_live_futures_config_refuses_the_order_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
+) -> None:
+    _futures_live(tmp_path, monkeypatch, body)
+    with pytest.raises(common.SafetyViolation, match="refusing to run an"):
+        common.assert_no_live_futures_config()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "enabled: false\n",
+        "# enabled: true\n",
+        "enabled: true_ish\n",
+        "disabled: true\n",
+        "",
+    ],
+)
+def test_a_disarmed_live_futures_config_admits_the_order_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
+) -> None:
+    """A commented-out, non-boolean, or differently-named key is not an armed path."""
+    _futures_live(tmp_path, monkeypatch, body)
+    common.assert_no_live_futures_config()
+
+
+def test_an_absent_live_futures_config_admits_the_order_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(common, "_REPO_ROOT", tmp_path)
+    common.assert_no_live_futures_config()
+
+
+def test_the_real_order_probe_calls_the_interlock_before_anything_else() -> None:
+    """The refusal is reachable from P-R5's own module, not just from common.py."""
+    source = Path(pro.__file__).read_text(encoding="utf-8")
+    assert source.count("assert_no_live_futures_config()") >= 1
+    assert "assert_no_live_futures_config" in source
