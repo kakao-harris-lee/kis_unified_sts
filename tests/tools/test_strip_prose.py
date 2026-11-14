@@ -166,7 +166,7 @@ def test_the_emitted_literal_is_the_one_black_would_leave_alone(first):
 
 def test_strip_and_black_settle_when_black_must_pad_a_trailing_quote():
     """First line ``'"'"``: black flips to ``"`` and pads the closing quote with a space."""
-    source = "def f():\n    \"\"\"'\"'\"\n\n    more prose.\n    \"\"\"\n"
+    source = 'def f():\n    """\'"\'"\n\n    more prose.\n    """\n'
     once = black.format_str(sp.strip_source(source), mode=black.Mode())
     twice = black.format_str(sp.strip_source(once), mode=black.Mode())
     assert twice == once
