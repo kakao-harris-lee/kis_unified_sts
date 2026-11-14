@@ -64,6 +64,7 @@ from . import _fixtures as fx
 from . import _symmetry_fixtures as sfx
 from .conftest import (
     _RISK_STATE_ENVELOPE_MAX,
+    approve_constructed_intent,
     call_wrapped_fixture,
     write_approval_file,
 )
@@ -1113,13 +1114,10 @@ def _drive_two_calls(runtime, custody_root: Path, event):
     """The SAME two-``run_once``-call pattern ``test_compose_root.py``'s own ADMIT tests use"""
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=proposal_digest,
-        environment_label="non-live-test",
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     results2 = runtime.run_once((event,))
     flow = results2[0].flow

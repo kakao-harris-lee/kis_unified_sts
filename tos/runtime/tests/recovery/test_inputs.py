@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import pytest
 from tos.engine.records import event_identity
@@ -57,42 +57,37 @@ def _mark_handling_started(
     )
 
 
-def _assemble(
-    *,
+@pytest.fixture()
+def assemble(
     rcl_log: SqliteCommitLog,
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
     tmp_path: Path,
     custody_root: Path,
-):
-    return assemble_recovery_inputs(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        scheme=SCHEME,
-        window_events=None,
-        custody_root=custody_root,
-        composite_state_store_path=tmp_path / "composite_state.sqlite3",
-        time_service=_NeverStartedTimeService(),
-        account=fx.instrument_key().account,
-        instrument=fx.instrument_key().instrument,
-    )
+) -> Callable[[], Any]:
+    """Assemble the recovery inputs from THIS test's own durable stores."""
+
+    def _assemble() -> Any:
+        return assemble_recovery_inputs(
+            rcl_log=rcl_log,
+            evidence_store=evidence_store,
+            inbox=inbox,
+            scheme=SCHEME,
+            window_events=None,
+            custody_root=custody_root,
+            composite_state_store_path=tmp_path / "composite_state.sqlite3",
+            time_service=_NeverStartedTimeService(),
+            account=fx.instrument_key().account,
+            instrument=fx.instrument_key().instrument,
+        )
+
+    return _assemble
 
 
 def test_genesis_boot_has_no_possibly_live_or_legacy_facts(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    tmp_path: Path,
-    custody_root: Path,
+    assemble: Callable[[], Any],
 ) -> None:
-    inputs = _assemble(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        tmp_path=tmp_path,
-        custody_root=custody_root,
-    )
+    inputs = assemble()
     assert inputs.possibly_live_attempts == ()
     assert inputs.legacy_receipts.count == 0
     assert inputs.inbox_unconsumed_count == 0
@@ -104,49 +99,28 @@ def test_genesis_boot_has_no_possibly_live_or_legacy_facts(
 
 
 def test_custody_identity_is_read_from_the_real_manifest(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    tmp_path: Path,
-    custody_root: Path,
+    assemble: Callable[[], Any],
 ) -> None:
-    inputs = _assemble(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        tmp_path=tmp_path,
-        custody_root=custody_root,
-    )
+    inputs = assemble()
     assert inputs.custody_environment_label == "non-live-test"
     assert inputs.custody_manifest_digest is not None
     assert len(inputs.custody_manifest_digest) == 64
 
 
 def test_unconsumed_event_is_counted_but_not_possibly_live(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
+    assemble: Callable[[], Any],
     inbox: SqliteEventInbox,
-    tmp_path: Path,
-    custody_root: Path,
 ) -> None:
     inbox.enqueue(fx.crossing_event(seq=1))
-    inputs = _assemble(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        tmp_path=tmp_path,
-        custody_root=custody_root,
-    )
+    inputs = assemble()
     assert inputs.inbox_unconsumed_count == 1
     assert inputs.possibly_live_attempts == ()
 
 
 def test_possibly_live_attempt_is_also_composite_state_incomplete(
-    rcl_log: SqliteCommitLog,
+    assemble: Callable[[], Any],
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
-    tmp_path: Path,
-    custody_root: Path,
 ) -> None:
     """This possibly-live attempt has a durable ``EVENT_HANDLING_STARTED`` marker but NO"""
     event = fx.crossing_event(seq=1)
@@ -159,13 +133,7 @@ def test_possibly_live_attempt_is_also_composite_state_incomplete(
     )
     _mark_handling_started(inbox, receipt.seq, marker)
 
-    inputs = _assemble(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        tmp_path=tmp_path,
-        custody_root=custody_root,
-    )
+    inputs = assemble()
     assert [attempt.event_id for attempt in inputs.possibly_live_attempts] == [event_id]
     assert inputs.composite_state_incomplete_attempt_ids == (event_id,)
 
@@ -182,11 +150,10 @@ def _composite() -> CompositeState:
 
 
 def test_composite_state_is_complete_after_a_clean_hand_off(
-    rcl_log: SqliteCommitLog,
+    assemble: Callable[[], Any],
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
     tmp_path: Path,
-    custody_root: Path,
 ) -> None:
     """Independent-review finding F3 (2026-09-10): a possibly-live attempt whose ``event_id``"""
     event = fx.crossing_event(seq=1)
@@ -207,23 +174,14 @@ def test_composite_state_is_complete_after_a_clean_hand_off(
     writer = CompositeStateWriter(tmp_path / "composite_state.sqlite3")
     writer(attempt_id, _composite())
 
-    inputs = _assemble(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        tmp_path=tmp_path,
-        custody_root=custody_root,
-    )
+    inputs = assemble()
     assert [attempt.event_id for attempt in inputs.possibly_live_attempts] == [event_id]
     assert inputs.composite_state_incomplete_attempt_ids == ()
 
 
 def test_forged_divergent_replay_row_holds_the_barrier(
-    rcl_log: SqliteCommitLog,
+    assemble: Callable[[], Any],
     evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    tmp_path: Path,
-    custody_root: Path,
 ) -> None:
     """Independent-review finding F5 (2026-09-10) — obligation 1's mutation guard: a"""
     evidence_store.append(
@@ -232,13 +190,7 @@ def test_forged_divergent_replay_row_holds_the_barrier(
         record_class="REPLAY_DIVERGED",
     )
 
-    inputs = _assemble(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        tmp_path=tmp_path,
-        custody_root=custody_root,
-    )
+    inputs = assemble()
     assert inputs.replay_verdict_ok is False
 
     verdict = RecoveryBarrier.verdict(inputs)
@@ -246,11 +198,8 @@ def test_forged_divergent_replay_row_holds_the_barrier(
 
 
 def test_real_replay_verdict_row_satisfies_obligation_one(
-    rcl_log: SqliteCommitLog,
+    assemble: Callable[[], Any],
     evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    tmp_path: Path,
-    custody_root: Path,
 ) -> None:
     """The positive half: a durable ``REPLAY_VERDICT_IDENTICAL`` row with no"""
     evidence_store.append(
@@ -259,22 +208,13 @@ def test_real_replay_verdict_row_satisfies_obligation_one(
         record_class="REPLAY_VERDICT_IDENTICAL",
     )
 
-    inputs = _assemble(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        tmp_path=tmp_path,
-        custody_root=custody_root,
-    )
+    inputs = assemble()
     assert inputs.replay_verdict_ok is True
 
 
 def test_malformed_inbox_row_fails_obligation_five_gracefully(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
+    assemble: Callable[[], Any],
     inbox: SqliteEventInbox,
-    tmp_path: Path,
-    custody_root: Path,
 ) -> None:
     """Independent-review finding F5 (2026-09-10) — obligation 5's mutation guard: a row whose"""
     inbox._conn.execute(
@@ -284,13 +224,7 @@ def test_malformed_inbox_row_fails_obligation_five_gracefully(
         "'{\"not\": \"a valid EngineEvent shape\"}', 'digest-x', NULL, NULL)"
     )
 
-    inputs = _assemble(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        tmp_path=tmp_path,
-        custody_root=custody_root,
-    )
+    inputs = assemble()
     assert inputs.inbox_events_parseable is False
 
     verdict = RecoveryBarrier.verdict(inputs)
@@ -298,18 +232,9 @@ def test_malformed_inbox_row_fails_obligation_five_gracefully(
 
 
 def test_well_formed_inbox_rows_satisfy_obligation_five(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
+    assemble: Callable[[], Any],
     inbox: SqliteEventInbox,
-    tmp_path: Path,
-    custody_root: Path,
 ) -> None:
     inbox.enqueue(fx.crossing_event(seq=1))
-    inputs = _assemble(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        tmp_path=tmp_path,
-        custody_root=custody_root,
-    )
+    inputs = assemble()
     assert inputs.inbox_events_parseable is True
