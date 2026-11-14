@@ -1533,6 +1533,32 @@ def test_the_export_hook_skips_loudly_when_no_projection_dir_is_set(env: Env) ->
     assert "일일 세션 종료" in r.stdout
 
 
+def test_the_export_hook_skips_a_relative_projection_dir(env: Env) -> None:
+    """A relative path resolves against cron's cwd, not the dashboard mount."""
+    _data_parents(env)
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        TOS_OPERATOR_PROJECTION_DIR="./data/tos_runtime",
+    )
+    assert r.returncode == 0, r.stdout
+    assert "is not absolute" in r.stdout
+    assert not env.export_argv.exists()
+
+
+def test_a_zero_ceiling_does_not_disable_the_export_timeout(env: Env) -> None:
+    """`timeout 0s` means no timeout, so 0 falls back to the default ceiling."""
+    _data_parents(env)
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
+        CP3_BARS_CEILING_S="0",
+    )
+    assert r.returncode == 0, r.stdout
+    assert "ceiling 120s" in r.stdout
+
+
 def test_the_export_hook_runs_after_the_runner_and_keeps_the_session_rc(
     env: Env,
 ) -> None:

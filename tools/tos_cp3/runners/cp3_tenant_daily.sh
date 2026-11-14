@@ -775,8 +775,12 @@ log "runner rc=$rc session=$SESSION"
 # and does nothing. A guessed destination would write a document the container
 # does not mount, which from the page is indistinguishable from no document.
 BARS_CEILING_S=${CP3_BARS_CEILING_S:-120}
+# `timeout 0s` disables the ceiling, so 0 and non-numbers fall back to 120.
+case $BARS_CEILING_S in ''|*[!0-9]*|0) BARS_CEILING_S=120 ;; esac
 if [ -z "${TOS_OPERATOR_PROJECTION_DIR:-}" ]; then
   log "=== BARS EXPORT SKIPPED — TOS_OPERATOR_PROJECTION_DIR is unset, so there is no directory the dashboard reads; set it for this wrapper to enable the /tos bar panel (this does NOT affect the session)"
+elif [ "${TOS_OPERATOR_PROJECTION_DIR#/}" = "$TOS_OPERATOR_PROJECTION_DIR" ]; then
+  log "=== BARS EXPORT SKIPPED — TOS_OPERATOR_PROJECTION_DIR=$TOS_OPERATOR_PROJECTION_DIR is not absolute; a relative path resolves against cron's cwd, not the dashboard mount (this does NOT affect the session)"
 elif [ ! -f "$WT/tools/tos_cp3/export_bars.py" ]; then
   # `-f` alone: the file is run as `"$PY" <script>`, so its execute bit is
   # irrelevant and the earlier `! -x && ! -f` pair could only ever agree with
