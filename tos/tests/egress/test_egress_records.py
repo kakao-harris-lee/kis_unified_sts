@@ -1,8 +1,4 @@
-"""EGRESS digest-bound artifacts — id ⊥ digest, required-covered, malformed-model (design #22 §2).
-
-Regime tag: structural / coordinate predicate substrate only; EGRESS-EV-004/005 substrate;
-EV-L1-complete claim forbidden.
-"""
+"""EGRESS digest-bound artifacts — id ⊥ digest, required-covered, malformed-model (design #22 §2)."""
 
 from __future__ import annotations
 
@@ -54,7 +50,6 @@ def test_qcc_id_independent_of_digest_same_id_diff_bytes_representable() -> None
 def test_issued_qcc_requires_every_required_covered_field() -> None:
     """(§2.3) An issued QCC missing any _REQUIRED_COVERED field is unconstructable."""
     with pytest.raises((ArtifactIntegrityError, ValueError)):
-        # active_egress_principal is required-covered; leaving it None must fail issuance.
         clean_qcc(active_egress_principal=None)
 
 
@@ -69,7 +64,7 @@ def test_qcc_malformed_trial_claim_coexistence_rejected() -> None:
     with pytest.raises((ArtifactIntegrityError, ValueError)):
         clean_qcc(
             is_restricted_live_trial=True,
-            trial_claims=TrialClaims(trial_policy_generation=1),  # incomplete
+            trial_claims=TrialClaims(trial_policy_generation=1),
         )
 
 

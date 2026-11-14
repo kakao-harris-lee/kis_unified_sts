@@ -1,6 +1,4 @@
-"""``SqliteEvidenceReceiptReader`` tests (TOS Phase 5 W1 close-out, GAP 1) — reads real durable
-evidence-store rows, mirroring ``test_witness_synthetic.py``'s own technique for the same store.
-"""
+"""``SqliteEvidenceReceiptReader`` tests (TOS Phase 5 W1 close-out, GAP 1) — reads real durable"""
 
 from __future__ import annotations
 
@@ -117,9 +115,7 @@ def test_receipts_preserves_attempt_id_none(store) -> None:
 
 
 def test_a_finality_proof_key_not_matching_the_known_prefix_is_ignored(store) -> None:
-    """A malformed / unrelated idempotency_key never falsely credits an attempt with a proof
-    it never received (module docstring's "disclosed coupling" — fail-closed, never a false
-    positive)."""
+    """A malformed / unrelated idempotency_key never falsely credits an attempt with a proof"""
     _append_result(
         store,
         attempt_id="a1",
@@ -154,14 +150,8 @@ def test_module_never_writes_to_the_evidence_store() -> None:
     assert "time.time(" not in source
 
 
-# ---------------------------------------------------------------------------
-# trading_date (plan 2026-09-26 egress trading date, T-4)
-# ---------------------------------------------------------------------------
-
-
 def test_trading_date_is_read_through_the_real_engine_evidence_sink(store) -> None:
-    """The date the kernel copied onto the evidence record reaches the receipt observation —
-    written by the production sink, not a hand-built payload."""
+    """The date the kernel copied onto the evidence record reaches the receipt observation —"""
     from tos.engine import (
         EgressResultKind,
         EngineEvidenceRecord,
@@ -191,8 +181,7 @@ def test_trading_date_is_read_through_the_real_engine_evidence_sink(store) -> No
     "recorded", [None, "", "2026-08-05", "2026085", 20260805], ids=repr
 )
 def test_absent_or_malformed_trading_date_reads_as_none(store, recorded) -> None:
-    """Every receipt recorded before the date existed has no key; a malformed value is no date.
-    Either way the join cannot use it."""
+    """Every receipt recorded before the date existed has no key; a malformed value is no date."""
     store.append(
         {
             "attempt_id": "a1",

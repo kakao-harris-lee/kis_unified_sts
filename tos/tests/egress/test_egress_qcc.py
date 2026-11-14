@@ -1,14 +1,4 @@
-"""Core §5.1-§5.4 — Quorum Commit Certificate structural validation (design #22; EGRESS-EV-004).
-
-Covers the four QCC yolk predicates: structural completeness (§5.1), coordinate currency (§5.2),
-quorum threshold shape with dedup interpretation B + lone-leader rejection (§5.3), and the
-evidence-receipt-is-not-a-QCC rejection (§5.4). The over-realization boundary is asserted: the
-threshold predicate is a distinct-count over **injected** verified-flags, never a signature check.
-
-Regime tag: structural / coordinate predicate substrate only; EGRESS-EV-004 substrate;
-EV-L1-complete claim forbidden. Over-realization boundary: cryptographic / consensus validity is
-+Security; L1 is structure / coordinate / count only.
-"""
+"""Core §5.1-§5.4 — Quorum Commit Certificate structural validation (design #22; EGRESS-EV-004)."""
 
 from __future__ import annotations
 
@@ -30,8 +20,6 @@ from ._egress_strategies import (
     expected_quorum_threshold,
     signer_sets,
 )
-
-# ---- §5.1 structural completeness ----------------------------------------
 
 
 def test_clean_qcc_is_structurally_complete() -> None:
@@ -68,10 +56,9 @@ def test_qcc_missing_a_nonce_is_incomplete() -> None:
 
 def test_model_construct_bypass_incomplete_qcc_still_rejected() -> None:
     """(§2.3 defence-in-depth) A model_construct-bypassed None-required QCC fails the §5.1 predicate."""
-    # model_construct skips validators, so a required-None QCC can be built — the predicate re-checks.
     bypassed = QuorumCommitCertificate.model_construct(
         qcc_id="qcc-x",
-        cluster_identity=None,  # required-covered left None
+        cluster_identity=None,
         signer_coordinates=clean_signers(),
         capability_nonce="n1",
         action_flow_permit_nonce="n2",
@@ -87,15 +74,10 @@ def test_model_construct_bypass_malformed_trial_still_rejected() -> None:
     bypassed = base.model_copy(
         update={
             "is_restricted_live_trial": True,
-            "trial_claims": TrialClaims(trial_policy_generation=1),  # incomplete
+            "trial_claims": TrialClaims(trial_policy_generation=1),
         }
     )
-    # model_copy also skips the after-validator re-run for the coexistence rule in some paths;
-    # the §5.1 predicate re-checks the trial completeness regardless.
     assert quorum_commit_certificate_structurally_complete(bypassed) is False
-
-
-# ---- §5.2 coordinate currency --------------------------------------------
 
 
 def test_current_coordinates_match_passes() -> None:
@@ -122,12 +104,8 @@ def test_none_current_or_qcc_fails_currency() -> None:
 
 def test_none_carried_coordinate_fails_currency() -> None:
     """(§5.2 fail-closed) A None carried coordinate (vs a concrete current) fails currency."""
-    # Build a QCC missing a NON-required coordinate (route_policy_generation) via model_copy bypass.
     qcc = clean_qcc().model_copy(update={"route_policy_generation": None})
     assert quorum_coordinates_current(qcc, clean_current_coordinates()) is False
-
-
-# ---- §5.3 quorum threshold shape (dedup interpretation B) -----------------
 
 
 def test_two_distinct_eligible_signed_meets_quorum_two() -> None:
@@ -166,23 +144,18 @@ def test_dedup_b_conflicting_entry_excludes_identity() -> None:
     """(§5.3 dedup-B) A conflicting (unverified) entry for an identity EXCLUDES that identity."""
     good_a = clean_signer(signer_identity="a")
     good_b = clean_signer(signer_identity="b")
-    # A second 'a' entry with eligible_verified=None conflicts ⇒ 'a' is excluded (only 'b' counts).
     conflicting_a = clean_signer(signer_identity="a", eligible_verified=None)
     signers = (good_a, conflicting_a, good_b)
-    # dedup-B: only 'b' counts ⇒ 1 < 2 ⇒ denial (the forged-entry-piggyback fail-open is blocked).
     assert quorum_threshold_structurally_met(signers, 2) is False
-    # With N=1 the surviving 'b' still meets the threshold (availability side of dedup-B).
     assert quorum_threshold_structurally_met(signers, 1) is True
 
 
 def test_dedup_duplicate_agreeing_entries_count_once() -> None:
     """(§5.3 dedup) Duplicate agreeing entries for one identity count that identity once."""
     a1 = clean_signer(signer_identity="a")
-    a2 = clean_signer(signer_identity="a")  # same identity, both eligible + signed
+    a2 = clean_signer(signer_identity="a")
     b = clean_signer(signer_identity="b")
-    # 'a' counted once + 'b' = 2 distinct ⇒ meets N=2.
     assert quorum_threshold_structurally_met((a1, a2, b), 2) is True
-    # …but not N=3 (only two distinct identities).
     assert quorum_threshold_structurally_met((a1, a2, b), 3) is False
 
 
@@ -193,28 +166,14 @@ def test_unverified_or_none_flag_signer_not_counted() -> None:
     assert quorum_threshold_structurally_met((unsigned, ineligible), 1) is False
 
 
-# ---- §5.3 MAJOR-1 — lone-signer carve-out is role-safe (order-independent) ------------------
-
-
 def test_lone_none_role_signer_is_insufficient() -> None:
-    """(§5.3 MAJOR-1) A lone verified signer with a None role is NOT a confirmed quorum member ⇒ False.
-
-    A ``None`` role is not positive proof of QUORUM_MEMBER; ADR §11.2:351 "One leader signature ...
-    is insufficient" is realized by requiring a positively-confirmed member for a lone signer.
-    """
-    # `signer_role` is genuinely `SignerRole | None` on the real domain field
-    # (`SignerCoordinate.signer_role`, egress/state.py) — no cast needed.
+    """(§5.3 MAJOR-1) A lone verified signer with a None role is NOT a confirmed quorum member ⇒ False."""
     none_role = clean_signer(signer_identity="n", signer_role=None)
     assert quorum_threshold_structurally_met((none_role,), 1) is False
 
 
 def test_lone_signer_role_reconcile_is_order_independent() -> None:
-    """(§5.3 MAJOR-1) A duplicate-entry role conflict is rejected regardless of input order.
-
-    The same identity carrying both a QUORUM_MEMBER entry and a LEADER entry must NOT let a genuine
-    leader signature slip through by role-label duplication — the verdict must be identical whether
-    the member entry or the leader entry appears first (no ``entries[0]`` order dependence).
-    """
+    """(§5.3 MAJOR-1) A duplicate-entry role conflict is rejected regardless of input order."""
     member = clean_signer(signer_identity="a", signer_role=SignerRole.QUORUM_MEMBER)
     leader = clean_signer(signer_identity="a", signer_role=SignerRole.LEADER)
     member_first = quorum_threshold_structurally_met((member, leader), 1)
@@ -228,7 +187,6 @@ def test_lone_confirmed_quorum_member_is_sufficient_for_n1() -> None:
     """(§5.3 MAJOR-1 positive side) A lone, all-entries-agree QUORUM_MEMBER meets a policy N=1."""
     member = clean_signer(signer_identity="a", signer_role=SignerRole.QUORUM_MEMBER)
     assert quorum_threshold_structurally_met((member,), 1) is True
-    # Duplicate agreeing member entries (both QUORUM_MEMBER) still confirm the lone identity.
     dup = clean_signer(signer_identity="a", signer_role=SignerRole.QUORUM_MEMBER)
     assert quorum_threshold_structurally_met((member, dup), 1) is True
 
@@ -240,9 +198,6 @@ def test_threshold_matches_oracle_bidirectionally(data) -> None:
     result = quorum_threshold_structurally_met(signers, quorum_n)
     expected = expected_quorum_threshold(signers, quorum_n)
     assert result == expected
-
-
-# ---- §5.4 evidence receipt is not a quorum proof -------------------------
 
 
 def test_evidence_receipt_is_never_a_quorum_proof() -> None:

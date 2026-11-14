@@ -34,14 +34,8 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-#: READMEs checked when no path is given — every evidence campaign README plus the tos one.
-DEFAULT_GLOBS: tuple[str, ...] = (
-    "docs/broker-profiles/evidence/*/README.md",
-    "tos-evidence/**/README.md",
-)
+DEFAULT_GLOBS: tuple[str, ...] = ("docs/broker-profiles/evidence/*/README.md",)
 
-#: `` `<artifact>.json:<path>=<value>` `` — a single inline-code token. The artifact is a bare
-#: file name (resolved next to the README, never a path that could leave its directory).
 CITATION_RE = re.compile(
     r"`(?P<artifact>[A-Za-z0-9][A-Za-z0-9._-]*\.json)"
     r":(?P<path>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])*)"
@@ -114,8 +108,7 @@ def resolve(document: Any, path: str) -> Any:
 
 
 def render_value(value: Any) -> str:
-    """How a resolved JSON value is written on the right of ``=``: strings verbatim, everything
-    else as compact JSON (``true``, ``null``, ``25``, ``[20,5]``)."""
+    """How a resolved JSON value is written on the right of ``=``: strings verbatim, everything"""
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))

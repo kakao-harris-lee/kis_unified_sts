@@ -1,9 +1,4 @@
-"""representation != enforcement (design #10 §4.5; ADR §19/§27; §17.5 line 947).
-
-A profile / declaration / verdict is a non-transmitting, non-enforcing datum: no egress /
-transmit / mutate / authorize / release / KnowledgeState-set method exists anywhere in the
-brokercap surface. The producers return decision bools only — the owning runtime enforces.
-"""
+"""representation != enforcement (design #10 §4.5; ADR §19/§27; §17.5 line 947)."""
 
 from __future__ import annotations
 
@@ -31,10 +26,6 @@ _MODELS = (
     UncertainSendVerdict,
 )
 
-#: Names that would betray egress / mutation / authorization / state-setting. ("send" is
-#: intentionally NOT listed: ``uncertain_send_policy`` is a pure decision producer named for
-#: the ADR §12.4 "uncertain send" domain concept — actual transmission is caught by
-#: "transmit" / "egress".)
 _BANNED_MODEL_TOKENS = (
     "transmit",
     "egress",

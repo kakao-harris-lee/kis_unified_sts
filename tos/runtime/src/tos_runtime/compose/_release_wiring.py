@@ -1,36 +1,4 @@
-"""Finality release-consumer compose wiring (TOS Phase 5 W2-R; plan §10 row ①③).
-
-Called from :func:`~tos_runtime.compose.root.compose_paper_runtime` immediately after
-``_finalize`` returns a fully-wired :class:`~tos_runtime.compose._types.ComposedRuntime` —
-mirrors :mod:`tos_runtime.compose._recovery_wiring`'s own precedent (see that module's own
-docstring "Why a separate module, not a block inside ``_finalize``"): the durable RCL log /
-evidence store / inbox / time service / instrument key this consumer depends on are ALL already
-public fields on that runtime, and ``_wiring.py``'s own size-budget ceiling
-(``config/tos_size_budget.yaml`` — registered at 1197 lines) must not grow for this wave (plan
-§4's own "``_wiring.py``는 성장 금지"), so this module reaches ``ComposedRuntime``'s already-
-public surface — and attaches the built consumer via
-:meth:`~tos_runtime.engine.driver.EngineDriver.bind_release_consumer` — rather than adding a new
-parameter to :func:`~tos_runtime.compose._engine_wiring.wire_engine_and_driver`/
-:func:`~tos_runtime.compose._engine_wiring.build_engine_driver`.
-
-**Independently RE-LOADS ``finality.yaml`` for ``release_proof_wait_ms``** — the SAME accepted
-pattern :func:`~tos_runtime.compose._recovery_wiring.apply_recovery_barrier` already uses,
-re-loading ``engine_driver.yaml`` a second time in a second wiring module (that function's own
-body). Config loading is cheap and idempotent, so a second load in a second wiring module is a
-duplication of a read, never a duplication of authority — ``_wiring.py``'s own ``_finalize``
-loads the SAME file once already for :class:`~tos_runtime.posttrade.finality.SyntheticFinalityProducer`'s
-own construction; both loads see the identical operator-approved file.
-
-**Reuses :mod:`tos_runtime.recovery.reconciliation`'s own private factories** —
-``_build_reconciliation_service`` (the SAME ``reservation_id_for_attempt`` bridge
-:mod:`tos_runtime.recovery.reconciliation`'s own module docstring "second identity gap" section
-describes) and ``_build_freshness_marker`` — never a second, possibly-diverging construction
-(team-lead directive, plan §10 row ①③: "construct the service EXACTLY the way
-``recovery/reconciliation.py:216`` does").
-
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``pathlib``) +
-``tos.canonical`` + ``tos_runtime.*`` only. No ``shared.*``.
-"""
+"""Finality release-consumer compose wiring (TOS Phase 5 W2-R; plan §10 row ①③)."""
 
 from __future__ import annotations
 
@@ -47,9 +15,6 @@ from tos_runtime.posttrade.release_consumer import FinalityReleaseConsumer
 from tos_runtime.posttrade.unsent_release import UnsentReleasePass
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.recon.ports import BrokerWitness
-
-# TOS Phase 5 W1 factory reuse (team-lead directive, plan §10 row ①③) — see this module's own
-# docstring "Reuses tos_runtime.recovery.reconciliation's own private factories".
 from tos_runtime.recovery.reconciliation import (  # noqa: SLF001
     _build_reconciliation_service,
 )
@@ -57,8 +22,6 @@ from tos_runtime.time.sources import MonotonicSource
 
 __all__ = ["FINALITY_CONFIG_NAME", "apply_release_wiring"]
 
-#: The config file name (mirrors ``_wiring.py``'s own ``_FINALITY_CONFIG_NAME`` literal — module
-#: docstring's "independently re-loads" section).
 FINALITY_CONFIG_NAME = "finality.yaml"
 
 
@@ -72,50 +35,7 @@ def apply_release_wiring(
     posttrade: BrokerPosttrade | None = None,
     venue_witness: BrokerWitness | None = None,
 ) -> ComposedRuntime:
-    """Build the TOS Phase 5 W2-R :class:`~tos_runtime.posttrade.release_consumer
-    .FinalityReleaseConsumer` and attach it to ``runtime.driver``.
-
-    Args:
-        runtime: The just-``_finalize``d :class:`~tos_runtime.compose._types.ComposedRuntime`
-            (mutated in place via ``runtime.driver.bind_release_consumer`` and returned) — its
-            ``.driver`` is still real at the call site :func:`~tos_runtime.compose.root
-            .compose_paper_runtime` uses (this wiring runs BEFORE
-            :func:`~tos_runtime.compose._recovery_wiring.apply_recovery_barrier`, which may
-            later set ``.driver`` to ``None`` on a HOLD verdict — attaching a consumer to a
-            driver that is then detached is harmless: a detached driver's
-            ``core.handle``/``run_once`` is never reachable at all, so the consumer bound to it
-            never runs either).
-        config_dir: The SAME directory ``compose_paper_runtime`` was given — read again here
-            only for ``finality.yaml``'s own ``release_proof_wait_ms`` (module docstring).
-        scheme: The SAME canonicalization scheme this runtime composed with.
-        monotonic_source: The SAME injected monotonic clock this runtime composed with (module
-            docstring — never a fresh ``ProcessMonotonicSource()``, which would desynchronize
-            this consumer's obligation-expiry clock from the driver's own timeout clock in a
-            test that injects a fake one).
-        post_trade_dimension_state: The POST_TRADE currentness dimension reader's late-bound
-            cell (Phase 5 W3.2, plan §2 decision 5 —
-            :class:`~tos_runtime.compose._dimension_readers._PostTradeDimensionState`) —
-            filled in with the built consumer below, or left ``None`` (module docstring's
-            "consumer not wired" case) when ``runtime.driver`` is already ``None``.
-        posttrade: PR-3b — this boot's broker post-trade parts
-            (:mod:`tos_runtime.compose._broker_posttrade_wiring`). When enabled (stock MOCK boot),
-            the consumer reconciles against the KIS witness and re-loads broker proofs; the built
-            producer and consumer are recorded on it for the fill observer. ``None`` or disabled
-            keeps the synthetic witness and producer.
-        venue_witness: #1011 P2 — this boot's
-            :class:`~tos_runtime.recon.witness_synthetic_venue.SyntheticVenueLedgerWitness`, or
-            ``None``. Read ONLY when ``posttrade`` supplies none, which is every synthetic boot;
-            the two can never both be set, because a venue ledger is refused for the
-            broker-reaching transport a ``posttrade`` witness requires
-            (:func:`~tos_runtime.compose._venue_ledger_wiring.build_synthetic_venue_ledger`).
-            ``None`` keeps :class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness`
-            — today's behaviour.
-
-    Returns:
-        ``runtime`` itself. A no-op (returns ``runtime`` unchanged) when ``runtime.driver`` is
-        already ``None`` — nothing to attach a consumer to, and
-        ``post_trade_dimension_state.consumer`` stays ``None``.
-    """
+    """Build the TOS Phase 5 W2-R :class:`~tos_runtime.posttrade.release_consumer"""
     if runtime.driver is None:
         return runtime
     finality_config = load_finality_config(config_dir / FINALITY_CONFIG_NAME)
@@ -156,23 +76,7 @@ def apply_release_wiring(
 def _build_unsent_release(
     runtime: ComposedRuntime, *, scheme: CanonicalizationScheme
 ) -> UnsentReleasePass:
-    """Build #974 Q2's never-sent release pass — **built here, never run here**.
-
-    **It only constructs.** An earlier revision made the plan §3.3 boot pass from this function,
-    which put it BEFORE :func:`~tos_runtime.compose._recovery_wiring.apply_recovery_barrier` and
-    so let a HOLD boot give capacity back — against that module's own stated invariant, "A HOLD
-    verdict never releases capacity … There is no code path left that could touch capacity"
-    (review-1023 M1). Both the boot run and the per-turn binding now live in
-    :func:`~tos_runtime.compose._operations_wiring.apply_operations_wiring`, which runs after the
-    barrier; see :attr:`~tos_runtime.compose._types.ComposedRuntime.unsent_release`.
-
-    Args:
-        runtime: The runtime whose ``core.ledger`` / RCL log / evidence store this pass acts on.
-        scheme: The SAME canonicalization scheme this runtime composed with.
-
-    Returns:
-        The built pass, to publish on the runtime.
-    """
+    """Build #974 Q2's never-sent release pass — **built here, never run here**."""
     instrument_key = runtime.context_resolver.instrument_key
     return UnsentReleasePass(
         rcl_log=runtime.rcl_log,

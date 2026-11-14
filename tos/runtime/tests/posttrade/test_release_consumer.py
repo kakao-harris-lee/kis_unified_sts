@@ -1,37 +1,4 @@
-"""Hermetic tests for :mod:`tos_runtime.posttrade.release_consumer` (TOS Phase 5 W2-R; plan §10
-row ①).
-
-**A genuine structural finding, disclosed here rather than worked around (see
-``test_cancel_ack_never_releases_under_the_current_reconciliation_model`` below and the
-module-under-test's own docstring for the full write-up).** For a ``CANCEL_ACK``/``EXPIRED``/
-``REJECT`` attempt, :class:`~tos_runtime.recon.service.ReconciliationService`'s
-``permits_capacity_release`` is **structurally unreachable** under the CURRENT reconciliation
-model, for two independent reasons, either one sufficient on its own:
-
-1. :func:`tos.recon.predicates.field_reconciled_proof_ok`'s own docstring names "cancel ACK /
-   terminal-status-without-quantity => no FQP token => False" as an explicit, intended case —
-   and this consumer's own design produces a non-execution proof ONLY AFTER reconciliation
-   corroborates (plan §3's rejected alternative "주문 응답으로 finality 판정"), so no FQP token
-   can possibly exist yet when reconciliation runs for a fresh attempt.
-2. Measured directly (not merely inferred): ``ReconciliationService``'s own
-   ``_QUANTITY_FIELDS`` corroboration (``CUMULATIVE_FILLED_QUANTITY``/
-   ``REMAINING_EXECUTABLE_QUANTITY``) requires TWO independent numeric-magnitude observations
-   to reach ``CORROBORATED`` — one from the evidence-receipt path, one from the witness path.
-   ``EgressResultPayload``'s own validator forbids ANY fill magnitude on a ``CANCEL_ACK``/
-   ``EXPIRED``/``REJECT`` payload, so the real
-   :class:`~tos_runtime.evidence.sinks.EngineEvidenceSinkAdapter`-written evidence receipt for
-   these three kinds NEVER carries a quantity observation — even a fully independent witness
-   reporting an explicit zero quantity is then, structurally, ``SINGLE_SOURCE`` at best, never
-   ``CORROBORATED``. Fabricating a non-``None`` quantity on the evidence-receipt side in a test
-   would misrepresent what the real runtime ever produces, so this suite does not do that.
-
-The consumer's OWN release wiring for this path (produce the non-execution proof, append its
-evidence, re-load it, apply the transferable/current gates, release) is still exercised and
-pinned — via a hand-picked stub :class:`~tos_runtime.recon.service.ReconciliationService`-shaped
-double reporting a canned permitting report, the SAME pattern
-``tests/recovery/test_reconciliation.py``'s own scenario (d) mutation guard already uses in this
-codebase — never a fake kernel predicate, never a relaxed gate in the module under test.
-"""
+"""Hermetic tests for :mod:`tos_runtime.posttrade.release_consumer` (TOS Phase 5 W2-R; plan §10"""
 
 from __future__ import annotations
 
@@ -95,22 +62,12 @@ _ACCOUNT = "acct-relc"
 _INSTRUMENT = "101S06"
 _KEY = InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT)
 _ATTEMPT_ID = "attempt-relc-1"
-#: This module's reservations are committed under the PRE-#966 scope formula, and the autouse
-#: ``_attempt_permit_join`` fixture records this attempt's flow evidence, so every test here
-#: resolves through :func:`~tos_runtime.rcl.reservation_lookup.reservation_id_for_attempt`'s
-#: step 3: the join resolves, no per-permit row exists, the scope row does. That is exactly a
-#: ledger committed before #966 replaying on today's code — the suite is its regression proof.
 _RESERVATION_ID = scope_reservation_id(_ACCOUNT, _INSTRUMENT)
 _MAIN_PERMIT = "afg-permit-relc-main"
 
 
 class _TrustedTimeService:
-    """A minimal ``TrustworthyTimeService`` double reporting a genuinely TRUSTED snapshot —
-    mirrors ``tests/recovery/test_reconciliation.py``'s own ``_TrustedTimeService``. Also
-    exposes ``health_state`` directly (TOS Phase 5 W2-R independent-review H2 fix): the real
-    :class:`~tos_runtime.time.service.TrustworthyTimeService` exposes it as a property, and
-    :meth:`~tos_runtime.posttrade.release_consumer.FinalityReleaseConsumer
-    ._check_obligation_expiry` reads it directly, not through ``current_snapshot()``."""
+    """A minimal ``TrustworthyTimeService`` double reporting a genuinely TRUSTED snapshot —"""
 
     health_state: HealthState = HealthState.TRUSTED
 
@@ -122,8 +79,7 @@ class _TrustedTimeService:
 
 
 class _UntrustedTimeService:
-    """A ``TrustworthyTimeService`` double reporting a NOT-``TRUSTED`` health state — for the H2
-    "evaluate and record nothing" negative test."""
+    """A ``TrustworthyTimeService`` double reporting a NOT-``TRUSTED`` health state — for the H2"""
 
     health_state: HealthState = HealthState.UNTRUSTED
 
@@ -173,10 +129,6 @@ def rcl_log(
     instance.close()
 
 
-#: TOS Phase 5 W2-R re-review finding NEW-2 (2026-09-10): a fake starting at ``0`` cannot
-#: distinguish "recorded the actual ``now_ms`` reading" from "recorded a hardcoded ``0``" --
-#: both look identical on the very first observation. A non-zero, non-round base makes the two
-#: distinguishable directly.
 _MONOTONIC_BASE_MS = 1_700_000_000_000
 
 
@@ -187,13 +139,7 @@ def monotonic_source() -> FakeMonotonicSource:
 
 @pytest.fixture(autouse=True)
 def _attempt_permit_join(evidence_store: SqliteEvidenceStore) -> None:
-    """This attempt's durable ``event_id`` join, which every real flow writes.
-
-    Required since review-973 L1: a join that does not resolve now yields ``None`` instead of
-    falling through to the scope row, so an attempt with no flow evidence at all holds. A real
-    attempt always has these two rows — they predate #966 — and recording them here keeps this
-    suite exercising the pre-#966 LEDGER (a scope-named reservation) rather than a pre-#966
-    EVIDENCE STORE, which is the case the fallback is actually for."""
+    """This attempt's durable ``event_id`` join, which every real flow writes."""
     _record_join(evidence_store, attempt_id=_ATTEMPT_ID, permit_identity=_MAIN_PERMIT)
 
 
@@ -226,9 +172,7 @@ def _open_reservation(
 def _open_reservation_under_scope(
     rcl_log: SqliteCommitLog, *, scope: ReservationScope
 ) -> None:
-    """Like :func:`_open_reservation`, but persists a caller-supplied
-    :class:`~tos.rcl.ReservationScope` (H1 fix tests: a scope genuinely divergent from what the
-    finality proof under test claims)."""
+    """Like :func:`_open_reservation`, but persists a caller-supplied"""
     identity = RuntimeIdentity(
         cell_id="relc-test-cell", process_nonce="relc-test-nonce"
     )
@@ -257,9 +201,7 @@ def _commit_transition(
     to_state: CapacityState,
     command_id: str,
 ) -> None:
-    """Commit one more reservation-lifecycle transition on the ALREADY-open ``_RESERVATION_ID``
-    reservation, reading the current tip fresh (M1 fix test: chaining the reservation through
-    multiple occupancies of the same overdue-eligible state)."""
+    """Commit one more reservation-lifecycle transition on the ALREADY-open ``_RESERVATION_ID``"""
     current_seq = SqliteReservationProjectionReader(rcl_log).reservation_last_seq(
         _RESERVATION_ID
     )
@@ -295,9 +237,6 @@ def _record_full_fill_receipt(
         payload, kind="EGRESS_RESULT_CONSUMED", record_class="EGRESS_RESULT_CONSUMED"
     )
     if finality_proof_recorded:
-        # A minimal shape sufficient for SqliteEvidenceReceiptReader's own idempotency-key
-        # scan (module docstring, "fake recon PORTS") -- never read by FinalityReleaseConsumer
-        # itself, which always re-loads its OWN proof independently.
         evidence_store.append(
             {"idempotency_key": f"synthetic-fqp-proof:{_ATTEMPT_ID}"},
             kind="POSTTRADE_FINALITY_PROOF",
@@ -326,9 +265,7 @@ def _record_non_execution_receipt(
 
 
 class _IndependentFullFillWitness:
-    """A genuinely independent (``independent_of_evidence_store=True``) broker witness double
-    reporting a ``FILLED`` order — mirrors ``test_reconciliation.py``'s own ``a2`` scenario.
-    """
+    """A genuinely independent (``independent_of_evidence_store=True``) broker witness double"""
 
     def observe(self, _scope: WitnessScope) -> WitnessSnapshot:
         return WitnessSnapshot(
@@ -436,37 +373,8 @@ def _kind_seq(evidence_store: SqliteEvidenceStore, kind: str) -> list[int]:
     return [seq for (seq,) in rows]
 
 
-# -- NEW-1 fix: import tos_runtime.posttrade.release_consumer cannot re-open the cycle ----
-
-
 def test_release_consumer_imports_cleanly_after_a_cold_cache_eviction() -> None:
-    """TOS Phase 5 W2-R re-review finding NEW-1 (2026-09-10): ``import
-    tos_runtime.posttrade.release_consumer`` used to fail with an ``ImportError`` on a
-    partially-initialized module -- ``release_consumer`` -> ``tos_runtime.engine.inbox``
-    (triggers ``tos_runtime/engine/__init__.py``) -> ``engine.driver`` -> ``engine
-    .finality_projection`` -> back to ``release_consumer``, still mid-import.
-
-    **No ``subprocess``/``os.environ``/``importlib.import_module`` here (firewall TOS-FW-B/
-    TOS-FW-C/TOS-FW-D forbid all three under ``tos/`` for tests too, per
-    ``tools/tos_firewall_check.py``'s own "parses every ``.py`` under ``tos/`` (src AND tests)"
-    scope, and TOS-FW-D specifically closes the static-analysis gap ``importlib.import_module``
-    would otherwise open).** A genuine cold start is reproduced IN-PROCESS instead, using a
-    PLAIN ``import`` statement (not a dynamic call -- the firewall's own AST check greps for
-    ``ast.Call`` nodes naming ``import_module``/``__import__``/``exec``/``eval``; the ``import``
-    keyword compiles to a different opcode entirely and is a genuinely static, allowlist-checked
-    import like any other in this file). **Measured, not assumed (first attempt at this test was
-    silently a no-op):** evicting ONLY the four modules literally named in the traceback
-    (``release_consumer``, ``engine.finality_projection``, ``engine.driver``, ``engine``) is NOT
-    enough -- ``tos_runtime.engine.inbox`` (a SIBLING submodule ``release_consumer.py`` imports
-    first, at line 156) stays cached, and ``from tos_runtime.engine.inbox import
-    SqliteEventInbox`` never needs to re-run ``tos_runtime/engine/__init__.py`` at all once that
-    exact dotted name is already a key in ``sys.modules`` -- CPython's own import machinery
-    short-circuits on the full dotted name before it ever re-checks the parent package chain.
-    This test therefore evicts EVERY ``tos_runtime.engine*`` entry (the whole subpackage, not a
-    hand-picked subset) plus ``tos_runtime.posttrade.release_consumer`` itself, then re-imports
-    fresh -- verified by hand to reproduce the identical traceback against a deliberately
-    re-broken copy of the fix, and to pass cleanly against the real one.
-    """
+    """TOS Phase 5 W2-R re-review finding NEW-1 (2026-09-10): ``import"""
     evicted_prefixes = ("tos_runtime.engine",)
     to_evict = [
         name
@@ -483,15 +391,9 @@ def test_release_consumer_imports_cleanly_after_a_cold_cache_eviction() -> None:
     finally:
         for name, module in saved.items():
             sys.modules[name] = module
-        # setattr, not plain assignment: `ModuleType` has no declared `engine`
-        # attribute, so `sys.modules["tos_runtime"].engine = ...` is an attr-defined
-        # error under mypy too, not just a ruff style preference.
         setattr(  # noqa: B010
             sys.modules["tos_runtime"], "engine", saved["tos_runtime.engine"]
         )
-
-
-# -- FULL_FILL -> POSITION_CONSUMED (happy path) -------------------------------------
 
 
 def test_full_fill_with_independent_witness_releases_to_position_consumed(
@@ -521,10 +423,6 @@ def test_full_fill_with_independent_witness_releases_to_position_consumed(
         record_class="POSTTRADE_FINALITY_PROOF",
     )
     inbox.record_finality_witness(_ATTEMPT_ID, True)
-    # finality_proof_recorded=False here: the REAL proof was already appended above (line 315);
-    # a second, minimal-shaped POSTTRADE_FINALITY_PROOF row with the same idempotency key would
-    # shadow it in _reload_proof's ORDER BY seq DESC scan (a self-inflicted test bug caught while
-    # writing this suite -- see this module's own docstring discipline of never faking a proof).
     _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
     _open_reservation(rcl_log)
 
@@ -539,24 +437,17 @@ def test_full_fill_with_independent_witness_releases_to_position_consumed(
 
     assert _reservation_state(rcl_log) is CapacityState.POSITION_CONSUMED
     assert _held_rows(evidence_store) == []
-    # Ordering pin: CAPACITY_RELEASE_INTENT must be durable strictly BEFORE the RCL log's own
-    # RCL_RESERVATION_TRANSITION evidence row for this transition.
     intent_seqs = _kind_seq(evidence_store, CAPACITY_RELEASE_INTENT_KIND)
     rcl_seqs = _kind_seq(evidence_store, "RCL_RESERVATION_TRANSITION")
     assert len(intent_seqs) == 1
     assert len(rcl_seqs) >= 1
     assert intent_seqs[0] < rcl_seqs[-1]
 
-    # kernel round #3 §2 decision 5 W2-K wiring: consume() now REPORTS the release via
-    # ReleaseOutcome, so tos_runtime.engine.finality_projection can build a kernel
-    # FinalityProofRef and call the engine's own ledger.release(ref).
     assert outcome.released is True
     assert outcome.attempt_id == _ATTEMPT_ID
     assert outcome.proof_digest == produced.proof.proof_id
     assert outcome.evidence_seq == intent_seqs[0]
-    assert (
-        outcome.resolution_generation == 0
-    )  # SyntheticFinalityProducer's own hardcoded 0
+    assert outcome.resolution_generation == 0
 
 
 def test_full_fill_release_outcome_feeds_a_real_kernel_ledger_release(
@@ -565,16 +456,7 @@ def test_full_fill_release_outcome_feeds_a_real_kernel_ledger_release(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """The full kernel round #3 §2 decision 5 / W2-K chain, end to end at the unit level (the
-    real compose e2e suite cannot reach this: its one synthetic broker witness is never
-    independent, so gate 3 never corroborates there — see
-    ``tests/compose/test_compose_root.py::test_full_fill_hand_off_never_releases_rcl_capacity_end_to_end``).
-    Here gate 3 is stubbed to corroborate (mirroring
-    ``test_cancel_ack_releases_when_reconciliation_permits_it``'s own pattern), so this proves
-    the WIRING — ``FinalityReleaseConsumer.consume``'s ``ReleaseOutcome`` really does carry
-    everything :func:`~tos_runtime.engine.finality_projection.project_finality` needs to build a
-    kernel :class:`~tos.engine.state.FinalityProofRef` and release the engine's OWN in-memory
-    projection too."""
+    """The full kernel round #3 §2 decision 5 / W2-K chain, end to end at the unit level (the"""
     from tos.engine.state import FinalityProofRef, ProvisionalReservationLedger
 
     producer = _producer()
@@ -611,8 +493,6 @@ def test_full_fill_release_outcome_feeds_a_real_kernel_ledger_release(
     outcome = consumer.consume(payload)
     assert outcome.released is True
 
-    # The SAME attempt, projected in the engine's own in-memory ledger up to POTENTIALLY_LIVE --
-    # exactly where it sits right before an EGRESS_RESULT lands, in every real compose root.
     ledger = ProvisionalReservationLedger(max_unresolved_send_per_scope=1)
     ledger.commit_unbound(_KEY, proposal_id="proposal-relc-1")
     ledger.bind_attempt(_KEY, attempt_id=_ATTEMPT_ID)
@@ -623,8 +503,6 @@ def test_full_fill_release_outcome_feeds_a_real_kernel_ledger_release(
     assert outstanding is not None
     assert outstanding.capacity_state is CapacityState.POSITION_CONSUMED
 
-    # ReleaseOutcome's own docstring: proof_digest/evidence_seq/resolution_generation are
-    # None unless released is True — already asserted above.
     assert outcome.proof_digest is not None
     assert outcome.evidence_seq is not None
     assert outcome.resolution_generation is not None
@@ -635,8 +513,6 @@ def test_full_fill_release_outcome_feeds_a_real_kernel_ledger_release(
         resolution_generation=outcome.resolution_generation,
     )
     assert ledger.release(ref) is True
-    # (kernel round #3 §2 decision 5b) RELEASED returns the scope — outstanding() no longer
-    # reports a released reservation at all, and the scope is admitted again.
     assert ledger.outstanding(_KEY) is None
     assert ledger.admits_new_exposure(_KEY) is True
 
@@ -647,8 +523,7 @@ def test_full_fill_without_witness_holds(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """Gate 1: a durable witness that is not exactly ``True`` (e.g. never written, mirroring a
-    non-``FULL_FILL`` producer outcome) holds -- never releases."""
+    """Gate 1: a durable witness that is not exactly ``True`` (e.g. never written, mirroring a"""
     payload = EgressResultPayload(
         instrument_key=_KEY,
         attempt_id=_ATTEMPT_ID,
@@ -658,7 +533,6 @@ def test_full_fill_without_witness_holds(
     )
     _record_full_fill_receipt(evidence_store, finality_proof_recorded=True)
     _open_reservation(rcl_log)
-    # deliberately never calling inbox.record_finality_witness(...)
 
     consumer = _consumer(
         rcl_log=rcl_log,
@@ -673,16 +547,10 @@ def test_full_fill_without_witness_holds(
     held = _held_rows(evidence_store)
     assert len(held) == 1
     assert held[0]["reason"] == ReleaseHoldReason.NO_WITNESS.value
-    # kernel round #3 §2 decision 5 W2-K wiring: a held (non-released) outcome carries no
-    # proof_digest/evidence_seq/resolution_generation -- the caller must not build a
-    # FinalityProofRef from it.
     assert outcome.released is False
     assert outcome.proof_digest is None
     assert outcome.evidence_seq is None
     assert outcome.resolution_generation is None
-
-
-# -- mutation pin (a): a non-positive report must hold even for a FULL_FILL payload ---
 
 
 def test_report_not_permitting_capacity_release_holds_even_with_witness_and_proof(
@@ -691,10 +559,7 @@ def test_report_not_permitting_capacity_release_holds_even_with_witness_and_proo
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """A ``ReconciliationService`` whose report never permits capacity release (fake PORTS
-    reporting no receipt at all, so the kernel predicate itself refuses) must hold -- catches
-    a hypothetical implementation that released off the payload's own ``FULL_FILL`` kind alone,
-    bypassing the reconciliation report."""
+    """A ``ReconciliationService`` whose report never permits capacity release (fake PORTS"""
     producer = _producer()
     payload = EgressResultPayload(
         instrument_key=_KEY,
@@ -717,8 +582,6 @@ def test_report_not_permitting_capacity_release_holds_even_with_witness_and_proo
     )
     inbox.record_finality_witness(_ATTEMPT_ID, True)
     _open_reservation(rcl_log)
-    # No EGRESS_RESULT_CONSUMED receipt recorded at all -- the evidence-receipt path sees
-    # nothing, so classification can never reach MATCHED and permits_capacity_release is False.
 
     consumer = _consumer(
         rcl_log=rcl_log,
@@ -734,9 +597,6 @@ def test_report_not_permitting_capacity_release_holds_even_with_witness_and_proo
     assert len(held) == 1
     assert held[0]["reason"] == ReleaseHoldReason.NOT_CORROBORATED.value
     assert _kind_seq(evidence_store, CAPACITY_RELEASE_INTENT_KIND) == []
-
-
-# -- non-independent (synthetic) witness holds, exactly like the composed runtime today --
 
 
 def test_full_fill_with_non_independent_witness_holds(
@@ -768,8 +628,6 @@ def test_full_fill_with_non_independent_witness_holds(
         record_class="POSTTRADE_FINALITY_PROOF",
     )
     inbox.record_finality_witness(_ATTEMPT_ID, True)
-    # finality_proof_recorded=False: the REAL proof is already appended above -- see the
-    # matching comment on test_full_fill_with_independent_witness_releases_to_position_consumed.
     _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
     _open_reservation(rcl_log)
 
@@ -785,22 +643,11 @@ def test_full_fill_with_non_independent_witness_holds(
     assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
     held = _held_rows(evidence_store)
     assert len(held) == 1
-    # #1011 §3.5: the store-derived witness earns its OWN reason, not the conflict one. The
-    # release decision is unchanged — still HELD, still POTENTIALLY_LIVE above.
     assert held[0]["reason"] == ReleaseHoldReason.WITNESS_NOT_INDEPENDENT.value
 
 
-# -- CANCEL_ACK / EXPIRED / REJECT -> RELEASED --------------------------------------
-
-
 class _StubPermittingReconciliationService:
-    """A minimal ``ReconciliationService``-shaped stand-in returning a canned, permitting
-    report -- the SAME pattern ``tests/recovery/test_reconciliation.py``'s own scenario (d)
-    mutation guard uses (module docstring): exercises THIS consumer's own release wiring in
-    isolation from whether the real kernel-backed reconciliation model can reach that report
-    for a ``CANCEL_ACK``/``EXPIRED``/``REJECT`` attempt today (see
-    ``test_cancel_ack_never_releases_under_the_current_reconciliation_model`` for that).
-    """
+    """A minimal ``ReconciliationService``-shaped stand-in returning a canned, permitting"""
 
     def reconcile(self, _scope: WitnessScope, *, freshness: FreshnessMarker) -> object:
         del freshness
@@ -829,10 +676,7 @@ def test_cancel_ack_releases_when_reconciliation_permits_it(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """Pins the consumer's OWN release wiring for the non-execution path: given a permitting
-    reconciliation report (module docstring's stub), the consumer produces the zero-quantity
-    non-execution proof itself, durably records it, re-loads it, and releases to ``RELEASED``.
-    """
+    """Pins the consumer's OWN release wiring for the non-execution path: given a permitting"""
     payload = EgressResultPayload(
         instrument_key=_KEY,
         attempt_id=_ATTEMPT_ID,
@@ -871,7 +715,6 @@ def test_cancel_ack_releases_when_reconciliation_permits_it(
     assert len(intent_seqs) == 1
     assert intent_seqs[0] < rcl_seqs[-1]
 
-    # kernel round #3 §2 decision 5 W2-K wiring.
     assert outcome.released is True
     assert outcome.attempt_id == _ATTEMPT_ID
     assert outcome.evidence_seq == intent_seqs[0]
@@ -885,14 +728,7 @@ def test_cancel_ack_never_releases_under_the_current_reconciliation_model(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """The honest, undoctored path (module docstring): a fresh ``CANCEL_ACK``, a fully
-    independent witness reporting ``CANCELLED``, and NO pre-existing FQP token -- exactly what
-    a genuine first encounter looks like under this consumer's own AFTER-corroboration proof
-    design -- still holds via the REAL :class:`~tos_runtime.recon.service.ReconciliationService`
-    and REAL evidence-receipt reader, because :func:`tos.recon.predicates
-    .field_reconciled_proof_ok` refuses any capacity-releasing field with no FQP token AND the
-    quantity fields can never reach ``CORROBORATED`` from a single (witness-only) numeric
-    observation. Structural, not a bug (module docstring)."""
+    """The honest, undoctored path (module docstring): a fresh ``CANCEL_ACK``, a fully"""
     payload = EgressResultPayload(
         instrument_key=_KEY,
         attempt_id=_ATTEMPT_ID,
@@ -920,9 +756,6 @@ def test_cancel_ack_never_releases_under_the_current_reconciliation_model(
         "SELECT COUNT(*) FROM entries WHERE kind = 'POSTTRADE_FINALITY_PROOF'"
     ).fetchone()[0]
     assert proof_rows == 0
-
-
-# -- non-eligible kinds do nothing at all ---------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -966,9 +799,6 @@ def test_non_release_eligible_kinds_record_nothing_release_related(
     assert _kind_seq(evidence_store, CAPACITY_RELEASE_INTENT_KIND) == []
 
 
-# -- obligation expiry (plan §10 row ④, record-only) -----------------------------------
-
-
 def test_obligation_expiry_first_observation_only_records_wait_start(
     rcl_log: SqliteCommitLog,
     evidence_store: SqliteEvidenceStore,
@@ -994,11 +824,7 @@ def test_obligation_expiry_first_observation_only_records_wait_start(
         "SELECT COUNT(*) FROM entries WHERE kind = ?", (RELEASE_PROOF_OVERDUE_KIND,)
     ).fetchone()[0]
     assert overdue == 0
-    # H2 fix: the wait-start marker is in-memory ONLY, never a durable evidence row (module
-    # docstring's "never persist a monotonic reading") -- assert directly on the in-memory map.
     assert len(consumer._wait_start_ms) == 1  # noqa: SLF001
-    # NEW-2 fix: the recorded value must be the ACTUAL monotonic reading, not a hardcoded 0 --
-    # only distinguishable because monotonic_source starts at a non-zero, non-round base.
     ((_stored_key, stored_first_observed_ms),) = (
         consumer._wait_start_ms.items()
     )  # noqa: SLF001
@@ -1028,17 +854,17 @@ def test_obligation_expiry_records_overdue_once_past_the_bound(
         monotonic_source=monotonic_source,
         release_proof_wait_ms=1_000,
     )
-    consumer.consume(payload)  # first observation -- WAIT_START only
+    consumer.consume(payload)
 
     monotonic_source.advance(1_001)
-    consumer.consume(payload)  # now overdue
+    consumer.consume(payload)
 
     overdue = evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = ?", (RELEASE_PROOF_OVERDUE_KIND,)
     ).fetchone()[0]
     assert overdue == 1
 
-    consumer.consume(payload)  # a third call must not duplicate the OVERDUE row
+    consumer.consume(payload)
     overdue_again = evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = ?", (RELEASE_PROOF_OVERDUE_KIND,)
     ).fetchone()[0]
@@ -1075,19 +901,13 @@ def test_obligation_expiry_never_fires_for_a_non_overdue_eligible_state(
         assert count == 0
 
 
-# -- H2 fix: obligation expiry evaluates/records nothing without TRUSTED time -----------
-
-
 def test_obligation_expiry_evaluates_nothing_when_time_is_not_trusted(
     rcl_log: SqliteCommitLog,
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """Independent-review finding H2: with ``time_service.health_state`` not ``TRUSTED``,
-    :meth:`~tos_runtime.posttrade.release_consumer.FinalityReleaseConsumer
-    ._check_obligation_expiry` must read nothing and record nothing at all -- not even the
-    in-memory wait-start marker."""
+    """Independent-review finding H2: with ``time_service.health_state`` not ``TRUSTED``,"""
     payload = EgressResultPayload(
         instrument_key=_KEY, attempt_id=_ATTEMPT_ID, kind=EgressResultKind.ACK
     )
@@ -1114,20 +934,13 @@ def test_obligation_expiry_evaluates_nothing_when_time_is_not_trusted(
         assert count == 0
 
 
-# -- M1 fix: once per OCCUPANCY, not once per reservation forever -----------------------
-
-
 def test_obligation_expiry_records_overdue_again_for_a_new_occupancy(
     rcl_log: SqliteCommitLog,
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """Independent-review finding M1: leaving the overdue-eligible state and re-entering it
-    (a genuinely NEW occupancy, keyed by the reservation's own advanced ``reservation_last_seq``)
-    must be able to record a SECOND ``RELEASE_PROOF_OVERDUE`` row -- the prior version's
-    reservation-id-only key let at most one such row ever exist per reservation, for any number
-    of separate occupancies."""
+    """Independent-review finding M1: leaving the overdue-eligible state and re-entering it"""
     payload = EgressResultPayload(
         instrument_key=_KEY, attempt_id=_ATTEMPT_ID, kind=EgressResultKind.ACK
     )
@@ -1158,17 +971,15 @@ def test_obligation_expiry_records_overdue_again_for_a_new_occupancy(
         monotonic_source=monotonic_source,
         release_proof_wait_ms=1_000,
     )
-    consumer.consume(payload)  # occupancy 1, first observation
+    consumer.consume(payload)
     monotonic_source.advance(1_001)
-    consumer.consume(payload)  # occupancy 1 -- overdue, row #1
+    consumer.consume(payload)
 
     first_overdue = evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = ?", (RELEASE_PROOF_OVERDUE_KIND,)
     ).fetchone()[0]
     assert first_overdue == 1
 
-    # Leave the overdue-eligible state (occupancy 1 ends), then re-enter it (occupancy 2 begins
-    # at a genuinely later reservation_last_seq).
     _commit_transition(
         rcl_log,
         epoch=epoch,
@@ -1184,22 +995,19 @@ def test_obligation_expiry_records_overdue_again_for_a_new_occupancy(
         command_id="cmd-relc-enter-occupancy-2",
     )
 
-    consumer.consume(payload)  # occupancy 2, first observation -- no new OVERDUE yet
+    consumer.consume(payload)
     still_one = evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = ?", (RELEASE_PROOF_OVERDUE_KIND,)
     ).fetchone()[0]
     assert still_one == 1
 
     monotonic_source.advance(1_001)
-    consumer.consume(payload)  # occupancy 2 -- overdue, row #2
+    consumer.consume(payload)
 
     second_overdue = evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = ?", (RELEASE_PROOF_OVERDUE_KIND,)
     ).fetchone()[0]
     assert second_overdue == 2
-
-
-# -- H1 fix: gate 4 inputs are independent of the proof under test ----------------------
 
 
 def test_gate4_holds_when_the_rcl_persisted_scope_diverges_from_the_proof(
@@ -1208,11 +1016,7 @@ def test_gate4_holds_when_the_rcl_persisted_scope_diverges_from_the_proof(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """Independent-review finding H1: ``target_leg_scope``'s account now comes from the RCL
-    reservation's OWN persisted scope (a genuinely separate write path), not from
-    ``self.account``/``FinalityConfig`` -- a proof minted for one account is refused for a
-    reservation persisted under a DIFFERENT account, which the prior (vacuous) construction
-    could never detect since both sides derived from the identical config constant."""
+    """Independent-review finding H1: ``target_leg_scope``'s account now comes from the RCL"""
     producer = _producer()
     payload = EgressResultPayload(
         instrument_key=_KEY,
@@ -1235,8 +1039,6 @@ def test_gate4_holds_when_the_rcl_persisted_scope_diverges_from_the_proof(
     )
     inbox.record_finality_witness(_ATTEMPT_ID, True)
     _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
-    # The reservation this attempt's own scope resolves to is persisted under a DIFFERENT
-    # account than the one the proof's own leg_scope claims.
     _open_reservation_under_scope(
         rcl_log,
         scope=ReservationScope(account="divergent-account", instrument=_INSTRUMENT),
@@ -1263,12 +1065,7 @@ def test_gate4_holds_when_a_newer_obligation_generation_supersedes_the_proof(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """Independent-review finding H1: ``active_generation`` now comes from the NEWEST
-    ``obligation_generation`` durably recorded across every ``ECONOMIC_OBLIGATION`` row sharing
-    this reservation's scope -- an independent evidence-store scan, never
-    ``proof.bound_generation`` read off the very artifact under test. A second, later-recorded
-    obligation for the SAME scope with an ADVANCED generation (simulating a future correction
-    lane) reopens finality for the earlier proof."""
+    """Independent-review finding H1: ``active_generation`` now comes from the NEWEST"""
     producer = _producer()
     payload = EgressResultPayload(
         instrument_key=_KEY,
@@ -1292,8 +1089,6 @@ def test_gate4_holds_when_a_newer_obligation_generation_supersedes_the_proof(
     inbox.record_finality_witness(_ATTEMPT_ID, True)
     _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
     _open_reservation(rcl_log)
-    # A later correction lane records a SECOND obligation for the SAME scope, generation
-    # advanced past what the original proof (bound_generation=0) was issued under.
     evidence_store.append(
         {
             "account_scope": _ACCOUNT,
@@ -1319,9 +1114,6 @@ def test_gate4_holds_when_a_newer_obligation_generation_supersedes_the_proof(
     assert held[0]["reason"] == ReleaseHoldReason.PROOF_NOT_CURRENT.value
 
 
-# -- M3 fix: the non-execution path also re-loads (never trusts the in-memory proof) ----
-
-
 def test_non_execution_path_genuinely_reloads_rather_than_trusting_produced_proof(
     rcl_log: SqliteCommitLog,
     evidence_store: SqliteEvidenceStore,
@@ -1329,16 +1121,7 @@ def test_non_execution_path_genuinely_reloads_rather_than_trusting_produced_proo
     monotonic_source: FakeMonotonicSource,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Independent-review finding M3 (mutation (d), direct pin): forces
-    :meth:`~tos_runtime.posttrade.release_consumer.FinalityReleaseConsumer._reload_proof` to
-    return ``None`` unconditionally (as if the just-appended row could not be found) while
-    leaving the durable evidence rows genuinely present. If ``_consume_non_execution`` ever
-    regressed to using the in-memory ``produced.proof`` object instead of this method's own
-    return value, the release would proceed anyway and this test would see ``RELEASED`` instead
-    of a ``PROOF_NOT_RELOADED`` hold -- an unambiguous, direct pin of the exact code path
-    mutation (d) targeted (unlike a gate-4 divergence, which cannot distinguish "used the
-    reload's value" from "used the in-memory object" when both carry identical content).
-    """
+    """Independent-review finding M3 (mutation (d), direct pin): forces"""
     monkeypatch.setattr(
         FinalityReleaseConsumer,
         "_reload_proof",
@@ -1371,8 +1154,6 @@ def test_non_execution_path_genuinely_reloads_rather_than_trusting_produced_proo
     held = _held_rows(evidence_store)
     assert len(held) == 1
     assert held[0]["reason"] == ReleaseHoldReason.PROOF_NOT_RELOADED.value
-    # The proof WAS durably produced (the mutation only stops _reload_proof from finding it) --
-    # confirms this test exercises "reload fails" specifically, not "production itself failed".
     proof_rows = evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = 'POSTTRADE_FINALITY_PROOF'"
     ).fetchone()[0]
@@ -1385,12 +1166,7 @@ def test_non_execution_path_holds_when_gate4_diverges_too(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """Independent-review finding M3 (routing through gate 4): the non-execution destination now
-    runs the SAME :meth:`_apply_gate4_and_release` the ``FULL_FILL`` path runs -- a scope
-    divergence holds it exactly like the ``FULL_FILL`` case
-    (``test_gate4_holds_when_the_rcl_persisted_scope_diverges_from_the_proof``), which the
-    pre-M3 code (a direct ``_release`` call, skipping gate 4 entirely) could never do.
-    """
+    """Independent-review finding M3 (routing through gate 4): the non-execution destination now"""
     payload = EgressResultPayload(
         instrument_key=_KEY,
         attempt_id=_ATTEMPT_ID,
@@ -1427,21 +1203,13 @@ def test_non_execution_path_holds_when_gate4_diverges_too(
     assert proof_rows == 1
 
 
-# -- M4 fix: distinct idempotency-key prefixes prevent shadowing between the two proof kinds --
-
-
 def test_non_execution_proof_never_shadows_an_earlier_full_fill_proof_for_the_same_attempt(
     rcl_log: SqliteCommitLog,
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """Independent-review finding M4: a ``FULL_FILL`` proof recorded for an attempt, followed by
-    a (hypothetical) non-execution proof recorded LATER for the SAME attempt id, must NOT shadow
-    each other in ``_reload_proof`` -- distinct id/idempotency-key prefixes
-    (:data:`~tos_runtime.posttrade.finality.FULL_FILL_PROOF_ID_PREFIX` vs
-    :data:`~tos_runtime.posttrade.finality.NON_EXECUTION_PROOF_ID_PREFIX`) make the two rows
-    independently addressable by kind, not merely by attempt id + recency."""
+    """Independent-review finding M4: a ``FULL_FILL`` proof recorded for an attempt, followed by"""
     fill_payload = EgressResultPayload(
         instrument_key=_KEY,
         attempt_id=_ATTEMPT_ID,
@@ -1521,18 +1289,13 @@ def test_non_execution_proof_never_shadows_an_earlier_full_fill_proof_for_the_sa
     )
 
 
-# -- M7 fix: the MATCHED conjunct is load-bearing ----------------------------------------
-
-
 def test_matched_conjunct_holds_when_no_classification_covers_the_attempt(
     rcl_log: SqliteCommitLog,
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """Independent-review finding M7 (mutation (m)): a report that permits capacity release but
-    carries NO classification for this exact attempt (an empty-scope or foreign-attempt report)
-    must still hold -- the ``matched`` conjunct's real job."""
+    """Independent-review finding M7 (mutation (m)): a report that permits capacity release but"""
 
     class _StubPermittingButUnclassifiedReport:
         def reconcile(
@@ -1582,21 +1345,13 @@ def test_matched_conjunct_holds_when_no_classification_covers_the_attempt(
     assert proof_rows == 0
 
 
-# -- L1: from_state is read dynamically, never a hardcoded constant ---------------------
-
-
 def test_release_reads_from_state_dynamically_not_a_hardcoded_constant(
     rcl_log: SqliteCommitLog,
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """LOW L1: opens the reservation directly at ``ATTEMPT_BOUND`` (never touching
-    ``POTENTIALLY_LIVE`` at all) and still expects a successful release -- if ``_release`` ever
-    hardcoded ``from_state=CapacityState.POTENTIALLY_LIVE`` instead of reading the projection's
-    actual current state, the RCL log's own ``check_reservation_from_state`` HIGH-1 gate would
-    refuse the transition (claimed ``from_state`` must equal the held row's state exactly).
-    """
+    """LOW L1: opens the reservation directly at ``ATTEMPT_BOUND`` (never touching"""
     identity = RuntimeIdentity(
         cell_id="relc-test-cell", process_nonce="relc-test-nonce"
     )
@@ -1652,15 +1407,6 @@ def test_release_reads_from_state_dynamically_not_a_hardcoded_constant(
     assert _reservation_state(rcl_log) is CapacityState.POSITION_CONSUMED
     assert _held_rows(evidence_store) == []
 
-
-# ===========================================================================
-# #966 — a close fill releases its own reservation and discharges the entry's
-#
-# Every test above drives a scope holding ONE reservation, resolved through the pre-#966
-# fallback (no evidence join exists in those fixtures, and the row is the scope-level id) —
-# which is itself the regression proof that an old ledger keeps working. This section drives
-# the shape #966 introduced: two reservations in one scope, each named by its own permit.
-# ===========================================================================
 
 _ENTRY_ATTEMPT = "attempt-relc-entry"
 _CLOSE_ATTEMPT = "attempt-relc-close"
@@ -1766,12 +1512,7 @@ def _record_receipt(
 
 
 class _CycleWitness:
-    """An independent witness reporting BOTH the entry's and the close's orders as filled.
-
-    ``positions`` plus ``positions_complete`` are the axes #966's entry discharge reads: a
-    COMPLETE observation with no row for the instrument is flat; an incomplete one proves
-    nothing (#966 review round 1).
-    """
+    """An independent witness reporting BOTH the entry's and the close's orders as filled."""
 
     def __init__(
         self,
@@ -1818,8 +1559,7 @@ def _cycle_consumer(
     witness: BrokerWitness,
     monotonic_source: FakeMonotonicSource,
 ) -> FinalityReleaseConsumer:
-    """Like :func:`_consumer`, but with the PRODUCTION reservation bridge (the durable permit
-    join) instead of this module's single-reservation stand-in."""
+    """Like :func:`_consumer`, but with the PRODUCTION reservation bridge (the durable permit"""
     projection = SqliteReservationProjectionReader(rcl_log)
     recon_service = ReconciliationService(
         rcl_reader=projection,
@@ -1883,8 +1623,6 @@ def _arrange_close(
         command_id="cmd-relc-entry",
     )
     if extra_consumed:
-        # A SECOND consumed position in the same scope. Step 8 never creates this shape, and
-        # the consumer must refuse rather than pick one of the two to discharge.
         _commit_named_reservation(
             rcl_log,
             reservation_id=permit_reservation_id(
@@ -1906,9 +1644,6 @@ def _arrange_close(
         remaining=Decimal("0"),
         broker_execution_id="exec-relc-entry",
     )
-    # The entry's own Final Quantity Proof row — reconciliation reads it per attempt, and its
-    # own gate is a conjunction over EVERY attempt in scope, so without it the entry drags the
-    # close's report to "not corroborated" before any #966 branch is reached.
     evidence_store.append(
         {"idempotency_key": f"synthetic-fqp-proof:{_ENTRY_ATTEMPT}"},
         kind="POSTTRADE_FINALITY_PROOF",
@@ -1951,8 +1686,7 @@ def test_a_close_fill_releases_its_own_reservation_and_discharges_the_entry(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """Both reservations end ``RELEASED``: the close opened no position, and the entry's is
-    discharged in full (quantity proof + a flat broker reading)."""
+    """Both reservations end ``RELEASED``: the close opened no position, and the entry's is"""
     payload = _arrange_close(rcl_log, evidence_store, inbox)
     consumer = _cycle_consumer(
         rcl_log=rcl_log,
@@ -1979,12 +1713,7 @@ def test_the_entry_discharge_uses_its_own_command_id(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """Two release transitions from ONE close attempt need two command ids.
-
-    Concrete failing input for re-using ``release_command_id``: the log's ``command_id`` is
-    UNIQUE, so the second transition would come back ``DUPLICATE_COMMAND_ID`` and the entry
-    would stay held forever.
-    """
+    """Two release transitions from ONE close attempt need two command ids."""
     payload = _arrange_close(rcl_log, evidence_store, inbox)
     consumer = _cycle_consumer(
         rcl_log=rcl_log,
@@ -2011,10 +1740,7 @@ def test_a_broker_still_reporting_the_position_holds_the_entry(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """The close filled, but the witness still holds the instrument -> the entry stays.
-
-    Capacity may not be released while a position is open (ADR-002-012 :179).
-    """
+    """The close filled, but the witness still holds the instrument -> the entry stays."""
     payload = _arrange_close(rcl_log, evidence_store, inbox)
     consumer = _cycle_consumer(
         rcl_log=rcl_log,
@@ -2040,11 +1766,7 @@ def test_a_partial_close_holds_the_entry(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """A close that discharges 4 of the entry's 10 units leaves the entry reservation held.
-
-    The quantity proof is what cause ``FINAL_QUANTITY_PROOF`` asserts, so a close that does
-    not match the entry's own final quantity cannot carry it.
-    """
+    """A close that discharges 4 of the entry's 10 units leaves the entry reservation held."""
     payload = _arrange_close(
         rcl_log,
         evidence_store,
@@ -2056,8 +1778,6 @@ def test_a_partial_close_holds_the_entry(
         rcl_log=rcl_log,
         evidence_store=evidence_store,
         inbox=inbox,
-        # The broker agrees with the close's own receipt — 4 units, fully filled — so gate 3
-        # corroborates and the hold below is genuinely the #966 quantity gate, not recon.
         witness=_CycleWitness(close_quantity=Decimal("4")),
         monotonic_source=monotonic_source,
     )
@@ -2076,8 +1796,7 @@ def test_a_second_outstanding_reservation_holds_instead_of_guessing(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """A scope holding TWO consumed positions is not a shape this consumer acts on: it cannot
-    tell which position the fill discharged, so it holds rather than picking one."""
+    """A scope holding TWO consumed positions is not a shape this consumer acts on: it cannot"""
     payload = _arrange_close(rcl_log, evidence_store, inbox, extra_consumed=True)
     consumer = _cycle_consumer(
         rcl_log=rcl_log,
@@ -2103,11 +1822,7 @@ def test_an_attempt_with_no_resolvable_reservation_holds(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """No join rows and no legacy row: the consumer records a hold and names no reservation.
-
-    Concrete failing input for a scope-level fallback id: it would have resolved to SOME row
-    and released it on the strength of a different attempt's fill.
-    """
+    """No join rows and no legacy row: the consumer records a hold and names no reservation."""
     inbox.record_finality_witness(_CLOSE_ATTEMPT, True)
     consumer = _cycle_consumer(
         rcl_log=rcl_log,
@@ -2142,14 +1857,7 @@ def test_an_incomplete_holdings_observation_holds_the_entry(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """#966 review round 1 (Codex HIGH): empty positions are NOT proof of flatness.
-
-    Concrete failing input: entry filled 10, close filled 10 with zero remaining — the
-    quantity proof passes — and a holdings answer the witness could not fully read, so it
-    reports ``positions=()`` with ``positions_complete=False``. Before the fix that empty
-    tuple read as flat and the entry reservation was RELEASED, re-opening the scope to a
-    fresh OPEN on the strength of a row nobody could parse.
-    """
+    """#966 review round 1 (Codex HIGH): empty positions are NOT proof of flatness."""
     payload = _arrange_close(rcl_log, evidence_store, inbox)
     consumer = _cycle_consumer(
         rcl_log=rcl_log,
@@ -2191,21 +1899,13 @@ def test_a_complete_empty_holdings_observation_releases_the_entry(
     assert _held_rows_after_entry_pending_link(evidence_store) == []
 
 
-# ===========================================================================
-# review-973 M3 — a non-execution result must not release a quantity still held
-# ===========================================================================
-
-
 def _non_execution_consumer(
     rcl_log: SqliteCommitLog,
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> FinalityReleaseConsumer:
-    """The consumer with gate 3 STUBBED to permit — the same isolation
-    ``test_cancel_ack_releases_when_reconciliation_permits_it`` uses, so what these tests
-    exercise is the consumer's own non-execution wiring and nothing about reconciliation.
-    """
+    """The consumer with gate 3 STUBBED to permit — the same isolation"""
     return FinalityReleaseConsumer(
         rcl_log=rcl_log,
         projection=SqliteReservationProjectionReader(rcl_log),
@@ -2228,15 +1928,7 @@ def test_a_cancel_after_a_partial_fill_does_not_release_the_held_quantity(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """review-973 M3: the entry partially filled 4 of 6, then the remainder was cancelled.
-
-    The non-execution path targeted ``RELEASED`` on any corroborated cancel, so the
-    reservation went terminal while 4 units were still held. Under #966's step-8 table that
-    leaves ZERO outstanding reservations on the scope, which ADMITS a fresh OPEN — pyramiding
-    over a live position — and makes the CLOSE that would exit those 4 units unreachable.
-    Before #966 a ``RELEASED`` row still blocked every commit on the scope, which is why this
-    was latent rather than visible.
-    """
+    """review-973 M3: the entry partially filled 4 of 6, then the remainder was cancelled."""
     _open_reservation(rcl_log)
     _record_receipt(
         evidence_store,
@@ -2258,14 +1950,6 @@ def test_a_cancel_after_a_partial_fill_does_not_release_the_held_quantity(
     (held,) = _held_rows(evidence_store)
     assert held["reason"] == ReleaseHoldReason.FILLED_QUANTITY_STILL_HELD.value
 
-    # ...and the step-8 consequence. An OPEN is refused, which is the point: no pyramiding
-    # over the 4 units still held. A CLOSE is refused TOO, and stating that honestly matters —
-    # the reservation is left at POTENTIALLY_LIVE, and step 8 admits a CLOSE only over exactly
-    # one POSITION_CONSUMED row. So those 4 units cannot be exited through this runtime until
-    # a cancel-after-fill advances the reservation to POSITION_CONSUMED, which is a separate
-    # transition this PR does not add (review-973 round 2 MEDIUM; tracked as its own issue).
-    # Holding is still strictly better than the bug this test pins: releasing reported ZERO
-    # outstanding capacity and admitted a fresh OPEN on top of a live position.
     rows = SqliteReservationProjectionReader(rcl_log).scope_reservations(_KEY)
     assert verdict_for_scope("OPEN", rows).outcome is StageOutcome.DENY
     assert verdict_for_scope("CLOSE", rows).outcome is StageOutcome.DENY
@@ -2305,13 +1989,7 @@ def test_an_attempt_with_no_flow_evidence_resolves_to_no_reservation(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """review-973 L1: a failed join must not fall through to the scope row.
-
-    Concrete failing input: a result for an attempt this process has no flow evidence for,
-    while the scope holds a reservation committed by a DIFFERENT attempt. The old order tried
-    the per-permit id, then took the scope row regardless — releasing another attempt's
-    reservation on the strength of this one's fill.
-    """
+    """review-973 L1: a failed join must not fall through to the scope row."""
     _open_reservation(rcl_log)
     payload = EgressResultPayload(
         instrument_key=_KEY,
@@ -2336,13 +2014,7 @@ def test_post_trade_currentness_ignores_a_sibling_scope(
     inbox: SqliteEventInbox,
     monotonic_source: FakeMonotonicSource,
 ) -> None:
-    """review-973 L3: ``resv-A-I`` must not match ``resv-A-I2-<permit>``.
-
-    Concrete failing input: this scope is ``(acct-relc, 101S06)`` and a conflicted release is
-    recorded for ``101S062`` — an instrument whose id merely starts with the same characters.
-    A bare ``startswith`` read that as this scope's own latest post-trade fact and reported a
-    conflict, blocking new risk here on another instrument's reconciliation.
-    """
+    """review-973 L3: ``resv-A-I`` must not match ``resv-A-I2-<permit>``."""
     sibling = permit_reservation_id(_ACCOUNT, f"{_INSTRUMENT}2", "afg-permit-sibling")
     evidence_store.append(
         {
@@ -2358,7 +2030,6 @@ def test_post_trade_currentness_ignores_a_sibling_scope(
 
     assert consumer.latest_release_is_conflict_free() is True
 
-    # ...while the SAME conflict recorded against this scope's own reservation does register.
     evidence_store.append(
         {
             "attempt_id": _ATTEMPT_ID,

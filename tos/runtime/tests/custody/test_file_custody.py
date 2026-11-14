@@ -1,6 +1,4 @@
-"""``FileCustody`` tests — the six §2 fault cases + handle/digest edge cases
-(design #40 D4, slice plan §2 "레인 N").
-"""
+"""``FileCustody`` tests — the six §2 fault cases + handle/digest edge cases"""
 
 from __future__ import annotations
 
@@ -24,13 +22,7 @@ from .conftest import FakeEvidenceDouble, write_manifest, write_scope_file
 
 
 def _payload(record: dict[str, object]) -> dict[str, object]:
-    """Narrow ``record["payload"]`` from ``object`` back to ``dict[str, object]``.
-
-    ``FakeEvidenceDouble.records`` stores ``{"payload": dict(payload), ...}``
-    (see ``conftest.py``), so ``payload`` is always a dict at runtime — this
-    just asserts what every ``record["payload"][...]`` chain below already
-    assumed implicitly, so mypy can check the second subscript too.
-    """
+    """Narrow ``record["payload"]`` from ``object`` back to ``dict[str, object]``."""
     payload = record["payload"]
     assert isinstance(payload, dict)
     return payload
@@ -56,11 +48,7 @@ _DEFAULT_SCOPES = {
 
 
 class _FileCustodyKwargs(TypedDict):
-    """1:1 with :class:`FileCustody`'s ``__init__`` REQUIRED keyword parameters (plan §1.1
-    A-rt; #784 LOW carry-over — mypy stage 3 §1.3 3-e) — ``total=True`` so a ``**kwargs`` call
-    site is checked key-by-key and type-by-type, and a missing required key is caught,
-    matching every other ``_*Kwargs``/``_*KwargsPartial`` pair in this test tree
-    (``tos/runtime/tests/time/test_service.py``'s ``_TimeConfigKwargs`` etc.)."""
+    """1:1 with :class:`FileCustody`'s ``__init__`` REQUIRED keyword parameters (plan §1.1"""
 
     root_dir: Path
     environment_label: str | None
@@ -69,9 +57,7 @@ class _FileCustodyKwargs(TypedDict):
 
 
 class _FileCustodyKwargsPartial(TypedDict, total=False):
-    """The two DEFAULTED :class:`FileCustody` keyword parameters — ``total=False`` since
-    :func:`_make_custody` only sets ``getuid`` conditionally, never ``secret_field_names``.
-    """
+    """The two DEFAULTED :class:`FileCustody` keyword parameters — ``total=False`` since"""
 
     getuid: Callable[[], int]
     secret_field_names: frozenset[str]
@@ -103,11 +89,6 @@ def _make_custody(
     return FileCustody(**base, **overrides)
 
 
-# ============================================================================
-# ① mode 0644 ⇒ refuse
-# ============================================================================
-
-
 def test_load_refuses_mode_0644(
     custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
 ) -> None:
@@ -126,11 +107,7 @@ def test_mode_0644_refuses_before_ever_opening_the_file(
     expected_owner_uid: int,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """LOW-1 (2026-09-08 independent review): the mode/owner gate must run
-    BEFORE ``FileCustody.load`` ever opens the file for reading — proven
-    here by making ``Path.open`` itself raise loudly, so a mode refusal that
-    somehow happened AFTER an open attempt would surface as that raise
-    instead of the expected ``CustodyLoadRefused``."""
+    """LOW-1 (2026-09-08 independent review): the mode/owner gate must run"""
     custody = _make_custody(
         custody_root, evidence_double, expected_owner_uid=expected_owner_uid
     )
@@ -148,11 +125,6 @@ def test_mode_0644_refuses_before_ever_opening_the_file(
         custody.load("read.principal")
 
 
-# ============================================================================
-# ② owner mismatch ⇒ refuse (inject getuid, never chown for real)
-# ============================================================================
-
-
 def test_load_refuses_owner_mismatch_via_injected_getuid(
     custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
 ) -> None:
@@ -166,11 +138,6 @@ def test_load_refuses_owner_mismatch_via_injected_getuid(
 
     with pytest.raises(CustodyLoadRefused, match="owner mismatch"):
         custody.load("read.principal")
-
-
-# ============================================================================
-# ③ label mismatch ⇒ refuse (construction itself refuses — "기동 거부")
-# ============================================================================
 
 
 def test_construction_refuses_environment_label_mismatch(
@@ -202,11 +169,6 @@ def test_construction_refuses_when_manifest_label_is_null(
         )
 
 
-# ============================================================================
-# ④ order scope ⇒ CustodyScopeNotProvisioned
-# ============================================================================
-
-
 @pytest.mark.parametrize("scope", ["order.equity", "order.futures", "order"])
 def test_load_refuses_order_scope(
     custody_root: Path,
@@ -221,24 +183,11 @@ def test_load_refuses_order_scope(
     with pytest.raises(CustodyScopeNotProvisioned):
         custody.load(scope)
 
-    # No file-system access, no evidence write — refused BEFORE any I/O.
     assert evidence_double.records == []
 
 
 def test_provisioned_scopes_is_pinned_exactly() -> None:
-    """MEDIUM-2 (2026-09-08 independent review): a mutation adding e.g.
-    ``"order.principal"`` to ``PROVISIONED_SCOPES`` broke ZERO existing
-    tests, because none of them asserted the constant's contents directly —
-    only that a few sampled strings were refused. This pins the exact set,
-    so ANY addition, removal, or rename is caught immediately regardless of
-    which specific scope strings the behavioural tests happen to exercise.
-
-    TOS KIS MOCK transport plan T2 lane C extended this set with the two
-    stock MOCK-order custody scopes (``kis_mock.app_key``/
-    ``kis_mock.app_secret``) — deliberately NOT ``kis_mock.account`` (review
-    F2: the account number is the sealed outbound coordinate, never a
-    custody credential).
-    """
+    """MEDIUM-2 (2026-09-08 independent review): a mutation adding e.g."""
     assert (
         frozenset(
             {
@@ -256,11 +205,7 @@ def test_provisioned_scopes_is_pinned_exactly() -> None:
 def test_scope_principal_reads_the_manifest_only_no_credential_file_needed(
     custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
 ) -> None:
-    """Independent review LOW-5: ``scope_principal``'s own "zero secret I/O" docstring claim had
-    no test. Proven directly: the scope's credential FILE is never written at all (unlike every
-    other test in this suite, which calls ``write_scope_file``), and ``scope_principal`` still
-    returns the manifest principal, with no evidence recorded either (a real ``load()`` always
-    appends one ``CUSTODY_LOAD`` record; this method appends none)."""
+    """Independent review LOW-5: ``scope_principal``'s own "zero secret I/O" docstring claim had"""
     custody = _make_custody(
         custody_root, evidence_double, expected_owner_uid=expected_owner_uid
     )
@@ -292,11 +237,8 @@ def test_load_refuses_any_order_prefixed_scope_case_insensitive(
     expected_owner_uid: int,
     scope: str,
 ) -> None:
-    """MEDIUM-2's behavioural companion to the exact-set pin above: every
-    casing of an ``order``-prefixed scope must be refused, not merely the
-    three literal strings the pre-review parametrize happened to cover.
-    """
-    assert scope.lower().startswith("order")  # the parametrize itself is honest
+    """MEDIUM-2's behavioural companion to the exact-set pin above: every"""
+    assert scope.lower().startswith("order")
     custody = _make_custody(
         custody_root, evidence_double, expected_owner_uid=expected_owner_uid
     )
@@ -307,18 +249,12 @@ def test_load_refuses_any_order_prefixed_scope_case_insensitive(
     assert evidence_double.records == []
 
 
-# ============================================================================
-# ⑤ missing file ⇒ refuse
-# ============================================================================
-
-
 def test_load_refuses_missing_file(
     custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
 ) -> None:
     custody = _make_custody(
         custody_root, evidence_double, expected_owner_uid=expected_owner_uid
     )
-    # Deliberately never write custody_root / "read.principal".
 
     with pytest.raises(CustodyLoadRefused, match="does not exist"):
         custody.load("read.principal")
@@ -339,11 +275,6 @@ def test_load_refuses_scope_manifest_omits(
 
     with pytest.raises(CustodyLoadRefused, match="does not configure"):
         custody.load("replay.params")
-
-
-# ============================================================================
-# ⑥ evidence raw records contain no key bytes
-# ============================================================================
 
 
 def test_evidence_record_never_contains_secret_bytes(
@@ -367,11 +298,6 @@ def test_evidence_record_never_contains_secret_bytes(
     assert _payload(record)["scope"] == "read.principal"
     assert _payload(record)["file_sha256"] == hashlib.sha256(secret).hexdigest()
     assert record["kind"] == "CUSTODY_LOAD"
-
-
-# ============================================================================
-# handle zeroed after context exit
-# ============================================================================
 
 
 def test_credential_handle_zeroed_after_context_exit(
@@ -403,36 +329,25 @@ def test_credential_handle_repr_never_contains_secret_bytes() -> None:
 def test_credential_handle_close_is_idempotent() -> None:
     handle = CredentialHandle(scope="s", principal_id="p", data=b"abc")
     handle.close()
-    handle.close()  # must not raise
+    handle.close()
     assert handle.is_closed is True
 
 
-# ============================================================================
-# LOW-2 (2026-09-08 independent review) — single-copy ownership + zeroing
-# ============================================================================
-
-
 def test_credential_handle_takes_ownership_of_a_bytearray_without_copying() -> None:
-    """A ``bytearray`` passed as ``data`` is the SAME object the handle
-    holds — not an equal-but-distinct copy — so there is exactly one copy
-    of the secret in memory from construction through :meth:`close`."""
+    """A ``bytearray`` passed as ``data`` is the SAME object the handle"""
     secret = bytearray(b"single-copy-secret")
 
     handle = CredentialHandle(scope="s", principal_id="p", data=secret)
 
-    assert handle._buffer is secret  # ownership, not a defensive copy
+    assert handle._buffer is secret
     handle.close()
-    assert all(byte == 0 for byte in secret)  # closing the handle zeroed THIS object
+    assert all(byte == 0 for byte in secret)
 
 
 def test_file_custody_load_hands_credential_handle_the_only_copy(
     custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
 ) -> None:
-    """End-to-end: ``FileCustody.load`` must read the secret into a
-    ``bytearray`` (never an immutable ``bytes`` object it could not zero)
-    and hand that exact buffer to the returned handle, so closing the
-    handle actually erases the one and only in-memory copy the load path
-    produced."""
+    """End-to-end: ``FileCustody.load`` must read the secret into a"""
     custody = _make_custody(
         custody_root, evidence_double, expected_owner_uid=expected_owner_uid
     )
@@ -455,11 +370,7 @@ def test_load_zeroes_already_read_bytes_when_digest_check_refuses(
     expected_owner_uid: int,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A digest mismatch is discovered only AFTER the file has already been
-    read (LOW-1's "check 5 runs on already-read bytes" — the read cannot be
-    undone), so the refusal path must zero that already-read buffer itself
-    rather than leaving it to a ``CredentialHandle`` that is never
-    constructed and therefore never gets the chance."""
+    """A digest mismatch is discovered only AFTER the file has already been"""
     import tos_runtime.custody.file_custody as file_custody_module
 
     data = b"digest-mismatch-secret-bytes"
@@ -492,11 +403,6 @@ def test_load_zeroes_already_read_bytes_when_digest_check_refuses(
 
     assert "buffer" in captured
     assert all(byte == 0 for byte in captured["buffer"])
-
-
-# ============================================================================
-# manifest digest pinning: mismatch ⇒ refuse; null ⇒ unpinned success
-# ============================================================================
 
 
 def test_load_refuses_pinned_digest_mismatch(
@@ -562,11 +468,6 @@ def test_load_with_null_digest_succeeds_and_records_unpinned_note(
     assert _payload(record)["digest_note"] == "digest 미고정"
 
 
-# ============================================================================
-# manifest existence/parse failures
-# ============================================================================
-
-
 def test_construction_refuses_missing_manifest(
     custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
 ) -> None:
@@ -593,20 +494,6 @@ def test_construction_refuses_malformed_manifest(
         )
 
 
-# ============================================================================
-# MEDIUM-1 (2026-09-08 independent review) — path-escape guard
-#
-# Reproduced pre-fix: an absolute path, a "../" value, AND a symlink whose
-# target lies outside root_dir all loaded successfully and were recorded as
-# a CUSTODY_LOAD evidence entry. Two layers now close this (see
-# file_custody.py's module docstring fault-contract table row "경로 이탈"):
-# (1) a manifest-parse-time string validator (absolute / ".." rejected as
-# CustodyManifestError from CustodyManifest.load, surfacing at FileCustody
-# CONSTRUCTION, before any scope is ever loaded); (2) a load-time resolved-
-# path containment check (catches a symlink, which layer (1) cannot).
-# ============================================================================
-
-
 def test_manifest_rejects_absolute_file_path(
     custody_root: Path,
     evidence_double: FakeEvidenceDouble,
@@ -631,7 +518,6 @@ def test_manifest_rejects_absolute_file_path(
             evidence=evidence_double,
         )
 
-    # Refused at CONSTRUCTION — no scope was ever loaded, no evidence write.
     assert evidence_double.records == []
 
 
@@ -640,9 +526,7 @@ def test_manifest_rejects_named_tbd_placeholder_principal(
     evidence_double: FakeEvidenceDouble,
     expected_owner_uid: int,
 ) -> None:
-    """W-A A-0 round 2: a scope's own ``principal`` (ADR-002-013 :267-269) is a real
-    identity sealed into every ``CUSTODY_LOAD`` evidence record — an operator typing
-    the literal placeholder string ``"TBD"`` must never pass for one."""
+    """W-A A-0 round 2: a scope's own ``principal`` (ADR-002-013 :267-269) is a real"""
     scopes = dict(_DEFAULT_SCOPES)
     scopes["read.principal"] = {
         "file": "read.principal",
@@ -698,9 +582,7 @@ def test_load_refuses_symlink_escaping_root(
     expected_owner_uid: int,
     tmp_path: Path,
 ) -> None:
-    """A symlink's OWN path string (``"read.principal"``) looks perfectly
-    relative and contained — only resolving it reveals the escape, which is
-    exactly what the manifest-parse-time string validator cannot do."""
+    """A symlink's OWN path string (``"read.principal"``) looks perfectly"""
     outside_dir = tmp_path / "outside"
     outside_dir.mkdir()
     outside_secret = outside_dir / "outside_secret.pem"
@@ -720,8 +602,7 @@ def test_load_refuses_symlink_escaping_root(
 def test_load_succeeds_with_honest_relative_nested_path(
     custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
 ) -> None:
-    """Regression guard: the MEDIUM-1 fix must not reject a genuinely
-    contained relative path, including one nested in a subdirectory."""
+    """Regression guard: the MEDIUM-1 fix must not reject a genuinely"""
     scopes = dict(_DEFAULT_SCOPES)
     scopes["read.principal"] = {
         "file": "nested/read.principal",

@@ -52,7 +52,6 @@ RUNTIME_DIR = REPO_ROOT / "tos" / "runtime"
 CHILD_MODULE = "tests.recovery._kill9_child"
 
 POINTS = ("BEFORE_SEND", "AFTER_SEND", "AFTER_RESULT")
-#: Orders the venue must have received by the time the child parks at each point.
 EXPECTED_VENUE_LINES_AT_KILL = {"BEFORE_SEND": 0, "AFTER_SEND": 1, "AFTER_RESULT": 1}
 VENUE_LEDGER_NAME = "venue_ledger.jsonl"
 PARK_SNAPSHOT_NAME = "park_snapshot.json"
@@ -76,7 +75,6 @@ class DrillResult:
 
 
 def _child_env() -> dict[str, str]:
-    # Minimal, explicit environment: no .env, no credentials, no proxy settings reach the child.
     return {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "PYTHONPATH": os.pathsep.join(("src", os.path.join("..", "src"))),
@@ -154,7 +152,6 @@ def _reboot(
                 check=False,
             )
     except subprocess.TimeoutExpired:
-        # run() already killed the child; report it as a failed reboot so the table still prints.
         return {"error": f"reboot {index} timed out after {timeout}s; see {log}"}
     if completed.returncode != 0 or not result_path.exists():
         return {"error": f"reboot {index} exited {completed.returncode}; see {log}"}

@@ -1,24 +1,4 @@
-"""§2.4 / §8-4 — the per-bar core re-instantiation prohibition (design #33 §2.4, a hard constraint).
-
-The tempting bypass is obvious: rebuild the ``EngineCore`` for each bar, the
-``ProvisionalReservationLedger`` resets, the scope looks free again, and repeated sending "works".
-The design forbids it twice over:
-
-* **single-core parity is the point.** A backtest and a paper run must share the same core, the same
-  sequencer, and the same ledger lifetime, or the backtest develops semantics paper does not have
-  (design #31 §2.1/§12; 완주 메모 §3-2:63-65);
-* **it forges headroom.** A reset manufactures capacity the real system does not have — the
-  harness-layer form of RFC-002 §9.1:558's "producer-local counters SHALL NOT create headroom". The
-  no-release constraint is an honest reflection of the RCL runtime's absence (``state.py:22``), not
-  an obstacle to route around (design #33 §12.2-6).
-
-Two independent seals are asserted here: the **runtime** guard (a driver refuses a second, different
-core) and the **authoring-level** guard (no source in the package constructs an ``EngineCore`` at
-all). The second is the #27 FD lesson in its D-E3 form — locking one call site is not locking the
-package, so the whole source tree is swept by AST.
-
-Regime tag: orchestration authoring evidence only; closes no EV (design #33 §1.1).
-"""
+"""§2.4 / §8-4 — the per-bar core re-instantiation prohibition (design #33 §2.4, a hard constraint)."""
 
 from __future__ import annotations
 
@@ -66,12 +46,7 @@ def test_a_second_different_core_is_refused() -> None:
 
 
 def test_re_running_the_same_core_is_allowed_and_keeps_the_reservation() -> None:
-    """(§2.4) The *same* core may be re-run — and the scope stays occupied across runs.
-
-    This is the positive half of the seal: continuing the run is fine, resetting it is not. The
-    second run's tick is denied at the capacity stage, which is exactly the honest behaviour a real
-    system without an RCL release path would show.
-    """
+    """(§2.4) The *same* core may be re-run — and the scope stays occupied across runs."""
     fill_model = _ack_model()
     driver = build_driver(fill_model)
     core, _ = build_core(transmit=fill_model)
@@ -89,12 +64,7 @@ def test_re_running_the_same_core_is_allowed_and_keeps_the_reservation() -> None
 
 
 def test_the_reset_bypass_would_have_produced_a_second_send() -> None:
-    """(§2.4) The bypass really *would* work — which is why the seal is not decorative.
-
-    A fresh core per bar hands off twice for the same scope, forging headroom the real system does
-    not have. Building the second core here is the test's own act, deliberately outside the driver;
-    the package itself never does it (see the AST sweep below).
-    """
+    """(§2.4) The bypass really *would* work — which is why the seal is not decorative."""
     first_model = _ack_model()
     first_core, _ = build_core(transmit=first_model)
     build_driver(first_model).run(first_core, reference_bars(1))
@@ -112,11 +82,7 @@ def test_the_reset_bypass_would_have_produced_a_second_send() -> None:
 
 
 def test_the_package_constructs_no_engine_core_anywhere() -> None:
-    """(§2.4 authoring-level seal) No ``tos.backtest`` source instantiates an ``EngineCore``.
-
-    The #27 FD lesson: locking one call site is not locking the package. Every shipped source is
-    parsed and every ``EngineCore(...)`` call — however it is spelled — is reported.
-    """
+    """(§2.4 authoring-level seal) No ``tos.backtest`` source instantiates an ``EngineCore``."""
     sources = sorted(_BACKTEST_SRC.rglob("*.py"))
     assert sources, f"no tos.backtest sources found under {_BACKTEST_SRC}"
 
@@ -146,12 +112,7 @@ def test_the_package_constructs_no_engine_core_anywhere() -> None:
 
 
 def test_the_driver_exposes_no_core_replacement_path() -> None:
-    """(§2.4) There is no setter, no rebind, no reset — the seal cannot be undone from outside.
-
-    The census covers **every** shipped driver, not the first one written: an N-lane driver that
-    forgot the seal would reset one ledger for N scopes at once, so the multi-symbol driver is
-    swept here rather than trusted to have inherited the discipline (design #37 §4 M17).
-    """
+    """(§2.4) There is no setter, no rebind, no reset — the seal cannot be undone from outside."""
     fill_model = _ack_model()
     drivers = {
         "BacktestDriver": build_driver(fill_model),
@@ -174,18 +135,7 @@ def test_the_driver_exposes_no_core_replacement_path() -> None:
 
 
 def test_every_shipped_driver_is_covered_by_the_replacement_canary() -> None:
-    """(anti-phantom §0.5) The swept driver list is the shipped one — no stale subset.
-
-    The existence direction: it is not enough that the two listed drivers are clean, the list must
-    *be* the set of drivers the package exports. A third driver landing without its seal shows up
-    here (design #37 §4 M17).
-
-    Membership is **structural**, mirroring the run-result family's ``is_dataclass`` ∧
-    ``closes_no_ev`` predicate: a driver is what carries ``bound_core`` — the §2.4 binding that is
-    the seal's whole subject. A name-based test (``endswith("Driver")``) would let a
-    ``LaneReplayHarness`` bind a core and escape the sweep in silence, which is the naming-versus-
-    structure defect this suite refuses everywhere else.
-    """
+    """(anti-phantom §0.5) The swept driver list is the shipped one — no stale subset."""
     import tos.backtest as package
 
     exported_drivers = {

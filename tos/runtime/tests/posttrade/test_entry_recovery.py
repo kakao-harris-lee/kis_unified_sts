@@ -124,13 +124,7 @@ def _arrange_pending_row(
 def _commit_a_scanned_pending_row(
     rcl_log: SqliteCommitLog, evidence_store: SqliteEvidenceStore, index: int
 ) -> None:
-    """One more pending row the scan must walk, with its close-release command committed.
-
-    A committed ``release-<attempt>`` is exactly what makes the scan read the RCL history
-    for a row (:func:`~tos_runtime.posttrade.entry_recovery._valid_close_commit`), which
-    is the per-close accumulation #1008 measured. The row still authorizes nothing — its
-    command digest is not the release digest — so the scan's answer is unchanged.
-    """
+    """One more pending row the scan must walk, with its close-release command committed."""
     attempt_id = f"attempt-accumulated-{index}"
     cycle._commit_named_reservation(
         rcl_log,
@@ -378,7 +372,6 @@ def test_idle_pass_does_not_reread_the_rcl_history_until_the_tip_moves(
     assert restarted.pending_recovery_attempt_ids() == (payload.attempt_id,)
     assert reads[0] == cold
 
-    # The tip moves: the next pass must read again, and still answer the same.
     cycle._commit_named_reservation(
         rcl_log,
         reservation_id="res-tip-moved",
@@ -420,6 +413,5 @@ def test_accumulated_pending_rows_do_not_cost_one_full_read_each(
         _commit_a_scanned_pending_row(rcl_log, evidence_store, index)
     mark = reads[0]
 
-    # Nine rows, the same cold-cache cost as one — and the same answer, in the same order.
     assert restarted.pending_recovery_attempt_ids() == (payload.attempt_id,)
     assert reads[0] - mark == one_row_cost

@@ -1,13 +1,4 @@
-"""§7.2-1 — value ⟺ covered ``payload_digest`` binding, the side-channel seal (design #32 §2.3).
-
-RFC-004 §9:244 forbids a Critical Input arriving "by unattributed fetch or side channel". The
-structural form of that prohibition is: a published value must digest back to the very
-``raw.payload_digest`` the snapshot-covered observation attests. These tests exercise the seal from
-both directions — the honest payload passes, and every way of detaching the value from its
-provenance is refused with a *named* reason.
-
-Regime tag: authoring evidence only; closes no EV (design #32 §1.1).
-"""
+"""§7.2-1 — value ⟺ covered ``payload_digest`` binding, the side-channel seal (design #32 §2.3)."""
 
 from __future__ import annotations
 
@@ -48,11 +39,6 @@ def _reasons(resolution) -> set[ValueRejectionReason]:
     return {entry.reason for entry in resolution.rejected}
 
 
-# ---------------------------------------------------------------------------
-# The binding holds
-# ---------------------------------------------------------------------------
-
-
 def test_an_honest_payload_publishes_its_values() -> None:
     """(§2.3) A value whose preimage digests to the observation's digest reaches the view."""
     resolution = _publish(*one_bar())
@@ -79,18 +65,8 @@ def test_the_view_digest_is_the_digest_of_its_own_content() -> None:
     assert view_digest_matches(resolution.view, SCHEME) is True
 
 
-# ---------------------------------------------------------------------------
-# Detaching the value from its provenance is refused (the side-channel mutations)
-# ---------------------------------------------------------------------------
-
-
 def test_a_forged_value_no_longer_digests_to_the_attested_payload() -> None:
-    """(§2.3 ★ side channel) Changing the value changes the preimage digest — refused.
-
-    This is the seal in its purest form: the producer keeps the observation exactly as the snapshot
-    covers it and merely edits the number. The recomputed preimage digest no longer matches, so the
-    value is not the value that observation attests, and it never reaches the environment.
-    """
+    """(§2.3 ★ side channel) Changing the value changes the preimage digest — refused."""
     honest = preimage(close=CLOSE_BAR_ONE, session="REGULAR")
     obs = observation(raw_event_id="raw-1", payload=honest, as_of=BAR_ONE_AS_OF)
     snapshot = issue_snapshot(
@@ -170,11 +146,6 @@ def test_two_observations_under_one_identity_are_ambiguous_not_arbitrary() -> No
     assert _reasons(resolution) == {ValueRejectionReason.OBSERVATION_AMBIGUOUS}
 
 
-# ---------------------------------------------------------------------------
-# Disagreement is never folded (§6)
-# ---------------------------------------------------------------------------
-
-
 def test_two_admitted_observations_of_one_field_are_both_refused() -> None:
     """(§6, ADR-002-018 §11:311) Source disagreement is not averaged, voted, or arbitrarily picked."""
     left = preimage(close=CLOSE_BAR_ONE)
@@ -223,11 +194,6 @@ def test_a_disagreement_does_not_suppress_the_unrelated_fields() -> None:
     )
     assert {value.field_key for value in resolution.values} == {"session"}
     assert _reasons(resolution) == {ValueRejectionReason.DUPLICATE_FIELD_KEY}
-
-
-# ---------------------------------------------------------------------------
-# The producer cannot self-report its way in (구조 파생 > 자기신고)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

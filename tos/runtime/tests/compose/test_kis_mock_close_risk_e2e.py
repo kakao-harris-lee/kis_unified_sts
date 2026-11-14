@@ -1,8 +1,4 @@
-"""KIS-mock proof flow for CLOSE risk admission (#1004).
-
-The OPEN fill and held-position proof use the composed asynchronous FETCH/APPLY path and the
-production ``RiskStateService``. Only the fake broker and its local HTTP server are test doubles.
-"""
+"""KIS-mock proof flow for CLOSE risk admission (#1004)."""
 
 from __future__ import annotations
 
@@ -354,8 +350,6 @@ def test_kis_mock_close_needs_fresh_bounded_worker_position_proof(
             environment_label=_ENVIRONMENT_LABEL,
             approved_intent_envelope_digest=open_intent_digest,
         )
-        # Risk proof is ineligible before any entry is POSITION_CONSUMED; boot and OPEN approval
-        # must not trigger an empty-account holdings poll.
         assert published == []
 
         open_row = _row(
@@ -389,8 +383,6 @@ def test_kis_mock_close_needs_fresh_bounded_worker_position_proof(
             if row["egress_result_kind"] == "ACK"
         )
 
-        # This worker reads the real OPEN fill and a positive broker holding. APPLY publishes
-        # against the pre-fill RCL tip, then consumes the fill and advances that tip.
         after_open_fetch = len(published)
         open_fill_pair = _wait_for_publish(observer, published, after_open_fetch)
         assert any(
@@ -420,8 +412,6 @@ def test_kis_mock_close_needs_fresh_bounded_worker_position_proof(
             current_holdings = ((fx.INSTRUMENT, open_quantity),)
             pair_change = (open_quantity, open_quantity - Decimal(1))
 
-        # A new FETCH generation now exists after the OPEN RCL commit. The valid case receives
-        # two identical complete snapshots; changed_pair varies only the second balance read.
         _script_witness(
             server,
             config_dir_with_risk_state,
@@ -465,14 +455,10 @@ def test_kis_mock_close_needs_fresh_bounded_worker_position_proof(
         assert worker_threads and all(
             thread_id != loop_thread for thread_id in worker_threads
         )
-        assert (
-            len(worker_threads) >= 2
-        )  # each accepted/rejected held pair is two worker reads
+        assert len(worker_threads) >= 2
 
         close_event = fx.crossing_event(seq=2, close=fx.UPPER_BAND + 1_000)
         if case == "stale_at_commit":
-            # Proposal discovery records approval; the approved replay consumes the already
-            # fetched proof at step 6. Step 9 then sees that exact proof age past its bound.
             _discover_and_approve(runtime, custody_root, close_event)
             _script_witness(
                 server,
@@ -597,7 +583,6 @@ def test_kis_mock_close_needs_fresh_bounded_worker_position_proof(
                 close_result.flow is not None and close_result.flow.handed_off is True
             )
             assert len(server.requests_for(_ORDER_PATH)) == posts_before_close + 1
-            # The valid CLOSE was step-6 admitted and crossed the real step-9 close proof fence.
             close_posts = [
                 request
                 for request in server.requests_for(_ORDER_PATH)
@@ -620,21 +605,10 @@ def test_kis_mock_close_needs_fresh_bounded_worker_position_proof(
         _close(runtime)
 
 
-# ===========================================================================
-# issue #1025 — a FLAT exit on this transport, bounded by the REAL broker proof
-# ===========================================================================
-
-
 def _write_flat_exit_strategy(
     config_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The band entry plus the shipped Setup D exit shape: ``decision.kind: FLAT``.
-
-    The sibling :func:`_write_close_strategy` authors an ``ACTION`` close with
-    ``quantity_basis: "RISK"``, which sizes from the risk budget. This one authors no basis at
-    all, exactly as ``setup_d_long.strategy.yaml``'s R2/R3 do, so the proposal carries the
-    kernel's ``FLAT_QUANTITY_BASIS`` and step 2 sizes it from the durable entry remainder.
-    """
+    """The band entry plus the shipped Setup D exit shape: ``decision.kind: FLAT``."""
     original = fx.band_reversion_strategy_mapping
 
     def flat_exit_mapping() -> dict[str, object]:
@@ -688,26 +662,7 @@ def test_a_flat_exits_durable_size_is_still_capped_by_the_real_broker_holding(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeKisServer,
 ) -> None:
-    """#1025's stock half, against the REAL ``BROKER_HELD_PROOF`` bound — no injected provider.
-
-    Step 2 now sizes a FLAT exit from the durable entry remainder (#1025), and the plan's §2
-    disposition is that step 6 must still bound that size by what the broker proves is held: a
-    broker holding SMALLER than the remainder refuses the close rather than sending a reduced
-    one (a smaller exit is a new proposal's business).
-
-    Concrete input: the composed kis-mock boot with the production ``RiskStateService`` and the
-    asynchronous FETCH/APPLY held-position path (only the fake broker is a double); one filled
-    entry of ``open_quantity``; then an exit tick, with the account reporting either exactly
-    ``open_quantity`` or one unit.
-
-    Concrete result:
-
-    * step 2 derives the FLAT quantity as ``open_quantity`` in BOTH cases — the durable
-      remainder, which is not what the broker says;
-    * holding == remainder: step 6 answers ``PROOF_ACCEPTED`` and the close POSTs;
-    * holding < remainder: step 6 answers ``QUANTITY_EXCEEDS_HELD``, the flow does not hand off,
-      and the order count is unchanged — the entry's POST stays the only one.
-    """
+    """#1025's stock half, against the REAL ``BROKER_HELD_PROOF`` bound — no injected provider."""
     from .test_flat_exit_held_quantity import admit_the_flat_basis
 
     clock = _PacedClock()
@@ -743,7 +698,6 @@ def test_a_flat_exits_durable_size_is_still_capped_by_the_real_broker_holding(
             server, config_dir_with_risk_state, date=date, rows=[], holdings=()
         )
 
-        # --- the entry -----------------------------------------------------------------
         open_event = fx.crossing_event(seq=1)
         _discover_and_approve(runtime, custody_root, open_event)
         open_construction = runtime.construction_stage.construction
@@ -768,14 +722,12 @@ def test_a_flat_exits_durable_size_is_still_capped_by_the_real_broker_holding(
         assert open_result.flow is not None and open_result.flow.handed_off is True
         assert len(server.requests_for(_ORDER_PATH)) == 1
 
-        # The worker reads the real fill and the holding; the entry reaches POSITION_CONSUMED.
         _wait_for_publish(observer, published, len(published))
         assert any(
             state is CapacityState.POSITION_CONSUMED
             for _reservation_id, state, _seq, _scope in runtime.rcl_log.reservation_rows()
         )
 
-        # --- what the broker says it holds when the exit is decided --------------------
         holdings = (
             ((fx.INSTRUMENT, open_quantity),)
             if broker_holds_the_whole_entry
@@ -790,7 +742,6 @@ def test_a_flat_exits_durable_size_is_still_capped_by_the_real_broker_holding(
         )
         _wait_for_publish(observer, published, len(published))
 
-        # --- the FLAT exit -------------------------------------------------------------
         close_event = fx.crossing_event(seq=2, close=fx.UPPER_BAND + 1_000)
         discovery = _discover_and_approve(runtime, custody_root, close_event)
         assert discovery.pipeline is not None
@@ -798,7 +749,6 @@ def test_a_flat_exits_durable_size_is_still_capped_by_the_real_broker_holding(
         assert discovery.pipeline.proposal.quantity_basis == FLAT_QUANTITY_BASIS
         close_construction = runtime.construction_stage.construction
         assert close_construction is not None
-        # Step 2's own number: the DURABLE entry remainder, in both cases.
         assert close_construction.derivation.quantity == open_quantity
 
         _script_witness(

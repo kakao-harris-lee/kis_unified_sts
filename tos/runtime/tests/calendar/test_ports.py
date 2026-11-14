@@ -1,11 +1,4 @@
-"""tos_runtime.calendar.ports — wall-clock reference ports.
-
-No sleep, no network — every implementation here is either a pure literal
-(FixedWallClockReference), a no-op (AbsentWallClockReference), a single
-in-process clock read (LocalWallClockReference), or a gated read of a real
-:class:`~tos_runtime.time.service.TrustworthyTimeService`
-(TrustedWallClockReference, G-1: runtime operations wiring plan §2 decision 1).
-"""
+"""tos_runtime.calendar.ports — wall-clock reference ports."""
 
 from __future__ import annotations
 
@@ -22,7 +15,7 @@ from tos_runtime.calendar.ports import (
 def test_absent_reference_always_returns_none() -> None:
     ref = AbsentWallClockReference()
     assert ref.read() is None
-    assert ref.read() is None  # repeat-call stability
+    assert ref.read() is None
 
 
 def test_absent_reference_describes_g1() -> None:
@@ -62,16 +55,8 @@ def test_all_three_implementations_satisfy_the_protocol() -> None:
     assert isinstance(LocalWallClockReference(), WallClockReference)
 
 
-# ----------------------------------------------------------------------------
-# TrustedWallClockReference (G-1, runtime operations wiring plan §2 decision 1)
-# ----------------------------------------------------------------------------
-
-
 class _FakeTimeService:
-    """A ``wall_clock_now()``-shaped double — isolates this port's own
-    contract (call the method, wrap a non-None result, pass None through)
-    from ``TrustworthyTimeService``'s own FSM, which
-    ``tests/time/test_service.py`` already exercises directly."""
+    """A ``wall_clock_now()``-shaped double — isolates this port's own"""
 
     def __init__(self, wall_clock_now: int | None) -> None:
         self._value = wall_clock_now
@@ -89,10 +74,7 @@ def test_trusted_reference_reads_a_value_when_the_service_has_one() -> None:
 
 
 def test_trusted_reference_is_none_when_the_service_reports_none() -> None:
-    """M1 (plan §5 mutation table): TrustedWallClockReference must never
-    read a value the underlying service itself would not expose (e.g.
-    because it is not TRUSTED yet) — it is a thin, honest passthrough, never
-    an independent source of a wall-clock value."""
+    """M1 (plan §5 mutation table): TrustedWallClockReference must never"""
     ref = TrustedWallClockReference(_FakeTimeService(wall_clock_now=None))
     assert ref.read() is None
 
@@ -110,9 +92,7 @@ def test_trusted_reference_satisfies_the_protocol() -> None:
 
 
 def test_trusted_reference_against_the_real_time_service() -> None:
-    """End-to-end proof (not just the double above): a real
-    ``TrustworthyTimeService`` fed through ``TrustedWallClockReference``
-    stays None until TRUSTED, then reads the real observation."""
+    """End-to-end proof (not just the double above): a real"""
     from tos.workload import RuntimeIdentity
     from tos_runtime.time.config import TrustworthyTimeConfig
     from tos_runtime.time.service import TrustworthyTimeService
@@ -142,7 +122,7 @@ def test_trusted_reference_against_the_real_time_service() -> None:
                 payload,
                 kind,
                 record_class,
-            )  # unused — this double never inspects them
+            )
             return EvidenceAppendReceipt(
                 segment_id=None, seq=0, chain_digest="d", key_generation=0
             )
@@ -163,6 +143,7 @@ def test_trusted_reference_against_the_real_time_service() -> None:
         trading_calendar_version="cal-1",
         verification_profile_version="vp-0",
         safety_profile_version="sp-0",
+        time_health_snapshot_heartbeat_ms=60_000,
     )
     monotonic = _FakeMonotonic(1000)
     service = TrustworthyTimeService(
@@ -175,11 +156,11 @@ def test_trusted_reference_against_the_real_time_service() -> None:
     service.start()
     ref = TrustedWallClockReference(service)
 
-    service.evaluate()  # -> SYNCHRONIZING
+    service.evaluate()
     assert ref.read() is None
 
     monotonic.value = 1010
-    service.evaluate()  # -> TRUSTED
+    service.evaluate()
     reading = ref.read()
     assert reading is not None
     assert reading.unix_ms == 1_700_000_000_000

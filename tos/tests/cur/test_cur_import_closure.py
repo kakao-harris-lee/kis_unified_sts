@@ -1,38 +1,4 @@
-"""§7.1 import-closure verification for ``tos.cur`` — **allowlist** form (design #23 §0.3/§7.1).
-
-Written as an **allowlist** (design #23 §7.1): after importing every ``tos.cur`` submodule in a fresh
-interpreter, the set of top-level ``tos.*`` packages in ``sys.modules`` must be a subset of::
-
-    {tos, tos.canonical, tos.ordering, tos.cur}
-
-An enumerated denylist would go stale the moment a new sibling lands; the allowlist is
-**future-robust** — any sibling, present or future (including ``tos.rlp`` / ``tos.wdr`` /
-``tos.sir`` / ``tos.stm`` / ``tos.sci`` / ``tos.posttrade``, all of which landed after cur), fails the
-assertion simply by appearing.
-**sibling edge 0** — cur has **no** sanctioned sibling edge, so its allowlist admits only the two core
-packages.
-
-It also asserts (design #23 §0.3):
-
-  1. no operational package is in the closure (``shared.execution`` / ``kis`` / ``streaming`` /
-     ``llm`` / ``storage`` / ``backtest``, ``services.*``, ``cli.*``);
-  2. neither ``shared.config`` nor ``shared.config.secrets`` is present (transitive ambient-
-     credential intake), nor ``shared.determinism``;
-  3. ``numpy`` / ``pandas`` / ``yaml`` are absent (bounds are injected; YAML is the harness's);
-  4. no ``tos.cur`` source references ``os.environ`` / ``os.getenv``, a dynamic escape
-     (``exec`` / ``eval`` / ``__import__`` / ``importlib``), or a real clock (``time`` /
-     ``datetime``) — cur is **clock-free** (§5.4: currentness is an ordering identity, not wall-clock);
-  5. the sibling-absence assertion **explicitly includes ``tos.egress`` / ``tos.venue`` / ``tos.iap``
-     / ``tos.capsule``** (the four maximum re-authoring temptations — the egress
-     ``QuorumCommitCertificate`` / ``RestrictiveLatchState`` / ``monotonic_denial_no_revival`` and the
-     venue / iap / capsule per-decision egress-currentness leaves are re-authored NOT AT ALL and
-     imported NOT AT ALL — produced facts injected as scalars / verdicts / digests, §0.4b/c/d).
-
-A planted-leak canary (including ``tos.egress`` / ``tos.venue`` / ``tos.iap`` / ``tos.capsule``, a
-*future* sibling, and ``shared.config``) proves the spawn+scan pipeline catches a leak no denylist
-could have anticipated; a planted-AST-escape canary proves the static scan catches an escape — so
-"green" is evidence the checker works, not that it has been neutered.
-"""
+"""§7.1 import-closure verification for ``tos.cur`` — **allowlist** form (design #23 §0.3/§7.1)."""
 
 from __future__ import annotations
 
@@ -42,13 +8,8 @@ from pathlib import Path
 
 import tos.cur
 
-#: The §7.1 allowlist: the only top-level ``tos.*`` packages the cur closure may contain.
 _ALLOWED_TOS_PACKAGES = frozenset({"tos", "tos.canonical", "tos.ordering", "tos.cur"})
 
-#: The forbidden siblings (all real siblings, including ``tos.rlp`` / ``tos.wdr`` / ... which landed
-#: after cur, + a future
-#: ``tos.future_sibling``) — INCLUDING the four maximum re-authoring temptations ``tos.egress`` /
-#: ``tos.venue`` / ``tos.iap`` / ``tos.capsule`` (re-authored NOT AT ALL, imported NOT AT ALL).
 _FORBIDDEN_SIBLINGS = frozenset(
     {
         "tos.afg",
@@ -68,19 +29,17 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.protective",
         "tos.rcl",
         "tos.recon",
-        "tos.replacement",
         "tos.sbr",
         "tos.spg",
         "tos.time",
         "tos.venue",
-        "tos.rlp",  # landed sibling — still excluded (sibling edge 0)
-        "tos.wdr",  # landed sibling — still excluded (sibling edge 0)
-        "tos.sir",  # landed sibling — still excluded (sibling edge 0)
-        "tos.stm",  # landed sibling — still excluded (sibling edge 0)
-        "tos.sci",  # landed sibling — still excluded (sibling edge 0)
-        "tos.posttrade",  # landed sibling — still excluded (sibling edge 0)
-        "tos.ptf",  # historical placeholder — landed as tos.posttrade (above); kept, never importable
-        "tos.future_sibling",  # a *future* sibling — the allowlist excludes it by construction
+        "tos.wdr",
+        "tos.sir",
+        "tos.stm",
+        "tos.sci",
+        "tos.posttrade",
+        "tos.ptf",
+        "tos.future_sibling",
     }
 )
 
@@ -122,18 +81,15 @@ _CUR_SRC = Path(__file__).resolve().parent.parent.parent / "src" / "tos" / "cur"
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
-#: Real-clock modules that must never be imported by a clock-free cur source (§5.4).
 _CLOCK_MODULES = frozenset({"time", "datetime"})
 
-#: The re-authored (never imported) sibling predicate / type names — asserted ABSENT from the cur
-#: namespace (local authorship, not an import; design #23 §7.1).
 _REAUTHORED_NOT_IMPORTED = (
-    "QuorumCommitCertificate",  # egress
-    "RestrictiveLatchState",  # egress
-    "monotonic_denial_no_revival",  # egress
-    "egress_currentness_active",  # venue leaf
-    "active_egress_currentness",  # iap leaf
-    "egress_currentness_ok",  # capsule leaf
+    "QuorumCommitCertificate",
+    "RestrictiveLatchState",
+    "monotonic_denial_no_revival",
+    "egress_currentness_active",
+    "active_egress_currentness",
+    "egress_currentness_ok",
 )
 
 
@@ -192,12 +148,12 @@ def _leak_canary_child(queue: mp.Queue) -> None:
     for planted in (
         "shared.config",
         "numpy",
-        "tos.egress",  # maximum re-authoring temptation — re-authored, not imported
-        "tos.venue",  # maximum re-authoring temptation — re-authored, not imported
-        "tos.iap",  # maximum re-authoring temptation — re-authored, not imported
-        "tos.capsule",  # maximum re-authoring temptation — re-authored, not imported
-        "tos.sci",  # landed sibling the allowlist catches
-        "tos.future_sibling",  # a *future* sibling the allowlist catches
+        "tos.egress",
+        "tos.venue",
+        "tos.iap",
+        "tos.capsule",
+        "tos.sci",
+        "tos.future_sibling",
     ):
         sys.modules[planted] = types.ModuleType(planted)
 
@@ -283,7 +239,6 @@ def test_allowlist_classifier_canaries() -> None:
     for sibling in _FORBIDDEN_SIBLINGS | {"tos.not_yet_invented"}:
         assert _is_allowed_tos_module(sibling) is False
         assert _is_allowed_tos_module(sibling + ".predicates") is False
-    # non-tos classification
     assert _is_forbidden_non_tos("shared.config") is True
     assert _is_forbidden_non_tos("shared.config.secrets") is True
     assert _is_forbidden_non_tos("shared.determinism") is True
@@ -293,7 +248,7 @@ def test_allowlist_classifier_canaries() -> None:
     assert _is_forbidden_non_tos("yaml") is True
     assert _is_forbidden_non_tos("pydantic") is False
     assert _is_forbidden_non_tos("decimal") is False
-    assert _is_forbidden_non_tos("click") is False  # must not false-match "cli"
+    assert _is_forbidden_non_tos("click") is False
 
 
 def test_reauthored_predicates_are_absent_from_cur_namespace() -> None:

@@ -32,14 +32,13 @@ those slots are verified rather than rewritten, §2.3), and where the observatio
 from (``synthetic_bootproof`` — written here; ``external`` — produced elsewhere and named by
 ``--journal-path``, §2.4). A manifest may not carry a VALUE: each slot names a source out of a
 closed set, and its ``replacement`` template is shape-checked so it cannot smuggle a literal in
-(:func:`_validate_replacement_template`). ``safety_activation.yaml::members`` stays out of the
-manifest entirely — it is always derived from ``print-policy-digests``.
+(:func:`_validate_replacement_template`).
 
 Firewall note (this file is OUTSIDE ``tos/``): it therefore may NOT import ``tos`` or
 ``tos_runtime`` at all (``tools/tos_firewall_check.py`` rule (e)/TOS-FW-R,
 ``_REVERSE_SCAN_TARGET_NAMES = {"tos", "tos_runtime"}``). The two runtime operations this
-script needs — ``print-policy-digests`` and the activation read-back — therefore run as
-SUBPROCESSES, using the same ``python -c 'import sys;from tos_runtime.compose.cli import
+operation this script needs — ``print-policy-digests`` — therefore runs as a
+SUBPROCESS, using the same ``python -c 'import sys;from tos_runtime.compose.cli import
 main;sys.exit(main(sys.argv[1:]))'`` convention the boot command itself uses. The AST gate does
 not read string arguments as imports.
 
@@ -155,11 +154,10 @@ RENDERED_NAME = "RENDERED.json"
 RENDER_MANIFEST_NAME = "RENDER.yaml"
 
 #: The policy kinds ``print-policy-digests`` MUST print for this deployment — the four
-#: ``compose`` itself calls ``require_member_activated`` for
-#: (``compose/_venue_wiring.py:265-278`` VENUE/OCP, ``compose/_riskstate_wiring.py:236-250``
-#: AGGREGATE_RISK/ACTION_FLOW). A fifth line (``CRITICAL_INPUT_POLICY``) is printed since this
-#: deployment adopted ``critical_input_policy.yaml``; the design's rule is one ``members``
-#: entry per PRINTED line, so it gets one too.
+#: governed policy documents ``compose`` binds at boot (``compose/_venue_wiring.py``
+#: VENUE/OCP, ``compose/_riskstate_wiring.py`` AGGREGATE_RISK/ACTION_FLOW). A fifth line
+#: (``CRITICAL_INPUT_POLICY``) is printed since this deployment adopted
+#: ``critical_input_policy.yaml``.
 MANDATORY_POLICY_KINDS: tuple[str, ...] = (
     "VENUE_CONSTRAINT_POLICY",
     "ORDER_CONSTRUCTION_POLICY",
@@ -265,7 +263,6 @@ COORDINATE_RULE_KEYS: tuple[str, ...] = (
     "marketfeed.yaml::direction",
     "marketfeed.yaml::journal_path",
     "finality.yaml::source_revision",
-    "safety_activation.yaml::members",
 )
 
 
@@ -827,7 +824,7 @@ def load_manifest(tree: Path) -> RenderManifest:
             raise RenderError(
                 f"{path}: a declared-direction tree must carry a slot for EVERY direction-bound "
                 f"value source — missing {missing!r}. Without them nothing verifies this tree's "
-                "direction, and the activation digests do not bind it either"
+                "direction, and the policy digests do not bind it either"
             )
 
     return RenderManifest(
@@ -912,21 +909,6 @@ def _slot_rules(
             )
         rules.append(Rule(slot.file, slot.rule_key, slot.anchor, line))
     return tuple(rules)
-
-
-def _members_rule(members_block: str) -> Rule:
-    """Phase 2: ``safety_activation.yaml::members`` (design §2 step 6).
-
-    Derived from ``print-policy-digests`` against the ALREADY-coordinate-filled output
-    directory, never hand-written (adoption plan §2 decision 3): the coordinates go into the
-    canonical digest, so this value is host-specific and cannot be committed.
-    """
-    return Rule(
-        "safety_activation.yaml",
-        "safety_activation.yaml::members",
-        "members: null",
-        members_block,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1229,7 +1211,10 @@ def _run_runtime_cli(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
 def _policy_digest_lines(config_dir: Path) -> tuple[tuple[str, str, int, str], ...]:
     """``print-policy-digests --config-dir <config_dir>`` → ``(kind, member_id, generation,
     digest)`` per printed line (design §2 step 6; the printer is
-    ``compose/cli.py::_dispatch_print_policy_digests`` + ``compose/_cli_ops.py:91-145``).
+    ``compose/cli.py::_dispatch_print_policy_digests`` + ``compose/_cli_ops.py``). This is a
+    render-time proof that every mandatory policy document actually LOADS against the
+    coordinate-filled copy, in a fresh process — the activation read-back that used to
+    follow it went with plan S2-a along with ``safety_activation.yaml``.
 
     Reproducible across processes since 2026-09-24. It was not before: ``covered_content()``
     is ``model_dump(mode="json", …)`` (``tos/src/tos/canonical/_base.py:187``), which renders a
@@ -1237,9 +1222,8 @@ def _policy_digest_lines(config_dir: Path) -> tuple[tuple[str, str, int, str], .
     as ORDER-SIGNIFICANT ("sequence order is preserved (vectors are order-significant)",
     ``tos/src/tos/canonical/canonicalization.py``). Set iteration order follows Python's
     per-process string hash seed, so any canonical model with a set in its covered content
-    digested differently in every process — and the documented operator procedure (run
-    ``print-policy-digests``, copy the digests into ``safety_activation.yaml::members``, boot)
-    is a CROSS-PROCESS transcription, so it could not work for such a kind.
+    digested differently in every process — and this render-time check compares digests
+    ACROSS processes, so it could not work for such a kind.
 
     The fix is one JSON-mode serialization hook on :class:`~tos.canonical.FrozenModel`
     (``tos/src/tos/canonical/_canonical_json.py``;
@@ -1247,11 +1231,11 @@ def _policy_digest_lines(config_dir: Path) -> tuple[tuple[str, str, int, str], .
     ``sorted()`` order, so all 19 set-carrying canonical models — ``VenueConstraintPolicy``
     among them — digest identically in every process.
     ``tests/tools/test_tos_canonical_set_order.py`` measures that over six ``PYTHONHASHSEED``
-    values, and ``_verify_activation`` still re-derives in a fresh process: the cross-process
+    values: the cross-process
     transcription is the property that must hold, and re-measuring it here is cheaper than
     discovering a regression at boot.
 
-    ⚠ **Separately: the activation record does not bind DIRECTION** (review-797 LOW-6).
+    ⚠ **Separately: the policy digest does not bind DIRECTION** (review-797 LOW-6).
     ``_runtime.construction.axes``' ``DIRECTION`` and ``admitted_quantity_bases`` sit OUTSIDE
     the OCP's canonical covered content (DR-0002 §2.3 binds the digest to
     ``policy_id``/``policy_generation``/``policy_version`` only), so a LONG render and a SHORT
@@ -1298,172 +1282,6 @@ def _policy_digest_lines(config_dir: Path) -> tuple[tuple[str, str, int, str], .
             f"{len(printed_kinds)} distinct kinds — one line per kind is expected"
         )
     return tuple(parsed)
-
-
-def _members_block(
-    entries: Sequence[tuple[str, str, int, str]], *, rendered_at: str
-) -> str:
-    """The ``members:`` YAML block.
-
-    Six fields per entry (``tos/src/tos/spg/records.py::BundleMemberRef`` via
-    ``tos_runtime/venue/activation.py``): ``kind``/``member_id``/``generation``/``digest`` are
-    transcribed from the printed line; ``resolved``/``immutable`` are NOT printed and are
-    written as the constants every policy file's own header prescribes (e.g.
-    ``venue_constraint_policy.yaml:36-37`` "resolved: true, immutable: true").
-    """
-    lines = [
-        "members:",
-        f"  # RENDERED {rendered_at} by scripts/tos/render_paper_config.py — derived from",
-        "  # `print-policy-digests --config-dir <this dir>` against the coordinate-filled",
-        "  # copy. Host-specific (the coordinates are inside each canonical digest): NEVER",
-        "  # commit this block. `resolved`/`immutable` are the constants the policy files'",
-        "  # own headers prescribe; they are not printed by the command.",
-    ]
-    for kind, member_id, generation, digest in entries:
-        lines.extend(
-            [
-                f'  - kind: "{kind}"',
-                f'    member_id: "{member_id}"',
-                f"    generation: {generation}",
-                f'    digest: "{digest}"',
-                "    resolved: true",
-                "    immutable: true",
-            ]
-        )
-    return "\n".join(lines)
-
-
-#: Design §2 step 6's end-check, run in a FRESH process.
-#:
-#: It deliberately RE-LOADS every policy through its own loader and activates against the
-#: digest THAT load computes — it does not merely re-check the digests the printing process
-#: already emitted. That distinction is the whole point: ``compose`` at boot is a third,
-#: different process that recomputes each ``canonical_digest`` and calls
-#: ``require_member_activated`` with ITS value (``compose/_venue_wiring.py:265-278``,
-#: ``compose/_riskstate_wiring.py:236-250``). A read-back that trusted the printed digests
-#: would pass while the boot refused — the documented operator procedure ("run
-#: print-policy-digests, copy the digests into members") is a CROSS-PROCESS transcription, so
-#: the check has to be cross-process too.
-_VERIFY_ACTIVATION = """
-import sys, json
-from pathlib import Path
-from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.spg import BundleMemberKind
-from tos_runtime.marketfeed.policy import load_critical_input_policy
-from tos_runtime.riskstate.policies import (
-    load_action_flow_policy,
-    load_aggregate_risk_policy,
-)
-from tos_runtime.venue import (
-    load_order_construction_policy,
-    load_venue_constraint_policy,
-)
-from tos_runtime.venue.activation import (
-    load_activation_members,
-    require_member_activated,
-)
-
-config_dir = Path(sys.argv[1])
-expected_count = int(sys.argv[2])
-scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
-
-
-def _venue():
-    loaded = load_venue_constraint_policy(
-        config_dir / "venue_constraint_policy.yaml", scheme=scheme
-    )
-    p = loaded.policy
-    return (p.policy_id, p.policy_generation, p.canonical_digest)
-
-
-def _ocp():
-    loaded = load_order_construction_policy(
-        config_dir / "order_construction_policy.yaml", scheme=scheme
-    )
-    p = loaded.policy
-    return (p.policy_id, p.policy_generation, p.canonical_digest)
-
-
-def _are():
-    loaded = load_aggregate_risk_policy(
-        config_dir / "aggregate_risk_policy.yaml", scheme=scheme
-    )
-    p = loaded.policy
-    return (p.policy_id, p.policy_generation, p.canonical_digest)
-
-
-def _afg():
-    loaded = load_action_flow_policy(
-        config_dir / "action_flow_policy.yaml", scheme=scheme
-    )
-    p = loaded.policy
-    return (p.policy_id, p.policy_generation, p.canonical_digest)
-
-
-def _cip():
-    loaded = load_critical_input_policy(
-        config_dir / "critical_input_policy.yaml", scheme=scheme
-    )
-    return (loaded.policy_id, loaded.policy_generation, loaded.canonical_digest)
-
-
-RELOADERS = {
-    "VENUE_CONSTRAINT_POLICY": _venue,
-    "ORDER_CONSTRUCTION_POLICY": _ocp,
-    "AGGREGATE_RISK_POLICY": _are,
-    "ACTION_FLOW_POLICY": _afg,
-    "CRITICAL_INPUT_POLICY": _cip,
-}
-
-members = load_activation_members(config_dir / "safety_activation.yaml")
-if len(members) != expected_count:
-    raise SystemExit(
-        f"members has {len(members)} entries, expected {expected_count}"
-    )
-for kind, reload_policy in RELOADERS.items():
-    member_id, generation, digest = reload_policy()
-    require_member_activated(
-        members,
-        kind=BundleMemberKind(kind),
-        member_id=member_id,
-        generation=generation,
-        digest=digest,
-    )
-print(f"ACTIVATED {len(members)} (re-derived in a fresh process)")
-"""
-
-
-def _verify_activation(
-    config_dir: Path, entries: Sequence[tuple[str, str, int, str]]
-) -> str:
-    """Design §2 step 6 end-check, in a FRESH process: re-load every policy, recompute its
-    ``canonical_digest``, and require that digest to be activated by the block just written.
-
-    This is what ``compose`` itself does at boot. A render whose members block only matches the
-    printing process's own digests is not a rendered deployment — it is one that will refuse at
-    boot, later and further away. See :data:`_VERIFY_ACTIVATION`."""
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-B",
-            "-c",
-            _VERIFY_ACTIVATION,
-            str(config_dir),
-            str(len(entries)),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=str(_REPO_ROOT),
-        env=_subprocess_env(),
-    )
-    if completed.returncode != 0:
-        raise RenderError(
-            "activation read-back refused — the rendered members block is not activated "
-            f"(exit {completed.returncode}):\n"
-            f"{(completed.stderr or completed.stdout).strip()}"
-        )
-    return completed.stdout.strip()
 
 
 def _write_journal(path: Path, *, instrument: str, now_ms: int) -> int:
@@ -1605,7 +1423,6 @@ class RenderResult:
     account_fingerprint: str
     rendered_keys: tuple[str, ...]
     policy_digests: tuple[tuple[str, str, int, str], ...]
-    activation_check: str
     journal_path: Path
     #: ``None`` in ``external`` journal mode — the renderer does not read the journal there,
     #: so it has no observation timestamp to report (design §2.4).
@@ -1664,7 +1481,7 @@ def render(
         RenderError: any refusal — a bad direction, a manifest that refuses to load, a
             direction or journal argument that contradicts the manifest's mode, an output path
             inside the repo, an anchor that did not match exactly once, a refused
-            ``print-policy-digests``, or an activation read-back that does not see every member.
+            ``print-policy-digests``.
             For a tree with an instance-path slot (the stock tree), also a broker profile file
             that is not its committed ``HEAD`` blob (:func:`broker_profile_pin`) — so such a
             tree renders ONLY from a git checkout, and an uncommitted profile edit there stops
@@ -1761,7 +1578,7 @@ def render(
     # Build in a sibling staging directory and swap it into place only on success
     # (review-797 MEDIUM-2, scope corrected in round 2). A failure AFTER the first account
     # byte reaches the disk — which is what every operator on this host hits today, because
-    # the activation read-back refuses on the canonical-digest defect — must not leave an
+    # a refused render — must not leave an
     # account-bearing directory behind.
     #
     # ⚠ The first cut of this closed only PART of that: the `try` ended before the fingerprint,
@@ -1816,9 +1633,6 @@ def render(
 
         digests = _policy_digest_lines(staging)
         rendered_at = now.isoformat()
-        members = _members_rule(_members_block(digests, rendered_at=rendered_at))
-        _apply_rules(staging, (members,))
-        activation_check = _verify_activation(staging, digests)
 
         # ⚠ No self-check against :data:`COORDINATE_RULE_KEYS` here any more, and deliberately
         # not a self-check against the manifest either. With the slot table as DATA, comparing
@@ -1826,7 +1640,7 @@ def render(
         # slot would turn nothing red (design §2.1, review M1). The pin that keeps its force is
         # the per-tree expected-slot literal in the unit tests, which carries the full
         # ``(file, key, anchor, replacement)`` tuple, not just the key name.
-        rendered_keys = tuple(rule.key for rule in rules) + (members.key,)
+        rendered_keys = tuple(rule.key for rule in rules)
 
         fingerprint = account_fingerprint(account)
         result = RenderResult(
@@ -1838,7 +1652,6 @@ def render(
             account_fingerprint=fingerprint,
             rendered_keys=rendered_keys,
             policy_digests=digests,
-            activation_check=activation_check,
             journal_path=effective_journal_path,
             journal_as_of_ms=journal_as_of_ms,
             rendered_at_kst=rendered_at,
@@ -1866,7 +1679,6 @@ def render(
                     }
                     for kind, member_id, generation, digest in digests
                 ],
-                "activation_check": activation_check,
                 "journal_path": str(effective_journal_path),
                 "journal_as_of_ms": journal_as_of_ms,
                 # ADDED 2026-10-09 (design §2.3): which committed tree this render came from.
@@ -1943,8 +1755,6 @@ def check(source: Path, out: Path) -> list[str]:
     anchors_by_file: dict[str, set[str]] = {}
     for slot in manifest.slots:
         anchors_by_file.setdefault(slot.file, set()).add(slot.anchor)
-    members = _members_rule("members: RENDERED")
-    anchors_by_file.setdefault(members.file, set()).add(members.anchor)
 
     for name in sorted(source_files & out_files):
         source_lines = (source / name).read_text(encoding="utf-8").split("\n")
@@ -2115,7 +1925,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         else f"as_of_ms={result.journal_as_of_ms}"
     )
     print(f"  journal:         {result.journal_path} ({journal_note})")
-    print(f"  activation:      {result.activation_check}")
     for kind, member_id, generation, digest in result.policy_digests:
         print(f"  digest:          {kind} {member_id} {generation} {digest}")
     return 0

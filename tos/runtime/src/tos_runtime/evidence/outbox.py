@@ -1,22 +1,4 @@
-"""Same-transaction outbox enqueue + at-least-once ``drain`` (design #40 D3, §2 item 3).
-
-The ``outbox`` table lives in the SAME sqlite file as ``entries``
-(:mod:`tos_runtime.evidence.store`), so :func:`enqueue` — called from inside
-:meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.append`'s own
-``BEGIN IMMEDIATE``/``COMMIT`` block, on the SAME cursor — either commits
-together with the entry it references or rolls back together with it
-(contract "outbox 같은 트랜잭션(append 실패 시 outbox 행 0)"). Unlike
-``entries``, ``outbox`` is ordinary (no append-only trigger): marking a row
-delivered is an ``UPDATE`` of bookkeeping metadata, not a rewrite of evidence
-content — the referenced entry itself is never touched.
-
-**No real external sink is implemented here** (design #40 §2 item 3 "실제
-외부 싱크 구현 0") — :class:`OutboxConsumer` is the Protocol a future
-transport adapter satisfies; :func:`drain` only guarantees at-least-once
-delivery semantics and idempotency-key plumbing.
-
-Firewall: stdlib (``sqlite3``, ``json``, ``time``) + ``pydantic`` only.
-"""
+"""Same-transaction outbox enqueue + at-least-once ``drain`` (design #40 D3, §2 item 3)."""
 
 from __future__ import annotations
 
@@ -48,14 +30,7 @@ CREATE TABLE IF NOT EXISTS outbox (
 
 @runtime_checkable
 class _ConnectionSource(Protocol):
-    """The one attribute :func:`drain` needs from an evidence store — its live connection.
-
-    A structural Protocol (rather than importing
-    :class:`tos_runtime.evidence.store.SqliteEvidenceStore` directly) so this
-    module never depends on ``store.py`` — ``store.py`` depends on THIS
-    module (to enqueue inside its own transaction), and a two-way import edge
-    would be a cycle.
-    """
+    """The one attribute :func:`drain` needs from an evidence store — its live connection."""
 
     @property
     def connection(self) -> sqlite3.Connection: ...
@@ -69,18 +44,7 @@ def create_outbox_table(conn: sqlite3.Connection) -> None:
 def enqueue(
     cursor: sqlite3.Cursor | sqlite3.Connection, *, entry_seq: int, target: str
 ) -> None:
-    """Insert one pending outbox row on the CALLER'S OWN open cursor/transaction.
-
-    Never commits — the caller (:meth:`SqliteEvidenceStore.append`) controls
-    the transaction boundary so this row lands in the same commit as the
-    entry it references.
-
-    Args:
-        cursor: The sqlite3 cursor/connection already inside an open
-            transaction.
-        entry_seq: The ``entries.seq`` this outbox row is delivering.
-        target: The delivery target name (caller vocabulary).
-    """
+    """Insert one pending outbox row on the CALLER'S OWN open cursor/transaction."""
     cursor.execute(
         "INSERT INTO outbox (entry_seq, target, delivered_at_monotonic_ns) "
         "VALUES (?, ?, NULL)",
@@ -89,12 +53,7 @@ def enqueue(
 
 
 class OutboxDelivery(BaseModel):
-    """One pending delivery, joined against its referenced entry's content.
-
-    ``idempotency_key`` is ``(segment_id, entry_seq)`` (design #40 §2 item 3)
-    — stable across repeated at-least-once deliveries of the same row, so a
-    consumer can dedupe without needing its own sequence tracking.
-    """
+    """One pending delivery, joined against its referenced entry's content."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -117,12 +76,7 @@ class OutboxConsumer(Protocol):
     """The injected delivery sink :func:`drain` calls for each pending row."""
 
     def deliver(self, delivery: OutboxDelivery) -> bool:
-        """Attempt one delivery; return ``True`` iff it should be marked delivered.
-
-        A ``False`` return (or a raised exception, which propagates to the
-        caller of :func:`drain`) leaves the row pending for a later
-        :func:`drain` call — at-least-once, never at-most-once.
-        """
+        """Attempt one delivery; return ``True`` iff it should be marked delivered."""
         ...
 
 
@@ -157,18 +111,7 @@ def drain(
     *,
     monotonic_ns: Callable[[], int] = time.monotonic_ns,
 ) -> int:
-    """Deliver every pending outbox row at least once; mark delivered ones done.
-
-    Args:
-        store: The evidence store owning the outbox (its
-            ``.connection`` is reused directly).
-        consumer: The delivery sink.
-        monotonic_ns: Injected monotonic-clock callable for
-            ``delivered_at_monotonic_ns`` on a successful delivery.
-
-    Returns:
-        The number of rows marked delivered this call.
-    """
+    """Deliver every pending outbox row at least once; mark delivered ones done."""
     conn = store.connection
     delivered = 0
     for delivery in list(_iter_pending(conn)):

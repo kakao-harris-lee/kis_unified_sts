@@ -1,27 +1,4 @@
-"""``tos_runtime.compose`` finalization — the tail of ``compose_paper_runtime`` (engine core +
-gateway + durable inbox/driver wiring, boot-time replay re-verification, and the final
-:class:`~tos_runtime.compose._types.ComposedRuntime` assembly).
-
-Split out of ``_wiring.py`` (independent review MEDIUM-5, T2 lane C re-review) purely for the
-size budget — no behavioural difference from having :func:`_finalize` inline there. ``_wiring.py``
-had grown past its own "성장 금지" (no-growth) landing condition; :func:`_finalize` was itself a
-registered 112-line over-budget function whose entire body is engine/transport hand-off wiring —
-the same concern :mod:`tos_runtime.compose._engine_wiring` and
-:mod:`tos_runtime.compose._transport_wiring` already own. Moving it here, alongside its own small
-:func:`_build_engine_configuration` helper, retires both the module-level ``_wiring.py`` exception
-and (via the ``_verify_boot_replay`` extraction below) the function-level ``_finalize`` exception.
-
-Depends on ``_wiring.py``'s own private phase-result dataclasses (:class:`~tos_runtime.compose.
-_wiring._Infra`, :class:`~tos_runtime.compose._wiring._RclAndAuthority`,
-:class:`~tos_runtime.compose._wiring._ConstructionStages`, :class:`~tos_runtime.compose._wiring.
-_RealizedStages`) — a ONE-DIRECTION dependency (this module imports from ``_wiring.py``;
-``_wiring.py`` never imports back from this module — :func:`~tos_runtime.compose.root.
-compose_paper_runtime` imports :func:`_finalize` directly from here instead), so there is no
-import cycle.
-
-:func:`~tos_runtime.compose.root.compose_paper_runtime` is the orchestrator that calls
-:func:`_finalize`, in the design #40 §5 order.
-"""
+"""``tos_runtime.compose`` finalization — the tail of ``compose_paper_runtime`` (engine core +"""
 
 from __future__ import annotations
 
@@ -71,18 +48,11 @@ __all__ = ["_finalize"]
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 _ENGINE_CONFIG_NAME = "engine.yaml"
-#: TOS Phase 3 Wave 2 Lane C-R follow-up (team-lead CR-4 dispatch, plan §2.2) — the SYNTHETIC
-#: post-trade finality policy (:mod:`tos_runtime.posttrade.config`).
 _FINALITY_CONFIG_NAME = "finality.yaml"
 
 
 def _build_engine_configuration(config_dir: Path) -> EngineConfiguration:
-    """Load ``engine.yaml``'s two operator-configured bounds (pre-merge fix
-    F5, 2026-09-08 — CLAUDE.md non-negotiable: thresholds belong in config,
-    never a hardcoded literal) and construct the kernel's own
-    ``EngineConfiguration`` — the ``canonicalization_version``/
-    ``enforcement_mechanism_version`` fields are compose's own fixed
-    identity, not operator-configured, and stay as they were."""
+    """Load ``engine.yaml``'s two operator-configured bounds (pre-merge fix"""
     engine_config = load_engine_config(config_dir / _ENGINE_CONFIG_NAME)
     return EngineConfiguration(
         dsl_evaluation_budget_steps=engine_config.dsl_evaluation_budget_steps,
@@ -102,18 +72,7 @@ def _verify_boot_replay(
     rcl_log: SqliteCommitLog,
     instrument_key: InstrumentKey,
 ) -> ReplayVerdict:
-    """Independent boot-time re-derivation over whatever this inbox has already durably admitted
-    (design plan §1.1 "부팅 시 verify_rcl_log_or_halt 뒤에 실행"). Split out of :func:`_finalize`
-    purely for the size budget (independent review MEDIUM-5) — no behavioural difference.
-
-    Reported deviation from the plan's literal adjacency: ``verify_rcl_log_or_halt`` itself runs
-    earlier, inside ``_boot_services``, before the engine core/gateway/inbox exist to replay at
-    all — this is the earliest point in compose an engine replay check is constructible, and it
-    still runs strictly after the RCL log's own integrity is re-verified (the substantive
-    ordering requirement). See :mod:`tos_runtime.engine.replay`'s own module docstring for what
-    "side-effect-free" does and does not cover for a core that DID have a working transmit in its
-    original run.
-    """
+    """Independent boot-time re-derivation over whatever this inbox has already durably admitted"""
     engine_driver_config = load_engine_driver_config(
         config_dir / ENGINE_DRIVER_CONFIG_NAME
     )
@@ -126,10 +85,7 @@ def _verify_boot_replay(
         configuration=engine_configuration,
         scheme=_SCHEME,
         window_events=engine_driver_config.replay_window_events,
-        # PR-3b Codex r3: recorded engine-projection releases are checked against the RCL's
-        # own committed state, never against pre-COMMIT evidence alone.
         rcl_committed=rcl_log.committed_command,
-        # #944: the replay rebuilds the live core's reservation projection in place.
         live_core=wired.core,
         instrument_key=instrument_key,
     )
@@ -138,10 +94,7 @@ def _verify_boot_replay(
 def _kis_credential_sessions(
     infra: _Infra, identity: RuntimeIdentity
 ) -> KisCredentialSessions:
-    """C-2 decision (C): one KIS credential session per app key for this whole boot — the
-    order transport takes its session in :func:`_finalize`, the ``kis_quote`` intake later
-    (``root.py``), both from the registry this returns (carried on
-    :attr:`~tos_runtime.compose._types.ComposedRuntime.kis_credential_sessions`)."""
+    """C-2 decision (C): one KIS credential session per app key for this whole boot — the"""
     return build_kis_credential_sessions(
         custody=infra.custody,
         monotonic=infra.monotonic_source,
@@ -172,27 +125,14 @@ def _finalize(
     credential_sessions_cell: KisCredentialSessionsCell | None = None,
     venue_ledger: SyntheticVenueLedger | None = None,
 ) -> ComposedRuntime:
-    """The gateway + ``EngineCore`` + durable inbox/driver wiring (delegated to
-    :func:`~tos_runtime.compose._engine_wiring.wire_engine_and_driver`) + the boot-time replay
-    check (:func:`_verify_boot_replay`) + the final :class:`~tos_runtime.compose._types.
-    ComposedRuntime` assembly — the tail of :func:`~tos_runtime.compose.root.
-    compose_paper_runtime`, split out purely for the size budget (module docstring)."""
+    """The gateway + ``EngineCore`` + durable inbox/driver wiring (delegated to"""
     engine_configuration = _build_engine_configuration(config_dir)
-    # Coordinator-preconditions governance posture (design #31 §9-10; plan §2.1) — fail-closed,
-    # from its own example-shaped file, same as every other tos_runtime.*.config value.
     coordinator_preconditions_config = load_coordinator_preconditions_config(
         config_dir / COORDINATOR_PRECONDITIONS_CONFIG_NAME
     )
-    # SYNTHETIC post-trade finality policy (CR-4, plan §2.2) — fail-closed, from its own file.
     finality_config = load_finality_config(config_dir / _FINALITY_CONFIG_NAME)
     kis_credential_sessions = _kis_credential_sessions(infra, identity)
     if credential_sessions_cell is not None:
-        # Published HERE, dispatched BELOW. `wire_engine_and_driver` is where the order
-        # transport takes its `kis_mock.*` session, and `session_for` CREATES that shared
-        # session for its first caller using that caller's client. So the order transport must
-        # go first, exactly as it did before the band source existed; dispatching here would
-        # make the band reader the creator and route the order transport's token issuance
-        # through the band client (independent review LOW-2).
         credential_sessions_cell.fill(kis_credential_sessions)
     wired = wire_engine_and_driver(
         data_dir=data_dir,
@@ -218,18 +158,11 @@ def _finalize(
         transport_kind=transport_kind,
         transport_config=transport_config,
         credential_sessions=kis_credential_sessions,
-        safety_mesh=risk.safety_mesh.services,
-        mesh_snapshot_refresher=risk.safety_mesh.refresh_tick_snapshot,
         trading_date_now=trading_date_now,
-        # #1011 P2: the synthetic transport records into this boot's venue ledger
-        # before it answers, when `finality.yaml::witness` selected one.
         venue_ledger=venue_ledger,
     )
 
     if credential_sessions_cell is not None:
-        # After the order transport has its session, before the boot replay — which can
-        # already drive step 3, and therefore a CP-3 band read. A session-terms conflict
-        # raised by a consumer here still refuses the BOOT (independent review M1).
         credential_sessions_cell.start_consumers()
 
     _verify_boot_replay(
@@ -273,7 +206,5 @@ def _finalize(
         inbox=wired.inbox,
         driver=wired.driver,
         scopes=broker_scopes,
-        safety_mesh_peek=risk.safety_mesh.peek_tick_snapshot,
-        protective_last_verdict=lambda: risk.safety_mesh.protective_action.last_verdict,
         kis_credential_sessions=kis_credential_sessions,
     )

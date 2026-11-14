@@ -1,49 +1,4 @@
-"""The synthetic paper transport (design #34 §5.2) — network 0, credentials 0, route 0.
-
-This is what the slice actually executes. Design #34 §2 makes it the honest send boundary for
-slice #1, on the **broker-reached / synthetic** axis rather than the live / non-live one:
-
-* ① the firewall forbids network stdlib inside ``tos/``, so a real broker transport is
-  necessarily located outside ``tos/`` — the firewall bounds *where* it can live;
-* ② a real paper-account API call is a **broker-resource-consuming** transmission (it creates a
-  mock order on a broker's server), so RFC-002 §10.8:741 triggers the full verify list for it,
-  and the deferred safety-governance mesh plus the P0-2-blocked profile make the required facts
-  unverifiable ⇒ §10.8:761 rejection. That is what actually stops the real-paper option from
-  executing, and the gateway enforces it rather than this module asserting it.
-
-A synthetic transport is the **other side** of that axis, not a way around it: it consumes no
-broker resource, holds no credential, and reaches no route, so the gateway's broker-applicability
-gate can positively establish it — with structural corroboration from the credential-route
-inventory, never from this class's say-so.
-
-**Deterministic by construction.** The fill band is a pure function of the injected
-:class:`SyntheticFillPolicy` and the authorized quantity: no clock, no RNG, no ambient state. Two
-runs over the same inputs produce byte-identical results, which is what makes the transport usable
-as the D-E3 backtest fill model's structural twin (design #34 §5.2 — same Protocol, different
-injection).
-
-**Structurally derived outcome.** The fill / partial distinction follows the **magnitudes**, not a
-declared label (구조 파생 > 자기신고), mirroring D-E1's own ``EgressResultPayload`` shape validator
-(``engine/records.py:221-229``): a remaining quantity above zero is a ``PARTIAL_FILL`` and cannot
-be recorded as a ``FULL_FILL``. The already-filled part is never re-requested (RFC-005 §11:338-339,
-§6:176-178).
-
-⚠ **NON-AUTHORITATIVE.** A result from this transport is not evidence that any broker accepted
-anything, because no broker was contacted. It closes no EV and it establishes no currentness,
-capability, or capacity fact (design #34 §1.1/§2.4).
-
-**SYNTHETIC execution identity (Phase 3 K2-p3-#6b).** Every result stamps
-``EgressResultPayload.broker_execution_id`` with a deterministic value derived from
-``(attempt.attempt_id, kind)`` — no clock, no RNG, the same discipline as the fill band above.
-This is a **SYNTHETIC** identity, never a real broker one: it exists so the kernel's DUPLICATE
-detection (``tos.engine.state.ProvisionalReservationLedger.apply_egress_result``, Phase 3
-K2-p3-#6) has an ADR-002-002 §15.3:725 "broker execution identity or broker-specific deterministic
-composite identity" to key on for the *paper* path, instead of degrading to the reference-excluded
-runtime-local replay guard that fires only for a byte-identical resend. It carries exactly the same
-non-authoritative status as the rest of this module — see the paragraph above.
-
-Firewall: ``pydantic`` + stdlib + ``tos.*`` only; **no network stdlib, no clock, no RNG**.
-"""
+"""The synthetic paper transport (design #34 §5.2) — network 0, credentials 0, route 0."""
 
 from __future__ import annotations
 
@@ -70,15 +25,6 @@ __all__ = [
 ]
 
 
-#: The outcomes an injected policy may declare outright, because they are *not* derived from a
-#: fill magnitude: an acknowledgement with no fill, a broker rejection, and the two genuinely
-#: unknown fates. ``FULL_FILL`` / ``PARTIAL_FILL`` are deliberately **absent** — those two are
-#: derived from the magnitudes and can never be declared (구조 파생 > 자기신고).
-#: The **pinned** arithmetic context the fill band runs under (adversarial review NIT-1), the
-#: symmetric twin of ``tos.egressgw.construction.DERIVATION_CONTEXT``. ``decimal`` arithmetic
-#: reads an ambient per-thread context; a fresh :class:`~decimal.Context` makes the band a pure
-#: function of its declared arguments, which is what lets this transport stand in for the D-E3
-#: fill model (design #34 §5.2).
 FILL_CONTEXT: Context = Context(prec=28, rounding=ROUND_HALF_EVEN)
 
 NON_FILL_DECLARABLE_KINDS: frozenset[EgressResultKind] = frozenset(
@@ -90,69 +36,17 @@ NON_FILL_DECLARABLE_KINDS: frozenset[EgressResultKind] = frozenset(
     }
 )
 
-#: ⚠ **Deliberately excludes ``CANCEL_ACK`` / ``EXPIRED`` (Phase 3 wave 2 KW2-C1).** This
-#: transport models a single-shot send/settle round trip only (module docstring); it has no
-#: cancel-request or expiry-observation entry point at all, so it can never honestly declare
-#: either outcome. Both kinds were added to the kernel's closed
-#: :class:`~tos.engine.EgressResultKind` vocabulary in this same wave (a cancel
-#: acknowledgement or a broker-observed expiry), but authoring one here would be inventing a
-#: cancel/expiry protocol this transport does not have. A real adapter that actually supports
-#: cancellation or observes expiry is future work; :func:`_synthetic_execution_id` below
-#: already accepts *any* :class:`~tos.engine.EgressResultKind` member generically (it only
-#: reads ``kind.value``), so extending that adapter later needs no change here — only a new
-#: code path that can actually produce one of these two kinds.
 
-#: The prefix stamped on every synthetic execution id (Phase 3 K2-p3-#6b) — distinct on sight from
-#: any real broker's own id format, so a reader (or a future consumer) never mistakes one for a
-#: genuine broker-issued identity.
 _SYNTHETIC_EXECUTION_ID_PREFIX = "syn-exec"
 
 
 def _synthetic_execution_id(attempt_id: str, kind: EgressResultKind) -> str:
-    """The deterministic **SYNTHETIC** execution id ``send_once`` stamps on every result.
-
-    A pure function of ``(attempt_id, kind)`` — no clock, no RNG, no ambient state, the same
-    discipline :class:`SyntheticFillPolicy` already holds the fill band to (design #34 §5.2). This
-    is what lets the kernel's DUPLICATE detection
-    (:meth:`tos.engine.state.ProvisionalReservationLedger.apply_egress_result`, Phase 3 K2-p3-#6)
-    key on an ADR-002-002 §15.3:725 "broker execution identity or broker-specific deterministic
-    composite identity" for the *paper* path, instead of degrading to the reference-excluded
-    runtime-local replay guard. ``kind`` is included (not just ``attempt_id``) because a single
-    attempt can genuinely carry more than one distinct egress result over its lifetime (e.g. a
-    ``TIMEOUT`` followed by a later ``FULL_FILL`` for the same attempt — ADR-002-002 §15.2 "later
-    valid fill accepted") and those are different facts, not a resend of the same one.
-
-    ⚠ **SYNTHETIC, not a broker identity.** This id is never evidence that any broker was
-    contacted — it carries the same non-authoritative status as every other result this transport
-    produces (module docstring).
-
-    Args:
-        attempt_id: The Coordinator's content-addressed attempt identity.
-        kind: The result kind this id is being stamped for.
-
-    Returns:
-        A deterministic, prefixed, human-distinguishable synthetic identity string.
-    """
+    """The deterministic **SYNTHETIC** execution id ``send_once`` stamps on every result."""
     return f"{_SYNTHETIC_EXECUTION_ID_PREFIX}:{attempt_id}:{kind.value}"
 
 
 class SyntheticFillPolicy(FrozenModel):
-    """The injected, deterministic paper fill band (design #34 §5.2).
-
-    Exactly one of two modes, and the validator forbids both at once:
-
-    * a **declared non-fill outcome** (``declared_kind`` in :data:`NON_FILL_DECLARABLE_KINDS`) —
-      how a scenario asks for an acknowledgement, a rejection, or one of the two unknown fates;
-    * a **fill band** (``fill_numerator`` / ``fill_denominator`` over the authorized quantity,
-      floored to ``lot_size``) — from which the kind is *derived*, never declared.
-
-    The band is expressed as an exact integer ratio rather than a float so the arithmetic is
-    exact and reproducible across processes (no binary-float variation — ADR-002-020 §11:301).
-
-    ⚠ This band models nothing about real market microstructure. Cost realism, queue position,
-    and the differential oracle are **D-E3's** (design #34 §5.2/§8.3); this exists so the send
-    boundary has a deterministic counterparty, not so anyone can estimate a fill.
-    """
+    """The injected, deterministic paper fill band (design #34 §5.2)."""
 
     declared_kind: EgressResultKind | None = None
     fill_numerator: int | None = None
@@ -208,18 +102,7 @@ class SyntheticFillPolicy(FrozenModel):
 
 
 def synthetic_transport_nature_fields() -> dict[str, bool]:
-    """The three negative-polarity nature flags a synthetic transport can honestly declare.
-
-    Returned as a plain mapping (not a ``TransportNature``) because
-    :class:`~tos.egressgw.records.TransportNature` lives in ``tos.egressgw``, which this package
-    does not import (design #34 §0.3 closure). A caller wires these into the gateway's context
-    together with the **principal** — and the gateway still refuses to take the declaration at
-    face value: it requires structural corroboration from the credential-route inventory
-    (design #34 §4.2).
-
-    Returns:
-        ``reaches_broker`` / ``credential_bearing`` / ``route_bearing``, each ``False``.
-    """
+    """The three negative-polarity nature flags a synthetic transport can honestly declare."""
     return {
         "reaches_broker": False,
         "credential_bearing": False,
@@ -228,23 +111,10 @@ def synthetic_transport_nature_fields() -> dict[str, bool]:
 
 
 class SyntheticPaperTransport:
-    """A deterministic, network-free paper transport (design #34 §5.2).
-
-    Holds **no** credential, **no** session, **no** route, and opens **no** socket: the class has
-    no such attribute to hold one in, which is the same constructive-absence discipline the
-    sibling kernels use for "there is no transmit method". Its only method is the single-shot
-    :meth:`send_once`, so a retry loop cannot be written against it.
-
-    ``requests`` retains what was asked, in order, so a test can assert that exactly one call was
-    made for one attempt — the mechanical form of "no blind resubmission".
-    """
+    """A deterministic, network-free paper transport (design #34 §5.2)."""
 
     def __init__(self, policy: SyntheticFillPolicy) -> None:
-        """Configure the transport with its injected deterministic fill policy.
-
-        Args:
-            policy: The injected :class:`SyntheticFillPolicy`.
-        """
+        """Configure the transport with its injected deterministic fill policy."""
         self._policy = policy
         self.requests: tuple[OutboundSendRequest, ...] = ()
 
@@ -265,25 +135,7 @@ class SyntheticPaperTransport:
         reference: OrderingEvent = OrderingEvent(),
         seal_digest: str | None = None,
     ) -> EgressResultPayload:
-        """Produce the deterministic result for exactly one verified outbound.
-
-        The result's ``attempt_id`` is **always** the attempt's own: a transport can never
-        transition a reservation other than the one it was handed (design #31 §2.1(ii)).
-
-        Args:
-            attempt: The Coordinator's bound attempt request.
-            instrument_key: The send's dispatch scope.
-            coordinates: The opaque ordered egress coordinates.
-            quantity: The authorized order quantity.
-            price: The authorized order price.
-            side: The authorized side token.
-            reference: The event's causal-ordering coordinates.
-            seal_digest: The sealed ``SendSeal.seal_digest`` (Phase 4 작업 6), stored on the
-                retained :class:`OutboundSendRequest` unchanged.
-
-        Returns:
-            The :class:`~tos.engine.EgressResultPayload` for this exact attempt.
-        """
+        """Produce the deterministic result for exactly one verified outbound."""
         request = OutboundSendRequest(
             attempt=attempt,
             instrument_key=instrument_key,
@@ -306,9 +158,6 @@ class SyntheticPaperTransport:
                 reference=reference,
             )
         if quantity is None or not quantity.is_finite() or quantity <= 0:
-            # No authorized magnitude to fill against. This is not a rejection — nothing was
-            # established about a broker's disposition — so the honest report is UNKNOWN
-            # (RFC-005 §11:322-323 missing acknowledgement != not accepted).
             return EgressResultPayload(
                 instrument_key=instrument_key,
                 attempt_id=attempt.attempt_id,
@@ -330,7 +179,6 @@ class SyntheticPaperTransport:
                 ),
                 reference=reference,
             )
-        # ★ structural derivation: the kind follows the magnitudes, never a label.
         kind = (
             EgressResultKind.PARTIAL_FILL
             if remaining > 0
@@ -351,7 +199,7 @@ class SyntheticPaperTransport:
         numerator = self._policy.fill_numerator
         denominator = self._policy.fill_denominator
         lot = self._policy.lot_size
-        assert numerator is not None  # narrowed by the policy validator
+        assert numerator is not None
         assert denominator is not None
         assert lot is not None
         with localcontext(FILL_CONTEXT):

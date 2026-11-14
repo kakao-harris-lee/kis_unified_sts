@@ -1,7 +1,4 @@
-"""``tos_runtime.compose._risk_attestations`` tests (re-review finding F4,
-2026-09-08). Hermetic — real config files under ``tmp_path``, real
-``AggregateRiskDecisionInputs``/``ActionFlowDecisionInputs`` construction
-(never a mock of the kernel dataclasses)."""
+"""``tos_runtime.compose._risk_attestations`` tests (re-review finding F4,"""
 
 from __future__ import annotations
 
@@ -42,11 +39,6 @@ def _write(path: Path, content: dict) -> None:
     path.write_text(yaml.safe_dump(content, sort_keys=False), encoding="utf-8")
 
 
-# ============================================================================
-# loader refuses a still-null (named-TBD) field, for every field
-# ============================================================================
-
-
 @pytest.mark.parametrize(
     "field",
     [
@@ -84,14 +76,6 @@ def test_a_valid_file_loads(tmp_path: Path) -> None:
         economic_commitment_exclusive=True,
         flow_commitment_exclusive=True,
     )
-
-
-# ============================================================================
-# wrap_aggregate_risk_inputs_provider: RESTRICTIVE MERGE, not an
-# unconditional override (fixed 2026-09-08 -- an unconditional override was
-# itself a fail-open: an attestation of True could silently flip a caller's
-# own genuine False/UNKNOWN claim back to admitting).
-# ============================================================================
 
 
 def _aggregate_inputs_with(
@@ -140,8 +124,7 @@ def _all_false_risk_attestations() -> RiskAttestations:
 
 
 def test_aggregate_wrapper_defers_to_attestation_when_caller_has_no_opinion() -> None:
-    """Caller ``None`` (possible on every field as of kernel round #1 §2.3)
-    or a caller ``True`` claim: the attestation governs."""
+    """Caller ``None`` (possible on every field as of kernel round #1 §2.3)"""
     wrapped = wrap_aggregate_risk_inputs_provider(
         lambda _request: _aggregate_inputs_with(
             all_fields_attributed=None,
@@ -162,10 +145,7 @@ def test_aggregate_wrapper_defers_to_attestation_when_caller_has_no_opinion() ->
 def test_aggregate_wrapper_defers_to_attestation_when_numerically_safe_is_none() -> (
     None
 ):
-    """Kernel round #1 §2.3: ``numerically_safe``/``valuation_ok`` are now
-    ``| None`` on ``AggregateRiskDecisionInputs`` — a caller with genuinely
-    no opinion on either can pass ``None`` and the attestation governs,
-    exactly like the other four fields already did."""
+    """Kernel round #1 §2.3: ``numerically_safe``/``valuation_ok`` are now"""
     wrapped = wrap_aggregate_risk_inputs_provider(
         lambda _request: _aggregate_inputs_with(
             all_fields_attributed=True,
@@ -182,9 +162,7 @@ def test_aggregate_wrapper_defers_to_attestation_when_numerically_safe_is_none()
 
 
 def test_aggregate_wrapper_none_never_masks_an_attested_restrictive_false() -> None:
-    """The other half of the same fix: ``None`` from the caller must not
-    accidentally read as more permissive than an operator attestation of
-    ``False`` — the attestation (a real restrictive fact) still governs."""
+    """The other half of the same fix: ``None`` from the caller must not"""
     wrapped = wrap_aggregate_risk_inputs_provider(
         lambda _request: _aggregate_inputs_with(
             all_fields_attributed=True,
@@ -201,9 +179,7 @@ def test_aggregate_wrapper_none_never_masks_an_attested_restrictive_false() -> N
 
 
 def test_aggregate_wrapper_never_overrides_the_callers_own_restrictive_claim() -> None:
-    """A caller's own definite non-``True`` claim (``False`` here) is NEVER
-    overridden upward, even when the operator attestation is ``True`` — the
-    fail-open the re-review flagged."""
+    """A caller's own definite non-``True`` claim (``False`` here) is NEVER"""
     wrapped = wrap_aggregate_risk_inputs_provider(
         lambda _request: _aggregate_inputs_with(
             all_fields_attributed=False,
@@ -222,9 +198,7 @@ def test_aggregate_wrapper_never_overrides_the_callers_own_restrictive_claim() -
 
 
 def test_aggregate_wrapper_attestation_downgrades_callers_naive_true() -> None:
-    """An operator attestation of ``False`` is a real, authoritative fact —
-    it downgrades a caller's bare ``True`` literal (never a stronger claim
-    than the attestation itself)."""
+    """An operator attestation of ``False`` is a real, authoritative fact —"""
     wrapped = wrap_aggregate_risk_inputs_provider(
         lambda _request: _aggregate_inputs_with(
             all_fields_attributed=True,
@@ -255,14 +229,6 @@ def test_aggregate_wrapper_passes_through_none() -> None:
     assert wrapped(fx.stage_request()) is None
 
 
-# ============================================================================
-# wrap_action_flow_inputs_provider: RESTRICTIVE MERGE for the 3 attested
-# fields (same fix as the aggregate wrapper above), and generation_current
-# is ALWAYS derived (never attested, never the caller's literal, never
-# merged).
-# ============================================================================
-
-
 def _action_flow_inputs_with(
     *,
     limit_source_is_injected_envelope,
@@ -286,7 +252,7 @@ def _action_flow_inputs_with(
         runtime_limit=fx.action_flow_envelope_max(),
         economic_commitment_exclusive=economic_commitment_exclusive,
         flow_commitment_exclusive=flow_commitment_exclusive,
-        generation_current=False,  # always discarded/re-derived; irrelevant here
+        generation_current=False,
         applicable_action_flow_scopes=("ACCOUNT",),
         decision_generation=decision_generation,
     )
@@ -312,8 +278,7 @@ def test_action_flow_wrapper_defers_to_attestation_when_caller_has_no_opinion() 
 def test_action_flow_wrapper_never_overrides_the_callers_own_restrictive_claim() -> (
     None
 ):
-    """A caller's own ``False`` is NEVER overridden upward, even when the
-    operator attestation is ``True`` — the fail-open the re-review flagged."""
+    """A caller's own ``False`` is NEVER overridden upward, even when the"""
     wrapped = wrap_action_flow_inputs_provider(
         lambda _request: _action_flow_inputs_with(
             limit_source_is_injected_envelope=False,
@@ -360,7 +325,7 @@ def test_action_flow_wrapper_derives_generation_current_false_on_mismatch() -> N
     )
     result = wrapped(fx.stage_request())
     assert result is not None
-    assert result.generation_current is False  # 5 != 9, generation_fenced fails
+    assert result.generation_current is False
 
 
 def test_action_flow_wrapper_derives_generation_current_true_on_match() -> None:
@@ -376,7 +341,7 @@ def test_action_flow_wrapper_derives_generation_current_true_on_match() -> None:
     )
     result = wrapped(fx.stage_request())
     assert result is not None
-    assert result.generation_current is True  # 5 == 5, generation_fenced holds
+    assert result.generation_current is True
 
 
 def test_action_flow_wrapper_maps_stale_epoch_read_to_none() -> None:

@@ -476,7 +476,7 @@ def test_untrusted_or_incomplete_snapshot_never_publishes(
 def test_stale_or_cross_date_snapshot_is_burned_and_unavailable() -> None:
     cell, clock = _cell()
     assert _publish(cell)
-    clock.now = 1_401  # age is beyond the injected 500 ms freshness bound
+    clock.now = 1_401
     assert _consume(cell, _SCOPE, PositionSide.LONG) is None
 
     assert _publish(
@@ -491,16 +491,12 @@ def test_stale_or_cross_date_snapshot_is_burned_and_unavailable() -> None:
 def test_a_scheduled_refresh_keeps_the_previous_proof_until_a_newer_one_publishes() -> (
     None
 ):
-    """Issue #1010's failing input: a CLOSE proposed right after a new plan marked the
-    refresh pending. Burning the proof there left the cache empty for the ~6.7 s the four
-    paced GETs need, so that CLOSE spent its one standing-approval use and then read
-    PROOF_UNAVAILABLE. The retained reading keeps its own age origin; a newer publish
-    replaces it."""
+    """Issue #1010's failing input: a CLOSE proposed right after a new plan marked the"""
     cell, clock = _cell()
     assert _publish(cell)
 
-    cell.mark_pending(_SCOPE)  # the next plan; its paced GETs have not answered yet
-    clock.now = 1_300  # 400 ms into the refresh, inside the retained reading's 500 ms
+    cell.mark_pending(_SCOPE)
+    clock.now = 1_300
     proof = _consume(cell, _SCOPE, PositionSide.LONG)
     assert proof is not None
     assert proof.age_origin_ms == 900
@@ -512,19 +508,17 @@ def test_a_scheduled_refresh_keeps_the_previous_proof_until_a_newer_one_publishe
 
 
 def test_a_retained_proof_is_still_refused_once_it_is_past_max_age() -> None:
-    """Retention is not an extension: the bound is the reading's own age origin against the
-    one configured ``max_age_ms``, pending refresh or not."""
+    """Retention is not an extension: the bound is the reading's own age origin against the"""
     cell, clock = _cell()
     assert _publish(cell)
 
     cell.mark_pending(_SCOPE)
-    clock.now = 1_401  # 501 ms past the retained reading's age origin
+    clock.now = 1_401
     assert _consume(cell, _SCOPE, PositionSide.LONG) is None
 
 
 def test_a_scheduled_refresh_keeps_a_proof_awaiting_its_commit_fence() -> None:
-    """The step-9 fence outlives the next plan too: only the consumed proof's own age, date
-    and tip may refuse it."""
+    """The step-9 fence outlives the next plan too: only the consumed proof's own age, date"""
     cell, _ = _cell()
     assert _publish(cell)
     proof = _consume(cell, _SCOPE, PositionSide.LONG)
@@ -545,7 +539,6 @@ def test_failed_refresh_invalidates_previous_proof() -> None:
     cell.invalidate()
     assert _consume(cell, _SCOPE, PositionSide.LONG) is None
 
-    # A refresh that answers with an unusable snapshot is a failed refresh as well.
     assert _publish(cell)
     assert not _publish(cell, _snapshot(positions=()))
     assert _consume(cell, _SCOPE, PositionSide.LONG) is None
@@ -556,8 +549,6 @@ def test_stock_witness_cannot_claim_short_position_side() -> None:
     assert _publish(cell)
 
     assert _consume(cell, _SCOPE, PositionSide.SHORT) is None
-    # A matching CLOSE attempt burns its proof even when the stock witness cannot prove its
-    # requested side; denial cannot leave a reusable balance read behind.
     assert _consume(cell, _SCOPE, PositionSide.LONG) is None
 
 

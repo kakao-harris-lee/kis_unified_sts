@@ -21,10 +21,19 @@ rather than a 4xx/5xx — disguising "no data yet" as a server error would viola
 ADR-DEV-014 OBS-INV-003, and the reason prefixes are pinned by
 ``tests/fixtures/tos/bars-reasons.json``, shared with the UI's matcher.
 
-**No ``reason`` ever carries a value read from the document**, and neither does
-any response field. Two consequences, both deliberate:
+**No ``reason`` ever carries a value read from the document.** The document's
+own content IS mirrored under ``document`` — that is what a read model is for —
+but it never reaches a diagnostic, and two kinds of value never reach the body
+at all. Three consequences, all deliberate:
 
 * reasons carry the failing *location* and the exception or value *type* only;
+* the response's top-level ``session`` is the id THIS ROUTE resolved, which has
+  passed :data:`_SESSION_ID_PATTERN`, not the document's own ``session`` string.
+  The earlier revision echoed ``document.session``, which is file content: a
+  document carrying a hostile name would have had it reflected into a field the
+  page renders outside the ``document`` block. (The exporter now also refuses to
+  write a document whose ``session`` is outside that same pattern, so the two
+  agree by construction — but this route does not depend on that.);
 * the document's host paths (``data_dir``, ``strategy.path``, ``bindings.path``)
   are **absent from the DTOs**, so ``extra="ignore"`` drops them before the body
   is built. They are deployment details of the host, the page never renders
@@ -325,19 +334,25 @@ def _resolve_latest(bars_dir: Path) -> str | None:
     Newest by mtime, which is the moment :func:`os.replace` put the document in
     place — so it orders by *export* time rather than by a name this route would
     otherwise have to parse.
+
+    ``stat`` is INSIDE the try, with the listing: an export replacing a document
+    between ``iterdir`` and ``stat`` makes the entry vanish, and that
+    ``FileNotFoundError`` raised from inside ``max``'s key function would reach
+    FastAPI as a 500 — a server error for "the exporter ran while the page was
+    loading", which is exactly the "no data yet as a 5xx" this route refuses
+    everywhere else. ``None`` here becomes ``available=false`` instead.
     """
     try:
-        candidates = [
-            entry
-            for entry in bars_dir.iterdir()
-            if entry.is_file() and entry.suffix == ".json"
-        ]
+        newest: tuple[float, str] | None = None
+        for entry in bars_dir.iterdir():
+            if entry.suffix != ".json" or not entry.is_file():
+                continue
+            stamp = (entry.stat().st_mtime, entry.stem)
+            if newest is None or stamp > newest:
+                newest = stamp
     except OSError:
         return None
-    if not candidates:
-        return None
-    newest = max(candidates, key=lambda entry: entry.stat().st_mtime)
-    return newest.stem
+    return None if newest is None else newest[1]
 
 
 def _read_document(bars_dir: Path, session_id: str) -> TosBarsResponse:
@@ -420,7 +435,9 @@ def _read_document(bars_dir: Path, session_id: str) -> TosBarsResponse:
         available=True,
         reason=None,
         age_seconds=age_seconds,
-        session=document.session or session_id,
+        # The RESOLVED id, which passed `_SESSION_ID_PATTERN` above — never
+        # `document.session`, which is file content (module docstring).
+        session=session_id,
         document=document,
     )
 

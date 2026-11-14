@@ -1,11 +1,4 @@
-"""Segment-commitment chain verify — ERI-EV-005 predicate-only (design #4 §3.4).
-
-The provisional hash chain (``c_i = H(c_{i-1} || d_i)``) supports the §13
-detection predicates: mutation / substitution, deletion / prefix-truncation /
-suffix-loss, fork (different predecessor), and append-only prefix preservation.
-The Protocol accepts chain or Merkle, so a production choice needs no rework. The
-MAC's cryptographic verification and real failure-domain separation are L2+.
-"""
+"""Segment-commitment chain verify — ERI-EV-005 predicate-only (design #4 §3.4)."""
 
 from __future__ import annotations
 
@@ -45,7 +38,6 @@ def test_mutation_is_detected(digests: list[str]) -> None:
     seq = tuple(digests)
     commitment = _SCHEME.commit(seq)
     tampered = ("__tampered__", *seq[1:])
-    # The mutated sequence no longer commits to the original commitment.
     assert not _SCHEME.verify_membership(tampered[0], 0, commitment, tampered)
 
 
@@ -79,7 +71,6 @@ def test_fork_is_detected_by_predecessor_discontinuity() -> None:
     anchor_b = _SCHEME.link_anchor(
         _SCHEME.commit(("d1", "dX")), predecessor_anchor="p-1"
     )
-    # Divergent committed content yields divergent anchors (no last-write-wins merge).
     assert anchor_a.segment_commitment != anchor_b.segment_commitment
     assert anchor_a.anchor_id != anchor_b.anchor_id
 
@@ -93,7 +84,6 @@ def test_anchor_chain_links_predecessor() -> None:
     assert isinstance(anchor, IntegrityAnchor)
     assert anchor.segment_commitment == commitment
     assert anchor.predecessor_anchor == "anchor-0"
-    # Cadence is an injected bound; unset => UNKNOWN (no approved MAX_anchor_cadence_ms).
     assert anchor.anchor_cadence_ms is None
 
 

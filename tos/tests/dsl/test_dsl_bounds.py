@@ -1,15 +1,4 @@
-"""Bounded-evaluation property tests — DCE-EV-007 (design §6.1 / §3.4).
-
-DCE-EV-007 (bounded ⇒ no-action): the pure symbolic state machine either
-*completes* (work fits the injected budget) or degrades to a recorded **no-action**
-— never a partial outcome and never an ``EVALUATING`` stall (RFC-008 §9). The bound
-is symbolic (a step count), never an invented numeric wall-time/CPU value
-(design §7 — VERIFICATION-PROFILE-002 carries no DSL-evaluation bound).
-
-★ fail-open guard: **★2 producer-optimism** — a ``BoundOutcome`` cannot store a
-``degraded_to_no_action`` flag that disagrees with the pure predicate, and cannot
-record a non-terminal ``EVALUATING`` state.
-"""
+"""Bounded-evaluation property tests — DCE-EV-007 (design §6.1 / §3.4)."""
 
 from __future__ import annotations
 
@@ -39,11 +28,6 @@ _COMPLETED_OUTCOME: Proposal = issue_proposal()
 _DEGRADED_OUTCOME: NoActionOutcome = issue_no_action()
 
 
-# ---------------------------------------------------------------------------
-# resolve_bound + the transition (DCE-EV-007)
-# ---------------------------------------------------------------------------
-
-
 @given(
     work=st.integers(min_value=0, max_value=200),
     budget=st.integers(min_value=0, max_value=200),
@@ -65,8 +49,6 @@ def test_bounded_evaluation_completes_or_degrades_to_no_action(
     else:
         assert state is BoundState.BOUND_EXHAUSTED
         assert degrades_to_no_action(state) is True
-        # The degraded outcome is a first-class No-Action Outcome — not a partial
-        # action and not the completed Proposal.
         assert isinstance(outcome, NoActionOutcome)
         assert outcome is _DEGRADED_OUTCOME
 
@@ -95,11 +77,6 @@ def test_select_outcome_rejects_evaluating_stall() -> None:
             completed_outcome=_COMPLETED_OUTCOME,
             on_exhaustion=lambda: _DEGRADED_OUTCOME,
         )
-
-
-# ---------------------------------------------------------------------------
-# ★2 producer-optimism — BoundOutcome flag must match the pure predicate
-# ---------------------------------------------------------------------------
 
 
 @given(

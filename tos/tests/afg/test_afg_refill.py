@@ -1,17 +1,4 @@
-"""core §5.4 — refill integrity, counter integrity, and the generation fence.
-
-AFG-EV-008 substrate (ADR-002-022 §18 line 403-407; **AFG-INV-004 line 169 "replenishes"
-+ AFG-INV-007 line 181**) plus the separate AFG-INV-013 line 205 generation fence (design
-#16 M6: "Stale Generations Are Fenced" is a *different axis* from the refill rule, and the
-v1.0 draft mis-anchored §18 to INV-013).
-
-Both-ways canaries (design #16 §4.4): a wall-clock jump, a clock recovery, a restart, a
-broker timestamp, a cross-host monotonic comparison, a negative age, and an unestablished
-continuity all refuse; approved trustworthy time + committed RCL history + one continuity
-+ a finite non-negative age permits.
-
-Closes **no** AFG-EV: predicate / coordinate substrate only (design #16 §1).
-"""
+"""core §5.4 — refill integrity, counter integrity, and the generation fence."""
 
 from __future__ import annotations
 
@@ -49,11 +36,6 @@ def _refill(**overrides: object) -> ActionFlowResult:
     continuity = base.pop("monotonic_continuity_id")
     age = base.pop("age")
     return refill_conservative(time_valid, continuity, age, **base)  # type: ignore[arg-type]
-
-
-# ---------------------------------------------------------------------------
-# refill_conservative (§18 line 403-407)
-# ---------------------------------------------------------------------------
 
 
 def test_approved_time_plus_rcl_history_permits_refill() -> None:
@@ -145,11 +127,6 @@ def test_all_none_refill_inputs_are_denied_or_unknown_never_granted() -> None:
     assert verdict is not ActionFlowResult.GRANT
 
 
-# ---------------------------------------------------------------------------
-# generation_fenced (AFG-INV-013 line 205 — a separate axis from §18 refill)
-# ---------------------------------------------------------------------------
-
-
 def test_current_generation_passes_the_fence() -> None:
     """(canary +) An artifact on the current generation => True (not fenced)."""
     assert generation_fenced(7, 7) is True
@@ -181,11 +158,6 @@ def test_fence_passes_only_on_equality(artifact: int, current: int) -> None:
     assert generation_fenced(artifact, current) is (artifact == current)
 
 
-# ---------------------------------------------------------------------------
-# action_flow_generation_monotone (§3.2 tos.ordering REUSE — no wall clock)
-# ---------------------------------------------------------------------------
-
-
 def test_generation_ordering_is_monotone() -> None:
     """(canary +) An earlier quorum index provably precedes a later one (append-only)."""
     a = OrderingEvent(event_id="a", quorum_commit_index=1)
@@ -199,11 +171,6 @@ def test_ambiguous_ordering_fails_closed() -> None:
     a = OrderingEvent(event_id="a")
     b = OrderingEvent(event_id="b")
     assert action_flow_generation_monotone(a, b) is False
-
-
-# ---------------------------------------------------------------------------
-# restart_counter_assumption_admissible (§22 line 463 — "assume-zero-counter")
-# ---------------------------------------------------------------------------
 
 
 def test_restart_making_no_zero_state_assumption_passes() -> None:

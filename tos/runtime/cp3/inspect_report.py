@@ -1,53 +1,4 @@
-"""The inspection's result shape, and the two renderings of it.
-
-Part of the CP-3 ``cp3`` package (roadmap
-``docs/plans/2026-11-11-tos-platform-roadmap.md`` §P1). Split out of
-:mod:`cp3.inspect_session` when the value-view join (review of #1057, MEDIUM-1)
-pushed that module past ``config/tos_size_budget.yaml``'s 1,000-line cap. The
-dependency runs one way — ``inspect_session -> inspect_report`` — so the
-dataclasses a future Control Plane API reuses carry no evaluation machinery.
-
-**What the table has to make visible, and why each marker exists.**
-
-* ``V`` — the engine's own value view disagreed with the producer's journal line
-  for this bar. The engine evaluated the view; the journal is the wrong answer
-  when they differ, so the difference is a finding, not a detail. The summary
-  names which field keys differed and on how many bars.
-* ``D`` — the re-evaluated decision disagrees with the outcome the engine
-  recorded. On a session where the inspector and the engine read the same
-  inputs through the same evaluator this must be zero; a non-zero count means
-  the screen is lying about something, so it is counted rather than smoothed.
-* ``W`` — the engine declined to decide on this bar, in either of the two shapes
-  :attr:`~cp3.inspect_evidence.BarEvidence.withheld` names: an **explicit-empty**
-  value view (every operand ``UNKNOWN``, so no rule could fire for reasons that
-  have nothing to do with the authored thresholds), or a recorded
-  ``DECISION_WITHHELD`` (the pipeline never reached an input signature — which
-  can happen on a tick whose view DID carry values). Such a bar is NOT evaluated
-  and is **outside every per-comparison denominator** — counting it would report
-  "entry_window was false" about a bar the engine never judged.
-* ``U`` — an engine view was asked for and is not usable (the chain broke, or
-  the recorded view is one this reader refused), so the rules were evaluated on
-  the **journal** line as a substitute. Shown, because the fields are still
-  worth reading, but outside the denominators: a bar whose evaluation inputs
-  stand in for inputs that should have been there cannot carry a claim about
-  what blocked a rule. ``substituted_bars`` counts these; ``unjoined_counts``
-  separately names the chain breaks among them.
-
-So the denominators are the **counted** bars, and the header and the summary
-state every population so the excluded ones are visible rather than merely
-absent.
-
-**A run that asked for no evidence at all is a different case** and is counted.
-With ``--no-evidence`` there is no engine view to be a substitute *for*: the
-operator asked what the authored policy does to the producer's own fields, the
-header says ``evidence (not read — no --data-dir)``, and there is no second
-source the reader could mistake the numbers for. Excluding those bars would
-leave every denominator at zero, which answers nothing. That is
-:data:`EVALUATION_JOURNAL_ONLY`, and it carries no ``U``.
-
-Firewall: ``tos.*`` + ``tos_runtime.*`` + stdlib only. Intra-package imports are
-RELATIVE (see :mod:`cp3._base`).
-"""
+"""The inspection's result shape, and the two renderings of it."""
 
 from __future__ import annotations
 
@@ -78,31 +29,16 @@ __all__ = [
     "value_text",
 ]
 
-#: Rules were evaluated on the engine's own published value view — the only
-#: population a per-comparison denominator may contain.
 EVALUATION_ENGINE_VIEW = "engine_view"
 
-#: The engine declined to decide — an explicit-empty view or a recorded
-#: ``DECISION_WITHHELD`` — so nothing was evaluated.
 EVALUATION_WITHHELD = "withheld"
 
-#: The evidence chain broke; rules were evaluated on the journal line instead of
-#: the engine view that should have been there. Outside the denominators.
 EVALUATION_JOURNAL_UNJOINED = "journal_unjoined"
 
-#: No durable set was asked for (``--no-evidence``), so the journal line is the
-#: only input there is and the only one the numbers could mean. Counted.
 EVALUATION_JOURNAL_ONLY = "journal_only"
 
-#: Numeric field keys the per-bar table prints as columns. The boolean gates are
-#: deliberately NOT repeated here: every one of them is already visible as its
-#: own comparison mark, and printing it twice would widen the row for nothing.
 _NUMERIC_COLUMNS: tuple[str, ...] = ("close_x100", "vwap_x100", "z_x1000")
 
-#: The engine ``outcome_type`` values this inspector can compare its own
-#: first-match decision against. Anything else is "not comparable" rather than a
-#: disagreement — inventing a verdict for an outcome shape nobody has measured
-#: is exactly the phantom finding ``D`` exists to avoid.
 ENGINE_OUTCOME_SHAPES: Mapping[str, str] = {
     "NoActionOutcome": "no_action",
     "Proposal": "proposal",
@@ -145,27 +81,7 @@ class RuleView:
 
 @dataclass(frozen=True)
 class BarRow:
-    """One recorded bar: its inputs, every rule's verdict, and what the engine did.
-
-    Attributes:
-        fields: The producer's journal line for this bar.
-        env_values: What the rules were ACTUALLY evaluated on — the engine's
-            value view when one was read, the journal line when none was asked
-            for or none was usable, and empty for a withheld bar.
-        evaluation: One of the four sources, in the order
-            :func:`~cp3.inspect_session._evaluation_source` tries them:
-            :data:`EVALUATION_WITHHELD`, :data:`EVALUATION_ENGINE_VIEW`,
-            :data:`EVALUATION_JOURNAL_ONLY`, :data:`EVALUATION_JOURNAL_UNJOINED`.
-        counted: Whether this bar is inside the per-comparison denominators —
-            true for :data:`EVALUATION_ENGINE_VIEW` and
-            :data:`EVALUATION_JOURNAL_ONLY`, false for the other two.
-        view_diff: ``field_key -> (engine view, journal)`` for every key the two
-            disagree on; empty when they agree or only one of them exists.
-        engine_shape: ``"no_action"`` / ``"proposal"`` from the recorded
-            outcome, or ``None`` when there is nothing comparable.
-        decision_disagrees: Whether the re-evaluated decision's shape differs
-            from ``engine_shape``.
-    """
+    """One recorded bar: its inputs, every rule's verdict, and what the engine did."""
 
     raw_event_id: str
     as_of_ms: int
@@ -260,11 +176,6 @@ class InspectReport:
     view_refusal_counts: Mapping[str, int]
 
 
-# ===========================================================================
-# Text rendering
-# ===========================================================================
-
-
 def _marks(row: BarRow, position: int) -> str:
     """One rule's cell for one bar: fired flag plus a mark per comparison."""
     if not row.rules:
@@ -275,13 +186,7 @@ def _marks(row: BarRow, position: int) -> str:
 
 
 def _populations(report: InspectReport) -> str:
-    """The one line that says which bars the denominators contain, and on what.
-
-    The source is named rather than assumed: with ``--no-evidence`` the counted
-    bars were evaluated on the producer's journal, and calling that "the
-    engine's value view" would be the exact confusion the ``V`` marker exists to
-    prevent.
-    """
+    """The one line that says which bars the denominators contain, and on what."""
     source = (
         "the journal (no engine view read)"
         if report.data_dir is None
@@ -431,11 +336,6 @@ def render_text(report: InspectReport) -> str:
     """The whole report as the operator table (header + legend + bars + summary)."""
     lines = _header_lines(report) + _bar_table(report) + _summary_lines(report)
     return "\n".join(lines) + "\n"
-
-
-# ===========================================================================
-# JSON rendering
-# ===========================================================================
 
 
 def _evidence_json(evidence: BarEvidence) -> dict[str, object]:

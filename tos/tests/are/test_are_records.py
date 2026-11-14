@@ -1,10 +1,4 @@
-"""Digest-bound artifact invariants (design #13 §2/§3.1; ARE-EV-001/002 substrate).
-
-id ⊥ digest => a same-id / different-bytes contradictory decision is a detectable
-``CRITICAL_CONFLICT`` (the forbidden-verb 'union' seal — two decisions cannot be merged);
-the snapshot grants no permission; the final ``AdverseIncrement[s,d]`` is the rcl
-``CapacityVector`` type (MAJOR-1 type-seal regression); every artifact is frozen (append-only).
-"""
+"""Digest-bound artifact invariants (design #13 §2/§3.1; ARE-EV-001/002 substrate)."""
 
 from __future__ import annotations
 
@@ -26,10 +20,6 @@ from ._are_strategies import (
     issue_scenario_set,
     issue_snapshot,
 )
-
-# ---------------------------------------------------------------------------
-# digest binding — issuance is reachable under Phase-1 null bounds
-# ---------------------------------------------------------------------------
 
 
 def test_all_four_artifacts_issue_under_null_bounds() -> None:
@@ -60,17 +50,10 @@ def test_issued_decision_requires_concrete_result() -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# id ⊥ digest — same-id / different-bytes is CRITICAL_CONFLICT ('union' seal)
-# ---------------------------------------------------------------------------
-
-
 def test_contradictory_same_id_decision_is_critical_conflict() -> None:
     """(§3.1 / ARE-INV-002) Two same-id decisions with different bytes => CRITICAL_CONFLICT (no union)."""
     a = issue_decision(decision_id="dec-1", result=RiskDecisionResult.GRANT)
-    b = issue_decision(
-        decision_id="dec-1", result=RiskDecisionResult.DENY
-    )  # contradictory
+    b = issue_decision(decision_id="dec-1", result=RiskDecisionResult.DENY)
     assert (
         classify_record_pair(
             a.decision_id, a.canonical_digest, b.decision_id, b.canonical_digest
@@ -105,22 +88,12 @@ def test_distinct_generation_ids_are_distinct() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# snapshot grants no permission (§5.3 line 124)
-# ---------------------------------------------------------------------------
-
-
 def test_snapshot_grants_no_permission() -> None:
     """(§5.3 line 124 / ARE-INV-009) The snapshot carries an all-false authority effect."""
     snap = issue_snapshot()
     assert snap.authority_effect.creates_capacity is False
     assert snap.authority_effect.permits_transmission is False
     assert snap.authority_effect.may_rearm is False
-
-
-# ---------------------------------------------------------------------------
-# dominance type-seal regression (MAJOR-1) — AdverseIncrement is rcl CapacityVector
-# ---------------------------------------------------------------------------
 
 
 def test_adverse_increment_result_uses_rcl_capacity_vector_type() -> None:
@@ -158,11 +131,6 @@ def test_decision_increment_equals_rcl_commit_coordinate() -> None:
         adverse_increment=vec,
     )
     assert isinstance(decision.adverse_increment, CapacityVector)
-
-
-# ---------------------------------------------------------------------------
-# frozen / append-only (no mutate)
-# ---------------------------------------------------------------------------
 
 
 def test_artifacts_are_frozen() -> None:

@@ -1,20 +1,4 @@
-"""CP-3 stock tenant tree ``cp3-setup-d-stock-005930`` (rescope M2, 2026-10-22).
-
-Two things are pinned here:
-
-1. **Drift against the LONG tree.** The stock tree is the LONG tree with the stock facts
-   swapped in. Every file is either byte-identical to LONG, or differs ONLY at the parsed-YAML
-   leaf paths declared below — so a later edit to LONG that is not carried over (or a stray
-   edit here) is a named failure, not a silent fork.
-2. **It boots with kis-mock and fails closed.** With the tree's own calendar and filled
-   policies, the compose root binds the stock venue policy (KRX tick ladder at ×100, 1 share,
-   ``krx-stock`` CONTINUOUS 09:00-15:30) under ``--transport kis-mock`` — the only transport
-   this MOCK order tree pairs with — and an attempt during the stock session sends nothing:
-   the band is unsourced, so the venue step cannot admit (``VENUE_CONSTRAINT_POLICY`` header).
-   The tree's OWN ``order_construction_policy.yaml`` is what boots (generation 4, B3): the
-   fixture helper that writes ``kis_mock_transport.yaml`` also rewrites the OCP, so the stock
-   OCP is installed after it.
-"""
+"""CP-3 stock tenant tree ``cp3-setup-d-stock-005930`` (rescope M2, 2026-10-22)."""
 
 from __future__ import annotations
 
@@ -60,7 +44,7 @@ from .test_compose_root import (
 from .test_deploy_config import _kst_unix_ms
 from .test_deploy_policies import _filled
 from .test_kis_mock_e2e_honesty import _sealed_mock_deployment
-from .test_venue_wiring import _kind_count, _rewrite_activation, _rows
+from .test_venue_wiring import _kind_count, _rows
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -69,36 +53,26 @@ _LONG = _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-long"
 _STOCK = _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-stock-005930"
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: file -> the parsed-YAML leaf paths allowed to differ from LONG. ``None`` = prose file.
 _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
     "README.md": None,
+    "fields.yaml": frozenset(
+        {
+            "fields.8.params.open_hour",
+            "fields.8.params.open_minute",
+        }
+    ),
     "RENDER.yaml": frozenset(
         {
             "tree_id",
             "account.env_key",
-            # the one stock code --instrument must match (#926 LOW, #936 MEDIUM)
             "instrument",
-            # the producer market feeding the tree (#936 review LOW-1)
             "market",
-            # B2: broker_scopes.yaml::instance_path, rewritten to the source checkout's file
-            # (the slot LONG does not have — LONG's boot never reads the INSTANCE)
             "slots.23",
         }
     ),
-    # PR-3a (운영자 결정 2026-10-23): this tree, and only this tree, is the MOCK order tree.
     "broker_scopes.yaml": frozenset({"active_scope", "scopes.2.profile_evidence_ok"}),
     "coordinator_preconditions.yaml": frozenset({"nonlive_broker_consuming.admitted"}),
-    # B5 (operator approved 2026-10-24): the witness bound covers the 60 s closed cadence.
     "authority.yaml": frozenset({"containment_bound_ms"}),
-    # B4 (operator approved 2026-10-24): the recorded activation approval + attestation.
-    "safety_activation.yaml": frozenset(
-        {
-            "activation.activation_id",
-            "activation.scope",
-            "activation.approval_ids",
-            "activation.compatibility_attestation_refs",
-        }
-    ),
     "egress_coordinates.yaml": frozenset({"endpoint.value", "route_identity.value"}),
     "construction.yaml": frozenset({"instrument_class"}),
     "marketfeed.yaml": frozenset({"instrument_class", "unit"}),
@@ -107,30 +81,18 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
     ),
     "action_flow_policy.yaml": frozenset({"policy_id"}),
     "critical_input_policy.yaml": frozenset({"policy_id", "issuer_principal_id"}),
-    "safety_envelope.yaml": frozenset({"envelope.governed_dimensions.0.unit"}),
-    "safety_profile.yaml": frozenset({"profile.governed_dimensions.0.unit"}),
     "order_construction_policy.yaml": frozenset(
         {
             "policy_id",
             "unit_multiplier_currency_and_numeric_rules.0",
             "_runtime.construction.effect_dimensions.0.unit",
-            # B3, generation 4: the kis-mock wire codec — and the generation bump and approval
-            # line that a content change to an issued policy carries (header PROVENANCE).
             "_runtime.wire_codec",
             "policy_generation",
             "_model_view.policy_generation",
-            # This tree is one generation AHEAD of LONG (wire_codec took 4 here), so every
-            # later approval row sits at a different index: #1025's FLAT approval is row 3 in
-            # LONG and row 4 here, and row 3 here is still the wire-codec one.
             "approved_by.3",
             "approved_by.4",
         }
     ),
-    # M2 boundary probe (operator directive 2026-11-11, rescope plan §2 sentence 2 / M2):
-    # the stock tree's strategy carries ONE extra rule after LONG's three — R4, a
-    # config-gated entry probe — so every difference is under `policy.rules.3` and the
-    # exits (rules 1-2) keep first-match precedence over it. The toggle is the sibling
-    # bindings key below; `false` makes R4 inert without touching this file.
     "strategies/setup_d_long.strategy.yaml": frozenset({"policy.rules.3"}),
     "strategy_bindings.yaml": frozenset(
         {"strategies.setup_d_long.strategy.bindings.m2_probe_entry_enabled"}
@@ -188,8 +150,6 @@ def _covered(path: str, allowed: frozenset[str]) -> bool:
     return any(path == a or path.startswith(a + ".") for a in allowed)
 
 
-#: Files only the stock tree carries: item 12's GET-only mock-account facts (PR-3a) and the
-#: post-ACK fill observer / stock broker witness config (PR-3b).
 _STOCK_ONLY = {"broker_facts.yaml", "fill_observer.yaml"}
 
 
@@ -230,10 +190,7 @@ def test_the_stock_tree_carries_the_operator_decisions() -> None:
         "instrument_class": "krx-stock",
         "quantity_unit": "SHARES",
         "currency": "KRW",
-        # Kept from LONG (PR #927 review M1): a kis-mock boot refuses unless the transport's
-        # `price_scale` equals this one.
         "price_scale": 100,
-        # PR-3a: the LONG tree's producer_journal band block, fed by the stock band probe.
         "band_source": yaml.safe_load(
             (_LONG / "venue_constraint_policy.yaml").read_text("utf-8")
         )["_runtime"]["band_source"],
@@ -255,7 +212,6 @@ def test_the_stock_tree_carries_the_operator_decisions() -> None:
         "live_authorization_state": "NOT_AUTHORIZED",
         "nonlive_broker_consuming": {"admitted": True},
     }
-    # the LONG/SHORT trees stay synthetic and unadmitted
     for tree in ("cp3-setup-d-long", "cp3-setup-d-short"):
         other = _REPO_ROOT / "config" / "tos_runtime" / tree
         assert (
@@ -267,9 +223,6 @@ def test_the_stock_tree_carries_the_operator_decisions() -> None:
     render = yaml.safe_load((_STOCK / "RENDER.yaml").read_text("utf-8"))
     assert render["account"] == {"env_key": "KIS_STOCK_ACCOUNT_NO"}
     assert render["direction"] == {"mode": "declared", "value": "LONG"}
-    # "Setup D LONG as-is" — LONG's three rules and its default, unchanged — PLUS the M2
-    # boundary probe appended last (operator directive 2026-11-11). The file was a byte copy
-    # of LONG's until then; what is pinned now is that nothing in LONG's own rules moved.
     stock_policy = yaml.safe_load(
         (_STOCK / "strategies/setup_d_long.strategy.yaml").read_text("utf-8")
     )
@@ -288,14 +241,7 @@ def test_the_stock_tree_carries_the_operator_decisions() -> None:
 
 
 def _stock_strategy_and_config() -> tuple[Any, dict[str, Any]]:
-    """The committed stock strategy (issued + admitted) and its committed bindings.
-
-    ``parse_strategy`` is used directly rather than
-    :func:`~tos_runtime.strategy.loader.load_strategies`, because the committed tree's
-    coordinate leaves are still the named-TBD ``"TBD"`` token, which the loader refuses by
-    design (that refusal is the operator-fill gate). The POLICY is independent of the
-    coordinates, so evaluating the committed file is exactly what the render will dispatch.
-    """
+    """The committed stock strategy (issued + admitted) and its committed bindings."""
     raw = yaml.safe_load(
         (_STOCK / "strategies/setup_d_long.strategy.yaml").read_text("utf-8")
     )
@@ -315,14 +261,7 @@ def _decide(strategy: Any, resolved: dict[str, Any], config: dict[str, Any]) -> 
 
 
 def test_the_committed_stock_strategy_is_admissible_within_its_engine_budget() -> None:
-    """R4 keeps the strategy admissible: every compare still reads a capsule operand.
-
-    Red-before (measured 2026-11-11): the probe's toggle written as a config-only compare
-    (``config.m2_probe_entry_enabled EQ 1``) makes ``strategy_admissible`` INADMISSIBLE —
-    "outcome-gating compare #8 has no capsule-sourced operand" — which is a refused boot
-    (``STRATEGY_REFUSED``) and zero sends, not an inert rule. Hence the capsule-vs-config
-    shape, pinned here.
-    """
+    """R4 keeps the strategy admissible: every compare still reads a capsule operand."""
     strategy, _ = _stock_strategy_and_config()
     result = strategy_admissible(strategy)
     assert result.verdict is AdmissionVerdict.ADMISSIBLE, result.reasons
@@ -335,9 +274,8 @@ def test_the_committed_stock_strategy_is_admissible_within_its_engine_budget() -
 def test_the_m2_probe_proposes_an_entry_only_while_its_binding_is_on() -> None:
     """R4 fires on the entry window alone — with every other Setup D gate false/absent."""
     strategy, config = _stock_strategy_and_config()
-    assert config["m2_probe_entry_enabled"] is True  # bool, never int 1 (EQ is typed)
+    assert config["m2_probe_entry_enabled"] is True
 
-    # Setup D's own gates are false, so R1 cannot fire; R4 does.
     decision = _decide(
         strategy,
         {
@@ -359,7 +297,6 @@ def test_the_m2_probe_proposes_an_entry_only_while_its_binding_is_on() -> None:
         "OPEN",
     )
     assert decision.target.quantity_basis == "RISK"
-    # The probe's target coordinates are R1's own anchors — one dispatch scope, not two.
     r1_target = strategy.policy.rules[0].decision.target
     assert r1_target is not None
     assert (decision.target.account, decision.target.instrument) == (
@@ -367,18 +304,14 @@ def test_the_m2_probe_proposes_an_entry_only_while_its_binding_is_on() -> None:
         r1_target.instrument,
     )
 
-    # Outside the entry window the probe is silent even with the binding on.
     assert (
         _decide(strategy, {"entry_window": False}, config).kind
         is DecisionKind.NO_ACTION
     )
-    # A stale/absent field resolves UNKNOWN, which is restrictive.
     assert _decide(strategy, {}, config).kind is DecisionKind.NO_ACTION
 
-    # Binding off (the one-line revert once M2 is met): R4 is inert...
     off = dict(config, m2_probe_entry_enabled=False)
     assert _decide(strategy, {"entry_window": True}, off).kind is DecisionKind.NO_ACTION
-    # ...and Setup D's own R1 is untouched by the probe being there at all.
     gates = {
         "entry_window": True,
         "hi_vol": True,
@@ -399,11 +332,7 @@ def test_the_m2_probe_proposes_an_entry_only_while_its_binding_is_on() -> None:
 def test_the_exits_win_over_the_m2_probe(
     exit_field: str, rationale_prefix: str
 ) -> None:
-    """First-match ordering: R4 sits AFTER R2/R3, so a live exit always wins.
-
-    ``evaluate_policy`` returns the FIRST firing rule's decision, so this is what keeps the
-    probe from pinning a position open while the mean-reversion or EOD exit is asserted.
-    """
+    """First-match ordering: R4 sits AFTER R2/R3, so a live exit always wins."""
     strategy, config = _stock_strategy_and_config()
     decision = _decide(strategy, {"entry_window": True, exit_field: True}, config)
     assert decision.kind is DecisionKind.FLAT
@@ -416,13 +345,7 @@ def test_the_exits_win_over_the_m2_probe(
 
 
 def test_the_m2_probe_does_not_widen_the_standing_approvals_action_set() -> None:
-    """The standing approval's derived actions come from the strategy's target pairs.
-
-    ``tos_runtime.authority.standing_cli._actions`` reads every
-    ``(position_effect, direction)`` pair the strategy declares and REFUSES when the CLOSE
-    pairs name more than one direction. R4's target pair is R1's, so the derived entry/exit
-    actions — and therefore each one's ``max_uses`` slot — are exactly what they were.
-    """
+    """The standing approval's derived actions come from the strategy's target pairs."""
     strategy, _ = _stock_strategy_and_config()
     pairs = set()
     stack: list[Any] = [strategy.model_dump(mode="json")]
@@ -439,13 +362,7 @@ def test_the_m2_probe_does_not_widen_the_standing_approvals_action_set() -> None
 
 
 def test_the_render_direction_anchor_still_matches_exactly_once() -> None:
-    """``_apply_rules`` requires EXACTLY ONE match of each RENDER.yaml anchor line.
-
-    R4's target writes ``direction: "LONG"`` (quoted) for this reason: the same parsed value,
-    a different line, so the verify-only direction slot still matches R1's line alone. Red
-    if a later edit unquotes it — and the renderer would then refuse ("matched 2 times"),
-    which is why this is a named test and not a comment.
-    """
+    """``_apply_rules`` requires EXACTLY ONE match of each RENDER.yaml anchor line."""
     text = (_STOCK / "strategies/setup_d_long.strategy.yaml").read_text("utf-8")
     lines = text.split("\n")
     manifest = yaml.safe_load((_STOCK / "RENDER.yaml").read_text("utf-8"))
@@ -476,33 +393,28 @@ def _stock_policy(tmp_path: Path) -> Any:
 @pytest.mark.parametrize(
     ("won", "expected"),
     [
-        # 199,900원 — the 100원 rung. The old flat 500원 tick refused this legal price.
         ("199900", OrderAdmissibilityResult.ADMISSIBLE),
         ("199950", OrderAdmissibilityResult.INADMISSIBLE),
-        ("270000", OrderAdmissibilityResult.ADMISSIBLE),  # 005930's own rung, 500원
+        ("270000", OrderAdmissibilityResult.ADMISSIBLE),
         ("270100", OrderAdmissibilityResult.INADMISSIBLE),
-        # Exact rung edges (#929 review LOW): each first price of a rung sits on the new,
-        # coarser tick; the next price up is off it.
-        ("1999", OrderAdmissibilityResult.ADMISSIBLE),  # top of the 1원 rung
-        ("2001", OrderAdmissibilityResult.INADMISSIBLE),  # 5원 rung starts at 2,000
-        ("200000", OrderAdmissibilityResult.ADMISSIBLE),  # 500원 rung's first price
+        ("1999", OrderAdmissibilityResult.ADMISSIBLE),
+        ("2001", OrderAdmissibilityResult.INADMISSIBLE),
+        ("200000", OrderAdmissibilityResult.ADMISSIBLE),
         ("200100", OrderAdmissibilityResult.INADMISSIBLE),
-        ("500000", OrderAdmissibilityResult.ADMISSIBLE),  # 1,000원 rung's first price
+        ("500000", OrderAdmissibilityResult.ADMISSIBLE),
         ("500500", OrderAdmissibilityResult.INADMISSIBLE),
-        ("1001000", OrderAdmissibilityResult.ADMISSIBLE),  # 1,000원 rung
+        ("1001000", OrderAdmissibilityResult.ADMISSIBLE),
         ("1000500", OrderAdmissibilityResult.INADMISSIBLE),
         (
             "10000000",
             OrderAdmissibilityResult.UNKNOWN,
-        ),  # above the table — never widened
+        ),
     ],
 )
 def test_the_stock_tree_tick_ladder_resolves_each_rung(
     tmp_path: Path, won: str, expected: OrderAdmissibilityResult
 ) -> None:
-    """The REAL stock file's ``price_band_ticks`` (×100), through the kernel predicate. The
-    band is unsourced on this tree, so it is filled here: the TICK is what is under test.
-    """
+    """The REAL stock file's ``price_band_ticks`` (×100), through the kernel predicate. The"""
     loaded = _stock_policy(tmp_path)
     assert loaded.policy.shape_constraints.tick_size is None
     constraints = loaded.policy.shape_constraints.model_copy(
@@ -531,9 +443,7 @@ def test_the_stock_tree_tick_ladder_is_contiguous_from_one_won(tmp_path: Path) -
 def test_the_stock_tree_states_the_price_scale_a_kis_mock_boot_checks(
     tmp_path: Path,
 ) -> None:
-    """PR #927 review M1: ``ORD_UNPR = price / price_scale`` must divide by the scale the
-    sealed price is in. The loaded policy — what ``_cross_check_price_scale`` reads — says
-    100 (×100, ``close_x100``)."""
+    """PR #927 review M1: ``ORD_UNPR = price / price_scale`` must divide by the scale the"""
     raw = _filled(
         _STOCK / "venue_constraint_policy.yaml",
         environment=_VENUE_POLICY_ENVIRONMENT,
@@ -545,11 +455,6 @@ def test_the_stock_tree_states_the_price_scale_a_kis_mock_boot_checks(
         yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
     )
     assert load_venue_constraint_policy(path, scheme=_SCHEME).price_scale == 100
-
-
-# ---------------------------------------------------------------------------
-# boot + one stock-session attempt
-# ---------------------------------------------------------------------------
 
 
 def _install_stock_tree(config_dir: Path) -> str:
@@ -568,8 +473,6 @@ def _install_stock_tree(config_dir: Path) -> str:
             environment=_VENUE_POLICY_ENVIRONMENT,
             account=_VENUE_POLICY_ACCOUNT,
             instrument=_VENUE_POLICY_INSTRUMENT,
-            # #1025: this tenant tree's OCP admits the FLAT basis; the venue policy has no
-            # sizing block for the flag to mean anything, so it is named per file.
             admits_flat_exit=name == "order_construction_policy.yaml",
         )
         (config_dir / name).write_text(
@@ -581,35 +484,14 @@ def _install_stock_tree(config_dir: Path) -> str:
     ocp = load_order_construction_policy(
         config_dir / "order_construction_policy.yaml", scheme=_SCHEME
     )
-    _rewrite_activation(
-        config_dir,
-        [
-            {
-                "kind": kind,
-                "member_id": loaded.policy.policy_id,
-                "generation": loaded.policy.policy_generation,
-                "digest": loaded.policy.canonical_digest,
-                "resolved": True,
-                "immutable": True,
-            }
-            for kind, loaded in (
-                ("VENUE_CONSTRAINT_POLICY", venue),
-                ("ORDER_CONSTRUCTION_POLICY", ocp),
-            )
-        ],
-    )
+    del ocp
     digest = venue.policy.canonical_digest
     assert digest is not None, "the loaded stock VCP carries no canonical_digest"
     return digest
 
 
 def _boot(config_dir, data_dir, custody_root, *, hour: int, minute: int):
-    """``test_compose_root._compose`` with the construction's class set to ``krx-stock`` and
-    the kis-mock transport (PR-3a: the stock tree is the MOCK order tree).
-
-    The venue wiring requires the construction's ``instrument_class`` to equal the policy's,
-    so the fixture's futures class would refuse the stock policy at boot.
-    """
+    """``test_compose_root._compose`` with the construction's class set to ``krx-stock`` and"""
     fx.write_band_strategy_file(config_dir)
     facts = _LiveRuntimeFacts()
     runtime = compose_paper_runtime(
@@ -654,13 +536,11 @@ def test_the_stock_tree_boots_and_a_session_attempt_sends_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     venue_digest = _mock_stock_deployment(config_dir, custody_root, server, monkeypatch)
-    # Monday 2026-10-19 10:00 KST — inside krx-stock CONTINUOUS.
     runtime = _boot(config_dir, data_dir, custody_root, hour=10, minute=0)
     _reach_trusted(runtime)
 
     bound = _rows(runtime, "VENUE_POLICY_BOUND")
     assert [row["canonical_digest"] for row in bound] == [venue_digest]
-    # The booted service carries the ladder, not a flat tick (the table is the one source).
     assert runtime.venue.shape_constraints.tick_size is None
     ticks = runtime.venue.shape_constraints.price_band_ticks
     assert ticks is not None and len(ticks) == 7
@@ -671,8 +551,6 @@ def test_the_stock_tree_boots_and_a_session_attempt_sends_nothing(
     flow = results[0].flow
     assert flow is not None
     verdicts = {v.step: v for v in flow.verdicts}
-    # Construction admits (1 share, krx-stock), then the venue step is UNKNOWN — the band is
-    # unsourced in this tree — so the sequence halts there and nothing is sealed or sent.
     assert verdicts[CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION].outcome is (
         StageOutcome.ADMIT
     )
@@ -714,11 +592,7 @@ def test_the_stock_ocp_declares_the_kis_mock_wire_codec_and_a_null_one_refuses_t
     server,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """B3 (2026-10-24 dry-run). Generation 3 of this tree's OCP said ``wire_codec: null``, and
-    a kis-mock boot of it refused. Generation 4 declares the codec the transport checks —
-    kind and the codec module's own nine fields, compared as a set exactly as the boot does.
-    The red half is the measured failure: the same tree with the leaf put back to ``null``.
-    """
+    """B3 (2026-10-24 dry-run). Generation 3 of this tree's OCP said ``wire_codec: null``, and"""
     from tos_runtime.transport.kis_mock.codec import KIS_ORDER_CASH_WIRE_FIELDS
 
     ocp = load_order_construction_policy(
@@ -727,8 +601,6 @@ def test_the_stock_ocp_declares_the_kis_mock_wire_codec_and_a_null_one_refuses_t
     )
     assert ocp.wire_codec_kind == "kis-order-cash-v1"
     assert ocp.wire_fields == KIS_ORDER_CASH_WIRE_FIELDS
-    # generation 5 since #1025 added the FLAT basis to this tree's admitted set; the
-    # wire codec this test is about landed in generation 4 and is unchanged by it.
     assert ocp.policy.policy_generation == 5
 
     _mock_stock_deployment(config_dir, custody_root, server, monkeypatch)
@@ -748,7 +620,7 @@ def _write_filled(directory: Path, name: str) -> Path:
         environment=_VENUE_POLICY_ENVIRONMENT,
         account=_VENUE_POLICY_ACCOUNT,
         instrument=_VENUE_POLICY_INSTRUMENT,
-        admits_flat_exit=name == "order_construction_policy.yaml",  # #1025
+        admits_flat_exit=name == "order_construction_policy.yaml",
     )
     path = directory / name
     path.write_text(
@@ -757,16 +629,8 @@ def _write_filled(directory: Path, name: str) -> Path:
     return path
 
 
-# ---------------------------------------------------------------------------
-# PR-3a: the committed MOCK posture is self-consistent
-# ---------------------------------------------------------------------------
-
-
 def test_the_stock_trees_mock_scope_egress_and_broker_facts_agree() -> None:
-    """The three facts item 5 / item 6 / item 12 read off this tree, pinned against their own
-    sources: the active scope is the kernel's mock class; the sealed egress endpoint is the
-    MOCK_VTS INSTANCE host's order-cash URL (the runbook's ``order_path`` proposal); and the
-    GET-only broker-facts config loads."""
+    """The three facts item 5 / item 6 / item 12 read off this tree, pinned against their own"""
     from tos.brokercap import mock_order_without_position_or_cash
     from tos_runtime.brokercap import load_broker_scopes
     from tos_runtime.brokercap.instance import load_instance_documents
@@ -788,9 +652,7 @@ def test_the_stock_trees_mock_scope_egress_and_broker_facts_agree() -> None:
     assert egress["endpoint"]["value"] == (
         f"{mock_doc.rest_base}/uapi/domestic-stock/v1/trading/order-cash"
     )
-    assert (
-        "openapivts" in egress["endpoint"]["value"]
-    )  # the 모의 host, never the real one
+    assert "openapivts" in egress["endpoint"]["value"]
 
     facts = load_broker_facts_config(_STOCK / "broker_facts.yaml")
     assert facts.balance_tr_id.startswith("V")

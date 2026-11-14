@@ -1,28 +1,4 @@
-"""§7.2-2 — per-bar distinctness as a structural corollary (design #32 §4; the D-E1 Gap-1 residue).
-
-The chain the design claims, tested link by link on shipped artifacts::
-
-    distinct bar
-      -> distinct observation ``time.source_event_time``      (the as-of anchor, covered)
-      -> distinct Critical Input Snapshot ``canonical_digest`` (observations ∈ _COVERED_FIELDS)
-      -> distinct Decision Context Capsule ``canonical_digest`` (the SnapshotRef is covered)
-      -> distinct value-view ``canonical_digest``              (the as-of is in the preimage)
-
-The load sits on the **covered ``source_event_time``**, not on the payload digest (design #32 §4.1,
-MINOR-1): the payload preimage's exact production form is still deferred (§2.3, 미결-3), so a claim
-resting on it would rest on something unfixed. Two bars carrying the *same* value but different
-as-of times therefore still differ everywhere downstream — asserted directly below.
-
-The converse matters as much: identical inputs reproduce identical digests. Distinctness without
-reproducibility would just be noise.
-
-⚠ **Honest boundary** (design #32 §4.3). This is a corollary of a producer stamping distinct bars
-with distinct as-of times. A producer that stamps two bars identically collapses the chain, and
-that is a producer-honesty problem the publication gate cannot close — it can only refuse an
-*absent* as-of, which it does.
-
-Regime tag: authoring evidence only; closes no EV (design #32 §1.1).
-"""
+"""§7.2-2 — per-bar distinctness as a structural corollary (design #32 §4; the D-E1 Gap-1 residue)."""
 
 from __future__ import annotations
 
@@ -66,11 +42,6 @@ def _bar(*, as_of: int, close: int):
     return capsule, snapshot, resolution
 
 
-# ---------------------------------------------------------------------------
-# The chain (design #32 §4.1)
-# ---------------------------------------------------------------------------
-
-
 def test_the_as_of_anchor_is_a_covered_snapshot_field() -> None:
     """(§4.1 link 2) ``observations`` is in ``_COVERED_FIELDS`` — read off the shipped model."""
     assert "observations" in CriticalInputSnapshot._COVERED_FIELDS
@@ -88,12 +59,7 @@ def test_distinct_bars_yield_distinct_snapshot_capsule_and_view_digests() -> Non
 
 
 def test_the_as_of_alone_separates_two_bars_carrying_the_same_value() -> None:
-    """(§4.1 MINOR-1 ★) The distinctness load is the covered as-of, not the value or its digest.
-
-    Same close, different bar. If the chain depended on the value (or on the payload preimage's
-    still-deferred form) these two would collide; because it depends on ``source_event_time``, they
-    do not.
-    """
+    """(§4.1 MINOR-1 ★) The distinctness load is the covered as-of, not the value or its digest."""
     _, snapshot_one, resolution_one = _bar(as_of=BAR_ONE_AS_OF, close=CLOSE_BAR_ONE)
     _, snapshot_two, resolution_two = _bar(as_of=BAR_TWO_AS_OF, close=CLOSE_BAR_ONE)
 
@@ -113,11 +79,6 @@ def test_the_capsule_digest_separates_because_the_snapshot_reference_is_covered(
     assert "critical_input_snapshot" in type(capsule_one)._COVERED_FIELDS
     assert capsule_one.canonical_digest != capsule_two.canonical_digest
     assert capsule_one.capsule_id != capsule_two.capsule_id
-
-
-# ---------------------------------------------------------------------------
-# Reproducibility — the converse (design #32 §7.2-2)
-# ---------------------------------------------------------------------------
 
 
 def test_identical_inputs_reproduce_an_identical_view_digest() -> None:
@@ -153,18 +114,7 @@ def test_the_view_digest_moves_when_any_value_moves() -> None:
 
 
 def test_the_view_digest_is_sensitive_to_every_value_field_under_one_binding() -> None:
-    """(§2.2/§3.2 3b ★ review MINOR-1) The digest depends on the **values**, not only the binding.
-
-    The honest publication path propagates a value change through the snapshot digest, so the
-    end-to-end tests above cannot tell a values-sensitive digest from a values-*blind* one: both
-    would separate two real bars. This canary pins the property directly — one fixed
-    ``(snapshot_id, snapshot_canonical_digest)`` binding, and each of the five ``ContextValue``
-    fields perturbed in turn. ``context_value_view_digest`` is a public export, so its
-    value-sensitivity is a contract, not an incidental consequence of how the caller happens to
-    build its inputs.
-
-    Without it, a mutant whose digest preimage omits ``values`` entirely survives the whole suite.
-    """
+    """(§2.2/§3.2 3b ★ review MINOR-1) The digest depends on the **values**, not only the binding."""
     from tos.dsl import ContextValue
 
     base = ContextValue(
@@ -218,11 +168,6 @@ def test_the_view_digest_binds_the_snapshot_identity_too() -> None:
     assert rebound != resolution.view.canonical_digest
 
 
-# ---------------------------------------------------------------------------
-# The publication gate's own share (design #32 §4.2)
-# ---------------------------------------------------------------------------
-
-
 def test_an_absent_as_of_is_refused_so_the_chain_cannot_start_unanchored() -> None:
     """(§4.2) The gate refuses what it *can* refuse: a missing as-of anchor."""
     from tos.capsule.observation import ObservationTime
@@ -249,12 +194,7 @@ def test_an_absent_as_of_is_refused_so_the_chain_cannot_start_unanchored() -> No
 def test_the_honest_boundary_is_recorded_a_stale_producer_still_collapses_the_chain() -> (
     None
 ):
-    """(§4.3 ⚠ over-claim seal) Same as-of on two bars ⇒ same digests. Stated, not hidden.
-
-    This test asserts the *limit*, not a guarantee: the publication gate cannot tell that a producer
-    reused an as-of, so the chain collapses and the design says so. Complete enforcement is upstream
-    (the Context Integrity Service) plus the signature append's detectability.
-    """
+    """(§4.3 ⚠ over-claim seal) Same as-of on two bars ⇒ same digests. Stated, not hidden."""
     _, snapshot_one, resolution_one = _bar(as_of=BAR_ONE_AS_OF, close=CLOSE_BAR_ONE)
     _, snapshot_two, resolution_two = _bar(as_of=BAR_ONE_AS_OF, close=CLOSE_BAR_ONE)
     assert snapshot_one.canonical_digest == snapshot_two.canonical_digest

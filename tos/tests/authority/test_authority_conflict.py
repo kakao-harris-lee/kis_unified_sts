@@ -1,12 +1,4 @@
-"""SA-EV-015 (substrate) — same-capability-id / different-bytes conflict + idempotency.
-
-Because ``capability_id`` is orthogonal to ``canonical_digest`` (design §3.1,
-``id != f(digest)``), a same-id / different-bytes capability pair is a Critical integrity
-conflict (§18.3 forgery / replay) and a same-id / same-bytes pair is an idempotent
-duplicate (§9.3 legitimate re-submission). The classifier is the promoted
-``tos.canonical.classify_record_pair`` applied to capability pairs — REUSED, not
-redefined.
-"""
+"""SA-EV-015 (substrate) — same-capability-id / different-bytes conflict + idempotency."""
 
 from __future__ import annotations
 
@@ -27,31 +19,24 @@ def _classify(a, b) -> RecordPairKind:
 def test_all_kinds_reachable_on_capability_pairs() -> None:
     """NOT_COMPARABLE / IDEMPOTENT_DUP / CRITICAL_CONFLICT / DISTINCT all reachable."""
     a = issue_capability(capability_id="cap-1", issuer_identity="iss-1")
-    dup = issue_capability(capability_id="cap-1", issuer_identity="iss-1")  # same bytes
-    conflict = issue_capability(capability_id="cap-1", issuer_identity="iss-2")  # diff
-    distinct = issue_capability(
-        capability_id="cap-2", issuer_identity="iss-1"
-    )  # diff id
+    dup = issue_capability(capability_id="cap-1", issuer_identity="iss-1")
+    conflict = issue_capability(capability_id="cap-1", issuer_identity="iss-2")
+    distinct = issue_capability(capability_id="cap-2", issuer_identity="iss-1")
 
     assert _classify(a, dup) is RecordPairKind.IDEMPOTENT_DUP
     assert _classify(a, conflict) is RecordPairKind.CRITICAL_CONFLICT
     assert _classify(a, distinct) is RecordPairKind.DISTINCT
-    # A DRAFT capability (null digest) is not a ledger citizen => NOT_COMPARABLE.
     draft = SafetyAuthorityCapability(capability_id="cap-1")
     assert draft.canonical_digest is None
     assert _classify(a, draft) is RecordPairKind.NOT_COMPARABLE
 
 
 def test_id_orthogonal_to_digest_keeps_conflict_reachable() -> None:
-    """(regression lock) id != f(digest): same capability id + different bytes conflicts.
-
-    If identity were derived from the digest, same-id would imply same-bytes and
-    CRITICAL_CONFLICT (forgery / replay detection, §18.3) would be unreachable.
-    """
+    """(regression lock) id != f(digest): same capability id + different bytes conflicts."""
     a = issue_capability(capability_id="cap-1", issuer_identity="iss-1")
     b = issue_capability(capability_id="cap-1", issuer_identity="iss-2")
     assert a.capability_id == b.capability_id
-    assert a.canonical_digest != b.canonical_digest  # id did NOT track the digest
+    assert a.canonical_digest != b.canonical_digest
     assert _classify(a, b) is RecordPairKind.CRITICAL_CONFLICT
 
 

@@ -1,5 +1,4 @@
-"""A fill refused after ``CANCEL_ACK`` stays visible to the position reader even when a later
-``EXPIRED`` is applied — driven through the real engine, not hand-seeded rows."""
+"""A fill refused after ``CANCEL_ACK`` stays visible to the position reader even when a later"""
 
 from __future__ import annotations
 
@@ -193,8 +192,7 @@ def test_terminal_result_replayed_after_release_does_not_reopen(
     side: str,
     terminal_kind: EgressResultKind,
 ) -> None:
-    """Codex round 2 HIGH: the engine records the re-sent applied result as ORPHAN (its
-    reservation is RELEASED), and the reader must treat that row as a replay."""
+    """Codex round 2 HIGH: the engine records the re-sent applied result as ORPHAN (its"""
     driver, core, attempt_id = _open_sealed_attempt(
         inbox, evidence_store, emergency_log, monotonic_source, side
     )

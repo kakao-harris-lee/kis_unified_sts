@@ -1,17 +1,4 @@
-"""The vector_complete yolk + the DimensionKey enum-drift seal (design #23 §5.1/§7.2).
-
-``vector_complete`` (CUR-EV-001 substrate) is the aggregator's own axis: every mandated dimension
-present + positively established + one revision + policy complete + no placeholder. The failures it
-catches — an unrepresented dimension (§5.1-3), a mixed revision (§5.3), a policy under-declaration
-(§5.5) — are each **undetectable by any per-decision leaf** (§0.4b), so this is **not** a leaf-AND.
-The ∅-seal is both-ways (a genuinely complete vector passes; an absent policy / required set /
-dimension set fails). The **enum-drift property** asserts ``DimensionKey`` == the ADR §9-derived
-reference set (CONTEXT included) — had this regression existed at authoring time, the v1.1 MAJOR-2
-CONTEXT omission would have been caught immediately (§7.2).
-
-Regime tag: completeness predicate substrate only; CUR-EV-001 NOT_IMPLEMENTED (``EV-L1/3`` — ``/3``
-integration / adversarial pending); EV-L1-complete claim forbidden.
-"""
+"""The vector_complete yolk + the DimensionKey enum-drift seal (design #23 §5.1/§7.2)."""
 
 from __future__ import annotations
 
@@ -20,6 +7,7 @@ from hypothesis import given
 from tos.cur import (
     CONDITIONAL_DIMENSION_KEYS,
     MANDATED_DIMENSION_FLOOR,
+    RETIRED_DIMENSION_KEYS,
     CurrentnessRevision,
     DimensionKey,
     dimension_positively_established,
@@ -38,30 +26,19 @@ from ._cur_strategies import (
     dimension_key,
 )
 
-#: The ADR §9-derived reference dimension catalogue (design #23 §2.2 verbatim; CONTEXT included as a
-#: SEPARATE dimension from CRITICAL_INPUT — the v1.1 MAJOR-2 anchor). Any enum drift below / away
-#: from this fixed set fails the property, so the enum can never silently regress off the ADR.
-# HONESTY NOTE (code-review MINOR-1): this is a MANUALLY-TRANSCRIBED regression anchor,
-# not a parsed derivation of ADR SS9 - it prevents single-sided enum edits (changing
-# DimensionKey without consciously updating this set), but a coordinated two-sided edit
-# or an ADR SS9 text change is NOT detected here; the design doc SS7.2 3-source check
-# (SS2.2 enum <-> SS2.4 prose <-> ADR SS9) remains the human-review obligation.
 _ADR_S9_NON_CONDITIONAL = frozenset(
     {
         "ENVIRONMENT_SCOPE",
         "CURRENTNESS_POLICY",
         "COMMIT_LOG",
         "SAFETY_AUTHORITY",
-        "SAFETY_ENVELOPE_PROFILE",
-        "DEVIATION",
-        "INCIDENT",
         "MONITORING",
         "RELEASE",
         "POST_TRADE",
         "TRUSTWORTHY_TIME",
         "RECOVERY",
         "CRITICAL_INPUT",
-        "CONTEXT",  # v1.1 MAJOR-2: a SEPARATE dimension from CRITICAL_INPUT (ADR §9:259)
+        "CONTEXT",
         "CONSTRAINT",
         "CONSTRUCTION",
         "TRADING_APPROVAL",
@@ -72,11 +49,19 @@ _ADR_S9_NON_CONDITIONAL = frozenset(
     }
 )
 _ADR_S9_CONDITIONAL = frozenset({"RESTRICTED_LIVE_TRIAL"})
-
-
-# ---------------------------------------------------------------------------
-# DimensionKey enum-drift seal (§7.2 — the v1.1 MAJOR-2 catch)
-# ---------------------------------------------------------------------------
+_S2B_RETIRED = frozenset(
+    {
+        "CRITICAL_INPUT",
+        "CONTEXT",
+        "CONSTRAINT",
+        "CONSTRUCTION",
+        "TRADING_APPROVAL",
+        "AGGREGATE_RISK",
+        "ACTION_FLOW",
+        "DECISION_PROOF_INTENT",
+        "EGRESS_IDENTITY",
+    }
+)
 
 
 def test_dimension_key_matches_the_adr_s9_derived_set() -> None:
@@ -85,23 +70,20 @@ def test_dimension_key_matches_the_adr_s9_derived_set() -> None:
     assert members == _ADR_S9_NON_CONDITIONAL | _ADR_S9_CONDITIONAL
 
 
-def test_context_is_a_separate_mandated_dimension_from_critical_input() -> None:
-    """(§7.2 / v1.1 MAJOR-2) CONTEXT and CRITICAL_INPUT are BOTH separate mandated dimensions."""
-    assert DimensionKey.CONTEXT in MANDATED_DIMENSION_FLOOR
-    assert DimensionKey.CRITICAL_INPUT in MANDATED_DIMENSION_FLOOR
-    assert DimensionKey.CONTEXT is not DimensionKey.CRITICAL_INPUT
+def test_retired_dimensions_are_members_outside_the_floor() -> None:
+    """(plan S2-b) The nine retired keys stay enum members but leave the mandated floor."""
+    assert {k.value for k in RETIRED_DIMENSION_KEYS} == _S2B_RETIRED
+    assert MANDATED_DIMENSION_FLOOR.isdisjoint(RETIRED_DIMENSION_KEYS)
+    assert len(MANDATED_DIMENSION_FLOOR) == 9
 
 
-def test_mandated_floor_is_every_non_conditional_member() -> None:
-    """(§5.1) The mandated floor == all non-conditional members; the only exclusion is conditional."""
-    assert {k.value for k in MANDATED_DIMENSION_FLOOR} == _ADR_S9_NON_CONDITIONAL
+def test_mandated_floor_is_every_non_conditional_non_retired_member() -> None:
+    """(§5.1) The mandated floor == all non-conditional, non-retired members."""
+    assert {
+        k.value for k in MANDATED_DIMENSION_FLOOR
+    } == _ADR_S9_NON_CONDITIONAL - _S2B_RETIRED
     assert {DimensionKey.RESTRICTED_LIVE_TRIAL} == CONDITIONAL_DIMENSION_KEYS
     assert MANDATED_DIMENSION_FLOOR.isdisjoint(CONDITIONAL_DIMENSION_KEYS)
-
-
-# ---------------------------------------------------------------------------
-# vector_complete — the yolk (§5.1)
-# ---------------------------------------------------------------------------
 
 
 def test_clean_vector_is_complete() -> None:
@@ -138,8 +120,7 @@ def test_unrepresented_dimension_is_incomplete() -> None:
     missing_one = tuple(
         clean_dimension(dimension_key=key, revision=rev)
         for key in sorted(MANDATED_DIMENSION_FLOOR)
-        if key
-        is not DimensionKey.CONTEXT  # drop CONTEXT specifically (the MAJOR-2 case)
+        if key is not DimensionKey.RECOVERY
     )
     vec = clean_vector(revision=rev, dimensions=missing_one)
     assert vector_complete(vec, clean_policy(), MANDATED_DIMENSION_FLOOR) is False
@@ -149,7 +130,6 @@ def test_dimension_present_but_not_established_is_incomplete() -> None:
     """(§5.2) A dimension present but positively_established is not True ⇒ incomplete."""
     rev = clean_revision()
     dims = list(clean_dimensions(revision=rev))
-    # Flip ONE dimension to not-established (None).
     dims[0] = clean_dimension(
         dimension_key=dimension_key(dims[0]),
         revision=rev,
@@ -176,7 +156,7 @@ def test_forbidden_placeholder_is_incomplete() -> None:
     dims[0] = clean_dimension(
         dimension_key=dimension_key(dims[0]),
         revision=rev,
-        bound_digest="latest",  # forbidden sentinel (§9 line 266)
+        bound_digest="latest",
     )
     vec = clean_vector(revision=rev, dimensions=tuple(dims))
     assert vector_complete(vec, clean_policy(), MANDATED_DIMENSION_FLOOR) is False
@@ -184,7 +164,7 @@ def test_forbidden_placeholder_is_incomplete() -> None:
 
 def test_policy_under_declaration_is_incomplete() -> None:
     """(§5.5 / §0.4b) A policy that omits a mandated dimension ⇒ incomplete (aggregate-only axis)."""
-    under = MANDATED_DIMENSION_FLOOR - {DimensionKey.CONTEXT}
+    under = MANDATED_DIMENSION_FLOOR - {DimensionKey.RECOVERY}
     under_policy = clean_policy(required_dimensions=under)
     assert (
         vector_complete(clean_vector(), under_policy, MANDATED_DIMENSION_FLOOR) is False
@@ -192,22 +172,11 @@ def test_policy_under_declaration_is_incomplete() -> None:
 
 
 def test_caller_cannot_narrow_the_mandated_floor() -> None:
-    """(§5.1 v1.1 MINOR-1) A caller passing a narrower mandate cannot weaken the §9 floor.
-
-    Even if the caller passes an empty / narrow ``mandated``, the floor is applied — a policy that
-    under-declares the full §9 floor is still rejected (the caller-narrowing attack is neutralized).
-    """
-    under = MANDATED_DIMENSION_FLOOR - {DimensionKey.CONTEXT}
+    """(§5.1 v1.1 MINOR-1) A caller passing a narrower mandate cannot weaken the §9 floor."""
+    under = MANDATED_DIMENSION_FLOOR - {DimensionKey.RECOVERY}
     under_policy = clean_policy(required_dimensions=under)
-    # Caller tries to narrow the mandate to nothing — the floor still requires CONTEXT.
     assert vector_complete(clean_vector(), under_policy, frozenset()) is False
-    # A complete vector + full policy still passes even with a narrow caller mandate (both-ways).
     assert vector_complete(clean_vector(), clean_policy(), frozenset()) is True
-
-
-# ---------------------------------------------------------------------------
-# supporting predicates
-# ---------------------------------------------------------------------------
 
 
 def test_dimension_positively_established_requires_every_coordinate() -> None:
@@ -258,7 +227,7 @@ def test_policy_covers_mandated_dimensions_both_ways() -> None:
     assert policy_covers_mandated_dimensions(None, MANDATED_DIMENSION_FLOOR) is False
     assert policy_covers_mandated_dimensions(clean_policy(), frozenset()) is False
     under = clean_policy(
-        required_dimensions=MANDATED_DIMENSION_FLOOR - {DimensionKey.CONTEXT}
+        required_dimensions=MANDATED_DIMENSION_FLOOR - {DimensionKey.RECOVERY}
     )
     assert policy_covers_mandated_dimensions(under, MANDATED_DIMENSION_FLOOR) is False
 
@@ -276,11 +245,6 @@ def test_no_forbidden_placeholder_both_ways() -> None:
         no_forbidden_placeholder(clean_vector(revision=rev, dimensions=tuple(dims)))
         is False
     )
-
-
-# ---------------------------------------------------------------------------
-# property — dropping any single mandated dimension always denies (§5.1 exhaustive)
-# ---------------------------------------------------------------------------
 
 
 @given(dropped=st.sampled_from(sorted(MANDATED_DIMENSION_FLOOR)))

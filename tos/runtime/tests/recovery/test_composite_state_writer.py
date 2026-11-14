@@ -1,6 +1,4 @@
-"""Unit tests for :mod:`tos_runtime.recovery.composite_state_writer` (TOS Phase 5 W1 close-out,
-GAP 2; keyed by ``attempt_id`` since independent-review finding F3, 2026-09-10 — see that
-module's own module docstring for why the original event-id keying was wrong)."""
+"""Unit tests for :mod:`tos_runtime.recovery.composite_state_writer` (TOS Phase 5 W1 close-out,"""
 
 from __future__ import annotations
 
@@ -62,16 +60,13 @@ def test_reload_by_a_different_attempt_id_still_raises_incomplete(
 
 
 def test_write_ignores_the_composites_own_intent_identity(tmp_path: Path) -> None:
-    """The composite's own ``intent_identity`` (a proposal digest, per
-    ``tos.engine.orthostate_projection.composite_state_for``'s own docstring) is never the
-    durable key — only the caller-supplied ``attempt_id`` is."""
+    """The composite's own ``intent_identity`` (a proposal digest, per"""
     store_path = tmp_path / "composite_state.sqlite3"
     writer = CompositeStateWriter(store_path)
     writer("attempt-abc", _composite(intent_identity="some-proposal-digest"))
 
     with pytest.raises(IncompleteStoreError):
         reload_conservative(store_path, "some-proposal-digest")
-    # But the attempt id it was actually keyed under reloads cleanly.
     reload_conservative(store_path, "attempt-abc")
 
 
@@ -109,16 +104,10 @@ def test_two_attempts_persist_independently(tmp_path: Path) -> None:
 
 
 def test_write_failure_propagates_to_the_caller(tmp_path: Path) -> None:
-    """Surviving-mutation fix: this writer itself never swallows a failure — the caller
-    (:meth:`tos_runtime.engine.driver.EngineDriver._project_orthostate_and_persist`) is what
-    converts a raised exception into a durable HALT. Pointing the writer at a path that cannot
-    be a sqlite file (a directory) proves the exception is never caught here."""
+    """Surviving-mutation fix: this writer itself never swallows a failure — the caller"""
     unwritable = tmp_path / "not-a-file"
     unwritable.mkdir()
     writer = CompositeStateWriter(unwritable)
 
-    # A directory where a sqlite file is expected -- ``sqlite3.connect().execute()`` raises its
-    # own OperationalError("unable to open database file") on this specific OS-level failure
-    # (verified directly against this fixture, not assumed).
     with pytest.raises(sqlite3.OperationalError):
         writer("attempt-abc", _composite())

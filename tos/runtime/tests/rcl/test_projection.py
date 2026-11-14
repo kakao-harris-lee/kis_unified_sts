@@ -24,9 +24,6 @@ from tos_runtime.rcl.projection import (
     outstanding_reservations,
 )
 
-#: A fixed scope for tests that exercise projection mechanics, not scope
-#: semantics themselves (laneO port-fix round, design #40 runtime slice #2
-#: §5, 2026-09-08).
 DEFAULT_SCOPE = ReservationScope(account="acct-1", instrument="101S06")
 
 
@@ -69,17 +66,6 @@ def test_projection_reflects_committed_transition(
     assert reader.all_reservations() == {"res-1": CapacityState.ATTEMPT_BOUND}
 
 
-# ============================================================================
-# Committed Capacity Vector round-trip (kernel round #4 K-4). Prior to this,
-# every transition in this module committed with the default
-# ``committed_vector=None``, so no test exercised the "commit a NON-empty
-# vector, read it back through the projection" path -- a mutation that made
-# ``reservation_committed_vector``
-# unconditionally return ``CapacityVector()`` passed the full runtime suite
-# (round #4 review finding ②). These pin that round trip so the same
-# mutation reds here.
-# ============================================================================
-
 _NON_EMPTY_VECTOR = CapacityVector(
     components=(CapacityComponent(dimension_id="notional", magnitude=Decimal("100")),)
 )
@@ -119,9 +105,7 @@ def test_reservation_committed_vector_reads_back_the_committed_value(
 def test_committed_vector_reads_as_none_when_never_committed(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """A transition committed with the default ``committed_vector=None`` reads
-    back as ``None`` through both key surfaces -- distinct from the non-empty
-    vector case above, not merely "falsy"."""
+    """A transition committed with the default ``committed_vector=None`` reads"""
     epoch = log.acquire_epoch(identity)
     transition = CapacityReservationTransition(
         reservation_id="res-1",
@@ -152,15 +136,7 @@ def test_committed_vector_reads_as_none_when_never_committed(
 def test_explicitly_empty_committed_vector_is_distinguishable_from_none(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """(round #4 review disposition — resolves the apparent commitlog.py/gates.py wording
-    conflict) A transition committed with ``committed_vector=CapacityVector()`` (explicitly
-    empty, zero components) must read back as that real, non-``None`` empty vector, never as
-    ``None`` -- ``CapacityReservationTransition.committed_vector``'s own docstring promises a
-    runtime projection distinguishes "no vector recorded" from "an explicitly empty one";
-    :func:`~tos_runtime.rcl.gates.reservation_committed_vector`'s docstring separately notes an
-    UNRELATED, narrower indistinguishability (reservation nonexistent vs. existing-with-no-
-    vector, both -> ``None``) -- this pins that the two claims do not collide: an explicit
-    empty vector is not folded into either ``None`` case."""
+    """(round #4 review disposition — resolves the apparent commitlog.py/gates.py wording"""
     epoch = log.acquire_epoch(identity)
     transition = CapacityReservationTransition(
         reservation_id="res-1",
@@ -184,15 +160,6 @@ def test_explicitly_empty_committed_vector_is_distinguishable_from_none(
     read_back = reader.reservation_committed_vector("res-1")
     assert read_back is not None
     assert read_back == CapacityVector()
-
-
-# ============================================================================
-# InstrumentKey-keyed reads (laneO port-fix round, design #40 runtime slice
-# #2 §5 disposition, 2026-09-08) — the kernel port gap this module's own
-# docstring used to report is now closed: CapacityReservationTransition.scope
-# lets the projection group by the engine's own InstrumentKey, not only by
-# the log's native reservation_id.
-# ============================================================================
 
 
 def test_unknown_instrument_reads_as_no_rows(log: SqliteCommitLog) -> None:
@@ -235,7 +202,6 @@ def test_projection_reads_by_instrument_key_after_a_transition(
         ),
     )
 
-    # A key for a different scope entirely reads back nothing.
     other_key = InstrumentKey(account="acct-2", instrument="201S03")
     assert reader.scope_reservations(other_key) == ()
 
@@ -243,9 +209,7 @@ def test_projection_reads_by_instrument_key_after_a_transition(
 def test_two_reservations_with_different_scopes_do_not_collide(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """Two DIFFERENT reservation_ids, each bound to its own distinct scope —
-    reading back by InstrumentKey must return only the matching reservation's
-    state, never the other's (no cross-scope collision)."""
+    """Two DIFFERENT reservation_ids, each bound to its own distinct scope —"""
     epoch = log.acquire_epoch(identity)
     scope_a = ReservationScope(account="acct-1", instrument="101S06")
     scope_b = ReservationScope(account="acct-2", instrument="201S03")
@@ -265,7 +229,7 @@ def test_two_reservations_with_different_scopes_do_not_collide(
         expected_seq=-1,
     )
     assert isinstance(first, AppendReceipt)
-    assert first.seq is not None  # a successful append never returns a None seq
+    assert first.seq is not None
 
     second = log.apply_reservation_transition(
         CapacityReservationTransition(
@@ -305,13 +269,6 @@ def test_two_reservations_with_different_scopes_do_not_collide(
         "res-a": CapacityState.ATTEMPT_BOUND,
         "res-b": CapacityState.POTENTIALLY_LIVE,
     }
-
-
-# ============================================================================
-# #966 — a scope holds MORE THAN ONE reservation while an exit closes an entry.
-# The pre-#966 surface returned the scope's FIRST row only, so these two rows
-# were indistinguishable from one: the second was simply invisible.
-# ============================================================================
 
 
 def test_scope_reservations_reports_every_row_of_the_scope(
@@ -365,12 +322,7 @@ def test_scope_reservations_reports_every_row_of_the_scope(
 def test_outstanding_reservations_excludes_only_released(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """``RELEASED`` is the one non-consuming state; ``POSITION_CONSUMED`` still consumes.
-
-    Pinned because the partition is NOT a conservatism-rank prefix — ``POSITION_CONSUMED``
-    ranks MORE conservative than ``POTENTIALLY_LIVE``, so a rank threshold would get this
-    exactly wrong (see ``ScopeReservation.outstanding``'s own docstring).
-    """
+    """``RELEASED`` is the one non-consuming state; ``POSITION_CONSUMED`` still consumes."""
     rows = tuple(
         ScopeReservation(reservation_id=state.value, state=state, last_seq=0)
         for state in CapacityState

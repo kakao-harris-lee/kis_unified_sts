@@ -1,21 +1,4 @@
-"""§8-1 — the driver-owned monotone yield-order counter (design #33 §3.4, MAJOR-1).
-
-The design's v1.1 revision replaced a ``bar_index``-coupled coordinate scheme with a **driver-owned
-global yield-order counter**, and the reason is a property of the shipped engine, not a preference:
-
-* the core holds **one** global ``_last_reference`` (``core.py:246``);
-* it compares every incoming event against it (``core.py:280``) — against the *last admitted event*,
-  never against the triggering tick;
-* it updates it for **every** non-``REVERSED`` event (``core.py:301``), and line 301 runs *before*
-  the handler, so even a tick that immediately halts at the capacity stage advances the gate.
-
-Under a ``2i / 2i+1`` scheme a next-bar settlement is processed as ``tick_0(0), tick_1(2),
-egress_0(1)``, and ``compare_order(1, 2)`` is ``BEFORE`` — the re-injected fill is refused as a
-**false ``REVERSED``** and the run silently loses its settlement. This module proves both halves:
-the rejected scheme really does produce that false halt, and the shipped driver really does not.
-
-Regime tag: orchestration authoring evidence only; closes no EV (design #33 §1.1).
-"""
+"""§8-1 — the driver-owned monotone yield-order counter (design #33 §3.4, MAJOR-1)."""
 
 from __future__ import annotations
 
@@ -60,11 +43,6 @@ def _next_bar_parameters() -> FillParameters:
     )
 
 
-# ---------------------------------------------------------------------------
-# the counter itself
-# ---------------------------------------------------------------------------
-
-
 def test_the_counter_is_strictly_increasing_on_one_continuity() -> None:
     """(§3.4) Coordinates are strictly increasing and share one continuity — so they compare."""
     counter = YieldOrderCounter(continuity_id="c-0")
@@ -102,19 +80,8 @@ def test_an_unnamed_continuity_is_refused() -> None:
         YieldOrderCounter(continuity_id="  ")
 
 
-# ---------------------------------------------------------------------------
-# the rejected bar-coupled scheme — why the counter exists
-# ---------------------------------------------------------------------------
-
-
 def test_the_rejected_bar_coupled_scheme_produces_a_false_reversed_halt() -> None:
-    """(§3.4 MAJOR-1) ``2i / 2i+1`` really does break next-bar settlement — measured, not argued.
-
-    The processing order is ``tick_0, tick_1, egress_0``; under the rejected scheme their
-    coordinates are ``0, 2, 1``. The engine's gate compares the re-injected result against the last
-    *admitted* event (``tick_1``, coordinate 2), so ``compare_order(1, 2) is BEFORE`` and the result
-    is refused as ``EVENT_ORDER_REVERSED`` — the settlement silently disappears.
-    """
+    """(§3.4 MAJOR-1) ``2i / 2i+1`` really does break next-bar settlement — measured, not argued."""
 
     def _bar_coupled(bar_index: int, *, is_egress: bool) -> OrderingEvent:
         sequence = 2 * bar_index + (1 if is_egress else 0)
@@ -134,7 +101,6 @@ def test_the_rejected_bar_coupled_scheme_produces_a_false_reversed_halt() -> Non
         ordering_admission(tick_1, egress_0) is OrderingAdmission.REVERSED
     ), "the rejected bar-coupled scheme must produce the false REVERSED the design removed"
 
-    # ... and the core really halts on it, refusing the settlement outright.
     fill_model = build_fill_model(_next_bar_parameters())
     fill_model.bind_settlement_context(reference_bars(1)[0])
     core, _ = build_core(transmit=fill_model)
@@ -182,17 +148,8 @@ def _tick_payload(*, reference: OrderingEvent):  # noqa: ANN202 - a local builde
     )
 
 
-# ---------------------------------------------------------------------------
-# the shipped driver
-# ---------------------------------------------------------------------------
-
-
 def test_next_bar_settlement_is_monotone_end_to_end() -> None:
-    """(§8-1) The mandated next-bar sequence ``tick_0, tick_1, egress_0`` admits MONOTONE throughout.
-
-    This is the property the whole MAJOR-1 revision exists for. A mutation that couples the
-    coordinate to ``bar_index`` turns the third entry into a ``REVERSED`` halt and fails here.
-    """
+    """(§8-1) The mandated next-bar sequence ``tick_0, tick_1, egress_0`` admits MONOTONE throughout."""
     fill_model = build_fill_model(_next_bar_parameters())
     driver = build_driver(fill_model)
     core, _ = build_core(transmit=fill_model)
@@ -217,12 +174,7 @@ def test_next_bar_settlement_is_monotone_end_to_end() -> None:
 
 
 def test_the_coordinate_is_decoupled_from_the_bar_index() -> None:
-    """(§3.4) The coordinate follows *yield order*; the bar index is recorded separately.
-
-    On a next-bar settlement the third event's coordinate (3) belongs to the settlement bar (1),
-    while the second event's coordinate (2) also belongs to bar 1 — two events, one bar, distinct
-    coordinates. That is the decoupling in one observation.
-    """
+    """(§3.4) The coordinate follows *yield order*; the bar index is recorded separately."""
     fill_model = build_fill_model(_next_bar_parameters())
     driver = build_driver(fill_model)
     core, _ = build_core(transmit=fill_model)
@@ -297,17 +249,7 @@ def test_a_trace_out_of_order_is_unconstructable() -> None:
 
 
 def test_a_trace_with_an_equal_coordinate_is_unconstructable() -> None:
-    """(§3.4/§6.1) Two entries sharing one coordinate are refused — **equality**, not just decrease.
-
-    Adversarial review MINOR-1: the strict-decrease case above ``(2, 1)`` leaves the boundary in
-    ``records.py:241`` (``entry.yield_sequence <= previous``) untested, so weakening it to ``<``
-    survived the whole suite. Equality is not a hypothetical shape — it is the exact signature of a
-    **duplicated yield-order coordinate**, i.e. the counter handing the same ``source_native_sequence``
-    to two events. That defect is precisely what the strict ``<=`` boundary exists to catch, because
-    :func:`~tos.ordering.compare_order` returns ``AMBIGUOUS`` for equal coordinates rather than an
-    order, and the core *admits* an ambiguous pair (``core.py:174-181``) — so the engine would not
-    refuse it and ``WiringTrace`` is the independent backstop.
-    """
+    """(§3.4/§6.1) Two entries sharing one coordinate are refused — **equality**, not just decrease."""
     from tos.backtest import TraceEntry, WiringTrace
 
     def _entry(sequence: int) -> TraceEntry:
@@ -324,11 +266,7 @@ def test_a_trace_with_an_equal_coordinate_is_unconstructable() -> None:
 
 
 def test_every_run_of_the_counter_advances_across_repeated_runs() -> None:
-    """(§3.4) A second run on the same driver continues the counter — it never restarts.
-
-    Restarting would let a later event carry an earlier coordinate, which is the same false-REVERSED
-    failure by another route.
-    """
+    """(§3.4) A second run on the same driver continues the counter — it never restarts."""
     fill_model = build_fill_model(_next_bar_parameters())
     driver = build_driver(fill_model)
     core, _ = build_core(transmit=fill_model)

@@ -1,15 +1,8 @@
-"""Unit tests for :mod:`tos_runtime.recovery.barrier` (TOS Phase 5 W1; plan §2 decision 2).
-
-Constructs :class:`~tos_runtime.recovery.inputs.RecoveryInputs` directly (no sqlite I/O needed —
-the barrier itself is a pure fold over already-assembled inputs) so these tests isolate the
-barrier's own decision from :mod:`tos_runtime.recovery.inputs`' assembly (covered separately by
-``test_inputs.py``).
-"""
+"""Unit tests for :mod:`tos_runtime.recovery.barrier` (TOS Phase 5 W1; plan §2 decision 2)."""
 
 from __future__ import annotations
 
 import pytest
-from tos.sbr.vocabulary import ReadinessVerdict
 from tos_runtime.recovery import barrier as barrier_module
 from tos_runtime.recovery.barrier import (
     RECON_UNAVAILABLE,
@@ -19,6 +12,7 @@ from tos_runtime.recovery.barrier import (
 from tos_runtime.recovery.inputs import RecoveryInputs
 from tos_runtime.recovery.legacy_receipts import LegacyReceiptFacts
 from tos_runtime.recovery.possibly_live import PossiblyLiveAttempt
+from tos_runtime.recovery.readiness import ReadinessVerdict
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -49,8 +43,7 @@ def test_clean_inputs_resolve_to_ready() -> None:
 
 
 def test_genesis_boot_with_no_evidence_or_generation_is_also_ready() -> None:
-    """The genuinely-empty-store case (:mod:`tos_runtime.recovery.inputs`'s own genesis
-    reading) is a legitimate consistency, not a failure."""
+    """The genuinely-empty-store case (:mod:`tos_runtime.recovery.inputs`'s own genesis"""
     verdict = RecoveryBarrier.verdict(
         _clean_inputs(
             evidence_tip_seq=None,
@@ -94,8 +87,7 @@ def test_incomplete_composite_state_holds_the_barrier() -> None:
 
 
 def test_generation_evidence_inconsistency_holds_the_barrier() -> None:
-    """One present, the other absent — neither the "both present" nor the "genesis, both
-    absent" case."""
+    """One present, the other absent — neither the "both present" nor the "genesis, both"""
     verdict = RecoveryBarrier.verdict(
         _clean_inputs(
             evidence_tip_seq=None,
@@ -107,8 +99,7 @@ def test_generation_evidence_inconsistency_holds_the_barrier() -> None:
 
 
 def test_readiness_verdict_is_truthy_untestable() -> None:
-    """The kernel's own truthy-sentinel seal (design #17 §2.2(1)) — a bare ``bool()`` must
-    raise, never silently pass as truthy."""
+    """The kernel's own truthy-sentinel seal (design #17 §2.2(1)) — a bare ``bool()`` must"""
     verdict = RecoveryBarrier.verdict(_clean_inputs())
     with pytest.raises(TypeError):
         bool(verdict.readiness_verdict)
@@ -128,10 +119,7 @@ def test_authority_effect_is_all_false() -> None:
 def test_authority_separation_invariant_failure_raises_typed_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """F8 (independent review, 2026-09-10): the defence-in-depth re-check used to be a bare
-    ``assert`` — silently stripped under ``python -O``. It must now be an explicit check that
-    raises :class:`~tos_runtime.recovery.barrier.RecoveryBarrierInvariantError`, not swallowed by
-    interpreter flags."""
+    """F8 (independent review, 2026-09-10): the defence-in-depth re-check used to be a bare"""
     monkeypatch.setattr(
         barrier_module, "recovery_authority_separated", lambda *_args, **_kwargs: False
     )

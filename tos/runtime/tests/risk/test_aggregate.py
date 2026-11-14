@@ -30,10 +30,6 @@ from tos_runtime.risk.aggregate import (
 
 from .conftest import FakeEvidenceAppendPort, grant_shaped_are_inputs, write_risk_config
 
-# ============================================================================
-# config loading — fail-closed on null/missing values
-# ============================================================================
-
 
 def test_load_adverse_scenario_set_refuses_null_generation(tmp_path: Path) -> None:
     path = write_risk_config(tmp_path / "risk.yaml", scenario_set_generation=None)
@@ -44,10 +40,7 @@ def test_load_adverse_scenario_set_refuses_null_generation(tmp_path: Path) -> No
 def test_load_adverse_scenario_set_refuses_named_tbd_placeholder(
     tmp_path: Path,
 ) -> None:
-    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): scenario_set_id/policy_binding_id/
-    evidence_package_ref are sealed into the issued AdverseScenarioSet's canonical
-    digest — an operator-typed ``"TBD"`` must never pass ``AdverseScenarioSet.issue``'s
-    own null-only check."""
+    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): scenario_set_id/policy_binding_id/"""
     path = write_risk_config(tmp_path / "risk.yaml", scenario_set_id="TBD")
     with pytest.raises(AggregateRiskConfigError, match="template placeholder"):
         load_adverse_scenario_set(path)
@@ -99,11 +92,6 @@ def test_load_required_scenario_kinds_refuses_unrecognized_member(
         load_required_scenario_kinds(path)
 
 
-# ============================================================================
-# snapshot() — structural derivation from the RCL projection
-# ============================================================================
-
-
 def test_snapshot_covers_required_scopes_after_a_successful_read(
     ara_service: AggregateRiskService, instrument_key: InstrumentKey
 ) -> None:
@@ -121,9 +109,7 @@ def test_snapshot_covers_required_scopes_after_a_successful_read(
 def test_snapshot_is_content_addressed_not_a_bare_counter(
     ara_service: AggregateRiskService, instrument_key: InstrumentKey
 ) -> None:
-    """Two snapshots for the SAME scope at the SAME ledger state carry the
-    same ``consistency_cut_identity`` shape (content-addressed, not a bare
-    process-lifetime counter that could collide across a restart)."""
+    """Two snapshots for the SAME scope at the SAME ledger state carry the"""
     first = ara_service.snapshot(
         instrument_key,
         snapshot_generation=1,
@@ -137,8 +123,7 @@ def test_snapshot_is_content_addressed_not_a_bare_counter(
 def test_snapshot_propagates_projection_read_failures(
     ara_service: AggregateRiskService, instrument_key: InstrumentKey, log
 ) -> None:
-    """An unreachable RCL log is never silently read as 'covers nothing' —
-    the exception propagates (the caller/Stage maps it to UNKNOWN)."""
+    """An unreachable RCL log is never silently read as 'covers nothing' —"""
     log.close()
     with pytest.raises(sqlite3.Error):
         ara_service.snapshot(
@@ -155,17 +140,7 @@ def test_snapshot_conservative_current_usage_reflects_the_committed_rcl_vector(
     log: SqliteCommitLog,
     writer_epoch: int,
 ) -> None:
-    """(review finding ④, round #4 — K-4's actual new behavior: the RCL commit vector
-    now flows into the risk snapshot) A reservation committed with a NON-empty
-    ``committed_vector`` in ``instrument_key``'s own scope must come back out as
-    ``snapshot.conservative_current_usage`` — not the ``CapacityVector()`` fallback,
-    which is reserved for "no reservation / no vector on record" only. Before this test,
-    no test in this suite ever committed a non-``None`` vector, so
-    ``AggregateRiskService.snapshot``'s wiring to the committed vector (rather
-    than the unconditional empty-vector fallback it replaced) had no regression coverage:
-    hardcoding ``conservative_current_usage=CapacityVector()`` in ``snapshot()`` left
-    ``tos/runtime/tests/risk`` / ``compose`` / ``rcl`` / ``riskstate`` / ``safety`` all
-    green (round #4 review, code-reviewer's own mutation)."""
+    """(review finding ④, round #4 — K-4's actual new behavior: the RCL commit vector"""
     committed_vector = CapacityVector(
         components=(
             CapacityComponent(dimension_id="notional", magnitude=Decimal("250")),
@@ -204,9 +179,7 @@ def test_snapshot_conservative_current_usage_reflects_the_committed_rcl_vector(
 def test_snapshot_conservative_current_usage_is_empty_vector_when_no_reservation(
     ara_service: AggregateRiskService, instrument_key: InstrumentKey
 ) -> None:
-    """The ``CapacityVector()`` fallback stays for the honest "no reservation on
-    record for this scope" case — never a fabricated magnitude, per the module
-    docstring."""
+    """The ``CapacityVector()`` fallback stays for the honest "no reservation on"""
     snapshot = ara_service.snapshot(
         instrument_key,
         snapshot_generation=1,
@@ -214,11 +187,6 @@ def test_snapshot_conservative_current_usage_is_empty_vector_when_no_reservation
         all_fields_attributed=True,
     )
     assert snapshot.conservative_current_usage == CapacityVector()
-
-
-# ============================================================================
-# decide() — risk_decision composition
-# ============================================================================
 
 
 def test_decide_grants_on_a_fully_proven_bundle(
@@ -233,7 +201,6 @@ def test_decide_grants_on_a_fully_proven_bundle(
     assert decision.result is RiskDecisionResult.GRANT
     assert decision.decision_id is not None
     assert decision.canonical_digest is not None
-    # decision_id is orthogonal to the digest (are §3.1) — never the same string.
     assert decision.decision_id != decision.canonical_digest
 
 
@@ -283,13 +250,7 @@ def test_decide_appends_decision_evidence(
     ]
     assert decision_calls[0]["decision_id"] == decision.decision_id
     assert decision_calls[0]["decision_digest"] == decision.canonical_digest
-    # decision_id ⊥ digest — both recorded as separate fields, never conflated.
     assert decision_calls[0]["decision_id"] != decision_calls[0]["decision_digest"]
-
-
-# ============================================================================
-# #966 — a scope can hold more than one reservation, so usage is a SUM
-# ============================================================================
 
 
 def _commit_with_vector(
@@ -340,12 +301,7 @@ def test_snapshot_sums_every_outstanding_reservation_of_the_scope(
     instrument_key: InstrumentKey,
     writer_epoch: int,
 ) -> None:
-    """Two outstanding reservations -> the dimension-wise SUM of their committed vectors.
-
-    The concrete failing input for the pre-#966 first-row read: an entry at
-    ``POSITION_CONSUMED`` holding 250 plus the exit's own reservation holding 100 was
-    reported as 250 — one whole reservation of usage invisible to the limit check.
-    """
+    """Two outstanding reservations -> the dimension-wise SUM of their committed vectors."""
     seq = _commit_with_vector(
         log,
         reservation_id="resv-entry",
@@ -452,11 +408,6 @@ def test_snapshot_excludes_released_reservations_from_usage(
     assert snapshot.conservative_current_usage.magnitude("notional") == Decimal("100")
 
 
-# ============================================================================
-# #972 — a reservation with no recorded vector is UNKNOWN usage, never 0
-# ============================================================================
-
-
 def _transition_without_vector(
     log: SqliteCommitLog,
     *,
@@ -500,10 +451,7 @@ def test_an_outstanding_reservation_without_a_vector_makes_the_decision_unknown(
     required_scenario_kinds,
     evidence_port: FakeEvidenceAppendPort,
 ) -> None:
-    """Failing input (PR #973 review L2): an outstanding row holding 250 plus an outstanding
-    row with NO vector (a row written before #972, replayed from an existing log) summed to
-    250 — the second row's usage read as 0. It must be UNKNOWN, so the decision is too.
-    """
+    """Failing input (PR #973 review L2): an outstanding row holding 250 plus an outstanding"""
     seq = _commit_with_vector(
         log,
         reservation_id="resv-recorded",
@@ -554,9 +502,7 @@ def test_a_lone_outstanding_reservation_without_a_vector_is_unknown_too(
     writer_epoch: int,
     required_scenario_kinds,
 ) -> None:
-    """No other row declares a dimension, so the usage vector stays empty — the decision
-    must still be UNKNOWN, not the GRANT an empty (= "nothing held") vector would give.
-    """
+    """No other row declares a dimension, so the usage vector stays empty — the decision"""
     _transition_without_vector(
         log,
         reservation_id="resv-unrecorded",
@@ -582,8 +528,7 @@ def test_a_released_reservation_without_a_vector_does_not_make_usage_unknown(
     writer_epoch: int,
     required_scenario_kinds,
 ) -> None:
-    """RELEASED rows consume nothing, so a missing vector on one is irrelevant — otherwise
-    every scope that ever held a pre-#972 reservation would stay UNKNOWN forever."""
+    """RELEASED rows consume nothing, so a missing vector on one is irrelevant — otherwise"""
     seq = _transition_without_vector(
         log,
         reservation_id="resv-old-released",
@@ -628,10 +573,7 @@ def test_a_lifecycle_transition_without_a_vector_keeps_the_committed_usage(
     writer_epoch: int,
     required_scenario_kinds,
 ) -> None:
-    """Failing input: step 9 commits 250, then the entry fill moves the row to
-    POSITION_CONSUMED through a transition that carries no vector (the release consumer
-    builds it that way). Overwriting the column with NULL would turn an open position into
-    UNKNOWN usage and block its own CLOSE at step 6."""
+    """Failing input: step 9 commits 250, then the entry fill moves the row to"""
     seq = _commit_with_vector(
         log,
         reservation_id="resv-entry",
@@ -674,9 +616,7 @@ def test_a_fresh_boot_over_the_same_log_reproduces_the_snapshot_usage(
     instrument_key: InstrumentKey,
     scenario_set,
 ) -> None:
-    """Replay/boot: a second process opening the same RCL file passes ``verify_replay`` and
-    derives the same usage — the committed vector survives the restart, carried-forward
-    rows included."""
+    """Replay/boot: a second process opening the same RCL file passes ``verify_replay`` and"""
     first = SqliteCommitLog(log_path, evidence_port=evidence_port)
     epoch = first.acquire_epoch(identity)
     seq = _commit_with_vector(

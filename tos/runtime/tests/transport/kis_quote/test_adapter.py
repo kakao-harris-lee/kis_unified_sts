@@ -1,13 +1,4 @@
-"""``KisQuoteObservationIntake`` tests — the monotonic request anchor, phantom-churn dedup with
-a deferred digest, token lifecycle sharing, broker rejection/malformed-response refusals,
-negative-greps, and the arithmetic the anchor buys: an injected transport delay lands in
-``source_age`` and decides FRESH/STALE against the deployed paper bounds (TOS tick-source wave,
-W2 lane; issue #810, plan
-``docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md``).
-
-``poll`` now returns :class:`~tos_runtime.marketfeed.ports.MonotonicAnchoredObservation` — no
-wall-clock value at all — so every test that needs a ``RawObservation`` finalizes one the way the
-scheduler does, through :func:`~tos_runtime.marketfeed.ports.anchor_observation`."""
+"""``KisQuoteObservationIntake`` tests — the monotonic request anchor, phantom-churn dedup with"""
 
 from __future__ import annotations
 
@@ -85,7 +76,6 @@ def _config(server: FakeKisServer, **overrides: Any) -> KisQuoteTransportConfig:
         "token_reissue_min_interval_s": 60,
         "request_timeout_s": 2.0,
         "allow_plaintext_for_tests": True,
-        # Issue #970 pacing kept out of the way: the fake clock never advances on its own.
         "app_key_min_request_interval_ms": 1,
         "app_key_request_wait_budget_ms": 60_000,
     }
@@ -107,9 +97,7 @@ def _intake(
     evidence: RecordingEvidenceSink | None = None,
     **config_overrides: Any,
 ) -> tuple[KisQuoteObservationIntake, Any, RecordingEvidenceSink]:
-    """The intake under test. ``monotonic`` defaults to the controllable fake — the delay
-    tests below pass a REAL :class:`~tos_runtime.time.sources.ProcessMonotonicSource`
-    instead, because a fake that never moves cannot show a transport delay."""
+    """The intake under test. ``monotonic`` defaults to the controllable fake — the delay"""
     config = _config(server, **config_overrides)
     client = build_quote_client(config)
     monotonic = monotonic if monotonic is not None else FakeMonotonicSource()
@@ -124,9 +112,6 @@ def _intake(
     return intake, monotonic, evidence
 
 
-#: The wall-clock instants these tests hand to :func:`anchor_observation` when they need a
-#: finalized observation — the scheduler's job, performed explicitly here so this module tests
-#: the adapter and not the mapping (``tests/time/test_service.py`` owns that).
 _ANCHOR_AS_OF_MS = 1_700_000_000_000
 _ANCHOR_RECEIVED_MS = _ANCHOR_AS_OF_MS + 40
 
@@ -158,10 +143,7 @@ def _set_quote(
     extra_output: dict[str, Any] | None = None,
     on_request: Callable[[], None] | None = None,
 ) -> None:
-    """Script the quote route. ``on_request`` runs inside the server's own quote handler,
-    between the request arriving and the response being written — how the #810 anchor tests
-    below inject the round trip they MEASURE, by advancing their scripted clocks rather than
-    sleeping."""
+    """Script the quote route. ``on_request`` runs inside the server's own quote handler,"""
     output = {"stck_prpr": stck_prpr, "acml_vol": acml_vol}
     if extra_output:
         output.update(extra_output)
@@ -173,16 +155,10 @@ def _set_quote(
     )
 
 
-# ---------------------------------------------------------------------------
-# happy path
-# ---------------------------------------------------------------------------
-
-
 def test_first_poll_emits_one_pending_observation_bracketing_the_request(
     server: FakeKisServer,
 ) -> None:
-    """#810: the poll hands back the two MONOTONIC instants its request spanned, and no
-    wall-clock value at all — the anchor is the scheduler's to stamp."""
+    """#810: the poll hands back the two MONOTONIC instants its request spanned, and no"""
     _set_token(server)
     _set_quote(server)
     intake, monotonic, _ = _intake(server)
@@ -195,8 +171,6 @@ def test_first_poll_emits_one_pending_observation_bracketing_the_request(
     assert pending.instrument == INSTRUMENT
     assert pending.source_id == "kis_quote_mock_stock"
     assert pending.fields == (("last_price", "71300"), ("volume", 12345))
-    # The fake monotonic source does not move on its own, so both readings are its current
-    # value: the ORDER is what this asserts, not a duration (the delay tests below measure one).
     assert pending.requested_monotonic_ms == monotonic.now_ms()
     assert pending.received_monotonic_ms >= pending.requested_monotonic_ms
 
@@ -204,10 +178,7 @@ def test_first_poll_emits_one_pending_observation_bracketing_the_request(
 def test_a_refused_pacer_slot_is_nothing_new_with_one_evidence_row_and_no_get(
     server: FakeKisServer,
 ) -> None:
-    """review-979 r1 LOW: like the band reader and the witness, a refused app-key slot (issue
-    #970) is "no observation", not an exception out of the scheduler's pass. The token POST
-    just took the key's slot; the quote GET would wait 1000 ms > 500 -> refused, unsent.
-    Mutation: let ``KisPacingRefused`` propagate -> red."""
+    """review-979 r1 LOW: like the band reader and the witness, a refused app-key slot (issue"""
     _set_token(server)
     _set_quote(server)
     intake, _, evidence = _intake(
@@ -225,11 +196,7 @@ def test_a_refused_pacer_slot_is_nothing_new_with_one_evidence_row_and_no_get(
 def test_the_pacer_wait_stays_outside_the_request_anchor_span(
     server: FakeKisServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """review-979 r2 LOW-A: the token POST takes the app key's slot, so the quote GET waits a
-    full interval (1500 ms) in the pacer. That wait is queueing, not transport: it must fall
-    BEFORE ``requested_monotonic_ms``, or the M5 anchor bound (800 ms) sees a 1.5 s round trip
-    and the observation goes stale. Mutation: read ``requested`` before ``app_credentials()``
-    -> span 1500 -> red."""
+    """review-979 r2 LOW-A: the token POST takes the app key's slot, so the quote GET waits a"""
     import tos_runtime.transport.kis_mock.pacer as pacer_module
 
     _set_token(server)
@@ -246,19 +213,12 @@ def test_the_pacer_wait_stays_outside_the_request_anchor_span(
 
     (pending,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
 
-    assert pending.requested_monotonic_ms == before + 1_500  # after the pacer wait
+    assert pending.requested_monotonic_ms == before + 1_500
     assert pending.received_monotonic_ms - pending.requested_monotonic_ms == 0
 
 
 def test_the_adapter_reads_no_wall_clock_anywhere(server: FakeKisServer) -> None:
-    """The #810 fix, pinned STRUCTURALLY rather than by behaviour: no attribute named
-    ``wall_clock_now``/``wall_clock_now_if_fresh`` is accessed anywhere in the adapter module.
-
-    An AST walk, not a text grep: the module docstring legitimately NAMES ``wall_clock_now``
-    when explaining why it is not called, and a grep would either fail on that sentence or be
-    weakened until it stopped catching a real call. Mutation: put any wall-clock read back into
-    ``poll`` -> red.
-    """
+    """The #810 fix, pinned STRUCTURALLY rather than by behaviour: no attribute named"""
     import ast
 
     from tos_runtime.transport.kis_quote import adapter as adapter_module
@@ -292,24 +252,17 @@ def test_token_is_reused_across_polls_within_its_lifetime(
     intake, _, _ = _intake(server)
 
     intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
-    _set_quote(server, stck_prpr="71400")  # a genuinely new price for poll #2
+    _set_quote(server, stck_prpr="71400")
     intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
 
     assert len(server.requests_for(TOKEN_PATH)) == 1
     assert len(server.requests_for(QUOTE_ROUTE)) == 2
 
 
-# ---------------------------------------------------------------------------
-# phantom-churn dedup (module docstring's central design decision)
-# ---------------------------------------------------------------------------
-
-
 def test_second_poll_with_identical_content_returns_nothing_new_once_consumed(
     server: FakeKisServer,
 ) -> None:
-    """The phantom-churn guarantee, after #810 made the digest deferred: it holds as soon as
-    the first emission was CONSUMED, which the advanced ``after_as_of_ms`` is the signal for
-    (module docstring's deferred-digest note)."""
+    """The phantom-churn guarantee, after #810 made the digest deferred: it holds as soon as"""
     _set_token(server)
     _set_quote(server)
     intake, _, _ = _intake(server)
@@ -318,12 +271,8 @@ def test_second_poll_with_identical_content_returns_nothing_new_once_consumed(
     assert len(first) == 1
     consumed_as_of_ms = _anchor(first[0]).as_of_ms
 
-    # Same body served again — the market has not moved, and the previous observation was
-    # durably consumed (the store's high-water mark advanced to it).
     second = intake.poll(instrument=INSTRUMENT, after_as_of_ms=consumed_as_of_ms)
     assert second == ()
-    # The quote GET still happened (KIS has no "since" parameter — module docstring) —
-    # only the EMISSION is suppressed, not the poll itself.
     assert len(server.requests_for(QUOTE_ROUTE)) == 2
 
 
@@ -359,8 +308,6 @@ def test_two_emitted_observations_never_share_a_raw_event_id(
     second = intake.poll(instrument=INSTRUMENT, after_as_of_ms=first_as_of_ms)
     second_as_of_ms = first_as_of_ms + 1_000
 
-    # Reverts to the FIRST price at a THIRD, later instant — a legitimate, distinct
-    # observation (module docstring: content reappearing later is not a collision).
     _set_quote(server, stck_prpr="71300")
     third = intake.poll(instrument=INSTRUMENT, after_as_of_ms=second_as_of_ms)
     third_as_of_ms = second_as_of_ms + 1_000
@@ -371,11 +318,6 @@ def test_two_emitted_observations_never_share_a_raw_event_id(
         _anchor(third[0], as_of_ms=third_as_of_ms).raw_event_id,
     }
     assert len(ids) == 3
-
-
-# ---------------------------------------------------------------------------
-# instrument-scope refusal
-# ---------------------------------------------------------------------------
 
 
 def test_poll_for_a_different_instrument_refuses_with_zero_network(
@@ -389,11 +331,6 @@ def test_poll_for_a_different_instrument_refuses_with_zero_network(
         intake.poll(instrument="000660", after_as_of_ms=None)
 
     assert server.all_requests == []
-
-
-# ---------------------------------------------------------------------------
-# broker rejection / malformed response (fail-closed on malformed input)
-# ---------------------------------------------------------------------------
 
 
 def test_broker_rejection_raises_kis_quote_rejected(server: FakeKisServer) -> None:
@@ -411,9 +348,6 @@ def test_broker_rejection_raises_kis_quote_rejected(server: FakeKisServer) -> No
 
 def test_non_json_body_refuses_the_whole_poll(server: FakeKisServer) -> None:
     _set_token(server)
-    # set_response always serializes `body` as JSON via the fake server, so a genuinely
-    # non-JSON body needs a raw route override — set_response with body=None sends an
-    # empty payload, which the client's own `_do_request` treats as `json=None`.
     server.set_response(QUOTE_ROUTE, status=200, body=None)
     intake, _, _ = _intake(server)
 
@@ -439,7 +373,7 @@ def test_missing_mapped_field_refuses(server: FakeKisServer) -> None:
     server.set_response(
         QUOTE_ROUTE,
         status=200,
-        body={"rt_cd": "0", "output": {"stck_prpr": "71300"}},  # acml_vol missing
+        body={"rt_cd": "0", "output": {"stck_prpr": "71300"}},
     )
     intake, _, _ = _intake(server)
 
@@ -463,25 +397,15 @@ def test_mapped_field_of_unsupported_type_refuses(server: FakeKisServer) -> None
         intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
 
 
-# ---------------------------------------------------------------------------
-# shared token lifecycle (step 0 measurement 2 — TokenStale propagates unchanged)
-# ---------------------------------------------------------------------------
-
-
 def test_stale_token_and_unelapsed_cooldown_raises_token_stale(
     server: FakeKisServer,
 ) -> None:
     _set_token(server, expires_in=1)
     _set_quote(server)
-    # Token age/cooldown is governed by the injected MonotonicSource (adapter.py's own "one
-    # clock, two jobs" note) — the same source the request anchor reads, for two different
-    # jobs.
     intake, monotonic, evidence = _intake(server, token_reissue_min_interval_s=300)
 
-    intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)  # issues the first token
-    monotonic.advance(
-        2_000
-    )  # token (expires_in=1s) is now stale; cooldown (300s) not elapsed
+    intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
+    monotonic.advance(2_000)
 
     with pytest.raises(TokenStale):
         intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
@@ -495,7 +419,7 @@ def test_token_reissues_once_cooldown_elapses(server: FakeKisServer) -> None:
     intake, monotonic, _ = _intake(server, token_reissue_min_interval_s=1)
 
     intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
-    monotonic.advance(2_000)  # both the token AND the cooldown have now elapsed
+    monotonic.advance(2_000)
     _set_quote(server, stck_prpr="71900")
     intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
 
@@ -503,40 +427,20 @@ def test_token_reissues_once_cooldown_elapses(server: FakeKisServer) -> None:
 
 
 def test_token_pacing_never_depends_on_wall_clock_trust(server: FakeKisServer) -> None:
-    """Pins the bug an earlier revision of this module had: deriving the token lifecycle's
-    clock from ``wall_clock_now()`` made token pacing depend on wall-clock TRUST, which is
-    wrong — a live token stays live even while wall-clock trust is degraded, because the two
-    facts are unrelated (adapter.py module docstring's own note against reintroducing it).
-
-    Since #810 this intake holds no wall-clock source at all, so the coupling is now
-    structurally impossible rather than merely absent — what this test still pins is that a
-    poll keeps working with no trusted time anywhere in sight, which is exactly the situation
-    the scheduler's ``SKIPPED_TIME_UNANCHORED`` handles afterwards.
-    """
+    """Pins the bug an earlier revision of this module had: deriving the token lifecycle's"""
     _set_token(server, expires_in=86400)
     _set_quote(server)
     intake, monotonic, _ = _intake(server)
 
-    intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)  # issues + caches the token
+    intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
 
     monotonic.advance(1_000)
     _set_quote(server, stck_prpr="72000")
     (pending,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
 
     assert pending.requested_monotonic_ms == 1_000
-    # No second token request: the cached token (expires_in=86400s) is still live.
     assert len(server.requests_for(TOKEN_PATH)) == 1
     assert len(server.requests_for(QUOTE_ROUTE)) == 2
-
-
-# ---------------------------------------------------------------------------
-# secret non-disclosure (measured convention: appkey/appsecret headers ride EVERY
-# authenticated KIS call, not only the token request — shared/kis/auth.py's own
-# get_auth_headers() shape; kis_mock's own post_order does the same. The pin this repo's
-# CLAUDE.md discipline actually supports is therefore narrower than "only on the token
-# request": the secret must appear ONLY in the header slot every measured call already
-# uses, and NEVER in a query string, a request body, or any exception message.)
-# ---------------------------------------------------------------------------
 
 
 def test_app_secret_never_appears_in_the_quote_query_string_or_body(
@@ -564,14 +468,6 @@ def test_app_secret_never_appears_in_a_raised_exception_message(
     with pytest.raises(KisQuoteRejected) as excinfo:
         intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
     assert APP_SECRET.decode() not in str(excinfo.value)
-
-
-# ---------------------------------------------------------------------------
-# host seal is structural, not documentation — a test that would pass if the seal were
-# only a comment: build a REAL client/config pointed at the real domain and prove the
-# LOADER itself refuses before any of this adapter's own code ever runs (the adapter has
-# no independent host check of its own — it trusts the config loader entirely).
-# ---------------------------------------------------------------------------
 
 
 def test_config_loader_is_the_actual_host_seal_not_the_adapter(tmp_path: Path) -> None:
@@ -611,26 +507,6 @@ def test_config_loader_is_the_actual_host_seal_not_the_adapter(tmp_path: Path) -
         )
 
 
-# ---------------------------------------------------------------------------
-# the #810 request anchor, measured end to end against the fake KIS server:
-# an injected transport delay lands in `source_age`, and decides FRESH/STALE
-# against the DEPLOYED paper bounds. Inverts the two pins #811 left here —
-# "STALE at every admissible spacing" and "an unconsumed quote is dropped".
-#
-# DETERMINISTIC (PR #812 review, LOW): the transport delay is injected by
-# advancing a scripted clock inside the fake server's quote handler, not by
-# sleeping — so `source_age` comes out EQUAL to the injected value and the
-# boundary can be pinned on both sides. Everything that decides the verdict is
-# still real: the TrustworthyTimeService, its wall_clock_at_monotonic
-# arithmetic, the kernel's freshness_verdict, the loopback HTTP round trip and
-# the deployed paper bounds. Only the clocks are scripted.
-# ---------------------------------------------------------------------------
-
-#: The APPROVED paper bounds, read from the deployed file rather than re-typed here — the claim
-#: under test is about THOSE numbers, and a guard that reads a second copy of what it guards is
-#: the repeated defect shape this repo already records. parents: [0]=kis_quote, [1]=transport,
-#: [2]=tests, [3]=runtime, [4]=tos, [5]=repo root (the same walk
-#: ``tests/compose/test_deploy_approved_values.py`` does).
 _PAPER_TIME_YAML = (
     Path(__file__).resolve().parents[5]
     / "config"
@@ -641,13 +517,7 @@ _PAPER_TIME_YAML = (
 
 
 def _paper_budget() -> tuple[Any, tuple[int, ...], int]:
-    """``(time config, delay bounds, budget_ms)`` from the DEPLOYED paper ``time.yaml``.
-
-    The budget is the kernel's own freshness arithmetic rearranged: ``freshness_verdict`` calls
-    STALE when ``source_age + sum(delay_bounds) > max_age_bound``
-    (``tos/src/tos/time/predicates.py``), so the age that still fits is
-    ``max_age_bound - sum(delay_bounds)``.
-    """
+    """``(time config, delay bounds, budget_ms)`` from the DEPLOYED paper ``time.yaml``."""
     config = load_time_config(_PAPER_TIME_YAML)
     delay_bounds = tuple(
         getattr(config, field_name) for field_name in _DELAY_BOUND_FIELDS
@@ -659,28 +529,15 @@ def _paper_budget() -> tuple[Any, tuple[int, ...], int]:
     )
 
 
-#: The budget the parametrizations below straddle — derived from the deployed file at import,
-#: never a typed-in 800, so a change to ``time.yaml`` moves the cases rather than silently
-#: leaving them on the wrong side of the boundary.
 _BUDGET_MS = _paper_budget()[2]
 
-#: A transport delay comfortably past that budget (the magnitude #811 measured as the pass
-#: spacing, kept so the two arcs' numbers stay comparable).
 _SLOW_ROUND_TRIP_MS = 1_000
 
 
 def _trusted_time_service(
     monotonic: ScriptedMonotonicSource, reader: ScriptedReferenceReader, config: Any
 ) -> TrustworthyTimeService:
-    """A REAL :class:`~tos_runtime.time.service.TrustworthyTimeService`, driven to ``TRUSTED``
-    over two real ``evaluate()`` cycles — not a double.
-
-    The mapping under test is that service's own ``wall_clock_at_monotonic`` arithmetic
-    (``tests/time/test_service.py`` pins its edges); re-implementing it in a fake here would
-    make these tests pass whatever the real one does. Only the two CLOCKS are scripted, and
-    they advance together, so the suspension this service observes is a measured 0 rather than
-    a guess (:class:`~tests.transport.kis_quote._fakes.ScriptedClock`).
-    """
+    """A REAL :class:`~tos_runtime.time.service.TrustworthyTimeService`, driven to ``TRUSTED``"""
     service = TrustworthyTimeService(
         monotonic=monotonic,
         references=(reader,),
@@ -689,8 +546,8 @@ def _trusted_time_service(
         evidence=InMemoryEvidencePort(),
     )
     service.start()
-    service.evaluate()  # UNINITIALIZED -> SYNCHRONIZING
-    service.evaluate()  # -> TRUSTED
+    service.evaluate()
+    service.evaluate()
     assert service.health_state is HealthState.TRUSTED
     return service
 
@@ -698,21 +555,7 @@ def _trusted_time_service(
 def _anchored_source_age(
     *, server: FakeKisServer, transport_ms: int
 ) -> tuple[int, tuple[int, ...], Any, int]:
-    """Run ONE pass — evaluate, poll (with ``transport_ms`` of round trip injected by the
-    quote handler itself), evaluate — and return
-    ``(source_age, delay_bounds, time config, budget_ms)``.
-
-    The order mirrors :meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.tick_once`
-    exactly: the intake is read FIRST (#809) and the pending observation is anchored against
-    the reading THIS pass's own evaluation produced (#810).
-
-    **Why the resulting age is exactly ``transport_ms``, not approximately.** The scripted pair
-    advances ONLY inside the quote handler, and by the same amount on both hands. So the
-    finalizing cycle's mapping sees an elapsed monotonic gap of ``transport_ms`` and an
-    observed suspension of 0, which puts ``as_of`` at the reading the request instant
-    corresponds to and leaves ``wall_clock_now() - as_of == transport_ms``. No real time
-    passes, and nothing about the host's speed enters the number.
-    """
+    """Run ONE pass — evaluate, poll (with ``transport_ms`` of round trip injected by the"""
     config, delay_bounds, budget_ms = _paper_budget()
     clock = ScriptedClock()
     monotonic = ScriptedMonotonicSource(clock)
@@ -727,8 +570,8 @@ def _anchored_source_age(
     (pending,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
     assert (
         pending.received_monotonic_ms - pending.requested_monotonic_ms == transport_ms
-    )  # the handler's advance really did land between the two anchor readings
-    time_service.evaluate()  # the pass's own evaluation, AFTER the intake read
+    )
+    time_service.evaluate()
 
     as_of_ms = time_service.wall_clock_at_monotonic(pending.requested_monotonic_ms)
     received_ms = time_service.wall_clock_at_monotonic(pending.received_monotonic_ms)
@@ -751,28 +594,13 @@ def _anchored_source_age(
 def test_an_injected_transport_delay_lands_in_source_age_and_reads_stale(
     server: FakeKisServer, transport_ms: int
 ) -> None:
-    """**The inversion of #811's "STALE at every admissible spacing" pin.** Staleness is now
-    decided by THIS request's own round trip, not by the pass spacing: the round trip injected
-    into the fake KIS server's quote handler shows up in ``source_age`` (which is what the
-    previous anchor could not see at all), and past the deployed budget the kernel's own
-    predicate answers STALE.
-
-    The two cases are the boundary's far side — one millisecond over, and the 1000 ms #811
-    measured as the pass spacing — so the pin is on the deployed budget itself, not on a
-    comfortable margin from it.
-
-    Mutations: anchor on the RESPONSE instant instead of the request -> ``source_age`` drops to
-    0 and both the equality and the STALE assertion go red (that is the pre-#809 fail-open);
-    drop the ``on_request`` advance -> the equality assertion goes red.
-    """
+    """**The inversion of #811's "STALE at every admissible spacing" pin.** Staleness is now"""
     source_age, delay_bounds, config, budget_ms = _anchored_source_age(
         server=server, transport_ms=transport_ms
     )
 
-    assert (
-        source_age == transport_ms
-    )  # exact: nothing here is a real elapsed measurement
-    assert transport_ms > budget_ms  # the deployed numbers, not a chosen pair
+    assert source_age == transport_ms
+    assert transport_ms > budget_ms
     assert (
         freshness_verdict(
             source_age=source_age,
@@ -794,14 +622,7 @@ def test_an_injected_transport_delay_lands_in_source_age_and_reads_stale(
 def test_a_quick_round_trip_reads_fresh_against_the_same_budget(
     server: FakeKisServer, transport_ms: int
 ) -> None:
-    """The other half of the inversion — the one the old pin said was unreachable at any
-    spacing the broker admits. Below the deployed budget the SAME numbers answer FRESH.
-
-    The two cases are the boundary's near side: no round trip at all, and a round trip landing
-    exactly ON the budget (``source_age + Σ delay_bounds == max_age_bound`` is still FRESH —
-    ``freshness_verdict`` goes STALE on ``>``). Together with the STALE pair above this pins
-    the verdict on both sides of one millisecond, which a real-timing test could not do.
-    """
+    """The other half of the inversion — the one the old pin said was unreachable at any"""
     source_age, delay_bounds, config, budget_ms = _anchored_source_age(
         server=server, transport_ms=transport_ms
     )
@@ -822,31 +643,19 @@ def test_a_quick_round_trip_reads_fresh_against_the_same_budget(
 def test_an_unconsumed_quote_is_re_emitted_by_this_intake_on_the_next_pass(
     server: FakeKisServer,
 ) -> None:
-    """**The inversion of #811's dropped-quote pin.** A pass that polls and then declines to
-    consume (``SKIPPED_TIME_NOT_EVALUATED``/``SKIPPED_TIME_UNANCHORED`` — no ``store.put``, so
-    ``latest_as_of`` does not move) leaves the next poll asking from the SAME mark. This intake
-    now reads that mark as its consumption signal and holds its digest PENDING, so the same
-    quote is emitted again instead of being dropped until the price changes.
-
-    Mutation: commit the digest inside ``poll`` (the pre-#810 behaviour) -> the second poll
-    returns ``()`` -> red.
-    """
+    """**The inversion of #811's dropped-quote pin.** A pass that polls and then declines to"""
     _set_token(server)
     _set_quote(server)
     intake, _, _ = _intake(server)
 
-    # Pass 1: polled, then the pass's time evaluation failed — nothing consumed.
     (first,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
 
-    # Pass 2 asks from the SAME unadvanced mark, and the quote has not moved.
     (second,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=None)
 
     assert second.content_digest == first.content_digest
     assert second.fields == first.fields
-    # It was re-served by a REAL second request, never replayed from a cache.
     assert len(server.requests_for(QUOTE_ROUTE)) == 2
 
-    # ...and the phantom-churn guarantee still holds once an emission IS consumed.
     consumed_as_of_ms = _anchor(second).as_of_ms
     assert intake.poll(instrument=INSTRUMENT, after_as_of_ms=consumed_as_of_ms) == ()
     assert len(server.requests_for(QUOTE_ROUTE)) == 3
@@ -855,14 +664,7 @@ def test_an_unconsumed_quote_is_re_emitted_by_this_intake_on_the_next_pass(
 def test_a_first_poll_from_an_already_advanced_mark_does_not_lose_the_emission(
     server: FakeKisServer,
 ) -> None:
-    """The restart case: this process's FIRST poll is asked from a non-``None`` mark (the
-    durable store already holds snapshots from a previous run). There is no pending digest to
-    commit, and the emission must still survive the next pass's re-poll if it is not consumed.
-
-    Mutation: treat "the mark is not None" as an advance on the first poll -> nothing changes
-    here, but the guard below (the second poll re-emitting from the same mark) would still
-    hold; the real mutation this catches is committing the digest eagerly -> red.
-    """
+    """The restart case: this process's FIRST poll is asked from a non-``None`` mark (the"""
     _set_token(server)
     _set_quote(server)
     intake, _, _ = _intake(server)

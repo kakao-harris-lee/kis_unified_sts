@@ -1,10 +1,4 @@
-"""Shared fixtures for ``tos_runtime.currentness`` tests.
-
-Uses a real :class:`~tos_runtime.rcl.SqliteCommitLog` under ``tmp_path``
-(hermetic — a sqlite file under the test's own ``tmp_path`` is explicitly
-allowed by D1.4) and simple test doubles for evidence/time/injected readers,
-per the task brief's TDD instruction.
-"""
+"""Shared fixtures for ``tos_runtime.currentness`` tests."""
 
 from __future__ import annotations
 
@@ -28,8 +22,7 @@ _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 
 class FakeEvidenceAppendPort:
-    """An ``EvidenceAppendPort`` test double (mirrors ``tos_runtime.rcl``'s
-    own test double — see that package's ``tests/rcl/conftest.py``)."""
+    """An ``EvidenceAppendPort`` test double (mirrors ``tos_runtime.rcl``'s"""
 
     def __init__(self) -> None:
         self.calls: list[tuple[dict[str, object], str, str]] = []
@@ -57,10 +50,7 @@ class FakeMonotonicClock:
 
 
 class FakeTimeService:
-    """A ``TrustworthyTimeService``-shaped double: returns a fixed, injected
-    :class:`~tos.time.TimeHealthSnapshot` (or raises
-    ``TimeServiceNotStarted``-compatible ``RuntimeError`` when none is set) —
-    the real FSM is lane K's own test scope, not this lane's."""
+    """A ``TrustworthyTimeService``-shaped double: returns a fixed, injected"""
 
     def __init__(self, snapshot: TimeHealthSnapshot | None = None) -> None:
         self._snapshot = snapshot
@@ -149,10 +139,7 @@ def not_started_time_service() -> FakeTimeService:
 
 @pytest.fixture
 def complete_policy() -> CurrentnessPolicy:
-    """A policy whose required floor is exactly what this lane can supply —
-    genuinely achievable completeness for the narrow "everything this lane
-    owns is present" test, distinct from the realistic full-floor policy
-    below."""
+    """A policy whose required floor is exactly what this lane can supply —"""
     issued = CurrentnessPolicy.issue(
         scheme=_SCHEME,
         policy_id="pol-currentness-test",
@@ -167,9 +154,7 @@ def complete_policy() -> CurrentnessPolicy:
 
 @pytest.fixture
 def full_floor_policy() -> CurrentnessPolicy:
-    """A policy declaring the real §9 mandated floor — legitimately
-    unachievable by this lane alone (most dimensions are owned by lanes not
-    wired here), demonstrating the honest "L1 substrate only" posture."""
+    """A policy declaring the real §9 mandated floor — legitimately"""
     issued = CurrentnessPolicy.issue(
         scheme=_SCHEME,
         policy_id="pol-full-floor-test",

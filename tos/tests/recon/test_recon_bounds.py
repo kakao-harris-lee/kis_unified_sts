@@ -1,9 +1,4 @@
-"""ConservativeBound merge (union) + monotonicity + None-dominance (§4.3 / §5.2).
-
-RECON-EV-003 predicate substrate. The central no-blended canary: merge is a widest-
-envelope union — ``merge(100, 150) => upper=150``, **never 125** (design #9 §4.1 / §5.2).
-None dominates (unbounded = most conservative). Narrowing requires positive strong proof.
-"""
+"""ConservativeBound merge (union) + monotonicity + None-dominance (§4.3 / §5.2)."""
 
 from __future__ import annotations
 
@@ -24,11 +19,6 @@ from ._recon_strategies import bounds, observation
 def _b(lower, upper) -> ConservativeBound:
     dec = lambda v: None if v is None else Decimal(v)  # noqa: E731
     return ConservativeBound(lower=dec(lower), upper=dec(upper))
-
-
-# ---------------------------------------------------------------------------
-# merge_conservative — union, never average
-# ---------------------------------------------------------------------------
 
 
 def test_merge_is_union_never_average() -> None:
@@ -86,11 +76,6 @@ def test_merge_covers_all_of_many(bs: list) -> None:
         assert merged.covers(b)
 
 
-# ---------------------------------------------------------------------------
-# ConservativeBound.covers — the extended-order containment helper
-# ---------------------------------------------------------------------------
-
-
 def test_covers_none_is_widest() -> None:
     """A fully-unbounded bound covers everything; a finite bound never covers unbounded."""
     unbounded = _b(None, None)
@@ -103,11 +88,6 @@ def test_covers_is_reflexive() -> None:
     """Every bound covers itself."""
     b = _b(10, 20)
     assert b.covers(b) is True
-
-
-# ---------------------------------------------------------------------------
-# bound_narrowing_allowed — widen free, narrow needs strong proof (§4.3)
-# ---------------------------------------------------------------------------
 
 
 def test_widen_allowed_under_any_basis() -> None:
@@ -133,14 +113,9 @@ def test_narrow_requires_strong_basis() -> None:
 
 def test_partial_narrow_treated_as_narrowing() -> None:
     """(conservative) An incomparable move (widen one side, narrow other) needs strong proof."""
-    frm, to = _b(10, 100), _b(5, 90)  # wider lower, narrower upper
+    frm, to = _b(10, 100), _b(5, 90)
     assert bound_narrowing_allowed(frm, to, strong_basis=None) is False
     assert bound_narrowing_allowed(frm, to, strong_basis=True) is True
-
-
-# ---------------------------------------------------------------------------
-# conservative_bound_of — absence contributes no positive bound (§5.3)
-# ---------------------------------------------------------------------------
 
 
 def test_bound_of_absence_only_is_unbounded() -> None:
@@ -157,5 +132,4 @@ def test_bound_of_ignores_absence_in_union() -> None:
     base = conservative_bound_of(positive)
     widened = conservative_bound_of(with_absence)
     assert widened.covers(base)
-    # the absence's narrower (20,30) did not narrow the (10,50) positive envelope
     assert widened.lower == Decimal(10) and widened.upper == Decimal(50)

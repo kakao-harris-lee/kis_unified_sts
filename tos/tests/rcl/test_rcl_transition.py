@@ -1,9 +1,4 @@
-"""Capacity-state conservatism lattice (RCL design §5.4; ADR-002-002 §10.2).
-
-Less-conservative transitions require a strong cause; timeout / absence / operator
-assumption may only increase conservatism. RELEASED is reachable only under the
-final-quantity proof rule (INV-007) and is terminal.
-"""
+"""Capacity-state conservatism lattice (RCL design §5.4; ADR-002-002 §10.2)."""
 
 from __future__ import annotations
 
@@ -65,14 +60,12 @@ def test_quarantined_to_less_conservative_allowed_with_strong_cause() -> None:
 @given(weak=st.sampled_from(sorted(WEAK_CAUSES)))
 def test_weak_causes_may_only_increase_conservatism(weak: TransitionCause) -> None:
     """Weak causes may increase conservatism but never decrease it (§10.2 line 574)."""
-    # Increase (COMMITTED_UNBOUND -> QUARANTINED_UNKNOWN) is allowed under a weak cause.
     assert (
         transition_allowed(
             CapacityState.COMMITTED_UNBOUND, CapacityState.QUARANTINED_UNKNOWN, weak
         )
         is True
     )
-    # Decrease (QUARANTINED_UNKNOWN -> COMMITTED_UNBOUND) is blocked under a weak cause.
     assert (
         transition_allowed(
             CapacityState.QUARANTINED_UNKNOWN, CapacityState.COMMITTED_UNBOUND, weak

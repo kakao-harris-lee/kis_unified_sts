@@ -1,36 +1,4 @@
-"""§7.1 import-closure verification for ``tos.venue`` — **allowlist** form (design #19 §0.3).
-
-Written as an **allowlist** (design #19 §7.1): after importing every ``tos.venue`` submodule in
-a fresh interpreter, the set of top-level ``tos.*`` packages in ``sys.modules`` must be a subset
-of::
-
-    {tos, tos.canonical, tos.ordering, tos.venue}
-
-An enumerated denylist would go stale the moment a new sibling lands; the allowlist is
-**future-robust** — any sibling, present or future (``tos.pr`` etc.), fails the assertion simply
-by appearing. **sibling edge 0** — venue has **no** sanctioned sibling edge, so its allowlist
-admits only the two core packages.
-
-It also asserts (design #19 §0.3):
-
-  1. no operational package is in the closure (``shared.execution`` / ``kis`` / ``streaming`` /
-     ``llm`` / ``storage`` / ``backtest``, ``services.*``, ``cli.*``);
-  2. neither ``shared.config`` nor ``shared.config.secrets`` is present (transitive ambient-
-     credential intake), nor ``shared.determinism``;
-  3. ``numpy`` / ``pandas`` / ``yaml`` are absent (bounds are injected; YAML is the harness's);
-  4. no ``tos.venue`` source references ``os.environ`` / ``os.getenv``, a dynamic escape
-     (``exec`` / ``eval`` / ``__import__`` / ``importlib``), or a real clock (``time`` /
-     ``datetime``) — venue is **clock-free** (§8);
-  5. the sibling-absence assertion **includes ``tos.iap`` and ``tos.sbr``** (the
-     ``invalidation_closure`` / ``_reachability_closure`` isomorph is re-authored locally, NOT
-     imported — §0.4d) and **``tos.dsl``** (the ``AdmissibilityResult`` homonym is NOT reused —
-     §0.4d).
-
-A planted-leak canary (including ``tos.iap``, ``tos.dsl``, a *future* sibling ``tos.pr``, and
-``shared.config``) proves the spawn+scan pipeline catches a leak no denylist could have
-anticipated, and a planted-AST-escape canary proves the static scan catches an escape — so
-"green" is evidence the checker works, not that it has been neutered.
-"""
+"""§7.1 import-closure verification for ``tos.venue`` — **allowlist** form (design #19 §0.3)."""
 
 from __future__ import annotations
 
@@ -38,12 +6,8 @@ import ast
 import multiprocessing as mp
 from pathlib import Path
 
-#: The §7.1 allowlist: the only top-level ``tos.*`` packages the venue closure may contain.
 _ALLOWED_TOS_PACKAGES = frozenset({"tos", "tos.canonical", "tos.ordering", "tos.venue"})
 
-#: The forbidden siblings (all real siblings + a future ``tos.pr``) — INCLUDING ``tos.iap`` /
-#: ``tos.sbr`` (closure isomorph re-authored locally, §0.4d) and ``tos.dsl`` (AdmissibilityResult
-#: homonym NOT reused, §0.4d). Asserted absent by the classifier canary below.
 _FORBIDDEN_SIBLINGS = frozenset(
     {
         "tos.afg",
@@ -63,7 +27,7 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.sbr",
         "tos.spg",
         "tos.time",
-        "tos.pr",  # a *future* sibling (session B) — the allowlist excludes it by construction
+        "tos.pr",
     }
 )
 
@@ -105,7 +69,6 @@ _VENUE_SRC = Path(__file__).resolve().parent.parent.parent / "src" / "tos" / "ve
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
-#: Real-clock modules that must never be imported by a clock-free venue source (§8).
 _CLOCK_MODULES = frozenset({"time", "datetime"})
 
 
@@ -164,10 +127,10 @@ def _leak_canary_child(queue: mp.Queue) -> None:
     for planted in (
         "shared.config",
         "numpy",
-        "tos.iap",  # the invalidation_closure isomorph is re-authored, not imported
-        "tos.sbr",  # the _reachability_closure isomorph is re-authored, not imported
-        "tos.dsl",  # the AdmissibilityResult homonym is NOT reused
-        "tos.pr",  # a *future* sibling (session B) the allowlist catches
+        "tos.iap",
+        "tos.sbr",
+        "tos.dsl",
+        "tos.pr",
     ):
         sys.modules[planted] = types.ModuleType(planted)
 
@@ -247,7 +210,6 @@ def test_allowlist_classifier_canaries() -> None:
     for sibling in _FORBIDDEN_SIBLINGS | {"tos.not_yet_invented"}:
         assert _is_allowed_tos_module(sibling) is False
         assert _is_allowed_tos_module(sibling + ".predicates") is False
-    # non-tos classification
     assert _is_forbidden_non_tos("shared.config") is True
     assert _is_forbidden_non_tos("shared.config.secrets") is True
     assert _is_forbidden_non_tos("shared.determinism") is True
@@ -257,7 +219,7 @@ def test_allowlist_classifier_canaries() -> None:
     assert _is_forbidden_non_tos("yaml") is True
     assert _is_forbidden_non_tos("pydantic") is False
     assert _is_forbidden_non_tos("decimal") is False
-    assert _is_forbidden_non_tos("click") is False  # must not false-match "cli"
+    assert _is_forbidden_non_tos("click") is False
 
 
 def _ast_escape_offenders(path: Path) -> list[str]:

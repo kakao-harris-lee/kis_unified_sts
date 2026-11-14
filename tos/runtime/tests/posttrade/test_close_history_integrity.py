@@ -89,8 +89,6 @@ def test_foreign_scope_receipt_for_same_attempt_refuses_close_history(
     assert original.proven
     assert original.prior_quantity == Decimal("4")
 
-    # The same attempt ID carrying a terminal result for another account/instrument must make
-    # the exact-scope FULL_FILL ambiguous; a scoped receipt reader would silently miss it.
     evidence_store.append(
         {
             "attempt_id": cycle._CLOSE_ATTEMPT,
@@ -122,9 +120,6 @@ def test_inverse_reservation_join_requires_unambiguous_forward_permit(
         attempt_id=cycle._ENTRY_ATTEMPT,
         permit_identity=cycle._ENTRY_PERMIT,
     )
-    # A second durable FLOW_STEP_ADMITTED row attaches the same event and attempt to another
-    # permit. The inverse lookup for the original permit still finds the attempt, but the forward
-    # lookup must now be ambiguous and the close-history resolver must refuse it.
     evidence_store.append(
         {
             "kind": "FLOW_STEP_ADMITTED",

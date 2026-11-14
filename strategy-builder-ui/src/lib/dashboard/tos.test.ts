@@ -79,18 +79,6 @@ describe('shared reason prefixes', () => {
 });
 
 describe('producer wire contract', () => {
-  it('carries the six-key protective verdict the runtime emits', () => {
-    // tos/runtime/src/tos_runtime/compose/_operations_wiring.py::_read_protective
-    const verdict = {
-      derestriction_admissible: false, capacity_exhausted: null, classification: null,
-      unevaluated: ['capacity_exhausted'], reasons: ['derestriction_admissible'],
-      protective_classification_digest: 'sha256:0f1e2d3c',
-    };
-    const projection: TosProjection = { ...populated, protective: { last_verdict: verdict } };
-    expect(projectionState({ ...response, projection }, 0, false)).toBe('recent');
-    expect(projection.protective?.last_verdict?.reasons).toEqual(['derestriction_admissible']);
-    expect(populated.protective?.last_verdict?.protective_classification_digest).toBe('sha256:0f1e2d3c');
-  });
   it('reads the four digest leaves added in round 1', () => {
     // 지적 9 regression: `process_nonce`, `code_digest`, `chain_digest` and
     // `manifest_digest` were missing from the TS interface while the header
@@ -109,7 +97,6 @@ describe('producer wire contract', () => {
     const projection: TosProjection = {
       ...populated,
       recovery: { readiness_verdict: 'READY', reasons: null },
-      safety_mesh: { snapshot_generation: null, services: null },
       currentness: { pending_dimensions: null, last_assemble_complete: null },
       operations: {
         schema_versions: { evidence: 1, rcl: null, inbox: null },

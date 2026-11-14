@@ -1,17 +1,4 @@
-"""One-use cache for a fresh, independent KIS stock holding observation.
-
-The balance requests themselves belong to the composition root's existing asynchronous fetch
-runner. That runner calls :meth:`publish` with two matching complete broker snapshots and the
-monotonic grant instants of both balance reads. The decision path calls :meth:`consume`, which
-never waits for I/O and burns a matching proof before returning it. An unavailable, stale,
-cross-date, incomplete, synthetic, changed-view, or competing-order observation supplies no
-proof. Scheduling the next read does not: a cached proof is held, under its own unchanged
-freshness bound, until a newer one replaces it or that refresh FAILS (issue #1010).
-
-KIS's current witness is stock-only and reports positive held quantities. It can prove a long
-holding (including a complete flat result of zero); it cannot prove a short holding. Futures and
-synthetic witnesses therefore remain unavailable to this cache.
-"""
+"""One-use cache for a fresh, independent KIS stock holding observation."""
 
 from __future__ import annotations
 
@@ -232,8 +219,6 @@ def _quantity_for_snapshot(
             return None
         if type(order.state) is not WitnessOrderState:
             return None
-        # KIS cancel semantics are not yet proven for this use. Only a fully filled row with
-        # explicit zero remaining quantity and an unambiguous broker identity is terminal.
         if order.state is not WitnessOrderState.FILLED:
             return None
         if (
@@ -301,18 +286,7 @@ def _fresh_window_valid(
 
 
 class HeldPositionCell:
-    """Thread-safe, nonblocking, one-use cache for one validated held-position snapshot.
-
-    The asynchronous fetch owner calls :meth:`mark_pending` before scheduling a new broker
-    read, then :meth:`publish` only after that read completes successfully. Exceptions,
-    ``WitnessUnavailable``, and other failures should call :meth:`invalidate`. A decision
-    consumes a proof synchronously; no broker request or wait occurs in :meth:`consume`.
-
-    Exactly four events end a cached proof: it is consumed, it ages past ``max_age_ms``
-    (checked at :meth:`consume` and again at :meth:`validate_consumed`, both against the one
-    configured bound), its refresh fails, or a newer proof replaces it. Merely scheduling
-    that refresh does not (issue #1010).
-    """
+    """Thread-safe, nonblocking, one-use cache for one validated held-position snapshot."""
 
     def __init__(
         self,
@@ -334,21 +308,9 @@ class HeldPositionCell:
         self._revision = 0
 
     def mark_pending(self, scope: WitnessScope | None = None) -> int:
-        """Reserve the token this refresh must present to publish; keep what is cached.
-
-        This cache holds one scope at a time. The token prevents a slow, older worker result
-        from replacing state from a newer refresh, and it alone orders publishes.
-
-        Issue #1010: scheduling a read is not evidence against the proof already held. Burning
-        it here emptied the cache for the whole worker window — four paced GETs, ~6.7 s to
-        publish against a 12 s cadence — so a CLOSE proposed in that hole spent its one
-        standing-approval use at step 4 and then read PROOF_UNAVAILABLE at step 6, and the
-        position stayed open. The retained reading keeps its own ``age_origin_ms``, so
-        :meth:`consume` still refuses it past ``max_age_ms``; a refresh that FAILS still burns
-        it (:meth:`reject`, :meth:`invalidate`, and the publish validation below).
-        """
+        """Reserve the token this refresh must present to publish; keep what is cached."""
         with self._lock:
-            del scope  # Scope is carried back to publish; the token is cell-wide.
+            del scope
             self._revision += 1
             return self._revision
 
@@ -360,11 +322,7 @@ class HeldPositionCell:
             self._revision += 1
 
     def reject(self, pending_token: int | None) -> bool:
-        """Invalidate only the refresh identified by ``pending_token``.
-
-        A late failed worker must not clear a newer successful sample. ``False`` means this
-        token is absent or no longer current; the cache state is left untouched on that path.
-        """
+        """Invalidate only the refresh identified by ``pending_token``."""
         if type(pending_token) is not int:
             return False
         with self._lock:
@@ -412,21 +370,7 @@ class HeldPositionCell:
         rcl_tip_at_start: RclTip | None,
         pending_token: int | None = None,
     ) -> bool:
-        """Publish a validated broker snapshot and its balance-request age origin.
-
-        ``snapshot`` and ``confirming_snapshot`` are separate full witness reads. Their positions
-        and order rows must match exactly; this detects a fill or other broker-side change during
-        the worker window. ``age_origin_ms`` is the FIRST balance request's FETCH grant, not a
-        timestamp copied from local evidence. ``confirming_age_origin_ms`` proves the second
-        read followed the first; it never resets the freshness window. Both reads use the same
-        trusted date passed to ``KisStockBrokerWitness.observe(..., today=...)``. The scope is the
-        base account/instrument scope with no attempt IDs; no attempt exists in broker evidence.
-
-        Invalid input is a failed refresh: it clears any cached proof and returns ``False``. It
-        never converts an unavailable or malformed observation into a flat account. A superseded
-        or absent token is not this refresh's failure — it returns ``False`` and leaves the
-        cache untouched, so the proof in hand survives until this read answers (issue #1010).
-        """
+        """Publish a validated broker snapshot and its balance-request age origin."""
         if type(pending_token) is not int:
             return False
         with self._lock:
@@ -508,14 +452,7 @@ class HeldPositionCell:
         *,
         proposal_id: str | None,
     ) -> HeldPositionProof | None:
-        """Return and burn one fresh proof for this exact scope, proposal, and held side.
-
-        ``side`` is the holding side the caller's exact CLOSE direction is expected to close.
-        The current proposal ID is bound only here; it is not attributed to the broker snapshot.
-        A matching proof is burned before freshness, proposal, and side checks, so a CLOSE that
-        is later denied cannot reuse its broker read. A stock snapshot cannot prove a short
-        position; futures and synthetic provenance never publish in the first place.
-        """
+        """Return and burn one fresh proof for this exact scope, proposal, and held side."""
         return self._consume_matching(
             lambda cached_scope: cached_scope == scope,
             side=side,
@@ -530,12 +467,7 @@ class HeldPositionCell:
         *,
         proposal_id: str | None,
     ) -> HeldPositionProof | None:
-        """Consume a proof by risk-only identity, retaining its original RCL generation.
-
-        A verified non-reservation RCL gap may advance the live tip between FETCH and Step 6.
-        This lookup therefore matches only the exact account/instrument base scope. It never
-        rewrites the cached scope or snapshot generation to the newer tip.
-        """
+        """Consume a proof by risk-only identity, retaining its original RCL generation."""
         if (
             type(account) is not str
             or not account

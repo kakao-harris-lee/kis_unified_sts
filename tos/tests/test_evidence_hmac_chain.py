@@ -1,25 +1,4 @@
-"""Production SHA-256/HMAC chain scheme + append receipt tests (design #40 D3-a/D3-b).
-
-Covers: a known-answer HMAC chain computation (derivation shown below, computed
-once with stdlib ``hashlib``/``hmac`` — see the module docstring comment), chain
-verification positive/negative (tampered entry digest, tampered prev link, missing
-key generation), rotation across two key generations, empty-key rejection, and the
-``EvidenceAppendReceipt`` durability-proof shape.
-
-``key_generation`` is ``int`` throughout (team-lead correction, 2026-09-08): it is
-the same monotonic axis as the pre-existing ``IntegrityAnchor.key_generation`` /
-``SegmentCommitmentScheme.link_anchor`` Protocol parameter, not a separate string
-label.
-
-Known-answer derivation (Python one-liner, run once to produce the fixtures below)::
-
-    import hashlib, hmac
-    key = b"test-key-material-32-bytes-long"
-    d1 = hashlib.sha256(b"record-one").hexdigest()
-    d2 = hashlib.sha256(b"record-two").hexdigest()
-    link1 = hmac.new(key, b"" + d1.encode(), hashlib.sha256).hexdigest()
-    link2 = hmac.new(key, link1.encode() + d2.encode(), hashlib.sha256).hexdigest()
-"""
+"""Production SHA-256/HMAC chain scheme + append receipt tests (design #40 D3-a/D3-b)."""
 
 from __future__ import annotations
 
@@ -45,11 +24,6 @@ _LINK2 = "dac0acc036661e8f6bc76e42d83e2e32931e9334ab80c8dc4cbb2bc9a6436c63"
 
 def _scheme() -> Sha256HmacChainScheme:
     return Sha256HmacChainScheme(key=_KEY, key_generation=_KEY_GENERATION)
-
-
-# ===========================================================================
-# construction + Protocol conformance
-# ===========================================================================
 
 
 def test_scheme_satisfies_segment_commitment_scheme_protocol() -> None:
@@ -83,11 +57,6 @@ def test_custom_version_is_honored() -> None:
     assert scheme.version == "ev-l2-sha256-hmac-chain-2"
 
 
-# ===========================================================================
-# known-answer test (fixed key, hand-derived expected hex — see module docstring)
-# ===========================================================================
-
-
 def test_known_answer_single_entry_commit() -> None:
     scheme = _scheme()
     assert scheme.commit((_D1,)) == _LINK1
@@ -102,11 +71,6 @@ def test_known_answer_verify_append_matches_direct_commit() -> None:
     scheme = _scheme()
     prefix_commitment = scheme.commit((_D1,))
     assert scheme.verify_append(prefix_commitment, (_D2,)) == scheme.commit((_D1, _D2))
-
-
-# ===========================================================================
-# membership verification: positive + negative (tampering)
-# ===========================================================================
 
 
 def test_membership_verifies_at_correct_position() -> None:
@@ -140,11 +104,6 @@ def test_wrong_key_fails_to_reproduce_commitment() -> None:
     assert honest.commit((_D1, _D2)) != dishonest.commit((_D1, _D2))
 
 
-# ===========================================================================
-# link_anchor
-# ===========================================================================
-
-
 def test_link_anchor_binds_commitment_and_is_deterministic() -> None:
     scheme = _scheme()
     commitment = scheme.commit((_D1,))
@@ -165,26 +124,18 @@ def test_link_anchor_chains_to_predecessor() -> None:
 
 
 def test_link_anchor_defaults_key_generation_to_the_schemes_own() -> None:
-    """When the caller does not override key_generation, the produced anchor's
-    key_generation equals the scheme's own — one axis, not two (team-lead
-    correction 2026-09-08)."""
+    """When the caller does not override key_generation, the produced anchor's"""
     scheme = _scheme()
     anchor = scheme.link_anchor(scheme.commit((_D1,)))
     assert anchor.key_generation == scheme.key_generation == _KEY_GENERATION
 
 
 def test_link_anchor_explicit_key_generation_overrides_the_default() -> None:
-    """A caller MAY still pass a different key_generation explicitly (e.g. binding
-    an anchor to a prior generation during a rotation window)."""
+    """A caller MAY still pass a different key_generation explicitly (e.g. binding"""
     scheme = _scheme()
     anchor = scheme.link_anchor(scheme.commit((_D1,)), key_generation=7)
     assert anchor.key_generation == 7
-    assert scheme.key_generation == _KEY_GENERATION  # the scheme itself is untouched
-
-
-# ===========================================================================
-# verify_chain: positive, tampering, missing generation, rotation
-# ===========================================================================
+    assert scheme.key_generation == _KEY_GENERATION
 
 
 def test_verify_chain_empty_entries_is_vacuously_true() -> None:
@@ -218,9 +169,7 @@ def test_verify_chain_detects_tampered_entry_digest() -> None:
 
 
 def test_verify_chain_detects_tampered_prev_link() -> None:
-    """The second link was computed over a different (tampered) prev commitment,
-    so it fails to re-derive even though its own claimed values look internally
-    consistent in isolation."""
+    """The second link was computed over a different (tampered) prev commitment,"""
     entries = (
         ChainedEntry(
             entry_digest=_D1,
@@ -235,8 +184,7 @@ def test_verify_chain_detects_tampered_prev_link() -> None:
 
 
 def test_verify_chain_missing_key_generation_fails_closed() -> None:
-    """A generation absent from keys_by_generation fails the whole chain — never
-    silently skipped, never treated as vacuously valid (playbook §2.A)."""
+    """A generation absent from keys_by_generation fails the whole chain — never"""
     entries = (ChainedEntry(entry_digest=_D1, key_generation=999, chain_digest=_LINK1),)
     assert verify_chain(entries, {_KEY_GENERATION: _KEY}) is False
     assert verify_chain(entries, {}) is False
@@ -264,11 +212,7 @@ def test_verify_chain_none_axis_fails_closed(
 
 
 def test_verify_chain_rotation_across_two_generations_positive() -> None:
-    """A chain whose first link is signed under generation 1 and whose second
-    link is signed under generation 2 (a rotation mid-chain) verifies correctly
-    when both keys are supplied — each link is checked with the key of its OWN
-    recorded generation, not a single "current" key (design #40 D4.1 rotation
-    semantics)."""
+    """A chain whose first link is signed under generation 1 and whose second"""
     key_2 = b"second-generation-key-material!"
     key_generation_2 = 2
 
@@ -289,8 +233,6 @@ def test_verify_chain_rotation_across_two_generations_positive() -> None:
     keys_by_generation = {_KEY_GENERATION: _KEY, key_generation_2: key_2}
     assert verify_chain(entries, keys_by_generation) is True
 
-    # Sanity: verifying with only ONE of the two keys fails closed (missing
-    # generation for the other link), proving the test actually exercises both.
     assert verify_chain(entries, {_KEY_GENERATION: _KEY}) is False
     assert verify_chain(entries, {key_generation_2: key_2}) is False
 
@@ -320,11 +262,6 @@ def test_verify_chain_rotation_with_wrong_second_key_is_detected() -> None:
     )
 
 
-# ===========================================================================
-# EvidenceAppendReceipt
-# ===========================================================================
-
-
 def test_append_receipt_default_durable_is_true() -> None:
     receipt = EvidenceAppendReceipt(
         segment_id="seg-1", seq=0, chain_digest=_LINK1, key_generation=_KEY_GENERATION
@@ -350,13 +287,9 @@ def test_append_receipt_accepts_zero_seq() -> None:
 
 
 def test_append_receipt_is_distinct_from_phase1_evidence_commit_receipt() -> None:
-    """Anti-collision: EvidenceAppendReceipt is NOT the same symbol as the
-    pre-existing, UNVERIFIED-only tos.evidence.receipt.EvidenceCommitReceipt."""
+    """Anti-collision: EvidenceAppendReceipt is NOT the same symbol as the"""
     from tos.evidence import EvidenceCommitReceipt
 
     assert EvidenceAppendReceipt is not EvidenceCommitReceipt
-    # The Phase-1 receipt has no `durable` field at all — it proves no
-    # durability by construction (receipt.py docstring "Phase-1 honesty");
-    # EvidenceAppendReceipt's whole purpose is that it can, via Literal[True].
     assert "durable" not in EvidenceCommitReceipt.model_fields
     assert "durable" in EvidenceAppendReceipt.model_fields

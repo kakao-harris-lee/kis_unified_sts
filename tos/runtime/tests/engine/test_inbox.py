@@ -1,6 +1,4 @@
-"""Hermetic tests for :class:`tos_runtime.engine.inbox.SqliteEventInbox` (TOS Phase 3 Wave 1
-Lane A-R; plan §1.1 "enqueue 중복 거부 · 소비 순서 = seq").
-"""
+"""Hermetic tests for :class:`tos_runtime.engine.inbox.SqliteEventInbox` (TOS Phase 3 Wave 1"""
 
 from __future__ import annotations
 
@@ -60,9 +58,7 @@ def test_next_unconsumed_returns_oldest_first_then_none(
 def test_unconsumed_count_tracks_admitted_minus_consumed(
     inbox: SqliteEventInbox,
 ) -> None:
-    """The MONITORING safety-mesh service's own inbox-backlog observation (Phase 5
-    W3-b) — distinct from :attr:`~SqliteEventInbox.count`, which never falls as
-    events are consumed."""
+    """The MONITORING safety-mesh service's own inbox-backlog observation (Phase 5"""
     assert inbox.unconsumed_count == 0
     inbox.enqueue(fx.decision_tick_event(seq=1))
     inbox.enqueue(fx.decision_tick_event(seq=2))
@@ -71,7 +67,7 @@ def test_unconsumed_count_tracks_admitted_minus_consumed(
 
     inbox.mark_consumed(1, evidence_seq=100, generation=1)
     assert inbox.unconsumed_count == 1
-    assert inbox.count == 2  # count never falls
+    assert inbox.count == 2
 
     inbox.mark_consumed(2, evidence_seq=101, generation=1)
     assert inbox.unconsumed_count == 0
@@ -108,15 +104,6 @@ def test_count_survives_reopening_the_same_file(tmp_path: Path) -> None:
     reopened.close()
 
 
-# -- new-risk halt latch: storage-layer clear guard (re-review finding RR1, 2026-09-09) -----
-#
-# Direct unit tests on SqliteEventInbox.clear_new_risk_halt itself, independent of the
-# ComposedRuntime wrapper/compose fixture — every re-arm test so far (test_compose_root.py's
-# TestNewRiskHaltOperatorReArm) goes through the wrapper, which checks first and returns early,
-# so the storage layer's OWN attestation/seq guards were never directly exercised (MR3c: deleting
-# the storage-layer attestation check left all 655 tests green).
-
-
 def test_clear_new_risk_halt_with_no_latch_is_refused(inbox: SqliteEventInbox) -> None:
     assert inbox.new_risk_halt() is None
     outcome = inbox.clear_new_risk_halt(
@@ -129,11 +116,7 @@ def test_clear_new_risk_halt_with_no_latch_is_refused(inbox: SqliteEventInbox) -
 def test_clear_new_risk_halt_with_empty_attestation_is_refused_latch_intact(
     inbox: SqliteEventInbox,
 ) -> None:
-    """RE-REVIEW finding RR1 (2026-09-09), RED under mutation MR3c: deleting this storage-layer
-    attestation check left every one of 655 tests green, because every existing re-arm test goes
-    through ``ComposedRuntime.clear_new_risk_halt``, which ALSO checks attestation non-emptiness
-    before ever reaching this method — so a direct call was the only way to exercise this guard
-    at all."""
+    """RE-REVIEW finding RR1 (2026-09-09), RED under mutation MR3c: deleting this storage-layer"""
     inbox.record_new_risk_halt(reason="X", event_id="attempt:1", evidence_seq=7)
     for empty in ("", "   ", "\n\t"):
         outcome = inbox.clear_new_risk_halt(
@@ -148,9 +131,7 @@ def test_clear_new_risk_halt_with_empty_attestation_is_refused_latch_intact(
 def test_clear_new_risk_halt_with_mismatched_seq_is_refused_latch_intact(
     inbox: SqliteEventInbox,
 ) -> None:
-    """RE-REVIEW finding RR1 — a direct call with the wrong ``evidence_seq`` (stale, newer, or
-    simply different) must refuse and leave the latch untouched, exercised independently of the
-    wrapper's own identical check."""
+    """RE-REVIEW finding RR1 — a direct call with the wrong ``evidence_seq`` (stale, newer, or"""
     inbox.record_new_risk_halt(reason="X", event_id="attempt:1", evidence_seq=7)
     for wrong_seq in (6, 8, 0, -1):
         outcome = inbox.clear_new_risk_halt(
@@ -165,8 +146,7 @@ def test_clear_new_risk_halt_with_mismatched_seq_is_refused_latch_intact(
 def test_clear_new_risk_halt_with_matching_seq_and_attestation_clears(
     inbox: SqliteEventInbox,
 ) -> None:
-    """Control for the two refusal tests above: the SAME storage-layer method, called directly,
-    genuinely clears when both checks pass."""
+    """Control for the two refusal tests above: the SAME storage-layer method, called directly,"""
     inbox.record_new_risk_halt(reason="X", event_id="attempt:1", evidence_seq=7)
     outcome = inbox.clear_new_risk_halt(
         latched_evidence_seq=7, operator_attestation="reviewed, genuine fill"
@@ -178,9 +158,7 @@ def test_clear_new_risk_halt_with_matching_seq_and_attestation_clears(
 def test_dated_egress_result_replays_with_the_same_date_and_identity(
     tmp_path: Path,
 ) -> None:
-    """Plan 2026-09-26 egress trading date: the date rides the inbox payload, so a replay reads
-    it back rather than re-reading a clock — same date, same event identity, after a reopen.
-    """
+    """Plan 2026-09-26 egress trading date: the date rides the inbox payload, so a replay reads"""
     from tos.engine.records import event_identity
 
     scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)

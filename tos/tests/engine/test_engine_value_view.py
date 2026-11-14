@@ -1,31 +1,4 @@
-"""The engine-side D-E2 extension: ``DecisionTickPayload.value_view`` + pipeline threading (#32 §3.2).
-
-A *new* file on purpose: every shipped ``tos/tests/engine`` test — the import closure canary above
-all — stayed byte-for-byte unedited and green through design #32, which is the sanction premise
-§15.2 ③ states ("committed 테스트 파괴 0") demonstrated rather than asserted.
-
-⚠ **One later, separately sanctioned exception (2026-09-09, Phase 3 wave 2 KW2-C2, plan §2.2):**
-the closure canary's own allowlist constant *was* edited, to add ``tos.orthostate`` as a fifteenth
-directly realized edge for the new ``engine/orthostate_projection.py`` adapter. That is a distinct
-authorized change from a different task, not a quiet reopening of the design #32 premise above —
-:func:`test_the_engine_import_closure_allowlist_is_unchanged` below now pins fifteen, not fourteen,
-and documents why.
-
-Three claims:
-
-1. **the field is additive and dsl-typed** (§2.2 F1). ``value_view`` is a
-   :class:`~tos.dsl.ContextValueView`, so it rides the pre-existing ``engine -> dsl`` edge
-   (``records.py:28-33``) and the engine's import-closure allowlist is untouched. A
-   ``tos.marketfeed`` type here would have created an ``engine -> marketfeed -> engine`` cycle.
-2. **``None`` is restrictive** (§6). A tick with no view merges no namespace, so every value operand
-   resolves to ``UNKNOWN`` and every comparison against it is ``False`` — the action set narrows.
-3. **the pipeline threads it, and the signature moves with it** (§3.2 (3)). Two ticks over the same
-   Capsule and the same strategy but different resolved values produce different outcomes *and*
-   different recorded signatures. This is the D-E1 §6 Gap-1 residue closing: identical Capsule,
-   distinguishable run.
-
-Regime tag: authoring evidence only; closes no EV (design #32 §1.1).
-"""
+"""The engine-side D-E2 extension: ``DecisionTickPayload.value_view`` + pipeline threading (#32 §3.2)."""
 
 from __future__ import annotations
 
@@ -142,11 +115,6 @@ def _run(*, threshold: int, view: ContextValueView | None):
     )
 
 
-# ---------------------------------------------------------------------------
-# 1. The field (design #32 §2.2 F1 / §15.2 ②)
-# ---------------------------------------------------------------------------
-
-
 def test_the_payload_carries_the_value_surface_as_a_dsl_type() -> None:
     """(§2.2 F1 ★) A dsl type, so the engine's closure allowlist is untouched and no cycle exists."""
     annotation = str(DecisionTickPayload.model_fields["value_view"].annotation)
@@ -170,29 +138,12 @@ def test_the_field_is_additive_and_defaults_to_none() -> None:
 
 
 def test_the_engine_import_closure_allowlist_is_unchanged() -> None:
-    """(§15.2 ③ ★) The committed canary's own constant is read — sixteen packages, no marketfeed.
-
-    Anti-phantom in its existence form: rather than asserting "we did not have to edit the engine
-    canary" (true through design #32; no longer true as of Phase 3 wave 2 KW2-C2 — see this file's
-    module docstring), the shipped constant is imported and inspected. ``tos.orthostate`` is the
-    first later, separately sanctioned addition (2026-09-09); ``tos.nontrade`` is the second
-    (kernel round #3 §2 결정 1, 2026-09-12 — the ``CORPORATE_ACTION`` handler), the SAME
-    one-way-safety argument as ``tos.orthostate`` (this test used to pin fifteen, before that
-    second addition; that pin is now false). ``tos.marketfeed`` was, and remains, never added —
-    the D-E2 value surface rides the pre-existing ``engine -> dsl`` edge instead (module
-    docstring claim 1).
-    """
+    """(§15.2 ③ ★) The committed canary's own constant is read — fifteen packages, no marketfeed."""
     from .test_engine_import_closure import _ALLOWED_TOS_PACKAGES
 
-    assert len(_ALLOWED_TOS_PACKAGES) == 16
+    assert len(_ALLOWED_TOS_PACKAGES) == 15
     assert "tos.marketfeed" not in _ALLOWED_TOS_PACKAGES
     assert "tos.orthostate" in _ALLOWED_TOS_PACKAGES
-    assert "tos.nontrade" in _ALLOWED_TOS_PACKAGES
-
-
-# ---------------------------------------------------------------------------
-# 2. None is restrictive (design #32 §6)
-# ---------------------------------------------------------------------------
 
 
 def test_without_a_view_a_value_gated_guard_cannot_fire() -> None:
@@ -218,11 +169,6 @@ def test_an_explicit_empty_view_is_equally_restrictive_but_still_recorded() -> N
         explicit.signature.captured_external_value_refs
         != absent.signature.captured_external_value_refs
     ), "a published empty view is a recorded fact, not the same as no view at all"
-
-
-# ---------------------------------------------------------------------------
-# 3. Threading + the signature (design #32 §3.2 (3); the D-E1 Gap-1 residue)
-# ---------------------------------------------------------------------------
 
 
 def test_a_resolved_value_reaches_the_policy_and_decides_the_outcome() -> None:
@@ -253,12 +199,7 @@ def test_the_value_free_signature_is_unchanged() -> None:
 
 
 def test_two_ticks_over_one_capsule_are_distinguishable_by_their_values() -> None:
-    """(§3.2 (3b) ★ the D-E1 Gap-1 residue) Same Capsule, different values, different signature.
-
-    D-E1 could reproduce an outcome but could not make two *different* bars distinguishable, because
-    the value surface did not exist. With the values in the signature, two runs that differ only in
-    what the market did are now separable on replay.
-    """
+    """(§3.2 (3b) ★ the D-E1 Gap-1 residue) Same Capsule, different values, different signature."""
     high = _run(
         threshold=_CLOSE - 1, view=_value_view(close=_CLOSE, digest="view-high")
     )

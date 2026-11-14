@@ -1,12 +1,4 @@
-"""Shared valid-artifact builders + strategies for the recon property tests.
-
-Firewall-clean: imports only ``hypothesis`` and ``tos.*`` (design #9 §0.3). The
-``issue_*`` / ``*_required_kwargs`` builders populate every safety-load-bearing covered
-field the assessment issuance guard demands, so a "valid" fixture is genuinely valid
-(never the all-null coverage illusion). ``fresh_marker`` is the positive (all-proof, same
-generation) freshness side; ``stale_marker`` is aged. The reserved ``"TBD"`` placeholder
-is excluded from required-field text (a past flaky-test lesson).
-"""
+"""Shared valid-artifact builders + strategies for the recon property tests."""
 
 from __future__ import annotations
 
@@ -29,33 +21,19 @@ from tos.recon import (
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Text bound to a required-covered field must be concrete (never the reserved ``"TBD"``
-#: placeholder the issuance guard rejects — design #9 §2.3/§3.2).
 REQUIRED_FIELD_TEXT = st.text(max_size=8).filter(lambda s: s != "TBD")
 
-# ---------------------------------------------------------------------------
-# Enum / scalar strategies
-# ---------------------------------------------------------------------------
 
 FIELDS = st.sampled_from(list(SafetyRelevantField))
 CLASSES = st.sampled_from(list(FieldConfidenceClass))
 CAPACITY_RELEASING = st.sampled_from(sorted(CAPACITY_RELEASING_FIELDS))
-#: The non-capacity-releasing fields (no release proof possible — design #9 §6.2).
 NON_RELEASING = st.sampled_from(
     [f for f in SafetyRelevantField if f not in CAPACITY_RELEASING_FIELDS]
 )
-#: A magnitude over non-negative Decimals (no float; §0.3).
 MAGNITUDE = st.integers(min_value=0, max_value=1000).map(Decimal)
 OPT_MAGNITUDE = st.none() | MAGNITUDE
-#: Injected bool | None flag (fail-closed on None / False).
 TRIBOOL = st.sampled_from([True, False, None])
-#: A small pool of independence-class labels (+ None for the fail-closed direction).
 INDEPENDENCE = st.sampled_from(["A", "B", "C", None])
-
-
-# ---------------------------------------------------------------------------
-# ConservativeBound
-# ---------------------------------------------------------------------------
 
 
 @st.composite
@@ -66,11 +44,6 @@ def bounds(draw: st.DrawFn) -> ConservativeBound:
     if lo is not None and hi is not None and lo > hi:
         lo, hi = hi, lo
     return ConservativeBound(lower=lo, upper=hi)
-
-
-# ---------------------------------------------------------------------------
-# FreshnessMarker
-# ---------------------------------------------------------------------------
 
 
 def fresh_marker(**overrides: Any) -> FreshnessMarker:
@@ -101,11 +74,6 @@ def markers(draw: st.DrawFn) -> FreshnessMarker:
     )
 
 
-# ---------------------------------------------------------------------------
-# EvidencePathObservation
-# ---------------------------------------------------------------------------
-
-
 def observation(**overrides: Any) -> EvidencePathObservation:
     """A single evidence-path observation with sensible positive defaults."""
     base: dict[str, Any] = {
@@ -134,11 +102,6 @@ def observations(draw: st.DrawFn) -> EvidencePathObservation:
     )
 
 
-# ---------------------------------------------------------------------------
-# FieldConfidence
-# ---------------------------------------------------------------------------
-
-
 def field_confidence(**overrides: Any) -> FieldConfidence:
     """A per-field confidence value with positive defaults."""
     base: dict[str, Any] = {
@@ -163,11 +126,6 @@ def field_confidences(draw: st.DrawFn) -> FieldConfidence:
     )
 
 
-# ---------------------------------------------------------------------------
-# ReleaseProofInputs
-# ---------------------------------------------------------------------------
-
-
 def release_inputs(**overrides: Any) -> ReleaseProofInputs:
     """Release-proof inputs with the positive (FQP present, fresh) defaults."""
     base: dict[str, Any] = {
@@ -176,11 +134,6 @@ def release_inputs(**overrides: Any) -> ReleaseProofInputs:
     }
     base.update(overrides)
     return ReleaseProofInputs(**base)
-
-
-# ---------------------------------------------------------------------------
-# FieldReconciliationAssessment
-# ---------------------------------------------------------------------------
 
 
 def assessment_required_kwargs(**overrides: Any) -> dict[str, Any]:

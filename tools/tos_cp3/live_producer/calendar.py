@@ -1,27 +1,4 @@
-"""Trading days and the session window — from the TENANT calendar, by decision.
-
-⛔ Plan §3.2 forbids ``shared/collector/historical/calendar.py`` here: its
-hardcoded ``KOREAN_HOLIDAYS`` is missing two 2026 substitute holidays (08-17
-and 10-05), so it disagrees with ``config/market_schedule.yaml`` and with the
-runtime calendar the session gate itself uses — and a seed walk that trusts it
-stops on 10-05's empty response and refuses to start. The file read here is the
-same one the runtime loads (``config/tos_runtime/<tenant>/calendar.yaml``).
-
-**Why the session window comes from here and not from a literal.** The PR-1
-evidence (§2.1-§2.2) establishes that the last bar of the day (15:45) can never
-be completed by a successor raw row, because 15:46 is outside the session; the
-only non-vacuous way to say "the session ended" is to read the window the
-runtime reads. A hardcoded 15:45 would be a second source of truth that drifts
-the first time the exchange moves the close.
-
-The two halves of the equivalence this file needs are split by the firewall, so
-a committed fixture is the hinge (plan §3.2, #892's shape):
-
-* ``tos/runtime/tests/...`` — the real runtime calendar loader yields this
-  trading-day list;
-* ``tests/tools/test_cp3_live_producer.py`` — this module reproduces it
-  byte-for-byte.
-"""
+"""Trading days and the session window — from the TENANT calendar, by decision."""
 
 from __future__ import annotations
 
@@ -53,24 +30,13 @@ class SessionWindow:
     end: time
 
     def last_bar_minute(self, day: date) -> datetime:
-        """The naive-KST minute label of the session's LAST one-minute bar.
-
-        The PR-1 evidence measured this identity on 2026-10-12: the last parsed
-        bar was 15:45 and the calendar's futures CONTINUOUS window ends at
-        15:45 (``last_parsed_bar_is_session_end_minute=true``).
-        """
+        """The naive-KST minute label of the session's LAST one-minute bar."""
         return datetime.combine(day, self.start).replace(
             hour=self.end.hour, minute=self.end.minute
         )
 
     def end_boundary(self, day: date) -> datetime:
-        """The naive-KST instant past which the last bar can no longer grow.
-
-        One minute after the last bar's label: the 15:45 bar covers
-        15:45:00-15:45:59, so 15:46:00 is "the session end time has elapsed",
-        which the evidence §2.2 makes a REQUIRED completion condition rather
-        than an option.
-        """
+        """The naive-KST instant past which the last bar can no longer grow."""
         return self.last_bar_minute(day) + timedelta(minutes=1)
 
 
@@ -82,25 +48,8 @@ class RuntimeCalendar:
     calendar_version: str
     tz_id: str
     holidays: frozenset[date]
-    #: Years this calendar is DECLARED to cover, supplied by the producer's own
-    #: YAML (``calendar_covered_years``) — never inferred from the holiday
-    #: dates. Plan §3.2 L2 requires an explicit refusal before the seed walk
-    #: leaves the covered range rather than a silent "no holidays, so every
-    #: weekday trades".
-    #:
-    #: ⚠ **Inference was wrong and is the reason this is declared** (review
-    #: L4). Deriving the set from ``{d.year for d in holidays}`` makes ONE
-    #: 2027-01-01 entry mark the whole of 2027 as covered, which is exactly the
-    #: silent "every weekday trades" the refusal exists to prevent — and the
-    #: tenant calendar is digest-bound, so it cannot be edited to carry the
-    #: range itself. :func:`load_runtime_calendar` cross-checks the declared
-    #: years against the file instead, so a year declared but absent from the
-    #: holiday list is a startup refusal.
     covered_years: frozenset[int]
     sessions: dict[str, tuple[SessionWindow, ...]]
-    #: The parsed calendar mapping — kept so :meth:`window` asks
-    #: :mod:`tools.tos_cp3.session_day` for a date's window, the same reader
-    #: the runner and the cron wrapper use (issue #924 dated overrides).
     raw: dict = field(default_factory=dict, repr=False, compare=False)
 
     def is_trading_day(self, day: date) -> bool:
@@ -116,12 +65,7 @@ class RuntimeCalendar:
     def window(
         self, session_id: str, phase: str, day: date | None = None
     ) -> SessionWindow:
-        """The ONE *phase* window of *session_id*.
-
-        With *day*, that date's window: a ``session_overrides`` entry for the
-        date replaces the regular one (issue #924 — e.g. the exam day's late
-        open and close). Without it, the regular window.
-        """
+        """The ONE *phase* window of *session_id*."""
         if day is not None:
             try:
                 dated = [
@@ -152,12 +96,7 @@ class RuntimeCalendar:
     def trading_days_before(
         self, target: date, *, max_calendar_days: int
     ) -> Iterator[date]:
-        """Yield trading days strictly before *target*, newest first.
-
-        Walks CALENDAR days (so the budget is comparable to PR-1's
-        ``max_seed_calendar_days``) and refuses as soon as the walk would leave
-        the covered years.
-        """
+        """Yield trading days strictly before *target*, newest first."""
         day = target
         for _ in range(max_calendar_days):
             day -= timedelta(days=1)
@@ -173,25 +112,13 @@ def _parse_time(value: str, *, path: Path, field: str) -> time:
         raise LiveProducerRefused(f"{path}: {field}={value!r} is not HH:MM") from exc
 
 
-#: A declared covered year must carry at least this many holidays in the
-#: calendar file. KRX closes far more days than this every year (the tenant
-#: file lists 19 for 2026), so a year scraping past 1 is not a covered year —
-#: it is a stray forward-dated entry (review L4).
 MIN_HOLIDAYS_PER_COVERED_YEAR = 5
 
 
 def load_runtime_calendar(
     path: Path, *, covered_years: Iterable[int]
 ) -> RuntimeCalendar:
-    """Read the tenant calendar YAML and cross-check its declared range.
-
-    Args:
-        covered_years: the years the producer's YAML declares this calendar
-            covers. Each one must actually carry holidays here, or startup is
-            refused: the tenant file is digest-bound and cannot be edited to
-            state its own range, so the declaration and the file are checked
-            against each other instead of one being trusted (review L4).
-    """
+    """Read the tenant calendar YAML and cross-check its declared range."""
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
     if not isinstance(data, dict):

@@ -1,13 +1,4 @@
-"""``tos_runtime.compose._nonlive_admission`` tests (TOS KIS MOCK transport
-plan T2 lane B; plan §2 decision 7 / §7 operator disposition row 1,
-``docs/plans/2026-09-10-tos-kis-mock-transport-plan.md``).
-
-Hermetic (D1.4) — every write stays under ``tmp_path``; the Broker
-Capability Profile INSTANCE document is loaded READ-ONLY from
-``docs/broker-profiles/`` (never written), the same pattern
-``tos/runtime/tests/brokercap/test_instance.py`` already uses (reads are
-never restricted by the write guard).
-"""
+"""``tos_runtime.compose._nonlive_admission`` tests (TOS KIS MOCK transport"""
 
 from __future__ import annotations
 
@@ -42,8 +33,6 @@ from tos_runtime.compose._nonlive_admission import (
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
-# tos/runtime/tests/compose/test_nonlive_admission.py -> repo root is 4 parents up
-# (same depth as tos/runtime/tests/brokercap/test_instance.py's own _REPO_ROOT).
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _DRAFT_PATH = (
     _REPO_ROOT / "docs" / "broker-profiles" / "KIS-BROKER-CAPABILITY-PROFILE-draft.yaml"
@@ -63,11 +52,6 @@ def real_prod_document() -> InstanceDocument:
     return load_instance_document(_DRAFT_PATH, environment="REAL_PROD")
 
 
-# ============================================================================
-# Fixtures — a minimal MOCK_STOCK_ORDER-shaped scope + capability tuples
-# ============================================================================
-
-
 def _mock_capability_tuple() -> CapabilityTuple:
     return CapabilityTuple(
         environment=BrokerEnvironment.BROKER_SIMULATION,
@@ -79,8 +63,7 @@ def _mock_capability_tuple() -> CapabilityTuple:
 
 
 def _read_capability_tuple_broker_simulation() -> CapabilityTuple:
-    """The OTHER admitted authorization_class (condition 3) — NON_AUTHORIZING_READ,
-    still inside BROKER_SIMULATION."""
+    """The OTHER admitted authorization_class (condition 3) — NON_AUTHORIZING_READ,"""
     return CapabilityTuple(
         environment=BrokerEnvironment.BROKER_SIMULATION,
         operation_class=OperationClass.MARKET_DATA_READ,
@@ -131,7 +114,7 @@ def _mock_scope(
 
 _RISK_FALSE = TransportNature(risk_relevant_live=False)
 _RISK_TRUE = TransportNature(risk_relevant_live=True)
-_RISK_NONE = TransportNature()  # every field None, including risk_relevant_live
+_RISK_NONE = TransportNature()
 
 
 def _positive_kwargs(mock_vts_document: InstanceDocument) -> dict:
@@ -142,12 +125,6 @@ def _positive_kwargs(mock_vts_document: InstanceDocument) -> dict:
         "active_scope": _mock_scope(),
         "instance_document": mock_vts_document,
     }
-
-
-# ============================================================================
-# All five positive -> admitted; each negated alone -> refused with the
-# matching reason (team-lead spec)
-# ============================================================================
 
 
 def test_all_five_positive_admits(mock_vts_document: InstanceDocument) -> None:
@@ -246,8 +223,7 @@ def test_condition3_empty_capability_tuples_refuses(
 def test_condition3_non_authorizing_read_in_broker_simulation_admits(
     mock_vts_document: InstanceDocument,
 ) -> None:
-    """NON_AUTHORIZING_READ is the OTHER admitted authorization_class, not just
-    MOCK_ORDER — still requires BROKER_SIMULATION."""
+    """NON_AUTHORIZING_READ is the OTHER admitted authorization_class, not just"""
     kwargs = _positive_kwargs(mock_vts_document)
     kwargs["active_scope"] = _mock_scope(
         capability_tuples=(_read_capability_tuple_broker_simulation(),)
@@ -287,12 +263,7 @@ def test_condition4_transport_nature_none_refuses(
 
 
 class _ReachesBrokerOnly:
-    """A minimal duck type satisfying the KERNEL's own ``TransportNatureLike`` Protocol
-    (``tos.engine.core`` — declares only ``reaches_broker``) but genuinely lacking
-    ``risk_relevant_live``. Independent review MEDIUM-3: the caller-side ``typing.cast`` in
-    ``RuntimeCoordinatorPreconditions.live_scope_authorized`` is a static-typing-only widening —
-    at runtime, nothing stops a Protocol-conforming object shaped exactly like this from reaching
-    condition 4."""
+    """A minimal duck type satisfying the KERNEL's own ``TransportNatureLike`` Protocol"""
 
     reaches_broker = True
 
@@ -350,22 +321,8 @@ def test_every_argument_none_refuses_with_all_five_reasons() -> None:
     assert len(verdict.reasons) == 5
 
 
-# ============================================================================
-# Full sweep — every scope in the real broker_scopes.example.yaml, every
-# posture, with risk_relevant_live derived from the scope itself (not
-# independently toggled) — only a MOCK_STOCK_ORDER-shaped scope with a
-# positive posture ever admits; every REAL_* scope refuses for BOTH posture
-# values, naming condition 3 among the reasons.
-# ============================================================================
-
-
 def _load_example_scopes_with_mock_stock_order_evidence() -> dict:
-    """The shipped example, with MOCK_STOCK_ORDER's ``profile_evidence_ok``
-    patched positive (mirrors ``tos/runtime/tests/brokercap/test_scopes.py``
-    ``test_resolve_scope_reduced``) so its stamped admissibility is REDUCED
-    rather than the shipped example's honest PROHIBITED (no P0-2 evidence
-    yet — a scopes-loader fact this sweep does not re-litigate; it exercises
-    this module's own condition boundaries instead)."""
+    """The shipped example, with MOCK_STOCK_ORDER's ``profile_evidence_ok``"""
     raw = yaml.safe_load(_BROKER_SCOPES_EXAMPLE_PATH.read_text(encoding="utf-8"))
     assert isinstance(
         raw, dict

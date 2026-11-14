@@ -1,21 +1,4 @@
-"""core §5.1 — scope-graph completeness, C1 shared-limit direction, envelope not enlarged.
-
-AFG-EV-001 substrate (ADR-002-022 §10; AFG-INV-001; §1 line 25). Every guard carries a
-**both-ways** canary: the forbidden direction (the guard fires) *and* the permitted
-direction (a legitimate admission is not blocked) — a vacuous grant is a safety defect and
-a vacuous block is an availability defect (design #16 §4.7).
-
-The centrepiece is the **C1 two-rule** property: v1.0 of the design transcribed §10 line
-276 as "smallest", which was a fail-open direction inversion. The two rules point in
-opposite directions and are tested separately:
-
-* unknown dependency / unproven independence => **smallest** conservative containing scope
-  (§1 line 25);
-* broker documentation not verified-complete => **largest** credible containing scope
-  (§10 line 276).
-
-Closes **no** AFG-EV: predicate / coordinate substrate only (design #16 §1).
-"""
+"""core §5.1 — scope-graph completeness, C1 shared-limit direction, envelope not enlarged."""
 
 from __future__ import annotations
 
@@ -54,11 +37,6 @@ _CREDIBLE_CONTAINING = frozenset(
         ActionFlowScopeKind.ACCOUNT,
     }
 )
-
-
-# ---------------------------------------------------------------------------
-# scope_graph_complete (§10 line 274-278; AFG-INV-001)
-# ---------------------------------------------------------------------------
 
 
 def test_complete_scope_graph_with_independence_passes() -> None:
@@ -166,14 +144,7 @@ def test_unknown_independence_basis_fails_closed() -> None:
 
 
 def test_every_adr_separation_axis_is_load_bearing() -> None:
-    """(§10:278 six axes) Dropping **any** one of the six separation axes fails closed.
-
-    ADR §10 line 278 verbatim names six axes — "allocation, refill, broker enforcement,
-    **credential/session state**, failure domain, and final route". A partial-evidence
-    claim on any one of them is not independence, so each axis is exercised individually
-    (the credential/session axis was the one the design contract's prose omitted; see the
-    design-#16 v1.2 errata).
-    """
+    """(§10:278 six axes) Dropping **any** one of the six separation axes fails closed."""
     scopes = tuple(sorted(REQUIRED_SCOPES))
     axes = ScopeIndependenceEvidence._SEPARATION_AXES
     assert len(axes) == 6, "ADR §10 line 278 declares exactly six separation axes"
@@ -199,7 +170,6 @@ def test_credential_session_state_axis_is_required_for_independence() -> None:
         ActionFlowScopeKind.SESSION, credential_session_state_separated=None
     )
     assert evidence.is_independent() is False
-    # Causal isolation: only that axis changes and the verdict flips.
     assert independent_evidence(ActionFlowScopeKind.SESSION).is_independent() is True
 
 
@@ -245,11 +215,6 @@ def test_scope_completeness_never_passes_without_full_coverage(
     assert verdict is expected
 
 
-# ---------------------------------------------------------------------------
-# shared_limit_conservative (C1 — the two opposite conservative rules)
-# ---------------------------------------------------------------------------
-
-
 def test_c1_rule2_incomplete_broker_documentation_widens_to_largest() -> None:
     """(C1 rule 2, §10:276 canary -) Incomplete documentation => LARGEST credible scope."""
     for status in (
@@ -281,7 +246,6 @@ def test_c1_rule1_unproven_independence_expands_to_smallest() -> None:
             evidence,
         )
         assert verdict is ActionFlowScopeKind.ACCOUNT
-    # The rule genuinely selects the narrowest member, not merely the claimed scope.
     verdict = shared_limit_conservative(
         DocumentedScopeStatus.VERIFIED_COMPLETE,
         ActionFlowScopeKind.GLOBAL,
@@ -375,11 +339,6 @@ def test_shared_limit_is_never_narrower_than_the_rule_demands(
         assert verdict is broadest_scope(credible)
 
 
-# ---------------------------------------------------------------------------
-# envelope_not_enlarged (§8 line 248 — the "enlarge-envelope" forbidden verb)
-# ---------------------------------------------------------------------------
-
-
 def test_within_envelope_from_the_injected_source_passes() -> None:
     """(canary +) A requested limit at or below the injected envelope maximum => True."""
     assert (
@@ -465,9 +424,7 @@ def test_none_magnitude_in_the_requested_limit_fails_closed() -> None:
 
 
 def test_empty_requested_limit_declares_zero_headroom_not_a_wildcard() -> None:
-    """(documented interpretation) An empty requested limit enlarges nothing — but only
-    after the positive source gate, and a caller's empty *requested scope* is denied
-    separately in :func:`~tos.afg.action_flow_decision` (§4.7 row 3)."""
+    """(documented interpretation) An empty requested limit enlarges nothing — but only"""
     assert (
         envelope_not_enlarged(
             requested_limit=CapacityVector(),
@@ -476,7 +433,6 @@ def test_empty_requested_limit_declares_zero_headroom_not_a_wildcard() -> None:
         )
         is True
     )
-    # ...and it is still gated by the source: an unproven source fails closed.
     assert (
         envelope_not_enlarged(
             requested_limit=CapacityVector(),

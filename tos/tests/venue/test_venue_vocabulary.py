@@ -1,7 +1,4 @@
-"""venue vocabulary — enum membership + closed/open taxonomy + dsl homonym distinction (design #19 §2.2).
-
-Regime tag: predicate / model substrate only; VTG-EV substrate; EV-L1-complete claim forbidden.
-"""
+"""venue vocabulary — enum membership + closed/open taxonomy + dsl homonym distinction (design #19 §2.2)."""
 
 from __future__ import annotations
 
@@ -36,7 +33,6 @@ def test_tradability_state_values() -> None:
 def test_action_class_is_closed_taxonomy() -> None:
     """(§11 line 283-289, v1.1 M4) ActionClass is the closed taxonomy (entry + exit + routing)."""
     values = {a.value for a in ActionClass}
-    # entry / lifecycle / exit / protective / routing all present (closed set)
     for expected in (
         "NEW_LONG",
         "NEW_SHORT",
@@ -67,14 +63,12 @@ def test_admissibility_result_is_not_dsl_admissibility_result() -> None:
     """(§0.4d) The venue result enum is a distinct type from dsl.AdmissibilityResult (homonym)."""
     from tos.dsl import AdmissibilityResult as DslAdmissibilityResult
 
-    # Distinct types (different domains — ADR-002-019 venue vs ADR-DEV-001 static program).
     assert OrderAdmissibilityResult is not DslAdmissibilityResult
     assert OrderAdmissibilityResult.__name__ == "OrderAdmissibilityResult"
 
 
 def test_action_and_constraint_classes_are_identity_gated_not_truthy() -> None:
     """(§2.2) ActionClass / ConstraintClass are plain StrEnums usable by identity/membership."""
-    # A plain StrEnum member is truthy-testable (they are input tokens, not gate results).
     assert bool(ActionClass.NEW_LONG) is True
     assert ActionClass.CLOSE in {ActionClass.CLOSE, ActionClass.CANCEL}
     assert ConstraintClass.SESSION_PHASE.value == "SESSION_PHASE"

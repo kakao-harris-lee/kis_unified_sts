@@ -1,28 +1,4 @@
-"""``_loader_probe`` — run every boot-blocking loader against one ``config_dir`` and report
-PASS/REFUSE per file, with the refusal verbatim.
-
-**Why this is committed (review-794 MEDIUM-4).** The W-A A-5 landing record
-(``docs/plans/2026-09-18-tos-config-adoption-and-carryover-plan.md`` §7.8) quotes a
-"N PASS / M REFUSE" partition as its diagnosis of what still blocks a ``run`` boot. The first
-cut of that record quoted the number from a scratch script that was never committed, so the
-number could not be re-derived by a reader — this repo's own rule is that evidence has to be
-re-runnable. This module is that script, committed, and
-``test_deploy_approved_values.py::test_loader_probe_partition_is_as_recorded`` pins the
-partition BY NAME (not merely by count), so the landing record's number cannot drift away from
-what the loaders actually do.
-
-``run`` itself stops at its own FIRST refusal (``construction.yaml``, ``_run_dispatch.py:94-99``),
-so a sequential boot can never enumerate what else is blocked. This probe calls each loader
-independently and therefore does.
-
-Run it directly to print the table::
-
-    PYTHONPATH=tos/src:tos/runtime/src python tos/runtime/tests/compose/_loader_probe.py \\
-        config/tos_runtime/paper
-
-Leading underscore: this is a helper, not a pytest module (pytest collects ``test_*.py`` only).
-Hermetic: every loader here only READS the files it is given; nothing is written.
-"""
+"""``_loader_probe`` — run every boot-blocking loader against one ``config_dir`` and report"""
 
 from __future__ import annotations
 
@@ -48,19 +24,11 @@ def _scheme() -> Any:
     return get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 
-#: The environment label the two ``{environment_label}``-templating loaders need. Any non-live
-#: label works for a load-only probe; this one matches the compose e2e suite's own fixture.
 _ENVIRONMENT_LABEL = "non-live-test"
 
 
 def _unreachable_observer() -> Any:
     raise AssertionError("observer must not be reached during a config load")
-
-
-# --------------------------------------------------------------------------
-# One callable per probed loader. Each takes the config DIRECTORY, because several
-# loaders read more than one file (the safety mesh reads three).
-# --------------------------------------------------------------------------
 
 
 def _time(d: Path) -> object:
@@ -101,14 +69,6 @@ def _currentness(d: Path) -> object:
     from tos_runtime.currentness.config import load_currentness_config
 
     return load_currentness_config(d / "currentness.yaml")
-
-
-def _pending_dimensions(d: Path) -> object:
-    from tos_runtime.compose._pending_dimensions import (
-        load_pending_currentness_dimensions,
-    )
-
-    return load_pending_currentness_dimensions(d / "currentness_dimensions.yaml")
 
 
 def _risk_attestations(d: Path) -> object:
@@ -159,45 +119,16 @@ def _finality(d: Path) -> object:
     return load_finality_config(d / "finality.yaml")
 
 
-def _safety_mesh_documents(d: Path) -> object:
-    from tos_runtime.safety.profile import SafetyProfileService
-
-    return SafetyProfileService(
-        envelope_path=d / "safety_envelope.yaml",
-        profile_path=d / "safety_profile.yaml",
-        activation_path=d / "safety_activation.yaml",
-    )
-
-
-def _deviations(d: Path) -> object:
-    from tos_runtime.safety.deviation import DeviationService
-
-    return DeviationService(deviations_path=d / "safety_deviations.yaml")
-
-
-def _incidents(d: Path) -> object:
-    from tos_runtime.safety.incident import IncidentService
-
-    return IncidentService(config_path=d / "safety_incidents.yaml")
-
-
 def _monitoring(d: Path) -> object:
     from tos_runtime.safety.monitoring import MonitoringService
 
     return MonitoringService(
         config_path=d / "monitor_coverage.yaml",
         evidence_tip_observer=lambda: _unreachable_observer(),
-        time_health_observer=lambda: _unreachable_observer(),
         inbox_unconsumed_observer=lambda: _unreachable_observer(),
         monotonic_ns=lambda: _unreachable_observer(),
         evidence_recorder=lambda *_a, **_k: _unreachable_observer(),
     )
-
-
-def _activation_members(d: Path) -> object:
-    from tos_runtime.venue.activation import load_activation_members
-
-    return load_activation_members(d / "safety_activation.yaml")
 
 
 def _venue_policy(d: Path) -> object:
@@ -270,9 +201,7 @@ def _strategies(d: Path) -> object:
 class ProbeSpec:
     """One probed loader."""
 
-    #: Stable label — the partition test pins these, so they are part of the contract.
     label: str
-    #: Called with the config DIRECTORY.
     load: Callable[[Path], object]
 
 
@@ -282,13 +211,9 @@ class ProbeOutcome:
 
     label: str
     passed: bool
-    #: ``""`` when it passed; otherwise ``"<ExcType>: <message>"``.
     refusal: str
 
 
-#: Every fixed config-dir name a ``run`` boot needs, in the order ``compose_paper_runtime``'s
-#: own wiring reaches them (the 18 this wave adopted, the 6 adopted earlier, plus the two the
-#: ``run`` CLI needs that have no adopted instance at all).
 PROBES: tuple[ProbeSpec, ...] = (
     ProbeSpec("time.yaml", _time),
     ProbeSpec("authority.yaml", _authority),
@@ -296,7 +221,6 @@ PROBES: tuple[ProbeSpec, ...] = (
     ProbeSpec("calendar.yaml", _calendar),
     ProbeSpec("risk.yaml", _risk),
     ProbeSpec("currentness.yaml", _currentness),
-    ProbeSpec("currentness_dimensions.yaml", _pending_dimensions),
     ProbeSpec("risk_attestations.yaml", _risk_attestations),
     ProbeSpec("egress_coordinates.yaml", _egress_coordinates),
     ProbeSpec("broker_scopes.yaml", _broker_scopes),
@@ -304,34 +228,20 @@ PROBES: tuple[ProbeSpec, ...] = (
     ProbeSpec("engine_driver.yaml", _engine_driver),
     ProbeSpec("coordinator_preconditions.yaml", _preconditions),
     ProbeSpec("finality.yaml", _finality),
-    ProbeSpec("safety_envelope+profile+activation", _safety_mesh_documents),
-    ProbeSpec("safety_deviations.yaml", _deviations),
-    ProbeSpec("safety_incidents.yaml", _incidents),
     ProbeSpec("monitor_coverage.yaml", _monitoring),
-    ProbeSpec("safety_activation.yaml::members", _activation_members),
     ProbeSpec("venue_constraint_policy.yaml", _venue_policy),
     ProbeSpec("order_construction_policy.yaml", _ocp),
     ProbeSpec("aggregate_risk_policy.yaml", _aggregate_risk),
     ProbeSpec("action_flow_policy.yaml", _action_flow),
     ProbeSpec("construction.yaml", _construction),
     ProbeSpec("strategies/", _strategies),
-    # The tick-source pair — adopted 2026-09-23 as boot-proof fixtures (design
-    # docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md §4 item 5).
-    # `marketfeed.yaml` carries coordinate slots and so refuses until rendered;
-    # `critical_input_policy.yaml` carries none and loads as committed.
     ProbeSpec("marketfeed.yaml", _marketfeed),
     ProbeSpec("critical_input_policy.yaml", _critical_input_policy),
 )
 
 
 def run_probes(config_dir: Path) -> tuple[ProbeOutcome, ...]:
-    """Run every :data:`PROBES` entry against ``config_dir``.
-
-    A loader that raises ANYTHING is reported as a refusal with its exception type and
-    message — the point is to surface whichever fail-closed check fired, never to guess which
-    exception types to enumerate (the same broad-catch rationale ``_run_dispatch.dispatch_run``
-    documents for itself).
-    """
+    """Run every :data:`PROBES` entry against ``config_dir``."""
     outcomes: list[ProbeOutcome] = []
     for spec in PROBES:
         try:

@@ -1,8 +1,4 @@
-"""Conservative usable lifetime — unknown/non-positive => invalid (time design §3(3)).
-
-EV-L1 predicate substrate only; TIME-EV-006 remains NOT_IMPLEMENTED pending
-EV-L2/L3 fault injection. Pure integer arithmetic over injected bounds; no clock.
-"""
+"""Conservative usable lifetime — unknown/non-positive => invalid (time design §3(3))."""
 
 from __future__ import annotations
 
@@ -21,7 +17,6 @@ _TERMS = (
     "safety_margin",
 )
 
-#: Every magnitude term, including issued_lifetime + elapsed_monotonic (v1.2 MAJOR).
 _ALL_MAGNITUDE_TERMS = ("issued_lifetime", "elapsed_monotonic", *_TERMS)
 
 
@@ -58,7 +53,6 @@ def test_unknown_issued_or_elapsed_makes_invalid() -> None:
 @given(over=st.integers(0, 10**6))
 def test_nonpositive_result_is_invalid_not_clamped(over: int) -> None:
     """A non-positive result is invalid (None), never clamped to zero (§11.2 294)."""
-    # elapsed + margins meet/exceed the issued lifetime.
     assert _lifetime(issued_lifetime=1_000, elapsed_monotonic=1_000 + over) is None
 
 
@@ -73,22 +67,15 @@ def test_monotone_decreasing_in_each_uncertainty(
     """A larger uncertainty term yields a shorter (or invalid) lifetime (§3(3))."""
     smaller = _lifetime(issued_lifetime=20_000, **{term: base_unc})
     larger = _lifetime(issued_lifetime=20_000, **{term: base_unc + bump})
-    assert smaller is not None  # 20_000 budget dominates this range
+    assert smaller is not None
     if larger is None:
-        return  # bumped past the budget => invalid, still "not longer"
+        return
     assert larger < smaller
-
-
-# ---- v1.2 MAJOR: negative magnitude terms must fail-closed (not extend a lease) ----
 
 
 @given(term=st.sampled_from(_ALL_MAGNITUDE_TERMS), neg=st.integers(-(10**6), -1))
 def test_negative_magnitude_term_is_invalid(term: str, neg: int) -> None:
-    """A negative magnitude term => None; a negative drift/elapsed must NOT extend a lease.
-
-    Regression for the reproduced fail-open (drift=-5000 => 5100, elapsed=-5000 =>
-    6000). The prior non-negative-only strategy hid this.
-    """
+    """A negative magnitude term => None; a negative drift/elapsed must NOT extend a lease."""
     assert _lifetime(**{term: neg}) is None
 
 
@@ -104,11 +91,7 @@ def test_negative_drift_does_not_extend_over_baseline() -> None:
 
 @given(back=st.integers(1, 10**6))
 def test_discontinuity_elapsed_does_not_leak_into_lease(back: int) -> None:
-    """A same-continuity discontinuity (negative elapsed) fed to lifetime => None (§13).
-
-    ``elapsed_within_continuity`` returns a negative value when the monotonic value
-    goes backwards (a discontinuity); that negative must not lengthen the lease.
-    """
+    """A same-continuity discontinuity (negative elapsed) fed to lifetime => None (§13)."""
     disc = elapsed_within_continuity(
         MonotonicReading(monotonic_continuity_id="c1", local_monotonic_value=1000),
         MonotonicReading(

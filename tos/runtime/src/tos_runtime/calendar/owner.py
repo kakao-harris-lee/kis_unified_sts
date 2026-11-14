@@ -1,65 +1,4 @@
-"""``SessionFactsOwner`` — the KST session/venue-facts runtime owner (Phase 5
-W5 plan §2 decision 3, ``docs/plans/2026-09-12-tos-phase5-w5-scenarios-plan.md``).
-
-This is the one place that turns :mod:`tos_runtime.calendar`'s pure functions
-(``session_phase_at``/``maturity_at``/``effective_phase_at``) plus an injected
-:class:`~tos_runtime.calendar.ports.WallClockReference` into the two facts the
-rest of compose actually consumes:
-
-* :meth:`SessionFactsOwner.phase_for_step3` — the ``observed_session_phase``
-  string step 3's ``VenueConstraintStage`` needs (W5 survey §2: previously a
-  hardcoded ``ConstructionConfig`` literal, now this owner's honest read).
-* :meth:`SessionFactsOwner.session_facts_current` /
-  :meth:`SessionFactsOwner.tradability_facts_current` /
-  :meth:`SessionFactsOwner.account_facts_current` — item 12's three raw
-  sub-facts (kernel round #3 §2 decision 4, splitting the single
-  ``venue_session_account_facts_current`` method this owner used to expose
-  into the three sub-facts the kernel's own
-  :func:`~tos.egressgw.venuefacts.venue_session_account_facts_current` now
-  composes). This owner supplies each raw sub-fact and composes nothing
-  itself any more — the None-propagating AND moved into the kernel (round #1
-  §0's "판정은 커널 술어만 한다" discipline), replacing
-  :mod:`tos_runtime.compose._egress_attestations`'s retired operator
-  attestation (plan §2 decision 4) with three real, structurally derived
-  facts instead of one pre-composed one.
-
-**Never asserts admissibility itself.** The phase token this owner produces is
-opaque calendar DATA (:mod:`tos_runtime.calendar.config`'s own module
-docstring); the KERNEL's own ``session_phase_admits``/``VenueConstraintStage``
-is the sole authority on whether that token permits an action. This module
-only observes, caches per tick generation, and evidences.
-
-**Wall-clock honesty (G-1, plan §6 ①).** When the injected
-:class:`~tos_runtime.calendar.ports.WallClockReference` reports no reading
-(the production default, :class:`~tos_runtime.calendar.ports.AbsentWallClockReference`),
-every fact this owner produces is honestly ``None`` — never a fabricated
-phase/maturity/session-context. ``SESSION_FACTS_SOURCE_ABSENT`` is recorded
-once, at construction, when that is the case.
-
-**Tick-generation caching.** Mirrors the ``_current_tick_generation``/
-``_InboxCell`` idiom :mod:`tos_runtime.compose._safety_wiring` already uses:
-``tick_generation_reader`` is a zero-argument callable (typically closing over
-a late-bound cell over the durable inbox's own ``count``, since the inbox does
-not exist yet when this owner is constructed — see
-:mod:`tos_runtime.compose._session_wiring`). :meth:`observe` recomputes only
-when the generation or the wall-clock reading changes (the latter moves only when the time
-service re-evaluates, between scheduler passes), never on every call within the same tick.
-
-**The broker-scope endpoint classification is never read in this module.**
-An EC-1 governance gate (``tests/brokercap/test_exit_conditions.py`` and
-``tests/brokercap/test_scopes.py``) only allows that
-:class:`~tos_runtime.brokercap.scopes.BrokerScope` attribute to be read
-inside the ``brokercap`` package itself.
-:meth:`SessionFactsOwner.tradability_facts_current` /
-:meth:`SessionFactsOwner.account_facts_current` therefore each take a plain
-``broker_reaching: bool`` the CALLER derives via
-:func:`tos_runtime.brokercap.is_broker_reaching` (see
-:mod:`tos_runtime.compose.root`) — never the scope object itself.
-
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos.time``
-(``SessionContext``, ``session_open_positively``) + ``tos_runtime.calendar`` +
-``tos_runtime.evidence.store`` only. No ``shared.*``, no ``tos_runtime.brokercap``.
-"""
+"""``SessionFactsOwner`` — the KST session/venue-facts runtime owner (Phase 5"""
 
 from __future__ import annotations
 
@@ -90,34 +29,20 @@ __all__ = [
     "SessionFactsOwner",
 ]
 
-#: Evidence kinds (plan §2 decision 10) — runtime constants, never a kernel
-#: ``EvidenceKind`` member (mirrors ``ComposedRuntime``'s own
-#: ``_NEW_RISK_HALT_CLEARED_KIND`` precedent for a runtime-level record kind).
-#: There is no separate ``SESSION_OPEN_EXPECTATION`` kind (team-lead review
-#: follow-up, 2026-09-12: folded into ``SESSION_FACTS_OBSERVED_KIND``'s own
-#: payload — see :meth:`SessionFactsOwner._maybe_record_observed`).
 SESSION_CALENDAR_BOUND_KIND = "SESSION_CALENDAR_BOUND"
 SESSION_FACTS_SOURCE_ABSENT_KIND = "SESSION_FACTS_SOURCE_ABSENT"
 SESSION_FACTS_OBSERVED_KIND = "SESSION_FACTS_OBSERVED"
 
-#: Sentinel distinguishing "never observed before" from an observed ``None``
-#: phase/expired value, so the very first observation for an instrument class
-#: always counts as a change (plan §2 decision 10: ``SESSION_FACTS_OBSERVED``
-#: fires "only when the phase token or maturity state changes").
 _NEVER_OBSERVED = object()
 
 
 class SessionCalendarMismatch(RuntimeError):
-    """Raised at construction when the calendar's own ``calendar_version``
-    disagrees with ``time.yaml``'s ``trading_calendar_version`` (both
-    non-``None``) — plan §2 decision 3, mutation M4. A boot refusal, never a
-    silently-tolerated drift between the two configs."""
+    """Raised at construction when the calendar's own ``calendar_version``"""
 
 
 @dataclass(frozen=True)
 class SessionFacts:
-    """One tick generation's worth of observed session facts for one
-    instrument class (:meth:`SessionFactsOwner.observe`)."""
+    """One tick generation's worth of observed session facts for one"""
 
     phase_fact: PhaseFact
     maturity_fact: MaturityFact
@@ -141,38 +66,7 @@ class SessionFactsOwner:
         tz_db_version_observed: Callable[[], str | None] | None = None,
         trading_date_wall_clock: WallClockReference | None = None,
     ) -> None:
-        """Construct the owner and record its two boot-time evidence rows.
-
-        Args:
-            calendar: The loaded, validated calendar (:func:`~tos_runtime.calendar
-                .config.load_calendar_config`).
-            wall_clock: The injected wall-clock reference (production default:
-                :class:`~tos_runtime.calendar.ports.AbsentWallClockReference`).
-            evidence_store: Where ``SESSION_CALENDAR_BOUND``/
-                ``SESSION_FACTS_SOURCE_ABSENT``/``SESSION_FACTS_OBSERVED``
-                (the latter's payload folds in the "session open expectation"
-                fields — no separate kind) are recorded.
-            tick_generation_reader: Zero-argument callable returning the
-                current tick generation, or ``None`` before any tick has run
-                (typically a late-bound cell over the durable inbox's own
-                ``count`` — see :mod:`tos_runtime.compose._session_wiring`).
-            time_tz_db_version: ``time.yaml``'s ``tz_db_version`` (opaque
-                version label, never compared byte-for-byte against
-                ``zoneinfo`` internals — this owner has no way to introspect
-                the system tzdata package's own version).
-            time_trading_calendar_version: ``time.yaml``'s
-                ``trading_calendar_version`` — cross-checked against
-                ``calendar.calendar_version`` below.
-            tz_db_version_observed: An optional zero-argument callable
-                reporting an independently-observed tzdata version label, or
-                ``None`` when no such source exists (the honest default today
-                — W5 survey found none). See :meth:`_session_context`'s own
-                docstring for how this feeds ``tz_version_conflict``.
-
-        Raises:
-            SessionCalendarMismatch: ``calendar.calendar_version`` and
-                ``time_trading_calendar_version`` are both known and disagree.
-        """
+        """Construct the owner and record its two boot-time evidence rows."""
         if (
             calendar.calendar_version is not None
             and time_trading_calendar_version is not None
@@ -226,16 +120,10 @@ class SessionFactsOwner:
             )
 
     def observe(self, instrument_class: str) -> SessionFacts:
-        """The current tick generation's session facts for ``instrument_class``,
-        cached once per generation (module docstring)."""
+        """The current tick generation's session facts for ``instrument_class``,"""
         generation = self._tick_generation_reader()
         reading = self._wall_clock.read()
         wall_clock_ms = None if reading is None else reading.unix_ms
-        # Keyed on the wall-clock reading too (plan 2026-09-26 periodic time eval): while a
-        # session is closed no tick advances the generation, so a generation-only key would
-        # serve "closed" forever even after a fresh time-health evaluation — the open would
-        # never be seen. Within one attempt the reading does not change (evaluation happens
-        # only between scheduler passes), so the step-3 fold and the send boundary still agree.
         if (
             generation != self._cache_generation
             or wall_clock_ms != self._cache_wall_clock_ms
@@ -252,48 +140,22 @@ class SessionFactsOwner:
         return facts
 
     def phase_for_step3(self, instrument_class: str) -> str | None:
-        """The ``observed_session_phase`` string step 3's ``VenueConstraintStage``
-        should fold this tick — ``None`` when no wall-clock reading is available
-        (never a fabricated phase; the kernel treats an absent phase as UNKNOWN,
-        not as a silent admit)."""
+        """The ``observed_session_phase`` string step 3's ``VenueConstraintStage``"""
         return self.observe(instrument_class).phase_fact.phase
 
     def trading_date_now(self, instrument_class: str) -> str | None:
-        """The KST trading date for ``instrument_class`` at this instant
-        (:func:`~tos_runtime.calendar.phase.trading_date_at`), read through
-        ``trading_date_wall_clock`` when one was injected (production: a
-        :class:`~tos_runtime.calendar.ports.FreshTrustedWallClockReference` — trusted AND fresh),
-        else the session-phase reference. ``None`` whenever that reference is. Uncached on
-        purpose: the caller stamps the moment a broker acknowledged an order, not the current
-        tick generation."""
+        """The KST trading date for ``instrument_class`` at this instant"""
         reading = self._trading_date_wall_clock.read()
         if reading is None:
             return None
         return trading_date_at(reading.unix_ms, instrument_class, self._calendar)
 
     def session_context(self, instrument_class: str) -> SessionContext | None:
-        """The kernel ``tos.time.SessionContext`` for ``instrument_class`` this
-        tick, or ``None`` when no wall-clock reading is available."""
+        """The kernel ``tos.time.SessionContext`` for ``instrument_class`` this"""
         return self.observe(instrument_class).session_context
 
     def session_facts_current(self, instrument_class: str) -> bool:
-        """Item 12's ``session_facts_current`` sub-fact (kernel round #3 §2
-        decision 4, ex-``venue_session_account_facts_current``'s
-        ``session_current`` conjunct): this tick's phase fact exists, was
-        observed at the CURRENT tick generation, and
-        ``calendar.calendar_version`` matches ``time.yaml``'s
-        ``trading_calendar_version`` (the same cross-check the constructor
-        already enforces at boot — re-asserted per-call as a genuine
-        currentness fact, not a re-derivation of a different judgement).
-
-        Always a strict ``bool`` — never itself tri-state, unlike the other
-        two sub-facts below (an absent phase fact makes this definitely
-        ``False``, never a mysterious ``None`` needing its own propagation).
-        The kernel's own
-        :func:`~tos.egressgw.venuefacts.venue_session_account_facts_current`
-        composes this with the other two sub-facts; this owner supplies the
-        raw fact only.
-        """
+        """Item 12's ``session_facts_current`` sub-fact (kernel round #3 §2"""
         facts = self.observe(instrument_class)
         return (
             facts.phase_fact.phase is not None
@@ -302,21 +164,11 @@ class SessionFactsOwner:
         )
 
     def tradability_facts_current(self, *, broker_reaching: bool) -> bool | None:
-        """Item 12's ``tradability_facts_current`` sub-fact (kernel round #3
-        §2 decision 4) — structurally ``True`` when ``broker_reaching`` is
-        ``False`` (a synthetic transport is its own only ledger, so there is
-        no separate tradability source to be stale); ``None`` when
-        ``broker_reaching`` is ``True`` (this runtime has no KIS
-        tradability-halt query TR consumer yet — a transport-track follow-up
-        — so this fact is honestly unsourced, never fabricated ``True``)."""
+        """Item 12's ``tradability_facts_current`` sub-fact (kernel round #3"""
         return None if broker_reaching else True
 
     def account_facts_current(self, *, broker_reaching: bool) -> bool | None:
-        """Item 12's ``account_facts_current`` sub-fact (kernel round #3 §2
-        decision 4) — the same structural derivation as
-        :meth:`tradability_facts_current`, for the account-halt source
-        instead of the tradability one (no separate query TR consumer yet for
-        a broker-reaching scope)."""
+        """Item 12's ``account_facts_current`` sub-fact (kernel round #3 §2"""
         return None if broker_reaching else True
 
     def _compute(self, instrument_class: str, generation: int | None) -> SessionFacts:
@@ -355,18 +207,7 @@ class SessionFactsOwner:
         )
 
     def _build_session_context(self, phase_fact: PhaseFact) -> SessionContext:
-        """Fold this tick's ``PhaseFact`` into a kernel ``tos.time.SessionContext``.
-
-        ``tz_version_conflict`` is a strict ``bool`` on the kernel record (no
-        third "unknown" state exists to express in that field) — this owner
-        can only assert a conflict when BOTH ``time.yaml``'s declared
-        ``tz_db_version`` and an independently-observed tzdata version are
-        known and disagree. When either is unknown (the common case today —
-        no ``tz_db_version_observed`` source exists, W5 survey §3), this
-        reports ``False``: a documented limitation ("cannot detect a
-        conflict"), never a claim that the two values were verified to
-        match.
-        """
+        """Fold this tick's ``PhaseFact`` into a kernel ``tos.time.SessionContext``."""
         observed = (
             self._tz_db_version_observed() if self._tz_db_version_observed else None
         )
@@ -388,27 +229,7 @@ class SessionFactsOwner:
     def _maybe_record_observed(
         self, instrument_class: str, facts: SessionFacts
     ) -> None:
-        """Record ``SESSION_FACTS_OBSERVED`` only when the phase token or the
-        maturity ``expired`` state actually changed since the last observed
-        generation for this instrument class (plan §2 decision 10 — never
-        every tick).
-
-        Folds in the "session open expectation" fields (team-lead review
-        follow-up, 2026-09-12: a separate ``SESSION_OPEN_EXPECTATION`` kind
-        used to fire on every tick a wall-clock reading existed, unbounded by
-        the change gate below — merging its fields into THIS payload means
-        they inherit the exact same change-only trigger, never every tick
-        either). ``session_open_positively`` (:mod:`tos.time.predicates`) is
-        deliberately NEVER called: it needs a real ``UncertaintyInterval``
-        from the reference time frame, and ``TrustworthyTimeService`` exposes
-        none today (W5 survey §3 — no ``current_snapshot()`` field or public
-        accessor carries one). Rather than fabricate an interval to force a
-        call, the folded fields record this as explicitly UNEVALUATED —
-        non-authoritative, consumed by nothing
-        (``tests/compose/test_session_wiring.py`` pins a zero-consumer
-        negative-grep) — present only when a real ``session_context`` exists
-        this tick (never fabricated for an absent wall clock).
-        """
+        """Record ``SESSION_FACTS_OBSERVED`` only when the phase token or the"""
         new_phase = facts.phase_fact.phase
         new_expired = facts.maturity_fact.expired
         prev_phase = self._last_phase.get(instrument_class, _NEVER_OBSERVED)

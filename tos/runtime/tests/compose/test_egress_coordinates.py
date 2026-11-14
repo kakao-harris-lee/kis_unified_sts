@@ -1,9 +1,4 @@
-"""``tos_runtime.compose._egress_coordinates`` tests (TOS Phase 4 작업 6 §2.1,
-plan doc ``docs/plans/2026-09-08-tos-phase4-send-seal-plan.md``). Hermetic —
-real config files under ``tmp_path`` / ``config_dir``, a real composed
-runtime for the "single source of truth" assertions (never a mock of the
-gateway's own coordinate set).
-"""
+"""``tos_runtime.compose._egress_coordinates`` tests (TOS Phase 4 작업 6 §2.1,"""
 
 from __future__ import annotations
 
@@ -48,11 +43,6 @@ def _write(path: Path, content: dict) -> None:
     path.write_text(yaml.safe_dump(content, sort_keys=False), encoding="utf-8")
 
 
-# ============================================================================
-# Loader happy path
-# ============================================================================
-
-
 def test_loader_happy_path_and_environment_label_substitution(tmp_path: Path) -> None:
     path = tmp_path / "egress_coordinates.yaml"
     _write(path, _valid_egress_coordinates())
@@ -66,17 +56,12 @@ def test_loader_happy_path_and_environment_label_substitution(tmp_path: Path) ->
     assert loaded.credential_generation == 0
     assert loaded.broker_session_generation == 0
     assert loaded.egress_generation == 1
-    # {environment_label} substitution is the ONLY templating the loader
-    # performs.
     assert loaded.active_principal == "egressgw-paper-env-7"
     assert loaded.capsule_terminus_fields == ("account", "instrument")
 
 
 def test_named_tbd_placeholder_endpoint_is_refused(tmp_path: Path) -> None:
-    """W-A A-0: an operator typing the literal placeholder string ``"TBD"`` for
-    one of the eight authorized-coordinate literals must never be sealed into
-    ``EgressCoordinateSet`` as though it were a genuine value — the pre-existing
-    ``_require_str`` guard only refused a bare ``null``/empty string."""
+    """W-A A-0: an operator typing the literal placeholder string ``"TBD"`` for"""
     raw = _valid_egress_coordinates()
     raw["endpoint"] = {"value": "TBD"}
     path = tmp_path / "egress_coordinates.yaml"
@@ -96,11 +81,6 @@ def test_active_principal_without_the_token_passes_through_unchanged(
     loaded = load_egress_coordinates(path, environment_label="paper-env-7")
 
     assert loaded.active_principal == "fixed-principal-no-templating"
-
-
-# ============================================================================
-# Each key null (named-TBD) refuses to load, naming the key
-# ============================================================================
 
 
 @pytest.mark.parametrize(
@@ -141,11 +121,6 @@ def test_not_a_mapping_refuses_to_load(tmp_path: Path) -> None:
         load_egress_coordinates(path, environment_label="paper-env-7")
 
 
-# ============================================================================
-# capsule_terminus_fields validation
-# ============================================================================
-
-
 def test_unknown_capsule_terminus_field_refuses_to_load(tmp_path: Path) -> None:
     raw = _valid_egress_coordinates()
     raw["capsule_terminus_fields"] = {"value": ["account", "not_a_real_field"]}
@@ -174,14 +149,6 @@ def test_non_list_capsule_terminus_fields_refuses_to_load(tmp_path: Path) -> Non
 
     with pytest.raises(EgressCoordinateConfigError):
         load_egress_coordinates(path, environment_label="paper-env-7")
-
-
-# ============================================================================
-# Single source of truth — the wired EgressCoordinateSet/digest equal the
-# loader output built from THIS SAME config file (mutation M-R1 catcher):
-# if a caller ever reverts to a hardcoded literal that diverges from a
-# custom config value, this test goes red.
-# ============================================================================
 
 
 def test_wired_coordinates_equal_the_configured_non_default_values(
@@ -216,18 +183,6 @@ def test_wired_coordinates_equal_the_configured_non_default_values(
         active_principal="custom-non-live-test",
     )
 
-    # Review follow-up finding #1b (2026-09-09): credential_route_inventory's
-    # gateway-principal entry was ALSO hardcoded to
-    # ``f"egressgw-{environment_label}"`` in ``_wiring.py`` — the same
-    # identity finding #1 already single-sourced for ``context.principal``
-    # above. A caller reverting either line back to its own literal would
-    # silently leave the inventory keyed to a DIFFERENT principal than the
-    # one that actually appears as ``context.principal`` / ``seal.
-    # claim_principal``, defeating ``credential_route_authority_disjoint``'s
-    # ability to corroborate the gateway's own transport. Assert the
-    # inventory carries an entry for the SAME principal as
-    # ``resolved.principal`` (not a second, independently-templated
-    # literal that merely happens to match the fixture default).
     matching_inventory_principals = [
         entry.principal
         for entry in resolved.credential_route_inventory
@@ -235,9 +190,6 @@ def test_wired_coordinates_equal_the_configured_non_default_values(
     ]
     assert matching_inventory_principals == [resolved.principal]
 
-    # T2 lane A: the DEFAULT ``request_bytes_digest_source`` is still the unchanged
-    # capsule-terminus stand-in — same constant, same computation, now wrapped in
-    # ``CapsuleStandInDigest`` rather than assigned to a bare field.
     assert isinstance(resolved.request_bytes_digest_source, CapsuleStandInDigest)
     assert resolved.request_bytes_digest_source.digest == _SCHEME.compute_digest(
         {
@@ -246,20 +198,6 @@ def test_wired_coordinates_equal_the_configured_non_default_values(
         }
     )
 
-    # Review finding #1 (2026-09-09): the M-R1 catcher above proved the
-    # *static* coordinate set matches this non-default config, but stopped
-    # at ``_compose(...)`` and never reached a send — which is exactly why
-    # it missed that ``_wiring.py`` still hardcoded ``context.principal`` to
-    # ``f"egressgw-{environment_label}"`` while ``active_principal`` (here,
-    # ``"custom-non-live-test"``) came from this same config. The kernel's
-    # ``_claim_principal_matches_active_principal`` validator requires
-    # ``seal.claim_principal`` (sourced from ``context.principal``) to equal
-    # ``seal.active_principal`` (sourced from ``authorized_coordinates.
-    # active_principal``); with the literal, this diverging config used to
-    # refuse EVERY send at the seal (reviewer probe:
-    # ``halt_reasons == ["SEND_SEAL_UNCONSTRUCTABLE"]``,
-    # ``transport requests == 0``). Run to the real synthetic hand-off and
-    # assert the opposite.
     _reach_trusted(runtime)
     event = fx.crossing_event()
     results = runtime.run_once((event,))
@@ -285,13 +223,6 @@ def test_wired_coordinates_equal_the_configured_non_default_values(
     assert "SEND_SEAL_UNCONSTRUCTABLE" not in halt_reasons, halt_reasons
     assert len(runtime.transport.requests) == 1
 
-    # Review finding #5 (2026-09-09): the QCC G-3 stand-in used to hardcode
-    # ``egress_generation=1`` regardless of config (`context.py`'s
-    # ``_quorum_certificate_for_command``), while `authorized_coordinates.
-    # egress_generation` (this config's ``9``) came from the same loader.
-    # Nothing compared the two, so the issued
-    # ``QuorumCommitCertificate.egress_generation`` silently drifted from
-    # what the operator configured. Assert both read the SAME config value.
     issued_contexts = [c for c in runtime.context_resolver.contexts if c is not None]
     assert issued_contexts, "expected at least one resolved SendBoundaryContext"
     qcc = issued_contexts[-1].quorum_commit_certificate
@@ -305,33 +236,7 @@ def test_wired_coordinates_equal_the_configured_non_default_values(
 def test_active_principal_matching_the_transport_identity_refuses_to_compose(
     config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
 ) -> None:
-    """(re-review residual R2, 2026-09-09) Finding #1's fix made the gateway
-    principal (``context.principal`` / ``authorized_coordinates.
-    active_principal``) config-driven, which opened a new degenerate-config
-    surface with no guard: an operator can set ``active_principal`` to the
-    exact string the transport's OWN identity is templated to
-    (``TransportNature.principal``, then the literal
-    ``f"synthetic-paper-{environment_label}"`` in ``_wiring.py``). Before
-    finding #1's fix this collision was unreachable (the gateway principal
-    was a different hardcoded literal); now it is one config edit away.
-
-    **G-4 CLOSED (TOS Phase 4 plan §2 decision 2,
-    docs/plans/2026-09-09-tos-phase4-scopes-and-verify-realization-plan.md):**
-    the transport's own identity is no longer a ``_wiring.py`` literal — it
-    is the ``SYNTHETIC_FUTURES_ORDER`` scope's own configured ``principal``
-    (``tos_runtime.brokercap.scopes.BrokerScope``), and the refusal below is
-    now :func:`~tos_runtime.brokercap.refuse_principal_collision` (raising
-    :class:`~tos_runtime.brokercap.BrokerScopeConfigError`), generalized
-    from ONE hardcoded comparison to every configured scope's principal —
-    the fixture's ``broker_scopes.yaml`` (conftest.py) still templates that
-    scope's principal to ``f"synthetic-paper-{environment_label}"``, so the
-    degenerate config below still collides exactly as before.
-
-    Conflating the gateway's workload identity with the transport's own
-    identity is exactly what ADR-002-013 §8's "non-transferable workload
-    identity" exists to forbid, so composition refuses fail-closed rather
-    than silently letting the two collide.
-    """
+    """(re-review residual R2, 2026-09-09) Finding #1's fix made the gateway"""
     degenerate = _valid_egress_coordinates()
     degenerate["active_principal"] = {"value": "synthetic-paper-{environment_label}"}
     _write(config_dir / "egress_coordinates.yaml", degenerate)
@@ -341,10 +246,7 @@ def test_active_principal_matching_the_transport_identity_refuses_to_compose(
 
 
 def test_no_authorized_coordinate_literal_remains_in_wiring_source() -> None:
-    """ "No literal" grep test (Part 1 test list) — the eight authorized-
-    coordinate values (review finding #2, 2026-09-09: ``endpoint`` joined
-    the other seven) must come from config only, never a bare literal in
-    ``_wiring.py``."""
+    '"No literal" grep test (Part 1 test list) — the eight authorized-'
     import tos_runtime.compose._wiring as wiring_module
 
     source = Path(wiring_module.__file__).read_text(encoding="utf-8")

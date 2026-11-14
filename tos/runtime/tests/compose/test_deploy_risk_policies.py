@@ -1,29 +1,4 @@
-"""Compose e2e tests for the REAL deployed risk-state files
-(``config/tos_runtime/paper/{risk,aggregate_risk_policy,action_flow_policy}.yaml``
--- TOS risk state service plan §6 ②, adopted by the operator 2026-09-16;
-placement per DR-0002 §2.1 / DR-0003 §2.1).
-
-Pins, in the same spirit as ``test_deploy_policies.py``:
-
-1. Operator-fill gate: as committed, ``account_scope``/``instrument_scope``
-   are ``"TBD"`` and both policy loaders REFUSE the files as-is.
-2. With those coordinates filled, the files carry exactly the adopted values.
-3. ``risk.yaml`` loads through the SAME loaders the compose root uses and
-   carries exactly the proposal-table values.
-4. The real calendar + the four real policies + the real ``risk.yaml`` boot
-   the compose root WITHOUT explicit risk providers: all four
-   ``*_POLICY_BOUND`` rows land, and the attempt still stops fail-closed at
-   step 2 (the venue policy's null ``max_quantity`` -- pinned by
-   ``test_deploy_policies.py``), so no ``RISK_STATE_OBSERVED`` row is ever
-   produced. That is the adopted deploy state.
-
-The fixture Hard Safety Envelope / Runtime Safety Profile gain the policy's
-governed dimension for this test only -- no paper HSE instance is committed
-yet (``safety_envelope.yaml`` is still an ``.example.yaml``), which the real
-policy file's header records.
-
-Hermetic (D1.4): every write lands under ``tmp_path``.
-"""
+"""Compose e2e tests for the REAL deployed risk-state files"""
 
 from __future__ import annotations
 
@@ -50,13 +25,11 @@ from . import _fixtures as fx
 from .conftest import (
     _VENUE_POLICY_ACCOUNT,
     _VENUE_POLICY_INSTRUMENT,
-    _governed_dimension_entry,
-    _write_yaml,
 )
 from .test_compose_root import _reach_trusted
 from .test_deploy_config import _install_real_calendar, _kst_unix_ms
 from .test_deploy_policies import _install_real_policies
-from .test_venue_wiring import _kind_count, _rewrite_activation
+from .test_venue_wiring import _kind_count
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -67,9 +40,6 @@ _REAL_RISK = _DEPLOY_DIR / "risk.yaml"
 _REAL_ARE = _DEPLOY_DIR / "aggregate_risk_policy.yaml"
 _REAL_AFG = _DEPLOY_DIR / "action_flow_policy.yaml"
 
-#: The adopted values (plan §6 ②; proposal table
-#: ``2026-09-12-tos-operator-value-proposals.md`` §3) -- pinned so a silent
-#: edit of a deploy file cannot pass as "still the approved value".
 _ADOPTED_DIMENSION_ID = "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"
 _ADOPTED_ARE_LIMIT = Decimal("1")
 _ADOPTED_FLOW_DIMENSION_ID = "afg.ORDER"
@@ -102,10 +72,7 @@ def _filled_risk_policy(path: Path, *, account: str, instrument: str | None) -> 
 
 
 def _install_real_risk_files(config_dir: Path) -> tuple[str, str]:
-    """Install the real ``risk.yaml`` verbatim and the two filled real policies
-    over the fixture ones, give the fixture HSE/profile the policy's governed
-    dimension, and append both member refs to the activation ``members:``.
-    Returns both policy digests."""
+    """Install the real ``risk.yaml`` verbatim and the two filled real policies over the"""
     (config_dir / "risk.yaml").write_text(
         _REAL_RISK.read_text(encoding="utf-8"), encoding="utf-8"
     )
@@ -122,19 +89,6 @@ def _install_real_risk_files(config_dir: Path) -> tuple[str, str]:
         (config_dir / name).write_text(
             yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
         )
-    # The fixture HSE/profile must govern the policy's dimension (no paper HSE
-    # instance exists yet -- the real policy file's own header says so).
-    for file_name, top_key, magnitude_key in (
-        ("safety_envelope.yaml", "envelope", "envelope_max"),
-        ("safety_profile.yaml", "profile", "profile_value"),
-    ):
-        path = config_dir / file_name
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        entry = _governed_dimension_entry(magnitude_key=magnitude_key, value="1")
-        entry["dimension"] = _ADOPTED_DIMENSION_ID
-        raw[top_key]["governed_dimensions"].append(entry)
-        _write_yaml(path, raw)
-
     are = load_aggregate_risk_policy(
         config_dir / "aggregate_risk_policy.yaml", scheme=_SCHEME
     )
@@ -143,31 +97,6 @@ def _install_real_risk_files(config_dir: Path) -> tuple[str, str]:
     )
     assert are.policy.canonical_digest is not None
     assert afg.policy.canonical_digest is not None
-    activation = yaml.safe_load(
-        (config_dir / "safety_activation.yaml").read_text(encoding="utf-8")
-    )
-    members = [dict(m) for m in activation["members"]]
-    members.extend(
-        [
-            {
-                "kind": "AGGREGATE_RISK_POLICY",
-                "member_id": are.policy.policy_id,
-                "generation": are.policy.policy_generation,
-                "digest": are.policy.canonical_digest,
-                "resolved": True,
-                "immutable": True,
-            },
-            {
-                "kind": "ACTION_FLOW_POLICY",
-                "member_id": afg.policy.policy_id,
-                "generation": afg.policy.policy_generation,
-                "digest": afg.policy.canonical_digest,
-                "resolved": True,
-                "immutable": True,
-            },
-        ]
-    )
-    _rewrite_activation(config_dir, members)
     return are.policy.canonical_digest, afg.policy.canonical_digest
 
 

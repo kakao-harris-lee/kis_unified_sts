@@ -1,9 +1,4 @@
-"""Snapshot completeness for authoritative restore (§4.4; RCLP-INV-009).
-
-A snapshot missing any completeness element is inadmissible (ADR-012 §21 line 528).
-The fixture builds a complete snapshot; each test drops one element and asserts
-inadmissibility — a vacuous "admissible" is forbidden.
-"""
+"""Snapshot completeness for authoritative restore (§4.4; RCLP-INV-009)."""
 
 from __future__ import annotations
 

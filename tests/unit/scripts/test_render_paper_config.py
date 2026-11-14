@@ -138,20 +138,21 @@ def test_render_fills_every_registered_coordinate_slot(tmp_path: Path) -> None:
     assert f'source_revision: "{_FAKE_REVISION}"' in finality
 
 
-def test_render_derives_members_and_reads_them_back_activated(tmp_path: Path) -> None:
-    """Design §2 step 6: ``members`` is DERIVED (never hand-written) and the render refuses
-    unless a FRESH process re-deriving each policy's digest finds every member activated.
+def test_render_prints_every_mandatory_policy_digest(tmp_path: Path) -> None:
+    """``print-policy-digests`` runs in a FRESH process against the already-coordinate-filled
+    copy and must name every mandatory policy kind — the render-time proof that each governed
+    document actually LOADS there.
+
+    The activation read-back that used to follow went with plan S2-a, along with
+    ``safety_activation.yaml`` itself: its ``members:`` were derived from these very digests,
+    so it activated its own transcription.
     """
     result = _render(tmp_path / "out")
 
     kinds = [kind for kind, _id, _gen, _digest in result.policy_digests]
     for mandatory in rpc.MANDATORY_POLICY_KINDS:
         assert mandatory in kinds
-    activation = (result.out / "safety_activation.yaml").read_text(encoding="utf-8")
-    assert "members: null" not in activation
-    assert activation.count("resolved: true") == len(result.policy_digests)
-    assert activation.count("immutable: true") == len(result.policy_digests)
-    assert result.activation_check.startswith(f"ACTIVATED {len(result.policy_digests)}")
+    assert not (result.out / "safety_activation.yaml").exists()
 
 
 def test_rendered_manifest_carries_a_fingerprint_and_never_the_account(
@@ -231,8 +232,6 @@ def test_guard_every_rule_anchor_occurs_exactly_once_in_the_committed_source() -
     """
     manifest = rpc.load_manifest(_SOURCE)
     anchored = [(slot.file, slot.rule_key, slot.anchor) for slot in manifest.slots]
-    members = rpc._members_rule("members: x")
-    anchored.append((members.file, members.key, members.anchor))
     for file_name, key, anchor in anchored:
         lines = (_SOURCE / file_name).read_text(encoding="utf-8").split("\n")
         assert [line for line in lines if line == anchor] == [
@@ -287,13 +286,10 @@ def test_guard_coordinate_rule_key_set_is_pinned() -> None:
 
     ⚠ **Retargeted at what ``render()`` actually writes** (PR #888 review L2). It used to pin
     ``COORDINATE_RULE_KEYS``, a transition reference nothing executes any more. The set now
-    comes from the manifest ``render()`` reads PLUS the derived ``members`` key taken from
-    :func:`render_paper_config._members_rule` itself — which makes this the only pin covering
-    ``members``, since that slot is deliberately not in the manifest and therefore not in
-    ``_EXPECTED_RESIDENT_SLOTS``.
+    comes from the manifest ``render()`` reads. (The derived ``members`` key that used to be
+    added here went with plan S2-a.)
     """
     rendered_keys = {slot.rule_key for slot in rpc.load_manifest(_SOURCE).slots}
-    rendered_keys.add(rpc._members_rule("members: x").key)
     assert rendered_keys == {
         "venue_constraint_policy.yaml::scope.accounts",
         "venue_constraint_policy.yaml::scope.instruments",
@@ -315,7 +311,6 @@ def test_guard_coordinate_rule_key_set_is_pinned() -> None:
         "marketfeed.yaml::direction",
         "marketfeed.yaml::journal_path",
         "finality.yaml::source_revision",
-        "safety_activation.yaml::members",
     }
 
 
@@ -526,12 +521,12 @@ def test_guard_render_leaves_the_repository_byte_identical(
 #: Every point in :func:`render` AFTER the first account byte reaches the disk, as a
 #: ``(name, install)`` pair. ``install`` monkeypatches ONE statement boundary to fail.
 #:
-#: The list is the whole protected window, in execution order — coordinate substitution, the
-#: members write, the read-back, the fingerprint, the manifest write, and each of the three
-#: renames inside the swap. The first cut of this suite injected at ``_verify_activation``
-#: ALONE, which sat comfortably inside the ``try`` and therefore proved nothing about the
-#: tail; the reviewer injected at the first uncovered statement and got a hidden
-#: ``.paper-config.partial-<pid>`` holding seven account-bearing files.
+#: The list is the whole protected window, in execution order — coordinate substitution,
+# print-policy-digests, the fingerprint, the manifest write, and each of the three renames
+# inside the swap. An early cut of this suite injected at ONE point that sat comfortably
+# inside the ``try`` and therefore proved nothing about the tail; the reviewer injected at
+# the first uncovered statement and got a hidden ``.paper-config.partial-<pid>`` holding
+# seven account-bearing files.
 def _fail_inside_apply_rules(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fail PART WAY through the first coordinate substitution — the account is on disk in
     some files but not others, which no whole-function hook can reproduce."""
@@ -545,37 +540,12 @@ def _fail_inside_apply_rules(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(rpc, "_apply_rules", _partial)
 
 
-def _fail_after_first_apply_rules(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fail on the SECOND ``_apply_rules`` call (the members write), after every coordinate
-    slot is already filled."""
-    real = rpc._apply_rules
-    calls = {"n": 0}
-
-    def _counted(config_dir: Path, rules: Iterable[rpc.Rule]) -> None:
-        calls["n"] += 1
-        if calls["n"] == 2:
-            raise rpc.RenderError("injected: at the members write")
-        real(config_dir, rules)
-
-    monkeypatch.setattr(rpc, "_apply_rules", _counted)
-
-
 def _fail_in_digests(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         rpc,
         "_policy_digest_lines",
         lambda _dir: (_ for _ in ()).throw(
             rpc.RenderError("injected: at print-policy-digests")
-        ),
-    )
-
-
-def _fail_in_verify(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        rpc,
-        "_verify_activation",
-        lambda *_a, **_k: (_ for _ in ()).throw(
-            rpc.RenderError("injected: at the activation read-back")
         ),
     )
 
@@ -629,9 +599,7 @@ def _fail_in_publish_rmtree(monkeypatch: pytest.MonkeyPatch) -> None:
 
 _FAILURE_POINTS: list[tuple[str, Callable[[pytest.MonkeyPatch], None]]] = [
     ("inside-coordinate-substitution", _fail_inside_apply_rules),
-    ("at-the-members-write", _fail_after_first_apply_rules),
     ("at-print-policy-digests", _fail_in_digests),
-    ("at-the-activation-read-back", _fail_in_verify),
     ("in-account-fingerprint", _fail_in_fingerprint),
     ("writing-RENDERED.json", _fail_in_manifest),
     # With a FRESH `out` the swap is a single rename (there is no previous render to move
@@ -1734,7 +1702,6 @@ def test_the_resident_driver_invocation_needs_no_new_argument(
     for key in (
         "instrument",
         "journal_path",
-        "activation_check",
         "source_revision",
         "rendered_at_kst",
     ):

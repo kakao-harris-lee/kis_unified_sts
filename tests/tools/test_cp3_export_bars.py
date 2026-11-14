@@ -369,3 +369,119 @@ def test_the_exported_name_is_one_the_route_will_accept() -> None:
         assert tos_bars._SESSION_ID_PATTERN.match(name), name
     assert eb.document_path(Path("/p"), SESSION).name == f"{SESSION}.json"
     assert os.sep not in SESSION
+
+
+# ===========================================================================
+# Review LOWs of #1059
+# ===========================================================================
+
+
+def test_both_directories_end_up_narrow_not_just_the_leaf(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``mkdir(mode=…)`` narrows only the leaf it creates; the parent got the default.
+
+    On a first run both the projection directory and ``bars/`` are created in
+    one call, so the projection directory used to keep whatever the umask left.
+    """
+    path = _export(tmp_path, session_tree, monkeypatch)
+    assert stat.S_IMODE(path.parent.stat().st_mode) == eb.DIR_MODE
+    assert stat.S_IMODE(path.parent.parent.stat().st_mode) == eb.DIR_MODE
+
+
+@pytest.mark.parametrize("existing", [0o755, 0o777, 0o750])
+def test_a_wider_existing_directory_is_repaired(
+    tmp_path: Path,
+    session_tree: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    existing: int,
+) -> None:
+    """A ``bars/`` left world-readable by a restore or a hand-made mkdir is narrowed.
+
+    ``mkdir(exist_ok=True)`` does nothing to an existing directory's mode, so
+    before this the wider mode simply survived and nothing said so.
+    """
+    projection = tmp_path / "projection"
+    (projection / eb.BARS_SUBDIR).mkdir(parents=True)
+    (projection / eb.BARS_SUBDIR).chmod(existing)
+    projection.chmod(existing)
+    path = _export(tmp_path, session_tree, monkeypatch, out_dir=projection)
+    assert stat.S_IMODE(path.parent.stat().st_mode) == eb.DIR_MODE
+    assert stat.S_IMODE(projection.stat().st_mode) == eb.DIR_MODE
+
+
+def test_a_narrower_existing_directory_is_left_alone(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The repair only ever NARROWS — it must not grant itself write access.
+
+    A mode-tightening fix that chmod-ed a deliberately read-only destination up
+    to ``0700`` would be doing the opposite of its job. Caught by the
+    pre-existing unwritable-destination test, pinned here on purpose: the write
+    must still fail with the named refusal rather than succeed.
+    """
+    destination = tmp_path / "readonly"
+    destination.mkdir(mode=0o500)
+    try:
+        with pytest.raises(eb.ExportRefusal, match="cannot write the bars document"):
+            _export(tmp_path, session_tree, monkeypatch, out_dir=destination)
+        assert stat.S_IMODE(destination.stat().st_mode) == 0o500
+    finally:
+        destination.chmod(0o700)
+
+
+def test_the_mode_holds_under_a_permissive_umask(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The mode is asserted with chmod, so the process umask cannot widen it."""
+    previous = os.umask(0o000)
+    try:
+        path = _export(tmp_path, session_tree, monkeypatch)
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE(path.parent.stat().st_mode) == eb.DIR_MODE
+    assert stat.S_IMODE(path.parent.parent.stat().st_mode) == eb.DIR_MODE
+    assert stat.S_IMODE(path.stat().st_mode) == eb.DOCUMENT_MODE
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../escape",
+        "a/b",
+        "has space",
+        "dot.dot",
+        "-leading",
+        "a" * 65,
+        "semi;colon",
+        "\u0000null",
+    ],
+)
+def test_a_session_name_outside_the_route_pattern_refuses_before_writing(
+    tmp_path: Path,
+    session_tree: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    """The name is this document's FILENAME and the route's path segment.
+
+    A name outside the pattern would either land somewhere this module did not
+    choose or produce a file the route refuses to serve — a document that exists
+    and can never be read. Both are refused up front, and nothing is written.
+    """
+    with pytest.raises(eb.ExportRefusal, match="which is outside"):
+        _export(
+            tmp_path, session_tree, monkeypatch, document={**_DOCUMENT, "session": name}
+        )
+    assert not (tmp_path / "projection").exists()
+
+
+def test_the_pattern_admits_the_names_the_runner_really_writes(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard must not refuse a real session."""
+    for name in ("stock-r1-20261110", "long-20261015", "short-20261110"):
+        path = _export(
+            tmp_path, session_tree, monkeypatch, document={**_DOCUMENT, "session": name}
+        )
+        assert path.name == f"{name}.json"

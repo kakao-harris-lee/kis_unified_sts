@@ -1,14 +1,4 @@
-"""All-false egress authority + constructive-absence canary (design #22 §4.3/§4.7/§7).
-
-``AllFalseEgressAuthority`` forces every permissive flag ``False`` at construction (any ``True`` ⇒
-``ArtifactIntegrityError``): a QCC / request / generation is verified data, not permission
-(EGRESS-INV-005/010). The **constructive-absence** canary asserts the package has **no** send /
-transmit / sign / re-arm / clear-latch / rotate / failover method — the structural absence of a
-transmit method is this package's identity (design #22 §4.7 — "send/transmit 메서드 부재가 정체성").
-
-Regime tag: structural / coordinate predicate substrate only; EGRESS-EV-004 substrate;
-EV-L1-complete claim forbidden.
-"""
+"""All-false egress authority + constructive-absence canary (design #22 §4.3/§4.7/§7)."""
 
 from __future__ import annotations
 
@@ -45,7 +35,6 @@ _AUTHORITY_FLAGS = (
     "re_arms",
 )
 
-#: Forbidden verb roots — a method whose name starts with any of these would be an egress capability.
 _FORBIDDEN_VERB_PREFIXES = (
     "send",
     "transmit",
@@ -107,8 +96,6 @@ def test_artifacts_have_no_transmit_or_mutate_method() -> None:
         ActiveEgressPrincipalSet,
         ReplayObservation,
     )
-    # The inherited core digest machinery (``.issue()`` — issue an artifact's digest) is NOT an
-    # egress capability; only egress-artifact-SPECIFIC additions are checked (skip base names).
     base_names = set(dir(DigestBoundArtifact))
     for artifact in artifacts:
         for name in dir(artifact):

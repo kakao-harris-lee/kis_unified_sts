@@ -1,22 +1,4 @@
-"""§7.2-12 — value typing: integer tick-scale first, Decimal refused, fractions fail-closed (§2.5).
-
-The DSL's comparison rules are the constraint this section answers to (``vocabulary.py:361-376``):
-``EQ``/``NE`` accept any same-typed scalar pair, ordering accepts ``int``/``float`` only, and a
-``bool`` is never an orderable magnitude. Design #32 §2.5 (MINOR-2) resolves that into three rules,
-each with a canary here:
-
-* **integers are the preferred numeric form.** Minor/tick units are exact and platform-independent,
-  so an ordering comparison has no binary-representation edge at all. Unit / scale / multiplier /
-  sign remain distinct safety fields on the observation's ``mapping`` (``observation.py:107-115``).
-* **a ``Decimal`` is refused outright**, at the preimage boundary, *before* pydantic's lax union can
-  turn it into a float. That coercion would be silent and lossy, and silence is the defect.
-* **the fractional path is fail-closed** (the delta review's carried MINOR). A deterministic
-  decimal → float projection rule is not yet ratified, so a ``float`` token is refused rather than
-  exposed under an unspecified rounding. When the rule lands, this is the single place that changes
-  — and this test is what will have to be rewritten deliberately rather than drifting.
-
-Regime tag: authoring evidence only; closes no EV (design #32 §1.1).
-"""
+"""§7.2-12 — value typing: integer tick-scale first, Decimal refused, fractions fail-closed (§2.5)."""
 
 from __future__ import annotations
 
@@ -74,11 +56,6 @@ def _publish_one(field_key: str, token: object):
     return capsule, resolution
 
 
-# ---------------------------------------------------------------------------
-# The projection function (design #32 §2.5)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("token", [0, 1, -1, CLOSE_BAR_ONE, True, False, "REGULAR", ""])
 def test_admitted_token_shapes_project_unchanged(token: object) -> None:
     """(§2.5) int / bool / str project to themselves — no rounding, no parsing, no coercion."""
@@ -90,11 +67,7 @@ def test_admitted_token_shapes_project_unchanged(token: object) -> None:
 
 @pytest.mark.parametrize("token", [1.5, 0.1, -2.75, 4512500.0, 0.0])
 def test_every_float_token_is_fail_closed(token: float) -> None:
-    """(§2.5 ★ carried MINOR) The fractional path is refused until the projection rule is ratified.
-
-    An *integral-valued* float is refused too (``4512500.0``): narrowing it to ``int`` would be the
-    silent coercion the rule prohibits, and exposing it as a float would use the unspecified rule.
-    """
+    """(§2.5 ★ carried MINOR) The fractional path is refused until the projection rule is ratified."""
     value, reason = project_scalar(token)
     assert value is None
     assert reason is ValueRejectionReason.NON_DETERMINISTIC_NUMERIC
@@ -108,20 +81,10 @@ def test_a_numeric_looking_string_stays_a_string() -> None:
     assert isinstance(value, str)
 
 
-# ---------------------------------------------------------------------------
-# The Decimal seal (design #32 §2.5)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("magnitude", [Decimal("1.5"), Decimal("100"), Decimal("0")])
 def test_a_decimal_token_is_refused_before_any_coercion(magnitude: Decimal) -> None:
-    """(§2.5 ★ mutation canary) The Decimal guard fires; pydantic never gets to widen it to float.
-
-    Without the guard, the ``bool | int | float | str`` union coerces the Decimal and the value
-    reaches the environment as a float — a silent, lossy conversion with no record that it happened.
-    """
+    """(§2.5 ★ mutation canary) The Decimal guard fires; pydantic never gets to widen it to float."""
     with pytest.raises(INTEGRITY_ERRORS, match="Decimal"):
-        # Deliberately illegal per the (non-Decimal) ScalarValue signature — fail-closed proof.
         PreimageEntry(key="close", value=cast(ScalarValue, magnitude))
 
 
@@ -129,11 +92,6 @@ def test_the_decimal_guard_does_not_over_reject_the_admitted_shapes() -> None:
     """(#26 WDR MAJOR-1 lesson) The guard rejects Decimal and nothing else."""
     for token in (CLOSE_BAR_ONE, True, "REGULAR"):
         assert PreimageEntry(key="close", value=token).value == token
-
-
-# ---------------------------------------------------------------------------
-# End-to-end through publication (design #32 §2.5/§7.2-12)
-# ---------------------------------------------------------------------------
 
 
 def test_an_integer_tick_value_publishes_and_orders() -> None:

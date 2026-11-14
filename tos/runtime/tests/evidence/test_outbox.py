@@ -64,7 +64,6 @@ def test_drain_delivers_pending_rows_and_marks_them_delivered(
     delivered = ob.drain(store, consumer)
     assert delivered == 2
     assert len(consumer.calls) == 2
-    # a second drain call finds nothing pending
     delivered_again = ob.drain(store, consumer)
     assert delivered_again == 0
     assert len(consumer.calls) == 2
@@ -78,12 +77,12 @@ def test_drain_is_at_least_once_a_failed_delivery_is_retried(
     )
     failing_consumer = _RecordingConsumer(succeed_targets=frozenset({"a"}))
     first_pass = ob.drain(store, failing_consumer)
-    assert first_pass == 1  # only "a" succeeded
-    assert len(failing_consumer.calls) == 2  # both were attempted
+    assert first_pass == 1
+    assert len(failing_consumer.calls) == 2
 
     succeeding_consumer = _RecordingConsumer(succeed_targets=frozenset({"b"}))
     second_pass = ob.drain(store, succeeding_consumer)
-    assert second_pass == 1  # "b" retried and now succeeds
+    assert second_pass == 1
     assert succeeding_consumer.calls == [("b", (None, 0))]
 
 
