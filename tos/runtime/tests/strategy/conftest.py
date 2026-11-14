@@ -1,18 +1,4 @@
-"""``tos_runtime.strategy.loader``/``resolve`` test fixtures (hermetic,
-``tmp_path`` only).
-
-Builds its own tiny strategy fixtures directly against kernel PRODUCTION
-packages (``tos.canonical``/``tos.dsl``/``tos.dsl.serialization``/
-``tos.engine.admission``) — mirrors ``tos/runtime/tests/compose/
-_fixtures.py``'s own "runtime tests build their own fixtures too"
-discipline (that module's docstring); this suite does not import the
-compose fixtures.
-
-``parse`` is wired to the REAL kernel :func:`tos.dsl.serialization.
-parse_strategy` (D-K lane, landed at ``[D-K-done]`` 2026-09-09) — no local
-shim remains, since the kernel function this suite was standing in for now
-exists.
-"""
+"""``tos_runtime.strategy.loader``/``resolve`` test fixtures (hermetic,"""
 
 from __future__ import annotations
 
@@ -34,12 +20,7 @@ INSTRUMENT = "ES"
 
 
 def admissible_strategy_mapping(**overrides: Any) -> dict[str, Any]:
-    """A raw mapping that :func:`tos.dsl.serialization.parse_strategy` +
-    :func:`tos.engine.admission.strategy_admissible` both accept positively
-    — the happy-path fixture. Shape matches ``tos.dsl.serialization.
-    _StrategyAuthoringContent`` exactly: ``dsl_version``,
-    ``config_binding_version``, ``policy`` (no ``canonicalization_version``
-    — optional, defaults to the provisional scheme)."""
+    """A raw mapping that :func:`tos.dsl.serialization.parse_strategy` +"""
     base: dict[str, Any] = {
         "dsl_version": "dsl-loader-test",
         "config_binding_version": "cfg-bind-loader-test",
@@ -78,10 +59,7 @@ def admissible_strategy_mapping(**overrides: Any) -> dict[str, Any]:
 
 
 def in_process_typed_strategy() -> AuthoredStrategy:
-    """The IN-PROCESS TYPED equivalent of :func:`admissible_strategy_mapping`'s
-    default shape — built directly via :meth:`~tos.dsl.AuthoredStrategy.issue`,
-    never through ``parse_strategy``. Used by the cross-check test to prove
-    the two authoring paths converge (design #31 §1.2 "두 경로 동형")."""
+    """The IN-PROCESS TYPED equivalent of :func:`admissible_strategy_mapping`'s"""
     mapping = admissible_strategy_mapping()
     policy = DecisionPolicy(**mapping["policy"])
     issued = AuthoredStrategy.issue(
@@ -95,10 +73,7 @@ def in_process_typed_strategy() -> AuthoredStrategy:
 
 
 def inadmissible_strategy_mapping() -> dict[str, Any]:
-    """A mapping that parses cleanly but is INADMISSIBLE: its only outcome-
-    gating Compare has no capsule-sourced operand (both sides are literal
-    ``const`` values) — the D1<->D4 partial seal
-    (``tos.engine.admission.compare_has_capsule_operand``) rejects this."""
+    """A mapping that parses cleanly but is INADMISSIBLE: its only outcome-"""
     mapping = admissible_strategy_mapping()
     mapping["policy"]["rules"][0]["all_of"][0] = {
         "left": {"const": 1},

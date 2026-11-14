@@ -1,16 +1,4 @@
-"""Truthy-sentinel structural seal — __bool__ raises + is-gate regression (design #22 §2.2/§4.7/§7).
-
-``EgressAdmission`` (ADMIT / DENY), ``CommitProofValidity`` (VALID / INVALID / UNKNOWN), and
-``RestrictiveLatchState`` (CLEAR / DENY_LATCHED) are non-empty ``StrEnum`` strings, so ``if
-admission:`` / ``bool(validity)`` / ``if state:`` would read a **denial** member as truthy — a
-catastrophic silent fail-open that reads a *rejection* (DENY / INVALID / UNKNOWN / DENY_LATCHED) as
-an *admission* (the #13/#14 M1 lesson, adopted from the start). Each subclasses ``_NonTruthyStrEnum``
-(``__bool__`` raises), so the misuse surfaces as a runtime error. ``SignerRole`` is a plain closed
-StrEnum (membership token), deliberately NOT sealed.
-
-Regime tag: structural / coordinate predicate substrate only; EGRESS vocabulary substrate;
-EV-L1-complete claim forbidden.
-"""
+"""Truthy-sentinel structural seal — __bool__ raises + is-gate regression (design #22 §2.2/§4.7/§7)."""
 
 from __future__ import annotations
 
@@ -54,7 +42,6 @@ def test_is_identity_gate_still_works() -> None:
     assert (EgressAdmission.DENY is EgressAdmission.ADMIT) is False
     assert (CommitProofValidity.VALID is CommitProofValidity.VALID) is True
     assert (RestrictiveLatchState.CLEAR is RestrictiveLatchState.CLEAR) is True
-    # …and set membership / .value / hashing (none call __bool__).
     assert EgressAdmission.ADMIT in {EgressAdmission.ADMIT}
     assert CommitProofValidity.VALID.value == "VALID"
     assert hash(RestrictiveLatchState.DENY_LATCHED) == hash(

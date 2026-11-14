@@ -4,7 +4,6 @@ Verifies that:
   - tr_id() returns the YAML-overridden value when present.
   - tr_id() falls back to the baked _DEFAULTS when YAML is absent or
     incomplete.
-  - ExecutionConfig field defaults pick up YAML overrides.
 """
 
 from __future__ import annotations
@@ -73,41 +72,3 @@ def test_tr_id_unknown_key_raises():
 
     with pytest.raises(KeyError, match="unknown TR ID key"):
         tr_id("does_not_exist")
-
-
-def test_execution_config_picks_up_yaml_overrides(tmp_path, monkeypatch):
-    """ExecutionConfig field defaults are wired through tr_id()."""
-    from shared.execution.config import ExecutionConfig
-
-    cfg_dir = tmp_path / "config"
-    (cfg_dir / "kis").mkdir(parents=True)
-    (cfg_dir / "kis" / "tr_ids.yaml").write_text(
-        "kis_tr_ids:\n"
-        "  stock:\n"
-        "    krx:\n"
-        "      buy_real: 'TTTC9999U'\n"
-        "  futures:\n"
-        "    order:\n"
-        "      day_real: 'TTTO9999U'\n"
-    )
-    monkeypatch.setenv("KIS_CONFIG_DIR", str(cfg_dir))
-
-    cfg = ExecutionConfig()
-    assert cfg.tr_code_buy_real == "TTTC9999U"
-    assert cfg.futures_tr_code_order_day_real == "TTTO9999U"
-    # Unset key → baked default
-    assert cfg.tr_code_sell_real == "TTTC0801U"
-
-
-def test_execution_config_defaults_when_yaml_missing(tmp_path, monkeypatch):
-    """No YAML → ExecutionConfig uses baked defaults (regression guard)."""
-    from shared.execution.config import ExecutionConfig
-
-    cfg_dir = tmp_path / "empty"
-    cfg_dir.mkdir()
-    monkeypatch.setenv("KIS_CONFIG_DIR", str(cfg_dir))
-
-    cfg = ExecutionConfig()
-    assert cfg.tr_code_buy_real == "TTTC0802U"
-    assert cfg.futures_tr_code_order_day_real == "TTTO1101U"
-    assert cfg.futures_tr_code_inquire_night_real == "STTN5201R"

@@ -1,16 +1,4 @@
-"""Focused tests for the ``expected_code_digest`` re-derivation tool.
-
-One test per property the tool is relied on for: ``--check`` is RED when any of the
-three pins is stale and GREEN when they all match; ``--write`` rewrites the pin in all
-three files and changes NOTHING else; an unreadable pin is an error, not a pass (a
-checker that cannot measure must not report success -- the "empty equals empty is not a
-match" lesson from the resident session's own digest guard).
-
-The three fixtures are copies of the REAL deploy files, so "only the pin line changed"
-is asserted about the file an operator actually deploys. The measurement is stubbed in
-the file-level tests (the tool's subprocess call into the runtime CLI is covered on its
-own by the last test, which proves the real path produces a real digest).
-"""
+"""Focused tests for the ``expected_code_digest`` re-derivation tool."""
 
 from __future__ import annotations
 
@@ -38,9 +26,6 @@ def _load_redigest_module():
 
 tr = _load_redigest_module()
 
-#: Two digests that are structurally valid but different -- "stale" has to be another
-#: well-formed digest, not garbage, or the test would prove only that the tool rejects
-#: garbage.
 _MEASURED = "a" * 64
 _STALE = "b" * 64
 
@@ -77,9 +62,7 @@ def test_check_is_red_when_any_one_pin_is_stale(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Parametrized over all three files: the tenant copies have never booted, so a
-    stale pin there has no other lane in which it could surface before the boot that
-    fails."""
+    """Parametrized over all three files: the tenant copies have never booted, so a"""
     for name in tr.RELEASE_FILES:
         tr.write_pin(fake_repo / name, _MEASURED)
     tr.write_pin(fake_repo / stale_file, _STALE)
@@ -106,8 +89,6 @@ def test_write_changes_the_pin_line_in_all_three_files_and_nothing_else(
     for name in tr.RELEASE_FILES:
         after = (fake_repo / name).read_text(encoding="utf-8")
         assert tr.read_pin(fake_repo / name) == _MEASURED
-        # Exactly one line moved, and it is the pin line -- the header comments, which
-        # carry the file's provenance and its history, are untouched.
         before_lines = before[name].splitlines(keepends=True)
         after_lines = after.splitlines(keepends=True)
         assert len(before_lines) == len(after_lines)
@@ -133,8 +114,7 @@ def test_write_is_a_no_op_when_the_pins_are_already_current(
 def test_an_unreadable_pin_is_an_error_not_a_pass(
     fake_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Fail-closed: if the key is renamed away, ``--check`` must not conclude that
-    nothing disagrees."""
+    """Fail-closed: if the key is renamed away, ``--check`` must not conclude that"""
     target = fake_repo / tr.RELEASE_FILES[0]
     target.write_text(
         target.read_text(encoding="utf-8").replace(
@@ -149,9 +129,7 @@ def test_an_unreadable_pin_is_an_error_not_a_pass(
 
 
 def test_measurement_runs_the_runtime_cli_and_returns_a_real_digest() -> None:
-    """The one test that exercises the real subprocess path: the tool must get its
-    number from the runtime's own ``print-digests`` (the function boot-time admission
-    calls), never from a reimplementation of the digest scheme."""
+    """The one test that exercises the real subprocess path: the tool must get its"""
     measured = tr.measure_code_digest(_REPO_ROOT)
     assert re.fullmatch(r"[0-9a-f]{64}", measured)
 
@@ -159,14 +137,7 @@ def test_measurement_runs_the_runtime_cli_and_returns_a_real_digest() -> None:
 def test_measurement_output_without_a_digest_line_is_an_error(
     fake_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``print-digests`` exiting 0 is not the same as ``print-digests`` answering.
-
-    If the CLI's output ever stops carrying the key -- renamed, reformatted, or
-    swallowed -- the measured value would be the empty string, and comparing it against
-    a pin read by the same kind of regex is how "empty equals empty" passes for nothing.
-    The regex demands 64 lowercase hex characters, so there is no empty measurement to
-    compare; the absence is an error.
-    """
+    """``print-digests`` exiting 0 is not the same as ``print-digests`` answering."""
     (fake_repo / "tos" / "src").mkdir(parents=True)
     (fake_repo / "tos" / "runtime" / "src").mkdir(parents=True)
     monkeypatch.setattr(
@@ -185,14 +156,7 @@ def test_measurement_output_without_a_digest_line_is_an_error(
 def test_a_repo_root_without_the_source_roots_is_an_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """⛔ The failure this guard exists for: measuring one tree, pinning another.
-
-    ``--repo-root`` only steers where the two packages are imported FROM. Point it at a
-    directory that is not a checkout and the import would fall through to an installed
-    (editable) ``tos``/``tos_runtime`` -- a different tree -- and ``--write`` would put
-    that tree's digest into this one's ``release.yaml``, honest-looking and wrong. So a
-    missing source root is refused before anything is measured.
-    """
+    """⛔ The failure this guard exists for: measuring one tree, pinning another."""
     assert tr.main(["--check", "--repo-root", str(tmp_path)]) == 2
     err = capsys.readouterr().err
     assert "missing source root(s)" in err
@@ -202,32 +166,12 @@ def test_a_repo_root_without_the_source_roots_is_an_error(
 def test_source_roots_that_cannot_serve_the_packages_are_an_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The same failure one step in: the roots EXIST but hold no packages.
-
-    Which branch answers depends on the environment, and both are exit 2:
-
-    * nothing installed (a plain dev checkout) -- the import fails and the subprocess
-      exits non-zero;
-    * ``tos``/``tos_runtime`` installed editable (this repo's CI installs both) -- the
-      editable finder in ``sys.meta_path`` answers the import AHEAD of ``sys.path``, and
-      the program's own ``commonpath`` check refuses because the module resolved outside
-      the root it was told to measure.
-
-    The second branch is the one that cannot be arranged hermetically (it needs an
-    installed copy of another checkout), so this test is where CI exercises it. Asserting
-    only "exit 2 with a message" is deliberate: pinning either wording would make the
-    test pass in one environment and fail in the other.
-    """
+    """The same failure one step in: the roots EXIST but hold no packages."""
     (tmp_path / "tos" / "src").mkdir(parents=True)
     (tmp_path / "tos" / "runtime" / "src").mkdir(parents=True)
 
     assert tr.main(["--check", "--repo-root", str(tmp_path)]) == 2
     assert "tos_redigest: ERROR" in capsys.readouterr().err
-
-
-# ---------------------------------------------------------------------------
-# Discovery — a tree added after the tool was written is not silently skipped
-# ---------------------------------------------------------------------------
 
 
 def _add_tree(repo: Path, name: str, digest: str) -> Path:
@@ -241,8 +185,7 @@ def _add_tree(repo: Path, name: str, digest: str) -> Path:
 def test_check_is_red_when_a_tree_outside_the_known_three_is_stale(
     fake_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The incident: the stock tree (#926) kept the old digest while a hand-kept list of
-    three reported every pin current."""
+    """The incident: the stock tree (#926) kept the old digest while a hand-kept list of"""
     for name in tr.RELEASE_FILES:
         tr.write_pin(fake_repo / name, _MEASURED)
     _add_tree(fake_repo, "cp3-setup-d-stock-005930", _STALE)

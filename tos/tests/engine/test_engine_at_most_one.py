@@ -1,28 +1,4 @@
-"""§7.2-9 — at-most-one re-entrancy deny (design #31 §4.4, MAJOR-1).
-
-The design's target: *"미해소 POTENTIALLY_LIVE reservation 존재 시 동일 instrument 2차 flow의
-capacity-stage deny … send 요청↔EGRESS_RESULT 사이 2차 DECISION_TICK가 겹치는 노출을 못 만듦"*, with the
-``MAX_unresolved_send_per_scope 1`` violation mutation killed.
-
-The window this closes is real even in a synchronous core: one event is processed to completion,
-but the *result* of a send arrives as a **later event**, so a second ``DECISION_TICK`` for the same
-instrument can legitimately arrive between the hand-off and the ``EGRESS_RESULT`` (design #31
-§2.1(iv)). Without the retention that second flow would create an overlapping economic effect.
-
-Two further properties keep the seal honest:
-
-* the bound is **injected**, not literal — a configuration of ``2`` really admits two, which proves
-  the deny is a comparison against the injected ``MAX_unresolved_send_per_scope`` and not a
-  hard-coded "one" (design #31 §8);
-* the deny is a **restrictive-only observation** of the engine's own projection: it never creates
-  headroom (RFC-002 §9.1:558), and the ledger offers no way to make room.
-
-**Honest scope (design #31 §4.4).** This provisional retention does not claim the real ledger's
-fencing-epoch / CAS atomicity — concurrency authority stays with the RCL runtime. It is the
-provisional mirror of SAFE-021, not SAFE-021 itself.
-
-Regime tag: orchestration authoring evidence only; closes no EV.
-"""
+"""§7.2-9 — at-most-one re-entrancy deny (design #31 §4.4, MAJOR-1)."""
 
 from __future__ import annotations
 
@@ -68,7 +44,6 @@ def test_a_second_tick_between_send_and_result_is_denied_at_the_capacity_stage()
     assert first.flow is not None and first.flow.handed_off is True
     assert len(transmit.attempts) == 1
 
-    # ... no EGRESS_RESULT has arrived yet; a second tick for the same instrument shows up.
     second = core.handle(decision_tick(sequence=2, capsule=issue_capsule()))
 
     assert second.flow is not None
@@ -99,18 +74,12 @@ def test_the_deny_happens_at_the_capacity_stage_not_later() -> None:
 
 
 def test_the_bound_is_injected_not_hardcoded() -> None:
-    """(§8) A configured bound of 2 admits a second exposure — the deny is a real comparison.
-
-    This is the ``MAX_unresolved_send_per_scope`` mutation in its honest form: if the engine had
-    hard-coded "one", raising the injected bound would change nothing. (Slice #1's register value
-    is 1; this test only proves the value is *consumed*, it does not endorse 2.)
-    """
+    """(§8) A configured bound of 2 admits a second exposure — the deny is a real comparison."""
     ledger = ProvisionalReservationLedger(max_unresolved_send_per_scope=2)
     key = instrument_key()
     assert ledger.admits_new_exposure(key) is True
     ledger.commit_unbound(key, proposal_id="prop-1")
     assert ledger.outstanding_count(key) == 1
-    # The slice projects at most one reservation per scope, so a bound of 2 still leaves room.
     assert ledger.admits_new_exposure(key) is True
 
     strict = ProvisionalReservationLedger(
@@ -226,33 +195,19 @@ def test_the_retention_survives_every_terminal_result_kind() -> None:
         assert len(transmit.attempts) == 1
 
 
-# ---------------------------------------------------------------------------
-# design #35 §5.2/§5.3 — the read-only held-position observation
-# ---------------------------------------------------------------------------
-
-
 def test_the_consumed_magnitude_accessor_reads_the_projection_and_changes_nothing() -> (
     None
 ):
-    """(design #35 §5.2/§5.3) The observation is a read; the RCL boundary is untouched.
-
-    ``outstanding_consumed_magnitude`` exists so a position-closing derivation can be sized from
-    the position that actually exists. Reading is neither serialization nor mutation, so RFC-002
-    §9.1:557 (the RCL is the sole such authority) is untouched and §9.1:558 ("producer-local
-    counters SHALL NOT create headroom") is untouched too — which is asserted here rather than
-    assumed: every capacity observable is compared before and after repeated reads.
-    """
+    """(design #35 §5.2/§5.3) The observation is a read; the RCL boundary is untouched."""
     transmit = RecordingTransmit()
     core, _ = build_core(transmit=transmit)
     key = instrument_key()
 
-    # ∅ both ways: nothing outstanding is an absent observation, not a zero.
     assert core.ledger.outstanding(key) is None
     assert core.ledger.outstanding_consumed_magnitude(key) is None
 
     first = core.handle(decision_tick(sequence=1))
     assert first.flow is not None and first.flow.attempt is not None
-    # outstanding but unfilled is *also* absent — a send that has not settled consumed nothing.
     assert core.ledger.outstanding(key) is not None
     assert core.ledger.outstanding_consumed_magnitude(key) is None
 
@@ -274,8 +229,6 @@ def test_the_consumed_magnitude_accessor_reads_the_projection_and_changes_nothin
     assert before is not None
     assert core.ledger.outstanding_consumed_magnitude(key) == before.filled_quantity
 
-    # ★ the read is idempotent and inert: nothing about the projection moves, however often it
-    #   is asked, and the scope stays exactly as occupied as it was.
     for _ in range(5):
         assert core.ledger.outstanding_consumed_magnitude(key) == before.filled_quantity
     after = core.ledger.outstanding(key)
@@ -287,20 +240,7 @@ def test_the_consumed_magnitude_accessor_reads_the_projection_and_changes_nothin
 
 
 def test_the_accessor_is_a_read_and_release_is_the_only_gated_mutator() -> None:
-    """(design #35 §5.3; kernel round #3 §2 decision 5) A read accessor was added; ``free`` /
-    ``clear`` / ``reset`` were not, and never became, mutators here — ``release`` is the ONE
-    exception, and it is a typed, token-gated exception, not a bare name.
-
-    This test used to pin the total absence of every one of the four forbidden spellings,
-    ``release`` included, when the projection truly had no release path of any kind. That pin is
-    now false: round #3 added :meth:`~tos.engine.state.ProvisionalReservationLedger.release`,
-    gated on a :class:`~tos.engine.state.FinalityProofRef` token (never a response kind or bare
-    string) and called only after the RCL-owned finality-release consumer has already recorded
-    the release itself (RFC-002 §9.1:557-558 — the RCL remains sole capacity-mutation authority;
-    this projection's release only mirrors a fact already established there). ``free`` / ``clear``
-    / ``reset`` stay absent under every spelling, and the absence is grepped rather than asserted
-    in prose (the #27 anti-phantom discipline).
-    """
+    """(design #35 §5.3; kernel round #3 §2 decision 5) A read accessor was added; ``free`` /"""
     ledger = ProvisionalReservationLedger(max_unresolved_send_per_scope=1)
     assert hasattr(ledger, "release")
     for name in ("free", "clear", "reset"):
@@ -318,8 +258,6 @@ def test_the_accessor_is_a_read_and_release_is_the_only_gated_mutator() -> None:
         "second one would be an unreviewed, ungated new mutation surface"
     )
     assert CapacityState.RELEASED in PROJECTION_ORDER
-    # Calling release with anything other than the typed token is refused, not silently ignored —
-    # there is no response-kind/string path to RELEASED (mutation M5).
     with pytest.raises(TypeError):
         ledger.release("EGRESS_RESULT")  # type: ignore[arg-type]
     with pytest.raises(TypeError):
@@ -327,11 +265,7 @@ def test_the_accessor_is_a_read_and_release_is_the_only_gated_mutator() -> None:
 
 
 def test_every_stage_request_carries_the_two_observations_restrictively() -> None:
-    """(design #35 §4.2/§5.2) Both additive slots default to absent, never to a stand-in value.
-
-    …and the sequencer really offers them to **every** step, so a stage that needs one does not
-    have to reach for the ledger itself — which is precisely how the projection stays the engine's.
-    """
+    """(design #35 §4.2/§5.2) Both additive slots default to absent, never to a stand-in value."""
     key = instrument_key()
     core, _ = build_core(transmit=RecordingTransmit())
     first = core.handle(decision_tick(sequence=1))
@@ -374,7 +308,6 @@ def test_every_stage_request_carries_the_two_observations_restrictively() -> Non
         stages={step: recording(stage) for step, stage in admitting_stages().items()},
         sink=None,
     )
-    # replay the *same* projection state by filling this core's scope the same way
     started = watched.handle(decision_tick(sequence=1))
     assert started.flow is not None and started.flow.attempt is not None
     watched.handle(

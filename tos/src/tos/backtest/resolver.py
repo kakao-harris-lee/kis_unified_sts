@@ -1,31 +1,4 @@
-"""The D-E2 resolver slot + the bar → time-coordinate projection (design #33 §3.3/§3.5).
-
-Two injected surfaces meet here, and the design keeps them strictly apart:
-
-* **the value surface is D-E2's.** :class:`~tos.engine.DecisionContextResolver` is the engine-typed
-  plug ``(capsule, *, instrument_key) -> DecisionTickPayload`` that resolves a Capsule's
-  ``SnapshotRef`` into value-carrying Critical Input observations with source identity, continuity,
-  and provenance (RFC-004 §9:242-244). That body **is not reachable from a slice-1 payload**:
-  ``DecisionContextCapsule.critical_input_snapshot`` is a :class:`~tos.capsule.SnapshotRef`
-  (``snapshot_id`` + ``canonical_digest``, ``capsule.py:41-50``), and slice #1 binds that reference
-  only (``records.py:161-163``). :class:`ProvisionalContextResolver` therefore resolves *nothing*:
-  the mechanism runs while the decision **starves of real numerics**, and that is recorded honestly
-  instead of being papered over with a config-relabelled market value — which RFC-008 §10:327-331
-  prohibits and design #31 §3.2 seals.
-
-* **the time surface is D-E3's.** :class:`BarTimeProjection` derives every
-  :class:`~tos.engine.TimeAdmissionInputs` coordinate from the bar's own opaque coordinate plus
-  injected bounds. No ``time`` / ``datetime`` call appears anywhere (design #33 §3.3/§9); the
-  freshness verdict stays a pure function of injected values, which is what makes replay
-  byte-identical and what makes ADR-DEV-010 BTE-INV-004's "bounded by the current context
-  timestamp" structural rather than promised.
-
-**Forward seam.** When D-E2's typed resolver lands it is injected in place of the provisional one —
-the converter's call site does not change (design #33 §7.4 (a)). Nothing here is authoritative and
-nothing here closes an EV.
-
-Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #33 §0.3). No clock, no RNG.
-"""
+"""The D-E2 resolver slot + the bar → time-coordinate projection (design #33 §3.3/§3.5)."""
 
 from __future__ import annotations
 
@@ -49,96 +22,17 @@ __all__ = [
 
 
 class BarTimeProjection(FrozenModel):
-    """Injected bounds that turn a bar coordinate into ``TimeAdmissionInputs`` (design #33 §3.3).
+    """Injected bounds that turn a bar coordinate into ``TimeAdmissionInputs`` (design #33 §3.3)."""
 
-    Every threshold is **injected** (design #33 §10 — hardcoded numbers: 0) and every one of them is
-    *provisional*: the trustworthy-time bounds are register §8-1 new-key candidates and the Phase-0
-    bounds approval (P0-1) is incomplete, so a run built on them closes no EV (design #33 §1.1).
-
-    Two of these injected fields are bound to a VERIFICATION-PROFILE-002 key **1:1**, each key
-    carrying a value: ``future_tolerance`` is bound to ``MAX_future_timestamp_tolerance_ms``
-    (profile rationale — "a timestamp from the future outside this tolerance is rejected",
-    ADR-002-008 §9), and ``maximum_consumer_age_ms`` is bound to
-    ``MAX_critical_input_consumer_receipt_age_ms`` (profile rationale — "consumer-local receipt
-    age …", ADR-002-018 §14).
-
-    A third field, ``delay_bounds``, carries a **composite-membership** bind — weaker in kind than
-    the two 1:1 literal binds above, because the field is a tuple that ``freshness_verdict`` sums
-    unconditionally (``total_age = source_age + sum(delay_bounds)``, order-agnostic) rather than a
-    single scalar checked against one key. It is bound to the sum of four VERIFICATION-PROFILE-002
-    keys drawn from ADR-002-008 §9's delay-class list: ``MAX_time_transport_and_queue_uncertainty_ms``,
-    ``MAX_clock_domain_conversion_uncertainty_ms``, ``MAX_time_source_precision_ms``, and
-    ``MAX_time_source_sequence_gap_ms``.
-
-    ``max_age_bound`` is now bound **1:1** to VERIFICATION-PROFILE-002 key
-    ``MAX_time_conservative_freshness_age_ms`` (registered 2026-09-04; UNCHK-024
-    disposition, ``docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md``
-    §2, §5): it is the single top-level conservative freshness ceiling
-    ``source_age + sum(delay_bounds)`` is checked against, and that key now
-    carries the role 1:1. The key's value was approved the same day —
-    **1000 ms** (operator, Bounds-Approver; disposition draft §6) — so this
-    field reads **VALUED** (in-universe, key exists, value approved), not
-    ``BLOCKED``.
-
-    VER-002-KEYS: ``MAX_future_timestamp_tolerance_ms``, ``MAX_critical_input_consumer_receipt_age_ms``, ``MAX_time_transport_and_queue_uncertainty_ms``, ``MAX_clock_domain_conversion_uncertainty_ms``, ``MAX_time_source_precision_ms``, ``MAX_time_source_sequence_gap_ms``, ``MAX_time_conservative_freshness_age_ms``
-
-    The remaining five injected fields — ``source_age``, ``snapshot_age_bound``,
-    ``interval_width``, ``boundary_lag``, ``health_state`` — are **not VERIFICATION-PROFILE-002
-    keys** for a different, structural reason: each is a bar-derived observation, a derived/injected
-    composite, a reference-frame construction parameter, or an enum (design #33 §3.3,
-    ``docs/plans/2026-07-29-tos-backtest-design.md:324-325``) — never a ``MAX_*``/``MIN_*``
-    threshold a profile key could hold. That makes this disposition final rather than a
-    register §8-1 gap like ``max_age_bound``'s used to be (now closed by key registration
-    and value approval): no key, present or future, could ever bind these five.
-
-    Two coordinates are genuinely **bar-derived** rather than constant:
-
-    * ``uncertainty_interval`` = ``[bar.timestamp_coordinate, + interval_width]`` — the reference
-      frame's "now" window advances with the bar;
-    * ``session_context.boundary_value`` = ``bar.timestamp_coordinate - boundary_lag`` — the session
-      boundary is placed strictly *before* the window, so ``session_open_positively`` never has to
-      judge a boundary-straddling window it cannot resolve (``predicates.py:599-604``).
-
-    ``source_age`` is an injected observation lag, and is labelled as injected: slice #1 has no
-    observation pipeline to derive it from, and inventing one would be a phantom.
-    """
-
-    #: The injected conservative source-event age (negative = future-dated; never clamped). Not
-    #: VERIFICATION-PROFILE-002-governed — structurally an injected observation, not a bound
-    #: (design #33 §3.3; see class docstring).
     source_age: int
-    #: The applicable injected delay-class upper bounds (ADR-002-008 §9). Bound to the
-    #: composite-membership sum of ``MAX_time_transport_and_queue_uncertainty_ms`` +
-    #: ``MAX_clock_domain_conversion_uncertainty_ms`` + ``MAX_time_source_precision_ms`` +
-    #: ``MAX_time_source_sequence_gap_ms`` (order-agnostic; see class docstring).
     delay_bounds: tuple[int | None, ...] = ()
-    #: The injected freshness threshold. Bound 1:1 to VERIFICATION-PROFILE-002 key
-    #: ``MAX_time_conservative_freshness_age_ms`` (registered 2026-09-04, value 1000 ms
-    #: approved 2026-09-04; reads VALUED — see class docstring).
     max_age_bound: int
-    #: The injected future-timestamp tolerance. Bound to VERIFICATION-PROFILE-002 key
-    #: ``MAX_future_timestamp_tolerance_ms`` (ADR-002-008 §9).
     future_tolerance: int
-    #: The injected effective snapshot age bound. Not VERIFICATION-PROFILE-002-governed —
-    #: structurally a derived/injected observation, not a bound (design #33 §3.3; see class
-    #: docstring).
     snapshot_age_bound: int
-    #: The injected maximum consumer age. Bound to VERIFICATION-PROFILE-002 key
-    #: ``MAX_critical_input_consumer_receipt_age_ms`` (ADR-002-018 §14).
     maximum_consumer_age_ms: int
-    #: The width of the reference-frame uncertainty window anchored at the bar coordinate. Not
-    #: VERIFICATION-PROFILE-002-governed — a reference-frame construction parameter, not a bound
-    #: (design #33 §3.3; see class docstring).
     interval_width: int
-    #: How far **before** the window the injected session boundary sits (strictly positive). Not
-    #: VERIFICATION-PROFILE-002-governed — a resolver-internal backtest construction device, not a
-    #: bound (design #33 §3.3; see class docstring).
     boundary_lag: int
-    #: The injected calendar/session authority determination (never recomputed here).
     session_template: SessionContext
-    #: The injected time health state; only ``TRUSTED`` permits new normal risk. Not
-    #: VERIFICATION-PROFILE-002-governed — structurally an enum state, not a bound a profile key
-    #: could constrain (design #33 §3.3; see class docstring).
     health_state: HealthState
 
     @model_validator(mode="after")
@@ -167,16 +61,7 @@ class BarTimeProjection(FrozenModel):
         return self
 
     def project(self, bar: Bar) -> TimeAdmissionInputs:
-        """Project one bar's coordinate onto the engine's injected time inputs.
-
-        Args:
-            bar: The bar whose coordinate anchors the reference frame.
-
-        Returns:
-            The :class:`~tos.engine.TimeAdmissionInputs` for that bar's ``DECISION_TICK``. No clock
-            is read: every field is either an injected bound or a function of
-            ``bar.timestamp_coordinate`` (design #33 §3.3).
-        """
+        """Project one bar's coordinate onto the engine's injected time inputs."""
         anchor = bar.timestamp_coordinate
         return TimeAdmissionInputs(
             source_age=self.source_age,
@@ -196,53 +81,18 @@ class BarTimeProjection(FrozenModel):
 
 
 class ProvisionalContextResolver:
-    """⚠ NON-AUTHORITATIVE PROVISIONAL :class:`~tos.engine.DecisionContextResolver` (§3.5).
+    """⚠ NON-AUTHORITATIVE PROVISIONAL :class:`~tos.engine.DecisionContextResolver` (§3.5)."""
 
-    It satisfies the engine's plug signature and **resolves no value**: the payload it returns binds
-    the Capsule (and through it the Capsule's ``SnapshotRef``) and nothing else. That is the honest
-    slice-1 position — the value-carrying observation body is D-E2's to add (``core.py:93-98``), and
-    a resolver that fabricated one would be exactly the over-realization the design forbids.
-
-    The consequence is stated plainly: **the mechanism runs, the decision starves.** A policy in
-    slice #1 can gate on capsule *identity/scope* facts, not on market numerics, so the differential
-    oracle's numeric layer is gated on D-E2 (design #33 §6.2 ②).
-    """
-
-    #: The label every provisional artifact in this slice carries (design #31 §4.4 mirror).
     authority_label = "NON_AUTHORITATIVE_PROVISIONAL"
 
     def __call__(
         self, capsule: DecisionContextCapsule, *, instrument_key: InstrumentKey
     ) -> DecisionTickPayload:
-        """Bind one Decision Context Capsule into a tick payload — reference binding only.
-
-        Args:
-            capsule: The Decision Context Capsule for this bar.
-            instrument_key: The dispatch scope.
-
-        Returns:
-            The :class:`~tos.engine.DecisionTickPayload`. ``time`` and ``reference`` are left at
-            their engine defaults on purpose: the bar-derived time coordinates are applied by the
-            converter (§3.3) and the causal coordinate is stamped by the driver at yield time
-            (§3.4), so this resolver claims neither.
-        """
+        """Bind one Decision Context Capsule into a tick payload — reference binding only."""
         return DecisionTickPayload(instrument_key=instrument_key, capsule=capsule)
 
 
 def resolved_value_surface_absent(payload: DecisionTickPayload) -> bool:
-    """Whether the resolved payload reaches **no** value-carrying Critical Input body (§3.5).
-
-    The anti-phantom form of the design's honesty claim (design #33 §0.5): rather than asserting
-    "D-E2 does not exist" in prose, this reads the shipped structure. A slice-1 payload reaches the
-    snapshot only through :class:`~tos.capsule.SnapshotRef`, whose entire surface is
-    ``snapshot_id`` + ``canonical_digest`` (``capsule.py:41-50``) — no observation, no field
-    evaluation, no value.
-
-    Args:
-        payload: The resolved ``DECISION_TICK`` payload.
-
-    Returns:
-        ``True`` iff the payload's snapshot binding is a pure reference.
-    """
+    """Whether the resolved payload reaches **no** value-carrying Critical Input body (§3.5)."""
     snapshot = payload.capsule.critical_input_snapshot
     return set(type(snapshot).model_fields) == {"snapshot_id", "canonical_digest"}

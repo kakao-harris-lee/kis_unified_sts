@@ -1,10 +1,4 @@
-"""Currentness witness / cache != current (§5.4; §9.4; §12; SA-EV-003 substrate).
-
-An online currentness witness is admissible only when positively present, within the
-containment bound, and non-conflicting; ``within_containment_bound=None`` (unestablished)
-denies — the capsule ``Freshness`` fail-closed pattern. No grace-period operation exists
-after currentness loss (§12.3).
-"""
+"""Currentness witness / cache != current (§5.4; §9.4; §12; SA-EV-003 substrate)."""
 
 from __future__ import annotations
 

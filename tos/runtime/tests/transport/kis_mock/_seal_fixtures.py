@@ -1,24 +1,4 @@
-"""A minimal, self-contained ``SendSeal`` builder for the adapter test suite.
-
-Unlike ``tos/tests/egressgw/_egressgw_fixtures.py`` (which drives the full gateway to produce a
-seal), this module constructs a :class:`~tos.egressgw.SendSeal` directly via its own constructor.
-
-**The digest invariant this builder encodes (review disposition F1, `dc6b47ba`).** By default,
-:func:`build_seal` sets BOTH ``request_bytes_digest`` AND ``capsule_egress_request_digest`` to
-:class:`~tos_runtime.transport.kis_mock.codec.KisOrderWireCodec`'s own digest of the sealed
-outbound. This is **not** a tautology dressed up as a test: it is the literal invariant T2 will
-make hold in production once the compose context resolver binds the SAME codec into
-``capsule_egress_request_digest`` (today it does not — see ``codec.py``'s own module docstring
-for the exact file:line where the compose root currently sets ``request_bytes_digest ==
-capsule_egress_request_digest`` to a STAND-IN value, never a real wire-bytes digest). Building
-fixtures against the FUTURE invariant, rather than an arbitrary matching pair, is what lets this
-suite exercise the adapter's ACK/REJECT/UNKNOWN/TIMEOUT/pacing/token logic realistically today,
-while ``mode: live`` stays config-refused until T2's binding actually lands (see
-:mod:`tos_runtime.transport.kis_mock.config`'s own docstring).
-
-Pass an explicit ``request_bytes_digest`` (deliberately not matching the codec's own) to exercise
-the digest-mismatch path instead.
-"""
+"""A minimal, self-contained ``SendSeal`` builder for the adapter test suite."""
 
 from __future__ import annotations
 
@@ -39,7 +19,6 @@ ACTION = "NEW_ORDER"
 METHOD = "SUBMIT"
 ACTIVE_PRINCIPAL = "kis-mock-order-non-live-test"
 
-#: The suite's default dynamic field map (the four kernel-sourced KIS wire fields).
 DEFAULT_FIELD_MAP: Mapping[str, str] = {
     "account": "CANO",
     "instrument": "PDNO",
@@ -47,9 +26,6 @@ DEFAULT_FIELD_MAP: Mapping[str, str] = {
     "price": "ORD_UNPR",
 }
 
-#: The suite's default static body fields (the five per-deployment-constant KIS wire fields —
-#: review F1's "known T1 gap" fields; arbitrary but fixed test values, never operator-approved
-#: ones — see the runbook's proposal table for the real disposition).
 DEFAULT_STATIC_BODY_FIELDS: Mapping[str, str] = {
     "ACNT_PRDT_CD": "01",
     "ORD_DVSN": "00",
@@ -73,22 +49,7 @@ def build_seal(
     request_bytes_digest: str | None = None,
     capsule_egress_request_digest: str | None = None,
 ) -> SendSeal:
-    """Build a self-consistent :class:`~tos.egressgw.SendSeal`.
-
-    ``request_bytes_digest``/``capsule_egress_request_digest`` both default to
-    :meth:`~tos_runtime.transport.kis_mock.codec.KisOrderWireCodec.digest` of
-    :meth:`~tos_runtime.transport.kis_mock.codec.KisOrderWireCodec.encode`'s own output for the
-    same ``field_map``/``static_body_fields``/values — the module docstring's "future invariant".
-    Pass an explicit (non-matching) ``request_bytes_digest`` to exercise the mismatch path.
-
-    ``instrument_key_account`` defaults to ``account`` (the two coincide in every OTHER test in
-    this suite, which is exactly why a mutation swapping ``seal.account`` for
-    ``seal.instrument_key.account`` in :mod:`tos_runtime.transport.kis_mock.codec` would
-    otherwise go undetected — team-lead re-review, mutation M8). Pass a DIFFERENT value here to
-    build a seal where the two coordinates diverge, and assert the codec follows ``seal.account``
-    (see ``test_codec.py::test_account_is_the_seal_field_never_instrument_key_account`` and
-    ``test_adapter.py``'s companion live-send assertion).
-    """
+    """Build a self-consistent :class:`~tos.egressgw.SendSeal`."""
     if instrument_key_account is None:
         instrument_key_account = account
     if field_map is None:
@@ -113,10 +74,6 @@ def build_seal(
     )
 
     if request_bytes_digest is None or capsule_egress_request_digest is None:
-        # Build a provisional seal first (any digest values will do — the codec reads only
-        # the account coordinate / instrument_key / outbound_quantity / outbound_price, all of
-        # which are already fixed above) purely so KisOrderWireCodec.encode can be handed a
-        # real SendSeal rather than a bespoke stand-in shape.
         provisional = SendSeal(
             attempt_id=attempt_id,
             instrument_key=InstrumentKey(

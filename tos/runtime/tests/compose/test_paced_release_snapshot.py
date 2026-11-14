@@ -1,17 +1,4 @@
-"""Issue #970 — the release snapshot under the app key pacer.
-
-Every request on the ``kis_mock.*`` key is now ``min_send_interval_ms`` apart, the witness's
-included. The fill observer's FETCH reads the planned order inquiry first and the release
-snapshot (balance + order inquiry) right after, so the snapshot's first GET waits a full interval
-in the pacer before it reads anything. That wait is not broker-state age: the snapshot is aged
-from its first GET's pacer grant (``fill_fetch.SnapshotRead``), and compose refuses a
-``release_snapshot_max_age_ms`` below two intervals. The CLOSE proof's sibling bound,
-``held_position_max_age_ms``, is read from the same pacer — four paced GETs rather than two —
-and is refused the same way.
-
-The fake clock moves only when the pacer sleeps (its ``sleep`` is patched), so every grant
-instant below is exact.
-"""
+"""Issue #970 — the release snapshot under the app key pacer."""
 
 from __future__ import annotations
 
@@ -44,8 +31,8 @@ from ..transport.kis_mock._fakes import InMemoryCredentialCustody, RecordingEvid
 from .test_kis_mock_e2e_honesty import _boot, _sealed_mock_deployment
 
 _DATE = "20261023"
-_INTERVAL_MS = 2_000  # the approved kis_mock_transport.yaml::min_send_interval_ms
-_LOOP_PASS_MS = 400  # marketfeed.yaml poll_interval_ms — FETCH done to APPLY
+_INTERVAL_MS = 2_000
+_LOOP_PASS_MS = 400
 
 
 class _SleepClock:
@@ -118,7 +105,7 @@ def _paced_witness(server: FakeKisGetServer, clock: _SleepClock) -> DeferredKisW
 
 def _queue_broker(server: FakeKisGetServer) -> None:
     empty_orders: dict[str, object] = {"rt_cd": "0", "output1": []}
-    server.queue_response(ORDER_PATH, status=200, body=empty_orders)  # the plan's read
+    server.queue_response(ORDER_PATH, status=200, body=empty_orders)
     server.queue_response(
         BALANCE_PATH,
         status=200,
@@ -131,21 +118,13 @@ def _queue_broker(server: FakeKisGetServer) -> None:
         },
         headers={"tr_cont": "D"},
     )
-    server.queue_response(ORDER_PATH, status=200, body=empty_orders)  # the snapshot's
+    server.queue_response(ORDER_PATH, status=200, body=empty_orders)
 
 
 def test_a_healthy_paced_snapshot_is_aged_from_its_first_get_and_served(
     get_server: FakeKisGetServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """One FETCH at S = 2000: token POST + the plan's order GET, then the snapshot's balance and
-    order GETs, each a full interval after the previous one. APPLY comes one loop pass later and
-    asks with the smallest age limit compose admits (2 x S): the snapshot is SERVED, and its
-    read start is the balance GET's grant — not the instant FETCH called the prefetch, which was
-    an interval earlier.
-
-    Mutation: age from the prefetch call (the #969 origin) -> 4400 ms > 4000 -> "expired",
-    the release holds forever -> red.
-    """
+    """One FETCH at S = 2000: token POST + the plan's order GET, then the snapshot's balance and"""
     clock = _SleepClock(start_ms=10_000)
     monkeypatch.setattr(pacer_module, "sleep", clock.sleep)
     witness = _paced_witness(get_server, clock)
@@ -172,7 +151,6 @@ def test_a_healthy_paced_snapshot_is_aged_from_its_first_get_and_served(
     snapshot = result.snapshot
     assert snapshot is not None
     assert isinstance(snapshot.outcome, WitnessSnapshot)
-    # token 10000 · plan order GET 12000 · snapshot balance GET 14000 · its order GET 16000
     assert snapshot.read_started_ms == 14_000
     assert snapshot.read_finished_ms == 16_000
     assert len(get_server.all_requests) == 3
@@ -183,10 +161,8 @@ def test_a_healthy_paced_snapshot_is_aged_from_its_first_get_and_served(
     ) as uses:
         assert isinstance(witness.observe(scope), WitnessSnapshot)
     assert [(u.verdict, u.age_ms) for u in uses] == [("served", 2_400)]
-    assert len(get_server.all_requests) == 3  # served, not read live
+    assert len(get_server.all_requests) == 3
 
-
-# -- review-979 r1 HIGH: many dates / balance pages must not expire every snapshot -----------
 
 _OLD_1 = "20261021"
 _OLD_2 = "20261022"
@@ -222,12 +198,10 @@ def _fetch_with(
     balance_pages: int,
     todays_snapshot_rows: list[dict[str, str]] | None = None,
 ) -> tuple[DeferredKisWitness, WitnessScope, Any]:
-    """One paced FETCH: the plan's order read of today, then the release snapshot over today
-    plus ``older_dates`` with ``balance_pages`` balance pages. The order-inquiry queue is filled
-    in the order the witness asks: plan read, every older date, then today."""
+    """One paced FETCH: the plan's order read of today, then the release snapshot over today"""
     witness = _paced_witness(server, clock)
     empty: dict[str, object] = {"rt_cd": "0", "output1": []}
-    server.queue_response(ORDER_PATH, status=200, body=empty)  # the plan's read
+    server.queue_response(ORDER_PATH, status=200, body=empty)
     for _date in sorted(older_dates):
         server.queue_response(ORDER_PATH, status=200, body=empty)
     for page in range(balance_pages):
@@ -274,12 +248,7 @@ def _serve_one_pass_later(
 def test_three_receipt_dates_at_S_2000_are_served_under_the_shipped_6000(
     get_server: FakeKisGetServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """review-979 r1 HIGH (i). Receipt dates accumulate in the evidence store, and every one is
-    an order walk. Read order is now (older dates, balance, today) and the age starts at the
-    balance read's grant: token 10000 · plan 12000 · older 14000, 16000 · balance 18000 · today
-    20000 -> age 2400 at APPLY. Aged from the snapshot's first GET (14000) it would be 6400 >
-    6000: every release snapshot expired, and every re-read the same length — a permanent HOLD.
-    """
+    """review-979 r1 HIGH (i). Receipt dates accumulate in the evidence store, and every one is"""
     clock = _SleepClock(start_ms=10_000)
     monkeypatch.setattr(pacer_module, "sleep", clock.sleep)
     witness, scope, snapshot = _fetch_with(
@@ -287,19 +256,15 @@ def test_three_receipt_dates_at_S_2000_are_served_under_the_shipped_6000(
     )
 
     assert snapshot is not None and isinstance(snapshot.outcome, WitnessSnapshot)
-    assert snapshot.first_request_ms == 14_000  # the whole read, recorded
-    assert (
-        snapshot.read_started_ms == 18_000
-    )  # the age origin: the balance read's grant
+    assert snapshot.first_request_ms == 14_000
+    assert snapshot.read_started_ms == 18_000
     assert _serve_one_pass_later(witness, scope, snapshot, clock) == [("served", 2_400)]
 
 
 def test_two_balance_pages_and_two_dates_are_served(
     get_server: FakeKisGetServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """review-979 r1 HIGH (ii): more than 20 holdings is a second balance page. older 14000 ·
-    balance 16000, 18000 · today 20000 -> age 4400 (from the first GET it would be 6400).
-    """
+    """review-979 r1 HIGH (ii): more than 20 holdings is a second balance page. older 14000 ·"""
     clock = _SleepClock(start_ms=10_000)
     monkeypatch.setattr(pacer_module, "sleep", clock.sleep)
     witness, scope, snapshot = _fetch_with(
@@ -314,15 +279,7 @@ def test_two_balance_pages_and_two_dates_are_served(
 def test_older_dates_are_read_first_and_today_last_so_a_new_order_is_inside_the_window(
     get_server: FakeKisGetServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """review-979 r1 HIGH (iv), at the witness: the only rows read before the age window opens
-    are CLOSED days' (a KRX day order dies with its day — a closed day's rows do not change).
-    An unattributed order B is today's, so it is read by the LAST walk, after the balance: an
-    order that appeared after the older walks, or after the balance read, is in the snapshot,
-    and the release reconciliation sees it as an orphan (-> HOLD).
-
-    Mutation: keep (today, *older) after the balance -> today is read before the window's end
-    is the older dates, the request order below differs -> red.
-    """
+    """review-979 r1 HIGH (iv), at the witness: the only rows read before the age window opens"""
     clock = _SleepClock(start_ms=10_000)
     monkeypatch.setattr(pacer_module, "sleep", clock.sleep)
     _witness, _scope, snapshot = _fetch_with(
@@ -335,10 +292,10 @@ def test_older_dates_are_read_first_and_today_last_so_a_new_order_is_inside_the_
 
     order = [(r.path, r.query.get("INQR_STRT_DT")) for r in get_server.all_requests]
     assert order == [
-        (ORDER_PATH, _DATE),  # the plan's read
-        (ORDER_PATH, _OLD_1),  # closed day, outside the age window
-        (BALANCE_PATH, None),  # the age window opens here
-        (ORDER_PATH, _DATE),  # today, last — where B lives
+        (ORDER_PATH, _DATE),
+        (ORDER_PATH, _OLD_1),
+        (BALANCE_PATH, None),
+        (ORDER_PATH, _DATE),
     ]
     assert snapshot is not None and isinstance(snapshot.outcome, WitnessSnapshot)
     assert any(
@@ -347,9 +304,7 @@ def test_older_dates_are_read_first_and_today_last_so_a_new_order_is_inside_the_
 
 
 def test_an_expiry_says_whether_the_read_itself_outran_the_limit() -> None:
-    """review-979 r1 HIGH: the HOLD stays (fail closed), but the evidence row tells an operator
-    a snapshot whose own read span (balance grant -> last GET) exceeds the limit — it can never
-    be served, however fast APPLY is — from one that aged waiting for APPLY."""
+    """review-979 r1 HIGH: the HOLD stays (fail closed), but the evidence row tells an operator"""
     scope = WitnessScope(account=ACCOUNT, order_dates=(_DATE,))
     witness = DeferredKisWitness(lambda: _DATE)
 
@@ -389,9 +344,7 @@ def server() -> Iterator[FakeKisServer]:
 def test_a_snapshot_age_limit_below_two_intervals_refuses_the_boot(
     tmp_path, config_dir, data_dir, custody_root, monkeypatch, server
 ) -> None:
-    """Compose refuses ``release_snapshot_max_age_ms < 2 x min_send_interval_ms`` — the
-    combination in which every release snapshot is served expired (R5 incident: #969's 2000
-    under #970's 2000-ms pacing). Exactly 2 x S boots (the boundary is admitted)."""
+    """Compose refuses ``release_snapshot_max_age_ms < 2 x min_send_interval_ms`` — the"""
     _sealed_mock_deployment(config_dir, custody_root, server, monkeypatch)
     transport = yaml.safe_load(
         (config_dir / "kis_mock_transport.yaml").read_text("utf-8")
@@ -409,16 +362,8 @@ def test_a_snapshot_age_limit_below_two_intervals_refuses_the_boot(
 @pytest.mark.parametrize(
     ("bounds", "message"),
     [
-        # Below the double read's own span: the CLOSE proof's four paced GETs are granted at
-        # 0 / S / 2S / 3S, so a bound under 3 x S is expired the moment it is published.
         (lambda s: (3 * s - 1, 2 * s), "the double read that refreshes it"),
-        # Below one poll period PLUS that read: the replacement is only planned a poll period
-        # later and still costs the four GETs, so the proof expires before it exists.
         (lambda s: (3 * s, 3 * s + 1), "poll period plus the double read"),
-        # The #1010 stock tree itself (12000/12000 under 2000 ms pacing), and the smaller pair
-        # the first draft of this guard also admitted (review-1014 r1 M1). max_age == poll
-        # cannot leave room for the read that refreshes it at any S, so neither depends on the
-        # interval this deployment happens to pace at.
         (lambda _s: (12_000, 12_000), "poll period plus the double read"),
         (lambda _s: (6_000, 6_000), "poll period plus the double read"),
     ],
@@ -439,10 +384,7 @@ def test_an_unreachable_held_position_age_limit_refuses_the_boot(
     bounds,
     message,
 ) -> None:
-    """The CLOSE proof's bound is read from the same pacer as its release sibling above, so it
-    is refused the same way (L1 of #1012; R5 incident #970). Both floors are derived from the
-    deployed ``min_send_interval_ms``, never a second literal; the shipped tree sits above
-    both (``test_the_shipped_held_position_bounds_clear_the_boot_floors``)."""
+    """The CLOSE proof's bound is read from the same pacer as its release sibling above, so it"""
     _sealed_mock_deployment(config_dir, custody_root, server, monkeypatch)
     transport = yaml.safe_load(
         (config_dir / "kis_mock_transport.yaml").read_text("utf-8")

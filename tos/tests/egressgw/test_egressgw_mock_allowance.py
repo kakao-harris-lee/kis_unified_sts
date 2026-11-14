@@ -1,11 +1,4 @@
-"""Item 6 under PR-3 option (a) (operator decision 2026-10-23, "K").
-
-A broker-resource-consuming send normally needs brokercap ``capability_admissible`` to be
-``ADMISSIBLE`` — for the KIS MOCK_VTS draft profile it is ``PROHIBITED`` (no dimension
-VERIFIED). Option (a) skips that check for a scope whose every tuple is a BROKER_SIMULATION
-mock order / read with no position or cash effect, judged from the context's own tuples. The
-runtime allowance flags still gate the verdict.
-"""
+"""Item 6 under PR-3 option (a) (operator decision 2026-10-23, "K")."""
 
 from __future__ import annotations
 
@@ -28,8 +21,6 @@ from tos.egressgw.vocabulary import BrokerApplicability, VerifyOutcome
 
 from ..brokercap._brokercap_strategies import issue_profile, live_scope, profile_key
 
-#: A simulation-class profile (its own environment_class, a non-live scope) and a production
-#: one. The profile key strings are opaque: nothing reads them to classify the profile.
 _NON_LIVE = live_scope(mode="NON_LIVE", action_classes=())
 _SIM_PROFILE = issue_profile(
     profile_key=profile_key(environment="SIM", instrument_class="EQ"),
@@ -41,7 +32,6 @@ _PROD_PROFILE = issue_profile(
     live_scope=_NON_LIVE,
     environment_class=BrokerEnvironment.BROKER_PRODUCTION,
 )
-#: A production profile whose KEY strings say "SIM" — the key is never the classifier.
 _PROD_PROFILE_NAMED_SIM = issue_profile(
     profile_key=profile_key(environment="SIM", instrument_class="EQ"),
     live_scope=_NON_LIVE,
@@ -69,8 +59,6 @@ def _judge(
     profile: BrokerCapabilityProfile | None = _SIM_PROFILE,
     **flags: Any,
 ) -> VerifyOutcome:
-    # Any profile here has no VERIFIED dimension for an unset required set: the normal path
-    # is PROHIBITED -> DENIED, so SATISFIED can only come from the mock-class skip.
     context = SendBoundaryContext(
         capability_tuples=tuples,
         broker_capability_profile=profile,
@@ -116,10 +104,8 @@ def test_a_real_money_or_unknown_tuple_takes_the_profile_check(
 @pytest.mark.parametrize(
     "profile",
     [
-        # #932 Codex r2: a production profile beside mock tuples — DENIED however it is named
         _PROD_PROFILE,
         _PROD_PROFILE_NAMED_SIM,
-        # an undeclared class is never read as simulation; no profile, nothing to read
         _UNDECLARED_PROFILE,
         None,
     ],
@@ -131,8 +117,7 @@ def test_mock_tuples_beside_a_non_simulation_profile_take_the_profile_check(
 
 
 def test_no_send_time_context_field_can_classify_a_profile() -> None:
-    """#932 Codex r2: the round-1 binding tables are gone — a context that tries to carry one
-    (the bypass ``BROKER_SIMULATION -> "PROD"``) does not even construct."""
+    """#932 Codex r2: the round-1 binding tables are gone — a context that tries to carry one"""
     with pytest.raises(ValidationError):
         SendBoundaryContext(
             capability_tuples=(_MOCK_SEND,),

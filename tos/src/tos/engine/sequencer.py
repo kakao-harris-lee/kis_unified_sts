@@ -1,42 +1,4 @@
-"""The 19-step fail-closed Execution Coordinator sequencer (design #31 §4 — load-bearing content).
-
-This is where the series' central lesson applies: **fail-open lives in the wiring, not inside the
-predicates**. The sequencer walks the ADR-002-002 §11 Normal Commitment Flow in its normative
-order (RFC-005 §7:192 — "SHALL NOT redefine, reorder, or abridge that sequence") and calls each
-step through an injected ``Stage``. The rules:
-
-1. **Positive-admit gate** (design #31 §4.2 rule 1). The *only* thing that advances the sequence is
-   ``verdict.outcome is StageOutcome.ADMIT``. A negated gate (``is not DENY``) is forbidden: it
-   fails open on ``None``, on an exception, and on any future member.
-2. **deny / UNKNOWN / missing / absent / raised ⇒ immediate stop** (rule 2). The flow stops at that
-   step, nothing is transmitted, and the halt is recorded with its reason — the sequencer-layer
-   mirror of RFC-002 §10.8:761 ("reject … when any required fact is missing, stale, conflicting, or
-   unverifiable").
-3. **UNKNOWN is restrictive *and* special** (rule 3). It is neither a rejection nor safe-to-retry
-   (RFC-005 §11:325-327). Before the attempt is handed off, an UNKNOWN simply stops the flow; once
-   the attempt has left the core, an UNKNOWN keeps the reservation projection conservatively
-   ``POTENTIALLY_LIVE`` and re-submits nothing (:mod:`tos.engine.state`).
-4. **A degraded outcome never gets here** (rule 4). :mod:`tos.engine.pipeline` folds a
-   bounded-evaluation degradation to no-action, and a no-action starts no flow — defence in depth.
-
-**Coordinator authority: none** (design #31 §4.3). Two structural seals make that mechanical rather
-than promised:
-
-* **step 12 is not injectable.** The Coordinator's single direct action is creating the unique
-  attempt request bound to the exact conformance proof and Action Flow Permit (ADR-002-002
-  §11.3:599). Supplying a stage for it raises.
-* **steps 15-19 are not hostable.** The Send Boundary is constitutionally D-E4 (RFC-002 §10.8);
-  supplying a stage for any of them raises. D-E1 therefore makes **no** claim about final-egress
-  currentness, QCC, or single-use capability, and its fail-closed guarantee is honestly scoped to
-  steps 1-14 (design #31 §4.5 item-7 / §10.2-3).
-
-**attempt-id determinism** (design #31 §4.3, MAJOR-3): the identity is content-addressed from
-(conformance-proof digest, Action Flow Permit identity, reference-coordinate digest) through the
-injected canonicalization scheme. No ``uuid4``, no timestamp nonce, no RNG — the same three inputs
-always reproduce the same attempt identity, so replay identity survives (RFC-003 §10:360-363).
-
-Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #31 §0.3). No clock, no RNG.
-"""
+"""The 19-step fail-closed Execution Coordinator sequencer (design #31 §4 — load-bearing content)."""
 
 from __future__ import annotations
 
@@ -87,13 +49,7 @@ __all__ = [
 
 @runtime_checkable
 class Stage(Protocol):
-    """One injected commitment-flow step (design #31 §4.1 / §12-2).
-
-    A stage is ``(StageRequest) -> StageVerdict``. The sequencer does not know — and must not
-    know — whether the implementation is an already-shipped pure sibling predicate, a
-    non-authoritative provisional stand-in, or a D-E4 implementation; that ignorance is what makes
-    backtest / paper / test-double parity possible (design #31 §4.1/§12).
-    """
+    """One injected commitment-flow step (design #31 §4.1 / §12-2)."""
 
     def __call__(self, request: StageRequest) -> StageVerdict:
         """Judge one step and return its positive-admit verdict."""
@@ -102,14 +58,7 @@ class Stage(Protocol):
 
 @runtime_checkable
 class Transmit(Protocol):
-    """The injected send-boundary hand-off (design #31 §4.5 / §12-3).
-
-    ``(AttemptRequest) -> SendHandoff``, returning immediately: the core issues the request and
-    does not block on the network (design #31 §2.1 D5). The *result* arrives later as an
-    ``EGRESS_RESULT`` event. D-E3 injects a fill-model stand-in (no real send); D-E4 injects the
-    real paper-account sender — **same sequencer, different injection** (RFC-002 §10.8:763 forbids
-    exposing a general-purpose live-order method to backtest/simulation components).
-    """
+    """The injected send-boundary hand-off (design #31 §4.5 / §12-3)."""
 
     def __call__(self, attempt: AttemptRequest) -> SendHandoff:
         """Hand the bound attempt to the send boundary and return at once."""
@@ -118,12 +67,7 @@ class Transmit(Protocol):
 
 @dataclass(frozen=True)
 class FlowResult:
-    """The outcome of one commitment-flow run (design #31 §4).
-
-    ``handed_off`` is ``True`` only when every step 1-14 admitted positively **and** the attempt
-    was passed to the injected transmit. ``halt_step`` / ``halt_reason`` name where and why the
-    flow stopped otherwise — a stop is never silent.
-    """
+    """The outcome of one commitment-flow run (design #31 §4)."""
 
     instrument_key: InstrumentKey
     verdicts: tuple[StageVerdict, ...] = ()
@@ -136,17 +80,7 @@ class FlowResult:
 
 
 def validate_stage_map(stages: Mapping[CommitmentStep, Stage]) -> None:
-    """Reject a stage map that would breach a Coordinator structural seal (design #31 §4.3/§4.5).
-
-    Args:
-        stages: The injected step → stage mapping.
-
-    Raises:
-        ArtifactIntegrityError: If a stage is supplied for a Coordinator-realized step (1 or 12) or
-            for any Send Boundary step (15-19). Both are structural seals: the Coordinator's only
-            direct action is step 12, and the send boundary is D-E4's — hosting either would be the
-            over-realization the design forbids.
-    """
+    """Reject a stage map that would breach a Coordinator structural seal (design #31 §4.3/§4.5)."""
     for step in stages:
         if step in COORDINATOR_REALIZED_STEPS:
             raise ArtifactIntegrityError(
@@ -166,20 +100,7 @@ def validate_stage_map(stages: Mapping[CommitmentStep, Stage]) -> None:
 def reference_coordinate_digest(
     reference: OrderingEvent, *, scheme: CanonicalizationScheme
 ) -> str:
-    """The content-addressed digest of the injected reference coordinate (design #31 §4.3).
-
-    The event's causal-ordering coordinates are an *opaque injected* time reference (design #31
-    §2.3): a bar timestamp for a backtest, an injected clock reading for paper. Digesting them
-    through the same canonicalization scheme keeps the attempt identity a pure function of its
-    inputs.
-
-    Args:
-        reference: The event's ordering coordinates.
-        scheme: The injected canonicalization scheme.
-
-    Returns:
-        The hex digest of the canonicalized coordinates.
-    """
+    """The content-addressed digest of the injected reference coordinate (design #31 §4.3)."""
     return scheme.compute_digest(reference.model_dump(mode="json"))
 
 
@@ -190,27 +111,7 @@ def build_attempt_request(
     reference: OrderingEvent,
     scheme: CanonicalizationScheme,
 ) -> AttemptRequest:
-    """Create the step-12 unique attempt request (ADR-002-002 §11.3:599; design #31 §4.3).
-
-    The identity is **content-addressed**: ``derive_id`` over the scheme digest of
-    (proof digest, permit identity, reference-coordinate digest). There is no ``uuid4``, no
-    timestamp, and no RNG anywhere on this path — the §7.1 canary enforces that — so the same three
-    bindings always reproduce the same attempt identity and replay identity is preserved
-    (RFC-003 §10:360-363).
-
-    Args:
-        conformance_proof_digest: The exact Order Conformance Proof digest (step 11).
-        action_flow_permit_identity: The exact single-use Action Flow Permit identity (step 9).
-        reference: The injected reference coordinate.
-        scheme: The injected canonicalization scheme.
-
-    Returns:
-        The bound :class:`~tos.engine.records.AttemptRequest`.
-
-    Raises:
-        ArtifactIntegrityError: If either binding is absent — an unbound attempt is
-            unconstructable (fail-closed).
-    """
+    """Create the step-12 unique attempt request (ADR-002-002 §11.3:599; design #31 §4.3)."""
     if not conformance_proof_digest or not action_flow_permit_identity:
         raise ArtifactIntegrityError(
             "an attempt request binds the exact conformance proof and Action Flow Permit "
@@ -241,23 +142,7 @@ def _halt(
     detail: str | None,
     event_id: str | None = None,
 ) -> FlowResult:
-    """Record a halt and return the restrictive :class:`FlowResult` (design #31 §4.2 rule 2).
-
-    Args:
-        sink: The provisional evidence sink.
-        key: The dispatch scope.
-        verdicts: Every verdict admitted before the halt.
-        step: The step the flow halted at.
-        reason: The halt reason.
-        detail: The halt detail.
-        event_id: The content-addressed identity of the ``DECISION_TICK`` event whose handling
-            produced this halt (Phase 3 wave 3 KW3-EV; :func:`~tos.engine.records.event_identity`)
-            — ``None`` only when the caller genuinely has none to offer (e.g. a unit test that
-            exercises the sequencer directly, never through :class:`~tos.engine.core.EngineCore`).
-            Threaded through so a replay can correlate every ``FLOW_HALTED`` record with the exact
-            event that produced it, instead of relying on encounter order (fragile under a
-            truncated replay window).
-    """
+    """Record a halt and return the restrictive :class:`FlowResult` (design #31 §4.2 rule 2)."""
     sink.record(
         EngineEvidenceRecord(
             kind=EvidenceKind.FLOW_HALTED,
@@ -278,11 +163,7 @@ def _halt(
 
 
 def _bindings_from(verdicts: tuple[StageVerdict, ...]) -> tuple[str | None, str | None]:
-    """Extract the (conformance-proof digest, Action Flow Permit identity) step 12 binds.
-
-    Read **structurally** off the recorded verdicts of step 11 and step 9 rather than from any
-    caller-supplied claim (구조 파생 > 자기신고; design #31 §4.3).
-    """
+    """Extract the (conformance-proof digest, Action Flow Permit identity) step 12 binds."""
     proof_digest: str | None = None
     permit_identity: str | None = None
     for verdict in verdicts:
@@ -307,34 +188,7 @@ def run_commitment_flow(
     value_view: ContextValueView | None = None,
     event_id: str | None = None,
 ) -> FlowResult:
-    """Walk ADR-002-002 §11 steps 1-14 fail-closed, then hand off to the injected transmit.
-
-    Args:
-        proposal_id: The emitted proposal's identity (bound into the reservation projection).
-        proposal: The emitted per-instrument Proposal that starts the flow (step 1).
-        instrument_key: The dispatch scope.
-        reference: The event's injected reference/ordering coordinates.
-        stages: The injected step → stage mapping for steps 2-11, 13, 14.
-        transmit: The injected send-boundary hand-off; ``None`` stops the flow after step 14 with
-            ``TRANSMIT_UNAVAILABLE`` (an absent send boundary is not a licence to skip it).
-        ledger: The provisional, non-authoritative reservation projection.
-        sink: The provisional evidence sink.
-        scheme: The injected canonicalization scheme.
-        value_view: The tick's resolved Critical Input value surface, carried onto every
-            :class:`StageRequest` so a stage can consume the values the decision was made on
-            (design #35 §4.2). ``None`` when the tick published none.
-        event_id: The ``DECISION_TICK`` event's content-addressed identity (Phase 3 KW3-EV;
-            :func:`~tos.engine.records.event_identity`), stamped onto every per-step record this
-            function emits so a replay can correlate a flow by its event, not encounter order —
-            see :attr:`~tos.engine.records.EngineEvidenceRecord.event_id`. ``None`` only for a
-            caller with no event to offer (e.g. a direct sequencer unit test).
-
-    Returns:
-        The :class:`FlowResult`.
-
-    Raises:
-        ArtifactIntegrityError: If the stage map breaches a Coordinator structural seal.
-    """
+    """Walk ADR-002-002 §11 steps 1-14 fail-closed, then hand off to the injected transmit."""
     validate_stage_map(stages)
 
     verdicts: tuple[StageVerdict, ...] = ()
@@ -343,11 +197,7 @@ def run_commitment_flow(
     def _stop(
         *, step: CommitmentStep, reason: HaltReason, detail: str | None
     ) -> FlowResult:
-        """Record a halt for this flow — binds ``sink``/``verdicts``/``event_id`` from the
-        enclosing scope so every one of this function's many halt sites (design #31 §4.2 rule 2:
-        every stop is a distinct, explicit branch, never a shared catch-all) states only what
-        differs: the step, the reason, and the detail (Phase 3 wave 3 KW3-EV size-budget
-        discipline — extracted rather than re-registering a larger exception)."""
+        """Record a halt for this flow — binds ``sink``/``verdicts``/``event_id`` from the"""
         return _halt(
             sink,
             key=instrument_key,
@@ -359,7 +209,6 @@ def run_commitment_flow(
         )
 
     for step in SEQUENCED_STEPS:
-        # -- step 1: the Decision Service proposal, already realized by the pipeline ----------
         if step is CommitmentStep.DECISION_PROPOSAL:
             verdicts += (
                 StageVerdict(
@@ -374,7 +223,6 @@ def run_commitment_flow(
             )
             continue
 
-        # -- step 12: the Coordinator's only direct action ------------------------------------
         if step is CommitmentStep.ATTEMPT_REQUEST:
             proof_digest, permit_identity = _bindings_from(verdicts)
             try:
@@ -416,13 +264,6 @@ def run_commitment_flow(
             )
             continue
 
-        # -- the capacity stage: at-most-one exposure retention (design #31 §4.4, MAJOR-1) -----
-        # A restrictive-only observation of the engine's OWN projection, applied *before* the
-        # injected stage runs, so the seal does not depend on which stand-in was injected. It
-        # creates no headroom for anyone (RFC-002 §9.1:558) and grants nothing; it only refuses to
-        # start an overlapping economic effect while one is unresolved for the scope — the
-        # provisional mirror of SAFE-021 At-Most-One Exposure Effect closing the between-events
-        # re-entrancy window (design #31 §2.1(iv)/§4.4).
         if (
             step is CommitmentStep.LEDGER_VERIFICATION
             and not ledger.admits_new_exposure(instrument_key)
@@ -442,7 +283,6 @@ def run_commitment_flow(
                 ),
             )
 
-        # -- steps 2-11, 13, 14: injected stages ----------------------------------------------
         stage = stages.get(step)
         if stage is None:
             return _stop(
@@ -461,9 +301,6 @@ def run_commitment_flow(
             prior_verdicts=verdicts,
             attempt=attempt,
             value_view=value_view,
-            # ★ a restrictive-only *read* of the engine's own projection (design #35 §5.2). The
-            # observation is offered to every step and consumed only by the bases that need it;
-            # nothing here creates headroom, releases a scope, or writes to the ledger.
             held_position_magnitude=ledger.outstanding_consumed_magnitude(
                 instrument_key
             ),
@@ -498,7 +335,6 @@ def run_commitment_flow(
             )
         verdicts += (verdict,)
 
-        # ★ the positive-admit gate. Only an explicit ADMIT advances (design #31 §4.2 rule 1).
         if verdict.outcome is not StageOutcome.ADMIT:
             reason = (
                 HaltReason.STAGE_UNKNOWN
@@ -515,17 +351,12 @@ def run_commitment_flow(
                 stage_outcome=verdict.outcome,
                 authority_class=verdict.authority_class,
                 event_id=event_id,
-                # [KW3-EV] verbatim from the verdict, every step uniformly (only steps 9/11 are
-                # ever non-None — see EngineEvidenceRecord.bound_identity/bound_digest docs).
                 bound_identity=verdict.bound_identity,
                 bound_digest=verdict.bound_digest,
                 detail=verdict.reason,
             )
         )
 
-        # Step 9 is where the atomic commitment is projected: the scope becomes occupied, and the
-        # at-most-one retention (design #31 §4.4) applies from here on. The ledger re-checks the
-        # bound itself, so a defect in the step-8 pre-check still fails closed here.
         if step is CommitmentStep.ATOMIC_COMMIT:
             try:
                 ledger.commit_unbound(instrument_key, proposal_id=proposal_id)
@@ -536,7 +367,6 @@ def run_commitment_flow(
                     detail=str(exc),
                 )
 
-    # -- send-boundary hand-off (steps 15-19 are D-E4; design #31 §4.5) -----------------------
     if attempt is None:  # pragma: no cover - step 12 always runs or halts
         return _stop(
             step=CommitmentStep.ATTEMPT_REQUEST,
@@ -553,9 +383,6 @@ def run_commitment_flow(
             ),
         )
 
-    # ADR-002-002 §11.4 step 17: the projection advances to POTENTIALLY_LIVE **before** the
-    # external call, and stays there even if the hand-off fails (INV-005:168; RFC-002 §10.7:722 —
-    # a missing acknowledgement is never read as a rejection).
     ledger.mark_potentially_live(instrument_key)
     try:
         handoff = transmit(attempt)

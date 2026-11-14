@@ -1,25 +1,4 @@
-"""``tos_runtime.compose._wiring._decision_provider`` tests (kernel round #1
-§2.2 re-review finding #7, LOW).
-
-``_decision_provider`` swallows ``OperatorApprovalFileError`` into ``None``
-(fail-closed — the sequencer must never see an exception here, module
-docstring's "zero auto-approval"), but that swallow previously left an
-operator's own MALFORMED/REFUSED approval file completely invisible: the
-same ``None`` as the ordinary "no decision authored yet" case. This module
-proves the fix — a refusal now appends one ``IAP_APPROVAL_FILE_REFUSED``
-evidence record (naming the path and the refusal text) before returning
-``None`` — and that an ordinary MISSING file (never refused, just not
-authored yet) records nothing, preserving that distinction.
-
-Hermetic, following this package's own established pattern of unit-testing
-one ``_wiring`` private function directly against real collaborators it
-does not itself construct (see ``test_time_permits_new_risk.py`` /
-``test_rcl_tip_generation_provider.py``) — a real
-:func:`tos_runtime.authority.iap.load_operator_approval_with_receipt` call
-against a REAL custody-mode violation (never mocked: the failure mode under
-test is the real custody gate's real refusal), with only the time service
-and evidence port duck-typed doubles.
-"""
+"""``tos_runtime.compose._wiring._decision_provider`` tests (kernel round #1"""
 
 from __future__ import annotations
 
@@ -44,19 +23,14 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 
 class _NeverStartedTimeService:
-    """Duck-typed double. Never actually reached by either test below — the
-    custody mode/owner gate refuses (or the file is simply absent) strictly
-    before any receipt work starts (module docstring's own "checks run
-    before the file is opened" discipline, shared with ``FileCustody``)."""
+    """Duck-typed double. Never actually reached by either test below — the"""
 
     def current_snapshot(self) -> NoReturn:
         raise TimeServiceNotStarted("unused by this test")
 
 
 class _RecordingEvidencePort:
-    """A minimal evidence-port double recording every ``append`` call
-    verbatim — this test exercises ``_decision_provider``'s OWN refusal-
-    visibility behavior, not the real durable evidence chain."""
+    """A minimal evidence-port double recording every ``append`` call"""
 
     def __init__(self) -> None:
         self.calls: list[tuple[dict[str, object], str, str]] = []
@@ -85,14 +59,12 @@ def _time_config() -> TrustworthyTimeConfig:
         trading_calendar_version="cal-1",
         verification_profile_version="vp-0",
         safety_profile_version="sp-0",
+        time_health_snapshot_heartbeat_ms=60_000,
     )
 
 
 def _issued_proposal() -> Proposal:
-    """A minimally-valid, digest-verified :class:`Proposal` built directly
-    via :meth:`Proposal.issue` — a real, non-DSL-driven digest is sufficient
-    for ``_decision_provider``'s own resolution logic (it only ever reads
-    ``proposal.canonical_digest``)."""
+    """A minimally-valid, digest-verified :class:`Proposal` built directly"""
     scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
     issued = Proposal.issue(
         scheme=scheme,
@@ -138,7 +110,7 @@ def test_a_refused_approval_file_is_recorded_before_returning_none(
             }
         )
     )
-    os.chmod(path, 0o644)  # wrong mode -- the custody gate refuses this
+    os.chmod(path, 0o644)
 
     evidence = _RecordingEvidencePort()
     provider = _decision_provider(
@@ -164,9 +136,7 @@ def test_a_refused_approval_file_is_recorded_before_returning_none(
 
 
 def test_a_missing_approval_file_records_nothing(tmp_path: Path) -> None:
-    """The ordinary "operator has not authored a decision yet" case (module
-    docstring's own zero-auto-approval discipline) must never be confused
-    with a refused/malformed file — nothing is durably recorded."""
+    """The ordinary "operator has not authored a decision yet" case (module"""
     proposal = _issued_proposal()
     (tmp_path / "approvals").mkdir()
     evidence = _RecordingEvidencePort()

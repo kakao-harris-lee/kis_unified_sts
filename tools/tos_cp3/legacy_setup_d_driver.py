@@ -1,49 +1,5 @@
 #!/usr/bin/env python3
-"""The LEGACY-driven half of the CP-3 field producer, moved out of B1a.
-
-What this is
-------------
-``tools/tos_cp3/produce_fields.py`` used to hold two producers: the one that
-drives the legacy
-:class:`~shared.decision.setups.vwap_reversion.SetupDVWAPReversion` bar by bar
-and reads its own evaluation trace, and — since P2-c slice 1 — the declarative
-one that runs a tenant's ``fields.yaml``. This module is the first of those,
-moved verbatim so that the second can be the only one the PRODUCTION path
-loads (plan ``docs/plans/2026-11-11-tos-p2-declarative-fields.md`` §5.2:
-``SetupDVWAPReversion`` import 0 in ``produce_fields.py``).
-
-Nothing here changed in the move. The bodies are the same bodies, the
-docstrings are the same docstrings, and the omission gate, the record shape,
-the scaling and the ``raw_event_id``/``as_of_ms`` derivation are still
-:mod:`~tools.tos_cp3.produce_fields`'s — imported from there rather than
-restated, so the legacy and declarative producers keep answering one question
-with one function.
-
-Who still drives the legacy
----------------------------
-Measurement, and only measurement:
-
-* ``tools/tos_cp3/fields_equivalence.py`` — the P2-b comparison's legacy side.
-  It reads the setup's own ``last_eval`` through the ``observer`` hook, which a
-  declarative evaluator has no equivalent of; that hook is why this driver
-  could not simply be replaced in place.
-* ``tools/tos_cp3/stitch_measure.py`` (S1b — the ATR window across a splice)
-  and ``tools/tos_cp3/minute_probe.py``, for the same reason.
-* :func:`measure_moving_vs_frozen_exit` — declared difference D7, which
-  measures the legacy's frozen entry-time exit target against the moving VWAP
-  the TOS rules compare. It is a measurement of the legacy, so it drives the
-  legacy by definition.
-
-The LIVE producer does not (P2-c slice 2). While the B3 witness stays
-byte-frozen until ``TOS_PAPER_READY`` (CLAUDE.md, legacy-removal plan §2) this
-module is what keeps the witness reachable without putting it in the
-production path's import closure.
-
-Firewall
---------
-``tools/`` is inside the reverse scan of ``tools/tos_firewall_check.py``
-(TOS-FW-R), so this module imports nothing from ``tos`` or ``tos_runtime``.
-"""
+"""The LEGACY-driven half of the CP-3 field producer, moved out of B1a."""
 
 from __future__ import annotations
 
@@ -88,13 +44,7 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
 
 
 def _bar_lookup(df: Any) -> dict[Any, tuple[float, float, float, float]]:
-    """Map each bar timestamp to its ``(open, high, low, volume)``.
-
-    ``MarketContext`` carries only the close, so the OHLCV half of a published
-    line is read back from the frame the replay was built from. A duplicated
-    timestamp would make that lookup ambiguous (the #516 minute-dedup defect),
-    so it is refused rather than resolved arbitrarily.
-    """
+    """Map each bar timestamp to its ``(open, high, low, volume)``."""
     import pandas as pd
 
     stamps = df["timestamp"]
@@ -122,40 +72,7 @@ def produce_bars(
     emit_days: frozenset[date] | None = None,
     observer: Callable[[datetime, Mapping[str, Any]], None] | None = None,
 ) -> ProducedBars:
-    """Drive the legacy Setup D bar by bar and project its state into fields.
-
-    ``check()`` is called exactly once per replayed bar — that single call is
-    what advances the setup's causal ATR / close / VWAP windows, so calling it
-    more or fewer times than the orchestrator would change ``hi_vol`` and
-    ``stall_ok``. Nothing in this function recomputes a threshold or a formula
-    that the setup owns.
-
-    A bar whose inputs cannot carry their published meaning
-    (:func:`_inputs_unusable`) is still EVALUATED — the legacy replay evaluates
-    every bar, and the causal deques must advance identically — but is not
-    emitted. Its id and reason go into the lineage.
-
-    Args:
-        emit_days: when given, only bars on these KST dates are EMITTED. Every
-            other bar is still replayed — the whole point of a stitched seed is
-            that the previous month's sessions advance ATR, the vol-window
-            percentile and ``prev_close`` — but produces no record, because a
-            previous-month bar carrying a ``raw_event_id`` named after this
-            symbol would be a label error (plan §3.2a). ``None`` keeps the
-            pre-stitch behaviour: every replayed bar is a candidate.
-        observer: read-only hook called with ``(bar_kst, last_eval)`` after
-            ``check()`` on EVERY replayed bar — the non-emitted previous-month
-            bars included, which is the point: the causal ATR window is filled
-            by bars this function does not publish, so a measurement of that
-            window (``tools/tos_cp3/stitch_measure.py`` S1b, plan §3.2a's
-            「``_atr_window`` 내용과 백분위 기준값」) cannot read it from the
-            records. It observes the setup's own trace — nothing here is
-            recomputed — and takes no part in the decision: it is handed a
-            :class:`~types.MappingProxyType` over ``last_eval``, so a write
-            raises instead of leaking into the next bar, and the returned
-            records are identical with and without it
-            (``tests/tools/test_cp3_produce_fields.py``).
-    """
+    """Drive the legacy Setup D bar by bar and project its state into fields."""
     import pandas as pd
 
     setup = SetupDVWAPReversion(config=strategy.entry_config)
@@ -179,23 +96,14 @@ def produce_bars(
     bars_replayed = 0
     non_target = 0
     for ctx in replay.iter_contexts():
-        # `arg-type` 억제 사유는 `emit_legacy_decisions.py` 의 같은 호출에 적었다 —
-        # frozen `MarketContext` 대 쓰기 가능 멤버를 선언한 `FuturesMarketView`
-        # 프로토콜의 기존 간극(`shared/backtest/decision_harness.py:262`).
         setup.check(ctx)  # type: ignore[arg-type]
         ev = setup.last_eval
         if observer is not None:
-            # Read-only by construction, not by convention: the proxy raises on
-            # any write, so "it takes no part in the decision" is enforced here
-            # rather than only asserted in a test. The default path keeps the
-            # `is not None` guard, so it allocates no proxy at all.
             observer(ctx.now, MappingProxyType(ev))
         bars_replayed += 1
 
         now: datetime = ctx.now
         if emit_days is not None and now.date() not in emit_days:
-            # Replayed (the windows advanced on the check() above) and then
-            # dropped BEFORE a join key is derived — see the docstring.
             non_target += 1
             continue
         as_of_ms = derive_as_of_ms(now)
@@ -227,9 +135,6 @@ def produce_bars(
                     f"{raw_event_id}: non-finite bar {name}={value!r}"
                 )
 
-        # ONE definition of z, shared with check() (see the accessor's
-        # docstring). Published on every bar because the session-exit fields
-        # outlive the entry window, where check() returns early.
         z = SetupDVWAPReversion.vwap_extension_z(close, vwap, atr)
 
         fields: dict[str, int | bool | str] = {
@@ -238,8 +143,6 @@ def produce_bars(
             "low_x100": scaled_int_half_up(bar_low, PRICE_SCALE),
             "close_x100": scaled_int_half_up(close, PRICE_SCALE),
             "volume": int(bar_volume),
-            # Opaque session identifier — a tos Bar reads no market hours from
-            # it. Futures is day-only, so the KST date IS the session.
             "session_token": now.date().isoformat(),
             "vwap_x100": scaled_int_half_up(vwap, PRICE_SCALE),
             "atr14_x100": scaled_int_half_up(atr, PRICE_SCALE),
@@ -295,11 +198,6 @@ def produce_records(
     ).records
 
 
-# ---------------------------------------------------------------------------
-# D7 measurement (moving VWAP vs the legacy frozen target)
-# ---------------------------------------------------------------------------
-
-
 def measure_moving_vs_frozen_exit(
     df: Any,
     *,
@@ -308,26 +206,7 @@ def measure_moving_vs_frozen_exit(
     contract_spec: ContractSpec,
     anchor: OpenAnchor,
 ) -> dict[str, Any]:
-    """Measure D7: when does a moving-VWAP exit differ from the legacy target?
-
-    For every bar the legacy setup FIRES on, walk the remaining bars of that
-    session and record the first bar at which
-
-    * the **frozen** rule triggers — the legacy ``take_profit`` price (fixed on
-      the signal) is reached, exactly as ``SetupTargetExit`` compares it, and
-    * the **moving** rule triggers — price is back at the session VWAP on the
-      entry's side (``z >= 0`` for a long fade, ``z <= 0`` for a short), which
-      is the strongest form a tenant policy can write on the published fields.
-
-    Returns the counts the lineage's D7 entry quotes. Kept beside the producer
-    rather than in a scratch script so the number in the sidecar can be
-    regenerated by the same code that documents it: ``--measure-d7`` prints the
-    :data:`D7_MEASUREMENT` literal from this function's output.
-
-    The buckets are disjoint and exhaustive — ``earlier + identical + later +
-    never_either == entries`` — and every lead is session-bounded, because the
-    inner walk stops at the session boundary.
-    """
+    """Measure D7: when does a moving-VWAP exit differ from the legacy target?"""
     setup = SetupDVWAPReversion(config=strategy.entry_config)
     replay = MarketContextReplay(
         df=df,
@@ -341,18 +220,13 @@ def measure_moving_vs_frozen_exit(
     )
 
     contexts: list[Any] = []
-    entries: list[tuple[int, str, float]] = []  # (index, direction, take_profit)
+    entries: list[tuple[int, str, float]] = []
     for ctx in replay.iter_contexts():
-        # 같은 프로토콜 간극 — 위 호출의 주석 참조.
         signal = setup.check(ctx)  # type: ignore[arg-type]
         contexts.append(ctx)
         if signal is not None:
             entries.append((len(contexts) - 1, signal.direction, signal.take_profit))
 
-    # Buckets are disjoint and exhaustive, and a "lead" is a number only when
-    # BOTH rules triggered inside the session. The first draft measured the
-    # frozen-never case to the end of the whole SERIES and reported a
-    # 32591-bar maximum — not a quantity about any session.
     earlier = identical = later = never_either = 0
     earlier_frozen_never = later_moving_never = 0
     leads: list[int] = []

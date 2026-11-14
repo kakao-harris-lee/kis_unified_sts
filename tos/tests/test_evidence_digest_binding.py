@@ -1,12 +1,4 @@
-"""Evidence digest-binding REUSE + independent-identity (design #4 §3.1/§3.3/§4.2).
-
-Reuses the design §3.4 (A) digest contract on the evidence covered content and
-demonstrates the crux of §3.1 (b): evidence identity is **independent**, not
-``f(digest)``. Two records with identical covered content but different
-``evidence_record_id`` share the same ``canonical_digest`` — the very fact that
-makes a §12 same-id/different-bytes conflict representable and detectable.
-Covers envelope / EIP / receipt / replay.
-"""
+"""Evidence digest-binding REUSE + independent-identity (design #4 §3.1/§3.3/§4.2)."""
 
 from __future__ import annotations
 
@@ -25,8 +17,6 @@ from ._evidence_strategies import (
     issue_replay,
 )
 
-# ---- digest == canonicalize(covered) (REUSE §3.4 (A)) ----------------------
-
 
 def test_envelope_digest_matches_covered() -> None:
     """An issued envelope's digest equals canonicalize(covered) (§3.3)."""
@@ -43,15 +33,11 @@ def test_all_evidence_artifacts_digest_match_covered() -> None:
         )
 
 
-# ---- id is INDEPENDENT, NOT f(digest) (§3.1 (b), §4.2 crux) ----------------
-
-
 @given(id_a=REQUIRED_FIELD_TEXT, id_b=REQUIRED_FIELD_TEXT)
 def test_identity_independent_of_digest(id_a: str, id_b: str) -> None:
     """Same covered content + different record id => SAME digest (id != f(digest))."""
     a = issue_envelope(evidence_record_id=id_a)
     b = issue_envelope(evidence_record_id=id_b)
-    # Identity does not enter the covered preimage, so the digest is unchanged.
     assert a.canonical_digest == b.canonical_digest
     if id_a != id_b:
         assert a.evidence_record_id != b.evidence_record_id
@@ -69,9 +55,6 @@ def test_idempotency_id_excluded_from_digest() -> None:
     a = issue_envelope(idempotency_id="idem-A")
     b = issue_envelope(idempotency_id="idem-B")
     assert a.canonical_digest == b.canonical_digest
-
-
-# ---- frozen immutability + substitution rejection --------------------------
 
 
 def test_envelope_is_frozen() -> None:
@@ -94,12 +77,9 @@ def test_mutate_covered_with_stale_digest_rejected() -> None:
     """Changing a covered field while keeping the old digest is rejected."""
     env = issue_envelope()
     kwargs = env.model_dump()
-    kwargs["record_class"] = "TAMPERED"  # covered change, digest now stale
+    kwargs["record_class"] = "TAMPERED"
     with pytest.raises(ValidationError):
         SafetyEvidenceEnvelope(**kwargs)
-
-
-# ---- excluded insensitivity + DRAFT pre-issuance ---------------------------
 
 
 def test_status_change_preserves_digest() -> None:

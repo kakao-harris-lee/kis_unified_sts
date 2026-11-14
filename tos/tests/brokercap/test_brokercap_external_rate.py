@@ -1,8 +1,4 @@
-"""External-detection / rate-admission bounds (design #10 §5.5; BC-EV-011/012).
-
-Bounds are injected (never hardcoded — §8); a None bound fails closed; a missed bound or
-protective-headroom encroachment denies new risk.
-"""
+"""External-detection / rate-admission bounds (design #10 §5.5; BC-EV-011/012)."""
 
 from __future__ import annotations
 
@@ -11,11 +7,6 @@ from hypothesis import given
 from tos.brokercap import external_detection_ok, rate_admission_ok
 
 _NN = st.integers(min_value=0, max_value=1000)
-
-
-# ---------------------------------------------------------------------------
-# external_detection_ok
-# ---------------------------------------------------------------------------
 
 
 def test_within_bounds_ok() -> None:
@@ -52,11 +43,6 @@ def test_external_detection_matches_bound_definition(
     assert external_detection_ok(detect, contain, observed) == (
         observed <= detect and observed <= contain
     )
-
-
-# ---------------------------------------------------------------------------
-# rate_admission_ok
-# ---------------------------------------------------------------------------
 
 
 def test_rate_admission_ok_positive() -> None:

@@ -1,6 +1,4 @@
-"""Hermetic tests for :mod:`tos_runtime.rcl.finality_witness` (TOS Phase 3 Wave 2 Lane C-R;
-plan §2.2) — the ``PostTradeFinalityProof -> finality_witness -> apply_reservation_transition``
-seam, end to end against a real :class:`~tos_runtime.rcl.log.SqliteCommitLog`."""
+"""Hermetic tests for :mod:`tos_runtime.rcl.finality_witness` (TOS Phase 3 Wave 2 Lane C-R;"""
 
 from __future__ import annotations
 
@@ -50,10 +48,7 @@ def _producer() -> SyntheticFinalityProducer:
 def _commit_to_potentially_live(
     log: SqliteCommitLog, epoch: int, *, reservation_id: str
 ) -> int:
-    """Commits the setup transition; returns the new tip ``seq`` (a
-    successful ``apply_reservation_transition`` never returns a ``None``
-    seq — every call site below only ever needs this resolved ``expected_seq``
-    for its own next transition, never the receipt object itself)."""
+    """Commits the setup transition; returns the new tip ``seq`` (a"""
     receipt = log.apply_reservation_transition(
         CapacityReservationTransition(
             reservation_id=reservation_id,
@@ -138,8 +133,7 @@ def test_no_proof_refuses_release(
     filled: str | None,
     remaining: str | None,
 ) -> None:
-    """CPL-4 (cancel is not release) / RFC-005 §11 (partial leaves remaining live): none of
-    these produce a proof, so the witness is ``None`` and the release is refused."""
+    """CPL-4 (cancel is not release) / RFC-005 §11 (partial leaves remaining live): none of"""
     epoch = log.acquire_epoch(identity)
     setup = _commit_to_potentially_live(log, epoch, reservation_id=f"res-{kind.value}")
 
@@ -171,21 +165,13 @@ def test_no_proof_refuses_release(
         )
     assert excinfo.value.reason == ReservationRefusalReason.FINALITY_WITNESS_REQUIRED
     rows = {rid: state for rid, state, _seq, _scope in log.reservation_rows()}
-    assert rows[f"res-{kind.value}"] == CapacityState.POTENTIALLY_LIVE  # unchanged
+    assert rows[f"res-{kind.value}"] == CapacityState.POTENTIALLY_LIVE
 
 
 def test_mutation_cancel_to_released_without_proof_is_refused(
     log: SqliteCommitLog, identity: RuntimeIdentity
 ) -> None:
-    """Quoted mutation: if a caller tried to hand-roll ``finality_witness=True`` for a
-    CANCEL_ACK result (bypassing this producer entirely), the RCL gate would admit it — that is
-    exactly why this producer must be the ONLY source of a ``True`` witness on this path,
-    never a hand-rolled bypass. This test pins the CONTROL: going through
-    :func:`finality_witness_for` with the producer's own (correctly ``None``) output refuses,
-    as asserted above; this test additionally confirms the underlying kernel gate itself would
-    admit a forged ``True`` — demonstrating why the producer's own gating (never emitting a
-    proof for CANCEL_ACK) is the load-bearing safety property, not the rcl call alone.
-    """
+    """Quoted mutation: if a caller tried to hand-roll ``finality_witness=True`` for a"""
     epoch = log.acquire_epoch(identity)
     setup = _commit_to_potentially_live(log, epoch, reservation_id="res-mutation-1")
     transition = CapacityReservationTransition(
@@ -195,9 +181,6 @@ def test_mutation_cancel_to_released_without_proof_is_refused(
         to_state=CapacityState.RELEASED,
         scope=DEFAULT_SCOPE,
     )
-    # A forged True witness (never produced by this module for CANCEL_ACK) DOES admit at the
-    # rcl layer — proving the producer's refusal to emit a proof for CANCEL_ACK is what CPL-4
-    # actually depends on here, not this generic kernel gate.
     forged = log.apply_reservation_transition(
         transition,
         TransitionCause.FINAL_QUANTITY_PROOF,

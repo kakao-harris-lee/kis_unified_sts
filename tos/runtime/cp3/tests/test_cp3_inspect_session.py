@@ -1,38 +1,4 @@
-"""``cp3.inspect_session`` — the recorded-session inspection, pinned to a fixture.
-
-Roadmap ``docs/plans/2026-11-11-tos-platform-roadmap.md`` §P1 완료 판정's second
-half: «수치 테스트: 기록된 세션 하나를 fixture 로 고정해 출력 표의 정답 비교». The
-fixture is synthetic rather than a copy of a real session — the real session's
-journal is 352 lines and its durable set is an operator's append-only store,
-neither of which belongs in the repo — but it is the same SHAPE on both sides:
-B1a's journal lines through the committed B1b strategy content, and three sqlite
-stores with the real schema versions, the real row shapes, and a real
-:class:`~tos.dsl.ContextValueView` per tick.
-
-**The eight bars are one per behaviour, not filler** (see :data:`_BARS`). Each
-exists because something in the output would otherwise be unpinned:
-
-* ``09:00`` an **explicit-empty** value view (the ``DECISION_WITHHELD`` shape) —
-  the bar must be ``?`` / not evaluated and must leave every denominator;
-* ``09:01`` the ``LE`` threshold edge (``z_x1000 == -1800``) — R1 fires;
-* ``09:02`` its neighbour (``-1799``) — R1 fails on exactly comparison 5, which
-  is the red half that makes "which comparison blocked R1" a real statement
-  instead of an off-by-one;
-* ``09:03`` no ``preimages`` row, and ``09:04`` two snapshots naming one bar —
-  both ``UNJOINED`` with the reason printed, never silently paired to a tick;
-* ``09:05`` a value view that **disagrees with the journal** (``hi_vol``) — the
-  rules must be evaluated on the view, the bar flagged ``V``, and the field
-  named in the summary;
-* ``09:06`` a view the policy fires R2 on while the engine recorded
-  ``NoActionOutcome`` — flagged ``D``, because a screen that quietly disagrees
-  with the engine is worse than one that says it does;
-* ``09:07`` a tick the driver admitted but never finished handling — its reason
-  must say that, not "no tick bound this snapshot".
-
-Hermetic: every file this writes is under ``tmp_path`` (the suite's autouse
-write guard enforces it), it opens no socket, and it reads no clock — the bar
-stamps are injected literals, as :mod:`cp3.tests._cp3_fixtures` already requires.
-"""
+"""``cp3.inspect_session`` — the recorded-session inspection, pinned to a fixture."""
 
 from __future__ import annotations
 
@@ -74,12 +40,6 @@ from ._cp3_fixtures import (
     write_jsonl,
 )
 
-#: The eight fixture bars: labelled minute, ``as_of_ms``, field builder. The
-#: stamps are literal KST wall-clock strings in the producer's own join-key
-#: format (``tools/tos_cp3/produce_fields.py::derive_raw_event_id``), so the
-#: printed time column is the labelled minute rather than the marked ``~``
-#: fallback. ``as_of_ms`` is deliberately ~62 s later than the label, as the live
-#: producer's journal sink really stamps it.
 _BARS: tuple[tuple[str, int, Any], ...] = (
     ("20261110T090000+0900", 1_794_268_862_186, neutral_fields),
     ("20261110T090100+0900", 1_794_268_922_132, entry_fields),
@@ -91,15 +51,8 @@ _BARS: tuple[tuple[str, int, Any], ...] = (
     ("20261110T090700+0900", 1_794_269_282_190, neutral_fields),
 )
 
-#: ``bar index -> {field_key: value}`` overrides applied to the ENGINE's value
-#: view only, so the view and the journal line disagree on exactly those keys.
-#: Bar 5 flips ``hi_vol``; bar 6 is left identical to its journal line on
-#: purpose — its ``D`` marker must come from the recorded outcome disagreeing,
-#: not from a value difference, or the two markers would be untestable apart.
 _VIEW_OVERRIDES: Mapping[int, Mapping[str, ScalarValue]] = {5: {"hi_vol": True}}
 
-#: ``bar index -> (handling_started seq, consumed seq)`` for the ticks the inbox
-#: holds. Bar 7's missing ``consumed`` is the half-stamped tick (LOW-3).
 _TICKS: Mapping[int, tuple[int, int | None]] = {
     0: (1, 4),
     1: (11, 14),
@@ -109,9 +62,7 @@ _TICKS: Mapping[int, tuple[int, int | None]] = {
     7: (71, None),
 }
 
-#: The evidence rows inside each tick's window, as ``(seq, kind, payload)``.
 _EVIDENCE_ROWS: tuple[tuple[int, str, dict[str, Any]], ...] = (
-    # Bar 0 — the withheld tick: an explicit-empty view and no outcome at all.
     (1, "EVENT_HANDLING_STARTED", {}),
     (2, "DECISION_WITHHELD", {"halt_reason": "TIME_NOT_ADMITTED"}),
     (
@@ -119,7 +70,6 @@ _EVIDENCE_ROWS: tuple[tuple[int, str, dict[str, Any]], ...] = (
         "EVENT_CONSUMED",
         {"halt_reason": "TIME_NOT_ADMITTED", "flow_fingerprint": {"halt_step": None}},
     ),
-    # Bar 1 — R1 fires, the engine proposes, construction denies it.
     (11, "EVENT_HANDLING_STARTED", {}),
     (
         12,
@@ -143,7 +93,6 @@ _EVIDENCE_ROWS: tuple[tuple[int, str, dict[str, Any]], ...] = (
             "flow_fingerprint": {"halt_step": "CANDIDATE_COMMAND_CONSTRUCTION"},
         },
     ),
-    # Bar 2 — nothing fires.
     (21, "EVENT_HANDLING_STARTED", {}),
     (
         22,
@@ -155,7 +104,6 @@ _EVIDENCE_ROWS: tuple[tuple[int, str, dict[str, Any]], ...] = (
         "EVENT_CONSUMED",
         {"halt_reason": "NO_ACTION_OUTCOME", "flow_fingerprint": {"halt_step": None}},
     ),
-    # Bar 5 — the view differs from the journal; the decision still agrees.
     (51, "EVENT_HANDLING_STARTED", {}),
     (
         52,
@@ -167,8 +115,6 @@ _EVIDENCE_ROWS: tuple[tuple[int, str, dict[str, Any]], ...] = (
         "EVENT_CONSUMED",
         {"halt_reason": "NO_ACTION_OUTCOME", "flow_fingerprint": {"halt_step": None}},
     ),
-    # Bar 6 — the policy fires R2 on this view, but the engine recorded a
-    # no-action: the disagreement the `D` marker exists for.
     (61, "EVENT_HANDLING_STARTED", {}),
     (
         62,
@@ -228,13 +174,7 @@ def _view_values(index: int) -> dict[str, Any]:
 
 
 def _value_view(index: int, *, empty: bool = False) -> dict[str, Any]:
-    """One tick's stored :class:`~tos.dsl.ContextValueView`, in its dumped shape.
-
-    Built as the real thing so the reader's own
-    :meth:`~tos.dsl.ContextValueView.model_validate` has to accept it: a fixture
-    that skipped a required provenance field would pass a test the real store
-    would fail.
-    """
+    """One tick's stored :class:`~tos.dsl.ContextValueView`, in its dumped shape."""
     snapshot_id = f"cis-{index}"
     raw_event_id = _raw_event_id(_BARS[index][0])
     as_of = _BARS[index][1]
@@ -356,10 +296,6 @@ def report(tmp_path: Path) -> InspectReport:
     )
 
 
-# ===========================================================================
-# The golden table
-# ===========================================================================
-
 _EXPECTED_LEGEND = """rules (comparison order, as authored):
   R1 = R1-ENTRY-LONG (ACTION)
        1 entry_window EQ true
@@ -433,19 +369,10 @@ def test_summary_matches_the_golden_text(report: InspectReport) -> None:
     )
 
 
-# ===========================================================================
-# MEDIUM-1 — the engine's value view is what the rules are evaluated on
-# ===========================================================================
-
-
 def test_rules_are_evaluated_on_the_engine_view_not_the_journal(
     report: InspectReport,
 ) -> None:
-    """Bar 5's ``hi_vol`` is false in the journal and true in the engine's view.
-
-    A tool that evaluated the journal would print comparison 2 as false here,
-    which is a statement about a value the engine never read.
-    """
+    """Bar 5's ``hi_vol`` is false in the journal and true in the engine's view."""
     row = report.bars[5]
     assert row.fields["hi_vol"] is False
     assert row.env_values["hi_vol"] is True
@@ -480,16 +407,9 @@ def test_an_explicit_empty_view_is_withheld_and_not_evaluated(
 def test_a_recorded_withheld_decision_is_withheld_even_with_a_full_view(
     tmp_path: Path,
 ) -> None:
-    """A tick whose view carried values can still have been withheld.
-
-    Freshness refused, a coordinator precondition refused: the pipeline never
-    reached an input signature, so re-evaluating the policy on those values
-    would print a decision the engine never made. The empty-view test alone
-    misses this shape (LOW-B, round-2 review of #1058).
-    """
+    """A tick whose view carried values can still have been withheld."""
     data_dir = _write_stores(tmp_path)
     with closing(sqlite3.connect(data_dir / EVIDENCE_FILE_NAME)) as evidence:
-        # Inside bar 2's window (21 < seq <= 24), whose value view is FULL.
         evidence.execute(
             "INSERT INTO entries VALUES (?, ?, ?)",
             (
@@ -507,7 +427,7 @@ def test_a_recorded_withheld_decision_is_withheld_even_with_a_full_view(
     )
     row = report.bars[2]
     assert row.evidence is not None
-    assert row.evidence.value_view  # the view is NOT empty
+    assert row.evidence.value_view
     assert row.evidence.view_is_explicitly_empty is False
     assert row.evidence.withheld_reason == "TIME_NOT_ADMITTED"
     assert row.evidence.withheld is True
@@ -516,7 +436,6 @@ def test_a_recorded_withheld_decision_is_withheld_even_with_a_full_view(
     assert row.rules == ()
     assert row.decision_rule_id is None
     assert row.flags == "--W-"
-    # It leaves the denominators, so they drop from four bars to three.
     assert (report.withheld_bars, report.counted_bars) == (2, 3)
     assert all(rule.bars == 3 for rule in report.rules)
 
@@ -559,11 +478,6 @@ def test_an_unjoined_bar_is_evaluated_on_the_journal_and_marked(
     assert row.decision_rule_id == "R2-EXIT-VWAP-REVERTED"
 
 
-# ===========================================================================
-# MEDIUM-2 — a decision that disagrees with the engine is a finding
-# ===========================================================================
-
-
 def test_a_decision_disagreeing_with_the_engine_outcome_is_flagged(
     report: InspectReport,
 ) -> None:
@@ -591,11 +505,7 @@ def test_agreeing_bars_are_not_flagged(report: InspectReport) -> None:
 def test_an_unmeasured_outcome_type_is_not_comparable_rather_than_a_disagreement(
     tmp_path: Path,
 ) -> None:
-    """An ``outcome_type`` nobody has measured must not manufacture a ``D``.
-
-    Guessing a shape for it would turn this inspector's own ignorance into a
-    reported engine defect.
-    """
+    """An ``outcome_type`` nobody has measured must not manufacture a ``D``."""
     data_dir = _write_stores(tmp_path)
     with closing(sqlite3.connect(data_dir / EVIDENCE_FILE_NAME)) as evidence:
         evidence.execute(
@@ -614,14 +524,7 @@ def test_an_unmeasured_outcome_type_is_not_comparable_rather_than_a_disagreement
     assert row.decision_disagrees is False
     assert row.flags == "----"
     assert report.not_comparable_bars == 1
-    # Bar 6's real disagreement is untouched by this edit, so the count still
-    # holds at one: an unmeasured outcome type adds nothing to it.
     assert report.disagreement_bars == 1
-
-
-# ===========================================================================
-# LOW-3 — a half-stamped tick says so
-# ===========================================================================
 
 
 def test_a_half_stamped_tick_says_handling_never_completed(
@@ -654,19 +557,10 @@ def test_a_snapshot_no_tick_ever_bound_says_that_instead(tmp_path: Path) -> None
     assert evidence.unjoined_reason == "no inbox DECISION_TICK bound snapshot cis-2"
 
 
-# ===========================================================================
-# The threshold edge, the window, and the clock
-# ===========================================================================
-
-
 def test_le_threshold_edge_is_inclusive_and_its_neighbour_is_not(
     report: InspectReport,
 ) -> None:
-    """``-1800`` fires R1; ``-1799`` fails exactly the threshold comparison.
-
-    Without the second half, a binding the stream never crosses would be
-    indistinguishable from the authored one.
-    """
+    """``-1800`` fires R1; ``-1799`` fails exactly the threshold comparison."""
     on_edge, inside = report.bars[1], report.bars[2]
     assert on_edge.rules[0].fired is True
     assert inside.rules[0].fired is False
@@ -740,18 +634,8 @@ def test_an_unparseable_join_key_is_marked_not_silently_derived(tmp_path: Path) 
     assert report.bars[0].time_kst == "~09:01"
 
 
-# ===========================================================================
-# --no-evidence, JSON, and the store refusals
-# ===========================================================================
-
-
 def test_without_a_data_dir_the_journal_is_the_counted_basis(tmp_path: Path) -> None:
-    """``--no-evidence``'s path: no store is opened, and the numbers still mean something.
-
-    There is no engine view for the journal to be a substitute FOR here, so
-    excluding these bars would leave every denominator at zero — which answers
-    nothing. The header names the basis instead.
-    """
+    """``--no-evidence``'s path: no store is opened, and the numbers still mean something."""
     report = inspect_session(
         journal_path=_write_journal(tmp_path),
         strategy_path=STRATEGY_PATH,
@@ -775,8 +659,6 @@ def test_json_carries_the_view_the_flags_and_the_summary(report: InspectReport) 
     edge = document["bars"][1]
     assert edge["decision_rule_id"] == "R1-ENTRY-LONG"
     assert [compare["passed"] for compare in edge["rules"][0]["compares"]] == [True] * 5
-    # A joined bar names BOTH keys of the chain, so the reading can be
-    # cross-checked against the operator's own stores.
     assert (edge["evidence"]["snapshot_id"], edge["evidence"]["event_id"]) == (
         "cis-1",
         "event-1",
@@ -829,12 +711,7 @@ def test_a_failing_read_refuses_naming_the_store(tmp_path: Path) -> None:
 def test_a_store_path_with_a_query_character_is_still_read_only(
     tmp_path: Path,
 ) -> None:
-    """``as_uri()`` percent-encodes ``?``, so the path is not cut at the query.
-
-    An f-string URI would open a different file (or this one read-WRITE, with
-    the ``mode=ro`` swallowed into the filename) — the reason LOW-1 asked for
-    ``as_uri`` rather than string concatenation.
-    """
+    """``as_uri()`` percent-encodes ``?``, so the path is not cut at the query."""
     data_dir = _write_stores(tmp_path)
     odd = tmp_path / "data?x"
     odd.mkdir()
@@ -845,12 +722,7 @@ def test_a_store_path_with_a_query_character_is_still_read_only(
 
 
 def test_an_unreadable_value_view_refuses_the_view_not_the_run(tmp_path: Path) -> None:
-    """A view the kernel model rejects is named; half of it is never used.
-
-    Half of an evaluation's inputs is not a smaller evaluation, it is a wrong
-    one — so the bar falls back to the journal, marked, and the refusal is
-    counted.
-    """
+    """A view the kernel model rejects is named; half of it is never used."""
     data_dir = _write_stores(tmp_path)
     with closing(sqlite3.connect(data_dir / INBOX_FILE_NAME)) as inbox:
         inbox.execute(

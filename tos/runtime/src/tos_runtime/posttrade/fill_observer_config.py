@@ -1,9 +1,4 @@
-"""``fill_observer.yaml`` — the post-ACK fill observer's cadence, bounds, and sealed witness
-fields (split out of :mod:`tos_runtime.posttrade.fill_observer` for the module size budget when
-issue #950 added the FETCH/APPLY split; unchanged content, re-exported there).
-
-Firewall: stdlib + ``pyyaml`` + ``tos_runtime._named_tbd`` only.
-"""
+"""``fill_observer.yaml`` — the post-ACK fill observer's cadence, bounds, and sealed witness"""
 
 from __future__ import annotations
 
@@ -31,45 +26,7 @@ class FillObserverConfigError(Exception):
 
 @dataclass(frozen=True)
 class FillObserverConfig:
-    """The observer's cadence and bounds plus the witness fields it seals (module docstring).
-
-    Attributes:
-        witness_fields: The GET-only witness fields (TR ids, paths, ``max_pages``) — validated
-            by :func:`~tos_runtime.recon.witness_kis_config.kis_witness_config_from_mapping`
-            together with the order transport's own sealed host.
-        poll_interval_ms: Minimum spacing between two order-inquiry polls
-            (:meth:`KisMockFillObserver.poll_if_due`), on the injected monotonic clock.
-        overdue_after_ms: How long an ACKed attempt may show no terminal row before one
-            ``FILL_OBSERVER_OVERDUE`` row is recorded (record only — nothing is guessed).
-        finality_retry_interval_ms: Minimum spacing between two finality re-runs for one
-            attempt whose terminal result is recorded but whose release has not committed.
-        prior_day_poll_interval_ms: Minimum spacing between two reads of an unresolved ACK from
-            an EARLIER trading day (Codex r2 MEDIUM): it is re-read under its own date until a
-            terminal broker result shows — slower than today's cadence, never abandoned.
-        poll_deadline_ms: The whole poll's bound, across every date and page it reads (#949
-            review HIGH). Once it is past, the observer starts no further read and the witness
-            fetches no further page: the read in question is ``WitnessUnavailable`` — recorded,
-            fail-closed, retried at the next due poll — never a partial row list. Worst case
-            for one poll is therefore this deadline plus the one request already in flight
-            (bounded by ``witness_request_timeout_s``), instead of that timeout times every
-            page times every date.
-        witness_request_timeout_s: Per-GET timeout for the witness this config seals — the
-            observer's own bound, deliberately NOT the order path's
-            ``kis_mock_transport.yaml::request_timeout_s`` (10 s). #949 review HIGH: the
-            observer's read happens inside the session loop's tick-to-tick window, so its worst
-            case has to be a number this file states, not one inherited from a path whose
-            latency nobody is waiting on. It bounds every GET this witness makes — the
-            observer's order inquiry AND the release/recovery reconciliation's balance read,
-            which run on the same witness. Since issue #950 the observer's reads run on its
-            FETCH thread, not the loop's; this bound still caps how long one FETCH — and a
-            shutdown waiting on one — can take.
-        release_snapshot_max_age_ms: The oldest a prefetched release-reconciliation snapshot
-            may be when the loop applies it, measured from the instant its read STARTED (#969
-            review r1 HIGH). Older, it is not served: that release HOLDS — never a live read
-            on the loop — and a fresh worker read is scheduled at once. A snapshot only proves
-            the broker as it was; past this age an order that appeared since (an orphan that
-            must block the release) could be missing from it.
-    """
+    """The observer's cadence and bounds plus the witness fields it seals (module docstring)."""
 
     witness_fields: dict[str, Any]
     poll_interval_ms: int
@@ -112,12 +69,7 @@ def _positive_int(raw: dict[str, Any], key: str, path: Path) -> int:
 
 
 def load_fill_observer_config(path: Path) -> FillObserverConfig:
-    """Load ``fill_observer.yaml``, fail-closed.
-
-    Raises:
-        FillObserverConfigError: The file is absent, not a mapping, misses a key, or carries a
-            non-positive bound.
-    """
+    """Load ``fill_observer.yaml``, fail-closed."""
     if not path.is_file():
         raise FillObserverConfigError(f"fill observer config not found: {path}")
     try:
@@ -137,8 +89,6 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
     if missing:
         raise FillObserverConfigError(f"{path}: missing {missing}")
     for key in _WITNESS_KEYS:
-        # The witness config loader re-checks every one of these; refusing the placeholder here
-        # names THIS file in the error rather than the witness's.
         reject_named_tbd(
             raw[key], field=key, context=str(path), error_cls=FillObserverConfigError
         )

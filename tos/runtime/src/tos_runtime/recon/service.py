@@ -1,80 +1,4 @@
-"""``ReconciliationService`` — Phase 5 W1 three-way reconciliation (plan §2 decision 3).
-
-Assembles three independently-sourced observations — RCL reservation state
-(:class:`~tos_runtime.rcl.projection.ReservationProjectionReader`), durably recorded
-egress-result receipts (:class:`~tos_runtime.recon.ports.EvidenceReceiptReader`), and a
-broker witness (:class:`~tos_runtime.recon.ports.BrokerWitness`) — into the kernel
-``tos.recon`` predicate inputs and calls those predicates for every judgement (**판정은
-커널 술어만 한다** — the ``tos_runtime.currentness.vector.CurrentnessAssembler`` precedent:
-this service authors no boolean a kernel predicate could produce instead).
-
-**Independence-class assignment (design #9 §0.2/§4.2 — injected, never computed).** Each
-observation path gets its own label:
-
-* ``RCL_RESERVATION_LOG`` — a reservation existing in the RCL commit log (a separate
-  sqlite file from the evidence store, design #40 D3.1);
-* ``EVIDENCE_RECEIPT`` — a durably recorded ``EGRESS_RESULT`` receipt;
-* ``BROKER_WITNESS`` — the injected :class:`~tos_runtime.recon.ports.BrokerWitness`.
-
-See :mod:`tos_runtime.recon.witness_synthetic`'s module docstring for the disclosed Phase 5
-caveat: today's one ``BrokerWitness`` implementation (``SyntheticLedgerWitness``) reads the
-same durable store as the ``EVIDENCE_RECEIPT`` path, so a CORROBORATED verdict resting only
-on those two paths (without RCL) is not yet genuine broker-independent corroboration. This
-service does not special-case that today — it assigns the labels above unconditionally by
-structural path, as ``tos.recon``'s own state.py docstring says independence must be an
-injected caller judgment — and relies on the disclosure in the witness module plus a future
-real (KIS) ``BrokerWitness`` to make it substantively true.
-
-**Runtime-only classification vocabulary.** The kernel ``tos.recon`` package classifies
-per-FIELD confidence only (``FieldConfidenceClass``) — it has no per-attempt three-way
-classification concept. :class:`ReconciliationClass` is added here, purely for reporting;
-it feeds nothing back into any kernel predicate.
-
-**Fail-closed throughout (plan §2 decision 3).** A :class:`~tos_runtime.recon.ports
-.WitnessUnavailable` witness, an empty scope, or any per-field conflict all yield
-``permits_capacity_release=False`` / ``permits_rearm=False`` — never a vacuous ``True``
-from "nothing to disagree with" (mirrors ``tos.recon.predicates.classify_field``'s own
-"0 usable paths => UNKNOWN, never a vacuous CORROBORATED").
-
-**Pure judgement — mutates nothing.** This module holds no RCL commit-log writer, no
-evidence-store append call, and reads no clock (freshness is an injected
-:class:`~tos.recon.FreshnessMarker` parameter — ``tos.recon`` itself is clock-free, design
-#9 §3.5). See ``tos/runtime/tests/recon/test_service.py``'s negative-grep test.
-
-**``attempt_id`` vs ``reservation_id`` (Phase 5 W1 close-out).** This module never assumed the
-two share one identity space, but shipped no bridge between them until a real caller measured
-the gap directly: a compose root whose RCL commit log keys reservations at SCOPE granularity
-(one reservation per ``(account, instrument)``, shared by every attempt in that scope — e.g.
-:class:`~tos_runtime.rcl.obligation.CapacityObligationRecorder`'s own
-``reservation_id_resolver``) would otherwise see :meth:`ReconciliationService.reconcile` call
-``rcl_reader.reservation_state`` with the wrong key for every attempt, so ``rcl_present`` is
-always ``False`` and :class:`ReconciliationClass.MATCHED` — and therefore any capacity
-release/re-arm — is structurally unreachable. The constructor's optional
-``reservation_id_for_attempt`` callable closes this: an injected caller-side mapping from
-attempt id to whatever identity the caller's own ``rcl_reader`` actually uses, defaulting to the
-identity mapping (unchanged behaviour for a caller whose RCL projection genuinely is
-per-attempt).
-
-**``broker_execution_id`` cross-reference (carryover plan W-C C-1, 2026-09-25).** A real broker
-witness cannot name an attempt: KIS's order inquiry has no attempt-id concept, so
-:class:`~tos_runtime.recon.witness_kis.KisStockBrokerWitness` returns every order with
-``attempt_id=None``. Joined on ``attempt_id`` alone, MATCHED was unreachable with that witness and
-the same order was counted twice (the attempt degraded to ``STALE_RESERVATION`` and the order
-re-reported as ``ORPHAN_BROKER_ORDER``). :func:`_join_orders_by_execution_id` now attributes an
-attempt-less witness order to the attempt whose evidence receipt recorded the same broker id (the
-ODNO the egress adapter received on ACK). Only an unambiguous one-to-one match joins; everything
-else stays an orphan, so the join can only move an order out of the fail-closed orphan bucket when
-the identity is certain. A KIS ODNO is a per-day sequence, so the identity is the pair (id, date):
-the receipt's :attr:`~tos_runtime.recon.ports.EgressReceiptObservation.trading_date` (recorded at
-the ACK instant from trusted time) against the order's own broker-assigned
-:attr:`~tos_runtime.recon.ports.WitnessOrder.order_date`; a missing date on either side means no
-join, so receipts recorded before the date existed never join (plan 2026-09-26 egress trading
-date). Joining grants nothing by itself — MATCHED, conflicts, corroboration and
-both permits are still the kernel predicates' call on the joined observations.
-
-Firewall: stdlib + ``tos.recon`` + ``tos.rcl`` (``CapacityState`` only, for the type
-signature this service reads through) + ``tos_runtime.recon.ports`` only.
-"""
+"""``ReconciliationService`` — Phase 5 W1 three-way reconciliation (plan §2 decision 3)."""
 
 from __future__ import annotations
 
@@ -117,69 +41,15 @@ __all__ = [
     "ReconciliationService",
 ]
 
-#: See module docstring "Independence-class assignment".
 _RCL_INDEPENDENCE_CLASS = "RCL_RESERVATION_LOG"
 _EVIDENCE_INDEPENDENCE_CLASS = "EVIDENCE_RECEIPT"
 _WITNESS_INDEPENDENCE_CLASS = "BROKER_WITNESS"
 
-#: Independent-review finding F2 (2026-09-10): surfaced on :attr:`ReconciliationReport.reason`
-#: when the witness path declared itself store-derived
-#: (:attr:`~tos_runtime.recon.ports.WitnessSnapshot.independent_of_evidence_store` ``False``) and
-#: that collapse is why full corroboration did not complete for at least one attempt/order in
-#: scope — distinguishable from the generic ``None``/"no observations in scope" reasons so a
-#: caller (:mod:`tos_runtime.recovery.reconciliation`) can report it honestly rather than folding
-#: it into a generic "not corroborated".
 WITNESS_NOT_INDEPENDENT_REASON = "WITNESS_NOT_INDEPENDENT"
 
 
 def witness_independence_collapsed(report: ReconciliationReport | None) -> bool:
-    """Whether the witness's lost independence is the ONLY reason ``report`` did not clear.
-
-    The ONE predicate behind #1011 §3.5's reason split. It lives here, next to the reason
-    string itself, because two post-trade modules have to classify the same report into their
-    OWN hold vocabulary and cannot import each other:
-    :func:`tos_runtime.posttrade.release_consumer.uncorroborated_hold_reason` (the release
-    path) and :mod:`tos_runtime.posttrade.entry_recovery` (the entry-discharge recovery pass,
-    which ``release_consumer`` imports). Two hand-typed copies of the comparison is exactly
-    the shape ``_DISCHARGE_HOLD_REASONS`` already avoids: the vocabulary lives where it is
-    owned, the mapping lives in each caller, and the predicate exists once.
-
-    **Three conditions, not one (review-1018 M1).** :meth:`~ReconciliationService._reason_for`
-    stamps :data:`WITNESS_NOT_INDEPENDENT_REASON` on ANY uncleared report whose witness
-    declared itself store-derived — it decides that BEFORE looking at orphans or conflicts, so
-    the reason alone means "store-derived and not cleared", not "independence was the only
-    problem". Mapping that straight onto the softer hold reason let a genuine disagreement
-    (plan §5 ④'s "진짜 충돌 → False 유지") be recorded as an independence hold, which the
-    POST_TRADE currentness dimension then reads as conflict-free. Measured, at the service
-    level: a store-derived witness reporting qty 5 / rem 5 against a receipt of 10 / 0 gave
-    hold ``WITNESS_NOT_INDEPENDENT`` and POST_TRADE ``True``.
-
-    So this also requires that nothing ELSE in the report disagreed:
-
-    * no field is ``CONFLICTED`` (the kernel's own :func:`~tos.recon.any_field_conflicted` —
-      never a second hand-typed scan); and
-    * every classification is :attr:`~ReconciliationClass.MATCHED`. That excludes
-      :attr:`~ReconciliationClass.ORPHAN_BROKER_ORDER` — a venue order nothing accounts for,
-      the §3.4 crash-before-evidence catch — and also the one-sided
-      ``STALE_RESERVATION``/``RECEIPT_ONLY`` shapes. The independence collapse itself produces
-      no non-MATCHED classification (:func:`_classify_attempt` reads existence only), so a
-      clean store-derived report is still all-MATCHED and still answers ``True`` here.
-
-    No shipped witness can currently produce the narrowed-away cases: the only store-derived
-    witness, :class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness`, reads the
-    same evidence rows as the receipt path, so its quantities cannot diverge from them. The
-    guarantee belongs in the code rather than in how that one class happens to be built —
-    which is the whole point of a future store-derived witness reading a different table.
-
-    Args:
-        report: A reconciliation report, or ``None`` when ``reconcile`` itself raised —
-            which is a different, unavailable-rather-than-uncorroborated state and is
-            therefore ``False`` here.
-
-    Returns:
-        ``True`` iff ``report`` names :data:`WITNESS_NOT_INDEPENDENT_REASON` AND carries no
-        conflicted field AND classifies every attempt and order ``MATCHED``.
-    """
+    """Whether the witness's lost independence is the ONLY reason ``report`` did not clear."""
     if report is None or report.reason != WITNESS_NOT_INDEPENDENT_REASON:
         return False
     if any_field_conflicted(report.field_confidences):
@@ -190,11 +60,6 @@ def witness_independence_collapsed(report: ReconciliationReport | None) -> bool:
     )
 
 
-#: The two capacity-releasing fields this service actually has quantity data for
-#: (``tos.recon.CAPACITY_RELEASING_FIELDS`` names both; RCL carries no per-dimension
-#: usage magnitude today — same landed-projection gap ``tos_runtime.risk.aggregate``'s own
-#: module docstring already reports — so only the evidence-receipt and witness paths ever
-#: contribute an observation for these two fields).
 _QUANTITY_FIELDS: tuple[SafetyRelevantField, SafetyRelevantField] = (
     SafetyRelevantField.CUMULATIVE_FILLED_QUANTITY,
     SafetyRelevantField.REMAINING_EXECUTABLE_QUANTITY,
@@ -204,14 +69,9 @@ _QUANTITY_FIELDS: tuple[SafetyRelevantField, SafetyRelevantField] = (
 class ReconciliationClass(StrEnum):
     """Runtime-only per-attempt three-way classification (module docstring)."""
 
-    #: All three paths (RCL, evidence receipt, broker witness) report the same attempt.
     MATCHED = "MATCHED"
-    #: RCL-only — a reservation with no corroborating downstream receipt or witness order.
     STALE_RESERVATION = "STALE_RESERVATION"
-    #: Witness-only — a broker order with no RCL reservation and no evidence receipt.
     ORPHAN_BROKER_ORDER = "ORPHAN_BROKER_ORDER"
-    #: Evidence-only — a recorded egress-result receipt with no live reservation or
-    #: witness order.
     RECEIPT_ONLY = "RECEIPT_ONLY"
 
 
@@ -226,22 +86,7 @@ class AttemptClassification:
 
 @dataclass(frozen=True)
 class ReconciliationReport:
-    """The result of one :meth:`ReconciliationService.reconcile` call.
-
-    ``permits_capacity_release`` / ``permits_rearm`` are both ``True`` only when every
-    attempt (and orphan order) in scope independently passes its own gate — a conjunction,
-    never an average or a majority (mirrors ``tos.recon``'s own no-blended-release
-    discipline at the report level).
-
-    ``observed_positions`` (#966) is the witness snapshot's own ``positions`` axis, carried
-    through verbatim — NOT a judgement this service makes. The release consumer needs it to
-    decide whether a close actually flattened the broker-side position before it discharges the
-    entry reservation (plan §2.4). It is ``()`` both for a genuinely flat account and for a
-    witness that tracks no positions at all (``SyntheticLedgerWitness`` always reports ``()``;
-    ``KisStockBrokerWitness`` omits zero-quantity holdings by construction), so a consumer must
-    treat it as corroboration of a quantity proof, never as the proof itself — see
-    :meth:`~tos_runtime.posttrade.release_consumer.FinalityReleaseConsumer._broker_position_flat`.
-    """
+    """The result of one :meth:`ReconciliationService.reconcile` call."""
 
     field_confidences: tuple[FieldConfidence, ...]
     classifications: tuple[AttemptClassification, ...]
@@ -249,10 +94,6 @@ class ReconciliationReport:
     permits_rearm: bool
     reason: str | None = None
     observed_positions: tuple[tuple[str, Decimal], ...] = ()
-    #: The witness snapshot's own :attr:`~tos_runtime.recon.ports.WitnessSnapshot
-    #: .positions_complete`, carried through verbatim. ``False`` (the fail-closed default,
-    #: and what the witness-unavailable path reports) means :attr:`observed_positions` does
-    #: not prove anything about what is held.
     observed_positions_complete: bool = False
 
 
@@ -264,20 +105,7 @@ def _order_existence_observations(
     freshness: FreshnessMarker,
     witness_independence_class: str,
 ) -> tuple[EvidencePathObservation, ...]:
-    """Build the ``ORDER_EXISTENCE`` observations for one attempt/order.
-
-    Each present path asserts existence with no magnitude (``ConservativeBound()``) and
-    ``agrees_within_tolerance=True`` — existence has no partial-agreement notion; a path
-    either reports the attempt or it does not (an absent path is simply fewer usable
-    observations, never a recorded disagreement, matching ``classify_field``'s own "fewer
-    paths -> SINGLE_SOURCE/UNKNOWN" degradation rather than an invented conflict).
-
-    Args:
-        witness_independence_class: The independence-class label the witness-sourced
-            observation is stamped with (independent-review finding F2) — the SAME class as the
-            receipt path whenever the witness declared itself store-derived, never
-            unconditionally :data:`_WITNESS_INDEPENDENCE_CLASS`.
-    """
+    """Build the ``ORDER_EXISTENCE`` observations for one attempt/order."""
     observations: list[EvidencePathObservation] = []
     if rcl_present:
         observations.append(
@@ -324,15 +152,7 @@ def _quantity_observations(
     evidence_source_ref: str,
     witness_independence_class: str,
 ) -> tuple[EvidencePathObservation, ...]:
-    """Build the observations for one quantity field from the two paths that carry a
-    magnitude at all (module docstring — RCL carries none). Agreement is exact equality:
-    Phase 5 injects no Verification Profile tolerance value, so this is the conservative
-    (strictest) default until a caller-injected tolerance replaces it.
-
-    Args:
-        witness_independence_class: See :func:`_order_existence_observations` (same
-            independent-review finding F2 bridge).
-    """
+    """Build the observations for one quantity field from the two paths that carry a"""
     observations: list[EvidencePathObservation] = []
     if evidence_value is not None:
         agrees = witness_value is not None and evidence_value == witness_value
@@ -375,16 +195,7 @@ def _quantity_field_verdicts(
     witness_independence_class: str,
     proof_inputs: ReleaseProofInputs,
 ) -> tuple[tuple[FieldConfidence, ...], dict[SafetyRelevantField, bool], bool]:
-    """Both quantity fields' confidences, release-proof gates, and the disagreement flag.
-
-    Split out of :meth:`ReconciliationService._attempt_field_confidences_and_gates` for the
-    100-line function budget when review-1018 M1 added the third return value; a pure
-    extraction of that method's own loop, no behaviour change.
-
-    The third value is ``True`` when any path recorded ``agrees_within_tolerance is False`` —
-    see that method's docstring for why the fact cannot be read back off the returned
-    confidences when the witness is store-derived.
-    """
+    """Both quantity fields' confidences, release-proof gates, and the disagreement flag."""
     evidence_values = {
         SafetyRelevantField.CUMULATIVE_FILLED_QUANTITY: (
             None if evidence is None else evidence.filled_quantity
@@ -443,8 +254,6 @@ def _classify_attempt(
     if rcl_present and has_evidence and has_witness:
         return ReconciliationClass.MATCHED
     if rcl_present and not has_witness:
-        # RCL-only, or RCL + a receipt but no broker confirmation — still not confirmed
-        # live by any downstream path; conservatively "stale reservation" either way.
         return ReconciliationClass.STALE_RESERVATION
     if has_witness and not rcl_present:
         return ReconciliationClass.ORPHAN_BROKER_ORDER
@@ -452,10 +261,7 @@ def _classify_attempt(
 
 
 def _execution_id(value: str | None) -> str | None:
-    """A broker execution id as a join key: surrounding whitespace dropped (the KIS witness
-    strips ODNO, the egress adapter records it as received), empty treated as absent. Nothing
-    else is normalized — leading zeros are part of the id, and guessing an equivalence here
-    would be exactly the silent join the rules below exist to prevent."""
+    """A broker execution id as a join key: surrounding whitespace dropped (the KIS witness"""
     if value is None:
         return None
     stripped = value.strip()
@@ -467,25 +273,7 @@ def _join_orders_by_execution_id(
     receipts: tuple[EgressReceiptObservation, ...],
     receipts_by_attempt: dict[str, EgressReceiptObservation],
 ) -> tuple[dict[str, WitnessOrder], tuple[WitnessOrder, ...]]:
-    """Split witness orders into ``{attempt_id: order}`` and the remaining orphans (module
-    docstring "``broker_execution_id`` cross-reference").
-
-    An order's broker identity is the pair ``(broker_execution_id, order_date)`` — a KIS ODNO is a
-    per-day sequence, and the date is the broker's own (:attr:`WitnessOrder.order_date`, KIS
-    ``ord_dt``). A receipt's is ``(broker_execution_id, trading_date)``, the date recorded at the
-    ACK instant from trusted time. An order that names its own attempt keeps that attempt
-    (unchanged behaviour). An order with ``attempt_id=None`` joins attempt ``a`` only when ALL of
-    these hold — otherwise it stays an orphan (fail-closed):
-
-    1. the order has both an id and a date, and only receipts with an attempt and a date are
-       considered (a missing date on either side means no join);
-    2. its identity pair appears on receipts of exactly one attempt;
-    3. every dated receipt of ``a`` carries that one pair, and so does the receipt the service
-       compares quantities against (``receipts_by_attempt[a]``) — otherwise the order would be
-       matched on one receipt and judged against another;
-    4. no other attempt-less order resolves to ``a``;
-    5. ``a`` has no order of its own already.
-    """
+    """Split witness orders into ``{attempt_id: order}`` and the remaining orphans (module"""
     orders = snapshot.orders
     by_attempt = {o.attempt_id: o for o in orders if o.attempt_id is not None}
     attempts_for_key: dict[tuple[str, str], set[str]] = {}
@@ -538,8 +326,7 @@ def _join_orders_by_execution_id(
 
 
 class ReconciliationService:
-    """Assembles the three observation paths and calls the kernel ``tos.recon``
-    predicates for every judgement (module docstring)."""
+    """Assembles the three observation paths and calls the kernel ``tos.recon``"""
 
     def __init__(
         self,
@@ -549,42 +336,14 @@ class ReconciliationService:
         *,
         reservation_id_for_attempt: Callable[[str], str | None] | None = None,
     ) -> None:
-        """Bind this service to its three injected observation ports.
-
-        Args:
-            rcl_reader: Read-only RCL reservation-projection port.
-            evidence_reader: Read-only evidence-receipt port.
-            witness: The broker-witness port. See module docstring's independence-class
-                caveat for what a ``SyntheticLedgerWitness`` injection here does and does
-                not establish.
-            reservation_id_for_attempt: Maps an ``attempt_id`` (as reported by the
-                evidence-receipt / witness observations) onto the identity
-                :attr:`rcl_reader` actually keys its reservation projection by. This
-                package's own predicates (design #9) never assume ``attempt_id`` and
-                ``reservation_id`` share one identity space — a caller whose RCL commit log
-                keys reservations differently from its attempt ids (e.g. a scope-level
-                reservation id shared by every attempt in that scope — the SAME identity
-                :class:`~tos_runtime.rcl.obligation.CapacityObligationRecorder`'s own
-                ``reservation_id_resolver`` already produces for exactly that reason)
-                supplies this to bridge the gap. Defaults to ``None``, which means "``rcl_reader``
-                is keyed by attempt id directly" (the identity mapping — unchanged pre-existing
-                behaviour for a caller whose RCL projection genuinely is per-attempt). Called
-                once per attempt per :meth:`reconcile`; returning ``None`` for a given attempt id
-                is treated exactly like "no mapping known", i.e. :meth:`reconcile` looks up
-                ``rcl_reader.reservation_state`` with the ORIGINAL ``attempt_id`` unchanged (never
-                silently skips the RCL path) — this function narrows, it does not gate.
-        """
+        """Bind this service to its three injected observation ports."""
         self._rcl_reader = rcl_reader
         self._evidence_reader = evidence_reader
         self._witness = witness
         self._reservation_id_for_attempt = reservation_id_for_attempt
 
     def _reservation_id_for(self, attempt_id: str) -> str:
-        """Resolve ``attempt_id`` onto the identity :attr:`_rcl_reader` is actually keyed by
-        (constructor's own ``reservation_id_for_attempt`` docstring) — the identity mapping when
-        no resolver was injected, or the resolver's own mapping otherwise (falling back to the
-        identity mapping if the resolver itself returns ``None`` for this attempt — narrows,
-        never gates)."""
+        """Resolve ``attempt_id`` onto the identity :attr:`_rcl_reader` is actually keyed by"""
         if self._reservation_id_for_attempt is None:
             return attempt_id
         resolved = self._reservation_id_for_attempt(attempt_id)
@@ -599,19 +358,7 @@ class ReconciliationService:
         freshness: FreshnessMarker,
         witness_independence_class: str,
     ) -> tuple[ReconciliationClass, tuple[FieldConfidence, ...], bool, bool, bool]:
-        """One attempt's classification, field confidences, rearm-ok, capacity-ok, disagreed.
-
-        Split out of :meth:`reconcile` to stay under the module's function size budget.
-
-        The fifth value (review-1018 M1) is whether any path's recorded magnitude
-        DISAGREED with another's (``agrees_within_tolerance is False``). It is not
-        recoverable from the returned confidences: when the witness is store-derived both
-        paths carry the SAME independence class, so :func:`~tos.recon.classify_field`
-        degrades a disagreement to ``SINGLE_SOURCE`` rather than ``CONFLICTED`` (measured —
-        witness 5/5 against a receipt 10/0 yields SINGLE_SOURCE on both quantity fields).
-        A disagreement that leaves no trace on the report is exactly what let M1's input be
-        recorded as an independence hold, so the fact is carried out of here explicitly.
-        """
+        """One attempt's classification, field confidences, rearm-ok, capacity-ok, disagreed."""
         classification = _classify_attempt(
             rcl_present=rcl_present, evidence=evidence, witness_order=witness_order
         )
@@ -675,10 +422,7 @@ class ReconciliationService:
         freshness: FreshnessMarker,
         witness_independence_class: str,
     ) -> tuple[AttemptClassification, tuple[FieldConfidence, ...], bool, bool, bool]:
-        """One known attempt id's full verdict — split out of :meth:`reconcile` to stay
-        under the module's function size budget. The fifth value is the magnitude
-        disagreement flag (review-1018 M1 — see
-        :meth:`_attempt_field_confidences_and_gates`)."""
+        """One known attempt id's full verdict — split out of :meth:`reconcile` to stay"""
         rcl_state = self._rcl_reader.reservation_state(
             self._reservation_id_for(attempt_id)
         )
@@ -733,21 +477,7 @@ class ReconciliationService:
     def reconcile(
         self, scope: WitnessScope, *, freshness: FreshnessMarker = FreshnessMarker()
     ) -> ReconciliationReport:
-        """Reconcile ``scope`` across RCL, evidence receipts, and the broker witness.
-
-        Args:
-            scope: The (account, instrument, attempt) window to reconcile.
-            freshness: The injected freshness/time-confidence marker applied uniformly to
-                every field this call assesses (``tos.recon`` is clock-free — see module
-                docstring). Defaults to the all-``None`` marker, which fails closed
-                (``tos.recon.predicates.freshness_ok`` is ``False`` on any ``None``).
-
-        Returns:
-            The assembled :class:`ReconciliationReport`. ``permits_capacity_release`` /
-            ``permits_rearm`` are conjunctions over every attempt and orphan order found —
-            an empty scope (nothing observed anywhere) yields ``False`` for both, never a
-            vacuous ``True`` (module docstring "fail-closed throughout").
-        """
+        """Reconcile ``scope`` across RCL, evidence receipts, and the broker witness."""
         try:
             snapshot = self._witness.observe(scope)
         except WitnessUnavailable as exc:
@@ -769,10 +499,6 @@ class ReconciliationService:
         attempt_ids = (
             set(scope.attempt_ids) | set(receipts_by_attempt) | set(witness_by_attempt)
         )
-        # Independent-review finding F2 (2026-09-10): a witness that declares itself
-        # store-derived (never independent of the evidence-receipt path) is stamped with the
-        # SAME independence-class label as that path, so classify_field's own >=2-distinct-class
-        # corroboration test can never be satisfied by two byte-identical reads of one store.
         witness_independence_class = (
             _WITNESS_INDEPENDENCE_CLASS
             if snapshot.independent_of_evidence_store
@@ -838,18 +564,7 @@ class ReconciliationService:
         snapshot: WitnessSnapshot,
         any_path_disagreed: bool = False,
     ) -> str | None:
-        """The report's own ``reason`` — split out of :meth:`reconcile` to stay under the
-        module's function size budget (independent-review finding F2 added the
-        ``WITNESS_NOT_INDEPENDENT_REASON`` branch).
-
-        ``any_path_disagreed`` narrows that branch (review-1018 M1): the independence reason
-        is a claim that the collapse is WHY nothing cleared, so a report in which two paths
-        actually reported different magnitudes must not carry it. With a store-derived witness
-        such a disagreement cannot surface as ``CONFLICTED`` — both paths share one
-        independence class, so ``classify_field`` degrades it to ``SINGLE_SOURCE`` — which is
-        why the fact is passed in rather than re-derived from the confidences here. Such a
-        report falls through to ``None``, which every caller already maps to "not
-        corroborated"."""
+        """The report's own ``reason`` — split out of :meth:`reconcile` to stay under the"""
         if not rearm_flags:
             return "no observations in scope"
         fully_cleared = (bool(capacity_flags) and all(capacity_flags)) and (
@@ -861,10 +576,5 @@ class ReconciliationService:
             and not snapshot.independent_of_evidence_store
             and not any_path_disagreed
         ):
-            # Independent-review finding F2: name the witness-independence collapse
-            # explicitly rather than folding it into a generic "not corroborated" — this
-            # compose root's ONE concrete witness (SyntheticLedgerWitness) is ALWAYS
-            # store-derived, so this reason will surface for every attempt it touches until a
-            # genuinely independent (e.g. real broker) witness replaces it.
             return WITNESS_NOT_INDEPENDENT_REASON
         return None

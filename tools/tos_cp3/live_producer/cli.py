@@ -1,24 +1,4 @@
-"""The CLI that starts ③: the flag surface, the dry run, and the exit codes.
-
-:mod:`~tools.tos_cp3.live_producer.producer`'s own docstring has always called
-that file two things — "the thin outer loop, and the CLI that starts it". This
-is the second of those, moved out verbatim so the loop is one thing. It is the
-same file split plan §3.5 made for
-:mod:`~tools.tos_cp3.live_producer.line` (the pure per-bar half),
-:mod:`~tools.tos_cp3.live_producer.halt_policy` (the give-ups) and
-:mod:`~tools.tos_cp3.live_producer.declaration` (the tenant's fields.yaml).
-
-**The entry point does not move.** ``producer.py`` re-exports
-:func:`build_parser` and :func:`main`, so ``python -m
-tools.tos_cp3.live_producer.producer`` — what ``run_tenant_session.sh`` step 8
-runs — is unchanged, and so is every caller that reaches them through
-``producer``.
-
-:class:`~tools.tos_cp3.live_producer.producer.LiveProducer` is imported INSIDE
-:func:`main` rather than at module scope: ``producer`` imports this module to
-re-export, so a module-scope import here would close the loop. The same
-deliberate deferral ``produce_fields.run()`` uses for the legacy driver.
-"""
+"""The CLI that starts ③: the flag surface, the dry run, and the exit codes."""
 
 from __future__ import annotations
 

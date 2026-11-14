@@ -5,6 +5,20 @@ real value an operator has signed off on for a named environment
 (`paper/`, later `live/`), distinct from the unapproved templates under
 `tos/runtime/config/*.example.yaml`.
 
+> **2026-11-13 — plan S2-a deleted five of the files documented below**
+> (`docs/plans/2026-11-13-tos-code-halving-plan.md`): `safety_envelope.yaml`,
+> `safety_profile.yaml`, `safety_activation.yaml`, `safety_deviations.yaml` and
+> `safety_incidents.yaml`. The safety-mesh services that read them are gone — their
+> judgement inputs were static YAML constants in every shipped tree and none ever
+> denied a send. `monitor_coverage.yaml` is still here but slimmed to the two bounds
+> the slim monitor actually reads (`coverage_generation` + `bounds.{max_evidence_tip_
+> stall_ms,max_inbox_unconsumed}`); its `manifest`/`items` blocks and
+> `healthy_time_states` went too. The ARE ceiling that used to live on
+> `safety_envelope.yaml::envelope.governed_dimensions[].envelope_max` moved, same
+> values, into `aggregate_risk_policy.yaml::_runtime.envelope_max`.
+> **Every sentence below that names one of the five deleted files is history, not
+> current procedure.**
+
 **Trees here are not one-per-environment-label.** `paper/` is the resident
 deployment (the daily session, `docs/runbooks/tos-paper-boot.md` §7); a
 **tenant** tree is a separate deployment with its own off-repo render and its
@@ -25,6 +39,17 @@ committed content.) Nothing in it has booted yet.
 `cp3-setup-d-long/`, still `SYNTHETIC_FUTURES_ORDER`, with no band source. Read its
 `README.md`; `tos/runtime/tests/compose/test_tenant_tree_stock.py` pins every
 difference from the LONG tree by file and key path.
+
+`decision_generations.yaml` sits beside the trees rather than inside one. It is not an
+approved value file: it pins each persistent-leaf tenant's **parsed** decision contract
+(rules, decision bindings, and `engine.yaml`'s two bounds) to a committed generation token,
+so changing any of those goes red in CI until the PR bumps the token — the act that says the
+durable data leaf must be re-genesis'd before the change deploys (`docs/runbooks/
+tos-paper-boot.md` §7.2-f). It exists because PR #1056 changed the stock tree's rules under a
+continuing leaf and the 2026-11-12 session was refused at boot with `EngineReplayDiverged`,
+1075 of 1075 events, leaving that leaf permanently un-bootable. Guard:
+`tos/runtime/tests/compose/test_tenant_decision_generation.py`.
+
 Adding a tenant tree changes NO digest the resident session re-derives —
 `release.yaml::expected_code_digest` folds `*.py` bytes under the two installed
 package roots only, and each policy's `canonical_digest` is computed from its
@@ -193,7 +218,13 @@ missing file) and 5 are genuine opt-in features that boot cleanly without
 them at the `compose_paper_runtime` level (`strategy_bindings.yaml`,
 `marketfeed.yaml` + `critical_input_policy.yaml` together, `nontrade.yaml`,
 `kis_mock_transport.yaml` — the last only matters for `--transport
-kis-mock`, not the default synthetic transport). Two of those five —
+kis-mock`, not the default synthetic transport). One of those five,
+`nontrade.yaml`, no longer exists at all: S2-c deleted the nontrade kernel
+and runtime packages on 2026-11-13
+(`docs/plans/2026-11-13-tos-code-halving-plan.md`), so
+`compose_paper_runtime` now reads 29 fixed names, not 30. The 2026-09-17
+counts above are left as measured, per this section's own rule. Two of
+those five —
 `marketfeed.yaml` + `critical_input_policy.yaml` — are opt-in at the
 `compose_paper_runtime` level but de facto required to run `run` at all,
 since `dispatch_run` itself refuses when they leave `composed.marketfeed`

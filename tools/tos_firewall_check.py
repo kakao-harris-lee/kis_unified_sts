@@ -1,139 +1,5 @@
 #!/usr/bin/env python3
-"""tos import-firewall gate (design §3.3-①) — default-deny AST enforcement.
-
-This is the *first* of the three enforcement layers defined in
-``docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md`` §3.3::
-
-  ① this custom AST gate      default-deny allowlist (§3.2) — the layer that
-                              import-linter's denylist-only contracts cannot
-                              express.
-  ② .importlinter             transitive defense for the internal forbidden
-                              packages (§3.3-②).
-  ③ CI job ``tos-firewall``   runs ①+② + ``pytest tos/tests`` on every PR.
-
-It parses every ``.py`` under ``tos/`` (src AND tests — §2.4, because a test
-that imports a forbidden module breaks the hermetic claim) and enforces:
-
-  (a) TOS-FW-A  every import (top-level OR nested in a function/try/class) must
-                be on the §3.2 allowlist; otherwise it is a violation.
-  (b) TOS-FW-B  forbidden stdlib egress / process / FFI primitives (§3.2).
-  (c) TOS-FW-C  ``os.environ`` / ``os.getenv`` usage is forbidden (C2 — the §4
-                "flag ban": capability must not be reachable via ambient env).
-  (d) TOS-FW-D  dynamic import / exec / eval — closes the static-analysis
-                escape hatch that would let (a)/(b) be bypassed at runtime.
-  (e) TOS-FW-R  no file OUTSIDE ``tos/`` may ``import tos`` (R-reverse — §3.2):
-                the operational system must never depend on the unverified
-                kernel. EXTENDED (design #40 D1.3 item 3, ratified by the
-                operator 2026-09-08) to ``tos_runtime`` too: no file outside
-                ``tos/`` may import the runtime shell either.
-  (f) TOS-FW-S  no SYMLINK (file or directory, walked or git-tracked) may
-                cross the tos/ boundary: crossing means SUBTREE
-                INTERSECTION, not merely "which side" — a link outside
-                tos/ pointing at tos/ itself, a descendant of it, OR an
-                ANCESTOR of it (whose subtree therefore reaches tos/ too,
-                e.g. ``shared/up -> <repo root>``) all cross; a link inside
-                tos/ pointing anywhere outside its own subtree (ancestors
-                included) crosses. Dangling targets always cross
-                (fail-closed; an unresolvable target is presumed to cross,
-                never presumed safe). Closes a bypass neither (e)'s content
-                scan nor the git-tracked-``.py`` union can reach: a
-                directory symlink is never traversed by ``os.walk``
-                regardless of where it points, and git tracks a symlink as
-                one index entry, never descending through it either — so
-                nothing on the far side of the alias is ever visible to
-                either scan. Rather than try to traverse through it, rule S
-                forbids the alias itself. The repo-root ``tos/`` entry may
-                NEVER be a symlink, checked first and unconditionally in
-                ``run_checks`` before rules (a)-(d) even attempt to run —
-                a missing or symlinked ``tos/`` is always a visible,
-                reported failure, never a silent PASS.
-
-  (g) TOS-FW-G  a KERNEL-scope file imports ``tos_runtime`` (design #40 D1.3
-                item 2, ratified by the operator 2026-09-08).
-                Kernel and runtime are asymmetric by design: runtime may
-                depend on the kernel, never the reverse. Rule (e)/TOS-FW-R is
-                separately extended so a file OUTSIDE ``tos/`` entirely that
-                imports ``tos_runtime`` is caught too (same reverse scan,
-                second root name) — see that rule's docstring.
-  (h) TOS-FW-H  a RUNTIME-scope file imports ANY ``shared.*`` module — even
-                one of the six commons packages the KERNEL is itself allowed
-                to import under §3.2 (design #40 D1.1).
-
-------------------------------------------------------------------------------
-SCOPE SPLIT (design #40 D1.3, ratified by the operator 2026-09-08)
-------------------------------------------------------------------------------
-Rules (a)-(d) above enforce ONE of TWO allowlists depending on which part of
-``tos/`` a ``.py`` file lives under — the scope is decided by a single
-path-prefix predicate (``scope_for_tos_path``), fail-closed toward the
-stricter (kernel) allowlist for any path it does not recognize as runtime:
-
-  KERNEL scope   ``tos/`` minus ``tos/runtime/`` — the §3.2 allowlist below,
-                 UNCHANGED by this split.
-  RUNTIME scope  ``tos/runtime/**`` — allowlist **R1** = (the kernel
-                 allowlist MINUS all six ``shared.*`` commons packages — rule
-                 (h) above) ∪ ``tos.*`` (the
-                 kernel — the one EXPECTED dependency direction) ∪
-                 ``tos_runtime.*`` (self) ∪ the stdlib egress primitives
-                 ``socket``/``ssl``/``http``/``urllib.request`` (``sqlite3``
-                 was already unrestricted in the kernel allowlist;
-                 ``hmac``/``hashlib``/``secrets`` were never forbidden
-                 either, so R1 names them for completeness without changing
-                 their status). ``subprocess``, ``ctypes``, ``ftplib``,
-                 ``smtplib``, ``poplib``, ``imaplib``, ``telnetlib``,
-                 ``os.environ``/``os.getenv``, and dynamic import/exec/eval
-                 stay forbidden in BOTH scopes (rules (b)/(c)/(d) are
-                 scope-invariant). No third-party addition (§3.2's set is
-                 unchanged for both scopes — Phase 2 closes on stdlib per
-                 design #40 D2/D3). R1 is therefore NOT a superset of the
-                 kernel allowlist — it is the kernel allowlist with
-                 `shared.*` carved OUT and the stdlib egress primitives
-                 carved IN.
-
-``tos/runtime/`` is itself a SEPARATE distribution (`tos-runtime` /
-``tos_runtime``, its own ``pyproject.toml`` under ``tos/runtime/``) — its
-tests and package are NOT part of the ``tos`` kernel package tested by
-``pytest tos/tests``; see ``tos/runtime/tests`` instead. This checker's own
-forward scan (``_iter_py_files``) is unchanged and still walks all of
-``tos/`` in one pass — the scope split happens per-file during
-classification, not as a second checker invocation (CI step count is
-unaffected, see design #40 D1.3 item 5).
-
-Two further diagnostic IDs are structural, not content rules, and so sit
-outside the (a)-(h) enumeration above (parallel to how a build tool reports
-"file not found" separately from its lint rules) — named here so neither is
-an undocumented orphan string:
-
-  TOS-FW-SYNTAX  a ``tos/`` ``.py`` file failed to AST-parse; a file that
-                 does not parse cannot be certified against (a)-(d).
-  TOS-FW-MISSING the repo-root ``tos/`` entry does not exist, or exists but
-                 is not a directory (and is not a symlink either — that
-                 case is TOS-FW-S, above). Rules (a)-(d) and the forward
-                 rule-S mirror cannot be evaluated with no ``tos/`` to
-                 evaluate them against; ``run_checks`` reports this
-                 explicitly rather than silently producing zero violations.
-
-Exit code is 1 with ``path:line [RULE-ID] message`` diagnostics on any
-violation, 0 otherwise.
-
-------------------------------------------------------------------------------
-ALLOWLIST CONTRACT (SoT = design doc §3.2; RUNTIME_* constants' SoT = design
-doc #40 D1.3, ratified by the operator 2026-09-08)
-------------------------------------------------------------------------------
-The KERNEL allowlist / forbidden constants below are a *ratified contract*.
-Their Source of Truth is design document #1 (`2026-07-20-tos-boundary-and-
-import-firewall-design.md`) §3.2. They may be changed ONLY by a PR that edits
-that document and records a §6.1 revision-log line (governance §6.1). Do not
-edit them here in isolation — this file merely mechanizes the contract, it
-does not own it.
-
-The RUNTIME_* constants (allowlist R1) mechanize design document #40
-(`2026-09-07-tos-phase2-runtime-shell-preliminary-decisions.md`) §D1.3 item 2,
-cross-referenced into design #1 §3.2/§3.3 by the same PR (design #40 §D1.3
-item 6).
-
-This gate itself lives under ``tools/`` (outside ``tos/``) and is therefore NOT
-governed by the firewall; it may use ``os``/``argparse``/etc. freely.
-"""
+"""tos import-firewall gate (design §3.3-①) — default-deny AST enforcement."""
 
 from __future__ import annotations
 
@@ -147,21 +13,10 @@ from collections import namedtuple
 from collections.abc import Iterator
 from pathlib import Path
 
-# ============================================================================
-# §3.2 allowlist (ratified contract; SoT = design doc §3.2)
-# ============================================================================
-
-# Third-party distributions whose top-level *import name* is allowed. Versions
-# are pinned in ``tos/pyproject.toml`` (§3.2 / §5.1). NB: pyyaml is imported as
-# ``yaml``, so the import name — not the distribution name — is listed.
 THIRD_PARTY_ALLOWED: frozenset[str] = frozenset(
     {"pydantic", "numpy", "pandas", "pytest", "hypothesis", "yaml"}
 )
 
-# stdlib modules forbidden for *direct* import: egress / process / FFI
-# primitives (C2 §4; DSL escape-closure spirit). Matched as an exact name OR a
-# dotted prefix, so "http" also bans "http.client", while "urllib.request" bans
-# only that submodule and leaves plain "urllib"/"urllib.parse" allowed.
 FORBIDDEN_STDLIB: frozenset[str] = frozenset(
     {
         "socket",
@@ -178,17 +33,6 @@ FORBIDDEN_STDLIB: frozenset[str] = frozenset(
     }
 )
 
-# Commons subpackages tos may import (§3.2). A package-level allow is only valid
-# under the import-linter transitive check (§3.3-②), which proves the package's
-# closure does not reach a §2.3 forbidden package.
-#
-# NB: ``shared.config`` is deliberately ABSENT (removed 2026-07-20, §6.1). Its
-# ``__init__`` unconditionally executes ``from shared.config.secrets import ...``,
-# so any ``shared.config`` import transitively pulls in ambient credential access
-# (``os.environ``), violating C2 (§4 3차 방어). The whole package is therefore off
-# the allowlist — no ``shared.config.secrets`` carve-out is needed, because the
-# parent is no longer allowed in the first place. Policy loading uses pyyaml per
-# design #2 §0.3, not ``shared.config``.
 SHARED_ALLOWED: frozenset[str] = frozenset(
     {
         "shared.models",
@@ -196,53 +40,21 @@ SHARED_ALLOWED: frozenset[str] = frozenset(
         "shared.resilience",
         "shared.utils",
         "shared.exceptions",
-        # §3.4 dual-use extraction; allowed per §3.2
-        # "커먼즈(신설 후)" row.
         "shared.determinism",
     }
 )
 
-# Full stdlib top-level module name set (§3.3-① mandates sys.stdlib_module_names).
 STDLIB: frozenset[str] = frozenset(sys.stdlib_module_names)
 
-# ============================================================================
-# R1 allowlist — tos/runtime/** scope only (design #40 D1.3 item 2, ratified
-# by the operator 2026-09-08; see the module docstring's SCOPE SPLIT section). Cross-
-# referenced into design #1 §3.2/§3.3 by the same PR (design #40 §D1.3
-# item 6). Do not edit in isolation from that document.
-#
-# Runtime excludes all shared.* imports, including the kernel commons allowlist
-# (design #40 D1.1). classify_module enforces this as rule (h)/TOS-FW-H.
-# ============================================================================
 
-# The self-import name of the new `tos-runtime` distribution (design #40
-# D1.1). Allowed ONLY in runtime scope, as ``tos_runtime.*`` (self) — a
-# KERNEL-scope file importing it is rule (g)/TOS-FW-G, and a file outside
-# ``tos/`` entirely importing it is the rule-(e) extension/TOS-FW-R.
 TOS_RUNTIME_PACKAGE_NAME: str = "tos_runtime"
 
-# stdlib egress primitives carved OUT of FORBIDDEN_STDLIB for runtime scope
-# only (design #40 D1.3 item 2 — the runtime shell is where D2/D3's sqlite3
-# WAL and future broker transport egress live; the kernel stays non-
-# transmitting). ``sqlite3`` needs no carve-out — it was never in
-# FORBIDDEN_STDLIB to begin with (already allowed in BOTH scopes). ``hmac``,
-# ``hashlib``, ``secrets`` likewise were never forbidden; D1.3 names them for
-# completeness only, so they are not repeated here as a set operation.
 RUNTIME_STDLIB_CARVEOUT: frozenset[str] = frozenset(
     {"socket", "ssl", "http", "urllib.request"}
 )
 
-# Runtime scope's forbidden-stdlib set: the kernel's FORBIDDEN_STDLIB minus
-# the carve-out above. ``subprocess``, ``ctypes``, ``ftplib``, ``smtplib``,
-# ``poplib``, ``imaplib``, ``telnetlib`` stay forbidden in BOTH scopes (design
-# #40 D1.3 item 2 "계속 금지" list).
 FORBIDDEN_STDLIB_RUNTIME: frozenset[str] = FORBIDDEN_STDLIB - RUNTIME_STDLIB_CARVEOUT
 
-# Reverse-scan exclusions are explicit repo-relative roots, matched by resolved
-# path identity. Never prune by directory name or Python identifier validity:
-# nested packages and scripts in hyphenated directories must still be scanned.
-# Vendor/scratch trees are excluded from walking; git-tracked Python files under
-# these roots are added back by _git_tracked_py_under_pruned_roots.
 _REVERSE_SCAN_PRUNE_ROOTS: tuple[str, ...] = (
     ".git",
     ".venv",
@@ -253,21 +65,11 @@ _REVERSE_SCAN_PRUNE_ROOTS: tuple[str, ...] = (
     "strategy-builder-ui/node_modules",
 )
 
-# The forward scan excludes only top-level tos/.venv to avoid scanning installed
-# dependencies. Nested node_modules and __pycache__ can be importable packages
-# and must remain in scope; ordinary .pyc cache files do not match the .py scan.
 
-# Neither kernel nor runtime may be imported from outside tos/ (design #40 D1.3).
 _REVERSE_SCAN_TARGET_NAMES: frozenset[str] = frozenset({"tos", "tos_runtime"})
 
-# Line-level fallback used only when a repo file outside tos/ fails to AST-parse
-# (a SyntaxError must not let an `import tos`/`import tos_runtime` slip through
-# silently).
 _REVERSE_LINE_RE = re.compile(r"^\s*(?:import|from)\s+(?:tos|tos_runtime)(?:\.|\s|$)")
 
-# ============================================================================
-# Model
-# ============================================================================
 
 Violation = namedtuple("Violation", ["rule", "path", "line", "message"])
 
@@ -278,22 +80,7 @@ def _matches_prefix(dotted: str, names: frozenset[str]) -> bool:
 
 
 def scope_for_tos_path(rel_display: str) -> str:
-    """Classify a ``tos/`` file's repo-root-relative display path into
-    ``"kernel"`` or ``"runtime"`` scope (design #40 D1.3 item 1).
-
-    The decision is a single path-prefix predicate: a path whose first two
-    components are ``tos`` then ``runtime`` is RUNTIME scope; every other
-    path — including one under ``tos/`` alone (no ``runtime/`` component) or
-    any hypothetical new sibling directory of ``tos/runtime/`` — is KERNEL
-    scope. This is deliberately fail-closed toward the stricter allowlist:
-    an unrecognized path never gets the more permissive runtime treatment.
-
-    ``rel_display`` need not actually start with ``tos/`` (several direct
-    unit-test calls pass a bare filename like ``"m.py"``, matching this
-    module's existing ``check_tos_file`` test-call convention) — such inputs
-    simply fall through to the "kernel" default, which is what those
-    existing tests already assumed before this scope split existed.
-    """
+    """Classify a ``tos/`` file's repo-root-relative display path into"""
     parts = Path(rel_display).parts
     if len(parts) >= 2 and parts[0] == "tos" and parts[1] == "runtime":
         return "runtime"
@@ -301,18 +88,9 @@ def scope_for_tos_path(rel_display: str) -> str:
 
 
 def classify_module(dotted: str, scope: str = "kernel") -> tuple[bool, str | None]:
-    """Classify an absolute dotted module path against the §3.2 allowlist
-    (kernel scope, the default) or the R1 allowlist (``scope="runtime"`` —
-    design #40 D1.3 item 2).
-
-    Returns ``(allowed, rule_id)`` where ``rule_id`` is the violated rule ID
-    when ``allowed`` is False, else None.
-    """
+    """Classify an absolute dotted module path against the §3.2 allowlist"""
     if not dotted:
         return True, None
-    # (b) forbidden stdlib is checked first so `socket`, `http.client`,
-    # `urllib.request` etc. report as B rather than a generic A. Runtime
-    # scope checks against the carved-out R1 forbidden set instead.
     forbidden_stdlib = (
         FORBIDDEN_STDLIB_RUNTIME if scope == "runtime" else FORBIDDEN_STDLIB
     )
@@ -320,26 +98,16 @@ def classify_module(dotted: str, scope: str = "kernel") -> tuple[bool, str | Non
         return False, "TOS-FW-B"
     top = dotted.split(".")[0]
     if top == "tos":
-        # Self (kernel scope) OR the kernel dependency (runtime scope — D1.1
-        # `tos_runtime → tos` ✔, the one direction runtime is EXPECTED to
-        # import the kernel).
         return True, None
     if top == "tos_runtime":
         if scope == "runtime":
-            return True, None  # self
-        # Kernel scope importing the runtime shell — rule (g): the asymmetry
-        # is the whole point of D1 (runtime depends on kernel, never the
-        # reverse). A file OUTSIDE tos/ entirely importing tos_runtime is a
-        # separate case, caught by the rule-(e) extension in
-        # `check_reverse_imports`, not here.
+            return True, None
         return False, "TOS-FW-G"
     if top == "shared":
         if scope == "runtime":
-            # Runtime may not import even the kernel's allowed commons (design #40 D1.1).
             return False, "TOS-FW-H"
         if _matches_prefix(dotted, SHARED_ALLOWED):
             return True, None
-        # e.g. shared.config (+ .secrets), shared.execution, bare `shared`
         return False, "TOS-FW-A"
     if top in THIRD_PARTY_ALLOWED:
         return True, None
@@ -348,18 +116,8 @@ def classify_module(dotted: str, scope: str = "kernel") -> tuple[bool, str | Non
     return False, "TOS-FW-A"
 
 
-# ============================================================================
-# Forward scan — tos/ files (rules a, b, c, d)
-# ============================================================================
-
-
 def _import_violation_message(rule: str | None, name: str) -> str:
-    """Build the diagnostic message for an (a)/(b)/(g)/(h) import violation.
-
-    Rules (g) and (h) get bespoke wording (the reason for each is a specific
-    D1 asymmetry/decision, not merely "not on the allowlist") — every other
-    rule keeps the original generic phrasing.
-    """
+    """Build the diagnostic message for an (a)/(b)/(g)/(h) import violation."""
     if rule == "TOS-FW-G":
         return (
             f"kernel-scope file imports 'tos_runtime' via '{name}' — forbidden "
@@ -377,22 +135,13 @@ def _import_violation_message(rule: str | None, name: str) -> str:
 
 
 def check_tos_file(path: Path, rel_display: str) -> list[Violation]:
-    """AST-scan a single ``tos/`` .py file for rules (a)-(d)/(g)/(h).
-
-    ``rel_display`` also decides KERNEL vs RUNTIME scope for rules
-    (a)/(b)/(g)/(h) — see ``scope_for_tos_path`` (design #40 D1.3 item 1,
-    SCOPE SPLIT in the module docstring). Rules (c)/(d) are scope-invariant.
-
-    Raises ``SyntaxError`` if the file cannot be parsed (surfaced by callers as
-    a hard failure — a tos file that does not parse cannot be certified).
-    """
+    """AST-scan a single ``tos/`` .py file for rules (a)-(d)/(g)/(h)."""
     scope = scope_for_tos_path(rel_display)
     text = path.read_text(encoding="utf-8")
     tree = ast.parse(text, filename=str(path))
     violations: list[Violation] = []
 
     for node in ast.walk(tree):
-        # ---- (a)/(b)/(g) imports (top-level AND nested — ast.walk visits all) ----
         if isinstance(node, ast.Import):
             for alias in node.names:
                 allowed, rule = classify_module(alias.name, scope)
@@ -407,12 +156,6 @@ def check_tos_file(path: Path, rel_display: str) -> list[Violation]:
                     )
         elif isinstance(node, ast.ImportFrom):
             if not (node.level and node.level > 0):
-                # Absolute `from X import a, b`: classify each X.a candidate so
-                # `from shared import execution` (denied), `from shared.config
-                # import ConfigLoader` (parent no longer allowed) and `from urllib
-                # import request` (forbidden) are caught, while `from
-                # shared.indicators import atr` (attr of an allowed pkg) stays
-                # allowed.
                 module = node.module or ""
                 for alias in node.names:
                     cand = f"{module}.{alias.name}" if module else alias.name
@@ -426,9 +169,7 @@ def check_tos_file(path: Path, rel_display: str) -> list[Violation]:
                                 _import_violation_message(rule, cand),
                             )
                         )
-            # else: relative import (`from . import x`) resolves within tos → self.
 
-            # ---- (c) `from os import environ/getenv` ----
             if node.module == "os":
                 for alias in node.names:
                     if alias.name in {"environ", "getenv"}:
@@ -440,7 +181,6 @@ def check_tos_file(path: Path, rel_display: str) -> list[Violation]:
                                 f"forbidden env access via import 'os.{alias.name}'",
                             )
                         )
-            # ---- (d) `from importlib import import_module` ----
             if node.module == "importlib":
                 for alias in node.names:
                     if alias.name == "import_module":
@@ -452,7 +192,6 @@ def check_tos_file(path: Path, rel_display: str) -> list[Violation]:
                                 "forbidden dynamic import 'importlib.import_module'",
                             )
                         )
-        # ---- (c) attribute access os.environ / os.getenv ----
         elif isinstance(node, ast.Attribute):
             if (
                 node.attr in {"environ", "getenv"}
@@ -467,7 +206,6 @@ def check_tos_file(path: Path, rel_display: str) -> list[Violation]:
                         f"forbidden env access 'os.{node.attr}'",
                     )
                 )
-        # ---- (d) dynamic import / exec / eval calls ----
         elif isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name) and func.id in {"__import__", "exec", "eval"}:
@@ -500,24 +238,11 @@ def _iter_py_files(root: Path) -> Iterator[Path]:
         yield p
 
 
-# ============================================================================
-# Reverse scan — repo files OUTSIDE tos/ (rule e / R-reverse)
-# ============================================================================
-
-# Sentinel for an "unset" keyword-only parameter, distinct from `None` (which
-# is itself a meaningful value here — "no git work tree"). Lets a caller that
-# already computed something ONCE (`run_checks`) pass it down explicitly,
-# while a caller that has no such value (a test calling a function directly)
-# leaves the parameter at its default and gets it computed on demand —
-# without conflating "not yet computed" with "computed as None".
 _UNSET = object()
 
 
 def _run_git(args: list[str], repo_root: Path) -> subprocess.CompletedProcess[bytes]:
-    """Run git with byte output so non-UTF-8 filenames survive os.fsdecode.
-
-    LC_ALL=C keeps error messages stable for callers that match git diagnostics.
-    """
+    """Run git with byte output so non-UTF-8 filenames survive os.fsdecode."""
     env = dict(os.environ)
     env["LC_ALL"] = "C"
     return subprocess.run(
@@ -529,25 +254,17 @@ def _run_git(args: list[str], repo_root: Path) -> subprocess.CompletedProcess[by
 
 
 def _git_toplevel_or_none(repo_root: Path) -> Path | None:
-    """Resolved toplevel of the git work tree containing ``repo_root``, but
-    ONLY if ``repo_root`` itself IS that toplevel — ``None`` otherwise
-    (covers both "no git work tree here at all" and "inside SOME work tree,
-    but not its toplevel").
-
-    Missing git and non-work-tree errors return None.
-    Other probe failures (including dubious ownership) must raise: silently
-    dropping tracked-file and tracked-symlink checks would bypass the firewall.
-    """
+    """Resolved toplevel of the git work tree containing ``repo_root``, but"""
     try:
         result = _run_git(["rev-parse", "--show-toplevel"], repo_root)
     except FileNotFoundError:
-        return None  # git itself is not installed
+        return None
     if result.returncode == 0:
         toplevel = Path(os.fsdecode(result.stdout.strip())).resolve()
         return toplevel if toplevel == repo_root.resolve() else None
     stderr = result.stderr.decode("utf-8", errors="replace")
     if "not a git repository" in stderr:
-        return None  # genuinely no git work tree here
+        return None
     raise RuntimeError(
         "tos_firewall_check: `git rev-parse --show-toplevel` failed "
         'unexpectedly (not a plain "not a git repository" case — this '
@@ -557,13 +274,7 @@ def _git_toplevel_or_none(repo_root: Path) -> Path | None:
 
 
 def _git_ls_files(repo_root: Path, args: list[str]) -> bytes:
-    """Run ``git -C repo_root ls-files <args>`` and return raw stdout bytes.
-
-    By the time this is called, the caller has already established (via
-    ``_git_toplevel_or_none``) that ``repo_root`` genuinely IS a git work
-    tree's toplevel — so a non-zero exit here is never "not a repo" and
-    must never be silently swallowed; it always raises ``RuntimeError``.
-    """
+    """Run ``git -C repo_root ls-files <args>`` and return raw stdout bytes."""
     result = _run_git(["ls-files", *args], repo_root)
     if result.returncode != 0:
         raise RuntimeError(
@@ -577,33 +288,13 @@ def _git_ls_files(repo_root: Path, args: list[str]) -> bytes:
 def _git_tracked_py_under_pruned_roots(
     repo_root: Path, toplevel: Path | None
 ) -> list[Path]:
-    """Every git-tracked ``.py`` beneath a pruned root OTHER than ``tos``.
-
-    ``git add -f`` can
-    force-track a file under a normally-pruned root (e.g.
-    ``open-trading-api/x.py``, ``.venv/x.py``) even though that root is
-    gitignored. CI checks out and runs that file, but ``_walk_repo_py``'s
-    filesystem-walk-only scan would never see it — the walk prunes the
-    directory before descending, so the AST never gets a chance to catch an
-    `import tos`. The fix is the UNION of the pruned walk with this: every
-    git-tracked ``.py`` under a pruned root. ``tos`` itself is excluded from
-    the query (the forward scan's territory, not rule e's).
-
-    ``toplevel`` must be the result of ONE prior ``_git_toplevel_or_none(repo_root)``
-    call (that function owns all the git-availability / fail-open-vs-fail-closed
-    semantics — this function trusts its answer and does not re-probe).
-    ``None`` means "not a usable git work tree here" — return ``[]``.
-    """
+    """Every git-tracked ``.py`` beneath a pruned root OTHER than ``tos``."""
     if toplevel is None:
         return []
 
     pruned_roots_for_union = [r for r in _REVERSE_SCAN_PRUNE_ROOTS if r != "tos"]
     raw = _git_ls_files(repo_root, ["-z", "--", *pruned_roots_for_union])
 
-    # Lexical (not resolved): a force-tracked symlink under a pruned root
-    # must be identified by its OWN path, never by the path its target
-    # happens to resolve to (see `check_reverse_imports`
-    # and the module-level comment on lexical boundary classification).
     return [
         Path(os.path.abspath(repo_root / os.fsdecode(rel)))
         for rel in raw.split(b"\0")
@@ -617,34 +308,12 @@ def _walk_repo_py(
     symlinks_out: list[Path] | None = None,
     toplevel: Path | None = _UNSET,  # type: ignore[assignment]
 ) -> Iterator[Path]:
-    """Yield every ``.py`` reachable outside the pruned roots.
-
-    ``symlinks_out``, if given, is a side-channel: every ``dirnames``/
-    ``filenames`` entry the walk visits that is itself a symlink (file OR
-    directory, ANY extension) is appended to it as a lexical absolute path,
-    recorded BEFORE that entry is pruned — so a directory symlink that would
-    otherwise be stripped from ``dirnames`` (because its RESOLVED target
-    happens to equal a pruned root's identity) is still recorded first. This
-    feeds rule S (TOS-FW-S, see the module docstring); ``symlinks_out`` is
-    fully populated only once this generator has been drained to completion.
-
-    ``toplevel``: pass the result of a prior ``_git_toplevel_or_none(repo_root)``
-    call to avoid re-probing (DRY — see that function's docstring); left at
-    its default, this computes it itself (one ``rev-parse``), so a direct
-    standalone call (as this module's own tests make) still works.
-    """
+    """Yield every ``.py`` reachable outside the pruned roots."""
     if toplevel is _UNSET:
         toplevel = _git_toplevel_or_none(repo_root)
-    # Resolve each explicit prune root once, before the walk starts (see the
-    # module-level comment above `_REVERSE_SCAN_PRUNE_ROOTS`).
     pruned_roots_resolved = frozenset(
         (repo_root / rel).resolve() for rel in _REVERSE_SCAN_PRUNE_ROOTS
     )
-    # Lexical (abspath, not resolved) dedup keys — must match the lexical
-    # paths `_git_tracked_py_under_pruned_roots` returns, so the union
-    # de-duplicates like-for-like rather than comparing a walked path's
-    # lexical location against a tracked path's resolved target (or vice
-    # versa), which could silently under- or over-count.
     walked_lexical: set[Path] = set()
     for dirpath, dirnames, filenames in os.walk(repo_root):
         if symlinks_out is not None:
@@ -663,42 +332,13 @@ def _walk_repo_py(
                 walked_lexical.add(Path(os.path.abspath(p)))
                 yield p
 
-    # UNION: close the "git add -f under a pruned root" bypass — see
-    # `_git_tracked_py_under_pruned_roots`'s docstring. Sorted for
-    # determinism; de-duplicated against the walk (paths already yielded
-    # above can never come from inside a pruned dir, so no real overlap is
-    # expected, but the guard is cheap and correctness should not depend on
-    # that never happening).
     for p in sorted(_git_tracked_py_under_pruned_roots(repo_root, toplevel), key=str):
         if p not in walked_lexical:
             yield p
 
 
 def _git_tracked_symlinks(repo_root: Path, toplevel: Path | None) -> list[Path]:
-    """Every git-tracked symlink (index mode ``120000``) EXCEPT beneath
-    (strictly under) the repo-root ``tos/`` (the forward-scan mirror owns
-    tos-INTERNAL symlinks — see ``_forward_scan_boundary_symlinks``). A
-    tracked symlink AT ``tos`` itself IS returned: the repo-root `tos` path is not
-    "inside tos/", it IS the boundary marker, and ``_tos_root_is_symlink``
-    (called from ``run_checks``) needs this function's output to detect a
-    tracked-but-not-yet-materialized symlink there. Lexical paths, not
-    resolved.
-
-    Closes the directory-symlink half of the same bypass class as
-    ``_git_tracked_py_under_pruned_roots``:
-    ``os.walk(followlinks=False)`` never descends into ANY directory
-    symlink, regardless of where it points or whether its parent is a
-    pruned root — so a directory alias force-tracked under a pruned root
-    (e.g. ``open-trading-api/link -> tos/src/tos``) is invisible to
-    ``_walk_repo_py``'s side-channel too (the walk never reaches
-    ``open-trading-api/`` at all once it is pruned). ``git ls-files -s``
-    finds the symlink OBJECT directly from the index, with no directory
-    traversal at all.
-
-    ``toplevel`` must be the result of ONE prior ``_git_toplevel_or_none(repo_root)``
-    call — see that function's docstring (this function does not re-probe).
-    ``None`` means "not a usable git work tree here" — return ``[]``.
-    """
+    """Every git-tracked symlink (index mode ``120000``) EXCEPT beneath"""
     if toplevel is None:
         return []
 
@@ -707,7 +347,6 @@ def _git_tracked_symlinks(repo_root: Path, toplevel: Path | None) -> list[Path]:
     for record in raw.split(b"\0"):
         if not record:
             continue
-        # `-s` record format: "<mode> <object-sha> <stage>\t<path>"
         meta, sep, rel_bytes = record.partition(b"\t")
         if not sep:
             continue
@@ -716,48 +355,20 @@ def _git_tracked_symlinks(repo_root: Path, toplevel: Path | None) -> list[Path]:
             continue
         rel = os.fsdecode(rel_bytes)
         if rel.startswith("tos/"):
-            continue  # forward-scan mirror's territory (tos-INTERNAL only)
+            continue
         symlinks.append(Path(os.path.abspath(repo_root / rel)))
     return symlinks
 
 
 def _subtree_contains(root: Path, candidate: Path) -> bool:
-    """True if ``candidate`` IS ``root``, or lies within ``root``'s subtree.
-
-    Comparison is EXACT-CASE (``PurePath.__eq__`` on POSIX never folds
-    case). On a case-INSENSITIVE filesystem (the default on macOS dev
-    machines) two differently-cased paths can name the same physical file
-    while comparing unequal here — a gap noted, not closed: enforcement is
-    Linux CI, where the filesystem is case-sensitive and this is exact by
-    construction.
-    """
+    """True if ``candidate`` IS ``root``, or lies within ``root``'s subtree."""
     return candidate == root or root in candidate.parents
 
 
 def _classify_symlink_crossing(
     link_lexical: Path, tos_dir_lexical: Path
 ) -> tuple[bool, Path | None]:
-    """Does ``link_lexical`` (a symlink) cross the tos/ boundary?
-
-    Crossing is subtree intersection: an outside link to an ancestor of tos/
-    also exposes the kernel (e.g. shared/up -> repo root).
-
-      - Link lexically OUTSIDE tos/: crossing iff the target's subtree and
-        tos_dir's subtree overlap AT ALL — target IS tos_dir, target is a
-        DESCENDANT of tos_dir, OR target is an ANCESTOR of tos_dir (its
-        subtree therefore reaches tos_dir too).
-      - Link lexically INSIDE tos/: crossing iff the target's subtree is
-        NOT entirely contained within tos_dir's subtree — anything outside,
-        ancestors of tos_dir included. (An ancestor that is still WITHIN
-        tos_dir's own subtree, e.g. a deep link pointing back up at
-        ``tos/src``, stays clean — its subtree is still wholly inside.)
-
-    Returns ``(crosses, target_lexical)``. A dangling or otherwise
-    unresolvable target is ALWAYS treated as crossing regardless of the
-    link's side (fail-closed — an unknown target could later resolve to
-    either side, so it is never presumed safe); ``target_lexical`` is
-    ``None`` in that case.
-    """
+    """Does ``link_lexical`` (a symlink) cross the tos/ boundary?"""
     link_inside = _subtree_contains(tos_dir_lexical, link_lexical)
     target_real = Path(os.path.realpath(link_lexical))
     if not target_real.exists():
@@ -774,22 +385,7 @@ def _classify_symlink_crossing(
 
 
 def _forward_scan_boundary_symlinks(repo_root: Path, tos_dir: Path) -> list[Violation]:
-    """Rule S, mirrored for symlinks lexically INSIDE tos/ (the forward
-    scan's side of the boundary): a directory or file alias under tos/
-    pointing OUTSIDE it looks tos-governed (importable as ``tos.*``,
-    forward-scanned by rules a-d) but is physically living — and mutable —
-    somewhere else entirely. Walks ``tos_dir`` directly with
-    ``os.walk(followlinks=False)`` (never descends into a directory
-    symlink), mirroring ``_iter_py_files``'s top-level `.venv/` exclusion so
-    this stays as cheap as the forward `.py` scan. Known limitation: the `.venv` entry itself is classified, but a
-    symlink one level deeper (``tos/.venv/leak -> ../../shared/real``) is not
-    reached because the tree is pruned after recording; bounded, since nothing
-    under ``tos/.venv`` is importable as ``tos.*``.
-
-    RECORDS symlinks in ``dirnames``/``filenames`` BEFORE pruning `.venv`
-    out of ``dirnames`` — same discipline as ``_walk_repo_py``'s
-    ``symlinks_out`` side-channel, so a tos/.venv symlink cannot evade detection.
-    """
+    """Rule S, mirrored for symlinks lexically INSIDE tos/ (the forward"""
     tos_dir_lexical = Path(os.path.abspath(tos_dir))
     violations: list[Violation] = []
     is_top = True
@@ -816,34 +412,17 @@ def _forward_scan_boundary_symlinks(repo_root: Path, tos_dir: Path) -> list[Viol
 
 
 def _safe_rel(path: Path, root: Path) -> str:
-    """Relative path of ``path`` under ``root`` for display — LEXICAL, not
-    resolved (``os.path.relpath`` normalises to absolute but never follows
-    symlinks). A violation must name the file that actually contains it: if
-    ``path`` is a symlink, resolving it here would substitute its TARGET's
-    path in the report, misattributing the violation to a different file.
-    """
+    """Relative path of ``path`` under ``root`` for display — LEXICAL, not"""
     try:
         return os.path.relpath(path, root)
     except ValueError:
-        # Windows: `path` and `root` on different drives — no relative path
-        # is expressible at all; fall back to the absolute string.
         return str(path)
 
 
 def _make_symlink_crossing_violation(
     link_lexical: Path, target_lexical: Path | None, repo_root: Path
 ) -> Violation:
-    """Build the one ``TOS-FW-S`` ``Violation`` shape both the reverse loop
-    (``check_reverse_imports``) and the forward mirror
-    (``_forward_scan_boundary_symlinks``) need.
-
-    Message wording: a dangling target (``target_lexical is None``) gets
-    its own wording, "dangling symlink (target unresolvable) — fail-closed",
-    rather than reusing the generic "crosses the tos/ boundary" phrasing —
-    a dangling link hasn't been PROVEN to cross anything; it is flagged
-    because its status is unknown, and that distinction is worth keeping
-    visible in the message itself.
-    """
+    """Build the one ``TOS-FW-S`` ``Violation`` shape both the reverse loop"""
     rel = _safe_rel(link_lexical, repo_root)
     if target_lexical is None:
         message = "dangling symlink (target unresolvable) — fail-closed"
@@ -859,36 +438,15 @@ def check_reverse_imports(
     toplevel: Path | None = _UNSET,  # type: ignore[assignment]
     tracked_symlinks: list[Path] = _UNSET,  # type: ignore[assignment]
 ) -> list[Violation]:
-    """Detect any file outside ``tos/`` that imports the ``tos`` package
-    (rule R), plus (rule S) any symlink lexically OUTSIDE tos/ whose
-    resolved target crosses to the other side of the boundary.
-
-    ``toplevel``/``tracked_symlinks``: pass ``run_checks``'s already-computed
-    values to avoid re-probing git (DRY — see ``_git_toplevel_or_none``'s
-    docstring); left at their defaults, both are computed here (a direct
-    standalone call, as this module's own tests make throughout, still
-    works with exactly one ``rev-parse`` and two ``ls-files`` calls).
-    """
+    """Detect any file outside ``tos/`` that imports the ``tos`` package"""
     if toplevel is _UNSET:
         toplevel = _git_toplevel_or_none(repo_root)
     if tracked_symlinks is _UNSET:
         tracked_symlinks = _git_tracked_symlinks(repo_root, toplevel)
 
     violations: list[Violation] = []
-    # LEXICAL boundary, not resolved: a file's tos/-membership is decided by
-    # where it lexically SITS in the tree, never by what a symlink resolves
-    # to. `.resolve()` here would misclassify a symlink OUTSIDE tos/ whose
-    # target happens to live inside tos/ as tos-internal, silently exempting
-    # it from rule e even though it is importable exactly where it sits.
-    # `os.path.abspath` normalises without following
-    # symlinks.
     tos_dir_lexical = Path(os.path.abspath(tos_dir))
 
-    # ---- rule S sources, gathered alongside rule R's walk ----
-    # (1) every symlink `_walk_repo_py` sees during its walk (recorded before
-    # any pruning — see that function's docstring); (2) every git-tracked
-    # symlink outside tos/, including ones under a pruned root that source
-    # (1) can never reach (see `_git_tracked_symlinks`'s docstring).
     walked_symlinks: list[Path] = []
 
     for path in _walk_repo_py(
@@ -896,19 +454,18 @@ def check_reverse_imports(
     ):
         path_lexical = Path(os.path.abspath(path))
         if path_lexical == tos_dir_lexical or tos_dir_lexical in path_lexical.parents:
-            continue  # inside tos/ (lexically) — governed by the forward rules
+            continue
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
         if "tos" not in text:
-            continue  # cheap prefilter: cannot import `tos` without the substring
+            continue
 
         rel = _safe_rel(path, repo_root)
         try:
             tree = ast.parse(text, filename=str(path))
         except SyntaxError:
-            # A non-parseable file must not hide an import — line-scan fallback.
             for i, line in enumerate(text.splitlines(), start=1):
                 if _REVERSE_LINE_RE.match(line):
                     violations.append(
@@ -948,21 +505,10 @@ def check_reverse_imports(
                         )
                     )
 
-    # ---- rule S: boundary-crossing symlinks lexically OUTSIDE tos/ ----
-    # (symlinks lexically INSIDE tos/, strictly under it, are
-    # `_forward_scan_boundary_symlinks`'s job — `walked_symlinks` and
-    # `_git_tracked_symlinks` already exclude those by construction, but the
-    # `in .parents` half of the guard below is kept as an explicit invariant
-    # check, not dead code removed for looking redundant. `tos` ITSELF is
-    # neither this loop's job NOR the forward mirror's — see
-    # `_tos_root_is_symlink`, called unconditionally from `run_checks`
-    # before anything else; the `== tos_dir_lexical` half of the guard below
-    # exists only to keep this generic per-symlink loop from double-counting
-    # that dedicated, more specific check).
     all_symlinks = {*walked_symlinks, *tracked_symlinks}
     for link_lexical in sorted(all_symlinks, key=str):
         if link_lexical == tos_dir_lexical or tos_dir_lexical in link_lexical.parents:
-            continue  # tos/ itself, or strictly inside it
+            continue
         crosses, target_lexical = _classify_symlink_crossing(
             link_lexical, tos_dir_lexical
         )
@@ -975,37 +521,10 @@ def check_reverse_imports(
     return violations
 
 
-# ============================================================================
-# Orchestration
-# ============================================================================
-
-
 def _tos_root_is_symlink(
     tos_dir: Path, tracked_symlinks: list[Path]
 ) -> tuple[bool, Path | None]:
-    """Is the repo-root ``tos/`` entry ITSELF a symlink?
-
-    ``tos/`` must NEVER be a symlink — it IS the boundary marker every other
-    check in this file is anchored to; there is no target that keeps it "on
-    the same side", because the symlink's mere existence means the kernel's
-    real content lives somewhere physically else. Checked FIRST, from
-    ``run_checks``, before any scan: neither the reverse loop (which skips the
-    root) nor the forward walk (which inspects descendants) can catch it.
-    A dangling root symlink must fail instead of silently skipping the scan.
-
-    Two independent sources, fail-closed if EITHER says yes:
-      1. The filesystem (``os.path.islink`` directly on ``tos_dir``).
-      2. The git index — ``tracked_symlinks`` (mode ``120000``, from ONE
-         prior ``_git_tracked_symlinks`` call, reused rather than re-probed
-         here — DRY, see ``_git_toplevel_or_none``'s docstring): the working
-         tree might not currently reflect what the index claims (e.g.
-         before a checkout materializes it), and the index is what CI
-         actually checks out, so it is checked too even when (1) says no.
-
-    Returns ``(is_symlink, target_lexical)`` — ``target_lexical`` is
-    ``None`` when dangling, or when the answer came only from source (2)
-    and there is nothing on the filesystem yet to resolve.
-    """
+    """Is the repo-root ``tos/`` entry ITSELF a symlink?"""
     if os.path.islink(tos_dir):
         target_real = Path(os.path.realpath(tos_dir))
         if target_real.exists():
@@ -1015,20 +534,12 @@ def _tos_root_is_symlink(
     tos_dir_lexical = Path(os.path.abspath(tos_dir))
     for tracked in tracked_symlinks:
         if tracked == tos_dir_lexical:
-            # Index says symlink; filesystem disagrees (or has nothing at
-            # all there) — still fail-closed, since CI trusts the index.
             return True, None
     return False, None
 
 
 def run_checks(repo_root: Path) -> list[Violation]:
-    """Run the full firewall (forward tos/ scan + reverse repo scan).
-
-    ``tos/`` itself is checked FIRST, unconditionally: a symlink there, or a
-    missing/non-directory entry there, is ALWAYS a visible, reported
-    failure — never a silent PASS (see ``_tos_root_is_symlink``).
-
-    """
+    """Run the full firewall (forward tos/ scan + reverse repo scan)."""
     repo_root = repo_root.resolve()
     tos_dir = repo_root / "tos"
     violations: list[Violation] = []
@@ -1075,7 +586,7 @@ def run_checks(repo_root: Path) -> list[Violation]:
             rel = _safe_rel(path, repo_root)
             try:
                 violations.extend(check_tos_file(path, rel))
-            except SyntaxError as exc:  # a tos file that will not parse fails hard
+            except SyntaxError as exc:
                 violations.append(
                     Violation(
                         "TOS-FW-SYNTAX",
@@ -1084,7 +595,6 @@ def run_checks(repo_root: Path) -> list[Violation]:
                         f"could not parse tos file: {exc.msg}",
                     )
                 )
-        # rule S, forward side: symlinks lexically INSIDE tos/ crossing OUT.
         violations.extend(_forward_scan_boundary_symlinks(repo_root, tos_dir))
 
     violations.extend(

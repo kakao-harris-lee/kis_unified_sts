@@ -1,13 +1,4 @@
-"""Shared builders for the ``tos.egressgw`` / ``tos.brokeradapter`` suites (design #34 §12).
-
-Every builder is deterministic and clock-free: no ``time`` / ``datetime`` / ``random`` / ``uuid``
-appears here either, because the §12.1-8 canary scans the shipped sources and the tests must not
-model something the packages forbid.
-
-The default context (:func:`happy_context`) is the **only** fully-admitting configuration in the
-suite; every scenario derives from it by making exactly one fact restrictive, so a test that
-passes proves the *single* fact under examination was load-bearing.
-"""
+"""Shared builders for the ``tos.egressgw`` / ``tos.brokeradapter`` suites (design #34 §12)."""
 
 from __future__ import annotations
 
@@ -73,9 +64,6 @@ INSTRUMENT = "ES"
 SIDE = "BUY"
 SESSION_PHASE = "CONTINUOUS"
 
-#: ⚠ Every numeric below is **provisional**: the register carries no approved sizing bound
-#: (P0-1) and no approved Broker Capability Profile INSTANCE (P0-2), so these are injected test
-#: values, never authorized ones (design #34 §9).
 NON_LIVE_TEST_ENVIRONMENT = "non-live-test"
 RISK_BUDGET = Decimal("1000")
 PER_UNIT_RISK = Decimal("50")
@@ -100,11 +88,6 @@ def instrument_key() -> InstrumentKey:
 def ordering(sequence: int = 1) -> OrderingEvent:
     """A totally-ordered event coordinate (an opaque injected bar index)."""
     return OrderingEvent(event_id=f"ev-{sequence}", quorum_commit_index=sequence)
-
-
-# ---------------------------------------------------------------------------
-# Order Construction inputs
-# ---------------------------------------------------------------------------
 
 
 def sizing_bound(**overrides: Any) -> SizingBound:
@@ -214,11 +197,6 @@ def construction(**overrides: Any) -> CandidateConstruction:
     }
     base.update(overrides)
     return construct_candidate_command(**base)
-
-
-# ---------------------------------------------------------------------------
-# Send-boundary facts
-# ---------------------------------------------------------------------------
 
 
 def attempt_request(
@@ -335,11 +313,7 @@ def venue_decision(
 
 
 def currentness_proof(**overrides: Any) -> EgressCurrentnessProof:
-    """A structurally complete, admissible, CURRENT Egress Currentness Proof.
-
-    ⚠ Structure and coordinates only: the owner submissions inside the Safety Currentness
-    Vector are provisional / D-E2-dependent (design #34 §4.3).
-    """
+    """A structurally complete, admissible, CURRENT Egress Currentness Proof."""
     revision = CurrentnessRevision(revision_id="rev-1", commit_index=1)
     base: dict[str, Any] = {
         "proof_id": "ecp-1",
@@ -466,11 +440,7 @@ def disjoint_inventory() -> tuple[CredentialRouteInventoryEntry, ...]:
 
 
 def happy_context(**overrides: Any) -> tuple[AttemptRequest, SendBoundaryContext]:
-    """A fully-admitting attempt + send-boundary context (the suite's single baseline).
-
-    Every scenario derives from this by making exactly one fact restrictive, so a passing test
-    proves that one fact was load-bearing rather than that some other fact happened to hold.
-    """
+    """A fully-admitting attempt + send-boundary context (the suite's single baseline)."""
     built = construction()
     assert built.command is not None
     proof = build_order_conformance_proof(

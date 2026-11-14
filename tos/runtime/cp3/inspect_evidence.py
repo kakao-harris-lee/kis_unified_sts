@@ -1,73 +1,4 @@
-"""Read-only evidence join — one recorded session bar → what the runtime did with it.
-
-Part of the CP-3 ``cp3`` package (roadmap
-``docs/plans/2026-11-11-tos-platform-roadmap.md`` §P1: «왜 이 바에서 이 결정이었나»).
-Its one job is the KEY join from a journal bar's ``raw_event_id`` to the
-decision records the engine wrote for that bar — **and to the value set the
-engine actually evaluated on it** — so :mod:`cp3.inspect_session` re-evaluates
-the policy on the engine's own inputs rather than on a look-alike.
-
-**Why this lives inside ``tos/`` and not beside the journal reader in
-``tools/``.** The import firewall is bidirectional
-(``tools/tos_firewall_check.py`` TOS-FW-R): nothing outside ``tos/`` may import
-``tos``/``tos_runtime``, so a legacy-side joiner must MIRROR the store
-literals it reads — which is what
-:mod:`tools.tos_cp3.session_inputs` does, pinned against a committed hinge.
-This module is the other side of that trade: it is in RUNTIME scope, so it
-imports the real file-name and schema-version constants from the stores
-themselves, and parses the stored value view through the kernel's own
-:class:`~tos.dsl.ContextValueView` — no literal and no projection can drift.
-
-**The join (three durable rows).** Identical in shape to
-:mod:`tools.tos_cp3.session_inputs`'s own documented chain, read here from the
-source constants instead of mirrored ones:
-
-1. ``marketfeed.sqlite3``'s ``preimages(snapshot_id, raw_event_id)`` — the bar's
-   ``raw_event_id`` names the Critical Input Snapshot the issuer built from it;
-2. ``inbox.sqlite3``'s ``events`` — the ``DECISION_TICK`` whose
-   ``decision_tick.capsule.critical_input_snapshot.snapshot_id`` is that
-   snapshot, carrying the ``event_id``, the two evidence ``seq`` stamps the
-   driver writes around the handler
-   (``tos_runtime.engine.driver.EngineDriver._process_next``), **and** that
-   tick's ``decision_tick.value_view`` — the published
-   :class:`~tos.dsl.ContextValueView` the engine evaluated;
-3. ``evidence.sqlite3``'s ``entries`` — every record in that tick's
-   ``(handling_started_evidence_seq, consumed_evidence_seq]`` window.
-
-**The value view is the point of the join, not a bonus.** A production
-evaluation reads ``env["capsule"]["resolved_values"]`` built from the view
-``tos.engine.pipeline`` passed it, NOT from the producer's journal line. The
-two normally agree (measured 2026-11-10: 351 of 352 bars identical), and where
-they do not, the journal is the wrong answer — so this module hands the view
-up and :mod:`cp3.inspect_session` evaluates on it. An **explicit-empty** view
-(``values == ()``) is a defined outcome, materially different from no view at
-all (``tos.dsl.context_value.ContextValueView`` class docstring: "design #32 §6
-∅ 양방향"), and that difference is carried, not flattened: an empty view is the
-shape a withheld tick has, and a bar whose policy was never meaningfully
-evaluated must not land in a per-comparison denominator.
-
-**Nothing is guessed.** A bar whose chain breaks at any link gets an
-:class:`BarEvidence` whose ``unjoined_reason`` names the broken link, never a
-positional pairing: pairing by position is the inference the stores can
-contradict silently (session_inputs' own module docstring, Claude lane MEDIUM
-R1 2026-10-14). An ambiguous link — one ``raw_event_id`` behind two snapshots,
-one snapshot bound by two ticks — is also "unjoined, and here is why", because
-an inspector that silently picks one would be reporting a guess as a reading.
-A tick the driver admitted but never finished handling says exactly that,
-rather than looking like a tick that was never admitted.
-
-**Read-only, always.** Every connection is opened as a ``file:…?mode=ro`` URI
-derived from :meth:`~pathlib.Path.as_uri` (so a path holding ``?`` or ``#`` is
-percent-encoded rather than silently truncating the query string), so this
-module cannot create, migrate, or WAL-checkpoint an operator's durable set;
-every store's ``PRAGMA user_version`` is pinned against the constant the
-writing store declares; and every statement runs through :func:`_query`, so a
-sqlite failure mid-read is a named refusal rather than a raw driver traceback.
-
-Firewall: ``tos.*`` + ``tos_runtime.*`` + stdlib only. No ``shared.*``, no
-clock, no RNG, no ``subprocess``, no network. Intra-package imports are
-RELATIVE (see :mod:`cp3._base`).
-"""
+"""Read-only evidence join — one recorded session bar → what the runtime did with it."""
 
 from __future__ import annotations
 
@@ -96,16 +27,8 @@ __all__ = [
     "read_bar_evidence",
 ]
 
-#: The inbox event kind a market bar arrives as
-#: (``tos_runtime.engine.inbox``'s own stored ``kind`` for a decision tick; the
-#: value is also what the live stores hold — measured on the 2026-11-10 stock
-#: session's ``inbox.sqlite3``).
 DECISION_TICK_KIND = "DECISION_TICK"
 
-#: The evidence record kinds this module reads back per tick. Everything else in
-#: the window (``TIME_HEALTH_SNAPSHOT`` dominates it by two orders of magnitude)
-#: is filtered in SQL rather than in Python, so a full trading day's window is
-#: one bounded query.
 EVIDENCE_KINDS_OF_INTEREST: tuple[str, ...] = (
     "DECISION_OUTCOME_EMITTED",
     "DECISION_WITHHELD",
@@ -116,34 +39,7 @@ EVIDENCE_KINDS_OF_INTEREST: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class BarEvidence:
-    """What the engine recorded for one bar, or why that could not be read.
-
-    Attributes:
-        raw_event_id: The journal bar this record is about.
-        snapshot_id: The Critical Input Snapshot built from that bar.
-        event_id: The inbox event the driver admitted for that snapshot.
-        value_view: The engine's own ``{field_key: scalar}`` evaluation inputs,
-            projected by :meth:`~tos.dsl.ContextValueView.as_environment_mapping`.
-            An empty mapping is an **explicit-empty view** — "the binding
-            resolved and nothing was admissible" — and is a real answer.
-            ``None`` means the tick payload carried no ``value_view`` at all, or
-            carried one this reader refused (see ``value_view_refusal``).
-        value_view_refusal: Why a present ``value_view`` could not be read as a
-            :class:`~tos.dsl.ContextValueView`, or ``None``.
-        outcome_type: ``DECISION_OUTCOME_EMITTED``'s ``outcome_type`` (e.g.
-            ``NoActionOutcome``, ``Proposal``), or ``None`` when none was emitted.
-        outcome_halt_reason: That record's own ``halt_reason``.
-        consumed_halt_reason: The ``EVENT_CONSUMED`` receipt's ``halt_reason`` —
-            the driver's last word on the tick.
-        consumed_halt_step: That receipt's ``flow_fingerprint.halt_step``.
-        withheld_reason: ``DECISION_WITHHELD``'s ``halt_reason``, when the
-            pipeline never reached a signature.
-        halt_step: The first ``FLOW_HALTED``'s ``step``.
-        halt_reason: That record's ``halt_reason``.
-        halt_detail: That record's ``detail`` sentence.
-        unjoined_reason: ``None`` when the three-row chain held; otherwise the
-            broken or ambiguous link, named.
-    """
+    """What the engine recorded for one bar, or why that could not be read."""
 
     raw_event_id: str
     snapshot_id: str | None = None
@@ -167,43 +63,18 @@ class BarEvidence:
 
     @property
     def view_is_explicitly_empty(self) -> bool:
-        """Whether the engine published a view that admitted no value at all.
-
-        That is the usual shape a withheld tick has: every DSL operand resolves
-        to ``UNKNOWN``, so no rule can fire for a reason that has nothing to do
-        with the authored thresholds. It is not the ONLY such shape — see
-        :attr:`withheld`.
-        """
+        """Whether the engine published a view that admitted no value at all."""
         return self.value_view is not None and not self.value_view
 
     @property
     def withheld(self) -> bool:
-        """Whether the engine declined to decide on this bar at all.
-
-        Two shapes, and either one is enough (LOW-B, round-2 review of #1058):
-
-        * an **explicit-empty** value view (:attr:`view_is_explicitly_empty`);
-        * a recorded ``DECISION_WITHHELD`` (:attr:`withheld_reason`), which says
-          the pipeline never reached an input signature.
-
-        The second is the one the empty-view test alone misses. A tick can
-        publish a view carrying values and STILL be withheld — freshness
-        refused, a coordinator precondition refused — and re-evaluating the
-        policy on those values would produce a decision the engine never made.
-        That is precisely the phantom the ``V``/``D`` markers exist to prevent,
-        so such a bar is not evaluated and not counted either.
-        """
+        """Whether the engine declined to decide on this bar at all."""
         return self.view_is_explicitly_empty or self.withheld_reason is not None
 
 
 @dataclass(frozen=True)
 class _Tick:
-    """One inbox ``DECISION_TICK`` row, reduced to what the join needs.
-
-    The two evidence stamps are optional because a tick the driver admitted but
-    never finished handling really exists in the store, and saying so is a
-    different fact from "no tick bound this snapshot" (LOW-3, review of #1057).
-    """
+    """One inbox ``DECISION_TICK`` row, reduced to what the join needs."""
 
     event_id: str
     handling_started_seq: int | None
@@ -218,16 +89,7 @@ class _Tick:
 
 @contextmanager
 def _read_only(path: Path) -> Iterator[sqlite3.Connection]:
-    """Open ``path`` read-only and yield the connection.
-
-    The URI comes from :meth:`~pathlib.Path.as_uri`, so a path containing ``?``
-    or ``#`` is percent-encoded instead of being read by sqlite as the start of
-    the query string — an f-string would silently open a DIFFERENT file, or open
-    this one read-WRITE because the ``mode=ro`` landed inside a filename.
-
-    Raises:
-        Cp3RunnerRefusal: The file is absent or sqlite refuses to open it.
-    """
+    """Open ``path`` read-only and yield the connection."""
     if not path.is_file():
         raise Cp3RunnerRefusal(f"{path}: durable store does not exist")
     try:
@@ -245,15 +107,7 @@ def _query(
     sql: str,
     params: Sequence[Any] = (),
 ) -> list[Any]:
-    """Run one read and return its rows, or refuse naming the store.
-
-    Every statement in this module goes through here: an I/O error, a locked
-    database or a missing table partway through a read is an operator-visible
-    fact about THAT store, not a raw driver traceback from somewhere in a loop.
-
-    Raises:
-        Cp3RunnerRefusal: sqlite failed the statement.
-    """
+    """Run one read and return its rows, or refuse naming the store."""
     try:
         return connection.execute(sql, tuple(params)).fetchall()
     except sqlite3.Error as exc:
@@ -263,14 +117,7 @@ def _query(
 def _pin_schema_version(
     connection: sqlite3.Connection, *, path: Path, expected: int
 ) -> None:
-    """Refuse a store whose ``PRAGMA user_version`` is not ``expected``.
-
-    Raises:
-        Cp3RunnerRefusal: The stored version differs from the writing store's
-            own declared constant — the columns this module reads may have
-            moved, and reading them anyway would publish a value whose meaning
-            is unknown.
-    """
+    """Refuse a store whose ``PRAGMA user_version`` is not ``expected``."""
     rows = _query(connection, path=path, sql="PRAGMA user_version")
     found = rows[0][0] if rows else None
     if found != expected:
@@ -321,13 +168,7 @@ def _bound_snapshot_id(tick: Mapping[str, Any]) -> str | None:
 def _ticks_by_snapshot(
     connection: sqlite3.Connection, *, path: Path
 ) -> dict[str, list[_Tick]]:
-    """``snapshot_id -> ticks`` from the inbox's ``DECISION_TICK`` rows.
-
-    A row whose stamps are half-present is KEPT (with ``None`` stamps) so the
-    bar can be told "the tick exists but handling never completed" rather than
-    "no tick bound this snapshot" — the two are different operational facts and
-    the first one is actionable (LOW-3, review of #1057).
-    """
+    """``snapshot_id -> ticks`` from the inbox's ``DECISION_TICK`` rows."""
     ticks: dict[str, list[_Tick]] = {}
     for event_id, payload_json, started, consumed in _query(
         connection,
@@ -358,15 +199,7 @@ def _ticks_by_snapshot(
 def _projected_view(
     raw: Any,
 ) -> tuple[Mapping[str, ScalarValue] | None, str | None]:
-    """``(the engine's {field_key: scalar}, refusal)`` from a stored value view.
-
-    The projection is the kernel's own
-    :meth:`~tos.dsl.ContextValueView.as_environment_mapping` over a model
-    validated by the kernel's own :class:`~tos.dsl.ContextValueView`, so neither
-    the field-key shape nor the duplicate-key rule is restated here. A view the
-    model refuses yields ``(None, reason)`` rather than a partial mapping: half
-    of an evaluation's inputs is not a smaller evaluation, it is a wrong one.
-    """
+    """``(the engine's {field_key: scalar}, refusal)`` from a stored value view."""
     if raw is None:
         return None, None
     if not isinstance(raw, dict):
@@ -381,12 +214,7 @@ def _projected_view(
 def _records_in_window(
     connection: sqlite3.Connection, *, path: Path, low: int, high: int
 ) -> list[tuple[int, str, Mapping[str, Any]]]:
-    """``(seq, kind, payload)`` for the kinds of interest within ``[low, high]``.
-
-    One bounded query for the whole asked range; the per-tick windows are cut
-    out of the result in Python, which keeps a trading day at a single scan
-    instead of one query per bar.
-    """
+    """``(seq, kind, payload)`` for the kinds of interest within ``[low, high]``."""
     placeholders = ",".join("?" * len(EVIDENCE_KINDS_OF_INTEREST))
     rows = _query(
         connection,
@@ -511,22 +339,7 @@ def _resolved_tick(
 def read_bar_evidence(
     data_dir: Path, raw_event_ids: Sequence[str]
 ) -> dict[str, BarEvidence]:
-    """Join each bar in ``raw_event_ids`` to the records the engine wrote for it.
-
-    Args:
-        data_dir: The tenant's durable-set leaf — the directory holding
-            ``marketfeed.sqlite3``, ``inbox.sqlite3`` and ``evidence.sqlite3``.
-        raw_event_ids: The journal bars to join, in any order.
-
-    Returns:
-        One :class:`BarEvidence` per asked ``raw_event_id``. A bar whose chain
-        broke carries ``unjoined_reason`` and nothing else.
-
-    Raises:
-        Cp3RunnerRefusal: A store is missing, cannot be opened read-only,
-            carries a ``PRAGMA user_version`` this reader is not pinned to, or
-            fails a read partway through.
-    """
+    """Join each bar in ``raw_event_ids`` to the records the engine wrote for it."""
     if not raw_event_ids:
         return {}
     marketfeed_path = data_dir / MARKETFEED_FILE_NAME
@@ -555,9 +368,6 @@ def read_bar_evidence(
     if not resolved:
         return out
 
-    # Both stamps are present on every resolved tick (`_Tick.complete`), so the
-    # bounds below cannot be None — `_resolved_tick` refused the half-stamped
-    # case above rather than letting it reach this arithmetic.
     low = min(tick.handling_started_seq or 0 for _snapshot, tick in resolved.values())
     high = max(tick.consumed_seq or 0 for _snapshot, tick in resolved.values())
     evidence_path = data_dir / EVIDENCE_FILE_NAME

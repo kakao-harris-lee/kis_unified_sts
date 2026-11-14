@@ -1,26 +1,4 @@
-"""§5.1 — the mandated scenario set, end-to-end through one core (design #33 §5.1/§8-2/§8-4).
-
-Every row of the design's §5.1 table is replayed here against **the** shipped engine, and every
-terminal shape is asserted against the engine's own ``EventResult`` / reservation projection rather
-than against a harness restatement of it (RFC-010 §6 원칙 1:183-185 — tests are evidence, not
-authority).
-
-Two rows carry more than their share:
-
-* **row A (ACK)** is the MINOR-2 addition. It exists because ``ACK`` advances the *knowledge* axis to
-  ``ACKNOWLEDGED`` while leaving the *capacity* projection untouched (``state.py:77`` maps it to
-  ``None``) — an axis distinction that a suite covering only fills would never exercise, and that
-  ``UNKNOWN`` (``vocabulary.py:149``) would silently blur.
-* **row 6 (at-most-one firing)** is the design's reframing (§2.3). The no-release constraint is not
-  apologised for: a multi-bar run positively demonstrates that bar 1's entry is realized and bars 2+
-  are refused at the capacity stage with ``AT_MOST_ONE_EXPOSURE_HELD``, so no overlapping economic
-  effect can be created. One realized entry plus N−1 exact denials — all recorded.
-
-Rows 3-6 are failure / boundary paths, which RFC-010 §6 원칙 4:193-196 makes first-class: "passing
-the nominal path proves nothing about failure."
-
-Regime tag: orchestration authoring evidence only; closes no EV (design #33 §1.1).
-"""
+"""§5.1 — the mandated scenario set, end-to-end through one core (design #33 §5.1/§8-2/§8-4)."""
 
 from __future__ import annotations
 
@@ -43,10 +21,6 @@ from tos.engine import (
 from tos.rcl import CapacityState
 
 from ._backtest_fixtures import instrument_key, run_scenario
-
-# ---------------------------------------------------------------------------
-# the contract itself
-# ---------------------------------------------------------------------------
 
 
 def test_every_mandated_scenario_id_has_exactly_one_spec() -> None:
@@ -80,18 +54,8 @@ def test_every_scenario_replays_and_yields_at_least_one_event() -> None:
         assert run.closes_no_ev is True
 
 
-# ---------------------------------------------------------------------------
-# row A — entry → ACK (MINOR-2: the knowledge axis, distinct from UNKNOWN)
-# ---------------------------------------------------------------------------
-
-
 def test_row_a_ack_advances_knowledge_without_touching_capacity() -> None:
-    """(§5.1 row A) ACK ⇒ knowledge ACKNOWLEDGED, capacity unchanged at POTENTIALLY_LIVE.
-
-    ``state.py:77`` maps ACK to ``(ACKNOWLEDGED, None)`` — the ``None`` is the capacity projection
-    *not moving*. That is a different axis from ``UNKNOWN`` (``vocabulary.py:149``), which also
-    leaves capacity alone but establishes no knowledge at all.
-    """
+    """(§5.1 row A) ACK ⇒ knowledge ACKNOWLEDGED, capacity unchanged at POTENTIALLY_LIVE."""
     run, core, _fill_model, _sink = run_scenario(scenario_for(ScenarioId.ENTRY_ACK))
 
     assert run.halts == ()
@@ -116,10 +80,7 @@ def test_row_a_ack_advances_knowledge_without_touching_capacity() -> None:
 
 
 def test_ack_and_unknown_are_distinguishable_on_the_knowledge_axis() -> None:
-    """(§5.1 MINOR-2; [KW2b-#2]) The two never share a knowledge state — nor, since KW2b-#2, a
-    capacity state either: ACK's ordinary mapping has no explicit capacity target (stays
-    POTENTIALLY_LIVE), while UNKNOWN's is now the unconditional, explicit QUARANTINED_UNKNOWN
-    (ADR-002-005 §7 "until resolved")."""
+    """(§5.1 MINOR-2; [KW2b-#2]) The two never share a knowledge state — nor, since KW2b-#2, a"""
     _, ack_core, _, _ = run_scenario(scenario_for(ScenarioId.ENTRY_ACK))
     _, unknown_core, _, _ = run_scenario(scenario_for(ScenarioId.ENTRY_UNKNOWN))
 
@@ -131,11 +92,6 @@ def test_ack_and_unknown_are_distinguishable_on_the_knowledge_axis() -> None:
     assert ack.knowledge is EgressKnowledge.ACKNOWLEDGED
     assert unknown.knowledge is EgressKnowledge.UNKNOWN
     assert ack.knowledge is not unknown.knowledge
-
-
-# ---------------------------------------------------------------------------
-# rows 1-4 — the fill kinds and their projections
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -205,15 +161,7 @@ def test_row_2_partial_carries_the_remaining_magnitude_into_the_projection() -> 
 
 
 def test_row_3_reject_leaves_the_scope_occupied() -> None:
-    """(§5.1 row 3 / §2.1) Even a proven rejection frees nothing through the ordinary result path
-    — release is the RCL's act.
-
-    ``RELEASE_PENDING_PROOF`` sits among the most consumed ranks in the projection order
-    (``state.py`` — only ``QUARANTINED_UNKNOWN``/``RELEASED`` rank above it, per Phase 3 wave 2
-    KW2b-#2 and kernel round #3 §2 decision 5 respectively). Applying this REJECT result through
-    ``apply_egress_result`` alone — never the dedicated, token-gated ``release`` — leaves the
-    scope occupied; ``free``/``clear`` remain absent under every spelling.
-    """
+    """(§5.1 row 3 / §2.1) Even a proven rejection frees nothing through the ordinary result path"""
     _run, core, _fill_model, _sink = run_scenario(scenario_for(ScenarioId.ENTRY_REJECT))
     assert core.ledger.admits_new_exposure(instrument_key()) is False
     for forbidden in ("free", "clear"):
@@ -226,11 +174,6 @@ def test_row_3_reject_leaves_the_scope_occupied() -> None:
     assert (
         outstanding.capacity_state is not CapacityState.RELEASED
     ), "an ordinary REJECT result must never itself reach RELEASED (only release() may)"
-
-
-# ---------------------------------------------------------------------------
-# row 5 — fail-closed halt
-# ---------------------------------------------------------------------------
 
 
 def test_row_5_a_stage_deny_stops_the_flow_and_hands_off_nothing() -> None:
@@ -246,22 +189,11 @@ def test_row_5_a_stage_deny_stops_the_flow_and_hands_off_nothing() -> None:
     assert halt.halt_reason is HaltReason.STAGE_DENIED
     assert halt.halt_step is CommitmentStep.VENUE_ADMISSIBILITY_DECISION
     assert halt.detail is not None and "INADMISSIBLE" in halt.detail
-    # nothing was committed, so the scope is still free — a halt is not a reservation.
     assert core.ledger.outstanding(instrument_key()) is None
 
 
-# ---------------------------------------------------------------------------
-# row 6 — the at-most-one seal FIRING (the positive demonstration, §2.3)
-# ---------------------------------------------------------------------------
-
-
 def test_row_6_one_realized_entry_plus_n_minus_one_exact_denials() -> None:
-    """(§5.1 row 6 / §2.3 / §8-4) The seal firing is demonstrated **positively**, not lamented.
-
-    Three bars, one core: bar 1 realizes the entry and hands off exactly once; bars 2 and 3 are
-    refused at the capacity stage with ``AT_MOST_ONE_EXPOSURE_HELD``, so no overlapping economic
-    effect is ever created (the provisional mirror of SAFE-021).
-    """
+    """(§5.1 row 6 / §2.3 / §8-4) The seal firing is demonstrated **positively**, not lamented."""
     spec = scenario_for(ScenarioId.AT_MOST_ONE_FIRING)
     run, _core, fill_model, _sink = run_scenario(spec)
 
@@ -296,11 +228,7 @@ def test_row_6_denials_are_recorded_with_their_reason() -> None:
 
 
 def test_row_6_the_denied_bars_still_advance_the_causal_gate() -> None:
-    """(§3.4) A capacity-halted tick still updates ``_last_reference`` (``core.py:301`` before the handler).
-
-    This is precisely why the coordinate must be a yield-order counter: the halted ticks are part of
-    the ordering sequence whether or not their flow completed.
-    """
+    """(§3.4) A capacity-halted tick still updates ``_last_reference`` (``core.py:301`` before the handler)."""
     run, _core, _fill_model, _sink = run_scenario(
         scenario_for(ScenarioId.AT_MOST_ONE_FIRING)
     )
@@ -313,11 +241,6 @@ def test_row_6_the_denied_bars_still_advance_the_causal_gate() -> None:
     ), "every trace entry must carry a concrete sequence"
     assert sequences == sorted(set(sequences))
     assert len(sequences) == run.events_yielded
-
-
-# ---------------------------------------------------------------------------
-# row 7 — flat-only (a single order, not a round trip)
-# ---------------------------------------------------------------------------
 
 
 def test_row_7_an_explicit_flat_is_a_single_order_not_a_round_trip() -> None:

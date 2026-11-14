@@ -31,7 +31,6 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 _CLOSE_1_ODNO = "0000004491"
 _CLOSE_2_ODNO = "0000004492"
 _OCP_CONFIG_NAME = "order_construction_policy.yaml"
-_ACTIVATION_NAME = "safety_activation.yaml"
 
 
 @pytest.fixture()
@@ -63,8 +62,6 @@ def _write_risk_budget(
     sizing = construction["sizing"]
     assert isinstance(sizing, dict)
     sizing["risk_budget"] = budget
-    # The fixture's activation digest is rebound below after the canonical
-    # policy loader recomputes the digest for this construction generation.
     document["canonical_digest"] = "TBD"
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
@@ -82,22 +79,6 @@ def _write_risk_budget(
         path, scheme=get_scheme(EV_L1_PROVISIONAL_VERSION)
     )
     assert loaded.policy.canonical_digest == digest
-    activation_path = config_dir / _ACTIVATION_NAME
-    activation = yaml.safe_load(activation_path.read_text(encoding="utf-8"))
-    assert isinstance(activation, dict)
-    members = activation["members"]
-    assert isinstance(members, list)
-    ocp_member = next(
-        member
-        for member in members
-        if isinstance(member, dict)
-        and member.get("kind") == "ORDER_CONSTRUCTION_POLICY"
-    )
-    ocp_member["generation"] = loaded.policy.policy_generation
-    ocp_member["digest"] = loaded.policy.canonical_digest
-    activation_path.write_text(
-        yaml.safe_dump(activation, sort_keys=False), encoding="utf-8"
-    )
     digest = loaded.policy.canonical_digest
     assert isinstance(digest, str)
     return digest
@@ -180,7 +161,6 @@ def test_two_full_close_fills_accumulate_through_restart_and_release_entry_once(
             holdings=(),
         )
 
-        # Produce and fill a real 10-unit OPEN through KIS mock.
         open_event = fx.crossing_event(seq=1)
         open_discovery = runtime0.run_once((open_event,))[0]
         assert open_discovery.pipeline is not None
@@ -199,8 +179,6 @@ def test_two_full_close_fills_accumulate_through_restart_and_release_entry_once(
             environment_label=riskfx._ENVIRONMENT_LABEL,
             approved_intent_envelope_digest=intent_digest,
         )
-        # The worker has no close-proof eligibility while the account is still flat and the
-        # OPEN reservation has not reached POSITION_CONSUMED.
         assert published0 == []
 
         open_row = _row(
@@ -245,8 +223,6 @@ def test_two_full_close_fills_accumulate_through_restart_and_release_entry_once(
             CapacityState.POSITION_CONSUMED
         )
 
-        # Reboot under test OCP sizing 4. This is a new public composition over the same
-        # durable inbox/evidence/RCL files; it does not replace a loaded construction object.
         _close(runtime0)
         runtime0 = None
         digest4 = _write_risk_budget(
@@ -339,8 +315,6 @@ def test_two_full_close_fills_accumulate_through_restart_and_release_entry_once(
             CapacityState.POSITION_CONSUMED
         )
 
-        # Reboot after the first complete close. Recovery sees broker holdings 6 and must not
-        # release the entry merely because close1 itself was FULL_FILL and RELEASED.
         _close(runtime1)
         runtime1 = None
         digest6 = _write_risk_budget(
@@ -450,8 +424,6 @@ def test_two_full_close_fills_accumulate_through_restart_and_release_entry_once(
             _release_count(runtime2, entry_release_command_id(close2_attempt_id)) == 1
         )
 
-        # A final public boot replays durable finality once more; no release command may be
-        # appended a second time.
         _close(runtime2)
         runtime2 = None
         runtime3 = _boot(config_dir_with_risk_state, data_dir, custody_root, clock)
@@ -467,7 +439,6 @@ def test_two_full_close_fills_accumulate_through_restart_and_release_entry_once(
             rows=[open_row, close1_row, close2_row],
             holdings=(),
         )
-        # The entry is already RELEASED, so replay must not schedule another held-position poll.
         assert published3 == []
         assert _reservation_states(runtime3)[entry_reservation_id] is (
             CapacityState.RELEASED

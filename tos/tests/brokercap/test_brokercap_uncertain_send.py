@@ -1,9 +1,4 @@
-"""Uncertain-send / same-order-retry (design #10 §5.4; BC-EV-002/003; BC-INV-002/003).
-
-Uncertain transmission is never blindly retried and never released by timeout; a same-order
-resend is admissible only when the profile proves deterministic idempotency for the exact
-identity + window.
-"""
+"""Uncertain-send / same-order-retry (design #10 §5.4; BC-EV-002/003; BC-INV-002/003)."""
 
 from __future__ import annotations
 
@@ -20,11 +15,6 @@ from tos.brokercap import (
 from ._brokercap_strategies import issue_profile, verified_declaration
 
 _IDEMPO = CapabilityDimension.SUBMISSION_IDEMPOTENCY
-
-
-# ---------------------------------------------------------------------------
-# uncertain_send_policy — structurally all-restrictive; timeout cannot release
-# ---------------------------------------------------------------------------
 
 
 def test_uncertain_send_verdict_is_all_restrictive() -> None:
@@ -53,13 +43,7 @@ def test_timeout_never_releases(idempotency: bool | None, timeout: bool | None) 
 
 def test_verdict_permissive_construction_is_structurally_restrictive() -> None:
     """(§4.6) The verdict defaults are restrictive — the producer emits only the ladder."""
-    # The producer returns the default (all-True restrictive) verdict — no permissive path.
     assert uncertain_send_policy() == UncertainSendVerdict()
-
-
-# ---------------------------------------------------------------------------
-# same_order_retry_allowed — both-ways
-# ---------------------------------------------------------------------------
 
 
 def test_retry_allowed_only_when_idempotency_verified_and_proven() -> None:
@@ -102,7 +86,6 @@ def test_retry_denied_when_idempotency_dimension_not_verified() -> None:
         )
         is False
     )
-    # Undeclared entirely:
     profile_bare = issue_profile(declarations=())
     assert (
         same_order_retry_allowed(

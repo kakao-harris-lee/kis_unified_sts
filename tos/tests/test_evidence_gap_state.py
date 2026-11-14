@@ -1,10 +1,4 @@
-"""Gap state machine — ERI-EV-004/012 (design #4 §2.7).
-
-The gap status transition SUSPECTED -> CONFIRMED -> CONTAINED -> REPAIRED ->
-INDEPENDENTLY_REVIEWED is an appended chain (never a mutated field): forward-only,
-no skip, no regression, with per-state preconditions and a fail-closed
-new-risk block. A gap record's authority is always false in every state.
-"""
+"""Gap state machine — ERI-EV-004/012 (design #4 §2.7)."""
 
 from __future__ import annotations
 
@@ -31,9 +25,6 @@ from ._evidence_strategies import gap_chain, make_gap
 _STATUSES = list(GapStatus)
 
 
-# ---- forward-only transition predicate -------------------------------------
-
-
 @given(frm=st.sampled_from(_STATUSES), to=st.sampled_from(_STATUSES))
 def test_transition_allowed_iff_next_step(frm: GapStatus, to: GapStatus) -> None:
     """A transition is allowed iff ``to`` is exactly one step after ``frm`` (§2.7)."""
@@ -49,9 +40,6 @@ def test_skip_transition_rejected() -> None:
 def test_regression_transition_rejected() -> None:
     """REPAIRED -> SUSPECTED (regression) is not allowed."""
     assert gap_transition_allowed(GapStatus.REPAIRED, GapStatus.SUSPECTED) is False
-
-
-# ---- appended chain --------------------------------------------------------
 
 
 def test_full_forward_chain_is_valid() -> None:
@@ -72,9 +60,6 @@ def test_chain_with_mixed_gap_ids_is_invalid() -> None:
     a = make_gap(GapStatus.SUSPECTED, gap_id="gap-1")
     b = make_gap(GapStatus.CONFIRMED, gap_id="gap-2")
     assert gap_chain_valid([a, b]) is False
-
-
-# ---- per-state preconditions (unconstructable when unmet) ------------------
 
 
 def test_confirmed_requires_detection_basis() -> None:
@@ -100,9 +85,6 @@ def test_repaired_requires_recovery_sources() -> None:
         )
 
 
-# ---- fail-closed new-risk block --------------------------------------------
-
-
 @given(status=st.sampled_from(_STATUSES))
 def test_gap_blocks_new_risk_in_every_valid_state(status: GapStatus) -> None:
     """A validly-built gap keeps new risk blocked in every state (fail-closed §2.7)."""
@@ -110,14 +92,11 @@ def test_gap_blocks_new_risk_in_every_valid_state(status: GapStatus) -> None:
     assert gap_blocks_new_risk(gap) is True
 
 
-@given(status=st.sampled_from(_STATUSES[:-1]))  # all but INDEPENDENTLY_REVIEWED
+@given(status=st.sampled_from(_STATUSES[:-1]))
 def test_unblocking_before_review_is_unconstructable(status: GapStatus) -> None:
     """Unblocking new risk before independent review is unconstructable (§2.7)."""
     with pytest.raises(ValidationError):
         make_gap(status, response=GapResponse(new_risk_blocked=False))
-
-
-# ---- authority always false ------------------------------------------------
 
 
 @given(status=st.sampled_from(_STATUSES))

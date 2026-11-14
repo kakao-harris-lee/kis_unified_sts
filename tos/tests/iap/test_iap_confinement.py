@@ -1,15 +1,4 @@
-"""UNKNOWN confinement + economic continuity + predicate-only §6 rules (design #15 §5.5/§5.6/§6).
-
-unknown_confines (§5.5): UNKNOWN blocks ordinary new risk and CANNOT be offset by capacity /
-label / priority / human preference (IAP-INV-010/013). economic_effect_outlives (§5.6): expiry /
-invalidation / missing-ACK / cancel-ACK never releases capacity or erases exposure (expiry ≠
-release). predicate-only: independent_validation_declared (§6.1), no_widening_no_union +
-approval_grants_no_authority (§6.3), active_egress_currentness (§6.4), stale_generation_fenced +
-conflicting_evaluators_unknown (§6.5), recovery_revives_nothing (§6.6).
-
-Regime tag: predicate / model substrate only; IAP-EV-002/006/008/009/010/011/012 NOT_IMPLEMENTED
-(+Security / +Broker / runtime residue); EV-L1-complete claim forbidden.
-"""
+"""UNKNOWN confinement + economic continuity + predicate-only §6 rules (design #15 §5.5/§5.6/§6)."""
 
 from __future__ import annotations
 
@@ -30,10 +19,6 @@ from tos.iap import (
 )
 
 from ._iap_strategies import TRIBOOL, ordering_event
-
-# ---------------------------------------------------------------------------
-# §5.5 unknown_confines — capacity / label / priority cannot offset uncertainty
-# ---------------------------------------------------------------------------
 
 
 @given(
@@ -68,11 +53,6 @@ def test_no_uncertainty_does_not_block_by_uncertainty() -> None:
     assert unknown_confines(any_unknown_state=False, capacity_available=True) is False
 
 
-# ---------------------------------------------------------------------------
-# §5.6 economic_effect_outlives — expiry ≠ release
-# ---------------------------------------------------------------------------
-
-
 def test_expiry_does_not_release_capacity() -> None:
     """(IAP-INV-011, IAP-AC-011) Without a positively-proven terminal release, the effect outlives (expiry ≠ release)."""
     assert economic_effect_outlives(terminal_release_proven=None) is True
@@ -82,11 +62,6 @@ def test_expiry_does_not_release_capacity() -> None:
 def test_positively_proven_release_outlives_is_false() -> None:
     """(positive side) Only a positively-proven terminal release lets the effect NOT outlive."""
     assert economic_effect_outlives(terminal_release_proven=True) is False
-
-
-# ---------------------------------------------------------------------------
-# §6.1 independent_validation_declared
-# ---------------------------------------------------------------------------
 
 
 def test_independent_validation_requires_all_positive() -> None:
@@ -125,11 +100,6 @@ def test_independent_validation_fails_closed(
     assert result is expected
 
 
-# ---------------------------------------------------------------------------
-# §6.3 no_widening_no_union + all-false authority
-# ---------------------------------------------------------------------------
-
-
 def test_no_widening_requires_single_exact_no_union() -> None:
     """(IAP-INV-007) True only for a single exact decision with no union of narrower decisions."""
     assert (
@@ -149,11 +119,6 @@ def test_no_widening_requires_single_exact_no_union() -> None:
 def test_approval_grants_no_authority_on_all_false() -> None:
     """(§7 / IAP-INV-005) The default all-false authority effect grants nothing."""
     assert approval_grants_no_authority(ApprovalAuthorityEffect()) is True
-
-
-# ---------------------------------------------------------------------------
-# §6.4 active_egress_currentness — cache / absence ≠ currentness
-# ---------------------------------------------------------------------------
 
 
 def test_active_currentness_requires_active_bounded_proof() -> None:
@@ -188,11 +153,6 @@ def test_absence_inferred_currentness_fails_closed() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# §6.5 stale_generation_fenced + conflicting_evaluators_unknown
-# ---------------------------------------------------------------------------
-
-
 def test_older_generation_is_fenced_by_newer() -> None:
     """(§17 line 405, IAP-INV-012) An older generation is fenced (provably precedes) a newer one."""
     older, newer = ordering_event(1), ordering_event(2)
@@ -202,9 +162,8 @@ def test_older_generation_is_fenced_by_newer() -> None:
 def test_ambiguous_generation_pair_fails_closed() -> None:
     """(§19 line 433 wall-clock) An unordered / cross-continuity pair fails closed (not fenced)."""
     a = ordering_event(1, continuity="cont-a")
-    b = ordering_event(2, continuity="cont-b")  # different continuity => AMBIGUOUS
+    b = ordering_event(2, continuity="cont-b")
     assert stale_generation_fenced(a, b) is False
-    # A newer-before-older pair is also not "older fenced by newer".
     assert stale_generation_fenced(ordering_event(2), ordering_event(1)) is False
 
 
@@ -236,11 +195,6 @@ def test_conflicting_evaluators_property(results: list[ApprovalResult]) -> None:
         assert outcome is ApprovalResult.UNKNOWN
     else:
         assert outcome is results[0]
-
-
-# ---------------------------------------------------------------------------
-# §6.6 recovery_revives_nothing
-# ---------------------------------------------------------------------------
 
 
 def test_recovery_revives_nothing() -> None:

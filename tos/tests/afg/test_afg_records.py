@@ -1,12 +1,4 @@
-"""afg five-artifact data model — digest binding, id ⊥ digest, all-false authority (§2).
-
-Covers design #16 §2.1 (the digest-bound / value / REUSE classification), §2.3 (covered
-content + self-exclusion + append-only generations), §0.4e (independent id, not
-``f(digest)``), and §5.5 (the evidence-reconstruction substrate: a same-id / different-bytes
-forged decision or double-spent permit is a ``classify_record_pair`` ``CRITICAL_CONFLICT``).
-
-Closes **no** AFG-EV: predicate / coordinate substrate only (design #16 §1).
-"""
+"""afg five-artifact data model — digest binding, id ⊥ digest, all-false authority (§2)."""
 
 from __future__ import annotations
 
@@ -48,11 +40,6 @@ _ARTIFACTS = (
     ActionFlowDecision,
     ActionFlowPermit,
 )
-
-
-# ---------------------------------------------------------------------------
-# §2.1 — the four digest-bound citizens + the ActionFlowVector REUSE
-# ---------------------------------------------------------------------------
 
 
 def test_four_artifacts_issue_with_verified_digests() -> None:
@@ -106,11 +93,6 @@ def test_extra_field_is_rejected() -> None:
     """(§2 / §8 line 248) ``extra="forbid"`` — an unknown field cannot be silently dropped."""
     with pytest.raises(ValidationError):
         ActionFlowPolicy(policy_id="x", unknown_field=1)  # type: ignore[call-arg]
-
-
-# ---------------------------------------------------------------------------
-# §3.1 / §0.4e — independent id (id ⊥ digest) + CRITICAL_CONFLICT detection
-# ---------------------------------------------------------------------------
 
 
 @given(version=REQUIRED_FIELD_TEXT)
@@ -198,11 +180,6 @@ def test_issued_artifact_requires_a_concrete_independent_id() -> None:
         assert "concrete policy_id" in str(excinfo.value)
 
 
-# ---------------------------------------------------------------------------
-# §2.3 — required covered / self-exclusion
-# ---------------------------------------------------------------------------
-
-
 def test_required_covered_is_structural_identity_only() -> None:
     """(§2.3) No numeric magnitude appears in any ``_REQUIRED_COVERED`` (null-bound ISSUED)."""
     numeric_ish = ("magnitude", "limit", "rate", "burst", "queue", "age", "vector")
@@ -234,21 +211,12 @@ def test_missing_required_covered_blocks_issue() -> None:
 
 
 def test_issued_result_raises_on_a_draft_decision() -> None:
-    """``issued_result`` is reachable, not dead code: a DRAFT decision (a normal,
-    validator-accepted state, §3.2) legitimately carries ``result=None`` — the
-    required-covered guard only fires at ISSUED, not at DRAFT (``_base.py``'s
-    ``_verify_digest_identity`` returns early for DRAFT). ``issued_result`` expresses
-    the ISSUED-only contract at the type level and must itself fail closed here."""
+    """``issued_result`` is reachable, not dead code: a DRAFT decision (a normal,"""
     draft = ActionFlowDecision()
     assert draft.status is ArtifactStatus.DRAFT
     assert draft.result is None
     with pytest.raises(ArtifactIntegrityError):
         _ = draft.issued_result
-
-
-# ---------------------------------------------------------------------------
-# §4.6 / AFG-INV-011 — all-false governor authority ("create" / "issue" verbs)
-# ---------------------------------------------------------------------------
 
 
 def test_default_governor_effect_grants_nothing() -> None:
@@ -283,12 +251,7 @@ def test_forged_unvalidated_authority_is_still_caught_by_the_predicate() -> None
 
 
 def test_every_declared_authority_flag_is_covered_by_the_predicate() -> None:
-    """(anti-under-realization) The predicate checks EVERY declared flag, not a fixed six.
-
-    A hardcoded disjunction would silently stop covering a flag added later; this drives
-    each declared field through the unvalidated ``model_construct`` path and requires the
-    predicate to reject it.
-    """
+    """(anti-under-realization) The predicate checks EVERY declared flag, not a fixed six."""
     declared = list(ActionFlowGovernorEffect.model_fields)
     assert declared, "the governor effect must declare at least one authority flag"
     for field in declared:
@@ -300,13 +263,7 @@ def test_every_declared_authority_flag_is_covered_by_the_predicate() -> None:
 
 
 def test_forged_truthy_non_bool_authority_flag_is_rejected() -> None:
-    """(M3 regression) A forged **truthy non-bool** flag must not clear the predicate.
-
-    ``model_construct`` skips validators, so a forged block can carry any object. An
-    ``is not True`` check would pass ``1`` / ``1.0`` / ``"yes"`` / ``[1]`` and report
-    "grants no authority" for an artifact that plainly does — the predicate must demand a
-    positive singleton ``False`` on every declared flag.
-    """
+    """(M3 regression) A forged **truthy non-bool** flag must not clear the predicate."""
     for field in ActionFlowGovernorEffect.model_fields:
         for forged_value in FORGED_AUTHORITY_VALUES:
             values: dict[str, Any] = {field: forged_value}
@@ -318,13 +275,7 @@ def test_forged_truthy_non_bool_authority_flag_is_rejected() -> None:
 
 
 def test_unset_flags_on_a_constructed_block_keep_their_false_defaults() -> None:
-    """(M3 boundary) ``model_construct()`` fills declared defaults, so omission is safe.
-
-    Every flag defaults to ``False``, so a block built with no overrides really is
-    all-false and legitimately passes — the forgery risk is an explicitly *supplied*
-    non-``False`` value, which :func:`test_forged_truthy_non_bool_authority_flag_is_rejected`
-    covers. Pinned here so a future default change (e.g. to ``None``) is caught.
-    """
+    """(M3 boundary) ``model_construct()`` fills declared defaults, so omission is safe."""
     forged = ActionFlowGovernorEffect.model_construct()
     for field in ActionFlowGovernorEffect.model_fields:
         assert getattr(forged, field) is False
@@ -332,34 +283,20 @@ def test_unset_flags_on_a_constructed_block_keep_their_false_defaults() -> None:
 
 
 def test_none_valued_authority_flag_is_not_a_proof_of_falsity() -> None:
-    """(M3 regression) A forged ``None`` flag is neither ``True`` nor ``False`` => rejected.
-
-    ``None`` is UNKNOWN: it does not positively establish that the authority is absent, so
-    the ``is False`` gate must refuse it (an ``is not True`` gate would have cleared it).
-    """
+    """(M3 regression) A forged ``None`` flag is neither ``True`` nor ``False`` => rejected."""
     for field in ActionFlowGovernorEffect.model_fields:
         forged = ActionFlowGovernorEffect.model_construct(**{field: None})
         assert governor_grants_no_authority(forged) is False
 
 
 def test_empty_authority_fieldset_subclass_proves_nothing() -> None:
-    """(anti-vacuity) A block declaring **no** flag is not a proof of authority separation.
-
-    "Grants nothing over nothing" is vacuous: an all-false block with an empty field set
-    would make :func:`governor_grants_no_authority` trivially ``True`` for an artifact that
-    declares no separation at all.
-    """
+    """(anti-vacuity) A block declaring **no** flag is not a proof of authority separation."""
 
     class _EmptyEffect(AllFalseActionFlowAuthority):
         pass
 
     assert _EmptyEffect.model_fields == {}
     assert governor_grants_no_authority(_EmptyEffect()) is False  # type: ignore[arg-type]
-
-
-# ---------------------------------------------------------------------------
-# §5.3 / ADR §29 q2 — forward-only decision (non-cyclic)
-# ---------------------------------------------------------------------------
 
 
 def test_decision_is_forward_only() -> None:

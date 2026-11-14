@@ -1,17 +1,4 @@
-"""MANDATED test-only seam cross-check: ioc command-conformance -> egress (design #22 §3.4/§3.5/§7).
-
-ioc (ADR-002-020) is the **conformance-decision kernel** (``ioc/__init__.py:14`` "not ... egress
-engine"): it owns the command↔proof coupling ``mutation_fence_holds`` (``ioc/predicates.py:492``) and
-the ``ConformanceResult`` verdict. EGRESS **consumes** the ioc conformance verdict as an injected
-enum-token and adds only the egress-scope coordinate equality (``exact_binding_holds``,
-defence-in-depth, §0.4c) — it **re-authors none** of the ioc conformance decision (sibling edge 0).
-The QCC carries a ``CanonicalBrokerCommand`` digest as a bound claim. This file imports the real ioc
-models as a **test** to prove the seam anchors exist; the import-closure test proves ``tos.ioc`` is
-**absent** from the egress runtime closure.
-
-Regime tag: structural / coordinate predicate substrate only; EGRESS-EV-005 substrate;
-EV-L1-complete claim forbidden.
-"""
+"""MANDATED test-only seam cross-check: ioc command-conformance -> egress (design #22 §3.4/§3.5/§7)."""
 
 from __future__ import annotations
 
@@ -32,7 +19,6 @@ from ._egress_strategies import (
 
 def test_ioc_owns_mutation_fence_holds_command_proof_coupling() -> None:
     """(§3.4 ioc predicates.py:492) ioc owns mutation_fence_holds — the command↔proof coupling."""
-    # None command / proof fails closed at the ioc-owned coupling (egress does not re-author this).
     assert mutation_fence_holds(None, None) is False
 
 
@@ -55,14 +41,12 @@ def test_exact_binding_consumes_the_injected_ioc_verdict() -> None:
         clean_qcc(),
         clean_authorized_coordinates(),
     )
-    # The real ioc enum member (a str subclass) is accepted as the injected token.
     assert (
         exact_binding_holds(
             request, qcc, authorized, ConformanceResult.CONFORMANT.value, "bytes-digest"
         )
         is True
     )
-    # NON_CONFORMANT / UNKNOWN verdicts are denial.
     assert (
         exact_binding_holds(
             request,

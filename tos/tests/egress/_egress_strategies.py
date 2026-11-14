@@ -1,21 +1,4 @@
-"""Shared valid-artifact builders + strategies for the egress property tests (design #22 §7).
-
-Firewall-clean: imports only ``hypothesis`` and ``tos.*`` (design #22 §0.3). The builders enforce
-the §7 clean-vs-illegal fixture discipline (the #8 lesson — a "clean" fixture must be *genuinely*
-complete / bound, never a permissive shortcut):
-
-* a **clean** QCC carries every ``_REQUIRED_COVERED`` coordinate concrete, both single-use nonces,
-  and a genuine two-distinct-signer quorum (all eligible + signed), so a genuine admission is
-  achievable;
-* a **clean** current-coordinate mirror matches the clean QCC field-for-field, so ``quorum_
-  coordinates_current`` is genuinely satisfiable (not a shortcut);
-* the **∅ strategies** deliberately generate empty signer / inventory sets so the ∅-void guards are
-  actually exercised (the #10 lesson — a strategy that never emits ∅ leaves the ∅ branch untested).
-
-Every quorum / generation value is an explicit fixture int — nothing here is a *policy* number; the
-real egress bounds are Verification-Profile injected and all null / TBD in Phase 1 (design #22 §8.1).
-The reserved ``"TBD"`` placeholder is excluded from required-field text.
-"""
+"""Shared valid-artifact builders + strategies for the egress property tests (design #22 §7)."""
 
 from __future__ import annotations
 
@@ -34,15 +17,11 @@ from tos.egress import (
     SignerRole,
 )
 
-#: The injected provisional canonicalizer (REUSE, design #22 §3.1 — no new scheme).
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Text bound to a required-covered field must be concrete (never the reserved ``"TBD"``).
 REQUIRED_FIELD_TEXT = st.text(max_size=8).filter(lambda s: s != "TBD")
-#: Injected ``bool | None`` flag (fail-closed on ``None`` / ``False``).
 TRIBOOL = st.sampled_from([True, False, None])
 
-#: The clean commit-proof / egress coordinate values shared by the clean QCC + current mirror.
 _CLEAN_COORDS = {
     "cluster_identity": "cluster-A",
     "capacity_domain": "domain-A",
@@ -59,7 +38,6 @@ _CLEAN_COORDS = {
     "trust_bundle_generation": 8,
 }
 
-#: The clean exact-binding egress coordinate values shared by the clean request + authorized set.
 _CLEAN_EGRESS_COORDS = {
     "endpoint": "endpoint-1",
     "account": "acct-1",
@@ -72,11 +50,6 @@ _CLEAN_EGRESS_COORDS = {
     "egress_generation": 9,
     "active_principal": "principal-1",
 }
-
-
-# ---------------------------------------------------------------------------
-# Clean builders (genuinely complete / bound — the #8 lesson)
-# ---------------------------------------------------------------------------
 
 
 def clean_signer(
@@ -224,19 +197,9 @@ def clean_inventory_entry(
     )
 
 
-# ---------------------------------------------------------------------------
-# Hypothesis strategies (∅ deliberately reachable — the #10 lesson)
-# ---------------------------------------------------------------------------
-
-
 @st.composite
 def signer_sets(draw: st.DrawFn) -> tuple[tuple[SignerCoordinate, ...], int]:
-    """A random signer coordinate tuple (∅ reachable) + a random quorum N (0 reachable).
-
-    Returns ``(signers, quorum_n)`` so a property test can predict the distinct eligible-and-signed
-    count against the threshold. Each signer has an independently-drawn identity, role, and injected
-    ``eligible_verified`` / ``signature_verified`` tri-bool (so dedup-B conflicts are reachable).
-    """
+    """A random signer coordinate tuple (∅ reachable) + a random quorum N (0 reachable)."""
     signers = draw(
         st.lists(
             st.builds(
@@ -258,12 +221,7 @@ def signer_sets(draw: st.DrawFn) -> tuple[tuple[SignerCoordinate, ...], int]:
 def _counted_confirmed_members(
     signers: tuple[SignerCoordinate, ...],
 ) -> list[bool]:
-    """Group by identity (dedup-B) and, per counted identity, reconcile the role across entries.
-
-    A counted identity (EVERY entry eligible + signed) records whether its role is a *positively
-    confirmed* QUORUM_MEMBER across EVERY entry — a role conflict (any entry LEADER / None) leaves
-    it NOT confirmed (independent reference for the MAJOR-1 role-reconcile).
-    """
+    """Group by identity (dedup-B) and, per counted identity, reconcile the role across entries."""
     from collections import defaultdict
 
     groups: dict[str, list[SignerCoordinate]] = defaultdict(list)
@@ -294,14 +252,7 @@ def expected_quorum_threshold(
     signers: tuple[SignerCoordinate, ...],
     quorum_n: int | None,
 ) -> bool:
-    """The full bidirectional oracle for :func:`quorum_threshold_structurally_met` (§5.3).
-
-    An independent reference implementation of the §5.3 spec including the MAJOR-1 role-reconcile:
-    a non-degenerate quorum (``quorum_n >= 1``, non-empty signers) is met when the count of distinct
-    eligible-and-signed identities is ``>= quorum_n`` AND the quorum does not reduce to a single
-    identity that is not a positively-confirmed QUORUM_MEMBER (a lone LEADER / None-role / role-
-    conflicted identity is rejected, order-independently).
-    """
+    """The full bidirectional oracle for :func:`quorum_threshold_structurally_met` (§5.3)."""
     if quorum_n is None or quorum_n < 1:
         return False
     if not signers:

@@ -103,7 +103,6 @@ def test_public_restart_finishes_entry_discharge_after_close_release_crash(
         date = runtime.session_facts.trading_date_now(fx.INSTRUMENT_CLASS)
         assert date is not None
 
-        # Discover/approve OPEN, then let the actual worker obtain an initial complete pair.
         riskfx._script_witness(
             server,
             config_dir_with_risk_state,
@@ -129,8 +128,6 @@ def test_public_restart_finishes_entry_discharge_after_close_release_crash(
             environment_label=riskfx._ENVIRONMENT_LABEL,
             approved_intent_envelope_digest=intent_digest,
         )
-        # No position-proof worker read is eligible before the OPEN fill has produced a durable
-        # POSITION_CONSUMED entry reservation.
         assert published == []
 
         open_row = _row(
@@ -156,8 +153,6 @@ def test_public_restart_finishes_entry_discharge_after_close_release_crash(
             if row["egress_result_kind"] == "ACK"
         )
 
-        # First async APPLY sees the full OPEN fill, then another pair binds the positive
-        # holdings to the post-fill RCL tip.
         after_open = len(published)
         open_fill_pair = riskfx._wait_for_publish(observer, published, after_open)
         assert isinstance(open_fill_pair.first, riskfx.WitnessSnapshot)
@@ -196,8 +191,6 @@ def test_public_restart_finishes_entry_discharge_after_close_release_crash(
 
         close_event = fx.crossing_event(seq=2, close=fx.UPPER_BAND + 1_000)
         riskfx._discover_and_approve(runtime, custody_root, close_event)
-        # Step 4 consumes the proposal approval and advances the durable RCL. The proof pair is
-        # therefore refreshed after discovery, before the approved CLOSE replay reaches Step 6.
         riskfx._script_witness(
             server,
             config_dir_with_risk_state,
@@ -316,8 +309,6 @@ def test_public_restart_finishes_entry_discharge_after_close_release_crash(
         assert recovery_snapshot["verdict"] == "served"
         assert recovery_snapshot["read_ok"] is True
         assert close_attempt_id not in observer2.pending_recovery_attempt_ids()
-        # Recovery consumed the independent flat release snapshot; no position-proof poll is
-        # eligible once entry discharge has committed.
         assert published2 == []
 
         assert (

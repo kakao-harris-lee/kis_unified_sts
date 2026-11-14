@@ -1,9 +1,4 @@
-"""Shared builders for the ``tos.engine`` authoring-evidence suite (design #31 §7).
-
-Every builder is deterministic and clock-free: no ``time`` / ``datetime`` / ``random`` / ``uuid``
-appears anywhere, including here, because the §7.1 determinism canary scans the *sources* and the
-tests must not model something the shipped package forbids.
-"""
+"""Shared builders for the ``tos.engine`` authoring-evidence suite (design #31 §7)."""
 
 from __future__ import annotations
 
@@ -33,7 +28,6 @@ from tos.dsl import (
 from tos.engine import (
     AttemptRequest,
     CommitmentStep,
-    CorporateActionPayload,
     DecisionTickPayload,
     EngineConfiguration,
     EngineCore,
@@ -47,7 +41,6 @@ from tos.engine import (
     TimeAdmissionInputs,
     provisional_stage_map,
 )
-from tos.nontrade import NonTradeEventRecord
 from tos.ordering import OrderingEvent
 from tos.time import HealthState, SessionContext, UncertaintyInterval
 
@@ -57,9 +50,6 @@ ACCOUNT = "acct-1"
 INSTRUMENT = "ES"
 DECISION_CLASS = "entry"
 
-#: Every bound the engine consumes is injected here — the package hardcodes none (design #31 §8).
-#: These are **provisional** values: the DSL-evaluation budget key does not exist in
-#: VERIFICATION-PROFILE-002 and the register's Phase-0 bounds approval is incomplete.
 PROVISIONAL_BUDGET_STEPS = 64
 PROVISIONAL_MAX_UNRESOLVED_SEND_PER_SCOPE = 1
 
@@ -106,12 +96,7 @@ def capsule_gated_policy(
     account: str | None = ACCOUNT,
     instrument: str | None = INSTRUMENT,
 ) -> DecisionPolicy:
-    """A policy whose single guard reads a **capsule-sourced** operand (design #31 §3.2 (3)).
-
-    The guard compares ``capsule.scope.decision_class`` against a literal, so it has the ≥1
-    capsule-sourced operand admission requires. ``fires=False`` compares against a different
-    literal so the default no-action is selected instead.
-    """
+    """A policy whose single guard reads a **capsule-sourced** operand (design #31 §3.2 (3))."""
     action = Decision(
         kind=DecisionKind.ACTION,
         rationale="capsule-sourced guard fired",
@@ -281,27 +266,6 @@ def decision_tick(
     )
 
 
-def corporate_action_event(
-    *,
-    sequence: int = 1,
-    key: InstrumentKey | None = None,
-    event: NonTradeEventRecord | None = None,
-    **payload_overrides: Any,
-) -> EngineEvent:
-    """Build a ``CORPORATE_ACTION`` event (kernel round #3 §2 결정 1) — the minimal, honestly
-    empty-coordinate payload every unit test that just needs a well-formed event (rather than
-    exercising a specific ``nontrade_disposition`` branch) can reuse."""
-    return EngineEvent(
-        kind=EventKind.CORPORATE_ACTION,
-        corporate_action=CorporateActionPayload(
-            instrument_key=key or instrument_key(),
-            event=event if event is not None else NonTradeEventRecord(),
-            reference=ordering(sequence),
-            **payload_overrides,
-        ),
-    )
-
-
 def registry_with(strategy: AuthoredStrategy | None = None) -> StrategyRegistry:
     """A registry holding exactly one admitted strategy."""
     registry = StrategyRegistry()
@@ -338,13 +302,7 @@ class RecordingTransmit:
 
 
 class AllTruePreconditions:
-    """A :class:`~tos.engine.CoordinatorPreconditions` test double that always admits.
-
-    Both gates report the injected values (default ``True``/``True``) so the pre-existing
-    suite — authored before the Phase 3 wave 2 KW2-B Coordinator gate existed — keeps
-    exercising exactly the behaviour it always exercised. A test that wants to exercise the
-    gate itself constructs one with an explicit ``False`` / ``None``.
-    """
+    """A :class:`~tos.engine.CoordinatorPreconditions` test double that always admits."""
 
     def __init__(
         self,

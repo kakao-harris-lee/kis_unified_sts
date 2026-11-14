@@ -1,8 +1,4 @@
-"""Shared fixtures for ``tos_runtime.engine`` tests (TOS Phase 3 Wave 1 Lane A-R).
-
-Hermetic: every sqlite file lives under ``tmp_path`` (D1.4, ``tos/runtime/tests/conftest.py``'s
-autouse guards enforce this); no network, no ambient env.
-"""
+"""Shared fixtures for ``tos_runtime.engine`` tests (TOS Phase 3 Wave 1 Lane A-R)."""
 
 from __future__ import annotations
 

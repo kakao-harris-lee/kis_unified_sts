@@ -1,18 +1,4 @@
-"""MANDATED test-only seam cross-check: venue -> capsule 3-Ref shape parity (design #19 §3.4(d)/§2.1/§7).
-
-capsule owns the three Layer-2 reference schemas — ``VenueConstraintPolicyRef`` = {policy_id,
-policy_generation, canonical_digest}, ``VenueConstraintSnapshotRef`` = {snapshot_id,
-constraint_generation, canonical_digest}, ``OrderAdmissibilityDecisionRef`` = {decision_id,
-canonical_digest} (``capsule/capsule.py:130-150``), carried by ``DecisionContextCapsule``
-(``capsule.py:242-244``). venue owns the **full** artifacts and produces exactly those (id,
-generation, digest) coordinates; capsule does not import ``tos.venue`` (sibling edge 0).
-
-This file imports the real capsule Refs as a **test** to lock the coordinate parity — the
-venue-produced coordinates fill the capsule Ref / capsule slots exactly. A test-only cross-import
-is **not** a runtime package edge (§3.4(d)/§7.1).
-
-Regime tag: predicate / model substrate only; VTG-EV substrate; EV-L1-complete claim forbidden.
-"""
+"""MANDATED test-only seam cross-check: venue -> capsule 3-Ref shape parity (design #19 §3.4(d)/§2.1/§7)."""
 
 from __future__ import annotations
 
@@ -68,7 +54,6 @@ def test_decision_ref_coordinate_parity_no_generation() -> None:
     )
     assert ref.decision_id == decision.decision_id
     assert ref.canonical_digest == decision.canonical_digest
-    # The Ref schema has exactly two fields (no generation) — parity with the producer pair.
     assert set(OrderAdmissibilityDecisionRef.model_fields) == {
         "decision_id",
         "canonical_digest",

@@ -52,11 +52,6 @@ def _load(path: Path, **overrides: Any):
     return load_kis_quote_transport_config(path, **kwargs)
 
 
-# ---------------------------------------------------------------------------
-# happy path
-# ---------------------------------------------------------------------------
-
-
 def test_a_fully_valued_config_loads(tmp_path: Path) -> None:
     path = _write(tmp_path, _valid_raw())
     config = _load(path)
@@ -77,11 +72,6 @@ def test_futures_tr_id_shape_also_accepted(tmp_path: Path) -> None:
     path = _write(tmp_path, raw)
     config = _load(path)
     assert config.tr_id == "FHMIF10000000"
-
-
-# ---------------------------------------------------------------------------
-# structural refusals
-# ---------------------------------------------------------------------------
 
 
 def test_missing_file_refuses(tmp_path: Path) -> None:
@@ -155,11 +145,6 @@ def test_missing_field_refuses(tmp_path: Path, field: str) -> None:
         _load(path)
 
 
-# ---------------------------------------------------------------------------
-# host seal (module docstring — structural, not documentation)
-# ---------------------------------------------------------------------------
-
-
 def test_endpoint_matching_real_domain_refuses_even_though_field_is_present(
     tmp_path: Path,
 ) -> None:
@@ -179,9 +164,6 @@ def test_endpoint_not_matching_mock_instance_refuses(tmp_path: Path) -> None:
 
 
 def test_instance_real_rest_base_none_refuses(tmp_path: Path) -> None:
-    # A caller that cannot state the REAL host cannot honestly exclude it — this is a
-    # programming-contract violation (the type says str), so exercised via a direct call that
-    # bypasses the type checker, mirroring kis_mock/test_config.py's own equivalent test.
     path = _write(tmp_path, _valid_raw())
     with pytest.raises(
         KisQuoteTransportConfigError, match="REAL rest_base must be known"
@@ -207,19 +189,14 @@ def test_plaintext_scheme_without_the_test_flag_refuses(tmp_path: Path) -> None:
         _load(path, instance_mock_rest_base="http://127.0.0.1:1")
 
 
-# ---------------------------------------------------------------------------
-# TR id shape (module docstring — measured, not the order transport's V-prefix rule)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "bad_tr_id",
     [
-        "VTTC0012U",  # order transport's own shape — a different TR family entirely
-        "TTTC0011U",  # real-order shape
-        "FHKST0101010",  # one digit too many
-        "fhkst01010100",  # lowercase — case-sensitive
-        "FH0101010",  # missing the 3-letter segment
+        "VTTC0012U",
+        "TTTC0011U",
+        "FHKST0101010",
+        "fhkst01010100",
+        "FH0101010",
     ],
 )
 def test_non_conforming_tr_id_refuses(tmp_path: Path, bad_tr_id: str) -> None:
@@ -230,15 +207,8 @@ def test_non_conforming_tr_id_refuses(tmp_path: Path, bad_tr_id: str) -> None:
         _load(path)
 
 
-# ---------------------------------------------------------------------------
-# field_mapping
-# ---------------------------------------------------------------------------
-
-
 def test_named_tbd_placeholder_instrument_refuses(tmp_path: Path) -> None:
-    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): this file's own stdlib-only
-    firewall discipline means it duplicates the ``"TBD"`` literal locally rather than
-    importing ``tos_runtime._named_tbd`` — pin that the local check actually fires."""
+    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): this file's own stdlib-only"""
     raw = _valid_raw()
     raw["instrument"] = "TBD"
     path = _write(tmp_path, raw)
@@ -286,28 +256,8 @@ def test_negative_request_timeout_refuses(tmp_path: Path) -> None:
         _load(path)
 
 
-# ---------------------------------------------------------------------------
-# shipped example (W2 lane review finding — LOW: no test ever loaded this file)
-# ---------------------------------------------------------------------------
-
-
 def test_shipped_example_file_is_all_null_and_therefore_refuses() -> None:
-    """``kis_quote.example.yaml`` is a template, not an approved config — every leaf is
-    ``null`` (named-TBD), so loading it as-shipped must refuse (module docstring's own "still-null
-    or missing required leaf is a fail-closed refusal at load" note). Mirrors
-    ``test_construction_config.py``'s ``test_shipped_example_file_is_all_null_and_therefore_refuses``.
-
-    Nothing else in this suite ever reads the shipped example file itself — every other test
-    here writes its own synthetic ``kis_quote.yaml`` via ``_write``/``_valid_raw``. This is the
-    ONE test that would catch a required key added to the loader without the example being kept
-    in sync (a missing key in ``marketfeed.example.yaml`` went unnoticed by hand for exactly this
-    reason before this test existed).
-
-    ``pytest.raises`` alone still cannot tell that value-only refusal apart from a STRUCTURAL one
-    (a required key entirely missing) — see ``tests/compose/test_shipped_example_integrity.py``'s
-    own module docstring for why (``safety_activation.example.yaml`` shipped exactly that bug
-    despite an identically-shaped narrow test passing the whole time) — so this also pins every
-    required key path is explicitly present."""
+    """``kis_quote.example.yaml`` is a template, not an approved config — every leaf is"""
     example_path = (
         Path(__file__).resolve().parents[3] / "config" / "kis_quote.example.yaml"
     )

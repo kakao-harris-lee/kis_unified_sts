@@ -1,5 +1,15 @@
 # config/tos_runtime/cp3-setup-d-stock-005930/
 
+> **2026-11-13 — S2-a 계획이 아래 문서가 가리키는 파일 다섯 개를 지웠다**
+> (`docs/plans/2026-11-13-tos-code-halving-plan.md`): `safety_envelope.yaml` ·
+> `safety_profile.yaml` · `safety_activation.yaml` · `safety_deviations.yaml` ·
+> `safety_incidents.yaml`. 그들을 읽던 안전망 서비스가 사라졌다 — 판정 입력이 모든
+> 출하 트리에서 정적 YAML 상수였고 한 번도 송신을 거부하지 않았다.
+> `monitor_coverage.yaml` 은 남았지만 축소판 모니터가 실제로 읽는 두 경계값만 남겼다.
+> ARE 상한(`envelope_max`)은 같은 값으로
+> `aggregate_risk_policy.yaml::_runtime.envelope_max` 로 옮겼다.
+> **아래에서 지워진 다섯 파일을 가리키는 문장은 현재 절차가 아니라 이력이다.**
+
 CP-3 **주식 tenant** 설정 트리 — rescope 계획 §3 M2(`docs/plans/2026-10-22-tos-rescope-plan.md`).
 운영자 결정 2026-10-22: **종목 005930(삼성전자) · 규칙 Setup D VWAP 되돌림 LONG 그대로 ·
 수량 1주 고정 · 주식 정규장 09:00~15:30 KST.**

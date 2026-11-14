@@ -1,10 +1,4 @@
-"""Shared valid-artifact builders + strategies for the evidence property tests.
-
-Firewall-clean: imports only ``hypothesis`` and ``tos.*`` (design §0.3). The
-``issue_*`` / ``make_*`` builders populate the safety-load-bearing covered fields
-each artifact's issuance guard demands, so a "valid" fixture is genuinely valid
-(not the all-null coverage illusion). Every artifact is built through these.
-"""
+"""Shared valid-artifact builders + strategies for the evidence property tests."""
 
 from __future__ import annotations
 
@@ -36,14 +30,7 @@ from tos.evidence.replay import ReplayBaseline, ReplayExpected, ReplayInputs
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Text bound to a required-covered field must be concrete (never the reserved
-#: ``"TBD"`` placeholder the issuance guard rejects — design §3.2).
 REQUIRED_FIELD_TEXT = st.text(max_size=8).filter(lambda s: s != "TBD")
-
-
-# ---------------------------------------------------------------------------
-# Safety Evidence Envelope
-# ---------------------------------------------------------------------------
 
 
 def envelope_required_kwargs(**overrides: Any) -> dict[str, Any]:
@@ -85,11 +72,6 @@ def issue_envelope(**overrides: Any) -> SafetyEvidenceEnvelope:
     )
 
 
-# ---------------------------------------------------------------------------
-# Evidence Integrity Policy
-# ---------------------------------------------------------------------------
-
-
 def eip_required_kwargs(**overrides: Any) -> dict[str, Any]:
     """EIP issuance kwargs with the required covered integrity fields concrete."""
     base: dict[str, Any] = {
@@ -109,11 +91,6 @@ def issue_eip(**overrides: Any) -> EvidenceIntegrityPolicy:
     return EvidenceIntegrityPolicy.issue(
         scheme=SCHEME, **eip_required_kwargs(**overrides)
     )
-
-
-# ---------------------------------------------------------------------------
-# Evidence Commit Receipt
-# ---------------------------------------------------------------------------
 
 
 def receipt_required_kwargs(**overrides: Any) -> dict[str, Any]:
@@ -147,11 +124,6 @@ def issue_receipt(**overrides: Any) -> EvidenceCommitReceipt:
     )
 
 
-# ---------------------------------------------------------------------------
-# Replay Capsule
-# ---------------------------------------------------------------------------
-
-
 def replay_required_kwargs(**overrides: Any) -> dict[str, Any]:
     """Replay-capsule issuance kwargs satisfying the §6.2/§15 exact-bind minimums."""
     base: dict[str, Any] = {
@@ -170,11 +142,6 @@ def replay_required_kwargs(**overrides: Any) -> dict[str, Any]:
 def issue_replay(**overrides: Any) -> ReplayCapsule:
     """Issue a valid :class:`ReplayCapsule` (digest-bound, isolated, exact-bound)."""
     return ReplayCapsule.issue(scheme=SCHEME, **replay_required_kwargs(**overrides))
-
-
-# ---------------------------------------------------------------------------
-# Evidence Gap Record (valid at each status; preconditions satisfied)
-# ---------------------------------------------------------------------------
 
 
 def make_gap(

@@ -1,11 +1,4 @@
-"""FieldReconciliationAssessment: digest / id / append-only / conflict (§2.1/§2.3/§3.1).
-
-Reuses the core ``tos.canonical`` digest substrate. The CanonicalDecimal digest
-regression lock is now against ``tos.canonical`` (the PROMOTE target, design #9 §0.4c):
-``1.0`` and ``1.00`` inside a FieldConfidence bound must share the assessment digest.
-Identity is independent of the digest (id != f(digest)), so a same-id / different-bytes
-re-submission is a detectable ``classify_record_pair`` CRITICAL_CONFLICT.
-"""
+"""FieldReconciliationAssessment: digest / id / append-only / conflict (§2.1/§2.3/§3.1)."""
 
 from __future__ import annotations
 
@@ -37,11 +30,6 @@ def _assessment_with_upper(value: Decimal | None) -> FieldReconciliationAssessme
     return issue_assessment(field_confidences=(fc,))
 
 
-# ---------------------------------------------------------------------------
-# CanonicalDecimal digest regression lock (vs tos.canonical PROMOTE target)
-# ---------------------------------------------------------------------------
-
-
 def test_bound_scale_equal_values_share_digest() -> None:
     """1.0 == 1.00 inside a FieldConfidence bound => equal assessment digest (PROMOTE lock)."""
     assert (
@@ -70,11 +58,6 @@ def test_none_bound_differs_from_finite() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Issuance / status / id⊥digest
-# ---------------------------------------------------------------------------
-
-
 def test_issue_reaches_issued_with_digest() -> None:
     """A fully-specified assessment ISSUES with a concrete digest and independent id."""
     a = issue_assessment()
@@ -88,7 +71,7 @@ def test_id_is_independent_of_digest() -> None:
     a = issue_assessment(scope_ref="scope-1")
     b = issue_assessment(scope_ref="scope-2")
     assert a.assessment_id == b.assessment_id == "asmt-1"
-    assert a.canonical_digest != b.canonical_digest  # id fixed, digest tracks content
+    assert a.canonical_digest != b.canonical_digest
 
 
 def test_issued_reachable_under_null_bounds() -> None:
@@ -96,7 +79,7 @@ def test_issued_reachable_under_null_bounds() -> None:
     fc = FieldConfidence(
         field=SafetyRelevantField.POSITION_QUANTITY,
         confidence_class=FieldConfidenceClass.UNKNOWN,
-        bound=ConservativeBound(),  # lower=None, upper=None
+        bound=ConservativeBound(),
     )
     a = issue_assessment(field_confidences=(fc,))
     assert a.status is ArtifactStatus.ISSUED
@@ -109,15 +92,10 @@ def test_empty_field_confidences_still_issues() -> None:
     assert a.status is ArtifactStatus.ISSUED
 
 
-# ---------------------------------------------------------------------------
-# classify_record_pair reachability (same-id / different-bytes => CRITICAL_CONFLICT)
-# ---------------------------------------------------------------------------
-
-
 def test_same_id_different_bytes_is_critical_conflict() -> None:
     """(§3.1 / §4.6) A forged / re-submitted same-id / different-bytes pair is CRITICAL_CONFLICT."""
     a = issue_assessment(scope_ref="scope-1")
-    b = issue_assessment(scope_ref="scope-2")  # same assessment_id, different bytes
+    b = issue_assessment(scope_ref="scope-2")
     assert (
         classify_record_pair(
             a.assessment_id, a.canonical_digest, b.assessment_id, b.canonical_digest
@@ -150,11 +128,6 @@ def test_distinct_ids_are_distinct() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Append-only / frozen (no update / delete / mutate)
-# ---------------------------------------------------------------------------
-
-
 def test_assessment_is_frozen() -> None:
     """(§2.0) An assessment is immutable — in-place mutation is rejected."""
     a = issue_assessment()
@@ -165,8 +138,6 @@ def test_assessment_is_frozen() -> None:
 def test_no_mutate_methods() -> None:
     """(§2.0/§4.7) recon adds no public update / delete / mutate / release / capacity method."""
     banned = ("update", "delete", "mutate", "release", "free_capacity", "overwrite")
-    # Scope to the recon/canonical-authored surface: subtract the pydantic framework API
-    # (which carries the deprecated ``update_forward_refs`` etc. — not recon's).
     inherited = set(dir(pydantic.BaseModel))
     authored = [
         n
@@ -176,11 +147,6 @@ def test_no_mutate_methods() -> None:
     for name in authored:
         for token in banned:
             assert token not in name.lower(), f"unexpected mutating method: {name}"
-
-
-# ---------------------------------------------------------------------------
-# Required-covered drop-one
-# ---------------------------------------------------------------------------
 
 
 def _required_cases() -> list[Any]:

@@ -1,24 +1,4 @@
-"""Compose end-to-end test fixtures (tos/runtime/tests/compose, hermetic).
-
-**Not a copy of ``tos/tests/slice/_slice_fixtures.py`` and does not import
-it** (runtime tests may not import kernel test modules — coordinator's task
-brief). This module authors its own, much smaller, single-crossing-bar
-strategy directly against kernel PRODUCTION packages
-(``tos.dsl``/``tos.capsule``/``tos.engine``/``tos.egressgw``/``tos.venue``)
-— the same public APIs the kernel test module uses, re-derived locally for
-this suite (mirrors that file's own "cross-suite imports are forbidden, each
-package's fixtures stay in its own suite" discipline, extended here to mean
-"runtime tests build their own fixtures too").
-
-One event, one instrument, one strategy: ``close < lower_band`` -> a single
-``LONG``/``OPEN`` proposal. No :mod:`tos.backtest`/:mod:`tos.marketfeed`
-driver is used — the compose end-to-end tests build the
-:class:`~tos.engine.records.EngineEvent` directly (a
-:class:`~tos.engine.records.DecisionTickPayload` needs only a Capsule + a
-:class:`~tos.dsl.ContextValueView`, both constructed directly here), since
-compose's own ``run_once(events)`` takes a plain iterable of events — no
-bar-replay driver is part of this composition.
-"""
+"""Compose end-to-end test fixtures (tos/runtime/tests/compose, hermetic)."""
 
 from __future__ import annotations
 
@@ -85,82 +65,17 @@ INSTRUMENT = "ES"
 DECISION_CLASS = "entry"
 SIDE = "BUY"
 SESSION_PHASE = "CONTINUOUS"
-#: TOS Phase 5 W5 plan §2 decision 5 — keys the calendar.yaml session-window /
-#: futures-expiry lookup this suite's ConstructionConfig now carries, replacing
-#: the retired ``observed_session_phase: str`` literal. Matches the instrument
-#: class key ``conftest.py``'s ``calendar.yaml`` fixture defines.
 INSTRUMENT_CLASS = "krx-index-futures"
-#: A fixed Monday 2026-09-14 10:00:00 Asia/Seoul instant (a real, non-holiday
-#: weekday) — the default wall-clock reading this suite's ``_compose()`` helper
-#: injects so every existing happy-path e2e test keeps observing an ADMISSIBLE
-#: step 3 (the conftest.py calendar fixture is open 24/7, so the EXACT instant
-#: does not matter for that fixture; this constant exists so every test that
-#: wants a deterministic, non-``None`` wall-clock reading shares ONE fixed
-#: instant rather than each hand-rolling its own arbitrary timestamp).
 DEFAULT_WALL_CLOCK_UNIX_MS = 1_789_347_600_000
-#: The SAME Monday at 23:59:30 Asia/Seoul — the last minute of a KST day, the same
-#: minute-of-day ``tos-firewall`` CI run 38755871346 was inside (2026-10-15 15:00 UTC =
-#: 2026-10-16 00:00 KST) when two compose e2e tests went red on wall time alone.
-#:
-#: ``conftest.py``'s shared ``calendar.yaml`` declares ONE window per day and
-#: :func:`tos_runtime.calendar.phase._active_window_at` matches it END-EXCLUSIVE
-#: (``start_dt <= instant_local < end_dt``), so while that window ended at ``"23:59"`` the
-#: minute 23:59:00.000–23:59:59.999 KST was ``closed_phase``, not ``CONTINUOUS`` — step 3
-#: folded INADMISSIBLE and :meth:`~tos_runtime.marketfeed.scheduler.TickScheduler.tick_once`
-#: skipped every pass (``scheduler.py``: ``if session_context is None or not
-#: session_context.is_open``). Every test that boots the PRODUCTION-DEFAULT wall clock
-#: (``wall_clock`` omitted, so the composed runtime reads the real OS clock) pins THIS
-#: instant with :func:`pin_system_clock` rather than inheriting whatever the host clock
-#: says: the worst instant of the day, on every run, instead of a suite that turns red for
-#: one minute a day.
-#:
-#: :func:`pin_system_clock` shifts rather than freezes, so a long test walks forward from
-#: here and may cross midnight 30s in. For the SESSION PHASE that is safe in both
-#: directions: ``conftest.py``'s window admits every instant of the day and every day of
-#: the week, so neither side of the boundary is a different verdict. A value that DOES
-#: change at midnight — the KST trading DATE — is not safe to hard-code against this
-#: instant (a boot slower than 30s lands on the next day), so a test asserting one derives
-#: the expected date from the runtime's own observed reading
-#: (``runtime.time_service.wall_clock_now()``), never from this constant.
 LAST_MINUTE_OF_DAY_UNIX_MS = 1_789_397_970_000
 
-#: The UNPATCHED reader, captured once at import. :func:`pin_system_clock` always shifts
-#: THIS, never whatever ``LocalSystemClockReader.read`` currently is, so a second call in
-#: the same test re-pins onto its own target instead of stacking a second offset on top of
-#: the first (issue #914: two calls with T used to read ``2T - now``).
 _ORIGINAL_LOCAL_SYSTEM_CLOCK_READ = LocalSystemClockReader.read
 
 
 def pin_system_clock(
     monkeypatch: pytest.MonkeyPatch, target_unix_ms: int
 ) -> Callable[[], int]:
-    """Shift the ONE OS wall clock a composed runtime reads onto ``target_unix_ms``.
-
-    :class:`~tos_runtime.time.sources.LocalSystemClockReader` is the single reference
-    ``compose_paper_runtime`` wires into
-    :class:`~tos_runtime.time.service.TrustworthyTimeService`
-    (``compose/_wiring.py::_build_custody_evidence_time``), and that service is what the
-    production-default
-    :class:`~tos_runtime.calendar.ports.TrustedWallClockReference` reads. Patching this
-    one ``read`` therefore covers the whole wall-clock surface while leaving the
-    production wiring exactly as it is — unlike passing ``wall_clock=``, which replaces
-    the very reference a production-default test exists to exercise.
-
-    The clock is SHIFTED, never frozen: every pacing/freshness bound this suite exercises
-    is a DIFFERENCE between two readings (``decide_tick``'s ``SKIPPED_INTERVAL``,
-    ``marketfeed.snapshot._derive_field_state``'s ``now_ms - as_of_ms``), and a frozen
-    clock would silently change what those bounds mean. Only the reading's VALUE moves;
-    ``reachable``/``healthy``/``quality``/``common_mode_group`` still come from the real
-    reader, so the time service's own health judgement is untouched.
-
-    Calling it again in the same test RE-pins onto the new target (the offset is always
-    taken against the unpatched reader, :data:`_ORIGINAL_LOCAL_SYSTEM_CLOCK_READ`); it does
-    not add a second shift.
-
-    Returns:
-        ``now_ms()`` — the shifted clock, for a caller that has to build its own
-        ``as_of_ms`` on the same timeline as the runtime it is about to boot.
-    """
+    """Shift the ONE OS wall clock a composed runtime reads onto ``target_unix_ms``."""
     real_read = _ORIGINAL_LOCAL_SYSTEM_CLOCK_READ
     offset_ms = target_unix_ms - int(time.time() * 1000)
 
@@ -178,7 +93,6 @@ def pin_system_clock(
 
 LOWER_BAND = 4_500_000
 UPPER_BAND = 4_520_000
-#: The single crossing close this suite drives through the whole flow.
 CROSSING_CLOSE = 4_499_000
 
 RISK_BUDGET = Decimal("1000")
@@ -197,13 +111,7 @@ def instrument_key() -> InstrumentKey:
 def stage_request(
     *, step: CommitmentStep = CommitmentStep.AGGREGATE_RISK_DECISION
 ) -> StageRequest:
-    """A minimal, valid :class:`~tos.engine.records.StageRequest` for callers that need a
-    real request object but not a particular one (mypy stage 3 §1.2 — a bare ``None`` used to
-    stand in for "the callee doesn't read the request", which is a lie to the type system: the
-    callee's own parameter is typed ``StageRequest``, not ``StageRequest | None``). Contract
-    tests that specifically prove a callee ignores this argument use two structurally
-    different instances of this fixture (e.g. differing ``step``), never a literal ``None``.
-    """
+    """A minimal, valid :class:`~tos.engine.records.StageRequest` for callers that need a"""
     proposal = build_proposal(
         scheme=SCHEME,
         proposer=Proposer(strategy_id="strat-fixture", strategy_version="v1"),
@@ -231,8 +139,7 @@ def _value_ref(field_key: str) -> Operand:
 
 
 def band_reversion_policy() -> DecisionPolicy:
-    """``close < lower_band`` -> ``LONG``/``OPEN``; else hold (single rule,
-    single-direction — this suite only ever drives the crossing branch)."""
+    """``close < lower_band`` -> ``LONG``/``OPEN``; else hold (single rule,"""
     entry = Decision(
         kind=DecisionKind.ACTION,
         rationale="close pierced the lower band — compose e2e entry",
@@ -290,20 +197,11 @@ def registry_with_band_strategy() -> tuple[StrategyRegistry, AuthoredStrategy]:
     return registry, strategy
 
 
-#: The strategy file name :func:`write_band_strategy_file` writes — matches
-#: this suite's own ``*.strategy.yaml`` naming convention
-#: (``tos/runtime/config/strategies/example.strategy.yaml``).
 BAND_STRATEGY_FILE_NAME = "band.strategy.yaml"
 
 
 def band_reversion_strategy_mapping() -> dict[str, object]:
-    """The raw-mapping equivalent of :func:`band_reversion_strategy` — same
-    ``dsl_version``/``config_binding_version``/policy content, shaped for
-    :func:`tos.dsl.serialization.parse_strategy` (the file-source authoring
-    path) rather than in-process typed construction. Both converge on the
-    IDENTICAL :class:`~tos.dsl.AuthoredStrategy` digest+id
-    (design #31 §1.2 "두 경로 동형") — ``parse_strategy`` issues via the
-    same :meth:`~tos.dsl.AuthoredStrategy.issue` call either way."""
+    """The raw-mapping equivalent of :func:`band_reversion_strategy` — same"""
     return {
         "dsl_version": "dsl-compose",
         "config_binding_version": "cfg-bind-compose",
@@ -344,11 +242,7 @@ def band_reversion_strategy_mapping() -> dict[str, object]:
 
 
 def write_band_strategy_file(config_dir: Path) -> Path:
-    """Write :func:`band_reversion_strategy_mapping` into
-    ``config_dir / "strategies" / "band.strategy.yaml"`` (creating the
-    ``strategies`` directory if absent) — the file-source counterpart to
-    :func:`registry_with_band_strategy`'s injected-registry path
-    (TOS Phase 3 슬라이스 D-R ``[D-R-2]``)."""
+    """Write :func:`band_reversion_strategy_mapping` into"""
     strategies_dir = config_dir / "strategies"
     strategies_dir.mkdir(exist_ok=True)
     path = strategies_dir / BAND_STRATEGY_FILE_NAME
@@ -495,13 +389,7 @@ def admitted_price(**overrides: object) -> AdmittedPriceObservation:
 
 
 def order_shape(**overrides: object) -> OrderShapeFields:
-    """A hand-built :class:`~tos.venue.OrderShapeFields` literal — no longer wired anywhere on
-    the ``ConstructionConfig`` path ((a′) wave lane D: the field this used to feed,
-    ``ConstructionConfig.order_shape``, is removed — every field is sourced from the
-    derivation/OCP instead, see ``compose/_venue_wiring.py``'s ``VenueServiceStage`` docstring).
-    Kept for unit-level tests that construct :class:`~tos_runtime.compose._venue_wiring
-    .VenueServiceStage` directly, e.g. to prove a caller-declared literal never survives
-    sourcing (``test_venue_wiring.py``)."""
+    """A hand-built :class:`~tos.venue.OrderShapeFields` literal — no longer wired anywhere on"""
     base: dict[str, object] = {
         "price": 4200,
         "quantity": 20,
@@ -516,10 +404,7 @@ def order_shape(**overrides: object) -> OrderShapeFields:
 
 
 class _ConstructionConfigKwargs(TypedDict):
-    """1:1 with :class:`ConstructionConfig`'s dataclass fields (plan §1.1 A-rt) — a
-    ``ConstructionConfig`` is a runtime ``@dataclass``, not a pydantic model, so it has no
-    ``model_validate``; a TypedDict lets ``**base``/``**overrides`` be checked key-by-key and
-    type-by-type instead of swallowed by a ``**dict[str, object]`` splat."""
+    """1:1 with :class:`ConstructionConfig`'s dataclass fields (plan §1.1 A-rt) — a"""
 
     account: str
     instrument: str
@@ -532,8 +417,7 @@ class _ConstructionConfigKwargs(TypedDict):
 
 
 class _ConstructionConfigKwargsPartial(TypedDict, total=False):
-    """Same fields as :class:`_ConstructionConfigKwargs`, all optional — the override-kwargs
-    shape for :func:`construction_config`."""
+    """Same fields as :class:`_ConstructionConfigKwargs`, all optional — the override-kwargs"""
 
     account: str
     instrument: str
@@ -548,16 +432,7 @@ class _ConstructionConfigKwargsPartial(TypedDict, total=False):
 def construction_config(
     **overrides: Unpack[_ConstructionConfigKwargsPartial],
 ) -> ConstructionConfig:
-    """TOS venue constraint service wave (plan §2 decision 5): the former
-    ``venue_snapshot``/``venue_policy``/``venue_decision``/``venue_shape_constraints``/
-    ``venue_constraint`` fields are gone — those facts now come exclusively from the governed
-    Venue Constraint Policy + Order Construction Policy ``conftest.py``'s own ``config_dir``
-    fixture writes and ``compose/_venue_wiring.py``'s ``build_venue_service`` loads (never a
-    test-authored stand-in).
-
-    ``envelope``/``order_shape`` are gone too ((a′) wave lane D, ``ConstructionConfig`` no
-    longer carries either field — both are now sourced from the loaded OCP's
-    ``construction_rules``/the derivation, never an injected literal)."""
+    """TOS venue constraint service wave (plan §2 decision 5): the former"""
     base: _ConstructionConfigKwargs = {
         "account": ACCOUNT,
         "instrument": INSTRUMENT,
@@ -573,9 +448,7 @@ def construction_config(
 
 
 def adverse_scenario_cells() -> tuple[ProjectedCell, ...]:
-    """A single fully-determinate, within-headroom
-    :class:`~tos.are.ProjectedCell` — enough for ``adverse_increment`` to
-    reach ``GRANT`` at the projection level."""
+    """A single fully-determinate, within-headroom"""
     from tos.are import (
         AdverseScenarioKind,
         RiskDimensionKind,
@@ -623,40 +496,22 @@ def action_flow_requested_limit() -> CapacityVector:
     )
 
 
-# ===========================================================================
-# TOS KIS MOCK transport plan T2 lane C — kis-mock compose test fixtures
-# ===========================================================================
-
-#: The real INSTANCE MOCK_VTS document's own ``rest_base`` (docs/broker-profiles/
-#: KIS-BROKER-CAPABILITY-PROFILE-draft.yaml) — this suite's config never invents its own host.
 KIS_MOCK_REST_BASE = "https://openapivts.koreainvestment.com:29443"
 
-#: ``MOCK_STOCK_ORDER.principal`` in ``broker_scopes.example.yaml``, substituted for the SAME
-#: ``environment_label`` (``"non-live-test"``) every compose e2e test in this suite composes
-#: with (:func:`_compose` in ``test_compose_root.py``) — the custody-principal consistency
-#: check (:func:`~tos_runtime.compose._transport_wiring.refuse_custody_principal_mismatch`)
-#: requires byte-exact equality with this value.
 KIS_MOCK_ORDER_PRINCIPAL = "kis-mock-order-non-live-test"
 
 
 class _Unset:
-    """A distinguishable "no override given" sentinel — distinct from ``None`` itself, which
-    :func:`write_kis_mock_transport_config`'s own ``wire_codec`` keyword uses to mean "write a
-    literal ``null``" (team-lead review MEDIUM, 2026-09-15: a test proving the wire-codec-
-    mismatch REFUSAL needs to request that exact ``null`` deliberately, which a plain ``None``
-    default could not distinguish from "no override, keep today's auto-fix")."""
+    """A distinguishable "no override given" sentinel — distinct from ``None`` itself, which"""
 
 
 _UNSET = _Unset()
 
 
-#: The stock tree's committed ``broker_facts.yaml`` (PR-3a) — what every kis-mock fixture boot
-#: copies, so the fixture cannot drift from the shipped protocol values.
 _STOCK_TREE_BROKER_FACTS = (
     Path(__file__).resolve().parents[4]
     / "config/tos_runtime/cp3-setup-d-stock-005930/broker_facts.yaml"
 )
-#: ...and its ``fill_observer.yaml`` (PR-3b), copied the same way for the same reason.
 _STOCK_TREE_FILL_OBSERVER = _STOCK_TREE_BROKER_FACTS.with_name("fill_observer.yaml")
 
 
@@ -670,38 +525,7 @@ def write_kis_mock_transport_config(
     wire_codec: str | None | _Unset = _UNSET,
     app_key_request_wait_budget_ms: int | None = None,
 ) -> Path:
-    """Write a fully-valued ``kis_mock_transport.yaml`` (T2 lane C test fixture) — every
-    named-TBD field of the shipped example filled with a concrete, schema-valid value.
-
-    ``endpoint_rest_base``/``allow_plaintext_for_tests``/``min_send_interval_ms`` default to
-    the real-host, TLS-only, T2-lane-C shape every existing caller relies on; T3's own
-    hermetic-fake-KIS-server counterfactual (``test_kis_mock_e2e_honesty.py``) is the only
-    caller that overrides them, to point this config at the fake server's own ``127.0.0.1``
-    ``http://`` base instead of inventing a second, duplicated config-writer.
-
-    **Also keeps ``order_construction_policy.yaml`` in step** (TOS venue constraint service
-    wave, plan §2 decision 6): ``build_venue_service`` refuses to boot a ``kis-mock`` transport
-    unless the governed Order Construction Policy's own ``_runtime.wire_codec`` exactly names
-    ``kind: kis-order-cash-v1`` + the nine :data:`~tos_runtime.transport.kis_mock.codec
-    .KIS_ORDER_CASH_WIRE_FIELDS`. Every existing caller of this function already calls it
-    immediately before a ``transport_kind=TransportKind.KIS_MOCK`` compose against the SAME
-    ``config_dir`` (never a bare probe directory this fixture module does not itself write
-    ``order_construction_policy.yaml`` into) — so this rewrites that ALREADY-present file in
-    place rather than requiring every one of those call sites to also learn a second fixture
-    call. A directory with no such file yet (the transport-config-loader-only unit tests in
-    ``test_transport_wiring.py``, which never reach ``compose_paper_runtime`` at all) is left
-    untouched.
-
-    Args:
-        wire_codec: Left at :data:`_UNSET` (the default), the OCP rewrite below writes the
-            exact ``kis-order-cash-v1`` codec block every existing kis-mock e2e caller relies
-            on. Passed ``None``, it writes a literal ``wire_codec: null`` instead — a
-            DELIBERATE mismatch a boot-refusal test can compose against (team-lead review
-            MEDIUM, 2026-09-15: no compose-level test previously exercised this path, since
-            every caller got the auto-fix unconditionally). A caller-supplied raw YAML
-            fragment string is written through unchanged (the same convention
-            :func:`~tests.venue._documents.ocp_yaml`'s own ``wire_codec`` parameter uses).
-    """
+    """Write a fully-valued ``kis_mock_transport.yaml`` (T2 lane C test fixture) — every"""
     path = config_dir / "kis_mock_transport.yaml"
     path.write_text(
         yaml.safe_dump(
@@ -725,11 +549,8 @@ def write_kis_mock_transport_config(
                     "SLL_TYPE": "",
                     "CNDT_PRIC": "",
                 },
-                # The compose fixtures price at the ×100 scale CP-3 trees use (PRICE 4200 =
-                # 42원), so ORD_UNPR is 42 — test_kis_mock_e2e_honesty pins it.
                 "price_scale": 100,
                 "min_send_interval_ms": min_send_interval_ms,
-                # Issue #970: two threads share the key (loop + fill FETCH), so two intervals.
                 "app_key_request_wait_budget_ms": (
                     2 * min_send_interval_ms
                     if app_key_request_wait_budget_ms is None
@@ -763,14 +584,10 @@ def write_kis_mock_transport_config(
             ),
             encoding="utf-8",
         )
-    # A mock-class kis-mock boot reads item 12's GET-only broker facts (PR-3a option (a)) —
-    # the stock tree's own committed file, one source, never a second fixture copy.
     shutil.copyfile(_STOCK_TREE_BROKER_FACTS, config_dir / "broker_facts.yaml")
     shutil.copyfile(_STOCK_TREE_FILL_OBSERVER, config_dir / "fill_observer.yaml")
     vcp_path = config_dir / "venue_constraint_policy.yaml"
     if vcp_path.is_file():
-        # A kis-mock boot cross-checks the transport's `price_scale` against the tree's
-        # `_runtime.price_scale` (PR #927 review M1) — state the same 100 here.
         vcp = yaml.safe_load(vcp_path.read_text(encoding="utf-8"))
         vcp["_runtime"].setdefault("price_scale", 100)
         vcp_path.write_text(
@@ -782,10 +599,7 @@ def write_kis_mock_transport_config(
 def provision_kis_mock_custody(
     custody_root: Path, *, principal: str = KIS_MOCK_ORDER_PRINCIPAL
 ) -> None:
-    """Add the two ``kis_mock.*`` custody scopes (T2 lane C) to an already-provisioned
-    ``custody_root`` (``tos/runtime/tests/compose/conftest.py``'s own ``custody_root`` fixture) —
-    manifest rows + 0600 secret files, both principals equal to ``principal`` (defaults to the
-    SAME value :data:`KIS_MOCK_ORDER_PRINCIPAL` names)."""
+    """Add the two ``kis_mock.*`` custody scopes (T2 lane C) to an already-provisioned"""
     manifest_path = custody_root / "custody.manifest.yaml"
     raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     scopes = raw.setdefault("scopes", {})

@@ -64,8 +64,6 @@ def test_gateway_adapter_durably_appends_before_returning(
             attempt_id="attempt-1",
         )
     )
-    # by the time record() returned above, the receipt already existed —
-    # last_committed() proves the durable commit already happened.
     last_seq, _, _ = store.last_committed()
     assert last_seq == 0
 
@@ -108,11 +106,6 @@ def test_adapters_bind_runtime_identity_onto_every_record(
     assert "cell-1" in row[0]
 
 
-# ---------------------------------------------------------------------------
-# kernel round #1 §3 (lane B) — ``on_refusal`` observer
-# ---------------------------------------------------------------------------
-
-
 def test_on_refusal_is_called_for_send_refused(store: SqliteEvidenceStore) -> None:
     observed: list[GatewayEvidenceRecord] = []
     adapter = GatewayEvidenceSinkAdapter(store, on_refusal=observed.append)
@@ -148,8 +141,7 @@ def test_on_refusal_is_not_called_for_other_kinds(store: SqliteEvidenceStore) ->
 def test_on_refusal_runs_only_after_the_durable_append_commits(
     store: SqliteEvidenceStore,
 ) -> None:
-    """The observer sees the record only AFTER ``store.append`` has already
-    committed — evidence first, verification second (module docstring)."""
+    """The observer sees the record only AFTER ``store.append`` has already"""
     seen_seq_at_call_time: list[int | None] = []
 
     def observer(_record: GatewayEvidenceRecord) -> None:
@@ -164,13 +156,11 @@ def test_on_refusal_runs_only_after_the_durable_append_commits(
             attempt_id="a1",
         )
     )
-    # seq 0 is already committed by the time the observer ran.
     assert seen_seq_at_call_time == [0]
 
 
 def test_on_refusal_exception_propagates(store: SqliteEvidenceStore) -> None:
-    """An observer failure is never swallowed — the append itself already
-    durably committed, but the caller must still see the failure."""
+    """An observer failure is never swallowed — the append itself already"""
 
     def failing_observer(_record: GatewayEvidenceRecord) -> None:
         raise RuntimeError("obligation verification failed")
@@ -184,7 +174,6 @@ def test_on_refusal_exception_propagates(store: SqliteEvidenceStore) -> None:
                 attempt_id="a1",
             )
         )
-    # the append itself still committed before the observer raised.
     last_seq, _, _ = store.last_committed()
     assert last_seq == 0
 
@@ -203,12 +192,6 @@ def test_no_on_refusal_configured_is_a_safe_default(
     )
     last_seq, _, _ = store.last_committed()
     assert last_seq == 0
-
-
-# ---------------------------------------------------------------------------
-# TOS KIS MOCK transport plan T2 lane C — ``on_record`` observer (independent
-# review LOW-6, mirroring the ``on_refusal`` tests above)
-# ---------------------------------------------------------------------------
 
 
 def test_on_record_is_called_for_every_kind(store: SqliteEvidenceStore) -> None:
@@ -237,8 +220,7 @@ def test_on_record_is_called_for_every_kind(store: SqliteEvidenceStore) -> None:
 def test_on_record_runs_only_after_the_durable_append_commits(
     store: SqliteEvidenceStore,
 ) -> None:
-    """The observer sees the record only AFTER ``store.append`` has already
-    committed — evidence first, observers second (module docstring)."""
+    """The observer sees the record only AFTER ``store.append`` has already"""
     seen_seq_at_call_time: list[int | None] = []
 
     def observer(_record: GatewayEvidenceRecord) -> None:
@@ -257,8 +239,7 @@ def test_on_record_runs_only_after_the_durable_append_commits(
 
 
 def test_on_record_exception_propagates(store: SqliteEvidenceStore) -> None:
-    """An observer failure is never swallowed — the append itself already
-    durably committed, but the caller must still see the failure."""
+    """An observer failure is never swallowed — the append itself already"""
 
     def failing_observer(_record: GatewayEvidenceRecord) -> None:
         raise RuntimeError("seal capture failed")
@@ -293,8 +274,7 @@ def test_no_on_record_configured_is_a_safe_default(store: SqliteEvidenceStore) -
 def test_on_record_runs_before_on_refusal_for_a_send_refused_record(
     store: SqliteEvidenceStore,
 ) -> None:
-    """Both observers fire for ``SEND_REFUSED`` — ``on_record`` first, per the ``record()``
-    docstring's documented order."""
+    """Both observers fire for ``SEND_REFUSED`` — ``on_record`` first, per the ``record()``"""
     order: list[str] = []
     adapter = GatewayEvidenceSinkAdapter(
         store,

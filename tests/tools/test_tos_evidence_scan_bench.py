@@ -1,14 +1,4 @@
-"""Focused tests for the evidence `kind`-scan benchmark (evidence growth plan §2 A1,
-``tools/tos_evidence_scan_bench.py``).
-
-The tool's job is to produce NUMBERS that a plan then records, so what has to be tested is not
-"is it fast" but "is what it measured really what it claims": the reference file is never
-written to, the synthetic distribution scales the way the tool documents, a reference whose
-``entries`` shape has drifted from the tool's own duplicated DDL is refused rather than
-silently replicated, and the before/after index measurement really does change the query plan.
-
-Hermetic: every file this module writes goes into ``tmp_path``.
-"""
+"""Focused tests for the evidence `kind`-scan benchmark (evidence growth plan §2 A1,"""
 
 from __future__ import annotations
 
@@ -39,8 +29,7 @@ bench = _load_bench_module()
 
 
 def _write_reference(path: Path, *, hot_rows: int = 20, boot_rows: int = 1) -> None:
-    """A miniature stand-in for a real ``evidence.sqlite3``: one high-volume kind, one warm
-    kind, and one once-per-boot kind, in the real ``entries`` shape."""
+    """A miniature stand-in for a real ``evidence.sqlite3``: one high-volume kind, one warm"""
     conn = sqlite3.connect(str(path))
     try:
         conn.execute(bench._ENTRIES_TABLE_SQL)
@@ -89,22 +78,14 @@ def test_profile_reports_every_kind_and_leaves_the_reference_untouched(
         "EVENT_CONSUMED": 5,
         "RECOVERY_BARRIER": 1,
     }
-    # Sorted by row count descending — the shape the plan's distribution table is read from.
     assert profiles[0].kind == "TIME_HEALTH_SNAPSHOT"
     assert profiles[0].payload_bytes == 20 * 200
-    # A reference file is opened read-only; a profile run must not even create a journal.
     assert hashlib.sha256(reference.read_bytes()).hexdigest() == before
     assert not (tmp_path / "evidence.sqlite3-journal").exists()
 
 
 def test_a_reference_whose_entries_shape_drifted_is_refused(tmp_path: Path) -> None:
-    """The drift guard on the duplicated DDL, proven red.
-
-    ``tools/`` cannot import ``tos_runtime`` (the import firewall's reverse rule), so this tool
-    carries its own copy of the ``entries`` DDL. Without this check the copy could fall behind
-    the real store's shape and the tool would go on building synthetic files in a shape the
-    runtime no longer uses — measuring the wrong thing, silently.
-    """
+    """The drift guard on the duplicated DDL, proven red."""
     reference = tmp_path / "drifted.sqlite3"
     conn = sqlite3.connect(str(reference))
     conn.execute("CREATE TABLE entries (seq INTEGER PRIMARY KEY, kind TEXT)")
@@ -130,12 +111,7 @@ def test_an_empty_reference_is_refused(tmp_path: Path) -> None:
 def test_build_scales_recurring_kinds_by_session_and_boot_kinds_by_day(
     tmp_path: Path,
 ) -> None:
-    """The two scaling rules, asserted separately.
-
-    A single factor for every kind would inflate the once-per-boot records 28-fold, which is
-    wrong in kind rather than in magnitude: a trading day holds one ``RECOVERY_BARRIER``,
-    not one per polling window.
-    """
+    """The two scaling rules, asserted separately."""
     reference = tmp_path / "evidence.sqlite3"
     _write_reference(reference)
     out = tmp_path / "synth.sqlite3"
@@ -147,10 +123,10 @@ def test_build_scales_recurring_kinds_by_session_and_boot_kinds_by_day(
         session_hours=7.0,
         reference_minutes=15.0,
         boot_once_max_rows=1,
-        batch_rows=7,  # deliberately smaller than one kind's batch — exercises the flush path
+        batch_rows=7,
     )
 
-    assert report.recurring_repeats == 84  # 3 days * 7 h * 60 / 15
+    assert report.recurring_repeats == 84
     assert report.boot_repeats == 3
     conn = sqlite3.connect(str(out))
     try:
@@ -168,7 +144,6 @@ def test_build_scales_recurring_kinds_by_session_and_boot_kinds_by_day(
         "RECOVERY_BARRIER": 3,
     }
     assert report.rows == sum(counts.values())
-    # seq is a dense 1..N — the same "no caller-supplied seq, no gaps" shape the real store has.
     assert seqs == list(range(1, report.rows + 1))
 
 
@@ -213,11 +188,7 @@ def _measure(db: Path, *, explain: bool = True):
 def test_measure_covers_every_shape_and_the_index_changes_the_plan(
     tmp_path: Path,
 ) -> None:
-    """The before/after the plan's §7 table is built from, on one file.
-
-    The "before" half is what keeps this honest: asserting only that the indexed plan mentions
-    the index would still pass if the unindexed plan had mentioned it too.
-    """
+    """The before/after the plan's §7 table is built from, on one file."""
     reference = tmp_path / "evidence.sqlite3"
     _write_reference(reference)
     db = tmp_path / "synth.sqlite3"
@@ -243,10 +214,7 @@ def test_measure_covers_every_shape_and_the_index_changes_the_plan(
     after = _measure(db)
     for name in ("by_kind_payload_asc__hot", "count_by_kind__absent"):
         assert "entries_kind_seq" in " ".join(after[name].plan), name
-    # The two unfiltered full scans are the control group: an index on `kind` cannot help them,
-    # so they must be unchanged — which is what makes the improvement above attributable.
     assert "entries_kind_seq" not in " ".join(after["full_scan_chain_control"].plan)
-    # Row counts are identical before and after: an index changes cost, never results.
     assert {name: m.rows_returned for name, m in after.items()} == {
         name: m.rows_returned for name, m in before.items()
     }
@@ -271,11 +239,7 @@ def test_measure_refuses_a_non_positive_repeat_count(tmp_path: Path) -> None:
 
 
 def test_every_query_shape_names_at_least_one_real_reader_module() -> None:
-    """A shape with no reader behind it is a benchmark of something nothing does.
-
-    Each ``readers`` entry is a ``path:line`` into ``tos/runtime/src/tos_runtime`` — checked
-    here for existence of the FILE (line numbers drift; a deleted module does not).
-    """
+    """A shape with no reader behind it is a benchmark of something nothing does."""
     runtime_src = _REPO_ROOT / "tos" / "runtime" / "src" / "tos_runtime"
     for shape in bench.QUERY_SHAPES:
         assert shape.readers, shape.name
@@ -328,9 +292,6 @@ def test_main_reports_a_refusal_as_exit_one(
     assert "no sqlite file at" in capsys.readouterr().err
 
 
-# -- review 2026-09-30 dispositions -------------------------------------------------------------
-
-
 class _NoFetchAllCursor:
     """A cursor proxy that iterates normally but explodes on ``fetchall``."""
 
@@ -359,9 +320,7 @@ class _NoFetchAllConnection:
 
 
 class _NoFetchAllSqlite:
-    """Stands in for the module's own ``sqlite3`` so every cursor it opens refuses
-    ``fetchall``. ``sqlite3.Cursor`` is a C type and cannot be monkeypatched directly.
-    """
+    """Stands in for the module's own ``sqlite3`` so every cursor it opens refuses"""
 
     def __init__(self, real) -> None:
         self._real = real
@@ -376,13 +335,7 @@ class _NoFetchAllSqlite:
 def test_the_module_never_calls_fetchall(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """HIGH-2, structurally.
-
-    The memory bound this tool documents is only real if nothing materializes a result set. An
-    earlier revision claimed the bound while ``build_synthetic`` held a whole kind's rows in a
-    list, and its ``measure`` had already been killed at 16 GB RSS for exactly that. A docstring
-    cannot enforce it; this can — it goes red the moment any path reverts to ``fetchall``.
-    """
+    """HIGH-2, structurally."""
     reference = tmp_path / "evidence.sqlite3"
     _write_reference(reference)
     monkeypatch.setattr(bench, "sqlite3", _NoFetchAllSqlite(sqlite3))
@@ -405,13 +358,7 @@ def test_the_module_never_calls_fetchall(
 def test_the_duplicated_entries_ddl_still_matches_the_real_store(
     tmp_path: Path,
 ) -> None:
-    """MEDIUM-HIGH-3: the copy is checked against the source of truth, by READING it.
-
-    The firewall forbids ``tools/`` from importing ``tos_runtime`` (rule TOS-FW-R), so the DDL
-    is duplicated. Reading the real module as text is firewall-safe and closes the drift the
-    duplication otherwise invites: this goes red if ``_CREATE_ENTRIES_TABLE_SQL`` changes and
-    the copy does not.
-    """
+    """MEDIUM-HIGH-3: the copy is checked against the source of truth, by READING it."""
     del tmp_path
     store_src = (
         _REPO_ROOT / "tos" / "runtime" / "src" / "tos_runtime" / "evidence" / "store.py"
@@ -427,16 +374,14 @@ def test_the_duplicated_entries_ddl_still_matches_the_real_store(
 
 
 def _normalized(sql: str) -> str:
-    """Whitespace-insensitive SQL comparison — indentation differs between the two files, the
-    column list must not."""
+    """Whitespace-insensitive SQL comparison — indentation differs between the two files, the"""
     return " ".join(sql.split())
 
 
 def test_the_entries_shape_copy_matches_what_the_real_store_creates(
     tmp_path: Path,
 ) -> None:
-    """The runtime half of the same guard: the ``(name, type, notnull, pk)`` tuple this tool
-    compares against must be what the DDL it carries actually produces."""
+    """The runtime half of the same guard: the ``(name, type, notnull, pk)`` tuple this tool"""
     path = tmp_path / "shape.sqlite3"
     conn = sqlite3.connect(str(path))
     conn.execute(bench._ENTRIES_TABLE_SQL)
@@ -448,9 +393,7 @@ def test_the_entries_shape_copy_matches_what_the_real_store_creates(
 
 
 def test_a_reference_whose_column_type_changed_is_refused(tmp_path: Path) -> None:
-    """A name-only drift check passes this; the full ``table_info`` comparison does not
-    (review MEDIUM-HIGH-3). ``payload_json`` losing NOT NULL is the shape of change that would
-    quietly make the synthetic file a different thing from the runtime's own."""
+    """A name-only drift check passes this; the full ``table_info`` comparison does not"""
     reference = tmp_path / "loosened.sqlite3"
     conn = sqlite3.connect(str(reference))
     conn.execute(
@@ -497,11 +440,8 @@ def test_measure_refuses_when_the_absent_kind_is_not_absent(tmp_path: Path) -> N
 def test_measure_refuses_when_the_hot_kind_is_not_the_most_frequent(
     tmp_path: Path,
 ) -> None:
-    """MEDIUM-6, the other half. ``__hot`` is only the worst case it claims to bound if the
-    kind really is the dominant one."""
+    """MEDIUM-6, the other half. ``__hot`` is only the worst case it claims to bound if the"""
     reference = tmp_path / "evidence.sqlite3"
-    # EVENT_CONSUMED outnumbers TIME_HEALTH_SNAPSHOT here — a distribution that would make the
-    # '__hot' shape measure something other than the worst case.
     _write_reference(reference, hot_rows=2)
     db = tmp_path / "synth.sqlite3"
     bench.build_synthetic(

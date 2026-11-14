@@ -1,5 +1,15 @@
 # config/tos_runtime/cp3-setup-d-short/
 
+> **2026-11-13 — S2-a 계획이 아래 문서가 가리키는 파일 다섯 개를 지웠다**
+> (`docs/plans/2026-11-13-tos-code-halving-plan.md`): `safety_envelope.yaml` ·
+> `safety_profile.yaml` · `safety_activation.yaml` · `safety_deviations.yaml` ·
+> `safety_incidents.yaml`. 그들을 읽던 안전망 서비스가 사라졌다 — 판정 입력이 모든
+> 출하 트리에서 정적 YAML 상수였고 한 번도 송신을 거부하지 않았다.
+> `monitor_coverage.yaml` 은 남았지만 축소판 모니터가 실제로 읽는 두 경계값만 남겼다.
+> ARE 상한(`envelope_max`)은 같은 값으로
+> `aggregate_risk_policy.yaml::_runtime.envelope_max` 로 옮겼다.
+> **아래에서 지워진 다섯 파일을 가리키는 문장은 현재 절차가 아니라 이력이다.**
+
 CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2026-10-09.
 
 > 이 디렉터리는 **값**이다. 아무것도 부팅하지 않았고, 아래 §5 「무엇이 증명되지 않았나」가
@@ -34,7 +44,9 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 
 ## 3. LONG 트리와 무엇이 다른가 (실측 2026-10-09)
 
-**33 파일 = 바이트 동일 24 + YAML 이 다름 7 + 산문이 다름 1(`README.md`) + SHORT 전용 1**
+**27 파일 = 바이트 동일 18 + YAML 이 다름 7 + 산문이 다름 1(`README.md`) + SHORT 전용 1**
+(2026-11-13 S2-a 실측 — 33 → 28 · 바이트 동일 24 → 17 은 지워진 안전망 설정 다섯 개와
+축소된 `monitor_coverage.yaml` 이다.)
 (LONG 트리도 33 파일이다; LONG 의 `strategies/setup_d_long.strategy.yaml` 은 이 트리에
 **없고** 그 자리를 `strategies/setup_d_short.strategy.yaml` 이 차지한다). 31 → 32 · 다름
 6 → 7 은 2026-10-10 PR-B 가 더한 **`RENDER.yaml`**(렌더 매니페스트) 때문이고, 32 → 33 ·
@@ -64,7 +76,7 @@ CP-3 tenant 설정 트리 — Setup D VWAP 되돌림, **SHORT 배포**. 착지 2
 
 ### 3.0 ⛔ 사본 의무 — 상주 쪽을 바꾸는 PR 은 **같은 PR 에서** 이 트리도 갱신한다
 
-LONG 트리와 **바이트 동일한 24 개** 가운데 **22 개가 상주 `config/tos_runtime/paper/` 파일의
+LONG 트리와 **바이트 동일한 18 개** 가운데 **16 개가 상주 `config/tos_runtime/paper/` 파일의
 바이트 사본**이고, 남는 **둘은 `engine.yaml` 과 `fields.yaml`** 이다. `engine.yaml` 은 상주와
 **주석이 다르다**(상주 주석이 상주 전략 `bootproof_band` 를 인용해 이 트리에서 거짓이 되므로
 tenant 적용 문단을 덧붙였다. 두 tenant 트리끼리는 같다). `fields.yaml` 은 **상주에 없다** —

@@ -1,8 +1,4 @@
-"""Health FSM conservatism, non-revival, authority absence, session (time design §6/§12).
-
-EV-L1 predicate substrate only; TIME-EV-008/-009 remain NOT_IMPLEMENTED pending
-EV-L2/L3 fault injection.
-"""
+"""Health FSM conservatism, non-revival, authority absence, session (time design §6/§12)."""
 
 from __future__ import annotations
 
@@ -96,9 +92,6 @@ def test_authority_true_is_unconstructable() -> None:
         except ValueError:
             continue
         raise AssertionError(f"authority flag {field}=True was accepted")
-
-
-# ---- session-boundary uncertainty (§12 line 319) ---------------------------
 
 
 def _open_ctx(**overrides: object) -> SessionContext:

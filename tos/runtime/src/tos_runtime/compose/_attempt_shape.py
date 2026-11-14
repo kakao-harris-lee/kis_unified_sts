@@ -1,58 +1,4 @@
-"""``tos_runtime.compose._attempt_shape`` — step 2 builds each command from the PROPOSAL's own
-``(position_effect, direction)``, never from the boot-time action class (issue #960).
-
-**The defect this closes.** Step 2 used to hold ONE envelope, built at boot from
-``construction.action_class`` (``NEW_LONG`` in every shipped tree), so every command — a CLOSE
-proposal's included — carried that envelope's SIDE (``BUY``). A standing-approval exit boundary
-(``CLOSE-SHORT-SELL``) therefore never matched, and a CLOSE approved by a per-proposal file sent
-a second BUY instead of selling.
-
-**Rule (one per attempt).** The composition's arms are the boot action class's own arm plus
-every direction-agnostic arm (``CLOSE`` …) the OCP resolves — both built by the SAME
-:func:`~tos_runtime.compose._envelope_wiring.build_construction_envelope` as before, so an
-OPEN proposal gets the byte-identical envelope it always got. A proposal selects the ONE arm
-whose ``position_effect`` equals the proposal's and whose ``side`` is the side the OCP gives an
-action in the proposal's ``direction``.
-
-Why "side of an action in that direction": ``Proposal.direction`` is the direction of the
-ACTION (``tos/src/tos/dsl/proposal.py::build_flat`` — "The direction of the closing action";
-a long is closed by ``direction: SHORT``), while the OCP keys ``CLOSE`` arms by the HELD
-position (``CLOSE.LONG = SELL``; ``config/tos_runtime/cp3-setup-d-short/README.md`` §3.2).
-The OCP's direction-named arms (``NEW_LONG.LONG``/``NEW_SHORT.SHORT``) already state which
-side acts in each direction, so reading that side bridges the two spellings with no second
-LONG/SHORT table here:
-
-=====================  ===============  ======================
-proposal (effect, dir)  action side      arm selected
-=====================  ===============  ======================
-(OPEN, LONG)            BUY  (NEW_LONG)   NEW_LONG.LONG  BUY/OPEN
-(CLOSE, SHORT)          SELL (NEW_SHORT)  CLOSE.LONG     SELL/CLOSE
-(CLOSE, LONG)           BUY  (NEW_LONG)   CLOSE.SHORT    BUY/CLOSE  (a short tree)
-=====================  ===============  ======================
-
-No arm, or more than one, is a step-2 DENY carrying the reason — the same denied
-:class:`~tos.egressgw.CandidateConstruction` shape a denied size derivation produces — never a
-fallback to the boot action class.
-
-**A FLAT proposal's held position comes from the DURABLE entry remainder (issue #1025).** The
-kernel offers step 2 the sequencer's own observation, ``ledger.outstanding_consumed_magnitude``
-(``tos/src/tos/engine/sequencer.py:467``) — a read of the engine's IN-MEMORY reservation
-projection. The runtime releases that memory reservation the moment the entry fills (the RCL
-row goes to ``POSITION_CONSUMED``; ``posttrade/release_consumer.py``), which is exactly what
-#966 needs for the kernel's at-most-one pre-check to let a CLOSE through — and it leaves the
-memory read ``None`` for the whole life of the open position. So a ``ZERO_POSITION`` proposal
-was denied by construction rule 4 ("no held position was observed") for every entry that had
-actually filled. :class:`ProposalShapedConstructionStage` therefore hands the kernel stage a
-copy of the request whose ``held_position_magnitude`` is
-:attr:`~tos_runtime.riskstate.close_bound.EntryCloseBound.remaining` — the SAME durable source
-step 6's CLOSE bound already rests on (#1011/#1015), so the two steps cannot disagree about
-what is held. Only for a FLAT proposal: an ACTION proposal's request is passed through
-untouched, since its basis sizes from the risk budget and never reads this field. If the reader
-refuses (no proven entry, a CLOSE already in flight, an unproven prior close) the copy carries
-``None`` and the kernel's rule-4 denial stands, byte for byte — fail-closed.
-
-Firewall: stdlib + ``tos.*`` + ``tos_runtime.*`` only.
-"""
+"""``tos_runtime.compose._attempt_shape`` — step 2 builds each command from the PROPOSAL's own"""
 
 from __future__ import annotations
 
@@ -97,19 +43,10 @@ def build_attempt_arms(
     boot_action_class: ActionClass,
     venue_service: VenueConstraintService,
 ) -> tuple[AttemptArm, ...]:
-    """The boot arm first, then every direction-agnostic arm the OCP resolves (module docstring).
-
-    The boot arm keeps today's boot refusal (:class:`SideDerivationRefused` propagates). A
-    direction-agnostic class whose arm cannot be resolved is simply absent — a proposal that
-    needs it is refused per attempt, not at boot.
-    """
+    """The boot arm first, then every direction-agnostic arm the OCP resolves (module docstring)."""
     rules = loaded_ocp.construction_rules
 
     def _arm(action_class: ActionClass) -> AttemptArm:
-        # ONE arm per class: the direction is this tree's own governed DIRECTION axis
-        # (`resolve_construction_direction`), so a long tree builds `CLOSE.LONG` (SELL) only and
-        # a short tree `CLOSE.SHORT` (BUY) only — a tree that traded both directions would need
-        # both CLOSE arms here, and today's trees are single-direction by construction.
         direction = resolve_construction_direction(rules, action_class=action_class)
         shape = rules.action_class_shape[(action_class, direction)]
         envelope = build_construction_envelope(
@@ -186,21 +123,7 @@ def select_attempt_arm(
 
 
 class ProposalShapedConstructionStage(OrderConstructionStage):
-    """Step 2, with the envelope chosen per attempt by :func:`select_attempt_arm`.
-
-    One unmodified kernel :class:`~tos.egressgw.OrderConstructionStage` per arm, built through
-    its public constructor (no private kernel attribute is written); this stage delegates to
-    the selected one and republishes its :attr:`construction`. :attr:`attempt` is the arm the
-    CURRENT attempt selected (``None`` before step 2 ran or when it refused) — steps 3/7/14 and
-    the send-boundary context read it so the whole attempt uses one action class and one side.
-    :attr:`effect_specs` follows the same arm, since step 5 derives its envelope from it.
-
-    ``entry_close_bound_reader`` is the composition's ONE
-    :meth:`~tos_runtime.riskstate.close_bound.DurableEntryCloseBoundReader.read` — the same
-    callable the risk-state service decides step 6 with (``compose/root.py``) — and it is read
-    only for a FLAT proposal that already selected an arm (module docstring). ``None`` leaves
-    the kernel's own observation in place, which for a FLAT proposal means rule 4 denies.
-    """
+    """Step 2, with the envelope chosen per attempt by :func:`select_attempt_arm`."""
 
     def __init__(
         self,
@@ -220,13 +143,7 @@ class ProposalShapedConstructionStage(OrderConstructionStage):
         self.attempt: AttemptArm | None = None
 
     def _durable_held_position(self) -> Decimal | None:
-        """The proven open-entry remainder of this scope, or ``None`` for every refusal.
-
-        Never raises and never guesses: an absent reader, a reader that raises, something that
-        is not an :class:`~tos_runtime.riskstate.close_bound.EntryCloseBound`, a refused bound
-        and an absent remainder all answer ``None``, which the kernel reads as "no held
-        position was observed" and denies.
-        """
+        """The proven open-entry remainder of this scope, or ``None`` for every refusal."""
         reader = self._entry_close_bound_reader
         if reader is None:
             return None
@@ -240,12 +157,7 @@ class ProposalShapedConstructionStage(OrderConstructionStage):
         return remaining if type(remaining) is Decimal else None
 
     def _shaped_request(self, request: StageRequest) -> StageRequest:
-        """``request`` for an ACTION proposal; a copy carrying the durable remainder for FLAT.
-
-        :class:`~tos.engine.StageRequest` is frozen, so this is a ``model_copy`` of it rather
-        than a mutation — the kernel stage receives a well-formed request either way, and the
-        sequencer's own request object is left exactly as it built it.
-        """
+        """``request`` for an ACTION proposal; a copy carrying the durable remainder for FLAT."""
         if getattr(request.proposal, "quantity_basis", None) != FLAT_QUANTITY_BASIS:
             return request
         return request.model_copy(
@@ -254,20 +166,12 @@ class ProposalShapedConstructionStage(OrderConstructionStage):
 
     @property
     def effect_specs(self) -> tuple[EffectDimensionSpec, ...]:
-        """THIS attempt's arm's Economic Effect Envelope specs (#960 review LOW-1).
-
-        Step 5 (:class:`~tos.egressgw.EconomicEffectStage`) derives its envelope from this
-        property, so a CLOSE attempt must not report the BOOT arm's specs — the kernel's own
-        property reads the one envelope it was constructed with, which here is the boot arm's.
-        Falls back to that boot arm when step 2 selected none (nothing to send anyway).
-        """
+        """THIS attempt's arm's Economic Effect Envelope specs (#960 review LOW-1)."""
         arm = self.attempt
         return super().effect_specs if arm is None else arm.envelope.effect_dimensions
 
     def __call__(self, request: StageRequest) -> StageVerdict:
-        self.attempt = (
-            None  # never a previous attempt's arm, even if a stage below raises
-        )
+        self.attempt = None
         proposal = request.proposal
         selected = select_attempt_arm(
             tuple(arm for arm, _ in self._arm_stages),

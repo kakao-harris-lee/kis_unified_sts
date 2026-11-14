@@ -1,11 +1,4 @@
-"""Restrictive dominance + precedence lattice (§5.3; SA-EV-009 — strong substrate).
-
-HALT / restrictive dominates any outstanding permissive capability regardless of issue
-order (the both-order property); safer-state transitions are broad while permissive
-transitions require a current epoch; a stale but authentic restrictive message may apply
-only when it cannot enlarge authority; and HALT's effect classifier denies new risk /
-re-arm / limit activation while preserving protective controls.
-"""
+"""Restrictive dominance + precedence lattice (§5.3; SA-EV-009 — strong substrate)."""
 
 from __future__ import annotations
 
@@ -42,15 +35,9 @@ def _permissive(issue_sequence: int) -> SafetyAuthorityCapability:
 
 
 def test_halt_dominates_permissive_both_orders() -> None:
-    """(canary SA-EV-009) HALT dominates a permissive grant in BOTH issue orders.
-
-    The two orderings are genuinely distinct (``compare_order`` reports BEFORE vs AFTER
-    from the issue sequences), yet ``restrictive_dominates`` returns True in both — proving
-    dominance is order-independent (§7 line 239-242; §20 line 746; SA-INV-010).
-    """
+    """(canary SA-EV-009) HALT dominates a permissive grant in BOTH issue orders."""
     halt = _halt()
 
-    # (a) HALT issued first (seq 1), permissive second (seq 2).
     perm_after = _permissive(issue_sequence=2)
     halt_first = OrderingEvent(
         event_id="halt", source_continuity_id="c", source_native_sequence=1
@@ -61,7 +48,6 @@ def test_halt_dominates_permissive_both_orders() -> None:
     assert compare_order(halt_first, perm_second) is Ordering.BEFORE
     assert restrictive_dominates(AuthorityState.LIVE_NORMAL, [halt, perm_after]) is True
 
-    # (b) permissive issued first (seq 1), HALT second (seq 2) — reversed order.
     perm_before = _permissive(issue_sequence=1)
     perm_first = OrderingEvent(
         event_id="perm", source_continuity_id="c", source_native_sequence=1
@@ -70,7 +56,6 @@ def test_halt_dominates_permissive_both_orders() -> None:
         event_id="halt", source_continuity_id="c", source_native_sequence=2
     )
     assert compare_order(perm_first, halt_second) is Ordering.BEFORE
-    # Same outstanding set, reversed list order — dominance is unchanged (True).
     assert (
         restrictive_dominates(AuthorityState.LIVE_NORMAL, [perm_before, halt]) is True
     )
@@ -119,7 +104,6 @@ def test_safer_transition_always_allowed() -> None:
     assert safer_transition_allowed(
         AuthorityState.LIVE_NORMAL, AuthorityState.LIVE_NORMAL
     )
-    # A less-safe direction is NOT a safer transition.
     assert (
         safer_transition_allowed(AuthorityState.HALTED, AuthorityState.LIVE_NORMAL)
         is False
@@ -128,7 +112,6 @@ def test_safer_transition_always_allowed() -> None:
 
 def test_permissive_transition_requires_current_epoch() -> None:
     """(canary) A less-safe transition needs epoch_current=True; None/False forbids it (§7 line 239)."""
-    # HALTED -> LIVE_NORMAL is a permissive direction.
     assert (
         permissive_transition_allowed(
             AuthorityState.HALTED, AuthorityState.LIVE_NORMAL, epoch_current=True
@@ -161,7 +144,6 @@ def test_restrictive_may_apply_when_stale_requires_authentic_and_cannot_enlarge(
 ):
     """(canary) A stale restrictive message applies only when authentic AND cannot-enlarge (§16.2)."""
     assert restrictive_may_apply_when_stale(authentic=True, cannot_enlarge=True) is True
-    # Any None / False on either coordinate => not applicable (fail-closed).
     assert (
         restrictive_may_apply_when_stale(authentic=None, cannot_enlarge=True) is False
     )

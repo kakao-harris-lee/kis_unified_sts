@@ -1,10 +1,4 @@
-"""``AttemptBindVerificationStage`` (step 13) + ``TransmissionCapabilityStage``
-(step 14) tests (design #40 §5 order 6, lane R item 3).
-
-Covers the independent review fix of 39dd3993 (LOW-D: the RCL entry is keyed
-on the nonce, not the attempt id — nonce reuse is refused by the log, and a
-second capability request for an attempt that already has one is separately
-refused in memory)."""
+"""``AttemptBindVerificationStage`` (step 13) + ``TransmissionCapabilityStage``"""
 
 from __future__ import annotations
 
@@ -66,11 +60,6 @@ def _request(
     )
 
 
-# ============================================================================
-# AttemptBindVerificationStage (step 13)
-# ============================================================================
-
-
 def test_attempt_bind_is_unknown_when_no_attempt_is_bound() -> None:
     stage = AttemptBindVerificationStage(
         reservation_digest_reader=lambda _a: None,
@@ -122,7 +111,7 @@ def test_attempt_bind_is_unknown_on_an_undetermined_link() -> None:
     stage = AttemptBindVerificationStage(
         reservation_digest_reader=lambda a: a.conformance_proof_digest,
         permit_digest_reader=lambda a: a.action_flow_permit_identity,
-        approval_digest_reader=lambda _a: None,  # undetermined, not missing-link
+        approval_digest_reader=lambda _a: None,
     )
     approval_verdict = StageVerdict(
         step=CommitmentStep.INDEPENDENT_APPROVAL,
@@ -137,11 +126,6 @@ def test_attempt_bind_is_unknown_on_an_undetermined_link() -> None:
     )
     verdict = stage(request)
     assert verdict.outcome is StageOutcome.UNKNOWN
-
-
-# ============================================================================
-# TransmissionCapabilityStage (step 14)
-# ============================================================================
 
 
 def _context() -> TransmissionCapabilityContext:
@@ -209,9 +193,7 @@ def test_transmission_capability_is_unknown_when_no_epoch_acquired(
 def test_transmission_capability_denies_a_second_request_for_the_same_attempt(
     log: SqliteCommitLog, writer_epoch: int
 ) -> None:
-    """LOW-D: an attempt is single-use for a TransmissionCapability — the
-    second request is refused in memory, before any second RCL append is
-    even attempted."""
+    """LOW-D: an attempt is single-use for a TransmissionCapability — the"""
     stage = TransmissionCapabilityStage(
         log, writer_epoch=writer_epoch, context_reader=lambda _r: _context()
     )
@@ -227,10 +209,7 @@ def test_transmission_capability_denies_a_second_request_for_the_same_attempt(
 def test_transmission_capability_nonce_reuse_across_attempts_is_refused_by_the_log(
     log: SqliteCommitLog, writer_epoch: int
 ) -> None:
-    """LOW-D: the durable entry is keyed on the NONCE, not the attempt id —
-    forcing the same nonce for two DIFFERENT attempts must collide on the
-    RCL's own command_id and be refused, proving the log (not just the
-    in-memory attempt guard) is what enforces single-use."""
+    """LOW-D: the durable entry is keyed on the NONCE, not the attempt id —"""
     stage = TransmissionCapabilityStage(
         log,
         writer_epoch=writer_epoch,

@@ -116,8 +116,6 @@ def test_serving_required_restores_outer_serving_context_after_nested_refusal() 
             with pytest.raises(WitnessUnavailable):
                 witness.observe(required_scope)
 
-        # If the nested strict scope, clock, or age limit leaked, the outer snapshot would
-        # be refused or the inner witness would be consulted here.
         assert witness.observe(outer_scope) is outer_snapshot.outcome
 
     assert [(use.verdict, use.age_ms) for use in outer_uses] == [

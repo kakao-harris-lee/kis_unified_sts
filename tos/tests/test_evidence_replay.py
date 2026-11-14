@@ -1,11 +1,4 @@
-"""Replay divergence + baseline binding — ERI-EV-007/008 (design #4 §6).
-
-``compute_replay_result`` is never ``MATCH`` if any of {unsupported baseline,
-missing/corrupt input, digest mismatch, schema incompatibility, unbounded
-nondeterminism} holds (ERI-INV-009). Baseline binding is exact: a changed
-baseline yields UNSUPPORTED_BASELINE and can never PASS (ERI-EV-008). Isolation
-and result-authority flags are forced false.
-"""
+"""Replay divergence + baseline binding — ERI-EV-007/008 (design #4 §6)."""
 
 from __future__ import annotations
 
@@ -27,9 +20,7 @@ from ._evidence_strategies import issue_replay
 
 
 class _ReplayKwargs(TypedDict):
-    """1:1 with :func:`compute_replay_result`'s signature (plan §1.1 A-fn) — a
-    ``**_replay_kwargs(...)`` splat is checked key-by-key and type-by-type, not swallowed
-    by a ``**dict[str, object]`` splat."""
+    """1:1 with :func:`compute_replay_result`'s signature (plan §1.1 A-fn) — a"""
 
     baseline_supported: bool
     input_complete: bool
@@ -40,8 +31,7 @@ class _ReplayKwargs(TypedDict):
 
 
 class _ReplayKwargsPartial(TypedDict, total=False):
-    """Same fields as :class:`_ReplayKwargs`, all optional — the override-kwargs shape for
-    :func:`_replay_kwargs`."""
+    """Same fields as :class:`_ReplayKwargs`, all optional — the override-kwargs shape for"""
 
     baseline_supported: bool
     input_complete: bool
@@ -134,9 +124,6 @@ def test_not_run_when_no_actual_digest() -> None:
     assert result is ReplayResultState.INCONCLUSIVE
 
 
-# ---- baseline binding ------------------------------------------------------
-
-
 def test_exact_baseline_supported() -> None:
     """A capsule whose baseline matches an approved baseline is supported (§6.2)."""
     capsule = issue_replay(baseline=ReplayBaseline(repository_commit_sha="sha-1"))
@@ -161,9 +148,6 @@ def test_changed_baseline_unsupported() -> None:
     assert result is ReplayResultState.UNSUPPORTED_BASELINE
 
 
-# ---- isolation + result authority forced false -----------------------------
-
-
 def test_isolation_live_flag_unconstructable() -> None:
     """A true live-reachability flag makes the isolation block unconstructable (§6.3)."""
     with pytest.raises(ValidationError):
@@ -186,15 +170,8 @@ def test_issued_replay_isolation_defaults_false() -> None:
     assert not iso.live_approval_or_authorization_consumable
 
 
-# ---- ERI-EV-008 current-rule re-evaluation = distinct named result ---------
-
-
 def test_current_rule_reevaluation_is_distinct_named_result() -> None:
-    """A current-rule re-evaluation is a distinct record, not a historical overwrite.
-
-    ERI-EV-008 (§6.2, ADR §15 line 409): re-evaluating under current rules yields a
-    distinct named result and must not supersede/overwrite the historical result.
-    """
+    """A current-rule re-evaluation is a distinct record, not a historical overwrite."""
     historical = issue_replay(
         replay_capsule_id="rc-historical",
         baseline=ReplayBaseline(repository_commit_sha="commit-OLD"),
@@ -206,7 +183,6 @@ def test_current_rule_reevaluation_is_distinct_named_result() -> None:
         result=ReplayResult(state=ReplayResultState.DIVERGED),
     )
     assert reevaluation_is_distinct_named_result(historical, reevaluation) is True
-    # Append-only: the historical capsule is frozen and its result is unchanged.
     assert historical.result.state is ReplayResultState.MATCH
     assert historical.replay_capsule_id != reevaluation.replay_capsule_id
 

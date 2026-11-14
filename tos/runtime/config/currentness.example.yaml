@@ -28,8 +28,8 @@ B_capability_claim_to_send: null
 
 # The operator-declared CURRENTNESS_POLICY dimension set (Phase 5 W3-b; W3.1
 # independent review MEDIUM-3) — fed verbatim into CurrentnessPolicy.required_
-# dimensions. Every tos.cur.DimensionKey name below is one of the 21 non-
-# conditional MANDATED_DIMENSION_FLOOR members ("a policy may require more,
+# dimensions. Every tos.cur.DimensionKey name below is one of the
+# conditional, non-retired MANDATED_DIMENSION_FLOOR members (9 after plan S2-b; "a policy may require more,
 # never fewer" — tos.cur.predicates.vector_complete's own §5.1 rule); an
 # operator MAY add more, but removing one here would make the CURRENTNESS_
 # POLICY currentness dimension genuinely report positively_established=False

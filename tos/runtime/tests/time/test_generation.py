@@ -20,7 +20,7 @@ def test_peek_next_does_not_advance() -> None:
     counter = GenerationCounter(start=0)
     assert counter.peek_next() == 1
     assert counter.current == 0
-    assert counter.peek_next() == 1  # idempotent, still hasn't advanced
+    assert counter.peek_next() == 1
 
 
 def test_next_advances_monotonically() -> None:

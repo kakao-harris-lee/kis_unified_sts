@@ -1,34 +1,4 @@
-"""§7.1 import-closure verification for ``tos.recon`` (design #9 §7.1).
-
-Isomorphic to the canonical / rcl / orthostate / liveauth closure tests. It imports every
-``tos.recon`` submodule in a **fresh, spawned interpreter** (``subprocess`` / ``os`` are
-firewall-forbidden even in tests) and asserts:
-
-  1. No design §2.3 operational package is in the closure (``shared.execution`` / ``kis``
-     / ``streaming`` / ``llm`` / ``storage`` / ``backtest``, ``services.*``, ``cli.*``).
-  2. Neither ``shared.config`` nor ``shared.config.secrets`` is present (C1 — the
-     transitive ambient-credential intake), nor ``shared.determinism``.
-  3. ``numpy`` / ``pandas`` / ``yaml`` are absent (bounds are injected; YAML parsing is the
-     harness's concern — design §0.3/§7.1).
-  4. **All eight siblings are absent** — ``tos.orthostate`` / ``tos.rcl`` / ``tos.time`` /
-     ``tos.evidence`` / ``tos.capsule`` / ``tos.authority`` / ``tos.liveauth`` / ``tos.dsl``
-     (design #9 §3.4/§3.5 — recon keeps a **sibling edge of 0**, producing bools / scalars
-     / injected coordinates instead of importing any of them).
-  5. **``tos.canonical`` AND ``tos.ordering`` ARE present** — the two core substrate
-     dependencies (§3.1/§3.2) are explicitly ALLOWED; the closure *bounds* them, it does
-     not forbid them.
-  6. No ``tos.recon`` source references ``os.environ`` / ``os.getenv`` or a dynamic escape
-     (``exec`` / ``eval`` / ``__import__`` / ``importlib``) or a real clock
-     (``time`` / ``datetime``).
-
-A planted-leak canary proves the spawn+scan pipeline actually catches a leak, and a
-planted-AST-escape canary proves the static scan catches an escape, so "green" is evidence
-the checker works — not that it has been neutered.
-
-Network stdlib (``socket`` / ``ssl`` / …) is intentionally NOT asserted absent:
-``pydantic`` transitively loads it into every tos closure; design #1 §4 accepts that as
-residual risk, and the direct-import ban is the firewall gate (TOS-FW-B) alone.
-"""
+"""§7.1 import-closure verification for ``tos.recon`` (design #9 §7.1)."""
 
 from __future__ import annotations
 
@@ -90,7 +60,6 @@ _RECON_SRC = Path(__file__).resolve().parent.parent.parent / "src" / "tos" / "re
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
-#: Real-clock modules that must never be imported by a clock-free recon source (§0.2).
 _CLOCK_MODULES = frozenset({"time", "datetime"})
 
 
@@ -203,14 +172,13 @@ def test_is_forbidden_classifier_canaries() -> None:
     assert _is_forbidden("tos.authority") is True
     assert _is_forbidden("tos.liveauth") is True
     assert _is_forbidden("tos.dsl") is True
-    # Allowed: self, the core substrate, third-party.
     assert _is_forbidden("tos.recon") is False
     assert _is_forbidden("tos.recon.predicates") is False
     assert _is_forbidden("tos.canonical") is False
     assert _is_forbidden("tos.ordering") is False
     assert _is_forbidden("pydantic") is False
     assert _is_forbidden("decimal") is False
-    assert _is_forbidden("click") is False  # must not false-match the "cli" prefix
+    assert _is_forbidden("click") is False
 
 
 def _ast_escape_offenders(path: Path) -> list[str]:

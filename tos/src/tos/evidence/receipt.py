@@ -1,29 +1,4 @@
-"""Evidence Commit Receipt (design #4 §2.2, template SoT).
-
-Models ``EVIDENCE-COMMIT-RECEIPT-template.yaml`` (33 lines, all scalar). A
-digest-bound artifact (design §3.2) with an **independent** ``receipt_id``
-(id != f(digest), design #4 §3.1).
-
-**Phase-1 honesty (design §2.2 / gap 5):** the receipt is pure data and proves
-**no durability**. Its durable-verification status can never leave ``UNVERIFIED``
-in Phase 1 — proving "durably accepted" needs an out-of-scope durable store +
-anchor service (L2+). Only the *binding* and *substitution-rejection* predicates
-are EV-L1 (see :mod:`tos.evidence.predicates`); those are pure functions, not a
-durability proof.
-
-**Interpretations (design deviations, reported):**
-
-* The inherited ``canonical_digest`` is the receipt's own self-digest over its
-  covered issuance fields; ``canonical_record_digest`` is a **covered binding
-  reference** to the target record's digest (design §3.2 "대상 레코드에 bind").
-* The template's top-level ``status: UNVERIFIED`` is a *durable-verification*
-  status, distinct from the ``ArtifactStatus`` (DRAFT/ISSUED) lifecycle the
-  digest-binding base uses. To avoid overloading the inherited ``status`` it is
-  modelled as ``verification_status`` (a :class:`ReceiptVerificationStatus`),
-  fixed to ``UNVERIFIED`` in Phase 1.
-
-Pure module: ``pydantic`` + stdlib only; no ``shared.*`` (design §0.3).
-"""
+"""Evidence Commit Receipt (design #4 §2.2, template SoT)."""
 
 from __future__ import annotations
 
@@ -45,26 +20,14 @@ _RECEIPT_AUTHORITY_FLAGS = (
 
 
 class ReceiptVerificationStatus(StrEnum):
-    """Durable-verification status of a receipt (template ``status``, design §2.2).
-
-    ``UNVERIFIED`` is the only state a pure Phase-1 model can honestly hold —
-    ``VERIFIED`` (durable acceptance) requires an out-of-scope durable store +
-    anchor service and is therefore unconstructable here (gap 5).
-    """
+    """Durable-verification status of a receipt (template ``status``, design §2.2)."""
 
     UNVERIFIED = "UNVERIFIED"
     VERIFIED = "VERIFIED"
 
 
 class EvidenceCommitReceipt(EvidenceArtifact):
-    """A digest-bound Evidence Commit Receipt (design #4 §2.2).
-
-    Binds to exactly one target record digest (``canonical_record_digest``), one
-    EIP generation, and one ``store_continuity_id``, and carries
-    ``valid_for_request_digest`` / ``valid_for_scope_digest`` /
-    ``valid_for_egress_generation`` (design §10.2). Substitution rejection is a
-    pure predicate; durable acceptance is not proven (status stays UNVERIFIED).
-    """
+    """A digest-bound Evidence Commit Receipt (design #4 §2.2)."""
 
     _ID_FIELD: ClassVar[str] = "receipt_id"
     _REQUIRED_COVERED: ClassVar[tuple[str, ...]] = (
@@ -115,13 +78,11 @@ class EvidenceCommitReceipt(EvidenceArtifact):
         }
     )
 
-    # ---- Layer-0 identity (independent) + verification status (excluded) ------
     receipt_id: str | None = None
     verification_status: ReceiptVerificationStatus = (
         ReceiptVerificationStatus.UNVERIFIED
     )
 
-    # ---- Covered issuance / binding fields ----
     evidence_record_id: str | None = None
     canonical_record_digest: str | None = None
     record_class: str | None = None
@@ -145,7 +106,6 @@ class EvidenceCommitReceipt(EvidenceArtifact):
     valid_for_scope_digest: str | None = None
     valid_for_egress_generation: int | None = None
 
-    # ---- Authority effect flags — all false (template lines 25-28, §4.6) ----
     creates_authority: bool = False
     creates_capacity: bool = False
     permits_broker_transmission: bool = False

@@ -1,29 +1,4 @@
-"""Typed-algebra -> candidate-AST lowering tests (design #31 §3.5 D4 / §9-4 seam closure).
-
-``lower_strategy`` closes the seam design #31 §3.5 named and explicitly deferred: it
-maps every node of the closed typed authoring algebra (``tos.dsl.vocabulary``) onto
-the open candidate-AST domain (``tos.dsl.candidate``) the escape-checker
-(``tos.dsl.admissibility.analyze``) consumes, so an in-process typed
-``AuthoredStrategy`` can now be run through the same escape-checker gate a
-serialized strategy will use (``tos.engine.admission.strategy_admissible``, lane
-D-K-3).
-
-Coverage:
-
-* every fixture policy shape (NO_ACTION-only default, ACTION, FLAT, VECTOR,
-  multi-rule) lowers to a non-empty, ADMISSIBLE ``CandidateProgram`` — a genuine
-  positive (``is_admissible`` checked, not merely "did not raise");
-* ``iter_nodes`` over the lowered program visits exactly one ``rule`` node per
-  authored ``Rule``, in authored order;
-* lowering is deterministic: lowering the same strategy twice yields ``==``
-  ``CandidateProgram`` values (frozen-model structural equality);
-* ``lower_strategy`` never raises, even for a policy-less ``AuthoredStrategy``
-  (module-docstring totality claim);
-* a lowered program mutated (validation-bypassing direct-node injection — the WDR
-  #26 two-layer canary idiom) to carry each ``candidate.ESCAPE_KINDS`` /
-  ambient-symbol / wildcard-scope family is rejected by ``analyze`` — proving the
-  checker actually inspects a *lowered* tree, not only a hand-built adversarial one.
-"""
+"""Typed-algebra -> candidate-AST lowering tests (design #31 §3.5 D4 / §9-4 seam closure)."""
 
 from __future__ import annotations
 
@@ -56,10 +31,6 @@ from ._dsl_strategies import (
     vector_policy,
 )
 
-# ---------------------------------------------------------------------------
-# Positive coverage — every fixture shape lowers to an admissible program
-# ---------------------------------------------------------------------------
-
 
 @pytest.mark.parametrize("build_policy", FIXTURE_POLICY_BUILDERS)
 def test_every_fixture_strategy_lowers_to_an_admissible_program(
@@ -69,9 +40,7 @@ def test_every_fixture_strategy_lowers_to_an_admissible_program(
     strategy = issue_strategy(policy=build_policy())
     program = lower_strategy(strategy)
     assert isinstance(program, CandidateProgram)
-    assert (
-        program.nodes
-    )  # non-empty (CandidateProgram forbids empty construction anyway)
+    assert program.nodes
     analysis = analyze(program)
     assert analysis.verdict is AdmissibilityVerdict.ADMISSIBLE, analysis.reasons
     assert is_admissible(program)
@@ -110,11 +79,6 @@ def test_lowering_a_rules_free_policy_still_lowers_its_mandatory_default() -> No
     assert is_admissible(program)
 
 
-# ---------------------------------------------------------------------------
-# Determinism + totality
-# ---------------------------------------------------------------------------
-
-
 def test_lowering_is_deterministic_same_strategy_same_program() -> None:
     """Lowering the same strategy twice yields structurally ``==`` candidate programs."""
     strategy = issue_strategy(policy=vector_policy())
@@ -139,12 +103,6 @@ def test_lowering_a_policy_less_strategy_is_total_never_raises() -> None:
     assert is_admissible(program)
 
 
-# ---------------------------------------------------------------------------
-# Escape-injection canary — a lowered program mutated with an escape/ambient/
-# wildcard family is rejected by analyze (WDR #26 two-layer canary idiom).
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("escape_kind", sorted(ESCAPE_KINDS))
 def test_a_lowered_program_with_an_injected_escape_kind_is_rejected(
     escape_kind: str,
@@ -152,7 +110,7 @@ def test_a_lowered_program_with_an_injected_escape_kind_is_rejected(
     """Appending one escape-kind node to an otherwise-admissible lowered program flips it (DCE-EV-001/004)."""
     strategy = issue_strategy(policy=multi_rule_policy())
     program = lower_strategy(strategy)
-    assert is_admissible(program)  # baseline is genuinely admissible (non-vacuous)
+    assert is_admissible(program)
     mutated = CandidateProgram(nodes=(*program.nodes, CandidateNode(kind=escape_kind)))
     assert not is_admissible(mutated)
     assert any(r.startswith("non_vocabulary_kind:") for r in analyze(mutated).reasons)

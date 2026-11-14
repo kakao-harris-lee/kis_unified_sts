@@ -1,11 +1,4 @@
-"""``tos_runtime.brokercap`` — runtime-configured Broker Capability scope
-table + G-4 transport/credential-route derivation (TOS Phase 4 plan §2,
-``docs/plans/2026-09-09-tos-phase4-scopes-and-verify-realization-plan.md``).
-
-Re-exports the public surface of :mod:`tos_runtime.brokercap.scopes` (scope
-table, lane A) and :mod:`tos_runtime.brokercap.instance` (Broker Capability
-Profile INSTANCE loader, lane C — plan §2 decision 3).
-"""
+"""``tos_runtime.brokercap`` — runtime-configured Broker Capability scope"""
 
 from __future__ import annotations
 

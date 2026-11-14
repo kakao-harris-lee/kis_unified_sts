@@ -1,94 +1,4 @@
-"""``RiskStateService`` — the production source for step 6/7's decision inputs (TOS risk
-state service wave, lane b; ``docs/plans/2026-09-16-tos-risk-state-service-plan.md`` §2.4,
-§4; DR-0003).
-
-**What this service does.** :meth:`aggregate_inputs_for` / :meth:`action_flow_inputs_for`
-build one :class:`~tos_runtime.risk.aggregate.AggregateRiskDecisionInputs` /
-:class:`~tos_runtime.risk.flow.ActionFlowDecisionInputs` per :class:`~tos.engine.records
-.StageRequest`, from the field-source table plan §2.1 lays out — **structural derivation** for
-every field the runtime can genuinely observe (position usage from durable evidence, OPEN
-command effect from the live construction, flow observation from the durable inbox/RCL log) and
-**governed-policy declaration** for every field a deployment must instead attest (limits,
-scope, deployment facts). It authors **no** attestation-only bool
-(``all_fields_attributed``/``numerically_safe``/``valuation_ok``/
-``limit_source_is_injected_envelope``/``economic_commitment_exclusive``/
-``flow_commitment_exclusive``) itself — every one of those stays ``None`` here, so
-:mod:`tos_runtime.compose._risk_attestations`'s existing ``_restrictive_merge`` governs them
-unchanged (plan §2.1's own "정책은 이 표 밖의 값을 만들지 않는다").
-
-**CLOSE effects require broker-held proof (#1004).** A close may reduce aggregate risk only when
-the optional injected reader returns a one-use, complete, fresh, independent, per-attempt KIS
-stock holding proof for the exact current ``AttemptArm.direction``. The held-position cell issuing
-that proof rechecks trusted date and RCL tip. Local fills and ``POSITION_CONSUMED`` rows never
-stand in for current holdings. When the reader, direction, or proof is absent or invalid, the
-effect stays ``None`` and ARE returns ``UNKNOWN``; a composition that does not wire a proof reader
-therefore blocks all CLOSEs at step 6.
-
-**Two governed-instance boot events, once.** :meth:`__init__` appends
-``AGGREGATE_RISK_POLICY_BOUND`` / ``ACTION_FLOW_POLICY_BOUND`` — the SAME "print which
-activation admitted this policy" idiom :func:`tos_runtime.venue.record_order_construction_policy_bound`
-already establishes, extended to these two new governed instances (plan §2.4).
-
-**Deviation, reported: ``max_attempts`` is an added constructor dependency, not in plan
-§4.1's literal list.** :func:`~tos_runtime.riskstate.flow_observation.to_action_cause`'s
-``forked_beyond_bound`` is ``None`` (UNKNOWN) whenever ``max_attempts`` is absent, and
-``tos.afg.cause_lineage_complete`` requires ``forked_beyond_bound is False`` to ever complete —
-so leaving this argument unsupplied would make step 7 GRANT unreachable in EVERY deployment,
-not merely an honest gap. The bound already exists as the SAME ``ActionAmplificationEnvelope
-.max_attempts`` :class:`~tos_runtime.risk.flow.ActionFlowGovernor` already enforces via
-``amplification_bounded`` — this service reads it through the SAME envelope object (never a
-second config load, never a re-typed literal), via ``max_attempts_reader`` (an ``int``-or-``None``
-zero-arg callable, mirroring this module's every other reader parameter).
-
-**``root_event_id`` is read from ``StageRequest.reference.event_id`` (structural, but not the
-durable inbox's own identity — ``root_event_seq`` is resolved independently, below).** No
-``StageRequest`` field carries the inbox's own content-addressed
-``tos.engine.records.event_identity`` digest; ``reference.event_id`` (threaded from the
-DECISION_TICK payload through the gateway's own seal construction) is the best available label
-for lineage-tracing purposes (:func:`~tos_runtime.riskstate.flow_observation.InboxFlowReader
-.observe`'s own ``_traces_to`` comparison — it compares this SAME label against the identical
-label a ``SEND_SEALED`` row's own ``send_seal.reference.event_id`` carries, both sourced from
-the one ``StageRequest.reference`` this attempt shares, so lineage tracing itself is sound
-regardless of whether the label matches the inbox's real digest).
-
-**``root_event_seq``/``elapsed_monotonic`` are resolved structurally, NOT via identity
-matching (team-lead disposition 2026-09-16, fixing an earlier gap).** This runtime's engine
-driver handles exactly ONE inbox row at a time (``EngineDriver._process_next``'s own
-``_draining`` re-entrancy guard: it pulls ``next_unconsumed()``, marks handling started, THEN
-calls ``core.handle`` — the whole 19-step commitment flow — and only marks the row consumed
-AFTER that returns), so the row :meth:`~tos_runtime.engine.inbox.SqliteEventInbox
-.next_unconsumed` reports DURING step 6/7 processing is genuinely, structurally the current
-attempt's own root event — not a guess, not an identity recomputation that might miss. This
-service's ``current_seq_reader`` reads exactly that (:mod:`tos_runtime.compose
-._riskstate_wiring` wires it straight from the composed inbox) and passes it to
-:meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe` as
-``root_event_seq=`` — bypassing that reader's own ``root_event_id``-to-``event_identity``
-fallback matching entirely. ``elapsed_monotonic`` is then a real, two real-reads difference
-(current monotonic reading minus the ``EVENT_HANDLING_STARTED`` marker's own recorded
-monotonic reading), never structurally absent.
-
-**Unit bridge: ``monotonic_reader`` is milliseconds, ``appended_at_monotonic_ns`` is
-nanoseconds.** ``tos_runtime.time.sources.MonotonicSource`` (this runtime's only injectable
-per-process monotonic clock, and ``monotonic_reader``'s own source) reports whole
-milliseconds; the durable evidence store's own ``appended_at_monotonic_ns`` column (what
-``EVENT_HANDLING_STARTED``'s marker records) is nanoseconds. ``risk.yaml``'s
-``max_elapsed_monotonic`` fixture value (``60_000``) reads as a millisecond bound consistent
-with every sibling ``*_ms`` config value in this runtime's own config files — this service
-therefore converts the nanosecond marker DOWN to whole milliseconds
-(``handling_started_monotonic // 1_000_000``) before subtracting, so ``elapsed_monotonic``
-stays in the SAME unit as the bound it is compared against.
-
-**Deviation, reported: ``grant_identity``/``attempt_id`` are the proposal id.** No attempt
-identity exists yet at step 6/7 (``StageRequest.attempt`` is populated only from step 13
-onward, per that model's own docstring) — the best available, genuinely per-attempt structural
-identity at this point is ``request.proposal.proposal_id``.
-
-Firewall (R1, runtime scope): stdlib + ``tos.*`` + ``tos_runtime.*`` only (no ``shared.*``, no
-``os.environ``/``subprocess``/``importlib.import_module`` — ``tools/tos_firewall_check.py``
-applies this ONE allowlist uniformly across ``tos/runtime/**``; this module's own import list is
-wider than its sibling ``policies``/``position``/``flow_observation`` modules because it is the
-cross-lane assembly point DR-0003 §2.1 describes, not a narrower structural-observation leaf).
-"""
+"""``RiskStateService`` — the production source for step 6/7's decision inputs (TOS risk"""
 
 from __future__ import annotations
 
@@ -108,7 +18,6 @@ from tos.egressgw.records import CandidateConstruction
 from tos.engine.records import StageRequest
 from tos.ioc import EconomicEffectEnvelope
 from tos.rcl import CapacityComponent, CapacityVector
-from tos.spg import HardSafetyEnvelope
 from tos.venue import ActionClass
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -167,17 +76,11 @@ _AFG_BOUND_KIND = "ACTION_FLOW_POLICY_BOUND"
 _OBSERVED_KIND = "RISK_STATE_OBSERVED"
 
 
-def _envelope_max_vector(
-    are_policy: LoadedAggregateRiskPolicy, hse_envelope: HardSafetyEnvelope
-) -> CapacityVector:
-    """Every ARE-governed dimension id's ``envelope_max`` off the ALREADY-loaded Hard Safety
-    Envelope (plan §2.1 "ARE ``injected_envelope_max``") — the wiring-time boot cross-check
-    (:mod:`tos_runtime.compose._riskstate_wiring`) already proved every one of these ids
-    exists among ``hse_envelope.governed_dimensions``, so a lookup miss here is unreachable in
-    production; this function still fails closed (``magnitude=None``, UNKNOWN) rather than
-    raise, matching ``CapacityComponent``'s own "``None`` for UNKNOWN" discipline."""
+def _envelope_max_vector(are_policy: LoadedAggregateRiskPolicy) -> CapacityVector:
+    """Every ARE-governed dimension id's ``injected_envelope_max`` ceiling, off the ARE"""
     by_dimension = {
-        gdl.dimension: gdl.envelope_max for gdl in hse_envelope.governed_dimensions
+        component.dimension_id: component.magnitude
+        for component in are_policy.envelope_max.components
     }
     components = tuple(
         CapacityComponent(
@@ -196,10 +99,7 @@ def _cells_for(
     overlap_effect: Decimal,
     max_credible_command_effect: Decimal | None,
 ) -> tuple[ProjectedCell, ...]:
-    """One :class:`~tos.are.ProjectedCell` per (governed scope, dimension) pair the policy
-    declares, crossed with every required scenario kind (plan §2.4 "producer 표") — split out
-    of :meth:`RiskStateService.aggregate_inputs_for` purely for that method's own 100-line size
-    budget; no behavioural difference from having this inline."""
+    """One :class:`~tos.are.ProjectedCell` per (governed scope, dimension) pair the policy"""
     cells: list[ProjectedCell] = []
     for (scope, dimension), dimension_id in sorted(
         are_policy.dimension_ids.items(), key=lambda item: item[1]
@@ -230,7 +130,6 @@ class RiskStateService:
         are_policy: LoadedAggregateRiskPolicy,
         afg_policy: LoadedActionFlowPolicy,
         scheme: CanonicalizationScheme,
-        hse_envelope: HardSafetyEnvelope,
         scenario_set: AdverseScenarioSet,
         required_scenario_kinds: frozenset[AdverseScenarioKind],
         position_reader: EvidencePositionReader,
@@ -257,20 +156,10 @@ class RiskStateService:
         close_authority: CloseAuthoritySource = CloseAuthoritySource.BROKER_HELD_PROOF,
         entry_close_bound_reader: Callable[[], EntryCloseBound] | None = None,
     ) -> None:
-        """Compose injected policy/readers and append the two boot policy-bound events.
-
-        The optional CLOSE readers consume and revalidate the one-use held-position proof.
-        Without them, or when any proof input is unavailable, CLOSE remains UNKNOWN.
-        ``close_authority`` selects which bound a CLOSE rests on (#1011 — the composition root
-        derives it from the boot's transport kind), and ``entry_close_bound_reader`` supplies
-        the durable entry/proven-close magnitudes BOTH authorities need: the synthetic one as
-        its whole bound, the broker one as the extra TOS-entry cap (#1012 L3). Other argument
-        contracts follow the named runtime ports and the module-level plan references.
-        """
+        """Compose injected policy/readers and append the two boot policy-bound events."""
         self._are_policy = are_policy
         self._afg_policy = afg_policy
         self._scheme = scheme
-        self._hse_envelope = hse_envelope
         self._scenario_set = scenario_set
         self._required_scenario_kinds = required_scenario_kinds
         self._position_reader = position_reader
@@ -293,20 +182,10 @@ class RiskStateService:
         self._entry_close_bound_reader = entry_close_bound_reader
         self._close_proof_lock = Lock()
         self._close_fence_proof: HeldPositionProof | None = None
-        #: The step-6 synthetic bound and the quantity it admitted, held for the step-9 fence
-        #: exactly as ``_close_fence_proof`` holds the broker-held one — one use, per attempt.
         self._close_fence_bound: tuple[str, EntryCloseBound, Decimal] | None = None
-        self._envelope_max = _envelope_max_vector(are_policy, hse_envelope)
+        self._envelope_max = _envelope_max_vector(are_policy)
         self._snapshot_seq = 0
         self._observation_seq = 0
-        #: One (attempt_id, FlowObservation, committed_flow_vectors) slot, filled by whichever
-        #: of :meth:`aggregate_inputs_for` / :meth:`action_flow_inputs_for` observes flow state
-        #: FIRST for a given attempt, and reused by the other — so exactly ONE
-        #: ``RISK_STATE_OBSERVED`` evidence row (carrying position, flow, AND the committed
-        #: flow vector count — review HIGH-2, 2026-09-16) is recorded per attempt, never two,
-        #: and the durable inbox/evidence/RCL-log reads underlying
-        #: :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe` /
-        #: :func:`~tos_runtime.riskstate.flow_observation.committed_flow_vectors` happen once.
         self._flow_obs_cache: (
             tuple[str | None, FlowObservation, tuple[CapacityVector, ...]] | None
         ) = None
@@ -318,8 +197,7 @@ class RiskStateService:
         afg_policy: LoadedActionFlowPolicy,
         activated_member_digests: tuple[str, str],
     ) -> None:
-        """The two boot-time ``*_POLICY_BOUND`` rows (module docstring) — split out of
-        :meth:`__init__` purely for that method's own 100-line size budget."""
+        """The two boot-time ``*_POLICY_BOUND`` rows (module docstring) — split out of"""
         are_digest, afg_digest = activated_member_digests
         self._record_policy_bound(
             _ARE_BOUND_KIND,
@@ -358,12 +236,7 @@ class RiskStateService:
     def _observe_flow(
         self, request: StageRequest
     ) -> tuple[FlowObservation, tuple[CapacityVector, ...]]:
-        """Observe flow state (AND the committed flow vectors — review HIGH-2, 2026-09-16:
-        both need to land in the SAME evidence row, so both are resolved here, together, once
-        per attempt) for ``request``'s own attempt (module docstring's own ``_flow_obs_cache``
-        note) — whichever of :meth:`aggregate_inputs_for` / :meth:`action_flow_inputs_for`
-        calls this FIRST for a given attempt id does the real inbox/evidence/RCL-log read; the
-        other reuses the cached result."""
+        """Observe flow state (AND the committed flow vectors — review HIGH-2, 2026-09-16:"""
         attempt_id = getattr(request.proposal, "proposal_id", None)
         if self._flow_obs_cache is not None and self._flow_obs_cache[0] == attempt_id:
             return self._flow_obs_cache[1], self._flow_obs_cache[2]
@@ -388,16 +261,7 @@ class RiskStateService:
         extra_absent: tuple[str, ...],
         close_effect: dict[str, object] | None = None,
     ) -> None:
-        """Record ONE ``RISK_STATE_OBSERVED`` row carrying BOTH position and flow state
-        (plan §2.4's own "position 관측 + flow 관측 + absent_fields" shape) — split out of
-        :meth:`aggregate_inputs_for` purely for that method's own 100-line size budget.
-        ``absent_fields`` is SORTED — deterministic, review HIGH-2 (2026-09-16) — never an
-        encounter-order artifact a caller could mistake for significance. ``duplicates_rejected``/
-        ``replays`` are deliberately NOT in this None-check table (TOS action-flow observation
-        completion wave, 2026-09-16): :meth:`~tos_runtime.riskstate.flow_observation
-        .InboxFlowReader.observe` now always populates both from a completed durable-evidence
-        scan (never ``None``), so they are observed, not absent — see that module's own docstring.
-        """
+        """Record ONE ``RISK_STATE_OBSERVED`` row carrying BOTH position and flow state"""
         self._observation_seq += 1
         absent = sorted(
             {*extra_absent}
@@ -512,10 +376,6 @@ class RiskStateService:
         if failure is not None:
             return None, close_effect_audit(direction, failure, None, None, bound=bound)
         effect, status = synthetic_close_effect(bound, proposed)
-        # The STEP-6 proposal id travels with the stash, exactly as the broker path carries
-        # `proof.proposal_id` (review-1015 L1). Without it `synthetic_close_fence` would copy
-        # step 9's own id into the fence and `synthetic_close_fence_valid` would compare that
-        # value with itself — a check that cannot fail is not a check.
         proposal_id = getattr(request.proposal, "proposal_id", None)
         if effect is not None and proposed is not None and type(proposal_id) is str:
             with self._close_proof_lock:
@@ -525,12 +385,7 @@ class RiskStateService:
     def _broker_close_effect(
         self, request: StageRequest, proposed: Decimal | None, bound: EntryCloseBound
     ) -> tuple[Decimal | None, dict[str, object]]:
-        """KIS stock: the broker holding, capped by what remains of the TOS entry (#1012 L3).
-
-        The cap is ``min(held, entry - proven closes)``. Before it, a scope holding shares
-        bought outside TOS admitted a close of the whole holding; the entry then refused to
-        discharge (``CLOSED_OVER_ENTRY``) and the scope sealed itself.
-        """
+        """KIS stock: the broker holding, capped by what remains of the TOS entry (#1012 L3)."""
         direction, proof, status = self._read_close_proof(request)
         effect: Decimal | None = None
         proof_matches = type(proof) is HeldPositionProof and close_proof_matches(
@@ -622,14 +477,7 @@ class RiskStateService:
     def _synthetic_close_fence(
         self, request: StageRequest
     ) -> SyntheticCloseEntryFence | None:
-        """Re-read the durable bound step 6 granted against, and fence step 9 on it (#1011).
-
-        The synthetic counterpart of the broker-held currentness recheck above: a SECOND,
-        independent read of the RCL + evidence store, required to name the same entry with the
-        same magnitudes at a tip no older. The fence then carries that re-read tip, which step 9
-        pins its CAS to. The stashed STEP-6 proposal id is what the fence is minted under
-        (review-1015 L1), so step 9 compares its own request against a value step 6 wrote.
-        """
+        """Re-read the durable bound step 6 granted against, and fence step 9 on it (#1011)."""
         with self._close_proof_lock:
             stashed = self._close_fence_bound
             self._close_fence_bound = None
@@ -756,19 +604,7 @@ class RiskStateService:
     def action_flow_inputs_for(
         self, request: StageRequest
     ) -> ActionFlowDecisionInputs | None:
-        """Build step 7's inputs for ``request`` (module docstring; plan §2.4). Returns
-        ``None`` (UNKNOWN — never a fabricated grant) when the RCL tip is unreadable or this
-        attempt's action class (#960) is not among the policy's own
-        ``action_class_map``.
-
-        Emits no evidence of its own — :meth:`aggregate_inputs_for` (step 6) always runs
-        first for the same attempt in the real commitment flow (a step-6 DENY/UNKNOWN halts
-        the sequencer before step 7's stage is ever invoked at all), so ONE
-        ``RISK_STATE_OBSERVED`` row per attempt, recorded there, already covers both position
-        and flow state (module docstring's own ``_flow_obs_cache`` note); this method reuses
-        that SAME cached :class:`~tos_runtime.riskstate.flow_observation.FlowObservation`
-        rather than reading the inbox/evidence store a second time.
-        """
+        """Build step 7's inputs for ``request`` (module docstring; plan §2.4). Returns"""
         rcl_tip = self._rcl_tip_reader()
         if rcl_tip is None:
             return None
@@ -787,18 +623,7 @@ class RiskStateService:
         )
 
     def _elapsed_monotonic_ms(self, flow_obs: FlowObservation) -> Decimal | None:
-        """``monotonic_reader()`` minus the ``EVENT_HANDLING_STARTED`` marker's own
-        recorded monotonic reading, in whole milliseconds — split out of
-        :meth:`_build_action_flow_inputs` purely for that method's own 100-line size
-        budget.
-
-        Unit bridge (module docstring): ``flow_obs.handling_started_monotonic`` is
-        nanoseconds (the evidence store's own ``appended_at_monotonic_ns`` column);
-        ``monotonic_reader`` is milliseconds (this runtime's only injectable per-process
-        monotonic clock, ``tos_runtime.time.sources.MonotonicSource.now_ms``). Converted
-        down to whole milliseconds here so ``elapsed_monotonic`` stays in the SAME unit as
-        ``risk.yaml``'s own ``max_elapsed_monotonic`` bound.
-        """
+        """``monotonic_reader()`` minus the ``EVENT_HANDLING_STARTED`` marker's own"""
         mono_now_ms = self._monotonic_reader()
         if mono_now_ms is None or flow_obs.handling_started_monotonic is None:
             return None
@@ -807,9 +632,7 @@ class RiskStateService:
     def _afg_digests(
         self, cause: ActionCause, observed: ObservedAmplification
     ) -> tuple[str, str, str]:
-        """``(cause_digest, lineage_digest, amplification_envelope_digest)`` — split out of
-        :meth:`_build_action_flow_inputs` purely for that method's own 100-line size
-        budget."""
+        """``(cause_digest, lineage_digest, amplification_envelope_digest)`` — split out of"""
         cause_digest = self._scheme.compute_digest(
             {
                 "root_cause_identity": cause.root_cause_identity,
@@ -835,11 +658,7 @@ class RiskStateService:
         cause: ActionCause,
         committed_vectors: tuple[CapacityVector, ...],
     ) -> ActionFlowDecisionInputs:
-        """Split out of :meth:`action_flow_inputs_for` purely for that method's own 100-line
-        size budget; no behavioural difference from having this inline. ``committed_vectors``
-        is the SAME value :meth:`_observe_flow` already resolved (and recorded absence of, if
-        empty, on the shared ``RISK_STATE_OBSERVED`` row) — never a second, independent RCL
-        log read here."""
+        """Split out of :meth:`action_flow_inputs_for` purely for that method's own 100-line"""
         observed = to_observed_amplification(
             flow_obs,
             self._afg_policy.deployment_facts,
@@ -866,17 +685,6 @@ class RiskStateService:
             cause=cause,
             snapshot=snapshot,
             required_scopes=self._afg_policy.required_scopes,
-            # DERIVED from how `snapshot` (above) was actually built, not a separate
-            # attestation: `_snapshot_for` sets `covered_scopes` EXCLUSIVELY from
-            # `self._afg_policy.covered_scopes` — the activated, governed policy document —
-            # and takes no argument through which `request`/`cause`/any producer-supplied
-            # value could substitute or narrow it. Since this snapshot's own scope coverage
-            # structurally cannot have come from a producer, `producer_self_declared_scope`
-            # is positively `False` by construction, not a guess or a hardcoded admission
-            # literal. `False` is required here (not merely permitted):
-            # `scope_graph_complete` treats `None` the same as a producer-declared scope,
-            # both fail-closed (tos.afg.predicates `scope_graph_complete`'s own docstring,
-            # point 3).
             producer_self_declared_scope=False,
             observed_amplification=observed,
             requested_limit=flow_vector,

@@ -1,28 +1,4 @@
-"""``ProvisionalReservationLedger.release`` + ``FinalityProofRef`` (kernel round #3 §2 decision 5,
-``docs/plans/2026-09-12-tos-kernel-round-3-plan.md``).
-
-Four things this file locks that nothing else does:
-
-* **Release is gated on the typed token alone** — a response kind, a bare string, or any other
-  non-:class:`~tos.engine.state.FinalityProofRef` argument raises ``TypeError`` (mutation M5: no
-  response-kind/string path exists to ``RELEASED``).
-* **Release requires a terminal knowledge state** — a reservation still ``POTENTIALLY_LIVE`` (no
-  settlement evidence yet) is refused (``False``, not an exception); only ``FILLED`` /
-  ``REJECTED`` / ``CANCEL_ACKNOWLEDGED`` / ``EXPIRED`` knowledge admits release.
-* **Release is idempotent and matches by token alone** — calling it twice on the same attempt
-  returns ``False`` the second time, and it finds the reservation across every scope the ledger
-  holds by ``attempt_id`` alone, never a caller-supplied ``InstrumentKey``.
-* **``resolution_generation`` extends the duplicate-detection signature (ⓖ)** — a byte-identical
-  repeat of an already-applied result is ``DUPLICATE`` only when its ``resolution_generation``
-  also matches; a genuinely re-resolved TIMEOUT arriving at a NEW generation is a fresh, applied
-  result, not folded into ``DUPLICATE``.
-* **RELEASED returns the scope, never the attempt (kernel round #3 §2 decision 5b)** — once
-  released, a scope admits a genuinely NEW attempt again (the released reservation stops counting
-  as outstanding), but the released ``attempt_id`` itself may never transition again, even after
-  that fresh attempt has replaced it in the scope.
-
-Regime tag: authoring evidence only; closes no EV (design #31 §1.1).
-"""
+"""``ProvisionalReservationLedger.release`` + ``FinalityProofRef`` (kernel round #3 §2 decision 5,"""
 
 from __future__ import annotations
 
@@ -50,9 +26,7 @@ _ATTEMPT = "release-attempt-1"
 def _outstanding(
     ledger: ProvisionalReservationLedger, key: InstrumentKey
 ) -> ProvisionalReservation:
-    """``ledger.outstanding(key)``, asserted present (absent is a real, reachable case
-    elsewhere in this module — every call site below already knows, from the test's own
-    preceding setup, that the reservation exists at this point)."""
+    """``ledger.outstanding(key)``, asserted present (absent is a real, reachable case"""
     reservation = ledger.outstanding(key)
     assert reservation is not None
     return reservation
@@ -61,8 +35,7 @@ def _outstanding(
 def _live_ledger(
     *, max_unresolved_send_per_scope: int = 1
 ) -> tuple[ProvisionalReservationLedger, InstrumentKey]:
-    """A ledger with one scope projected all the way to ``POTENTIALLY_LIVE`` — the state every
-    ordinary flow reaches right before an egress result lands."""
+    """A ledger with one scope projected all the way to ``POTENTIALLY_LIVE`` — the state every"""
     ledger = ProvisionalReservationLedger(
         max_unresolved_send_per_scope=max_unresolved_send_per_scope
     )
@@ -84,11 +57,6 @@ def _proof(**overrides: object) -> FinalityProofRef:
     return FinalityProofRef.model_validate(base)
 
 
-# ===========================================================================
-# mutation M5 — the type gate
-# ===========================================================================
-
-
 @pytest.mark.parametrize(
     "bogus",
     [
@@ -100,22 +68,14 @@ def _proof(**overrides: object) -> FinalityProofRef:
     ],
 )
 def test_release_requires_a_finality_proof_ref_type(bogus: object) -> None:
-    """(mutation M5) No response-kind/string/dict path reaches ``RELEASED`` — only the typed
-    token does. Every one of these looks plausible (a kind, the attempt id itself, a dict shaped
-    like one) and every one must be refused the same way."""
+    """(mutation M5) No response-kind/string/dict path reaches ``RELEASED`` — only the typed"""
     ledger, _ = _live_ledger()
     with pytest.raises(TypeError):
         ledger.release(bogus)  # type: ignore[arg-type]
 
 
-# ===========================================================================
-# terminal-state gate
-# ===========================================================================
-
-
 def test_release_refuses_a_still_live_reservation() -> None:
-    """A ``POTENTIALLY_LIVE`` reservation carries no settlement evidence yet — refused, not an
-    exception."""
+    """A ``POTENTIALLY_LIVE`` reservation carries no settlement evidence yet — refused, not an"""
     ledger, key = _live_ledger()
     assert ledger.release(_proof()) is False
     assert ledger.outstanding(key) is not None
@@ -164,12 +124,7 @@ def test_release_refuses_a_quarantined_reservation() -> None:
     ],
 )
 def test_release_succeeds_from_every_terminal_knowledge_state(kind, fills) -> None:
-    """(kernel round #3 §2 decision 5) Exactly the four terminal knowledge states the plan names
-    (FULL_FILL/CANCEL_ACK/EXPIRED/REJECT) admit release.
-
-    (§2 decision 5b) ``outstanding`` no longer reports a ``RELEASED`` reservation at all — release
-    RETURNS the projected capacity (:meth:`admits_new_exposure` reopens the scope), it does not
-    leave a terminal entry sitting there forever."""
+    """(kernel round #3 §2 decision 5) Exactly the four terminal knowledge states the plan names"""
     ledger, key = _live_ledger()
     ledger.apply_egress_result(
         EgressResultPayload(instrument_key=key, attempt_id=_ATTEMPT, kind=kind, **fills)
@@ -177,11 +132,6 @@ def test_release_succeeds_from_every_terminal_knowledge_state(kind, fills) -> No
     assert ledger.release(_proof()) is True
     assert ledger.outstanding(key) is None
     assert ledger.admits_new_exposure(key) is True
-
-
-# ===========================================================================
-# idempotency + token-only matching
-# ===========================================================================
 
 
 def test_release_is_idempotent_false_on_the_second_call() -> None:
@@ -197,15 +147,13 @@ def test_release_is_idempotent_false_on_the_second_call() -> None:
     )
     assert ledger.release(_proof()) is True
     assert ledger.release(_proof(proof_digest="a-different-proof")) is False
-    # (§2 decision 5b) still reports "nothing outstanding" — idempotent False did not somehow
-    # revive an outstanding view of the released reservation.
     assert ledger.outstanding(key) is None
 
 
 def test_release_matches_by_attempt_id_across_every_scope_not_by_caller_supplied_key() -> (
     None
 ):
-    """ "Release by token only" — the caller need not know which scope holds the attempt."""
+    '"Release by token only" — the caller need not know which scope holds the attempt.'
     ledger = ProvisionalReservationLedger(max_unresolved_send_per_scope=1)
     key_a = instrument_key(account="acct-a", instrument="instr-a")
     key_b = instrument_key(account="acct-b", instrument="instr-b")
@@ -233,7 +181,6 @@ def test_release_matches_by_attempt_id_across_every_scope_not_by_caller_supplied
     assert ledger.release(ref) is True
     assert ledger.outstanding(key_b) is None
     assert ledger.admits_new_exposure(key_b) is True
-    # Scope A is untouched — release only ever finds the ONE matching attempt_id.
     assert _outstanding(ledger, key_a).capacity_state is CapacityState.POTENTIALLY_LIVE
     assert ledger.admits_new_exposure(key_a) is False
 
@@ -259,19 +206,8 @@ def test_release_refuses_an_unmatched_attempt_id() -> None:
     assert _outstanding(ledger, key).capacity_state is CapacityState.POSITION_CONSUMED
 
 
-# ===========================================================================
-# §2 decision 5b — RELEASED returns the scope, never the attempt
-# (team-lead disposition on the K-3 flag: Phase 5 §10:114 names exactly this gap — "엔진
-# in-memory 투영은 W2-K 전까지 프로세스 수명 동안 점유 유지" — reopening the scope after release IS
-# W2-K's whole purpose.)
-# ===========================================================================
-
-
 def test_release_reopens_the_scope_for_a_genuinely_new_attempt() -> None:
-    """(mutation lens: if ``outstanding``/``outstanding_count`` still counted a ``RELEASED``
-    reservation, ``admits_new_exposure`` would stay ``False`` forever and this ``commit_unbound``
-    would raise the at-most-one ``ArtifactIntegrityError`` instead of succeeding — this pin goes
-    red under exactly that mutation.)"""
+    """(mutation lens: if ``outstanding``/``outstanding_count`` still counted a ``RELEASED``"""
     ledger, key = _live_ledger()
     ledger.apply_egress_result(
         EgressResultPayload(
@@ -295,14 +231,7 @@ def test_release_reopens_the_scope_for_a_genuinely_new_attempt() -> None:
 def test_the_released_attempt_id_may_never_transition_again_after_the_scope_reopens() -> (
     None
 ):
-    """(mutation lens: if ``_store`` accepted a re-commit of an already-released ``attempt_id``
-    — i.e. dropped its non-revival memory — this ``bind_attempt`` call would silently succeed
-    instead of raising, and this pin goes red under exactly that mutation.)
-
-    The scope itself is free to move on to a fresh attempt (the test above), but the SPECIFIC
-    ``attempt_id`` that already reached ``RELEASED`` is terminal forever — even once a later,
-    different attempt has already replaced it as the scope's own outstanding reservation.
-    """
+    """(mutation lens: if ``_store`` accepted a re-commit of an already-released ``attempt_id``"""
     ledger, key = _live_ledger()
     ledger.apply_egress_result(
         EgressResultPayload(
@@ -314,10 +243,9 @@ def test_the_released_attempt_id_may_never_transition_again_after_the_scope_reop
         )
     )
     assert ledger.release(_proof()) is True
-    ledger.commit_unbound(key, proposal_id="proposal-2")  # the scope reopens
+    ledger.commit_unbound(key, proposal_id="proposal-2")
     with pytest.raises(ArtifactIntegrityError, match="already reached RELEASED"):
         ledger.bind_attempt(key, attempt_id=_ATTEMPT)
-    # The fresh attempt's own outstanding projection is untouched by the refused attempt.
     assert _outstanding(ledger, key).capacity_state is CapacityState.COMMITTED_UNBOUND
     assert _outstanding(ledger, key).attempt_id is None
 
@@ -325,9 +253,7 @@ def test_the_released_attempt_id_may_never_transition_again_after_the_scope_reop
 def test_a_released_reservation_itself_never_transitions_before_the_scope_reopens() -> (
     None
 ):
-    """Terminal means terminal: with no fresh ``commit_unbound`` yet, the released entry cannot
-    be mutated at all — every mutator reads through :meth:`outstanding`, which reports "nothing
-    projected" for a released scope exactly as it would for a genuinely empty one."""
+    """Terminal means terminal: with no fresh ``commit_unbound`` yet, the released entry cannot"""
     ledger, key = _live_ledger()
     ledger.apply_egress_result(
         EgressResultPayload(
@@ -348,10 +274,7 @@ def test_a_released_reservation_itself_never_transitions_before_the_scope_reopen
 def test_a_stale_egress_result_for_the_released_attempt_is_an_orphan_not_a_crash() -> (
     None
 ):
-    """A late/duplicate egress result arriving for the now-released attempt finds no outstanding
-    reservation (the same conservative disposition an egress result for a scope that was never
-    occupied at all would get) — never a crash, and never a silent revival of the released entry.
-    """
+    """A late/duplicate egress result arriving for the now-released attempt finds no outstanding"""
     ledger, key = _live_ledger()
     ledger.apply_egress_result(
         EgressResultPayload(
@@ -376,17 +299,8 @@ def test_a_stale_egress_result_for_the_released_attempt_is_an_orphan_not_a_crash
     assert stale.disposition is ResultDisposition.ORPHAN_NO_RESERVATION
 
 
-# ===========================================================================
-# ⓖ — resolution_generation extends the dedup signature
-# ===========================================================================
-
-
 def test_a_repeated_timeout_at_a_new_generation_is_not_a_duplicate() -> None:
-    """(ⓖ) The SAME TIMEOUT result (byte-identical in every field but ``resolution_generation``)
-    arriving again at a NEW generation is a fresh, applied result — not folded into ``DUPLICATE``.
-    Before round #3 the 5-tuple signature had no generation axis at all, so this exact scenario
-    (a quarantine-resolution consumer re-resolving the same TIMEOUT at a later generation) would
-    have been misread as a mere resend."""
+    """(ⓖ) The SAME TIMEOUT result (byte-identical in every field but ``resolution_generation``)"""
     ledger, key = _live_ledger()
     first = ledger.apply_egress_result(
         EgressResultPayload(
@@ -413,8 +327,7 @@ def test_a_repeated_timeout_at_a_new_generation_is_not_a_duplicate() -> None:
 
 
 def test_a_repeated_timeout_at_the_same_generation_is_a_duplicate() -> None:
-    """The mirror of the above: byte-identical in every field, generation included, IS a
-    duplicate — round #3 only adds a new axis, it does not remove the existing guard."""
+    """The mirror of the above: byte-identical in every field, generation included, IS a"""
     ledger, key = _live_ledger()
     payload = EgressResultPayload(
         instrument_key=key,
@@ -429,10 +342,7 @@ def test_a_repeated_timeout_at_the_same_generation_is_a_duplicate() -> None:
 
 
 def test_repeated_results_with_no_generation_tracked_behave_exactly_as_before() -> None:
-    """The honest default (``resolution_generation=None`` on both) behaves exactly like the
-    pre-round-#3 5-tuple signature: two ``None`` results with otherwise-identical fields still
-    compare equal, so an ordinary producer that never stamps a generation is unaffected.
-    """
+    """The honest default (``resolution_generation=None`` on both) behaves exactly like the"""
     ledger, key = _live_ledger()
     payload = EgressResultPayload(
         instrument_key=key, attempt_id=_ATTEMPT, kind=EgressResultKind.TIMEOUT

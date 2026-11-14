@@ -1,25 +1,4 @@
-"""Shared builders for the backtest=paper parity + blind-resubmit suite (TOS Phase 3 Wave 3
-Lane F-R; plan §3.2 bullets 2-3, §5).
-
-**Not a copy of ``tos/runtime/tests/compose/_fixtures.py`` and does not import it** — the same
-per-suite fixture discipline ``tos/runtime/tests/engine/_fixtures.py``'s own module docstring
-states (and ``tos/runtime/tests/compose/_fixtures.py`` states in the other direction): each test
-suite authors its own fixtures directly against kernel/runtime PRODUCTION packages rather than
-importing another suite's test-only helpers. This module builds on top of THIS suite's own
-``_fixtures.py`` (same package, not a cross-suite import) plus kernel production packages
-(``tos.backtest``, ``tos.engine``) and the runtime's own production evidence-sink adapter
-(``tos_runtime.evidence.sinks``).
-
-**Why the durable ``EngineEvidenceSinkAdapter`` here, when ``_fixtures.py``'s own
-``build_core`` hardcodes a discarding ``NullEvidenceSink``.** The blind-resubmit test needs to
-assert that a NEW attempt reached the send boundary only through a FRESH kernel-recorded
-``ATTEMPT_REQUEST_CREATED`` -> ``SEND_HANDED_OFF`` pair (``tos.engine.vocabulary.EvidenceKind``),
-never a re-send of an old attempt — a claim a ``NullEvidenceSink`` cannot support, because it
-discards every kernel evidence record before it ever reaches a queryable store. Mirrors exactly
-how ``tos_runtime.compose._engine_wiring`` wires the SAME adapter for the real paper core
-(``engine_sink = EngineEvidenceSinkAdapter(evidence_store, runtime_identity=identity)``), minus the
-``runtime_identity`` binding this suite's fixtures never carry.
-"""
+"""Shared builders for the backtest=paper parity + blind-resubmit suite (TOS Phase 3 Wave 3"""
 
 from __future__ import annotations
 
@@ -82,63 +61,16 @@ from . import _fixtures as fx
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Independent review finding #14's own convention (``test_driver.py``): a concrete bound large
-#: enough that this suite's own ``FakeMonotonicSource``/``monotonic_source`` fixture never crosses
-#: it within a single test, for a caller that wants "timeout injection never fires here".
 NO_TIMEOUT_WITHIN_TEST = 10**12
 
-#: The single authorized quantity injected into BOTH sides of the parity harness (team-lead
-#: dispatch, 2026-09-09, "F-R-3"): `~tos.brokeradapter.synthetic.SyntheticPaperTransport` on the
-#: engine-driver side and `~tos.backtest.fills.DeterministicFillModel` (`scenario_quantity`) on
-#: the backtest side both consume this SAME literal, so both settle a genuinely FULL fill of the
-#: SAME magnitude rather than two independently-chosen quantities that merely happen to look
-#: alike.
 PARITY_QUANTITY = Decimal(1)
 
 
 class SyntheticBrokerGateway:
-    """A ``Transmit``-protocol adapter over the kernel's own, already-shipped
-    :class:`~tos.brokeradapter.synthetic.SyntheticPaperTransport` (design #34 §5.2) — REUSED here,
-    never reimplemented (team-lead dispatch, 2026-09-09, "F-R-3": "reuse via import").
-
-    **Why this exists.** Kernel commit ``[KW3-RD]`` gave ``EGRESS_RESULT`` events a real
-    ``outcome_digest`` covering ``(disposition, capacity_state, knowledge, filled_quantity,
-    remaining_quantity, pre_quarantine_capacity)`` (``tos.engine.records.EgressResultOutcome``).
-    Before that, ``fx.FakeGateway``'s synchronous auto-``ACK`` and the backtest side's
-    ``DeterministicFillModel`` FULL_FILL were "harmless" different Transmit-local choices, because
-    an ``EGRESS_RESULT``'s ``outcome_digest`` was unconditionally ``None`` either way. Now that it
-    is a REAL digest, an ``ACK`` (``capacity_state=POTENTIALLY_LIVE``, ``knowledge=ACKNOWLEDGED``)
-    and a ``FULL_FILL`` (``capacity_state=POSITION_CONSUMED``, ``knowledge=FILLED``) legitimately
-    hash to different values — the plan's own parity premise ("차이는 EventSource/Transmit 주입뿐")
-    requires the SAME Transmit *semantics* on both sides, not merely "a Transmit of some kind".
-
-    This adapter calls ``send_once(attempt, *, instrument_key, coordinates, quantity, ...)``
-    DIRECTLY, with the SAME injected :data:`PARITY_QUANTITY` the backtest side's
-    ``FillParameters.scenario_quantity`` also carries — so both sides settle a FULL_FILL of the
-    same magnitude via the same kernel fill-band arithmetic
-    (:meth:`~tos.brokeradapter.synthetic.SyntheticPaperTransport._filled_quantity`), not two
-    independently-invented test doubles that happen to agree.
-
-    **Narrowed scope (wave 3 review finding 6, LOW, 2026-09-09): same transport and same injected
-    quantity — NOT the full real-paper send boundary.** The real paper wiring puts
-    :class:`~tos.egressgw.BrokerEgressGateway` ON TOP of this transport
-    (``tos_runtime.compose._engine_wiring.py:429-446``); steps 15-19 (final-egress currentness,
-    QCC, single-use capability, ``SendSeal``, actual-outbound comparison, gateway evidence) run
-    inside that gateway, never inside ``SyntheticPaperTransport.send_once`` itself. This adapter
-    calls ``send_once`` directly, bypassing the gateway entirely — the send boundary (gateway/seal,
-    steps 15-19) is not exercised on either side of the parity comparison this adapter serves;
-    parity there is out of this test's scope.
-
-    Retains results SYNCHRONOUSLY inside ``__call__`` (mirroring both ``fx.FakeGateway``'s own
-    auto-ack and the real ``BrokerEgressGateway``'s step-18/19 ordering), so
-    :class:`~tos_runtime.engine.driver.EngineDriver`'s normal drain-and-reinject path applies
-    unchanged.
-    """
+    """A ``Transmit``-protocol adapter over the kernel's own, already-shipped"""
 
     def __init__(self, *, quantity: Decimal = PARITY_QUANTITY) -> None:
-        """Wire a full-fill synthetic broker: ``fill_numerator/fill_denominator = 1/1`` over a
-        1-unit lot — the injected quantity is always filled in full, never partially, so the
-        derived kind (design #34 §5.2 "구조 파생 > 자기신고") is always ``FULL_FILL``."""
+        """Wire a full-fill synthetic broker: ``fill_numerator/fill_denominator = 1/1`` over a"""
         self._quantity = quantity
         self._transport = SyntheticPaperTransport(
             SyntheticFillPolicy(
@@ -149,9 +81,7 @@ class SyntheticBrokerGateway:
 
     @property
     def attempts(self) -> tuple[Any, ...]:
-        """Every attempt request handed to the underlying transport, in order — mirrors
-        ``fx.FakeGateway.attempts`` for this suite's own "exactly one transport call" counting
-        assertions."""
+        """Every attempt request handed to the underlying transport, in order — mirrors"""
         return tuple(request.attempt for request in self._transport.requests)
 
     def __call__(self, attempt: Any) -> SendHandoff:
@@ -168,10 +98,7 @@ class SyntheticBrokerGateway:
 
 
 class AlwaysPermissivePreconditions:
-    """A ``True``/``True`` ``CoordinatorPreconditions`` double — this suite's own driver tests
-    exercise the durable-inbox/blind-resubmit/parity machinery, not the Coordinator gate itself
-    (mirrors ``_fixtures.py``'s own, module-private ``_AlwaysPermissivePreconditions`` — declared
-    fresh here rather than importing a leading-underscore name across modules)."""
+    """A ``True``/``True`` ``CoordinatorPreconditions`` double — this suite's own driver tests"""
 
     def authority_epoch_current(self) -> bool | None:
         return True
@@ -192,14 +119,7 @@ def build_engine_driver(
     continuity_id: str = "parity-fr",
     registry: StrategyRegistry | None = None,
 ) -> tuple[EngineDriver, EngineCore]:
-    """Wire a real :class:`~tos_runtime.engine.driver.EngineDriver` over a durable
-    :class:`~tos_runtime.engine.inbox.SqliteEventInbox` — the same "compose-shaped" core wiring
-    ``tos/runtime/tests/engine/test_driver.py``'s own ``_make_driver`` uses, extended with an
-    OPTIONAL durable evidence sink (module docstring) so a caller can query kernel-recorded
-    ``ATTEMPT_REQUEST_CREATED``/``SEND_HANDED_OFF`` rows instead of only reading the ``EventResult``
-    the driver hands back, and an OPTIONAL injected ``registry`` (default ``fx.registry_with()``,
-    a single-scope registry) so a caller can wire :func:`registry_with_two_scopes` instead.
-    """
+    """Wire a real :class:`~tos_runtime.engine.driver.EngineDriver` over a durable"""
     core = EngineCore(
         registry=registry if registry is not None else fx.registry_with(),
         stages=fx.admitting_stages(),
@@ -226,24 +146,6 @@ def build_engine_driver(
     return driver, core
 
 
-# -- a second scope, for the "a fresh decision uses a NEW attempt" blind-resubmit check ---------
-#
-# **Finding (2026-09-09, this lane).** ``ProvisionalReservationLedger`` has NO release path in
-# this Phase — ``tos.engine.state.PROJECTION_ORDER`` does not carry a ``RELEASED`` member at all
-# (``state.py``'s own module docstring: "release 는 RCL 소관"/RFC-002 §9.1:557), and a genuinely
-# ``APPLIED`` ``FULL_FILL`` advances the SAME scope's outstanding reservation only as far as
-# ``CapacityState.POSITION_CONSUMED`` — still counted by ``outstanding_count``/
-# ``admits_new_exposure`` as occupying the scope's one ``max_unresolved_send_per_scope`` slot,
-# permanently, for the life of this in-memory ledger. Measured directly: a second
-# ``DECISION_TICK`` on the SAME ``InstrumentKey``, issued AFTER the first attempt's FULL_FILL is
-# durably ``APPLIED``, is still refused at the capacity stage
-# ("denied at the capacity stage (MAX_unresolved_send_per_scope...)") — resolving the first
-# attempt does NOT free its scope's slot; only a genuinely different scope has room. So "a fresh
-# decision uses a NEW attempt, never a resend" is demonstrated here on a SECOND
-# ``InstrumentKey`` in the SAME registry/core/driver — the same kernel/runtime machinery, a
-# different scope — rather than by re-using the first tick's own (permanently occupied) scope.
-# This is a Phase-5/RCL-release gap, not a defect in this wave's own driver/ledger wiring.
-
 _SECOND_ACCOUNT = "acct-ar"
 _SECOND_INSTRUMENT = "NQ"
 
@@ -253,8 +155,7 @@ def second_instrument_key() -> InstrumentKey:
 
 
 def _second_issue_capsule(*, seq: int = 1) -> DecisionContextCapsule:
-    """The second scope's own Decision Context Capsule — same shape as ``fx.issue_capsule``,
-    scoped to :func:`second_instrument_key` instead."""
+    """The second scope's own Decision Context Capsule — same shape as ``fx.issue_capsule``,"""
     return DecisionContextCapsule.issue(
         scheme=SCHEME,
         issuer_principal_id="iss-ar-2",
@@ -281,8 +182,7 @@ def _second_issue_capsule(*, seq: int = 1) -> DecisionContextCapsule:
 
 
 def _second_always_fires_policy() -> DecisionPolicy:
-    """The second scope's own capsule-gated always-fires policy — same shape as
-    ``fx.always_fires_policy``, declaring the SECOND instrument's target."""
+    """The second scope's own capsule-gated always-fires policy — same shape as"""
     action = Decision(
         kind=DecisionKind.ACTION,
         rationale="F-R second-scope fixture always fires",
@@ -312,11 +212,7 @@ def _second_always_fires_policy() -> DecisionPolicy:
 
 
 def registry_with_two_scopes() -> StrategyRegistry:
-    """A registry holding the SAME first-scope strategy :func:`tos_runtime.tests.engine._fixtures
-    .registry_with` builds, PLUS a second, independently-scoped always-fires strategy — so ONE
-    core/driver can admit a genuinely NEW decision on a scope that is not permanently
-    capacity-occupied by the first scope's own (unreleasable) reservation (see the module-level
-    finding above)."""
+    """A registry holding the SAME first-scope strategy :func:`tos_runtime.tests.engine._fixtures"""
     registry = StrategyRegistry()
     registry.register(fx.issue_strategy(fx.always_fires_policy()), fx.authored_config())
     registry.register(
@@ -346,25 +242,14 @@ def second_decision_tick_event(*, seq: int = 1) -> Any:
 def durable_engine_sink(
     evidence_store: SqliteEvidenceStore,
 ) -> EngineEvidenceSinkAdapter:
-    """A real, durable :class:`~tos.engine.sink.EvidenceSink` over ``evidence_store`` — the same
-    production adapter ``tos_runtime.compose._engine_wiring`` wires for the real paper core.
-    """
+    """A real, durable :class:`~tos.engine.sink.EvidenceSink` over ``evidence_store`` — the same"""
     return EngineEvidenceSinkAdapter(evidence_store)
 
 
 def ordered_consumed_outcome_digests(
     evidence_store: SqliteEvidenceStore,
 ) -> tuple[str | None, ...]:
-    """The ``EVENT_CONSUMED`` receipts' own ``outcome_digest`` field, in ``seq`` order.
-
-    This is the durable, uniform way to read the FULL outcome-digest sequence for a run driven
-    through :class:`~tos_runtime.engine.driver.EngineDriver`: ``enqueue_and_run`` only returns the
-    ``EventResult`` for the event it was asked to admit, not for any re-injected follow-on
-    ``EGRESS_RESULT`` its own drain loop processes as a side effect — but every processed event,
-    tick or re-injected result alike, gets its own durable ``EVENT_CONSUMED`` receipt
-    (``tos_runtime.engine.driver`` module docstring item 2/3), and that receipt already carries
-    ``result.outcome_digest`` verbatim (``EngineDriver._record_consumed``).
-    """
+    """The ``EVENT_CONSUMED`` receipts' own ``outcome_digest`` field, in ``seq`` order."""
     rows = evidence_store.connection.execute(
         "SELECT payload_json FROM entries WHERE kind = 'EVENT_CONSUMED' ORDER BY seq ASC"
     ).fetchall()
@@ -378,10 +263,7 @@ def ordered_consumed_outcome_digests(
 def attempt_ids_for_kind(
     evidence_store: SqliteEvidenceStore, kind: str
 ) -> list[str | None]:
-    """Every ``attempt_id`` recorded on a durable evidence row of the given ``kind``, in ``seq``
-    order — used to read the kernel's own ``ATTEMPT_REQUEST_CREATED``/``SEND_HANDED_OFF`` receipts
-    (``tos.engine.vocabulary.EvidenceKind``) off a store fed by :func:`durable_engine_sink`.
-    """
+    """Every ``attempt_id`` recorded on a durable evidence row of the given ``kind``, in ``seq``"""
     rows = evidence_store.connection.execute(
         "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC", (kind,)
     ).fetchall()
@@ -392,16 +274,8 @@ def attempt_ids_for_kind(
     return ids
 
 
-# -- the backtest-side half of the parity harness ----------------------------------------------
-
-
 def backtest_time_projection() -> BarTimeProjection:
-    """Injected bar -> time-coordinate bounds that positively admit — the same shape (and the
-    same proven-to-admit values) ``tos/tests/backtest/_backtest_fixtures.py::time_projection``
-    uses across the kernel's own backtest suite, reproduced here (not imported — cross-suite
-    imports are forbidden; module docstring) because this harness needs its OWN converter wiring
-    to independently admit the exact same strategy this suite's ``_fixtures.py`` registers.
-    """
+    """Injected bar -> time-coordinate bounds that positively admit — the same shape (and the"""
     return BarTimeProjection(
         source_age=10,
         delay_bounds=(5,),
@@ -425,16 +299,7 @@ def backtest_time_projection() -> BarTimeProjection:
 
 
 def backtest_converter() -> CausalBarConverter:
-    """The causal bar -> ``DECISION_TICK`` converter for the parity harness.
-
-    ``capsule_source`` always returns THIS suite's own ``fx.issue_capsule(seq=1)`` — the identical
-    capsule content the engine-driver side of the parity test feeds through
-    ``fx.decision_tick_event(seq=1)`` — so both paths evaluate the SAME
-    ``always_fires_policy`` (``fx.always_fires_policy`` gates only on
-    ``capsule.scope.decision_class``, never on a value surface) against byte-identical Capsule
-    content. ``ProvisionalContextResolver`` resolves no value (design #33 §3.5) — irrelevant here
-    since the policy never reads one.
-    """
+    """The causal bar -> ``DECISION_TICK`` converter for the parity harness."""
     return CausalBarConverter(
         instrument_key=fx.instrument_key(),
         resolver=ProvisionalContextResolver(),
@@ -444,10 +309,7 @@ def backtest_converter() -> CausalBarConverter:
 
 
 def backtest_fill_parameters() -> FillParameters:
-    """A deterministic SETTLE parameterisation that always fully fills, same-bar, with no
-    rejection-band edge case in play — the parity harness cares about the OUTCOME-DIGEST
-    sequence, not the fill economics, so every magnitude is chosen only to avoid an incidental
-    ``REJECT``."""
+    """A deterministic SETTLE parameterisation that always fully fills, same-bar, with no"""
     return FillParameters(
         mode=FillMode.SETTLE,
         side=FillSide.BUY,
@@ -465,11 +327,7 @@ def backtest_fill_parameters() -> FillParameters:
 def build_backtest_driver_and_core(
     *, sink: Any = None
 ) -> tuple[BacktestDriver, EngineCore, DeterministicFillModel]:
-    """Wire one :class:`~tos.backtest.BacktestDriver` over one :class:`~tos.engine.EngineCore`,
-    registering the EXACT SAME strategy/stage-map/configuration this suite's ``_fixtures.py``
-    gives the engine-driver side (:func:`build_engine_driver`) — the shared premise the parity
-    assertion depends on.
-    """
+    """Wire one :class:`~tos.backtest.BacktestDriver` over one :class:`~tos.engine.EngineCore`,"""
     fill_model = DeterministicFillModel(
         instrument_key=fx.instrument_key(),
         parameters=backtest_fill_parameters(),
@@ -494,7 +352,5 @@ def build_backtest_driver_and_core(
 
 
 def one_bar():
-    """The single synthetic bar the parity harness replays — content is irrelevant (the policy
-    gates on capsule identity, never on a value surface); only its presence as a causally-ordered
-    stream of length 1 matters."""
+    """The single synthetic bar the parity harness replays — content is irrelevant (the policy"""
     return reference_bars(1)

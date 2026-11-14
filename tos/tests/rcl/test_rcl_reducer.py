@@ -1,10 +1,4 @@
-"""RCLP-EV-001 (core, L1 slice) — deterministic reducer / no-double-spend (§5.2).
-
-No-double-spend under the aggregate envelope (INV-001; AC-001) on a *given*
-committed order, plus determinism, idempotency (RCLP-INV-006), CAS, and the
-producer-optimism canary. (That a single order is produced by quorum under
-concurrency is EV-L3, §0.2 — not claimed here.)
-"""
+"""RCLP-EV-001 (core, L1 slice) — deterministic reducer / no-double-spend (§5.2)."""
 
 from __future__ import annotations
 
@@ -48,7 +42,6 @@ def test_two_jointly_exceeding_admits_exactly_one() -> None:
         o1.state, _commit("c2", 0, "r2", 7), limits=LIMITS, applicable_dimensions=DIMS
     )
     assert o1.admitted is True and o1.reason is ApplyReason.ADMITTED
-    # The second, submitted against the stale revision, fails CAS (§8.4).
     assert o2.admitted is False and o2.reason is ApplyReason.REJECTED_STALE_REVISION
     admitted = [o for o in (o1, o2) if o.admitted]
     assert len(admitted) == 1
@@ -83,13 +76,11 @@ def test_idempotent_retry_returns_same_result_no_duplicate_transition() -> None:
     o1 = apply_committed(
         s0, _commit("c1", 0, "r1", 7), limits=LIMITS, applicable_dimensions=DIMS
     )
-    # Replay the exact same command against the advanced state.
     replay = apply_committed(
         o1.state, _commit("c1", 0, "r1", 7), limits=LIMITS, applicable_dimensions=DIMS
     )
     assert replay.reason is ApplyReason.IDEMPOTENT_REPLAY
     assert replay.admitted == o1.admitted
-    # No duplicate reservation / revision advance from the replay.
     assert replay.state.revision == o1.state.revision
     assert len(replay.state.committed) == len(o1.state.committed)
 
@@ -100,13 +91,11 @@ def test_same_id_different_bytes_is_contained_conflict() -> None:
     o1 = apply_committed(
         s0, _commit("c1", 0, "r1", 7), limits=LIMITS, applicable_dimensions=DIMS
     )
-    # Same identity, different bytes (different increment).
     conflict = apply_committed(
         o1.state, _commit("c1", 0, "r1", 3), limits=LIMITS, applicable_dimensions=DIMS
     )
     assert conflict.admitted is False
     assert conflict.reason is ApplyReason.REJECTED_CRITICAL_CONFLICT
-    # Contained: no state change (both original observations preserved).
     assert conflict.state.revision == o1.state.revision
 
 
@@ -129,11 +118,7 @@ def test_determinism_same_order_same_result() -> None:
 
 @given(order=st.permutations(range(4)))
 def test_aggregate_usage_order_independent(order) -> None:
-    """(shuffle canary) Aggregate committed usage is invariant under reservation order.
-
-    The aggregate envelope depends on the *set* of committed reservations, not their
-    listing order — shuffling unordered inputs does not change the result (§5.2).
-    """
+    """(shuffle canary) Aggregate committed usage is invariant under reservation order."""
     reservations = [
         CommittedReservation(
             reservation_id=f"r{i}", adverse_increment=vec(gross_notional=i + 1)
@@ -172,7 +157,6 @@ def test_producer_local_counter_creates_no_headroom(
     o_opt = apply_committed(
         LedgerState(), optimistic, limits=LIMITS, applicable_dimensions=DIMS
     )
-    # Same admission and same resulting committed headroom regardless of the counters.
     assert o_plain.admitted == o_opt.admitted
     h_plain = available_headroom(o_plain.state, LIMITS, DIMS)
     h_opt = available_headroom(o_opt.state, LIMITS, DIMS)
@@ -203,7 +187,6 @@ def test_unidentified_draft_command_refused_no_ledger_effect() -> None:
     """(fail-closed) A DRAFT / unidentified command mutates no capacity (§4.1)."""
     from tos.rcl import LedgerCommandRecord
 
-    # A DRAFT command has null command_identity + null canonical_digest.
     draft = LedgerCommandRecord()
     assert draft.canonical_digest is None
     outcome = apply_committed(
@@ -211,4 +194,4 @@ def test_unidentified_draft_command_refused_no_ledger_effect() -> None:
     )
     assert outcome.admitted is False
     assert outcome.reason is ApplyReason.REJECTED_UNIDENTIFIED
-    assert outcome.state == LedgerState()  # no ledger effect at all
+    assert outcome.state == LedgerState()

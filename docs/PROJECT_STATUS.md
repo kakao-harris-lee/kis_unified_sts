@@ -3,6 +3,11 @@
 **Last updated**: 2026-11-08 (legacy runtime removal L1–L6). Earlier sections
 keep their original dates and are historical records, not current state.
 
+> **2026-11-12 — 미참조 과거 문서 정리.** 저장소 어디에서도 참조하지 않는 과거
+> 문서를 삭제했다. 아래 historical 절에서 그런 문서를 가리키던 링크는 경로만
+> 코드스팬으로 남겼다 — 내용은 git 이력에 그대로 있다:
+> `git log --diff-filter=D -- docs/`.
+
 ## Legacy runtime removed — 2026-11
 
 The legacy KIS trading runtime is gone. The removal plan
@@ -28,19 +33,22 @@ and order router are deleted, and `config/futures_live.yaml` survives only
 because `tools/broker_probes/common.py` reads its `enabled` flag to refuse order
 probes. The real futures account is still never funded.
 
-Two things were deliberately **kept** against the closure measurement, each with
-its reason recorded in the PR: `shared/execution/executor.py` (and its three
-imports), because `docs/broker-profiles/BROKER-TRANSPORT-SYMBOLS.csv` binds the
-`ORDER_SENDER` symbol to that file and `tools/tos_spec_status.py --check`
-requires the class to exist; and `shared/decision/setups/vwap_reversion.py` with
-its dependencies, which is the CP-3 **B3 witness** and stays byte-identical
-until `TOS_PAPER_READY`. B3 byte-identity was measured across the removal: the
+One thing was deliberately **kept** against the closure measurement, with its
+reason recorded in the PR: `shared/decision/setups/vwap_reversion.py` with its
+dependencies, which is the CP-3 **B3 witness** and stays byte-identical until
+`TOS_PAPER_READY`. B3 byte-identity was measured across the removal: the
 2026-11-06 LONG window's `decisions.jsonl` is identical before and after
-(sha256 `8c8093e6…`).
+(sha256 `8c8093e6…`). The other keep, `shared/execution/executor.py` (and its
+imports), existed only because `BROKER-TRANSPORT-SYMBOLS.csv` bound the
+`ORDER_SENDER` symbol to it and `tos_spec_status --check` required the class;
+all of that was retired on 2026-11-13
+(`docs/plans/2026-11-13-tos-code-halving-plan.md` §S3) and the file went with it,
+together with `shared/kis/client.py`, `shared/http/`, `shared/observability/`
+and `services/monitoring/`.
 
-Register rows for deleted routes keep their IDs and carry
-`RETIRED_SOURCE_REMOVED@6fc17c0f8d25`
-(`tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.csv`).
+Register rows for deleted routes kept their IDs and carried
+`RETIRED_SOURCE_REMOVED@6fc17c0f8d25` in the migration-conformance register,
+which was retired with the spec corpus on 2026-11-13; it is in git history.
 
 ## Current TOS snapshot — 2026-10-06
 
@@ -59,16 +67,11 @@ inspection. Historical legacy observations below retain their original dates.
 
 Static checks rerun on 2026-10-06:
 
-- `tools/tos_spec_status.py --check`: **PASS**; restricted-live and production
-  remain **NOT_AUTHORIZED**. Non-blocking baseline warning: the older completion
-  development plan says 163 profile keys while the current profile derives 164
-  (16 null in both).
-- `tools/tos_completion_status.py --check`: **GREEN, violations=0**.
-  Completion observations still include `planned_unassigned_pairs=749`,
-  `blank_normative_ref_rows=22` and profile-dependent blocked evidence.
-  Checker success does not certify complete implementation or authorize trading.
-- The 2026-10-04 conversation's RED observation is superseded by this rerun;
-  no change to the frozen completion contract was made.
+- `tools/tos_completion_status.py --check` was rerun GREEN on the same date.
+  That checker, the completion contract it judged and the rest of the Phase-0
+  governance machinery were **retired on 2026-11-12**
+  ([plan](plans/2026-11-12-phase0-retirement-plan.md)); Phase 0 closed with the
+  2026-10-22 signature (#920) and completion is now `TOS_PAPER_READY`.
 
 #861 later received an independent Claude-side post-merge review ([11 findings + 8 notes](https://github.com/kakao-harris-lee/kis_unified_sts/pull/861#issuecomment-6016550580)), disposed by #864, which itself went through two review rounds and an independent verifier before merge; author self-checks and CI still are not independent approval.
 CP-0 documents layers/interfaces/disposition; later stages cover command design,
@@ -86,7 +89,8 @@ Unlike the snapshot above, this section records a live host inspection.
   437 s with the generation frozen after the 15:45 KST stop. The UI's own stale
   rendering was not screenshot-verified, only the API age that drives it.
   Numbers and caveats: the 2026-10-07 observation section of the
-  [CP-1 implementation and verification record](testing/2026-10-06-tos-control-plane.md).
+  CP-1 implementation and verification record,
+  `docs/testing/2026-10-06-tos-control-plane.md` (2026-11-13 은퇴 — `git log --diff-filter=D -- docs/`).
 - Same-day manual restart (17:32-17:34 KST, operator-authorized, same leaf):
   `process_nonce` changed, `projection_generation` returned to 1 and the
   authenticated API served the new identity; `runtime_generation` stayed 0 on
@@ -100,8 +104,10 @@ Unlike the snapshot above, this section records a live host inspection.
 
 - [TOS integration plan](plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md):
   Control Plane, first paper tenant and legacy disposition sequencing.
-- [ROADMAP.md](ROADMAP.md): existing Cross-Asset + Stock + Futures strategy roadmap;
-  [cross-asset detail](plans/2026-07-02-unified-investment-system-roadmap.md).
+- The legacy Cross-Asset + Stock + Futures strategy roadmap (`ROADMAP.md`) was
+  retired on 2026-11-13 with the runtime it described
+  (`git log --diff-filter=D -- docs/`). The live one is
+  [plans/2026-11-11-tos-platform-roadmap.md](plans/2026-11-11-tos-platform-roadmap.md).
 - Normative TOS contracts/registers remain authoritative for conformance and
   authorization. These status and planning documents do not replace them.
 
@@ -173,9 +179,9 @@ Unlike the snapshot above, this section records a live host inspection.
   root causes. Workbench UI/UX QA now has committed Vitest smoke coverage plus
   desktop/mobile
   Playwright fallback screenshot evidence for degraded empty-state render paths:
-  [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md).
+  `testing/quant-ops-workbench-2026-06-25.md`.
   `/signals` trace QA was refreshed on 2026-06-27:
-  [testing/quant-ops-workbench-2026-06-27.md](testing/quant-ops-workbench-2026-06-27.md).
+  `testing/quant-ops-workbench-2026-06-27.md`.
 
 <a id="cross-asset-unified-investment-system-phases-06-shadow"></a>
 
@@ -341,7 +347,7 @@ policy-blocked (PR #636).
 
 **2026-07-05 to 2026-07-12** - New-architecture refactoring plan P0-P6 executed
 (TA-Lib SoT, declarative builder, vectorbt, risk primitives, futures read-models).
-Plan: [plans/2026-07-08-new-architecture-refactoring-plan.md](plans/2026-07-08-new-architecture-refactoring-plan.md)
+Plan: `plans/2026-07-08-new-architecture-refactoring-plan.md`
 (checkboxes re-synced to code on 2026-09-06). Landed: dead-package removal +
 TA-Lib/vectorbt CI gates (P0, PR #604); indicator engine as the single source of
 truth with parity-gated delegation of every hand-rolled site (P1, PRs #561-#611);
@@ -374,7 +380,7 @@ facade, runtime config extraction, re-entry guard helpers, startup sequence,
 execution facade/runtime helpers, market-data bootstrap, and
 `PositionRecoveryService`. Compatibility imports and monkeypatch surfaces are
 kept. The remaining actionable backlog is now grouped by priority in
-[superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md):
+`superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md`:
 P1 orchestrator execution/initialization/kill-switch slices, P2 dashboard
 trades route + CLI + universe/market-data helpers, and P3 KIS/backfill/test
 decomposition.
@@ -402,7 +408,7 @@ stock-strategy, and runtime-ledger tests passed, as did targeted `ruff check`,
 
 **2026-07-02 to 2026-07-03** - Unified investment system Phases 0–6 merged.
 Built the cross-asset track from the master design doc
-([통합_투자_시스템_전략_설계서.md](통합_투자_시스템_전략_설계서.md)) plus a
+(`통합_투자_시스템_전략_설계서.md`) plus a
 market-structure-based Market Risk Score for bear-market response: P0 data
 foundation, P1 risk score + `/market`, P2 track gates, P3 whole-asset MDD
 circuit breaker + `track_id` ledger, P4 mini-KOSPI200 hedge advisor
@@ -414,7 +420,7 @@ market-risk/portfolio) before commit. Remaining work is operator gates only —
 backfill + scheduler rebuild, shadow-to-enforce flips, the circuit-breaker
 `--execute` drill, and Track A holdings registration. Detail and open items
 (O11–O17) in
-[plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
+`plans/2026-07-02-unified-investment-system-roadmap.md`.
 Operationally important: O13 flags that the monolithic futures paper path may
 leave kill-switch conditions unevaluated — decide coverage before F-9 cutover.
 
@@ -425,7 +431,7 @@ policy docs/tests, theme/fusion quality tooling, and Workbench evidence UX.
 This does not promote strategies or resolve Mini vs full KOSPI 200 policy;
 real paper/market evidence and operator approval are still required before
 promotion, live, or cutover gates. Evidence:
-[testing/quant-gap-execution-2026-06-28.md](testing/quant-gap-execution-2026-06-28.md).
+`testing/quant-gap-execution-2026-06-28.md`.
 
 **2026-06-28** - Expert execution board opened.
 Created `reports/quant-gap/2026-06-28-execution-board.md` to coordinate market-structure,
@@ -435,7 +441,7 @@ futures, stock, Workbench, and QA expert lanes from the 2026-06-28 gap research.
 Roadmap/status docs now reflect Setup D paper enablement, the enriched Signal
 Decision Trace endpoint, PR #547 hardening, and the split gap list for KOSPI 200
 futures vs stock trading. Research note:
-[investigations/2026-06-28-quant-system-gap-research.md](investigations/2026-06-28-quant-system-gap-research.md).
+`investigations/2026-06-28-quant-system-gap-research.md`.
 The main new roadmap decisions are: collect futures F-9/Setup C/Setup D evidence
 before cutover/live gates, and explicitly choose KRX-only stock v1 vs a
 Nextrade/ATS smart-order-routing readiness track.
@@ -454,11 +460,11 @@ Static audit refreshed the exact strategy roster and Workbench QA evidence
 language. Enabled strategies still match config. Disabled stock variants and
 futures `_futures` strategy names are now listed explicitly, and Workbench QA no
 longer claims committed browser/screenshot evidence. Audit note:
-[investigations/2026-06-25-roadmap-codebase-consistency.md](investigations/2026-06-25-roadmap-codebase-consistency.md).
+`investigations/2026-06-25-roadmap-codebase-consistency.md`.
 
 **2026-06-25** - Multi-agent code-quality cleanup completed.
 Implemented the high-priority cleanup plan in
-[superpowers/plans/archive/2026-06-25-code-quality-cleanup-multi-agent.md](superpowers/plans/archive/2026-06-25-code-quality-cleanup-multi-agent.md):
+`superpowers/plans/archive/2026-06-25-code-quality-cleanup-multi-agent.md`:
 shared strategy entry gates, table-driven registry registration, centralized
 runtime defaults, centralized dashboard query intervals, Strategy Builder
 reducer/YAML serializer extraction, `/trades` page componentization, broker
@@ -488,7 +494,7 @@ Playwright fallback verification covered `/risk`, `/coverage`, `/trades`,
 The pass checked route headings, degraded empty states, refresh/tab
 interactions, console errors, visible interactive overlap, and retained
 screenshots under
-[testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md).
+`testing/quant-ops-workbench-2026-06-25.md`.
 
 **2026-06-25** - High-priority roadmap implementation slices.
 F-9 now has a read-only verifier and dry-run-first rollback helper:
@@ -536,13 +542,13 @@ Pre-decoupled stock paper guides, historical backtest-review placeholders,
 host-crontab registration docs, and obsolete RL/ClickHouse-era plans were
 archived or de-indexed. The roadmap now includes a cross-asset Quant Ops
 Workbench track with a multi-agent implementation plan:
-[plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md).
-Current operators should start from [ROADMAP.md](ROADMAP.md), this status page,
-and runbooks.
+`plans/2026-06-22-quant-ops-workbench-uiux.md`.
+Current operators should start from this status page and the runbooks (the
+`ROADMAP.md` this 2026-06 entry names was retired on 2026-11-13).
 
 **2026-06-20** - Documentation cleanup (this PR). Superseded RL/paradigm plans
 and the synthetic-data stock validation summary were archived with SUPERSEDED
-banners and de-indexed; a single authoritative [ROADMAP.md](ROADMAP.md) (Stock +
+banners and de-indexed; a single authoritative `ROADMAP.md` (Stock +
 Futures) was added; `strategies.md` and Phase-5/Strategy-Lab/RegimeGate specs
 were corrected for current state (no RL, no ClickHouse, Next.js UI).
 
@@ -572,7 +578,7 @@ default Python dependencies no longer include ClickHouse drivers.
 
 ## Legacy Open Validation (historical follow-ups; reverify before resuming)
 
-Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top items:
+Full per-asset open list with owners/gates is in `ROADMAP.md`. Top items:
 
 - **Stock:** HAR-RV log-RV transition (forecast model stale since 2026-05-31,
   daily refit failing — RV-history serialization and local file-backed log-RV
@@ -583,7 +589,7 @@ Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top i
   evidence); `momentum_breakout` redesign (retune still negative);
   non-Workbench Strategy Lab build-out; decide KRX-only stock v1 vs Nextrade/ATS
   SOR readiness before enabling `ats_routing`. See
-  [plans/2026-06-02-stock-reopt-har-rv-followups.md](plans/2026-06-02-stock-reopt-har-rv-followups.md).
+  `plans/2026-06-02-stock-reopt-har-rv-followups.md`.
 - **Futures:** F9 decoupled cutover gates (shadow → Gate 2 → operator-gated
   cutover) before replacing the orchestrator path; Phase 5 Gate 1–3 to small
   live; run the F-9 verifier and evidence-bundle compiler with real Gate 1/Phase
@@ -602,12 +608,12 @@ Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top i
   `portfolio.yaml::circuit_breaker.mode`; register Track A holdings; and decide
   the O13 monolithic kill-switch coverage before F-9 cutover. Full checklist and
   open items O11–O17 in
-  [plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
+  `plans/2026-07-02-unified-investment-system-roadmap.md`.
 - **Both:** Paper/live E2E smoke with Redis + SQLite only after each cutover;
   position-recovery drill after process restart; MLflow restart
   (`localhost:5000` down); refresh Workbench desktop/mobile screenshot/accessibility
   QA artifacts when those routes change; continue runtime refactoring from
-  [superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md)
+  `superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md`
   with one orchestrator lane at a time and the remaining independent
   dashboard/KIS/backfill/test lanes in parallel where possible. Use
   `scripts/ops/ops_readiness_check.py` as the offline checklist; live service

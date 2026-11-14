@@ -1,20 +1,4 @@
-"""MANDATED test-only seam cross-check: brokercap fqp_adequate <-> recon token (design #10 §3.4).
-
-brokercap does NOT import ``tos.recon`` at runtime (the import-closure test asserts its
-absence from brokercap's package closure); this file imports **both** packages as a **test**
-to lock the produced-bool seam. #9 §9.2 item 4 deferred the *content* of recon's
-``final_quantity_proof_token`` to ADR-002-004 (this package); brokercap's
-:func:`fqp_adequate` owns that content and produces the ``bool`` recon consumes as its
-injected ``ReleaseProofInputs.final_quantity_proof_token: bool | None``.
-
-* brokercap ``fqp_adequate`` True  <=> recon ``field_specific_release_proof_ok`` may reach
-  True (with a CORROBORATED + fresh field).
-* brokercap ``fqp_adequate`` False (e.g. a cancel-ACK sole basis) <=> recon release proof
-  fails closed.
-
-This test is NOT a package edge — a test-only cross-import is not counted in the
-``import tos.brokercap`` closure (design #10 §3.4/§7.1).
-"""
+"""MANDATED test-only seam cross-check: brokercap fqp_adequate <-> recon token (design #10 §3.4)."""
 
 from __future__ import annotations
 

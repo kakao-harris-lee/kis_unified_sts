@@ -1,12 +1,4 @@
-"""predicate-only §6 — conflict / account / currentness / exit / protective / common-mode / authority
-(design #19 §6; VTG-EV-002/005/007/008/009/010/011 substrate).
-
-Each is predicate-only: it closes NO VTG-EV (minimum EV-L2, +Security ×4 / +Broker ×4). Causal
-isolation: each polarity assertion fixes a valid baseline and flips exactly one input.
-
-Regime tag: predicate / model substrate only; VTG-EV-002/005/007/008/009/010/011
-NOT_IMPLEMENTED; EV-L1-complete claim forbidden.
-"""
+"""predicate-only §6 — conflict / account / currentness / exit / protective / common-mode / authority"""
 
 from __future__ import annotations
 
@@ -30,10 +22,6 @@ from tos.venue import (
 )
 
 from ._venue_strategies import clean_account_facts, clean_continuity
-
-# ---------------------------------------------------------------------------
-# §6.1 tradability_conflict_unknown (VTG-EV-002, +Broker)
-# ---------------------------------------------------------------------------
 
 
 def test_conflicting_observations_without_resolution_are_unknown() -> None:
@@ -99,11 +87,6 @@ def test_single_observation_alone_is_still_unknown() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# §6.2 account_constraint_conservative (VTG-EV-005, +Broker)
-# ---------------------------------------------------------------------------
-
-
 def test_fresh_corroborated_facts_are_conservative_positive_side() -> None:
     """(§13 canary b) Fresh, corroborated, non-inferred facts establish headroom conservatively."""
     assert account_constraint_conservative(clean_account_facts(), None) is True
@@ -137,11 +120,6 @@ def test_none_facts_fail_closed() -> None:
     assert account_constraint_conservative(None, None) is False
 
 
-# ---------------------------------------------------------------------------
-# §6.3 egress_currentness_active + stale_decision_rejected_at_egress (VTG-EV-007, +Security)
-# ---------------------------------------------------------------------------
-
-
 def test_actively_established_current_generation_admits() -> None:
     """(§17 canary b) Actively-established currentness for exactly the current gen admits."""
     assert egress_currentness_active(True, 5, 5) is True
@@ -173,11 +151,6 @@ def test_none_generation_fails_closed() -> None:
     assert egress_currentness_active(True, 5, None) is False
 
 
-# ---------------------------------------------------------------------------
-# §6.4 exit_not_assumed_admissible (VTG-EV-008, +Broker)
-# ---------------------------------------------------------------------------
-
-
 def test_exit_with_positive_tradable_is_admissible_positive_side() -> None:
     """(§11 canary b) An exit-class action with positively-TRADABLE tradability passes."""
     for action in (ActionClass.CLOSE, ActionClass.REDUCE_ONLY, ActionClass.CANCEL):
@@ -200,11 +173,6 @@ def test_non_exit_action_is_not_cleared_by_this_predicate() -> None:
         exit_not_assumed_admissible(ActionClass.NEW_LONG, TradabilityState.TRADABLE)
         is False
     )
-
-
-# ---------------------------------------------------------------------------
-# §6.5 protective_label_no_bypass (VTG-EV-009, +Broker)
-# ---------------------------------------------------------------------------
 
 
 def test_all_three_conditions_allow_protective_positive_side() -> None:
@@ -259,11 +227,6 @@ def test_non_protective_label_is_blocked() -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# §6.6 common_mode_reduces_scope + unknown_continuity_invalidates (VTG-EV-010, +Security)
-# ---------------------------------------------------------------------------
-
-
 def test_shared_dependency_reduces_scope() -> None:
     """(§15 line 353) A shared dependency is common-mode => scope must reduce."""
     assert common_mode_reduces_scope(frozenset({"shared-feed"}), True) is True
@@ -308,11 +271,6 @@ def test_gap_or_unverifiable_continuity_invalidates() -> None:
 def test_none_continuity_invalidates() -> None:
     """(∅) A None continuity invalidates (fail-closed)."""
     assert unknown_continuity_invalidates(None) is True
-
-
-# ---------------------------------------------------------------------------
-# §6.7 gate_authority_separated (VTG-EV-011, +Security)
-# ---------------------------------------------------------------------------
 
 
 def test_all_false_effect_no_credential_is_separated_positive_side() -> None:

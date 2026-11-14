@@ -1,33 +1,4 @@
-"""``ProducerJournalBandReader`` — CP-3 band 원천 경로 변경 PR-B
-(``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §3.2/§3.3/§3.4).
-
-**One test per CLAUSE** (#838): every input below differs from the line this reader ACCEPTS in
-exactly ONE respect, and :meth:`TestTheMeasuredLineIsAccepted` pins that baseline. Without the
-baseline a clause test proves only "this returns ``None``", which a broken fixture also
-satisfies.
-
-**The accepted line is not written here — it is PR-A's writer's own output.**
-``fixtures/band_probe_line.jsonl`` was produced by driving
-``tools.tos_cp3.live_producer.sinks.ObservationJournal`` with
-``band_line.BAND_KEY_ORDER`` exactly as ``band_probe._publish`` does, over a
-``FHMIF10000000``-shaped body carrying the 2026-10-08 P-VL ``A05611`` measurement
-(990.48/1162.72, basis 1076.60). The runtime may not import ``tools`` (firewall R1), so
-:class:`TestTheLineSchemaMatchesTheWriter` compares this package's own
-:data:`~tos_runtime.venue.band_journal.BAND_JOURNAL_LINE_KEYS` against that file's keys.
-
-⚠ **That is only HALF of the pin, and on its own it measures nothing about the writer** (PR
-#907 review MEDIUM-3). The fixture is a static file: if ``band_line.BAND_KEY_ORDER`` grows a
-key, nothing here notices, and the first real session refuses every line with ``line_key_set``.
-The other half — the WRITER's current output against this same fixture — is
-``tests/tools/test_cp3_live_producer.py::
-test_the_band_probes_output_still_has_the_runtime_fixtures_shape``, which lives on the side of
-the firewall that may import ``tools`` and reads this fixture as a plain file. "The two
-definitions are the same shape" is a measurement only with both.
-
-Hermetic (``tos/runtime/tests/conftest.py`` D1.4): no socket is ever opened — this reader has
-none to open, which is the point of the path (plan §3.5). Every file it reads is under
-``tmp_path`` or is the committed fixture, read-only.
-"""
+"""``ProducerJournalBandReader`` — CP-3 band 원천 경로 변경 PR-B"""
 
 from __future__ import annotations
 
@@ -45,12 +16,10 @@ from tos_runtime.venue.band_journal import (
 )
 from tos_runtime.venue.band_source import VENUE_BAND_OBSERVED_KIND
 
-#: PR-A's writer output, byte-for-byte (module docstring).
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "band_probe_line.jsonl"
 
 _INSTRUMENT = "A05611"
 _TRADING_DATE = "20261016"
-#: ``990.48 × 100`` and ``1162.72 × 100`` — the exact scaled ints the measured band becomes.
 _SCALED_LOWER = 99048
 _SCALED_UPPER = 116272
 _SCALED_BASIS = 107660
@@ -68,12 +37,7 @@ def _writer_line() -> dict[str, Any]:
 
 
 def _line(**overrides: Any) -> dict[str, Any]:
-    """The writer's own line with exactly the named leaves replaced.
-
-    Built FROM the fixture rather than typed out again: a clause test that varied one leaf of a
-    hand-written baseline would stop being "one respect different from what the producer
-    writes" the moment the writer changed.
-    """
+    """The writer's own line with exactly the named leaves replaced."""
     line = _writer_line()
     line.update(overrides)
     return line
@@ -118,8 +82,7 @@ def _band_source(path: Path, **overrides: Any) -> ProducerJournalBandSource:
 
 
 def _write(tmp_path: Path, *lines: Any, name: str = "band.jsonl") -> Path:
-    """Write ``lines`` as a band journal. A ``str`` entry is written verbatim (that is how an
-    unparseable tail is produced); anything else is JSON-encoded."""
+    """Write ``lines`` as a band journal. A ``str`` entry is written verbatim (that is how an"""
     path = tmp_path / name
     path.write_text(
         "".join(
@@ -131,9 +94,6 @@ def _write(tmp_path: Path, *lines: Any, name: str = "band.jsonl") -> Path:
     return path
 
 
-#: Every way the LAST line of a journal can be unusable, and the reason the reader must name.
-#: Three of the four left ``read()`` as an exception before PR #907's review MEDIUM-1, each on
-#: its own boundary: the decode, ``json.loads``, and the scale multiply.
 _BAD_TAIL_REASONS: dict[str, str] = {
     "unparseable": "line_unparseable",
     "not_utf8": "journal_not_utf8",
@@ -147,17 +107,10 @@ def _bad_tail(key: str) -> bytes:
     if key == "unparseable":
         return b"{not json"
     if key == "not_utf8":
-        # A UTF-16 BOM in a file declared UTF-8: `read_text` raises `UnicodeDecodeError`,
-        # which is a `ValueError` and so is caught by NEITHER `except OSError` clause.
         return b"\xff\xfe"
     if key == "deeply_nested":
-        # `json.loads` recurses once per nesting level, so a tail like this raises
-        # `RecursionError` — not a `ValueError`, so the parse clause does not see it.
         return (b"[" * 100_000) + (b"]" * 100_000)
     if key == "overflowing_bound":
-        # A well-formed line whose `upper` scales out of `decimal`'s exponent range:
-        # `Decimal("1e999999999")` CONSTRUCTS (the guarded step) and is finite, and the
-        # `× price_scale` that follows raises `decimal.Overflow`.
         return json.dumps(_line(upper="1e999999999")).encode("utf-8")
     raise AssertionError(key)
 
@@ -173,8 +126,6 @@ def _reader(
     evidence = sink if sink is not None else _Sink()
     reader = ProducerJournalBandReader(
         band_source=_band_source(path, **source_overrides),
-        # `MonotonicSource` is a Protocol, so the double satisfies it structurally and mypy
-        # checks that here.
         monotonic=_FakeMonotonic(),
         evidence_sink=evidence,
         trading_date_reader=lambda: trading_date,
@@ -183,34 +134,14 @@ def _reader(
     return reader, evidence
 
 
-# ---------------------------------------------------------------------------
-# The schema pin — the duplication firewall R1 forces, measured
-# ---------------------------------------------------------------------------
-
-
 class TestTheLineSchemaMatchesTheWriter:
-    """Plan §3.3 — the runtime cannot import ``tools``, so the line's shape is defined twice.
-
-    These two assertions hold the RUNTIME's definition to the fixture. Delete them and a key
-    dropped from :data:`BAND_JOURNAL_LINE_KEYS` stops being noticed.
-
-    ⚠ They say nothing about the writer: the fixture is a static file, so a key added to
-    ``band_line.BAND_KEY_ORDER`` leaves them green and lands in a file this reader then
-    rejects with ``line_key_set`` — a band permanently absent for a reason that reads like a
-    corrupted journal. The writer's half of the pin is on the ``tools`` side of the firewall
-    (module docstring).
-    """
+    """Plan §3.3 — the runtime cannot import ``tools``, so the line's shape is defined twice."""
 
     def test_the_key_set_equals_the_writers_own_output(self) -> None:
         assert set(_writer_line()) == BAND_JOURNAL_LINE_KEYS
 
     def test_the_kind_token_equals_the_writers_own(self) -> None:
         assert _writer_line()["kind"] == BAND_JOURNAL_LINE_KIND
-
-
-# ---------------------------------------------------------------------------
-# The baseline
-# ---------------------------------------------------------------------------
 
 
 class TestTheMeasuredLineIsAccepted:
@@ -231,36 +162,7 @@ class TestTheMeasuredLineIsAccepted:
         assert sink.only()["outcome"] == "OBSERVED"
 
     def test_the_trading_date_is_the_lines_own_stamp(self, tmp_path: Path) -> None:
-        """Plan §3.3 / review MEDIUM-1 — NOT re-stamped with ``trading_date_now()``.
-
-        ⚠ **This assertion does not discriminate, and says so rather than pretending.** Past
-        the G2 clause the line's stamp and the runtime's reading are EQUAL, so
-        ``trading_date=trading_date`` passes it too — measured 2026-10-16: that single
-        mutation is GREEN across the whole suite. Writing it as if it were a red proof would
-        be the "guard that admits what it names" shape this repo keeps rediscovering.
-
-        What the expression actually is: the INPUT to a SECOND layer, whose own red proof is
-        :class:`~tests.venue.test_service_band.TestTradingDateBond`. The layering is measured
-        as a compound (2026-10-16), against one input — a D-1 line read by a D runtime, the
-        clock staying at D:
-
-        ====================================  ==========================================
-        world                                 result
-        ====================================  ==========================================
-        shipped                               REFUSED at the boot read
-                                              (``trading_date_mismatch`` row)
-        read-side clause deleted              OBSERVED, then DROPPED by the service bond
-                                              at the first snapshot
-        read-side clause deleted + restamped  OBSERVED and NEVER dropped — the D-1 band
-                                              stays in force all session (price_max 115918)
-        ====================================  ==========================================
-
-        ⚠ Rows 1 and 2 used to differ at the first SNAPSHOT; since the rescope plan's M1 the
-        boot read happens in ``VenueConstraintService.__init__``, so the service bond already
-        has a band to drop on the first call and only the evidence row separates them.
-
-        So this test pins the VALUE, and the table above is why the value matters.
-        """
+        """Plan §3.3 / review MEDIUM-1 — NOT re-stamped with ``trading_date_now()``."""
         line = _writer_line()
         reader, _ = _reader(_write(tmp_path, line))
 
@@ -272,10 +174,7 @@ class TestTheMeasuredLineIsAccepted:
     def test_as_of_ms_is_the_runtimes_clock_and_the_lines_goes_to_evidence(
         self, tmp_path: Path
     ) -> None:
-        """Two clocks, never mixed (plan §3.3). The line's ``as_of_ms`` is the PRODUCER's wall
-        clock in a different process; the observation's is this runtime's monotonic reading,
-        the same rule the ``kis_quote_get`` reader applies to its own request instant.
-        """
+        """Two clocks, never mixed (plan §3.3). The line's ``as_of_ms`` is the PRODUCER's wall"""
         line = _writer_line()
         reader, sink = _reader(_write(tmp_path, line))
 
@@ -283,15 +182,13 @@ class TestTheMeasuredLineIsAccepted:
 
         assert observation is not None
         assert observation.as_of_ms != line["as_of_ms"]
-        assert observation.as_of_ms == 1_001  # the double's first reading
+        assert observation.as_of_ms == 1_001
         assert sink.only()["producer_as_of_ms"] == line["as_of_ms"]
 
     def test_the_digest_and_the_continuity_come_from_the_line_and_say_so(
         self, tmp_path: Path
     ) -> None:
-        """Plan §3.3 — the digest is the producer's claim about bytes this process never saw,
-        and the evidence row records whose it is rather than letting a reader assume the
-        runtime hashed a response itself."""
+        """Plan §3.3 — the digest is the producer's claim about bytes this process never saw,"""
         line = _writer_line()
         reader, sink = _reader(_write(tmp_path, line))
 
@@ -308,8 +205,7 @@ class TestTheMeasuredLineIsAccepted:
     def test_the_measured_band_is_symmetric_about_its_basis(
         self, tmp_path: Path
     ) -> None:
-        """A NECESSARY condition of the stage-1 formula, never a stage judgement (band plan
-        2026-10-08 §4.5's implementation-time correction)."""
+        """A NECESSARY condition of the stage-1 formula, never a stage judgement (band plan"""
         reader, sink = _reader(_write(tmp_path, _writer_line()))
 
         observation = reader.read()
@@ -317,11 +213,6 @@ class TestTheMeasuredLineIsAccepted:
         assert observation is not None
         assert observation.symmetric_about_basis is True
         assert sink.only()["symmetric_about_basis"] is True
-
-
-# ---------------------------------------------------------------------------
-# The last line, and never a fallback
-# ---------------------------------------------------------------------------
 
 
 class TestTheLastLineOnly:
@@ -341,16 +232,7 @@ class TestTheLastLineOnly:
     def test_an_invalid_last_line_does_NOT_fall_back_to_the_valid_one_before_it(
         self, tmp_path: Path, tail: str
     ) -> None:
-        """**The red proof for "never a fallback."** The first line is the accepted baseline,
-        so a reader that fell back would return a band and this test would see one. It must see
-        ``None``: falling back believes "a band that was once valid" instead of "the band that
-        is valid now", and on a reused session directory the line before is yesterday's.
-
-        Parametrized over every way a tail can be unusable (:data:`_BAD_TAIL_REASONS`),
-        because "no fallback" has to hold on the path each of them takes out of the reader —
-        and three of the four take a DIFFERENT path from ``line_unparseable`` (PR #907 review
-        MEDIUM-1).
-        """
+        """**The red proof for "never a fallback."** The first line is the accepted baseline,"""
         path = tmp_path / "band.jsonl"
         path.write_bytes(
             json.dumps(_writer_line()).encode("utf-8") + b"\n" + _bad_tail(tail) + b"\n"
@@ -363,9 +245,7 @@ class TestTheLastLineOnly:
         assert sink.only()["reason"] == _BAD_TAIL_REASONS[tail]
 
     def test_a_trailing_blank_line_is_not_the_last_line(self, tmp_path: Path) -> None:
-        """``ObservationJournal`` terminates every row with ``\\n``, so the raw tail of a
-        correct file is empty. Treating that as the last line would make EVERY well-written
-        journal unreadable."""
+        "``ObservationJournal`` terminates every row with ``\\n``, so the raw tail of a"
         path = tmp_path / "band.jsonl"
         path.write_text(json.dumps(_writer_line()) + "\n\n", encoding="utf-8")
 
@@ -373,8 +253,7 @@ class TestTheLastLineOnly:
 
 
 class TestTheFileItself:
-    """Plan §3.3 — absence, an unparseable tail and an I/O error are all band ``None`` plus a
-    reason (band plan 2026-10-08 §4.6: every failure is ``UNKNOWN`` ⇒ 송신 0)."""
+    """Plan §3.3 — absence, an unparseable tail and an I/O error are all band ``None`` plus a"""
 
     def test_an_absent_journal_is_a_named_refusal(self, tmp_path: Path) -> None:
         reader, sink = _reader(tmp_path / "never-written.jsonl")
@@ -389,9 +268,7 @@ class TestTheFileItself:
         assert sink.only()["reason"] == "journal_empty"
 
     def test_an_io_error_is_a_named_refusal_not_an_escape(self, tmp_path: Path) -> None:
-        """A DIRECTORY at the journal's path: ``read_text`` raises ``IsADirectoryError``, an
-        ``OSError`` that is not ``FileNotFoundError``. Without the catch it would leave
-        ``read()`` and surface inside ``snapshot()``/``decide()``."""
+        """A DIRECTORY at the journal's path: ``read_text`` raises ``IsADirectoryError``, an"""
         path = tmp_path / "band.jsonl"
         path.mkdir()
 
@@ -403,14 +280,7 @@ class TestTheFileItself:
     def test_a_non_utf8_journal_is_a_named_refusal_not_an_escape(
         self, tmp_path: Path
     ) -> None:
-        """PR #907 review MEDIUM-1 — a byte no UTF-8 decoder accepts.
-
-        ``read_text(encoding="utf-8")`` raises ``UnicodeDecodeError``, which is a
-        ``ValueError``: neither ``except FileNotFoundError`` nor ``except OSError`` sees it, so
-        without its own clause it leaves ``read()`` and surfaces inside
-        ``snapshot()``/``decide()`` — the exact shape the ``journal_io_error`` test above
-        closes for the OTHER family of file failures.
-        """
+        """PR #907 review MEDIUM-1 — a byte no UTF-8 decoder accepts."""
         path = tmp_path / "band.jsonl"
         path.write_bytes(_bad_tail("not_utf8") + b"\n")
 
@@ -422,10 +292,7 @@ class TestTheFileItself:
     def test_a_deeply_nested_tail_is_a_named_refusal_not_an_escape(
         self, tmp_path: Path
     ) -> None:
-        """PR #907 review MEDIUM-1 — ``json.loads`` recurses per nesting level, so a tail of
-        100k open brackets raises ``RecursionError``. That is not a ``ValueError``, so the
-        ``line_unparseable`` clause does not catch it and the error leaves ``read()``.
-        """
+        """PR #907 review MEDIUM-1 — ``json.loads`` recurses per nesting level, so a tail of"""
         path = tmp_path / "band.jsonl"
         path.write_bytes(_bad_tail("deeply_nested") + b"\n")
 
@@ -435,8 +302,7 @@ class TestTheFileItself:
         assert sink.only()["reason"] == "line_too_deeply_nested"
 
     def test_a_json_scalar_tail_is_a_named_refusal(self, tmp_path: Path) -> None:
-        """Valid JSON that is not an object — ``json.loads`` succeeds, so the parse check
-        alone would pass it to the field reads."""
+        """Valid JSON that is not an object — ``json.loads`` succeeds, so the parse check"""
         reader, sink = _reader(_write(tmp_path, "42"))
 
         assert reader.read() is None
@@ -445,9 +311,7 @@ class TestTheFileItself:
     def test_an_unavailable_trading_date_refuses_before_the_file_is_opened(
         self, tmp_path: Path
     ) -> None:
-        """A band that cannot be bound to a date cannot be invalidated when the date turns, so
-        it is refused outright rather than stamped with a guess. The journal here is the
-        ACCEPTED one, so only the missing date can be the reason."""
+        """A band that cannot be bound to a date cannot be invalidated when the date turns, so"""
         reader, sink = _reader(_write(tmp_path, _writer_line()), trading_date=None)
 
         assert reader.read() is None
@@ -455,23 +319,17 @@ class TestTheFileItself:
 
 
 class TestTheLineShape:
-    """``kind`` and the key set — the two clauses that run before anything is read OUT of the
-    line."""
+    """``kind`` and the key set — the two clauses that run before anything is read OUT of the"""
 
     def test_another_line_kind_is_refused(self, tmp_path: Path) -> None:
-        """A future ``cp3-band/2``, or a price line that wandered into this file: the keys
-        would not mean what this reader thinks they mean."""
+        """A future ``cp3-band/2``, or a price line that wandered into this file: the keys"""
         reader, sink = _reader(_write(tmp_path, _line(kind="cp3-band/2")))
 
         assert reader.read() is None
         assert sink.only()["reason"] == "line_kind_unknown"
 
     def test_a_line_missing_one_key_is_refused(self, tmp_path: Path) -> None:
-        """**The concrete input**: a line claiming ``cp3-band/1`` without
-        ``raw_payload_digest``. Without the key-set clause the observation would carry ``None``
-        there, and the snapshot's ``critical_input_snapshot_digest`` stand-in would read
-        exactly like "no band at all" for a band that IS in force.
-        """
+        """**The concrete input**: a line claiming ``cp3-band/1`` without"""
         line = _writer_line()
         del line["raw_payload_digest"]
 
@@ -489,8 +347,7 @@ class TestTheLineShape:
         assert sink.only()["reason"] == "line_key_set"
 
     def test_a_non_integer_producer_stamp_is_refused(self, tmp_path: Path) -> None:
-        """``as_of_ms`` lands in an evidence row as an integer; a string there would be
-        recorded as one and silently compared against nothing."""
+        """``as_of_ms`` lands in an evidence row as an integer; a string there would be"""
         reader, sink = _reader(_write(tmp_path, _line(as_of_ms="1760577960000")))
 
         assert reader.read() is None
@@ -498,16 +355,7 @@ class TestTheLineShape:
 
 
 class TestTheProvenanceValues:
-    """PR #907 review MEDIUM-2 — a PRESENT key is not a USABLE value.
-
-    The key-set clause above makes every provenance key present; this is what makes it carry
-    something. The gap it closes is the one the key set's own docstring used to claim it had
-    already closed: ``{"raw_payload_digest": null, "producer_continuity_id": null}`` satisfies
-    ``set(line) == BAND_JOURNAL_LINE_KEYS``, so before this clause the line was OBSERVED and
-    the service issued a snapshot whose ``price_min``/``price_max`` were IN FORCE while its
-    ``critical_input_snapshot_digest`` and ``source_continuity_id`` read exactly like "no band
-    at all" — the very state :data:`BAND_JOURNAL_LINE_KEYS`' equality rule exists to prevent.
-    """
+    """PR #907 review MEDIUM-2 — a PRESENT key is not a USABLE value."""
 
     @pytest.mark.parametrize(
         "digest",
@@ -526,11 +374,7 @@ class TestTheProvenanceValues:
     def test_a_raw_payload_digest_that_is_not_sha256_hex_is_refused(
         self, tmp_path: Path, digest: Any
     ) -> None:
-        """The field is this band's ``critical_input_snapshot_digest`` stand-in, so "it is a
-        SHA-256 of something" is the whole of what it claims. 64 LOWERCASE hex, because the
-        writer's own ``hashlib.sha256(...).hexdigest()`` emits exactly that and a second
-        spelling of one digest is a second digest to every comparison downstream.
-        """
+        """The field is this band's ``critical_input_snapshot_digest`` stand-in, so "it is a"""
         reader, sink = _reader(_write(tmp_path, _line(raw_payload_digest=digest)))
 
         assert reader.read() is None
@@ -547,9 +391,7 @@ class TestTheProvenanceValues:
     def test_a_blank_producer_continuity_id_is_refused(
         self, tmp_path: Path, continuity: Any
     ) -> None:
-        """``source_continuity_id`` is ``None`` on a snapshot that has no band, so a band
-        carrying ``None`` there is indistinguishable from no band in every row that reports
-        it — including the runbook §7.2-d acceptance that compares the two."""
+        """``source_continuity_id`` is ``None`` on a snapshot that has no band, so a band"""
         reader, sink = _reader(
             _write(tmp_path, _line(producer_continuity_id=continuity))
         )
@@ -558,28 +400,11 @@ class TestTheProvenanceValues:
         assert sink.only()["reason"] == "producer_continuity_id_not_a_nonempty_string"
 
 
-# ---------------------------------------------------------------------------
-# G2 / G3 / C1 — the read-side clauses, each varying exactly one leaf
-# ---------------------------------------------------------------------------
-
-
 class TestG2TradingDateReadSide:
-    """Plan §3.4 G2 ② — a D-dated line read by a D+1 runtime.
-
-    ⚠ **The red proof is the ROW, not any snapshot** (plan §3.4's 가려진 절 note).
-    ``VenueConstraintService.snapshot`` runs its own trading-date bond at the head of every
-    call and drops a stale band SILENTLY, so deleting this clause leaves every snapshot
-    assertion green — while this reader's own ``REFUSED`` / ``trading_date_mismatch`` row is
-    something that bond cannot produce. (Until the rescope plan's M1 the FIRST snapshot could
-    also tell them apart, because the boot read then happened inside ``snapshot()`` after
-    that call's bond had already run; it no longer can.) The service-level half is
-    ``tests/venue/test_service_band.py::TestProducerJournalG2ReadSide``.
-    """
+    """Plan §3.4 G2 ② — a D-dated line read by a D+1 runtime."""
 
     def test_a_line_from_another_trading_date_is_refused(self, tmp_path: Path) -> None:
-        """Only ``trading_date`` differs from the accepted line: yesterday's, left in a reused
-        session directory. The producer's own ``refuse_if_journal_exists`` is the structural
-        half; this is the read-side layer."""
+        """Only ``trading_date`` differs from the accepted line: yesterday's, left in a reused"""
         reader, sink = _reader(_write(tmp_path, _line(trading_date="20261015")))
 
         assert reader.read() is None
@@ -592,12 +417,7 @@ class TestG3ContractReadSide:
     """Plan §3.4 G3 — a roll-day session directory reused across contracts."""
 
     def test_a_line_for_another_contract_is_refused(self, tmp_path: Path) -> None:
-        """**Only ``instrument`` differs** — date and source stay valid, and the band values
-        stay the ones the broker really returned for THAT contract. Both measured bands pass
-        every §4.2 clause (``A05610`` 987.46/1159.18 vs ``A05611`` 990.48/1162.72, P-VL
-        2026-10-08), so without this clause the session trades admissibly against another
-        contract's band and nothing anywhere says so.
-        """
+        """**Only ``instrument`` differs** — date and source stay valid, and the band values"""
         reader, sink = _reader(_write(tmp_path, _line(instrument="A05610")))
 
         assert reader.read() is None
@@ -608,13 +428,7 @@ class TestG3ContractReadSide:
     def test_the_other_contracts_own_band_would_otherwise_be_admissible(
         self, tmp_path: Path
     ) -> None:
-        """The other half of the same input, measured: an ``A05610`` line whose POLICY is also
-        ``A05610`` is accepted and yields 98746/115918 — so the refusal above is about the
-        contract bond and not about those numbers being unusable.
-
-        Without it the pair would prove nothing: "returns ``None``" is also what a line this
-        reader simply cannot parse does.
-        """
+        """The other half of the same input, measured: an ``A05610`` line whose POLICY is also"""
         reader, _ = _reader(
             _write(
                 tmp_path, _line(instrument="A05610", upper="1159.18", lower="987.46")
@@ -629,13 +443,7 @@ class TestG3ContractReadSide:
 
 
 class TestC1SourcePrefix:
-    """Plan §3.4 C1 — a CONFIG-CONSISTENCY rule, deliberately not counted as a guard.
-
-    No concrete fail-open input can be written for it: one tool writes this file today and a
-    hand-written line can copy the prefix. It stays because a line from an unapproved writer is
-    an operations error on its face, and because the day a second writer exists (a synthetic
-    band harness) it is promoted to a guard with a real input.
-    """
+    """Plan §3.4 C1 — a CONFIG-CONSISTENCY rule, deliberately not counted as a guard."""
 
     def test_an_unapproved_source_id_is_refused(self, tmp_path: Path) -> None:
         """Only ``source_id`` differs — the date and the contract stay valid."""
@@ -649,9 +457,7 @@ class TestC1SourcePrefix:
         assert "tos-paper-bootproof-render" in row["detail"]
 
     def test_the_prefix_match_requires_a_delimiter(self, tmp_path: Path) -> None:
-        """``tos-cp3-live-EVIL`` is not ``tos-cp3-live``. A bare ``startswith`` would approve
-        it — a producer name is a namespace, and the separator is what makes the boundary real
-        (the same rule ``tools/tos_cp3/bootproof_guard.py::_matches_prefix`` states)."""
+        """``tos-cp3-live-EVIL`` is not ``tos-cp3-live``. A bare ``startswith`` would approve"""
         reader, sink = _reader(_write(tmp_path, _line(source_id="tos-cp3-live-EVIL/9")))
 
         assert reader.read() is None
@@ -664,19 +470,8 @@ class TestC1SourcePrefix:
         assert reader.read() is not None
 
 
-# ---------------------------------------------------------------------------
-# G1 — the shared validation set, reached through this reader
-# ---------------------------------------------------------------------------
-
-
 class TestG1ValidationSetIsReused:
-    """Plan §3.4 G1 — "기존 그대로 — 변환이 런타임에 있으므로 재사용".
-
-    The clauses themselves have their own per-clause tests against the ``kis_quote_get`` reader
-    (``test_band_source.py::TestValidationSet``) and the function is shared
-    (:func:`~tos_runtime.venue.band_source.validate_band_values`). What these pin is that this
-    reader REACHES it — with the line's own strings and the policy's own scale and tick.
-    """
+    """Plan §3.4 G1 — "기존 그대로 — 변환이 런타임에 있으므로 재사용"."""
 
     def test_an_off_grid_bound_is_refused(self, tmp_path: Path) -> None:
         """Plan §3.4's own example: ``upper: "1162.73"`` is off the 0.02 grid."""
@@ -699,13 +494,7 @@ class TestG1ValidationSetIsReused:
     def test_a_bound_whose_scaled_form_overflows_is_refused(
         self, tmp_path: Path
     ) -> None:
-        """PR #907 review MEDIUM-1 — ``"1e999999999"``.
-
-        The non-finite clause does not cover it: ``Decimal`` CONSTRUCTS this value (the one
-        step inside the ``try``) and ``is_finite()`` is ``True``. The ``× price_scale`` that
-        follows pushes the exponent past the context's ``Emax`` and raises
-        ``decimal.Overflow``, which left ``read()`` entirely.
-        """
+        """PR #907 review MEDIUM-1 — ``"1e999999999"``."""
         path = tmp_path / "band.jsonl"
         path.write_bytes(_bad_tail("overflowing_bound") + b"\n")
 
@@ -727,9 +516,7 @@ class TestG1ValidationSetIsReused:
         assert sink.only()["reason"] == "tick_size_absent"
 
     def test_a_tick_five_tree_is_caught_here(self, tmp_path: Path) -> None:
-        """Why the tick 5→2 correction is a PRECONDITION of enabling, in code: the measured
-        band is on the 0.02 grid, so a tree still carrying ``tick_size: 5`` rejects it.
-        """
+        """Why the tick 5→2 correction is a PRECONDITION of enabling, in code: the measured"""
         reader, sink = _reader(_write(tmp_path, _writer_line()), tick_size=5)
 
         assert reader.read() is None
@@ -781,9 +568,7 @@ class TestNarrowedIntraday:
 def test_every_refusal_row_names_the_policy_instrument(
     tmp_path: Path, reason_key: str
 ) -> None:
-    """Whatever went wrong, the row says WHICH contract's band is now ``UNKNOWN`` — an
-    evidence row that only said "refused" would not let an operator tell a tenant's band
-    outage from a neighbouring session's."""
+    """Whatever went wrong, the row says WHICH contract's band is now ``UNKNOWN`` — an"""
     writers = {
         "journal_absent": lambda: tmp_path / "missing.jsonl",
         "journal_empty": lambda: _write(tmp_path),

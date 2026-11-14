@@ -13,9 +13,7 @@ __all__ = [
 
 
 class _FakeRequestCredentials:
-    """A :class:`~tos_runtime.recon.witness_kis.KisWitnessRequestCredentials` double whose
-    key/secret become unreadable once its block exits (the real session zeroes its handles).
-    """
+    """A :class:`~tos_runtime.recon.witness_kis.KisWitnessRequestCredentials` double whose"""
 
     def __init__(self, *, access_token: str, app_key: str, app_secret: str) -> None:
         self.access_token = access_token
@@ -68,8 +66,7 @@ class FakeCredentialSession:
 
 
 class RaisingCredentialSession:
-    """A credential session whose ``request_credentials()`` always raises — for the
-    ``WitnessUnavailable``-wrapping test."""
+    """A credential session whose ``request_credentials()`` always raises — for the"""
 
     @contextmanager
     def request_credentials(self) -> Iterator[_FakeRequestCredentials]:

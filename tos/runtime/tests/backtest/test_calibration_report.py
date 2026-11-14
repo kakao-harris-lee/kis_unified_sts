@@ -1,20 +1,4 @@
-"""``tos_runtime.backtest`` tests — the paper/backtest calibration report (Phase 3 wave 3 §3.1
-slice E, runtime half; plan §3.1 / §5).
-
-Covers: config load (fill/null-leaf/unknown-key), attempt-id pairing (matching + the two
-one-sided unpaired cases), the three kernel verdict branches reached through injected budgets,
-the price-unobservable-always-INSUFFICIENT consequence, the expectancy-claim withholding, and the
-loader reading typed :class:`~tos.engine.records.EngineEvidenceRecord` rows back out of a real
-:class:`~tos_runtime.evidence.store.SqliteEvidenceStore`.
-
-**Pairing-key limitation (see ``calibration_report.py`` module docstring for the full
-statement).** The plan asks to pair paper/backtest observations by the same
-``(strategy_digest, capsule_digest)`` scope. Neither side of this runtime slice's pairing carries
-that: :class:`~tos.engine.records.EngineEvidenceRecord` (the paper ``EGRESS_RESULT_CONSUMED`` row)
-has ``capsule_digest`` but no ``strategy_digest`` field at all, and
-:class:`~tos.backtest.records.LocalFillRecord` (the backtest fill) has neither. Pairing is
-therefore by ``attempt_id`` alone, unconditionally — every test below reflects that.
-"""
+"""``tos_runtime.backtest`` tests — the paper/backtest calibration report (Phase 3 wave 3 §3.1"""
 
 from __future__ import annotations
 
@@ -39,10 +23,6 @@ from tos_runtime.backtest.config import (
     load_backtest_calibration_config,
 )
 from tos_runtime.evidence.store import SqliteEvidenceStore
-
-# ---------------------------------------------------------------------------
-# fixtures / small builders
-# ---------------------------------------------------------------------------
 
 
 class _FixedKeyProvider:
@@ -113,11 +93,6 @@ def _backtest_fill(attempt_id: str, *, filled: Decimal | None) -> LocalFillRecor
     )
 
 
-# ---------------------------------------------------------------------------
-# pairing
-# ---------------------------------------------------------------------------
-
-
 def test_matching_attempt_id_produces_one_paired_observation() -> None:
     report = build_calibration_report(
         evidence_rows=(_paper_row("a1", filled=Decimal(10)),),
@@ -143,10 +118,7 @@ def test_paper_only_attempt_is_counted_unpaired_not_a_zero_deviation() -> None:
 
 
 def test_backtest_only_attempt_is_counted_unpaired_not_a_zero_deviation() -> None:
-    """Mutation to quote: if the report treated an unpaired backtest fill as
-    ``fill_ratio=0`` instead of a plain unpaired count, ``report.observations`` here would be
-    non-empty (one manufactured ``FillDeviation(fill_ratio=Decimal(0), ...)``) and this
-    assertion goes red."""
+    """Mutation to quote: if the report treated an unpaired backtest fill as"""
     report = build_calibration_report(
         evidence_rows=(),
         backtest_fills=(_backtest_fill("a1", filled=Decimal(10)),),
@@ -176,15 +148,8 @@ def test_multiple_disjoint_attempts_pair_only_the_matching_ids() -> None:
     assert report.unpaired_backtest_count == 1
 
 
-# ---------------------------------------------------------------------------
-# fill_ratio / latency_bars / price_bps semantics
-# ---------------------------------------------------------------------------
-
-
 def test_fill_ratio_is_a_shortfall_magnitude_when_paper_underfills() -> None:
-    """[E-R-3] shortfall = abs(backtest - paper) / backtest, matching
-    ``FillDeviation.fill_ratio``'s own "shortfall magnitude, not a signed ratio" contract.
-    """
+    """[E-R-3] shortfall = abs(backtest - paper) / backtest, matching"""
     report = build_calibration_report(
         evidence_rows=(_paper_row("a1", filled=Decimal(8)),),
         backtest_fills=(_backtest_fill("a1", filled=Decimal(10)),),
@@ -196,10 +161,7 @@ def test_fill_ratio_is_a_shortfall_magnitude_when_paper_underfills() -> None:
 
 
 def test_fill_ratio_is_symmetric_when_paper_overfills_relative_to_backtest() -> None:
-    """[E-R-3] "below the backtest's, or vice versa" (kernel docstring) — paper filling MORE
-    than backtest is the same deviation dimension, reported as the same non-negative magnitude
-    a matching under-fill would produce, never a negative value (FillDeviation would refuse to
-    construct one — see calibration_report.py's ``_fill_ratio`` docstring)."""
+    """[E-R-3] "below the backtest's, or vice versa" (kernel docstring) — paper filling MORE"""
     report = build_calibration_report(
         evidence_rows=(_paper_row("a1", filled=Decimal(12)),),
         backtest_fills=(_backtest_fill("a1", filled=Decimal(10)),),
@@ -269,10 +231,7 @@ def test_price_bps_is_always_none_no_price_on_synthetic_paper_transport() -> Non
 def test_price_unobservable_forces_insufficient_because_budget_requires_all_four_fields() -> (
     None
 ):
-    """Every :class:`DeviationBudget` field is required (no "unbounded" representation) — so
-    with ``price_bps`` always ``None`` on this runtime's observations, the verdict is
-    unconditionally INSUFFICIENT_OBSERVATIONS today, regardless of how forgiving the injected
-    budget otherwise is."""
+    """Every :class:`DeviationBudget` field is required (no "unbounded" representation) — so"""
     report = build_calibration_report(
         evidence_rows=(_paper_row("a1", filled=Decimal(10)),),
         backtest_fills=(_backtest_fill("a1", filled=Decimal(10)),),
@@ -285,11 +244,6 @@ def test_price_unobservable_forces_insufficient_because_budget_requires_all_four
         observed_expectancy=Decimal(1),
     )
     assert report.verdict is CalibrationVerdict.INSUFFICIENT_OBSERVATIONS
-
-
-# ---------------------------------------------------------------------------
-# expectancy claim gating
-# ---------------------------------------------------------------------------
 
 
 def test_expectancy_claim_withheld_when_verdict_is_insufficient() -> None:
@@ -306,12 +260,7 @@ def test_expectancy_claim_withheld_when_verdict_is_insufficient() -> None:
 
 
 def test_expectancy_claim_carries_value_only_when_within() -> None:
-    """Because price is always unobservable on this runtime today, WITHIN is unreachable in
-    practice — this pins that the gate itself still distinguishes the branches correctly by
-    driving ``calibration_within_budget`` (via a paired price-bearing fixture is not possible
-    here; this is exercised directly against the kernel gate in
-    ``tos/tests/backtest/test_backtest_calibration.py``). Here we only pin that a non-WITHIN
-    report never carries a value."""
+    """Because price is always unobservable on this runtime today, WITHIN is unreachable in"""
     report = build_calibration_report(
         evidence_rows=(_paper_row("a1", filled=Decimal(10)),),
         backtest_fills=(_backtest_fill("a1", filled=Decimal(10)),),
@@ -343,11 +292,6 @@ def test_budget_config_digest_is_stable_for_the_same_budget() -> None:
         observed_expectancy=Decimal(1),
     )
     assert different.budget_config_digest != report_a.budget_config_digest
-
-
-# ---------------------------------------------------------------------------
-# the thin loader — reads typed records back out of a real evidence store
-# ---------------------------------------------------------------------------
 
 
 def test_loader_reads_egress_result_consumed_rows_back_typed(
@@ -385,11 +329,7 @@ def test_loader_preserves_commit_order(store: SqliteEvidenceStore) -> None:
 
 
 def test_loader_round_trips_a_record_with_masked_keys_non_empty(tmp_path: Path) -> None:
-    """[E-R-3] pin the wrapper shape the loader unwraps: ``SqliteEvidenceStore.append`` writes
-    ``{"payload": scrubbed_payload, "masked_keys": [...]}`` into ``payload_json`` — this test
-    configures a non-empty ``secret_keys`` set so ``masked_keys`` is actually non-empty on the
-    written row (not just structurally present-but-empty, as every other test in this file
-    exercises), and confirms the loader still reads the (scrubbed) record back typed."""
+    """[E-R-3] pin the wrapper shape the loader unwraps: ``SqliteEvidenceStore.append`` writes"""
     scrubbing_store = SqliteEvidenceStore(
         tmp_path / "evidence-scrubbed.sqlite3",
         key_provider=_FixedKeyProvider(),
@@ -420,11 +360,6 @@ def test_loader_round_trips_a_record_with_masked_keys_non_empty(tmp_path: Path) 
         assert read_back.detail == "***REDACTED***"
     finally:
         scrubbing_store.close()
-
-
-# ---------------------------------------------------------------------------
-# config loader — fill / null-leaf / unknown-key
-# ---------------------------------------------------------------------------
 
 
 def _write_config(tmp_path: Path, contents: dict[str, object]) -> Path:
@@ -505,12 +440,7 @@ _EXAMPLE_CONFIG_PATH = (
 
 
 def _example_config_comment_block(key: str) -> str:
-    """The blank-line-delimited comment block documenting ``key`` in the example config.
-
-    The file is authored as one blank-line-separated block per key (header block first) — this
-    walks those blocks rather than parsing YAML, since the value under test is the COMMENT text,
-    which ``yaml.safe_load`` discards entirely.
-    """
+    """The blank-line-delimited comment block documenting ``key`` in the example config."""
     text = _EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
     for block in text.split("\n\n"):
         if f"{key}:" in block:
@@ -535,14 +465,7 @@ def test_example_config_file_is_all_named_tbd_null() -> None:
 def test_example_config_comment_for_max_fill_ratio_shortfall_describes_a_shortfall() -> (
     None
 ):
-    """[E-R-4] Wave 3 review finding 3 (MEDIUM) — doc-drift pin. The comment above
-    ``max_fill_ratio_shortfall`` used to describe the pre-E-R-3 quotient formula
-    (``paper.filled_quantity / backtest.filled_quantity``, ~1.0 for a match), contradicting the
-    shipped ``_fill_ratio`` (``abs(backtest - paper) / backtest``, 0 for a match) — an operator
-    reading only the comment could enter e.g. ``0.9`` and pass a 90% underfill as WITHIN. This
-    pins that the comment describes a shortfall (0 = exact match, larger = more deviation) and
-    never the old quotient wording.
-    """
+    """[E-R-4] Wave 3 review finding 3 (MEDIUM) — doc-drift pin. The comment above"""
     block = _example_config_comment_block("max_fill_ratio_shortfall").lower()
     assert "shortfall" in block
     assert "quotient" not in block

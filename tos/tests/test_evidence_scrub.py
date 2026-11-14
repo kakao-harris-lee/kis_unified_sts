@@ -1,9 +1,4 @@
-"""scrub_secret_fields determinism + nesting tests (design #40 D3-d; ADR-002-016 §16 line 426).
-
-Includes list/tuple recursion coverage added 2026-09-08 after an independent
-review found secrets nested inside list/tuple elements passed through unmasked
-(the fix lives in ``tos/src/tos/evidence/scrub.py``'s module docstring "Container
-recursion" note)."""
+"""scrub_secret_fields determinism + nesting tests (design #40 D3-d; ADR-002-016 §16 line 426)."""
 
 from __future__ import annotations
 
@@ -13,15 +8,7 @@ _SECRETS = frozenset({"api_key", "session_cookie"})
 
 
 def _dig(container: object, *path: str | int) -> object:
-    """Descend into a nested dict/list/tuple ``object`` value by key/index.
-
-    ``scrub_secret_fields`` returns ``dict[str, object]`` — every nested value
-    is typed ``object`` on purpose (the function is generic over payload
-    shape), so mypy's ``[index]`` correctly refuses to subscript it further.
-    Each step here asserts the concrete container type before subscripting,
-    which is exactly the assumption every ``scrubbed[...][...]`` chain below
-    was already making implicitly — this just makes it explicit and checked.
-    """
+    """Descend into a nested dict/list/tuple ``object`` value by key/index."""
     current = container
     for step in path:
         if isinstance(step, str):
@@ -39,7 +26,7 @@ def test_no_matching_key_leaves_payload_unchanged_with_empty_masked_tuple() -> N
     payload = {"symbol": "005930", "quantity": 10}
     scrubbed, masked = scrub_secret_fields(payload, _SECRETS)
     assert scrubbed == payload
-    assert scrubbed is not payload  # a fresh copy, not the same object
+    assert scrubbed is not payload
     assert masked == ()
 
 
@@ -103,16 +90,8 @@ def test_non_mapping_nested_value_is_left_untouched_when_not_secret() -> None:
     assert masked == ()
 
 
-# ===========================================================================
-# list/tuple recursion (independent-review HIGH finding, fixed 2026-09-08:
-# an earlier revision recursed only into Mapping, so a secret nested inside a
-# list/tuple element passed through unmasked)
-# ===========================================================================
-
-
 def test_secret_inside_list_element_mapping_is_masked() -> None:
-    """Repro of the reported gap: scrub_secret_fields({"accounts":
-    [{"api_key": "SECRET"}]}, {"api_key"}) must mask it, not return masked=()."""
+    """Repro of the reported gap: scrub_secret_fields({"accounts":"""
     payload = {"accounts": [{"api_key": "SECRET", "region": "kr"}]}
     scrubbed, masked = scrub_secret_fields(payload, _SECRETS)
     assert _dig(scrubbed, "accounts", 0, "api_key") == "***REDACTED***"
@@ -155,8 +134,7 @@ def test_multiple_list_elements_masked_with_correct_index_in_path() -> None:
 
 
 def test_mixed_depth_list_inside_mapping_inside_list_is_masked() -> None:
-    """Mixed nesting: mapping -> list -> mapping -> list -> mapping, secret at
-    the bottom, plus a top-level secret and an untouched sibling at every level."""
+    """Mixed nesting: mapping -> list -> mapping -> list -> mapping, secret at"""
     payload = {
         "session_cookie": "top-secret",
         "groups": [
@@ -179,8 +157,7 @@ def test_mixed_depth_list_inside_mapping_inside_list_is_masked() -> None:
 
 
 def test_non_secret_inside_list_is_left_untouched() -> None:
-    """Negative control: a list containing non-secret mappings/scalars is
-    returned structurally unchanged with an empty masked tuple."""
+    """Negative control: a list containing non-secret mappings/scalars is"""
     payload = {"accounts": [{"region": "kr"}, {"region": "us"}], "tags": ["a", "b"]}
     scrubbed, masked = scrub_secret_fields(payload, _SECRETS)
     assert scrubbed == payload

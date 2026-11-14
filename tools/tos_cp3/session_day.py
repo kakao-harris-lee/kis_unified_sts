@@ -33,7 +33,6 @@ from typing import Any
 
 import yaml
 
-#: The calendar key the dated exceptions live under (same key the runtime reads).
 OVERRIDES_KEY = "session_overrides"
 
 
@@ -48,31 +47,16 @@ class DayWindow:
     phase: str
     start: time
     end: time
-    #: True when a ``session_overrides`` entry supplied this window.
     overridden: bool
 
 
 def holidays_of(calendar: Mapping[str, Any]) -> frozenset[date]:
-    """The dates *calendar* declares closed.
-
-    One reader for the ``holidays`` key: the producer's
-    :func:`tools.tos_cp3.live_producer.calendar.load_runtime_calendar` and the
-    status board's streak both come here, so "this day is closed" has a single
-    definition on the legacy side.
-    """
+    """The dates *calendar* declares closed."""
     raw = calendar.get("holidays")
     if not isinstance(raw, list) or not raw:
         raise SessionDayError("'holidays' must be a non-empty list")
     out: set[date] = set()
     for entry in raw:
-        # ⚠ A ``datetime`` IS a ``date`` subclass, and an unquoted
-        # ``2026-01-01 00:00:00`` loads as one. Kept, it would sit in the set
-        # while ``date(2026, 1, 1) not in holidays`` stays True — a ``date``
-        # never equals a ``datetime`` — so the declared closed day would read as
-        # a TRADING day in every reader here (review-1003 MEDIUM). Fail-open in
-        # a holiday set is the one direction this file must not have, so the
-        # entry is named and refused rather than normalised: a calendar that
-        # means a date should say a date.
         if isinstance(entry, datetime):
             raise SessionDayError(
                 f"'holidays' carries the datetime {entry} — write it as a plain "
@@ -97,12 +81,7 @@ def is_trading_day(day: date, holidays: Collection[date]) -> bool:
 
 
 def assert_covers(day: date, *, covered_years: Collection[int], where: object) -> None:
-    """Refuse a date outside the years a reader DECLARES its calendar covers.
-
-    The holiday set is never asked whether it covers a year — one stray
-    forward-dated entry would answer yes and every weekday of that year would
-    read as a trading day (plan §3.2 L2). *where* names the file in the message.
-    """
+    """Refuse a date outside the years a reader DECLARES its calendar covers."""
     if day.year not in covered_years:
         raise SessionDayError(
             f"{where} covers {sorted(covered_years)}; {day} is outside it. A "
@@ -120,13 +99,7 @@ def parse_hhmm(value: Any, *, where: str) -> time:
 
 
 def repeated_override_dates(text: str) -> list[str]:
-    """Dates that appear more than once as ``session_overrides`` keys in calendar *text*.
-
-    Read from the YAML node tree, not the loaded mapping: an identical key twice is
-    collapsed by the loader (last one wins), and ``"2026-12-03"`` next to unquoted
-    ``2026-12-03`` survives loading as two keys (a str and a ``date``). Either way two
-    readers that pick differently would disagree on the same file (review #963 MEDIUM).
-    """
+    """Dates that appear more than once as ``session_overrides`` keys in calendar *text*."""
     root = yaml.compose(text, Loader=yaml.SafeLoader)
     if not isinstance(root, yaml.MappingNode):
         return []
@@ -146,17 +119,7 @@ def repeated_override_dates(text: str) -> list[str]:
 
 
 def validate_overrides(calendar: Mapping[str, Any], *, text: str) -> None:
-    """Refuse the override shapes the runtime loader refuses
-    (``tos_runtime.calendar.config._parse_session_overrides``), so the two readers
-    accept the same files: repeated date · bad date · date also a holiday · missing
-    ``reason`` · no ``sessions`` · class the regular ``sessions`` lack · empty list ·
-    a ``days`` field · a midnight-crossing window · a phase the class's regular
-    windows never produce · a bad HH:MM.
-
-    NOT re-checked here: overlapping override windows. The runtime refuses those at
-    boot, and this side only ever asks for the ONE window of one phase, which it
-    already requires to be unique (:func:`phase_window`).
-    """
+    """Refuse the override shapes the runtime loader refuses"""
     repeated = repeated_override_dates(text)
     if repeated:
         raise SessionDayError(f"{OVERRIDES_KEY} repeats date(s) {repeated}")
@@ -253,10 +216,7 @@ def _override_entries(
 def windows_on(
     calendar: Mapping[str, Any], session_id: str, day: date | None
 ) -> tuple[DayWindow, ...]:
-    """Every window of *session_id* on *day*: the override's if one applies, else the regular ones.
-
-    ``day=None`` asks for the regular windows only.
-    """
+    """Every window of *session_id* on *day*: the override's if one applies, else the regular ones."""
     override = None if day is None else _override_entries(calendar, session_id, day)
     if override is not None:
         entries, overridden = override, True
@@ -331,12 +291,7 @@ class ProducerSession:
 def load_producer_session(
     producer_config: Path, *, repo_root: Path, calendar_path: Path | None = None
 ) -> ProducerSession:
-    """Read ``calendar_yaml`` / ``calendar_session_id`` / ``calendar_session_phase``
-    from a producer config and load that calendar.
-
-    ``calendar_path`` replaces the config's own calendar path — the wrapper's
-    preflight reads both files out of ``origin/main`` into temporary files.
-    """
+    """Read ``calendar_yaml`` / ``calendar_session_id`` / ``calendar_session_phase``"""
     data = yaml.safe_load(producer_config.read_text(encoding="utf-8"))
     if not isinstance(data, Mapping):
         raise SessionDayError(f"{producer_config}: not a YAML mapping")

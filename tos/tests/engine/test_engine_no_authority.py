@@ -1,22 +1,4 @@
-"""§7.2-6 — the Execution Coordinator holds no authority (design #31 §4.3).
-
-The design's target: *"시퀀서가 capacity mutation·command 구성·Transmission Capability 발행을 직접 하지
-않음 (RFC-002 §9.1:557·§10.7:724 미러·주입 stage만 호출) — AST/호출 canary"*.
-
-Three independent lines of evidence, because a single one is easy to satisfy vacuously:
-
-1. **structural** — :class:`~tos.engine.AllFalseCoordinatorAuthority` carries the eleven RFC-005
-   §12:346-377 ``SHALL NOT`` obligations, and any ``True`` makes the record unconstructable. Every
-   engine-emitted record carries it;
-2. **AST call canary** — no engine source calls a capacity-mutating, command-constructing,
-   capability-issuing, or authority-producing sibling function. This is the "fail-open lives in the
-   wiring" check applied to the wiring's own source;
-3. **author-level absence** — no engine namespace so much as *binds* such a symbol
-   (:mod:`test_engine_import_closure` sweeps ``vars()`` of every submodule, the #27 FD lesson that
-   locking the export surface is not locking the package).
-
-Regime tag: orchestration authoring evidence only; closes no EV.
-"""
+"""§7.2-6 — the Execution Coordinator holds no authority (design #31 §4.3)."""
 
 from __future__ import annotations
 
@@ -49,23 +31,18 @@ from ._engine_fixtures import (
 
 _ENGINE_SRC = Path(__file__).resolve().parents[2] / "src" / "tos" / "engine"
 
-#: Sibling functions whose invocation would mean the Coordinator performed someone else's act.
 _FORBIDDEN_CALLS = frozenset(
     {
-        # rcl — capacity mutation / capability consumption (RFC-002 §9.1:557)
         "apply_committed",
         "apply_benefit",
         "claim_capability",
         "fold_commands",
         "available_headroom",
         "credible_union_capacity",
-        # ioc — broker-command construction (RFC-002 §10.7:724; RFC-005 §7:210-213)
         "compile_command",
-        # are / afg / cur — another authority's own decision production
         "risk_decision",
         "action_flow_decision",
         "vector_complete",
-        # afg — permit consumption
         "permit_single_use",
     }
 )
@@ -112,7 +89,6 @@ def test_an_engine_record_cannot_be_built_with_authority() -> None:
             step=CommitmentStep.ATOMIC_COMMIT,
             outcome=StageOutcome.ADMIT,
             authority_class=StageAuthorityClass.NON_AUTHORITATIVE_PROVISIONAL,
-            # Deliberately illegal per the (non-dict) signature — fail-closed proof.
             authority=cast(
                 AllFalseCoordinatorAuthority, {"mutates_risk_capacity_ledger": True}
             ),

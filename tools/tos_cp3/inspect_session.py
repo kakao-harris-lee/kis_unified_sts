@@ -1,40 +1,5 @@
 #!/usr/bin/env python3
-"""`sts tos inspect` — the legacy-side driver for the per-bar inspection.
-
-Roadmap ``docs/plans/2026-11-11-tos-platform-roadmap.md`` §P1. The operator
-types one session name; this module turns it into the four paths the inspection
-needs and runs the inspection.
-
-**Why this is a driver and not the tool.** The inspection must reuse the DSL
-evaluator (``tos.dsl.vocabulary.eval_compare`` / ``evaluate_policy``) and the
-production strategy loader — re-implementing comparison semantics outside the
-kernel would make the screen's answer a property of this file rather than of the
-strategy, and ``EQ`` is type-strict in a way a hand-rolled comparison gets wrong.
-But the import firewall is **bidirectional**: ``tools/`` is in its reverse scan
-(``tools/tos_firewall_check.py`` TOS-FW-R), so this file may not import ``tos``
-or ``tos_runtime`` at all — the same rule that makes
-:mod:`tools.tos_cp3.session_inputs` read the runtime's sqlite stores as plain
-files instead of importing their classes, and that makes
-:mod:`tools.tos_cp3.produce_fields` drive the legacy Setup D class rather than
-the kernel.
-
-So the two sides meet the way every other CP-3 pair does — through a **process
-boundary**, exactly as ``tools/tos_cp3/runners/cp3_tenant_daily.sh`` boots the
-runtime (``PYTHONPATH=tos/runtime/src:tos/src python -c 'from
-tos_runtime.compose.cli import main; …'``). The inspection core is
-``tos/runtime/cp3/inspect_session.py`` (RUNTIME scope, so it imports the real
-kernel evaluator, the real loader and the real store constants); this module
-resolves paths, builds that process's argv, and hands its output back.
-
-**Read-only.** Nothing here writes: the child process opens the journal, the
-rendered tenant tree and the three sqlite stores for reading only.
-
-Usage::
-
-    sts tos inspect stock-r1-20261110
-    sts tos inspect stock-r1-20261110 --from 09:00 --to 10:00
-    sts tos inspect ~/.local/state/tos/cp3-sessions/stock-r1-20261110 --json
-"""
+"""`sts tos inspect` — the legacy-side driver for the per-bar inspection."""
 
 from __future__ import annotations
 
@@ -47,9 +12,6 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-#: Repo root of the checkout this file belongs to, at the FRONT of ``sys.path``
-#: for the same reason B1a/B2/B3 do it: an editable install of another checkout
-#: must not shadow this worktree's ``tools/``.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -68,30 +30,12 @@ __all__ = [
     "run",
 ]
 
-#: The child module the core lives in. ``cp3`` is importable only with
-#: ``tos/runtime`` on ``PYTHONPATH`` (see :func:`child_pythonpath`) — the same
-#: invocation ``tos/runtime/cp3/__init__.py`` documents for the B1b runner.
 INSPECT_MODULE = "cp3.inspect_session"
 
-#: The three source roots the child needs, repo-root-relative, in the order
-#: ``cp3_tenant_daily.sh`` and ``run_tenant_session.sh`` already use.
 CHILD_PYTHONPATH_PARTS: tuple[str, ...] = ("tos/src", "tos/runtime/src", "tos/runtime")
 
-#: A tenant's durable-set parent is ``<state_dir>/<tree_id><suffix>`` and its
-#: leaf is the instrument — the shape ``TENANT_DATA_PARENT`` /
-#: ``TOS_STOCK_DATA_PARENT`` is set to for every tracked tenant session
-#: (``tools/tos_cp3/runners/stock-mock-session.env.example``;
-#: ``run_tenant_session.sh`` 499행 ``DATA_LEAF=$TENANT_DATA_PARENT/$INSTRUMENT``).
-#: It is a derivation, not a declaration, which is why ``--data-dir`` overrides
-#: it and a missing directory refuses by name instead of being inferred further.
 TENANT_DATA_PARENT_SUFFIX = "-data"
 
-#: The rendered tenant tree's strategy directory and bindings file, as the
-#: production loader names them (``tos_runtime.strategy.resolve.STRATEGIES_DIRNAME``
-#: / ``tos_runtime.strategy.bindings.STRATEGY_BINDINGS_FILE_NAME``). Restated
-#: here because the firewall forbids importing them; the child re-checks both
-#: names through the real constants and refuses a mismatch, so a drift in either
-#: literal fails loudly in the child rather than silently here.
 RENDER_DIRNAME = "render"
 STRATEGIES_DIRNAME = "strategies"
 STRATEGY_BINDINGS_FILE_NAME = "strategy_bindings.yaml"
@@ -105,23 +49,13 @@ class InspectRefusal(Exception):
 
 @dataclass(frozen=True)
 class InspectRun:
-    """One inspection's result, with the child's two streams kept apart.
-
-    Merging them was wrong (review of #1057, LOW-2): on a successful ``--json``
-    run, anything the child wrote to stderr — a warning, a deprecation notice
-    from a dependency — ended up glued to the document and made it unparseable.
-    A caller writes :attr:`stdout` to stdout and :attr:`stderr` to stderr, so a
-    machine consumer reading stdout alone always gets a valid document or
-    nothing.
-    """
+    """One inspection's result, with the child's two streams kept apart."""
 
     stdout: str
     stderr: str
     exit_code: int
 
 
-#: ``(argv, env) -> InspectRun``. Injected so the resolution and argv
-#: construction above can be tested without starting a process.
 Runner = Callable[[Sequence[str], Mapping[str, str]], InspectRun]
 
 
@@ -140,11 +74,7 @@ class SessionPaths:
 
 
 def _read_manifest(render_dir: Path) -> tuple[str, str]:
-    """``(instrument, tree_id)`` from the session's own render manifest.
-
-    Raises:
-        InspectRefusal: The manifest is absent, unreadable, or names neither.
-    """
+    """``(instrument, tree_id)`` from the session's own render manifest."""
     manifest_path = render_dir / RENDERED_MANIFEST_NAME
     if not manifest_path.is_file():
         raise InspectRefusal(
@@ -167,13 +97,7 @@ def _read_manifest(render_dir: Path) -> tuple[str, str]:
 
 
 def _sole_strategy_file(render_dir: Path) -> Path:
-    """The one strategy file the rendered tree holds.
-
-    Raises:
-        InspectRefusal: The directory is absent, empty, or holds more than one
-            file — which strategy a session ran is a fact of the render, so two
-            candidates are refused rather than one of them picked.
-    """
+    """The one strategy file the rendered tree holds."""
     strategies_dir = render_dir / STRATEGIES_DIRNAME
     if not strategies_dir.is_dir():
         raise InspectRefusal(
@@ -202,27 +126,7 @@ def resolve_session(
     data_dir: Path | None = None,
     with_evidence: bool = True,
 ) -> SessionPaths:
-    """Resolve one session reference into the paths the inspection reads.
-
-    Args:
-        session: A session directory name (``stock-r1-20261110``) under
-            ``state_dir / sessions_subdir``, or a path to such a directory.
-        state_dir: The state root (``config/tos_status_board.yaml::state_dir``,
-            or ``--state-dir``).
-        sessions_subdir: The tenant-session parent's name under ``state_dir``.
-        data_dir: An explicit durable-set leaf, or ``None`` to derive it from
-            the manifest's ``tree_id`` and ``instrument``.
-        with_evidence: ``False`` skips the durable set entirely (rule evaluation
-            only) — for a session whose stores were archived or moved away.
-
-    Returns:
-        The resolved :class:`SessionPaths`.
-
-    Raises:
-        InspectRefusal: The session directory, its journal, its render tree, its
-            manifest, its strategy file, its bindings file, or a derived data
-            directory is absent or ambiguous.
-    """
+    """Resolve one session reference into the paths the inspection reads."""
     candidate = Path(session).expanduser()
     session_dir = (
         candidate if candidate.is_dir() else state_dir / sessions_subdir / session
@@ -277,11 +181,7 @@ def build_argv(
     as_json: bool = False,
     executable: str | None = None,
 ) -> list[str]:
-    """The child process's argv for ``paths``.
-
-    ``-P`` keeps the child's ``sys.path`` free of its own script directory, the
-    same hardening every ``tools/tos_cp3`` runner invocation uses.
-    """
+    """The child process's argv for ``paths``."""
     argv = [
         executable or sys.executable,
         "-P",
@@ -340,25 +240,7 @@ def run(
     with_evidence: bool = True,
     runner: Runner = _subprocess_runner,
 ) -> InspectRun:
-    """Resolve ``session`` and render its inspection.
-
-    Args:
-        session: The session directory name or path.
-        config_path: The status-board config the state root is read from.
-        state_dir: Overrides the config's ``state_dir``.
-        data_dir: An explicit durable-set leaf.
-        window_from: Inclusive KST ``HH:MM`` lower bound.
-        window_to: Inclusive KST ``HH:MM`` upper bound.
-        as_json: Render the machine document instead of the table.
-        with_evidence: ``False`` inspects the rules without the durable set.
-        runner: The process runner (injected for tests).
-
-    Returns:
-        The :class:`InspectRun` — exit code ``2`` on any refusal raised here
-        (with the message on ``stderr`` and an EMPTY ``stdout``, so a
-        ``--json`` caller never sees a refusal sentence where a document
-        should be), else the child's own streams and code.
-    """
+    """Resolve ``session`` and render its inspection."""
     try:
         config = status_board.load_config(config_path)
         root = (
@@ -416,11 +298,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Render one inspection, keeping the child's two streams on their own.
-
-    A ``--json`` run's stdout is therefore a valid document or empty, never a
-    document with a diagnostic appended (review of #1057, LOW-2).
-    """
+    """Render one inspection, keeping the child's two streams on their own."""
     args = _parser().parse_args(argv)
     outcome = run(
         session=args.session,

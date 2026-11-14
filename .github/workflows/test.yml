@@ -6,7 +6,7 @@ name: Tests
 # tests/tos_l3/) moved to .github/workflows/tos-firewall.yml, which already
 # runs on every PR/push with no path gating. This job carries the heavy
 # runtime stack (Redis service, full `.[dev]` install, ~25min) and gates
-# nothing tos-specific, so a PR that only touches tos/tos-spec/docs/config
+# nothing tos-specific, so a PR that only touches tos/docs/config
 # no longer needs to pay for it.
 #
 # Why `paths` with `!` and not `paths-ignore`: one directory inside an
@@ -49,17 +49,11 @@ on:
       - '**'
       # The former paths-ignore set, carried over verbatim as negations.
       - '!tos/**'
-      - '!tos-spec/**'
-      - '!tos-evidence/**'
       - '!docs/**'
       - '!**.md'
       - '!.claude/**'
-      - '!config/tos_completion.yaml'
       - '!tools/tos_*'
-      - '!tools/u17-verify.sh'
-      - '!tools/wfcanon-v222.py'
       - '!tests/tools/test_tos_*'
-      - '!tests/tools/test_u17_verify.py'
       - '!tests/tos_l3/**'
       - '!.github/workflows/tos-*.yml'
       # MUST STAY LAST — patterns are checked sequentially and the last match
@@ -259,7 +253,6 @@ jobs:
           # shellcheck disable=SC2086  # word splitting is the point here
           pytest $TARGETS $SHARD_IGNORES \
             --ignore-glob='tests/tools/test_tos_*.py' \
-            --ignore=tests/tools/test_u17_verify.py \
             --ignore=tests/tos_l3 \
             -n auto --dist ${{ matrix.dist }} -m "not serial" \
             --timeout=180 --timeout-method=thread \
@@ -321,7 +314,6 @@ jobs:
         run: |
           pytest tests/ \
             --ignore-glob='tests/tools/test_tos_*.py' \
-            --ignore=tests/tools/test_u17_verify.py \
             --ignore=tests/tos_l3 \
             -m serial \
             --timeout=180 --timeout-method=thread \

@@ -1,19 +1,4 @@
-"""S-2 / S-3 — conservative fill and no-stale re-derivation (design #39 §5.1).
-
-The three obligations under test, each both ways:
-
-* an **incomplete** store fills conservatively and a **complete** one is not touched;
-* a **stale cache** is discarded and never consulted, while the store's own value is;
-* the reload's result is exactly ``reconstruct_conservative`` of what the store said —
-  asserted over the **full enum cross-product** of the two dimensions the §13 projection
-  actually moves, so the design §4 catalog's eight cells are a deterministic sample of a
-  swept space rather than the whole of what was checked.
-
-Hypothesis is not used here: the space is small and finite, so it is enumerated
-exhaustively (a sampled property would be strictly weaker). The suite is
-seed-independent by construction; the harness still pins ``--hypothesis-seed=0`` and
-``PYTHONHASHSEED=0`` for the run record (VER §9.1).
-"""
+"""S-2 / S-3 — conservative fill and no-stale re-derivation (design #39 §5.1)."""
 
 from __future__ import annotations
 
@@ -42,8 +27,6 @@ from tos.staterestore import (
 
 _IDENTITY = "INTENT-RELOAD-TEST"
 
-#: ADR-002-005 §13 line 199 — the two positive-knowledge values a restart may never
-#: arrive at. Stated here as data so the assertion is a set membership, not a comment.
 _FORBIDDEN_POST_RESTART_KNOWLEDGE = frozenset(
     {KnowledgeState.RECONCILED, KnowledgeState.CONSISTENT}
 )
@@ -67,11 +50,6 @@ def _write(tmp_path, composite: CompositeState, *, stop_after: int | None = None
     with CompositeStateStore(path) as store:
         store.commit_composite(composite, stop_after=stop_after)
     return path
-
-
-# --------------------------------------------------------------------------
-# S-2 conservative fill — both ways
-# --------------------------------------------------------------------------
 
 
 def test_a_complete_store_needs_no_fill(tmp_path) -> None:
@@ -100,13 +78,7 @@ def test_an_incomplete_store_fills_the_absent_dimensions_conservatively(
 
 
 def test_an_absent_attempt_marker_reads_as_no_attempt_started(tmp_path) -> None:
-    """§6 line 96 — ``SEND_STARTED`` is durable *before* the external call.
-
-    So no durable attempt marker structurally means the external call had not been made.
-    This is the one fill that is *not* the most conservative value of its dimension, and
-    it is admissible only because of that write-ahead ordering — which the store's own
-    commit-order test pins.
-    """
+    """§6 line 96 — ``SEND_STARTED`` is durable *before* the external call."""
     path = _write(tmp_path, _composite(), stop_after=2)
     outcome = reload_conservative(path, _IDENTITY)
     assert (
@@ -129,12 +101,7 @@ def test_an_absent_intent_marker_is_refused_not_filled(tmp_path) -> None:
 
 
 def test_the_fill_table_has_no_intent_entry() -> None:
-    """The refusal above is structural, not a branch someone can 'complete'.
-
-    Adding ``StateDimension.INTENT`` to the fill table would be adding a fabricated
-    identity, and the loop that consumes the table would then happily reconstruct an
-    unidentifiable record. Asserting the key's absence makes that edit fail here first.
-    """
+    """The refusal above is structural, not a branch someone can 'complete'."""
     assert StateDimension.INTENT not in ABSENT_DIMENSION_FILL
     assert set(ABSENT_DIMENSION_FILL) == {
         StateDimension.TRANSMISSION_ATTEMPT,
@@ -145,13 +112,7 @@ def test_the_fill_table_has_no_intent_entry() -> None:
 
 
 def test_no_fill_value_is_an_optimistic_one() -> None:
-    """§13 line 199 / §7 line 120 — absence never becomes good news.
-
-    Named explicitly rather than left implicit in the table: a future edit that made an
-    absent Broker read as ``NONE_OBSERVED`` (an "order was never placed" claim) or an
-    absent Knowledge read as ``RECONCILED`` would be exactly the fail-open this stage
-    exists to detect.
-    """
+    """§13 line 199 / §7 line 120 — absence never becomes good news."""
     assert ABSENT_DIMENSION_FILL[StateDimension.KNOWLEDGE] is KnowledgeState.UNOBSERVED
     assert (
         ABSENT_DIMENSION_FILL[StateDimension.KNOWLEDGE]
@@ -164,11 +125,6 @@ def test_no_fill_value_is_an_optimistic_one() -> None:
         ABSENT_DIMENSION_FILL[StateDimension.BROKER_ORDER]
         is not BrokerOrderState.NONE_OBSERVED
     )
-
-
-# --------------------------------------------------------------------------
-# S-3 no stale cache — both ways
-# --------------------------------------------------------------------------
 
 
 def test_a_stale_optimistic_cache_is_discarded_and_never_consulted(tmp_path) -> None:
@@ -189,19 +145,7 @@ def test_a_stale_optimistic_cache_is_discarded_and_never_consulted(tmp_path) -> 
 
 
 def test_a_refused_open_leaves_the_caches_alone(tmp_path) -> None:
-    """**Review round-3 F4.** Discarding is irreversible; a refused open must not do it.
-
-    ``StoreOpenRefused`` exists so a caller can tell a retryable substrate failure from
-    a verdict about a store it read. That is only useful if a retry still has the same
-    evidence in front of it — and the discard unlinks files, so an order that destroyed
-    them on the way to reporting the failure made the distinction worth less than it
-    looked.
-
-    The refusal is provoked without ``chmod`` (so it holds as root too): the store
-    path's parent is a regular file, so the constructor's ``mkdir`` raises
-    ``NotADirectoryError`` before sqlite is ever called — which is also the ``OSError``
-    family review round-3 F3 found escaping the boundary unclassified.
-    """
+    """**Review round-3 F4.** Discarding is irreversible; a refused open must not do it."""
     blocker = tmp_path / "not-a-directory"
     blocker.write_text("", encoding="utf-8")
     cache = tmp_path / "resume.cache.json"
@@ -216,16 +160,7 @@ def test_a_refused_open_leaves_the_caches_alone(tmp_path) -> None:
 def test_a_parent_that_cannot_be_created_is_a_classified_open_refusal(
     tmp_path,
 ) -> None:
-    """**Review round-3 F3.** ``mkdir`` fails before sqlite, and used to escape raw.
-
-    ``CompositeStateStore.__init__`` creates the store's parent directory before it
-    connects, so a parent that is a regular file raises ``OSError`` from a line the
-    open boundary did not cover — reaching the caller as an unclassified error and the
-    L3 worker as exit 1, the outcome that boundary was added to remove. Measured, the
-    error is ``FileExistsError`` (``mkdir(exist_ok=True)`` still refuses when the path
-    exists and is not a directory); the refusal names whichever one it caught rather
-    than asserting a particular errno, since the family is what matters.
-    """
+    """**Review round-3 F3.** ``mkdir`` fails before sqlite, and used to escape raw."""
     blocker = tmp_path / "not-a-directory"
     blocker.write_text("", encoding="utf-8")
 
@@ -238,11 +173,7 @@ def test_a_parent_that_cannot_be_created_is_a_classified_open_refusal(
 
 
 def test_the_store_value_is_what_flows_through_not_a_constant(tmp_path) -> None:
-    """The other way: a *different* durable Knowledge produces a different result.
-
-    Without this, a reload hardcoded to emit ``UNOBSERVED`` would satisfy every
-    cache-rejection assertion above while re-deriving nothing at all.
-    """
+    """The other way: a *different* durable Knowledge produces a different result."""
     path = _write(tmp_path, _composite(knowledge_state=KnowledgeState.QUARANTINED))
     outcome = reload_conservative(path, _IDENTITY)
     assert outcome.composite.knowledge_state is KnowledgeState.QUARANTINED
@@ -253,22 +184,12 @@ def test_discarding_an_absent_cache_is_a_no_op(tmp_path) -> None:
     assert discard_caches((tmp_path / "nothing-here.json",)) == ()
 
 
-# --------------------------------------------------------------------------
-# the projection is delegated, and swept exhaustively
-# --------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("broker", list(BrokerOrderState))
 @pytest.mark.parametrize("knowledge", list(KnowledgeState))
 def test_reload_equals_the_ratified_projection_over_the_whole_cross_product(
     tmp_path, broker: BrokerOrderState, knowledge: KnowledgeState
 ) -> None:
-    """9 × 7 = 63 combinations: the reload adds nothing to, and removes nothing from, §13.
-
-    This is what makes the outside catalog a *sample*: the eight design §4 cells are
-    eight points of this swept space, chosen because each is separately argued from the
-    ADR, not because they are the only points that were checked.
-    """
+    """9 × 7 = 63 combinations: the reload adds nothing to, and removes nothing from, §13."""
     committed = _composite(broker_order_state=broker, knowledge_state=knowledge)
     path = tmp_path / f"store-{broker}-{knowledge}.sqlite3"
     with CompositeStateStore(path) as store:
@@ -285,8 +206,6 @@ def test_reload_equals_the_ratified_projection_over_the_whole_cross_product(
     assert outcome.composite.broker_order_state is expected.broker_order_state
     assert outcome.composite.knowledge_state is expected.knowledge_state
     assert outcome.composite.capacity_state is expected.capacity_state
-    # Layer 2, independent of the equality above (design §4): whatever the projection
-    # returns, positive knowledge may never be re-arrived at.
     assert outcome.composite.knowledge_state not in _FORBIDDEN_POST_RESTART_KNOWLEDGE
 
 
@@ -296,13 +215,7 @@ def test_reload_equals_the_ratified_projection_over_the_whole_cross_product(
 def test_both_positive_knowledge_values_are_downgraded_across_a_restart(
     tmp_path, positive: KnowledgeState
 ) -> None:
-    """design §4 L3-07 and its ``CONSISTENT`` sub-case, on the real durable path.
-
-    The outside catalog pins the ``RECONCILED`` cell (ADR-002-005 §14 line 211 verbatim);
-    the ``CONSISTENT`` sub-case is a second member of the same downgrade set and is
-    exercised here rather than as a ninth crash scenario, so the catalog size stays the
-    ratified eight.
-    """
+    """design §4 L3-07 and its ``CONSISTENT`` sub-case, on the real durable path."""
     committed = _composite(
         transmission_attempt_state=TransmissionAttemptState.ACK_OBSERVED,
         broker_order_state=BrokerOrderState.FILLED,
@@ -315,12 +228,11 @@ def test_both_positive_knowledge_values_are_downgraded_across_a_restart(
 
     outcome = reload_conservative(path, _IDENTITY)
     assert outcome.composite.knowledge_state is KnowledgeState.CONFLICTED
-    # the terminal broker order is preserved, not downgraded with it (§13 line 198)
     assert outcome.composite.broker_order_state is BrokerOrderState.FILLED
 
 
 def test_the_identity_is_re_derived_from_the_store(tmp_path) -> None:
-    """ "real identity (logical)" — the reconstruction carries the stored intent identity."""
+    '"real identity (logical)" — the reconstruction carries the stored intent identity.'
     path = _write(tmp_path, _composite())
     outcome = reload_conservative(path, _IDENTITY)
     assert outcome.composite.intent_identity == _IDENTITY

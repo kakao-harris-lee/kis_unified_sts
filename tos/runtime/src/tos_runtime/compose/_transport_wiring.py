@@ -1,51 +1,4 @@
-"""Transport-kind selection + KIS MOCK compose wiring (TOS KIS MOCK transport plan T2 lane C —
-compose wiring, ``docs/plans/2026-09-10-tos-kis-mock-transport-plan.md`` §4 row T2, §8 "T2 must").
-
-**What this module owns.** Everything ``compose --transport {synthetic,kis-mock}`` needs beyond
-what T1 (the adapter package, :mod:`tos_runtime.transport.kis_mock`) and T2 lanes A/B (the codec
-digest binding, :mod:`tos_runtime.compose._request_digest`; the Coordinator non-live admission,
-:mod:`tos_runtime.compose._nonlive_admission`) already landed:
-
-1. :class:`TransportKind` — the two-member closed vocabulary ``compose_paper_runtime``'s new
-   ``transport_kind`` keyword accepts.
-2. :func:`load_transport_config` — loads ``kis_mock_transport.yaml`` for ``kis-mock`` (``None``
-   for ``synthetic``), resolving the host-seal facts (plan §2 decision 5) from the Broker
-   Capability Profile INSTANCE documents rather than trusting the config file to name its own
-   host.
-3. :func:`refuse_transport_scope_mismatch` / :func:`refuse_custody_principal_mismatch` — the two
-   boot-time consistency refusals that keep the transport kind and the active broker scope (and
-   its custody principal) from ever disagreeing about whether this runtime reaches a real broker.
-4. :func:`resolve_transport_boot` — the single call site :mod:`tos_runtime.compose._wiring` uses
-   to run all of the above during boot, kept to ONE call so that module's own size budget stays
-   net-negative (its own module docstring's constraint).
-5. :class:`SealRegistry` — the ``SendSeal`` capture/lookup seam between the kernel gateway's own
-   ``SEND_SEALED`` evidence record and :class:`~tos_runtime.transport.kis_mock.adapter.
-   KisMockTransport`'s injected ``SealLookup`` port.
-6. :func:`build_transport` — constructs either transport (the ``SyntheticPaperTransport``
-   construction moved out of :mod:`tos_runtime.compose._engine_wiring` here unchanged, module
-   docstring item 2 below, or a fully-wired ``KisMockTransport``).
-
-**Why the scope/transport consistency check does not re-author the tuple check.** Condition 3 of
-:func:`~tos_runtime.compose._nonlive_admission.nonlive_broker_consuming_admitted` ("every
-capability tuple MOCK-shaped under BROKER_SIMULATION") is EXACTLY the shape a ``kis-mock``
-transport's active scope must have — :func:`refuse_transport_scope_mismatch` imports and reuses
-that module's own private ``_capability_tuples_mock_simulation`` helper directly rather than
-re-typing the same five-line predicate a second time (two independently-maintained copies of a
-security-relevant condition is worse than one shared one, even a private one).
-
-**Custody-manifest principal, no substitution.** :class:`~tos_runtime.custody.file_custody.
-CustodyManifest` performs NO ``{environment_label}`` token substitution of its own (unlike
-:func:`~tos_runtime.brokercap.scopes.load_broker_scopes`, which does) — see
-``custody.manifest.example.yaml``'s own updated comment. :func:`refuse_custody_principal_mismatch`
-therefore compares the manifest's OWN (already-concrete, per-deployment) principal string against
-``active_scope.principal`` (already ``{environment_label}``-substituted by the broker-scopes
-loader) byte-for-byte; a real deployment's manifest must write the concrete substituted value.
-
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``dataclasses``, ``enum``,
-``pathlib``) + ``tos.brokeradapter``/``tos.egressgw`` + ``tos_runtime.brokercap``/
-``tos_runtime.custody``/``tos_runtime.evidence``/``tos_runtime.time``/``tos_runtime.transport.
-kis_mock``/``tos_runtime.workload`` (transitively, via ``tos.workload``) only. No ``shared.*``.
-"""
+"""Transport-kind selection + KIS MOCK compose wiring (TOS KIS MOCK transport plan T2 lane C —"""
 
 from __future__ import annotations
 
@@ -106,26 +59,12 @@ __all__ = [
     "resolve_transport_boot",
 ]
 
-#: The canonical config-file name under a compose ``config_dir`` for the KIS MOCK transport
-#: config (mirrors ``_engine_wiring.ENGINE_DRIVER_CONFIG_NAME``'s own convention).
 KIS_MOCK_TRANSPORT_CONFIG_NAME = "kis_mock_transport.yaml"
 
-#: The two custody scope names a ``kis-mock`` boot requires (plan §2 decision 4) — the ONE
-#: source of truth for both the provisioning/principal check (:func:`refuse_custody_principal_
-#: mismatch`) and the adapter construction (:func:`build_transport`'s own ``app_key_scope``/
-#: ``app_secret_scope`` kwargs) — independent review MEDIUM-2: these two literals used to be
-#: written twice (once here, once again inline in ``build_transport``), so a mutation swapping
-#: or dropping one there went undetected by every existing test.
-#: C-2 decision (C): the literals now live in :mod:`~tos_runtime.compose._kis_credential_wiring`,
-#: shared with the ``kis_quote`` intake's session.
 _KIS_MOCK_APP_KEY_SCOPE = KIS_MOCK_APP_KEY_SCOPE
 _KIS_MOCK_APP_SECRET_SCOPE = KIS_MOCK_APP_SECRET_SCOPE
 _KIS_MOCK_CUSTODY_SCOPES = (_KIS_MOCK_APP_KEY_SCOPE, _KIS_MOCK_APP_SECRET_SCOPE)
 
-#: The Broker Capability Profile INSTANCE document environment name every KIS MOCK boot's host
-#: seal excludes (plan §2 decision 5) — the same literal ``environment_binding.BROKER_PRODUCTION``
-#: maps to everywhere else in this codebase (``broker_scopes.example.yaml``).
-#: :data:`tos_runtime.brokercap.instance.REAL_ENVIRONMENT` — the one definition (#932 Codex r3).
 _REAL_ENVIRONMENT = REAL_ENVIRONMENT
 
 
@@ -137,20 +76,13 @@ class TransportKind(StrEnum):
 
 
 class TransportWiringError(Exception):
-    """A transport-kind / scope-consistency / custody-principal / host-seal fact could not be
-    proven at boot — fail-closed, never a silent default (module docstring)."""
-
-
-# ===========================================================================
-# Transport config loading — host seal (plan §2 decision 5)
-# ===========================================================================
+    """A transport-kind / scope-consistency / custody-principal / host-seal fact could not be"""
 
 
 def _document_for_environment(
     documents: tuple[InstanceDocument, ...], environment: str
 ) -> InstanceDocument | None:
-    """The single ``documents`` entry whose own ``environment`` equals ``environment``, or
-    ``None`` when zero or more than one match — never an ambiguous pick."""
+    """The single ``documents`` entry whose own ``environment`` equals ``environment``, or"""
     matches = [
         document for document in documents if document.environment == environment
     ]
@@ -162,39 +94,7 @@ def load_transport_config(
     config_dir: Path,
     broker_scopes: BrokerScopesConfig,
 ) -> KisMockTransportConfig | None:
-    """Load ``kis_mock_transport.yaml`` for ``kis-mock`` (``None`` for ``synthetic``).
-
-    The two REST-base host-seal facts (plan §2 decision 5) come from the Broker Capability
-    Profile INSTANCE documents, never the config file itself: this function loads EVERY document
-    at ``broker_scopes.instance_path`` (:func:`~tos_runtime.brokercap.instance
-    .load_instance_documents`), takes the active scope's own bound document (its
-    ``instance.environment``) as the MOCK fact and the fixed :data:`_REAL_ENVIRONMENT` document as
-    the REAL fact, and passes both into
-    :func:`~tos_runtime.transport.kis_mock.config.load_kis_mock_transport_config` along with
-    ``codec_bound=True`` — this module's own attestation that :func:`build_transport` (via this
-    module's caller) actually binds
-    :class:`~tos_runtime.compose._request_digest.KisWireCodecDigest` into the compose context
-    resolver for a ``kis-mock`` boot (T2 lane A's own gate).
-
-    Args:
-        kind: The selected transport kind.
-        config_dir: The compose config directory (``kis_mock_transport.yaml`` lives directly
-            under it).
-        broker_scopes: The already-loaded scope table — ``active_scope.instance`` and
-            ``instance_path`` supply the two host-seal facts.
-
-    Returns:
-        ``None`` for ``synthetic``; the fully-valued config for ``kis-mock``.
-
-    Raises:
-        TransportWiringError: ``kind`` is ``kis-mock`` and the active scope declares no
-            ``instance`` block, ``broker_scopes.instance_path`` is unset, the MOCK or REAL
-            document cannot be uniquely resolved, or either document's own ``rest_base`` is
-            unknown — the host seal cannot be proven without every one of these facts.
-        BrokerInstanceConfigError: The instance file cannot be loaded (propagated, not swallowed).
-        KisMockTransportConfigError: The transport config itself fails fail-closed validation
-            (propagated, not swallowed).
-    """
+    """Load ``kis_mock_transport.yaml`` for ``kis-mock`` (``None`` for ``synthetic``)."""
     if kind is TransportKind.SYNTHETIC:
         return None
     mock_rest_base, real_rest_base = instance_rest_bases(broker_scopes)
@@ -207,13 +107,7 @@ def load_transport_config(
 
 
 def instance_rest_bases(broker_scopes: BrokerScopesConfig) -> tuple[str, str]:
-    """The two host-seal facts ``(mock rest_base, REAL rest_base)`` from the INSTANCE documents
-    (:func:`load_transport_config`'s docstring) — the one place they are resolved, so the order
-    transport and the stock fill witness are sealed by the same two values.
-
-    Raises:
-        TransportWiringError: See :func:`load_transport_config`.
-    """
+    """The two host-seal facts ``(mock rest_base, REAL rest_base)`` from the INSTANCE documents"""
     scope = broker_scopes.active_scope
     if scope.instance is None or broker_scopes.instance_path is None:
         raise TransportWiringError(
@@ -241,27 +135,10 @@ def instance_rest_bases(broker_scopes: BrokerScopesConfig) -> tuple[str, str]:
     return mock_document.rest_base, real_document.rest_base
 
 
-# ===========================================================================
-# Boot-time consistency refusals
-# ===========================================================================
-
-
 def refuse_transport_scope_mismatch(
     kind: TransportKind, broker_scopes: BrokerScopesConfig
 ) -> None:
-    """Refuse boot when ``kind`` and the active scope disagree about whether this runtime reaches
-    a real broker (plan §2 decisions 5/7 — one source of truth).
-
-    ``kis-mock`` requires the active scope's own derived
-    :class:`~tos.egressgw.TransportNature` to have ``reaches_broker is True`` AND every one of the
-    scope's own capability tuples to be MOCK-shaped under ``BROKER_SIMULATION`` — reusing
-    :mod:`tos_runtime.compose._nonlive_admission`'s own private tuple-check helper (module
-    docstring: "do not re-author the tuple check"), never a second, independently-typed copy of a
-    security-relevant condition. ``synthetic`` requires ``reaches_broker is False``.
-
-    Raises:
-        TransportWiringError: The active scope's shape does not match ``kind``.
-    """
+    """Refuse boot when ``kind`` and the active scope disagree about whether this runtime reaches"""
     scope = broker_scopes.active_scope
     nature = scope_transport_nature(scope)
     if kind is TransportKind.KIS_MOCK:
@@ -284,26 +161,7 @@ def refuse_transport_scope_mismatch(
 def refuse_custody_principal_mismatch(
     kind: TransportKind, custody: FileCustody, active_scope: BrokerScope
 ) -> None:
-    """Refuse boot when a ``kis-mock`` custody scope's own manifest principal does not equal the
-    active scope's own principal (plan §2 decision 4 — "one principal names both the credential
-    and the route"). A no-op for ``synthetic``.
-
-    Args:
-        kind: The selected transport kind.
-        custody: The already-constructed :class:`~tos_runtime.custody.file_custody.FileCustody` —
-            :meth:`~tos_runtime.custody.file_custody.FileCustody.scope_principal` is used, never
-            :meth:`~tos_runtime.custody.file_custody.FileCustody.load` (zero secret I/O for this
-            check).
-        active_scope: The active broker scope.
-
-    Raises:
-        TransportWiringError: Either scope's manifest principal does not equal
-            ``active_scope.principal``.
-        CustodyScopeNotProvisioned: A ``kis_mock.*`` scope is not provisioned (propagated —
-            :data:`~tos_runtime.custody.file_custody.PROVISIONED_SCOPES` must already carry it,
-            module docstring).
-        CustodyLoadRefused: The manifest does not configure a ``kis_mock.*`` scope (propagated).
-    """
+    """Refuse boot when a ``kis-mock`` custody scope's own manifest principal does not equal the"""
     if kind is not TransportKind.KIS_MOCK:
         return
     for scope_name in _KIS_MOCK_CUSTODY_SCOPES:
@@ -319,15 +177,7 @@ def refuse_custody_principal_mismatch(
 
 @dataclass(frozen=True)
 class TransportBootResult:
-    """:func:`resolve_transport_boot`'s return value.
-
-    Attributes:
-        transport_config: The loaded KIS MOCK transport config (``None`` for ``synthetic``).
-        extra_config_files: The transport-specific config file(s) boot-integrity attestation
-            (:func:`~tos_runtime.compose._boot_integrity.record_operator_attested_inputs`) should
-            record a digest row for — empty for ``synthetic``, ``(kis_mock_transport.yaml,)`` for
-            ``kis-mock``.
-    """
+    """:func:`resolve_transport_boot`'s return value."""
 
     transport_config: KisMockTransportConfig | None
     extra_config_files: tuple[Path, ...]
@@ -339,22 +189,7 @@ def resolve_transport_boot(
     broker_scopes: BrokerScopesConfig,
     custody: FileCustody,
 ) -> TransportBootResult:
-    """The ONE call site :mod:`tos_runtime.compose._wiring` uses during boot for every
-    transport-kind fact this module owns (module docstring item 4) — load the config, run both
-    consistency refusals, and report which extra file(s) boot-integrity should attest.
-
-    Args:
-        kind: The selected transport kind.
-        config_dir: The compose config directory.
-        broker_scopes: The already-loaded scope table.
-        custody: The already-constructed custody port.
-
-    Returns:
-        The :class:`TransportBootResult`.
-
-    Raises:
-        TransportWiringError: Any of the refusals above.
-    """
+    """The ONE call site :mod:`tos_runtime.compose._wiring` uses during boot for every"""
     transport_config = load_transport_config(kind, config_dir, broker_scopes)
     refuse_transport_scope_mismatch(kind, broker_scopes)
     refuse_custody_principal_mismatch(kind, custody, broker_scopes.active_scope)
@@ -368,50 +203,14 @@ def resolve_transport_boot(
     )
 
 
-# ===========================================================================
-# SendSeal capture — the adapter's injected SealLookup port
-# ===========================================================================
-
-
 @dataclass
 class SealRegistry:
-    """Captures the kernel gateway's own ``SEND_SEALED`` evidence record's
-    :class:`~tos.egressgw.SendSeal`, keyed by ``attempt_id``, and serves it back to
-    :class:`~tos_runtime.transport.kis_mock.adapter.KisMockTransport`'s injected ``SealLookup``
-    port — SINGLE-USE (:meth:`__call__` pops): a second lookup for the same attempt returns
-    ``None``, mirroring the kernel gateway's own at-most-one-send-per-attempt discipline. Never
-    reconstructs a seal from any other source.
-
-    **Only wired for ``kis-mock`` (independent review HIGH-1).** A caller MUST wire
-    :meth:`capture` as the gateway evidence sink's ``on_record`` observer ONLY when this
-    registry actually has a consumer (:func:`build_transport`'s ``kis-mock`` branch) — see
-    :mod:`tos_runtime.compose._engine_wiring`'s own construction site. Wiring it unconditionally
-    (the pre-fix behaviour) meant every ``SendSeal`` on the DEFAULT ``synthetic`` path — which
-    never calls :meth:`__call__` at all — accumulated in :attr:`_seals` for the process lifetime,
-    an unbounded in-memory retention on every existing deployment, not only ``kis-mock`` ones.
-
-    **Bounding the ``kis-mock`` registry itself (HIGH-1's second half).** Under normal (non-crash)
-    operation, ``tos.egressgw.gateway.BrokerEgressGateway.__call__`` never halts between recording
-    ``SEND_SEALED`` and calling the transport — so every captured seal is popped by the adapter's
-    own single-use lookup almost immediately. The one reachable exception is a sink itself raising
-    between those two points (a crash-adjacent path the kernel already treats as "possibly live",
-    module docstring of ``tos.egressgw.gateway``) — bounded to at most one stale entry per such
-    crash, not unbounded growth. As defense in depth against a future gateway change that DOES
-    halt in that window, :meth:`capture` also evicts any earlier-captured seal for the SAME
-    ``attempt_id`` the moment a ``SEND_REFUSED`` record arrives for it — a refusal recorded for an
-    attempt this registry already holds a seal for means that seal was never (and will never be)
-    consumed.
-    """
+    """Captures the kernel gateway's own ``SEND_SEALED`` evidence record's"""
 
     _seals: dict[str, SendSeal] = field(default_factory=dict)
 
     def capture(self, record: GatewayEvidenceRecord) -> None:
-        """The :class:`~tos_runtime.evidence.sinks.GatewayEvidenceSinkAdapter` ``on_record``
-        observer (wired ONLY for ``kis-mock``, class docstring) — captures ``record.send_seal``
-        for a ``kind == "SEND_SEALED"`` record, evicts any stale entry on a later
-        ``kind == "SEND_REFUSED"`` for the same attempt (class docstring's bounding discipline),
-        and is a no-op for every other kind.
-        """
+        """The :class:`~tos_runtime.evidence.sinks.GatewayEvidenceSinkAdapter` ``on_record``"""
         if record.attempt_id is None:
             return
         if record.kind == "SEND_SEALED" and record.send_seal is not None:
@@ -427,15 +226,7 @@ class SealRegistry:
 def _evidence_recorder(
     store: SqliteEvidenceStore, runtime_identity: RuntimeIdentity
 ) -> EvidenceRecorder:
-    """Adapt :class:`~tos_runtime.transport.kis_mock.adapter.KisMockTransport`'s injected
-    ``EvidenceRecorder`` Protocol (``record(kind, fields)``) onto
-    :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.append` — the same
-    ``kind``-as-``record_class`` default every other bare adapter in this compose root uses when
-    no operator-configured taxonomy exists (CLAUDE.md "configuration-driven only" — there is no
-    such taxonomy for this adapter's own evidence kinds yet). Returns a plain function — a
-    structural (``Protocol``) match for ``EvidenceRecorder``'s own ``__call__`` shape, typed
-    explicitly as that Protocol (rather than a bare ``Callable``) so mypy resolves the match.
-    """
+    """Adapt :class:`~tos_runtime.transport.kis_mock.adapter.KisMockTransport`'s injected"""
 
     def _record(kind: str, fields: Mapping[str, Any]) -> None:
         store.append(
@@ -448,14 +239,7 @@ def _evidence_recorder(
     return _record
 
 
-#: Public name for the compose root's other callers (``_finalize_wiring`` builds the KIS
-#: credential registry's evidence sink with it — C-2 decision (C)).
 evidence_recorder = _evidence_recorder
-
-
-# ===========================================================================
-# Transport construction
-# ===========================================================================
 
 
 def _build_synthetic_transport(
@@ -463,19 +247,7 @@ def _build_synthetic_transport(
     venue_ledger: SyntheticVenueLedger | None,
     trading_date_now: Callable[[], str | None] | None,
 ) -> Transport:
-    """The ``synthetic`` branch of :func:`build_transport` (split out for the function budget).
-
-    The kernel ``SyntheticPaperTransport(SyntheticFillPolicy(...))`` is constructed here
-    unchanged. With a ``venue_ledger`` it is wrapped in a
-    :class:`~tos_runtime.venue_ledger.synthetic.RecordingSyntheticTransport` (#1011 P2), which
-    records every result into the venue's own file BEFORE returning it — so "the venue accepted
-    it and nothing recorded it" is unrepresentable.
-
-    Raises:
-        TransportWiringError: A ledger was supplied without the runtime's trusted trading-date
-            reader. An undated row carries no ``order_date`` for the witness's cross-reference
-            join at all, so this fails the boot rather than recording rows no witness can join.
-    """
+    """The ``synthetic`` branch of :func:`build_transport` (split out for the function budget)."""
     synthetic = SyntheticPaperTransport(
         SyntheticFillPolicy(fill_numerator=1, fill_denominator=1, lot_size=Decimal("1"))
     )
@@ -505,61 +277,7 @@ def build_transport(
     credential_sessions: KisCredentialSessions,
     venue_ledger: SyntheticVenueLedger | None = None,
 ) -> Transport:
-    """Construct the selected transport (module docstring item 6).
-
-    ``synthetic`` builds the SAME ``SyntheticPaperTransport(SyntheticFillPolicy(...))``
-    :mod:`tos_runtime.compose._engine_wiring` used to construct inline (moved here unchanged, no
-    behavioural difference). ``kis-mock`` builds a fully-wired
-    :class:`~tos_runtime.transport.kis_mock.adapter.KisMockTransport`, using
-    :func:`~tos_runtime.transport.kis_mock.client.build_client` as its own module docstring
-    requires (reviewer F3 — the ONLY sanctioned production client construction path; an injected
-    client stays a test seam this compose root never uses).
-
-    Args:
-        kind: The selected transport kind.
-        transport_config: The loaded KIS MOCK config (required, non-``None``, for ``kis-mock``;
-            ignored for ``synthetic``).
-        custody: The credential port — ``kis_mock.app_key``/``kis_mock.app_secret`` scopes
-            (already provisioned, :data:`~tos_runtime.custody.file_custody.PROVISIONED_SCOPES`).
-        monotonic: The injected monotonic clock (pacing + token bookkeeping).
-        seal_lookup: The :class:`SealRegistry` this same boot wires as the gateway evidence sink's
-            ``on_record`` observer — the SAME instance, so what the gateway captures is exactly
-            what this transport can look up.
-        evidence_store: The durable evidence store the adapted ``EvidenceRecorder`` appends into.
-        runtime_identity: Bound onto every evidence record the adapted recorder appends.
-        trading_date_now: Forwarded to the ``kis-mock`` adapter (its own docstring); ignored for
-            ``synthetic``.
-        credential_sessions: This boot's KIS credential registry
-            (:func:`~tos_runtime.compose._kis_credential_wiring.build_kis_credential_sessions`)
-            — the ``kis-mock`` adapter takes the
-            ``kis_mock.*`` session from it. Required, never defaulted: a private registry here
-            would silently give the ``kis_quote`` intake a second token lifecycle for the same
-            app key (the collision C-2 exists to prevent).
-        venue_ledger: #1011 P2 — this boot's synthetic venue ledger
-            (:mod:`tos_runtime.compose._venue_ledger_wiring` decides whether there is one), or
-            ``None``. When present the ``synthetic`` branch returns the SAME kernel transport
-            wrapped in a :class:`~tos_runtime.venue_ledger.synthetic
-            .RecordingSyntheticTransport`, which records every result before returning it.
-
-    Returns:
-        The constructed transport, structurally satisfying the kernel's
-        :class:`~tos.brokeradapter.Transport` Protocol either way.
-
-    Raises:
-        TransportWiringError: ``kind`` is ``kis-mock`` and a ``venue_ledger`` was supplied (the
-            ledger is the SYNTHETIC venue's own record — the primary refusal is
-            :func:`~tos_runtime.compose._venue_ledger_wiring.build_synthetic_venue_ledger`'s,
-            before any file exists; this one is the same refusal restated where the wrapping
-            would actually happen, so a future caller that bypasses that function cannot wrap a
-            broker-reaching transport); or ``kind`` is ``kis-mock`` and ``transport_config`` is
-            ``None`` — a
-            caller contract violation (:func:`resolve_transport_boot` always returns a
-            non-``None`` config for ``kis-mock``; not a reachable state through this module's own
-            call sites, but a typed refusal rather than a bare ``assert`` — independent review
-            MEDIUM-6, matching the Phase 5 W1 ``driver.py`` disposition: a bare ``assert`` is
-            stripped under ``python -O``, degrading into an unrelated ``AttributeError`` several
-            frames from the actual contract violation instead of naming it).
-    """
+    """Construct the selected transport (module docstring item 6)."""
     if kind is TransportKind.SYNTHETIC:
         return _build_synthetic_transport(
             venue_ledger=venue_ledger, trading_date_now=trading_date_now

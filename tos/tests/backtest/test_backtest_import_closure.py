@@ -1,41 +1,4 @@
-"""§9 — import-closure + determinism canaries for ``tos.backtest`` (design #33 §0.3/§4.4/§9).
-
-``tos.backtest`` is a **consumer of the D-E1 integrator**, so design #33 §0.3 states its closure as a
-relation rather than a fresh list: it must be a subset of ``tos.engine``'s closure **plus itself**.
-Two assertions therefore carry different weight:
-
-* **the runtime closure** (this file's ``_ALLOWED_TOS_PACKAGES``) is the engine's closure (now
-  fifteen — ``tos.orthostate`` was added 2026-09-09, Phase 3 wave 2 KW2-C2; see
-  ``tos/tests/engine/test_engine_import_closure.py``) plus ``tos.backtest`` — importing the
-  integrator legitimately pulls in what the integrator assembles, and adding a *new* top-level
-  package beyond that would be a real breach;
-* **the direct-import surface** is the narrower §0.3 list —
-  ``{tos, tos.canonical, tos.ordering, tos.time, tos.dsl, tos.capsule, tos.rcl, tos.engine,
-  tos.backtest}`` — because that is what the harness itself may name. ``are`` / ``afg`` / ``ioc`` /
-  ``venue`` / ``cur`` are reached only through the engine's stand-ins and adapters, never re-authored
-  or re-imported here (design #33 §0.3).
-
-The two packages kept **outside** carry the most weight: ``tos.egress`` (the QCC kernel) and
-``tos.brokercap`` live beyond the D-E4 send-boundary injection point, and the harness reaches the
-send boundary only through the injected ``Transmit`` interface (design #33 §0.3/§7.5).
-
-Beyond the closure, an AST scan of the shipped sources asserts (design #33 §4.4/§9):
-
-  1. no operational package (``shared.*``, ``services.*``, ``cli.*``) and no ``numpy`` / ``pandas`` /
-     ``yaml`` — bar loading is out-of-tree precisely so this stays true (§3.1);
-  2. no ``os.environ`` / ``os.getenv``;
-  3. no dynamic escape — ``exec`` / ``eval`` / ``compile`` / ``__import__`` / ``importlib``;
-  4. no network stdlib — the fill model is a synthetic band, not a sender (RFC-002 §10.8:763);
-  5. **no wall clock** — the harness's time is the coordinate the bar carries (§3.3);
-  6. **no RNG or nonce source** — ``random`` / ``secrets`` / ``uuid`` / the seed-randomized builtin
-     ``hash``. This is what keeps a replay byte-identical: introducing ``uuid4()`` or a timestamp
-     into a fill would destroy replay identity (RFC-003 §10:360-363), and this canary detects it.
-
-Planted-leak and planted-escape canaries prove the checks actually catch what they claim, so "green"
-is evidence the checker works rather than evidence it was neutered.
-
-Regime tag: orchestration authoring evidence only; closes no EV (design #33 §1.1).
-"""
+"""§9 — import-closure + determinism canaries for ``tos.backtest`` (design #33 §0.3/§4.4/§9)."""
 
 from __future__ import annotations
 
@@ -56,8 +19,6 @@ import tos.backtest.results
 import tos.backtest.scenarios
 import tos.backtest.vocabulary
 
-#: The runtime closure allowlist: the ``tos.engine`` closure (design #31 §0.3) **plus** the harness
-#: itself. A subset relation, exactly as design #33 §0.3 states it.
 _ALLOWED_TOS_PACKAGES = frozenset(
     {
         "tos",
@@ -75,17 +36,11 @@ _ALLOWED_TOS_PACKAGES = frozenset(
         "tos.cur",
         "tos.engine",
         "tos.orthostate",
-        # kernel round #3 §2 결정 1 (2026-09-12): tos.engine now directly realizes
-        # tos.nontrade too (the CORPORATE_ACTION handler), reaching every tos.engine
-        # consumer through the already-ratified tos.engine edge — same widening as
-        # tos.orthostate above.
         "tos.nontrade",
         "tos.backtest",
     }
 )
 
-#: The narrower set design #33 §0.3 lets the harness **name directly**. The sibling stage bands are
-#: reached through ``tos.engine.standins`` / ``tos.engine.adapters``, never re-imported here.
 _ALLOWED_DIRECT_IMPORTS = frozenset(
     {
         "tos",
@@ -100,22 +55,18 @@ _ALLOWED_DIRECT_IMPORTS = frozenset(
     }
 )
 
-#: Siblings deliberately kept outside the closure, plus a future one.
 _FORBIDDEN_SIBLINGS = frozenset(
     {
         "tos.authority",
-        "tos.brokercap",  # D-E4 edge — beyond the send-boundary injection point (§7.5)
-        "tos.egress",  # the QCC kernel — never encroached upon (§0.3/§7.5)
-        "tos.egressgw",  # D-E4's future send boundary — excluded by construction
-        "tos.failuredomain",
+        "tos.brokercap",
+        "tos.egress",
+        "tos.egressgw",
         "tos.hag",
         "tos.iap",
         "tos.liveauth",
         "tos.posttrade",
         "tos.protective",
         "tos.recon",
-        "tos.replacement",
-        "tos.rlp",
         "tos.sbr",
         "tos.sci",
         "tos.sir",
@@ -134,7 +85,7 @@ _FORBIDDEN_EXACT = frozenset(
         "shared.streaming",
         "shared.llm",
         "shared.storage",
-        "shared.backtest",  # the differential oracle's *other* side — compared, never imported (§6.1)
+        "shared.backtest",
         "shared.config",
         "shared.config.secrets",
         "shared.determinism",
@@ -146,10 +97,6 @@ _FORBIDDEN_EXACT = frozenset(
         "vectorbt",
     }
 )
-#: ``socket`` / ``ssl`` / ``asyncio`` are deliberately **absent** from the closure denylist: the
-#: allowed third party ``pydantic`` pulls them into ``sys.modules`` on its own, so a
-#: closure-membership assertion about them would measure pydantic, not the harness. The accurate
-#: mechanism is the AST source scan below.
 _FORBIDDEN_PREFIXES = (
     "shared.execution.",
     "shared.kis.",
@@ -171,11 +118,8 @@ _BACKTEST_SRC = Path(__file__).resolve().parents[2] / "src" / "tos" / "backtest"
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "compile", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
-#: Real-clock modules the harness must never import (design #33 §3.3).
 _CLOCK_MODULES = frozenset({"time", "datetime"})
-#: Nondeterministic identity / nonce sources (design #33 §4.4).
 _RNG_MODULES = frozenset({"random", "secrets", "uuid"})
-#: Network / process stdlib.
 _NETWORK_MODULES = frozenset(
     {
         "socket",
@@ -189,7 +133,6 @@ _NETWORK_MODULES = frozenset(
         "ctypes",
     }
 )
-#: Wall-clock / RNG call names that would be nondeterministic even without a module import.
 _NONDETERMINISTIC_CALLS = frozenset(
     {
         "monotonic",
@@ -212,7 +155,6 @@ _NONDETERMINISTIC_CALLS = frozenset(
         "token_urlsafe",
     }
 )
-#: The seed-randomized builtin. Using it for any identity would break cross-process reproduction.
 _FORBIDDEN_BUILTIN_CALLS = frozenset({"hash", "id"})
 
 _BACKTEST_SUBMODULES = (
@@ -230,7 +172,6 @@ _BACKTEST_SUBMODULES = (
     "tos.backtest.vocabulary",
 )
 
-#: Every shipped submodule, imported **statically** (the firewall forbids ``import_module``).
 _LOADED_SUBMODULES = {
     "tos.backtest": tos.backtest,
     "tos.backtest._base": tos.backtest._base,
@@ -382,11 +323,7 @@ def test_backtest_closure_excludes_the_send_boundary_siblings() -> None:
 
 
 def test_backtest_closure_has_no_operational_package_or_dataframe_library() -> None:
-    """(§0.3/§3.1) No ``shared.*``, no services/cli, and no numpy / pandas / vectorbt / yaml.
-
-    ``shared.backtest`` is the differential oracle's *other* side: it is compared against, out of
-    tree, by a comparator that imports neither — and it is never imported here (design #33 §6.1).
-    """
+    """(§0.3/§3.1) No ``shared.*``, no services/cli, and no numpy / pandas / vectorbt / yaml."""
     result = _run_child(_closure_child)
     assert (
         result["forbidden"] == []
@@ -427,7 +364,6 @@ def test_allowlist_classifier_canaries() -> None:
     for sibling in _FORBIDDEN_SIBLINGS | {"tos.not_yet_invented"}:
         assert _is_allowed_tos_module(sibling) is False
         assert _is_allowed_direct_import(sibling) is False
-    # In the closure but NOT directly nameable by a harness source (reached via the engine).
     for indirect in (
         "tos.are",
         "tos.afg",
@@ -444,7 +380,7 @@ def test_allowlist_classifier_canaries() -> None:
     assert _is_forbidden_non_tos("pandas") is True
     assert _is_forbidden_non_tos("pydantic") is False
     assert _is_forbidden_non_tos("decimal") is False
-    assert _is_forbidden_non_tos("click") is False  # must not false-match "cli"
+    assert _is_forbidden_non_tos("click") is False
 
 
 def _ast_offenders(path: Path) -> list[str]:
@@ -527,11 +463,7 @@ def _ast_offenders(path: Path) -> list[str]:
 
 
 def test_source_has_no_escape_env_clock_rng_or_network() -> None:
-    """(§4.4/§9) No dynamic escape, ambient env, wall clock, RNG/nonce, or network in the sources.
-
-    The RNG half is what keeps the fill model reproducible: a ``uuid4()`` or a ``now()`` anywhere on
-    the settlement path would destroy replay identity (RFC-003 §10:360-363).
-    """
+    """(§4.4/§9) No dynamic escape, ambient env, wall clock, RNG/nonce, or network in the sources."""
     sources = sorted(_BACKTEST_SRC.rglob("*.py"))
     assert sources, f"no tos.backtest source files found under {_BACKTEST_SRC}"
     offenders: list[str] = []
@@ -543,21 +475,11 @@ def test_source_has_no_escape_env_clock_rng_or_network() -> None:
 
 
 def test_the_test_suite_is_clock_and_rng_free_too() -> None:
-    """(§9) The suite models nothing the shipped package forbids — including here.
-
-    A determinism canary that scans only ``src`` while its own fixtures seed an RNG would be
-    measuring the wrong thing.
-    """
+    """(§9) The suite models nothing the shipped package forbids — including here."""
     suite = sorted(Path(__file__).resolve().parent.rglob("*.py"))
     offenders: list[str] = []
     for path in suite:
-        offenders.extend(
-            offender
-            for offender in _ast_offenders(path)
-            # ``id()`` is not used, but ``hash``/``id`` bans are about *identity derivation*; the
-            # suite derives none. Everything else applies verbatim.
-            if True
-        )
+        offenders.extend(offender for offender in _ast_offenders(path) if True)
     assert (
         offenders == []
     ), f"forbidden construct found in the backtest suite: {offenders}"
@@ -633,12 +555,7 @@ def test_source_imports_no_module_outside_the_direct_allowlist() -> None:
 
 
 def test_every_submodule_is_covered_by_the_closure_child() -> None:
-    """Anti-phantom: the closure child imports **every** shipped submodule, not a stale subset.
-
-    The #27 FD lesson: locking the export surface is not locking the package. If a new submodule
-    lands and the child does not import it, its imports would never be exercised by the closure
-    scan — so the file list on disk is compared against the child's list.
-    """
+    """Anti-phantom: the closure child imports **every** shipped submodule, not a stale subset."""
     on_disk = {
         f"tos.backtest.{path.stem}" if path.stem != "__init__" else "tos.backtest"
         for path in _BACKTEST_SRC.glob("*.py")
@@ -650,21 +567,17 @@ def test_every_submodule_is_covered_by_the_closure_child() -> None:
 
 
 def test_the_harness_namespace_exposes_no_engine_or_sibling_mutation_symbol() -> None:
-    """(§0.2-1/§2.4 author-level lock) No core-construction or authority symbol is reachable.
-
-    Not merely "the harness does not import it" but "the harness's own namespaces do not carry it":
-    every module's ``vars()`` is swept, not just ``tos.backtest.__all__`` (the #27 FD lesson).
-    """
+    """(§0.2-1/§2.4 author-level lock) No core-construction or authority symbol is reachable."""
     forbidden = (
-        "run_commitment_flow",  # §0.2-1 — the sequencer is consumed, never re-authored
-        "run_decision_pipeline",  # §0.2-1 — the pipeline is the engine's
-        "ProvisionalReservationLedger",  # §2.4 — the ledger is the core's, never the harness's
-        "apply_egress_result",  # §2.4 — the projection transition is the core's
-        "apply_committed",  # rcl — capacity mutation
-        "claim_capability",  # rcl — capability consumption
-        "compile_command",  # ioc — broker-command construction
-        "permit_single_use",  # afg — permit consumption semantics
-        "vector_complete",  # cur — per-send currentness production
+        "run_commitment_flow",
+        "run_decision_pipeline",
+        "ProvisionalReservationLedger",
+        "apply_egress_result",
+        "apply_committed",
+        "claim_capability",
+        "compile_command",
+        "permit_single_use",
+        "vector_complete",
     )
     for module_name, module in _LOADED_SUBMODULES.items():
         for name in forbidden:
@@ -678,14 +591,7 @@ def test_the_harness_namespace_exposes_no_engine_or_sibling_mutation_symbol() ->
 
 
 def test_the_core_type_is_referenced_for_typing_only_and_never_re_exported() -> None:
-    """(§2.4) ``EngineCore`` is a **contract-typing** reference in one module, and nothing more.
-
-    The driver names the type so its ``run(core: EngineCore, ...)`` signature is honest about what
-    it requires. That is deliberately *not* the same as constructing one — the construction ban is
-    proven separately by the AST sweep in ``test_backtest_single_core.py``, which reports any
-    ``EngineCore(...)`` call anywhere in the package. Here the narrower claim is pinned: the harness
-    does not re-export the core, so no consumer can reach a constructor *through* it.
-    """
+    """(§2.4) ``EngineCore`` is a **contract-typing** reference in one module, and nothing more."""
     assert not hasattr(tos.backtest, "EngineCore"), (
         "tos.backtest re-exports EngineCore — the harness's public surface must not offer the core "
         "it is forbidden to re-instantiate (design #33 §2.4)"

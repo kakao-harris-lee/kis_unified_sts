@@ -1,10 +1,4 @@
-"""#966 — resolving an ``attempt_id`` onto its reservation from durable evidence only.
-
-:mod:`tos_runtime.rcl.reservation_lookup` joins ``ATTEMPT_REQUEST_CREATED`` and the step-9
-``FLOW_STEP_ADMITTED`` row on their shared ``event_id``. These pin both directions, the
-fail-closed cases (empty join, ambiguous join, an id the log holds no row for), and the
-pre-#966 fallback that keeps an old ledger resolving.
-"""
+"""#966 — resolving an ``attempt_id`` onto its reservation from durable evidence only."""
 
 from __future__ import annotations
 
@@ -126,11 +120,6 @@ def _resolve(log: SqliteCommitLog, store: SqliteEvidenceStore, attempt_id: str):
     )
 
 
-# ===========================================================================
-# the join, both directions
-# ===========================================================================
-
-
 def test_the_join_resolves_an_attempt_onto_its_permit(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
@@ -149,19 +138,13 @@ def test_the_join_resolves_a_permit_back_onto_its_attempt(
 
 
 def test_two_flows_do_not_cross(evidence_store: SqliteEvidenceStore) -> None:
-    """Each attempt resolves to ITS OWN flow's permit — the concrete failing input for a
-    join that ignored ``event_id`` and simply took the latest step-9 row."""
+    """Each attempt resolves to ITS OWN flow's permit — the concrete failing input for a"""
     _record_commit(evidence_store, event_id="evt-a", permit_identity="afg-permit-a")
     _record_attempt(evidence_store, event_id="evt-a", attempt_id="attempt-a")
     _record_commit(evidence_store, event_id="evt-b", permit_identity="afg-permit-b")
     _record_attempt(evidence_store, event_id="evt-b", attempt_id="attempt-b")
     assert permit_identity_for_attempt(evidence_store, "attempt-a") == "afg-permit-a"
     assert permit_identity_for_attempt(evidence_store, "attempt-b") == "afg-permit-b"
-
-
-# ===========================================================================
-# fail-closed
-# ===========================================================================
 
 
 def test_an_attempt_with_no_evidence_resolves_to_nothing(
@@ -181,30 +164,17 @@ def test_an_attempt_whose_flow_never_committed_resolves_to_nothing(
 def test_an_ambiguous_join_resolves_to_nothing(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    """One flow carrying two distinct step-9 permits is unresolvable, not a pick.
-
-    Concrete failing input for a "take the first" implementation: it would name one of two
-    reservations with no basis, and the release consumer would then transition that one.
-    """
+    """One flow carrying two distinct step-9 permits is unresolvable, not a pick."""
     _record_commit(evidence_store, event_id=_EVENT, permit_identity="afg-permit-x")
     _record_commit(evidence_store, event_id=_EVENT, permit_identity="afg-permit-y")
     _record_attempt(evidence_store, event_id=_EVENT, attempt_id=_ATTEMPT)
     assert permit_identity_for_attempt(evidence_store, _ATTEMPT) is None
 
 
-# ===========================================================================
-# reservation_id_for_attempt: only ever an id the log holds a row for
-# ===========================================================================
-
-
 def test_resolution_requires_the_log_to_hold_the_row(
     rcl_log: SqliteCommitLog, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """The join resolves, but no reservation was ever committed under it -> ``None``.
-
-    This is what keeps a resolved id honest: it is always a row the RCL itself has, never a
-    name the function merely spelled.
-    """
+    """The join resolves, but no reservation was ever committed under it -> ``None``."""
     _record_commit(evidence_store, event_id=_EVENT, permit_identity=_PERMIT)
     _record_attempt(evidence_store, event_id=_EVENT, attempt_id=_ATTEMPT)
     assert _resolve(rcl_log, evidence_store, _ATTEMPT) is None
@@ -223,12 +193,7 @@ def test_resolution_returns_the_per_attempt_row_when_it_exists(
 def test_a_pre_966_ledger_resolves_to_its_scope_level_row(
     rcl_log: SqliteCommitLog, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """A ledger written before #966 holds one ``resv-{acct}-{instr}`` row for the scope.
-
-    Its flow evidence resolves normally — the two joined rows predate #966 — but no per-permit
-    reservation was ever committed, so the scope row is the answer. No migration, no rewrite
-    (plan §2.1).
-    """
+    """A ledger written before #966 holds one ``resv-{acct}-{instr}`` row for the scope."""
     _record_commit(evidence_store, event_id=_EVENT, permit_identity=_PERMIT)
     _record_attempt(evidence_store, event_id=_EVENT, attempt_id=_ATTEMPT)
     legacy = scope_reservation_id(_ACCOUNT, _INSTRUMENT)
@@ -239,12 +204,7 @@ def test_a_pre_966_ledger_resolves_to_its_scope_level_row(
 def test_a_failed_join_never_falls_through_to_the_scope_row(
     rcl_log: SqliteCommitLog, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """review-973 L1: no flow evidence for this attempt -> ``None``, even with a scope row.
-
-    Concrete failing input: the scope holds a reservation committed by a DIFFERENT attempt and
-    this attempt has no join rows at all. Falling through handed the caller that other
-    attempt's reservation, which the release consumer would then transition.
-    """
+    """review-973 L1: no flow evidence for this attempt -> ``None``, even with a scope row."""
     _commit_reservation(rcl_log, scope_reservation_id(_ACCOUNT, _INSTRUMENT))
     assert _resolve(rcl_log, evidence_store, "attempt-with-no-flow-evidence") is None
 
@@ -273,11 +233,6 @@ def test_the_per_attempt_row_wins_over_a_legacy_row(
     assert _resolve(rcl_log, evidence_store, _ATTEMPT) == own
 
 
-# ============================================================================
-# #976 — the join reads each evidence row once, not once per lookup
-# ============================================================================
-
-
 def _count_decodes(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """Count the payload decodes the lookup performs (one per evidence row it reads)."""
     from tos_runtime.rcl import reservation_lookup
@@ -302,10 +257,7 @@ def _seed_flows(store: SqliteEvidenceStore, count: int, *, start: int = 0) -> No
 def test_repeated_lookups_do_not_rescan_the_evidence(
     evidence_store: SqliteEvidenceStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Failing input (#976, review-973 L5): the recon resolver asks once per attempt, and each
-    call decoded every FLOW_STEP_ADMITTED and ATTEMPT_REQUEST_CREATED row — 20 flows, 20
-    lookups, 2 kinds read twice per call: 20 x 80 = 1600 decodes. Now each row once: 40.
-    """
+    """Failing input (#976, review-973 L5): the recon resolver asks once per attempt, and each"""
     _seed_flows(evidence_store, 20)
     decodes = _count_decodes(monkeypatch)
     for i in range(20):
@@ -327,7 +279,7 @@ def test_rows_appended_after_a_lookup_are_seen_and_read_once(
     _seed_flows(evidence_store, 2, start=3)
     assert permit_identity_for_attempt(evidence_store, "attempt-3") == "permit-3"
     assert attempt_id_for_reservation(evidence_store, "permit-4") == "attempt-4"
-    assert decodes[0] == 10  # 6 rows, then the 4 new ones — never the first 6 again
+    assert decodes[0] == 10
 
 
 def _old_scan(store: SqliteEvidenceStore, kind: str) -> list[dict]:
@@ -372,10 +324,7 @@ def _old_attempt_for(store: SqliteEvidenceStore, permit: str) -> str | None:
 def test_incremental_results_equal_the_old_full_scan_at_every_step(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    """Results are identical to the pre-#976 full scan after every batch of appends,
-    including the fail-closed shapes: an ambiguous permit, an attempt whose flow never
-    committed, an admitted row for another step, and non-string ids the old scan skipped.
-    """
+    """Results are identical to the pre-#976 full scan after every batch of appends,"""
     probes = [f"attempt-{i}" for i in range(6)] + ["attempt-x", "attempt-amb"]
     permits = [f"permit-{i}" for i in range(6)] + ["permit-amb-1", "permit-amb-2", "p"]
 
@@ -421,8 +370,7 @@ def test_incremental_results_equal_the_old_full_scan_at_every_step(
 def test_a_lookup_inside_an_open_transaction_bypasses_the_cache(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    """Rows read inside a transaction may still roll back, so they are never cached: after the
-    rollback the lookup answers from committed rows only."""
+    """Rows read inside a transaction may still roll back, so they are never cached: after the"""
     from tos_runtime.rcl import reservation_lookup
 
     _seed_flows(evidence_store, 1)

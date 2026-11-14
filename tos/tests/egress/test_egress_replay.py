@@ -1,8 +1,4 @@
-"""Core §5.5-§5.6 — replay / substitution + capability/permit single-use (design #22; EGRESS-EV-005).
-
-Regime tag: structural / coordinate predicate substrate only; EGRESS-EV-005 substrate;
-EV-L1-complete claim forbidden.
-"""
+"""Core §5.5-§5.6 — replay / substitution + capability/permit single-use (design #22; EGRESS-EV-005)."""
 
 from __future__ import annotations
 
@@ -14,8 +10,6 @@ from tos.egress import (
 )
 
 from ._egress_strategies import clean_replay_observation
-
-# ---- §5.5 replay / substitution classification ---------------------------
 
 
 def test_same_subject_different_bytes_is_critical_conflict() -> None:
@@ -56,9 +50,6 @@ def test_none_observation_is_not_comparable() -> None:
     a = clean_replay_observation(observation_id="o1")
     assert replay_or_substitution_detected(None, a) is RecordPairKind.NOT_COMPARABLE
     assert replay_or_substitution_detected(a, None) is RecordPairKind.NOT_COMPARABLE
-
-
-# ---- §5.6 capability / permit single-use ---------------------------------
 
 
 def test_first_use_with_no_prior_claims_passes() -> None:

@@ -1,10 +1,4 @@
-"""Non-revival + structural absences + append-only (§4.1-§4.5; SA-INV-004/011).
-
-The model provides NO operation that revives an invalidated capability / lease, decreases
-or reuses an epoch, releases capacity from an epoch advance, derives a blind cancel-all,
-or grants a grace period; records are frozen with no lifecycle mutator; and every authority
-artifact's authority_effect is all-false (authority != enforcement).
-"""
+"""Non-revival + structural absences + append-only (§4.1-§4.5; SA-INV-004/011)."""
 
 from __future__ import annotations
 
@@ -36,12 +30,7 @@ def test_recovery_generation_revives_nothing() -> None:
 
 
 def test_no_revive_or_rearm_restoring_operation_exists() -> None:
-    """(canary §4.4) The package exposes no 'generation/epoch increase => validity restored' op.
-
-    The only name mentioning revival is ``recovery_generation_revives_nothing`` — the
-    predicate that *documents* the absence (returns True) — not a revive / re-arm-restore
-    operation. ``rearm_gate`` is non-authorizing (its verdict is all-false), not a restore.
-    """
+    """(canary §4.4) The package exposes no 'generation/epoch increase => validity restored' op."""
     revive_names = [
         name
         for name in dir(authority)
@@ -76,11 +65,7 @@ def test_no_epoch_decrease_release_or_cancel_all_operation_exists() -> None:
 
 
 def test_epoch_advance_does_not_release_economic_effect() -> None:
-    """(canary SA-INV-004) There is no operation mapping an epoch advance to a capacity release.
-
-    RCL capacity is referenced only by scalar; the authority package has no function that
-    consumes an epoch and mutates / releases any capacity coordinate.
-    """
+    """(canary SA-INV-004) There is no operation mapping an epoch advance to a capacity release."""
     epoch_ops = [
         name
         for name in dir(authority)
@@ -124,9 +109,8 @@ def test_every_record_authority_effect_is_all_false() -> None:
     for record in (issue_capability(), issue_transition(), issue_lease()):
         effect = getattr(record, "authority_effect", None)
         if effect is None:
-            continue  # not every record carries one; those that do must be all-false
+            continue
         assert all(getattr(effect, name) is False for name in type(effect).model_fields)
-    # The capability carries an explicit AuthorityEffect and it is all-false.
     cap_effect = issue_capability().authority_effect
     assert all(
         getattr(cap_effect, name) is False for name in type(cap_effect).model_fields

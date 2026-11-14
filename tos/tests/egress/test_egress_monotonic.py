@@ -1,11 +1,4 @@
-"""Not-Phase-1 thin model §6b — generation monotonicity, stale principal, monotonic denial.
-
-These are thin L1 model properties authored defence-in-depth (design #22 §6b); they close **no**
-EGRESS-EV — the real bypass resistance / reconnect runtime / race timing is +Security.
-
-Regime tag: structural / coordinate predicate substrate only; EGRESS-EV-002/006/007 seam;
-EV-L1-complete claim forbidden; not-Phase-1 model property (EV NOT realized).
-"""
+"""Not-Phase-1 thin model §6b — generation monotonicity, stale principal, monotonic denial."""
 
 from __future__ import annotations
 
@@ -27,9 +20,6 @@ def _gen(index: int) -> OrderingEvent:
     return OrderingEvent(event_id=f"g{index}", quorum_commit_index=index)
 
 
-# ---- §6b.1 egress generation monotonicity --------------------------------
-
-
 def test_generation_strictly_increases() -> None:
     """(§6b.1) A strictly increasing generation is monotonic."""
     assert egress_generation_monotonic(_gen(1), _gen(2)) is True
@@ -43,9 +33,6 @@ def test_generation_decrease_is_rejected() -> None:
 def test_generation_equal_is_rejected() -> None:
     """(§6b.1) An equal (ambiguous) generation pair fails closed."""
     assert egress_generation_monotonic(_gen(1), _gen(1)) is False
-
-
-# ---- §6b.1 stale principal structural rejection --------------------------
 
 
 def test_current_active_principal_admitted() -> None:
@@ -109,11 +96,7 @@ def test_inactive_or_expired_principal_rejected() -> None:
 
 
 def test_unknown_expiry_principal_rejected_but_positive_non_expiry_admitted() -> None:
-    """(§6b.1 MAJOR-2 polarity) expired=None (unknown) ⇒ denial; expired=False (positive) ⇒ admit.
-
-    ``expired`` is negative-polarity (True = expired = risk), so admission requires positive proof
-    of non-expiry ``is False`` — an unknown old-principal state is denial (EGRESS-INV-011 line 183).
-    """
+    """(§6b.1 MAJOR-2 polarity) expired=None (unknown) ⇒ denial; expired=False (positive) ⇒ admit."""
     unknown_expiry = clean_active_set(
         egress_generation=9,
         principals=(
@@ -128,14 +111,12 @@ def test_unknown_expiry_principal_rejected_but_positive_non_expiry_admitted() ->
             ),
         ),
     )
-    # firing side: unknown expiry is denied (was a fail-open under `expired is not True`).
     assert (
         stale_principal_structurally_rejected(
             "principal-1", unknown_expiry, expected_generation=9
         )
         is False
     )
-    # positive side: an explicitly-non-expired, active, current principal is admitted.
     assert (
         stale_principal_structurally_rejected(
             "principal-1", positive_non_expiry, expected_generation=9
@@ -164,9 +145,6 @@ def test_none_principal_or_set_fails_closed() -> None:
         )
         is False
     )
-
-
-# ---- §6b.3 monotonic denial non-revival ----------------------------------
 
 
 def _restrictive(kind: str) -> EgressEvent:

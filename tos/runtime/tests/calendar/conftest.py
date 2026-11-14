@@ -1,15 +1,4 @@
-"""Hermetic fixtures for tos_runtime.calendar tests (D1.4: tmp_path only, no
-external network, no ambient env — same discipline as
-tos/runtime/tests/compose/conftest.py).
-
-The calendar VALUES below (session windows, holiday, expiry rule) are
-FIXTURE DATA authored for this test suite, derived from the legacy KST facts
-recorded in scratchpad/w5-survey-legacy.md §1-3 (e.g. KRX stock regular
-09:00-15:30, futures regular 08:45-15:45, night session, quarterly
-second-Thursday expiry) — they are NOT the operator-signed production
-calendar (Phase 5 W5 plan §2 decision 1/§6 ②, which is still all named-TBD
-`null` in tos/runtime/config/calendar.example.yaml).
-"""
+"""Hermetic fixtures for tos_runtime.calendar tests (D1.4: tmp_path only, no"""
 
 from __future__ import annotations
 
@@ -23,10 +12,6 @@ STOCK_CLASS = "krx-stock-fixture"
 FUTURES_CLASS = "krx-futures-fixture"
 UNKNOWN_CLASS = "unknown-instrument-class"
 
-#: 2026-01-01 is a Thursday (verified by test_config.py itself, not trusted
-#: here) — a deliberately-chosen holiday that ALSO falls on what would
-#: otherwise be a regular trading weekday, so the holiday-overrides-weekday
-#: case is exercised.
 FIXTURE_HOLIDAY = "2026-01-01"
 
 FIXTURE_CALENDAR_YAML = textwrap.dedent(f"""\
@@ -63,8 +48,7 @@ FIXTURE_CALENDAR_YAML = textwrap.dedent(f"""\
 
 
 def write_fixture_calendar(tmp_path: Path, text: str = FIXTURE_CALENDAR_YAML) -> Path:
-    """Write ``text`` (default: the standard fixture calendar) to a fresh
-    file under ``tmp_path`` and return its path."""
+    """Write ``text`` (default: the standard fixture calendar) to a fresh"""
     path = tmp_path / "calendar.yaml"
     path.write_text(text, encoding="utf-8")
     return path

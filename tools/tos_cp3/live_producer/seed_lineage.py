@@ -1,15 +1,4 @@
-"""What the session records about the frame it seeded itself from.
-
-Split out of :mod:`~tools.tos_cp3.live_producer.producer` for the same reason
-:mod:`~tools.tos_cp3.live_producer.session_log` was (PR #904 review round 1,
-item A.5): that module sits at ``config/tos_size_budget.yaml``'s 1,000-line
-cap, and the right answer to "no room left" is a seam, not shorter lines.
-
-The seam is the one the module already had. Everything here is a REPORT — one
-dict, assembled from values the boot already resolved — and nothing here
-decides anything, fetches anything or writes anything. ``producer.py`` keeps
-the deciding and the I/O.
-"""
+"""What the session records about the frame it seeded itself from."""
 
 from __future__ import annotations
 
@@ -45,24 +34,7 @@ def seed_lineage(
     fields_schema: str,
     fields_catalog: str,
 ) -> dict[str, Any]:
-    """The ``seed`` log record: where this session's frame came from.
-
-    ``session_window`` is the one field downstream tooling DECIDES on — the
-    §3.6 extractor reads the close out of it to tell the session's own last
-    bar from a bar the runtime really missed
-    (``tools/tos_cp3/session_inputs.py``'s ``REASON_PUBLISHED_AFTER_CLOSE``).
-    It is written as ``"<start>..<end>"`` of two ``datetime.time``
-    isoformats, from the tenant calendar the runtime also loads.
-
-    Since P2-c the record also names WHAT COMPUTED the fields. The identity is
-    the declaration's — its path, the sha256 of its bytes, and the two versions
-    it pins — because that is what the producer now runs; the legacy entry type
-    (``setup_d_vwap_reversion``) named a class this session no longer loads, so
-    recording it would be recording a thing that did not happen. ``fields.yaml``
-    is byte-identical across the LONG and SHORT trees on purpose, so the digest
-    identifies the DECLARATION rather than the tenant — the tenant is named by
-    the session directory and ``source_id``.
-    """
+    """The ``seed`` log record: where this session's frame came from."""
     return {
         "instrument": instrument,
         "fields_yaml": str(fields_yaml),
@@ -76,11 +48,6 @@ def seed_lineage(
         "capacity": seed.capacity,
         "required": seed.required,
         "min_bars_per_day": seed.min_bars_per_day,
-        # Reason-tagged, not one count (review L3): a day the calendar calls a
-        # trading day that returned ZERO rows may be a holiday the calendar is
-        # missing, which is the defect plan §3.2 moved off
-        # `shared/collector/historical/calendar.py` to avoid. Merged into a
-        # density count it would be invisible.
         "dropped_days": [
             {
                 "day": str(s.day),
@@ -101,9 +68,6 @@ def seed_lineage(
         "parser_env": dict(config.parser_env),
         "config_sha256": config.sha256,
         "source_id": source_id,
-        # Plan §3.2a. ``junctions`` is [] on a session with no splice and the
-        # manifest is still written and still digested — B1a and B2 read it
-        # either way.
         "front_month_product": config.front_month_product,
         "stitch_manifest": str(market_root / STITCH_FILENAME),
         "stitch_manifest_sha256": manifest.sha256,

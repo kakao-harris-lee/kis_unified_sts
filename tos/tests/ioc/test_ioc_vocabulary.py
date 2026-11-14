@@ -1,9 +1,4 @@
-"""Vocabulary verbatim-transcription + coordinate non-collapse (design #14 §2.2/§2.3).
-
-The enums are the ADR-002-020 §10-§16 axis terms verbatim; the conformance axis is a distinct
-coordinate system from the rcl / are / brokercap / orthostate axes (token overlap is intentional,
-non-collapse rests on distinct types + non-import).
-"""
+"""Vocabulary verbatim-transcription + coordinate non-collapse (design #14 §2.2/§2.3)."""
 
 from __future__ import annotations
 
@@ -78,10 +73,8 @@ def test_mutation_class_values() -> None:
 def test_conformance_axis_covers_all_three_clause_groups() -> None:
     """(§2.2(2)) The axis enum carries the §10 identity, §11 direction/quantity, §12 price/mode axes."""
     names = {a.value for a in ConformanceAxis}
-    # §10 identity
     for axis in ("ENVIRONMENT", "BROKER", "ACCOUNT", "VENUE", "INSTRUMENT", "ROUTE"):
         assert axis in names
-    # §11 direction + quantity (direction / side / position-effect are independent axes)
     for axis in (
         "DIRECTION",
         "SIDE",
@@ -91,7 +84,6 @@ def test_conformance_axis_covers_all_three_clause_groups() -> None:
         "MULTIPLIER",
     ):
         assert axis in names
-    # §12 price / order-type / mode
     for axis in (
         "PRICE",
         "ORDER_TYPE",
@@ -111,6 +103,5 @@ def test_conformance_axis_is_distinct_type_from_rcl_dimension() -> None:
 
     assert ConformanceAxis is not RiskDimensionKind
     assert ConformanceAxis is not DimensionDescriptor
-    # A shared token ("INSTRUMENT" / "ACCOUNT") lives on distinct types — never coercible.
     assert ConformanceAxis.INSTRUMENT.value == "INSTRUMENT"
     assert not isinstance(ConformanceAxis.INSTRUMENT, RiskDimensionKind)

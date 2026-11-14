@@ -26,15 +26,12 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import yaml
 
 from shared.collector.historical.ohlcv_parser import parse_ohlcv
-from tools.tos_cp3 import diff_decisions as dd
-from tools.tos_cp3 import emit_legacy_decisions as b2
 from tools.tos_cp3 import legacy_setup_d_driver as legacy_driver  # noqa: E402
 from tools.tos_cp3 import produce_fields as b1a
 from tools.tos_cp3 import stitch as stitch_mod
@@ -572,7 +569,7 @@ def _unused_fetch(day: date, contract: str) -> list[dict]:  # pragma: no cover
     raise AssertionError("no fetch should happen in this test")
 
 
-def test_item4_b1a_and_b2_refuse_a_session_dir_whose_manifest_was_not_passed(
+def test_item4_b1a_refuses_a_session_dir_whose_manifest_was_not_passed(
     stitched_session: StitchedSession,
 ) -> None:
     """Plan §9 MEDIUM-1 / re-review N-2, with §3.6's layout taken literally.
@@ -581,11 +578,8 @@ def test_item4_b1a_and_b2_refuse_a_session_dir_whose_manifest_was_not_passed(
     directly inside it; the check looks exactly there.
     """
     assert (stitched_session.market_root / STITCH_FILENAME).is_file()
-    for runner in (b1a.run, b2.run):
-        with pytest.raises(ProduceFieldsError, match="no --stitch-manifest"):
-            runner(
-                **stitched_session.run_kwargs(out_name=f"no-flag-{runner.__module__}")
-            )
+    with pytest.raises(ProduceFieldsError, match="no --stitch-manifest"):
+        b1a.run(**stitched_session.run_kwargs(out_name="no-flag-b1a"))
 
 
 def test_item4_refuses_a_manifest_that_targets_another_symbol(
@@ -620,76 +614,6 @@ def test_item4_refuses_a_manifest_whose_c_x100_does_not_recompute(
     kwargs["stitch_manifest"] = forged
     with pytest.raises(ProduceFieldsError, match="disagrees with"):
         b1a.run(**kwargs)
-
-
-# --- B3's side of the refusal ---------------------------------------------
-
-
-def _identity_lineages(
-    b1a_sha: str | None, b2_sha: str | None, *, b2_has_key: bool = True
-) -> dict[str, Any]:
-    common = {
-        "symbol": NEW,
-        "market_open_kst": "08:45",
-        "market_open_source": "config",
-        "min_bars_per_day": 330,
-        "window_start": "2026-10-02",
-        "window_end": "2026-10-12",
-    }
-    b2_identity = dict(common)
-    if b2_has_key:
-        b2_identity["stitch_manifest_sha256"] = b2_sha
-    return {
-        dd.LABEL_FIELDS: SimpleNamespace(
-            lineage={
-                "dataset": {
-                    "symbol": common["symbol"],
-                    "min_bars_per_day": common["min_bars_per_day"],
-                    "requested_start": common["window_start"],
-                    "requested_end": common["window_end"],
-                    "stitch_manifest_sha256": b1a_sha,
-                },
-                "strategy": {
-                    "market_open_kst": common["market_open_kst"],
-                    "market_open_source": common["market_open_source"],
-                },
-            }
-        ),
-        dd.LABEL_LEGACY: SimpleNamespace(
-            lineage={"join": {"window_identity": b2_identity}}
-        ),
-    }
-
-
-def test_item4_b3_refuses_a_pair_whose_only_difference_is_the_manifest_digest() -> None:
-    """Plan re-review N-1: the digest is in the identity B3 actually compares."""
-    assert "stitch_manifest_sha256" in dd.WINDOW_IDENTITY_FIELDS
-    assert dd.B1A_IDENTITY_PROJECTION["stitch_manifest_sha256"] == (
-        "dataset.stitch_manifest_sha256"
-    )
-    agreeing = _identity_lineages("a" * 64, "a" * 64)
-    dd._check_window_identity(agreeing)  # does not raise
-    with pytest.raises(dd.DiffDecisionsError, match="stitch_manifest_sha256"):
-        dd._check_window_identity(_identity_lineages("a" * 64, "b" * 64))
-
-
-def test_item4_b3_window_identity_refuses_a_b2_lineage_without_the_key() -> None:
-    """A pre-stitch B2 paired with a stitched B1a, refused BY THE IDENTITY CHECK.
-
-    Absence reads as ``None`` rather than raising — but it stays in the
-    comparison, which is the whole point (plan §3.2a v7 re-review LOW): drop it
-    and this exact pair passes.
-    """
-    refs = _identity_lineages("a" * 64, None, b2_has_key=False)
-    assert (
-        dd.b2_window_identity(refs[dd.LABEL_LEGACY].lineage)["stitch_manifest_sha256"]
-        is None
-    )
-    with pytest.raises(dd.DiffDecisionsError, match="stitch_manifest_sha256"):
-        dd._check_window_identity(refs)
-    # And two pre-stitch sidecars still agree, so old artifact pairs are not
-    # broken by the new field.
-    dd._check_window_identity(_identity_lineages(None, None, b2_has_key=False))
 
 
 # ===========================================================================
@@ -1155,49 +1079,6 @@ def test_item5_no_record_is_emitted_for_a_non_target_segment(
         == load_manifest(stitched_session.manifest_path).sha256
     )
     assert stitch_block["junction_recompute_only_bars"] > 0
-
-
-def test_item5_b2_reads_the_same_frame_through_the_same_loader(
-    stitched_session: StitchedSession,
-) -> None:
-    """B1a and B2 must agree on the window identity, digest included (HIGH-1)."""
-    fields = b1a.run(
-        **stitched_session.run_kwargs(out_name="pair-b1a", with_manifest=True)
-    )
-    legacy = b2.run(
-        **stitched_session.run_kwargs(out_name="pair-b2", with_manifest=True)
-    )
-    refs = {
-        dd.LABEL_FIELDS: SimpleNamespace(lineage=fields.lineage),
-        dd.LABEL_LEGACY: SimpleNamespace(lineage=legacy.lineage),
-    }
-    identity, _entry = dd._check_window_identity(refs)
-    assert identity["stitch_manifest_sha256"] == (
-        load_manifest(stitched_session.manifest_path).sha256
-    )
-    assert [r.raw_event_id for r in fields.records] == [
-        r.raw_event_id for r in legacy.records
-    ]
-
-
-def test_item5_b3_refuses_a_stitched_b1a_against_an_unstitched_b2(
-    stitched_session: StitchedSession,
-) -> None:
-    """The pair plan §9 HIGH-1 is about, refused by the window-identity check."""
-    fields = b1a.run(
-        **stitched_session.run_kwargs(out_name="refuse-b1a", with_manifest=True)
-    )
-    legacy = b2.run(
-        **stitched_session.run_kwargs(out_name="refuse-b2", with_manifest=True)
-    )
-    unstitched = json.loads(json.dumps(legacy.lineage))
-    unstitched["join"]["window_identity"].pop("stitch_manifest_sha256")
-    refs = {
-        dd.LABEL_FIELDS: SimpleNamespace(lineage=fields.lineage),
-        dd.LABEL_LEGACY: SimpleNamespace(lineage=unstitched),
-    }
-    with pytest.raises(dd.DiffDecisionsError, match="stitch_manifest_sha256"):
-        dd._check_window_identity(refs)
 
 
 # ===========================================================================

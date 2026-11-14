@@ -56,7 +56,7 @@ def tos_status(
 ) -> None:
     """한 장 상태판 — 오늘 무엇이 돌았고 무엇이 막혔나.
 
-    CP-3 tenant 세션(부팅·종료·digest, 틱·보류 사유, VENUE_BAND_OBSERVED, B3 대조,
+    CP-3 tenant 세션(부팅·종료·digest, 틱·보류 사유, VENUE_BAND_OBSERVED,
     생산자 지연)과 상주 paper 세션을 상태 디렉터리에서 읽기만 해서 보여 준다.
     막힘이 하나라도 있으면 종료코드 1.
     """

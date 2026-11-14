@@ -1,38 +1,4 @@
-"""Builders for the vertical-slice #1 end-to-end integration evidence.
-
-Slice #1 (``docs/plans/2026-07-29-tos-engine-completion-path-assessment.md`` §3-1) is complete
-when **one DSL strategy → an event-driven backtest → one paper order** runs through the four
-landed lanes using their *public APIs only*:
-
-* D-E1 ``tos.engine`` — the single event core + the 19-step fail-closed sequencer;
-* D-E2 ``tos.marketfeed`` — the admitted Critical Input value surface + its
-  :class:`~tos.engine.DecisionContextResolver`;
-* D-E3 ``tos.backtest`` — the bar model, the causal converter, and the interleaving driver;
-* D-E4 ``tos.egressgw`` / ``tos.brokeradapter`` — the send boundary (steps 15-19) and the
-  synthetic paper transport.
-
-**The RFC-008 §10-conformant path is the point.** Every value the policy gates on
-(``close`` / ``lower_band`` / ``upper_band``) reaches it through
-``env["capsule"][VALUE_NAMESPACE]`` — an admitted, digest-bound Critical Input — and
-:class:`~tos.dsl.EvaluationConfig` ``bindings`` is **empty**. The DSL spike's
-config-relabelling channel (RFC-008 §10:327-331 / RFC-004 §9:251-252) is not used and cannot
-be: ``tests/slice`` contains no ``config``-sourced operand at all, which the negative-grep
-canary in ``test_slice_conformant_path.py`` asserts mechanically.
-
-**Determinism.** No ``time`` / ``datetime`` / ``random`` / ``secrets`` / ``uuid`` and no I/O
-appears anywhere here, mirroring the four suites' own canaries: every identity on the path is
-content-addressed or injected, so a replay is byte-identical.
-
-⚠ **Authoring evidence only; closes no EV.** Every lane declares itself provisional
-(design #31 §1.1, #32 §1.1, #33 §1.1/§1.2, #34 §1.1): the canonicalization scheme is
-``ev-l1-provisional-0``, the authority runtimes are ``NON_AUTHORITATIVE_PROVISIONAL`` stand-ins,
-the transport reaches no broker, and a single-run backtest is an ADR-DEV-010 §8:191-192
-disqualifier. What this file demonstrates is **wiring**, and nothing else.
-
-Firewall: ``pydantic`` / ``pytest`` + stdlib + ``tos.*`` only. Cross-suite imports are
-forbidden (each package's fixtures stay in its own suite), so the builders below are written
-against the four packages' public APIs and re-derive what they need locally.
-"""
+"""Builders for the vertical-slice #1 end-to-end integration evidence."""
 
 from __future__ import annotations
 
@@ -156,9 +122,6 @@ CONTINUITY_ID = "slice-1-stream"
 SIDE = "BUY"
 SESSION_PHASE = "CONTINUOUS"
 
-#: ⚠ Every number below is **provisional**: the register's Phase-0 bounds approval (P0-1) is
-#: incomplete and there is no approved Broker Capability Profile INSTANCE (P0-2), so these are
-#: injected slice values, never authorized ones (design #31 §8 / #33 §10 / #34 §9).
 PROVISIONAL_BUDGET_STEPS = 64
 PROVISIONAL_MAX_UNRESOLVED_SEND_PER_SCOPE = 1
 
@@ -177,24 +140,12 @@ MIN_QUANTITY = Decimal("2")
 MAX_QUANTITY = Decimal("100")
 PRICE = Decimal("4200")
 
-#: The governed Critical Input field the sizing policy prices against (design #35 §4.2 (4)).
-#: It is the **same** ``field_key`` the band comparison gates on, which is the whole point: the
-#: number the strategy decided on is now the number the order is sized against.
 PRICE_FIELD_KEY = "close"
 
-# ---------------------------------------------------------------------------
-# The band-crossing bar profile (§3-1 "일부 bar만 하단 밴드 관통")
-# ---------------------------------------------------------------------------
 
-#: The band, in **integer minor/tick units** — the exposed numeric form D-E2 admits
-#: (design #32 §2.5: a fractional magnitude is fail-closed until the deterministic-float
-#: projection rule is ratified, so an ordering comparison is only ever on exact integers).
 LOWER_BAND = 4_500_000
 UPPER_BAND = 4_520_000
 
-#: ``(close, expectation)`` per bar. The expectation column is documentation only — every
-#: assertion in the suite reads the **engine's own** ``EventResult``, never this table
-#: (RFC-010 §6 원칙 1:183-185 — a test is evidence, not authority).
 BAND_PROFILE: tuple[tuple[int, str], ...] = (
     (4_510_000, "inside the band — No-Action"),
     (4_499_000, "below the lower band — LONG/OPEN, realized end to end"),
@@ -203,13 +154,9 @@ BAND_PROFILE: tuple[tuple[int, str], ...] = (
     (4_521_000, "above the upper band — FLAT proposed"),
 )
 
-#: The bar whose crossing is realized end to end (the only order the run produces).
 CROSSING_BAR_INDEX = 1
-#: The bar whose crossing is denied by the at-most-one exposure retention.
 DENIED_BAR_INDEX = 2
-#: The bars whose close sits inside the band (No-Action).
 INSIDE_BAR_INDEXES = (0, 3)
-#: The bar whose close crosses the upper band (the Explicit-Flat branch).
 FLAT_BAR_INDEX = 4
 
 _BAR_COORDINATE_STEP = 60
@@ -219,20 +166,9 @@ _SESSION_TOKEN = "slice-session"
 _VOLUME = Decimal(1000)
 
 
-# ===========================================================================
-# D-E2 — the Critical Input value surface, per bar
-# ===========================================================================
-
-
 @dataclass(frozen=True)
 class BarContext:
-    """One bar's complete Critical Input context (design #32 §2.3/§4.1).
-
-    Distinct bars carry distinct ``as_of`` times and distinct closes, and observations are a
-    *covered* snapshot field, so distinct bars yield distinct snapshot digests → distinct Capsule
-    digests → distinct outcome identities. That is the D-E1 Gap-1 residue D-E2 closes
-    (design #32 §4).
-    """
+    """One bar's complete Critical Input context (design #32 §2.3/§4.1)."""
 
     bar: Bar
     close: int
@@ -346,15 +282,7 @@ def _bar_context(index: int, close: int) -> BarContext:
 
 
 class BandBarBook:
-    """The slice's injected market history + its per-bar Critical Input contexts.
-
-    It plays the three producer roles D-E2 injects — the per-bar Capsule source (D-E3's
-    ``capsule_source``), the content-addressed
-    :class:`~tos.marketfeed.SnapshotStore`, and the
-    :class:`~tos.marketfeed.ValueCandidateSource` — over one deterministic table. It opens
-    nothing: the values are already-admitted observations, exactly the shape RFC-004 §9:242-244
-    requires (never an unattributed fetch).
-    """
+    """The slice's injected market history + its per-bar Critical Input contexts."""
 
     def __init__(self, profile: Sequence[tuple[int, str]] = BAND_PROFILE) -> None:
         """Build every bar's context from the injected ``(close, note)`` profile."""
@@ -382,26 +310,14 @@ class BandBarBook:
         """The context for bar ``index``."""
         return self._contexts[index]
 
-    # -- the three injected producer roles -----------------------------------
-
     def capsule_source(self, bar: Bar) -> DecisionContextCapsule:
-        """D-E3's injected per-bar Capsule source (``CapsuleSource``, converter.py:46).
-
-        Unlike the D-E3 suite's own source — which issues the *same* Capsule for every bar
-        because slice-1 had no value surface — this issues a **distinct** Capsule per bar,
-        because the bar's admitted observations are covered snapshot content (design #32 §4).
-        """
+        """D-E3's injected per-bar Capsule source (``CapsuleSource``, converter.py:46)."""
         return self._contexts[bar.bar_index].capsule
 
     def snapshot_store(
         self, *, snapshot_id: str | None, canonical_digest: str | None
     ) -> CriticalInputSnapshot | None:
-        """D-E2's injected content-addressed snapshot lookup (resolver.py:56).
-
-        Returns ``None`` — a first-class "this store has no such snapshot" — rather than
-        substituting a different body, and re-checks the digest so a store that held a stale
-        body under a live id cannot pass one off (ADR-002-018 §15:386).
-        """
+        """D-E2's injected content-addressed snapshot lookup (resolver.py:56)."""
         if snapshot_id is None:
             return None
         context = self._by_snapshot_id.get(snapshot_id)
@@ -422,22 +338,12 @@ class BandBarBook:
 
 
 def build_resolver(book: BandBarBook) -> MarketFeedContextResolver:
-    """The **real** D-E2 resolver in D-E1's ``DecisionContextResolver`` slot (design #32 §3.3).
-
-    ``time_projection`` is deliberately left ``None``: D-E3's :class:`~tos.backtest.BarTimeProjection`
-    owns the bar → time-coordinate projection and the converter applies it after this resolver
-    returns (converter.py:119-127), so claiming the coordinates here would be a double authorship.
-    """
+    """The **real** D-E2 resolver in D-E1's ``DecisionContextResolver`` slot (design #32 §3.3)."""
     return MarketFeedContextResolver(
         snapshot_store=book.snapshot_store,
         candidate_source=book.candidate_source,
         scheme=SCHEME,
     )
-
-
-# ===========================================================================
-# D-E3 — the bar → tick converter and the time projection
-# ===========================================================================
 
 
 def instrument_key() -> InstrumentKey:
@@ -446,11 +352,7 @@ def instrument_key() -> InstrumentKey:
 
 
 def time_projection(**overrides: Any) -> BarTimeProjection:
-    """Injected bar → time-coordinate bounds that positively admit (design #33 §3.3).
-
-    ⚠ Every bound is provisional: the trustworthy-time bounds are register §8-1 new-key
-    candidates and P0-1 is incomplete.
-    """
+    """Injected bar → time-coordinate bounds that positively admit (design #33 §3.3)."""
     base: dict[str, Any] = {
         "source_age": 10,
         "delay_bounds": (5,),
@@ -476,13 +378,7 @@ def time_projection(**overrides: Any) -> BarTimeProjection:
 
 
 def build_converter(book: BandBarBook, *, resolver: Any = None) -> CausalBarConverter:
-    """Wire D-E3's causal converter with the **D-E2 resolver injected** (design #33 §7.4 (a)).
-
-    This is the forward seam D-E3 declared: "착지 시 typed resolver 교체" — the call site is
-    unchanged and only the injected resolver differs from
-    :class:`~tos.backtest.ProvisionalContextResolver`. The ``resolver`` override exists so the
-    suite can run the *negative control* — the same everything with the value surface removed.
-    """
+    """Wire D-E3's causal converter with the **D-E2 resolver injected** (design #33 §7.4 (a))."""
     return CausalBarConverter(
         instrument_key=instrument_key(),
         resolver=build_resolver(book) if resolver is None else resolver,
@@ -491,27 +387,13 @@ def build_converter(book: BandBarBook, *, resolver: Any = None) -> CausalBarConv
     )
 
 
-# ===========================================================================
-# The DSL band-reversion strategy (capsule-sourced operands only)
-# ===========================================================================
-
-
 def _value_ref(field_key: str) -> Operand:
-    """A capsule-sourced operand reading one admitted Critical Input value.
-
-    The path is ``("capsule", VALUE_NAMESPACE, field_key)`` — the ``"capsule"`` source, never a
-    third invented one and never ``"config"`` (design #32 §3.2; RFC-008 §10:327-331).
-    """
+    """A capsule-sourced operand reading one admitted Critical Input value."""
     return Operand(ref=("capsule", VALUE_NAMESPACE, field_key))
 
 
 def band_reversion_policy() -> DecisionPolicy:
-    """``close < lower_band → LONG/OPEN``; ``close > upper_band → FLAT``; else hold.
-
-    Both guards compare **two capsule-sourced value operands**, so the D1↔D4 typed-admission
-    predicate (``compare_has_capsule_operand``) passes on substance rather than on a decorative
-    capsule read placed beside a config-relabelled market value.
-    """
+    """``close < lower_band → LONG/OPEN``; ``close > upper_band → FLAT``; else hold."""
     entry = Decision(
         kind=DecisionKind.ACTION,
         rationale="close pierced the lower band — mean-reversion entry",
@@ -582,11 +464,7 @@ def band_reversion_strategy() -> AuthoredStrategy:
 
 
 def authored_config() -> EvaluationConfig:
-    """The authored constants — **deliberately empty** (design #31 §3.2 (2)).
-
-    An empty ``bindings`` mapping is the mechanical statement that no market-derived value is
-    relabelled as configuration in this slice: there is no config key for one to hide in.
-    """
+    """The authored constants — **deliberately empty** (design #31 §3.2 (2))."""
     return EvaluationConfig(config_version="cfg-slice", bindings={})
 
 
@@ -610,11 +488,6 @@ def registry_with_band_strategy() -> tuple[StrategyRegistry, AuthoredStrategy]:
     return registry, strategy
 
 
-# ===========================================================================
-# D-E4 — Order Construction stages + the send-boundary context
-# ===========================================================================
-
-
 def sizing_bound(**overrides: Any) -> SizingBound:
     """The governance-supplied sizing bound the proposed envelope encloses (⚠ provisional)."""
     base: dict[str, Any] = {
@@ -625,9 +498,6 @@ def sizing_bound(**overrides: Any) -> SizingBound:
         "min_quantity": MIN_QUANTITY,
         "max_quantity": MAX_QUANTITY,
         "quantity_unit": QuantityUnitKind.CONTRACTS,
-        # design #35 §5.2 (4): the flat basis is admitted, so the exit half of the band-reversion
-        # strategy is *constructable*. It still stops — at the capacity seal (step 8), not at the
-        # sizing rule (step 2) — and those are not the same fact (§5.3).
         "admitted_quantity_bases": frozenset({"RISK", FLAT_QUANTITY_BASIS}),
     }
     base.update(overrides)
@@ -669,15 +539,7 @@ def proposed_envelope(**overrides: Any) -> ProposedConstructionEnvelope:
 
 
 def admitted_price(book: BandBarBook, **overrides: Any) -> AdmittedPriceObservation:
-    """The admitted Critical Input price observation the size derivation consumes.
-
-    ⚠ **Seam gap, recorded rather than papered over.** ``snapshot_digest`` is bound to the
-    *real* Critical Input Snapshot of the crossing bar, so the price's lineage pointer is
-    genuine — but the price ``value`` itself is still an **injected** provisional scalar. There
-    is no shipped seam from a :class:`~tos.dsl.ContextValueView` value to
-    :class:`~tos.egressgw.AdmittedPriceObservation`, so D-E4's Order Construction does not read
-    the D-E2 value surface. See ``test_slice_gaps.py::test_the_construction_price_is_injected_not_value_sourced``.
-    """
+    """The admitted Critical Input price observation the size derivation consumes."""
     crossing = book.context_for(CROSSING_BAR_INDEX)
     base: dict[str, Any] = {
         "source": CAPSULE_CONTEXT_SOURCE,
@@ -757,24 +619,8 @@ def venue_shape() -> OrderShapeFields:
 
 
 def venue_shape_constraints() -> VenueShapeConstraints:
-    """Injected venue shape constraints admitting the slice's shape.
-
-    The price band and tick moved when the shape price became value-sourced (design #36 §3.4):
-    the shape now carries a band close, so the old band would have refused it. The design fixes
-    only the *condition* a stand-in must satisfy — ``price_min ≤ V ≤ price_max`` and
-    ``(V − price_min) mod tick_size == 0`` — never the approved numbers, which are not this
-    slice's to choose. The quantity band is untouched: quantity is not value-sourced.
-
-    ``V`` is every close that reaches step 3, not only the realized crossing: 4,499,000
-    (realized), 4,498,500 (denied at the capacity stage) and 4,521,000 (the flat). Their pairwise
-    differences bound the tick at 500, which is why the tick is 500 and not the coarser 1000 —
-    a 1000 tick would refuse 4,498,500 at step 3 and move that bar's recorded halt off the
-    capacity seal, i.e. re-source the price and silently rewrite a different lane's evidence.
-    The injected 4,200 stand-in is off this grid on purpose (design #36 §8): a value-free tick
-    reaching step 3 fails admissibility instead of passing quietly.
-    """
+    """Injected venue shape constraints admitting the slice's shape."""
     return VenueShapeConstraints(
-        # ⚠ provisional (P0-2·register §8-2 candidate·#36 §10-2)
         price_min=1000,
         price_max=9_000_000,
         tick_size=500,
@@ -807,11 +653,7 @@ def transmission_capability() -> TransmissionCapability:
 
 
 def currentness_proof() -> EgressCurrentnessProof:
-    """A structurally complete, admissible, CURRENT Egress Currentness Proof.
-
-    ⚠ Structure and coordinates only: the owner submissions inside the Safety Currentness
-    Vector are provisional / D-E2-dependent (design #34 §4.3).
-    """
+    """A structurally complete, admissible, CURRENT Egress Currentness Proof."""
     revision = CurrentnessRevision(revision_id="rev-slice", commit_index=1)
     issued = EgressCurrentnessProof.issue(
         scheme=SCHEME,
@@ -934,20 +776,7 @@ def bind_send_boundary_context(
     order_shape: OrderShapeFields | None,
     venue_shape_constraints: VenueShapeConstraints | None,
 ) -> SendBoundaryContext:
-    """Partially apply the **shipped** ``send_boundary_context`` factory (design #35 §3.1).
-
-    Everything below is an *injected* fact — the provisional stand-ins, the venue facts, the
-    capability nonces, the environment tokens. Everything derived — the reservation identity
-    triple, the construction / proof pair, the item-17 artifacts bound to this command's digest,
-    the outbound economics — is derived **inside the factory**, from the attempt the sequencer
-    just built and the artifacts the step-2 / step-11 stages just produced. That is what keeps
-    verify item 2 (reservation identity match) and item 13 (order construction) load-bearing
-    instead of self-confirming: no look-alike is rebuilt from the same inputs here.
-
-    ``order_shape`` / ``venue_shape_constraints`` are passed in for the same reason (design #36
-    §3.3): the pair ``order_shape_admissible`` compares is step 3's, read off the stage that
-    folded it, so item 11's re-fold cannot be handed a second shape that quietly disagrees.
-    """
+    """Partially apply the **shipped** ``send_boundary_context`` factory (design #35 §3.1)."""
     return send_boundary_context(
         attempt=attempt,
         construction=construction,
@@ -1052,26 +881,8 @@ def construction_stages(
     return stages, step2, step3, step11
 
 
-# ===========================================================================
-# The lazy send-boundary context resolver (design #35 §3.1 (3))
-# ===========================================================================
-
-
 class RecordingContextResolver:
-    """The gateway's lazy ``contexts`` resolver — a partial application, plus a log.
-
-    This is **not** the harness-local bridge slice #1 had to write. The two pieces of wiring no
-    shipped package owned are now shipped: :func:`~tos.egressgw.send_boundary_context` assembles
-    the context, and :class:`~tos.backtest.GatewayResultReinjector` carries the results back to
-    the driver. What is left here is the design's own resolver shape (design #35 §3.1 (3)) —
-    "injected bundles fixed before the run, flow artifacts derived per attempt" — with the
-    produced pairs recorded so the suite can assert against them.
-
-    It assembles nothing itself and judges nothing: the factory builds the context and the
-    gateway renders every verdict. Returning ``None`` (no construction or no proof yet) is the
-    honest negative path — the gateway records the same ``CONTEXT_MISSING`` stop a missing
-    mapping entry has always produced (design #35 §3.1 (1)).
-    """
+    """The gateway's lazy ``contexts`` resolver — a partial application, plus a log."""
 
     def __init__(
         self,
@@ -1110,11 +921,6 @@ class RecordingContextResolver:
         return context
 
 
-# ===========================================================================
-# The run
-# ===========================================================================
-
-
 @dataclass(frozen=True)
 class SliceRun:
     """Everything one slice run produced, plus the live objects each lane owns."""
@@ -1148,22 +954,7 @@ class SliceRun:
 def run_slice(
     *, profile: Sequence[tuple[int, str]] = BAND_PROFILE, resolver: Any = None
 ) -> SliceRun:
-    """Replay the band profile end to end through one core and one send boundary.
-
-    The wiring, in the direction the data flows — every joint a **shipped** symbol
-    (design #35)::
-
-        BandBarBook  →  MarketFeedContextResolver  →  CausalBarConverter  →  BacktestDriver
-                     →  EngineCore(registry, stages, transmit=BrokerEgressGateway)
-                     →  BrokerEgressGateway(contexts=lazy resolver)  →  SyntheticPaperTransport
-                     →  GatewayResultReinjector  →  EGRESS_RESULT re-injection
-                     →  the same EngineCore
-
-    The gateway now occupies the ``Transmit`` slot **directly** — the substitution design #33
-    §7.4 (c) declared — because a lazy ``contexts`` resolver can bind a context to an identity
-    that only exists after step 12, and ``GatewayResultReinjector`` presents the gateway's
-    retained results on the port the driver drains.
-    """
+    """Replay the band profile end to end through one core and one send boundary."""
     book = BandBarBook(profile)
     registry, strategy = registry_with_band_strategy()
     stages, step2, step3, step11 = construction_stages(book)

@@ -1,34 +1,4 @@
-"""§7.1 import-closure verification for ``tos.authority`` (design §7.1).
-
-Isomorphic to the capsule / evidence / dsl / rcl closure tests, extended to the Safety
-Authority package. It imports every ``tos.authority`` submodule in a **fresh, spawned
-interpreter** (``subprocess`` / ``os`` are firewall-forbidden even in tests) and asserts:
-
-  1. No design §2.3 operational package is in the closure (``shared.execution`` /
-     ``kis`` / ``streaming`` / ``llm`` / ``storage`` / ``backtest``, ``services.*``,
-     ``cli.*``).
-  2. Neither ``shared.config`` nor ``shared.config.secrets`` is present (C1 — the
-     transitive ambient-credential intake), nor ``shared.determinism``.
-  3. ``numpy`` / ``pandas`` / ``yaml`` are absent (bounds are injected; YAML parsing
-     is the harness's concern — design §0.3/§7.1).
-  4. **``tos.rcl`` AND ``tos.capsule`` AND ``tos.evidence`` are absent** (§0.3/§3.3
-     layering — authority is the capacity-side sibling of RCL and a sibling of
-     capsule / evidence; it imports none, referencing RCL capacity + time snapshots
-     only by scalar).
-  5. **``tos.time`` AND ``tos.ordering`` AND ``tos.canonical`` ARE present** — the
-     ratified first sibling→sibling edge (``tos.time``, §3.4) is explicitly ALLOWED,
-     not sealed; the closure *bounds* it rather than forbidding it.
-  6. No ``tos.authority`` source references ``os.environ`` / ``os.getenv`` or a dynamic
-     escape (``exec`` / ``eval`` / ``__import__`` / ``importlib``) — no real clock is
-     asserted separately by the ambient-env / static scan below.
-
-A planted-leak canary proves the spawn+scan pipeline actually catches a leak, so
-"green" is evidence the checker works — not that it has been neutered.
-
-Network stdlib (``socket`` / ``ssl`` / …) is intentionally NOT asserted absent:
-``pydantic`` transitively loads it into every tos closure; design #1 §4 accepts that
-as residual risk, and the direct-import ban is the firewall gate (TOS-FW-B) alone.
-"""
+"""§7.1 import-closure verification for ``tos.authority`` (design §7.1)."""
 
 from __future__ import annotations
 
@@ -82,7 +52,6 @@ _AUTHORITY_SRC = (
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
-#: Real-clock modules that must never be imported by a clock-free authority source (§0.2).
 _CLOCK_MODULES = frozenset({"time", "datetime"})
 
 
@@ -196,14 +165,13 @@ def test_is_forbidden_classifier_canaries() -> None:
     assert _is_forbidden("tos.capsule") is True
     assert _is_forbidden("tos.evidence") is True
     assert _is_forbidden("tos.evidence.ledger") is True
-    # Allowed: self, the ratified sibling edge, the core substrate, third-party.
     assert _is_forbidden("tos.authority") is False
     assert _is_forbidden("tos.time") is False
     assert _is_forbidden("tos.canonical") is False
     assert _is_forbidden("tos.ordering") is False
     assert _is_forbidden("pydantic") is False
     assert _is_forbidden("decimal") is False
-    assert _is_forbidden("click") is False  # must not false-match the "cli" prefix
+    assert _is_forbidden("click") is False
 
 
 def _ast_escape_offenders(path: Path) -> list[str]:

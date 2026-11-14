@@ -1,11 +1,4 @@
-"""No-blended-release is a STRUCTURAL invariant (design #9 §4.1; ADR §1/§5/§11).
-
-The central safety property realized as *impossibility of construction*, not narrative:
-there is **no** numeric confidence-score type or field anywhere in ``tos.recon``, and no
-averaging / midpoint / blend / weight function on the public surface. Confidence is
-exactly a :class:`FieldConfidenceClass` + a :class:`ConservativeBound` (a Decimal
-lower/upper pair). Isomorphic to the orthostate no-normalize module-reflection canary.
-"""
+"""No-blended-release is a STRUCTURAL invariant (design #9 §4.1; ADR §1/§5/§11)."""
 
 from __future__ import annotations
 
@@ -27,9 +20,6 @@ from tos.recon import records as recon_records
 from tos.recon import state as recon_state
 from tos.recon import vocabulary as recon_vocabulary
 
-#: Substrings whose appearance in a public name would signal a blended / averaged /
-#: point-estimate confidence path (design #9 §4.1). ``mean`` is matched as a whole-ish
-#: token to avoid false hits.
 _FORBIDDEN_NAME_TOKENS = (
     "score",
     "average",

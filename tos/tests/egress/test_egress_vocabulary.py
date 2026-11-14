@@ -1,8 +1,4 @@
-"""EGRESS vocabulary — closed enum membership + spec-term fidelity (design #22 §2.2).
-
-Regime tag: structural / coordinate predicate substrate only; EGRESS vocabulary substrate;
-EV-L1-complete claim forbidden.
-"""
+"""EGRESS vocabulary — closed enum membership + spec-term fidelity (design #22 §2.2)."""
 
 from __future__ import annotations
 
@@ -36,6 +32,5 @@ def test_signer_role_is_closed_two_member_taxonomy() -> None:
 
 def test_signer_role_is_plain_and_truthy_usable() -> None:
     """(§2.2(4)) SignerRole is a plain StrEnum (membership token) — NOT truthy-sealed."""
-    # A plain StrEnum member is truthy-usable (it is a membership token, never a gate result).
     assert bool(SignerRole.QUORUM_MEMBER) is True
     assert (SignerRole.LEADER is SignerRole.LEADER) is True
