@@ -1,60 +1,13 @@
-"""§7.1 import-closure verification for ``tos.staterestore`` (design #39 §7.4 / §8)."""
+"""TOS-FW-B/C/D static scan for ``tos.staterestore`` — the closure canaries are table-driven."""
 
 from __future__ import annotations
 
 import ast
-import multiprocessing as mp
 from pathlib import Path
 
-_FORBIDDEN_EXACT = frozenset(
-    {
-        "shared.execution",
-        "shared.kis",
-        "shared.streaming",
-        "shared.llm",
-        "shared.storage",
-        "shared.backtest",
-        "shared.config",
-        "shared.config.secrets",
-        "shared.determinism",
-        "services",
-        "cli",
-        "numpy",
-        "pandas",
-        "yaml",
-        "tos.evidence",
-        "tos.capsule",
-        "tos.dsl",
-        "tos.authority",
-        "tos.liveauth",
-        "tos.time",
-    }
-)
-_FORBIDDEN_PREFIXES = (
-    "shared.execution.",
-    "shared.kis.",
-    "shared.streaming.",
-    "shared.llm.",
-    "shared.storage.",
-    "shared.backtest.",
-    "shared.config.",
-    "shared.determinism.",
-    "services.",
-    "cli.",
-    "numpy.",
-    "pandas.",
-    "yaml.",
-    "tos.evidence.",
-    "tos.capsule.",
-    "tos.dsl.",
-    "tos.authority.",
-    "tos.liveauth.",
-    "tos.time.",
-)
+from .._closure_policy import SRC_ROOT
 
-_STATERESTORE_SRC = (
-    Path(__file__).resolve().parent.parent.parent / "src" / "tos" / "staterestore"
-)
+_STATERESTORE_SRC = SRC_ROOT / "staterestore"
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
@@ -73,98 +26,6 @@ _FORBIDDEN_STDLIB = frozenset(
         "ctypes",
     }
 )
-
-
-def _is_forbidden(module_name: str) -> bool:
-    """Whether ``module_name`` is a forbidden member of the closure (§7.1)."""
-    if module_name in _FORBIDDEN_EXACT:
-        return True
-    return module_name.startswith(_FORBIDDEN_PREFIXES)
-
-
-def _closure_child(queue: mp.Queue) -> None:
-    """Child target: import every tos.staterestore submodule; report the closure."""
-    import sys
-
-    import tos.staterestore  # noqa: F401
-    import tos.staterestore._l3_worker  # noqa: F401
-    import tos.staterestore._wal  # noqa: F401
-    import tos.staterestore.reload  # noqa: F401
-    import tos.staterestore.store  # noqa: F401
-
-    leaked = sorted(name for name in sys.modules if _is_forbidden(name))
-    queue.put(
-        {
-            "leaked": leaked,
-            "orthostate_present": "tos.orthostate" in sys.modules,
-            "rcl_present": "tos.rcl" in sys.modules,
-            "sqlite3_present": "sqlite3" in sys.modules,
-        }
-    )
-
-
-def _leak_canary_child(queue: mp.Queue) -> None:
-    """Child target: plant fake forbidden modules, then run the same scan."""
-    import sys
-    import types
-
-    import tos.staterestore  # noqa: F401
-
-    sys.modules["shared.config"] = types.ModuleType("shared.config")
-    sys.modules["tos.evidence"] = types.ModuleType("tos.evidence")
-    sys.modules["tos.liveauth"] = types.ModuleType("tos.liveauth")
-    sys.modules["numpy"] = types.ModuleType("numpy")
-    leaked = sorted(name for name in sys.modules if _is_forbidden(name))
-    queue.put(
-        {
-            "leaked": leaked,
-            "orthostate_present": None,
-            "rcl_present": None,
-            "sqlite3_present": None,
-        }
-    )
-
-
-def _run_child(target) -> dict:
-    """Spawn ``target`` in a clean interpreter and return its reported result dict."""
-    ctx = mp.get_context("spawn")
-    queue: mp.Queue = ctx.Queue()
-    proc = ctx.Process(target=target, args=(queue,))
-    proc.start()
-    result = queue.get(timeout=60)
-    proc.join(timeout=60)
-    assert proc.exitcode == 0, f"closure child exited abnormally: {proc.exitcode}"
-    assert isinstance(result, dict), f"closure child returned {type(result).__name__}"
-    return result
-
-
-def test_staterestore_import_closure_has_no_forbidden_packages() -> None:
-    """(items 1-3) A fresh import of tos.staterestore pulls no forbidden package."""
-    result = _run_child(_closure_child)
-    assert (
-        result["leaked"] == []
-    ), f"forbidden packages reached the tos.staterestore closure: {result['leaked']}"
-
-
-def test_staterestore_closure_includes_its_declared_edges_and_substrate() -> None:
-    """(items 4-5) orthostate + rcl are reached, and the real sqlite substrate is too."""
-    result = _run_child(_closure_child)
-    assert result["orthostate_present"] is True, "tos.orthostate missing from closure"
-    assert result["rcl_present"] is True, "tos.rcl missing from closure"
-    assert result["sqlite3_present"] is True, (
-        "sqlite3 is NOT in the closure — the durable substrate this package exists for "
-        "is not being loaded"
-    )
-
-
-def test_leak_canary_is_detected() -> None:
-    """The spawn+scan pipeline catches planted config / evidence / liveauth / numpy leaks."""
-    result = _run_child(_leak_canary_child)
-    leaked = result["leaked"]
-    assert "shared.config" in leaked, "planted shared.config leak was NOT detected"
-    assert "tos.evidence" in leaked, "planted tos.evidence leak was NOT detected"
-    assert "tos.liveauth" in leaked, "planted tos.liveauth leak was NOT detected"
-    assert "numpy" in leaked, "planted numpy leak was NOT detected"
 
 
 def _scan_source(tree: ast.AST) -> dict[str, list[str]]:
