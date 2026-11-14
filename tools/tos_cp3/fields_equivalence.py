@@ -30,6 +30,7 @@ from shared.instruments.contract_spec import (  # noqa: E402
     ContractSpecRegistry,
     resolve_contract_spec,
 )
+from tools.tos_cp3.legacy_setup_d_driver import produce_bars  # noqa: E402
 from tools.tos_cp3.minute_probe import seed_capacity  # noqa: E402
 from tools.tos_cp3.produce_fields import (  # noqa: E402
     DEFAULT_MIN_BARS_PER_DAY,
@@ -42,7 +43,6 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     load_bars,
     load_stitched_bars,
     load_strategy_inputs,
-    produce_bars,
     replay_admission_offset,
     resolve_open_anchor,
 )

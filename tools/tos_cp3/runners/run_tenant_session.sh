@@ -385,8 +385,18 @@ guard_python_module "$PY" TENANT_PYTHON tools.tos_cp3.bootproof_guard \
 # default-expansion form this template's no-instance-defaults rule forbids.
 _INSTRUMENT_ARG=
 [ -z "${TENANT_INSTRUMENT+x}" ] || _INSTRUMENT_ARG=$TENANT_INSTRUMENT
+#
+# The fields.yaml BINDING is read here too (P2-c). Since the producer computes
+# the fifteen fields from `$TREE_DIR/fields.yaml`, the tree the flag names and
+# the producer config must agree about the session open — a futures declaration
+# (08:45) under the stock producer config (09:00) would publish an entry window
+# shifted by fifteen minutes on every bar, and the published field is a bare
+# bool that cannot say so. The producer refuses the same pair itself
+# (`produce_fields.assert_declaration_binds_to_the_run`); this is the earlier,
+# cheaper copy of the same question, in the same place the market pair is asked,
+# so a mis-paired tree never reaches step 8's real-quote GETs.
 MARKETS_OUT=$("$PY" - "$TENANT_PRODUCER_CONFIG" "$TREE_DIR/RENDER.yaml" \
-  "$_INSTRUMENT_ARG" <<'PY' 2>&1
+  "$_INSTRUMENT_ARG" "$TREE_DIR/fields.yaml" <<'PY' 2>&1
 import re
 import sys
 
@@ -407,16 +417,61 @@ elif not isinstance(pattern, str):
     match = "nopattern"
 else:
     match = "match" if re.fullmatch(pattern, instrument) else "nomatch"
-print(producer.get("market"), tree.get("market"), match)
+# The declaration's session open, as "HH:MM" — or why it could not be read.
+try:
+    with open(sys.argv[4], encoding="utf-8") as handle:
+        fields = yaml.safe_load(handle)
+except OSError:
+    fields_open = "nofile"
+except yaml.YAMLError:
+    fields_open = "unreadable"
+else:
+    opens = [
+        spec
+        for spec in (fields or {}).get("fields", [])
+        if isinstance(spec, dict) and spec.get("op") == "session.minutes_since_open"
+    ]
+    if len(opens) != 1:
+        fields_open = "noanchor"
+    else:
+        params = opens[0].get("params") or {}
+        try:
+            fields_open = "%02d:%02d" % (
+                int(params["open_hour"]),
+                int(params["open_minute"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            fields_open = "noanchor"
+print(producer.get("market"), tree.get("market"), match, fields_open,
+      producer.get("open_anchor"))
 PY
 ) || die "cannot read the market from $TENANT_PRODUCER_CONFIG / $TREE_DIR/RENDER.yaml: $(printf '%s' "$MARKETS_OUT" | tail -1)"
-read -r _MARKET TREE_MARKET INSTRUMENT_MATCH <<<"$MARKETS_OUT"
+read -r _MARKET TREE_MARKET INSTRUMENT_MATCH FIELDS_OPEN PRODUCER_OPEN_ANCHOR \
+  <<<"$MARKETS_OUT"
 case "$_MARKET" in
 futures | stock) ;;
 *) die "TENANT_PRODUCER_CONFIG declares market='$_MARKET' — expected futures or stock" ;;
 esac
 [ "$TREE_MARKET" = "$_MARKET" ] ||
   die "TENANT_TREE='$TENANT_TREE' is a '$TREE_MARKET' tree (RENDER.yaml market) but TENANT_PRODUCER_CONFIG reads market='$_MARKET' — refused before the producer starts"
+case "$FIELDS_OPEN" in
+nofile) die "TENANT_TREE='$TENANT_TREE' has no $TREE_DIR/fields.yaml — the producer publishes from the declaration and will not start without one" ;;
+unreadable) die "$TREE_DIR/fields.yaml is not readable as YAML — refused before the producer starts" ;;
+noanchor) die "$TREE_DIR/fields.yaml declares no single 'session.minutes_since_open' field, so the session open it counts from cannot be checked against TENANT_PRODUCER_CONFIG" ;;
+esac
+# Compared only against a LITERAL HH:MM. `open_anchor: auto` means the producer
+# derives the anchor from the era rule and the calendar and then refuses a
+# mismatch itself against the value it resolved
+# (produce_fields.assert_declaration_binds_to_the_run), and a second, weaker
+# copy of that rule here would be a guard that can disagree with the real one.
+# Anything else — absent, misspelled — is the producer config's own validation
+# at step 8, not this check's business.
+case "$PRODUCER_OPEN_ANCHOR" in
+[0-9][0-9]:[0-9][0-9])
+  [ "$PRODUCER_OPEN_ANCHOR" = "$FIELDS_OPEN" ] ||
+    die "$TREE_DIR/fields.yaml counts minutes from $FIELDS_OPEN but TENANT_PRODUCER_CONFIG declares open_anchor='$PRODUCER_OPEN_ANCHOR' — the entry window would be shifted on every bar; refused before the producer starts"
+  ;;
+esac
 
 # Transport and instrument follow the market. The stock tenant tree is the MOCK
 # order tree (PR-3a, operator decision 2026-10-23): its active scope is
@@ -645,7 +700,7 @@ trap 'on_signal HUP 129' HUP
 # second copy of that rule in this template would be a lock whose two owners
 # disagree about what it covers.
 PRODUCER_CEILING_S=$((RUN_S + PRODUCER_SIGKILL_AFTER_S))
-log "=== PRODUCER instrument=$INSTRUMENT config=$TENANT_PRODUCER_CONFIG session-dir=$TENANT_PRODUCER_SESSION_DIR journal=$TENANT_JOURNAL ceiling ${PRODUCER_CEILING_S}s"
+log "=== PRODUCER instrument=$INSTRUMENT config=$TENANT_PRODUCER_CONFIG session-dir=$TENANT_PRODUCER_SESSION_DIR journal=$TENANT_JOURNAL tenant-tree=$TREE_DIR ceiling ${PRODUCER_CEILING_S}s"
 PYTHONPATH="$REPO" \
   timeout --kill-after="${PRODUCER_SIGKILL_AFTER_S}s" "${PRODUCER_CEILING_S}s" \
   "$PY" -m tools.tos_cp3.live_producer.producer \
@@ -653,6 +708,7 @@ PYTHONPATH="$REPO" \
   --instrument "$INSTRUMENT" \
   --session-dir "$TENANT_PRODUCER_SESSION_DIR" \
   --journal "$TENANT_JOURNAL" \
+  --tenant-tree "$TREE_DIR" \
   --confirm >>"$TENANT_LOG" 2>&1 &
 PRODUCER_PID=$!
 log "producer pid=$PRODUCER_PID (supervised by timeout, ceiling ${PRODUCER_CEILING_S}s)"

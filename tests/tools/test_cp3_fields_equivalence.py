@@ -19,6 +19,7 @@ real 20-day and recorded-session runs are measurements in the PR body, not tests
 
 from __future__ import annotations
 
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ import yaml
 from shared.indicators.fields import load_fields_file, parse_fields_document
 from shared.instruments.contract_spec import ContractSpec
 from tools.tos_cp3 import fields_equivalence as fe
+from tools.tos_cp3 import legacy_setup_d_driver as legacy_driver  # noqa: E402
 from tools.tos_cp3 import produce_fields as pf
 from tools.tos_cp3.produce_fields import (
     FIELD_ORDER,
@@ -636,7 +638,7 @@ class TestDeclarativeProducer:
         """Same join keys, same stamps, same fifteen values, same order."""
         document = load_fields_file(_fields_yaml("cp3-setup-d-long"))
         inputs = _inputs(document, _frame(), strategy)
-        legacy = pf.produce_bars(
+        legacy = legacy_driver.produce_bars(
             inputs.df,
             symbol=inputs.symbol,
             strategy=strategy,
@@ -681,7 +683,7 @@ class TestDeclarativeProducer:
             document=document,
             emit_days=inputs.emit_days,
         )
-        legacy = pf.produce_bars(
+        legacy = legacy_driver.produce_bars(
             inputs.df,
             symbol=inputs.symbol,
             strategy=strategy,
@@ -729,7 +731,7 @@ class TestDeclarativeProducer:
             document=document,
             emit_days=inputs.emit_days,
         )
-        legacy = pf.produce_bars(
+        legacy = legacy_driver.produce_bars(
             inputs.df,
             symbol=inputs.symbol,
             strategy=strategy,
@@ -758,7 +760,7 @@ class TestDeclarativeProducer:
         """
         document = load_fields_file(_fields_yaml("cp3-setup-d-long"))
         inputs = _inputs(document, _frame(), strategy)
-        legacy = pf.produce_bars(
+        legacy = legacy_driver.produce_bars(
             inputs.df,
             symbol=inputs.symbol,
             strategy=strategy,
@@ -830,6 +832,141 @@ class TestDeclarativeProducer:
                 symbol=inputs.symbol,
                 document=broken,
                 emit_days=inputs.emit_days,
+            )
+
+    def test_the_row_is_the_declaration_s_publish_list_not_field_order(
+        self, strategy: Any
+    ) -> None:
+        """Review #1067 L2 — a SIXTEENTH published field reaches the journal.
+
+        Selecting ``FIELD_ORDER`` out of the evaluated bar made the producer's
+        answer to "what does this tenant publish?" a module constant: a tenant
+        could add a published field and the producer would drop it from every
+        row without a word. Here the declaration publishes ``mso`` as well, and
+        the record carries sixteen keys with the new one in its declared place.
+        """
+        raw = yaml.safe_load(_fields_yaml("cp3-setup-d-long").read_text("utf-8"))
+        raw["publish"].append(
+            {"field": "mso", "as": "mso_x1", "scale": {"mult": 1, "round": "half_up"}}
+        )
+        wider = parse_fields_document(raw)
+        inputs = _inputs(
+            load_fields_file(_fields_yaml("cp3-setup-d-long")), _frame(), strategy
+        )
+        declared = pf.produce_bars_declarative(
+            inputs.df,
+            symbol=inputs.symbol,
+            document=wider,
+            emit_days=inputs.emit_days,
+        )
+        assert tuple(declared.records[0].fields) == FIELD_ORDER + ("mso_x1",)
+
+    def test_a_declaration_short_of_a_field_is_not_a_key_error(
+        self, strategy: Any
+    ) -> None:
+        """The other half of L2: fourteen keys, produced, not a bare ``KeyError``.
+
+        Dropping ``eod`` from ``publish`` used to raise ``KeyError('eod')`` out
+        of the row comprehension — a traceback mid-run, with no name for what
+        was actually wrong. The producer now emits what the declaration says;
+        whether that set is the one this tenant's consumers expect is the
+        start-time question
+        :func:`~tools.tos_cp3.produce_fields.assert_publish_matches_critical_inputs`
+        answers, and :class:`TestPublishMatchesTheCriticalInputPolicy` is where
+        this same declaration is refused.
+        """
+        raw = yaml.safe_load(_fields_yaml("cp3-setup-d-long").read_text("utf-8"))
+        raw["publish"] = [entry for entry in raw["publish"] if entry["field"] != "eod"]
+        narrower = parse_fields_document(raw)
+        inputs = _inputs(
+            load_fields_file(_fields_yaml("cp3-setup-d-long")), _frame(), strategy
+        )
+        declared = pf.produce_bars_declarative(
+            inputs.df,
+            symbol=inputs.symbol,
+            document=narrower,
+            emit_days=inputs.emit_days,
+        )
+        published = tuple(declared.records[0].fields)
+        assert "eod" not in published
+        assert published == tuple(name for name in FIELD_ORDER if name != "eod")
+
+
+class TestPublishMatchesTheCriticalInputPolicy:
+    """Review #1067 L2 — the publish set is checked against the tenant's policy.
+
+    The producer takes the publish list whole, so the set the kernel receives
+    is the declaration's. The tenant tree already states which fields its
+    consumers were configured for, one ``field_key`` per entry with the
+    freshness bound applied to it, and that is what this check compares
+    against — at producer START, where the answer is free.
+    """
+
+    @staticmethod
+    def _policy(tree: str) -> Path:
+        return (
+            REPO_ROOT / "config" / "tos_runtime" / tree / "critical_input_policy.yaml"
+        )
+
+    def test_the_three_shipped_trees_pass(self) -> None:
+        """Green at the start: a guard, not a migration step."""
+        for tree in TREES:
+            pf.assert_publish_matches_critical_inputs(
+                load_fields_file(_fields_yaml(tree)), policy_path=self._policy(tree)
+            )
+
+    def test_a_sixteenth_published_field_is_refused_by_name(self) -> None:
+        """It would reach the snapshot with no ``max_age_ms`` of its own."""
+        raw = yaml.safe_load(_fields_yaml("cp3-setup-d-long").read_text("utf-8"))
+        raw["publish"].append(
+            {"field": "mso", "as": "mso_x1", "scale": {"mult": 1, "round": "half_up"}}
+        )
+        with pytest.raises(pf.ProduceFieldsError, match="mso_x1"):
+            pf.assert_publish_matches_critical_inputs(
+                parse_fields_document(raw),
+                policy_path=self._policy("cp3-setup-d-long"),
+            )
+
+    def test_a_dropped_field_is_refused_by_name(self) -> None:
+        """The kernel refuses the WHOLE poll on a missing journal key, so this
+        would be a refused poll every minute from the open rather than a field
+        reading ``None``."""
+        raw = yaml.safe_load(_fields_yaml("cp3-setup-d-long").read_text("utf-8"))
+        raw["publish"] = [entry for entry in raw["publish"] if entry["field"] != "eod"]
+        with pytest.raises(pf.ProduceFieldsError, match="declared-but-unpublished"):
+            pf.assert_publish_matches_critical_inputs(
+                parse_fields_document(raw),
+                policy_path=self._policy("cp3-setup-d-long"),
+            )
+
+    @pytest.mark.parametrize(
+        ("text", "match"),
+        [
+            ("policy_id: x\n", "no 'fields' list"),
+            ("fields: []\n", "no 'fields' list"),
+            ("fields:\n  - max_age_ms: 800\n", "no 'field_key' string"),
+            ("fields: [unclosed\n", "not parseable as YAML"),
+        ],
+    )
+    def test_a_policy_that_cannot_be_compared_is_refused(
+        self, tmp_path: Path, text: str, match: str
+    ) -> None:
+        """An unreadable policy is not agreement."""
+        policy = tmp_path / "critical_input_policy.yaml"
+        policy.write_text(text, encoding="utf-8")
+        with pytest.raises(pf.ProduceFieldsError, match=match):
+            pf.assert_publish_matches_critical_inputs(
+                load_fields_file(_fields_yaml("cp3-setup-d-long")), policy_path=policy
+            )
+
+    def test_a_missing_policy_file_is_refused_rather_than_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        """A mis-rendered tree must not pass the check by not having one."""
+        with pytest.raises(pf.ProduceFieldsError, match="cannot be read"):
+            pf.assert_publish_matches_critical_inputs(
+                load_fields_file(_fields_yaml("cp3-setup-d-long")),
+                policy_path=tmp_path / "critical_input_policy.yaml",
             )
 
 
@@ -941,6 +1078,55 @@ class TestPublishCoverageRefusal:
                 strategies_dir=strategies,
             )
 
+    def test_the_three_shipped_trees_bind_to_their_own_producer_config(self) -> None:
+        """Each tree's declaration agrees with the anchor its producer resolves.
+
+        The binding check starts green, like the publish-coverage one: it is a
+        guard, not a migration step.
+        """
+        strategy = load_strategy_inputs(STRATEGY_YAML)
+        for tree in TREES:
+            hour, minute = TREE_ANCHORS[tree]
+            pf.assert_declaration_binds_to_the_run(
+                load_fields_file(_fields_yaml(tree)),
+                strategy=strategy,
+                anchor=OpenAnchor(hour, minute, "test"),
+            )
+
+    def test_a_declaration_from_the_other_market_is_refused(self) -> None:
+        """The concrete input: the futures tree under the stock open.
+
+        08:45 against 09:00 shifts ``entry_window`` by fifteen minutes on every
+        bar of the session, and the field is a bare bool — nothing downstream
+        could report it.
+        """
+        strategy = load_strategy_inputs(STRATEGY_YAML)
+        with pytest.raises(pf.ProduceFieldsError, match="counts minutes from 08:45"):
+            pf.assert_declaration_binds_to_the_run(
+                load_fields_file(_fields_yaml("cp3-setup-d-long")),
+                strategy=strategy,
+                anchor=OpenAnchor(9, 0, "config"),
+            )
+
+    def test_a_vol_window_the_seed_is_not_built_for_is_refused(self) -> None:
+        """The seed is sized from the strategy YAML; the window consumes it.
+
+        Doubling the declaration's window leaves ``vol_ref`` inside its warmup
+        all session, where the gate is PERMISSIVE — so ``hi_vol`` would read
+        true on every bar, an entry gate held open because two numbers
+        disagreed.
+        """
+        strategy = load_strategy_inputs(STRATEGY_YAML)
+        raw = yaml.safe_load(_fields_yaml("cp3-setup-d-long").read_text("utf-8"))
+        vol = next(spec for spec in raw["fields"] if spec["name"] == "vol_ref")
+        vol["params"]["window"] = int(strategy.entry_config.vol_window_bars) * 2
+        with pytest.raises(pf.ProduceFieldsError, match="vol_ref window="):
+            pf.assert_declaration_binds_to_the_run(
+                parse_fields_document(raw),
+                strategy=strategy,
+                anchor=OpenAnchor(8, 45, "test"),
+            )
+
     def test_a_commented_out_ref_is_not_a_ref(self, tmp_path: Path) -> None:
         """Walked over the PARSED document, so a comment cannot trip it."""
         strategies = tmp_path / "strategies"
@@ -959,3 +1145,70 @@ class TestPublishCoverageRefusal:
             load_fields_file(_fields_yaml("cp3-setup-d-long")),
             strategies_dir=strategies,
         )
+
+
+class TestTheRestatedRegistryName:
+    """``produce_fields.SETUP_D_REGISTRY_NAME`` must equal the class attribute.
+
+    P2-c drives the legacy imports in ``produce_fields.py`` to zero (plan §5.2),
+    and two of the four uses were the registry-name string. Restating a literal
+    is only honest while something compares it to its source — this is that
+    something. A test MAY import the legacy class: a test is not the producer
+    path, which is the thing the criterion is about.
+    """
+
+    def test_the_literal_equals_the_class_attribute(self) -> None:
+        from shared.decision.setups.vwap_reversion import SetupDVWAPReversion
+
+        assert pf.SETUP_D_REGISTRY_NAME == SetupDVWAPReversion.REGISTRY_NAME
+
+    def test_the_shipped_strategy_yaml_declares_that_type(self) -> None:
+        """...and the string is the one the shipped strategy actually carries,
+        so the loader's refusal is about a real value rather than a typo both
+        sides share."""
+        raw = yaml.safe_load(STRATEGY_YAML.read_text(encoding="utf-8"))
+        assert raw["strategy"]["entry"]["type"] == pf.SETUP_D_REGISTRY_NAME
+
+    def test_produce_fields_names_the_legacy_class_nowhere(self) -> None:
+        """Plan §5.2, as a number rather than a promise: the count is ZERO.
+
+        The two functions that used to hold it — the legacy driver and the D7
+        measurement — now live in ``tools/tos_cp3/legacy_setup_d_driver.py``,
+        which is where this assertion says they are. Reading the AST rather
+        than the import list is deliberate: a name reached through an alias or
+        a re-export would still show up here.
+        """
+        import ast
+
+        for module, expected in ((pf, False), (legacy_driver, True)):
+            tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+            named = {
+                node.lineno
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Name) and node.id == "SetupDVWAPReversion"
+            }
+            assert bool(named) is expected, (module.__name__, sorted(named))
+
+    def test_what_of_the_legacy_module_produce_fields_still_binds(self) -> None:
+        """Exactly one name, and it is a CONFIG dataclass — not the setup.
+
+        Said precisely because the imprecise version is tempting: importing
+        ``produce_fields`` still executes
+        ``shared/decision/setups/vwap_reversion.py``, because ``SetupDConfig``
+        — the thresholds dataclass ``load_strategy_inputs`` fills and
+        ``live_producer/frame.py::build_seed`` reads ``vol_window_bars`` out of
+        — is declared in that same file. So plan §5.2's claim is about the
+        DECIDING class, which the module no longer names anywhere; it is not a
+        claim that the witness left the live producer's import closure. Moving
+        ``SetupDConfig`` is a separate change with its own reasons.
+        """
+        import tools.tos_cp3.produce_fields as module
+
+        bound = {
+            name
+            for name, value in vars(module).items()
+            if getattr(value, "__module__", None)
+            == "shared.decision.setups.vwap_reversion"
+        }
+        assert bound == {"SetupDConfig"}, bound
+        assert sys.modules["shared.decision.setups.vwap_reversion"] is not None

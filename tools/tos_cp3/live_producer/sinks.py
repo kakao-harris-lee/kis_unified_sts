@@ -199,6 +199,31 @@ def append_bar_part(
     return tuple(written)
 
 
+def store_unadjusted_seed(
+    market_root: Path,
+    *,
+    asset_class: str,
+    instrument: str,
+    kept: Sequence[Any],
+    junction_new_bars: Sequence[tuple],
+) -> None:
+    """Write every seed day under ITS OWN contract's partition, unadjusted."""
+    for entry in kept:
+        append_bar_part(
+            market_root,
+            asset_class=asset_class,
+            symbol=entry.contract,
+            bars=entry.bars,
+        )
+    if junction_new_bars:
+        append_bar_part(
+            market_root,
+            asset_class=asset_class,
+            symbol=instrument,
+            bars=junction_new_bars,
+        )
+
+
 def market_digest(market_root: Path) -> dict[str, str]:
     """sha256 of every written part file, keyed by its path under *market_root*."""
     return {

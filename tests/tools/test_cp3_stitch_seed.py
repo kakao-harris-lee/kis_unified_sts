@@ -32,8 +32,10 @@ import pytest
 import yaml
 
 from shared.collector.historical.ohlcv_parser import parse_ohlcv
+from tools.tos_cp3 import legacy_setup_d_driver as legacy_driver  # noqa: E402
 from tools.tos_cp3 import produce_fields as b1a
 from tools.tos_cp3 import stitch as stitch_mod
+from tools.tos_cp3.legacy_setup_d_driver import produce_bars  # noqa: E402
 from tools.tos_cp3.live_producer import config as config_mod
 from tools.tos_cp3.live_producer import producer as producer_mod
 from tools.tos_cp3.live_producer import sinks as sinks_mod
@@ -44,7 +46,6 @@ from tools.tos_cp3.produce_fields import (
     ContractSpecRegistry,
     ProduceFieldsError,
     load_strategy_inputs,
-    produce_bars,
     resolve_contract_spec,
     resolve_open_anchor,
 )
@@ -68,6 +69,13 @@ NEW = "A05611"
 #: ``get_front_month_code(product="mini")`` moves to A05611 the next trading
 #: day (2026-10-09 is a holiday, so that is 2026-10-12).
 TARGET = date(2026, 10, 12)
+
+#: The shipped tenant tree this producer serves. Real, not a fixture: the
+#: producer binds the declaration to the session at boot
+#: (``produce_fields.assert_declaration_binds_to_the_run``), so a stand-in
+#: would have to restate the shipped open anchor and vol window to be accepted
+#: — and then it would stop pinning the shipped ones.
+TENANT_TREE = _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-long"
 SPLICE = date(2026, 10, 8)
 #: Walk order is backwards from TARGET; these are the four trading days the
 #: tenant calendar yields before it (2026-10-05 is a substitute holiday and
@@ -778,6 +786,7 @@ def stitched_session(tmp_path_factory: pytest.TempPathFactory) -> StitchedSessio
         target=TARGET,
         session_dir=tmp_path / "session",
         journal_path=tmp_path / "session" / "journal.jsonl",
+        tenant_tree=TENANT_TREE,
         clock=producer_mod.Clock(now=clock.now, sleep=clock.sleep),
         quotes_factory=lambda _config, _log: quotes,
     )
@@ -809,6 +818,7 @@ def unsplit_session(tmp_path_factory: pytest.TempPathFactory) -> StitchedSession
         target=UNSPLIT_TARGET,
         session_dir=tmp_path / "session",
         journal_path=tmp_path / "session" / "journal.jsonl",
+        tenant_tree=TENANT_TREE,
         clock=producer_mod.Clock(now=clock.now, sleep=clock.sleep),
         quotes_factory=lambda _config, _log: quotes,
     )
@@ -1188,7 +1198,7 @@ def test_b1a_refuses_a_lineage_whose_three_exit_doors_do_not_add_up(
         },
         market_open="auto",
     )
-    produced = b1a.produce_bars(
+    produced = legacy_driver.produce_bars(
         window.df,
         symbol=NEW,
         strategy=window.strategy,
