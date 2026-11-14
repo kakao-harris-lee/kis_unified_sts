@@ -294,29 +294,21 @@ def test_futures_asset_is_refused_before_any_credential_resolution(
         pc.probe_pca(_args(asset="futures"))
 
 
-def test_missing_symbol_is_refused(stock_env: None) -> None:
-    with pytest.raises(ProbeError, match="--symbol"):
-        pc.probe_pca(_args(symbol=""))
-
-
-def test_unknown_event_class_is_refused(stock_env: None) -> None:
-    with pytest.raises(ProbeError, match="--event-class"):
-        pc.probe_pca(_args(event_class="rights_offering"))
-
-
-def test_unknown_env_is_refused(stock_env: None) -> None:
-    with pytest.raises(ProbeError, match="--env"):
-        pc.probe_pca(_args(env="paper"))
-
-
-def test_zero_window_is_refused(stock_env: None) -> None:
-    with pytest.raises(ProbeError, match="--window-s"):
-        pc.probe_pca(_args(window_s=0))
-
-
-def test_bad_iso_time_is_refused(stock_env: None) -> None:
-    with pytest.raises(ProbeError, match="--effective-time"):
-        pc.probe_pca(_args(effective_time="not-a-date"))
+@pytest.mark.parametrize(
+    ("override", "match"),
+    [
+        ({"symbol": ""}, "--symbol"),
+        ({"event_class": "rights_offering"}, "--event-class"),
+        ({"env": "paper"}, "--env"),
+        ({"window_s": 0}, "--window-s"),
+        ({"effective_time": "not-a-date"}, "--effective-time"),
+    ],
+)
+def test_a_bad_argument_is_refused(
+    stock_env: None, override: dict[str, Any], match: str
+) -> None:
+    with pytest.raises(ProbeError, match=match):
+        pc.probe_pca(_args(**override))
 
 
 def test_naive_iso_time_without_utc_offset_is_refused_before_any_call(

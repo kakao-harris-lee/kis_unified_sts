@@ -50,6 +50,7 @@ from typing import Any
 
 import pytest
 
+from tests.support.probe_auth import install_stub_auth
 from tools.broker_probes import probes_order
 from tools.broker_probes.probes_order import (
     _CLEANUP_ATTEMPTS,
@@ -71,11 +72,6 @@ _NO_QTY = "모의투자 정정/취소할 수량이 없습니다."
 
 #: The rejection that ended trial 1's cleanup with order 0000003144 left resting.
 _THROTTLED = "초당 거래건수를 초과하였습니다."
-
-
-class _StubAuth:
-    def get_auth_headers(self) -> dict[str, str]:
-        return {"authorization": "Bearer stub"}
 
 
 @pytest.fixture
@@ -301,9 +297,7 @@ class _Broker:
 
 def _install(monkeypatch: pytest.MonkeyPatch, broker: _Broker) -> _Broker:
     monkeypatch.setattr(probes_order, "http_json", broker)
-    monkeypatch.setattr(
-        "shared.kis.auth.KISAuthManager", lambda *a, **k: _StubAuth(), raising=True
-    )
+    install_stub_auth(monkeypatch)
     return broker
 
 
