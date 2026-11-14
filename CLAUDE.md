@@ -1,8 +1,10 @@
 # CLAUDE.md - KIS Unified STS Operational Guide
 
 This file is the compact operational source of truth for coding agents in this
-repo. Keep historical rationale in `docs/plans/` or `docs/superpowers/`; keep
-this file focused on current runtime rules.
+repo. `docs/plans/` and `docs/superpowers/` hold the rationale for what runs
+**today**; rationale for finished work lives in git history
+(`git log --diff-filter=D -- docs/`), not in a kept file. Keep this file focused
+on current runtime rules.
 
 If the deploy-host memory file exists at
 `/home/deploy/.claude/projects/-home-deploy-project-kis-unified-sts/memory/MEMORY.md`,
@@ -343,6 +345,7 @@ Agent roster, skill list, directory layout, and execution detail live under
 | 2026-08-30 | Doc-only fix to the model-lanes paragraph: it claimed every audit lens runs on Sonnet 5, contradicting the 2026-08-25 row and the actual frontmatter (`architecture-auditor`/`security-auditor` are Opus) | CLAUDE.md | Cost audit found the prose had drifted from the pinned `model:` values; agent files unchanged |
 | 2026-11-12 | **Phase-0 판정 장치 퇴역** — 완료 계약서·인덱스 도구·완료/계약 검사기·U-17 예방 통제와 그 CI 단계를 삭제. 필수 체크 `tos-gate` 는 이름을 유지하고 내용만 `tos_redigest --check`(살아 있는 핀 게이트)로 교체 | CLAUDE.md, tos/CLAUDE.md, `.github/workflows/tos-{gate,firewall,test}.yml`, `tools/`, `tos-spec/`, `docs/` | Phase 0 는 2026-10-22 서명(#920)으로 닫혔고 완료 기준은 `TOS_PAPER_READY` 다. 역사 기록이 된 판정 장치가 PR 마다 수 분의 CI 와 저장소 부피의 큰 몫을 계속 먹었다 (계획: `docs/plans/2026-11-12-phase0-retirement-plan.md`) |
 | 2026-11-13 | **명세·증거 코퍼스 은퇴 (S3)** — `tos-spec/`(66k 줄) · `tos-evidence/`(25k) 전체와 그들만 읽던 도구(`tos_spec_status` · `tos_evidence_run` · `tos_profile_census`)·테스트·CI 단계(mdBook 빌드, 코퍼스 무결성), `BROKER-TRANSPORT-SYMBOLS.{csv,md}`, 명세 앵커 커널 테스트를 삭제. 그 검사기가 유일한 존속 이유였던 `shared/execution/executor.py` · `shared/kis/client.py` 와 그 폐쇄(`shared/http` · `shared/observability` · `services/monitoring`)도 함께 삭제 | CLAUDE.md, tos/CLAUDE.md, `.github/workflows/tos-{firewall,test}.yml`, `tools/`, `tos-spec/`, `tos-evidence/`, `shared/`, `services/`, `docs/` | 운영자 지시: 코드·문서 부피 절반화 (계획: `docs/plans/2026-11-13-tos-code-halving-plan.md` §S3) |
+| 2026-11-14 | **역사 계획·증거 은퇴 (S3/§4)** — 끝난 계획 35건과 측정 캠페인 증거 5건, 그리고 「historical rationale 는 `docs/plans/` 에 둔다」는 문장을 「끝난 근거는 git 이력에 둔다」로 교체 | CLAUDE.md, `docs/` | 운영자 지시: 문서 부피 절반화. `docs/` 68,135 → 38,485 줄 (계획: `docs/plans/2026-11-13-tos-code-halving-plan.md` §S3/§4) |
 
 ## Documentation Map
 
@@ -358,3 +361,7 @@ Agent roster, skill list, directory layout, and execution detail live under
   `paper-live-code-separation`)과 `docs/runtime_storage_architecture.md` ·
   `docs/ROADMAP.md` 를 포함해 전부 git 이력에 있다:
   `git log --diff-filter=D -- docs/`.
+- 2026-11-14 에 끝난 계획 35건(2026-07~09 커널·런타임 착지 기록 · 상위 제안표 ·
+  측정 계획)과 끝난 측정 캠페인 증거 5건을 지웠다 (같은 계획 §S3/§4). 남긴
+  계획은 지금 도는 것의 결정 기록과 `TOS_PAPER_READY` 기준, 방화벽 설계 계약뿐
+  이다. 코드·설정에 남은 은퇴 문서 인용은 git 이력을 가리키는 주석이다.

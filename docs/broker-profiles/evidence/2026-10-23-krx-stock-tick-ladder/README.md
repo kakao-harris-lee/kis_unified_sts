@@ -1,6 +1,7 @@
 # KRX 규정 원문 — 유가증권시장 주권 호가가격단위 사다리 (주식 트리 `price_band_ticks` 의 1차 출처)
 
 - 수집: 2026-10-23 KST · 작업 목록 `docs/plans/2026-10-23-tos-local-parallel-work.md` L3
+  (그 목록은 2026-11-14 은퇴 — git 이력에 있다: `git log --diff-filter=D -- docs/plans/`)
 - 출처: **KRX 법무포털** `https://rule.krx.co.kr/out/index.do` → 유가증권시장 업무규정 · 같은 시행세칙. 포털은 POST 전용이라
   조문별 고정 URL 이 없다(선례 `../2026-10-08-krx-venue-limits/README.md` 와 같은 방식).
 - 대상: `config/tos_runtime/cp3-setup-d-stock-005930/venue_constraint_policy.yaml::_model_view.shape_constraints.price_band_ticks` 7행.
