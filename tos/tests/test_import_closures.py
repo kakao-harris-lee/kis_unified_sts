@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import importlib
+import ast
+import sys
 from pathlib import Path
 
 import pytest
 
+from . import _closure_children
 from ._closure_policy import (
     CLEARED_NON_TOS_PROBES,
     DENIED_NON_TOS_PROBES,
@@ -16,17 +18,39 @@ from ._closure_policy import (
     ClosurePolicy,
     canary_of,
     closure_of,
-    closure_of_modules,
+    closure_of_module,
     scan_offenders,
     statically_imported_modules,
     tos_top_level,
 )
 from ._closure_table import POLICIES
 
-_LOADED: dict[str, dict[str, object]] = {
-    policy.name: {name: importlib.import_module(name) for name in policy.child_imports}
-    for policy in POLICIES.values()
-}
+
+def _load_all() -> dict[str, dict[str, object]]:
+    """Run every package's importer in this process, then bind the modules it loaded."""
+    loaded: dict[str, dict[str, object]] = {}
+    for name, policy in POLICIES.items():
+        _closure_children.IMPORTERS[name]()
+        loaded[name] = {module: sys.modules[module] for module in policy.child_imports}
+    return loaded
+
+
+_LOADED = _load_all()
+
+
+def _importer_imports(key: str) -> tuple[str, ...]:
+    """The modules ``_closure_children.IMPORTERS[key]`` really names, read from its source."""
+    source = Path(_closure_children.__file__).read_text(encoding="utf-8")
+    wanted = _closure_children.IMPORTERS[key].__name__
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.FunctionDef) and node.name == wanted:
+            return tuple(
+                alias.name
+                for child in ast.walk(node)
+                if isinstance(child, ast.Import)
+                for alias in child.names
+            )
+    raise AssertionError(f"{wanted} is not defined in _closure_children.py")
 
 
 def _params(predicate) -> list:
@@ -56,8 +80,8 @@ def _bound(policy: ClosurePolicy) -> set[str]:
     """The declared allowlist widened by the closure of each package it may consume."""
     assert policy.allowed_tos is not None
     bound = set(policy.allowed_tos)
-    if policy.bounded_by:
-        bound |= set(closure_of_modules(policy, policy.bounded_by)["tos_tops"])
+    for module in policy.bounded_by:
+        bound |= set(closure_of_module(policy, module)["tos_tops"])
     return bound
 
 
@@ -231,7 +255,7 @@ def test_every_submodule_is_covered_by_the_closure_child(policy: ClosurePolicy) 
 @pytest.mark.parametrize("policy", WITH_NAMESPACE)
 def test_namespace_exposes_no_sibling_or_mutation_symbol(policy: ClosurePolicy) -> None:
     """(author-level lock) No mutation, construction or other authority's symbol is reachable."""
-    root = importlib.import_module(f"tos.{policy.name}")
+    root = sys.modules[f"tos.{policy.name}"]
     for name in policy.namespace_forbidden:
         assert not hasattr(root, name), f"tos.{policy.name} exposes {name!r}"
     if not policy.namespace_all_submodules:
@@ -244,6 +268,18 @@ def test_namespace_exposes_no_sibling_or_mutation_symbol(policy: ClosurePolicy) 
 @pytest.mark.parametrize("policy", WITH_BOUND)
 def test_the_consumed_package_edge_is_real(policy: ClosurePolicy) -> None:
     """(anti-phantom) The widening package really has a closure — the bound is not a free pass."""
-    tops = set(closure_of_modules(policy, policy.bounded_by)["tos_tops"])
     for name in policy.bounded_by:
+        tops = set(closure_of_module(policy, name)["tos_tops"])
         assert name in tops, f"{name} reports no closure of its own"
+
+
+@pytest.mark.parametrize("policy", ALL)
+def test_the_closure_child_imports_exactly_the_declared_modules(
+    policy: ClosurePolicy,
+) -> None:
+    """Anti-phantom: the child's real ``import`` statements are the policy's declared edge set."""
+    assert _importer_imports(policy.name) == policy.child_imports, (
+        f"_closure_children.import_{policy.name} and POLICIES[{policy.name!r}].child_imports "
+        "have drifted — the measured closure would not be the declared one"
+    )
+    assert _importer_imports(f"{policy.name}:root") == policy.canary_imports

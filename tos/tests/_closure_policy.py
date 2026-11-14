@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import importlib
 import multiprocessing as mp
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -376,12 +375,13 @@ class ClosurePolicy:
 
 
 def _child(queue: Any, plan: dict[str, Any]) -> None:
-    """Child target: import ``plan['imports']``, plant ``plan['planted']``, report the closure."""
+    """Child target: run ``plan['importer']``, plant ``plan['planted']``, report the closure."""
     import sys
     import types
 
-    for name in plan["imports"]:
-        importlib.import_module(name)
+    from ._closure_children import IMPORTERS
+
+    IMPORTERS[plan["importer"]]()
     for name in plan["planted"]:
         sys.modules[name] = types.ModuleType(name)
 
@@ -420,9 +420,10 @@ def _run(plan: dict[str, Any]) -> dict[str, Any]:
 _CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 
 
-def _plan(policy: ClosurePolicy, imports: tuple[str, ...], planted: tuple[str, ...]):
+def _plan(policy: ClosurePolicy, importer: str, planted: tuple[str, ...]):
+    """The picklable description one spawn child needs."""
     return {
-        "imports": list(imports),
+        "importer": importer,
         "planted": list(planted),
         "deny_exact": policy.deny_exact,
         "deny_prefixes": policy.deny_prefixes,
@@ -434,7 +435,7 @@ def closure_of(policy: ClosurePolicy) -> dict[str, Any]:
     """The measured closure of ``policy``'s own submodules, cached per session."""
     key = (policy.name, "closure")
     if key not in _CACHE:
-        _CACHE[key] = _run(_plan(policy, policy.child_imports, ()))
+        _CACHE[key] = _run(_plan(policy, policy.name, ()))
     return _CACHE[key]
 
 
@@ -442,15 +443,13 @@ def canary_of(policy: ClosurePolicy) -> dict[str, Any]:
     """The measured closure after planting ``policy``'s fake leaks, cached per session."""
     key = (policy.name, "canary")
     if key not in _CACHE:
-        _CACHE[key] = _run(_plan(policy, policy.canary_imports, policy.planted))
+        _CACHE[key] = _run(_plan(policy, f"{policy.name}:root", policy.planted))
     return _CACHE[key]
 
 
-def closure_of_modules(
-    policy: ClosurePolicy, modules: tuple[str, ...]
-) -> dict[str, Any]:
-    """The measured closure of ``modules`` alone, cached per session."""
-    key = (policy.name, "bound:" + ",".join(modules))
+def closure_of_module(policy: ClosurePolicy, module: str) -> dict[str, Any]:
+    """The measured closure of ``module`` alone, cached per session."""
+    key = (policy.name, f"bound:{module}")
     if key not in _CACHE:
-        _CACHE[key] = _run(_plan(policy, modules, ()))
+        _CACHE[key] = _run(_plan(policy, f"module:{module}", ()))
     return _CACHE[key]
