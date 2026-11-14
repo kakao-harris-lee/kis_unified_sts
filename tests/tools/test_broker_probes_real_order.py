@@ -1855,6 +1855,14 @@ def _futures_live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) ->
         "enabled: 1\n",
         "enabled:   true\n",
         "enabled: true   # armed for the trial\n",
+        # PyYAML's bool resolver reads each of these as true as well. Before
+        # 2026-11-15 the guard matched only `true|True|yes|1`, so `enabled: ON`
+        # armed the live path with this interlock saying nothing.
+        "enabled: TRUE\n",
+        "enabled: on\n",
+        "enabled: On\n",
+        "enabled: ON\n",
+        "enabled: YES\n",
         # Indented is still armed. The guard strips each line before matching,
         # so an `enabled: true` nested under any key refuses too — fail-closed
         # is the right direction for this one, and pinning it keeps a future
@@ -1895,8 +1903,7 @@ def test_an_absent_live_futures_config_admits_the_order_probe(
     common.assert_no_live_futures_config()
 
 
-def test_the_real_order_probe_calls_the_interlock_before_anything_else() -> None:
+def test_the_real_order_probe_module_calls_the_interlock() -> None:
     """The refusal is reachable from P-R5's own module, not just from common.py."""
     source = Path(pro.__file__).read_text(encoding="utf-8")
     assert source.count("assert_no_live_futures_config()") >= 1
-    assert "assert_no_live_futures_config" in source
