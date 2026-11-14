@@ -1,10 +1,4 @@
-"""``tos_runtime.compose._attempt_arm`` — the arm step 2 selected for the CURRENT attempt
-(issue #960; selection lives in :mod:`tos_runtime.compose._attempt_shape`), and the reads every
-later per-attempt consumer (steps 3/7/14, the send-boundary context) shares.
-
-Split out only so ``context.py`` can import these without an import cycle through
-``_envelope_wiring``. Firewall: stdlib + ``tos.*`` only.
-"""
+"""``tos_runtime.compose._attempt_arm`` — the arm step 2 selected for the CURRENT attempt"""
 
 from __future__ import annotations
 
@@ -25,9 +19,7 @@ __all__ = [
 
 @dataclass(frozen=True)
 class AttemptArm:
-    """One ``(action_class, direction)`` arm of the OCP's ``action_class_shape`` this
-    composition can construct, with the envelope built for it. ``direction`` is the OCP key
-    (the held position for ``CLOSE``), not the proposal's own ``direction``."""
+    """One ``(action_class, direction)`` arm of the OCP's ``action_class_shape`` this"""
 
     action_class: ActionClass
     direction: str
@@ -44,9 +36,7 @@ def attempt_reader(
 
 
 def attempt_side(stage: OrderConstructionStage, boot_side: str) -> str:
-    """The current attempt's side; ``boot_side`` only when step 2 selected no arm — a plain
-    kernel stage (its one envelope IS the boot arm) or a refused attempt (no command to send).
-    """
+    """The current attempt's side; ``boot_side`` only when step 2 selected no arm — a plain"""
     arm = getattr(stage, "attempt", None)
     return boot_side if arm is None else arm.side
 
@@ -60,11 +50,6 @@ def attempt_action_class(
 
 
 def attempt_position_effect(stage: OrderConstructionStage) -> str | None:
-    """The current attempt's position effect, or ``None`` when step 2 selected no arm.
-
-    Unlike :func:`attempt_side`/:func:`attempt_action_class` there is no boot fallback: step 8
-    (#966) admits against the ledger by this value, and the boot arm's effect is not a fact
-    about the attempt under judgement. ``None`` denies there — never a substituted default.
-    """
+    """The current attempt's position effect, or ``None`` when step 2 selected no arm."""
     arm = getattr(stage, "attempt", None)
     return None if arm is None else arm.position_effect

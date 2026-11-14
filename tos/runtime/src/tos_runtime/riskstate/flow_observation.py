@@ -1,135 +1,4 @@
-"""tos_runtime.riskstate.flow_observation — inbox/RCL-log/evidence-derived Action Flow
-observations (TOS risk state service wave, plan §2.3/§4.1; DR-0003 §2.3 "Action-flow facts:
-observed versus declared").
-
-**Lineage bridge (measured, cited, not invented).** ``tos.egressgw.seal.SendSeal.reference``
-is a ``tos.ordering.OrderingEvent`` (``tos/src/tos/egressgw/seal.py:219`` — "the causal-ordering
-event itself — sealed like every other transport argument"), and ``OrderingEvent`` carries both
-``event_id`` and ``causal_predecessor_ids`` (``tos/src/tos/ordering/_ordering.py:59-68``). Every
-durable ``SEND_SEALED`` evidence row therefore already carries, per ``attempt_id``, the exact
-causal-ordering coordinates this module needs for lineage: this is the ``event -> proposal ->
-attempt`` chain DR-0003 §2.3 names as an observation, read from the SAME evidence rows
-:mod:`tos_runtime.riskstate.position` reads for position, never a second invented mechanism.
-
-**Two dedup layers exist in this runtime — only the SECOND is amplification (TOS action-flow
-observation completion wave, 2026-09-16; DR-0003 §2.3 "duplicate redelivery rejections,
-recovery replays" as observations, not declarations).**
-
-* **Inbox admission dedup** (``SqliteEventInbox.enqueue``'s typed ``InboxReceipt.duplicate``
-  flag, ``tos_runtime/engine/inbox.py:227-236``) is a TRANSIENT return value at the moment of
-  ONE enqueue call, content-addressed on the whole event's bytes — no durable side table
-  records it anywhere (measured: no ``DUPLICATE``/dedup-count evidence kind exists in this
-  runtime, confirmed by grep across ``tos_runtime/engine/*.py`` and
-  ``tos_runtime/compose/_engine_wiring.py``). A refused duplicate admission creates no new
-  attempt, no new send, no new work of any kind — it contributes exactly zero amplification by
-  construction, so leaving it uncounted here is not a gap: there is nothing for
-  ``duplicate_redelivery_expansion`` to measure at this layer.
-* **Kernel result-signature dedup** is the layer that IS amplification-relevant:
-  ``ProvisionalReservationLedger._applied_result_signatures``
-  (``tos/src/tos/engine/state.py:333-346``, a per-scope 6-tuple signature set) classifies a
-  re-injected ``EGRESS_RESULT`` that repeats an already-applied signature as
-  ``ResultDisposition.DUPLICATE`` (``state.py:846-862``), durably recorded as a
-  ``RESULT_UNMATCHED`` evidence row carrying both ``result_disposition`` and ``attempt_id``
-  (``tos/src/tos/engine/core.py:705-720``). ``duplicates_rejected`` is
-  :func:`count_duplicate_dispositions` over the already-fetched ``RESULT_UNMATCHED`` payloads,
-  filtered to ``result_disposition == "DUPLICATE"`` and ``attempt_id`` in the cause's own
-  ``cause_attempts`` set (the SAME set :meth:`InboxFlowReader._scan_sealed_lineage` already
-  builds via ``SEND_SEALED`` lineage tracing). A completed scan matching none is a genuine
-  ``0``, never ``None`` — the scan ran and found none, which is a real fact, not a guess.
-
-**``replays`` — restart-recovery episode count (accepted proxy, under-count disclosed).**
-``EngineDriver._process_next``'s crash-window recovery (``tos_runtime/engine/driver.py:482-544``,
-``_handle_interrupted_event``) durably appends exactly one of two ``event_id``-keyed markers per
-interrupted row, right before that row is marked consumed:
-``DECISION_TICK_DROPPED_ON_RECOVERY`` (non-halt) or ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND``
-(halt). AFG's own vocabulary groups process-restart with failover/reconnect as the SAME
-amplification class (``tos/src/tos/afg/state.py:515-524``, ``non_revival_holds``'s parameter
-list), so :func:`count_recovery_markers` counts BOTH kinds whose ``event_id`` durably names
-this cause's own root event — resolved as the root row's own content-addressed identity, read
-back from its ``EVENT_HANDLING_STARTED`` write-ahead marker
-(:meth:`InboxFlowReader._resolve_handling_started`), never the caller-authored
-``reference.event_id`` label the ``root_event_id`` parameter carries (module docstring's own
-"``StageRequest.reference.event_id`` is a caller-authored label" note above). **Disclosed
-under-count**: a SECOND restart of the SAME still-pending row does not append a second marker
-(the branch fires once, right before the row is marked consumed) — this is a lower bound on
-restart-recovery episodes attributable to this cause, not an exact replay count in every
-stricter sense DR-0003 might intend. Carried on every observation as
-:attr:`FlowObservation.replays_definition` (the module-level :data:`REPLAYS_DEFINITION`
-string) so a consumer of ``RISK_STATE_OBSERVED.flow.replays_definition`` never mistakes the
-proxy for an exact fact. A completed scan matching none is a genuine ``0``, never ``None``.
-
-**``root_event_seq``/``handling_started_monotonic`` need a canonicalization scheme this fixed
-constructor does not carry (deviation, reported).** ``SqliteEventInbox`` computes and stores
-each row's own content-addressed ``event_id`` at ``enqueue`` time (``event_identity(event,
-scheme=...)``, ``inbox.py:348``) but exposes NO public "read seq by event_id" method — the only
-way to resolve a caller-supplied ``root_event_id`` string back to an inbox ``seq`` is to
-recompute ``event_identity`` per replayed row and compare, which needs the SAME
-canonicalization scheme the inbox itself was constructed with. The plan §4.1 interface fixes
-this reader's constructor to exactly ``(inbox, evidence_store, rcl_log)`` — no scheme. This
-module therefore accepts an OPTIONAL, additive ``scheme`` keyword (widening a Protocol-shaped
-constructor is still a satisfying implementation of it, the
-``tos_runtime.rcl.log.SqliteCommitLog.append_cas`` "a wider signature is still a satisfying
-implementation of the narrower Protocol" convention): when a scheme is supplied,
-``root_event_seq`` is resolved by replaying the inbox and recomputing each event's identity;
-``handling_started_monotonic`` is then read from :meth:`~tos_runtime.evidence.store
-.SqliteEvidenceStore.entry`'s own ``appended_at_monotonic_ns`` column for that seq's
-``EVENT_HANDLING_STARTED`` evidence receipt — a primary-key lookup of that ONE row, never a
-walk of the evidence table (evidence growth plan §2 A2-b; see
-:meth:`InboxFlowReader._resolve_handling_started`). Without a scheme, both fields
-are ``None`` (never guessed).
-
-**Superseded in production by a second, additive widening (team-lead disposition
-2026-09-16): :meth:`InboxFlowReader.observe` now also accepts an optional
-``root_event_seq``.** The identity-recomputation match above only succeeds when a caller's
-``root_event_id`` string happens to equal the inbox's own content-addressed identity for that
-row — this runtime's engine driver (``tos_runtime/engine/driver.py``) never guarantees that
-(``StageRequest.reference.event_id`` is a caller-authored label threaded through from the
-DECISION_TICK payload, not that digest). The engine handles exactly ONE inbox row at a time
-(``EngineDriver._process_next``'s own ``_draining``/re-entrancy guard), so the CURRENTLY
-handled row's ``seq`` is a genuine structural fact a caller can read directly off
-``SqliteEventInbox.next_unconsumed()`` (still not-yet-consumed at that point in the flow —
-``mark_consumed`` runs only after ``core.handle`` returns) and pass straight through, skipping
-the identity-recomputation match entirely. :mod:`tos_runtime.compose._riskstate_wiring` wires
-exactly this for :class:`~tos_runtime.riskstate.service.RiskStateService`.
-
-**``committed_flow_vectors`` — measured, and empirically ``()`` under the current e2e wiring
-(deviation, reported prominently).** DR-0003 §2.3 names "the committed flow vectors (unconsumed
-permits in the commit log)" as an observation. Two facts, both measured directly against
-``tos_runtime/rcl/log.py``:
-
-1. ``SqliteCommitLog.replay()`` selects only ``seq, writer_epoch, command_id, command_digest,
-   kind, payload_digest`` (``log.py:578-581``) — ``CommitEntry`` itself
-   (``tos/src/tos/rcl/commitlog.py:195-200``) has no payload field at all, only
-   ``payload_digest``. There is therefore NO public read surface anywhere on
-   ``SqliteCommitLog`` that returns a committed entry's actual ``payload_json`` (unlike
-   ``SqliteEvidenceStore``, which exposes ``.connection`` for exactly this reason — ``log.py``
-   has no such property).
-2. ``ledger_stages.AtomicCommitStage`` (the step-9 stage the real e2e uses) commits the
-   reservation + permit binding as ONE entry whose ``kind`` is ``CommandType
-   .COMMIT_RESERVATION`` (``risk/flow.py``'s own module docstring, "``ledger_stages
-   .AtomicCommitStage``'s combined commit uses ``CommandType.COMMIT_RESERVATION`` instead"),
-   never ``CommandType.ISSUE_ACTION_FLOW_PERMIT`` — that dedicated kind is written ONLY by
-   :meth:`~tos_runtime.risk.flow.ActionFlowGovernor.issue_permit`'s STANDALONE path
-   (``risk/flow.py:429-487``, "NOT used by the combined step-9 atomic commit"), which the real
-   e2e does not call.
-
-So even setting aside fact 1, fact 2 means the production commit path never writes an
-``ISSUE_ACTION_FLOW_PERMIT``-kind entry at all — :func:`committed_flow_vectors` genuinely
-returns ``()`` under the current e2e wiring, always. This function is still implemented against
-the STANDALONE path's kind (for a caller — e.g. a future test, or a future e2e that DOES call
-``issue_permit`` — that produces one): each matching entry contributes one
-:class:`~tos.rcl.CapacityVector` with an UNKNOWN (``magnitude=None``) component on
-``flow_dimension_id`` — never a fabricated magnitude (rcl's own ``CapacityComponent`` docstring:
-"``None`` for an UNKNOWN/unbounded dimension ... UNKNOWN consumes capacity" — so a proven-to-
-exist-but-unreadable committed permit is conservative, not silently absent). This is reported to
-the operator/team-lead as a real gap requiring either a new ``SqliteCommitLog`` public reader or
-a durable, out-of-band permit-vector evidence write from the atomic commit path — kernel round
-#4 / a future lane, not this one (plan §6 item 4 already lists a sibling kernel-round candidate
-here: "RCL 예약 행에 committed 벡터 영속").
-
-Firewall (R1, runtime scope): stdlib + ``tos.*`` + ``tos_runtime.engine.inbox`` +
-``tos_runtime.evidence.store`` + ``tos_runtime.rcl.log`` only.
-"""
+"""tos_runtime.riskstate.flow_observation — inbox/RCL-log/evidence-derived Action Flow"""
 
 from __future__ import annotations
 
@@ -162,17 +31,11 @@ __all__ = [
 
 _SEND_SEALED_KIND = "SEND_SEALED"
 _HANDLING_STARTED_KIND = "EVENT_HANDLING_STARTED"
-#: The two restart-recovery marker kinds ``EngineDriver._process_next`` appends
-#: (``tos_runtime/engine/driver.py:517-535``) — module docstring's own "replays" section.
 _RECOVERY_MARKER_KINDS = (
     "DECISION_TICK_DROPPED_ON_RECOVERY",
     "HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND",
 )
 
-#: Disclosed fixed definition for the ``replays`` axis (module docstring) — carried on every
-#: :class:`FlowObservation` as :attr:`FlowObservation.replays_definition` and disclosed on the
-#: ``RISK_STATE_OBSERVED`` evidence row (``riskstate/service.py``) so a consumer never mistakes
-#: this accepted proxy for an exact replay count.
 REPLAYS_DEFINITION = (
     "recovery-marker-episodes:DECISION_TICK_DROPPED_ON_RECOVERY+"
     "HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND"
@@ -181,16 +44,7 @@ REPLAYS_DEFINITION = (
 
 @dataclass(frozen=True)
 class FlowObservation:
-    """One root cause's observed action-flow facts (plan §2.3/§4.1). Every ``int``/``bool``
-    field is ``None`` when this reader's injected ports carry no real source for it — see the
-    module docstring's own "deviation, reported" sections for exactly which fields that is and
-    why. ``queries`` is deliberately NOT a field here — it is a structural constant computed by
-    :func:`to_observed_amplification` directly (module docstring; plan §4.1's own exception).
-    ``duplicates_rejected``/``replays`` are, as of the TOS action-flow observation completion
-    wave (2026-09-16), always concrete ``int``s once :meth:`InboxFlowReader.observe` runs a
-    scan (module docstring) — never ``None`` in practice, though the type stays ``int | None``
-    for construction-site symmetry with every other field here.
-    """
+    """One root cause's observed action-flow facts (plan §2.3/§4.1). Every ``int``/``bool``"""
 
     queue_depth: int | None
     in_flight: int | None
@@ -201,37 +55,18 @@ class FlowObservation:
     handling_started_monotonic: int | None
     lineage_found: bool | None
     sources: tuple[str, ...]
-    #: The fixed, disclosed definition string for the ``replays`` axis (module docstring's own
-    #: :data:`REPLAYS_DEFINITION`) — ``None`` only for a :class:`FlowObservation` built by a
-    #: caller other than :meth:`InboxFlowReader.observe` that never set it.
     replays_definition: str | None = None
 
 
 class _HandlingStartedFacts(NamedTuple):
-    """The two facts :meth:`InboxFlowReader._resolve_handling_started` reads off the root
-    row's own ``EVENT_HANDLING_STARTED`` marker — resolved TOGETHER, from one evidence row.
-
-    Both used to be resolved separately, each re-reading the same row (module docstring's
-    own lineage section; evidence growth plan §2 A2-b). ``content_event_id`` is ``None``
-    when the marker row carries no decodable ``event_id`` — the timestamp is still a fact
-    in that case, so this is a tuple of two independently-absent facts, not an all-or-
-    nothing pair.
-    """
+    """The two facts :meth:`InboxFlowReader._resolve_handling_started` reads off the root"""
 
     appended_at_monotonic_ns: int
     content_event_id: str | None
 
 
 def _decode_content_event_id(payload_json: str) -> str | None:
-    """The root row's own content-addressed ``event_id``, decoded out of an
-    ``EVENT_HANDLING_STARTED`` payload (``{"event_id": event_identity(event, scheme=...)}``,
-    ``tos_runtime/engine/driver.py:788-792``).
-
-    This is the SAME content digest ``EngineDriver._process_next`` computes for its
-    crash-window recovery markers (``driver.py:771``) — never the caller-authored
-    ``reference.event_id`` label the ``root_event_id`` parameter carries. ``None`` when the
-    payload is not a mapping or carries no string ``event_id`` (never guessed).
-    """
+    """The root row's own content-addressed ``event_id``, decoded out of an"""
     decoded = json.loads(payload_json)
     payload = decoded.get("payload", decoded)
     if not isinstance(payload, dict):
@@ -241,24 +76,14 @@ def _decode_content_event_id(payload_json: str) -> str | None:
 
 
 def _started_monotonic(facts: _HandlingStartedFacts | None) -> int | None:
-    """The ``appended_at_monotonic_ns`` projection of a resolved marker, or ``None`` for a
-    recorded absence.
-
-    A one-field projection with its own name because :meth:`InboxFlowReader.observe` sits
-    at its 100-line size budget and the inline conditional does not fit the line length —
-    the honest fix is to name the projection, never to register the method as an exception
-    (``config/tos_size_budget.yaml``: "등재는 면허가 아니라 가시성이다").
-    """
+    """The ``appended_at_monotonic_ns`` projection of a resolved marker, or ``None`` for a"""
     return None if facts is None else facts.appended_at_monotonic_ns
 
 
 def _read_kind_payloads(
     store: SqliteEvidenceStore, kind: str
 ) -> list[dict[str, object]]:
-    """The shared by-kind raw-SQL idiom (mirrors
-    :mod:`tos_runtime.riskstate.position`'s own identically-named helper — kept local rather
-    than imported across a sibling module boundary within this same package, matching this
-    package's own convention of not sharing private helpers between its modules)."""
+    """The shared by-kind raw-SQL idiom (mirrors"""
     try:
         cursor = store.connection.execute(
             "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC", (kind,)
@@ -278,8 +103,7 @@ def _read_kind_payloads(
 
 
 def _sealed_reference(seal: Mapping[str, object]) -> tuple[str | None, tuple[str, ...]]:
-    """Extract ``(event_id, causal_predecessor_ids)`` from a ``send_seal.reference``
-    (``OrderingEvent``) sub-mapping — module docstring's lineage bridge."""
+    """Extract ``(event_id, causal_predecessor_ids)`` from a ``send_seal.reference``"""
     reference = seal.get("reference")
     if not isinstance(reference, Mapping):
         return None, ()
@@ -302,15 +126,7 @@ def _traces_to(
 def count_duplicate_dispositions(
     unmatched_payloads: list[dict[str, object]], *, cause_attempts: set[str]
 ) -> int:
-    """The kernel result-signature dedup count (module docstring's own "Two dedup layers"
-    section) — ``RESULT_UNMATCHED`` rows whose ``result_disposition`` is ``"DUPLICATE"``
-    (``tos/src/tos/engine/state.py:846-862``) AND whose ``attempt_id`` is a member of this
-    root cause's own traced ``cause_attempts`` set (the SAME set
-    :meth:`InboxFlowReader._scan_sealed_lineage` already builds via ``SEND_SEALED`` lineage
-    tracing). A ``DUPLICATE`` row for an attempt outside the cause, or a non-``DUPLICATE``
-    ``RESULT_UNMATCHED`` row, is never counted. Pure: takes already-read payload lists, returns
-    a plain ``int`` — ``0`` for an empty or fully-non-matching scan, never ``None``.
-    """
+    'The kernel result-signature dedup count (module docstring\'s own "Two dedup layers"'
     count = 0
     for payload in unmatched_payloads:
         if payload.get("result_disposition") != "DUPLICATE":
@@ -324,14 +140,7 @@ def count_duplicate_dispositions(
 def count_recovery_markers(
     marker_payloads: list[dict[str, object]], *, root_event_ids: frozenset[str]
 ) -> int:
-    """The restart-recovery episode count (module docstring's own "replays" section) — rows of
-    the two recovery marker kinds (:data:`_RECOVERY_MARKER_KINDS`) whose ``event_id`` is a
-    member of ``root_event_ids`` (this cause's own content-addressed root event identity, or
-    identities — see :meth:`InboxFlowReader._resolve_handling_started`). A marker for a
-    different ``event_id``, or an empty ``root_event_ids`` (the root could not be resolved), is
-    never counted — never a fabricated match. Pure: takes already-read payload lists, returns a
-    plain ``int`` — ``0`` for an empty or fully-non-matching scan, never ``None``.
-    """
+    """The restart-recovery episode count (module docstring's own "replays" section) — rows of"""
     count = 0
     for payload in marker_payloads:
         event_id = payload.get("event_id")
@@ -341,8 +150,7 @@ def count_recovery_markers(
 
 
 class InboxFlowReader:
-    """Folds the durable inbox/evidence store into one :class:`FlowObservation` for a single
-    root cause (module docstring)."""
+    """Folds the durable inbox/evidence store into one :class:`FlowObservation` for a single"""
 
     def __init__(
         self,
@@ -352,21 +160,7 @@ class InboxFlowReader:
         *,
         scheme: CanonicalizationScheme | None = None,
     ) -> None:
-        """Bind this reader to its three ports (plan §4.1's fixed interface) plus an OPTIONAL,
-        additive ``scheme`` (module docstring's own disclosed widening — ``rcl_log`` is
-        accepted per the fixed interface but is not read by this reader; it is reserved for a
-        caller-symmetric construction site alongside :func:`committed_flow_vectors`, which
-        takes its own ``rcl_log`` argument directly rather than reading it through this
-        instance).
-
-        Args:
-            inbox: The durable event inbox (read-only — ``unconsumed_count`` only).
-            evidence_store: The durable evidence store (read-only).
-            rcl_log: Accepted for interface symmetry with :func:`committed_flow_vectors`;
-                unused by this reader itself (module docstring).
-            scheme: Optional canonicalization scheme — see module docstring's
-                ``root_event_seq``/``handling_started_monotonic`` section.
-        """
+        """Bind this reader to its three ports (plan §4.1's fixed interface) plus an OPTIONAL,"""
         self._inbox = inbox
         self._evidence_store = evidence_store
         self._rcl_log = rcl_log
@@ -385,42 +179,7 @@ class InboxFlowReader:
     def _resolve_handling_started(
         self, root_event_seq: int | None
     ) -> _HandlingStartedFacts | None:
-        """Both facts this reader reads off ``root_event_seq``'s own ``EVENT_HANDLING_STARTED``
-        marker, resolved together from ONE evidence row; ``None`` for a recorded absence,
-        never a guessed timestamp or a guessed identity.
-
-        Absence has four shapes, all of them ``None``: no ``root_event_seq``; the inbox row
-        was never durably marked handling-started; no evidence row carries the ``seq`` that
-        marker names; or the row that does carry it is not the marker the receipt describes
-        (wrong ``kind``, or a ``key_generation`` other than the one the receipt recorded).
-
-        **Why the generation is compared.** ``SqliteEventInbox.mark_handling_started`` stores
-        ``(evidence_seq, generation)`` TOGETHER — the generation is not decoration, it is the
-        half that says WHICH row the seq meant. Rows here are append-only, so the pair can
-        only come apart when the evidence file is replaced under a surviving inbox: a restore
-        from an older backup, or a re-seeded store, where ``seq`` N is now some other event's
-        marker. Checking ``kind`` alone accepts that row and hands back ANOTHER event's
-        ``appended_at_monotonic_ns`` and ``event_id`` as if they were this cause's — exactly
-        the guessed fact this module's contract forbids. Comparing the generation refuses it
-        as an absence instead. (It is a bound, not a proof: two rows of the same generation
-        are indistinguishable this way. It uses the datum the receipt already carries and
-        never widens the accepted set.)
-
-        **One primary-key lookup, no scan** (evidence growth plan
-        ``docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md`` §2 A2-b). The inbox
-        side was always O(1) (``SqliteEventInbox.handling_started_receipt``, "an O(1) lookup
-        by primary key"). The evidence side used to be read TWICE per ``observe`` and in two
-        different ways: a walk of ``SqliteEvidenceStore.iter_entry_meta()`` for the
-        timestamp — a ``kind``-less full scan the ``entries_kind_seq`` index cannot help,
-        measured at **≥130 s per proposal on a 365-day store** (plan §7.1.12 "읽어야 할 것" 2)
-        on a path :meth:`~tos_runtime.riskstate.service.RiskStateService._observe_flow` runs
-        once per risk-stage attempt — plus a hand-written ``SELECT payload_json`` against the
-        store's raw ``connection`` for the identity. Both are now the one call to
-        :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.entry`, which also puts the
-        ``entries`` column list back behind the store's own API instead of duplicating it in
-        this module. The ``kind`` check is the SAME one the walk made — the lookup narrows
-        which rows are READ, never which rows are ACCEPTED.
-        """
+        """Both facts this reader reads off ``root_event_seq``'s own ``EVENT_HANDLING_STARTED``"""
         if root_event_seq is None:
             return None
         receipt = self._inbox.handling_started_receipt(root_event_seq)
@@ -446,14 +205,7 @@ class InboxFlowReader:
         cause_attempts: set[str],
         handling_started: _HandlingStartedFacts | None,
     ) -> tuple[int, int, tuple[str, ...]]:
-        """The dedup/replay axis counts — split out of :meth:`observe` purely for that
-        method's own 100-line size budget (module docstring's own "Two dedup layers"/
-        "replays" sections). Returns ``(duplicates_rejected, replays, extra_sources)``.
-
-        Takes the ALREADY-RESOLVED :class:`_HandlingStartedFacts` rather than the root seq:
-        :meth:`observe` needs the same row's timestamp, so resolving it here as well would
-        read one evidence row twice per observation.
-        """
+        """The dedup/replay axis counts — split out of :meth:`observe` purely for that"""
         duplicates_rejected = count_duplicate_dispositions(
             unmatched_payloads, cause_attempts=cause_attempts
         )
@@ -486,19 +238,7 @@ class InboxFlowReader:
         terminal_attempts: set[str],
         resolved_root_event_seq: int | None,
     ) -> tuple[set[str], int, bool | None]:
-        """The sealed-payload lineage scan + the pre-seal fallback — split out of
-        :meth:`observe` purely for that method's own 100-line size budget.
-
-        Returns ``(cause_attempts, in_flight_count, this_attempt_lineage_found)``. The
-        fallback: when THIS attempt has sealed nothing yet (DR-0003 §2.3's own "event ->
-        proposal -> attempt chain read from the inbox" — evaluated at step 7, strictly
-        BEFORE step 15 ever seals anything for it, so a SEND_SEALED-tracing match can never
-        positively confirm a brand-new attempt's own lineage), the root event's own durable
-        presence at a positively resolved inbox seq IS the structural fact DR-0003 names —
-        never a fabricated ``True`` when the root itself could not be resolved. The
-        SEND_SEALED-tracing check still stands, unchanged, for an ALREADY-sealed attempt
-        whose seal does NOT trace to its claimed root (a genuine inconsistency).
-        """
+        """The sealed-payload lineage scan + the pre-seal fallback — split out of"""
         cause_attempts: set[str] = set()
         in_flight_count = 0
         this_attempt_sealed = False
@@ -528,25 +268,7 @@ class InboxFlowReader:
         attempt_id: str,
         root_event_seq: int | None = None,
     ) -> FlowObservation:
-        """Assemble one :class:`FlowObservation` for ``root_event_id``/``attempt_id`` (module
-        docstring).
-
-        Args:
-            root_event_seq: An OPTIONAL, additive, directly-resolved inbox seq for the root
-                event (lane b widening, TOS risk state service wave team-lead disposition
-                2026-09-16) — when supplied, it is used DIRECTLY in place of this reader's own
-                ``root_event_id``-to-``event_identity``-recomputation match
-                (:meth:`_resolve_root_event_seq`), which only succeeds when the caller's
-                ``root_event_id`` string happens to equal the durable inbox's own
-                content-addressed identity for that row — a coincidence this runtime's own
-                compose test fixtures do NOT guarantee (measured:
-                ``tests/compose/_fixtures.py::crossing_event`` sets ``reference.event_id`` to
-                a human label, never that digest). A caller that already knows which inbox
-                row is CURRENTLY being handled (e.g. ``SqliteEventInbox.next_unconsumed()``'s
-                own ``seq`` — the engine handles exactly one inbox row at a time, so this is a
-                genuine structural fact, not a guess) should resolve it there and pass it
-                here, never recomputing an identity match. ``None`` (the default) preserves
-                this reader's prior behavior unchanged."""
+        """Assemble one :class:`FlowObservation` for ``root_event_id``/``attempt_id`` (module"""
         sealed_payloads = _read_kind_payloads(self._evidence_store, _SEND_SEALED_KIND)
         consumed_payloads = _read_kind_payloads(
             self._evidence_store, "EGRESS_RESULT_CONSUMED"
@@ -562,9 +284,6 @@ class InboxFlowReader:
 
         sources: list[str] = []
 
-        # Resolved BEFORE the sealed-payload loop below (module docstring's own "resolved
-        # structurally" section) — the pre-seal fallback for `this_attempt_lineage_found`
-        # needs to know whether the root event is itself durably, positively present.
         resolved_root_event_seq: int | None
         if root_event_seq is not None:
             resolved_root_event_seq = root_event_seq
@@ -623,15 +342,7 @@ class InboxFlowReader:
 def committed_flow_vectors(
     rcl_log: SqliteCommitLog, *, flow_dimension_id: str
 ) -> tuple[CapacityVector, ...]:
-    """The RCL log's own committed Action Flow Permit vectors on ``flow_dimension_id`` (module
-    docstring's own extensive "measured, and empirically ``()``" section — read that first).
-
-    Each ``CommandType.ISSUE_ACTION_FLOW_PERMIT`` entry :meth:`~tos_runtime.rcl.log
-    .SqliteCommitLog.replay` yields contributes one UNKNOWN-magnitude
-    :class:`~tos.rcl.CapacityVector` (never a fabricated number — ``SqliteCommitLog`` exposes
-    no public read of a committed entry's ``payload_json``, so this function can prove a
-    committed permit EXISTS but not what it committed).
-    """
+    """The RCL log's own committed Action Flow Permit vectors on ``flow_dimension_id`` (module"""
     vectors: list[CapacityVector] = []
     for entry in rcl_log.replay():
         if entry.kind is CommandType.ISSUE_ACTION_FLOW_PERMIT:
@@ -655,21 +366,7 @@ def to_observed_amplification(
     fan_out: int | None = None,
     depth: int | None = None,
 ) -> ObservedAmplification:
-    """Pure transform: :class:`FlowObservation` (+ the governed :class:`DeploymentFlowFacts`
-    declaration + caller-supplied structural facts) -> :class:`~tos.afg.ObservedAmplification`
-    (plan §2.1/§4.1).
-
-    ``queries=0`` is a STRUCTURAL constant, not a literal fabrication: no ``tos_runtime``
-    transport (``tos_runtime/transport/``) exposes any method whose name contains ``query`` —
-    pinned mechanically by ``tests/riskstate/test_structural_pins.py`` so a future query path
-    forces this observation to be rebuilt (module docstring's own cross-reference; DR-0003 §2.3
-    "the number of broker queries — which is zero because the runtime's transports expose no
-    query path, a structural fact pinned by a test"). ``mutations`` is defined as ``attempts``
-    (plan §4.1) — a governed broker mutation IS an attempt in this runtime's vocabulary, there
-    is no narrower "mutation-only" subset counted separately. ``amplification_per_cause`` is
-    ``attempts / 1`` (plan §2.1's own formula — one root cause, so the per-cause rate is the
-    raw attempt count).
-    """
+    """Pure transform: :class:`FlowObservation` (+ the governed :class:`DeploymentFlowFacts`"""
     attempts = obs.attempts_for_cause
     return ObservedAmplification(
         fan_out=fan_out,
@@ -698,22 +395,7 @@ def to_action_cause(
     command_digest: str | None,
     max_attempts: int | None,
 ) -> ActionCause:
-    """Pure transform: :class:`FlowObservation` -> :class:`~tos.afg.ActionCause` (plan
-    §2.1/§4.1). Never a ``True``/``False`` literal except where derived as documented below:
-
-    * ``lineage_attested = obs.lineage_found is True`` — a positive attestation ONLY when this
-      reader positively traced the attempt's own sealed lineage to ``root_event_id``; ``None``
-      (could not determine — no sealed row for this attempt at all) and ``False`` both yield
-      ``lineage_attested=False``, never conflated with a genuine positive trace.
-    * ``cyclic = root_event_id in (proposal_id,)`` — a purely structural self-reference check
-      (plan §4.1's own formula), never an observation of a real cyclic graph.
-    * ``forked_beyond_bound`` — ``None`` when either ``max_attempts`` or
-      ``obs.attempts_for_cause`` is unavailable (fail-closed to UNKNOWN, never assumed within
-      bound); otherwise the observed count strictly exceeding the injected bound.
-    * ``inconsistent = None if obs.lineage_found is None else not obs.lineage_found`` — an
-      attempt this reader could not place in the inbox at all stays UNKNOWN (never assumed
-      consistent); one it PROVED does not trace to the named root is positively inconsistent.
-    """
+    """Pure transform: :class:`FlowObservation` -> :class:`~tos.afg.ActionCause` (plan"""
     return ActionCause(
         root_cause_identity=root_event_id,
         parent_lineage=(proposal_id,),

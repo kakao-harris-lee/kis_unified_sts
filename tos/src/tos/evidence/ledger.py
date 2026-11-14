@@ -1,30 +1,4 @@
-"""Append-only ledger: segment commitment + integrity anchor (design #4 §2.4, §3.4).
-
-Two layers, modelled separately (design §2.1 note / §13 line 335):
-
-1. **record content-addressing** — each envelope's own ``canonical_digest``
-   (:mod:`tos.evidence.envelope`).
-2. **segment commitment + integrity anchor** — an authenticated commitment over
-   an *ordered* segment of record digests, plus a chained anchor.
-
-The anchor detects mutation; it does **not** validate the safety decision (ADR
-§5.7 line 120).
-
-:class:`SegmentCommitmentScheme` is an abstract Protocol that accepts **both**
-chain and Merkle constructions (design §3.4), so a production choice of either
-needs no model rework (§27 Q3, Phase-0). :class:`ProvisionalHashChainScheme`
-(``ev-l1-provisional-chain-0``) is the **explicitly non-production** provisional
-implementation: ``c_i = H(c_{i-1} || d_i)``, reusing the same injected digest
-factory (default ``hashlib.sha256``) as the canonicalizer. Prefix preservation
-(append-only) is immediate: ``commit(A + B) == verify_append(commit(A), B)``.
-
-**Honest scope (design §3.4):** the MAC's cryptographic verification, real
-"anchor outside the failure domain", and common-mode corruption are EV-L2+/
-Security; the anchor cadence *timing* is an injected bound with no approved
-profile key (``MAX_anchor_cadence_ms`` missing — Phase-0 §8/§9.2 item 4).
-
-Pure module: ``pydantic`` + stdlib (``hashlib``) only; no ``shared.*``.
-"""
+"""Append-only ledger: segment commitment + integrity anchor (design #4 §2.4, §3.4)."""
 
 from __future__ import annotations
 
@@ -33,21 +7,13 @@ from typing import Protocol, runtime_checkable
 
 from tos.canonical import DigestFactory, FrozenModel
 
-#: Version string of the provisional non-production chain scheme (design §3.4).
 EV_L1_PROVISIONAL_CHAIN_VERSION = "ev-l1-provisional-chain-0"
 
-#: Genesis commitment for the provisional chain (empty prefix).
 _CHAIN_GENESIS = ""
 
 
 class IntegrityAnchor(FrozenModel):
-    """A chained integrity anchor over a segment commitment (design §2.4, ADR §5.7).
-
-    Detects mutation of the committed segment; it does not validate the safety
-    decision. ``predecessor_anchor`` chains anchors so a rollback / skipped
-    interval is a discontinuity. ``anchor_cadence_ms`` is an injected bound (§8);
-    ``None`` => UNKNOWN (no approved ``MAX_anchor_cadence_ms`` — Phase-0).
-    """
+    """A chained integrity anchor over a segment commitment (design §2.4, ADR §5.7)."""
 
     anchor_id: str
     segment_commitment: str
@@ -59,13 +25,7 @@ class IntegrityAnchor(FrozenModel):
 
 
 class EvidenceSegment(FrozenModel):
-    """An ordered segment of record digests with an authenticated commitment (§2.4).
-
-    ``record_digests`` is position-ordered (index = position). ``store_continuity_id``
-    resets on restart/restore/reset (§11 line 315 => new continuity).
-    ``segment_commitment`` is produced by a :class:`SegmentCommitmentScheme`;
-    ``predecessor_commitment`` links to the prior segment (append-only prefix).
-    """
+    """An ordered segment of record digests with an authenticated commitment (§2.4)."""
 
     segment_id: str | None = None
     record_ids: tuple[str, ...] = ()
@@ -80,17 +40,7 @@ class EvidenceSegment(FrozenModel):
 
 @runtime_checkable
 class SegmentCommitmentScheme(Protocol):
-    """A versioned segment-commitment scheme — chain or Merkle (design §3.4).
-
-    Parallel to ``CanonicalizationScheme``: a production choice of chain or
-    Merkle-equivalent commitment plugs in behind this Protocol without model
-    rework.
-
-    Declared as a read-only property (not a plain attribute) so frozen
-    implementations (dataclass ``frozen=True`` / pydantic frozen models)
-    satisfy this Protocol structurally, not just today's mutable implementers
-    (docs/plans/2026-09-23-tos-protocol-readonly-members-sweep-plan.md).
-    """
+    """A versioned segment-commitment scheme — chain or Merkle (design §3.4)."""
 
     @property
     def version(self) -> str: ...
@@ -130,12 +80,7 @@ class SegmentCommitmentScheme(Protocol):
 
 
 class ProvisionalHashChainScheme:
-    """Provisional, **non-production** hash-chain scheme (design §3.4).
-
-    ``c_i = H(c_{i-1} || d_i)`` from the empty genesis, reusing the injected
-    digest factory (default ``hashlib.sha256`` — a stdlib primitive for
-    reproducible tests, not a production selection, design §9.2 item 2).
-    """
+    """Provisional, **non-production** hash-chain scheme (design §3.4)."""
 
     def __init__(
         self,
@@ -143,13 +88,7 @@ class ProvisionalHashChainScheme:
         version: str = EV_L1_PROVISIONAL_CHAIN_VERSION,
         digest_factory: DigestFactory = hashlib.sha256,
     ) -> None:
-        """Initialize the provisional chain scheme.
-
-        Args:
-            version: The scheme version identifier this instance binds.
-            digest_factory: Zero-arg callable returning a fresh hashlib-style
-                hasher (default the non-production ``hashlib.sha256``).
-        """
+        """Initialize the provisional chain scheme."""
         self.version = version
         self._digest_factory = digest_factory
 
@@ -173,22 +112,7 @@ class ProvisionalHashChainScheme:
         commitment: str,
         proof: tuple[str, ...],
     ) -> bool:
-        """Verify chain inclusion of ``record_digest`` at ``position``.
-
-        For the provisional chain the ``proof`` is the full ordered digest
-        sequence of the segment: membership holds iff the position carries the
-        claimed digest and the sequence re-commits to ``commitment`` (so any
-        mutation, deletion, prefix truncation, or suffix loss fails to verify).
-
-        Args:
-            record_digest: The claimed digest at ``position``.
-            position: The 0-based position in the segment.
-            commitment: The segment commitment to verify against.
-            proof: The ordered digest sequence of the segment.
-
-        Returns:
-            ``True`` iff membership verifies.
-        """
+        """Verify chain inclusion of ``record_digest`` at ``position``."""
         if position < 0 or position >= len(proof):
             return False
         if proof[position] != record_digest:
@@ -198,18 +122,7 @@ class ProvisionalHashChainScheme:
     def verify_append(
         self, prev_commitment: str, appended_digests: tuple[str, ...]
     ) -> str:
-        """Return the commitment after appending ``appended_digests`` to a prefix.
-
-        Prefix-preserving by construction: ``commit(A + B) ==
-        verify_append(commit(A), B)`` (append-only).
-
-        Args:
-            prev_commitment: The commitment over the existing prefix.
-            appended_digests: The digests appended after the prefix.
-
-        Returns:
-            The new commitment.
-        """
+        """Return the commitment after appending ``appended_digests`` to a prefix."""
         return self._fold(prev_commitment, appended_digests)
 
     def link_anchor(
@@ -222,23 +135,7 @@ class ProvisionalHashChainScheme:
         predecessor_anchor: str | None = None,
         anchor_cadence_ms: int | None = None,
     ) -> IntegrityAnchor:
-        """Bind ``commitment`` into a chained anchor with a deterministic id.
-
-        The ``anchor_id`` is derived from the commitment and predecessor so the
-        anchor chain is reproducible; ``anchor_cadence_ms`` is an injected bound
-        (``None`` => UNKNOWN, no approved profile key — Phase-0 §8).
-
-        Args:
-            commitment: The segment commitment this anchor binds.
-            store_continuity_id: The store continuity in effect.
-            policy_generation: The EIP generation in effect.
-            key_generation: The signing-key generation in effect.
-            predecessor_anchor: The prior anchor id (chain link).
-            anchor_cadence_ms: The injected cadence bound (§8), or ``None``.
-
-        Returns:
-            The :class:`IntegrityAnchor`.
-        """
+        """Bind ``commitment`` into a chained anchor with a deterministic id."""
         hasher = self._digest_factory()
         hasher.update(f"{predecessor_anchor or ''}|{commitment}".encode())
         anchor_id = f"anchor-{hasher.hexdigest()}"

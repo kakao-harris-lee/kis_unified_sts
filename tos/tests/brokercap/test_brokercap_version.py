@@ -1,8 +1,4 @@
-"""Profile version enforcement (design #10 §6.1; BC-EV-021; BC-INV-008).
-
-stale / mismatched / expired / degraded => deny; matching, unexpired, undegraded => True.
-This produced bool is the upstream of liveauth ``broker_capability_current``.
-"""
+"""Profile version enforcement (design #10 §6.1; BC-EV-021; BC-INV-008)."""
 
 from __future__ import annotations
 
@@ -11,10 +7,6 @@ from hypothesis import given
 from tos.brokercap import active_profile_version, profile_version_current
 
 from ._brokercap_strategies import issue_profile, profile_version
-
-# ---------------------------------------------------------------------------
-# profile_version_current both-ways
-# ---------------------------------------------------------------------------
 
 
 def test_current_version_positive() -> None:
@@ -82,11 +74,6 @@ def test_version_current_definition(
         and degraded is False
     )
     assert profile_version_current(active, presented, not_expired, degraded) == expected
-
-
-# ---------------------------------------------------------------------------
-# active_profile_version scalar producer
-# ---------------------------------------------------------------------------
 
 
 def test_active_profile_version_scalar() -> None:

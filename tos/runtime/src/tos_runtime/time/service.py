@@ -1,39 +1,9 @@
-"""``TrustworthyTimeService`` — Phase 2 runtime composition of the ``tos.time``
-kernel predicate substrate (design #40 D1/D4; slice plan §1 item 2).
-
-**This service does not judge.** It collects inputs — a monotonic reading, one
-or more reference-source observations, and injected config bounds — and calls
-the kernel's own conservative, fail-closed predicates
-(``tos/src/tos/time/predicates.py``) to derive the next ``HealthState`` and a
-``TimeHealthSnapshot``. Any transition the kernel's own
-``health_transition_allowed``/``transition_to_trusted_requires_new_generation``
-refuses is never applied — the service falls back to leaving the state
-unchanged and recording why (slice plan §0: "런타임은 판정하지 않고 입력을
-모아 커널 술어를 호출").
-
-Fault-contract table (slice plan §1 "장애 계약" — the two this lane owns):
-
-| # | contract | how this service satisfies it |
-| - | -------- | ------------------------------ |
-| ⑥ | clock regression/distortion | Every ``evaluate()`` call re-derives ``anchor_valid`` against the process's own high-water-mark anchor. A regression (or an unresolvable suspension) makes ``anchor_valid`` false, which can only route the FSM toward ``UNTRUSTED`` — never toward, or held at, ``TRUSTED`` (see ``_propose_transition``). |
-| ⑦ | source unavailable | An unreachable/unhealthy reference observation feeds ``freshness_verdict`` a ``source_age=None`` (kernel: unknown source time), which the kernel predicate returns as ``FreshnessVerdict.UNKNOWN`` — never ``FRESH`` — so ``required_ok`` cannot hold and the service cannot claim freshness on a source it could not reach. |
-| ⑤ | restart / recovery | A fresh process's ``start()`` mints a brand-new anchor + a brand-new :class:`~tos_runtime.time.generation.GenerationCounter` seeded at 0 — sharing no provable relationship with whatever an earlier process's snapshots asserted (``tos.time.recovery_generation_revives_nothing`` documents this is by design). Within one process, the only edge out of ``UNTRUSTED`` re-baselines the anchor at the recovery instant, and any subsequent return to ``TRUSTED`` still requires a strictly-new generation via ``transition_to_trusted_requires_new_generation``. |
-
-Anchor-validity is a **high-water-mark** check, not merely "the value at
-process start": every cycle that finds the anchor still valid ratchets its
-recorded ``monotonic_anchor_value`` forward to the latest reading (never
-backward), so a later reading has to beat the *highest* value ever
-legitimately observed, not just the value recorded at boot — otherwise a
-single injected regression followed by an unrelated later high reading could
-look "valid again" by accident. Recovery out of ``UNTRUSTED`` deliberately
-resets this high-water mark at the recovery instant (a fresh anchor, not a
-revival of the old one).
-"""
+"""``TrustworthyTimeService`` — Phase 2 runtime composition of the ``tos.time``"""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Protocol
+from collections.abc import Mapping, Sequence
+from typing import Any, Protocol
 
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.time import (
@@ -58,6 +28,7 @@ from tos.workload import RuntimeIdentity
 from tos_runtime.evidence.ports import EvidenceAppendPort
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.generation import GenerationCounter
+from tos_runtime.time.judged_content import judged_content
 from tos_runtime.time.sources import MonotonicSource, ReferenceSourceReader
 
 __all__ = [
@@ -74,55 +45,28 @@ _STARTUP_KIND = "TIME_SERVICE_STARTUP"
 _STARTUP_RECORD_CLASS = "TIME_STARTUP"
 _SNAPSHOT_KIND = "TIME_HEALTH_SNAPSHOT"
 _SNAPSHOT_RECORD_CLASS = "TIME_HEALTH_SNAPSHOT"
-#: G-1 taking-effect announcement (runtime operations wiring plan §2
-#: decision 8) — appended exactly once per service instance.
 _WALL_CLOCK_EXPOSED_KIND = "TIME_WALL_CLOCK_EXPOSED"
 _WALL_CLOCK_EXPOSED_RECORD_CLASS = "TIME_WALL_CLOCK_EXPOSED"
 
 
 class TimeServiceNotStarted(RuntimeError):
-    """Raised when a method requiring ``start()`` is called before it, or
-    ``start()`` is called twice on the same service instance."""
+    """Raised when a method requiring ``start()`` is called before it, or"""
 
 
 class RecoveryGenerationNotAdvanced(RuntimeError):
-    """Raised when a recovery out of ``UNTRUSTED`` would not carry a strictly
-    greater generation than the last exposed snapshot (LOW-5, review of
-    ba7d438f). ``tos.time.recovery_generation_revives_nothing`` documents the
-    rule this enforces, but the kernel predicate itself is an unconditional
-    ``True`` for any input — it cannot detect a violation, only describe one.
-    This exception is the real, falsifiable guard at the one place a
-    violation would actually matter."""
+    """Raised when a recovery out of ``UNTRUSTED`` would not carry a strictly"""
 
 
 class TimeSnapshotReader(Protocol):
-    """The narrow read surface most :class:`TrustworthyTimeService` consumers actually need —
-    the FSM's current health snapshot only (mypy stage 3 §1.3 rule 3 port introduction).
-
-    Introduced because five independently-named test doubles
-    (``FakeTimeService`` / ``_TrustedTimeService`` / ``_NeverStartedTimeService`` /
-    ``_NotStartedTimeService`` / ``_BrokenTimeService``) each stood in for the FULL service
-    while implementing only :meth:`current_snapshot` — the signal that every one of these
-    consumers never touches :meth:`TrustworthyTimeService.start`,
-    :meth:`~TrustworthyTimeService.evaluate`, :meth:`~TrustworthyTimeService.wall_clock_now`,
-    or :attr:`~TrustworthyTimeService.last_transition_reason`. Narrowing the parameter type to
-    this Protocol lets each test inject its own double directly, structurally, instead of every
-    test needing to drive the full real FSM to get a typed value in.
-    """
+    """The narrow read surface most :class:`TrustworthyTimeService` consumers actually need —"""
 
     def current_snapshot(self) -> TimeHealthSnapshot:
-        """Return the current :class:`~tos.time.TimeHealthSnapshot` (raises
-        :class:`TimeServiceNotStarted`, or an implementation's own equivalent, before the first
-        successful ``start()``/``evaluate()``)."""
+        """Return the current :class:`~tos.time.TimeHealthSnapshot` (raises"""
         ...
 
 
 class TimeHealthReader(Protocol):
-    """The narrower read surface :class:`~tos_runtime.posttrade.release_consumer
-    .FinalityReleaseConsumer` needs (mypy stage 3 §1.3 rule 3 port introduction) — only the
-    current :class:`~tos.time.HealthState`, read directly as a property
-    (``_check_obligation_expiry`` reads ``health_state`` itself, never through
-    :meth:`TimeSnapshotReader.current_snapshot`)."""
+    """The narrower read surface :class:`~tos_runtime.posttrade.release_consumer"""
 
     @property
     def health_state(self) -> HealthState:
@@ -131,32 +75,7 @@ class TimeHealthReader(Protocol):
 
 
 class TrustworthyTimeService:
-    """Composition root for one process's Trustworthy Time health-check cycle.
-
-    Args:
-        monotonic: The injected monotonic-clock port.
-        references: The injected reference-source ports. The typical Phase 2
-            wiring is exactly one —
-            :class:`~tos_runtime.time.sources.LocalSystemClockReader` — but
-            this constructor does NOT itself enforce "at most one": a caller
-            may inject any number. Multiple instances of the same reader kind
-            still collapse to one independent contribution (every
-            ``LocalSystemClockReader`` declares the same
-            ``common_mode_group``), and with more than one genuinely
-            independent reachable source, ``_required_ok`` reports
-            disagreement as UNKNOWN rather than asserting agreement it never
-            measured (HIGH-2 fix, review of ba7d438f) — see
-            :meth:`_required_ok`.
-        config: The fully-valued, fail-closed-loaded config
-            (:func:`tos_runtime.time.config.load_time_config`).
-        identity: This process's :class:`tos.workload.RuntimeIdentity`
-            (design #40 D4) — binds every snapshot's continuity identity to
-            the same workload instance every other evidence/RCL record this
-            process produces carries.
-        evidence: The durable append port (:class:`tos_runtime.evidence.ports.
-            EvidenceAppendPort`) every snapshot (and the one startup record)
-            is committed through before it is ever exposed.
-    """
+    """Composition root for one process's Trustworthy Time health-check cycle."""
 
     def __init__(
         self,
@@ -179,26 +98,13 @@ class TrustworthyTimeService:
         self._snapshot: TimeHealthSnapshot | None = None
         self._snapshot_seq = 0
         self._last_transition_reason: str | None = None
-        #: G-1 (decision 8): whether the TIME_WALL_CLOCK_EXPOSED announcement
-        #: has already been appended for this service instance.
         self._wall_clock_exposed = False
-        #: G-1 (team-lead follow-up, 2026-09-13): the previous cycle's
-        #: ``(now_ms, wall_clock_unix_ms)`` reading pair — ``None`` until the
-        #: first ``evaluate()`` completes. Feeds :meth:`_observed_suspension_ms`
-        #: on the NEXT cycle; updated only after a cycle's own evidence append
-        #: succeeds (same "no state moves before the receipt" discipline as
-        #: every other mutation in :meth:`evaluate`).
         self._previous_monotonic_ms: int | None = None
         self._previous_wall_clock_unix_ms: int | None = None
-        #: #810 (plan ``docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md`` §2.2):
-        #: the two facts :meth:`wall_clock_at_monotonic` needs about the CYCLE the currently
-        #: exposed snapshot came from — the monotonic reading the PREVIOUS cycle took (the
-        #: mapping's domain floor) and the suspension THIS cycle observed. Captured in
-        #: :meth:`evaluate` alongside every other post-receipt mutation, because
-        #: :attr:`_previous_monotonic_ms` is overwritten there and neither value can be
-        #: recovered from the snapshot afterwards. ``None`` until a cycle supplies them.
         self._cycle_previous_monotonic_ms: int | None = None
         self._cycle_suspension_ms: int | None = None
+        self._evidenced_content: dict[str, Any] | None = None
+        self._evidenced_monotonic_ms: int | None = None
 
     @property
     def health_state(self) -> HealthState:
@@ -207,23 +113,11 @@ class TrustworthyTimeService:
 
     @property
     def last_transition_reason(self) -> str | None:
-        """Why the most recent ``evaluate()`` did not change state, or ``None``
-        when it either changed state or made no transition attempt at all."""
+        """Why the most recent ``evaluate()`` did not change state, or ``None``"""
         return self._last_transition_reason
 
     def start(self) -> None:
-        """Issue this process's ``TimeContinuityIdentity`` anchor + generation 0,
-        together, then durably evidence the startup event.
-
-        Design #40 D1.1: "``runtime_generation`` 은 D2 epoch 와 같은 트랜잭션에서
-        증가" — Phase 2 realizes "same transaction" for this axis as "issued in
-        the same startup call", with durable RCL-epoch binding deferred to
-        slice order 3.
-
-        Raises:
-            TimeServiceNotStarted: If called more than once on the same
-                instance (a service is started exactly once per process).
-        """
+        """Issue this process's ``TimeContinuityIdentity`` anchor + generation 0,"""
         if self._generation is not None:
             raise TimeServiceNotStarted("start() has already been called")
 
@@ -245,14 +139,7 @@ class TrustworthyTimeService:
         )
 
     def current_snapshot(self) -> TimeHealthSnapshot:
-        """Return the most recently evaluated + durably-evidenced snapshot.
-
-        Raises:
-            TimeServiceNotStarted: If ``start()`` has not run, or no
-                ``evaluate()`` call has yet completed successfully (a snapshot
-                is exposed only after its evidence append returned a receipt —
-                see the module docstring and :meth:`evaluate`).
-        """
+        """Return the most recently evaluated + durably-evidenced snapshot."""
         self._require_started()
         if self._snapshot is None:
             raise TimeServiceNotStarted("no TimeHealthSnapshot has been evaluated yet")
@@ -283,22 +170,12 @@ class TrustworthyTimeService:
     def _propose_transition(
         from_state: HealthState, anchor_ok: bool, required_ok: bool
     ) -> HealthState:
-        """Propose a conservative next state (validated + possibly refused by
-        :meth:`evaluate` before ever being applied — see the module
-        docstring's fault-contract table)."""
+        """Propose a conservative next state (validated + possibly refused by"""
         if from_state is HealthState.UNINITIALIZED:
             return HealthState.SYNCHRONIZING
         if from_state is HealthState.UNTRUSTED:
-            # The FSM's only edge out of UNTRUSTED — always re-attempt sync;
-            # evaluate() re-baselines the anchor when this is actually applied.
             return HealthState.SYNCHRONIZING
         if not anchor_ok:
-            # TRUSTED/DEGRADED_HOLDOVER lose all trust the instant the anchor
-            # cannot be proven continuous — never merely "less fresh" (kernel
-            # anchor_valid docstring; fault contract ⑥). A proposal from
-            # SYNCHRONIZING here is shape-illegal (no SYNCHRONIZING->UNTRUSTED
-            # edge) and is safely refused by evaluate()'s health_transition_
-            # allowed gate, leaving SYNCHRONIZING in place.
             return HealthState.UNTRUSTED
         if from_state is HealthState.SYNCHRONIZING:
             return HealthState.TRUSTED if required_ok else HealthState.SYNCHRONIZING
@@ -315,19 +192,7 @@ class TrustworthyTimeService:
     def _anchor_ok(
         self, anchor: TimeContinuityIdentity, now_ms: int, *, suspension_ms: int | None
     ) -> bool:
-        """Kernel ``anchor_valid`` call: is ``anchor`` still continuous at ``now_ms``?
-
-        ``suspension_ms`` is the REAL per-cycle observation from
-        :meth:`_observed_suspension_ms` (team-lead follow-up, 2026-09-13,
-        superseding an earlier ``suspension_ms=0`` literal this method used
-        to pass unconditionally — see git history for that finding). ``None``
-        on the very first ``evaluate()`` cycle (no previous reading to diff
-        against) makes the kernel's own ``anchor_valid`` refuse (``tos/src/
-        tos/time/predicates.py`` :143-145: ``suspension_ms is None`` =>
-        invalid) — harmless there, since the first cycle's own
-        ``UNINITIALIZED -> SYNCHRONIZING`` transition never consults
-        ``anchor_ok`` in the first place (:meth:`_propose_transition`).
-        """
+        """Kernel ``anchor_valid`` call: is ``anchor`` still continuous at ``now_ms``?"""
         continuity_now = anchor.model_copy(update={"monotonic_anchor_value": now_ms})
         return anchor_valid(
             continuity_now,
@@ -339,24 +204,7 @@ class TrustworthyTimeService:
     def _observed_suspension_ms(
         self, now_ms: int, wall_clock_unix_ms: int | None
     ) -> int | None:
-        """This cycle's observed process-suspension magnitude (team-lead
-        follow-up, 2026-09-13, runtime operations wiring plan §2 decision 2):
-        ``max(0, Δwall_clock_ms - Δmonotonic_ms)`` between the PREVIOUS
-        ``evaluate()`` cycle's ``(monotonic, wall_clock)`` reading pair and
-        THIS cycle's — a real system suspend/sleep stops the monotonic clock
-        while the wall clock keeps advancing (an NTP step shows up the same
-        way), so a wall delta that outruns the monotonic delta is an honest,
-        conservative signal of exactly what the anchor predicate is meant to
-        protect against. Clamped at 0 (never negative — the monotonic clock
-        running AHEAD of the wall clock is not "negative suspension").
-
-        Returns ``None`` — never a fabricated ``0`` — whenever no comparison
-        is possible: the first ``evaluate()`` cycle ever (no previous
-        reading), or either the previous or current cycle's reference
-        reader(s) supplied no wall-clock value at all
-        (:attr:`~tos_runtime.time.sources.ReferenceObservation.
-        wall_clock_unix_ms` was ``None`` that cycle).
-        """
+        """This cycle's observed process-suspension magnitude (team-lead"""
         prev_mono = self._previous_monotonic_ms
         prev_wall = self._previous_wall_clock_unix_ms
         if prev_mono is None or prev_wall is None or wall_clock_unix_ms is None:
@@ -368,23 +216,7 @@ class TrustworthyTimeService:
     def _read_reference_sources(
         self,
     ) -> tuple[tuple[ReferenceSource, ...], int, int | None]:
-        """Read every injected reference source; return the kernel-shaped
-        records, how many are reachable+healthy this cycle, and this cycle's
-        wall-clock observation (G-1, runtime operations wiring plan §2
-        decision 1).
-
-        The count — not just a bool — matters as of the HIGH-2 fix (review of
-        ba7d438f): whether disagreement can be honestly asserted as 0 depends
-        on whether there is exactly one reachable source (nothing to disagree
-        with) or more than one (a real comparison would be needed, and Phase 2
-        performs none) — see :meth:`_required_ok`.
-
-        The wall-clock value is the first reachable+healthy observation that
-        actually carries one (Phase 2 wires exactly one reader kind,
-        :class:`~tos_runtime.time.sources.LocalSystemClockReader`, so in
-        practice there is at most one candidate) — never fabricated when no
-        injected reader supplies one.
-        """
+        """Read every injected reference source; return the kernel-shaped"""
         observations = [reader.read() for reader in self._references]
         reachable_count = sum(
             1 for obs in observations if obs.reachable and obs.healthy
@@ -417,36 +249,17 @@ class TrustworthyTimeService:
         kernel_sources: tuple[ReferenceSource, ...],
         reachable_count: int,
     ) -> bool:
-        """Fold every kernel predicate this cycle's observations feed into the
-        single "may this be TRUSTED" gate (fault contracts ⑥/⑦)."""
+        """Fold every kernel predicate this cycle's observations feed into the"""
         reachable = reachable_count > 0
         reference_count = (
             independent_reference_count(kernel_sources) if reachable else 0
         )
 
-        # HIGH-2 fix (review of ba7d438f): the precondition "at most one
-        # reachable source" is NOT enforced by the constructor — a caller can
-        # wire any number of ReferenceSourceReaders (module docstring
-        # "accepts a sequence so a later profile can add a second independent
-        # source"). So disagreement is asserted as 0 ONLY in the genuinely
-        # single-source case (exactly one reachable source — nothing to
-        # disagree with); with MORE than one reachable source, Phase 2
-        # performs no pairwise comparison at all (no comparator exists yet),
-        # so the disagreement observation is UNKNOWN (``None``), which
-        # source_disagreement_within_bound fails closed on — never silently
-        # asserted as "in bound". An earlier cut asserted 0 for any reachable
-        # count, which let un-measured multi-source agreement pass as
-        # measured agreement.
-        # reachable_count == 0 -> None (no observation at all); == 1 -> 0
-        # (nothing to disagree with); > 1 -> None (unmeasured, fail-closed).
         disagreement_ms: int | None = 0 if reachable_count == 1 else None
         disagreement_ok = source_disagreement_within_bound(
             disagreement_ms, self._config.max_time_source_disagreement_ms
         )
 
-        # A locally-read observation's source_age is ~0 by construction (read
-        # and evaluated in the same cycle, no transport hop yet exists in
-        # Phase 2); an unreachable source reports no age at all (fail-closed).
         source_age = 0 if reachable else None
         freshness = freshness_verdict(
             source_age=source_age,
@@ -458,11 +271,6 @@ class TrustworthyTimeService:
             future_tolerance=self._config.max_future_timestamp_tolerance_ms,
         )
 
-        # Defense-in-depth self-check: even a FRESH instantaneous read must
-        # still fall within the same conservative freshness bound when framed
-        # as a consumer age (Phase 2's own service is its own sole consumer
-        # here — a cross-continuity consumer would instead compose
-        # effective_snapshot_age_bound_from_continuity, out of this slice).
         snapshot_admissible = snapshot_age_admissible(
             0 if reachable else None,
             self._config.max_time_conservative_freshness_age_ms,
@@ -486,11 +294,7 @@ class TrustworthyTimeService:
         anchor: TimeContinuityIdentity,
         now_ms: int,
     ) -> tuple[HealthState, str | None, int, TimeContinuityIdentity]:
-        """Propose + gate one FSM transition (never applied if the kernel
-        refuses it). Returns ``(applied_state, refusal_reason, commit_
-        generation, next_anchor)`` — ``next_anchor`` is only replaced here on
-        an UNTRUSTED->SYNCHRONIZING recovery; the caller still ratchets it
-        afterward when the anchor held valid this cycle."""
+        """Propose + gate one FSM transition (never applied if the kernel"""
         to_state = self._propose_transition(from_state, anchor_ok, required_ok)
         applied_state = from_state
         reason: str | None = None
@@ -526,18 +330,6 @@ class TrustworthyTimeService:
             to_state is HealthState.SYNCHRONIZING
             and from_state is HealthState.UNTRUSTED
         ):
-            # tos.time.recovery_generation_revives_nothing is the kernel rule
-            # this enforces ("a new generation does not revive what an
-            # earlier one invalidated") — but that predicate is an
-            # unconditional True for any input (LOW-5, review of ba7d438f):
-            # it documents the rule, it cannot detect a violation of it. The
-            # REAL, falsifiable guard is this explicit generation-advance
-            # check: recovery must mint a generation strictly greater than
-            # whatever the last exposed snapshot carried. A plain `assert`
-            # here would (a) vanish entirely under `python -O` and (b) never
-            # fail regardless of -O, since both of its would-be arguments
-            # were the same value — this `if ... raise` cannot be stripped
-            # and is genuinely falsifiable.
             last_generation = (
                 self._snapshot.generation
                 if self._snapshot is not None
@@ -561,10 +353,7 @@ class TrustworthyTimeService:
         anchor_ok: bool,
         now_ms: int,
     ) -> TimeContinuityIdentity:
-        """Advance the anchor's high-water mark forward when it held valid
-        this cycle (module docstring "high-water-mark" note); leave it
-        untouched on a regression, and never overwrite a fresh recovery
-        rebuild (``next_anchor is not anchor`` already)."""
+        """Advance the anchor's high-water mark forward when it held valid"""
         if next_anchor is not anchor or not anchor_ok:
             return next_anchor
         ratcheted = max(anchor.monotonic_anchor_value or now_ms, now_ms)
@@ -607,24 +396,51 @@ class TrustworthyTimeService:
         )
         return snapshot
 
+    def _re_establishes_freshness(self, now_ms: int) -> bool:
+        """Whether this cycle is the one that makes an AGED-OUT exposed reading fresh again."""
+        previous = self._snapshot
+        if previous is None:
+            return False
+        issued = previous.issue_monotonic_value
+        if issued is None:
+            return True
+        age_ms = now_ms - issued
+        return (
+            age_ms < 0 or age_ms > self._config.max_time_conservative_freshness_age_ms
+        )
+
+    def _snapshot_evidence_due(self, judged: Mapping[str, Any], now_ms: int) -> bool:
+        """Whether this cycle's ``TIME_HEALTH_SNAPSHOT`` row must be appended: the judged"""
+        if self._evidenced_content is None or judged != self._evidenced_content:
+            return True
+        if self._re_establishes_freshness(now_ms):
+            return True
+        last_ms = self._evidenced_monotonic_ms
+        if last_ms is None or now_ms < last_ms:
+            return True
+        return now_ms - last_ms >= self._config.time_health_snapshot_heartbeat_ms
+
+    def _announce_wall_clock_exposed(
+        self, snapshot: TimeHealthSnapshot, wall_clock_observation: int
+    ) -> None:
+        """G-1 taking-effect announcement (runtime operations wiring plan §2 decision 8):"""
+        self._evidence.append(
+            {
+                "event": _WALL_CLOCK_EXPOSED_KIND,
+                "snapshot_id": snapshot.snapshot_id,
+                "wall_clock_observation": wall_clock_observation,
+                "unit": "unix_ms",
+                "source_label": "LOCAL_SYSTEM_CLOCK",
+            },
+            kind=_WALL_CLOCK_EXPOSED_KIND,
+            record_class=_WALL_CLOCK_EXPOSED_RECORD_CLASS,
+        )
+        self._wall_clock_exposed = True
+
     def evaluate(self) -> TimeHealthSnapshot:
-        """Run one health-check cycle: read sources, call kernel predicates,
-        derive the next state, issue + durably evidence a snapshot, and only
-        then expose it.
-
-        Returns:
-            The freshly issued, digest-verified :class:`TimeHealthSnapshot`.
-
-        Raises:
-            TimeServiceNotStarted: If ``start()`` has not run.
-            Exception: Whatever the injected evidence port raises on a failed
-                append — propagated unchanged; no internal state (health
-                state, anchor, generation) is mutated and no snapshot is
-                exposed when this happens (see the module docstring).
-        """
+        """Run one health-check cycle: read sources, call kernel predicates,"""
         generation, anchor = self._require_started()
         now_ms = self._monotonic.now_ms()
-        # Read before the post-receipt block below overwrites it (:meth:`_capture_cycle`).
         previous_monotonic_ms = self._previous_monotonic_ms
 
         kernel_sources, reachable_count, wall_clock_observation = (
@@ -655,52 +471,30 @@ class TrustworthyTimeService:
             ),
         )
 
-        # "영수증 없으면 일어나지 않았다" — durable commit BEFORE any of the
-        # state below becomes observable. If this raises, nothing past this
-        # point executes: no state/anchor/generation mutation, no snapshot
-        # exposed via current_snapshot().
-        self._evidence.append(
-            snapshot.model_dump(mode="json"),
-            kind=_SNAPSHOT_KIND,
-            record_class=_SNAPSHOT_RECORD_CLASS,
+        payload = snapshot.model_dump(mode="json")
+        judged = judged_content(payload, reason)
+        announce_ms: int | None = (
+            wall_clock_observation
+            if applied_state is HealthState.TRUSTED and not self._wall_clock_exposed
+            else None
         )
-
-        # G-1 taking-effect announcement (runtime operations wiring plan §2
-        # decision 8): exactly once per service instance, the first time a
-        # TRUSTED snapshot carries a real wall-clock observation. A SEPARATE
-        # evidence append from the snapshot's own row above — ordered after
-        # it, per the same "receipt before observable state" discipline (if
-        # THIS append raises, the snapshot itself was already durably
-        # committed and IS exposed; only the exposure flag below would not
-        # yet be set, so a retry-from-caller would correctly re-attempt this
-        # announcement on the next evaluate() rather than silently losing it).
-        if (
-            applied_state is HealthState.TRUSTED
-            and wall_clock_observation is not None
-            and not self._wall_clock_exposed
-        ):
+        due = announce_ms is not None or self._snapshot_evidence_due(judged, now_ms)
+        if due:
             self._evidence.append(
-                {
-                    "event": _WALL_CLOCK_EXPOSED_KIND,
-                    "snapshot_id": snapshot.snapshot_id,
-                    "wall_clock_observation": wall_clock_observation,
-                    "unit": "unix_ms",
-                    "source_label": "LOCAL_SYSTEM_CLOCK",
-                },
-                kind=_WALL_CLOCK_EXPOSED_KIND,
-                record_class=_WALL_CLOCK_EXPOSED_RECORD_CLASS,
+                payload, kind=_SNAPSHOT_KIND, record_class=_SNAPSHOT_RECORD_CLASS
             )
-            self._wall_clock_exposed = True
+        if announce_ms is not None:
+            self._announce_wall_clock_exposed(snapshot, announce_ms)
 
+        if due:
+            self._evidenced_content = judged
+            self._evidenced_monotonic_ms = now_ms
         if commit_generation != generation.current:
             generation.next()
         self._anchor = next_anchor
         self._health_state = applied_state
         self._last_transition_reason = reason
         self._snapshot = snapshot
-        # Feeds the NEXT cycle's _observed_suspension_ms — captured
-        # unconditionally (regardless of this cycle's health-state outcome),
-        # same as every other post-receipt mutation above.
         self._previous_monotonic_ms = now_ms
         self._previous_wall_clock_unix_ms = wall_clock_observation
         self._capture_cycle(previous_monotonic_ms, suspension_ms)
@@ -709,47 +503,18 @@ class TrustworthyTimeService:
     def _capture_cycle(
         self, previous_monotonic_ms: int | None, suspension_ms: int | None
     ) -> None:
-        """Record the two facts :meth:`wall_clock_at_monotonic` needs about the cycle that
-        just issued the exposed snapshot (#810, plan
-        ``docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md`` §2.2): the PREVIOUS
-        cycle's monotonic reading — the mapping's domain floor, which
-        :attr:`_previous_monotonic_ms` has by now been overwritten with this cycle's — and the
-        suspension this cycle observed.
-
-        Called from :meth:`evaluate` with the other post-receipt mutations, never before the
-        durable append returns: a mapping that survived a failed commit would describe a cycle
-        whose snapshot was never exposed.
-        """
+        """Record the two facts :meth:`wall_clock_at_monotonic` needs about the cycle that"""
         self._cycle_previous_monotonic_ms = previous_monotonic_ms
         self._cycle_suspension_ms = suspension_ms
 
     def wall_clock_now(self) -> int | None:
-        """The current wall-clock reading, or ``None`` (G-1, runtime
-        operations wiring plan §2 decision 1).
-
-        Gated on ``HealthState.TRUSTED``: a ``SYNCHRONIZING``/``DEGRADED_
-        HOLDOVER``/``UNTRUSTED`` cycle — even one whose snapshot happens to
-        carry a wall-clock observation — never exposes it through this
-        method. This is the ONE read
-        :class:`~tos_runtime.calendar.ports.TrustedWallClockReference` calls;
-        it never reads ``current_snapshot().wall_clock_observation`` directly
-        (which would skip this gate).
-        """
+        """The current wall-clock reading, or ``None`` (G-1, runtime"""
         if self._health_state is not HealthState.TRUSTED or self._snapshot is None:
             return None
         return self._snapshot.wall_clock_observation
 
     def wall_clock_now_if_fresh(self, max_age_ms: int) -> int | None:
-        """:meth:`wall_clock_now`, but only while the snapshot it comes from is at most
-        ``max_age_ms`` old on this service's own monotonic clock; ``None`` otherwise.
-
-        :meth:`wall_clock_now` serves the observation captured at the last ``evaluate()`` — in a
-        composed runtime that is the boot cycle, so its value can be hours or days old. A consumer
-        that turns the reading into an identity (the egress trading date — plan 2026-09-26 egress
-        trading date, review finding 1) must not use a stale instant as "now": an ACK on day D+1
-        stamped with day D would pair a fresh ODNO with the wrong day. A snapshot with no
-        ``issue_monotonic_value``, or one from the future, is not fresh.
-        """
+        """:meth:`wall_clock_now`, but only while the snapshot it comes from is at most"""
         observation = self.wall_clock_now()
         if observation is None or self._snapshot is None:
             return None
@@ -762,72 +527,10 @@ class TrustworthyTimeService:
         return observation
 
     def wall_clock_at_monotonic(self, mono_ms: int) -> int | None:
-        """The wall-clock time that a PAST monotonic instant of this process corresponds to,
-        or ``None`` (#810, plan
-        ``docs/plans/2026-09-28-tos-kis-quote-request-anchor-plan.md`` §2.2).
-
-        The value is::
-
-            S'_wall - (S'_mono - mono_ms) - (the suspension THIS cycle observed)
-
-        where ``S'`` is the freshly evaluated, exposed snapshot: ``S'_wall`` is its
-        ``wall_clock_observation`` (served through :meth:`wall_clock_now`, so the
-        ``TRUSTED`` gate is the same one) and ``S'_mono`` its ``issue_monotonic_value``.
-
-        **This is NOT the rejected "extrapolate now" (plan 2026-09-26 §3).** That proposal
-        read a cached wall-clock value and added elapsed monotonic time to MANUFACTURE a
-        present instant no reference source ever attested — a reading with no evaluation
-        behind it. This maps only BACKWARD, from a reading that has just been evaluated and
-        found trustworthy, onto an instant that lies inside the very interval that evaluation
-        covers. Subtracting the observed suspension moves the answer EARLIER, which makes any
-        age derived from it LARGER — the conservative direction. (During a suspension the
-        monotonic clock stops while the wall clock runs on, so the elapsed-monotonic gap
-        understates the elapsed wall time; charging the whole observed suspension to the gap
-        can only over-age the mapped instant, never under-age it.)
-
-        **The domain is this cycle only.** ``mono_ms`` must lie between the PREVIOUS
-        evaluation's monotonic reading and ``S'_mono``: outside that interval there is no
-        measured suspension covering the span, so the mapping would be an extrapolation past
-        what was evaluated. The floor also stays honest about what the suspension figure
-        actually measures — it is ``max(0, Δwall - Δmono)`` across exactly those two readings
-        (:meth:`_observed_suspension_ms`).
-
-        Returns ``None`` — never a fabricated instant — when:
-
-        * the service is not ``TRUSTED``, or has no exposed snapshot, or that snapshot carries
-          no wall-clock observation / no ``issue_monotonic_value``;
-        * this cycle observed no suspension magnitude at all (the first ``evaluate()``, or a
-          cycle with no wall-clock reading on either side) — an unknown term is not a zero;
-        * ``mono_ms`` is outside the domain above.
-
-        **The unknown-suspension branch is defense in depth: no ``TRUSTED`` path in a real run
-        reaches it** (PR #812 review, LOW). :meth:`_observed_suspension_ms` answers ``None`` on
-        exactly three inputs — no previous monotonic reading, no previous wall-clock reading, no
-        current one — and a real run closes all three before this line: the first
-        ``evaluate()`` (the only one with no previous reading) is still ``SYNCHRONIZING``, so
-        the ``TRUSTED`` gate above has already returned ``None``; and Phase 2 wires exactly one
-        reference-reader kind (:class:`~tos_runtime.time.sources.LocalSystemClockReader`), which
-        always carries a wall-clock value, so neither the previous nor the current observation
-        can be absent while the service is ``TRUSTED``. The branch is kept — and pinned by
-        ``tests/time/test_service.py`` — because folding the unknown to a zero (``suspension_ms
-        or 0``) would silently un-age every mapped instant on the day a future reader kind, or
-        a degraded read, does expose a trusted reading with no suspension behind it.
-
-        Args:
-            mono_ms: A reading taken from THIS service's own injected
-                :class:`~tos_runtime.time.sources.MonotonicSource` — monotonic readings are
-                comparable only within one source instance, so a caller injected with a
-                different source has no meaningful argument to pass here.
-
-        Returns:
-            The mapped wall-clock time in epoch milliseconds, or ``None``.
-        """
+        """The wall-clock time that a PAST monotonic instant of this process corresponds to,"""
         issue_wall_ms = self.wall_clock_now()
         if issue_wall_ms is None or self._snapshot is None:
             return None
-        # Annotated, not inferred: the snapshot field's own declared type is what this
-        # arithmetic must be checked against (an inferred ``Any`` here would silently accept
-        # a non-numeric mapping).
         issue_mono_ms: int | None = self._snapshot.issue_monotonic_value
         if issue_mono_ms is None:
             return None

@@ -1,28 +1,4 @@
-"""§7.1 import-closure verification test (C1 enforcement, design v2).
-
-C1 (the v1 REJECT CRITICAL) slipped through a firewall blind spot precisely
-because no test asserted the *runtime* import closure. Isomorphic to design #1
-§3.4's determinism closure test, this test imports the pure model package in a
-**fresh, isolated interpreter** (via ``multiprocessing`` spawn — ``subprocess``
-and ``os`` are firewall-forbidden even in tests) and asserts:
-
-  1. No design §2.3 operational package (``shared.execution``/``shared.kis``/
-     ``shared.streaming``/``shared.llm``/``shared.storage``/``shared.backtest``/
-     ``services.*``/``cli.*``) is in the closure.
-  2. Neither ``shared.config`` nor ``shared.config.secrets`` is in the closure
-     (C1 direct hit — the transitive ambient-credential intake the AST gate,
-     seeing only literal top-level imports, cannot catch).
-  3. ``numpy``/``pandas`` are absent too: design §0.3 forbids the pure model from
-     importing them (closure minimisation), so their presence would be a
-     regression even though the firewall allowlist tolerates them (MINOR-1).
-  4. Even if ``os`` is loaded, no model source references ``os.environ`` /
-     ``os.getenv`` (AST scan reinforcement; ambient-credential-reader absence).
-
-Spawn gives a clean interpreter so the parent pytest process's pre-existing
-imports cannot mask a real leak. A negative canary (``test_leak_canary_is_
-detected``) proves the spawn+scan pipeline actually *catches* a planted leak, so
-"green" is evidence the checker works — not evidence it has been neutered.
-"""
+"""§7.1 import-closure verification test (C1 enforcement, design v2)."""
 
 from __future__ import annotations
 
@@ -30,8 +6,6 @@ import ast
 import multiprocessing as mp
 from pathlib import Path
 
-# Forbidden top-level package names (exact) and dotted prefixes (design §2.3 + C1
-# + §0.3 numpy/pandas closure-minimisation, MINOR-1).
 _FORBIDDEN_EXACT = frozenset(
     {
         "shared.execution",
@@ -73,11 +47,7 @@ def _is_forbidden(module_name: str) -> bool:
 
 
 def _closure_child(queue: mp.Queue) -> None:
-    """Child target: import the pure package, report any forbidden closure members.
-
-    Runs in a spawned (clean) interpreter. Imports every capsule submodule and
-    scans ``sys.modules`` for forbidden packages, returning the sorted leak list.
-    """
+    """Child target: import the pure package, report any forbidden closure members."""
     import sys
 
     import tos.capsule  # noqa: F401
@@ -97,12 +67,7 @@ def _closure_child(queue: mp.Queue) -> None:
 
 
 def _leak_canary_child(queue: mp.Queue) -> None:
-    """Child target: plant a fake forbidden module, then run the same scan.
-
-    Proves the spawn+scan pipeline actually detects a leak — if the scanner were
-    silently neutered, this would return an empty list and the canary test would
-    fail (MINOR-6).
-    """
+    """Child target: plant a fake forbidden module, then run the same scan."""
     import sys
     import types
 
@@ -142,7 +107,6 @@ def test_leak_canary_is_detected() -> None:
 
 def test_is_forbidden_classifier_canaries() -> None:
     """(MINOR-6) The classifier flags forbidden names and clears allowed ones."""
-    # Positive: forbidden exacts, dotted children, and §0.3 numeric libs.
     assert _is_forbidden("shared.llm") is True
     assert _is_forbidden("shared.llm.market") is True
     assert _is_forbidden("shared.config") is True
@@ -152,12 +116,11 @@ def test_is_forbidden_classifier_canaries() -> None:
     assert _is_forbidden("cli") is True
     assert _is_forbidden("numpy") is True
     assert _is_forbidden("pandas.core") is True
-    # Negative: the allowlisted commons/third-party/self must NOT be flagged.
     assert _is_forbidden("shared.utils") is False
     assert _is_forbidden("shared.exceptions") is False
     assert _is_forbidden("pydantic") is False
     assert _is_forbidden("tos.capsule") is False
-    assert _is_forbidden("click") is False  # must not false-match the "cli" prefix
+    assert _is_forbidden("click") is False
 
 
 def test_model_source_has_no_ambient_env_access() -> None:

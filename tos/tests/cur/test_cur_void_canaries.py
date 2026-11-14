@@ -1,15 +1,4 @@
-"""Forbidden-verb + clock-free constructive-absence canary (design #23 §4.1/§7).
-
-cur is **pure, non-transmitting, non-mutating, and clock-free** (§4.1). The constructive-absence
-canary asserts the package defines **no** send / transmit / emit / sign / claim (execution) /
-mutate / reserve / release / transfer / quarantine (capacity) / approve / arm / rearm / clear-halt /
-open / connect / socket function, references **no** real clock (``time.time`` / ``datetime.now`` /
-``monotonic``), and reaches **no** ambient env / dynamic escape. The structural absence of a transmit
-/ mutate method is this package's identity (§4.1 — "a currentness sequencer ... does not invent
-facts ... or transmit", §1 line 21).
-
-Regime tag: structural substrate; EV-L1-complete claim forbidden.
-"""
+"""Forbidden-verb + clock-free constructive-absence canary (design #23 §4.1/§7)."""
 
 from __future__ import annotations
 
@@ -26,7 +15,6 @@ from tos.cur._base import DigestBoundArtifact
 
 _CUR_SRC = Path(__file__).resolve().parent.parent.parent / "src" / "tos" / "cur"
 
-#: Forbidden verb roots — a function whose name starts with any of these would be a cur capability.
 _FORBIDDEN_VERB_PREFIXES = (
     "send",
     "transmit",
@@ -35,7 +23,7 @@ _FORBIDDEN_VERB_PREFIXES = (
     "publish",
     "deliver",
     "sign",
-    "claim",  # execution verb (a claim_capability would be an rcl-owned execution — sibling turf)
+    "claim",
     "mutate",
     "reserve",
     "release",
@@ -52,8 +40,6 @@ _FORBIDDEN_VERB_PREFIXES = (
     "socket",
 )
 
-#: Real-clock call fragments a clock-free package must never reference (§5.4 / §0.4e). Dotted /
-#: call forms only, so a bare "monotonic" adjective in prose never false-matches.
 _FORBIDDEN_CLOCK_FRAGMENTS = (
     "time.time",
     "time.monotonic",
@@ -71,8 +57,6 @@ def test_artifacts_have_no_transmit_or_mutate_method() -> None:
         RestrictiveFenceRecord,
         CurrentnessPolicy,
     )
-    # The inherited core digest machinery (``.issue()`` — issue an artifact's digest) is NOT a cur
-    # capability; only cur-artifact-SPECIFIC additions are checked (skip base names).
     base_names = set(dir(DigestBoundArtifact))
     for artifact in artifacts:
         for name in dir(artifact):

@@ -1,7 +1,4 @@
-"""``tos_runtime.brokercap.scopes`` tests (TOS Phase 4 plan §2 decisions 1-2,
-``docs/plans/2026-09-09-tos-phase4-scopes-and-verify-realization-plan.md``,
-lane A wave 1). Hermetic — real config files under ``tmp_path`` only (D1.4).
-"""
+"""``tos_runtime.brokercap.scopes`` tests (TOS Phase 4 plan §2 decisions 1-2,"""
 
 from __future__ import annotations
 
@@ -121,11 +118,6 @@ def _minimal_config(scopes: list[dict], *, active_scope: str | None) -> dict:
     }
 
 
-# ============================================================================
-# Loader happy path — the shipped example config
-# ============================================================================
-
-
 def test_example_config_loads_with_active_scope_filled(tmp_path: Path) -> None:
     raw = _load_example_dict()
     path = tmp_path / "broker_scopes.yaml"
@@ -139,11 +131,6 @@ def test_example_config_loads_with_active_scope_filled(tmp_path: Path) -> None:
     by_name = {s.name: s for s in config.scopes}
     assert by_name["SYNTHETIC_FUTURES_ORDER"].admissibility is Admissibility.ADMISSIBLE
     assert by_name["REAL_READ"].admissibility is Admissibility.ADMISSIBLE
-    # MOCK_STOCK_ORDER maps to the kernel's REDUCED-ceiling rule, but the
-    # shipped example honestly leaves profile_evidence_ok null (no P0-2
-    # evidence yet — task 4, operator lane) — the kernel fails that closed
-    # to PROHIBITED (None/False both fail closed, never REDUCED); see
-    # test_resolve_scope_reduced below for the positive-evidence case.
     assert by_name["MOCK_STOCK_ORDER"].admissibility is Admissibility.PROHIBITED
     assert by_name["REAL_ORDER"].admissibility is Admissibility.PROHIBITED
 
@@ -187,11 +174,6 @@ def test_principal_without_the_token_passes_through_unchanged(tmp_path: Path) ->
     assert config.active_scope.principal == "fixed-principal-no-templating"
 
 
-# ============================================================================
-# Named-TBD null -> refuse to load
-# ============================================================================
-
-
 @pytest.mark.parametrize(
     "field",
     [
@@ -217,10 +199,7 @@ def test_a_still_null_scope_field_refuses_to_load(tmp_path: Path, field: str) ->
 
 
 def test_named_tbd_placeholder_name_refuses_to_load(tmp_path: Path) -> None:
-    """W-A A-0: an operator typing the literal placeholder string ``"TBD"`` for
-    a scope's own ``name``/``principal`` must never be sealed into ``BrokerScope``
-    as though it were a genuine identity — the pre-existing null-only ``_require``
-    guard never caught this."""
+    """W-A A-0: an operator typing the literal placeholder string ``"TBD"`` for"""
     scope = _minimal_scope(name="TBD")
     raw = _minimal_config([scope], active_scope=None)
     path = tmp_path / "broker_scopes.yaml"
@@ -376,22 +355,10 @@ def test_not_a_mapping_refuses_to_load(tmp_path: Path) -> None:
         load_broker_scopes(path, environment_label="paper-env-7")
 
 
-# ============================================================================
-# Instance cross-check uses the scope's OWN resolved environment_binding
-# (re-review finding: _check_instance_bindings used to validate against the
-# config-wide table even for a scope carrying its own F4 override)
-# ============================================================================
-
-
 def test_instance_cross_check_uses_the_scopes_own_environment_binding(
     tmp_path: Path,
 ) -> None:
-    """A scope declaring its own ``environment_binding`` override must have
-    ``instance.environment`` cross-checked against THAT map, not the
-    config-wide default — otherwise a scope could carry an override that
-    silently disagrees with its own declared INSTANCE binding while the
-    cross-check keeps passing against a table the scope no longer actually
-    binds through (one-source-of-truth violation)."""
+    """A scope declaring its own ``environment_binding`` override must have"""
     raw = _load_example_dict()
     _scope_by_name(raw, "REAL_READ")["environment_binding"] = {
         "BROKER_PRODUCTION": "SYNTHETIC"
@@ -406,10 +373,7 @@ def test_instance_cross_check_uses_the_scopes_own_environment_binding(
 def test_instance_cross_check_passes_when_the_override_agrees_with_instance(
     tmp_path: Path,
 ) -> None:
-    """Positive companion: an override that maps BROKER_PRODUCTION to the
-    SAME string the scope's ``instance.environment`` already names still
-    loads cleanly — the cross-check is against the scope's own resolved
-    map, not a blanket refusal of overrides."""
+    """Positive companion: an override that maps BROKER_PRODUCTION to the"""
     raw = _load_example_dict()
     _scope_by_name(raw, "REAL_READ")["environment_binding"] = {
         "BROKER_PRODUCTION": "REAL_PROD"
@@ -422,11 +386,6 @@ def test_instance_cross_check_passes_when_the_override_agrees_with_instance(
     assert real_read.environment_binding[BrokerEnvironment.BROKER_PRODUCTION] == (
         "REAL_PROD"
     )
-
-
-# ============================================================================
-# EC-3 — config alone can never create a futures REAL order capability
-# ============================================================================
 
 
 def test_broker_production_futures_order_in_config_refuses_to_load_naming_scope(
@@ -463,11 +422,6 @@ def test_null_capability_tuple_axis_refuses_to_load(tmp_path: Path) -> None:
         load_broker_scopes(path, environment_label="paper-env-7")
 
 
-# ============================================================================
-# Principal separation
-# ============================================================================
-
-
 def test_read_and_order_scopes_sharing_a_principal_refuses_to_load(
     tmp_path: Path,
 ) -> None:
@@ -497,11 +451,7 @@ def test_synthetic_and_read_scopes_sharing_a_principal_refuses_to_load(
 
 
 def test_same_class_scopes_sharing_a_principal_refuses_to_load(tmp_path: Path) -> None:
-    """Independent-review finding F2: principal separation used to be
-    enforced only ACROSS ``principal_class`` values — two scopes of the
-    SAME class (e.g. two ``ORDER`` scopes) sharing a principal loaded
-    without complaint. The generalized rule refuses ANY two distinct
-    scopes sharing a principal, naming both."""
+    """Independent-review finding F2: principal separation used to be"""
     scope_a = _minimal_scope(
         name="ORDER_A", principal_class="ORDER", principal="same-order"
     )
@@ -521,8 +471,7 @@ def test_same_class_scopes_sharing_a_principal_refuses_to_load(tmp_path: Path) -
 def test_different_class_scopes_with_distinct_principals_still_load(
     tmp_path: Path,
 ) -> None:
-    """Sanity companion to the F2 refusal above — two scopes with genuinely
-    DISTINCT principals still load cleanly."""
+    """Sanity companion to the F2 refusal above — two scopes with genuinely"""
     scope_a = _minimal_scope(
         name="ORDER_A", principal_class="ORDER", principal="order-a-principal"
     )
@@ -539,22 +488,12 @@ def test_different_class_scopes_with_distinct_principals_still_load(
     assert config.active_scope.name == "ORDER_A"
 
 
-# ============================================================================
-# Duplicate tuples across scopes — independent-review finding F3
-# ============================================================================
-
-
 def test_duplicate_capability_tuple_across_two_scopes_refuses_to_load(
     tmp_path: Path,
 ) -> None:
-    """The SAME capability tuple listed in two different scopes must refuse
-    at load — without this, ``resolve_scope`` would silently pick whichever
-    scope appears FIRST in the YAML list, letting an earlier (more
-    permissive) scope shadow a later (more restrictive) one for the exact
-    same request."""
+    """The SAME capability tuple listed in two different scopes must refuse"""
     scope_a = _minimal_scope(name="DUP_A", principal="dup-a-principal")
     scope_b = _minimal_scope(name="DUP_B", principal="dup-b-principal")
-    # Both scopes carry the IDENTICAL default capability tuple.
     raw = _minimal_config([scope_a, scope_b], active_scope="DUP_A")
     path = tmp_path / "broker_scopes.yaml"
     _write(path, raw)
@@ -574,11 +513,6 @@ def test_non_duplicate_tuples_across_scopes_load_cleanly(tmp_path: Path) -> None
 
     config = load_broker_scopes(path, environment_label="paper-env-7")
     assert {s.name for s in config.scopes} == {"NODUP_A", "NODUP_B"}
-
-
-# ============================================================================
-# Non-string values — independent-review finding F6
-# ============================================================================
 
 
 def test_non_string_principal_refuses_to_load_never_attributeerror(
@@ -602,11 +536,6 @@ def test_non_string_binding_value_refuses_to_load(tmp_path: Path) -> None:
 
     with pytest.raises(BrokerScopeConfigError, match="environment_binding"):
         load_broker_scopes(path, environment_label="paper-env-7")
-
-
-# ============================================================================
-# resolve_scope — EC-1, all four dispositions, never rewrites
-# ============================================================================
 
 
 @pytest.fixture()
@@ -634,11 +563,7 @@ def test_resolve_scope_admitted(loaded_config: BrokerScopesConfig) -> None:
 
 
 def test_resolve_scope_reduced(tmp_path: Path) -> None:
-    """The kernel's REDUCED-ceiling rule fires only when ``profile_evidence_ok``
-    is positively ``true`` — the shipped example config (loaded_config
-    fixture) honestly leaves it ``null`` (no P0-2 evidence yet), which fails
-    closed to PROHIBITED, so this test builds its own config with the
-    evidence flag positively set to exercise the REDUCED path."""
+    """The kernel's REDUCED-ceiling rule fires only when ``profile_evidence_ok``"""
     raw = _load_example_dict()
     _scope_by_name(raw, "MOCK_STOCK_ORDER")["profile_evidence_ok"] = True
     path = tmp_path / "broker_scopes.yaml"
@@ -660,9 +585,7 @@ def test_resolve_scope_reduced(tmp_path: Path) -> None:
 def test_resolve_scope_mock_stock_order_prohibited_when_evidence_not_positive(
     loaded_config: BrokerScopesConfig,
 ) -> None:
-    """The shipped example's honest ``profile_evidence_ok: null`` fails
-    closed to PROHIBITED, never REDUCED (None/False both fail closed —
-    kernel ``routing_admissibility`` docstring)."""
+    """The shipped example's honest ``profile_evidence_ok: null`` fails"""
     requested = CapabilityTuple(
         environment=BrokerEnvironment.BROKER_SIMULATION,
         operation_class=OperationClass.ORDER_SEND,
@@ -691,8 +614,7 @@ def test_resolve_scope_prohibited(loaded_config: BrokerScopesConfig) -> None:
 def test_resolve_scope_unsupported_deny_mock_futures_order_never_rewritten(
     loaded_config: BrokerScopesConfig,
 ) -> None:
-    """A MOCK futures order has no scope at all (the upstream plan has no
-    such row) — it must DENY, never fall back to a different, wider scope."""
+    """A MOCK futures order has no scope at all (the upstream plan has no"""
     requested = CapabilityTuple(
         environment=BrokerEnvironment.BROKER_SIMULATION,
         operation_class=OperationClass.ORDER_SEND,
@@ -703,11 +625,6 @@ def test_resolve_scope_unsupported_deny_mock_futures_order_never_rewritten(
     resolution = resolve_scope(loaded_config, requested)
     assert resolution.disposition is ScopeDisposition.UNSUPPORTED_DENY
     assert resolution.scope is None
-
-
-# ============================================================================
-# transport_nature — structural derivation per endpoint class
-# ============================================================================
 
 
 def _scope(
@@ -798,11 +715,6 @@ def test_transport_nature_risk_relevant_live_true_only_for_real_order() -> None:
     assert nature.principal == "p"
 
 
-# ============================================================================
-# credential_route_inventory
-# ============================================================================
-
-
 def test_credential_route_inventory_shape(loaded_config: BrokerScopesConfig) -> None:
     inventory = credential_route_inventory(
         loaded_config, active_principal="egressgw-paper-env-7"
@@ -833,14 +745,7 @@ def test_credential_route_inventory_shape(loaded_config: BrokerScopesConfig) -> 
 def test_credential_route_inventory_inside_boundary_is_scope_derived_not_hardcoded(
     tmp_path: Path,
 ) -> None:
-    """Independent-review finding F1: a scope declared ``inside_boundary:
-    false`` must produce an inventory entry with ``inside_boundary=False`` —
-    never the old hardcoded ``True`` literal — and that flag must be
-    LOAD-BEARING against the kernel's own boundary-disjointness predicate
-    (``tos.egress.predicates.credential_route_authority_disjoint``): a
-    broker-reaching (``usable_credential=True``, ``broker_route=True``)
-    scope OUTSIDE the boundary is exactly the bypass condition
-    EGRESS-INV-002 forbids."""
+    """Independent-review finding F1: a scope declared ``inside_boundary:"""
     from tos.egress.predicates import credential_route_authority_disjoint
 
     raw = _load_example_dict()
@@ -858,14 +763,8 @@ def test_credential_route_inventory_inside_boundary_is_scope_derived_not_hardcod
     assert real_read_entry.usable_credential is True
     assert real_read_entry.broker_route is True
 
-    # Load-bearing: an outside-boundary principal with a usable credential
-    # AND a broker route is exactly the bypass condition the kernel
-    # predicate must catch — it does, honestly, once derived from config.
     assert credential_route_authority_disjoint(inventory) is False
 
-    # Contrast: the SAME inventory shape but with every entry honestly
-    # inside the boundary (the shipped example, unmodified) passes —
-    # proving the flag (not something else) is what flips the verdict.
     baseline_raw = _load_example_dict()
     baseline_path = tmp_path / "broker_scopes_baseline.yaml"
     _write(baseline_path, baseline_raw)
@@ -874,11 +773,6 @@ def test_credential_route_inventory_inside_boundary_is_scope_derived_not_hardcod
         baseline_config, active_principal="egressgw-paper-env-7"
     )
     assert credential_route_authority_disjoint(baseline_inventory) is True
-
-
-# ============================================================================
-# refuse_principal_collision — G-4 generalization of R2
-# ============================================================================
 
 
 def test_refuse_principal_collision_raises_when_active_principal_matches_a_scope(
@@ -896,18 +790,13 @@ def test_refuse_principal_collision_passes_for_a_distinct_principal(
     refuse_principal_collision(loaded_config, active_principal="egressgw-paper-env-7")
 
 
-# ============================================================================
-# Negative-grep — no ambient env, no kernel-bypassing construction
-# ============================================================================
-
-
 def test_no_os_environ_or_getenv_in_brokercap_package() -> None:
     package_dir = (
         Path(__file__).resolve().parents[2] / "src" / "tos_runtime" / "brokercap"
     )
     for path in package_dir.glob("*.py"):
         if path.name == "instance.py":
-            continue  # lane C's module — out of lane A's scope
+            continue
         source = path.read_text(encoding="utf-8")
         assert "os.environ" not in source, f"{path}: os.environ found"
         assert "getenv(" not in source, f"{path}: getenv( found"
@@ -919,7 +808,7 @@ def test_no_model_construct_or_model_copy_update_in_brokercap_package() -> None:
     )
     for path in package_dir.glob("*.py"):
         if path.name == "instance.py":
-            continue  # lane C's module — out of lane A's scope
+            continue
         source = path.read_text(encoding="utf-8")
         assert "model_construct(" not in source, f"{path}: model_construct( found"
         assert "model_copy(update=" not in source, f"{path}: model_copy(update= found"
@@ -928,10 +817,7 @@ def test_no_model_construct_or_model_copy_update_in_brokercap_package() -> None:
 def test_no_consumer_of_a_prohibited_scopes_endpoint_class_outside_this_module() -> (
     None
 ):
-    """EC-1: a PROHIBITED scope (REAL_ORDER) is listed for visibility only —
-    no OTHER module in this runtime reads ``.endpoint_class`` to route a
-    call. This module itself legitimately reads it (transport_nature /
-    credential_route_inventory), so it is excluded from the scan."""
+    """EC-1: a PROHIBITED scope (REAL_ORDER) is listed for visibility only —"""
     runtime_src = Path(__file__).resolve().parents[2] / "src" / "tos_runtime"
     offenders = []
     for path in runtime_src.rglob("*.py"):
@@ -943,24 +829,10 @@ def test_no_consumer_of_a_prohibited_scopes_endpoint_class_outside_this_module()
     assert offenders == []
 
 
-# ============================================================================
-# Mutation evidence M-A (EC-1) — a widening resolver would go red
-# ============================================================================
-
-
 def test_mutation_evidence_m_a_shipped_resolver_never_widens_environment(
     loaded_config: BrokerScopesConfig,
 ) -> None:
-    """Demonstrates the discriminating power of EC-1's "never widen" rule.
-
-    A SYNTHETIC market-data read has no scope in this config (only
-    ``REAL_READ`` — ``BROKER_PRODUCTION`` only — covers reads) — the shipped
-    :func:`resolve_scope` correctly denies it. A MUTATED resolver that
-    retries with ``environment=BROKER_PRODUCTION`` on ``UNSUPPORTED_DENY``
-    would incorrectly ADMIT it (silently promoting a synthetic read to a
-    real-broker read) — this test proves that mutation goes red against the
-    same assertion the shipped code satisfies.
-    """
+    """Demonstrates the discriminating power of EC-1's "never widen" rule."""
     requested = CapabilityTuple(
         environment=BrokerEnvironment.SYNTHETIC,
         operation_class=OperationClass.MARKET_DATA_READ,
@@ -986,13 +858,8 @@ def test_mutation_evidence_m_a_shipped_resolver_never_widens_environment(
         return result
 
     mutated_result = _mutated_resolve(loaded_config, requested)
-    assert (
-        mutated_result.disposition is ScopeDisposition.ADMITTED
-    )  # the bug, illustrated
+    assert mutated_result.disposition is ScopeDisposition.ADMITTED
 
-    # The EC-1 guard itself: this is the assertion the shipped resolver
-    # satisfies and the mutated one does NOT — proving the mutation is
-    # caught (red) by the very check the shipped code passes (green).
     with pytest.raises(AssertionError):
         assert resolve_scope(loaded_config, requested).disposition is (
             ScopeDisposition.ADMITTED
@@ -1002,10 +869,7 @@ def test_mutation_evidence_m_a_shipped_resolver_never_widens_environment(
 def test_mutation_evidence_m_a_exhaustive_sweep_never_admits_a_different_environment(
     loaded_config: BrokerScopesConfig,
 ) -> None:
-    """Exhaustive sweep (5 enums, all constructible tuples): whenever
-    :func:`resolve_scope` returns a scope, that scope must contain a tuple
-    EXACTLY equal to what was requested — in particular sharing the same
-    ``environment`` — never a different one reached by a widening retry."""
+    """Exhaustive sweep (5 enums, all constructible tuples): whenever"""
     axes = (
         BrokerEnvironment,
         OperationClass,

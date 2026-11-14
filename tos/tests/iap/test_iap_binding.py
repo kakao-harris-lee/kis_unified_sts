@@ -1,14 +1,4 @@
-"""exact_binding_holds — exact binding chain (design #15 §5.3; IAP-EV-004 substrate, core L1 slice).
-
-bidirectional set comparison (§4.3/§4.7, the #14 MAJOR-1 lesson): a missing link (binding broken)
-AND a surplus / substituted link (a different chain) both deny. both-ways: an exactly-matching
-chain binds (APPROVE, positive side). ∅ both-ways: an empty chain cannot prove binding (DENY, not
-a vacuous pass). Substitution of any node invalidates (§13 line 585). A None link => UNKNOWN
-(never assume-match).
-
-Regime tag: predicate / model substrate only; IAP-EV-004 NOT_IMPLEMENTED (`/3+Security` residue);
-EV-L1-complete claim forbidden.
-"""
+"""exact_binding_holds — exact binding chain (design #15 §5.3; IAP-EV-004 substrate, core L1 slice)."""
 
 from __future__ import annotations
 
@@ -84,6 +74,6 @@ def test_identical_nonempty_chain_always_binds(chain: dict[str, str]) -> None:
 def test_extra_key_never_binds(chain: dict[str, str], extra_key: str) -> None:
     """(property, both-ways) Adding a key the bound chain lacks is never APPROVE (surplus denies)."""
     if extra_key in chain:
-        return  # only exercise a genuinely-surplus key
+        return
     actual = {**chain, extra_key: "surplus"}
     assert exact_binding_holds(chain, actual) is not ApprovalResult.APPROVE

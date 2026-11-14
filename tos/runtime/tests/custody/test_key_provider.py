@@ -1,6 +1,4 @@
-"""``FileKeyProvider`` tests: generation discovery, mode/owner gate, Protocol
-conformance, and a real-store smoke test (design #40 D4.1, slice plan §2).
-"""
+"""``FileKeyProvider`` tests: generation discovery, mode/owner gate, Protocol"""
 
 from __future__ import annotations
 
@@ -91,21 +89,16 @@ def test_key_for_refuses_owner_mismatch_via_injected_getuid(
 def test_old_generation_key_remains_readable_after_a_newer_one_appears(
     tmp_path: Path, expected_owner_uid: int
 ) -> None:
-    """ "옛 세대 키는 검증용으로 읽기만" — an old generation stays readable."""
+    '"옛 세대 키는 검증용으로 읽기만" — an old generation stays readable.'
     _write_key(tmp_path, 1, b"gen-1-key-bytes")
     provider = FileKeyProvider(tmp_path, expected_owner_uid=expected_owner_uid)
     assert provider.current_generation() == 1
 
-    _write_key(tmp_path, 2, b"gen-2-key-bytes")  # rotation step 1: file first
+    _write_key(tmp_path, 2, b"gen-2-key-bytes")
 
     assert provider.current_generation() == 2
-    assert provider.key_for(1) == b"gen-1-key-bytes"  # still readable
+    assert provider.key_for(1) == b"gen-1-key-bytes"
     assert provider.key_for(2) == b"gen-2-key-bytes"
-
-
-# ============================================================================
-# Protocol conformance — both the custody-local mirror AND the store's own
-# ============================================================================
 
 
 def test_file_key_provider_satisfies_both_key_provider_protocols(
@@ -116,11 +109,6 @@ def test_file_key_provider_satisfies_both_key_provider_protocols(
 
     assert isinstance(provider, CustodyKeyProvider)
     assert isinstance(provider, StoreKeyProvider)
-
-
-# ============================================================================
-# smoke test: a real SqliteEvidenceStore constructed with FileKeyProvider
-# ============================================================================
 
 
 def test_sqlite_evidence_store_accepts_file_key_provider_directly(

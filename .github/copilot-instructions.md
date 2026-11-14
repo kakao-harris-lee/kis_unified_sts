@@ -2,8 +2,8 @@
 
 ## Project Overview
 
-Two projects in one repository. The **TOS kernel** (`tos/`, `tos-spec/`,
-`tos-evidence/`, `tools/tos_*`) is the live one — read `tos/CLAUDE.md` before
+Two projects in one repository. The **TOS kernel** (`tos/`, `tools/tos_*`)
+is the live one — read `tos/CLAUDE.md` before
 touching it. The legacy KIS trading runtime it replaced was deleted in
 2026-11 (`docs/plans/2026-11-07-legacy-removal-plan.md`, steps L1–L6); it last
 existed at tag `legacy-final` (`6fc17c0f8d25`). What survives outside `tos/` is
@@ -71,7 +71,7 @@ witness's exit (below).
 | `shared/kis/auth.py` | KIS auth for the CP-3 quote client |
 | `shared/storage/{config,market_data_store}.py` | Parquet/DuckDB market-data store |
 | `shared/llm/{data_classes,market_context}.py` | the two type-hint modules `shared/strategy/base.py` still names; L7 deleted the other 35 |
-| `shared/execution/executor.py`, `shared/kis/client.py` **and their import closures** | kept **only** because `docs/broker-profiles/BROKER-TRANSPORT-SYMBOLS.csv` binds `ORDER_SENDER` / `BROKER_CLIENT_READ` to them and `tools/tos_spec_status.py --check` requires those classes to exist. Nothing calls them; `services/monitoring/`, `shared/streaming/`, `shared/observability/` and `shared/http/` are in the tree only because those two import them |
+| `shared/execution/{tr_ids,contract_spec}.py` | the TR-ID SoT `tools/broker_probes/probes_real_order.py` imports and the contract specs `scripts/analysis/walkforward_setup_d_vwap_reversion.py` re-exports. `executor.py` and `shared/kis/client.py` — kept until 2026-11-13 only because `BROKER-TRANSPORT-SYMBOLS.csv` + `tos_spec_status --check` required those classes — went with that checker, and `shared/http/`, `shared/observability/` and `services/monitoring/` with them, since those two were their only importers. `shared/streaming/` stays: `.importlinter` names it in the forbidden set |
 
 ### No Code Duplication
 
@@ -135,7 +135,6 @@ mypy shared/ --ignore-missing-imports --no-error-summary
 pytest tests/ -q
 
 # TOS checkers (what CI gates on)
-python tools/tos_spec_status.py --check
 python tools/tos_firewall_check.py
 # `lint-imports` as CI runs it (.github/workflows/tos-firewall.yml): plain, after
 # an editable install of the root project and tos/runtime. Without that install

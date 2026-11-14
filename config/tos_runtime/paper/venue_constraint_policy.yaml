@@ -55,10 +55,11 @@
 #   1. scope.accounts  — the paper account number (never committed here).
 #   2. scope.instruments — the CURRENT front-month contract code (ADR-002-019
 #      §11 binds the contract month; a roll is a NEW policy generation).
-#   3. run `tos-runtime print-policy-digests --config-dir <dir>` and copy the
-#      printed digest into safety_activation.yaml `members:` (kind
-#      VENUE_CONSTRAINT_POLICY, member_id, generation, digest, resolved: true,
-#      immutable: true). canonical_digest below may stay TBD (derived) or be
+#   3. run `tos-runtime print-policy-digests --config-dir <dir>` and keep the
+#      printed VENUE_CONSTRAINT_POLICY digest as a record. Plan S2-a (2026-11-13)
+#      deleted `safety_activation.yaml`, so there is no `members:` entry to copy it
+#      into any more; boot records it in `*_POLICY_BOUND` evidence.
+#      canonical_digest below may stay TBD (derived) or be
 #      set to that exact value.
 #
 # The rule-list keys below are template DATA (preserved, never interpreted by

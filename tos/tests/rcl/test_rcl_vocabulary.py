@@ -1,13 +1,4 @@
-"""§1.1 커널 라운드 #1 — ``CommandType`` 4멤버 신설 계약 테스트 (rcl/vocabulary.py).
-
-ADR-002-012 §10 은 16종을 "at minimum ... semantics equivalent to" 로 열어두고, 같은 절이
-Safety Authority / Independent Approval / Action Flow Governor / Currentness Sequencer 의
-**비-capacity 명령 제출**을 명시한다(design #40 Phase 2 · slice #3 §7 reported gaps). 넷 다
-capacity 를 만들지 않는다 — rcl 반영자(:func:`~tos.rcl.predicates.apply_committed`)의
-``CommitReservation`` 분기(predicates.py:331)에 불포함임을 여기서 고정한다.
-
-Regime tag: authoring evidence only; closes no RCLP-EV item (design #40 §1.1).
-"""
+"""§1.1 커널 라운드 #1 — ``CommandType`` 4멤버 신설 계약 테스트 (rcl/vocabulary.py)."""
 
 from __future__ import annotations
 
@@ -22,7 +13,6 @@ from tos.rcl import (
 
 from ._rcl_strategies import issue_command
 
-#: The four new §1.1 members (kernel round #1 — runtime-realized authority/currentness commands).
 _NEW_MEMBERS = (
     CommandType.ADVANCE_AUTHORITY_EPOCH,
     CommandType.CONSUME_APPROVAL_DECISION,
@@ -30,7 +20,6 @@ _NEW_MEMBERS = (
     CommandType.ISSUE_EGRESS_CURRENTNESS_PROOF,
 )
 
-#: Pre-existing member count (16 ADR-012 §10 + 11 ADR-002-002 §27) — kernel round #1 adds 4.
 _PRIOR_MEMBER_COUNT = 27
 
 
@@ -57,11 +46,7 @@ def test_none_of_the_four_is_commit_reservation() -> None:
 
 
 def test_none_of_the_four_takes_the_commit_reservation_branch_in_the_reducer() -> None:
-    """(rcl/predicates.py:331) Only ``CommitReservation`` mutates capacity in the reducer.
-
-    A committed command of any of the four new types must advance the ledger revision through
-    the generic (non-capacity-mutating) path — no ``CommittedReservation`` entry is appended.
-    """
+    """(rcl/predicates.py:331) Only ``CommitReservation`` mutates capacity in the reducer."""
     limits = CapacityVector()
     for index, member in enumerate(_NEW_MEMBERS):
         state = LedgerState()

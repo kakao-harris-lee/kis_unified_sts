@@ -1,10 +1,7 @@
-"""``release_admission`` / ``ReleaseAdmissionService`` tests (design #40 §5
-order 6, lane R item 4; Phase 5 W4 §2 decision 5 — real dependency-set /
-source-tree digest admission)."""
+"""``release_admission`` / ``ReleaseAdmissionService`` tests (design #40 §5"""
 
 from __future__ import annotations
 
-from tos.sci import AdmissionResult
 from tos.workload import RuntimeIdentity
 from tos_runtime.operations.dependency_admission import RuntimeArtifactObservation
 from tos_runtime.release.admission import (
@@ -13,6 +10,7 @@ from tos_runtime.release.admission import (
     release_admission,
 )
 from tos_runtime.release.config import ReleaseAdmissionConfig
+from tos_runtime.release.verdict import AdmissionResult, ReleaseRestriction
 
 
 def test_admits_when_every_clause_holds(
@@ -50,8 +48,7 @@ def test_refuses_when_code_digest_mismatches(
 def test_refuses_when_dependency_set_digest_mismatches(
     identity: RuntimeIdentity, observation: RuntimeArtifactObservation
 ) -> None:
-    """M2 guard: a source-tree match alone must not admit — the dependency-
-    set coordinate has to match too (Phase 5 W4 §2 decision 5 (e))."""
+    """M2 guard: a source-tree match alone must not admit — the dependency-"""
     restriction = ReleaseRestrictionLookup(resolved=True, active=None)
     admitted = release_admission(
         identity,
@@ -68,12 +65,7 @@ def test_refuses_when_dependency_set_digest_mismatches(
 def test_refuses_when_identity_code_digest_disagrees_with_the_observation(
     identity: RuntimeIdentity, observation: RuntimeArtifactObservation
 ) -> None:
-    """Re-review disposition (HIGH, 2026-09-12): ``identity.code_digest`` used
-    to flow into the attestation unread — only ``observation.source_tree_digest``
-    was ever compared against config, so a caller could hand in an ``identity``
-    built from a constant instead of the real observation and nothing would
-    catch it. Even when BOTH observation digests genuinely match config, a
-    disagreeing ``identity.code_digest`` must still deny."""
+    """Re-review disposition (HIGH, 2026-09-12): ``identity.code_digest`` used"""
     mismatched_identity = identity.model_copy(
         update={"code_digest": "identity-built-from-a-constant-not-the-observation"}
     )
@@ -127,8 +119,7 @@ def test_refuses_when_currentness_is_not_current(
 def test_refuses_when_restriction_lookup_is_unresolved(
     identity: RuntimeIdentity, observation: RuntimeArtifactObservation
 ) -> None:
-    """An unresolved restriction lookup denies conservatively regardless of
-    what `active` carries (SCI-INV-014)."""
+    """An unresolved restriction lookup denies conservatively regardless of"""
     for resolved in (False, None):
         restriction = ReleaseRestrictionLookup(resolved=resolved, active=None)
         admitted = release_admission(
@@ -146,16 +137,7 @@ def test_refuses_when_restriction_lookup_is_unresolved(
 def test_refuses_when_a_restriction_is_present(
     identity: RuntimeIdentity, observation: RuntimeArtifactObservation
 ) -> None:
-    from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-    from tos.sci import ReleaseRestriction, SupplyChainScope
-
-    scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
-    active = ReleaseRestriction.issue(
-        scheme=scheme,
-        restriction_id="r-1",
-        restriction_generation=1,
-        restricted_scope=SupplyChainScope(),
-    )
+    active = ReleaseRestriction(restriction_id="r-1", restriction_generation=1)
     restriction = ReleaseRestrictionLookup(resolved=True, active=active)
     admitted = release_admission(
         identity,
@@ -176,11 +158,6 @@ def test_restriction_lookup_present_is_negative_polarity_unknown_when_unresolved
     assert lookup.present is None
     lookup = ReleaseRestrictionLookup(resolved=True, active=None)
     assert lookup.present is False
-
-
-# ============================================================================
-# ReleaseAdmissionService — binds a config + observation to release_admission
-# ============================================================================
 
 
 def _config(**overrides: object) -> ReleaseAdmissionConfig:
@@ -225,9 +202,7 @@ def test_service_decide_refuses_under_a_mismatched_dependency_set_digest(
 def test_service_reuses_the_same_observation_across_repeated_decide_calls(
     identity: RuntimeIdentity, observation: RuntimeArtifactObservation
 ) -> None:
-    """No double observation: one :class:`ReleaseAdmissionService` bound to
-    one observation object answers ``decide`` consistently across multiple
-    calls without re-observing anything (Phase 5 W4 §2 decision 5 (e))."""
+    """No double observation: one :class:`ReleaseAdmissionService` bound to"""
     service = ReleaseAdmissionService(_config(), observation)
     assert service.decide(identity, currentness_current=True) is True
     assert service.decide(identity, currentness_current=True) is True

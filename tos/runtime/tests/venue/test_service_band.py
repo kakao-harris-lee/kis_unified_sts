@@ -1,27 +1,4 @@
-"""``VenueConstraintService`` with a declared band source — CP-3 band 원천 웨이브 plan §8 items
-2 (unit half), 4, 4b (the ADMISSIBLE half), 4c and 5
-(``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md`` §4.3/§4.4a/§4.4b).
-
-**What each class pins, and what goes red without it:**
-
-* :class:`TestNoBandReaderIsYesterdaysBehaviour` — plan §8 1's unit half: a service with no
-  reader issues the same rows, with the same keys, as before this wave. The compose half
-  (against the REAL resident file) lives in
-  ``tests/compose/test_venue_band_source_wiring.py``.
-* :class:`TestEffectiveConstraints` — the band reaches the kernel predicate, and step 3's two
-  folds read the SAME object between re-issues.
-* :class:`TestTradingDateBond` — plan §4.4a's reachable sequence. Its red proof is the one
-  #838 asks for: the clause is reached with the two OTHER mechanisms (the out-of-session
-  ``None`` phase and the phase-change re-read) deliberately removed from the input, so the
-  date comparison is the ONLY thing that can drop the band.
-* :class:`TestWrongContractBandWouldAdmit` — plan §4.4b's fail-open input, stated as the
-  ADMISSIBLE it produces. The loader is what prevents it
-  (``test_band_source_loader.py::TestContractBond``); this class is why that matters.
-* :class:`TestReissueOnlyOnTransition` / :class:`TestBandChangeIsANewGeneration` — plan §4.3's
-  review L3 and ADR-002-019 §18.
-
-Hermetic: ``tmp_path`` only; the band "reader" is a list-driven double, so no socket exists.
-"""
+"""``VenueConstraintService`` with a declared band source — CP-3 band 원천 웨이브 plan §8 items"""
 
 from __future__ import annotations
 
@@ -64,7 +41,6 @@ from ._documents import (
 
 _INSTRUMENT = "K200F"
 _TRADING_DATE = "20261008"
-#: The measured ``A05610`` band, scaled (see ``test_band_source.py``).
 _LOWER, _UPPER = 98746, 115918
 
 
@@ -77,8 +53,7 @@ class _FakeReader:
 
 
 class _Monotonic:
-    """Satisfies ``MonotonicSource`` structurally (it is a Protocol), for the one test class
-    that wires a REAL ``ProducerJournalBandReader``."""
+    """Satisfies ``MonotonicSource`` structurally (it is a Protocol), for the one test class"""
 
     def __init__(self) -> None:
         self._now = 1_000
@@ -89,22 +64,14 @@ class _Monotonic:
 
 
 class _Reads:
-    """How many times the band reader was actually called — the observable ``read_on`` acts
-    on (independent review M2: it used to be validated and then ignored)."""
+    """How many times the band reader was actually called — the observable ``read_on`` acts"""
 
     def __init__(self) -> None:
         self.count = 0
 
 
 class _Sink:
-    """The ``EvidenceRecorder`` a REAL band reader writes its ``VENUE_BAND_OBSERVED`` rows
-    through (re-declared here rather than imported from ``test_band_journal``: cross-suite
-    imports are forbidden by this suite's own convention, ``conftest.py``).
-
-    It exists because the rescope-plan M1 boot read made the ROW the observable: the venue
-    service's own evidence store never carries ``VENUE_BAND_OBSERVED`` (the reader owns that
-    kind), so a test that only looks at the store cannot see a boot read at all.
-    """
+    """The ``EvidenceRecorder`` a REAL band reader writes its ``VENUE_BAND_OBSERVED`` rows"""
 
     def __init__(self) -> None:
         self.rows: list[tuple[str, dict[str, Any]]] = []
@@ -158,13 +125,7 @@ def _build(
     tick_size: str = "2",
     read_on: str = '["boot", "phase_change"]',
 ):
-    """A service whose policy declares (or does not declare) a band source.
-
-    ``bands`` is consumed one per READ — the service's own read instants are what pull from
-    it, so a test never has to simulate them. ``reads`` on the returned ``_Reads`` counts how
-    many times the reader was actually called, which is the only way to see ``read_on`` being
-    honoured rather than merely parsed (independent review M2).
-    """
+    """A service whose policy declares (or does not declare) a band source."""
     runtime_extra = (
         band_source_runtime_extra(instrument=_INSTRUMENT, read_on=read_on)
         if declare_band_source
@@ -293,8 +254,7 @@ class TestEffectiveConstraints:
     def test_the_kernel_predicate_now_answers_on_the_observed_band(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """Before a band, the kernel answers UNKNOWN on a null bound
-        (``predicates.py``'s required-bound check); with one, it judges."""
+        """Before a band, the kernel answers UNKNOWN on a null bound"""
         service, _phase, _gen, _date, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
@@ -316,10 +276,7 @@ class TestEffectiveConstraints:
     def test_the_same_constraints_object_is_served_between_reissues(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """Plan §8 2: step 3's decision and the gateway's item 11 re-fold must see the same
-        values. They read the same property, so what has to hold is that the property does not
-        mint a NEW ``model_copy`` per access — which would also make every comparison a
-        different object and hide a genuine mid-attempt change."""
+        """Plan §8 2: step 3's decision and the gateway's item 11 re-fold must see the same"""
         service, _phase, _gen, _date, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
@@ -365,11 +322,7 @@ class TestTradingDateBond:
     def test_a_band_from_a_previous_trading_date_is_dropped_on_the_first_call_of_the_next(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """The reachable sequence: a process reads a band on D, is never asked for a snapshot
-        during the out-of-session window, and is asked again on D+1 — same session phase, same
-        tick generation. Neither the phase-change re-read nor the out-of-session ``None`` phase
-        can fire here, so the date comparison is the ONLY thing standing between the D band
-        and a D+1 decision."""
+        """The reachable sequence: a process reads a band on D, is never asked for a snapshot"""
         service, _phase, _gen, date_reader, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
@@ -383,7 +336,6 @@ class TestTradingDateBond:
         )
         assert inside_on_d.result is OrderAdmissibilityResult.ADMISSIBLE
 
-        # D+1: same phase, same tick generation, no new read.
         date_reader.value = "20261012"
         second = service.snapshot()
 
@@ -413,16 +365,13 @@ class TestTradingDateBond:
     def test_the_bond_runs_before_the_tick_generation_cache(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """Plan §4.4a's placement clause, as its own assertion: the second call above uses the
-        SAME tick generation as the first, so a bond evaluated after the cache early return
-        would never run at all. Asserted on the generation counter rather than on the dropped
-        band, so moving the check behind the cache fails HERE specifically."""
+        """Plan §4.4a's placement clause, as its own assertion: the second call above uses the"""
         service, _phase, generation, date_reader, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
 
         first = service.snapshot()
-        assert generation.value == 1  # unchanged across both calls
+        assert generation.value == 1
         date_reader.value = "20261012"
         second = service.snapshot()
 
@@ -435,10 +384,7 @@ class TestWrongContractBandWouldAdmit:
     def test_a_neighbouring_contracts_band_admits_a_price_the_venue_would_reject(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """``A05611``'s measured band (990.48/1162.72) passes every §4.2 clause, so the reader
-        cannot tell it apart from ``A05610``'s (987.46/1159.18). Folded onto an ``A05610``
-        policy it ADMITS 1160.00 — a price above that contract's own upper limit. Nothing
-        downstream catches this; only the loader's scope rule does."""
+        """``A05611``'s measured band (990.48/1162.72) passes every §4.2 clause, so the reader"""
         wrong = _band(
             price_min=int(float(PVL_A05611_LOWER) * 100),
             price_max=int(float(PVL_A05611_UPPER) * 100),
@@ -455,7 +401,7 @@ class TestWrongContractBandWouldAdmit:
         )
 
         assert verdict.result is OrderAdmissibilityResult.ADMISSIBLE
-        assert _UPPER < 116_000  # above A05610's own measured upper limit
+        assert _UPPER < 116_000
 
 
 class TestReissueOnlyOnTransition:
@@ -481,10 +427,7 @@ class TestReissueOnlyOnTransition:
     def test_a_new_tick_generation_without_a_phase_change_does_not_reissue(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """Renamed from "a band that reads identically does not reissue" (independent review
-        M3): no read happens on the final call at all, so the old name claimed a band
-        comparison this sequence never performs. What it pins is the pre-existing rule — a new
-        tick generation at an unchanged phase is not a material change."""
+        """Renamed from "a band that reads identically does not reissue" (independent review"""
         service, phase, generation, _date, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band(), _band()]
         )
@@ -497,19 +440,13 @@ class TestReissueOnlyOnTransition:
         generation.value = 3
         third = service.snapshot()
 
-        # Two phase changes => two re-issues, and NOT a third for an unchanged band.
         assert [s.constraint_generation for s in (first, second, third)] == [1, 2, 3]
         generation.value = 4
         assert service.snapshot().constraint_generation == 3
 
 
 class TestReadOnIsHonoured:
-    """Independent review M2 — ``read_on`` is CONSULTED, not merely validated by the loader.
-
-    Before this, every declaration behaved like ``["boot", "phase_change"]``: a tree
-    declaring ``["boot"]`` kept re-reading on every phase change (3x the GETs it asked for,
-    against a 1.0 rps mock limit), and one declaring ``["phase_change"]`` still read at boot.
-    """
+    """Independent review M2 — ``read_on`` is CONSULTED, not merely validated by the loader."""
 
     def test_boot_only_reads_once_and_never_again(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
@@ -518,8 +455,6 @@ class TestReadOnIsHonoured:
             tmp_path, evidence_store, bands=[_band()], read_on='["boot"]'
         )
 
-        # The "boot" instant is CONSTRUCTION since the rescope plan's M1, so the count is
-        # already 1 here — and the first snapshot must not make it 2.
         assert reads.count == 1
         service.snapshot()
         assert reads.count == 1
@@ -530,7 +465,6 @@ class TestReadOnIsHonoured:
             service.snapshot()
 
         assert reads.count == 1
-        # The band read at boot is still the one in force — not dropped by the absent reads.
         assert service.shape_constraints.price_max == _UPPER
 
     def test_phase_change_only_does_not_read_at_boot(
@@ -539,16 +473,12 @@ class TestReadOnIsHonoured:
         service, phase, generation, _date, _loaded, reads = _build(
             tmp_path, evidence_store, bands=[_band()], read_on='["phase_change"]'
         )
-        assert (
-            reads.count == 0
-        )  # construction is the "boot" instant, and it is not declared
+        assert reads.count == 0
 
         service.snapshot()
 
         assert reads.count == 0
-        assert (
-            service.shape_constraints.price_max is None
-        )  # no band yet, kernel UNKNOWN
+        assert service.shape_constraints.price_max is None
 
         phase.value = "CLOSED"
         generation.value = 2
@@ -560,15 +490,14 @@ class TestReadOnIsHonoured:
     def test_both_tokens_read_at_boot_and_on_each_phase_change(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """The baseline the two tests above differ from — without it they would also pass
-        against a service that never reads at all."""
+        """The baseline the two tests above differ from — without it they would also pass"""
         service, phase, generation, _date, _loaded, reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
-        assert reads.count == 1  # "boot" = construction
+        assert reads.count == 1
 
         service.snapshot()
-        assert reads.count == 1  # the first snapshot is not a second "boot"
+        assert reads.count == 1
         phase.value = "CLOSED"
         generation.value = 2
         service.snapshot()
@@ -577,34 +506,12 @@ class TestReadOnIsHonoured:
 
 
 class TestBandChangeIsANewGeneration:
-    """ADR-002-019 §18 / plan §8 5 — a band change is a material change ⇒ new Constraint
-    Generation.
-
-    **Plan §8 5 says "phase 동일 · band 값만 다른 두 읽기", and a same-phase VALUE change is
-    NOT reachable under any ``read_on``.** A read happens only at boot or on a phase change,
-    and both of those already issue; so no sequence this runtime can produce has two reads at
-    the same phase. The same correction plan §4.4a already made for its own v1 input applies
-    here: the reachable form of "the phase did not change but the band did" is the
-    trading-date bond DROPPING it, and
-    :meth:`test_a_same_phase_band_transition_takes_a_new_generation` is that test — the one
-    that goes red if ``band_transition`` is dropped from the re-issue condition.
-
-    Independent review M3 measured the consequence: the value/continuity comparison that used
-    to sit beside it decided nothing (mutating it to "always changed", and deleting the fold
-    outright, both left every test green), so it is gone. The two tests below are renamed to
-    claim only what they actually pin — a phase change re-issues, and the re-issued snapshot
-    binds the band read at that moment — rather than "a band change re-issues", which they
-    never showed.
-    """
+    """ADR-002-019 §18 / plan §8 5 — a band change is a material change ⇒ new Constraint"""
 
     def test_a_same_phase_band_transition_takes_a_new_generation(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """The clause-specific test (#838): same phase, same tick generation, band present →
-        absent. Deleting ``band_transition`` from ``snapshot()``'s re-issue condition leaves
-        the phase check alone, which answers "nothing changed" — and the constraint generation
-        stops moving even though the kernel is now judging on a different constraint set.
-        """
+        """The clause-specific test (#838): same phase, same tick generation, band present →"""
         service, phase, generation, date_reader, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band()]
         )
@@ -620,16 +527,13 @@ class TestBandChangeIsANewGeneration:
     def test_the_reissued_snapshot_binds_the_band_read_at_that_moment(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """The phase change is what re-issues; this pins that the NEW snapshot carries the
-        band the read at that instant returned, not the previous one."""
+        """The phase change is what re-issues; this pins that the NEW snapshot carries the"""
         widened = _band(price_min=_LOWER - 200, price_max=_UPPER + 200)
         service, phase, generation, _date, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band(), widened]
         )
 
         first = service.snapshot()
-        # A phase change is what triggers the second READ; the band it returns is different,
-        # and the assertion below is about the BAND being bound, not about the phase.
         phase.value = "CLOSED"
         generation.value = 2
         second = service.snapshot()
@@ -641,9 +545,7 @@ class TestBandChangeIsANewGeneration:
     def test_the_reissued_snapshot_binds_the_new_continuity_id(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """A token reissue produces the SAME band numbers under a NEW continuity id. The
-        re-issue here comes from the phase change (M3) — what this pins is that the snapshot
-        carries the continuity of the read it just took, never the previous one."""
+        """A token reissue produces the SAME band numbers under a NEW continuity id. The"""
         reissued = _band(continuity="boot-1:1")
         service, phase, generation, _date, _loaded, _reads = _build(
             tmp_path, evidence_store, bands=[_band(), reissued]
@@ -686,16 +588,7 @@ def _producer_journal_service(
     journal_bytes: bytes,
     band_sink: _Sink | None = None,
 ) -> VenueConstraintService:
-    """A service whose band comes from a REAL :class:`ProducerJournalBandReader` over a
-    journal whose exact BYTES the caller chose — bytes, because one input below is not text.
-
-    A real reader, not a double: a double would make every assertion here one about the
-    test's own ``if``.
-
-    ``band_sink`` captures the reader's own ``VENUE_BAND_OBSERVED`` rows. Passing one is what
-    lets a test assert WHICH layer refused a line: the reader names a reason in a row, the
-    service's trading-date bond drops a band silently.
-    """
+    """A service whose band comes from a REAL :class:`ProducerJournalBandReader` over a"""
     journal = tmp_path / "band.jsonl"
     journal.write_bytes(journal_bytes)
     path = write_fixture_venue_policy(
@@ -737,29 +630,7 @@ def _producer_journal_service(
 
 
 class TestProducerJournalG2ReadSide:
-    """2026-10-15 plan §3.4 G2 ② — the SERVICE half of the read-side trading-date clause.
-
-    ⚠ **The "가려진 절" moved, and this class had to move with it.** Until the rescope plan's
-    M1 the boot read happened INSIDE the first ``snapshot()`` call, after that call's own
-    trading-date bond had already run against a still-``None`` band — so the first snapshot
-    was the one place where deleting the reader's ``trading_date`` comparison changed an
-    answer, and the assertion lived there (measured red proof, 2026-10-16). With the read now
-    at CONSTRUCTION, the band is already held when
-    :meth:`~tos_runtime.venue.service.VenueConstraintService._enforce_trading_date_bond` runs
-    on the first call, so that bond drops a D-1 band whether or not the reader rejected it:
-    **the snapshot assertions below no longer discriminate the reader's clause at all.**
-
-    What discriminates it is the ``VENUE_BAND_OBSERVED`` row. The reader REFUSES with a named
-    reason; the service's bond drops a band silently, writing nothing. So
-    :meth:`test_a_line_from_another_trading_date_is_refused_by_the_reader_not_the_bond` is the
-    clause-level test (#838's "the disposition is a unit test that hits only that clause"),
-    and the snapshot assertions stay as the compound — the two layers together leave no band
-    in force. The reader's own standalone proof is
-    ``tests/venue/test_band_journal.py::TestG2TradingDateReadSide``.
-
-    A REAL :class:`~tos_runtime.venue.band_journal.ProducerJournalBandReader` is wired here,
-    not a double: a double would make this an assertion about the test's own ``if``.
-    """
+    """2026-10-15 plan §3.4 G2 ② — the SERVICE half of the read-side trading-date clause."""
 
     def _service(
         self,
@@ -796,13 +667,7 @@ class TestProducerJournalG2ReadSide:
     def test_a_line_from_another_trading_date_is_refused_by_the_reader_not_the_bond(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """The clause-level assertion (class docstring): WHICH layer rejected the line.
-
-        Deleting ``ProducerJournalBandReader``'s own ``trading_date`` comparison turns this
-        row into an ``OBSERVED`` one — the service's bond would still drop the band a moment
-        later, leaving every snapshot assertion green, but it writes no row and so cannot
-        produce this one.
-        """
+        """The clause-level assertion (class docstring): WHICH layer rejected the line."""
         sink = _Sink()
         self._service(
             tmp_path, evidence_store, line_trading_date="20261007", band_sink=sink
@@ -817,10 +682,7 @@ class TestProducerJournalG2ReadSide:
     def test_a_line_from_another_trading_date_leaves_the_first_snapshot_bandless(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """The COMPOUND (class docstring): whichever layer caught it, no band is in force.
-
-        Only the LINE's ``trading_date`` differs from the baseline above.
-        """
+        """The COMPOUND (class docstring): whichever layer caught it, no band is in force."""
         service = self._service(tmp_path, evidence_store, line_trading_date="20261007")
 
         snapshot = service.snapshot()
@@ -832,19 +694,7 @@ class TestProducerJournalG2ReadSide:
 
 
 class TestProducerJournalFailsClosedIntoTheFirstSnapshot:
-    """PR #907 review MEDIUM-1 / Codex medium — the SERVICE half of the three inputs that
-    left ``ProducerJournalBandReader.read()`` as an EXCEPTION.
-
-    Why this class exists beside the reader's own tests: ``VenueConstraintService._read_band``
-    calls the reader with **no ``try``**, so anything the reader raises propagates out of
-    ``snapshot()`` — and ``decide()`` calls ``snapshot()`` first, so the runtime's whole
-    admissibility path dies on a corrupt tail instead of answering ``UNKNOWN``. Band plan
-    2026-10-08 §4.6 is explicit that every band failure is band ``None`` ⇒ kernel ``UNKNOWN``
-    ⇒ 송신 0; an exception is neither.
-
-    Each input differs from :meth:`test_todays_line_is_the_baseline` in exactly one respect:
-    the BYTES of the last line.
-    """
+    """PR #907 review MEDIUM-1 / Codex medium — the SERVICE half of the three inputs that"""
 
     def _service(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore, *, tail: bytes
@@ -856,8 +706,7 @@ class TestProducerJournalFailsClosedIntoTheFirstSnapshot:
     def test_todays_line_is_the_baseline(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """Without this, "the band is absent" below would also be what a broken fixture
-        produces."""
+        """Without this, "the band is absent" below would also be what a broken fixture"""
         service = self._service(
             tmp_path,
             evidence_store,
@@ -905,8 +754,7 @@ class TestProducerJournalFailsClosedIntoTheFirstSnapshot:
     def test_decide_answers_unknown_rather_than_dying(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore, tail: bytes
     ) -> None:
-        """The verdict the kernel owes on an absent bound (``predicates.py``'s required-bound
-        check): ``UNKNOWN``, which is 송신 0 — never an exception out of ``decide()``."""
+        """The verdict the kernel owes on an absent bound (``predicates.py``'s required-bound"""
         service = self._service(tmp_path, evidence_store, tail=tail)
 
         verdict = service.decide(
@@ -919,16 +767,7 @@ class TestProducerJournalFailsClosedIntoTheFirstSnapshot:
 
 
 class TestProducerJournalNullProvenance:
-    """PR #907 review MEDIUM-2 — "a band in force whose provenance reads exactly like no
-    band at all", stated as the snapshot it produces.
-
-    The reader's own clause tests are
-    :class:`~tests.venue.test_band_journal.TestTheProvenanceValues`. This is why they matter:
-    ``{"raw_payload_digest": null, "producer_continuity_id": null}`` passes the key-set
-    equality rule, so before the value clauses the service issued a snapshot with the band's
-    two BOUNDS in force and both provenance fields ``None`` — indistinguishable, in every row
-    that reports them, from the bandless snapshot the class above measures.
-    """
+    """PR #907 review MEDIUM-2 — "a band in force whose provenance reads exactly like no"""
 
     def test_a_line_with_null_provenance_leaves_the_first_snapshot_bandless(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
@@ -946,8 +785,6 @@ class TestProducerJournalNullProvenance:
 
         snapshot = service.snapshot()
 
-        # The fail-open: BEFORE the value clauses the two bounds below were _LOWER/_UPPER
-        # while the two fields above were `None` — a band judging prices with no provenance.
         assert service.shape_constraints.price_min is None
         assert service.shape_constraints.price_max is None
         assert snapshot.critical_input_snapshot_digest is None
@@ -955,31 +792,7 @@ class TestProducerJournalNullProvenance:
 
 
 class TestTheBandIsReadAtBoot:
-    """Rescope plan M1 (``docs/plans/2026-10-22-tos-rescope-plan.md`` §3) — the band is
-    OBSERVABLE at boot, with no proposal and no snapshot.
-
-    **The measured input this exists for** (``docs/broker-profiles/evidence/
-    2026-10-22-cp3-band-first-session/README.md`` §2): on the first enabled session all 25
-    proposals were denied at ``CANDIDATE_COMMAND_CONSTRUCTION``, which is UPSTREAM of every
-    caller of ``snapshot()``. The band source was bound, the journal line was there and would
-    have passed every clause — and ``VENUE_BAND_OBSERVED`` rows that day were **0**, so band
-    acceptance was neither passed nor failed but unmeasurable. The whole point of reading at
-    construction is that this day leaves a row.
-
-    The first three below are red against the pre-M1 placement, each for a different reason;
-    the fourth is a GREEN-both-ways regression guard, not a placement pin (independent review
-    LOW-1 measured it — an earlier version of this docstring claimed all four were red, which
-    would have let the no-source case be deleted as redundant). The four together are the
-    operator's four cases:
-
-    * a valid journal → exactly one ``OBSERVED`` row **without any snapshot**
-      (pre-M1: zero rows — the lazy read never happened);
-    * an unusable/absent line → exactly one ``REFUSED`` row naming the reason (same);
-    * the first snapshot after boot adds NO second row (red if the ``"boot"`` read is left in
-      ``snapshot()`` as well as added to ``__init__`` — one instant, two rows);
-    * a tree that declares no band source reads nothing, ever (the resident ``paper`` and
-      SHORT trees, whose ``band_source`` is null — plan §5).
-    """
+    """Rescope plan M1 (``docs/plans/2026-10-22-tos-rescope-plan.md`` §3) — the band is"""
 
     def _sink_and_service(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore, *, tail: bytes
@@ -998,15 +811,12 @@ class TestTheBandIsReadAtBoot:
             tmp_path, evidence_store, tail=json.dumps(line).encode("utf-8") + b"\n"
         )
 
-        # No `snapshot()`, no `decide()` — the 2026-10-22 shape exactly.
         row = sink.only()
 
         assert row["outcome"] == "OBSERVED"
         assert row["raw_payload_digest"] == line["raw_payload_digest"]
         assert (row["price_min"], row["price_max"]) == (_LOWER, _UPPER)
         assert row["trading_date"] == _TRADING_DATE
-        # And the band read at boot is already the EFFECTIVE constraint set, before anything
-        # asks for a snapshot.
         assert service.shape_constraints.price_max == _UPPER
         assert _rows(evidence_store, VENUE_SNAPSHOT_ISSUED_KIND) == []
 
@@ -1041,8 +851,7 @@ class TestTheBandIsReadAtBoot:
     def test_an_absent_journal_lands_one_refused_row_too(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """Separate from the parametrization above because the journal file must NOT be
-        written at all — ``_producer_journal_service`` always writes one."""
+        """Separate from the parametrization above because the journal file must NOT be"""
         sink = _Sink()
         path = write_fixture_venue_policy(
             tmp_path,
@@ -1091,8 +900,7 @@ class TestTheBandIsReadAtBoot:
     def test_the_first_snapshot_does_not_add_a_second_row_for_the_same_instant(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """One instant, one row. The boot read is ``__init__``'s; the first snapshot must not
-        repeat it (``service.snapshot``'s ``last_snapshot is not None`` clause)."""
+        """One instant, one row. The boot read is ``__init__``'s; the first snapshot must not"""
         sink, service = self._sink_and_service(
             tmp_path,
             evidence_store,
@@ -1103,26 +911,13 @@ class TestTheBandIsReadAtBoot:
         snapshot = service.snapshot()
 
         assert len(sink.rows) == 1
-        # The row that is already there is the one the snapshot binds — not a second read.
         assert snapshot.critical_input_snapshot_digest is not None
         assert sink.only()["band_digest"] == snapshot.critical_input_snapshot_digest
 
     def test_a_clock_stale_boot_is_refused_and_then_retried_at_the_first_snapshot(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """⛔ The regression this wave could have shipped (independent review MEDIUM-1).
-
-        The input is the PRODUCTION clock path, reproduced at the seam the service actually
-        has: ``trading_date_reader`` answering ``None`` once and then a date. On the real
-        compose path that reader is ``FreshTrustedWallClockReference(time_service,
-        max_age_ms=1000)`` (``_session_wiring.py:203-210``), which goes absent once the last
-        evaluated snapshot is older than the bound — and compose evaluates the time service
-        twice at ``_wiring.py:388-389`` and then builds everything else, so a boot whose
-        remaining wiring takes over a second arrives here stale.
-
-        Before the owed-read flag this left the band unread for the whole session when every
-        proposal sat in one session phase: the boot read refused, and nothing read again.
-        """
+        """⛔ The regression this wave could have shipped (independent review MEDIUM-1)."""
         journal = tmp_path / "band.jsonl"
         journal.write_bytes(
             json.dumps(_producer_journal_line()).encode("utf-8") + b"\n"
@@ -1146,8 +941,6 @@ class TestTheBandIsReadAtBoot:
             f"have produced that source — got {type(loaded.band_source).__name__}"
         )
         sink = _Sink()
-        # `None` for the boot read, the real date from the first snapshot on — a clock that
-        # was stale when the venue service was built and fresh by the runner's first cycle.
         dates: list[str | None] = [None]
         reader = ProducerJournalBandReader(
             band_source=loaded.band_source,
@@ -1171,9 +964,6 @@ class TestTheBandIsReadAtBoot:
             trading_date_reader=_FakeReader(_TRADING_DATE),
         )
 
-        # The boot read names the clock, and holds NO band — fail-closed.
-        # `_Sink.rows` holds `(kind, fields)`; `only()` is unusable here because this
-        # test is about there being TWO rows.
         assert [(k, f["outcome"], f.get("reason")) for k, f in sink.rows] == [
             ("VENUE_BAND_OBSERVED", "REFUSED", "trading_date_unavailable")
         ]
@@ -1181,24 +971,16 @@ class TestTheBandIsReadAtBoot:
 
         snapshot = service.snapshot()
 
-        # The owed read ran once, and the band is in force from the first snapshot on.
         assert [f["outcome"] for _, f in sink.rows] == ["REFUSED", "OBSERVED"]
         assert service.shape_constraints.price_max == _UPPER
         assert snapshot.critical_input_snapshot_digest is not None
-        # At most one OBSERVED row per boot (module docstring) — and no third read, ever.
         service.snapshot()
         assert [f["outcome"] for _, f in sink.rows] == ["REFUSED", "OBSERVED"]
 
     def test_a_boot_that_already_holds_a_band_is_not_owed_a_retry(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """The flag's other half: the retry is reached ONLY when the boot read came back
-        empty, so the healthy boot's row count is exactly what it was before MEDIUM-1 — one.
-
-        Distinct from :meth:`test_the_first_snapshot_does_not_add_a_second_row_for_the_same_instant`,
-        which pins the ``last_snapshot is not None`` clause: this one pins the ``and
-        self._band is None`` term, and goes green if the retry is made unconditional.
-        """
+        """The flag's other half: the retry is reached ONLY when the boot read came back"""
         sink, service = self._sink_and_service(
             tmp_path,
             evidence_store,
@@ -1214,10 +996,7 @@ class TestTheBandIsReadAtBoot:
     def test_a_tree_that_declares_no_band_source_never_reads(
         self, tmp_path: Path, evidence_store: SqliteEvidenceStore
     ) -> None:
-        """The resident ``paper`` tree and the SHORT tenant tree (band ``null``, plan §5): no
-        new row, no read, at boot or ever. A reader IS handed in, so what keeps it unused is
-        the policy declaration alone — the same gate plan §4.5's review L2 asks for.
-        """
+        """The resident ``paper`` tree and the SHORT tenant tree (band ``null``, plan §5): no"""
         service, phase, generation, _date, _loaded, reads = _build(
             tmp_path, evidence_store, declare_band_source=False, bands=[_band()]
         )
@@ -1229,4 +1008,4 @@ class TestTheBandIsReadAtBoot:
         service.snapshot()
 
         assert reads.count == 0
-        assert service.shape_constraints.price_max == 500  # the policy's own literal
+        assert service.shape_constraints.price_max == 500

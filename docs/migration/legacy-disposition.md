@@ -1,9 +1,9 @@
 # Legacy disposition — 기능별 처리와 전환 작업표
 
 기준: 2026-10-06, repository `5c4f38e9`. **처분 계획이며 전환/삭제 완료 증거가 아니다.**
-실행 경로·규범 이관 상태의 정본은 기존
-[MIGRATION-CONFORMANCE-REGISTER.csv](../../tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.csv)와
-[설명 문서](../../tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.md)다.
+실행 경로·규범 이관 상태의 정본이던 `tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.{csv,md}`
+는 명세 코퍼스와 함께 2026-11-13 에 은퇴했다
+(`docs/plans/2026-11-13-tos-code-halving-plan.md` §S3; 내용은 git 이력에 있다).
 이 문서는 그 ID를 유지하고 제품·연구·운영 기능의 작업 순서를 보완한다.
 정본 레지스터를 복사하거나 완료 상태를 독립적으로 승격하지 않는다.
 
@@ -37,10 +37,10 @@ caller는 소스상 경로이며 실제 호스트의 활성 프로세스라는 �
 | dashboard·UI | `services/dashboard/`, `strategy-builder-ui/`; 기존 API/화면 | 유지 + TOS 조회 브리지; TOS write는 별도 명령 계약 이후 | schema/version/unknown/freshness·배포 mount·인증 확인; Product 담당 |
 | 알림·스케줄러 | `services/`, 기존 운영 설정; legacy alert/cron 소비자 | 전달 기능 유지, TOS projection 소비는 별도 연결 | dedup·장애 알림·ack 의미·재시작 검증; Ops 담당 |
 
-주요 소스 근거: [monolith](../../services/trading/orchestrator.py),
-[executor](../../shared/execution/executor.py), [futures router](../../services/order_router/main.py),
-[stock router](../../services/stock_order_router/main.py),
-[backtest dispatch](../../shared/backtest/backend.py),
+주요 소스 근거: `monolith`,
+`executor`, `futures router`,
+`stock router`,
+`backtest dispatch`,
 [TOS interfaces](../architecture/tos-public-interfaces.md).
 연구·제품 기능의 '유지'는 레거시 거래 런타임 개발 재개를 의미하지 않는다.
 

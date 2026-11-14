@@ -1,8 +1,4 @@
-"""reopen_revives_nothing — unconditional non-revival (design #19 §6.8; VTG-EV-012 substrate).
-
-Regime tag: predicate / model substrate only; VTG-EV-012 NOT_IMPLEMENTED (`/3` + Security
-residue); EV-L1-complete claim forbidden.
-"""
+"""reopen_revives_nothing — unconditional non-revival (design #19 §6.8; VTG-EV-012 substrate)."""
 
 from __future__ import annotations
 
@@ -67,11 +63,7 @@ def test_property_no_revival_input_changes_the_answer(
 
 
 def test_model_provides_no_reopen_to_decision_revival_operation() -> None:
-    """(§6.8 structural) The decision model has NO reopen -> prior-decision restore path.
-
-    The absence is the seal: there is no method / field that maps a venue reopen back into a
-    prior decision or authority — a fresh decision + governed chain is mandatory (§22 line 471).
-    """
+    """(§6.8 structural) The decision model has NO reopen -> prior-decision restore path."""
     forbidden = {
         "revive",
         "restore_decision",

@@ -1,5 +1,4 @@
-"""``KisMockTransport`` tests — ACK/REJECT/UNKNOWN/TIMEOUT mapping, digest binding, pacing,
-token lifecycle, dry-run, and negative-greps (plan §4 슬라이스 T1)."""
+"""``KisMockTransport`` tests — ACK/REJECT/UNKNOWN/TIMEOUT mapping, digest binding, pacing,"""
 
 from __future__ import annotations
 
@@ -53,9 +52,7 @@ def server() -> Iterator[FakeKisServer]:
 
 
 class _KisMockConfigKwargs(TypedDict):
-    """1:1 with :class:`KisMockTransportConfig`'s dataclass fields (plan §1.1 A-rt) — a runtime
-    ``@dataclass``, not a pydantic model, so ``**base``/``**overrides`` are checked key-by-key
-    and type-by-type instead of swallowed by a ``**dict[str, object]`` splat."""
+    """1:1 with :class:`KisMockTransportConfig`'s dataclass fields (plan §1.1 A-rt) — a runtime"""
 
     mode: Literal["dry_run", "live"]
     endpoint_rest_base: str
@@ -74,8 +71,7 @@ class _KisMockConfigKwargs(TypedDict):
 
 
 class _KisMockConfigKwargsPartial(TypedDict, total=False):
-    """Same fields as :class:`_KisMockConfigKwargs`, all optional — the override-kwargs shape
-    for :func:`_config`."""
+    """Same fields as :class:`_KisMockConfigKwargs`, all optional — the override-kwargs shape"""
 
     mode: Literal["dry_run", "live"]
     endpoint_rest_base: str
@@ -138,8 +134,6 @@ def _build_transport(
         allow_plaintext_for_tests=cfg.allow_plaintext_for_tests,
     )
     mono = monotonic or FakeMonotonicSource()
-    # (review F2) No "account" custody scope — the account number is sourced exclusively from
-    # the sealed outbound coordinate (SendSeal.account), never custody.
     cust = custody or InMemoryCredentialCustody(
         {
             APP_KEY_SCOPE: b"app-key-value",
@@ -177,8 +171,7 @@ def _attempt(attempt_id: str = "attempt-1"):
 
 
 def _send(transport: KisMockTransport, attempt):
-    """Call ``send_once`` with placeholder Protocol arguments — the adapter reads only the
-    seal, never these (module docstring), so their exact values are immaterial here."""
+    """Call ``send_once`` with placeholder Protocol arguments — the adapter reads only the"""
     from tos.engine import InstrumentKey
 
     return transport.send_once(
@@ -191,21 +184,11 @@ def _send(transport: KisMockTransport, attempt):
     )
 
 
-# ---------------------------------------------------------------------------
-# Protocol conformance
-# ---------------------------------------------------------------------------
-
-
 def test_the_adapter_satisfies_the_transport_protocol_structurally(
     server: FakeKisServer,
 ) -> None:
     transport, *_ = _build_transport(server)
     assert isinstance(transport, Transport)
-
-
-# ---------------------------------------------------------------------------
-# missing seal
-# ---------------------------------------------------------------------------
 
 
 def test_a_missing_seal_raises_send_refused_with_zero_network(
@@ -219,11 +202,6 @@ def test_a_missing_seal_raises_send_refused_with_zero_network(
     assert evidence.of_kind("TRANSPORT_SEND_REFUSED_NO_SEAL") == [
         {"attempt_id": attempt.attempt_id}
     ]
-
-
-# ---------------------------------------------------------------------------
-# digest binding (decision 3)
-# ---------------------------------------------------------------------------
 
 
 def test_a_digest_mismatch_raises_send_refused_with_zero_network(
@@ -255,11 +233,6 @@ def test_a_matching_digest_proceeds_to_dry_run(server: FakeKisServer) -> None:
     assert len(evidence.of_kind("TRANSPORT_DRY_RUN")) == 1
 
 
-# ---------------------------------------------------------------------------
-# dry_run (decision 9)
-# ---------------------------------------------------------------------------
-
-
 def test_dry_run_never_touches_the_network(server: FakeKisServer) -> None:
     attempt = _attempt("dry-1")
     seal = build_seal(attempt_id=attempt.attempt_id)
@@ -274,14 +247,7 @@ def test_dry_run_never_touches_the_network(server: FakeKisServer) -> None:
     (record,) = evidence.of_kind("TRANSPORT_DRY_RUN")
     assert record["attempt_id"] == attempt.attempt_id
     assert record["tr_id"] == "VTTC0012U"
-    # (review F2) the account number is sourced from the seal, never custody — and dry_run
-    # never reaches token issuance either — so NO custody scope is loaded at all.
     assert custody.load_calls == []
-
-
-# ---------------------------------------------------------------------------
-# live path — response mapping (decision 2)
-# ---------------------------------------------------------------------------
 
 
 def _live_ack_setup(server: FakeKisServer, *, side: str = "BUY"):
@@ -320,9 +286,7 @@ def test_ack_path(server: FakeKisServer) -> None:
 def test_ack_is_stamped_with_the_trading_date_captured_at_send_start(
     server: FakeKisServer,
 ) -> None:
-    """Plan 2026-09-26 egress trading date T-3: the ODNO is a per-day sequence, so the result the
-    broker numbered carries the KST trading date — read ONCE, at send start (2026-11-05).
-    """
+    """Plan 2026-09-26 egress trading date T-3: the ODNO is a per-day sequence, so the result the"""
     attempt, seal = _live_ack_setup(server)
     calls: list[None] = []
 
@@ -342,16 +306,7 @@ def test_ack_is_stamped_with_the_trading_date_captured_at_send_start(
 def test_the_date_is_captured_before_the_send_blocks_not_after_the_post(
     server: FakeKisServer,
 ) -> None:
-    """Incident 2026-11-05 (CP-3 stock MOCK 005930, the first-ever MOCK order): the send blocked
-    ~2340 ms waiting for its app-key pacer slot, so a date read AFTER the POST found the
-    conservative wall clock stale (max age 1000 ms) and answered ``None``. The ACK went out
-    undated, the fill observer could not join it by ODNO, and the fill stayed unobserved for
-    6.5 h. The date is therefore read at send start, before any wait.
-
-    The scripted clock advance stands in for that blocked send (``on_request`` fires on the
-    server thread once the POST has arrived — i.e. after the pacer wait), so no real time
-    passes. Mutation: read the date in ``_finish`` instead -> ``None`` -> red.
-    """
+    """Incident 2026-11-05 (CP-3 stock MOCK 005930, the first-ever MOCK order): the send blocked"""
     attempt, seal = _live_ack_setup(server)
     mono = FakeMonotonicSource()
     server.set_response(
@@ -365,7 +320,6 @@ def test_the_date_is_captured_before_the_send_blocks_not_after_the_post(
         },
         on_request=lambda: mono.advance(2_340),
     )
-    #: ``compose/_session_wiring``'s conservative freshness bound for a wall-clock reading.
     freshness_age_ms = 1_000
 
     def trading_date_now() -> str | None:
@@ -384,8 +338,7 @@ def test_the_date_is_captured_before_the_send_blocks_not_after_the_post(
 
 
 def test_ack_without_an_established_date_carries_none(server: FakeKisServer) -> None:
-    """Untrusted time or a midnight-crossing session: the source answers ``None`` and nothing is
-    guessed."""
+    """Untrusted time or a midnight-crossing session: the source answers ``None`` and nothing is"""
     attempt, seal = _live_ack_setup(server)
     transport, _, _, _ = _build_transport(
         server, seals={attempt.attempt_id: seal}, trading_date_now=lambda: None
@@ -402,8 +355,7 @@ def test_ack_without_a_date_source_carries_none(server: FakeKisServer) -> None:
 def test_a_raising_date_source_never_loses_the_acknowledged_result(
     server: FakeKisServer,
 ) -> None:
-    """Review finding 2: the date is read after a real order was acknowledged — a failure there
-    degrades to an undated result, never to a lost ACK."""
+    """Review finding 2: the date is read after a real order was acknowledged — a failure there"""
     attempt, seal = _live_ack_setup(server)
 
     def broken() -> str | None:
@@ -564,10 +516,7 @@ def test_malformed_json_maps_to_unknown(server: FakeKisServer) -> None:
 
 
 def test_rt_cd_absent_maps_to_unknown_never_reject(server: FakeKisServer) -> None:
-    """(review F4) A 200 response whose JSON body is a well-formed dict but carries no
-    ``rt_cd`` key at all must be UNKNOWN, never REJECT — absence is not non-acceptance
-    (RFC-005 §11:322-323). Before this fix, an absent ``rt_cd`` fell through to
-    ``rt_cd == "0"`` being False and was mis-mapped to REJECT."""
+    """(review F4) A 200 response whose JSON body is a well-formed dict but carries no"""
     attempt = _attempt("no-rtcd-1")
     seal = build_seal(attempt_id=attempt.attempt_id)
     server.set_response(
@@ -600,18 +549,11 @@ def test_an_empty_dict_body_maps_to_unknown_never_reject(server: FakeKisServer) 
     assert record["reason"] == "rt_cd_absent"
 
 
-# ---------------------------------------------------------------------------
-# account sourcing (review F2) — CANO comes from the sealed outbound coordinate, never custody
-# ---------------------------------------------------------------------------
-
-
 def test_account_field_is_sourced_from_the_seal_never_custody(
     server: FakeKisServer,
 ) -> None:
     attempt, seal = _live_ack_setup(server)
     assert seal.account == ACCOUNT
-    # A custody double that does NOT provision any "account"-shaped scope at all — if the
-    # adapter tried to load one, this would raise CustodyScopeNotProvisioned.
     custody = InMemoryCredentialCustody(
         {
             APP_KEY_SCOPE: b"app-key-value",
@@ -627,20 +569,13 @@ def test_account_field_is_sourced_from_the_seal_never_custody(
 
     body = _json.loads(request.body)
     assert f"{body['CANO']}-{body['ACNT_PRDT_CD']}" == seal.account
-    # Only app_key/app_secret are ever loaded (once for token issuance, once for the order
-    # call itself — review F5's narrow with-block discipline reloads fresh each network call)
-    # — never anything account-shaped.
     assert set(cust.load_calls) == {APP_KEY_SCOPE, APP_SECRET_SCOPE}
 
 
 def test_account_field_follows_seal_account_when_instrument_key_account_diverges(
     server: FakeKisServer,
 ) -> None:
-    """(F2, team-lead re-review mutation M8) A companion to the codec-level test of the same
-    name: build a seal whose ``instrument_key.account`` deliberately differs from
-    ``seal.account`` and confirm the ACTUAL wire body the adapter sends carries ``seal.account``
-    — never ``instrument_key.account``. Every other test in this file builds the two equal,
-    which is exactly why a mutation confusing the two would otherwise survive."""
+    """(F2, team-lead re-review mutation M8) A companion to the codec-level test of the same"""
     attempt = _attempt("m8-diverge")
     seal = build_seal(
         attempt_id=attempt.attempt_id,
@@ -667,8 +602,7 @@ def test_account_field_follows_seal_account_when_instrument_key_account_diverges
 def test_a_different_custody_bound_value_never_leaks_into_the_body(
     server: FakeKisServer,
 ) -> None:
-    """A custody double bound to a DIFFERENT (unrelated) value than the seal's own account must
-    never leak into the body — because the adapter never even asks custody about it."""
+    """A custody double bound to a DIFFERENT (unrelated) value than the seal's own account must"""
     attempt, seal = _live_ack_setup(server)
     custody = InMemoryCredentialCustody(
         {
@@ -685,16 +619,9 @@ def test_a_different_custody_bound_value_never_leaks_into_the_body(
     assert b"a-completely-different-account-value" not in request.body
 
 
-# ---------------------------------------------------------------------------
-# pacing (decision 6)
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture(autouse=True)
 def _no_real_pacer_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The fake clock does not advance on its own, so the app key pacer (issue #970) would
-    really sleep ``min_send_interval_ms`` between this suite's token POST and order POST. The
-    pacing tests below patch the sleep again to drive the clock."""
+    """The fake clock does not advance on its own, so the app key pacer (issue #970) would"""
     import tos_runtime.transport.kis_mock.pacer as pacer_module
 
     monkeypatch.setattr(pacer_module, "sleep", lambda _seconds: None)
@@ -719,10 +646,7 @@ def _clock_driving_sleep(
 def test_pacing_waits_before_the_second_send_and_t0_is_taken_after_the_wait(
     server: FakeKisServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Decision 6, now on the app key's pacer (issue #970). The first send's token POST takes a
-    slot too, so its order POST waits the full interval after it; the second send waits only
-    what is left of the interval since the first order POST, and t0 is read after the wait.
-    """
+    """Decision 6, now on the app key's pacer (issue #970). The first send's token POST takes a"""
     mono = FakeMonotonicSource(start_ms=0)
     sleeps = _clock_driving_sleep(monkeypatch, mono)
 
@@ -740,10 +664,9 @@ def test_pacing_waits_before_the_second_send_and_t0_is_taken_after_the_wait(
     seal1 = build_seal(attempt_id=attempt1.attempt_id)
     transport._seal_lookup = make_seal_lookup({attempt1.attempt_id: seal1})
     _send(transport, attempt1)
-    # token POST at 0 -> the order POST waits the whole interval after it
     assert sleeps == [pytest.approx(1.0, abs=0.01)]
 
-    mono.advance(200)  # only 200ms have passed — well under the 1000ms floor
+    mono.advance(200)
 
     attempt2 = _attempt("pace-2")
     seal2 = build_seal(attempt_id=attempt2.attempt_id)
@@ -751,11 +674,8 @@ def test_pacing_waits_before_the_second_send_and_t0_is_taken_after_the_wait(
     before_second_send_wall = mono.now_ms()
     _send(transport, attempt2)
 
-    assert sleeps[1:] == [
-        pytest.approx(0.8, abs=0.01)
-    ]  # waited ~800ms to reach the 1000ms floor
+    assert sleeps[1:] == [pytest.approx(0.8, abs=0.01)]
     assert mono.now_ms() >= before_second_send_wall + 800
-    # t0 is read after the wait: the fake server answers instantly, so latency is 0
     sends = [f for kind, f in evidence.records if kind == "TRANSPORT_SEND"]
     assert [f["latency_ms"] for f in sends] == [0, 0]
     assert len(server.requests_for(ORDER_PATH)) == 2
@@ -780,7 +700,7 @@ def test_no_pacing_wait_when_the_interval_has_already_elapsed(
     )
     _send(transport, attempt1)
 
-    mono.advance(1500)  # more than the floor has already elapsed
+    mono.advance(1500)
     sleeps = _clock_driving_sleep(monkeypatch, mono)
 
     attempt2 = _attempt("nopace-2")
@@ -795,10 +715,7 @@ def test_no_pacing_wait_when_the_interval_has_already_elapsed(
 def test_an_order_whose_slot_is_beyond_the_wait_budget_is_rejected_unsent(
     server: FakeKisServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Issue #970: waiting longer than ``app_key_request_wait_budget_ms`` fails closed the
-    throttle way — REJECT, ``reason=throttled``, ``sent: false`` — and the order never reaches
-    the broker (mutation: send anyway after the refusal, or let the refusal raise -> red).
-    """
+    """Issue #970: waiting longer than ``app_key_request_wait_budget_ms`` fails closed the"""
     mono = FakeMonotonicSource(start_ms=0)
     sleeps = _clock_driving_sleep(monkeypatch, mono)
     server.set_response(
@@ -807,7 +724,6 @@ def test_an_order_whose_slot_is_beyond_the_wait_budget_is_rejected_unsent(
     server.set_response(
         ORDER_PATH, status=200, body={"rt_cd": "0", "output": {"ODNO": "1"}}
     )
-    # The token POST just took the key's slot; the order would have to wait 1000 ms > 500 ms.
     cfg = _config(server, min_send_interval_ms=1000, app_key_request_wait_budget_ms=500)
     transport, evidence, _, _ = _build_transport(server, config=cfg, monotonic=mono)
     attempt = _attempt("over-budget")
@@ -832,9 +748,7 @@ def test_an_order_whose_slot_is_beyond_the_wait_budget_is_rejected_unsent(
 def test_an_order_behind_another_threads_token_issue_is_rejected_unsent(
     server: FakeKisServer,
 ) -> None:
-    """review-979 r1 MEDIUM, at the order: another thread holds the token lock (its issue in
-    flight) past ``app_key_request_wait_budget_ms`` -> this attempt ends REJECT throttled,
-    ``sent: false``, with no order POST and no token POST of its own."""
+    """review-979 r1 MEDIUM, at the order: another thread holds the token lock (its issue in"""
     server.set_response(
         TOKEN_PATH, status=200, body={"access_token": "tok-1", "expires_in": 86400}
     )
@@ -848,7 +762,7 @@ def test_an_order_behind_another_threads_token_issue_is_rejected_unsent(
         {attempt.attempt_id: build_seal(attempt_id=attempt.attempt_id)}
     )
     held = transport._credential_session._lifecycle._lock
-    assert held.acquire(timeout=1.0)  # another thread's issue, in flight
+    assert held.acquire(timeout=1.0)
     try:
         result = _send(transport, attempt)
     finally:
@@ -859,11 +773,6 @@ def test_an_order_behind_another_threads_token_issue_is_rejected_unsent(
     assert server.requests_for(TOKEN_PATH) == []
     (row,) = [f for kind, f in evidence.records if kind == "TRANSPORT_SEND"]
     assert (row["reason"], row["sent"]) == ("throttled", False)
-
-
-# ---------------------------------------------------------------------------
-# token lifecycle (decision 4)
-# ---------------------------------------------------------------------------
 
 
 def test_token_is_issued_once_and_reused_while_fresh(server: FakeKisServer) -> None:
@@ -909,9 +818,7 @@ def test_an_expired_token_within_the_reissue_cooldown_raises_token_stale_with_ze
     assert len(server.requests_for(TOKEN_PATH)) == 1
     assert len(server.requests_for(ORDER_PATH)) == 1
 
-    mono.advance(
-        2000
-    )  # token (expires_in=1s) is now stale; cooldown (300s) has not elapsed
+    mono.advance(2000)
 
     attempt2 = _attempt("stale-2")
     transport._seal_lookup = make_seal_lookup(
@@ -920,12 +827,9 @@ def test_an_expired_token_within_the_reissue_cooldown_raises_token_stale_with_ze
     with pytest.raises(TokenStale):
         _send(transport, attempt2)
 
-    # no NEW requests were made for the second, refused attempt
     assert len(server.requests_for(TOKEN_PATH)) == 1
     assert len(server.requests_for(ORDER_PATH)) == 1
     (stale_record,) = evidence.of_kind("TRANSPORT_TOKEN_STALE")
-    # (review F8) the burned attempt's evidence explains how much cooldown remained, so an
-    # operator reading the record understands why this attempt was refused.
     assert stale_record["cooldown_remaining_ms"] > 0
     assert stale_record["cooldown_remaining_ms"] == (
         cfg.token_reissue_min_interval_s * 1000 - stale_record["elapsed_ms"]
@@ -951,9 +855,7 @@ def test_a_later_attempt_after_the_cooldown_reissues_the_token(
     )
     _send(transport, attempt1)
 
-    mono.advance(
-        5000
-    )  # both the token's own expiry (1s) and the reissue cooldown (1s) elapse
+    mono.advance(5000)
 
     attempt2 = _attempt("recover-2")
     transport._seal_lookup = make_seal_lookup(
@@ -962,11 +864,6 @@ def test_a_later_attempt_after_the_cooldown_reissues_the_token(
     result = _send(transport, attempt2)
     assert result.kind is EgressResultKind.ACK
     assert len(server.requests_for(TOKEN_PATH)) == 2
-
-
-# ---------------------------------------------------------------------------
-# secrets never in evidence / on the wire
-# ---------------------------------------------------------------------------
 
 
 def test_the_app_secret_never_appears_in_any_evidence_record(
@@ -992,19 +889,13 @@ def test_the_app_secret_never_appears_in_any_evidence_record(
     _send(transport, attempt)
     dump = repr(evidence.records)
     assert "unmistakable-secret-marker" not in dump
-    assert "tok-1" not in dump  # the bearer token itself is also never surfaced
+    assert "tok-1" not in dump
 
 
 def test_the_adapter_holds_no_persistent_raw_credential_attribute(
     server: FakeKisServer,
 ) -> None:
-    """(review F5) After a live send, the adapter instance itself must not be holding any raw
-    credential-shaped ``bytes``/``bytearray`` attribute — credentials are loaded, used inside the
-    narrowest possible scope, and dropped; only the (non-secret) bearer token string and
-    bookkeeping timestamps persist across calls. This does not prove every transient copy was
-    scrubbed from process memory (Python ``bytes``/``str`` are immutable and cannot themselves
-    be zeroed — the module docstring says so honestly) — it proves the adapter does not
-    deliberately retain one as instance state."""
+    """(review F5) After a live send, the adapter instance itself must not be holding any raw"""
     attempt, seal = _live_ack_setup(server)
     transport, _, _, _ = _build_transport(server, seals={attempt.attempt_id: seal})
     _send(transport, attempt)
@@ -1028,11 +919,6 @@ def test_the_seal_digest_never_appears_on_the_wire(server: FakeKisServer) -> Non
     for request in server.all_requests:
         assert seal.seal_digest.encode() not in request.body
         assert all(seal.seal_digest not in v for v in request.headers.values())
-
-
-# ---------------------------------------------------------------------------
-# negative-greps over the whole kis_mock package
-# ---------------------------------------------------------------------------
 
 
 def _package_files() -> list[Path]:
@@ -1090,9 +976,7 @@ def test_no_retry_primitive_anywhere_in_the_package_except_the_pacing_helper() -
 
 
 def _code_only(source: str) -> str:
-    """Blank out every module/class/function docstring so a negative-grep does not trip on this
-    package's own prose (which, by design, names every one of the forbidden literals it is
-    itself refusing)."""
+    """Blank out every module/class/function docstring so a negative-grep does not trip on this"""
     tree = ast.parse(source)
     lines = source.splitlines(keepends=True)
     for node in ast.walk(tree):
@@ -1114,9 +998,6 @@ def _code_only(source: str) -> str:
 
 
 def test_no_forbidden_literals_anywhere_in_the_package() -> None:
-    # Full real-order TR id literals (never a bare prefix fragment — config.py legitimately
-    # carries the *prefixes* ``"T"``/``"STTN"``/``"CTF"`` as refusal-check constants; what must
-    # never appear anywhere in this package is an actual real-order TR id value).
     forbidden = (
         "os.environ",
         "os.getenv",
@@ -1143,8 +1024,7 @@ def test_no_forbidden_literals_anywhere_in_the_package() -> None:
 
 
 def test_the_planted_violation_scan_actually_catches_something() -> None:
-    """The negative-grep above is not vacuously green (mirrors the kernel suite's own
-    'detects a planted violation' control test)."""
+    """The negative-grep above is not vacuously green (mirrors the kernel suite's own"""
     planted = (
         "import time\n"
         "def send_once(self, attempt):\n"

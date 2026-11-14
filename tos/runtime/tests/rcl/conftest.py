@@ -12,12 +12,7 @@ from tos_runtime.rcl.log import SqliteCommitLog
 
 
 class FakeEvidenceAppendPort:
-    """An :class:`~tos_runtime.evidence.ports.EvidenceAppendPort` test double.
-
-    Records every call so a test can assert on what the log evidenced, and
-    can be told to raise on the next call to simulate an evidence-append
-    failure (fault contract (f): "evidence 영수증 실패 = ROLLBACK + 거부").
-    """
+    """An :class:`~tos_runtime.evidence.ports.EvidenceAppendPort` test double."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[dict[str, object], str, str]] = []

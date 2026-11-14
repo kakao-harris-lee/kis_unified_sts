@@ -1,12 +1,4 @@
-"""Shared builders for ``tos_runtime.marketfeed.store`` tests.
-
-Deliberately small — this is NOT the full ``tos.marketfeed`` authoring-evidence suite
-(``tos/tests/marketfeed/_marketfeed_fixtures.py``, which this file mirrors the idiom of); it builds
-just enough of a real, issuable :class:`~tos.capsule.CriticalInputSnapshot` +
-:class:`~tos.marketfeed.RawPayloadPreimage` pair for
-:class:`~tos_runtime.marketfeed.store.SqliteSnapshotStore`'s own tests to round-trip and publish
-through the real kernel gate.
-"""
+"""Shared builders for ``tos_runtime.marketfeed.store`` tests."""
 
 from __future__ import annotations
 
@@ -27,8 +19,6 @@ from tos.capsule.snapshot import SnapshotScope
 from tos.engine import InstrumentKey
 from tos.marketfeed import PreimageEntry, RawPayloadPreimage
 
-#: The one canonicalization scheme this wave rides everywhere (matches
-#: ``tos/tests/marketfeed/_marketfeed_fixtures.py``'s own ``SCHEME``).
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 ACCOUNT = "acct-1"
@@ -131,12 +121,7 @@ def issue_capsule(
 def one_bar(
     *, as_of: int = AS_OF_MS, close: int = 4_512_500, raw_event_id: str = "raw-1"
 ) -> tuple[DecisionContextCapsule, CriticalInputSnapshot, RawPayloadPreimage]:
-    """One bar: a snapshot covering one observation with a ``close`` field, plus its Capsule.
-
-    Returns:
-        ``(capsule, snapshot, payload)`` — the Capsule binds the snapshot exactly, and ``payload``
-        is the preimage the snapshot's one observation attests.
-    """
+    """One bar: a snapshot covering one observation with a ``close`` field, plus its Capsule."""
     payload = preimage(close=close)
     obs = observation(raw_event_id=raw_event_id, payload=payload, as_of=as_of)
     snapshot = issue_snapshot(

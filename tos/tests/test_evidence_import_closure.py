@@ -1,21 +1,4 @@
-"""§7.1 import-closure verification for ``tos.evidence`` + ``tos.canonical``.
-
-Isomorphic to ``test_import_closure.py`` (capsule) but extended to the promoted
-substrate and the evidence package (design #4 §7.1). It imports the pure packages
-in a **fresh, spawned interpreter** (``subprocess``/``os`` are firewall-forbidden
-even in tests) and asserts:
-
-  1. No design §2.3 operational package is in the closure.
-  2. Neither ``shared.config`` nor ``shared.config.secrets`` is present (C1 — the
-     transitive ambient-credential intake the AST gate cannot catch).
-  3. ``numpy``/``pandas`` are absent (design §0.3 closure minimisation).
-  4. ``tos.capsule`` is **absent** from the ``tos.evidence`` closure (design #4
-     §3.1 layering — evidence must not reach the capsule package).
-  5. No evidence/canonical source references ``os.environ`` / ``os.getenv``.
-
-A planted-leak canary proves the spawn+scan pipeline actually catches a leak, so
-"green" is evidence the checker works — not that it has been neutered.
-"""
+"""§7.1 import-closure verification for ``tos.evidence`` + ``tos.canonical``."""
 
 from __future__ import annotations
 
@@ -23,8 +6,6 @@ import ast
 import multiprocessing as mp
 from pathlib import Path
 
-# Forbidden exact names + dotted prefixes: the §2.3 set + C1 + §0.3 numeric libs +
-# the §3.1 capsule-layering exclusion (evidence must not import tos.capsule).
 _FORBIDDEN_EXACT = frozenset(
     {
         "shared.execution",
@@ -140,12 +121,11 @@ def test_is_forbidden_classifier_canaries() -> None:
     assert _is_forbidden("numpy") is True
     assert _is_forbidden("tos.capsule") is True
     assert _is_forbidden("tos.capsule._base") is True
-    # Allowed: self substrate, third-party, commons.
     assert _is_forbidden("tos.canonical") is False
     assert _is_forbidden("tos.evidence") is False
     assert _is_forbidden("pydantic") is False
     assert _is_forbidden("shared.utils") is False
-    assert _is_forbidden("click") is False  # must not false-match the "cli" prefix
+    assert _is_forbidden("click") is False
 
 
 def test_evidence_source_has_no_ambient_env_access() -> None:

@@ -82,12 +82,6 @@ def test_null_leaf_at_top_level_refuses_naming_the_field(tmp_path: Path) -> None
     message = str(excinfo.value)
     assert str(path) in message
     assert "config_binding_version" in message
-    # The load-bearing assertion: this exact phrase is ONLY produced by the
-    # null-leaf walker, never by pydantic's own ValidationError message —
-    # without the null-leaf check, config_binding_version's required `str`
-    # type still makes pydantic reject `None`, but with a generic "shape"
-    # message that happens to also mention the field name, which would let
-    # the assertion above pass for the wrong reason.
     assert "still null (named-TBD)" in message
 
 
@@ -112,8 +106,7 @@ def test_null_leaf_in_bindings_refuses_naming_the_key(tmp_path: Path) -> None:
 def test_named_tbd_placeholder_in_bindings_refuses_naming_the_key(
     tmp_path: Path,
 ) -> None:
-    """The null-only leaf walk must also catch the literal placeholder
-    string ``"TBD"`` typed in place of a real bindings value."""
+    """The null-only leaf walk must also catch the literal placeholder"""
     path = tmp_path / STRATEGY_BINDINGS_FILE_NAME
     mapping = {
         "strategies": {
@@ -150,8 +143,7 @@ def test_unrecognized_key_refuses(tmp_path: Path) -> None:
 def test_nested_mapping_under_bindings_refuses_not_silently_flattened(
     tmp_path: Path,
 ) -> None:
-    """``bindings`` is flat scalar leaves only (module docstring) — a nested
-    mapping value is a shape error, never silently flattened."""
+    """``bindings`` is flat scalar leaves only (module docstring) — a nested"""
     path = tmp_path / STRATEGY_BINDINGS_FILE_NAME
     mapping = {
         "strategies": {
@@ -167,9 +159,7 @@ def test_nested_mapping_under_bindings_refuses_not_silently_flattened(
 
 
 def test_example_yaml_is_refused_as_shipped() -> None:
-    """``tos/runtime/config/strategy_bindings.example.yaml`` documents the
-    shape with every value left as a named-TBD ``null`` — it must be
-    refused exactly like any other still-null config file."""
+    """``tos/runtime/config/strategy_bindings.example.yaml`` documents the"""
     example_path = (
         Path(__file__).resolve().parents[2]
         / "config"

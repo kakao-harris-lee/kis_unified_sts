@@ -1,20 +1,4 @@
-"""Serialized-strategy parsing tests (design #31 §3.5/§9-4).
-
-``parse_strategy`` realizes contract-part (i) of the design #31 §3.5 serialized
-authoring seam: pydantic validation of a plain mapping into an issued, digest-bound
-``AuthoredStrategy`` — no YAML import in the kernel (that is the runtime lane's job,
-design #31 §1.2 lane D-R).
-
-Coverage:
-
-* an unknown key at the top level, and one nested inside ``policy``, is refused and
-  the raised ``StrategyParseError`` names its dotted path;
-* ``parse_strategy(model_dump)`` round-trips: re-parsing a strategy's own authoring
-  content yields the identical digest/id (idempotent, not merely "does not raise");
-* the parsed path and the in-process typed path converge on the same artifact shape
-  (same digest for the same content, regardless of which path built it) — the
-  design #31 §1.2 "두 경로 동형" claim, checked directly rather than only asserted.
-"""
+"""Serialized-strategy parsing tests (design #31 §3.5/§9-4)."""
 
 from __future__ import annotations
 
@@ -40,11 +24,6 @@ def _mapping_with(**overrides: object) -> dict:
     return base
 
 
-# ---------------------------------------------------------------------------
-# Positive parsing
-# ---------------------------------------------------------------------------
-
-
 def test_a_well_formed_mapping_parses_to_an_issued_strategy() -> None:
     strategy = parse_strategy(_NO_ACTION_MAPPING)
     assert isinstance(strategy, AuthoredStrategy)
@@ -59,11 +38,6 @@ def test_a_mapping_naming_an_explicit_canonicalization_version_uses_it() -> None
         _mapping_with(canonicalization_version=EV_L1_PROVISIONAL_VERSION)
     )
     assert strategy.canonicalization_version == EV_L1_PROVISIONAL_VERSION
-
-
-# ---------------------------------------------------------------------------
-# Unknown keys are refused with their dotted path
-# ---------------------------------------------------------------------------
 
 
 def test_an_unknown_top_level_key_is_refused_with_its_path() -> None:
@@ -105,20 +79,9 @@ def test_an_unknown_key_nested_inside_a_rule_operand_is_refused_with_its_path() 
 
 
 def test_a_precomputed_identity_field_is_refused_as_an_unknown_key() -> None:
-    """The authoring-content shape does not accept a hand-written digest/id/status.
-
-    Those three are *derived* by ``AuthoredStrategy.issue`` — never author-supplied
-    (module docstring); ``strategy_id``/``canonical_digest``/``status`` are not
-    fields of the validation wrapper, so any attempt to smuggle one in is just
-    another unknown key.
-    """
+    """The authoring-content shape does not accept a hand-written digest/id/status."""
     with pytest.raises(StrategyParseError, match="strategy_id"):
         parse_strategy(_mapping_with(strategy_id="astrat-forged"))
-
-
-# ---------------------------------------------------------------------------
-# Round-trip + cross-path convergence
-# ---------------------------------------------------------------------------
 
 
 def test_round_trip_parse_strategy_of_its_own_dump_is_idempotent() -> None:

@@ -1,54 +1,4 @@
-"""``AggregateRiskService`` — runtime realization of the Aggregate Risk Authority
-(ARA) snapshot derivation + ``risk_decision`` composition (design #40 §5 order 5
-item 1; slice plan §2 item 1).
-
-**This service does not judge.** ``snapshot()`` reads the RCL reservation
-projection (``tos_runtime.rcl.projection.ReservationProjectionReader``) and
-:meth:`decide` prepares :func:`tos.are.risk_decision`'s boolean witnesses by
-calling the *other* ``tos.are`` §5 predicates (:func:`tos.are.snapshot_scope_complete`
-/ :func:`tos.are.adverse_increment` / :func:`tos.are.envelope_bound_not_enlarged`)
-— never computing a boolean itself — and then calls
-:func:`tos.are.risk_decision` exactly once for the final verdict (the
-``tos_runtime.authority.stages.IndependentApprovalStage`` precedent: the stage
-routes inputs into a kernel judgement call, it never judges).
-
-**Per-dimension usage magnitude landed (kernel round #4 K-4).** The RCL log now persists
-``CapacityReservationTransition.committed_vector`` on the ``reservations`` row
-(``tos_runtime/rcl/schema.py`` schema v2) and
-:class:`~tos_runtime.rcl.projection.ReservationProjectionReader` exposes it via
-``reservation_committed_vector``. :meth:`AggregateRiskService.snapshot`'s
-``conservative_current_usage`` derives from that accessor, summed over the scope's OUTSTANDING
-reservations (#966 — see that method's own docstring); an empty vector means "no outstanding
-reservation", never a fabricated magnitude, and an outstanding reservation with no vector on
-record makes the usage UNKNOWN and the decision ``UNKNOWN`` (#972). The per-cell magnitudes :func:`tos.are.adverse_increment` needs
-(:class:`~tos.are.ProjectedCell`) remain Phase-0 / broker-capability-profile valuation inputs
-this slice does not own either way (design #13 §4 non-scope) — they still arrive via the
-caller-injected :class:`AggregateRiskDecisionInputs`, never computed here.
-
-**Single-node quorum honesty (R-RCL-F0).** This service claims no quorum
-certificate — see ``RESIDUAL-RISK-REGISTER-002`` R-RCL-F0 and
-``tos_runtime.rcl.log.SqliteCommitLog``'s own module docstring for the
-single-writer-epoch fencing discipline this service reads through
-(:class:`~tos_runtime.rcl.projection.ReservationProjectionReader`).
-
-**Time gate.** Callers (``tos_runtime.risk.ledger_stages.AggregateRiskDecisionStage``)
-are responsible for refusing to admit new risk unless the injected
-``TrustworthyTimeService.current_snapshot()`` reports
-``tos.time.state_permits_new_normal_risk(snapshot.health_state) is True`` — this
-service itself holds no time reference (module docstring's own "이 서비스가
-만족하는 장애 계약" convention: the time gate is a cross-cutting Stage concern,
-not an ``AggregateRiskService``-local one, since steps 6, 7, and 9 all need it
-identically; see ``ledger_stages._time_gate``).
-
-Firewall: stdlib + ``pydantic`` (transitively) + ``pyyaml`` + ``tos.are`` /
-``tos.canonical`` / ``tos.engine.records`` (``InstrumentKey`` only) / ``tos.rcl``
-(``CapacityVector`` / ``CapacityComponent`` / ``aggregate_usage`` only) +
-``tos_runtime.evidence`` (``EvidenceAppendPort`` seam)
-+ ``tos_runtime.rcl`` (``ReservationProjectionReader`` seam) only (R1 allowlist).
-No ``tos_runtime.authority`` / ``tos_runtime.currentness`` / ``tos_runtime.release``
-import (slice plan §5 cross-lane isolation) — a future composition root
-injects any cross-lane fact this service needs as a plain argument.
-"""
+"""``AggregateRiskService`` — runtime realization of the Aggregate Risk Authority"""
 
 from __future__ import annotations
 
@@ -100,20 +50,11 @@ __all__ = [
 _EVIDENCE_KIND_SNAPSHOT = "ARE_SNAPSHOT"
 _EVIDENCE_KIND_DECISION = "ARE_DECISION"
 
-#: The template's reserved not-yet-filled placeholder (W-A A-0 round 2) — the SAME token
-#: ``tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`` names, duplicated here (never imported)
-#: per this module's own closed R1 Firewall allowlist (module docstring): ``scenario_set_id``
-#: / ``policy_binding_id`` / ``evidence_package_ref`` are free strings sealed straight into the
-#: issued ``AdverseScenarioSet``'s digest — ``AdverseScenarioSet.issue`` refuses a bare
-#: ``null`` (module docstring), but never caught an operator typing this literal instead.
 _TBD_STR = "TBD"
 
 
 class AggregateRiskConfigError(Exception):
-    """Raised when the ``AdverseScenarioSet`` / coverage-floor config is
-    missing, malformed, or carries an unfilled (missing/null) required value —
-    fail-closed at load (CLAUDE.md "configuration-driven only" + slice plan §2
-    item 1 "값 null=named-TBD → 서비스 기동 거부")."""
+    """Raised when the ``AdverseScenarioSet`` / coverage-floor config is"""
 
 
 def _load_raw_mapping(path: Path) -> dict[str, Any]:
@@ -150,29 +91,7 @@ def _parse_scenario_kinds(
 def load_adverse_scenario_set(
     path: Path, *, scheme: CanonicalizationScheme | None = None
 ) -> AdverseScenarioSet:
-    """Load + issue the :class:`~tos.are.AdverseScenarioSet` from ``path``.
-
-    Reuses the kernel's own ``_REQUIRED_COVERED`` enforcement
-    (``AdverseScenarioSet.issue`` -> ``DigestBoundArtifact.missing_required_fields``)
-    rather than re-deriving a null-check: a still-``null`` (named-TBD)
-    ``scenario_set_generation`` makes ``.issue`` itself raise
-    :class:`~tos.canonical.ArtifactIntegrityError`, which this function
-    re-raises as :class:`AggregateRiskConfigError` (fail-closed startup
-    refusal, slice plan §2 item 1).
-
-    Args:
-        path: The YAML config file (see ``tos/runtime/config/risk.example.yaml``).
-        scheme: The registered canonicalization scheme (defaults to the
-            provisional EV-L1 scheme every other runtime module uses).
-
-    Returns:
-        The issued, digest-verified :class:`~tos.are.AdverseScenarioSet`.
-
-    Raises:
-        AggregateRiskConfigError: The file is unreadable/malformed, or the
-            scenario set cannot be issued (a required covered field is still
-            null).
-    """
+    """Load + issue the :class:`~tos.are.AdverseScenarioSet` from ``path``."""
     scheme = scheme or get_scheme(EV_L1_PROVISIONAL_VERSION)
     raw = _load_raw_mapping(path)
     covered = _parse_scenario_kinds(
@@ -194,10 +113,6 @@ def load_adverse_scenario_set(
             evidence_package_ref=raw.get("evidence_package_ref"),
         )
     except (ArtifactIntegrityError, ValidationError) as exc:
-        # A model-validator ArtifactIntegrityError (a ValueError subclass, see
-        # tos.canonical._base's own docstring) raised inside pydantic
-        # construction surfaces to the caller as pydantic.ValidationError, not
-        # the original exception type — both are caught here.
         raise AggregateRiskConfigError(
             f"{path}: AdverseScenarioSet cannot be issued from this config (a "
             f"required covered field is still null/named-TBD, or malformed) — "
@@ -208,17 +123,7 @@ def load_adverse_scenario_set(
 
 
 def load_required_scenario_kinds(path: Path) -> frozenset[AdverseScenarioKind]:
-    """Load the injected adverse-scenario min-coverage floor from ``path``.
-
-    An empty/absent floor always fails :func:`tos.are.adverse_increment` closed
-    anyway (§11/§4.7 "an empty ... floor fails closed"), so this loader
-    surfaces the same fact earlier and louder, at startup — the
-    ``tos_runtime.time.config`` precedent.
-
-    Raises:
-        AggregateRiskConfigError: The floor is missing/empty, or names an
-            unrecognized ``AdverseScenarioKind`` member.
-    """
+    """Load the injected adverse-scenario min-coverage floor from ``path``."""
     raw = _load_raw_mapping(path)
     required = raw.get("required_scenario_kinds")
     if not required:
@@ -234,31 +139,7 @@ def load_required_scenario_kinds(path: Path) -> frozenset[AdverseScenarioKind]:
 
 @dataclass(frozen=True)
 class AggregateRiskDecisionInputs:
-    """Every injected witness :func:`tos.are.risk_decision` needs beyond what
-    :meth:`AggregateRiskService.snapshot` derives from the RCL projection.
-
-    None of these are computable from the landed RCL commit log — valuation /
-    numerical-safety / envelope witnesses are Phase-0 / broker-capability-
-    profile concerns this slice does not own (design #13 §4 non-scope,
-    module docstring). A caller (the
-    ``tos_runtime.risk.ledger_stages.AggregateRiskDecisionStage`` inputs
-    provider) supplies them; their absence is ``None`` — UNKNOWN, never
-    assumed positive.
-
-    ``numerically_safe``/``valuation_ok`` are ``| None`` (kernel round #1
-    §1.4/§2.3 — ``tos.are.predicates._decide_result``/``risk_decision`` were
-    widened to accept ``None`` for both, "None = no opinion => UNKNOWN", with
-    no logic change: ``is not True`` / ``not valuation_ok`` already treated
-    ``None`` as restrictive). Widening the runtime type here only lets a
-    caller with genuinely no opinion pass ``None`` through instead of being
-    forced to fabricate a ``bool`` — the same "UNKNOWN, never assumed
-    positive" discipline every other Optional field on this dataclass
-    already has, and what lets
-    :func:`~tos_runtime.compose._risk_attestations._restrictive_merge`
-    defer to the operator attestation for these two fields as well (that
-    module's own docstring, updated the same round: "on the fields that
-    allow it" now means all six attested fields, not four).
-    """
+    """Every injected witness :func:`tos.are.risk_decision` needs beyond what"""
 
     cells: tuple[ProjectedCell, ...]
     required_scenario_kinds: frozenset[AdverseScenarioKind]
@@ -288,21 +169,7 @@ class AggregateRiskService:
         *,
         canonicalization_version: str = EV_L1_PROVISIONAL_VERSION,
     ) -> None:
-        """Compose the service over its injected ports.
-
-        Args:
-            projection: The read-only RCL reservation projection
-                (``tos_runtime.rcl.projection.ReservationProjectionReader``).
-            scenario_set: The issued :class:`~tos.are.AdverseScenarioSet` (see
-                :func:`load_adverse_scenario_set` — refuses at load time if
-                any required config value is still null).
-            evidence: The durable append port every snapshot/decision is
-                evidenced through (``decision_id`` and ``canonical_digest`` are
-                appended as separate, orthogonal fields — never conflated —
-                per are's own ``id != f(digest)`` identity discipline).
-            canonicalization_version: The registered ``tos.canonical`` scheme
-                version used to digest every issued snapshot/decision.
-        """
+        """Compose the service over its injected ports."""
         self._projection = projection
         self._scenario_set = scenario_set
         self._evidence = evidence
@@ -322,46 +189,7 @@ class AggregateRiskService:
         all_fields_attributed: bool | None,
         lineage_ref: str | None = None,
     ) -> AggregateRiskStateSnapshot:
-        """Derive an :class:`~tos.are.AggregateRiskStateSnapshot` from the RCL
-        reservation projection (module docstring — no self-aggregation).
-
-        ``consistency_cut_identity`` is content-addressed from the
-        projection's own last-committed-seq observation for ``key`` (never a
-        clock, never a counter that could collide across a restart —
-        ``tos.engine.sequencer.build_attempt_request``'s own "no uuid4, no
-        timestamp nonce" discipline). ``covered_scopes`` is recorded as the
-        caller's injected ``required_scopes`` *only after* the read below
-        succeeds — a raised exception here (RCL log file inaccessible) is
-        never silently read as "covers nothing"; it propagates so the caller
-        (a ``Stage``) maps it to ``UNKNOWN`` (fail-closed, never a denial by
-        omission).
-
-        **#966 — usage is the scope's aggregate, not its first row's.** A scope may now hold
-        more than one reservation at once (each attempt commits its own —
-        :mod:`tos_runtime.rcl.reservation_identity`), so ``conservative_current_usage`` is the
-        dimension-wise sum of every OUTSTANDING (non-``RELEASED``) reservation's committed
-        vector, via the kernel's own :func:`tos.rcl.aggregate_usage` (which propagates an
-        UNKNOWN magnitude rather than dropping it). Reading one row would under-report usage as
-        soon as a second reservation existed. ``RELEASED`` rows are excluded because they
-        consume nothing — that is also what lets a scope admit a fresh entry after an exit
-        completed. ``last_seq`` is the newest committed seq across the scope's rows.
-
-        **#972 — a missing vector is UNKNOWN usage, never 0.** Step 9 now records each
-        reservation's step-5 envelope as its committed vector, and later lifecycle transitions
-        keep it (:func:`tos_runtime.rcl.gates.upsert_reservation_projection`). An OUTSTANDING
-        row with no vector on record (one committed before #972, replayed from an existing
-        log) has unknown usage: every dimension the aggregate declares is set UNKNOWN, the row
-        id is evidenced under ``unrecorded_vector_reservations``, and the snapshot is recorded
-        as not fully attributed — so :meth:`decide` reaches ``UNKNOWN`` through
-        :func:`tos.are.snapshot_scope_complete` (fail-closed), not a smaller sum. A ``RELEASED``
-        row's vector is irrelevant and never consulted.
-
-        Raises:
-            Exception: Whatever :meth:`ReservationProjectionReader.scope_reservations` /
-                ``reservation_committed_vector`` raise on an unreachable RCL log — not
-                caught here (module docstring's fault-contract table: steps
-                8-10 map this to UNKNOWN, not a snapshot-level decision).
-        """
+        """Derive an :class:`~tos.are.AggregateRiskStateSnapshot` from the RCL"""
         return self._issue_snapshot(
             key,
             snapshot_generation=snapshot_generation,
@@ -373,9 +201,7 @@ class AggregateRiskService:
     def _scope_usage(
         self, outstanding: tuple[ScopeReservation, ...]
     ) -> tuple[CapacityVector, tuple[str, ...]]:
-        """The dimension-wise usage of ``outstanding`` and the ids of the rows that carry no
-        committed vector (:meth:`snapshot` docstring, #972). With any such row, every declared
-        dimension of the sum is UNKNOWN — its usage is not known to be 0."""
+        """The dimension-wise usage of ``outstanding`` and the ids of the rows that carry no"""
         recorded: list[CapacityVector] = []
         unrecorded: list[str] = []
         for row in outstanding:
@@ -403,9 +229,7 @@ class AggregateRiskService:
         all_fields_attributed: bool | None,
         lineage_ref: str | None,
     ) -> tuple[AggregateRiskStateSnapshot, bool | None]:
-        """:meth:`snapshot`'s body; also returns the attribution :meth:`decide` must judge
-        completeness with — ``False`` when an outstanding row's usage is unknown (#972).
-        """
+        """:meth:`snapshot`'s body; also returns the attribution :meth:`decide` must judge"""
         rows = self._projection.scope_reservations(key)
         outstanding = outstanding_reservations(rows)
         last_seq = max((row.last_seq for row in rows), default=None)
@@ -439,13 +263,10 @@ class AggregateRiskService:
                     "account": key.account,
                     "instrument": key.instrument,
                 },
-                # #966: every outstanding row of the scope, not the first row's state —
-                # the honest record of what the aggregate above was summed over.
                 "outstanding_reservations": [
                     {"reservation_id": row.reservation_id, "state": row.state.value}
                     for row in outstanding
                 ],
-                # #972: outstanding rows whose usage is UNKNOWN (no committed vector).
                 "unrecorded_vector_reservations": list(unrecorded),
                 "all_fields_attributed": attributed,
             },
@@ -462,14 +283,7 @@ class AggregateRiskService:
         snapshot_generation: int,
         decision_generation: int,
     ) -> AggregateRiskDecision:
-        """Prepare :func:`tos.are.risk_decision`'s witnesses via the other
-        ``tos.are`` §5 predicates, then call it exactly once (module
-        docstring).
-
-        Raises:
-            Exception: Propagated from :meth:`snapshot` on an unreachable RCL
-                projection (never swallowed into a false decision).
-        """
+        """Prepare :func:`tos.are.risk_decision`'s witnesses via the other"""
         snapshot, attributed = self._issue_snapshot(
             key,
             snapshot_generation=snapshot_generation,
@@ -524,7 +338,6 @@ class AggregateRiskService:
             grant_identity=inputs.grant_identity,
             effect_digest=inputs.effect_digest,
         )
-        # decision_id ⊥ canonical_digest — both appended, never conflated as one key.
         self._evidence.append(
             {
                 "decision_id": decision.decision_id,

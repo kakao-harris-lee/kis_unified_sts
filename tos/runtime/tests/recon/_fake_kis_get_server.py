@@ -1,18 +1,4 @@
-"""A hermetic, ``127.0.0.1``-only fake KIS GET server (``http.server``) for the W3
-``KisStockBrokerWitness`` test suite.
-
-Extends the ``_fake_kis_server.py`` pattern (``tos/runtime/tests/transport/kis_mock/
-_fake_kis_server.py``, stdlib ``ThreadingHTTPServer``) to the GET-only, per-path SEQUENCE
-of scripted responses this witness's continuation-walk tests need: one call to the same
-path advances to the NEXT queued response (page 0, page 1, ...), so a test can script a
-multi-page KIS pagination walk exactly the way the measured P-BAL campaign observed it
-(``docs/broker-profiles/evidence/2026-09-11-p02-t3-campaign/P-BAL-20260911T002427Z.json``:
-20 rows then 5, ``tr_cont: 'M'`` then ``'D'``).
-
-Records every request it receives (path, query params, headers) so a test can assert
-exactly which continuation keys were sent, and that no secret leaked into an unexpected
-place.
-"""
+"""A hermetic, ``127.0.0.1``-only fake KIS GET server (``http.server``) for the W3"""
 
 from __future__ import annotations
 
@@ -42,20 +28,7 @@ class GetResponseSpec:
 
 
 class FakeKisGetServer:
-    """A threaded HTTP server bound to ``127.0.0.1`` serving a per-path QUEUE of scripted
-    GET responses — each request to a path pops the next queued response for it.
-
-    Usage::
-
-        server = FakeKisGetServer()
-        server.queue_response("/uapi/.../inquire-balance", status=200, body={...},
-                               headers={"tr_cont": "M"})
-        server.queue_response("/uapi/.../inquire-balance", status=200, body={...},
-                               headers={"tr_cont": "D"})
-        server.start()
-        ...
-        server.stop()
-    """
+    """A threaded HTTP server bound to ``127.0.0.1`` serving a per-path QUEUE of scripted"""
 
     def __init__(self) -> None:
         self._requests: list[RecordedGetRequest] = []

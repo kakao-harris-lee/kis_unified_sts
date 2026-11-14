@@ -1,137 +1,4 @@
-"""``tos_runtime.compose.cli`` — argument parsing + operations-subcommand dispatch (slice plan §4
-item 2; TOS Phase 5 W4 §2 decision 10).
-
-**``run`` now actually composes and drives the runtime, but that is the CODE PATH, not a
-deployment** (TOS ``run`` 구동 아크 plan, ``docs/plans/2026-09-17-tos-run-boot-and-real-sources-
-arc-plan.md`` §2 decisions 2/3/6, §4 W1 — replaces the former "parsing only" state; dispatch
-lives in :mod:`~tos_runtime.compose._run_dispatch`, split out for this module's size budget).
-:func:`_dispatch_run` loads ``construction.yaml`` fail-closed
-(:func:`~tos_runtime.compose._construction_config.load_construction_config` — never expresses
-``price``, always ``None``), calls :func:`~tos_runtime.compose.root.compose_paper_runtime` with
-the loaded :class:`~tos_runtime.compose.root.ConstructionConfig`, refuses with a non-zero exit
-when ``composed.marketfeed is None`` (nothing to drive with no wired tick source), and
-otherwise drives ``composed.marketfeed.run_forever`` until ``SIGINT``/``SIGTERM`` flips the
-injected stop predicate (never mid-tick); :func:`main` no longer returns ``0`` unconditionally
-for :class:`Args`. A real boot still needs every config file ``compose_paper_runtime`` reads
-filled with operator-approved values: of the 30 it reads (plan §0.1), 6 have an approved
-instance under ``config/tos_runtime/paper/``; the other 24 ship only as ``*.example.yaml``
-(every leaf ``null``). **Of those 24, 19 actually block boot** (fail-closed loader refusal —
-``run`` relays each refusal, naming the file and the key, never inventing a value); the other
-**5 are genuine opt-in**, not blockers: ``strategy_bindings.yaml``
-(:func:`~tos_runtime.strategy.bindings` reports ``present=False`` rather than refusing),
-``marketfeed.yaml``/``critical_input_policy.yaml`` TOGETHER (absent ⇒
-``composed.marketfeed is None``, refused separately by THIS module, not by a config loader —
-see :func:`_dispatch_run`), ``nontrade.yaml``, and ``kis_mock_transport.yaml`` (unreached at
-the default ``--transport synthetic``).
-
-**The five operations subcommands DO real work directly from bare flags** (plan §2 decision 10),
-because none of them need a ``ConstructionConfig``/risk-input-provider: ``backup-set``,
-``restore-drill``, ``migrate``, ``rotate-key``, ``print-digests`` each call straight into
-:mod:`tos_runtime.operations.backup_set` / :mod:`tos_runtime.operations.schema_migrations` /
-:mod:`tos_runtime.operations.key_rotation` / :mod:`tos_runtime.operations.dependency_admission`.
-
-**``cold-backup --data-dir --config-dir --custody-root``** (evidence growth plan §2 A3) is the
-one unattended door onto what ``backup-set --archive-dir`` does interactively: destinations come
-from ``evidence_cold_backup.yaml`` and the generation from the backup root, so a cron line's Nth
-run is spelled exactly like its first. Parser/args/dispatch live in
-:mod:`~tos_runtime.compose._backup_dispatch` (that module's docstring; split for this one's
-size budget).
-
-**``print-policy-digests --config-dir`` (plan §2 decision 7)** follows the SAME bare-flags
-idiom: loads the governed policy YAMLs under ``--config-dir`` and prints each one's
-``policy_id``/``policy_generation``/``canonical_digest`` to stdout, so an operator can copy
-them into ``safety_activation.yaml``'s ``members:`` list (:func:`_dispatch_print_policy_digests`
-names which policies).
-
-**Three MORE operations subcommands, added by the runtime operations wiring plan
-(2026-09-13) §2 decisions 4/5/7: ``rearm``, ``ack-alert``, ``nontrade-eval``.** All three follow
-the SAME idiom as ``rotate-key`` above — open the evidence store / inbox / time service directly
-(the ``rotate-key`` "no driver, no engine" pattern), never a full
-:func:`~tos_runtime.compose.root.compose_paper_runtime` call, because none of the three need a
-``ConstructionConfig`` or the risk-input providers either:
-
-* ``rearm --data-dir --custody-root --approvals-dir --config-dir --environment-label --seq``
-  evaluates the HAG two-person re-arm quorum
-  (:func:`~tos_runtime.safety.rearm.prepare_new_risk_halt_clear`) against an operator-authored
-  ``approvals_dir/rearm/<seq>.yaml`` decision file + ``approvals_dir/rearm/roster.yaml``, and —
-  only on an ``APPROVED`` outcome — clears the storage-layer latch via
-  :func:`~tos_runtime.compose._cli_ops.rearm_and_clear`, the SECOND sanctioned door onto
-  :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt` (team-lead directive:
-  written when ``run`` could not yet reach a live ``ComposedRuntime`` at all — that loader gap
-  is closed now (blocker list below), but ``rearm`` still deliberately avoids a full
-  ``compose_paper_runtime`` call: clearing a latch needs only the evidence store + inbox + a
-  started time service, never a live ``EngineCore`` —
-  ``ComposedRuntime.clear_new_risk_halt`` alone would leave this subcommand unable to ever
-  complete a re-arm; the machine pin, ``tests/engine/test_no_direct_latch_clear.py``, now allows
-  exactly these two callers, both gated by the SAME HAG quorum evaluation). ``rearm`` exits ``0``
-  only when the latch was actually cleared and non-zero on any refusal (quorum refused, or the
-  disclosed storage-layer TOCTOU window); it prints which outcome occurred, never silently claims
-  a clear that did not happen.
-* ``ack-alert --data-dir --custody-root --approvals-dir --environment-label --seq`` calls
-  :func:`~tos_runtime.safety.ack.acknowledge_alert` against an operator-authored
-  ``approvals_dir/alerts/<seq>.yaml`` file. Needs only the evidence store (no inbox, no time
-  service) — see that module's own docstring for why an acknowledgement is not a resolution,
-  containment, or re-arm.
-* ``nontrade-eval --observation <path>`` is a pure, stateless dry run: it loads a
-  :class:`~tos_runtime.nontrade.observations.NonTradeObservation` from a YAML file (a small,
-  scalar-fields-only loader local to this module — the nested kernel records
-  ``transition_envelope``/``split_spec``/``correction``/``prior_correction`` are refused rather
-  than silently dropped if present, a future wave's own loader) and folds it through
-  :meth:`~tos_runtime.nontrade.processor.NonTradeEventProcessor.evaluate` (that method's own
-  docstring: "a DRY RUN: records no evidence and touches no durable state"), printing the
-  disposition + per-predicate result table. Opens no store, no custody, no inbox — genuinely
-  zero evidence reaches any real durable store.
-
-**Canonical blocker list — CODE-PATH blockers, all now resolved (plan §7.2 "웨이브 착지" of the
-``run`` 구동 아크 plan carries the SAME (a′)/(b′)/(c) resolution labels as this W1 landing entry
-— keep both in sync; §7.1 "정직 등재" is the separate, non-label registration for
-``required_authority_scope``, see ``_wiring.py:562``'s own comment).** Every blocker below used
-to be "the code cannot do this"; none of them are any more:
-
-(a) **RESOLVED** — venue constraint service wave: ``VenueConstraintSnapshot``/
-    ``OrderAdmissibilityDecision`` come from a real governed service (``compose/_venue_wiring.py``).
-(b) **RESOLVED** — risk state service wave: ``aggregate_risk_inputs_provider``/
-    ``action_flow_inputs_provider`` default to the production ``RiskStateService`` when
-    ``None``. (b′) below is that service's own disclosed remaining limit, not a missing path.
-(a′) **RESOLVED** — envelope/order_shape wave: both are OCP/derivation-sourced now, no
-    caller-injected literal.
-(b′) **잔존** — the risk state service's own already-disclosed limit (single-source position
-    observation, contract-count dimensions only). Operator decision (that wave's plan §6
-    confirmation point 5), outside every wave's scope so far, this one included.
-(c) **RESOLVED** — tick-source wave: ``TickScheduler`` feeds real ``DECISION_TICK`` events —
-    governed policy, durable store, the REAL kernel resolver — to ``EngineDriver``.
-**Loader gap RESOLVED** (this wave, W1 lane A): ``construction.yaml`` loads fail-closed
-    (:func:`~tos_runtime.compose._construction_config.load_construction_config`), so ``run``
-    calls ``compose_paper_runtime`` instead of returning ``0`` unconditionally.
-
-**Even a fully-approved config directory still carries (b′)'s disclosed limits and
-``snapshot_age_bound``'s injected-not-measured bound** (tick-source plan §7) — config approval
-resolves neither; also missing today: an approved ``strategies/`` file and ``custody.manifest.yaml``.
-
-**No subcommand token given ⇒ ``run`` (backward compatibility).** :func:`parse_args` prepends
-``"run"`` to ``argv`` when the first token is not one of :data:`_SUBCOMMANDS` — the OLD bare
-``--config-dir ... --data-dir ... --custody-root ... --environment-label ...`` invocation (no
-subcommand keyword at all) continues to parse exactly as before, now via the ``run`` subparser
-rather than the top-level parser directly (module docstring's own backward-compatibility
-requirement).
-
-**Reported scope decision — ``restore-drill`` performs ``restore_set``, not the full
-``operations.backup_set.restore_drill``.** The full drill (recompose + replay + readiness
-verification) needs a :class:`~tos_runtime.operations.backup_set.ComposeForDrill` callable, which
-in turn needs the SAME ``ConstructionConfig``/risk-input-providers ``run`` cannot synthesize from
-bare flags either — there is no more CLI-expressible a path to a real ``EngineCore`` here than
-there is for ``run``. This CLI subcommand therefore performs the fully self-contained, digest-
-verified restore step (:func:`~tos_runtime.operations.backup_set.restore_set`) and reports that a
-genuine drill needs a strategy-specific Python caller. It ALSO adds a ``--custody-root`` flag
-beyond the plan's literal ``--manifest --dest --environment-label`` list — ``restore_set`` requires
-a ``key_provider`` for its post-restore evidence-chain re-verification, and there is no way to
-build one without a custody directory. Both of these are reported to the team lead as an explicit
-Phase B scope decision, not a silent narrowing.
-
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``argparse``, ``os``,
-``secrets``, ``sys``) + ``tos_runtime.*`` only. No ``shared.*``. (``decimal``/``pyyaml`` moved
-with the ``nontrade-eval`` loader into :mod:`~tos_runtime.compose._nontrade_eval_dispatch`.)
-"""
+"""``tos_runtime.compose.cli`` — argument parsing + operations-subcommand dispatch (slice plan §4"""
 
 from __future__ import annotations
 
@@ -167,9 +34,6 @@ from tos_runtime.compose._cli_ops import (
     risk_state_policy_digest_lines,
 )
 from tos_runtime.compose._migrate_paths import migrate_path_for
-from tos_runtime.compose._nontrade_eval_dispatch import (
-    dispatch_nontrade_eval as _dispatch_nontrade_eval,
-)
 from tos_runtime.compose._run_dispatch import dispatch_run as _dispatch_run
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.custody.key_provider import FileKeyProvider
@@ -194,9 +58,6 @@ from tos_runtime.operations.schema_migrations import (
 )
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.safety.ack import acknowledge_alert
-from tos_runtime.time.config import load_time_config
-from tos_runtime.time.service import TrustworthyTimeService
-from tos_runtime.time.sources import LocalSystemClockReader, ProcessMonotonicSource
 from tos_runtime.venue import (
     ORDER_CONSTRUCTION_POLICY_CONFIG_NAME,
     VENUE_POLICY_CONFIG_NAME,
@@ -211,7 +72,6 @@ __all__ = [
     "BackupSetArgs",
     "ColdBackupArgs",
     "MigrateArgs",
-    "NontradeEvalArgs",
     "PrintDigestsArgs",
     "PrintPolicyDigestsArgs",
     "RearmArgs",
@@ -222,7 +82,6 @@ __all__ = [
     "parse_args",
 ]
 
-#: The recognized subcommand tokens (module docstring's own "no token given ⇒ run" rule).
 _SUBCOMMANDS = (
     "run",
     "backup-set",
@@ -234,23 +93,15 @@ _SUBCOMMANDS = (
     "print-policy-digests",
     "rearm",
     "ack-alert",
-    "nontrade-eval",
     _STANDING_COMMAND,
 )
 
-#: Duplicated from :mod:`tos_runtime.operations.backup_set`'s own private
-#: ``_LIVE_ENVIRONMENT_LABELS`` (not exported) — the SAME "duplicate the literal, do not reach
-#: into another module's private surface" discipline :mod:`tos_runtime.compose._operations_wiring`
-#: already documents for its own duplicated constants. Refused here, in the CLI, BEFORE anything
-#: else runs (plan §2 decision 10's own "refuse ... before doing anything").
 _LIVE_ENVIRONMENT_LABELS = frozenset({"paper", "restricted-live", "production"})
 
 
 @dataclass(frozen=True)
 class Args:
-    """``run`` subcommand args — the original five fields, unchanged, plus two new optional TOS
-    Phase 5 W4 fields (``projection_path``/``backup_root``, both defaulting to ``None`` so any
-    existing construction call keeps working)."""
+    """``run`` subcommand args — the original five fields, unchanged, plus two new optional TOS"""
 
     config_dir: Path
     data_dir: Path
@@ -263,14 +114,7 @@ class Args:
 
 @dataclass(frozen=True)
 class BackupSetArgs:
-    """``backup-set`` subcommand args.
-
-    ``archive_dir`` is the opt-in compressed cold copy (evidence growth plan §2 A3): omitted,
-    this subcommand behaves exactly as before. Given, the snapshot is additionally compressed
-    to ``archive_dir`` and read back — decompress, digest every member against the manifest,
-    re-verify the evidence chain — which needs ``custody_root`` for the chain keys and
-    ``verify_dir`` as the scratch directory to read back into.
-    """
+    """``backup-set`` subcommand args."""
 
     data_dir: Path
     dest: Path
@@ -284,8 +128,7 @@ class BackupSetArgs:
 
 @dataclass(frozen=True)
 class RestoreDrillArgs:
-    """``restore-drill`` subcommand args (module docstring — ``custody_root`` is an addition
-    beyond the plan's literal flag list, reported there)."""
+    """``restore-drill`` subcommand args (module docstring — ``custody_root`` is an addition"""
 
     manifest: Path
     dest: Path
@@ -295,8 +138,7 @@ class RestoreDrillArgs:
 
 @dataclass(frozen=True)
 class MigrateArgs:
-    """``migrate`` subcommand args. ``store=None`` means every registered store
-    (:data:`~tos_runtime.operations.schema_migrations.STORE_MIGRATIONS`)."""
+    """``migrate`` subcommand args. ``store=None`` means every registered store"""
 
     data_dir: Path
     store: str | None = None
@@ -304,9 +146,7 @@ class MigrateArgs:
 
 @dataclass(frozen=True)
 class RotateKeyArgs:
-    """``rotate-key`` subcommand args — opens the evidence store + RCL log the same way
-    ``run`` does (no driver, no engine), then calls
-    :func:`~tos_runtime.operations.key_rotation.rotate_evidence_key`."""
+    """``rotate-key`` subcommand args — opens the evidence store + RCL log the same way"""
 
     data_dir: Path
     custody_root: Path
@@ -315,24 +155,19 @@ class RotateKeyArgs:
 
 @dataclass(frozen=True)
 class PrintDigestsArgs:
-    """``print-digests`` subcommand args — none; the observation reads the CURRENT process's own
-    installed source tree/dependency set (:mod:`tos_runtime.operations.dependency_admission`).
-    """
+    """``print-digests`` subcommand args — none; the observation reads the CURRENT process's own"""
 
 
 @dataclass(frozen=True)
 class PrintPolicyDigestsArgs:
-    """``print-policy-digests`` subcommand args (module docstring) — loads the two governed
-    policy YAMLs under ``config_dir`` and prints their id/generation/digest; opens no store,
-    reads no activation file."""
+    """``print-policy-digests`` subcommand args (module docstring) — loads the two governed"""
 
     config_dir: Path
 
 
 @dataclass(frozen=True)
 class RearmArgs:
-    """``rearm`` subcommand args (module docstring — opens the evidence store/inbox/time service
-    directly, the SAME ``rotate-key`` idiom; never a full ``compose_paper_runtime``)."""
+    """``rearm`` subcommand args (module docstring — opens the evidence store/inbox/time service"""
 
     data_dir: Path
     custody_root: Path
@@ -353,17 +188,8 @@ class AckAlertArgs:
     seq: int
 
 
-@dataclass(frozen=True)
-class NontradeEvalArgs:
-    """``nontrade-eval`` subcommand args — a pure dry run, no store/custody at all."""
-
-    observation: Path
-
-
 def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
-    """The ``run`` subcommand's own flags — factored out so both :func:`build_parser`'s ``run``
-    subparser (used when a subcommand token IS given) and the implicit "no token ⇒ run" path
-    (module docstring) parse the identical flag set."""
+    """The ``run`` subcommand's own flags — factored out so both :func:`build_parser`'s ``run``"""
     parser.add_argument(
         "--config-dir",
         required=True,
@@ -428,8 +254,7 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the argument parser: ``run`` (default) plus the four operations subcommands
-    (module docstring)."""
+    """Build the argument parser: ``run`` (default) plus the four operations subcommands"""
     parser = argparse.ArgumentParser(
         prog="tos-runtime-compose",
         description=(
@@ -516,21 +341,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_cold_backup_subparser(subparsers)
     add_standing_approval_subparser(subparsers)
-    _add_rearm_ack_nontrade_subparsers(subparsers)
+    _add_rearm_ack_subparsers(subparsers)
 
     return parser
 
 
-def _add_rearm_ack_nontrade_subparsers(
+def _add_rearm_ack_subparsers(
     subparsers: argparse._SubParsersAction,
 ) -> None:
-    """The three runtime operations wiring plan (2026-09-13) subcommands — split out of
-    :func:`build_parser` purely for the 100-line function budget (no behaviour difference from
-    inlining it there)."""
+    """The two runtime operations wiring plan (2026-09-13) subcommands — split out of"""
     rearm_parser = subparsers.add_parser(
         "rearm",
         help=(
-            "Evaluate the HAG two-person re-arm quorum for a latched new-risk halt "
+            "Evaluate the operator re-arm approval for a latched new-risk halt "
             "(module docstring — durably evidences APPROVED/REFUSED; does not itself "
             "clear the halt)."
         ),
@@ -560,15 +383,6 @@ def _add_rearm_ack_nontrade_subparsers(
     ack_parser.add_argument("--environment-label", required=True, type=str)
     ack_parser.add_argument("--seq", required=True, type=int)
 
-    nontrade_parser = subparsers.add_parser(
-        "nontrade-eval",
-        help=(
-            "Dry-run a NonTradeObservation YAML file through NonTradeEventProcessor and "
-            "print its disposition (module docstring — zero evidence, no store opened)."
-        ),
-    )
-    nontrade_parser.add_argument("--observation", required=True, type=Path)
-
 
 def parse_args(
     argv: list[str] | None = None,
@@ -583,19 +397,9 @@ def parse_args(
     | PrintPolicyDigestsArgs
     | RearmArgs
     | AckAlertArgs
-    | NontradeEvalArgs
     | StandingApprovalArgs
 ):
-    """Parse ``argv`` (defaults to ``sys.argv[1:]``) into the args object for whichever
-    subcommand was named (or ``run``, implicitly — module docstring).
-
-    Args:
-        argv: The argument vector (excluding the program name), or ``None`` to read
-            ``sys.argv`` itself.
-
-    Returns:
-        The parsed args object for the resolved subcommand.
-    """
+    """Parse ``argv`` (defaults to ``sys.argv[1:]``) into the args object for whichever"""
     if argv is None:
         argv = sys.argv[1:]
     effective = list(argv)
@@ -663,25 +467,13 @@ def parse_args(
             environment_label=namespace.environment_label,
             seq=namespace.seq,
         )
-    if command == "nontrade-eval":
-        return NontradeEvalArgs(observation=namespace.observation)
     if command == "print-policy-digests":
         return PrintPolicyDigestsArgs(config_dir=namespace.config_dir)
-    # command == "print-digests" — argparse itself refuses any token outside _SUBCOMMANDS,
-    # so every other branch is exhaustive; this is the only remaining reachable case.
     return PrintDigestsArgs()
 
 
 def _dispatch_rotate_key(args: RotateKeyArgs) -> int:
-    """The ``rotate-key`` subcommand's own dispatch — split out of :func:`main` purely for
-    the 100-line function budget (no behaviour difference from inlining it there).
-
-    Opens the evidence store + RCL log the SAME way ``run`` does (no driver, no engine) —
-    :attr:`~tos_runtime.evidence.store.SqliteEvidenceStore.__init__`'s
-    ``permit_rotation_pending_for_generation`` is what lets this open at all when the new
-    generation's key file is already staged (that parameter's own docstring). Never re-raises
-    a refusal — every refusal is printed and reported via a non-zero exit code instead.
-    """
+    """The ``rotate-key`` subcommand's own dispatch — split out of :func:`main` purely for"""
     paths = DurableSetPaths.from_data_dir(args.data_dir)
     key_provider = FileKeyProvider(args.custody_root, expected_owner_uid=os.getuid())
     try:
@@ -708,24 +500,14 @@ def _dispatch_rotate_key(args: RotateKeyArgs) -> int:
         evidence_store.close()
 
     print(f"rotate-key: {outcome}")
-    # ROTATED_RCL_UNRECORDED is still a rotation that DID happen (module docstring of
-    # tos_runtime.operations.key_rotation's own M8 note) — reported on stdout above, but a
-    # non-zero exit still flags it for an operator/script to notice and reconcile the RCL side.
     return 0 if outcome == RotationOutcome.ROTATED else 1
 
 
-#: Duplicated from ``tos_runtime.compose._wiring._TIME_CONFIG_NAME`` (a private module constant
-#: there, not exported) — the SAME "duplicate the literal" discipline this module already applies
-#: to ``_LIVE_ENVIRONMENT_LABELS`` above.
 _TIME_CONFIG_NAME = "time.yaml"
 
 
 def _build_cli_identity(environment_label: str) -> RuntimeIdentity:
-    """This process's own :class:`~tos.workload.RuntimeIdentity` for a directly-opened (not
-    fully composed) CLI subcommand — the SAME real source-tree digest
-    :func:`~tos_runtime.operations.dependency_admission.observe_runtime_artifact` measures for
-    ``print-digests``/``compose_paper_runtime``'s own identity, never the retired constant digest
-    (``tos_runtime.compose._wiring``'s own M6 lesson)."""
+    """This process's own :class:`~tos.workload.RuntimeIdentity` for a directly-opened (not"""
     return RuntimeIdentity(
         cell_id=environment_label,
         runtime_generation=0,
@@ -735,13 +517,7 @@ def _build_cli_identity(environment_label: str) -> RuntimeIdentity:
 
 
 def _dispatch_print_policy_digests(args: PrintPolicyDigestsArgs) -> int:
-    """The ``print-policy-digests`` subcommand's own dispatch — loads the Venue/OCP policies
-    with the compose scheme and prints each ``policy_id``/``policy_generation``/
-    ``canonical_digest``, plus AGGREGATE_RISK_POLICY/ACTION_FLOW_POLICY/CRITICAL_INPUT_POLICY
-    lines for whichever of those OPTIONAL files exist (:mod:`tos_runtime.compose._cli_ops`'s
-    ``risk_state_policy_digest_lines``/``marketfeed_policy_digest_lines``). Opens no evidence
-    store, reads no ``safety_activation.yaml`` — a refused load (PRESENT but malformed; not
-    required to be activated) is printed and reported via a non-zero exit code."""
+    """The ``print-policy-digests`` subcommand's own dispatch — loads the Venue/OCP policies"""
     scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
     try:
         loaded_venue = load_venue_constraint_policy(
@@ -772,19 +548,7 @@ def _dispatch_print_policy_digests(args: PrintPolicyDigestsArgs) -> int:
 
 
 def _dispatch_rearm(args: RearmArgs) -> int:
-    """The ``rearm`` subcommand's own dispatch — evaluates the HAG two-person quorum and, only
-    on an ``APPROVED`` outcome, clears the storage-layer latch (:func:`~tos_runtime.compose
-    ._cli_ops.rearm_and_clear` — the second sanctioned door onto
-    :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`, for exactly this
-    CLI-only, no-live-``ComposedRuntime`` case; see that module's own docstring).
-
-    Opens the evidence store + inbox + a started :class:`~tos_runtime.time.service
-    .TrustworthyTimeService` directly (the ``rotate-key`` idiom — no driver, no engine, no full
-    ``compose_paper_runtime``); :class:`~tos_runtime.safety.rearm.ReArmWorkflow` never actually
-    consults the time service (its own docstring — hag reads no clock), so it is carried here only
-    for interface symmetry with :func:`~tos_runtime.safety.rearm.prepare_new_risk_halt_clear`'s
-    signature.
-    """
+    """The ``rearm`` subcommand's own dispatch — evaluates the operator approval and, only"""
     paths = DurableSetPaths.from_data_dir(args.data_dir)
     key_provider = FileKeyProvider(args.custody_root, expected_owner_uid=os.getuid())
     evidence_store = SqliteEvidenceStore(paths.evidence, key_provider=key_provider)
@@ -793,23 +557,9 @@ def _dispatch_rearm(args: RearmArgs) -> int:
             paths.inbox, scheme=get_scheme(EV_L1_PROVISIONAL_VERSION)
         )
         try:
-            time_config = load_time_config(args.config_dir / _TIME_CONFIG_NAME)
-            identity = _build_cli_identity(args.environment_label)
-            time_service = TrustworthyTimeService(
-                monotonic=ProcessMonotonicSource(),
-                references=(LocalSystemClockReader(),),
-                config=time_config,
-                identity=identity,
-                evidence=evidence_store,
-            )
-            time_service.start()
-            time_service.evaluate()
-            time_service.evaluate()
-
             result = rearm_and_clear(
                 inbox=inbox,
                 evidence_store=evidence_store,
-                time_service=time_service,
                 approvals_dir=args.approvals_dir,
                 environment_label=args.environment_label,
                 expected_owner_uid=os.getuid(),
@@ -823,13 +573,12 @@ def _dispatch_rearm(args: RearmArgs) -> int:
     if not result.cleared:
         print(f"rearm: {result.reason}", file=sys.stderr)
         return 1
-    print(f"rearm: cleared evidence_seq={args.seq} (HAG two-person quorum APPROVED).")
+    print(f"rearm: cleared evidence_seq={args.seq} (operator approval APPROVED).")
     return 0
 
 
 def _dispatch_ack_alert(args: AckAlertArgs) -> int:
-    """The ``ack-alert`` subcommand's own dispatch — needs only the evidence store (module
-    docstring; :func:`~tos_runtime.safety.ack.acknowledge_alert`)."""
+    """The ``ack-alert`` subcommand's own dispatch — needs only the evidence store (module"""
     paths = DurableSetPaths.from_data_dir(args.data_dir)
     key_provider = FileKeyProvider(args.custody_root, expected_owner_uid=os.getuid())
     evidence_store = SqliteEvidenceStore(paths.evidence, key_provider=key_provider)
@@ -849,16 +598,7 @@ def _dispatch_ack_alert(args: AckAlertArgs) -> int:
 
 
 def _migrate_report(outcome: MigrationOutcome) -> str:
-    """One operator-facing line naming what ``migrate`` actually did.
-
-    "is current" used to be printed for three materially different outcomes — nothing to do,
-    versions applied, and an index rebuilt — which made a repair indistinguishable from a no-op
-    in the one place an operator looks (review L3).
-
-    ``repaired`` can now name a ``schema_ledger`` append-only trigger as well as an index, so
-    the repair line says what was missing rather than asserting "unindexed" over a file whose
-    actual defect was an unprotected ledger.
-    """
+    """One operator-facing line naming what ``migrate`` actually did."""
     if outcome.applied:
         parts = [
             f"applied v{outcome.from_version} -> v{outcome.to_version} "
@@ -882,19 +622,7 @@ def _migrate_report(outcome: MigrationOutcome) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse ``argv`` and dispatch to the right subcommand (module docstring).
-
-    ``run`` now composes and drives the runtime via :func:`_dispatch_run` (module docstring —
-    replaces the former unconditional ``return 0``); every other subcommand performs its real
-    action directly and prints a short human-readable report.
-
-    Returns:
-        ``0`` on success; ``1`` on a refusal this function or :func:`_dispatch_run` decided
-        (e.g. ``restore-drill`` against a live ``environment_label``, or ``run`` against an
-        unapproved config) — an underlying operations function's own exception is NOT caught
-        here and propagates, except inside :func:`_dispatch_run` itself (that function's own
-        docstring explains its one deliberate broad catch).
-    """
+    """Parse ``argv`` and dispatch to the right subcommand (module docstring)."""
     args = parse_args(argv)
 
     if isinstance(args, Args):
@@ -954,16 +682,10 @@ def main(argv: list[str] | None = None) -> int:
     if isinstance(args, AckAlertArgs):
         return _dispatch_ack_alert(args)
 
-    if isinstance(args, NontradeEvalArgs):
-        return _dispatch_nontrade_eval(args)
-
-    # isinstance(args, PrintDigestsArgs) — the only remaining case.
     observation = observe_runtime_artifact()
     sys.stdout.write(print_digests_text(observation))
     return 0
 
 
-# `python -m tos_runtime.compose.cli …` (#961): without this guard the module only defined `main`
-# and exited 0 having done nothing — a `write-standing-approval` that "succeeded" and wrote no file.
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

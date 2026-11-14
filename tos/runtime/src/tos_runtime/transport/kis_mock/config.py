@@ -1,76 +1,4 @@
-"""``KisMockTransportConfig`` — fail-closed boot config for the KIS MOCK stock transport
-(plan ``docs/plans/2026-09-10-tos-kis-mock-transport-plan.md`` §2 결정 1/4/5/9).
-
-Mirrors :mod:`tos_runtime.compose._egress_coordinates`'s own boot-refusal mechanism (same
-module's docstring: "every field is a named-TBD ``null``... a still-null field refuses
-composition at startup, fail-closed, never a silent default") over a flatter YAML shape, the
-same style :mod:`tos_runtime.custody.file_custody`'s manifest loader uses.
-
-**Host seal (decision 5).** ``endpoint_rest_base`` must equal the INSTANCE MOCK_VTS document's
-own ``_kis.endpoints.rest_base`` literal *exactly* — the loader takes the INSTANCE's mock and
-real ``rest_base`` strings as caller-supplied facts (``instance_mock_rest_base`` /
-``instance_real_rest_base``) rather than reading the broker-capability-profile YAML itself
-(this package does not import ``docs/`` — that binding is the caller's job, kept out of this
-firewalled distribution). A config whose ``endpoint_rest_base`` differs from the MOCK document,
-or matches the REAL_PROD document, refuses to load — a config value cannot re-point this
-transport at a live host, no matter what an operator (or an attacker with write access to the
-config file) sets it to. The REAL-host exclusion compares normalized hosts
-(:func:`tos_runtime.transport.endpoint.real_host_problem`, #932 final review MEDIUM): the REAL
-hostname in any spelling — case, trailing ``/``, implicit port, trailing-dot FQDN — is refused,
-both as the config value and as the MOCK document's own fact.
-
-**``V``-prefix + shape rule (decision 5, review disposition F7).** KIS's own TR-id convention
-prefixes every 모의(paper) order TR with ``V`` (``VTTC0011U``/``VTTC0012U``, N-17 memo) and every
-실전(real) one with ``T`` (``TTTC0011U``/``TTTC0012U``); futures 야간(night) real TRs use
-``STTN``/``CTF*`` prefixes (``shared/execution/tr_ids.py``, cited by the N-17 collation memo).
-Every one of these observed ids is exactly nine characters, shaped 1 letter + 3 letters + 4
-digits + 1 letter (``VTTC0012U`` = ``V``+``TTC``+``0012``+``U``; ``STTN1101U`` =
-``S``+``TTN``+``1101``+``U``; ``CTFO6118R`` = ``C``+``TFO``+``6118``+``R`` — verified against
-the official SDK oracle, ``open-trading-api/examples_llm/domestic_stock/order_cash/
-order_cash.py:103-118``, and the N-17 memo's further real-order/real-night observations).
-``tr_id_buy``/``tr_id_sell`` must match ``^V[A-Z]{3}\\d{4}[A-Z]$`` exactly (case-sensitive, no
-normalization) — refused outright (with a specific message) if they start with ``T``, ``STTN``,
-or ``CTF``, and refused (generically, "TR id shape") for any other deviation from that nine-
-character shape. A config cannot smuggle a real-order TR id, nor a malformed one, past this
-loader by construction.
-
-**``static_body_fields`` + the nine-field coverage check (review disposition F1).** KIS's
-``order_cash`` body needs exactly nine fields (N-17 memo). Four are per-attempt kernel facts
-named through ``field_map``; the other five (``ACNT_PRDT_CD``, ``ORD_DVSN``,
-``EXCG_ID_DVSN_CD``, ``SLL_TYPE``, ``CNDT_PRIC``) are per-deployment constants with no sealed
-source at all, named through ``static_body_fields`` (KIS wire field name -> literal value). The
-union of ``field_map``'s values and ``static_body_fields``'s keys must equal exactly this
-module's own copy of :data:`~tos_runtime.transport.kis_mock.codec.KIS_ORDER_CASH_WIRE_FIELDS`
-(duplicated here, not imported, to keep this module stdlib-only — see the Firewall note below;
-``test_config.py::test_a_fully_valued_config_loads`` is the drift canary) — a config missing or
-adding a field refuses to load, before this transport ever reaches the network.
-
-**``mode: live`` is refused unless the caller attests ``codec_bound=True`` (review disposition
-F1/F6, T2 lane A follow-up).** By DEFAULT, the compose context resolver binds
-``EgressRequestRecord.request_bytes_digest``/``SendBoundaryContext.capsule_egress_request_digest``
-to :class:`~tos_runtime.compose._request_digest.CapsuleStandInDigest` — a documented STAND-IN
-(:mod:`tos_runtime.compose._egress_coordinates` module docstring, :mod:`tos_runtime.compose.
-_request_digest` module docstring), never a hash of real KIS wire bytes — so a live send's own
-digest check (:mod:`tos_runtime.transport.kis_mock.adapter`) would deterministically mismatch
-every attempt under that default wiring, regardless of how correct this transport is. T2 lane A
-landed the seam that closes this gap (:class:`~tos_runtime.compose._request_digest.
-KisWireCodecDigest`, built over :meth:`~tos_runtime.transport.kis_mock.codec.KisOrderWireCodec.
-encode_fields` — see ``codec.py``'s own module docstring), but binding it into the DEFAULT
-compose wiring is a later lane's job (compose ``--transport kis-mock``). So this loader still
-refuses ``mode: live`` UNLESS the caller explicitly passes ``codec_bound=True`` to
-:func:`load_kis_mock_transport_config` — an attestation that the compose root the caller is
-about to run actually wired ``KisWireCodecDigest`` (never inferred, never a config-file field:
-the config file cannot see its own compose wiring, so this is a caller-supplied fact, exactly
-like ``instance_mock_rest_base``/``instance_real_rest_base`` below). The default,
-``codec_bound=False``, preserves T1's unconditional refusal exactly.
-
-Firewall: stdlib (``dataclasses``, ``pathlib``, ``re``, ``urllib.parse``) + ``pyyaml`` only — no
-``tos``/``tos_runtime`` sibling import (this module has nothing to seal against yet; the seal
-comparison lives in :mod:`tos_runtime.transport.kis_mock.adapter`, which does import ``tos``, and
-the shared wire codec lives in :mod:`tos_runtime.transport.kis_mock.codec`). No
-``os.environ``/``os.getenv`` anywhere (TOS-FW-C, D1.1 config row — every path/fact here is
-caller-supplied or file-sourced, never ambient).
-"""
+"""``KisMockTransportConfig`` — fail-closed boot config for the KIS MOCK stock transport"""
 
 from __future__ import annotations
 
@@ -93,34 +21,16 @@ __all__ = [
     "load_kis_mock_transport_config",
 ]
 
-#: The only two boot modes the dataclass's type admits (decision 9); the loader below refuses
-#: ``live`` unconditionally regardless (module docstring "mode: live is unconditionally
-#: refused").
 _VALID_MODES = ("dry_run", "live")
 
-#: KIS's own TR-id prefix convention (module docstring). ``V`` is the ONLY admitted prefix for
-#: this MOCK-only transport; the other three are explicitly real-order/real-night prefixes and
-#: are named here so a rejection can say exactly which real-order convention was caught, rather
-#: than a bare shape-mismatch message.
 _FORBIDDEN_TR_PREFIXES = ("T", "STTN", "CTF")
 
-#: The exact KIS mock order TR id shape (review F7 — module docstring's citation): 'V' + 3
-#: letters + 4 digits + 1 letter, e.g. ``VTTC0012U``. Case-sensitive — KIS never lower-cases a
-#: TR id, so this pattern does not either.
 _TR_ID_PATTERN = re.compile(r"^V[A-Z]{3}\d{4}[A-Z]$")
 
-#: The closed set of per-attempt kernel-side values ``field_map`` may name as a source (review
-#: F2 — ``account`` reads the SEALED outbound coordinate ``SendSeal.account``, never a
-#: custody-loaded value; see :mod:`tos_runtime.transport.kis_mock.codec`'s own module docstring
-#: for the full account-sourcing rationale). A config that names any other source string is
-#: refused at load time rather than failing later inside a send.
 DYNAMIC_FIELD_SOURCES: frozenset[str] = frozenset(
     {"account", "instrument", "quantity", "price"}
 )
 
-#: This module's own copy of :data:`tos_runtime.transport.kis_mock.codec.KIS_ORDER_CASH_WIRE_FIELDS`
-#: — duplicated, not imported, so this loader stays stdlib-only (module docstring). Keep the two
-#: literals in sync; ``test_config.py::test_a_fully_valued_config_loads`` is the drift canary.
 KIS_ORDER_CASH_WIRE_FIELDS: frozenset[str] = frozenset(
     {
         "CANO",
@@ -135,36 +45,16 @@ KIS_ORDER_CASH_WIRE_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-#: The template's reserved not-yet-filled placeholder — the SAME token
-#: ``tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`` names, duplicated here (never imported)
-#: per this module's own stdlib-only firewall discipline (module docstring): an operator
-#: typing this literal into a free string field (``order_path``/``token_path``/a
-#: ``static_body_fields`` value) must never be sealed in as a real value the way a bare
-#: ``null`` already refuses. ``mode``/``endpoint_rest_base``/``tr_id_buy``/``tr_id_sell``/
-#: ``field_map`` values need no separate check here — each is already gated by a closed
-#: set, an exact-equality host seal, or a regex shape check that "TBD" fails on its own.
 _TBD_STR = "TBD"
 
 
 class KisMockTransportConfigError(Exception):
-    """The KIS MOCK transport config is missing, malformed, still named-TBD, or names an
-    unrecognized/forbidden value — fail-closed at load, never a silent default."""
+    """The KIS MOCK transport config is missing, malformed, still named-TBD, or names an"""
 
 
 @dataclass(frozen=True)
 class KisMockTransportConfig:
-    """The fully-valued, fail-closed-loaded KIS MOCK transport config (plan §2 결정 1; review
-    disposition F1).
-
-    ``field_map`` keys are per-attempt kernel-side value names drawn from
-    :data:`DYNAMIC_FIELD_SOURCES`; values are the KIS wire body field names they populate
-    (e.g. ``{"instrument": "PDNO", "quantity": "ORD_QTY"}``). ``static_body_fields`` covers the
-    remaining KIS ``order_cash`` fields that have no per-attempt kernel source at all
-    (``ACNT_PRDT_CD``, ``ORD_DVSN``, ``EXCG_ID_DVSN_CD``, ``SLL_TYPE``, ``CNDT_PRIC`` —
-    per-deployment constants, KIS wire field name -> literal value). Together the two must cover
-    exactly :data:`KIS_ORDER_CASH_WIRE_FIELDS` — see the module docstring's "nine-field coverage
-    check".
-    """
+    """The fully-valued, fail-closed-loaded KIS MOCK transport config (plan §2 결정 1; review"""
 
     mode: Literal["dry_run", "live"]
     endpoint_rest_base: str
@@ -174,16 +64,8 @@ class KisMockTransportConfig:
     tr_id_sell: str
     field_map: Mapping[str, str]
     static_body_fields: Mapping[str, str]
-    #: The integer scale the sealed price is expressed in (100 for every CP-3 tree, which
-    #: prices off ``close_x100``). ``ORD_UNPR`` is ``price / price_scale`` — see
-    #: :mod:`tos_runtime.transport.kis_mock.codec`. Required, no default: an unscaled send of a
-    #: ×100 price is a 100× order price.
     price_scale: int
-    #: Least spacing, start to start, between two requests on this app key — every request,
-    #: not only order POSTs (issue #970: the key's one
-    #: :class:`~tos_runtime.transport.kis_mock.pacer.KisAppKeyPacer`). The name predates that.
     min_send_interval_ms: int
-    #: Longest one request may wait for its pacer slot before it is refused unsent (#970).
     app_key_request_wait_budget_ms: int
     token_reissue_min_interval_s: int
     request_timeout_s: float
@@ -248,17 +130,7 @@ def _require_bool(raw: Any, field: str, path: Path) -> bool:
 def _require_str_mapping(
     raw: Any, field: str, path: Path, *, allow_empty_value: bool = False
 ) -> dict[str, str]:
-    """Require ``raw[field]`` to be a non-empty mapping of non-empty string keys to string
-    values.
-
-    Args:
-        allow_empty_value: When ``False`` (``field_map`` — a KIS wire field name can never be
-            empty), an empty-string value is refused exactly like ``null``. When ``True``
-            (``static_body_fields`` — KIS's own ``SLL_TYPE``/``CNDT_PRIC`` are legitimately
-            ``""`` per the official SDK's own default, ``order_cash.py``'s ``sll_type: str =
-            ""``), only ``None`` (named-TBD) is refused; an explicit empty string is a
-            concrete, attested value, not a placeholder.
-    """
+    """Require ``raw[field]`` to be a non-empty mapping of non-empty string keys to string"""
     block = _require_present(raw, field, path)
     if not isinstance(block, dict) or not block:
         raise KisMockTransportConfigError(
@@ -343,16 +215,12 @@ def _validate_endpoint(
     allow_plaintext_for_tests: bool,
     path: Path,
 ) -> None:
-    if (
-        instance_real_rest_base is None
-    ):  # runtime guard for a caller ignoring the type hint
+    if instance_real_rest_base is None:
         raise KisMockTransportConfigError(
             "REAL rest_base must be known (instance_real_rest_base was None) to be excluded — "
             "a caller that cannot state the REAL_PROD host cannot honestly prove this config "
             "excludes it (review F3)"
         )
-    # Normalized REAL-host exclusion (#932 final review MEDIUM): a REAL host spelled
-    # differently (trailing "/", case, implicit port, trailing-dot FQDN) is still the REAL host.
     problem = real_host_problem(
         endpoint_rest_base,
         instance_mock_rest_base=instance_mock_rest_base,
@@ -381,9 +249,7 @@ def _validate_endpoint(
 
 
 def _read_yaml_mapping(path: Path) -> dict[str, Any]:
-    """Read + parse ``path`` as a top-level YAML mapping — the first three fail-closed checks
-    every loader in this codebase performs before touching any individual field (mirrors
-    :mod:`tos_runtime.compose._egress_coordinates`'s own loader shape)."""
+    """Read + parse ``path`` as a top-level YAML mapping — the first three fail-closed checks"""
     if not path.is_file():
         raise KisMockTransportConfigError(
             f"KIS MOCK transport config file not found: {path}"
@@ -432,35 +298,7 @@ def load_kis_mock_transport_config(
     instance_real_rest_base: str,
     codec_bound: bool = False,
 ) -> KisMockTransportConfig:
-    """Load + fail-closed-validate the KIS MOCK transport config from ``path``.
-
-    Args:
-        path: The config file (shaped like
-            ``tos/runtime/config/kis_mock_transport.example.yaml``).
-        instance_mock_rest_base: The INSTANCE MOCK_VTS document's own
-            ``_kis.endpoints.rest_base`` literal — the one value ``endpoint_rest_base`` is
-            allowed to equal.
-        instance_real_rest_base: The INSTANCE REAL_PROD document's own ``rest_base`` — REQUIRED
-            (review F3: a caller that cannot state this cannot honestly exclude it), and must
-            differ from ``instance_mock_rest_base``.
-        codec_bound: The caller's own attestation that the compose root about to run this
-            config actually wired :class:`~tos_runtime.compose._request_digest.KisWireCodecDigest`
-            as its ``request_bytes_digest_source`` (T2 lane A — module docstring). ``False``
-            (the default) preserves the unconditional ``mode: live`` refusal; only an explicit
-            ``True`` admits ``mode: live`` past this check.
-
-    Returns:
-        The fully-valued config.
-
-    Raises:
-        KisMockTransportConfigError: The file is missing/unreadable/not valid YAML/not a
-            mapping, an entry is absent or still ``null`` (named-TBD), ``mode`` is ``"live"``
-            and ``codec_bound`` is not ``True`` (module docstring), a TR id carries a real-order
-            prefix or does not match the mock TR id shape, ``endpoint_rest_base`` does not match
-            the MOCK instance (or matches the REAL one), ``instance_real_rest_base`` is ``None``
-            or equals ``instance_mock_rest_base``, or ``field_map``/``static_body_fields`` name
-            an unrecognized source or do not cover exactly the nine KIS wire fields.
-    """
+    """Load + fail-closed-validate the KIS MOCK transport config from ``path``."""
     raw = _read_yaml_mapping(path)
 
     mode = _require_str(raw, "mode", path)

@@ -1,11 +1,4 @@
-"""decision_binding_exact + no_decision_union — exact binding / no widen (design #19 §5.4; VTG-EV-006).
-
-Every stage binds the same exact decision identity; a mutated field breaks the chain; a shape
-maps to exactly one decision (no union / widen).
-
-Regime tag: predicate / model substrate only; VTG-EV-006 NOT_IMPLEMENTED (`/3` + Security
-residue); EV-L1-complete claim forbidden.
-"""
+"""decision_binding_exact + no_decision_union — exact binding / no widen (design #19 §5.4; VTG-EV-006)."""
 
 from __future__ import annotations
 

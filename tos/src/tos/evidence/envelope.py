@@ -1,41 +1,4 @@
-"""Safety Evidence Envelope (design #4 §2.1, template SoT).
-
-Models ``SAFETY-EVIDENCE-ENVELOPE-template.yaml`` (111 lines). Field layers
-(design §2.1, used by the §3.3 digest coverage):
-
-* **Layer-0 (identity/meta, self-excluded)**: ``evidence_record_id``,
-  ``idempotency_id``, ``status``, ``canonicalization_version``, ``canonical_digest``.
-  Identity is NOT derived from the digest (design #4 §3.1/§2.1) so that a §12
-  same-id/different-bytes conflict stays representable and detectable.
-* **Layer-1 (covered)**: ``record_class``, ``record_outcome``, ``schema_id``/
-  ``schema_version``, the EIP reference triple, ``source``, ``scope``,
-  ``subjects``, ``causality``, ``payload``, ``time_evidence``, ``lifecycle``, and
-  ``authority_effect``.
-* **Layer-2 / ledger-placement (self-excluded)**: the whole ``integrity`` block
-  (``predecessor_commitment``/``segment_id`` are decided by ledger placement, and
-  ``evidence_commit_receipt_id`` is issued *after* the record — design §2.1 note),
-  and the derived correction back-reference (see below).
-
-**Interpretations (design deviations, reported):**
-
-1. The inherited ``canonical_digest`` (Layer-0) is the envelope's own canonical
-   *record* digest over Layer-1 — the role design §3.2/§4.2 calls the record's
-   ``canonical_payload_digest``. The template's ``payload.canonical_payload_digest``
-   / ``payload.raw_payload_digest`` stay as covered references to the external
-   payload artifact. Because the payload digests are covered, the record digest
-   changes iff any covered field changes, so keying the §12 conflict predicate on
-   ``(evidence_record_id, canonical_digest)`` is at least as sensitive as keying
-   on the payload digest (design §4.2 intent preserved).
-2. ``lifecycle.corrected_by_record_id`` is **not stored**: design §2.0 states the
-   correction back-reference is derived by a forward ledger scan and that writing
-   it onto the original would violate append-only. It is therefore omitted from
-   the stored model and computed by
-   :func:`tos.evidence.predicates.corrected_by`; the authoritative correction
-   link is the correcting record's ``supersedes_record_id`` + a ``CORRECTION``
-   causal link.
-
-Pure module: ``pydantic`` + stdlib only; no ``shared.*`` (design §0.3).
-"""
+"""Safety Evidence Envelope (design #4 §2.1, template SoT)."""
 
 from __future__ import annotations
 
@@ -45,8 +8,8 @@ from tos.canonical import FrozenModel
 from tos.evidence._base import AllFalseFlags, EvidenceArtifact
 from tos.evidence.elements import CausalLink, DurabilityClass
 
-_ENVELOPE_RECORD_OUTCOME_DEFAULT = "AMBIGUOUS"  # template line 5 (conservative)
-_ENVELOPE_CONFIDENTIALITY_DEFAULT = "RESTRICTED"  # template line 79
+_ENVELOPE_RECORD_OUTCOME_DEFAULT = "AMBIGUOUS"
+_ENVELOPE_CONFIDENTIALITY_DEFAULT = "RESTRICTED"
 
 
 class EnvelopeSource(FrozenModel):
@@ -76,12 +39,7 @@ class EnvelopeScope(FrozenModel):
 
 
 class EnvelopeSubjects(FrozenModel):
-    """Subject identifiers this record is about (template lines 32-65).
-
-    All optional (``null`` in the template). ``decision_context_capsule_id`` /
-    ``context_generation`` carry the design #2 capsule as a **scalar reference**
-    only — the capsule model class is never imported (design #4 §0.3/§3.1).
-    """
+    """Subject identifiers this record is about (template lines 32-65)."""
 
     intent_id: str | None = None
     transmission_attempt_id: str | None = None
@@ -119,11 +77,7 @@ class EnvelopeSubjects(FrozenModel):
 
 
 class Causality(FrozenModel):
-    """Causal edges + authoritative-revision reconciliation (template lines 67-71).
-
-    ``causal_links`` carries typed :class:`CausalLink` edges (design §2.5 A);
-    time is never a causal edge.
-    """
+    """Causal edges + authoritative-revision reconciliation (template lines 67-71)."""
 
     correlation_id: str | None = None
     causal_links: tuple[CausalLink, ...] = ()
@@ -132,12 +86,7 @@ class Causality(FrozenModel):
 
 
 class Payload(FrozenModel):
-    """Payload content references (template lines 73-80).
-
-    ``raw_payload_digest`` (raw) and ``canonical_payload_digest`` (canonical) are
-    references to the external payload artifact — never the raw credential/key/
-    token itself (design §4.7 ERI-INV-013 structural realization).
-    """
+    """Payload content references (template lines 73-80)."""
 
     content_type: str | None = None
     raw_payload_digest: str | None = None
@@ -159,14 +108,7 @@ class TimeEvidence(FrozenModel):
 
 
 class Integrity(FrozenModel):
-    """Signature + ledger-placement block (template lines 89-94, design §2.1 note).
-
-    Excluded from the record digest preimage: ``predecessor_commitment`` /
-    ``segment_id`` are decided by ledger placement (§2.4 segment commitment), and
-    ``evidence_commit_receipt_id`` is a Layer-2 reference issued after the record.
-    The MAC's cryptographic verification is EV-L2+ (key custody); the model only
-    carries the field's presence/structure (design §3.4 honest-scope).
-    """
+    """Signature + ledger-placement block (template lines 89-94, design §2.1 note)."""
 
     source_signature_or_mac: str | None = None
     integrity_key_id: str | None = None
@@ -176,12 +118,7 @@ class Integrity(FrozenModel):
 
 
 class Lifecycle(FrozenModel):
-    """Lifecycle block (template lines 96-100; ``corrected_by_record_id`` omitted).
-
-    ``corrected_by_record_id`` is a derived forward-scan back-reference and is not
-    stored (design §2.0); ``supersedes_record_id`` is the authoritative forward
-    supersession link (covered).
-    """
+    """Lifecycle block (template lines 96-100; ``corrected_by_record_id`` omitted)."""
 
     durability_class: DurabilityClass = DurabilityClass.DENY_IF_UNSPECIFIED
     retention_class: str | None = None
@@ -200,12 +137,7 @@ class EnvelopeAuthorityEffect(AllFalseFlags):
 
 
 class SafetyEvidenceEnvelope(EvidenceArtifact):
-    """An immutable, append-only Safety Evidence Envelope (design #4 §2.1).
-
-    Digest-verified (``canonical_digest == H_ver(canonicalize(Layer-1))``) with an
-    **independent** ``evidence_record_id`` (globally unique, stable across
-    retry/replication/export/replay) and ``idempotency_id``. Use :meth:`issue`.
-    """
+    """An immutable, append-only Safety Evidence Envelope (design #4 §2.1)."""
 
     _ID_FIELD: ClassVar[str] = "evidence_record_id"
     _REQUIRED_COVERED: ClassVar[tuple[str, ...]] = (
@@ -248,12 +180,9 @@ class SafetyEvidenceEnvelope(EvidenceArtifact):
         }
     )
 
-    # ---- Layer-0 identity (independent; excluded from the digest, §2.1) --------
-    # canonical_digest / status / canonicalization_version inherited.
     evidence_record_id: str | None = None
     idempotency_id: str | None = None
 
-    # ---- Layer-1 covered content ----
     record_class: str | None = None
     record_outcome: str = _ENVELOPE_RECORD_OUTCOME_DEFAULT
     schema_id: str | None = None
@@ -270,5 +199,4 @@ class SafetyEvidenceEnvelope(EvidenceArtifact):
     lifecycle: Lifecycle = Lifecycle()
     authority_effect: EnvelopeAuthorityEffect = EnvelopeAuthorityEffect()
 
-    # ---- Layer-2 / ledger-placement (excluded from the digest) ----
     integrity: Integrity = Integrity()

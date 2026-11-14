@@ -1,14 +1,4 @@
-"""3-axis coordinate non-collapse (design #9 §4.2; #6 §4.7 / #8 §0.4e precedent).
-
-recon ``FieldConfidenceClass`` (per-field evidence confidence) is a distinct axis from
-orthostate ``KnowledgeState`` (per-action aggregate knowledge) and capsule ``FieldState``
-(per-field context freshness). The three deliberately SHARE the tokens
-``UNKNOWN`` / ``CONFLICTED`` / ``STALE`` (ADR uses the same words per-field and
-per-action), so non-collapse rests on **distinct types + non-import**, not on global
-string distinctness. This is a **test-only** cross-import (recon does not import the other
-two at runtime — verified by the import-closure test); it document-locks the axis
-distinctness as a regression.
-"""
+"""3-axis coordinate non-collapse (design #9 §4.2; #6 §4.7 / #8 §0.4e precedent)."""
 
 from __future__ import annotations
 
@@ -41,7 +31,7 @@ def test_field_confidence_class_has_no_reconciled() -> None:
     """(§2.2) Per-field confidence tops out at CORROBORATED — RECONCILED is the aggregate axis."""
     members = {m.value for m in FieldConfidenceClass}
     assert "RECONCILED" not in members
-    assert "RECONCILED" in {m.value for m in KnowledgeState}  # aggregate axis owns it
+    assert "RECONCILED" in {m.value for m in KnowledgeState}
 
 
 def test_axes_are_three_separate_types() -> None:

@@ -1,14 +1,4 @@
-"""consumption_transition — single-use consumption state machine (design #15 §6.2; IAP-EV-005 substrate, predicate-only).
-
-The state-machine property (§12 line 306-314): registration -> consumption -> spent.
-ELIGIBLE + current APPROVE + equivalent envelope => CONSUMED + one record; a duplicate identical
-command => same record (idempotent); a conflicting command => reject; a distinct second
-consumption => reject (single-use, at most one Intent). No revival path (a CONSUMED decision never
-returns to ELIGIBLE). Uses classify_record_pair REUSE for the duplicate-vs-conflict distinction.
-
-Regime tag: predicate / model substrate only; IAP-EV-005 NOT_IMPLEMENTED (real linearizable
-serialization / writer-fence is +Security runtime, §12 line 316); EV-L1-complete claim forbidden.
-"""
+"""consumption_transition — single-use consumption state machine (design #15 §6.2; IAP-EV-005 substrate, predicate-only)."""
 
 from __future__ import annotations
 
@@ -37,11 +27,6 @@ def _consume(**overrides: object) -> tuple[ConsumptionStatus, ConsumptionOutcome
     return consumption_transition(**base)  # type: ignore[arg-type]
 
 
-# ---------------------------------------------------------------------------
-# registration -> consumption (ELIGIBLE branch)
-# ---------------------------------------------------------------------------
-
-
 def test_first_consumption_consumes() -> None:
     """(§12 line 306-309, positive side) ELIGIBLE + current APPROVE + equivalent envelope => CONSUMED_NEW."""
     status, outcome = _consume()
@@ -68,11 +53,6 @@ def test_stale_or_nonequivalent_does_not_consume() -> None:
         status, outcome = _consume(**kwargs)
         assert status is ConsumptionStatus.ELIGIBLE
         assert outcome is ConsumptionOutcome.REJECTED_INELIGIBLE
-
-
-# ---------------------------------------------------------------------------
-# consumption -> spent (CONSUMED branch): duplicate / conflict / reuse
-# ---------------------------------------------------------------------------
 
 
 def test_duplicate_identical_is_idempotent_same_record() -> None:
@@ -125,11 +105,6 @@ def test_reuse_with_missing_digest_fails_closed_to_reject() -> None:
     )
     assert status is ConsumptionStatus.CONSUMED
     assert outcome is ConsumptionOutcome.REJECTED_REUSE
-
-
-# ---------------------------------------------------------------------------
-# state-machine properties (§12) — at most one consumption, no revival
-# ---------------------------------------------------------------------------
 
 
 @given(
@@ -191,11 +166,10 @@ def test_second_consumption_creates_no_new_intent() -> None:
     """(§12 / IAP-INV-006) After a first CONSUMED_NEW, no further command yields another CONSUMED_NEW."""
     status, outcome = _consume()
     assert outcome is ConsumptionOutcome.CONSUMED_NEW
-    # Any subsequent attempt (identical, conflicting, or distinct) is never a fresh CONSUMED_NEW.
     for cmd_id, cmd_digest in (
-        ("cmd-1", "cmd-digest-1"),  # identical -> replay
-        ("cmd-1", "OTHER"),  # conflict
-        ("cmd-9", "cmd-digest-9"),  # distinct reuse
+        ("cmd-1", "cmd-digest-1"),
+        ("cmd-1", "OTHER"),
+        ("cmd-9", "cmd-digest-9"),
     ):
         _, next_outcome = _consume(
             current_status=status,

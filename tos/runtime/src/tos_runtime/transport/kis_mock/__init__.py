@@ -1,11 +1,4 @@
-"""The KIS 모의투자(paper) stock-order transport (plan
-``docs/plans/2026-09-10-tos-kis-mock-transport-plan.md``, slice T1).
-
-Re-exports the public surface of this package's three modules
-(:mod:`~tos_runtime.transport.kis_mock.config`, :mod:`~tos_runtime.transport.kis_mock.client`,
-:mod:`~tos_runtime.transport.kis_mock.adapter`) so a caller (T2's compose root, or a test) can
-``from tos_runtime.transport.kis_mock import KisMockTransport`` directly.
-"""
+"""The KIS 모의투자(paper) stock-order transport (plan"""
 
 from __future__ import annotations
 

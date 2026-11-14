@@ -1,10 +1,4 @@
-"""Capacity -> capability binding + claim nonce-once (RCLP-EV-006 L1; §6.4).
-
-A capability authorization is valid only when bound to an already-committed
-reservation revision, exact worst-case effect coverage, current generations, and no
-dominating restriction — with claim nonce consumed exactly once. Send boundary /
-egress is deferred (§0.2).
-"""
+"""Capacity -> capability binding + claim nonce-once (RCLP-EV-006 L1; §6.4)."""
 
 from __future__ import annotations
 
@@ -157,9 +151,6 @@ def test_empty_applicable_dimensions_rejected() -> None:
         )
         is False
     )
-
-
-# ---- claim nonce-once (ADR-012 §12 line 340-343) ---------------------------
 
 
 def test_first_claim_consumes_nonce() -> None:

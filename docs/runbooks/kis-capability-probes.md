@@ -10,7 +10,9 @@
 - **근거**: 실행 계획 `docs/plans/2026-07-29-tos-phase0-p02-execution-plan.md` §1 T2 ·
   프로브 정본 `docs/plans/2026-07-29-tos-broker-capability-profile-kis-draft.md` §5
 - **대상 INSTANCE**: `docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml`
-- **대상 bound**: `tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml`
+- **대상 bound**: `VERIFICATION-PROFILE-002.yaml` — 2026-11-13 에 `tos-spec/` 과 함께
+  은퇴했다(`docs/plans/2026-11-13-tos-code-halving-plan.md` §S3). 측정값의 현재 귀착지는
+  위 INSTANCE 뿐이다.
 
 ---
 
@@ -1551,4 +1553,4 @@ python -m tools.broker_probes.run P-BAL --asset stock --env real
 - 설계 #10 (bounds 10-bullet 열거 `:1168-1171`): `docs/plans/2026-07-25-tos-broker-capability-design.md`
 - 인간 게이트 레지스터 (P0-2 행): `docs/plans/2026-07-29-tos-phase0-human-gate-register.md:50`
 - INSTANCE: `docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml`
-- bounds: `tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml`
+- bounds: `VERIFICATION-PROFILE-002.yaml` (2026-11-13 은퇴 — git 이력)

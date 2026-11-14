@@ -1,6 +1,4 @@
-"""tos_runtime.venue.service.VenueConstraintService — unit tests (hermetic,
-tmp_path only; fake session-phase / tick-generation readers, no mocks
-framework)."""
+"""tos_runtime.venue.service.VenueConstraintService — unit tests (hermetic,"""
 
 from __future__ import annotations
 
@@ -37,8 +35,7 @@ _ADMITTING_SHAPE = OrderShapeFields(
 
 
 class _FakeReader:
-    """A settable zero-arg reader double — mirrors
-    ``tos/runtime/tests/calendar/test_owner.py::_SteppingGeneration``."""
+    """A settable zero-arg reader double — mirrors"""
 
     def __init__(self, value):
         self.value = value
@@ -78,21 +75,11 @@ def _build_service(
     return service, phase_reader, generation_reader, loaded
 
 
-# ===========================================================================
-# construction — VENUE_POLICY_BOUND
-# ===========================================================================
-
-
 def test_construction_records_venue_policy_bound_once(
     tmp_path: Path, evidence_store: SqliteEvidenceStore
 ) -> None:
     _build_service(tmp_path, evidence_store)
     assert kind_count(evidence_store, VENUE_POLICY_BOUND_KIND) == 1
-
-
-# ===========================================================================
-# snapshot() caching
-# ===========================================================================
 
 
 def test_snapshot_same_tick_issues_one_evidence_row(
@@ -136,7 +123,7 @@ def test_snapshot_restart_constraint_generation_strictly_greater(
     tmp_path: Path, evidence_store: SqliteEvidenceStore, key_provider
 ) -> None:
     service, phase, gen, loaded = _build_service(tmp_path, evidence_store)
-    service.snapshot()  # the initial (REGULAR-phase) snapshot, superseded below
+    service.snapshot()
     phase.value = "CLOSED"
     gen.value = 2
     snap2 = service.snapshot()
@@ -173,11 +160,6 @@ def test_snapshot_absent_fields_recorded(
     assert snapshot.source_continuity_id is None
     assert snapshot.max_age is None
     assert snapshot.action_tradability == ()
-
-
-# ===========================================================================
-# decide()
-# ===========================================================================
 
 
 def test_decide_admissible_matches_kernel_fold(
@@ -236,8 +218,7 @@ def test_decide_inadmissible_closed_phase_matches_kernel_fold(
 def test_decide_unknown_null_bound_matches_kernel_fold(
     tmp_path: Path, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """Default fixture leaves ``max_quantity`` null — ``order_shape_admissible``
-    must come back UNKNOWN (module docstring's honest-absence discipline)."""
+    """Default fixture leaves ``max_quantity`` null — ``order_shape_admissible``"""
     service, _phase, _gen, loaded = _build_service(tmp_path, evidence_store)
     decision = service.decide(
         action_class=ActionClass.NEW_LONG,

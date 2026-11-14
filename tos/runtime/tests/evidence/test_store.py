@@ -1,8 +1,4 @@
-"""``SqliteEvidenceStore`` tests — fault contracts ②④⑤⑦ (design #40 §2 item 1).
-
-Test names are grouped by the fault-contract letter they exercise, matching
-the table in ``store.py``'s own module docstring.
-"""
+"""``SqliteEvidenceStore`` tests — fault contracts ②④⑤⑦ (design #40 §2 item 1)."""
 
 from __future__ import annotations
 
@@ -20,10 +16,6 @@ from tos_runtime.evidence.store import (
 
 from .._sqlite_plans import query_plans
 from .conftest import FixedKeyProvider
-
-# ============================================================================
-# basic append / replay / verify
-# ============================================================================
 
 
 def test_append_returns_receipt_with_seq_zero_for_first_entry(
@@ -59,12 +51,6 @@ def test_verify_or_raise_raises_evidence_corruption_on_wrong_key(
     store.append({"a": 1}, kind="TEST", record_class="TESTCLASS")
     with pytest.raises(EvidenceCorruption):
         store.verify_or_raise({1: b"wrong-key"})
-
-
-# ============================================================================
-# LOW-4 (2026-09-08 independent review) — verify_detailed distinguishes
-# "0 links, vacuously ok" from "N links, genuinely verified"
-# ============================================================================
 
 
 def test_verify_detailed_on_empty_store_is_ok_with_zero_verified_links(
@@ -126,26 +112,14 @@ def test_successful_rotate_leaves_exactly_one_marker_and_new_key_only_thereafter
     assert len(rotation_markers) == 1
     assert rotation_markers[0].key_generation == 2
 
-    # the post-rotation entry does NOT verify under the old key alone —
-    # it was signed under the new generation.
     assert store.verify({1: b"test-fixed-key-bytes"}) is False
     assert store.verify({1: b"test-fixed-key-bytes", 2: b"new-key-bytes"}) is True
-
-
-# ============================================================================
-# MEDIUM-3 (2026-09-08 independent review) — rotate() must be atomic
-# ============================================================================
 
 
 def test_rotate_is_atomic_a_failed_rotation_commit_leaves_generation_unchanged(
     store: SqliteEvidenceStore,
 ) -> None:
-    """Force the rotation-commit append itself to fail (read-only pragma, per
-    the reviewer's own repro) and prove the store's scheme/generation, its
-    verifiability under the OLD key, and its entry count are all untouched —
-    a failed rotate() must never leave a "new generation with no committed
-    marker" state (the bug this test guards against).
-    """
+    """Force the rotation-commit append itself to fail (read-only pragma, per"""
     store.append({"a": 1}, kind="TEST", record_class="TESTCLASS")
     entries_before = store.connection.execute(
         "SELECT COUNT(*) FROM entries"
@@ -167,14 +141,8 @@ def test_rotate_is_atomic_a_failed_rotation_commit_leaves_generation_unchanged(
     assert entries_after == entries_before, "no rotation-commit marker may exist"
     assert store.verify({1: b"test-fixed-key-bytes"}) is True
 
-    # the store must still be usable under the OLD key after the failed rotate
     receipt = store.append({"c": 3}, kind="TEST", record_class="TESTCLASS")
     assert receipt.key_generation == 1
-
-
-# ============================================================================
-# ② — same-seq reinsertion refused (PK)
-# ============================================================================
 
 
 def test_duplicate_seq_insertion_refused_by_primary_key(
@@ -190,11 +158,6 @@ def test_duplicate_seq_insertion_refused_by_primary_key(
         )
 
 
-# ============================================================================
-# append-only trigger — UPDATE/DELETE forbidden
-# ============================================================================
-
-
 def test_update_on_entries_is_rejected(store: SqliteEvidenceStore) -> None:
     store.append({"a": 1}, kind="TEST", record_class="TESTCLASS")
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
@@ -207,17 +170,10 @@ def test_delete_on_entries_is_rejected(store: SqliteEvidenceStore) -> None:
         store.connection.execute("DELETE FROM entries WHERE seq = 0")
 
 
-# ============================================================================
-# ④ — durable commit before/after crash
-# ============================================================================
-
-
 def test_last_committed_excluding_ignores_the_named_kinds(
     store: SqliteEvidenceStore,
 ) -> None:
-    """W3.1 independent review HIGH-1: a self-perturbing observer (a writer whose own
-    appends the SAME reader would otherwise see as tip advancement) needs a view of the
-    tip that excludes its own writes. ``last_committed_excluding`` is that view."""
+    """W3.1 independent review HIGH-1: a self-perturbing observer (a writer whose own"""
     store.append({"a": 1}, kind="OTHER", record_class="OTHERCLASS")
     seq_before_alert, digest_before_alert, _ = store.last_committed_excluding(
         frozenset({"ALERT"})
@@ -225,8 +181,6 @@ def test_last_committed_excluding_ignores_the_named_kinds(
     assert seq_before_alert == 0
 
     store.append({"a": 2}, kind="ALERT", record_class="ALERTCLASS")
-    # last_committed() (unfiltered) sees the ALERT row -- that is the flap this method
-    # exists to avoid for a caller wired against its own alert sink.
     unfiltered_seq, _, _ = store.last_committed()
     assert unfiltered_seq == 1
 
@@ -315,7 +269,6 @@ def test_append_after_a_crash_continues_the_chain_correctly(tmp_path: Path) -> N
     )
     with pytest.raises(InjectedCrash):
         crashing_store.append({"a": 1}, kind="TEST", record_class="TESTCLASS")
-    # the SAME instance is reused for the next append (no crash this time)
     crashing_store._crash_hook = None
     second_receipt = crashing_store.append(
         {"b": 2}, kind="TEST", record_class="TESTCLASS"
@@ -323,11 +276,6 @@ def test_append_after_a_crash_continues_the_chain_correctly(tmp_path: Path) -> N
     assert second_receipt.seq == 1
     assert crashing_store.verify({1: b"test-fixed-key-bytes"}) is True
     crashing_store.close()
-
-
-# ============================================================================
-# ⑦ — storage failure never yields a partial commit
-# ============================================================================
 
 
 def test_sqlite_failure_during_append_rolls_back_and_raises(
@@ -344,20 +292,13 @@ def test_sqlite_failure_during_append_rolls_back_and_raises(
         store.append({"b": 2}, kind="TEST", record_class="TESTCLASS")
     store._crash_hook = None
 
-    # the failed append never landed — the next append still gets seq=1, not 2
     receipt = store.append({"c": 3}, kind="TEST", record_class="TESTCLASS")
     assert receipt.seq == 1
     assert store.verify({1: b"test-fixed-key-bytes"}) is True
 
 
 class _RollbackFailingConnection:
-    """A thin proxy that forces ``ROLLBACK`` to raise, forwarding everything else.
-
-    LOW-6 (2026-09-08 independent review) test double: simulates a real
-    sqlite connection whose ``ROLLBACK`` statement itself fails, so the test
-    can prove the ORIGINAL commit-path exception still propagates instead of
-    being replaced by this one.
-    """
+    """A thin proxy that forces ``ROLLBACK`` to raise, forwarding everything else."""
 
     def __init__(
         self, real_conn: sqlite3.Connection, rollback_error: Exception
@@ -377,9 +318,7 @@ class _RollbackFailingConnection:
 def test_rollback_failure_does_not_mask_the_original_commit_error(
     store: SqliteEvidenceStore,
 ) -> None:
-    """Force BOTH the commit-path AND the rollback itself to fail; the
-    ORIGINAL error type must be what propagates, not the rollback failure's.
-    """
+    """Force BOTH the commit-path AND the rollback itself to fail; the"""
 
     class _OriginalCommitFailure(RuntimeError):
         pass
@@ -399,16 +338,9 @@ def test_rollback_failure_does_not_mask_the_original_commit_error(
     with pytest.raises(_OriginalCommitFailure) as exc_info:
         store.append({"x": 1}, kind="TEST", record_class="TESTCLASS")
 
-    # never the rollback failure's type
     assert not isinstance(exc_info.value, _RollbackFailure)
-    # the rollback failure is recorded, not silently dropped
     notes = getattr(exc_info.value, "__notes__", [])
     assert any("ROLLBACK also failed" in note for note in notes)
-
-
-# ============================================================================
-# scrubbing — plaintext secret never reaches the sqlite file bytes
-# ============================================================================
 
 
 def test_secret_fields_are_scrubbed_before_they_reach_the_raw_sqlite_file(
@@ -453,18 +385,10 @@ def test_non_secret_fields_are_not_scrubbed(store: SqliteEvidenceStore) -> None:
     store2.close()
 
 
-# ============================================================================
-# entry — ONE row by primary key (evidence growth plan §2 A2-b)
-# ============================================================================
-
-
 def test_entry_meta_fields_are_all_real_columns_of_the_entries_table(
     store: SqliteEvidenceStore,
 ) -> None:
-    """``_ENTRY_META_COLUMNS_SQL`` is derived from ``_EntryRow._fields``, which is only
-    correct while every meta field name is also a column name. Pin that against the schema
-    itself, so adding a field that is NOT a column is a red test here rather than an
-    ``OperationalError`` raised from whichever reader happens to run first."""
+    """``_ENTRY_META_COLUMNS_SQL`` is derived from ``_EntryRow._fields``, which is only"""
     columns = {
         row[1]
         for row in store.connection.execute("PRAGMA table_info(entries)").fetchall()
@@ -508,13 +432,7 @@ def test_entry_is_none_for_a_seq_no_row_carries(store: SqliteEvidenceStore) -> N
 def test_entry_seeks_the_primary_key_while_iter_entry_meta_scans(
     store: SqliteEvidenceStore,
 ) -> None:
-    """The point of :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.entry` is the
-    PLAN, not the return value — a one-row ``WHERE seq = ?`` that happened to be served by a
-    full table scan would return exactly the same row while keeping the ≥130 s cost the
-    evidence growth plan §2 A2-b exists to remove. So this pins both sides: ``entry`` seeks
-    the integer primary key and never scans; ``iter_entry_meta`` still scans, which is its
-    documented whole-table contract and the reason a per-row caller must not use it.
-    """
+    """The point of :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.entry` is the"""
     for index in range(5):
         store.append({"i": index}, kind="TEST", record_class="TESTCLASS")
 

@@ -36,8 +36,10 @@
 #
 # OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"): account_scope
 # (same value as venue_constraint_policy.yaml), then
-# `tos-runtime print-policy-digests --config-dir <dir>` → safety_activation.yaml
-# `members:` (kind ACTION_FLOW_POLICY).
+# `tos-runtime print-policy-digests --config-dir <dir>` (kind ACTION_FLOW_POLICY).
+# The printed line is a RECORD only since plan S2-a
+# (2026-11-13): `safety_activation.yaml` is deleted, so there is no `members:` list
+# to transcribe the digest into. Boot still records it in `*_POLICY_BOUND` evidence.
 # =============================================================================
 
 artifact_type: ACTION_FLOW_POLICY

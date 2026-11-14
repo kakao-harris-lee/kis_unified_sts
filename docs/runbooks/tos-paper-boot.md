@@ -14,7 +14,7 @@
 | §5 ①–⑤ | 2026-09-24 실측 차단 이력(정본 digest · 부팅 라벨 · HSE · 세션 게이트 · 방향 결속) |
 | §7.1 · §7.2 좌표 규율 · §7.2-a | 상주 결정의 배경 · 0700 패치 실측 |
 | §7.2-b (배경) · §7.2-c | tenant 경로 지정의 근거 · ③ 이전의 손 부팅 증명 절차 |
-| §7.2-d (해설) | 러너가 무엇을 바꿨나 · §3.6 대조 명령과 수용 기준 M5/M6/B3 · band 설계 |
+| §7.2-d (해설) | 러너가 무엇을 바꿨나 · 은퇴한 §3.6 대조 명령과 수용 기준 M5/M6/B3 · band 설계 |
 | §7.3 | 래퍼 `start` 가 하는 일(순서) · 드라이버 출처 |
 | §7.9 · §7.9-leaf · §7.9-held(증상) · §7.10 | 드라이런 기록 · 닫힌/열린 질문 · 종목 롤 측정 |
 
@@ -129,71 +129,17 @@ TENANT_PRODUCER_SESSION_DIR=$SESSION/producer \
   정상 정지(143)로 보이지 않는다. 그 파일이 **없는데** `timeout` 이 124 를 답했다면 런타임이
   적기 전에 SIGKILL 된 것이므로 정상 정지로 기록하지 않고 124 를 남긴다(WARN 한 줄).
 
-**세션 뒤 — §3.6 대조는 러너가 자동으로 돌린다**(step 14, 2026-10-29). 손으로 돌릴
-여섯 줄과 수용 기준(M5 · M6 · B3)은 이력 §7.2-d 에 그대로 있고, 자동 단계는 그 여섯
-줄을 **서브프로세스로 그대로** 돌린다(`tools/tos_cp3/post_session_b3.py` ·
-설정 `config/tos_cp3_b3.yaml`). 읽을 것 둘:
+**세션 뒤 — §3.6 B3 대조는 은퇴했다 (2026-11-13).** 레거시 Setup D 증인과의 장후
+대조(러너 step 14 · `tools/tos_cp3/post_session_b3.py` · `config/tos_cp3_b3.yaml` ·
+B2/B3 도구와 `tos` 쪽 B1b 러너)는 P2-b 동등성 측정이 끝나면서 삭제했다 — 선언형 생산
+경로가 레거시 경로와 626,745 셀 0 불일치로 같다는 측정(#1065 · #1066)이
+`docs/plans/2026-11-11-tos-platform-roadmap.md` §7 결정 3 이 건 조건이었다. 세션 디렉터리에
+`b3/` 는 더 생기지 않고, `sts tos status` 도 그 줄을 보여 주지 않는다. 그때의 실측
+(세 세션 409 봉 · unresolved 0 · divergent 0)과 선언된 차이 B1b-D1 의 해설은 이 파일의
+이력본(`docs/runbooks/tos-paper-boot-history.md` §7.2-d)과 git 이력에 그대로 있다.
 
-- `<session>/b3/report/summary.json` — **무엇을 봤나**. `unresolved.count` 와
-  `live_comparison.divergent` 가 §2-1 의 두 판정 수다. 이 파일을 쓰는 것은
-  `diff_decisions.py` 하나뿐이다.
-  - `summary_schema_version` **3 부터** `divergent` 가 「설명 안 되는 divergence」다
-    (2026-10-29). 선언된 차이는 `live_comparison.declared_difference_counts` 에
-    선언 id 별로, 대조에서 빼 둔 봉은 `live_comparison.excluded_bar_counts` 에
-    사유별로 따로 나온다 — 다섯 수(`identical` · `kind_only_matches` ·
-    선언 · `divergent` · `excluded_from_comparison`)의 합이 `bars_in_scope` 다.
-    v2 의 `divergent` 는 선언된 차이를 섞어 세므로 그 수로 §2-1 을 읽지 않는다.
-- `<session>/b3/status.json` — **돌았나**. 첫 단계 **전에** `verdict: running` 으로
-  쓰이고 끝에 원자적으로 교체되므로, `running` 이 남아 있으면 **끝내지 못한 것**이다
-  (예산 초과 · SIGKILL). `failed` 는 사유와 멈춘 단계(`stage`)를 싣고, `skipped` 는
-  설정이나 시장 때문에 돌리지 않은 것이다. 단계 로그는 `<session>/b3/logs/`.
-
-**실측 2026-10-29 (long-20261028 세션 · 잎은 그 세션 뒤의 콜드 백업 gen9).** 여섯 단계
-25.9 s, `summary.json` 409 봉 · **unresolved 0**.
-
-처음 그 실측의 `live_comparison.divergent` 는 **26/409** 였고, 그 26 건은 전부 이미
-기계가 읽을 수 있는 곳에 선언돼 있는데 대조가 그 곳을 읽지 않은 것이었다. 두 집합을
-읽게 한 뒤(2026-10-29) 세 세션 실측:
-
-| 세션 | 봉 | identical | 선언 B1b-D1 | 대조 제외 pre_boot | **divergent** |
-| --- | --- | --- | --- | --- | --- |
-| long-20261028 | 409 | 383 | 25 | 1 | **0** |
-| long-20261029 | 409 | 353 | 55 | 1 | **0** |
-| short-20261029 | 409 | 369 | 39 | 1 | **0** |
-
-- **B1b-D1** — 오프라인만 `capacity_denied` 이고 실시간은 아닌 봉. `tos.backtest` 는
-  한 scope 당 주문 하나를 run 내내 들고 있고(예약 투영에 release 경로가 없다) 첫 발사
-  뒤는 전부 정확한 capacity 거부라서 생기는 차이이고, B1b 가 자기 `lineage.json`
-  (`declared_differences`)에 그렇게 선언한다. **한 방향만**이다 — 실시간이 거부하고
-  오프라인이 아닌 경우는 이 차이가 아니고 divergent 로 남는다. 결정 종류까지 어긋나면
-  역시 divergent 다. lineage 가 그 id 를 선언하지 않으면 아무것도 재분류하지 않는다.
-  - ⚠ **선언된 한계**: 실시간의 **진짜 capacity 누수**(자기 예약을 들고 있는데 두 번째
-    노출을 허용)는 B3 에서 이 차이와 **구분되지 않는다** — `live.jsonl` 에 노출 상태가
-    없어 「release 돼서 거부 안 됨」과 「거부돼야 했는데 안 됨」을 가를 수 없다. B3 의
-    oracle 은 kickoff §3 B4(「체결 비교 포기」)대로 결정/의도 수준이고, 누수는 엔진 자신의
-    at-most-one-exposure 불변식이 잡는다.
-- **08:45 봉** — 부팅 시점에 이미 생산자 journal 에 있던 줄이라 설계상 boot 에서 stale
-  이고 엔진은 보류밖에 할 수 없다(`DECISION_WITHHELD` / `TIME_NOT_ADMITTED`). 러너의
-  `boot-journal-snapshot.json::pre_boot_raw_event_ids` 가 **id 로** 지목하는 봉만
-  빼고, 그 id 는 `consumed-ids.json` 이 실어 온다. 시각이나 순서로 빼지 않는다 —
-  **post-boot 의 `TIME_NOT_ADMITTED` 는 M5 ① stale 신호이고 그대로 센다**.
-  - **조건은 둘**: id 가 지목되고 **그 봉의 실시간 레코드가 보류 모양**
-    (`outcome_kind: NO_OUTCOME`)이어야 한다. 지목된 봉인데 실시간이 실제로 결정을 냈으면
-    그대로 대조하고 `live_comparison.pre_boot_bars_not_held_out` 에 id 를 남긴다.
-
-오프라인 분류(`bars` · `buckets` · `unresolved`)는 빼 둔 봉까지 409 봉 그대로다. 빠진
-것은 그 한 봉의 **실시간 대조**뿐이다.
-
-⚠ 그 실측이 처음에는 거부로 끝났고, 그것이 **왜 여태 summary 가 없었는지**다:
-`live-decisions` 가 누적 잎 전체(6 일 2,348 건)를 담아 B3 가
-「live decision(s) name bars that are not compared」로 거부했다. 2026-10-22 의 세션 날짜
-범위 고정이 consumed-ids 문서에만 적용돼 있었다 — 이제 두 문서가 같은 boot 스냅샷으로
-같은 날에 묶인다(`session_inputs.LiveScope`).
-
-`sts tos status` 는 이 둘을 그 순서로 읽는다 — 돌지 않은 세션은 수를 보여 주지 않고
-사유를 보여 준다. ⛔ **B3 의 rc 는 세션의 종료 코드를 바꾸지 않는다**(위 「종료 코드」가
-그대로다): 세션의 판정은 런타임과 생산자에 대한 것이고, 돌지 못한 대조는 그 둘에 대해
-아무 말도 하지 않는다. 러너 로그의 `=== END B3 rc=…` 줄이 그 rc 를 적는다.
+깨끗한 거래일 판정은 이제 「세션이 기동해 `clean_run_rcs` 안의 rc 로 끝났다」 하나다
+(`config/tos_status_board.yaml::clean_streak`).
 
 **세션 뒤 — 실전 주문 TR 0 건.** 요청 로그 **둘 다**(`producer-log.jsonl` ·
 `band-log.jsonl`)의 TR id 집합이 조회 TR 둘(`FHKIF03020200` · `FHMIF10000000`)의

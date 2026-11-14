@@ -1,10 +1,4 @@
-"""economic_effect_dominated + no_silent_widening (design #14 §5.5/§5.3; IOC-EV-006/004 substrate).
-
-Committed-capacity dominance over the ``EconomicEffectEnvelope`` (rcl ``CapacityVector``), with
-∅ both-ways (empty envelope / empty committed), the None-magnitude fail-closed, and the
-forbidden-verb canaries (reduce / shrink — §13 line 343; widen / narrow — §11 line 303). Consume
-gate is ``is True`` (§4.7). Closes no IOC-EV.
-"""
+"""economic_effect_dominated + no_silent_widening (design #14 §5.5/§5.3; IOC-EV-006/004 substrate)."""
 
 from __future__ import annotations
 
@@ -29,17 +23,10 @@ def _vec(**dims: Decimal | None) -> CapacityVector:
     )
 
 
-# ---------------------------------------------------------------------------
-# dominance positive side (§5.5 / §13 / IOC-INV-005 line 173)
-# ---------------------------------------------------------------------------
-
-
 def test_committed_dominates_every_governed_dimension() -> None:
     """(canary +) Committed >= envelope on every governed dimension => dominated (True)."""
     envelope = _vec(notional=Decimal("10"), delta=Decimal("5"))
-    committed = _vec(
-        notional=Decimal("20"), delta=Decimal("5")
-    )  # equal counts as dominate
+    committed = _vec(notional=Decimal("20"), delta=Decimal("5"))
     assert economic_effect_dominated(envelope, committed) is True
 
 
@@ -54,15 +41,10 @@ def test_envelope_type_is_rcl_capacity_vector() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# dominance negative side — committed below envelope on any dimension
-# ---------------------------------------------------------------------------
-
-
 def test_committed_below_on_one_dimension_is_not_dominated() -> None:
     """(canary - 'reduce/shrink' §13 line 343) Committed below envelope on one dim => not-dominated."""
     envelope = _vec(notional=Decimal("10"), delta=Decimal("5"))
-    committed = _vec(notional=Decimal("10"), delta=Decimal("4"))  # delta short
+    committed = _vec(notional=Decimal("10"), delta=Decimal("4"))
     assert economic_effect_dominated(envelope, committed) is False
 
 
@@ -83,13 +65,8 @@ def test_none_committed_magnitude_is_not_dominated() -> None:
 def test_missing_committed_dimension_is_not_dominated() -> None:
     """(fail-closed) A governed dimension absent from committed => not-dominated."""
     envelope = _vec(notional=Decimal("10"), delta=Decimal("5"))
-    committed = _vec(notional=Decimal("100"))  # delta absent
+    committed = _vec(notional=Decimal("100"))
     assert economic_effect_dominated(envelope, committed) is False
-
-
-# ---------------------------------------------------------------------------
-# ∅ both-ways (§4.7) — empty envelope / empty committed
-# ---------------------------------------------------------------------------
 
 
 def test_empty_envelope_is_not_dominated() -> None:
@@ -111,11 +88,6 @@ def test_empty_committed_is_not_dominated() -> None:
 def test_both_empty_is_not_dominated() -> None:
     """(∅ both-ways) Empty envelope AND empty committed => not-dominated (fail-closed both sides)."""
     assert economic_effect_dominated(CapacityVector(), CapacityVector()) is False
-
-
-# ---------------------------------------------------------------------------
-# no_silent_widening (§5.3 / §11 line 303 / IOC-INV-006)
-# ---------------------------------------------------------------------------
 
 
 def test_exact_bounded_and_all_gates_evaluated_passes() -> None:

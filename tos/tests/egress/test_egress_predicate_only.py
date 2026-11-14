@@ -1,9 +1,4 @@
-"""Predicate-only §6.1 — credential-route authority disjointness (design #22; EGRESS-EV-001).
-
-Regime tag: structural / coordinate predicate substrate only; EGRESS-EV-001 substrate (predicate-
-only, minimum EV-L2/3+Security); EV-L1-complete claim forbidden. The real inventory enumeration is
-L2+; this is the injected-inventory disjointness predicate only, a predicate not a prevention.
-"""
+"""Predicate-only §6.1 — credential-route authority disjointness (design #22; EGRESS-EV-001)."""
 
 from __future__ import annotations
 
@@ -19,12 +14,12 @@ def test_disjoint_when_outside_principals_lack_both() -> None:
             principal="inside-1",
             usable_credential=True,
             broker_route=True,
-            inside_boundary=True,  # inside — allowed to hold both
+            inside_boundary=True,
         ),
         clean_inventory_entry(
             principal="outside-cred-only",
             usable_credential=True,
-            broker_route=False,  # no route — not a bypass candidate
+            broker_route=False,
             inside_boundary=False,
         ),
     ]
@@ -46,7 +41,6 @@ def test_outside_principal_with_both_is_not_disjoint() -> None:
 
 def test_unknown_flags_treated_as_potentially_usable() -> None:
     """(§6.1 / §4.6) A None credential / route flag is UNKNOWN ⇒ conservatively potentially-usable."""
-    # Outside principal, both flags None ⇒ potentially usable + potentially routed ⇒ bypass candidate.
     inventory = [
         clean_inventory_entry(
             principal="outside-unknown",
@@ -65,7 +59,7 @@ def test_unknown_boundary_treated_as_outside() -> None:
             principal="unknown-boundary",
             usable_credential=True,
             broker_route=True,
-            inside_boundary=None,  # unknown ⇒ outside ⇒ bypass candidate
+            inside_boundary=None,
         ),
     ]
     assert credential_route_authority_disjoint(inventory) is False
@@ -77,7 +71,7 @@ def test_outside_with_credential_but_explicit_no_route_is_disjoint() -> None:
         clean_inventory_entry(
             principal="outside-no-route",
             usable_credential=True,
-            broker_route=False,  # explicitly no route ⇒ not a bypass candidate
+            broker_route=False,
             inside_boundary=False,
         ),
     ]

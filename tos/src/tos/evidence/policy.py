@@ -1,29 +1,4 @@
-"""Evidence Integrity Policy (design #4 §2.5 B, §3.5, template SoT).
-
-Models ``EVIDENCE-INTEGRITY-POLICY-template.yaml`` (87 lines). Per design §3.5 the
-EIP **is** a digest-bound artifact (``content_digest == H_ver(canonicalize(policy
-body))``) with an **independent**, non-derived id: ``policy_id`` is stable across
-generations while the digest changes per generation, so ``(policy_id, generation,
-content_digest)`` identifies a specific version (design §3.5).
-
-**Interpretations (design deviations, reported):**
-
-* The inherited ``canonical_digest`` realizes the template's ``content_digest``
-  (design §3.2/§3.5); ``canonicalization_version`` and ``status`` map to the
-  template fields of the same name.
-* Covered = the policy **body** blocks only (scope / durability / integrity /
-  completeness / retention / access_and_redaction / replay / authority_effect —
-  design §3.5). Identity/governance meta (``version`` / ``generation`` /
-  ``approved_by`` / ``effective_from`` / ``expires_at`` / ``review``) is
-  self-excluded.
-* All bound values (``required_replication`` / ``anchor_cadence_ms`` /
-  ``B_evidence_gap_*`` / ``min_retention_ms``) are **injected** and default
-  ``null`` => UNKNOWN => fail-closed at consumption (design §8 — never
-  hard-coded). ``anchor_cadence_ms`` in particular lacks an approved profile bound
-  (``MAX_anchor_cadence_ms`` is a missing key, Phase-0 §8/§9.2 item 4).
-
-Pure module: ``pydantic`` + stdlib only; no ``shared.*`` (design §0.3).
-"""
+"""Evidence Integrity Policy (design #4 §2.5 B, §3.5, template SoT)."""
 
 from __future__ import annotations
 
@@ -42,11 +17,11 @@ from tos.evidence.elements import (
     SourceSequenceRule,
 )
 
-_EMERGENCY_JOURNAL_FAILURE_DEFAULT = "APPLY_RESTRICTION_AND_HARD_FENCE"  # line 25
-_CONTAIN = "CONTAIN"  # lines 36-37
-_STOP_NEW_RISK = "STOP_NEW_RISK"  # line 44
-_UNSUPPORTED_BASELINE = "UNSUPPORTED_BASELINE"  # line 69
-_DIVERGED = "DIVERGED"  # line 70
+_EMERGENCY_JOURNAL_FAILURE_DEFAULT = "APPLY_RESTRICTION_AND_HARD_FENCE"
+_CONTAIN = "CONTAIN"
+_STOP_NEW_RISK = "STOP_NEW_RISK"
+_UNSUPPORTED_BASELINE = "UNSUPPORTED_BASELINE"
+_DIVERGED = "DIVERGED"
 
 
 class EIPScope(FrozenModel):
@@ -65,7 +40,7 @@ class EIPDurability(FrozenModel):
 
     default_class: DurabilityClass = DurabilityClass.DENY_IF_UNSPECIFIED
     record_class_rules: tuple[RecordClassDurabilityRule, ...] = ()
-    required_replication: int | None = None  # injected bound (§8)
+    required_replication: int | None = None
     acknowledgement_rule: str | None = None
     emergency_journal_required: bool = True
     emergency_journal_failure_response: str = _EMERGENCY_JOURNAL_FAILURE_DEFAULT
@@ -80,7 +55,7 @@ class EIPIntegrity(FrozenModel):
     source_authentication: str | None = None
     segment_commitment: str | None = None
     external_anchor: str | None = None
-    anchor_cadence_ms: int | None = None  # injected; no approved bound (Phase-0 §8)
+    anchor_cadence_ms: int | None = None
     key_rotation_policy: str | None = None
     conflicting_record_id_response: str = _CONTAIN
     fork_or_rollback_response: str = _CONTAIN
@@ -174,14 +149,7 @@ class EIPReview(FrozenModel):
 
 
 class EvidenceIntegrityPolicy(EvidenceArtifact):
-    """A digest-bound Evidence Integrity Policy (design #4 §3.5).
-
-    ``content_digest`` (the inherited ``canonical_digest``) covers the policy body;
-    ``policy_id`` is the independent, generation-stable id. An envelope's
-    ``evidence_integrity_policy_digest`` binding must equal a known EIP's
-    ``content_digest``; a mismatch is policy-substitution / generation-drift
-    (design §3.5, detectable via :func:`tos.evidence.predicates.eip_binding_ok`).
-    """
+    """A digest-bound Evidence Integrity Policy (design #4 §3.5)."""
 
     _ID_FIELD: ClassVar[str] = "policy_id"
     _REQUIRED_COVERED: ClassVar[tuple[str, ...]] = (
@@ -201,9 +169,6 @@ class EvidenceIntegrityPolicy(EvidenceArtifact):
         }
     )
 
-    # ---- Layer-0 identity + governance meta (self-excluded, §3.5) ----
-    # canonical_digest (= template content_digest) / status / canonicalization_version
-    # inherited.
     policy_id: str | None = None
     version: str | None = None
     generation: int | None = None
@@ -212,7 +177,6 @@ class EvidenceIntegrityPolicy(EvidenceArtifact):
     expires_at: int | None = None
     review: EIPReview = EIPReview()
 
-    # ---- Covered policy body ----
     scope: EIPScope = EIPScope()
     durability: EIPDurability = EIPDurability()
     integrity: EIPIntegrity = EIPIntegrity()

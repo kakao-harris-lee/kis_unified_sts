@@ -1,11 +1,4 @@
-"""Freshness verdict — negative not clamped, UNKNOWN != 0 (time design §4).
-
-EV-L1 predicate substrate only; TIME-EV-007 remains NOT_IMPLEMENTED pending
-EV-L2/L3 fault injection. This is the strongest-precedent substrate (shipped
-``compare_order`` overlap⇒AMBIGUOUS + capsule ``Freshness.within_bound=None``⇒
-UNKNOWN). Bounds are hypothesis-generated injected values (no hard-coded
-threshold).
-"""
+"""Freshness verdict — negative not clamped, UNKNOWN != 0 (time design §4)."""
 
 from __future__ import annotations
 
@@ -66,7 +59,6 @@ def test_future_beyond_tolerance_is_conflicted(future: int, tol: int) -> None:
     if future > tol:
         assert verdict is FreshnessVerdict.CONFLICTED
     else:
-        # within skew tolerance: fresh (negative age was evaluated, not clamped)
         assert verdict is FreshnessVerdict.FRESH
 
 
@@ -106,15 +98,9 @@ def test_stale_vs_fresh_by_total_age(
         assert verdict is FreshnessVerdict.FRESH
 
 
-# ---- v1.2 MAJOR: negative injected bounds must fail-closed to UNKNOWN ----
-
-
 @given(neg=st.integers(-(10**6), -1))
 def test_negative_delay_bound_is_unknown_not_fresh(neg: int) -> None:
-    """A negative delay bound => UNKNOWN; it must NOT hide staleness (reproduced fail-open).
-
-    Prior bug: source_age=1000, delay=[-5000], max_age=1000 => FRESH. Now UNKNOWN.
-    """
+    """A negative delay bound => UNKNOWN; it must NOT hide staleness (reproduced fail-open)."""
     assert (
         freshness_verdict(
             source_age=1000,
@@ -140,7 +126,6 @@ def test_negative_max_age_bound_is_unknown(neg: int) -> None:
 @given(neg=st.integers(-(10**6), -1))
 def test_negative_future_tolerance_is_unknown(neg: int) -> None:
     """A negative future tolerance is an unestablished bound => UNKNOWN (fail-closed)."""
-    # Also holds for a future-dated source: a corrupt tolerance cannot bless it.
     assert (
         freshness_verdict(
             source_age=-5, delay_bounds=[0], max_age_bound=100, future_tolerance=neg
@@ -151,7 +136,6 @@ def test_negative_future_tolerance_is_unknown(neg: int) -> None:
 
 def test_legitimate_negative_source_age_still_evaluated() -> None:
     """A negative source_age (future-dated) is NOT blanket-rejected (kept legitimate)."""
-    # within tolerance => FRESH; beyond tolerance => CONFLICTED (unchanged behavior).
     assert (
         freshness_verdict(
             source_age=-5, delay_bounds=[0], max_age_bound=100, future_tolerance=10
@@ -166,25 +150,8 @@ def test_legitimate_negative_source_age_still_evaluated() -> None:
     )
 
 
-# ---- fail-open fix: an unestablished bound outranks the future-tolerance path ----
-#
-# Found by the engine hypothesis property
-# ``test_an_unestablished_threshold_never_admits`` (design #31 §2.3): the
-# future-tolerance branch returned FRESH *before* the ``max_age_bound is None`` /
-# unknown-delay-bound checks ran, so a future-dated source admitted with no
-# threshold established at all. ADR-002-008 §9 line 241 ("if the upper bound
-# cannot be established, the evidence is STALE or UNKNOWN") and line 243
-# ("unbounded transport path SHALL NOT be ... accepted as fresh") admit no
-# future-tolerance exemption, and TIME-AC-007 (line 457) says "never
-# optimistically fresh".
-
-
 def test_reported_fail_open_example_is_not_fresh() -> None:
-    """The exact falsifying example is pinned: future-dated + no threshold != FRESH.
-
-    Prior bug: source_age=-1, max_age_bound=None, future_tolerance=50 => FRESH
-    (and the engine's ``time_admits`` therefore admitted). Now UNKNOWN.
-    """
+    """The exact falsifying example is pinned: future-dated + no threshold != FRESH."""
     assert (
         freshness_verdict(
             source_age=-1, delay_bounds=[], max_age_bound=None, future_tolerance=50
@@ -211,11 +178,7 @@ def test_future_dated_within_tolerance_is_not_fresh_without_a_delay_bound() -> N
 def test_no_source_age_is_fresh_without_a_threshold(
     source_age: int, bounds: list[int], tol: int
 ) -> None:
-    """Matrix: for an unestablished ``max_age_bound``, *no* source age is FRESH.
-
-    Covers negative / zero / positive ``source_age``; the verdict must be a
-    fail-closed one (UNKNOWN, or CONFLICTED when the future is unbounded).
-    """
+    """Matrix: for an unestablished ``max_age_bound``, *no* source age is FRESH."""
     verdict = freshness_verdict(
         source_age=source_age,
         delay_bounds=bounds,
@@ -240,11 +203,7 @@ def test_no_source_age_is_fresh_without_a_threshold(
 def test_established_threshold_matrix_preserves_prior_semantics(
     source_age: int, bounds: list[int], max_age: int, tol: int
 ) -> None:
-    """Counterpart: with every bound established, the prior semantics are unchanged.
-
-    The fix is an ordering correction only — negative-within-tolerance still
-    yields FRESH, and the STALE/FRESH split for non-negative ages is untouched.
-    """
+    """Counterpart: with every bound established, the prior semantics are unchanged."""
     verdict = freshness_verdict(
         source_age=source_age,
         delay_bounds=bounds,

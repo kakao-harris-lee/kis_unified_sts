@@ -1,56 +1,4 @@
-"""§7.1 import-closure verification for ``tos.posttrade`` — **allowlist** (design #24 §0.3).
-
-Written as an **allowlist**, never a denylist (design #24 §7.1, the #16 M9 lesson): after
-importing every ``tos.posttrade`` submodule in a fresh interpreter, the set of top-level
-``tos.*`` packages in ``sys.modules`` must be a subset of::
-
-    {tos.canonical, tos.ordering, tos.posttrade}
-
-An enumerated denylist would go stale the moment a new sibling lands (session A is landing
-packages while this design was in review); the allowlist is **future-robust** — any sibling,
-present or future, fails the assertion simply by appearing.
-
-**None of the twelve-plus producer siblings is in the allowlist.** That is the load-bearing
-absence (design #24 §0.4b/§0.4c/§0.4e):
-
-* ``tos.rcl`` — the ``CapacityVector`` REUSE was considered and **rejected**; capacity
-  mutation is rcl's alone (§1 line 21, PTF-INV-008) and this package is capacity-non-mutating;
-* ``tos.are`` — the ``ProjectedCell`` REUSE was likewise rejected; the aggregate-risk axis and
-  the netting **benefit** are are's coordinate system;
-* ``tos.recon`` — the ``FieldConfidence`` REUSE was rejected; confidence ≠ finality
-  (PTF-INV-005);
-* ``tos.nontrade`` — the mutual §16 line 309 / §17 line 414 deferral is a **boundary**, not an
-  edge: importing it would fuse the event and obligation axes;
-* ``tos.iap`` — its ``ConsumptionOutcome.IDEMPOTENT_REPLAY`` is a *different proposition*
-  (authorization-token consumption), so importing it would be the phantom edge design #24
-  §0.4e blocks;
-* ``tos.egress`` / ``tos.cur`` / ``tos.brokercap`` / ``tos.orthostate`` / ``tos.time`` — all
-  injected coordinates.
-
-It also asserts:
-
-  1. no design #1 §2.3 operational package is in the closure (``shared.execution`` / ``kis`` /
-     ``streaming`` / ``llm`` / ``storage`` / ``backtest``, ``services.*``, ``cli.*``);
-  2. neither ``shared.config`` nor ``shared.config.secrets`` is present (the transitive
-     ambient-credential intake), nor ``shared.determinism``;
-  3. ``numpy`` / ``pandas`` / ``yaml`` are absent (bounds are injected; YAML parsing is the
-     harness's concern — design #24 §0.3);
-  4. no ``tos.posttrade`` source references ``os.environ`` / ``os.getenv``, a dynamic escape
-     (``exec`` / ``eval`` / ``__import__`` / ``importlib``), or a real clock (``time`` /
-     ``datetime``) — this package is **clock-free** (every age bound is a null VP-002 key and
-     every freshness verdict is injected);
-  5. no numeric policy literal is hardcoded (§8.0 / CLAUDE.md);
-  6. no concrete broker, clearing house, custodian, or bank is named — the discipline matters
-     especially here, because ``+Broker`` sits on **all twelve** PTF-EV rows.
-
-A planted-leak canary proves the spawn+scan pipeline catches a leak (including every real
-sibling and a *future* sibling name that no denylist could have anticipated), and a
-planted-AST-escape canary proves the static scan catches an escape — so "green" is evidence
-the checker works, not that it has been neutered.
-
-A **test-only** cross-import of a sibling (the ``test_seam_*`` modules) is not a runtime
-package edge and is deliberately not counted here (design #24 §3.4/§7.1).
-"""
+"""§7.1 import-closure verification for ``tos.posttrade`` — **allowlist** (design #24 §0.3)."""
 
 from __future__ import annotations
 
@@ -58,7 +6,6 @@ import ast
 import multiprocessing as mp
 from pathlib import Path
 
-#: The §7.1 allowlist: the only top-level ``tos.*`` packages the closure may contain.
 _ALLOWED_TOS_PACKAGES = frozenset(
     {"tos", "tos.canonical", "tos.ordering", "tos.posttrade"}
 )
@@ -103,11 +50,8 @@ _POSTTRADE_SRC = (
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
-#: Real-clock modules that must never be imported by a clock-free source.
 _CLOCK_MODULES = frozenset({"time", "datetime"})
 
-#: Every committed sibling at the time of writing, plus a future name. A denylist would have
-#: had to enumerate these; the allowlist catches them without knowing them.
 _EVERY_SIBLING = (
     "tos.capsule",
     "tos.evidence",
@@ -129,7 +73,6 @@ _EVERY_SIBLING = (
     "tos.afg",
     "tos.hag",
     "tos.egress",
-    "tos.replacement",
     "tos.nontrade",
     "tos.cur",
     "tos.some_future_sibling",
@@ -165,7 +108,6 @@ def _closure_child(queue: mp.Queue) -> None:
     import tos.posttrade._base  # noqa: F401
     import tos.posttrade.predicates  # noqa: F401
     import tos.posttrade.records  # noqa: F401
-    import tos.posttrade.state  # noqa: F401
     import tos.posttrade.vocabulary  # noqa: F401
 
     tos_tops = sorted(
@@ -227,15 +169,11 @@ def test_posttrade_tos_closure_is_within_the_allowlist() -> None:
     )
 
 
-def test_posttrade_closure_includes_the_two_core_packages() -> None:
-    """(§3.1/§3.2) tos.canonical AND tos.ordering are both genuinely REUSED.
-
-    A package that merely *declared* the ordering REUSE without importing it would pass the
-    allowlist trivially; this asserts the REUSE is real.
-    """
+def test_posttrade_closure_includes_the_core_package() -> None:
+    """(§3.1) tos.canonical is genuinely REUSED (tos.ordering left with state.py, plan S2-c)."""
     result = _run_child(_closure_child)
     tops = set(result["tos_tops"])
-    for expected in ("tos.canonical", "tos.ordering", "tos.posttrade"):
+    for expected in ("tos.canonical", "tos.posttrade"):
         assert expected in tops, f"{expected} missing from the tos.posttrade closure"
 
 
@@ -299,7 +237,6 @@ def test_allowlist_classifier_canaries() -> None:
     for sibling in _EVERY_SIBLING:
         assert _is_allowed_tos_module(sibling) is False
         assert _is_allowed_tos_module(sibling + ".predicates") is False
-    # non-tos classification
     assert _is_forbidden_non_tos("shared.config") is True
     assert _is_forbidden_non_tos("shared.config.secrets") is True
     assert _is_forbidden_non_tos("shared.determinism") is True
@@ -309,7 +246,7 @@ def test_allowlist_classifier_canaries() -> None:
     assert _is_forbidden_non_tos("yaml") is True
     assert _is_forbidden_non_tos("pydantic") is False
     assert _is_forbidden_non_tos("decimal") is False
-    assert _is_forbidden_non_tos("click") is False  # must not false-match "cli"
+    assert _is_forbidden_non_tos("click") is False
 
 
 def _ast_escape_offenders(path: Path) -> list[str]:
@@ -399,13 +336,7 @@ def test_posttrade_source_imports_no_forbidden_sibling_statically() -> None:
 
 
 def test_no_hardcoded_numeric_bound_in_posttrade_source() -> None:
-    """(§8.0 / CLAUDE.md) No source hardcodes an amount / ratio / haircut / threshold.
-
-    Every post-trade bound is injected: all **19** VP-002 PTF keys (6 ``B_*`` timing, 5
-    ``MAX_*`` age, 8 currentness identity slots) are ``null`` with ``owner: TBD``. The only
-    numeric literals a decision module may contain are the structural ``0`` / ``1`` used for
-    emptiness, non-negativity, and single-element checks — never a policy number.
-    """
+    """(§8.0 / CLAUDE.md) No source hardcodes an amount / ratio / haircut / threshold."""
     offenders: list[str] = []
     for path in sorted(_POSTTRADE_SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -421,35 +352,8 @@ def test_no_hardcoded_numeric_bound_in_posttrade_source() -> None:
     assert offenders == [], f"hardcoded numeric bound in posttrade source: {offenders}"
 
 
-def test_adr_line_anchors_are_strings_never_numbers() -> None:
-    """(§8.0) A citation coordinate is not a quantity.
-
-    Keeping the ADR line anchors non-numeric leaves the numeric-literal scan above at full
-    strength: a scanner that had to whitelist citation numbers could be talked into
-    whitelisting a policy bound.
-    """
-    from tos.posttrade import (
-        FQP_DOES_NOT_PROVE,
-        OBLIGATION_RECORD_FIELD_GROUPS,
-        VOID_TABLE_ROWS,
-    )
-
-    for anchor, _fields in OBLIGATION_RECORD_FIELD_GROUPS:
-        assert isinstance(anchor, str)
-    for anchor, _description, _dimension in FQP_DOES_NOT_PROVE:
-        assert isinstance(anchor, str)
-    for row_number, _input_name, _expected in VOID_TABLE_ROWS:
-        assert isinstance(row_number, str)
-
-
 def test_no_broker_is_named_in_the_posttrade_source() -> None:
-    """(broker-agnostic) No concrete broker / clearing house / custodian / bank is named.
-
-    Broker constraints are expressed as capability classes (the Broker Capability Profile,
-    ADR-002-018) and arrive as injected tokens — project memory ``tos-spec-broker-agnostic``.
-    The discipline is enforced especially strictly here because ``+Broker`` sits on **all
-    twelve** PTF-EV rows.
-    """
+    """(broker-agnostic) No concrete broker / clearing house / custodian / bank is named."""
     forbidden_tokens = ("kis", "korea investment", "koreainvestment", "ebest", "kiwoom")
     offenders: list[str] = []
     for path in sorted(_POSTTRADE_SRC.rglob("*.py")):

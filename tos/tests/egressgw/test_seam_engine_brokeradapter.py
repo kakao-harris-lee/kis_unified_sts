@@ -1,20 +1,4 @@
-"""Seams — D-E1's ``Transmit`` slot and the ``tos.brokeradapter`` structural transport port.
-
-Two seams the design (§0.1-7 / §5.1 / §7) makes load-bearing, and which no single-package test can
-prove:
-
-1. **The gateway fills D-E1's open slot.** ``engine/sequencer.py`` refuses to host steps 15-19
-   and halts with ``TRANSMIT_UNAVAILABLE`` when no transmit is injected ("an absent send boundary
-   is not a licence to skip it"). This file runs the real 19-step flow with the Order Construction
-   stages at steps 2 / 3 / 5 / 11 and the Broker Egress Gateway in the ``Transmit`` slot, so the
-   hand-off, the binding, and the ``EGRESS_RESULT`` production are exercised end to end.
-2. **The two Protocol declarations have not drifted.** ``tos.egressgw`` and ``tos.brokeradapter``
-   are kept out of each other's import closures (design #34 §0.3), so the transport port is
-   declared twice and satisfied structurally. A silent signature drift would break the injection
-   at runtime only, so it is asserted here directly.
-
-Regime tag: authoring evidence only; closes no EV (design #34 §1.1).
-"""
+"""Seams — D-E1's ``Transmit`` slot and the ``tos.brokeradapter`` structural transport port."""
 
 from __future__ import annotations
 
@@ -187,12 +171,7 @@ def _prebuilt_construction() -> tuple[OrderConstructionStage, ConformanceProofSt
 
 
 def _flow_attempt_and_context():
-    """The attempt the flow will build, plus a context bound to the flow's own artifacts.
-
-    Both halves come from the *same* deterministic construction the flow re-runs, so the seam is
-    exercised on identical artifacts rather than on look-alikes: the reservation identities the
-    gateway matches at item 2 really are the ones step 12 binds.
-    """
+    """The attempt the flow will build, plus a context bound to the flow's own artifacts."""
     step2, step11 = _prebuilt_construction()
     built = step2.construction
     proof = step11.proof
@@ -254,11 +233,6 @@ def _run_flow(*, transmit, action_class=None, price=None):
     return result, ledger, sink
 
 
-# ---------------------------------------------------------------------------
-# seam 1 — the gateway satisfies D-E1's Transmit slot
-# ---------------------------------------------------------------------------
-
-
 def test_the_gateway_satisfies_the_engine_transmit_protocol() -> None:
     """(§0.1-7) ``(AttemptRequest) -> SendHandoff`` — the slot D-E1 left open."""
     attempt, context = happy_context()
@@ -292,12 +266,7 @@ def test_the_full_nineteen_step_flow_reaches_the_gateway_and_hands_off() -> None
 
 
 def test_the_step2_stage_reads_the_basis_off_the_engines_own_proposal() -> None:
-    """(§3.1 3-way split) Decision identifies the basis; construction renders the size.
-
-    The Proposal carries ``quantity_basis`` and **no** quantity field at all (RFC-008 §7
-    "evidence, never capacity"), so the concrete size can only come from the derivation over the
-    envelope-enclosed governance bound.
-    """
+    """(§3.1 3-way split) Decision identifies the basis; construction renders the size."""
     proposal = _proposal()
     assert proposal.quantity_basis == "RISK"
     for name in type(proposal).model_fields:
@@ -374,11 +343,6 @@ def test_the_construction_stages_admit_positively_inside_the_flow() -> None:
         CommitmentStep.ORDER_CONFORMANCE_PROOF,
     ):
         assert outcomes[step] is StageOutcome.ADMIT
-
-
-# ---------------------------------------------------------------------------
-# seam 2 — the two Protocol declarations have not drifted
-# ---------------------------------------------------------------------------
 
 
 def test_the_two_transport_protocol_declarations_are_signature_identical() -> None:

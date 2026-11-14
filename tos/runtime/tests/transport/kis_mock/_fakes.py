@@ -1,5 +1,4 @@
-"""Shared fakes for the adapter test suite: an in-memory custody, a controllable monotonic
-clock, and a recording evidence sink."""
+"""Shared fakes for the adapter test suite: an in-memory custody, a controllable monotonic"""
 
 from __future__ import annotations
 
@@ -62,14 +61,7 @@ class RecordingEvidenceSink:
 
 
 class _SealLookup:
-    """A ``SealLookup`` double backed by a plain mapping.
-
-    A bare closure has type ``Callable[[str], SendSeal | None]``, which mypy will not accept
-    where a ``SealLookup`` (a callback ``Protocol`` with a named ``attempt_id`` parameter) is
-    expected — ``Callable`` erases parameter names, and ``SealLookup.__call__`` is not
-    positional-only. A small class whose ``__call__`` matches the protocol's signature exactly
-    satisfies it structurally.
-    """
+    """A ``SealLookup`` double backed by a plain mapping."""
 
     def __init__(self, seal_by_attempt_id: Mapping[str, SendSeal]) -> None:
         self._seal_by_attempt_id = seal_by_attempt_id

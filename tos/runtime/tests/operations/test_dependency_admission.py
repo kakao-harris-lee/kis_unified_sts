@@ -1,7 +1,4 @@
-"""Hermetic tests for :mod:`tos_runtime.operations.dependency_admission`
-(Phase 5 W4 §2 decision 5 — real dependency-set / source-tree digest
-observation, replacing the constant ``code_digest`` fixture the survey
-named as the M6 vacuous pattern)."""
+"""Hermetic tests for :mod:`tos_runtime.operations.dependency_admission`"""
 
 from __future__ import annotations
 
@@ -24,11 +21,6 @@ def _make_tree(root: Path, files: dict[str, str]) -> None:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# observe_source_tree_digest — real measurement, not a constant (M2 guard)
-# ---------------------------------------------------------------------------
 
 
 def test_digest_changes_when_one_source_byte_changes(tmp_path: Path) -> None:
@@ -83,11 +75,6 @@ def test_default_package_roots_are_the_installed_tos_and_tos_runtime_trees() -> 
     assert roots == (Path(tos.__file__).parent, Path(tos_runtime.__file__).parent)
 
 
-# ---------------------------------------------------------------------------
-# observe_dependency_set_digest — real installed distributions, not a lock file
-# ---------------------------------------------------------------------------
-
-
 def test_dependency_set_digest_is_stable_across_repeated_calls() -> None:
     first = observe_dependency_set_digest()
     second = observe_dependency_set_digest()
@@ -97,9 +84,7 @@ def test_dependency_set_digest_is_stable_across_repeated_calls() -> None:
 def test_dependency_set_digest_changes_when_the_observed_set_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """M2 guard for the dependency coordinate: a distribution-set digest that
-    never changed no matter what was installed would be exactly the vacuous
-    constant this module replaces."""
+    """M2 guard for the dependency coordinate: a distribution-set digest that"""
     baseline = observe_dependency_set_digest()
     real_distributions = importlib.metadata.distributions
 
@@ -116,11 +101,6 @@ def test_dependency_set_digest_changes_when_the_observed_set_changes(
     mutated = observe_dependency_set_digest()
 
     assert baseline != mutated
-
-
-# ---------------------------------------------------------------------------
-# RuntimeArtifactObservation / observe_runtime_artifact — the bundled fact
-# ---------------------------------------------------------------------------
 
 
 def test_observe_runtime_artifact_bundles_both_digests(tmp_path: Path) -> None:

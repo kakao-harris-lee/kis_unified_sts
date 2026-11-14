@@ -1,15 +1,4 @@
-"""MANDATED test-only seam cross-check: ioc <-> are (design #14 §3.4; §14 line 369).
-
-ioc's ``OrderConformanceProof`` binds the ADR-002-021 are ``AggregateRiskDecision`` by **digest
-scalar** (decision id / generation / canonical digest) — it does NOT import ``tos.are`` at
-runtime, nor re-author aggregate risk projection. This file imports the real are
-``AggregateRiskDecision`` + ``decision_content_ref`` (``are/records.py:451``, ``decision_id``
-``494`` / ``decision_generation`` ``497``) as a **test** to lock that the proof binds the exact
-are decision content ref scalars.
-
-A test-only cross-import is NOT a runtime package edge (design #14 §3.4/§7.1); are is one of the
-twelve siblings ioc never imports at runtime (the §7.1 closure test asserts its absence).
-"""
+"""MANDATED test-only seam cross-check: ioc <-> are (design #14 §3.4; §14 line 369)."""
 
 from __future__ import annotations
 
@@ -44,9 +33,7 @@ def test_proof_binds_are_decision_content_ref_scalars() -> None:
     )
     assert proof.aggregate_risk_decision_id == decision.decision_id
     assert proof.aggregate_risk_decision_generation == decision.decision_generation
-    assert (
-        proof.aggregate_risk_decision_digest == decision.canonical_digest
-    )  # id ⊥ digest scalar
+    assert proof.aggregate_risk_decision_digest == decision.canonical_digest
 
 
 def test_decision_ref_is_scalar_not_a_decision_object() -> None:
@@ -58,7 +45,6 @@ def test_decision_ref_is_scalar_not_a_decision_object() -> None:
         proof_generation=1,
         aggregate_risk_decision_digest=decision.canonical_digest,
     )
-    # The proof field is a plain str digest, never an AggregateRiskDecision instance.
     assert isinstance(proof.aggregate_risk_decision_digest, str)
     assert not isinstance(proof.aggregate_risk_decision_digest, AggregateRiskDecision)
 

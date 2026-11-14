@@ -1,9 +1,4 @@
-"""``tos_runtime.calendar.phase.trading_date_at`` (plan 2026-09-26 egress trading date, T-2).
-
-The KST trading date an acknowledged order belongs to: the local date of an open window that does
-not cross midnight, and ``None`` everywhere the calendar cannot say — outside every window, an
-unknown class, and (operator 2026-09-26) any midnight-crossing session.
-"""
+"""``tos_runtime.calendar.phase.trading_date_at`` (plan 2026-09-26 egress trading date, T-2)."""
 
 from __future__ import annotations
 

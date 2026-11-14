@@ -23,10 +23,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # The three distribution packages (pyproject `[tool.hatch.build.targets.wheel]
-# packages`) are copied whole: after L6 that is services/{dashboard,monitoring},
+# packages`) are copied whole: after L6 that is services/dashboard,
 # cli/{main,commands/tos_status} and the shared/ closure those two still need.
-# services/monitoring stays because shared/kis/{client,stock_feed}.py import
-# services.monitoring.metrics lazily, and cli/ because pyproject installs the
+# services/ is just dashboard/ now — services/monitoring went with
+# shared/kis/client.py (2026-11-13 S3), its only lazy importer — and cli/
+# is copied because pyproject installs the
 # `sts` entrypoint from cli.main.
 COPY pyproject.toml README.md ./
 COPY shared/ ./shared/

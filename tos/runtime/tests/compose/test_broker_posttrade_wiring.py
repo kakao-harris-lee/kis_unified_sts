@@ -1,10 +1,4 @@
-"""Which boots take post-trade facts from the broker (PR-3b) — and which keep the synthetic ones.
-
-Only the stock MOCK order tree (``kis-mock`` + ``MOCK_STOCK_ORDER``) reconciles against
-``KisStockBrokerWitness`` and proves fills with ``BrokerFinalityProducer``; the paper, CP-3 LONG
-and SHORT trees keep ``SyntheticLedgerWitness`` and ``SyntheticFinalityProducer``. Plus the boot
-refusals of the stock wiring and the small pure pieces it rests on.
-"""
+"""Which boots take post-trade facts from the broker (PR-3b) — and which keep the synthetic ones."""
 
 from __future__ import annotations
 
@@ -70,9 +64,7 @@ def server() -> Iterator[FakeKisServer]:
 def test_only_the_stock_tree_is_a_broker_posttrade_tree(
     tree: str, broker: bool
 ) -> None:
-    """The committed trees: only the stock one has the mock-order class AND a
-    ``fill_observer.yaml``; the other three keep synthetic post-trade by construction.
-    """
+    """The committed trees: only the stock one has the mock-order class AND a"""
     raw = yaml.safe_load((_TREES / tree / "broker_scopes.yaml").read_text("utf-8"))
     (active,) = [s for s in raw["scopes"] if s["name"] == raw["active_scope"]]
     scopes = load_broker_scopes(
@@ -120,20 +112,14 @@ def test_stock_mock_boot_refuses_a_real_tr_id(
     _sealed_mock_deployment(config_dir, custody_root, server, monkeypatch)
     path = config_dir / "fill_observer.yaml"
     raw = yaml.safe_load(path.read_text("utf-8"))
-    raw["order_inquiry_tr_id"] = "TTTC0081R"  # the REAL 주식일별주문체결조회
+    raw["order_inquiry_tr_id"] = "TTTC0081R"
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(KisWitnessConfigError, match="TTTC0081R"):
         _boot(tmp_path, config_dir, data_dir, custody_root)
 
 
 def test_the_shipped_held_position_bounds_clear_the_boot_floors() -> None:
-    """The shipped CLOSE-proof bounds clear both boot floors at the operator-approved pacing,
-    and ``max_age == poll`` — #1010's own tree — does not. review-1014 r1 M1: the first draft
-    of the guard compared against the poll period alone and admitted the configuration it
-    names, so this pins the floor the deployed tree actually has to clear."""
-    # kis_mock_transport.yaml is operator-deployed, not in this tree: this is the approved
-    # min_send_interval_ms that fill_observer.yaml's own derivation cites. The boot test in
-    # test_paced_release_snapshot.py reads the deployed file instead.
+    """The shipped CLOSE-proof bounds clear both boot floors at the operator-approved pacing,"""
     approved_interval_ms = 2_000
     path = _STOCK / "fill_observer.yaml"
     config = load_fill_observer_config(path)
@@ -156,9 +142,6 @@ def test_the_committed_fill_observer_config_loads() -> None:
     config = load_fill_observer_config(_STOCK / "fill_observer.yaml")
     assert config.witness_fields["order_inquiry_tr_id"] == "VTTC0081R"
     assert config.poll_interval_ms > 0 and config.overdue_after_ms > 0
-    # #949 review HIGH (a): the observer's GETs are bounded by ITS OWN timeout, and that bound
-    # has to be well under the order path's (kis_mock_transport.yaml's 10 s) — the observer is
-    # read from inside the session loop's tick-to-tick window and the order path is not.
     assert 0 < config.witness_request_timeout_s <= 3.0
 
 
@@ -179,13 +162,13 @@ def test_a_non_positive_bound_refuses(tmp_path, key, value) -> None:
     ("raw", "key"),
     [
         ("0000004470", "4470"),
-        ("        4470", "4470"),  # the measured futures inquiry padding
+        ("        4470", "4470"),
         ("4470", "4470"),
         ("0000000000", None),
         ("", None),
         (None, None),
         ("PR3A-ODNO-1", None),
-        ("４４７０", None),  # full-width digits are not an order number
+        ("４４７０", None),
     ],
 )
 def test_odno_key(raw, key) -> None:
@@ -242,9 +225,6 @@ def test_reconciliation_service_takes_the_injected_witness(tmp_path) -> None:
     assert service._witness is sentinel  # noqa: SLF001
 
 
-# -- #969 review r1 HIGH: the prefetched release snapshot has an age limit --------------------
-
-
 _ACCOUNT = "5000000001"
 
 
@@ -271,9 +251,7 @@ def _prefetched(scope: WitnessScope, *, started_ms: int) -> PrefetchedSnapshot:
 
 
 def test_an_expired_prefetched_snapshot_is_refused_without_a_live_read() -> None:
-    """Past ``max_age_ms`` a matching snapshot is refused as unavailable (the release holds)
-    and the live witness is NOT asked — expiry must not put the broker back on the loop.
-    Inside the limit it is served, also without a live read."""
+    """Past ``max_age_ms`` a matching snapshot is refused as unavailable (the release holds)"""
     scope = WitnessScope(
         account=_ACCOUNT,
         instrument_keys=(InstrumentKey(account=_ACCOUNT, instrument="005930"),),

@@ -1,6 +1,4 @@
-"""``KisWitnessHttpClient`` tests — GET-only, headers preserved (mirrors
-``tos/runtime/tests/transport/kis_mock/test_client.py``'s own shape for the sibling
-order-transport client)."""
+"""``KisWitnessHttpClient`` tests — GET-only, headers preserved (mirrors"""
 
 from __future__ import annotations
 

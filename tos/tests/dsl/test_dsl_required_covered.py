@@ -1,24 +1,4 @@
-"""Required-covered fail-open suite for the DSL digest-bound artifacts (★1; design §2/§6).
-
-This is the DSL analogue of ``test_evidence_required_covered.py`` — the negative
-suite that closes the "empty/degenerate artifact reaches ISSUED" fail-open (the
-family that had three prior implementations REJECTED in review). The shared
-``issue_*`` fixtures always fill the required covered set, so without this suite the
-issuance guard would never be exercised.
-
-For every digest-bound DSL artifact — ``AuthoredStrategy``, ``Proposal``,
-``NoActionOutcome``, ``PortfolioVector``, ``AdmissibilityResult``,
-``CapabilityManifest``, ``BoundOutcome`` — this asserts:
-
-1. **★1 required-covered**: dropping any single ``_REQUIRED_COVERED`` path makes an
-   ISSUED artifact unconstructable (a degenerate artifact passing ISSUED would be
-   the evidence-ReplayCapsule fail-open isomorph).
-2. **non-vacuous guard**: no artifact has an empty ``_REQUIRED_COVERED`` (an empty
-   set is itself the fail-open — this test *fails* if a model regresses to it).
-3. **bare-issue rejection**: issuing with no covered content is rejected.
-4. **positive**: each ``issue_*`` fixture is genuinely complete (no all-null coverage
-   illusion) — ``missing_required_fields() == []``.
-"""
+"""Required-covered fail-open suite for the DSL digest-bound artifacts (★1; design §2/§6)."""
 
 from __future__ import annotations
 
@@ -56,7 +36,6 @@ from ._dsl_strategies import (
     vector_required_kwargs,
 )
 
-# (artifact class, kwargs builder) — the digest-bound artifacts under test.
 _ARTIFACTS: list[tuple[type[DigestBoundArtifact], Callable[..., dict[str, Any]]]] = [
     (AuthoredStrategy, strategy_required_kwargs),
     (Proposal, proposal_required_kwargs),
@@ -127,12 +106,6 @@ def test_issue_fixtures_are_genuinely_complete() -> None:
         issue_bound_outcome(),
     ):
         assert artifact.missing_required_fields() == []
-
-
-# ---------------------------------------------------------------------------
-# Non-empty rationale — the completeness guard treats "" as concrete, so a set-
-# but-empty rationale would satisfy the required-rationale obligation vacuously.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\t\n"])

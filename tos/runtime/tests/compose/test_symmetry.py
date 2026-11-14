@@ -1,22 +1,4 @@
-"""Long/short compose end-to-end symmetry (TOS Phase 5 W5 plan §2 decision 8, compose half;
-lane f4). Hermetic — two independent, fully-composed runtimes (real sqlite, real custody files),
-one per mirrored side, each driven through the SAME two-pass approval-file pattern
-``test_send_seal.py``/``test_compose_root.py`` already establish.
-
-Drives the identical ``close < lower_band`` crossing event through two separately-composed
-runtimes — one with :func:`~._fixtures.construction_config` (``NEW_LONG``/``BUY``), one with
-:func:`~._symmetry_fixtures.mirrored_construction_config` (``NEW_SHORT``/``SELL``) — and asserts
-the 19-step commitment-flow verdict sequence and the durable evidence-kind sequence are IDENTICAL
-between the two runs, while the ``SendSeal``'s ``outbound_side`` and ``seal_digest`` are the one
-place they legitimately differ.
-
-Each side needs its OWN ``config_dir``/``data_dir``/``custody_root`` (a second
-``compose_paper_runtime`` call into an already-composed data/custody directory would collide with
-the first run's sqlite/ledger state) — the shared ``conftest.py`` fixtures are parametrized only
-by ``tmp_path``, so :func:`_fresh_compose_dirs` calls their underlying (undecorated) functions
-directly against two independent subdirectories of the test's own ``tmp_path``, rather than
-re-deriving conftest's config-writing logic a second time.
-"""
+"""Long/short compose end-to-end symmetry (TOS Phase 5 W5 plan §2 decision 8, compose half;"""
 
 from __future__ import annotations
 
@@ -46,14 +28,7 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 
 def _fresh_compose_dirs(root: Path) -> tuple[Path, Path, Path]:
-    """Build one independent ``(config_dir, data_dir, custody_root)`` triple under ``root``.
-
-    ``conftest.py``'s ``config_dir``/``data_dir``/``custody_root`` fixtures are each
-    parametrized only by ``tmp_path`` (verified by reading their signatures) — pytest refuses a
-    fixture function called directly, but the plain function each decorator wraps is reachable
-    via ``__wrapped__``, so this calls exactly the same config-writing logic every other compose
-    e2e test uses, just twice, against two independent roots.
-    """
+    """Build one independent ``(config_dir, data_dir, custody_root)`` triple under ``root``."""
     root.mkdir(parents=True, exist_ok=True)
     config_dir = call_wrapped_fixture(_config_dir_fixture, root)
     data_dir = call_wrapped_fixture(_data_dir_fixture, root)
@@ -100,10 +75,7 @@ def _compose_short(root: Path):
 
 
 def _durable_rows_in_order(runtime) -> list[tuple[str, dict]]:
-    """Every durable evidence row in append order — mirrors
-    ``test_send_seal.py``'s own ``_durable_rows_in_order`` exactly (kept as a second, tiny
-    definition rather than an import: importing a sibling test module's private helper into a
-    THIRD file starts a chain this suite does not otherwise have)."""
+    """Every durable evidence row in append order — mirrors"""
     rows = runtime.evidence_store.connection.execute(
         "SELECT kind, payload_json FROM entries ORDER BY seq ASC"
     ).fetchall()
@@ -121,10 +93,7 @@ class SymmetryObservation:
 
 
 def _drive_to_send_boundary(runtime, custody_root: Path) -> SymmetryObservation:
-    """Run once, write the matching approval file, run again — the same two-pass pattern
-    ``test_compose_root.py::test_engine_steps_admit_for_real_and_reach_the_transport`` and
-    ``test_send_seal.py::_run_to_send_boundary`` both use — then reduce the result to a
-    :class:`SymmetryObservation`."""
+    """Run once, write the matching approval file, run again — the same two-pass pattern"""
     event = fx.crossing_event()
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
@@ -160,11 +129,7 @@ def assert_side_symmetric(
     long_side: str = "BUY",
     short_side: str = "SELL",
 ) -> None:
-    """The decision-8 mutation pin, as a standalone, independently-testable assertion.
-
-    Every structural field must match exactly; the seal is the one place a real, legitimate
-    difference is REQUIRED (a design that produced the same seal digest on both sides would mean
-    side was never actually bound into what gets signed)."""
+    """The decision-8 mutation pin, as a standalone, independently-testable assertion."""
     assert long_obs.verdict_sequence == short_obs.verdict_sequence, (
         "the 19-step commitment-flow verdict sequence diverged between mirrored sides:\n"
         f"long:  {long_obs.verdict_sequence}\nshort: {short_obs.verdict_sequence}"
@@ -203,13 +168,6 @@ class TestComposeE2ELongShortSymmetry:
         short_runtime.rcl_log.close()
         short_runtime.evidence_store.close()
 
-        # Sanity: both sides genuinely reached the transport — a run that halted early with an
-        # empty verdict/evidence sequence on BOTH sides would make the equality assertions below
-        # pass vacuously. The flow records a verdict only for each step it actually reaches
-        # (REGISTRY_DISPATCH through the Transmission Capability that hands off to the
-        # transport) — not all 19 of :data:`~tos.engine.vocabulary.COMMITMENT_FLOW_ORDER`, since
-        # later steps (e.g. egress result consumption) are driven by a SUBSEQUENT tick, not this
-        # one — so this pins "genuinely reached the send boundary", not a fixed step count.
         assert len(long_obs.verdict_sequence) >= 10
         assert all(outcome == "ADMIT" for _step, outcome in long_obs.verdict_sequence)
         assert "SEND_SEALED" in long_obs.evidence_kind_sequence
@@ -219,12 +177,7 @@ class TestComposeE2ELongShortSymmetry:
 
 
 def test_assert_side_symmetric_fires_on_a_fabricated_asymmetric_pair() -> None:
-    """Mutation-detector self-test (anti-vacuity — the same idiom
-    ``tests/engine/test_no_direct_latch_clear.py``/``tests/operator/test_no_write_port.py`` use
-    for their own regexes, applied here to a structural assertion instead): prove
-    :func:`assert_side_symmetric` actually fires when handed a genuinely asymmetric pair, rather
-    than trusting the real long/short pair above passing as proof the check does anything.
-    """
+    """Mutation-detector self-test (anti-vacuity — the same idiom"""
     base_sequence = (("REGISTRY_DISPATCH", "ADMIT"), ("VENUE_CONSTRUCTION", "ADMIT"))
     base_evidence = ("SEND_SEALED", "SEND_STARTED")
 
@@ -240,10 +193,8 @@ def test_assert_side_symmetric_fires_on_a_fabricated_asymmetric_pair() -> None:
         outbound_side="SELL",
         seal_digest="digest-short",
     )
-    # the genuinely symmetric pair must NOT raise.
     assert_side_symmetric(symmetric_long, symmetric_short)
 
-    # (a) a verdict sequence that silently diverged between sides.
     asymmetric_verdicts = SymmetryObservation(
         verdict_sequence=(
             ("REGISTRY_DISPATCH", "ADMIT"),
@@ -256,7 +207,6 @@ def test_assert_side_symmetric_fires_on_a_fabricated_asymmetric_pair() -> None:
     with pytest.raises(AssertionError, match="verdict sequence diverged"):
         assert_side_symmetric(symmetric_long, asymmetric_verdicts)
 
-    # (b) an evidence-kind sequence that silently diverged between sides.
     asymmetric_evidence = SymmetryObservation(
         verdict_sequence=base_sequence,
         evidence_kind_sequence=("SEND_SEALED",),
@@ -266,9 +216,6 @@ def test_assert_side_symmetric_fires_on_a_fabricated_asymmetric_pair() -> None:
     with pytest.raises(AssertionError, match="evidence-kind sequence diverged"):
         assert_side_symmetric(symmetric_long, asymmetric_evidence)
 
-    # (c) the M6-shaped mutation: a "short" observation whose outbound_side is still "BUY" (the
-    # side literal never actually flipped, as an `if side == "BUY"` branch that always takes the
-    # BUY arm would produce).
     still_buy = SymmetryObservation(
         verdict_sequence=base_sequence,
         evidence_kind_sequence=base_evidence,
@@ -278,12 +225,11 @@ def test_assert_side_symmetric_fires_on_a_fabricated_asymmetric_pair() -> None:
     with pytest.raises(AssertionError, match="outbound_side"):
         assert_side_symmetric(symmetric_long, still_buy)
 
-    # (d) the digest-blindness mutation: both sides producing the identical seal digest.
     same_digest = SymmetryObservation(
         verdict_sequence=base_sequence,
         evidence_kind_sequence=base_evidence,
         outbound_side="SELL",
-        seal_digest="digest-long",  # identical to symmetric_long's
+        seal_digest="digest-long",
     )
     with pytest.raises(AssertionError, match="SAME seal digest"):
         assert_side_symmetric(symmetric_long, same_digest)

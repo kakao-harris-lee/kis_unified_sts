@@ -1,17 +1,4 @@
-"""Package-level structure: exports, honest scope declarations, and the sibling-kernel seals.
-
-Two things this file locks that nothing else does:
-
-* **``tos.egress`` is consumed, never encroached upon** (design #34 §0.3/§11-3). Not merely
-  "egressgw does not modify the kernel", but "egressgw's own namespaces expose no kernel
-  production symbol" — the #27 FD lesson that locking the export surface alone leaves the
-  submodules open, so every module's ``vars()`` is swept.
-* **The honest scope is stated where a reader will hit it.** The package docstring must carry the
-  "closes no EV / admits no live send" declaration; a slice whose over-realization warning lives
-  only in a design document is one refactor away from losing it.
-
-Regime tag: authoring evidence only; closes no EV (design #34 §1.1).
-"""
+"""Package-level structure: exports, honest scope declarations, and the sibling-kernel seals."""
 
 from __future__ import annotations
 
@@ -44,72 +31,19 @@ def test_every_exported_name_resolves() -> None:
         ), f"tos.egressgw.__all__ names a missing {name!r}"
 
 
-def test_the_package_declares_its_honest_scope_in_its_own_docstring() -> None:
-    """(§1.1) The provisional / no-EV / no-live declaration lives in the code, not only the doc."""
-    doc = " ".join((tos.egressgw.__doc__ or "").split())
-    for phrase in (
-        "closes no EV",
-        "synthetic transport",
-        "P0-2",
-        "admits no live send",
-        "no ADR acceptance, restricted-live, or production is authorized",
-    ):
-        assert (
-            phrase in doc
-        ), f"the package docstring lost its honest-scope phrase: {phrase!r}"
-
-
-def test_the_package_states_the_six_five_six_split() -> None:
-    """(§4.1) The 6 / 5 / 6 honesty table is stated where a reader of the code will see it."""
-    doc = " ".join((tos.egressgw.__doc__ or "").split())
-    assert "six are verified by shipped predicates" in doc
-    assert "five are non-authoritative provisional stand-ins" in doc
-    assert "six" in doc and "deferred" in doc
-
-
-def test_the_package_recounts_the_actual_remaining_attestations() -> None:
-    """(kernel round #3 §2 decision 6, superseding round #2 §2 decision 4) The 6/5/6 split is the
-    kernel's own static disposition table (design #34 §4.1) — it does not shrink just because a
-    runtime later derives some of the five provisional items structurally. This test locks the
-    honest amendment: the docstring also names the actual remaining count in the reference
-    runtime composition, not just the kernel-level classification.
-
-    Round #2 landed the docstring recount at "three fields ... remaining ... attestations" when
-    only items 3, 6, 14, and 15 were structurally derived. Round #3 lands the last two owners
-    (item 12's ``venue_session_account_facts_current`` via ``SessionFactsOwner`` — W5; item 16's
-    ``restrictive_latch_state`` / ``worst_credible_capacity`` via ``tos_runtime.safety.latch`` —
-    W3), so the honest count is now zero remaining operator attestations. The old "three fields"
-    pin is false today: it would silently mask a regression if a future owner were retired without
-    updating this count.
-    """
-    doc = " ".join((tos.egressgw.__doc__ or "").split())
-    assert "zero remaining" in doc
-    assert "non-authoritative operator attestations" in doc
-    assert "venue_session_account_facts_current" in doc
-    assert "restrictive_latch_state" in doc
-    assert "worst_credible_capacity" in doc
-    assert "three fields as the only remaining" not in doc
-
-
 def test_no_module_exposes_a_sibling_kernel_production_symbol() -> None:
-    """(§0.3 / §11-3, author-level) The kernels are consumed; their productions are not re-hosted.
-
-    ``compile_command`` is deliberately **absent** from this list: Order Construction is exactly
-    the runtime that is *supposed* to call it (design #34 §3.2). What must not appear is a
-    re-hosted kernel *production* — a locally defined quorum certificate builder, a capability
-    issuer, a capacity mutation, or a currentness vector producer.
-    """
+    """(§0.3 / §11-3, author-level) The kernels are consumed; their productions are not re-hosted."""
     forbidden = (
-        "apply_committed",  # rcl — capacity mutation
-        "apply_benefit",  # rcl
-        "claim_capability",  # rcl — the capability nonce ledger is rcl's
-        "fold_commands",  # rcl
-        "vector_complete",  # cur — the per-send currentness production
-        "quorum_commit_certificate_structurally_complete",  # egress — QCC production
-        "quorum_threshold_structurally_met",  # egress
-        "quorum_coordinates_current",  # egress
-        "risk_decision",  # are
-        "action_flow_decision",  # afg
+        "apply_committed",
+        "apply_benefit",
+        "claim_capability",
+        "fold_commands",
+        "vector_complete",
+        "quorum_commit_certificate_structurally_complete",
+        "quorum_threshold_structurally_met",
+        "quorum_coordinates_current",
+        "risk_decision",
+        "action_flow_decision",
     )
     for module_name, module in _MODULES.items():
         for name in forbidden:

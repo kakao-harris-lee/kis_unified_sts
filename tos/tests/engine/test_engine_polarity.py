@@ -1,20 +1,4 @@
-"""Polarity + truthy-sentinel regression (design #31 §6 / §11; the #18/#22/#23/#25 lesson).
-
-Two defect classes, both of which have bitten this series before:
-
-* **truthy sentinel.** Every verdict-shaped ``StrEnum`` has non-empty string members, so
-  ``if verdict:`` reads ``DENY`` / ``REJECT`` / ``INADMISSIBLE`` as *truthy* — a silent fail-open.
-  The engine's verdict enums are therefore **truthy-untestable** (``__bool__`` raises), and the
-  mandated consume gate is the explicit positive identity (design #31 §6/§4.2 rule 1).
-* **negated gates.** ``verdict is not DENY`` fails open on ``None`` and on any future member. The
-  shipped sources are grepped so the forbidden normalization cannot reappear in a later edit.
-
-The sibling verdict adapters are exercised over their **whole** result vocabularies (not a happy
-sample), including venue's four-valued result whose ``RESTRICTED_PROTECTIVE_ONLY`` member is the
-one a truthiness read would misread as permission.
-
-Regime tag: orchestration authoring evidence only; closes no EV.
-"""
+"""Polarity + truthy-sentinel regression (design #31 §6 / §11; the #18/#22/#23/#25 lesson)."""
 
 from __future__ import annotations
 
@@ -101,12 +85,7 @@ def test_no_engine_source_uses_a_negated_denial_gate() -> None:
 
 
 def test_no_engine_source_normalizes_a_negative_flag_with_is_not_true() -> None:
-    """(series discipline) A negative-polarity ``bool | None`` is cleared by ``is False`` alone.
-
-    Reading ``is not True`` on a negative-polarity flag turns an *unknown* into a "safe" — the
-    #18/#22/#23/#25 MAJOR-2 regression. The engine's own negative-polarity surface is small, so the
-    check is a source grep: the normalization simply must not appear.
-    """
+    """(series discipline) A negative-polarity ``bool | None`` is cleared by ``is False`` alone."""
     offenders: list[str] = []
     for path in sorted(_ENGINE_SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -124,11 +103,6 @@ def test_no_engine_source_normalizes_a_negative_flag_with_is_not_true() -> None:
         "`is not True` reads an unknown as cleared; a negative-polarity flag is cleared only by "
         f"`is False` (design #31 §6); found: {offenders}"
     )
-
-
-# ---------------------------------------------------------------------------
-# sibling verdict adapters — exhaustive over each result vocabulary (§5.2)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

@@ -1,11 +1,4 @@
-"""``derive_item6_item12`` under option (a) "K" (operator decision 2026-10-23).
-
-The MOCK_STOCK_ORDER scope (REDUCED, real MOCK_VTS INSTANCE draft) passes item 6 and takes
-item 12 from the injected mock-account freshness. Every mutation of its tuples toward real money
-— production environment, position/cash effect, real-order authorization, an unknown axis —
-falls back to the ordinary rule: REDUCED fails item 6, and item 12 reads the profile approval
-the draft does not have, whatever the mock source says.
-"""
+"""``derive_item6_item12`` under option (a) "K" (operator decision 2026-10-23)."""
 
 from __future__ import annotations
 
@@ -36,9 +29,7 @@ _EXAMPLE = Path(__file__).resolve().parents[2] / "config/broker_scopes.example.y
 def _mock_scopes(tmp_path: Path) -> BrokerScopesConfig:
     raw = yaml.safe_load(_EXAMPLE.read_text(encoding="utf-8"))
     raw["active_scope"] = "MOCK_STOCK_ORDER"
-    raw["instance_path"] = os.path.relpath(
-        _DRAFT, tmp_path
-    )  # relative, as committed trees (#958)
+    raw["instance_path"] = os.path.relpath(_DRAFT, tmp_path)
     for scope in raw["scopes"]:
         if scope["name"] == "MOCK_STOCK_ORDER":
             scope["profile_evidence_ok"] = True
@@ -83,7 +74,6 @@ def test_a_stale_or_absent_mock_source_fails_item_12(
 ) -> None:
     fields = _derive(_mock_scopes(tmp_path), generation)
     assert fields.broker_constraint_generation_current is False
-    # item 6 is about the scope, not the account read
     assert fields.account_instrument_action_allowed is True
 
 
@@ -107,15 +97,8 @@ def test_each_mutation_toward_real_money_is_refused_on_both_items(
     original = config.active_scope.capability_tuples
     mutated = _mutations(original[0])[index]
     fields = _derive(_with_tuples(config, (mutated, *original[1:])), True)
-    # REDUCED without the mock class: item 6 refused, as before option (a)
     assert fields.account_instrument_action_allowed is False
-    # item 12 ignores the mock source and reads the profile (no approvers -> False)
     assert fields.broker_constraint_generation_current is False
-
-
-# ---------------------------------------------------------------------------
-# The profile's own environment class (#932 Codex r2)
-# ---------------------------------------------------------------------------
 
 
 def test_the_draft_instance_documents_declare_their_environment_class() -> None:
@@ -170,10 +153,6 @@ def test_an_unknown_environment_class_refuses_to_load(tmp_path: Path) -> None:
         load_instance_documents(path)
 
 
-# ---------------------------------------------------------------------------
-# The class is tied to the document's own host (#932 Codex r3)
-# ---------------------------------------------------------------------------
-
 _REAL_HOST = "https://openapi.koreainvestment.com:9443"
 _MOCK_HOST = "https://openapivts.koreainvestment.com:29443"
 
@@ -206,8 +185,7 @@ def test_the_shipped_documents_are_host_bound() -> None:
 def test_red_codex_r3_real_prod_relabelled_simulation_refuses_to_load(
     tmp_path: Path, loader: str
 ) -> None:
-    """Codex r3's exact input: ONLY REAL_PROD's class flipped. It used to load (REAL_PROD is
-    also NON_LIVE with no action classes) and relax item 6 for a production profile."""
+    """Codex r3's exact input: ONLY REAL_PROD's class flipped. It used to load (REAL_PROD is"""
     from tos_runtime.brokercap.instance import (
         BrokerInstanceConfigError,
         load_instance_document,
@@ -227,9 +205,7 @@ def test_red_codex_r3_real_prod_relabelled_simulation_refuses_to_load(
 @pytest.mark.parametrize(
     ("edits", "why"),
     [
-        # the MOCK document moved onto the REAL host while still claiming simulation
         (((f'rest_base: "{_MOCK_HOST}"', f'rest_base: "{_REAL_HOST}"'),), "REAL host"),
-        # a class nobody can tie to a broker host
         (
             ((_MOCK_CLASS, "    environment_class: SYNTHETIC\n"),),
             "not a broker environment",
@@ -251,9 +227,7 @@ def test_a_class_its_host_does_not_support_refuses_to_load(
 def test_red_codex_r3_a_simulation_profile_on_the_real_host_built_outside_the_loader(
     tmp_path: Path,
 ) -> None:
-    """A REAL-host document carrying a SIMULATION profile, assembled in code (not by the
-    loader, so not host-bound): items 6 and 12 refused, and the kernel is handed no profile —
-    the gateway takes the normal capability check and DENIES."""
+    """A REAL-host document carrying a SIMULATION profile, assembled in code (not by the"""
     from tos.egressgw import SendBoundaryContext
     from tos.egressgw.gateway import _check_allowance
     from tos.egressgw.vocabulary import BrokerApplicability, VerifyOutcome
@@ -261,8 +235,6 @@ def test_red_codex_r3_a_simulation_profile_on_the_real_host_built_outside_the_lo
     config = _mock_scopes(tmp_path)
     instance = load_active_instance_document(config)
     assert instance is not None
-    # a plain copy of the loaded MOCK document moved onto the REAL host — whatever the loader
-    # bound, it bound a different host
     forged = dataclasses.replace(
         instance, environment="REAL_PROD", rest_base=_REAL_HOST
     )
@@ -272,7 +244,6 @@ def test_red_codex_r3_a_simulation_profile_on_the_real_host_built_outside_the_lo
     )
     assert fields.account_instrument_action_allowed is False
     assert fields.broker_constraint_generation_current is False
-    # an un-host-bound class claim never reaches the kernel: no profile at all
     assert fields.broker_capability_profile is None
     verdict = _check_allowance(
         None,  # type: ignore[arg-type]
@@ -290,8 +261,7 @@ def test_red_codex_r3_a_simulation_profile_on_the_real_host_built_outside_the_lo
 def test_production_declared_on_the_simulation_host_refuses_to_load(
     tmp_path: Path,
 ) -> None:
-    """The REAL document moved onto the MOCK host. Loaded alone so the PRODUCTION branch is
-    the one that answers (the all-documents load fails earlier on the MOCK document)."""
+    """The REAL document moved onto the MOCK host. Loaded alone so the PRODUCTION branch is"""
     from tos_runtime.brokercap.instance import (
         BrokerInstanceConfigError,
         load_instance_document,
@@ -307,8 +277,7 @@ def test_production_declared_on_the_simulation_host_refuses_to_load(
 def test_a_file_without_a_real_host_loads_the_simulation_claim_unbound(
     tmp_path: Path,
 ) -> None:
-    """No REAL host to exclude: the claim cannot be proven, so it loads unbound (never read
-    as simulation). The transport seal refuses such a file outright."""
+    """No REAL host to exclude: the claim cannot be proven, so it loads unbound (never read"""
     from tos_runtime.brokercap.instance import load_instance_documents
 
     docs = list(yaml.safe_load_all(_DRAFT.read_text(encoding="utf-8")))

@@ -11,18 +11,17 @@
   분포(선물 트리의 4단계 UNKNOWN 은 따로 떼어 이름을 붙인다 — :func:`_fmt_flow_halts`),
   M5 첫 수(값을 쥐고도 UNKNOWN 으로 거절된 post-boot 봉), ``MARKETFEED_FIELD_REFUSED``
   행, ``VENUE_BAND_OBSERVED`` 행, ``MARKETFEED_PASS_OVERRUN`` 행 수와 가장 긴 pass(#949).
-* B3 대조 — 먼저 **돌았는가**(``<session>/b3/status.json``, 세션 러너 step 14 가 자동으로
-  남긴다), 그 다음 **무엇을 봤는가**(``<session>/b3/report/summary.json``) — unresolved ·
-  divergent. 돌지 않은 세션은 그 사유가 나오고, 수는 나오지 않는다.
 * 생산자 지연(journal ``as_of_ms`` − 분 마감) p50/p90 과 생산자 카운터.
 * 상주 paper 세션(``paper-sessions`` · ``paper-ops`` pid) 상태와 그 세션의
   ``MARKETFEED_PASS_OVERRUN`` · 권한 행.
 * 세션마다 권한 행 — ``AUTHORITY_WITNESS_LOST``(#957) 수와 standing 세션 승인
   ``APPROVAL_STANDING_BOUND/CONSUMED/REFUSED/NOT_COVERED``(#955) 수·사유.
-* 트리(LONG · SHORT)마다 **연속 깨끗한 거래일** 과 목표(로드맵 §2-1 · §3 M4) — 시작
-  날짜, 마지막으로 깨진 날과 그 사유. 거래일은 그 트리의 tenant 캘린더에서 읽으므로
-  주말·휴장(12-25 · 12-31)은 연속을 깨지도 늘리지도 않고, 거래일인데 세션이 없으면
-  깬다. 깨끗한 하루의 조건은 ``config/tos_status_board.yaml::clean_streak`` 에 있다.
+* 세는 트리(지금은 LONG)마다 **깨끗한 거래일 누적** 과 목표 — 창의 시작, 가장 오래된
+  깨끗한 날, 마지막으로 깨진 날과 그 사유. 거래일은 그 트리의 tenant 캘린더에서
+  읽으므로 주말·휴장(12-25 · 12-31)은 세지도 깨지도 않고, **깨진 거래일은 그날만 세지
+  않는다** — 앞의 기록을 지우지 않는다(2026-11-11 완화,
+  ``docs/plans/2026-11-11-tos-paper-ready-relaxation.md`` §2 문장 1 «연속은 요구하지
+  않는다»). 깨끗한 하루의 조건은 ``config/tos_status_board.yaml::clean_streak`` 에 있다.
 
 **읽기 전용.** sqlite 는 :func:`tools.tos_cp3.session_inputs._connect_ro`
 (``file:…?mode=ro`` + ``PRAGMA user_version`` 핀)로만 연다. 파일은 읽기만 하고, 프로세스
@@ -69,98 +68,46 @@ KST = ZoneInfo("Asia/Seoul")
 BLOCK = "막힘"
 WARN = "확인"
 
-#: 러너가 정상 종료로 보는 rc — 0, 그리고 자기 정지 경로의 SIGTERM(143).
-#: ``run_tenant_session.sh`` 말미의 case 문과 같은 집합이다.
 NORMAL_END_RCS = frozenset({0, 143})
 
-#: stale 거절로 읽는 보류 사유(#931 운영자 지시). 그 밖의 사유는 1건이라도 막힘.
 STALE_HALT_REASON = "TIME_NOT_ADMITTED"
 
-#: 4단계(독립 승인) 흐름 정지를 가르는 두 값 — ``FLOW_HALTED`` 행의 ``halt_reason`` 과
-#: ``step``(런타임 ``engine.vocabulary.HaltReason`` / ``CommitmentStep`` 의 값).
 STAGE_UNKNOWN_HALT_REASON = "STAGE_UNKNOWN"
 INDEPENDENT_APPROVAL_STEP = "INDEPENDENT_APPROVAL"
-#: 「결정 전용」으로 보는 시장 — 러너가 session.log 에 적는 ``market=`` 값
-#: (``run_tenant_session.sh`` step 5b: 생산자 config 와 트리 RENDER.yaml 이 일치한 값).
 DECISION_ONLY_MARKET = "futures"
-#: 그 시장의 4단계 UNKNOWN 정지에 붙이는 이름 — :func:`_fmt_flow_halts` 참조.
 STEP4_UNKNOWN_EXPECTED_LABEL = "4단계 승인 없음(선물 결정 전용 — 예상)"
 
 FIELD_REFUSED_KIND = "MARKETFEED_FIELD_REFUSED"
-#: ``MARKETFEED_FIELD_REFUSED.refused_by_reason`` 의 stale 키(런타임 ``_derive_field_state``).
-#: 그 밖의 사유는 1건이라도 막힘(#931).
 STALE_FIELD_REASON = "stale"
 BAND_OBSERVED_KIND = "VENUE_BAND_OBSERVED"
-#: 런타임 ``marketfeed.scheduler._MARKETFEED_PASS_OVERRUN_KIND`` 의 거울(#949) — 한 pass(틱 +
-#: post-pass hook)가 ``poll_interval_ms + journal_pass_allowance_ms`` 창을 넘을 때만 쓰이는
-#: 진단 행. 날짜도 벽시계도 싣지 않으므로 band 행처럼 부팅 구간 seq 범위로만 세션에 묶인다.
 PASS_OVERRUN_KIND = "MARKETFEED_PASS_OVERRUN"
-#: 런타임 ``compose._authority_heartbeat.AUTHORITY_WITNESS_LOST_KIND`` 의 거울(#957) — 매 pass
-#: heartbeat 가 Safety Authority 증인을 present → absent 로 본 순간 한 행. 런타임은 이 행으로
-#: 멈추지 않고 기록만 한다. 다만 만료된 창은 회복되지 않으므로 이후 송신은 그 프로세스가 끝날
-#: 때까지 거절된다(fail-closed). 장 전에 부팅하는 트리(LONG/SHORT 크론 08:38/08:40)는 개장 때
-#: 설계상 잃는다 — 그래서 막힘이 아니라 확인이다.
 AUTHORITY_WITNESS_LOST_KIND = "AUTHORITY_WITNESS_LOST"
-#: 런타임 ``authority.standing._EVIDENCE_*`` 의 거울(#955) — standing 세션 승인 artifact 의
-#: 바인딩·사용·거절·미적용. 키는 상태판 JSON 의 키다.
 STANDING_APPROVAL_KINDS: Mapping[str, str] = {
     "bound": "APPROVAL_STANDING_BOUND",
     "consumed": "APPROVAL_STANDING_CONSUMED",
     "refused": "APPROVAL_STANDING_REFUSED",
     "not_covered": "APPROVAL_STANDING_NOT_COVERED",
 }
-#: 런타임 ``riskstate.flow_observation._SEND_SEALED_KIND`` 의 거울 — 송신이 봉인된 행.
-#: 이 행 뒤의 증인 상실은 «장 전 설계상 상실» 일 수 없다(그 뒤 송신이 거절된다).
 SEND_SEALED_KIND = "SEND_SEALED"
-#: 같은 파일의 ``_HANDLING_STARTED_KIND`` 거울 — 틱(봉 하나) 처리의 시작 행. paper 잎에서
-#: 세션의 첫 틱 seq 를 찾는 데 쓴다(tenant 는 이미 읽은 틱의 evidence seq 를 쓴다).
 HANDLING_STARTED_KIND = "EVENT_HANDLING_STARTED"
-#: 부팅 구간으로 세션에 묶어 세는 권한 행 전부.
 AUTHORITY_KINDS: tuple[str, ...] = (
     AUTHORITY_WITNESS_LOST_KIND,
     *STANDING_APPROVAL_KINDS.values(),
 )
-#: 부팅마다 한 번 쓰이는 행 — 누적 잎을 «부팅 구간» seq 범위로 나누는 경계다.
-#: band 행처럼 날짜를 싣지 않는 행(REFUSED 는 trading_date 가 없다)은 이 범위로만 세션에 묶인다.
 BOOT_KIND = "TIME_SERVICE_STARTUP"
-#: diff_decisions.py 가 쓰는 summary 모양 — 다른 값이면 키를 믿지 않고 막힘으로 보고한다.
-B3_SUMMARY_SCHEMA_VERSIONS = frozenset({2, 3})
-#: 선언된 divergence 를 자기 버킷(``live_comparison.declared_difference_counts``)에
-#: 담아 내는 첫 summary 모양. **그 아래 모양의 `divergent` 는 선언된 차이를 섞어 센다**
-#: — 로드맵 §2-1 의 「설명 안 되는 divergence」로 읽으면 안 되므로, v2 는 수를 그대로
-#: 보여 주되 판정을 «확인» 에 둔다. v3 부터는 `divergent` 가 바로 그 수이고 §2-1 을
-#: 못 채우는 것이라서 «막힘» 이다.
-B3_DECLARED_BUCKET_SCHEMA_VERSION = 3
-#: 세션 디렉터리 아래 B3 산출물 디렉터리. ``config/tos_cp3_b3.yaml::subdir`` 와 같아야 하고
-#: ``tests/tools/test_cp3_post_session_b3.py`` 가 그 일치를 고정한다 — 두 값이 어긋나면
-#: 상태판은 돌아간 대조를 «결과 없음» 으로 읽는다.
-B3_SUBDIR = "b3"
-#: post_session_b3.py 가 쓰는 실행 기록 모양(``<session>/b3/status.json``).
-B3_STATUS_SCHEMA_VERSIONS = frozenset({1})
-#: 그 기록의 verdict — 「돌았다」 하나뿐이고 나머지는 전부 「재지 못했다」다.
-B3_VERDICT_OK = "ok"
-B3_VERDICT_SKIPPED = "skipped"
-
 _SESSION_DIR_RE = re.compile(r"^(?P<label>[a-z0-9][a-z0-9-]*?)-(?P<day>\d{8})$")
 _PAPER_DIR_RE = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2})-(?P<hms>\d{6})-(?P<direction>[A-Z]+)$"
 )
-#: 상주 paper 드라이버가 런타임 부팅을 확인했을 때 bootproof.txt 첫 줄에 쓰는 문구.
 BOOTPROOF_OK = "boot proof: OK"
-#: 상주 paper 드라이버의 bootproof.txt — 첫 줄 끝 « · <종목>», 셋째 줄 «baseline_seq=<n>».
 _BOOTPROOF_INSTRUMENT_RE = re.compile(r"· (?P<instrument>[A-Z0-9]+)$")
 _BOOTPROOF_BASELINE_RE = re.compile(r"baseline_seq=(?P<seq>-?\d+)")
 _LOG_LINE_RE = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (?P<msg>.*)$")
 
 
-# ---------------------------------------------------------------------------
-# config
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class StreakTree:
-    """연속 판정이 세는 한 트리 — 세션 디렉터리 label 과 그 트리의 tenant 캘린더."""
+    """누적 판정이 세는 한 트리 — 세션 디렉터리 label 과 그 트리의 tenant 캘린더."""
 
     label: str
     calendar_yaml: Path
@@ -168,7 +115,7 @@ class StreakTree:
 
 @dataclass(frozen=True)
 class StreakConfig:
-    """``config/tos_status_board.yaml::clean_streak`` 의 값(로드맵 §2-1 · §3 M4)."""
+    """``config/tos_status_board.yaml::clean_streak`` 의 값(2026-11-11 완화 §2 문장 1)."""
 
     target_days: int
     window_days: int
@@ -219,7 +166,6 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> BoardConfig:
     missing = [key for key in required if key not in raw]
     if missing:
         raise ValueError(f"{path}: 키가 없다 {missing}")
-    # 빈 needle 은 모든 cmdline 에 들어 있어 pid 재사용 방지를 끈다(#941).
     blank = [
         key
         for key in ("paper_runtime_cmdline_needle", "paper_driver_cmdline_needle")
@@ -263,7 +209,6 @@ def load_streak_config(raw: Any, *, path: Path) -> StreakConfig:
             f"{path}: clean_streak.target_days={target} 는 1 이상이어야 한다"
         )
     if window < target:
-        # 창이 목표보다 좁으면 목표를 채웠는지 영원히 알 수 없다.
         raise ValueError(
             f"{path}: clean_streak.window_days={window} 가 target_days={target} 보다 작다"
         )
@@ -309,11 +254,6 @@ def expand_path(value: str) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(value)))
 
 
-# ---------------------------------------------------------------------------
-# small helpers
-# ---------------------------------------------------------------------------
-
-
 def percentile(values: Sequence[int], p: int) -> int | None:
     """Nearest-rank 백분위. 빈 입력이면 ``None``."""
     if not values:
@@ -324,10 +264,7 @@ def percentile(values: Sequence[int], p: int) -> int | None:
 
 
 def bar_close_ms(raw_event_id: str) -> int | None:
-    """``A05611:1m:20261022T084500+0900`` → 그 1분봉 마감(시작 + 60s)의 epoch ms.
-
-    id 문법은 ``session_inputs`` 의 것을 그대로 쓴다(두 문법이 갈라지지 않게).
-    """
+    """``A05611:1m:20261022T084500+0900`` → 그 1분봉 마감(시작 + 60s)의 epoch ms."""
     try:
         stamp = raw_event_id.split(si._RAW_EVENT_ID_SEPARATOR, 1)[1]
         start = _dt.datetime.strptime(stamp, si._RAW_EVENT_ID_STAMP_FORMAT)
@@ -375,20 +312,12 @@ def _hhmmss(ts: str | None) -> str:
     return ts[11:] if ts else "—"
 
 
-# ---------------------------------------------------------------------------
-# tenant session — the runner's own log
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class RunnerLog:
     """``session.log`` (``run_tenant_session.sh`` 의 log() 흐름)에서 읽은 사실."""
 
     first_ts: str | None = None
     repo_commit: str | None = None
-    #: 러너 step 5b 가 적은 시장(``futures`` · ``stock``) — 생산자 config 와 트리
-    #: RENDER.yaml 이 **일치했을 때만** 적히므로 트리의 범위를 말하는 값이다. 그 줄이
-    #: 없는 옛 세션 로그(~2026-10-23)에서는 ``None`` 이고, 그때는 시장을 모른다.
     market: str | None = None
     instrument: str | None = None
     data_leaf: str | None = None
@@ -396,8 +325,6 @@ class RunnerLog:
     direction: str | None = None
     source_revision: str | None = None
     activation: str | None = None
-    #: 렌더가 band 원천 슬롯을 선언했나 — True/False, 줄이 없으면 None.
-    #: SHORT 트리처럼 band 를 끈 트리는 False 이고, 그때 band 부재는 소견이 아니다.
     band_declared: bool | None = None
     band_line_ok: bool = False
     band_digest: str | None = None
@@ -413,7 +340,6 @@ class RunnerLog:
 
 _RUNNER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("repo_commit", re.compile(r"checkout ok: .*repo_commit=(\w+)")),
-    # 줄 머리를 고정한다 — 뒤의 B3 줄(`=== B3 … market=… ceiling …`)도 같은 토큰을 싣는다.
     ("market", re.compile(r"^market=(\w+) \(tree and producer agree\)")),
     ("data_leaf", re.compile(r"instrument=(\S+) · data leaf (\S+)")),
     ("render", re.compile(r"=== RENDER tree=(\S+) direction=(\S+)")),
@@ -436,7 +362,6 @@ def parse_runner_log(text: str) -> RunnerLog:
     for line in text.splitlines():
         stamped = _LOG_LINE_RE.match(line)
         if stamped is None:
-            # render 블록(타임스탬프 없는 들여쓴 줄)
             render = _RENDER_FIELD_RE.match(line)
             if render is not None:
                 setattr(out, render.group(1), render.group(2).strip())
@@ -451,8 +376,6 @@ def parse_runner_log(text: str) -> RunnerLog:
             if name == "repo_commit":
                 out.repo_commit = m.group(1)
             elif name == "market" and out.market is None:
-                # 첫 줄만 — 러너 5b 가 먼저 적는다. 같은 로그에 쓰는 자식 프로세스가
-                # 나중에 같은 꼴의 줄을 내도 덮지 못한다(review-1030 LOW-1).
                 out.market = m.group(1)
             elif name == "data_leaf":
                 out.instrument, out.data_leaf = m.group(1), m.group(2)
@@ -497,11 +420,6 @@ def expected_code_digest(config_dir: Path) -> str | None:
     return m.group(1) if m else None
 
 
-# ---------------------------------------------------------------------------
-# producer
-# ---------------------------------------------------------------------------
-
-
 def producer_facts(session_dir: Path, percentiles: Sequence[int]) -> dict[str, Any]:
     """journal 지연 분포 + producer-summary 카운터 + band 줄."""
     latencies: list[int] = []
@@ -534,11 +452,6 @@ def producer_facts(session_dir: Path, percentiles: Sequence[int]) -> dict[str, A
     }
 
 
-# ---------------------------------------------------------------------------
-# runtime stores (one accumulating leaf, many session days)
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class LeafFacts:
     """한 데이터 잎을 한 번 읽은 결과. 잎은 세션을 누적하므로 날짜로 자른다."""
@@ -547,7 +460,6 @@ class LeafFacts:
     snapshots: tuple[si.Snapshot, ...] | None = None
     extra_rows: list[tuple[int, str, dict[str, Any]]] = field(default_factory=list)
     code_digest_by_seq: dict[int, str | None] = field(default_factory=dict)
-    #: 부팅 행(:data:`BOOT_KIND`)의 seq, 오름차순.
     boot_seqs: list[int] = field(default_factory=list)
     error: str | None = None
 
@@ -574,11 +486,7 @@ def _kind_rows(
 def pass_overrun_summary(
     rows: Iterable[tuple[int, Mapping[str, Any]]],
 ) -> dict[str, Any]:
-    """``MARKETFEED_PASS_OVERRUN`` 행 수와 가장 긴 pass(``pass_ms`` 최대) 한 행.
-
-    필드 이름은 런타임 ``TickScheduler._record_pass_overrun`` 이 쓰는 그대로다.
-    ``pass_ms`` 가 정수가 아닌 행도 세지만 «최악» 후보에서는 뺀다.
-    """
+    """``MARKETFEED_PASS_OVERRUN`` 행 수와 가장 긴 pass(``pass_ms`` 최대) 한 행."""
     rows = list(rows)
     timed = [
         (seq, p)
@@ -601,17 +509,7 @@ def authority_summary(
     first_tick_seq: int | None,
     first_send_seq: int | None,
 ) -> dict[str, Any]:
-    """권한 행(:data:`AUTHORITY_KINDS`) 요약 — 증인 상실 수와 standing 승인 종류별 수·사유.
-
-    키는 런타임이 쓰는 그대로다: REFUSED·NOT_COVERED 는 ``reason``, CONSUMED 는 ``action``.
-
-    **증인 상실은 위치로 나눈다(#962 리뷰 MEDIUM).** 장 전에 부팅한 트리는 개장 때 설계상
-    증인을 잃는다(``_authority_heartbeat`` docstring) — 그 행은 세션의 첫 틱보다, 그리고 어떤
-    ``SEND_SEALED`` 보다 앞선다. 그 밖의 상실(첫 틱 뒤, 송신 봉인 뒤)은 장중 상실이라 이후
-    송신이 재부팅 전까지 거절된다(막힘). 트리 이름으로 가르지 않는다. 아직 틱이 없는 세션
-    (``first_tick_seq is None``)에서 송신 봉인보다 앞선 상실은 «첫 틱 전» 으로 따로 센다(확인,
-    #962 r2 LOW) — 장 전 부팅이면 설계상이지만, 첫 봉이 지나도 남아 있으면 볼 일이다.
-    """
+    """권한 행(:data:`AUTHORITY_KINDS`) 요약 — 증인 상실 수와 standing 승인 종류별 수·사유."""
     lost = 0
     mid_session: list[int] = []
     no_tick_yet: list[int] = []
@@ -632,7 +530,6 @@ def authority_summary(
                 mid_session.append(seq)
             elif first_tick_seq is None:
                 no_tick_yet.append(seq)
-            # 그 밖(첫 틱 전·송신 봉인 전)은 장 전 설계상 상실 — 수만 보인다.
         elif kind in names:
             key = names[kind]
             counts[key] += 1
@@ -710,10 +607,6 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
     """한 세션 날짜(KST ``YYYYMMDD``)로 자른 런타임 사실."""
     if leaf.error is not None or leaf.records is None or leaf.snapshots is None:
         return {"error": leaf.error or "store not read"}
-    # 날짜 한정은 session_inputs.scope_to_session_day 에 맡긴다 — 날짜를 읽을 수 없는 id 와
-    # 부팅 스냅샷·저장소의 날짜 불일치를 거부하는 것이 그 함수다. 다만 그 함수는 «넘겨받은
-    # 스냅샷 중 가장 새 날짜» 를 세션으로 보므로, 지난 날짜를 볼 때는 그 날 이후 스냅샷을 빼고
-    # 넘긴다(날짜를 읽을 수 없는 id 는 빼지 않는다 — 그래야 거부된다).
     passed = [
         snap
         for snap in leaf.snapshots
@@ -733,7 +626,6 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
                 "error": f"세션 범위 거부 — 저장소가 말하는 세션 날짜 {scope.session_day} ≠ {day}"
             }
     else:
-        # 아직 한 봉도 소비하지 않은 세션(부팅 직후) — 거부가 아니라 «틱 0» 이다.
         day_snaps = []
         scope = si.SessionScope(
             session_day=day,
@@ -760,7 +652,6 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
     flow_halts = Counter(
         r["flow_halt_reason"] for r in ticks if r.get("flow_halt_reason") is not None
     )
-    # 위 분포의 **부분집합** — 같은 틱 목록에서 세므로 STAGE_UNKNOWN 수를 넘지 못한다.
     step4_unknown = sum(
         1
         for r in ticks
@@ -804,7 +695,7 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
     band_rows: list[dict[str, Any]] | None
     pass_overrun: dict[str, Any] | None
     if seq_range is None:
-        band_rows = None  # 틱이 없어 이 세션의 부팅 구간을 정할 수 없다
+        band_rows = None
         pass_overrun = None
         authority = None
     else:
@@ -869,7 +760,6 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
         "handed_off": sum(1 for r in ticks if r.get("handed_off")),
         "stale_withheld_post_boot": stale,
         "other_withheld_post_boot": other,
-        # #931 운영자 판정: M5 ① / post_boot_consumed_ids ≤ stale_refusal_ratio_max
         "post_boot_consumed_ids": post_boot_consumed,
         "m5_present_value_refused_as_unknown": m5,
         "m5_ratio": (m5 / post_boot_consumed) if post_boot_consumed else None,
@@ -890,12 +780,7 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
 def session_seq_range(
     leaf: LeafFacts, ticks: Sequence[Mapping[str, Any]]
 ) -> tuple[int, int | None] | None:
-    """이 세션의 부팅 구간 ``[boot, 다음 boot)`` evidence seq 범위.
-
-    세션의 첫 틱보다 앞선 마지막 부팅 행이 시작이다. 틱이 없으면 잎의 마지막 부팅 구간에
-    어느 날의 틱도 없을 때만 그 구간을 쓴다(부팅 직후 아직 틱이 없는 세션). 그 밖에는 ``None``
-    — 추측해서 다른 세션의 행을 붙이지 않는다.
-    """
+    """이 세션의 부팅 구간 ``[boot, 다음 boot)`` evidence seq 범위."""
     if not leaf.boot_seqs:
         return None
     if ticks:
@@ -912,124 +797,6 @@ def session_seq_range(
     return start, (later[0] if later else None)
 
 
-# ---------------------------------------------------------------------------
-# B3
-# ---------------------------------------------------------------------------
-
-
-def b3_run_facts(session_dir: Path) -> dict[str, Any] | None:
-    """B3 **실행 기록**(``b3/status.json``) 요약. 파일이 없으면 ``None``.
-
-    summary 와 역할이 다르다. summary 는 「대조가 무엇을 봤나」이고 이 파일은 「대조가
-    돌았나」다. 자동 단계(``tools/tos_cp3/post_session_b3.py``)는 첫 단계 **전에**
-    ``verdict: running`` 으로 이 파일을 쓰고 끝에 원자적으로 교체하므로,
-    ``running`` 이 남아 있는 것은 **끝내지 못했다**는 뜻이다(예산 초과·SIGKILL).
-
-    Returns:
-        ``{"verdict", "reason", "stage", "ok"}`` — 모양이 다르면 ``{"error": …}``.
-        ``ok`` 는 verdict 가 ``"ok"`` 일 때만 참이고, 그때만 summary 의 수를 믿는다.
-    """
-    path = session_dir / B3_SUBDIR / "status.json"
-    if not path.exists():
-        return None
-    record = _read_json(path)
-    if not isinstance(record, dict):
-        return {"error": f"{path.name} 이 JSON 객체가 아니다"}
-    version = record.get("status_schema_version")
-    if version not in B3_STATUS_SCHEMA_VERSIONS:
-        return {
-            "error": f"status_schema_version={version!r} — 이 상태판은"
-            f" {sorted(B3_STATUS_SCHEMA_VERSIONS)} 모양만 읽는다"
-        }
-    verdict = record.get("verdict")
-    if not isinstance(verdict, str) or not verdict:
-        return {"error": f"verdict 가 문자열이 아니다: {verdict!r}"}
-    stage = record.get("stage")
-    reason = record.get("reason")
-    return {
-        "verdict": verdict,
-        "stage": stage if isinstance(stage, str) else None,
-        "reason": reason if isinstance(reason, str) else "",
-        "ok": verdict == B3_VERDICT_OK,
-        "overdue": _b3_run_overdue(record),
-    }
-
-
-def _b3_run_overdue(record: dict[str, Any]) -> bool:
-    """``verdict: running`` 이 **지났는가** — 자기 예산을 넘겼는가.
-
-    B3 는 정지 뒤 1-2 분을 돈다. 그 사이에 상태판을 보면 ``running`` 이 정상이므로
-    그것만으로 막힘을 올리면 하루 한 번 거짓 경보가 난다. 그래서 기록이 **자기**
-    예산(``total_timeout_s``, 그 파일이 싣는다)과 시작 시각을 들고 있고, 그 합을
-    넘겼으면 더는 돌고 있을 수 없다.
-
-    시각이나 예산을 읽을 수 없으면 **지난 것으로 본다** — 읽을 수 없는 기록으로
-    「아직 돌고 있다」를 주장할 수는 없다.
-    """
-    started, budget = record.get("started_at"), record.get("total_timeout_s")
-    if not isinstance(started, str) or not isinstance(budget, int):
-        return True
-    try:
-        began = _dt.datetime.fromisoformat(started)
-    except ValueError:
-        return True
-    if began.tzinfo is None:
-        return True
-    # 60 s: 바깥 ceiling 이 SIGKILL 을 보내고 러너가 그 줄을 적는 데 드는 여유.
-    return _dt.datetime.now(KST) - began > _dt.timedelta(seconds=budget + 60)
-
-
-def b3_facts(session_dir: Path) -> dict[str, Any] | None:
-    """B3 summary 요약. 파일이 없으면 ``None``, 모양이 다르면 ``{"error": …}``."""
-    path = session_dir / B3_SUBDIR / "report" / "summary.json"
-    if not path.exists():
-        return None
-    summary = _read_json(path)
-    if not isinstance(summary, dict):
-        return {"error": f"{path.name} 이 JSON 객체가 아니다"}
-    version = summary.get("summary_schema_version")
-    if version not in B3_SUMMARY_SCHEMA_VERSIONS:
-        return {
-            "error": f"summary_schema_version={version!r} — 이 상태판은"
-            f" {sorted(B3_SUMMARY_SCHEMA_VERSIONS)} 모양만 읽는다"
-        }
-    unresolved = summary.get("unresolved")
-    live = summary.get("live_comparison")
-    window = summary.get("window_identity")
-    count = unresolved.get("count") if isinstance(unresolved, dict) else None
-    if not isinstance(count, int) or isinstance(count, bool):
-        return {"error": f"unresolved.count 가 정수가 아니다: {unresolved!r}"}
-    if not isinstance(live, dict) or not all(
-        isinstance(live.get(k), int)
-        for k in ("compared_bars", "identical", "divergent")
-    ):
-        return {
-            "error": "live_comparison 의 compared_bars/identical/divergent 가 정수가 아니다"
-        }
-    window = window if isinstance(window, dict) else {}
-    declared = live.get("declared_difference_counts")
-    excluded = live.get("excluded_bar_counts")
-    separates = version >= B3_DECLARED_BUCKET_SCHEMA_VERSION
-    return {
-        "unresolved": count,
-        "compared_bars": live["compared_bars"],
-        "identical": live["identical"],
-        "divergent": live["divergent"],
-        # 「선언된 차이로 설명된 봉」과 「대조에서 빼 둔 봉」. ``None`` 은 0 이 아니라
-        # «이 summary 모양은 말하지 않는다» 다 — 그래야 아래 divergent 줄이 v2 의
-        # 섞인 수를 §2-1 의 수로 읽지 않는다.
-        "declared": declared if separates and isinstance(declared, dict) else None,
-        "excluded": excluded if separates and isinstance(excluded, dict) else None,
-        "separates_declared": separates,
-        "window": f"{window.get('window_start')}..{window.get('window_end')}",
-    }
-
-
-# ---------------------------------------------------------------------------
-# one tenant session
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class TenantSession:
     name: str
@@ -1043,8 +810,6 @@ class TenantSession:
     expected_code_digest: str | None
     producer: dict[str, Any]
     store: dict[str, Any] | None
-    b3: dict[str, Any] | None
-    b3_run: dict[str, Any] | None
     boot_snapshot_error: str | None = None
     issues: list[tuple[str, str]] = field(default_factory=list)
 
@@ -1086,7 +851,6 @@ def read_tenant_session(
     store: dict[str, Any] | None = None
     boot_snapshot_error: str | None = None
     if with_store and runner.boot_at and not runner.data_leaf:
-        # 부팅은 했는데 잎 경로를 모른다 — «부팅 전» 이 아니라 «상태 모름» 이다.
         store = {
             "error": "session.log 에 'instrument=… · data leaf …' 줄이 없어 저장소를 열 수 없다"
         }
@@ -1114,8 +878,6 @@ def read_tenant_session(
         expected_code_digest=expected_code_digest(path / "config"),
         producer=producer_facts(path, cfg.latency_percentiles),
         store=store,
-        b3=b3_facts(path),
-        b3_run=b3_run_facts(path),
         boot_snapshot_error=boot_snapshot_error,
     )
     session.issues = tenant_issues(session, cfg)
@@ -1139,7 +901,6 @@ def _authority_issues(auth: Mapping[str, Any] | None) -> list[tuple[str, str]]:
     if not auth or "error" in auth:
         return []
     issues: list[tuple[str, str]] = []
-    # 장 전 설계상 상실은 확인 줄을 내지 않는다(본문에 수만 보인다). 장중 상실만 막힘.
     if auth["witness_lost_mid_session"]:
         seqs = ",".join(str(x) for x in auth["witness_lost_mid_session_seqs"])
         issues.append(
@@ -1280,7 +1041,6 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
                 issues.append((BLOCK, f"stale 이 아닌 필드 거절: {line}"))
             ratio = st["m5_ratio"]
             if ratio is not None and ratio > cfg.stale_refusal_ratio_max:
-                # 판정은 세션 전체 분모로 한다 — 진행 중에는 분모가 작아 확인으로만 올린다.
                 level = WARN if s.status in ("RUNNING", "PRE-BOOT") else BLOCK
                 suffix = " (진행 중 — 판정은 종료 뒤)" if level == WARN else ""
                 issues.append(
@@ -1339,61 +1099,7 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
                         f" ≠ release.yaml {s.expected_code_digest[:12]}",
                     )
                 )
-    # 실행 기록이 먼저다. 「돌지 않았다」를 모르는 채 summary 의 수를 읽으면, 앞선 날의
-    # 남은 summary 가 오늘의 결과로 보인다 — 그래서 verdict 가 ok 가 아니면 수를 읽지
-    # 않고 그 사실을 올린다.
-    if s.b3_run is not None and "error" in s.b3_run:
-        issues.append((BLOCK, f"B3 실행 기록을 읽을 수 없다 — {s.b3_run['error']}"))
-    elif s.b3_run is not None and not s.b3_run["ok"]:
-        verdict = s.b3_run["verdict"]
-        where = f" ({s.b3_run['stage']})" if s.b3_run["stage"] else ""
-        if verdict == B3_VERDICT_SKIPPED:
-            # 설정·시장으로 «돌리지 않기로 한» 것. §2-1 을 재지 못한 것은 맞으므로
-            # 숨기지 않고, 결함이 아니므로 막힘도 아니다.
-            issues.append((WARN, f"B3 대조 건너뜀 — {s.b3_run['reason']}"))
-        elif verdict == "running" and not s.b3_run["overdue"]:
-            issues.append((WARN, f"B3 대조 진행 중{where}"))
-        else:
-            issues.append(
-                (
-                    BLOCK,
-                    f"B3 대조가 §2-1 을 재지 못했다 — {verdict}{where}: {s.b3_run['reason']}",
-                )
-            )
-    elif s.b3 is not None:
-        if "error" in s.b3:
-            issues.append((BLOCK, f"B3 summary 를 읽을 수 없다 — {s.b3['error']}"))
-        else:
-            if s.b3["unresolved"]:
-                issues.append((BLOCK, f"B3 unresolved={s.b3['unresolved']}"))
-            # §2-1 의 두 수 중 두 번째가 live divergent 다. **선언된 차이를 자기 버킷으로
-            # 가른 모양(v3)에서만** 그 수가 「설명 안 되는 divergence」이고, 그때는
-            # unresolved 와 같은 등급으로 막는다. 그 아래 모양은 선언된 차이를 섞어 세므로
-            # 수는 보여 주되 확인에 둔다 — 섞인 수를 §2-1 미달로 읽지 않기 위해.
-            if s.b3["divergent"]:
-                declared = s.b3["declared"] or {}
-                tail = (
-                    f" (선언 {_fmt_counts(declared)})"
-                    if s.b3["separates_declared"]
-                    else " — 이 summary 모양은 선언된 차이를 가르지 않는다"
-                )
-                issues.append(
-                    (
-                        BLOCK if s.b3["separates_declared"] else WARN,
-                        f"B3 live divergent {s.b3['divergent']}/{s.b3['compared_bars']}"
-                        f"{tail}",
-                    )
-                )
-    elif s.status in ("ENDED", "ABORT", "FAILED"):
-        issues.append(
-            (WARN, "B3 결과 없음(세션 디렉터리에 b3/report/summary.json 이 없다)")
-        )
     return issues
-
-
-# ---------------------------------------------------------------------------
-# resident paper
-# ---------------------------------------------------------------------------
 
 
 def _read_pid(path: Path) -> int | None:
@@ -1409,16 +1115,7 @@ def paper_segment_rows(
     report: Mapping[str, Any] | None,
     kinds: Sequence[str],
 ) -> list[tuple[int, str, dict[str, Any]]] | dict[str, str] | None:
-    """상주 paper 세션 부팅 구간의 ``kinds`` 행. 잎이나 기준 seq 를 모르면 ``None``,
-    잎을 읽지 못하면 ``{"error": …}``.
-
-    범위는 드라이버가 부팅 전에 잡은 ``baseline_evidence_seq``(= 그때의 ``MAX(seq)``) 다음부터,
-    이 세션 부팅 행 다음의 부팅 행 전까지다 — 다음 날 세션의 행을 붙이지 않는다. 잎은
-    report.json 의 ``data_dir``, 진행 중(report 없음)이면 bootproof 의 종목으로
-    ``<state_dir>/<paper_data_subdir>/<종목>`` (래퍼가 잎을 고르는 규칙).
-    """
-    # 부팅 증명이 OK 가 아니면 이 세션의 부팅 행이 없을 수 있다 — 그때 «기준 뒤 두 번째 부팅»
-    # 은 다음 세션의 끝이라, 다음 세션의 행을 이 날짜에 붙이게 된다(#951 리뷰 LOW-1). 보지 않는다.
+    """상주 paper 세션 부팅 구간의 ``kinds`` 행. 잎이나 기준 seq 를 모르면 ``None``,"""
     if not bootproof or BOOTPROOF_OK not in bootproof[0]:
         return None
     report = report if isinstance(report, Mapping) else {}
@@ -1524,7 +1221,7 @@ def paper_facts(
     rows = paper_segment_rows(
         cfg, bootproof, report, (PASS_OVERRUN_KIND, SEND_SEALED_KIND, *AUTHORITY_KINDS)
     )
-    if isinstance(rows, dict):  # {"error": …} — 두 요약 모두 «읽지 못함»
+    if isinstance(rows, dict):
         facts["pass_overrun"] = facts["authority"] = rows
         facts["issues"].append(
             (WARN, f"{PASS_OVERRUN_KIND}·권한 행을 읽지 못했다 — {rows['error']}")
@@ -1567,12 +1264,6 @@ def paper_facts(
     return facts
 
 
-# ---------------------------------------------------------------------------
-# consecutive clean trading days — roadmap §2-1 · §3 M4
-# ---------------------------------------------------------------------------
-
-#: 그날의 판정이 더 바뀌지 않는 세션 상태. 나머지(RUNNING · PRE-BOOT · NOT-BOOTED)는
-#: 아직 끝나지 않은 것이므로 **상태판 날짜에서만** 보류로 둔다(:func:`day_pending`).
 SETTLED_STATUSES = frozenset({"ENDED", "FAILED", "ABORT", "LOST"})
 
 
@@ -1586,17 +1277,7 @@ class TreeCalendar:
 
 
 def load_tree_calendar(path: Path) -> TreeCalendar:
-    """tenant 캘린더의 휴장일을 :mod:`tools.tos_cp3.session_day` 로 읽는다.
-
-    휴장일 키와 거래일 술어는 생산자(``live_producer/calendar.py``)와 **같은 함수**다 —
-    같은 파일을 두 번 해석하지 않기 위해서다. 날짜별 예외(``session_overrides``)는
-    런타임이 거부하는 모양을 여기서도 거부한다(#924): 읽히지 않는 캘린더로 «거래일
-    아님» 을 주장하지 않는다.
-
-    Raises:
-        OSError: 파일을 열 수 없다.
-        sd.SessionDayError: 모양이 다르다.
-    """
+    """tenant 캘린더의 휴장일을 :mod:`tools.tos_cp3.session_day` 로 읽는다."""
     import yaml
 
     text = path.read_text(encoding="utf-8")
@@ -1615,18 +1296,7 @@ def load_tree_calendar(path: Path) -> TreeCalendar:
 
 
 def day_clean(session: TenantSession | None, scfg: StreakConfig) -> str:
-    """깨끗한 거래일인가 — 깨끗하면 ``""``, 아니면 **왜 아닌지** 한 줄.
-
-    §2-1 의 조건 전부가 참이어야 한다: 세션이 ``clean_run_rcs`` 안의 rc 로 끝났고 ·
-    B3 실행 기록의 verdict 가 ``ok`` 이고 · summary 모양이
-    v:data:`B3_DECLARED_BUCKET_SCHEMA_VERSION` 이상이고 · 대조한 봉이 0 이 아니고 ·
-    ``unresolved`` 0 ·
-    (설명 안 되는) ``divergent`` 0.
-
-    빠진 것 · 읽히지 않는 것 · 옛 모양 · 실패는 전부 깨끗하지 않다. 건너뛰는 분기는
-    없다 — ``unresolved`` 와 ``divergent`` 는 좋은 값이 0 이라서, 재지 못한 하루를
-    조용히 통과시키면 그것이 10 일 중 하루로 센다.
-    """
+    """깨끗한 거래일인가 — 깨끗하면 ``""``, 아니면 **왜 아닌지** 한 줄."""
     if session is None:
         return "세션 디렉터리 없음"
     r = session.runner
@@ -1635,61 +1305,15 @@ def day_clean(session: TenantSession | None, scfg: StreakConfig) -> str:
         return f"세션 상태 {session.status}{detail}"
     if r.run_rc not in scfg.clean_run_rcs:
         return f"런타임 종료 rc={r.run_rc} (깨끗은 {sorted(scfg.clean_run_rcs)})"
-    run = session.b3_run
-    if run is None:
-        return f"B3 실행 기록 없음 ({B3_SUBDIR}/status.json)"
-    if "error" in run:
-        return f"B3 실행 기록을 읽을 수 없다 — {run['error']}"
-    if not run["ok"]:
-        where = f" ({run['stage']})" if run["stage"] else ""
-        return (
-            f"B3 대조가 §2-1 을 재지 못했다 — {run['verdict']}{where}: {run['reason']}"
-        )
-    b3 = session.b3
-    if b3 is None:
-        return f"B3 summary 없음 ({B3_SUBDIR}/report/summary.json)"
-    if "error" in b3:
-        return f"B3 summary 를 읽을 수 없다 — {b3['error']}"
-    if not b3["separates_declared"]:
-        return (
-            f"B3 summary 모양이 v{B3_DECLARED_BUCKET_SCHEMA_VERSION} 미만 —"
-            " divergent 가 선언된 차이를 섞어 세므로 §2-1 을 재지 못한다"
-        )
-    if b3["compared_bars"] <= 0:
-        # 0 봉 대조의 `unresolved 0` · `divergent 0` 은 「차이가 없다」가 아니라
-        # 「아무것도 재지 않았다」다(review-1003). 두 수의 좋은 값이 0 이라서 이 하루는
-        # 조건을 모두 통과한 것처럼 보이고, 그러면 10 일 중 하루로 센다.
-        return "B3 대조한 봉이 0 — 재지 못한 것이 0 으로 읽힌다"
-    if b3["unresolved"]:
-        return f"B3 unresolved={b3['unresolved']}"
-    if b3["divergent"]:
-        return f"B3 설명 안 되는 divergent={b3['divergent']}/{b3['compared_bars']}"
     return ""
 
 
 def day_pending(session: TenantSession | None) -> str | None:
-    """상태판 날짜를 아직 판정할 수 없는 이유 — 없으면 ``None``.
-
-    끝나지 않은 하루를 「깨끗하지 않다」로 세면 연속 수가 장중에는 언제나 0 이 된다.
-    그래서 보류는 **상태판 날짜(= 오늘)에만** 둔다: 세는 것은 끝난 거래일이고, 오늘은
-    끝나면 센다. 앞선 거래일에는 이 함수를 쓰지 않으므로 같은 모양이 어제의 것이면
-    :func:`day_clean` 이 그대로 연속을 깬다 — 보류가 하루를 영구히 사면하지 않는다.
-    """
+    """상태판 날짜를 아직 판정할 수 없는 이유 — 없으면 ``None``."""
     if session is None:
         return "세션 디렉터리 아직 없음"
     if session.status not in SETTLED_STATUSES:
         return f"세션 {session.status}"
-    run = session.b3_run
-    if session.status == "ENDED" and run is None:
-        # 러너 step 14 는 첫 단계 **전에** status.json 을 쓴다(#1000). 정지와 그 쓰기
-        # 사이가 이 창이고, 끝까지 비어 있으면 오늘이 어제가 되는 순간 연속을 깬다.
-        return (
-            f"B3 기록 없음({B3_SUBDIR}/status.json) — 정지 직후면 정상이고,"
-            " 끝까지 없으면 내일 연속을 깬다"
-        )
-    if isinstance(run, dict) and run.get("verdict") == "running" and not run["overdue"]:
-        where = f" ({run['stage']})" if run.get("stage") else ""
-        return f"B3 대조 진행 중{where}"
     return None
 
 
@@ -1701,12 +1325,7 @@ def tree_streak(
     today: _dt.date,
     scfg: StreakConfig,
 ) -> dict[str, Any]:
-    """한 트리의 «지금 연속 몇 거래일 깨끗한가».
-
-    *day* 에서 하루씩 거꾸로 걸으며 거래일만 판정한다. 비거래일(주말·휴장)은 연속을
-    깨지도 늘리지도 않고, **거래일인데 세션이 없으면 깬다**. 목표에 닿거나 깨진 날을
-    만나면 멈춘다.
-    """
+    """한 트리의 «창 안에서 깨끗한 거래일이 몇 날인가» — **누적**."""
     out: dict[str, Any] = {
         "label": tree.label,
         "target_days": scfg.target_days,
@@ -1719,7 +1338,7 @@ def tree_streak(
         "pending": None,
         "broke_on": None,
         "broke_reason": None,
-        "window_exhausted": False,
+        "window_start": None,
         "error": None,
     }
     try:
@@ -1728,8 +1347,9 @@ def tree_streak(
         out["error"] = f"{type(exc).__name__}: {exc}"
         return out
     out["calendar_version"] = calendar.version
-    streak = 0
+    clean = 0
     start: _dt.date | None = None
+    walked: _dt.date | None = None
     cursor = day
     for _ in range(scfg.window_days):
         try:
@@ -1739,9 +1359,9 @@ def tree_streak(
                 where=calendar.path,
             )
         except sd.SessionDayError as exc:
-            # 거래일인지 모르는 날에 닿았다 — 센 수는 하한으로 남기고 사유를 올린다.
             out["error"] = str(exc)
             break
+        walked = cursor
         if sd.is_trading_day(cursor, calendar.holidays):
             session = sessions.get((cursor.strftime("%Y%m%d"), tree.label))
             pending = day_pending(session) if cursor == day == today else None
@@ -1750,25 +1370,20 @@ def tree_streak(
             else:
                 why = day_clean(session, scfg)
                 if why:
-                    out["broke_on"] = cursor.isoformat()
-                    out["broke_reason"] = why
-                    break
-                streak += 1
-                start = cursor
-                if streak >= scfg.target_days:
-                    break
+                    if out["broke_on"] is None:
+                        out["broke_on"] = cursor.isoformat()
+                        out["broke_reason"] = why
+                else:
+                    clean += 1
+                    start = cursor
+                    if clean >= scfg.target_days:
+                        break
         cursor -= _dt.timedelta(days=1)
-    else:
-        out["window_exhausted"] = True
-    out["days"] = streak
-    out["met"] = streak >= scfg.target_days
+    out["days"] = clean
+    out["met"] = clean >= scfg.target_days
     out["start"] = start.isoformat() if start else None
+    out["window_start"] = walked.isoformat() if walked else None
     return out
-
-
-# ---------------------------------------------------------------------------
-# the board
-# ---------------------------------------------------------------------------
 
 
 def _session_dirs(cfg: BoardConfig) -> list[Path]:
@@ -1823,8 +1438,6 @@ def build_board(
         }
         - {day_key},
     )
-    # 이력은 그 날짜를 포함해 history_days 개 날짜다. 앞선 날짜는 history_days - 1 개 —
-    # 0 이면 [-0:] 가 전부를 남기므로 따로 비운다.
     earlier = [d for d in history_days if d < day_key]
     keep = cfg.history_days - 1
     history_days = earlier[-keep:] if keep > 0 else []
@@ -1834,8 +1447,6 @@ def build_board(
         if _SESSION_DIR_RE.match(p.name).group("day") in history_days  # type: ignore[union-attr]
     ]
     paper = paper_facts(cfg, date_iso, proc_root=live_root)
-    # 연속 판정은 이력 창(history_days)보다 멀리 볼 수 있다. 이미 읽은 세션을 다시 읽지
-    # 않고, 모자란 날짜만 저장소 없이(연속 조건에 쓰지 않는다) 채운다.
     scfg = cfg.clean_streak
     by_key: dict[tuple[str, str], TenantSession] = {
         (s.day, s.label): s for s in history + on_day
@@ -1863,15 +1474,13 @@ def build_board(
     for s in on_day:
         issues.extend((level, s.name, text) for level, text in s.issues)
     issues.extend((level, "paper", text) for level, text in paper["issues"])
-    # 수가 목표보다 작은 것은 소견이 아니다(채우는 동안은 그게 정상). **셀 수 없는** 것만
-    # 올린다 — 캘린더를 읽지 못하면 §2-1 을 재지 못한 것이고 그 사실은 숨기지 않는다.
     for t in streak:
         if t["error"]:
             issues.append(
                 (
                     WARN,
                     f"streak/{t['label']}",
-                    f"연속 거래일을 셀 수 없다 — {t['error']}",
+                    f"깨끗한 거래일을 셀 수 없다 — {t['error']}",
                 )
             )
     return {
@@ -1920,8 +1529,6 @@ def _session_json(s: TenantSession) -> dict[str, Any]:
         "aborts": r.aborts,
         "producer": s.producer,
         "store": s.store,
-        "b3": s.b3,
-        "b3_run": s.b3_run,
         "issues": [{"level": lv, "text": t} for lv, t in s.issues],
     }
 
@@ -1942,15 +1549,9 @@ def _history_row(s: TenantSession) -> dict[str, Any]:
         "witness_lost_mid_session": (st.get("authority") or {}).get(
             "witness_lost_mid_session"
         ),
-        "b3_unresolved": (s.b3 or {}).get("unresolved"),
         "store_error": st.get("error"),
         "blocks": sum(1 for lv, _ in s.issues if lv == BLOCK),
     }
-
-
-# ---------------------------------------------------------------------------
-# text rendering
-# ---------------------------------------------------------------------------
 
 
 def _fmt_counts(counts: Mapping[str, Any] | None) -> str:
@@ -1960,19 +1561,7 @@ def _fmt_counts(counts: Mapping[str, Any] | None) -> str:
 
 
 def _fmt_flow_halts(store: Mapping[str, Any], market: str | None) -> str:
-    """흐름 정지 사유 분포. 선물 트리의 4단계 UNKNOWN 은 떼어 이름을 붙인다.
-
-    상주 session 승인은 **설계상 MOCK 주식 전용**이고(``tos/runtime/src/tos_runtime/
-    authority/standing.py`` 모듈 docstring · ``provide()``), 선물 트리에 남는 원천은
-    건당 운영자 승인 파일뿐이다 — 그 파일은 제안이 생긴 뒤에만 쓸 수 있고 멈춘 제안을
-    다시 끌지 않으므로, 2·3 단계를 지난 선물 진입 제안은 4단계에서 UNKNOWN 으로 멈춘다.
-    운영자 판정 2026-11-05: **선물 트리는 결정 전용**이고 이 정지가 예상 종착이다
-    (LONG 실측 11 부팅 67 건 · 그중 2026-11-04 40 건, 4단계 admit 은 한 번도 없다).
-    그래서 소견(막힘/확인)을 새로 올리지 않고 줄에 이름만 붙인다.
-
-    시장을 모르는 세션(``market=`` 줄이 없는 옛 로그)과 주식 트리에서는 떼지 않는다 —
-    주식 4단계 UNKNOWN 은 standing 승인이 덮어야 하는 것이라 예상이 아니다.
-    """
+    """흐름 정지 사유 분포. 선물 트리의 4단계 UNKNOWN 은 떼어 이름을 붙인다."""
     counts = dict(store["flow_halts"])
     step4 = store.get("flow_halts_independent_approval_unknown") or 0
     if market != DECISION_ONLY_MARKET or not step4:
@@ -2089,36 +1678,6 @@ def render_text(board: Mapping[str, Any]) -> str:
             f"    생산자: journal {p['journal_rows']}줄 · 지연(as_of−분마감) {lat_txt or '—'} · 최대 {lat['max']}ms · band 줄 {band}"
         )
         add(f"    생산자 카운터: {counters}")
-        b3, b3_run = s["b3"], s["b3_run"]
-        if b3_run is not None and "error" in b3_run:
-            add(f"    B3 대조: 실행 기록을 읽을 수 없음 — {b3_run['error']}")
-        elif b3_run is not None and not b3_run["ok"]:
-            where = f" ({b3_run['stage']})" if b3_run["stage"] else ""
-            add(f"    B3 대조: {b3_run['verdict']}{where} — {b3_run['reason']}")
-        elif b3 is None:
-            add(
-                f"    B3 대조: 결과 없음(세션 디렉터리 {B3_SUBDIR}/report/summary.json)"
-            )
-        elif "error" in b3:
-            add(f"    B3 대조: summary 를 읽을 수 없음 — {b3['error']}")
-        else:
-            add(
-                f"    B3 대조: unresolved {b3['unresolved']} · divergent {b3['divergent']}/{b3['compared_bars']}"
-                f" (identical {b3['identical']}) · 창 {b3['window']}"
-            )
-            # 선언된 차이와 대조에서 빼 둔 봉은 divergent 와 **따로** 보여 준다.
-            # 같은 줄에 섞으면 「설명 안 되는 divergence」가 몇인지 읽을 수 없다.
-            if b3["separates_declared"]:
-                add(
-                    f"      선언된 차이: {_fmt_counts(b3['declared'])}"
-                    f" · 대조 제외: {_fmt_counts(b3['excluded'])}"
-                )
-            else:
-                add(
-                    "      선언된 차이: 모름 — 이 summary 모양(v"
-                    f"{B3_DECLARED_BUCKET_SCHEMA_VERSION} 미만)은 선언된 차이를"
-                    " divergent 와 가르지 않는다"
-                )
     if board["cron"]:
         add("  크론 마지막 줄:")
         for name, line in board["cron"].items():
@@ -2165,7 +1724,7 @@ def render_text(board: Mapping[str, Any]) -> str:
     if board["history"]:
         add("■ 최근 세션(날짜별)")
         add(
-            "  날짜      세션        상태        rc   틱   stale 기타 band 초과 상실/장중 B3unres 막힘"
+            "  날짜      세션        상태        rc   틱   stale 기타 band 초과 상실/장중 막힘"
         )
         for h in board["history"]:
             err = " 저장소모름" if h["store_error"] else ""
@@ -2177,29 +1736,30 @@ def render_text(board: Mapping[str, Any]) -> str:
             add(
                 f"  {h['day']}  {h['label']:<10}  {h['status']:<10}  {str(h['run_rc']):>3}"
                 f"  {str(h['ticks']):>4}  {str(h['stale']):>4}  {h['other_withheld']:>3}  {str(h['band']):>3}  {str(h['overrun']):>3}  {lost:>9}"
-                f"  {str(h['b3_unresolved']):>6}  {h['blocks']:>3}{err}"
+                f"  {h['blocks']:>3}{err}"
             )
         add("")
     streak = board.get("clean_streak") or []
     if streak:
         add(
-            f"■ 연속 깨끗한 거래일 (§2-1 · 목표 {streak[0]['target_days']} 거래일"
-            " · 끝난 거래일만 · 판정에는 넣지 않는다)"
+            f"■ 깨끗한 거래일 누적 (창 {streak[0]['window_days']}일 · 목표"
+            f" {streak[0]['target_days']} 거래일 · 끝난 거래일만 · 연속 아님"
+            " · 판정에는 넣지 않는다)"
         )
         for t in streak:
             line = f"  {t['label']:<10} {t['days']}/{t['target_days']}"
             line += " ✔ 목표 충족" if t["met"] else ""
             if t["start"]:
-                line += f" · 시작 {t['start']}"
+                line += f" · 가장 오래된 깨끗한 날 {t['start']}"
             add(line)
+            if t["window_start"]:
+                add(f"    센 창 {t['window_start']} ~ {board['date']}")
             if t["pending"]:
                 add(f"    {board['date']} 보류 — {t['pending']}")
             if t["broke_on"]:
-                add(f"    마지막 깨짐 {t['broke_on']} — {t['broke_reason']}")
-            if t["window_exhausted"]:
                 add(
-                    f"    창 {t['window_days']} 달력일 안에서 깨진 날을 만나지 못했다"
-                    " — 이 수는 하한이다"
+                    f"    마지막 깨진 거래일 {t['broke_on']} — {t['broke_reason']}"
+                    " (누적을 지우지 않는다)"
                 )
             if t["error"]:
                 add(f"    셀 수 없다 — {t['error']}")
@@ -2211,11 +1771,6 @@ def render_text(board: Mapping[str, Any]) -> str:
     for i in board["issues"]:
         add(f"  [{i['level']}] {i['where']}: {i['text']}")
     return "\n".join(out) + "\n"
-
-
-# ---------------------------------------------------------------------------
-# entry point
-# ---------------------------------------------------------------------------
 
 
 def today_kst() -> _dt.date:

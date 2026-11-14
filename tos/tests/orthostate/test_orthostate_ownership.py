@@ -1,14 +1,4 @@
-"""Transition ownership — the §12 table + Attempt region split; fail-closed (§6.2).
-
-Each single-owner dimension is actor-only (from/to accepted, not gated). The Transmission
-Attempt dimension is region-split by to_state (design #8 §6.2; ADR §6 line 82/89, §12 line
-186): the Execution Coordinator owns the preparation region (entry into PREPARED /
-CAPABILITY_ISSUED) and the Broker Adapter / Egress owns the send-boundary region (entry
-into SEND_STARTED and beyond) — neither may perform the other's region, and the
-write-ahead entry INTO SEND_STARTED is the send boundary (BAE). None actor / dimension,
-None from/to on Attempt, and off-region combinations fail closed. [STATE-EV-005 substrate
-— actor auth + rejection evidencing are EV-L2/L3 + Security, deferred]
-"""
+"""Transition ownership — the §12 table + Attempt region split; fail-closed (§6.2)."""
 
 from __future__ import annotations
 
@@ -25,7 +15,6 @@ _D = StateDimension
 _T = TransitionAuthority
 _A = TransmissionAttemptState
 
-#: The four single-owner dimensions and their sole §12 owner (Attempt is region-split).
 _SINGLE_OWNER: dict[StateDimension, TransitionAuthority] = {
     _D.INTENT: _T.INTENT_REGISTRY,
     _D.BROKER_ORDER: _T.BROKER_ADAPTER_EVIDENCE,
@@ -44,11 +33,6 @@ _SEND_BOUNDARY_ENTRIES = [
     (_A.SENT_UNCONFIRMED, _A.SEND_FAILED_PROVEN),
     (_A.SENT_UNCONFIRMED, _A.SUPERSEDED),
 ]
-
-
-# ---------------------------------------------------------------------------
-# Single-owner dimensions (actor-only; from/to accepted but not region-gated)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("dimension,owner", list(_SINGLE_OWNER.items()))
@@ -92,11 +76,6 @@ def test_reconciliation_cannot_write_capacity() -> None:
     assert may_transition(_T.RISK_CAPACITY_LEDGER, _D.CAPACITY, None, None) is True
 
 
-# ---------------------------------------------------------------------------
-# Transmission Attempt region split (the promised §7 region-split test)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("frm,to", _PREP_ENTRIES, ids=lambda x: getattr(x, "value", x))
 def test_execution_coordinator_owns_prep(frm, to) -> None:
     """(guard True) The Execution Coordinator owns the preparation region entries."""
@@ -130,11 +109,7 @@ def test_egress_owns_send_boundary(frm, to) -> None:
     "frm,to", _SEND_BOUNDARY_ENTRIES, ids=lambda x: getattr(x, "value", x)
 )
 def test_execution_coordinator_rejected_for_send_boundary(frm, to) -> None:
-    """(canary MAJOR fix) The Coordinator may NOT perform a send-boundary transition.
-
-    Closes the reviewer's concrete over-grant: EXECUTION_COORDINATOR must be REJECTED for
-    SEND_STARTED -> SENT_UNCONFIRMED (and every send-boundary entry).
-    """
+    """(canary MAJOR fix) The Coordinator may NOT perform a send-boundary transition."""
     assert (
         may_transition(_T.EXECUTION_COORDINATOR, _D.TRANSMISSION_ATTEMPT, frm, to)
         is False
@@ -211,23 +186,15 @@ def test_none_actor_rejected_for_attempt() -> None:
     assert may_transition(None, _D.TRANSMISSION_ATTEMPT, _A.NONE, _A.PREPARED) is False
 
 
-# ---------------------------------------------------------------------------
-# Exhaustive full-matrix sweep (§12 + region split)
-# ---------------------------------------------------------------------------
-
-
 def test_full_ownership_matrix() -> None:
     """(exhaustive) Every (actor, dimension[, region]) cell matches the §12 + region table."""
-    # Single-owner dimensions: allowed iff actor is the sole owner (from/to irrelevant).
     for dimension, owner in _SINGLE_OWNER.items():
         for actor in _T:
             assert may_transition(actor, dimension, None, None) is (actor is owner)
-    # Attempt preparation region: only the Execution Coordinator.
     for actor in _T:
         assert may_transition(actor, _D.TRANSMISSION_ATTEMPT, _A.NONE, _A.PREPARED) is (
             actor is _T.EXECUTION_COORDINATOR
         )
-    # Attempt send-boundary region: only the Broker Adapter / Egress.
     for actor in _T:
         assert may_transition(
             actor, _D.TRANSMISSION_ATTEMPT, _A.SEND_STARTED, _A.SENT_UNCONFIRMED

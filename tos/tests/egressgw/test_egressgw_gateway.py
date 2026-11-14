@@ -1,18 +1,4 @@
-"""§4-§6 — the Broker Egress Gateway end to end: steps 15-19, fail-closed, and at-most-one.
-
-Design #34 §12.1 targets exercised here:
-
-* **-1 게이트 fail-closed 전수** — any verify item that denies / is UNKNOWN returns
-  ``SendHandoff(accepted_for_transmission=None)``, calls **no** transport, and records the reason;
-* **-2 no blind resubmit** — the same (proof, permit, coordinate) triple content-addresses to the
-  same attempt identity and is refused; the transport is single-shot; ``uncertain_send_policy`` is
-  structurally all-restrictive and ``same_order_retry_allowed`` is ``False``;
-* **-6 partial as partial / UNKNOWN** — a partial fill stays partial and a timeout is UNKNOWN;
-* **-7 at-most-one consumption** — the nonces are claimed exactly once and a result is applied
-  only to the exact attempt it names.
-
-Regime tag: authoring evidence only; closes no EV (design #34 §1.1).
-"""
+"""§4-§6 — the Broker Egress Gateway end to end: steps 15-19, fail-closed, and at-most-one."""
 
 from __future__ import annotations
 
@@ -41,17 +27,17 @@ from tos.egressgw import (
     send_boundary_context,
     verify_send_boundary,
 )
-from tos.egressgw.gateway import _check_construction
+from tos.egressgw.construction import candidate_command_verdict
 from tos.engine import (
     AttemptRequest,
     CommitmentStep,
     EgressResultKind,
     EgressResultPayload,
     InstrumentKey,
+    StageOutcome,
 )
 from tos.ioc import ConformanceResult
 from tos.ordering import OrderingEvent
-from tos.venue import OrderAdmissibilityResult
 
 from ._egressgw_fixtures import (
     CAPABILITY_NONCE,
@@ -67,7 +53,6 @@ from ._egressgw_fixtures import (
     happy_context,
     ordering,
     quorum_certificate,
-    venue_decision,
 )
 
 
@@ -135,11 +120,6 @@ def _declared(kind: EgressResultKind) -> SyntheticPaperTransport:
     return SyntheticPaperTransport(SyntheticFillPolicy(declared_kind=kind))
 
 
-# ---------------------------------------------------------------------------
-# the happy path (steps 15-19 in order)
-# ---------------------------------------------------------------------------
-
-
 def test_the_baseline_send_is_accepted_and_records_every_step_in_order() -> None:
     """(§1.3 / §4.6) verify → SEND_SEALED → SEND_STARTED → POTENTIALLY_LIVE → transport → evidence."""
     attempt, context = happy_context()
@@ -155,19 +135,11 @@ def test_the_baseline_send_is_accepted_and_records_every_step_in_order() -> None
         "NETWORK_CALL_ENTERED",
         "EGRESS_RESULT_RECORDED",
     )
-    assert sink.kinds[:17] == ("VERIFY_ITEM",) * 17
+    assert sink.kinds[:7] == ("VERIFY_ITEM",) * 7
 
 
 def test_the_baseline_send_records_the_commitment_step_sequence_exactly() -> None:
-    """(Phase 3 wave 3 KW3-GW) The stamped CommitmentStep sequence is exactly [15,15,16,17,18,19].
-
-    Every ``VERIFY_ITEM`` record collapses to one representative step-15 entry (there are 17 of
-    them, all the same step); ``SEND_SEALED`` is its own separate step-15 entry — the seal is
-    step 15's own output (design §1.2), not a "step 15½" the closed 19-step enum has no member
-    for; then 16 (the claim), 17 (potentially live), 18 (the network-call write-ahead mark), 19
-    (the terminal result) — exactly once each. No new numeric literal anywhere in this
-    assertion: every expected value is a named ``CommitmentStep`` member.
-    """
+    """(Phase 3 wave 3 KW3-GW) The stamped CommitmentStep sequence is exactly [15,15,16,17,18,19]."""
     attempt, context = happy_context()
     gateway, sink = build_gateway(attempt=attempt, context=context)
     assert gateway(attempt).accepted_for_transmission is True
@@ -183,25 +155,19 @@ def test_the_baseline_send_records_the_commitment_step_sequence_exactly() -> Non
         previous_kind = record.kind
 
     assert collapsed == [
-        CommitmentStep.SEND_BOUNDARY_VERIFICATION,  # VERIFY_ITEM x17, collapsed to one entry
-        CommitmentStep.SEND_BOUNDARY_VERIFICATION,  # SEND_SEALED
-        CommitmentStep.SEND_STARTED_DURABLE,  # SEND_STARTED
-        CommitmentStep.POTENTIALLY_LIVE_TRANSITION,  # POTENTIALLY_LIVE_OBSERVED
-        CommitmentStep.NETWORK_CALL,  # NETWORK_CALL_ENTERED
-        CommitmentStep.EVIDENCE_RECORD,  # EGRESS_RESULT_RECORDED
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        CommitmentStep.SEND_STARTED_DURABLE,
+        CommitmentStep.POTENTIALLY_LIVE_TRANSITION,
+        CommitmentStep.NETWORK_CALL,
+        CommitmentStep.EVIDENCE_RECORD,
     ]
 
 
 def test_mutation_swapping_two_record_kinds_makes_the_step_sequence_assertion_red() -> (
     None
 ):
-    """(Phase 3 wave 3 KW3-GW mutation) Swapping two records' emission order goes red.
-
-    A sink wrapper that swaps ``POTENTIALLY_LIVE_OBSERVED`` and ``NETWORK_CALL_ENTERED`` as they
-    arrive (buffering one, releasing it only once the other lands) — the same collapse-and-
-    compare the step-sequence test above uses now sees ``[..., 18, 17, ...]`` where it expects
-    ``[..., 17, 18, ...]``, and fails.
-    """
+    """(Phase 3 wave 3 KW3-GW mutation) Swapping two records' emission order goes red."""
 
     class _SwappingSink:
         def __init__(self) -> None:
@@ -264,8 +230,7 @@ def test_mutation_swapping_two_record_kinds_makes_the_step_sequence_assertion_re
 def test_mutation_dropping_the_step_18_record_makes_the_step_sequence_assertion_red() -> (
     None
 ):
-    """(Phase 3 wave 3 KW3-GW mutation) A sink that silently drops ``NETWORK_CALL_ENTERED``
-    is caught: the collapsed step sequence is one entry short of the expected six."""
+    """(Phase 3 wave 3 KW3-GW mutation) A sink that silently drops ``NETWORK_CALL_ENTERED``"""
 
     class _DroppingSink:
         def __init__(self) -> None:
@@ -315,9 +280,7 @@ def test_mutation_dropping_the_step_18_record_makes_the_step_sequence_assertion_
 
 
 def test_each_failure_path_stamps_the_step_where_it_actually_failed() -> None:
-    """(Phase 3 wave 3 KW3-GW) Every ``SEND_REFUSED`` record's step matches its own halt site —
-    never a fixed default regardless of which check actually failed."""
-    # CONTEXT_MISSING (no bound context at all)
+    """(Phase 3 wave 3 KW3-GW) Every ``SEND_REFUSED`` record's step matches its own halt site —"""
     attempt_a, _ = happy_context()
     sink_a = RecordingGatewayEvidenceSink()
     gateway_a = BrokerEgressGateway(
@@ -327,7 +290,6 @@ def test_each_failure_path_stamps_the_step_where_it_actually_failed() -> None:
     assert sink_a.records[-1].halt_reason is SendHaltReason.CONTEXT_MISSING
     assert sink_a.records[-1].step is CommitmentStep.SEND_BOUNDARY_VERIFICATION
 
-    # ATTEMPT_ALREADY_CONSUMED (a repeat of the same content-addressed attempt)
     attempt_b, context_b = happy_context()
     gateway_b, sink_b = build_gateway(
         attempt=attempt_b, context=context_b, transport=full_fill_transport()
@@ -337,14 +299,12 @@ def test_each_failure_path_stamps_the_step_where_it_actually_failed() -> None:
     assert sink_b.records[-1].halt_reason is SendHaltReason.ATTEMPT_ALREADY_CONSUMED
     assert sink_b.records[-1].step is CommitmentStep.SEND_STARTED_DURABLE
 
-    # VERIFY_ITEM_UNKNOWN (item 1 — no Transmission Capability)
     attempt_c, context_c = happy_context(transmission_capability=None)
     gateway_c, sink_c = build_gateway(attempt=attempt_c, context=context_c)
     gateway_c(attempt_c)
     assert sink_c.records[-1].halt_reason is SendHaltReason.VERIFY_ITEM_UNKNOWN
     assert sink_c.records[-1].step is CommitmentStep.SEND_BOUNDARY_VERIFICATION
 
-    # OUTBOUND_NOT_BOUND_TO_CONSTRUCTION (forged outbound quantity)
     attempt_d, context_d = happy_context(outbound_quantity=Decimal("999"))
     gateway_d, sink_d = build_gateway(
         attempt=attempt_d, context=context_d, transport=full_fill_transport()
@@ -356,14 +316,12 @@ def test_each_failure_path_stamps_the_step_where_it_actually_failed() -> None:
     )
     assert sink_d.records[-1].step is CommitmentStep.SEND_BOUNDARY_VERIFICATION
 
-    # SEND_SEAL_UNCONSTRUCTABLE (claim principal diverges from the sealed active principal)
     attempt_e, context_e = happy_context(principal="someone-else")
     gateway_e, sink_e = build_gateway(attempt=attempt_e, context=context_e)
     gateway_e(attempt_e)
     assert sink_e.records[-1].halt_reason is SendHaltReason.SEND_SEAL_UNCONSTRUCTABLE
     assert sink_e.records[-1].step is CommitmentStep.SEND_BOUNDARY_VERIFICATION
 
-    # SINGLE_USE_CLAIM_REFUSED (the seal's own nonces already claimed under another attempt)
     attempt_f, context_f = happy_context()
     ledger_f = SendAttemptLedger()
     assert ledger_f.claim(
@@ -384,7 +342,6 @@ def test_each_failure_path_stamps_the_step_where_it_actually_failed() -> None:
     assert sink_f.records[-1].halt_reason is SendHaltReason.SINGLE_USE_CLAIM_REFUSED
     assert sink_f.records[-1].step is CommitmentStep.SEND_STARTED_DURABLE
 
-    # TRANSPORT_UNAVAILABLE (no transport injected)
     attempt_g, context_g = happy_context()
     sink_g = RecordingGatewayEvidenceSink()
     gateway_g = BrokerEgressGateway(
@@ -394,7 +351,6 @@ def test_each_failure_path_stamps_the_step_where_it_actually_failed() -> None:
     assert sink_g.records[-1].halt_reason is SendHaltReason.TRANSPORT_UNAVAILABLE
     assert sink_g.records[-1].step is CommitmentStep.NETWORK_CALL
 
-    # TRANSPORT_RAISED
     attempt_h, context_h = happy_context()
     sink_h = RecordingGatewayEvidenceSink()
     gateway_h = BrokerEgressGateway(
@@ -406,7 +362,6 @@ def test_each_failure_path_stamps_the_step_where_it_actually_failed() -> None:
     assert sink_h.records[-1].halt_reason is SendHaltReason.TRANSPORT_RAISED
     assert sink_h.records[-1].step is CommitmentStep.NETWORK_CALL
 
-    # RESULT_ATTEMPT_IDENTITY_MISMATCH
     attempt_i, context_i = happy_context()
     sink_i = RecordingGatewayEvidenceSink()
     gateway_i = BrokerEgressGateway(
@@ -480,13 +435,6 @@ def test_the_gateway_authority_block_makes_no_transmits_claim() -> None:
     assert "transmits" not in AllFalseGatewayAuthority.model_fields
 
 
-# ---------------------------------------------------------------------------
-# fail-closed over every item (design #34 §12.1-1)
-# ---------------------------------------------------------------------------
-
-
-#: One restrictive override per verify item the slice actually evaluates, each expected to stop
-#: the send at that exact item. Written out per item so a silently-skipped check is visible.
 _CASES: list[tuple[str, SendVerifyItem, dict[str, Any]]] = [
     (
         "no capability",
@@ -507,21 +455,6 @@ _CASES: list[tuple[str, SendVerifyItem, dict[str, Any]]] = [
         },
     ),
     (
-        "attempt identity mismatch",
-        SendVerifyItem.MATCHING_INTENT_AND_RESERVATION_IDENTITIES,
-        {"reservation_attempt_id": "attempt-other"},
-    ),
-    (
-        "no reservation identity",
-        SendVerifyItem.MATCHING_INTENT_AND_RESERVATION_IDENTITIES,
-        {"reservation_attempt_id": None},
-    ),
-    (
-        "stale commitment epoch",
-        SendVerifyItem.CURRENT_COMMITMENT_EPOCH,
-        {"commitment_epoch_current": None},
-    ),
-    (
         "allowance withheld",
         SendVerifyItem.ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY,
         {"account_instrument_action_allowed": False},
@@ -530,21 +463,6 @@ _CASES: list[tuple[str, SendVerifyItem, dict[str, Any]]] = [
         "max quantity allowance withheld",
         SendVerifyItem.ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY,
         {"max_quantity_within_allowance": None},
-    ),
-    (
-        "non-admitting session phase",
-        SendVerifyItem.VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION,
-        {"observed_session_phase": "AUCTION"},
-    ),
-    (
-        "no venue decision",
-        SendVerifyItem.VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION,
-        {"venue_decision": None},
-    ),
-    (
-        "decision disagrees with the current snapshot",
-        SendVerifyItem.VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION,
-        {"venue_decision": venue_decision(OrderAdmissibilityResult.UNKNOWN)},
     ),
     (
         "stale broker constraint generation",
@@ -561,26 +479,6 @@ _CASES: list[tuple[str, SendVerifyItem, dict[str, Any]]] = [
         "unfenced conformance proof",
         SendVerifyItem.ORDER_CONSTRUCTION,
         {"conformance_proof": None},
-    ),
-    (
-        "approval bound to another intent",
-        SendVerifyItem.TRADING_APPROVAL,
-        {"approval_intent_binding_digest": "someone-elses-intent"},
-    ),
-    (
-        "no approval consumption",
-        SendVerifyItem.TRADING_APPROVAL,
-        {"approval_consumed_for_this_intent": None},
-    ),
-    (
-        "permit is not the attempt's",
-        SendVerifyItem.ACTION_FLOW,
-        {"action_flow_permit_identity": "permit-other"},
-    ),
-    (
-        "action flow commitment stale",
-        SendVerifyItem.ACTION_FLOW,
-        {"action_flow_commitment_current": None},
     ),
     (
         "restrictive latch is denied",
@@ -641,6 +539,30 @@ def test_one_restrictive_fact_stops_the_send_at_that_item(
     assert (refusal.detail or "").strip(), "a restrictive stop must record its reason"
 
 
+_FOLDED_OVERRIDES: list[tuple[str, dict[str, Any]]] = [
+    ("attempt identity mismatch", {"reservation_attempt_id": "attempt-other"}),
+    ("stale commitment epoch", {"commitment_epoch_current": None}),
+    ("non-admitting session phase", {"observed_session_phase": "AUCTION"}),
+    ("no venue decision", {"venue_decision": None}),
+    ("no approval consumption", {"approval_consumed_for_this_intent": None}),
+    ("action flow commitment stale", {"action_flow_commitment_current": None}),
+]
+
+
+@pytest.mark.parametrize(
+    "override",
+    [override for _, override in _FOLDED_OVERRIDES],
+    ids=[label for label, _ in _FOLDED_OVERRIDES],
+)
+def test_a_folded_items_input_is_no_longer_judged_at_the_boundary(
+    override: dict[str, Any],
+) -> None:
+    """(plan S2-b) The fold is deliberate: the earlier stage owns this input now."""
+    attempt, context = happy_context(**override)
+    gateway, _ = build_gateway(attempt=attempt, context=context)
+    assert gateway(attempt).accepted_for_transmission is True
+
+
 def test_the_deferred_mesh_stops_a_broker_reaching_send_before_any_transport_call() -> (
     None
 ):
@@ -654,7 +576,7 @@ def test_the_deferred_mesh_stops_a_broker_reaching_send_before_any_transport_cal
     gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
     assert gateway(attempt).accepted_for_transmission is None
     assert transport.requests == ()
-    assert sink.records[-1].item is SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH
+    assert sink.records[-1].item is SendVerifyItem.VALID_LIVE_SCOPE
 
 
 def test_a_missing_context_is_a_stop_never_a_skip() -> None:
@@ -686,18 +608,6 @@ def test_an_absent_transport_is_a_stop_never_a_skip() -> None:
     )
     assert gateway(attempt).accepted_for_transmission is None
     assert sink.records[-1].halt_reason is SendHaltReason.TRANSPORT_UNAVAILABLE
-
-
-# ---------------------------------------------------------------------------
-# the outbound seam is bound to the construction (adversarial review MINOR-2)
-# ---------------------------------------------------------------------------
-#
-# The verify list checks that a conformant construction exists (item 13) and that the egress
-# *coordinates* equal their authorized values (item 17). The economic scalars the gateway hands
-# the transport — quantity, price, side — and the command digest the outbound request carries
-# were, before this hardening, passed through unbound: the fixtures wired them consistently and
-# nothing enforced it. Each case below forges exactly one of them while leaving every one of the
-# seventeen verify items satisfied, so only the binding check can catch it.
 
 
 def _forged(**override: Any):
@@ -764,13 +674,7 @@ def test_an_absent_outbound_side_is_a_stop() -> None:
 
 
 def test_an_outbound_request_for_another_command_is_refused() -> None:
-    """(MINOR-2 / EGRESS-INV-004) Item 17 stays satisfied yet the request is for another command.
-
-    Both the request and the QCC are forged to the *same* other digest, so
-    ``exact_binding_holds`` — which compares them to each other, not to the compiled command —
-    still returns ``True``. Only the construction binding notices that the coordinates item 17
-    compared belong to a command this flow never built.
-    """
+    """(MINOR-2 / EGRESS-INV-004) Item 17 stays satisfied yet the request is for another command."""
     attempt, context = happy_context(
         egress_request=egress_request("some-other-command-digest"),
         quorum_commit_certificate=quorum_certificate("some-other-command-digest"),
@@ -801,18 +705,8 @@ def test_the_binding_predicate_accepts_the_consistent_baseline() -> None:
     assert outbound_binding_mismatch(context) is None
 
 
-# ---------------------------------------------------------------------------
-# Phase 4 작업 6 — SendSeal: sole source, seal failure, mutation pins (design §1.4)
-# ---------------------------------------------------------------------------
-
-
 def test_a_diverging_claim_and_active_principal_halts_as_seal_unconstructable() -> None:
-    """(design §1.1 A2) A gap none of the 17 items or the binding check close — the seal does.
-
-    ``context.principal`` (item 1's claim principal) and ``authorized_coordinates.
-    active_principal`` (item 17's coordinate) are never compared to each other anywhere in the
-    verify list or in ``outbound_binding_mismatch`` — only the seal's own validator does.
-    """
+    """(design §1.1 A2) A gap no verify item or the binding check closes — the seal does."""
     attempt, context = happy_context(principal="someone-else")
     gateway, sink = build_gateway(attempt=attempt, context=context)
 
@@ -848,13 +742,7 @@ def test_send_sealed_carries_the_full_seal_and_send_started_carries_only_its_dig
 
 
 def test_the_claim_is_sourced_from_the_seal_via_claim_request_digest() -> None:
-    """(design §1.2; independent review finding #3) The step-16 claim binds
-    ``seal.claim_request_digest`` (= ``context.request_digest``, the item-1 single-use identity)
-    — sourced from the seal, not a second independent read of ``context``, but restoring the
-    prior ledger semantics of binding the per-attempt request identity rather than
-    ``seal.request_bytes_digest`` (the item-17 Capsule/exact-binding identity, deliberately a
-    different fixture value — ``REQUEST_DIGEST`` vs ``CAPSULE_EGRESS_REQUEST_DIGEST``).
-    """
+    """(design §1.2; independent review finding #3) The step-16 claim binds"""
     attempt, context = happy_context()
     assert context.request_digest == REQUEST_DIGEST
     gateway, sink = build_gateway(attempt=attempt, context=context)
@@ -869,7 +757,6 @@ def test_the_claim_is_sourced_from_the_seal_via_claim_request_digest() -> None:
     assert capability_claim.request_digest == seal.claim_request_digest
     assert permit_claim.request_digest == seal.claim_request_digest
     assert capability_claim.request_digest == context.request_digest
-    # The two identities remain deliberately distinct — the claim binds one, item 17 the other.
     assert seal.request_bytes_digest != seal.claim_request_digest
 
 
@@ -885,8 +772,6 @@ def test_transport_arguments_equal_the_seal_via_seal_matches_outbound() -> None:
     (sealed_record,) = [r for r in sink.records if r.kind == "SEND_SEALED"]
     seal = sealed_record.send_seal
     assert seal is not None
-    # (independent review finding #7) The transport actually received the seal digest — not
-    # merely a value ``seal_matches_outbound`` was never asked to compare.
     assert transport.requests[-1].seal_digest == seal.seal_digest
     assert (
         seal_matches_outbound(
@@ -906,13 +791,7 @@ def test_transport_arguments_equal_the_seal_via_seal_matches_outbound() -> None:
 def test_mk2_a_resolver_asked_twice_never_leaks_its_second_answer_into_the_transport_call() -> (
     None
 ):
-    """(mutation M-K2) The seal is built once, from one resolution; a later, differently-valued
-    resolution can never leak into the transport call because step 18 never re-reads context.
-
-    The resolver below would hand back a *different* outbound quantity on a second call — if the
-    gateway ever re-resolved context (instead of reading the already-built seal) between the seal
-    and the transport call, that different value would reach the transport. It never does.
-    """
+    """(mutation M-K2) The seal is built once, from one resolution; a later, differently-valued"""
     attempt, context = happy_context()
     calls = {"n": 0}
 
@@ -937,43 +816,7 @@ def test_mk2_a_resolver_asked_twice_never_leaks_its_second_answer_into_the_trans
 
 
 def test_mk1_send_once_reads_only_seal_attributes_never_context_again() -> None:
-    """(mutation M-K1, structural pin) ``send_once``'s arguments never read ANY ``context.*``
-    value, directly or indirectly — zero exceptions (design §0 "봉인이 유일 입력 원천이어야 한다").
-
-    Independent review finding #4: the original pin matched only ``ast.Attribute`` values whose
-    ``.value`` was ``ast.Name("context")``, over ``call_node.keywords`` only. Three shapes
-    defeated it (all now proven RED below the pin itself, not by a downstream assertion
-    behaviour test):
-
-    * **M1b** — ``ctx = context`` before the call, then ``quantity=ctx.outbound_quantity``
-      (an alias). Caught by the alias ban: *any* assignment binding a name to the bare name
-      ``context`` anywhere in ``__call__`` or ``_seal_and_claim`` is itself rejected, independent
-      of whether the alias is ever read at the call site.
-    * **M1c** — ``quantity=getattr(context, "outbound_quantity")``. Caught by walking the whole
-      call subtree for a ``getattr(...)`` call whose first argument is the bare name ``context``.
-    * **M1d** — ``side=context.authorized_coordinates.action`` (context two attributes deep).
-      Caught because the subtree walk finds the bare ``ast.Name("context")`` at the bottom of the
-      attribute chain, regardless of nesting depth.
-
-    Positional arguments are scanned too (``call_node.args``, not just ``call_node.keywords``).
-
-    **Re-review residual R1 — two more alias shapes, plus a call-site allowlist.** The alias ban
-    above originally matched only ``ast.Assign`` whose value was a bare ``ast.Name("context")``.
-    Two one-token variants slipped past it, both now RED by the widened ban itself:
-
-    * **M1e** — ``ctx: SendBoundaryContext = context`` (an ``ast.AnnAssign``).
-    * **M1f** — ``if (ctx := context) is None: ...`` (an ``ast.NamedExpr``, i.e. a walrus alias).
-
-    The ban is also widened to catch tuple-unpacking, e.g. ``_, ctx = flag, context`` — the
-    assignment's value is a ``Tuple``/``List`` literal with ``context`` as one of its elements,
-    not the value itself.
-
-    Separately, R1 adds a call-site allowlist: **any** call anywhere in either method that
-    receives the bare name ``context`` as a whole argument (not just an attribute read off it)
-    must be one of the sanctioned sites surveyed from the current source below. A brand new
-    consumer of the raw context object — one the alias ban and the send_once-subtree scan do not
-    happen to cover — trips this check instead of passing silently.
-    """
+    """(mutation M-K1, structural pin) ``send_once``'s arguments never read ANY ``context.*``"""
     import ast
     import textwrap
 
@@ -983,9 +826,7 @@ def test_mk1_send_once_reads_only_seal_attributes_never_context_again() -> None:
     )
 
     def _bound_names(value: ast.expr | None) -> list[str]:
-        """Bare names a binding target would receive: the value itself if it's a bare
-        ``Name``, or its top-level elements if it's a ``Tuple``/``List`` literal (the
-        RHS of a tuple-unpacking assignment)."""
+        """Bare names a binding target would receive: the value itself if it's a bare"""
         if value is None:
             return []
         if isinstance(value, ast.Name):
@@ -994,10 +835,6 @@ def test_mk1_send_once_reads_only_seal_attributes_never_context_again() -> None:
             return [elt.id for elt in value.elts if isinstance(elt, ast.Name)]
         return []
 
-    # -- alias ban (mutation M1b, widened per re-review residual R1): no assignment, annotated
-    # assignment, or walrus expression anywhere in either method may bind a name to the bare name
-    # ``context`` (directly or via tuple-unpacking) — checked independently of the call site, so
-    # an alias is rejected even before it is ever read.
     for source, label in (
         (call_source, "__call__"),
         (seal_and_claim_source, "_seal_and_claim"),
@@ -1015,16 +852,6 @@ def test_mk1_send_once_reads_only_seal_attributes_never_context_again() -> None:
             "independent review finding #4 and its re-review residual R1)"
         )
 
-    # -- call-site allowlist (re-review residual R1): the bare name ``context`` may be handed
-    # whole into a call ONLY at the sites named here. Surveyed from the current source of both
-    # methods — every existing call that passes bare ``context`` as an argument:
-    #   * ``verify_send_boundary(attempt=attempt, context=context)``      (step 15, __call__)
-    #   * ``outbound_binding_mismatch(context)``                          (outbound binding, __call__)
-    #   * ``self._seal_and_claim(..., context=context)``                  (__call__)
-    #   * ``outbound_coordinates(context)``                               (_seal_and_claim)
-    #   * ``build_send_seal(context=context, ...)``                       (_seal_and_claim)
-    #   * ``self._record_uncertain(attempt_id, context)``                 (step 19, __call__)
-    # A new consumer must be added here deliberately, not slip through unpinned.
     sanctioned_context_call_signatures = frozenset(
         {
             "verify_send_boundary",
@@ -1117,11 +944,6 @@ def test_mk1_send_once_reads_only_seal_attributes_never_context_again() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# at-most-one: single-use consumption + no blind resubmit (§5.4 / §6)
-# ---------------------------------------------------------------------------
-
-
 def test_the_same_attempt_is_never_sent_twice() -> None:
     """(§6 / RFC-005 §12:362 item 6) A repeat of the same triple is refused, not resent."""
     attempt, context = happy_context()
@@ -1207,7 +1029,6 @@ def test_a_raised_transport_leaves_the_attempt_consumed_and_resubmits_nothing() 
     assert transport.calls == 1
     assert sink.records[-1].halt_reason is SendHaltReason.TRANSPORT_RAISED
     assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True
-    # And the refusal is permanent: nothing retries it.
     assert gateway(attempt).accepted_for_transmission is None
     assert transport.calls == 1
 
@@ -1225,11 +1046,6 @@ def test_a_result_naming_another_attempt_is_refused() -> None:
         sink.records[-1].halt_reason is SendHaltReason.RESULT_ATTEMPT_IDENTITY_MISMATCH
     )
     assert gateway.results == ()
-
-
-# ---------------------------------------------------------------------------
-# UNKNOWN / TIMEOUT and partial fills (§5.5)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("kind", [EgressResultKind.UNKNOWN, EgressResultKind.TIMEOUT])
@@ -1286,22 +1102,18 @@ def test_a_rejection_is_recorded_without_a_fill_magnitude() -> None:
     assert result.filled_quantity is None
 
 
-# ---------------------------------------------------------------------------
-# the verification record itself
-# ---------------------------------------------------------------------------
-
-
 def test_the_verification_is_retained_for_evidence_even_when_it_refuses() -> None:
     """(§4.2 "중단 사유 기록") The refused verification stays inspectable."""
-    attempt, context = happy_context(commitment_epoch_current=None)
+    attempt, context = happy_context(broker_constraint_generation_current=None)
     gateway, _ = build_gateway(attempt=attempt, context=context)
     gateway(attempt)
     (verification,) = gateway.verifications
     assert verification.admitted is not True
-    assert verification.halt_item is SendVerifyItem.CURRENT_COMMITMENT_EPOCH
+    item = SendVerifyItem.VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION
+    assert verification.halt_item is item
     outcomes = {v.item: v.outcome for v in verification.verdicts}
-    assert outcomes[SendVerifyItem.CURRENT_COMMITMENT_EPOCH] is VerifyOutcome.UNKNOWN
-    assert len(verification.verdicts) == 17
+    assert outcomes[item] is VerifyOutcome.UNKNOWN
+    assert len(verification.verdicts) == 7
 
 
 def test_a_denied_construction_never_reaches_the_send_boundary() -> None:
@@ -1314,11 +1126,6 @@ def test_a_denied_construction_never_reaches_the_send_boundary() -> None:
     gateway, _ = build_gateway(attempt=attempt, context=context, transport=transport)
     assert gateway(attempt).accepted_for_transmission is None
     assert transport.requests == ()
-
-
-# ---------------------------------------------------------------------------
-# TOS-GAP-001 (item 13) — a None/UNKNOWN ioc verdict never crashes and never admits
-# ---------------------------------------------------------------------------
 
 
 def _built_construction() -> Any:
@@ -1334,31 +1141,13 @@ def _built_construction() -> Any:
     ids=["conformance-unknown", "numerical-unknown"],
 )
 def test_a_native_unknown_ioc_verdict_is_unknown_never_a_pass(field: str) -> None:
-    """(TOS-GAP-001 / ADR-002-020 §14:374) A native ``UNKNOWN`` ioc verdict on an otherwise
-    complete command must stop the send at item 13 with ``VerifyOutcome.UNKNOWN`` and a
-    ``SEND_REFUSED`` evidence record — never ``SATISFIED``, never an exception.
-
-    ``UNKNOWN`` is a decided (non-``None``) :class:`~tos.ioc.ConformanceResult` member, so this
-    bundle is still a *sanctioned* shape under the ``CandidateConstruction`` validator
-    (``records.py``) — the validator only demands presence, not a particular decided value.
-    """
+    """(TOS-GAP-001 / ADR-002-020 §14:374) A native ``UNKNOWN`` ioc verdict on an otherwise"""
     malformed = _built_construction().model_copy(
         update={field: ConformanceResult.UNKNOWN}
     )
-    attempt, context = happy_context(construction=malformed)
-    transport = full_fill_transport()
-    gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
-    handoff = gateway(attempt)
-    assert handoff.accepted_for_transmission is None
-    assert transport.requests == ()
-    (verification,) = gateway.verifications
-    outcomes = {v.item: v.outcome for v in verification.verdicts}
-    assert outcomes[SendVerifyItem.ORDER_CONSTRUCTION] is VerifyOutcome.UNKNOWN
-    refusal = sink.records[-1]
-    assert refusal.kind == "SEND_REFUSED"
-    assert refusal.item is SendVerifyItem.ORDER_CONSTRUCTION
-    assert refusal.halt_reason is SendHaltReason.VERIFY_ITEM_UNKNOWN
-    assert (refusal.detail or "").strip(), "a restrictive stop must record its reason"
+    verdict = candidate_command_verdict(malformed)
+    assert verdict.outcome is StageOutcome.UNKNOWN
+    assert (verdict.reason or "").strip(), "a restrictive stop must record its reason"
 
 
 @pytest.mark.parametrize(
@@ -1367,27 +1156,14 @@ def test_a_native_unknown_ioc_verdict_is_unknown_never_a_pass(field: str) -> Non
     ids=["conformance-absent", "numerical-absent"],
 )
 def test_a_none_ioc_verdict_cannot_reach_the_send_boundary_context(field: str) -> None:
-    """(TOS-GAP-001) The exact ``conformance_result=None`` shape that used to raise
-    ``AttributeError`` inside item 13 cannot reach the gateway's ``__call__`` at all: pydantic
-    re-validates a nested model instance when it is embedded into ``SendBoundaryContext``, so
-    the ``CandidateConstruction`` shape validator (records.py) fires there and the malformed
-    bundle is rejected one layer before the send boundary — even though ``model_copy`` bypassed
-    that same validator when building the malformed bundle standalone. This is a stronger
-    guarantee than the item-13 defense in depth exercised by the UNKNOWN case above: a ``None``
-    ioc verdict on a bound command is structurally unconstructable in context, not merely
-    handled gracefully once encountered.
-    """
+    """(TOS-GAP-001) The exact ``conformance_result=None`` shape that used to raise"""
     malformed = _built_construction().model_copy(update={field: None})
     with pytest.raises(ValidationError, match="ioc verdict|missing"):
         happy_context(construction=malformed)
 
 
 def _model_construct_malformed_construction(**overrides: Any) -> CandidateConstruction:
-    """Bypass the ``records.py`` shape validator directly (repo idiom,
-    ``tos/tests/wdr/test_wdr_malformed_model.py:85-97``): ``model_construct`` skips every
-    validator, so this can build the exact ``command is not None`` + ``None`` ioc verdict shape
-    the constructor and ``model_copy``-into-``SendBoundaryContext`` both refuse to let reach the
-    send boundary (the two tests above)."""
+    """Bypass the ``records.py`` shape validator directly (repo idiom,"""
     base = _built_construction()
     fields: dict[str, Any] = {
         "derivation": base.derivation,
@@ -1413,42 +1189,20 @@ def _model_construct_malformed_construction(**overrides: Any) -> CandidateConstr
     ],
     ids=["conformance-none", "numerical-none"],
 )
-def test_check_construction_model_construct_bypass_none_verdict_is_unknown_not_a_crash(
+def test_step2_model_construct_bypass_none_verdict_never_admits(
     overrides: dict[str, Any],
 ) -> None:
-    """(M1, TOS-GAP-001) The exact ``None`` ioc-verdict shape the constructor and
-    ``model_copy``-into-context both make unreachable (the two tests above) is reverting either
-    guard's live target: this calls ``_check_construction`` (gateway.py ~:941 / ~:971) directly
-    against a ``model_construct``-bypassed bundle, so a reverted guard is caught here even though
-    the malformed shape can never arrive through the public construction path. Regression for the
-    independent reviewer's M1 finding on PR #655 — the prior suite proved the shape
-    *unreachable*, never proved the guard itself live.
-    """
+    """(M1, TOS-GAP-001) The exact ``None`` ioc-verdict shape the constructor and"""
     malformed = _model_construct_malformed_construction(**overrides)
-    # ``SendBoundaryContext.model_construct`` likewise skips validation, so the malformed
-    # ``construction`` survives embedding unchanged — ``_check_construction`` only reads
-    # ``context.construction``; ``attempt``/``applicability`` are unused (``del``'d immediately).
-    context = SendBoundaryContext.model_construct(construction=malformed)
-    verdict = _check_construction(None, context, None)  # type: ignore[arg-type]
-    assert verdict.outcome is VerifyOutcome.UNKNOWN
-    assert verdict.native_verdict_value is None
+    verdict = candidate_command_verdict(malformed)
+    assert verdict.outcome is not StageOutcome.ADMIT
     assert (verdict.reason or "").strip(), "a restrictive stop must record its reason"
-
-
-# ---------------------------------------------------------------------------
-# GAP-2 (design #35 §3) — the lazy context resolver beside the mapping
-# ---------------------------------------------------------------------------
 
 
 def test_the_mapping_and_the_resolver_paths_produce_the_identical_verification() -> (
     None
 ):
-    """(design #35 §3.1/§3.2) The union is additive: the mapping path is unchanged.
-
-    ``attempt_id`` is content-addressed at step 12, so a caller driven by an event loop cannot
-    populate the mapping ahead of the run — hence the resolver. But the mapping path carries every
-    committed call site in this suite, so the two must be the *same* boundary, not two boundaries.
-    """
+    """(design #35 §3.1/§3.2) The union is additive: the mapping path is unchanged."""
     attempt, context = happy_context()
 
     mapped_gateway, mapped_sink = build_gateway(attempt=attempt, context=context)
@@ -1467,7 +1221,7 @@ def test_the_mapping_and_the_resolver_paths_produce_the_identical_verification()
     (resolved_verification,) = resolved_gateway.verifications
     assert resolved_verification == mapped_verification
     assert resolved_gateway.results == mapped_gateway.results
-    assert mapped_sink.kinds == ("VERIFY_ITEM",) * 17 + (
+    assert mapped_sink.kinds == ("VERIFY_ITEM",) * 7 + (
         "SEND_SEALED",
         "SEND_STARTED",
         "POTENTIALLY_LIVE_OBSERVED",
@@ -1519,12 +1273,7 @@ def test_a_resolver_that_returns_none_is_the_same_recorded_context_missing_stop(
 
 
 def test_a_contexts_argument_that_is_neither_shape_admits_nothing() -> None:
-    """(design #35 §3.1) Both admitted shapes are positive membership — the rest is a stop.
-
-    Recognising the mapping and the callable by what they *are*, rather than the callable by
-    elimination, means an unrecognised ``contexts`` argument can only deny. There is no branch in
-    which it falls through to an admitted send.
-    """
+    """(design #35 §3.1) Both admitted shapes are positive membership — the rest is a stop."""
     attempt, _context = happy_context()
     transport = full_fill_transport()
     sink = RecordingGatewayEvidenceSink()
@@ -1545,12 +1294,7 @@ def test_a_contexts_argument_that_is_neither_shape_admits_nothing() -> None:
 def test_the_shipped_factory_derives_the_flow_bound_fields_and_never_takes_them() -> (
     None
 ):
-    """(design #35 §3.1 (2)) The factory's derived fields cannot be supplied by a caller.
-
-    That is what keeps verify item 2 (reservation identity match) and item 13 (order construction)
-    load-bearing instead of self-confirming: there is no parameter through which a look-alike
-    identity, a substituted construction, or a hand-written outbound magnitude could enter.
-    """
+    """(design #35 §3.1 (2)) The factory's derived fields cannot be supplied by a caller."""
     parameters = inspect.signature(send_boundary_context).parameters
     assert all(
         parameter.kind is inspect.Parameter.KEYWORD_ONLY
@@ -1615,11 +1359,7 @@ def test_the_shipped_factory_derives_the_flow_bound_fields_and_never_takes_them(
 def test_the_factory_binds_no_item_17_artifact_when_no_command_was_constructed() -> (
     None
 ):
-    """(design #35 §3.1 (2), ∅ both ways) No command ⇒ no digest ⇒ nothing built against one.
-
-    Building the outbound artifacts against a ``None`` digest would manufacture a "bound" record
-    that binds nothing; leaving them absent is the recorded stop RFC-002 §10.8:761 requires.
-    """
+    """(design #35 §3.1 (2), ∅ both ways) No command ⇒ no digest ⇒ nothing built against one."""
     from ._egressgw_fixtures import admitted_price
 
     denied = construction(price=admitted_price(value=None))

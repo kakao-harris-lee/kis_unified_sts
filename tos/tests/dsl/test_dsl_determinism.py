@@ -1,18 +1,4 @@
-"""Pure-evaluation property tests — determinism slice (design §6.2 / §4).
-
-* **Referential transparency**: ``evaluate(s, c, cfg) == evaluate(s, c, cfg)`` — the
-  same three inputs always yield the same Outcome + recorded signature (RFC-008 §9).
-* **Ambient-independence (structural)**: ``evaluate``'s signature exposes no
-  clock/RNG/env/network/fs parameter and no fetch callable, so it *cannot* reach an
-  ambient source (DCE-INV-003) — verified at the type/signature level, backed by the
-  import-closure test (``test_dsl_import_closure.py``).
-* **EXV-INV-001 (captured, not called)**: ``evaluate`` has no fetch capability; a
-  captured external value enters only through the Capsule (its snapshot digest is
-  recorded as the reproduction pointer, never live-fetched).
-
-Reproducibility granularity (bit-for-bit) is **not asserted** — deferred to
-ADR-DEV-002 (design §4.3). Only outcome + recorded-signature equivalence is claimed.
-"""
+"""Pure-evaluation property tests — determinism slice (design §6.2 / §4)."""
 
 from __future__ import annotations
 
@@ -33,10 +19,9 @@ from tos.dsl import (
 
 from ._dsl_strategies import ENFORCEMENT_VERSION, SCHEME, issue_capsule, issue_strategy
 
-_STRATEGY = issue_strategy()  # simple_policy: propose ACTION iff config.enabled
+_STRATEGY = issue_strategy()
 _CAPSULE = issue_capsule()
 
-# Ambient names that MUST NOT appear as evaluation parameters (DCE-INV-003).
 _AMBIENT_PARAM_NAMES = frozenset(
     {
         "clock",
@@ -70,11 +55,6 @@ def _config(enabled: bool, **bindings: ScalarValue) -> EvaluationConfig:
     return EvaluationConfig(
         config_version="cfg-v1", bindings={**bindings, "enabled": enabled}
     )
-
-
-# ---------------------------------------------------------------------------
-# Referential transparency
-# ---------------------------------------------------------------------------
 
 
 @given(
@@ -127,11 +107,6 @@ def test_config_drives_decision_deterministically() -> None:
         enforcement_mechanism_version=ENFORCEMENT_VERSION,
     )
     assert isinstance(off.outcome, NoActionOutcome)
-
-
-# ---------------------------------------------------------------------------
-# Ambient-independence (structural) + EXV-INV-001 (captured, not called)
-# ---------------------------------------------------------------------------
 
 
 def test_evaluate_signature_exposes_no_ambient_source() -> None:

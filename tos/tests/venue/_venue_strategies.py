@@ -1,23 +1,4 @@
-"""Shared valid-artifact builders + strategies for the venue property tests (design #19 §7).
-
-Firewall-clean: imports only ``hypothesis`` and ``tos.*`` (design #19 §0.3). The builders
-enforce the §7 clean-vs-illegal fixture discipline (the #8 lesson — a "clean" fixture must be
-*genuinely* admissible, never a permissive shortcut):
-
-* a **clean** policy declares a non-empty admitting-phase set for the exact action, a non-empty
-  required-constraint-class set, and genuine injected shape constraints;
-* a **clean** instrument route + candidate match on every scalar field and alias set;
-* a **clean** order shape is genuinely inside every injected band / tick / lot / enum set and
-  positively not silently-rounded;
-* a **clean** binding chain binds the exact decision identity on every stage;
-* the **∅ strategies** deliberately generate empty sets / graphs so the ∅-void guards are
-  actually exercised (the #10 lesson — a strategy that never emits ∅ leaves the ∅ branch
-  untested).
-
-Every band / tick / lot value is an explicit fixture int — nothing here is a *policy* number;
-the real venue bounds are Verification-Profile injected and all null / TBD in Phase 1 (design
-#19 §8.1). The reserved ``"TBD"`` placeholder is excluded from required-field text.
-"""
+"""Shared valid-artifact builders + strategies for the venue property tests (design #19 §7)."""
 
 from __future__ import annotations
 
@@ -44,34 +25,19 @@ from tos.venue import (
     VenueShapeConstraints,
 )
 
-#: One real broker-reported price-band tick measurement (kernel round #4 K-1; §0.1 — this is
-#: the ONLY measured KRX price-band tick datapoint this repo has; do not extend this into a
-#: fabricated multi-row table). Source: 종목 005930, wire price 232,500원, broker-reported
-#: ``output.aspr_unit='500'`` (TR ``FHKST01010100``, v1_국내주식-008,
-#: ``.../quotations/inquire-price``), recorded at
-#: ``docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-11-20260730T002715Z.json``
-#: (``measurements.limit_price_tick``). This is broker-measured fact used as a test fixture, not
-#: a promoted deployment policy value (the deployed profile stays ``UNKNOWN`` — §0.1/§2 결정 3).
 MEASURED_KRX_PRICE_BAND_ROW = PriceBandTick(
     band_min=200_000, band_max=300_000, tick=500
 )
 MEASURED_KRX_PRICE = 232_500
 
-#: The injected provisional canonicalizer (REUSE, design #19 §3.1 — no new scheme).
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: Text bound to a required-covered field must be concrete (never the reserved ``"TBD"``).
 REQUIRED_FIELD_TEXT = st.text(max_size=8).filter(lambda s: s != "TBD")
-#: Injected ``bool | None`` flag (fail-closed on ``None`` / ``False``).
 TRIBOOL = st.sampled_from([True, False, None])
-#: The four admissibility results.
 ADMISSIBILITY_RESULTS = st.sampled_from(list(OrderAdmissibilityResult))
-#: The tradability states.
 TRADABILITY_STATES = st.sampled_from(list(TradabilityState))
-#: The closed action taxonomy.
 ACTION_CLASSES = st.sampled_from(list(ActionClass))
 
-#: A representative session-phase-token universe (§5.5 line 127 — policy-defined tokens).
 PHASE_TOKENS: frozenset[str] = frozenset(
     {
         "closed",
@@ -86,11 +52,6 @@ PHASE_TOKENS: frozenset[str] = frozenset(
         "after_hours",
     }
 )
-
-
-# ---------------------------------------------------------------------------
-# Clean builders (genuinely admissible — the #8 lesson)
-# ---------------------------------------------------------------------------
 
 
 def clean_instrument_route() -> InstrumentRouteFields:
@@ -130,16 +91,7 @@ def clean_shape_constraints() -> VenueShapeConstraints:
 
 
 def price_band_table_constraints() -> VenueShapeConstraints:
-    """Shape constraints with a declared price-band tick table (kernel round #4 K-1).
-
-    The table's single row is the one measured KRX datapoint (see
-    ``MEASURED_KRX_PRICE_BAND_ROW``); the flat ``tick_size`` is deliberately a value (7) that
-    does NOT divide the measured price (232,500 % 7 == 2, unlike the table's 500, which divides
-    it exactly), so a test that regresses to reading the flat field instead of the table (M1)
-    flips ADMISSIBLE to INADMISSIBLE — a detectably different, and wrong, result. (7 was chosen
-    over smaller values precisely because 232,500 is divisible by several small integers, e.g.
-    3 — confirmed by mutation: a flat tick_size=3 does NOT catch the M1 regression.)
-    """
+    """Shape constraints with a declared price-band tick table (kernel round #4 K-1)."""
     return VenueShapeConstraints(
         price_min=100_000,
         price_max=500_000,
@@ -171,8 +123,8 @@ def price_band_table_shape() -> OrderShapeFields:
 def clean_shape() -> OrderShapeFields:
     """A genuinely venue-admissible order shape (inside every band / tick / lot / enum set)."""
     return OrderShapeFields(
-        price=105,  # 100 + 1 tick
-        quantity=20,  # 2 lots, within [10, 100]
+        price=105,
+        quantity=20,
         order_type="LIMIT",
         tif="DAY",
         side="BUY",
@@ -299,11 +251,6 @@ def clean_continuity() -> SourceContinuity:
         rolled_back=False,
         failed_over=False,
     )
-
-
-# ---------------------------------------------------------------------------
-# Hypothesis strategies (∅ deliberately reachable — the #10 lesson)
-# ---------------------------------------------------------------------------
 
 
 @st.composite

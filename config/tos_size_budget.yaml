@@ -24,10 +24,11 @@ scope:
   # that document's §0) — the runtime shell's own source tree gets the same
   # module/function size discipline as the kernel from day one. No longer a
   # skeleton (120 tracked files under tos/runtime as of 2026-09-08's slice
-  # #3 landing) — it currently passes at 0 violations with 0 registered
-  # exceptions of its own (all 29 below are tos/src/tos); an exception entry
-  # is added here the same way the kernel's own were, if/when a runtime
-  # target genuinely needs one.
+  # #3 landing). It has registered exceptions of its own now — 3 of the 11
+  # below are tos/runtime/src (the sentence here said "all 29 below are
+  # tos/src/tos" until the 2026-11-13 S4 re-measure, by which time it had been
+  # false for some time). An exception entry is added here the same way the
+  # kernel's own were, if/when a runtime target genuinely needs one.
   - tos/runtime/src
   # CP-3 B1b (docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md §3 B1b).
   # `tos/runtime/cp3` is a SIBLING of `tos/runtime/src`, deliberately outside
@@ -57,13 +58,27 @@ scope:
 # (재측정으로 순위가 바뀌면) 아래 목록의 물리적 순서와 decomposition_order 값을 함께
 # 갱신해 이 규율이 항상 참이 되게 유지한다. 분해는 이 계획 범위 밖;
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
+#
+# 2026-11-13 S4 산문 제거 재측정 — 20건 중 9건이 예산 아래로 내려가 삭제됐고 11건을
+# 재등재했다(물리적 순서·decomposition_order 1~11 재계산). 삭제된 9건:
+# `egressgw/construction.py` · `egressgw/records.py` · `afg/predicates.py` ·
+# `afg/predicates.py::action_flow_decision` · `authority/predicates.py::degraded_lease_valid` ·
+# `orthostate/predicates.py::coupling_violations` · `compose/_wiring.py` ·
+# `compose/_wiring.py::_build_context_resolver` · `engine/driver.py::EngineDriver._process_next`.
+# 줄어든 것은 docstring·주석뿐이고 판정 경로는 그대로다.
 exceptions:
 - target: tos/src/tos/egressgw/gateway.py
-  measured: 1802
+  measured: 1037
   owner: tos-kernel
   decomposition_order: 1
   expires_on: '2026-12-31'
   note: >-
+    **2026-11-13 S4 산문 제거 재등재 1516→1037(-479)**: `tools/strip_prose.py` 가 docstring 을 첫 줄만 남기고 주석을 지웠다. 판정 경로는 한 줄도 바뀌지 않았다(도구가 파일마다 docstring 상수를 뺀 `ast.dump` 를 전후 대조한다).
+    **2026-11-13 S2-b 재등재 1804→1516(-288)**: `_bound_context` 도크스트링에 Mapping 형식은 테스트 접합부라는 문단(리뷰 L1)을 더하고, verify 항목 여섯을 앞 단계로 접고(`_check_identities` · `_check_commitment_epoch` · `_check_venue` · `_check_approval` · `_check_action_flow` 삭제) `_check_construction` 을 명령 존재 + mutation fence 로 줄였다.
+    **2026-11-13 S2-a 리뷰 LOW(3) 재등재 1802→1804(+2)**: 모듈 도크스트링의 "17 항목 중
+    여섯" · "여섯은 유보" 문언을 실제 13 항목 · 유보 2 로 고치고, `verify_send_boundary`
+    도크스트링과 step 15 주석에서 "17-item" 을 걷어내며 줄바꿈 2줄. 문언만 바뀌었고
+    판정 경로는 그대로다.
     **2026-10-23 재등재 1806→1802(-4)**: #932 Codex r2 — 송신 컨텍스트의 binding 표를 걷어내고 프로필 자신의 environment_class 만 읽도록 바꾸며 줄었다.
     **2026-10-23 #932 리뷰 MEDIUM 재등재 1776→1806(+30)**: `_mock_class_bound_to_profile` 신설(도크스트링 + endpoint_binding_from_profile_ok 대조) — mock 튜플이 첨부 프로필 키에 묶일 때만 건너뛴다 + import 1줄 + 주석 정정.
     **2026-10-23 PR-3a option (a) "K" 재등재 1764→1776(+12)**: `_check_allowance` 의 option (a) 분기(mock 클래스면 프로필 검사 생략) 주석 4줄 + 블록 들여쓰기 + 도크스트링 항목 6줄 + import 1줄.
@@ -137,635 +152,17 @@ exceptions:
     ``egressgw/venuefacts.py::venue_generation_item_verdict`` 로 이관되고, 이
     모듈에는 ``(attempt, applicability)`` 를 버리고 위임만 하는 얇은 래퍼(약 12줄)만
     남았다(mesh 분리와 동일 패턴) — import 1줄 추가를 감안해도 순감소.
-- target: tos/src/tos/sir/predicates.py
-  measured: 1681
-  owner: tos-kernel
+- target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
+  measured: 338
+  owner: tos-runtime
   decomposition_order: 2
   expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/posttrade/predicates.py
-  measured: 1644
-  owner: tos-kernel
-  decomposition_order: 3
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/stm/predicates.py
-  measured: 1514
-  owner: tos-kernel
-  decomposition_order: 4
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/sci/records.py
-  measured: 1242
-  owner: tos-kernel
-  decomposition_order: 5
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/egressgw/construction.py
-  measured: 1239
-  owner: tos-kernel
-  decomposition_order: 6
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성 ·
-    커널 라운드 #4 K-3(signer/approval/evidence 결속)으로 1215→1238 실측 갱신 ·
-    #984 step 5 stale envelope 초기화 1줄 추가로 1239 실측 갱신
-- target: tos/src/tos/afg/predicates.py
-  measured: 1186
-  owner: tos-kernel
-  decomposition_order: 7
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/spg/predicates.py
-  measured: 1145
-  owner: tos-kernel
-  decomposition_order: 8
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/hag/predicates.py
-  measured: 1060
-  owner: tos-kernel
-  decomposition_order: 9
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/wdr/predicates.py
-  measured: 1014
-  owner: tos-kernel
-  decomposition_order: 10
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/posttrade/vocabulary.py
-  measured: 1002
-  owner: tos-kernel
-  decomposition_order: 11
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/engine/sequencer.py::run_commitment_flow
-  measured: 298
-  owner: tos-kernel
-  decomposition_order: 12
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
-    2026-09-09 Phase 3 웨이브 3 [KW3-EV] — event_id·bound 값 스탬프 추가에도 11개
-    `_halt` 호출부를 `_stop` 클로저로 추출해 304→298(감소 · 래칫 재등록).
-- target: tos/src/tos/egressgw/gateway.py::BrokerEgressGateway.__call__
-  measured: 269
-  owner: tos-kernel
-  decomposition_order: 13
-  expires_on: '2026-12-31'
   note: >-
-    Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
-    2026-09-07 재등재(독립 리뷰 M2) — measured 181→248 · decomposition_order
-    16→13(measured 내림차순 재정렬, 동률 시 target 오름차순).
-    2026-09-08 kernel round #1 item 16 typed obligation (+9 lines) — measured
-    248→257 (halt item 16 verdict 순회로 preserved_worst_credible_capacity 추출).
-    2026-09-09 kernel round #1 review #1/#9 (-8 lines) — measured 257→249
-    (obligation 전달 로직을 신규 모듈 헬퍼 ``_item16_obligation`` 으로 인수해 ``__call__``
-    본체는 오히려 축소; 헬퍼 자체는 모듈 전체 measured 증가에 반영됨).
-    2026-09-09 kernel round #1 review #4 (+5 lines) — measured 249→254
-    (``preserved_obligation_magnitude_unknown`` 을 튜플로 함께 배선).
-    2026-09-09 Phase 4 작업 6(SendSeal, 레인 K) — measured 254→256(+2). 스텝
-    16-18 이 ``_seal_and_claim`` 호출 + ``SEND_SEALED`` 기록으로 재배선되며 본체는
-    순증 2줄(seal/claim 로직 대부분은 신규 헬퍼 ``_seal_and_claim`` 자체에 있고, 그
-    헬퍼의 실측은 모듈 전체 measured 증가에 반영됨 — 위 항목 참고).
-    2026-09-09 TOS Phase 3 wave 3 KW3-GW — measured 256→283(+27). 모든
-    ``_halt``/레코드 방출 호출에 ``step=CommitmentStep.*`` 추가(9개 halt
-    사이트 + 5개 레코드 방출), step-18 진입 직전 신규 ``NETWORK_CALL_ENTERED``
-    write-ahead 레코드 추가. 신규 헬퍼 ``_record`` 로 5개 방출 호출을
-    ``self._sink.record(GatewayEvidenceRecord(...))`` 중첩에서
-    ``self._record(kind=..., step=..., ...)`` 한 줄 호출로 축약(팀리드 지시
-    "extract, don't register" — 완전 상쇄는 못 했으나 순증을 줄임: 헬퍼가
-    없었다면 이보다 더 컸을 것). ``EGRESS_RESULT_RECORDED`` 는 지연-기록
-    설계(자체 도크스트링 참고)상 헬퍼를 쓰지 않고 직접 구성.
-- target: tos/src/tos/egressgw/construction.py::derive_order_size
-  measured: 246
-  owner: tos-kernel
-  decomposition_order: 14
-  expires_on: '2026-12-31'
-  note: >-
-    Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
-    2026-09-07 decomposition_order 13→14(measured 불변, __call__ 재정렬로 인한 이동).
-- target: tos/src/tos/egressgw/records.py::send_boundary_context
-  measured: 239
-  owner: tos-kernel
-  decomposition_order: 15
-  expires_on: '2026-12-31'
-  note: >-
-    **2026-10-23 재등재 245→239(-6)**: #932 Codex r2 — 송신 컨텍스트의 binding 표를 걷어내고 프로필 자신의 environment_class 만 읽도록 바꾸며 줄었다.
-    **2026-10-23 #932 리뷰 MEDIUM 재등재 239→245(+6)**: `capability_environment_binding` · `capability_asset_binding` 매개변수 2줄 + 전달 2줄 + Args 2줄.
-    **2026-10-23 PR-3a option (a) "K" 재등재 235→239(+4)**: `capability_tuples` 매개변수 1줄 + 전달 1줄 + Args 2줄.
-    Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
-    2026-09-07 decomposition_order 14→15(measured 불변, __call__ 재정렬로 인한 이동).
-    2026-09-11 kernel round #2 K-2(§2 결정 2) — measured 211→236(+25). 신규
-    deferred-6 kwargs(safety_authority_epoch_current/live_scope_valid/
-    safety_profile_current/deviation_clear/incident_clear/monitoring_clear) 6개와
-    그 pass-through 배선 6줄 추가.
-    2026-09-12 kernel round #3 K-2(§2 결정 4) — measured 236→245(+9). 단일
-    kwarg `venue_session_account_facts_current` 를 3개
-    (`session_facts_current`/`tradability_facts_current`/`account_facts_current`)
-    로 분할하며 kwargs 선언 1→3줄 + pass-through 배선 1→3줄(순증 4줄) 및 인접
-    docstring Args 항목 확장.
-- target: tos/src/tos/nontrade/predicates.py::nontrade_disposition
-  measured: 186
-  owner: tos-kernel
-  decomposition_order: 16
-  expires_on: '2026-12-31'
-  note: >-
-    Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
-    2026-09-07 decomposition_order 15→16(measured 불변, __call__ 재정렬로 인한 이동).
-- target: tos/src/tos/posttrade/predicates.py::post_trade_disposition
-  measured: 181
-  owner: tos-kernel
-  decomposition_order: 17
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/sci/predicates.py::admission_admits_only_positive
-  measured: 179
-  owner: tos-kernel
-  decomposition_order: 18
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/engine/pipeline.py::run_decision_pipeline
-  measured: 177
-  owner: tos-kernel
-  decomposition_order: 19
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/egressgw/construction.py::construct_candidate_command
-  measured: 151
-  owner: tos-kernel
-  decomposition_order: 20
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성 ·
-    커널 라운드 #4 K-3(signer/approval/evidence kwarg 3개 추가)으로 136→151 실측 갱신
-- target: tos/src/tos/spg/predicates.py::semantic_validation
-  measured: 134
-  owner: tos-kernel
-  decomposition_order: 21
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/marketfeed/value.py::publish_context_value_view
-  measured: 133
-  owner: tos-kernel
-  decomposition_order: 22
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/stm/predicates.py::critical_coverage_complete_or_gap
-  measured: 116
-  owner: tos-kernel
-  decomposition_order: 23
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/spg/predicates.py::profile_within_envelope
-  measured: 115
-  owner: tos-kernel
-  decomposition_order: 24
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/authority/predicates.py::degraded_lease_valid
-  measured: 110
-  owner: tos-kernel
-  decomposition_order: 25
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/orthostate/predicates.py::coupling_violations
-  measured: 110
-  owner: tos-kernel
-  decomposition_order: 26
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/egressgw/gateway.py::_check_construction
-  measured: 106
-  owner: tos-kernel
-  decomposition_order: 27
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/posttrade/predicates.py::obligation_commit_idempotent
-  measured: 103
-  owner: tos-kernel
-  decomposition_order: 28
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/src/tos/afg/predicates.py::action_flow_decision
-  measured: 102
-  owner: tos-kernel
-  decomposition_order: 29
-  expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
-- target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1190
-  owner: tos-runtime
-  decomposition_order: 30
-  expires_on: '2026-12-31'
-  note: >-
-    **2026-11-04 #1025 청산 보유수량 재등재 1181→1190(+9)**: `_build_construction_stages` 가 durable CLOSE 상한 리더를 step 2 로 관통시킨다 — `EntryCloseBound` import 1줄 + 파라미터 1줄 + `ProposalShapedConstructionStage(entry_close_bound_reader=...)` 1줄 + 그 리더가 **왜 step 6 과 같은 인스턴스여야 하는지**의 docstring 6줄. 판정은 `_attempt_shape.py`(FLAT 여부 분기)와 `riskstate/close_bound.py`(상한 도출)에 있고 이 모듈은 리더를 관통만 한다.
-    **2026-10-30 #1011 synthetic CLOSE fence 재등재 1178→1181(+3)**: step 9 fence 리더 타입이 `CloseProofCommitFence | SyntheticCloseEntryFence | None` 로 넓어져 주석 아닌 애노테이션만 3줄이 됐다(import 1줄 + 애노테이션 줄바꿈 2줄). 판정은 `risk/close_fence.py`·`risk/ledger_stages.py` 에 있고 이 모듈은 타입만 관통한다.
-    **#975/#1004 분해 1228→1178**: step 8–10 결선을 별도 모듈로 옮겨 CLOSE 증거 fence 배선을 추가하면서 기존 모듈 크기를 줄임.
-    **2026-10-29 #984 CLOSE 부호 전달 재등재 1227→1228(+1)**: step 9 가 step 8 과 같은 `attempt_position_effect(construction_stage)` 를 읽어 CLOSE committed vector 를 음수 노출로 기록.
-    **2026-10-28 #972 step 9 committed vector 재등재 1224→1227(+3)**: `_build_ledger_stages` 에 `economic_stage` 매개변수 1줄 + 호출부 전달 1줄 + step 9 `AtomicCommitStage` 의 `effect_envelope_reader=lambda: economic_stage.envelope` 1줄. 봉투를 committed vector 로 기록하는 판단·UNKNOWN 처분은 `risk/ledger_stages.py`(`AtomicCommitStage._transition`) 에 있다.
-    **2026-10-28 #966 attempt 단위 예약 ID 재등재 1179→1224(+45)**: 신설 `_build_ledger_stages`(steps 8/9/10) 로의 분리가 본체 — `_build_realized_stages` 가 100줄 문턱을 넘었고(104), 분리는 `_build_currentness_stages` 의 기존 선례와 같은 처분이라 그 함수는 무예외로 돌아왔다. 호출부는 1건으로 줄었지만 신설 함수 자신(도크스트링 포함)이 모듈에 순증한다. 함께: step 8 의 `position_effect_reader`(#966 판정표 입력), step 9 의 `reservation_id_in_scope(request.instrument_key, permit.permit_id)`, step 14 의 `attempt_request_reservation_id`. 판정·식별 로직 자체는 `risk/ledger_stages.py`·`rcl/reservation_identity.py` 에 있다.
-    **2026-10-27 #960 CLOSE 제안의 SIDE 재등재 1165→1179(+14)**: step 2 가 제안의 (position_effect, direction) 로 팔을 고르도록 `ProposalShapedConstructionStage`·`build_attempt_arms`·`attempt_reader`/`attempt_side` 를 결선 — import 6줄 + `_build_construction_stages` 의 arms 인자 블록 + step 3 의 `attempt_reader` 인자 + step 14 `side_action_scope` 의 attempt 읽기. 팔 선택·거부 로직 자체는 신설 `compose/_attempt_shape.py`·`_attempt_arm.py` 로 분리했고, `_build_realized_stages`/`_build_currentness_stages` 는 `construction_stages` 하나를 넘겨 두 함수 모두 100줄 문턱 아래 유지(무예외).
-    **2026-10-24 standing session approval 재등재 1146→1165(+19)**: `_build_step4_recorder`·`_build_realized_stages` 에 `standing` 매개변수, per-proposal 공급자 뒤에 standing 공급자를 잇는 분기, CONSUMED 증거용 래퍼 — 판정 로직은 신설 `tos_runtime/authority/standing.py` 로 분리.
-    **2026-10-23 PR-3a option (a) "K" 재등재 1138→1146(+8)**: `_build_context_resolver` 에 `transport_config`·`mock_generation_reader` 매개변수와 `transport_endpoint`·`mock_generation_reader` 전달(item 5 엔드포인트, item 12 mock 세대).
-    **2026-09-23 mypy 3단계 3-e 재등재 1134→1138(+4)**: §1.3 rule 3 포트 도입 —
-    `_time_permits_new_risk`/`_decision_provider` 의 `time_service` 파라미터를
-    concrete `TrustworthyTimeService` 에서 새 Protocol 포트 `TimeSnapshotReader`
-    (`tos_runtime/time/service.py`)로 좁힘. import 를 단일 줄에서 3-멤버 괄호
-    블록으로 바꾼 것이 +4 전부(함수 시그니처 자체는 타입명만 바뀌어 순증 0).
-    코드 동작 변화 0 · 커널 diff 0.
-    **2026-09-17 리뷰 후속 재등재 1132→1134(+2)**: 합성 지점 주석에
-    `docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md` §7.1 "정직 등재"
-    로의 역참조 한 줄을 추가(팀리드 지시 — 코드 곁 등재와 계획 §7.1 이 서로를 찾을 수
-    있도록). 코드 동작 변화 0(주석만) · 커널 diff 0.
-    **2026-09-17 TOS `run` 구동 아크 plan W1 레인 A 재등재 1122→1132(+10)**: 레인 A 에
-    부여된 처분 의무(§4 W1 레인 A 각주 — "레인 A 가 발견한 `required_authority_scope`
-    합성은 레인 A 가 실측해 처분한다 — 원천이 있으면 원천화, 없으면 §7 에 등재. 지어내지
-    않는다") 이행 — 원천이 없으므로 값을 만들지 않고, 합성 지점(`_build_construction_stages`
-    의 `required_authority_scope=(f"scope-{construction.instrument}",)`) 에 정직 등재
-    주석만 추가: 이 f-string 이 런타임에서 유일한 생산자이고, 다운스트림 어디도 그 값을
-    검증하지 않으며, 커널 라운드 #4 ① 후보임을 코드 자리에 남긴다. 코드 동작 변화 0
-    (주석만) · 커널 diff 0.
-    **2026-09-15 TOS venue constraint service wave 재등재 1118→1122(+4, 레인 b,
-    계획 §2 결정 4/6)**: `_build_construction_stages` 시그니처를
-    `session_phase_reader: Callable[[], str | None]` 1개에서
-    `venue_service: VenueConstraintService`/`loaded_ocp: LoadedOrderConstructionPolicy`
-    2개로 교체하고, step 2 의 `policy_id="compose-ocp"`/`"ocp-v1"`/`1` 리터럴 3줄을
-    `loaded_ocp.policy.policy_id`/`.policy_version`/`.policy_generation` 로 교체
-    — 커널 레코드 필드가 `.issue()` 이후에도 정적 타입은 `str | None`/`int | None`
-    이라 mypy 서사에 `ocp.policy_id is not None and ocp.policy_version is not None`
-    /`ocp.policy_generation is not None` 좁히기 assert 2줄이 필요(§4 «커널 객체
-    사적 속성 접근 0» 규율상 우회 불가). 계획 §4 결정 「`_wiring.py` 는 순증 0」
-    목표를 4줄만큼 미달성 — 압축 시도 후 정직 재등재(무예외 목표 미달성 정직
-    등재 관례, 위 항목들과 동일).
-    **2026-09-12 team-lead 리뷰 후속 재등재 1187→1112(-75)**: `_PhaseRefreshingVenueCall`
-    (private-attribute 기입 방식, 전 항목)를 완전 삭제하고 신설
-    `tos_runtime/compose/_venue_phase.py::VenuePhaseStage`(매 호출마다 커널
-    `VenueConstraintStage` 를 공개 생성자로 재구성 — private 기입 0)로 대체 —
-    `_build_construction_stages` 는 `build_venue_phase_stage(construction,
-    session_phase_reader)` 팩토리 호출 1줄만 남음. `_record_egress_identity_observation`
-    +`_EGRESS_IDENTITY_OBSERVATION_KIND`(약 25줄)를 `context.py::record_egress_identity_observation`
-    로 이관(호출부 1줄만 잔존) — `_wiring.py` 자신의 성장 억제를 위해 W3.1 MEDIUM-4
-    항목을 이번에 이관. `VenueConstraintStage`/`StageVerdict`/`CredentialRouteInventoryEntry`/
-    `credential_route_authority_disjoint` import 4건도 함께 제거(모두 무사용).
-    1000줄 문턱은 여전히 초과 — 등재 유지(무예외 목표 미달성, 정직 등재).
-    **2026-09-12 black 재포맷 1186→1187(+1)**.
-    **2026-09-12 Phase 5 W5 재등재 1141→1186(+45)**: step 3의 `observed_session_phase`
-    를 late-bound 로 전환(계획 §2 결정 5) — `_build_construction_stages` 가
-    `session_phase_reader: Callable[[], str | None]` 매개변수를 받고, 신설
-    `_PhaseRefreshingVenueCall`(kernel `VenueConstraintStage` 를 편집하지 않고
-    `_observed_session_phase` 를 매 호출 전 재기입하는 얇은 어댑터 — 도크스트링
-    포함 약 20줄) 로 `venue_stage` 를 감싸 `VerdictRecorder` 에 전달. `StageVerdict`
-    import 1줄 추가. `_build_context_resolver` 는 `egress_attestations` 매개변수를
-    `venue_session_account_facts_reader: Callable[[], bool | None]` 로 교체(item 12
-    가 이제 `tos_runtime.calendar.owner.SessionFactsOwner` 의 실 owner 읽기 —
-    `tos_runtime.compose._egress_attestations` 삭제); `record_operator_attested_inputs`
-    호출부에서 `risk.egress_attestations` 인자 제거. 모듈 최상단
-    `from tos_runtime.compose._egress_attestations import EgressAttestations` 제거.
-    레인 A2 등재(kernel round #1 §2.2 재심 finding #3, MEDIUM) — IAP 만료
-    영수증을 compose root 에 결선(_decision_provider 가
-    load_operator_approval_with_receipt 를 쓰도록 전환 + time/time_config 를
-    _Infra/_build_rcl_and_authority/IntentRegistry 전체에 배선)하며 996→1027로
-    초과. 도크스트링 축약(레인 A 편차⑤ 관례)으로 두 차례 줄였으나(1037→1027)
-    완전 회피는 불가 — 신규 파라미터 배선 자체가 실측 증가분. decomposition_order
-    는 measured 내림차순 관례상 order=11 자리이나, 공유 워크트리에서 커널 측
-    (레인 K2) 이 이 파일의 다른 항목(gateway.py measured)을 동시 편집 중이라
-    중간 삽입/재정렬로 인한 편집 충돌을 피하기 위해 목록 끝에 append 로 등재—
-    후속 하우스키핑에서 물리적 재정렬 가능.
-    2026-09-09 finding #7(LOW) — _decision_provider 에 evidence 포트를 배선해
-    IAP_APPROVAL_FILE_REFUSED 증거를 남기며 1027→1047. 부수로
-    _build_realized_stages 가 함수 100줄 문턱을 1줄 초과(101) — _build_step4_recorder
-    가 time_service/time_config/evidence 개별 인자 대신 infra: _Infra 하나를
-    받도록 리팩터해 함수 예외는 해소하고 모듈 실측은 1038 로 재등재.
-    2026-09-08 재심 R#1(문서) — IntentRegistry 결선 주석을 «G-1 잔여 블로커 둘»
-    로 정정하며 1038→1045(+7, 주석만 · 코드 불변 · 오케스트레이터 직접 편집).
-    2026-09-09 Phase 4 작업 6 §2.1(레인 R) — egress 좌표 7종 +
-    capsule_terminus_fields 를 리터럴에서 신규 로더
-    tos_runtime.compose._egress_coordinates 로 이관: _build_context_resolver 가
-    egress_coordinates: EgressCoordinatesConfig 파라미터를 받아
-    EgressCoordinateSet/capsule_egress_request_digest 를 그 값에서만 구성하고,
-    _boot_services 가 config_dir/egress_coordinates.yaml 을 로드해
-    record_operator_attested_inputs 에 넘기며 반환 튜플에 egress_coordinates 를
-    추가. 신규 파라미터 배선 자체가 실측 증가분 — 1045→1073(+28).
-    2026-09-09 독립 리뷰 seal review #1/#2 처분(레인 R2) — finding #1(HIGH):
-    context.principal 을 f"egressgw-{environment_label}" 리터럴에서
-    egress_coordinates.active_principal(로더가 이미 치환한 값) 로 단일 출처화 —
-    커스텀 active_principal 설정 시 SEND_SEAL_UNCONSTRUCTABLE 로 전송 전량
-    거부되던 결함 해소. finding #2(MEDIUM): EgressCoordinateSet 의 열 번째
-    좌표 endpoint="synthetic://paper/order" 리터럴도 동일 로더로 이관
-    (EgressCoordinatesConfig.endpoint 신설). 두 처분의 사유 주석이 실측
-    증가분 — 1073→1084(+11).
-    2026-09-09 팀리드 follow-up([R2-seal-#1b]) — credential_route_inventory
-    의 게이트웨이 principal 항목도 f"egressgw-{environment_label}" 리터럴로
-    남아 있어 context.principal 과 독립적으로 어긋날 수 있었다.
-    egress_coordinates.active_principal 로 단일 출처화하며 신규 주석 추가로
-    1084→1098 초과(_build_context_resolver 도 100줄 문턱 103 으로 초과) —
-    기존 finding #1 주석을 압축(11→4줄)해 함수 96줄로 회복, 모듈 실측은
-    1081 로 재등재(순감소, 주석 압축분이 신규 주석분을 상회).
-    2026-09-09 seal 재심 잔여 R2([seal-residual-R1/R2]) — active_principal
-    이 config 화되며(finding #1) 열린 새 퇴화 구성 표면: 운영자가
-    active_principal 을 transport 자체 정체성(f"synthetic-paper-
-    {environment_label}", G-4 로 별도 등재, 이번에 이관하지 않음)과 동일하게
-    설정할 수 있었다(ADR-002-013 §8 비이전 워크로드 정체성 위반). 부트타임
-    거부 검사를 신설 함수 _refuse_active_principal_matching_transport_identity
-    로 뽑아 _build_context_resolver 앞단에서 호출 — 함수 분리 자체가 모듈
-    실측 증가분(1081→1116). _build_context_resolver 본문의 finding #1/#1b/
-    capsule stand-in 주석 3곳을 추가 압축해 신설 호출 4줄을 상쇄하고 함수를
-    100줄 문턱 아래로 유지(무예외).
-    2026-09-09 TOS Phase 3 Wave 1 레인 A-R(이벤트 코어) — durable inbox +
-    EngineDriver 결선을 _finalize 에 추가하며 함수 100줄 문턱을 151줄로 초과.
-    새 모듈 tos_runtime/compose/_engine_wiring.py 로 게이트웨이+EngineCore+
-    inbox/driver 조립 전체(wire_engine_and_driver)와 부팅 시 재생 검증
-    호출(verify_replay_or_halt)을 이관해 _finalize 를 얇은 시퀀싱 함수로
-    되돌림(함수 예외 해소, 무등재). 모듈 실측은 그 이관 이후에도 신규 import
-    6줄 + wire_engine_and_driver 호출부 + verify_replay_or_halt 호출부 순증분
-    으로 1116→1117(+1, 실질적으로는 더 많이 걷어냈으나 신규 배선 자체가
-    상쇄 후 남은 순증분).
-    2026-09-09 TOS Phase 3 슬라이스 D-R [D-R-2] — config_dir/strategies/
-    파일 소스로 StrategyRegistry 를 결선(tos_runtime.strategy.resolve.
-    resolve_strategy_registry, both-present 거부 + STRATEGY_REFUSED
-    증거). _boot_services 가 registry 파라미터를 받아 신규 헬퍼
-    _resolve_strategies_and_attested_inputs 를 호출(egress_coordinates
-    로드 + 전략 결선 + record_operator_attested_inputs 를 한 곳에 묶음 —
-    함수 자체는 100줄 문턱 아래 유지, 무예외)하고 반환값을 7-튜플에서
-    named _BootResult 데이터클래스로 전환(root.py 호출부의 다중행
-    구조분해 대입을 없애 compose_paper_runtime 도 함수 100줄 문턱 아래로
-    유지 — 무예외). 신규 헬퍼+데이터클래스 자체가 모듈 실측 증가분 —
-    1117→1172(+55).
-    2026-09-09 독립 리뷰 P3W1 R2-D finding #8 처분 — neither-present
-    기본 거부(allow_no_strategies: bool = False 신설, True 는 명시적
-    선택)를 _resolve_strategies_and_attested_inputs/_boot_services 두
-    함수 시그니처에 관통 배선(파라미터 1개 + 호출 인자 1개씩)하며
-    1172→1189(+17, 대부분 두 함수의 갱신된 도크스트링 — 함수 자체는 100줄
-    문턱 아래 유지, 무예외). compose_paper_runtime(root.py) 도 동일 커밋에서
-    같은 파라미터를 받아 104→101→100줄로 두 차례 축약해 문턱 준수(무등재).
-    2026-09-09 TOS Phase 3 Wave 2 레인 B-R(Coordinator 양성 게이트, 설계
-    #31 §9-10) — _finalize 가 신규 tos_runtime.compose._preconditions
-    (RuntimeCoordinatorPreconditions) 를 배선: coordinator_preconditions.yaml
-    로더 호출 1줄 + wire_engine_and_driver 호출부에 authority_epoch_service/
-    live_authorization_state 인자 2줄 추가. 부수로 _finalize 가 함수 100줄
-    문턱을 104→102 줄로 초과 — 부팅-시-재생 순서 설명 주석(레인 A-R 저작,
-    본 레인 무편집 대상)을 12→7줄로 압축(문장 재배열만·내용 보존)해 함수를
-    100줄로 회복(무예외). 모듈 실측은 신규 import 3줄 + 호출부 순증분으로
-    1189→1196(+7).
-    2026-09-09 팀리드 CR-4 후속(orthostate/finality 결선, plan §2.2) —
-    _finalize 가 finality.yaml 로더(load_finality_config) 호출 1줄 +
-    wire_engine_and_driver 호출부에 finality_config 인자 1줄을 추가하며
-    함수 100줄 문턱을 100→101 로 1줄 초과. 본 레인 신규 주석은 이미 1줄로
-    압축했고(기존 coordinator_preconditions 주석 2줄은 타 레인 저작이라
-    비편집) 추가 압축 여지가 없어 함수 예외로 등재(아래 별도 항목). 모듈
-    실측은 신규 import 1줄 + 상수 2줄 + 호출부 순증분으로 1196→1203(+7).
-    2026-09-09 TOS Phase 3 슬라이스 D-R [D-R-3c] — finding #9 편차 ④ 해소:
-    _resolve_strategies_and_attested_inputs 의 record_operator_attested_inputs
-    호출부에 resolved_strategies.loaded_bindings 인자 1줄 + 도크스트링 정정
-    2줄 추가. 함수 자체는 100줄 문턱 아래 유지(무예외). 모듈 실측은
-    1203→1205(+2).
-    2026-09-10 TOS Phase 5 W2-R 독립 리뷰 M6 처분 — 두 곳의 손작성
-    `f"resv-{account}-{instrument}"` (AtomicCommitStage 의
-    reservation_id_provider · TransmissionCapabilityStage 의
-    reservation_identity)를 신규 `tos_runtime.rcl.reservation_identity
-    .scope_reservation_id` 호출로 교체(import 1줄 + 호출부 2곳 각 1줄 감소)
-    하며 순감소 1205→1196(−9, 이전 재등재 이후 다른 레인의 변경 포함 실측
-    스냅샷 갱신 — 이 커밋 자신의 순증분은 −1).
-    2026-09-10 T2 lane A(KIS wire-codec digest binding, plan
-    docs/plans/2026-09-10-tos-kis-mock-transport-plan.md §8 설계 정정 ①) —
-    _build_context_resolver 의 capsule_egress_request_digest: str 필드를
-    request_bytes_digest_source: RequestBytesDigestSource 시임으로 교체(신규
-    모듈 tos_runtime/compose/_request_digest.py, CapsuleStandInDigest/
-    KisWireCodecDigest 2구현). 기본값 조립을 별도 함수
-    _default_request_bytes_digest_source 로 분리해 _build_context_resolver
-    를 100줄 문턱 아래(98줄)로 유지(무예외) — 신규 import 4줄 + 파라미터 1줄
-    + 헬퍼 함수 14줄 + 호출부 순증분으로 (베이스라인 1197, 당시 실측치와
-    상단 measured 필드 간 소수 괴리는 선행 항목의 기록되지 않은 편차이며
-    본 항목은 그 실측 불변 상태 위에서) 1197→1219. black 재포맷이 개행 1줄을
-    추가해 1219→1220(+1, 코드 의미 불변).
-    2026-09-10 T2 lane C(compose 결선, plan §4 T2 행·§8 "T2 must") — 신설
-    모듈 tos_runtime/compose/_transport_wiring.py 를 결선: _default_request_
-    bytes_digest_source 를 모듈 밖(tos_runtime/compose/_request_digest.py)으로
-    이관(순환 임포트 회피를 위해 construction: object 로 폭 넓힌 시그니처 — 편차
-    보고) 하고 3줄 함수를 완전 제거, 신규 import 2줄 +
-    _resolve_strategies_and_attested_inputs/_boot_services/_finalize 세
-    함수 시그니처에 transport_kind/instance_document/transport_kind/
-    transport_config 파라미터 4개 관통 배선 + resolve_transport_boot 호출
-    1줄 + wire_engine_and_driver 호출부 신규 kwarg 6줄을 추가하며
-    1220→1238(+18). 도크스트링 압축(2곳)으로 20줄 상쇄를 시도했으나 신규
-    파라미터 배선 자체가 순증분이라 완전 상쇄는 불가 — 등재(무예외 목표
-    미달성, 정직 재등재).
-    2026-09-10 T2 재심 처분(MEDIUM-5) — 재심이 «_finalize(112줄, 자체가
-    100줄 문턱 초과 등재분) 를 별도 모듈로 분리하면 _wiring.py 는 1197 아래로
-    복귀하고 _finalize 자체 예외도 퇴역 가능» 이라는 구체 대안을 제시,
-    채택. 신설 tos_runtime/compose/_finalize_wiring.py 로 _finalize +
-    _build_engine_configuration 을 이관하고, _finalize 자신도
-    _verify_boot_replay 헬퍼(재생 검증 블록 추출)로 분리해 99줄로 복귀(함수
-    예외 완전 퇴역 — 아래 옛 `_wiring.py::_finalize` 항목 삭제). 이관 자체가
-    _wiring.py 의 대규모 순감소 — 1238→1088(-150). 1088 은 여전히
-    module_max_lines(1000) 초과라 등재는 유지하되, 1197 «성장 금지» 목표는
-    이번 재등재로 실질 충족(1088 < 1197). `_finalize_wiring.py` 는
-    1000줄/100줄 문턱 양쪽 모두 아래(221줄 모듈 · 최대 함수 99줄)라 신규
-    등재 없음.
-    2026-09-10 병합(feat/tos-phase5-w2-finality ← main `e5fd37f1`) — 위 두
-    독립 계보(W2-R M6 처분의 1205→1196 · T2 lane A/C 의 1197→1238→1088)가
-    같은 파일을 각자의 브랜치에서 편집해 병합 시 숫자가 어긋남(T2 계보 자신도
-    베이스라인 1197 이 W2-R 의 1196 갱신을 모르고 출발했음을 이미 자인).
-    병합 결과물을 재실측한 실제 값으로 상단 measured 필드를 1087 로 재등재
-    (T2 가 기록한 1088 과 1줄 차이 — 두 브랜치의 독립 변경이 겹친 뒤의
-    실측이므로 어느 한쪽 계보의 산술만으로는 재현되지 않음, 실측이 유일한
-    근거).
-    **2026-09-11 Phase 5 W3-b 재등재 1087→1088**: `_boot_services`의 기존
-    `_build_risk_and_currentness(...)` 호출부에 `environment_label,` 인자 1줄
-    추가(ENVIRONMENT_SCOPE 커런트니스 차원 리더가 필요로 함, plan §2 결정 3) —
-    신규 호출이 아니라 기존 호출에 인자 1개 관통 배선. `_wiring.py` 는 1호출+
-    import 만이라는 W3 계획의 목표(§8 결정)는 새 모듈(`_safety_wiring.py`)을
-    아직 결선하지 않았으므로 아직 적용 대상이 아니고, 이 1줄은 그 목표와
-    무관한 별도 배선.
-    **2026-09-11 Phase 5 W3-b EGRESS_IDENTITY/item-4 재등재 1088→1085(-3)**:
-    `_build_context_resolver`에 `authority_epoch_service` 매개변수 1줄 추가(item
-    4 deferred-mesh 필드가 필요로 함, plan §2 결정 4) + 호출부(`ComposeContextResolver
-    (...)`) 1줄 관통 배선 — 둘 다 기존 함수 편집. 같은 함수의 도크스트링을
-    산문 1단락으로 압축(§100줄 문턱 재확보)하며 net 순감소.
-    **2026-09-11 Phase 5 W3 안전 메시 4개 서비스 결선 재등재 1085→1100(+15)**:
-    `_safety_wiring.build_safety_mesh` 신규 import+호출 1건(§8 결정, 1호출+import)
-    + `_build_context_resolver`에 `safety_mesh`/`projection` 매개변수 2줄 +
-    `ComposeContextResolver(...)` 호출부에 `safety_mesh_deferred_fields`/`latch`/
-    `capacity=build_capacity_owner(...)` 3줄 + `instrument_key` 지역변수 추출
-    (구 인라인 `InstrumentKey(...)` 대체) + `_resolve_strategies_and_attested_inputs`
-    의 `extra_config_files` 표현식을 `risk.safety_mesh.config_files` 병합용
-    괄호식으로 확장. `_build_context_resolver` 자체는 도크스트링 압축(위 항목)으로
-    100줄 문턱 아래 유지.
-    **2026-09-11 W3.1 재심 처분(MEDIUM-4/HIGH-1 계열) 재등재 1100→1137**:
-    `_record_egress_identity_observation` 신규 헬퍼(EGRESS_IDENTITY 를 차원
-    판정이 아닌 증거 전용 관측으로 1회 boot 기록, disposition: pending 8→9
-    복원) + `_build_context_resolver`에 `evidence_store` 매개변수 1줄 +
-    `resolved_credential_route_inventory` 지역변수 재사용(관측·리졸버 양쪽에
-    공급) — 신규 함수 자체가 순증분 대부분. `_build_context_resolver` 자신도
-    도크스트링을 재차 압축했으나(15→10줄) 여전히 100줄 문턱을 101로 초과 —
-    함수 자신을 아래 목록 끝에 별도 등재(무예외 목표 미달성, 정직 등재).
-    **2026-09-11 Phase 5 W3.2 재등재 1137→1141(+4)**: 6차원 owner 착지(plan §2
-    결정 2) — step 3(venue)·step 13(bind verification)에 step 4/9 와 동일한
-    `VerdictRecorder` 관용구 부착. `_ConstructionStages`에 `venue_recorder`
-    필드 1줄 + `_build_construction_stages`의 반환식에 `venue_recorder=
-    VerdictRecorder(venue_stage)` 1줄(venue_stage 자신은 `ComposeContextResolver`
-    가 그대로 읽으므로 무편집 — 신규 필드 추가일 뿐) + `_RealizedStages`의
-    `step13_stage: AttemptBindVerificationStage` 필드를 `step13_recorder:
-    VerdictRecorder`로 대체(순증분 0) + `_build_stage_map`의 두 항목을 레코더로
-    교체(순증분 0). 순수 신규 증가는 필드 1줄 + 호출부 1줄 = 2줄이나, 두 필드
-    옆 인라인 주석(각 1줄)까지 포함해 흑자 후 +4 — 계획 §4 결정 2 의 "`_wiring.py`
-    는 성장 0 목표"는 이번 파도만은 재등재로 해소(도크스트링 상세 설명은 전부
-    `_currentness_wiring.py`의 CONSTRAINT/DECISION_PROOF_INTENT 리더 자신의
-    도크스트링으로 이관 — 이 파일에는 1줄 포인터만 남김).
-    2026-09-12 kernel round #3 K-2(§2 결정 4) — measured 1112→1118(+6). 커널
-    필드 분할(단일 → 3개)이 강제한 소비자 갱신: `_build_context_resolver` 매개변수
-    `venue_session_account_facts_reader` 1줄을 3개 리더 매개변수로 교체(+2줄) +
-    `ComposeContextResolver(...)` 호출부 pass-through 1→3줄(+2줄) + 도크스트링
-    설명 확장(+2줄).
-- target: tos/runtime/src/tos_runtime/compose/_engine_wiring.py::wire_engine_and_driver
-  measured: 167
-  owner: tos-runtime
-  decomposition_order: 33
-  expires_on: '2026-12-31'
-  note: >-
-    **2026-10-31 #1011 P2 venue 원장 배선 재등재 162→167(+5)**: `venue_ledger` 파라미터 1줄 + 그 도크스트링 3줄 + `build_transport(...)` 호출에 전달 1줄. 이 함수는 전송을 만드는 유일한 자리라 「원장을 감싼 전송」도 여기서만 표현된다. 판단(설정 키 + 전송 종류)은 신설 `_venue_ledger_wiring.py` 에, 감싸는 일 자체는 `_transport_wiring._build_synthetic_transport` 에 있다. 호출 시퀀스 무변경.
-    **2026-10-28 #966 재등재 156→162(+6)**: `CapacityObligationRecorder` 의 `reservation_id_resolver` 가 scope 상수 대신 durable permit 조인(`rcl/reservation_lookup.reservation_id_for_attempt`)을 타도록 인자 5줄 + 사유 주석. SEND_REFUSED 가 가리키는 attempt 의 예약은 #966 부터 attempt 마다 다르므로 scope 하나로 답하면 다른 attempt 의 상태를 읽는다. 조인·판독 로직 자체는 신설 `rcl/reservation_lookup.py`.
-    **2026-10-23 PR-3b 재등재 155→156(+1)**: `build_engine_driver(...)` 에 `broker_sourced=broker_posttrade_enabled(active_scope, transport_config)` 1줄 — 주식 MOCK 부팅은 브로커 체결 증명 생산자를 쓴다. 판단 자체는 `_posttrade_source.py`.
-    팀리드 CR-4 후속(orthostate/finality 결선, plan §2.2) — CPL-6 이
-    라이브 authority-epoch 재확인을 요구함을 실측(compose e2e 뮤테이션
-    프로브로 적발: side condition 미배선 시 모든 진짜 hand-off 가
-    COUPLING_VIOLATION 오탐)하고 authority_epoch_current 콜백 파라미터를
-    신규 배선(도크스트링 설명 포함)하며 100→103 초과. 안전-부담 파라미터의
-    도크스트링을 생략하는 것은 이 파일 자신의 기존 관례(finality_config 등
-    모든 신규 파라미터가 온전한 도크스트링을 받음)와 어긋나 압축 대신 등재.
-    2026-09-10 T2 lane C(compose 결선) — nonlive_admitted/active_scope/
-    instance_document/custody/transport_kind/transport_config 파라미터 6개
-    (각 온전한 도크스트링 포함 — 이 파일 관례 유지) + SealRegistry 결선(3줄) +
-    build_transport 호출(8줄) + gateway_sink on_record 배선(1줄) +
-    _build_preconditions 호출부 확장(3줄)을 추가하며 103→136(+33). 신규
-    파라미터 6개의 도크스트링이 순증분 대부분 — 이 파일 자신의 «안전-부담
-    파라미터는 온전한 도크스트링을 받는다» 관례상 압축 대신 등재.
-    2026-09-10 T2 재심 처분(HIGH-1/MEDIUM-6) — on_record 를 transport_kind
-    is KIS_MOCK 조건부로 전환(삼항식 3줄 + 도크스트링 보강 2줄) +
-    SealRegistry 클래스 자체의 바운딩/한정-배선 도크스트링 확장(별도
-    파일 _transport_wiring.py — 이 함수 실측에는 영향 없음) — 이 함수 자신은
-    on_record kwarg 의 값 표현식만 바뀌어 136→142(+6, 조건부 표현식 3줄 +
-    보강 주석 3줄). 안전-부담 배선 변경이라 압축 대신 등재.
-    2026-09-10 병합(feat/tos-phase5-w2-finality ← main `e5fd37f1`) —
-    `tos/runtime/src/tos_runtime/posttrade/finality.py::SyntheticFinalityProducer.produce`
-    예외 항목(main 측, T2 미편집분)은 W2-R 이 이미 `produce`/`produce_non_execution`
-    분리로 27줄까지 줄여 등재 해제한 상태(W2-R 커밋 `bf5a68e4`) — T2 는 이
-    변경을 보지 못한 브랜치에서 작업해 병합 시 해당 항목이 재등장할 뻔했으나,
-    병합된 코드의 `produce` 는 여전히 27줄(W2-R 상태 그대로, T2 무편집)이라
-    옛 항목을 재등재하지 않고 계속 해제 상태로 유지.
-    **2026-09-11 Phase 5 W3-b 재등재 142→145**: Coordinator 세번째 질문(plan
-    §2 결정 5) — `safety_mesh: Sequence[SafetyMeshService] = ()` 매개변수 1줄
-    + `_build_preconditions` 호출부에 `safety_mesh=safety_mesh,`/
-    `evidence_store=evidence_store,` 2줄 추가. 안전-부담 파라미터 관례상
-    압축 대신 등재.
-    **2026-09-11 W3.1 재심 처분(MEDIUM-6, once-per-tick SafetyMeshSnapshot)
-    재등재 145→149**: `_build_preconditions`/`wire_engine_and_driver` 둘 다에
-    `mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None`
-    매개변수(각 온전한 도크스트링 포함 — 이 파일 관례 유지) + `_build_preconditions`
-    호출부에 `mesh_snapshot_refresher=mesh_snapshot_refresher,` 1줄 추가 —
-    Coordinator 의 mesh-check 경로에서 `clear()`/`dimension_report()` 를 틱당
-    정확히 1회로 고정하는 팀리드 처분(3곳 소비자가 같은 스냅샷을 공유).
-    안전-부담 파라미터 관례상 압축 대신 등재.
-    2026-09-26 egress 거래일 계획(docs/plans/2026-09-26-tos-egress-trading-date-plan.md T-3) — `trading_date_now` 매개변수 1줄 + `build_transport` 호출부 인자 1줄로 149→151(+2). 안전-부담 배선 관례상 압축 대신 재등재.
-    2026-09-26 주기 평가·C-2 계획(docs/plans/2026-09-26-tos-periodic-time-eval-and-witness-wiring-plan.md W2) — `credential_sessions` 매개변수 1줄 + 도크스트링 2줄 + `build_transport` 호출부 인자 1줄로 151→155(+4). 앱키당 단일 자격증명 세션의 관통 배선이라 압축 대신 재등재.
-- target: tos/runtime/src/tos_runtime/engine/driver.py::EngineDriver._process_next
-  measured: 149
-  owner: tos-runtime
-  decomposition_order: 36
-  expires_on: '2026-12-31'
-  note: >-
-    독립 리뷰(웨이브 2) finding #3 처분(레인 C-R2, 2026-09-09) — 결합/소유권
-    위반이 기록만 되고 아무것도 막지 않던 결함(ADR-002-005 §10 "immediate
-    new-risk halt condition" 이 실제로는 뒷받침되지 않음)을 수리. 신규
-    DECISION_TICK 을 처리하기 전 durable new-risk halt 래치
-    (`inbox.new_risk_halt()`) 를 검사해, 래치돼 있으면 core.handle 을
-    호출하지 않고 합성 EventResult 로 거부(EGRESS_RESULT 는 절대 거부하지
-    않음 — 결과는 계속 소비되어 지식은 개선될 수 있음)하는 분기를 추가하며
-    100→121 초과. 이 분기는 기존 크래시-윈도우 idempotency 검사들과 같은
-    자리(_process_next 의 드레인 루프 본문)에 있어야 write-ahead 마커·
-    EVENT_CONSUMED 영수증의 원자성이 유지되므로 별도 헬퍼로의 분리는
-    _process_next 자신의 트랜잭션 경계를 쪼개는 것이라 보류(압축 대신 등재).
-    2026-09-09 재심 finding R4 처분(레인 C-R2) — 새 위험 래치의 순서 창(latch
-    가 이후 EGRESS_RESULT 소비에서만 걸리므로, 그보다 낮은 seq 의 이미-admit
-    된 DECISION_TICK 은 래치 이전에 처리될 수 있음)을 도크스트링에 유계
-    잔여로 명시(단일 InstrumentKey·max_unresolved_send_per_scope=1 하에서는
-    도달 불가)하며 121→139(+18, 전부 도크스트링 — 로직 무변경, measured-drift
-    가드 재실측 갱신). 웨이브 3 리뷰 finding #1(b) 처분(레인 C-R2,
-    2026-09-09) — EVENT_CONSUMED 영수증에 flow_fingerprint 필드 추가(신규
-    모듈 flow_fingerprint.py 로 파생 로직 추출, 호출부 1줄씩만 증가)하며
-    139→140(black 이 halt_reason 지역변수 대입을 3줄로 개행 + 신규 인자
-    2줄 — 순증분 최소화 목적의 한 줄 압축 시도는 black 자체가 다시 개행함,
-    measured-drift 가드 재실측 갱신, 로직 변경 없음).
-    2026-09-10 Phase 5 W1 close-out GAP 2(레인 W1-c) — orthostate 프로젝션+staterestore
-    기록 호출을 `_project_orthostate_and_persist` 신규 헬퍼로 추출(팀리드 지시: 인라인
-    시 140→156 초과이므로 분리)하고 `_process_next` 에는 위치 인자 호출 한 줄만 남김
-    (`self._project_orthostate_and_persist(event, result, event_id)`, `_record_consumed`
-    직전 — GAP 2 의 핵심 순서 보장이 이 위치 자체이므로 호출 위치는 그대로 유지). 순인상
-    +1(호출 1줄) — 이 한 줄은 더 압축 불가(신규 헬퍼 호출 자체가 실질 신규 기능이며,
-    인접 도크스트링 보정은 원문과 동일한 3줄 폭으로 재작성해 순증 0으로 맞춤). 140→141,
-    measured-drift 가드 재실측 갱신.
-    **2026-09-13 커널 라운드 #3 K-4(레인 kr3-lane-K, plan §2 결정 1-3)** —
-    `_stamp` 이 두 이벤트 종류(DECISION_TICK/EGRESS_RESULT)만 가정하던 assert
-    를 CORPORATE_ACTION 을 포함한 3-way 분기로 확장(기존 2-way 분기는 신규
-    킨드에서 크래시했다 — 실제 버그 발견/수리). `_process_next` 자신의 드레인
-    루프 본문에 새 분기는 추가하지 않았으나, `_stamp` 확장이 이 함수가 호출하는
-    코드 경로의 실측 라인 수에 반영되어 141→146(+5, 신규 이벤트 종류 처리 로직
-    — 로직 확장, 순수 서식 아님). 별도 헬퍼로의 추가 분리는 이 항목의 기존
-    "own transaction boundary" 논거(위 2026-09-09 항목)를 다시 어기므로 보류
-    (압축 대신 등재), measured-drift 가드 재실측 갱신.
-    **2026-09-13 런타임 운영 결선 웨이브(레인 g2, plan §2 결정 3)** — nontrade
-    엔진 경로: `_record_consumed` 직후 `self._apply_nontrade_latch(event_id=event_id,
-    result=result, evidence_seq=evidence_seq)` 호출 1건 추가(신규 헬퍼
-    `_apply_nontrade_latch` 자체는 별도 함수 — 이 항목이 등재하는 것은 그 호출부
-    한 줄뿐)하며 146→149(+3, black 이 3-키워드 호출을 3줄로 개행 — 순수 서식,
-    로직은 신규 헬퍼 쪽). 신규 판정(restrictive 판단·래치 호출) 자체를
-    `_process_next` 본문에 인라인하지 않고 헬퍼로 분리한 것은 위 GAP 2/2026-09-09
-    항목과 같은 이유(드레인 루프의 write-ahead/EVENT_CONSUMED 원자성 경계를
-    쪼개지 않기 위함) — 호출 위치는 `_record_consumed` 직후·`mark_consumed`
-    직전(래치는 이 이벤트의 EVENT_CONSUMED 영수증이 이미 커밋된 뒤에만 그 seq 를
-    참조해야 하므로), measured-drift 가드 재실측 갱신.
-- target: tos/src/tos/egressgw/records.py
-  measured: 1083
-  owner: tos-kernel
-  decomposition_order: 37
-  expires_on: '2026-12-31'
-  note: >-
-    **2026-10-23 재등재 1098→1083(-15)**: #932 Codex r2 — 송신 컨텍스트의 binding 표를 걷어내고 프로필 자신의 environment_class 만 읽도록 바꾸며 줄었다.
-    **2026-10-23 #932 리뷰 MEDIUM 재등재 1083→1098(+15)**: 같은 두 필드(주석 5줄) + import 2줄 + 팩토리 매개변수 · 전달 · Args.
-    **2026-10-23 PR-3a option (a) "K" 재등재 1070→1083(+13)**: `SendBoundaryContext.capability_tuples` 필드(주석 4줄) + import 확장 + 팩토리 매개변수·전달·Args.
-    신규 등재(TOS Phase 3 wave 3 KW3-GW, 2026-09-09) — 뮤테이션 매트릭스 레인
-    발견(F-K, ``ffaafcb4``): step 15-19 순서가 증거로 감사되지 않았다.
-    ``GatewayEvidenceRecord`` 에 ``step: CommitmentStep | None = None`` 필드,
-    ``FIXED_KIND_STEPS``(비-SEND_REFUSED 킨드별 고정 step 맵) ClassVar, 검증자
-    ``_step_matches_fixed_kind_when_given``(step 이 주어졌을 때만 검사 —
-    하위호환: step 없이 만들어진 기존 호출부는 그대로 통과) 추가하며
-    1000→1027 초과. ``decomposition_order`` 는 measured 내림차순 관례상
-    order=11 자리(wdr/predicates.py 1014 와 posttrade/vocabulary.py 1002
-    사이)이나, 공유 워크트리에서 다른 레인들이 이 파일 뒷부분(런타임 항목)을
-    동시 append 중이라 중간 삽입/재정렬로 인한 편집 충돌을 피하기 위해
-    목록 끝에 append(gateway.py 항목의 2026-09-07 재등재 주석과 동일 관례) —
-    후속 하우스키핑에서 물리적 재정렬 가능.
-    2026-09-11 kernel round #2 — measured 1027→1071(+44). K-2(§2 결정 2, +32):
-    ``SendBoundaryContext`` 신규 필드 6개(safety_authority_epoch_current 등) +
-    ``send_boundary_context`` factory kwargs 6개 + docstring Args 항목 6개 +
-    pass-through 배선 6줄. K-3(§2 결정 3): ``step`` 을 필수 필드로 바꾸고 검증자의
-    조기 ``None`` 반환 제거(순증 거의 0, 문언 재작성 위주).
-    2026-09-11 독립 리뷰 라운드 #1 처분(LOW-1) — measured 1071→1113(+42). `_verdict`
-    헬퍼(레인 K-1 에서 신설된 `_base.py` 버전 — 함수-본문 지연 import 로 base<->records
-    순환을 우회하고 있었음)를 이 모듈로 이관(`VerifyItemVerdict` 바로 옆) — 이제
-    `REALIZED_ITEMS`/`PROVISIONAL_ITEMS` 를 모듈 스코프에서 직접 참조하므로 지연
-    import 가 완전히 사라진다(순환을 우회가 아니라 제거). `gateway.py`/`mesh.py` 는
-    이 모듈에서 `_verdict` 를 import.
-    2026-09-12 kernel round #3 K-2(§2 결정 4) — measured 1113→1132(+19). item 12
-    필드를 단일 `venue_session_account_facts_current: bool | None` 에서 3개
-    (`session_facts_current`/`tradability_facts_current`/`account_facts_current`)
-    로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
-    1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
-- target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 526
-  owner: tos-runtime
-  decomposition_order: 38
-  expires_on: '2026-12-31'
-  note: >-
+    **2026-11-13 S4 산문 제거 재등재 484→338(-146)**: `tools/strip_prose.py` 가 docstring 을 첫 줄만 남기고 주석을 지웠다. 판정 경로는 한 줄도 바뀌지 않았다(도구가 파일마다 docstring 상수를 뺀 `ast.dump` 를 전후 대조한다).
+    **2026-11-13 S2-b 재등재 504→484(-20)**: 은퇴한 여섯 차원 리더의 늦은 결속 줄과 pending 사양 인자를 지웠다.
+    **2026-11-13 S2-a 안전망 제거 재등재 505→504(-1)**: `build_safety_mesh(...)` 호출과 그 결과를 받던 지역 바인딩이 축소판 모니터 배선(`build_monitor_owners`)으로 바뀌며 순 1줄 줄었다. 실측값이다 — S2-c 와 S2-a 가 같은 함수의 다른 줄을 건드려 리베이스 뒤 한 번 더 쟀다.
+    **2026-11-13 S2-c nontrade 제거 재등재 531→505(-26)**: `build_nontrade_admissibility_provider`/`apply_nontrade_wiring` 호출부(주석 8줄 포함 26줄) 삭제. nontrade 입력원도 `nontrade.yaml` 도 출하 트리에 없다(계획 `docs/plans/2026-11-13-tos-code-halving-plan.md` S2-c). 호출 시퀀스의 나머지는 무변경.
+    **2026-11-13 egress 거래일자 재등재 526→531(+5)**: `_finalize(trading_date_now=)` 에 주는 리더를 `build_egress_trading_date_reader(trading_date_reader, time_service=...)` 로 감싼다 — 호출 3줄(기존 1줄 대체) + 사유 주석 3줄. 감싸는 판단과 그 측정은 `compose/_session_wiring.py` 의 함수 docstring 에 있고, 여기 남은 것은 «어느 소비자만 감싸는가» 라는 결선뿐이다(egress 스탬프만 — 루프 스레드이고, 나머지 소비자는 FETCH 스레드에서도 일자를 읽는다). 호출 시퀀스 무변경.
     **2026-11-04 #1025 청산 보유수량 재등재 517→526(+9)**: `DurableEntryCloseBoundReader(...).read` 를 **한 번만** 짓고 step 2(`_build_construction_stages`)와 step 6(`build_risk_state_service`) 둘에 같은 callable 을 준다 — 지역 바인딩 7줄(기존 step 6 인라인 7줄을 대체) + `_build_construction_stages(entry_close_bound_reader=)` 1줄 + step 6 쪽 1줄, 그리고 왜 하나여야 하는지(두 번 지으면 같은 저장소를 두 시점에 읽는다 = #1025 그 자체)의 주석 6줄. 두 소비자를 잇는 결선이라 그 순서는 root.py 에서만 표현된다. 호출 시퀀스 무변경.
     **2026-10-31 #1011 P2 venue 원장 배선 재등재 498→517(+19)**: `build_synthetic_venue_ledger(...)` 호출 7줄 + 사유 주석 5줄, `_finalize(venue_ledger=)` 1줄, `composed.venue_ledger` 1줄 + provenance 4줄, `apply_release_wiring(venue_witness=)` 1줄, `apply_recovery_barrier(witness=)` 의 조건식 5줄(기존 1줄 대체). 쓰는 쪽(전송)은 `_finalize` 전, 읽는 쪽(증인)은 release·recovery 결선에 필요해 **두 시점 사이**를 잇는 결선이고, 그 순서는 root.py 에서만 표현된다. 호출 시퀀스 무변경.
     **2026-10-30 #1011 CLOSE 수량 상한 원천 재등재 488→498(+10)**: `build_risk_state_service(...)` 에 `close_authority=_close_authority_for(transport_kind)` 1줄(주석 2줄) + `entry_close_bound_reader=DurableEntryCloseBoundReader(...).read` 7줄. 전송 종류→상한 원천의 판단 자체는 모듈 수준 `_close_authority_for` 로 빼 함수 밖에 두었고, 여기 남은 것은 결선뿐이다(synthetic 트리는 브로커가 없어 증거 저장소가 곧 브로커 — 결선 순서는 root.py 에서만 표현된다). 호출 시퀀스 무변경.
@@ -964,51 +361,149 @@ exceptions:
 # deliberately left unfilled rather than renumbering every later entry (the tool
 # only rejects a DUPLICATE decomposition_order, never a gap — module docstring's
 # own enforced failure classes (a)-(f) do not include "must be contiguous").
-- target: tos/runtime/src/tos_runtime/compose/_wiring.py::_build_context_resolver
-  measured: 115
-  owner: tos-runtime
-  decomposition_order: 40
+- target: tos/src/tos/engine/sequencer.py::run_commitment_flow
+  measured: 244
+  owner: tos-kernel
+  decomposition_order: 3
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
+    2026-09-09 Phase 3 웨이브 3 [KW3-EV] — event_id·bound 값 스탬프 추가에도 11개
+    `_halt` 호출부를 `_stop` 클로저로 추출해 304→298(감소 · 래칫 재등록).
+- target: tos/src/tos/egressgw/gateway.py::BrokerEgressGateway.__call__
+  measured: 227
+  owner: tos-kernel
+  decomposition_order: 4
   expires_on: '2026-12-31'
   note: >-
-    **2026-10-23 PR-3a option (a) "K" 재등재 107→115(+8)**: 같은 PR-3a 매개변수 2개와 전달 3줄(transport_endpoint 괄호식 포함).
-    **2026-09-15 TOS venue constraint service wave 재등재 110→107(-3, 레인 b,
-    계획 §2 결정 5/9)**: `ComposeContextResolver(...)` 호출부의
-    `venue_snapshot=construction.venue_snapshot,`/`venue_policy=construction.venue_policy,`/
-    `venue_decision=construction.venue_decision,` 3줄 제거 — 세 값은 이제
-    `ComposeContextResolver.__call__` 자신이 `self.venue_stage.last_snapshot`/
-    `.policy`/`.last_decision` 로 매 attempt 마다 직접 읽는다(고정 필드가 아니라
-    attempt-fresh 읽기 — item 11 이 이번 attempt 의 실 decision 을 읽도록, mutation
-    M12 가드). 감소 재등재.
-    **2026-09-12 black 재포맷 103→104(+1)**.
-    **2026-09-12 Phase 5 W5 재등재 101→103(+2)**: `egress_attestations:
-    EgressAttestations` 매개변수를 `venue_session_account_facts_reader:
-    Callable[[], bool | None]` 로 교체(item 12 — `tos_runtime.calendar.owner
-    .SessionFactsOwner` 의 실 owner 읽기, 계획 §2 결정 3) + `ComposeContextResolver(...)`
-    호출부의 `egress_attestations=egress_attestations,` 를
-    `venue_session_account_facts_reader=venue_session_account_facts_reader,` 로
-    교체(순증 0) + 도크스트링 1줄 갱신(순증 +1) — 매개변수 이름 자체가
-    1글자 길어져(+1) 총 +2.
-    W3.1 독립 리뷰 처분(MEDIUM-4) 신규 등재 — `evidence_store: SqliteEvidenceStore`
-    매개변수 1줄 + `_record_egress_identity_observation(evidence_store,
-    resolved_credential_route_inventory)` 호출 1건(EGRESS_IDENTITY 를 차원 판정이
-    아닌 증거 전용 관측으로 기록, disposition: pending 8→9 복원) + 도크스트링
-    재압축(15→10줄)을 거쳤으나 99→101 로 100줄 문턱을 여전히 2줄 초과 — 이 파일
-    자신의 «안전-부담 파라미터는 온전한 도크스트링을 받는다» 관례상 완전 압축은
-    포기하고 등재(무예외 목표 미달성, 정직 등재).
-    **2026-09-12 kernel round #3 K-2(§2 결정 4) 재등재 104→110(+6)**: 단일
-    `venue_session_account_facts_reader` 매개변수를 3개
-    (`session_facts_current_reader`/`tradability_facts_current_reader`/
-    `account_facts_current_reader`, 각 `Callable[[], bool | None]`)로 교체(+2줄)
-    + `ComposeContextResolver(...)` 호출부 pass-through 1→3줄(+2줄) +
-    도크스트링 갱신(+2줄) — item 12 합성이 커널
-    `tos.egressgw.venuefacts.venue_session_account_facts_current` 로 이관되며
-    이 리졸버는 세 원시 sub-fact 를 각각 공급할 뿐 합성하지 않는다.
+    **2026-11-13 S4 산문 제거 재등재 269→227(-42)**: `tools/strip_prose.py` 가 docstring 을 첫 줄만 남기고 주석을 지웠다. 판정 경로는 한 줄도 바뀌지 않았다(도구가 파일마다 docstring 상수를 뺀 `ast.dump` 를 전후 대조한다).
+    Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
+    2026-09-07 재등재(독립 리뷰 M2) — measured 181→248 · decomposition_order
+    16→13(measured 내림차순 재정렬, 동률 시 target 오름차순).
+    2026-09-08 kernel round #1 item 16 typed obligation (+9 lines) — measured
+    248→257 (halt item 16 verdict 순회로 preserved_worst_credible_capacity 추출).
+    2026-09-09 kernel round #1 review #1/#9 (-8 lines) — measured 257→249
+    (obligation 전달 로직을 신규 모듈 헬퍼 ``_item16_obligation`` 으로 인수해 ``__call__``
+    본체는 오히려 축소; 헬퍼 자체는 모듈 전체 measured 증가에 반영됨).
+    2026-09-09 kernel round #1 review #4 (+5 lines) — measured 249→254
+    (``preserved_obligation_magnitude_unknown`` 을 튜플로 함께 배선).
+    2026-09-09 Phase 4 작업 6(SendSeal, 레인 K) — measured 254→256(+2). 스텝
+    16-18 이 ``_seal_and_claim`` 호출 + ``SEND_SEALED`` 기록으로 재배선되며 본체는
+    순증 2줄(seal/claim 로직 대부분은 신규 헬퍼 ``_seal_and_claim`` 자체에 있고, 그
+    헬퍼의 실측은 모듈 전체 measured 증가에 반영됨 — 위 항목 참고).
+    2026-09-09 TOS Phase 3 wave 3 KW3-GW — measured 256→283(+27). 모든
+    ``_halt``/레코드 방출 호출에 ``step=CommitmentStep.*`` 추가(9개 halt
+    사이트 + 5개 레코드 방출), step-18 진입 직전 신규 ``NETWORK_CALL_ENTERED``
+    write-ahead 레코드 추가. 신규 헬퍼 ``_record`` 로 5개 방출 호출을
+    ``self._sink.record(GatewayEvidenceRecord(...))`` 중첩에서
+    ``self._record(kind=..., step=..., ...)`` 한 줄 호출로 축약(팀리드 지시
+    "extract, don't register" — 완전 상쇄는 못 했으나 순증을 줄임: 헬퍼가
+    없었다면 이보다 더 컸을 것). ``EGRESS_RESULT_RECORDED`` 는 지연-기록
+    설계(자체 도크스트링 참고)상 헬퍼를 쓰지 않고 직접 구성.
+- target: tos/src/tos/egressgw/construction.py::derive_order_size
+  measured: 158
+  owner: tos-kernel
+  decomposition_order: 5
+  expires_on: '2026-12-31'
+  note: >-
+    **2026-11-13 S4 산문 제거 재등재 246→158(-88)**: `tools/strip_prose.py` 가 docstring 을 첫 줄만 남기고 주석을 지웠다. 판정 경로는 한 줄도 바뀌지 않았다(도구가 파일마다 docstring 상수를 뺀 `ast.dump` 를 전후 대조한다).
+    Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
+    2026-09-07 decomposition_order 13→14(measured 불변, __call__ 재정렬로 인한 이동).
+- target: tos/src/tos/engine/pipeline.py::run_decision_pipeline
+  measured: 154
+  owner: tos-kernel
+  decomposition_order: 6
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/egressgw/records.py::send_boundary_context
+  measured: 127
+  owner: tos-kernel
+  decomposition_order: 7
+  expires_on: '2026-12-31'
+  note: >-
+    **2026-11-13 S4 산문 제거 재등재 223→127(-96)**: `tools/strip_prose.py` 가 docstring 을 첫 줄만 남기고 주석을 지웠다. 판정 경로는 한 줄도 바뀌지 않았다(도구가 파일마다 docstring 상수를 뺀 `ast.dump` 를 전후 대조한다).
+    **2026-10-23 재등재 245→239(-6)**: #932 Codex r2 — 송신 컨텍스트의 binding 표를 걷어내고 프로필 자신의 environment_class 만 읽도록 바꾸며 줄었다.
+    **2026-10-23 #932 리뷰 MEDIUM 재등재 239→245(+6)**: `capability_environment_binding` · `capability_asset_binding` 매개변수 2줄 + 전달 2줄 + Args 2줄.
+    **2026-10-23 PR-3a option (a) "K" 재등재 235→239(+4)**: `capability_tuples` 매개변수 1줄 + 전달 1줄 + Args 2줄.
+    Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
+    2026-09-07 decomposition_order 14→15(measured 불변, __call__ 재정렬로 인한 이동).
+    2026-09-11 kernel round #2 K-2(§2 결정 2) — measured 211→236(+25). 신규
+    deferred-6 kwargs(safety_authority_epoch_current/live_scope_valid/
+    safety_profile_current/deviation_clear/incident_clear/monitoring_clear) 6개와
+    그 pass-through 배선 6줄 추가.
+    2026-11-13 S2-a — measured 239→223(-16). 위 deferred-6 중 넷
+    (safety_profile_current/deviation_clear/incident_clear/monitoring_clear)이
+    verify 7~10 과 함께 삭제됐다. 남은 둘은 4(safety_authority_epoch_current) ·
+    5(live_scope_valid) 다.
+    2026-09-12 kernel round #3 K-2(§2 결정 4) — measured 236→245(+9). 단일
+    kwarg `venue_session_account_facts_current` 를 3개
+    (`session_facts_current`/`tradability_facts_current`/`account_facts_current`)
+    로 분할하며 kwargs 선언 1→3줄 + pass-through 배선 1→3줄(순증 4줄) 및 인접
+    docstring Args 항목 확장.
+- target: tos/src/tos/marketfeed/value.py::publish_context_value_view
+  measured: 113
+  owner: tos-kernel
+  decomposition_order: 8
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/runtime/src/tos_runtime/compose/_engine_wiring.py::wire_engine_and_driver
+  measured: 108
+  owner: tos-runtime
+  decomposition_order: 9
+  expires_on: '2026-12-31'
+  note: >-
+    **2026-11-13 S4 산문 제거 재등재 160→108(-52)**: `tools/strip_prose.py` 가 docstring 을 첫 줄만 남기고 주석을 지웠다. 판정 경로는 한 줄도 바뀌지 않았다(도구가 파일마다 docstring 상수를 뺀 `ast.dump` 를 전후 대조한다).
+    **2026-10-31 #1011 P2 venue 원장 배선 재등재 162→167(+5)**: `venue_ledger` 파라미터 1줄 + 그 도크스트링 3줄 + `build_transport(...)` 호출에 전달 1줄. 이 함수는 전송을 만드는 유일한 자리라 「원장을 감싼 전송」도 여기서만 표현된다. 판단(설정 키 + 전송 종류)은 신설 `_venue_ledger_wiring.py` 에, 감싸는 일 자체는 `_transport_wiring._build_synthetic_transport` 에 있다. 호출 시퀀스 무변경.
+    **2026-10-28 #966 재등재 156→162(+6)**: `CapacityObligationRecorder` 의 `reservation_id_resolver` 가 scope 상수 대신 durable permit 조인(`rcl/reservation_lookup.reservation_id_for_attempt`)을 타도록 인자 5줄 + 사유 주석. SEND_REFUSED 가 가리키는 attempt 의 예약은 #966 부터 attempt 마다 다르므로 scope 하나로 답하면 다른 attempt 의 상태를 읽는다. 조인·판독 로직 자체는 신설 `rcl/reservation_lookup.py`.
+    **2026-10-23 PR-3b 재등재 155→156(+1)**: `build_engine_driver(...)` 에 `broker_sourced=broker_posttrade_enabled(active_scope, transport_config)` 1줄 — 주식 MOCK 부팅은 브로커 체결 증명 생산자를 쓴다. 판단 자체는 `_posttrade_source.py`.
+    팀리드 CR-4 후속(orthostate/finality 결선, plan §2.2) — CPL-6 이
+    라이브 authority-epoch 재확인을 요구함을 실측(compose e2e 뮤테이션
+    프로브로 적발: side condition 미배선 시 모든 진짜 hand-off 가
+    COUPLING_VIOLATION 오탐)하고 authority_epoch_current 콜백 파라미터를
+    신규 배선(도크스트링 설명 포함)하며 100→103 초과. 안전-부담 파라미터의
+    도크스트링을 생략하는 것은 이 파일 자신의 기존 관례(finality_config 등
+    모든 신규 파라미터가 온전한 도크스트링을 받음)와 어긋나 압축 대신 등재.
+    2026-09-10 T2 lane C(compose 결선) — nonlive_admitted/active_scope/
+    instance_document/custody/transport_kind/transport_config 파라미터 6개
+    (각 온전한 도크스트링 포함 — 이 파일 관례 유지) + SealRegistry 결선(3줄) +
+    build_transport 호출(8줄) + gateway_sink on_record 배선(1줄) +
+    _build_preconditions 호출부 확장(3줄)을 추가하며 103→136(+33). 신규
+    파라미터 6개의 도크스트링이 순증분 대부분 — 이 파일 자신의 «안전-부담
+    파라미터는 온전한 도크스트링을 받는다» 관례상 압축 대신 등재.
+    2026-09-10 T2 재심 처분(HIGH-1/MEDIUM-6) — on_record 를 transport_kind
+    is KIS_MOCK 조건부로 전환(삼항식 3줄 + 도크스트링 보강 2줄) +
+    SealRegistry 클래스 자체의 바운딩/한정-배선 도크스트링 확장(별도
+    파일 _transport_wiring.py — 이 함수 실측에는 영향 없음) — 이 함수 자신은
+    on_record kwarg 의 값 표현식만 바뀌어 136→142(+6, 조건부 표현식 3줄 +
+    보강 주석 3줄). 안전-부담 배선 변경이라 압축 대신 등재.
+    2026-09-10 병합(feat/tos-phase5-w2-finality ← main `e5fd37f1`) —
+    `tos/runtime/src/tos_runtime/posttrade/finality.py::SyntheticFinalityProducer.produce`
+    예외 항목(main 측, T2 미편집분)은 W2-R 이 이미 `produce`/`produce_non_execution`
+    분리로 27줄까지 줄여 등재 해제한 상태(W2-R 커밋 `bf5a68e4`) — T2 는 이
+    변경을 보지 못한 브랜치에서 작업해 병합 시 해당 항목이 재등장할 뻔했으나,
+    병합된 코드의 `produce` 는 여전히 27줄(W2-R 상태 그대로, T2 무편집)이라
+    옛 항목을 재등재하지 않고 계속 해제 상태로 유지.
+    **2026-09-11 Phase 5 W3-b 재등재 142→145**: Coordinator 세번째 질문(plan
+    §2 결정 5) — `safety_mesh: Sequence[SafetyMeshService] = ()` 매개변수 1줄
+    + `_build_preconditions` 호출부에 `safety_mesh=safety_mesh,`/
+    `evidence_store=evidence_store,` 2줄 추가. 안전-부담 파라미터 관례상
+    압축 대신 등재.
+    **2026-09-11 W3.1 재심 처분(MEDIUM-6, once-per-tick SafetyMeshSnapshot)
+    재등재 145→149**: `_build_preconditions`/`wire_engine_and_driver` 둘 다에
+    `mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None`
+    매개변수(각 온전한 도크스트링 포함 — 이 파일 관례 유지) + `_build_preconditions`
+    호출부에 `mesh_snapshot_refresher=mesh_snapshot_refresher,` 1줄 추가 —
+    Coordinator 의 mesh-check 경로에서 `clear()`/`dimension_report()` 를 틱당
+    정확히 1회로 고정하는 팀리드 처분(3곳 소비자가 같은 스냅샷을 공유).
+    안전-부담 파라미터 관례상 압축 대신 등재.
+    2026-09-26 egress 거래일 계획(docs/plans/2026-09-26-tos-egress-trading-date-plan.md T-3) — `trading_date_now` 매개변수 1줄 + `build_transport` 호출부 인자 1줄로 149→151(+2). 안전-부담 배선 관례상 압축 대신 재등재.
+    2026-09-26 주기 평가·C-2 계획(docs/plans/2026-09-26-tos-periodic-time-eval-and-witness-wiring-plan.md W2) — `credential_sessions` 매개변수 1줄 + 도크스트링 2줄 + `build_transport` 호출부 인자 1줄로 151→155(+4). 앱키당 단일 자격증명 세션의 관통 배선이라 압축 대신 재등재.
 - target: tos/runtime/src/tos_runtime/compose/_finalize_wiring.py::_finalize
-  measured: 128
+  measured: 106
   owner: tos-runtime
-  decomposition_order: 41
+  decomposition_order: 10
   expires_on: '2026-12-31'
   note: >-
+    **2026-11-13 S4 산문 제거 재등재 124→106(-18)**: `tools/strip_prose.py` 가 docstring 을 첫 줄만 남기고 주석을 지웠다. 판정 경로는 한 줄도 바뀌지 않았다(도구가 파일마다 docstring 상수를 뺀 `ast.dump` 를 전후 대조한다).
     **2026-10-31 #1011 P2 venue 원장 배선 재등재 124→128(+4)**: `venue_ledger` 파라미터 1줄 + `wire_engine_and_driver(...)` 호출에 전달 1줄 + 사유 주석 2줄. 전송을 만드는 경로가 root → _finalize → wire_engine_and_driver 하나라 원장 쓰기 객체도 그 경로로만 내려간다. 호출 시퀀스 무변경.
     **2026-10-23 PR-3b Codex r3 재등재 123→124(+1)**: `_verify_boot_replay(...)` 호출에 `rcl_log=rcl.rcl_log` 1줄 — 부팅 replay 가 기록된 엔진 투영 해제를 증거가 아니라 RCL 자신의 커밋 상태(`committed_command`)로 확인한다.
     **2026-10-09 PR #890 재리뷰 LOW-2 재등재 116→123(+7)**: 셀의 「채우기」와
@@ -1041,72 +536,10 @@ exceptions:
     유일한 지점이라 분해 대신 등재.
     2026-09-26 egress 거래일 계획 T-3 — `trading_date_now` 매개변수 1줄 + `wire_engine_and_driver` 호출부 인자 1줄로 103→105(+2). 재등재.
     2026-09-26 주기 평가·C-2 계획 W2 — `kis_credential_sessions` 생성 1줄(본문은 `_kis_credential_sessions` 헬퍼로 분리) + `wire_engine_and_driver`·`ComposedRuntime` 호출부 인자 각 1줄로 105→108(+3). 재등재.
-- target: tos/runtime/src/tos_runtime/compose/_preconditions.py::RuntimeCoordinatorPreconditions.live_scope_authorized
-  measured: 107
-  owner: tos-runtime
-  decomposition_order: 42
+- target: tos/src/tos/egressgw/construction.py::construct_candidate_command
+  measured: 104
+  owner: tos-kernel
+  decomposition_order: 11
   expires_on: '2026-12-31'
-  note: >-
-    W3.1 독립 리뷰 처분(MEDIUM-6, once-per-tick SafetyMeshSnapshot) 신규 등재 —
-    `mesh_snapshot_refresher`(주어졌을 때)를 매 호출 최상단에서 무조건 1회
-    호출해 이번 틱의 `SafetyMeshSnapshot`을 셀에 채우는 블록(주석 6줄 포함) +
-    `_mesh_clear`를 그 스냅샷을 받아 `service.clear()`를 직접 부르는 대신
-    `snapshot.clear_for(identity)`를 읽도록 재작성(스냅샷 부재 시에만
-    `service.clear()` 폴백, 기존 유닛 테스트의 페이크 서비스 호환 유지)하며
-    100→107(+7) — Coordinator 자신이 매 틱 스냅샷을 «갱신하는» 유일한 소비자여야
-    한다는 팀리드 처분의 핵심 지점이라 분해 대신 등재.
-- target: tos/runtime/src/tos_runtime/compose/_safety_wiring.py::build_safety_mesh
-  measured: 149
-  owner: tos-runtime
-  decomposition_order: 43
-  expires_on: '2026-12-31'
-  note: >-
-    W3.1 독립 리뷰 처분(HIGH-1/MEDIUM-6) 신규 등재 — HIGH-1: 구성 직후
-    `monitoring_service.clear()` 1회 웜업 호출(주석 포함, 최초 관측이 항상
-    UNKNOWN 인 a2 의 HIGH-2 수정으로 인한 첫 틱 회귀를 boot 시점에 소진) +
-    `_evidence_tip_observer_excluding_own_alerts` 로 STM_ALERT 자기 관측 배제.
-    MEDIUM-6: `_SafetyMeshTickCell`/`_mesh_dimension_reader_for`/
-    `_clear_value`/`_current_tick_snapshot` 를 통해 `dimension_readers`·
-    `_deferred_fields`·`RestrictiveLatchOwner` 세 소비자 모두 같은 per-tick
-    스냅샷을 공유하도록 재배선(개별 `service.clear()`/`service.dimension_report()`
-    직접 호출을 제거) — 이 함수 자신이 그 세 소비자의 결선 지점이라 순증분
-    대부분이 여기 남는다. 100→116(+16) — 팀리드가 명시한 구조적 처분(one
-    evaluation per tick, shared by all consumers)의 결선 지점이라 분해 대신 등재.
-    **2026-09-11 재심 처분(MEDIUM-8, latent — M17 잔존) 재등재 116→122**:
-    `_mesh_dimension_reader_for`/`_deferred_fields`/`restrictive_latch` 의
-    `incident_clear`/`profile_clear` 클로저·`refresh_tick_snapshot` 람다 모두에
-    `inbox_cell` 인자 1개씩 관통 배선(틱 세대 식별자의 소스 — 이미 이 함수가
-    쥐고 있는 `_InboxCell`을 재사용, 새 결선 없음) — 이 함수 자신이 그 다섯
-    호출부 전부의 결선 지점이라 순증분이 여기 남는다. 분해 대신 등재.
-    **2026-09-11 W3.2 lane d2 재등재 122→140(+18)**: `ProtectiveActionService`
-    구성(§2 결정 8) — `latch_state`/`incident_clear`(같은 per-tick 스냅샷 재사용,
-    새 스냅샷 소비자 아님)/`time_health_state`/`evidence_recorder` 4개 포트를
-    조립하는 블록(주석 6줄 포함) + `_SafetyMesh` 반환에 `protective_action=` 1줄
-    추가 — 이 함수가 그 유일한 결선 지점이라 분해 대신 등재.
-    **2026-09-12 Phase 5 W4 lane e2 재등재 140→147(+7)**: 결정 6 — 시그니처에
-    `software_deployment_ok: bool | None = None` 파라미터 1개(§2 결정 6, STAGE B
-    `release_admission` 결과를 SAFETY_ENVELOPE_PROFILE 로 관통 배선) + 도크스트링
-    Args 항목 5줄 + `SafetyProfileService(...)` 호출에 인자 1줄 — 이 함수가 그
-    유일한 결선 지점이라 분해 대신 등재. (같은 PR 의 `b5a3e7a1` 이 STAGE B
-    `_stage_b_release_probe` 를 이 함수 호출 앞으로 재배치해 `_wiring.py` 가
-    `software_deployment_ok=release_admitted` 실값을 넘긴다 — 최초 결선 시점의
-    «`None` 기본값·후속 이월» 문언은 W4 독립 리뷰 MEDIUM 1 로 정정.)
-    **2026-09-12 Phase 5 W4 최종 후속 재등재 147→148**: `_SafetyMesh` 반환문에
-    `peek_tick_snapshot=tick_cell.peek,` 1줄 추가(§2 결정 7 — operator projection
-    이 `.clear()` 재호출 없이 마지막 스냅샷을 읽는 유일한 경로) — 이 함수가
-    `_SafetyMesh` 조립의 유일한 지점이라 분해 대신 등재.
-    **2026-09-16 TOS 리스크 상태 서비스 웨이브(레인 b) 재등재 148→149(+1)**:
-    `_SafetyMesh` 반환문에 `profile_service=profile_service,` 1줄 추가 — HSE
-    (`governed_dimensions`)를 `tos_runtime.compose._riskstate_wiring`가 재로드
-    없이 읽도록 `SafetyProfileService`를 이름으로 노출(`services` 튜플 위치 의존
-    회피) — 이 함수가 `_SafetyMesh` 조립의 유일한 지점이라 분해 대신 등재.
-
-# 2026-09-16 리스크 상태 서비스 웨이브 리뷰 처분(item T1): `riskstate/policies.py` 가
-# 레인 b의 `side_tokens`/`instrument_scope`/`account_scope` 확장으로 1000줄 문턱을
-# 넘겼을 때 등재된 신규 예외 항목은 "분해가 원칙, 등재는 드리프트만" 규율을 어겼다
-# (등재 시 사유가 이미 "분해는 이 웨이브 범위 밖"이라고 자인). 처분: `tos_runtime/venue
-# /config.py` 가 이미 밟은 분할(`_venue_policy_loader.py`/`_order_construction_policy
-# _loader.py`)과 동일한 패턴으로 `policies.py` 를 얇은 재수출 shim 으로 축소하고
-# `_aggregate_risk_policy_loader.py`/`_action_flow_policy_loader.py`(+ 공유 헬퍼
-# `_riskstate_primitives.py`) 로 분리 — 예외 항목 자체를 제거. 세 파일 모두 100/1000줄
-# 문턱 아래.
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성 ·
+    커널 라운드 #4 K-3(signer/approval/evidence kwarg 3개 추가)으로 136→151 실측 갱신

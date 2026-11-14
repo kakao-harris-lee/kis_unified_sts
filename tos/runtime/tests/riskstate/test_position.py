@@ -180,7 +180,6 @@ def test_sealed_with_no_terminal_result_is_in_flight(
     assert obs.in_flight_buy == Decimal(2)
     assert obs.in_flight_sell == Decimal(0)
     assert in_flight_overlap_effect(obs) == Decimal(2)
-    # Not part of worst_credible_directional_usage's non-in-flight-only sibling.
     assert conservative_current_usage(obs) == Decimal(0)
     assert worst_credible_directional_usage(obs) == Decimal(2)
 
@@ -228,10 +227,7 @@ def test_consumed_row_governs_over_a_prior_unmatched_row(
 def test_zero_fill_terminal_outcome_is_confirmed_not_unknown(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    """A TERMINAL zero-fill result (here ``REJECT``; ``tos.engine.TERMINAL_RESULT_KINDS``) is a
-    POSITIVELY resolved fact — not an unknown, not in flight — per the module docstring's
-    classification table. (A bare ``ACK`` is NOT terminal: see
-    ``test_consumed_nonterminal_zero_fill_retains_full_sealed_quantity``.)"""
+    """A TERMINAL zero-fill result (here ``REJECT``; ``tos.engine.TERMINAL_RESULT_KINDS``) is a"""
     seed_send_sealed(
         evidence_store,
         attempt_id="a1",
@@ -262,10 +258,6 @@ def test_zero_fill_terminal_outcome_is_confirmed_not_unknown(
     assert obs.unknown_buy == Decimal(0)
     assert obs.in_flight_buy == Decimal(0)
 
-
-# ===========================================================================
-# Lane A re-review #7 (high) — consumed NON-terminal results keep outstanding exposure
-# ===========================================================================
 
 _SIDE_SIGNS = (("BUY", 1), ("SELL", -1))
 
@@ -324,10 +316,7 @@ def _in_flight_against(obs: PositionObservation, sign: int) -> Decimal:
 def test_consumed_nonterminal_zero_fill_retains_full_sealed_quantity(
     evidence_store: SqliteEvidenceStore, kind: str, side: str, sign: int
 ) -> None:
-    """``core.py`` emits ``EGRESS_RESULT_CONSUMED`` for every APPLIED result, including the
-    non-terminal ``ACK`` / ``TIMEOUT`` / ``UNKNOWN``. A sealed 10-lot whose only consumed
-    result is one of those has resolved NOTHING — the full 10 stays outstanding (in flight,
-    the bucket it held before any result arrived), never 0."""
+    """``core.py`` emits ``EGRESS_RESULT_CONSUMED`` for every APPLIED result, including the"""
     _seal_ten(evidence_store, side)
     _consume(evidence_store, kind=kind, filled=None, remaining=None)
     obs = _reader(evidence_store).observe()
@@ -343,8 +332,7 @@ def test_consumed_nonterminal_zero_fill_retains_full_sealed_quantity(
 def test_consumed_partial_fill_confirms_filled_and_retains_remainder(
     evidence_store: SqliteEvidenceStore, side: str, sign: int
 ) -> None:
-    """PARTIAL_FILL 7 filled / 3 remaining: confirmed 7 signed by side, 3 still outstanding —
-    worst-credible usage is 10, not 7."""
+    """PARTIAL_FILL 7 filled / 3 remaining: confirmed 7 signed by side, 3 still outstanding —"""
     _seal_ten(evidence_store, side)
     _consume(evidence_store, kind="PARTIAL_FILL", filled="7", remaining="3")
     obs = _reader(evidence_store).observe()
@@ -373,9 +361,7 @@ def test_consumed_terminal_full_fill_leaves_nothing_outstanding(
 def test_consumed_terminal_after_partial_confirms_only_the_filled_part(
     evidence_store: SqliteEvidenceStore, kind: str, side: str, sign: int
 ) -> None:
-    """A terminal REJECT / CANCEL_ACK / EXPIRED after a 7/3 partial: the kernel's stored
-    reservation still carries ``filled=7, remaining=3`` on the terminal row, but the attempt now
-    HAS a terminal result (DR-0003 §2.2) — confirmed 7, nothing outstanding."""
+    """A terminal REJECT / CANCEL_ACK / EXPIRED after a 7/3 partial: the kernel's stored"""
     _seal_ten(evidence_store, side)
     _consume(evidence_store, kind="PARTIAL_FILL", filled="7", remaining="3")
     _consume(evidence_store, kind=kind, filled="7", remaining="3")
@@ -389,8 +375,7 @@ def test_consumed_terminal_after_partial_confirms_only_the_filled_part(
 def test_result_sequence_resolves_by_the_latest_consumed_row(
     evidence_store: SqliteEvidenceStore, side: str, sign: int
 ) -> None:
-    """ACK -> PARTIAL(4/6) -> FULL_FILL(10/0), in commit (``seq``) order: each prefix is
-    classified by its own latest row, and the full sequence resolves to confirmed 10."""
+    """ACK -> PARTIAL(4/6) -> FULL_FILL(10/0), in commit (``seq``) order: each prefix is"""
     _seal_ten(evidence_store, side)
     _consume(evidence_store, kind="ACK", filled=None, remaining=None)
     obs = _reader(evidence_store).observe()
@@ -414,10 +399,7 @@ def test_result_sequence_resolves_by_the_latest_consumed_row(
 def test_nonterminal_result_after_terminal_reopens_the_remainder(
     evidence_store: SqliteEvidenceStore, side: str, sign: int
 ) -> None:
-    """The latest row governs in BOTH directions: an applied ``ACK`` after a ``REJECT`` (a
-    contradictory sequence the kernel's rank machinery still applies, since ``ACK`` moves no
-    capacity) leaves the latest result non-terminal, so the unfilled 10 is outstanding again —
-    fail-closed, never "some earlier row was terminal"."""
+    """The latest row governs in BOTH directions: an applied ``ACK`` after a ``REJECT`` (a"""
     _seal_ten(evidence_store, side)
     _consume(evidence_store, kind="REJECT", filled=None, remaining=None)
     _consume(evidence_store, kind="ACK", filled=None, remaining=None)
@@ -429,8 +411,7 @@ def test_nonterminal_result_after_terminal_reopens_the_remainder(
 def test_unrecognized_result_kind_is_not_terminal(
     evidence_store: SqliteEvidenceStore, kind: object
 ) -> None:
-    """A missing / non-string / unrecognized ``egress_result_kind`` proves no terminality
-    (fail-closed) — the full sealed 10 stays outstanding."""
+    """A missing / non-string / unrecognized ``egress_result_kind`` proves no terminality"""
     _seal_ten(evidence_store, "BUY")
     evidence_store.append(
         {
@@ -451,9 +432,7 @@ def test_unrecognized_result_kind_is_not_terminal(
 def test_unrecognized_side_on_nonterminal_consumed_result_is_both_directions(
     evidence_store: SqliteEvidenceStore, kind: str
 ) -> None:
-    """Unrecognized side token + non-terminal consumed result: the filled part fails closed to
-    UNKNOWN in both directions, the outstanding remainder to IN-FLIGHT in both directions.
-    """
+    """Unrecognized side token + non-terminal consumed result: the filled part fails closed to"""
     _seal_ten(evidence_store, "SIDEWAYS")
     filled, remaining = ("7", "3") if kind == "PARTIAL_FILL" else (None, None)
     _consume(evidence_store, kind=kind, filled=filled, remaining=remaining)
@@ -515,8 +494,7 @@ def test_unrecognized_side_is_unknown_in_both_directions(
 
 
 def test_long_short_mirror_symmetry(evidence_store: SqliteEvidenceStore) -> None:
-    """NEW_SHORT mirror: negating the side and swapping evidence carriers reproduces the
-    negated usage (plan §5 demonstration (7))."""
+    """NEW_SHORT mirror: negating the side and swapping evidence carriers reproduces the"""
     seed_send_sealed(
         evidence_store,
         attempt_id="a1",
@@ -581,10 +559,6 @@ def test_long_short_mirror_symmetry(evidence_store: SqliteEvidenceStore) -> None
         short_obs
     ) == worst_credible_directional_usage(long_obs)
 
-
-# ===========================================================================
-# Property tests (hypothesis) — pure functions only
-# ===========================================================================
 
 _NONNEG_DECIMAL = st.decimals(
     min_value=0, max_value=1_000_000, allow_nan=False, allow_infinity=False, places=2
@@ -685,9 +659,7 @@ def test_worst_credible_usage_at_least_confirmed_magnitude(
 def test_long_short_mirror_symmetry_property(
     confirmed_net: Decimal, unknown_buy: Decimal, unknown_sell: Decimal
 ) -> None:
-    """Negating every side (confirmed_net sign flips, buy/sell buckets swap) leaves
-    :func:`worst_credible_directional_usage` unchanged (plan §2.2's own symmetry property).
-    """
+    """Negating every side (confirmed_net sign flips, buy/sell buckets swap) leaves"""
     obs = PositionObservation(
         scope_key="s",
         confirmed_net=confirmed_net,
@@ -946,13 +918,6 @@ def test_later_consumed_covering_the_unmatched_fill_supersedes_it(
     assert against == Decimal(0)
 
 
-# --- Codex round 2 HIGH: a result replayed after finality release ------------------------------
-#
-# After release the engine holds no reservation, so the SAME already-applied result re-sent is
-# recorded as ``RESULT_UNMATCHED(ORPHAN_NO_RESERVATION)`` (or ``MISMATCHED_ATTEMPT`` once a new
-# attempt holds the scope) — the ORPHAN check runs before the DUPLICATE one
-# (``tos/src/tos/engine/state.py`` ``apply_egress_result``). It must not reopen the attempt.
-
 _COMMAND = Decimal(1)
 _LIMIT = Decimal(10)
 
@@ -975,8 +940,7 @@ def _assert_flat(obs: PositionObservation) -> None:
 def test_reject_replayed_after_release_does_not_reopen(
     evidence_store: SqliteEvidenceStore, side: str
 ) -> None:
-    """Codex's exact input: SEND_SEALED 10 -> CONSUMED REJECT -> release -> same REJECT as
-    ORPHAN. Before the fix: in-flight 10, ARE 0 + 1 + 10 = 11 > 10 -> DENY."""
+    """Codex's exact input: SEND_SEALED 10 -> CONSUMED REJECT -> release -> same REJECT as"""
     _seed_attempt(evidence_store, side)
     _seed_result(evidence_store, "EGRESS_RESULT_CONSUMED", "REJECT", None)
     _seed_result(
@@ -998,7 +962,6 @@ def test_reject_replayed_after_release_does_not_reopen(
     [
         ("REJECT", None, None),
         ("CANCEL_ACK", None, None),
-        # the engine stores the reservation's cumulative fill on a non-fill CONSUMED row
         ("CANCEL_ACK", "0", None),
         ("EXPIRED", None, None),
     ],
@@ -1032,8 +995,7 @@ def test_no_fill_terminal_replayed_after_release_does_not_reopen(
 def test_partial_fill_replayed_after_cancel_and_release_does_not_reopen(
     evidence_store: SqliteEvidenceStore, side: str, disposition: str
 ) -> None:
-    """An earlier applied fill (same kind, execution id, cumulative 4) re-sent after the
-    attempt closed adds nothing: CONFIRMED 4, nothing outstanding."""
+    """An earlier applied fill (same kind, execution id, cumulative 4) re-sent after the"""
     _seed_attempt(evidence_store, side)
     _seed_result(
         evidence_store,
@@ -1066,11 +1028,8 @@ def test_partial_fill_replayed_after_cancel_and_release_does_not_reopen(
 @pytest.mark.parametrize(
     "late_kind,late_filled,execution_id",
     [
-        # a different kind than any applied result (a fill crossing the cancel)
         ("FULL_FILL", "10", None),
-        # same kind as an applied result but a larger cumulative fill
         ("CANCEL_ACK", "3", None),
-        # same kind and fill, but a different broker execution — a distinct result
         ("CANCEL_ACK", None, "x-other"),
     ],
 )
@@ -1107,8 +1066,7 @@ def test_genuinely_new_result_after_release_still_reopens(
 def test_replay_does_not_hide_an_unresolved_late_fill(
     evidence_store: SqliteEvidenceStore, side: str
 ) -> None:
-    """A replay of the applied CANCEL_ACK after a refused late fill leaves that fill open —
-    the replay exemption is per row, never per attempt."""
+    """A replay of the applied CANCEL_ACK after a refused late fill leaves that fill open —"""
     _seed_attempt(evidence_store, side)
     _seed_result(evidence_store, "EGRESS_RESULT_CONSUMED", "CANCEL_ACK", None)
     _seed_result(
@@ -1130,20 +1088,12 @@ def test_replay_does_not_hide_an_unresolved_late_fill(
     assert toward == Decimal(10)
 
 
-# --- Codex round 3 HIGH: a replay must match the applied result's remaining quantity too -------
-#
-# The kernel's DUPLICATE signature is (attempt, kind, filled, remaining, execution id, resolution
-# generation). The reader mirrors it with the fields the evidence stores; resolution generation is
-# stored on neither kind.
-
-
 def _seed_partial_then_cancel(
     store: SqliteEvidenceStore,
     side: str,
     applied_remaining: str | None = "6",
 ) -> None:
-    """SEND_SEALED 10 -> applied PARTIAL_FILL 4 -> applied CANCEL_ACK (the engine stores the
-    reservation's 4/6 on the non-fill CONSUMED row)."""
+    """SEND_SEALED 10 -> applied PARTIAL_FILL 4 -> applied CANCEL_ACK (the engine stores the"""
     _seed_attempt(store, side)
     _seed_result(
         store,
@@ -1170,10 +1120,7 @@ def _toward(obs: PositionObservation, side: str) -> Decimal:
 def test_fill_with_different_remaining_after_release_is_not_a_replay(
     evidence_store: SqliteEvidenceStore, side: str, disposition: str
 ) -> None:
-    """Codex round 3's exact input: applied PARTIAL 4/6, CANCEL_ACK, release, then PARTIAL 4/5.
-    The broker reports a different open quantity, so it is a new fact: the unfilled remainder
-    stays IN-FLIGHT. Before the fix it was skipped as a replay (in-flight 0, ARE 4 + 1 <= 10).
-    """
+    """Codex round 3's exact input: applied PARTIAL 4/6, CANCEL_ACK, release, then PARTIAL 4/5."""
     _seed_partial_then_cancel(evidence_store, side)
     _seed_result(
         evidence_store,
@@ -1202,9 +1149,7 @@ def test_fill_missing_remaining_on_either_side_is_not_a_replay(
     applied_remaining: str | None,
     replayed_remaining: str | None,
 ) -> None:
-    """A fill without a remaining quantity cannot be shown to be the applied one (the engine
-    never records one — ``EgressResultPayload`` requires both magnitudes on a fill), so it fails
-    closed."""
+    """A fill without a remaining quantity cannot be shown to be the applied one (the engine"""
     _seed_partial_then_cancel(evidence_store, side, applied_remaining=applied_remaining)
     _seed_result(
         evidence_store,
@@ -1226,9 +1171,7 @@ def test_non_fill_result_carrying_a_magnitude_is_not_a_replay(
     filled: str | None,
     remaining: str | None,
 ) -> None:
-    """A non-fill kind never carries a magnitude in the engine (``EgressResultPayload``), so the
-    applied CANCEL_ACK's own payload had none; an unmatched CANCEL_ACK that carries one is not
-    that result."""
+    """A non-fill kind never carries a magnitude in the engine (``EgressResultPayload``), so the"""
     _seed_partial_then_cancel(evidence_store, side)
     _seed_result(
         evidence_store,
@@ -1246,8 +1189,7 @@ def test_non_fill_result_carrying_a_magnitude_is_not_a_replay(
 def test_cancel_ack_replayed_after_partial_and_release_does_not_reopen(
     evidence_store: SqliteEvidenceStore, side: str
 ) -> None:
-    """The applied CANCEL_ACK's payload had no magnitude even though its CONSUMED row stores the
-    reservation's 4/6, so the same CANCEL_ACK re-sent is still a replay."""
+    """The applied CANCEL_ACK's payload had no magnitude even though its CONSUMED row stores the"""
     _seed_partial_then_cancel(evidence_store, side)
     _seed_result(
         evidence_store,

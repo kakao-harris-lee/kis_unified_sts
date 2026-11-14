@@ -1,14 +1,4 @@
-"""Shared builders for ``tos_runtime.engine`` tests (TOS Phase 3 Wave 1 Lane A-R).
-
-**Not a copy of ``tos/tests/engine/_engine_fixtures.py`` and does not import it** — runtime tests
-may not import kernel test modules (the same discipline
-``tos/runtime/tests/compose/_fixtures.py``'s own docstring states and this module extends). This
-file authors its own, much smaller, single-instrument fixture set directly against kernel
-PRODUCTION packages (``tos.dsl``/``tos.capsule``/``tos.engine``), mirroring the kernel test
-module's own shape (``provisional_stage_map``, a capsule-gated always-fire policy) so the
-DECISION_TICK -> flow -> hand-off path is exercised the same way the kernel's own authoring
-evidence exercises it, without depending on it.
-"""
+"""Shared builders for ``tos_runtime.engine`` tests (TOS Phase 3 Wave 1 Lane A-R)."""
 
 from __future__ import annotations
 
@@ -52,12 +42,10 @@ from tos.engine import (
     provisional_stage_map,
 )
 from tos.engine.records import (
-    CorporateActionPayload,
     DecisionTickPayload,
     EgressResultPayload,
 )
 from tos.engine.vocabulary import EgressResultKind
-from tos.nontrade import NonTradeEventRecord
 from tos.ordering import OrderingEvent
 from tos.time import HealthState, SessionContext, UncertaintyInterval
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -135,12 +123,7 @@ def always_fires_policy() -> DecisionPolicy:
 
 
 def never_fires_policy() -> DecisionPolicy:
-    """A capsule-gated policy whose guard never matches — a defined no-action for every tick.
-
-    Carries one rule (with a real ``TargetSpec``, so the strategy's dispatch scope is still
-    structurally derivable at registration — design #31 §3.3) whose guard compares against a
-    decision_class literal no fixture capsule ever carries, so it never actually fires.
-    """
+    """A capsule-gated policy whose guard never matches — a defined no-action for every tick."""
     unreachable_action = Decision(
         kind=DecisionKind.ACTION,
         rationale="unreachable — guard never matches",
@@ -259,34 +242,9 @@ def egress_result_event(
     )
 
 
-def corporate_action_event(*, seq: int = 1, **payload_overrides: Any) -> EngineEvent:
-    """An UNSTAMPED ``CORPORATE_ACTION`` event (kernel round #3 §2 결정 1) — the minimal,
-    honestly empty-coordinate payload; pass ``venue_admissibility=...`` etc. to reach a
-    different disposition rank."""
-    return EngineEvent(
-        kind=EventKind.CORPORATE_ACTION,
-        corporate_action=CorporateActionPayload(
-            instrument_key=instrument_key(),
-            event=NonTradeEventRecord(),
-            reference=OrderingEvent(
-                source_continuity_id="fixture", source_native_sequence=seq
-            ),
-            **payload_overrides,
-        ),
-    )
-
-
 @dataclass
 class FakeGateway:
-    """A send-boundary test double exposing the exact surface
-    :class:`~tos_runtime.engine.driver.EngineDriver` drains (``.results``, structurally — never
-    imported by type, mirroring ``tos.backtest.fills.RetainedEgressResults``'s "declared locally"
-    seam). ``__call__`` accepts and, by default, retains an ``ACK`` result SYNCHRONOUSLY before
-    returning — mirroring how the real ``BrokerEgressGateway`` retains ``.results`` before its
-    own ``__call__`` returns (step 19 happens inside the same call as step 18's ``send_once``).
-    A test can still append to :attr:`results` directly (:meth:`record_result`) to simulate a
-    result becoming available on a LATER drain instead.
-    """
+    """A send-boundary test double exposing the exact surface"""
 
     attempts: list[AttemptRequest] = field(default_factory=list)
     results: tuple[EgressResultPayload, ...] = ()
@@ -312,16 +270,7 @@ class FakeGateway:
 
 
 class _AlwaysPermissivePreconditions:
-    """A ``True``/``True`` ``CoordinatorPreconditions`` double for THIS file's own
-    driver/replay fixtures (TOS Phase 3 Wave 2 KW2-B made ``preconditions`` a
-    required ``EngineCore`` constructor argument — design #31 §9-10; plan
-    §2.1). This module's own tests exercise the durable-inbox/driver/replay
-    machinery, not the Coordinator gate itself (that is
-    ``tos_runtime.compose._preconditions``'s own test scope,
-    ``tos/runtime/tests/compose/test_preconditions.py`` — Lane B-R), so every
-    tick here is unconditionally admitted past the gate, matching this
-    fixture set's pre-KW2-B behaviour exactly (there was no gate to fail
-    before)."""
+    """A ``True``/``True`` ``CoordinatorPreconditions`` double for THIS file's own"""
 
     def authority_epoch_current(self) -> bool | None:
         return True
@@ -338,20 +287,7 @@ def build_core(
     preconditions: Any = None,
     sink: Any = None,
 ) -> EngineCore:
-    """``preconditions`` defaults to :class:`_AlwaysPermissivePreconditions` (module docstring —
-    this fixture set exercises the durable-inbox/driver/replay machinery, not the Coordinator
-    gate itself). A caller that specifically wants to exercise a gate refusal (independent
-    review finding #1, wave 2, 2026-09-09 — ``tos_runtime.engine.replay``'s own Coordinator-gate
-    refusal case) passes a different ``CoordinatorPreconditions`` double instead.
-
-    ``sink`` defaults to :class:`~tos.engine.NullEvidenceSink` (this fixture set's own long-
-    standing default — kernel-level ``EngineEvidenceRecord``s, e.g. ``SEND_HANDED_OFF``, are
-    discarded, never landing in the durable ``evidence_store``). A caller that needs the LIVE
-    run's own kernel evidence to be durably queryable afterward (CR5, 2026-09-09 —
-    :class:`~tos_runtime.engine.replay_transmit.RecordedTransmit` reads ``SEND_HANDED_OFF``
-    evidence back out of the SAME durable store) passes
-    ``tos_runtime.evidence.sinks.EngineEvidenceSinkAdapter(evidence_store)`` instead.
-    """
+    """``preconditions`` defaults to :class:`_AlwaysPermissivePreconditions` (module docstring —"""
     return EngineCore(
         registry=registry if registry is not None else registry_with(),
         stages=stages if stages is not None else admitting_stages(),
@@ -374,14 +310,7 @@ def orthostate_projector(
     *,
     authority_epoch_current: Any = lambda: True,
 ) -> OrthostateProjector:
-    """A real, test-scoped :class:`~tos_runtime.engine.orthostate_projection
-    .OrthostateProjector` — ``EngineDriver`` now requires one (team-lead CR-4 dispatch, plan
-    §2.2), so every test-suite driver construction needs a concrete instance, never a stand-in
-    that skips the projection. ``authority_epoch_current`` defaults to an always-current stand-in
-    (``lambda: True``): this fixture set's own driver/replay tests exercise the commitment-flow
-    machinery, not authority-epoch currency (that is
-    ``tos_runtime.compose._preconditions``'s own test scope) — a caller that specifically wants
-    to exercise CPL-6 passes a different callable."""
+    """A real, test-scoped :class:`~tos_runtime.engine.orthostate_projection"""
     return OrthostateProjector(
         inbox=inbox,
         evidence_store=evidence_store,
@@ -390,9 +319,6 @@ def orthostate_projector(
     )
 
 
-#: A fully-valued, test-scoped SYNTHETIC finality policy — mirrors
-#: ``tos/runtime/tests/compose/conftest.py``'s own ``finality.yaml`` fixture values, so a driver
-#: test and a compose e2e test derive the identical proof shape for the same fill.
 _TEST_FINALITY_CONFIG = FinalityConfig(
     currency="KRW",
     value_date="2026-09-09",
@@ -403,6 +329,5 @@ _TEST_FINALITY_CONFIG = FinalityConfig(
 
 
 def finality_producer() -> SyntheticFinalityProducer:
-    """A real, test-scoped :class:`~tos_runtime.posttrade.finality.SyntheticFinalityProducer`
-    — ``EngineDriver`` now requires one (team-lead CR-4 dispatch, plan §2.2)."""
+    """A real, test-scoped :class:`~tos_runtime.posttrade.finality.SyntheticFinalityProducer`"""
     return SyntheticFinalityProducer(config=_TEST_FINALITY_CONFIG, scheme=SCHEME)

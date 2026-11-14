@@ -1,13 +1,4 @@
-"""CII-EV-005 / -006 snapshot validity + freshness + common mode + §6.2 re-wrap.
-
-* CII-EV-005: conservative aggregation (design §5.1) — "individually fresh !=
-  valid snapshot"; injected freshness bounds; UNKNOWN is never upgraded.
-* CII-EV-006 (core): common-mode collapse (design §5.2).
-* MAJOR-3: the four §5.1 conjuncts, empty-blocking fail-closed, injected
-  required-corroboration gate; MINOR-4: cut-incoherence floor is CONFLICTED.
-* §6.2: Validity-Window as-of anchor -> re-wrap invariance.
-* CII-EV-009: predicate-only egress currentness (design §7).
-"""
+"""CII-EV-005 / -006 snapshot validity + freshness + common mode + §6.2 re-wrap."""
 
 from __future__ import annotations
 
@@ -36,8 +27,6 @@ from ._strategies import (
     issue_snapshot,
 )
 
-# ---- freshness (injected bound) --------------------------------------------
-
 
 @given(
     age=st.integers(min_value=0, max_value=10**9),
@@ -55,16 +44,10 @@ def test_freshness_state_against_injected_bound(age: int, bound: int) -> None:
 )
 def test_missing_window_is_unknown(present: int, absent: int | None) -> None:
     """A missing age OR bound fails closed to UNKNOWN; both present is decided (MINOR-2)."""
-    # Missing-age branch (age None, bound present) -> UNKNOWN.
     assert freshness_state(None, present) == FieldState.UNKNOWN
-    # Missing-bound branch (age present, bound None) -> UNKNOWN.
     assert freshness_state(present, None) == FieldState.UNKNOWN
-    # Both-present branch -> never UNKNOWN (VALID or STALE, decided by the bound).
     if absent is not None:
         assert freshness_state(present, absent) in (FieldState.VALID, FieldState.STALE)
-
-
-# ---- CII-EV-005 / MINOR-4: individually fresh != valid snapshot ------------
 
 
 @given(n=st.integers(min_value=0, max_value=4))
@@ -83,7 +66,6 @@ def test_individually_fresh_not_valid_when_cut_incompatible(n: int) -> None:
     assert not cut_compatible(snap)
     result = aggregate_snapshot_validity(snap, required_independent_paths=0)
     assert result != FieldState.VALID
-    # MINOR-4: an incoherent (non-atomic) cut floors at CONFLICTED, not UNKNOWN.
     assert result == FieldState.CONFLICTED
 
 
@@ -126,9 +108,6 @@ def test_all_gates_pass_is_valid() -> None:
     )
 
 
-# ---- MAJOR-3: empty-blocking + injected required-corroboration gate ---------
-
-
 def test_empty_blocking_is_not_valid() -> None:
     """An empty blocking set is not evidence of validity: UNKNOWN, not VALID (MAJOR-3b)."""
     snap = issue_snapshot(
@@ -154,7 +133,6 @@ def test_zero_corroboration_blocks_valid(required: int) -> None:
         consistency_cut=COMPATIBLE_CUT,
         corroboration_paths=(),
     )
-    # required=0 (intrinsic) is VALID; injecting a positive requirement blocks it.
     assert (
         aggregate_snapshot_validity(snap, required_independent_paths=0)
         == FieldState.VALID
@@ -163,9 +141,6 @@ def test_zero_corroboration_blocks_valid(required: int) -> None:
         aggregate_snapshot_validity(snap, required_independent_paths=required)
         != FieldState.VALID
     )
-
-
-# ---- CII-EV-006 (core): common-mode collapse -------------------------------
 
 
 def test_shared_tag_collapses_independence() -> None:
@@ -197,9 +172,6 @@ def test_unresolved_common_mode_gate(tag: str) -> None:
     assert has_unresolved_common_mode(snap)
 
 
-# ---- §6.2: Validity Window as-of anchor / re-wrap invariance ---------------
-
-
 @given(
     as_of=st.integers(0, 10**6),
     now=st.integers(0, 2 * 10**6),
@@ -217,7 +189,6 @@ def test_rewrap_does_not_reset_currentness(
     stale1 = capsule_observation_stale(c1, obs, now, window)
     stale2 = capsule_observation_stale(c2, obs, now, window)
     assert stale1 == stale2
-    # and both equal the as-of-anchored staleness, independent of wrap time
     assert stale1 == observation_validity_stale(as_of, now, window)
 
 
@@ -225,9 +196,6 @@ def test_missing_window_is_stale_fail_closed() -> None:
     """A missing window/anchor is stale (fail-closed, §6.2 line 197)."""
     assert observation_validity_stale(None, 100, 10) is True
     assert observation_validity_stale(100, 100, None) is True
-
-
-# ---- CII-EV-009 predicate-only ---------------------------------------------
 
 
 def test_egress_currentness_fail_closed() -> None:

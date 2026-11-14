@@ -6,12 +6,12 @@
 >
 > **문서 지위**: kis_unified_sts 프로젝트 측 설계 계약. **비준 대상** —
 > 운영자(단일 운영자, DR-0001 거버넌스)의 본 문서 승인이
-> [IMPLEMENTATION-PLAN-002](../../tos-spec/src/part-1-foundation/verification/IMPLEMENTATION-PLAN-002.md)
+> `IMPLEMENTATION-PLAN-002`
 > §0/§1이 요구하는 "greenfield TOS boundary + mechanism substrate 배치" 비준의
 > 구체적 입력물이 된다. 본 문서는 tos-spec에 대해 **non-normative**이며 스펙 텍스트를
 > 변경하지 않는다(broker-agnostic 원칙: KIS 언급은 프로젝트 측 문서인 여기에만 존재).
 >
-> **선행 문서**: [2026-07-20 tos-spec 재사용성 분석](2026-07-20-tos-spec-reuse-analysis.md)
+> **선행 문서**: `2026-07-20 tos-spec 재사용성 분석`
 > — 본 계약은 그 분석의 판정(전략 B + 비협상 조건 C1/C2/C3)을 운영 가능한 규칙으로
 > 고정한다.
 >

@@ -1,13 +1,4 @@
-"""approval_decision — deterministic restrictive decision (design #15 §5.2; IAP-EV-003 substrate, core L1 slice).
-
-determinism property (§4.2): same complete input set + policy + generation + facts => same result
-(a pure function, no hidden clock / randomness / registry). restrictive (§11 line 289): missing /
-stale / conflicting / unverifiable / unsupported / unknown => DENY / UNKNOWN, never APPROVE.
-UNKNOWN cannot be promoted (§11 line 296). both-ways: complete + all-True => APPROVE.
-
-Regime tag: predicate / model substrate only; IAP-EV-003 NOT_IMPLEMENTED (`/3` residue);
-EV-L1-complete claim forbidden.
-"""
+"""approval_decision — deterministic restrictive decision (design #15 §5.2; IAP-EV-003 substrate, core L1 slice)."""
 
 from __future__ import annotations
 
@@ -71,7 +62,6 @@ def test_decision_never_approves_on_a_negative(
     if result is ApprovalResult.APPROVE:
         assert all_positive, "APPROVE leaked on a missing / stale / conflicting input"
     else:
-        # Every non-APPROVE is a denial (DENY or UNKNOWN) — never a permissive fallback.
         assert result in (ApprovalResult.DENY, ApprovalResult.UNKNOWN)
 
 
@@ -147,9 +137,7 @@ def test_unknown_cannot_be_promoted_by_re_evaluation() -> None:
     """(§11 line 296) Repeated evaluation of an UNKNOWN input never promotes it to APPROVE."""
     request, policy = complete_request(), issue_policy()
     facts = {**APPROVE_FACTS, "policy_supports_request": None}
-    for _ in range(
-        5
-    ):  # repeated evaluation / timeout / retry cannot promote (§11 line 296)
+    for _ in range(5):
         assert approval_decision(request, policy, 7, **facts) is ApprovalResult.UNKNOWN
 
 

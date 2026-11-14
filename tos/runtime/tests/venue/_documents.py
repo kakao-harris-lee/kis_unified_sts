@@ -1,25 +1,4 @@
-"""Shared Venue Constraint Policy / Order Construction Policy INSTANCE document builders
-(TOS venue constraint service wave, plan §2 decisions 1/2/6, ``docs/plans/
-2026-09-15-tos-venue-constraint-service-plan.md``).
-
-Factored out of ``tests/venue/conftest.py`` (team-lead directive, lane b compose wiring dispatch
-2026-09-15) purely so :mod:`tests.compose.conftest` can reuse the SAME template-shaped document
-builders rather than re-typing the full template key set a second time — the venue/compose
-suites are otherwise independent (module docstring of ``tests/venue/conftest.py``'s own
-``FixedKeyProvider`` cites the general "cross-suite imports are forbidden" convention for
-re-declared test doubles; this module is the deliberate, named exception for document
-CONTENT, not doubles, because the two suites must agree on exactly what a loadable INSTANCE
-document looks like).
-
-The YAML VALUES below are FIXTURE DATA authored for these test suites only — they are NOT the
-operator-signed production policy (plan §6 ②, still an open operator decision). Each fixture
-copies the FULL key set of ``tos-spec/src/part-1-foundation/verification/
-VENUE-CONSTRAINT-POLICY-template.yaml`` / ``.../ORDER-CONSTRUCTION-POLICY-template.yaml`` (every
-rule-list key present as ``[]``, ``authority``/``evidence`` present as their template-shaped
-mappings) plus the two sibling ``_model_view``/``_runtime`` blocks the loader actually reads
-kernel-typed content from (see ``tos_runtime/venue/config.py``'s own module docstring for the
-discipline this mirrors, :mod:`tos_runtime.brokercap.instance`'s ``_model_view`` convention).
-"""
+"""Shared Venue Constraint Policy / Order Construction Policy INSTANCE document builders"""
 
 from __future__ import annotations
 
@@ -28,8 +7,6 @@ from pathlib import Path
 
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, CanonicalizationScheme, get_scheme
 
-#: The one registered kernel canonicalization scheme (mirrors
-#: tos_runtime.compose._wiring's own ``_SCHEME`` constant).
 SCHEME: CanonicalizationScheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 FIXTURE_POLICY_ID = "vcp-fixture-1"
@@ -38,10 +15,6 @@ FIXTURE_OCP_POLICY_ID = "ocp-fixture-1"
 FIXTURE_OCP_POLICY_GENERATION = 1
 FIXTURE_OCP_POLICY_VERSION = "1.0.0"
 
-#: Copied verbatim (key order and all) from
-#: ``tos-spec/src/part-1-foundation/verification/VENUE-CONSTRAINT-POLICY-template.yaml``'s
-#: own rule-list run, ``authority``, and ``evidence`` blocks — the part of
-#: the document the loader only checks for shape/presence, never interprets.
 _VENUE_TEMPLATE_TAIL = textwrap.dedent("""\
     approved_sources: []
     source_continuity_rules: []
@@ -78,7 +51,6 @@ _VENUE_TEMPLATE_TAIL = textwrap.dedent("""\
       evidence_location: TBD
     """)
 
-#: The equivalent template-tail for ORDER-CONSTRUCTION-POLICY-template.yaml.
 _OCP_TEMPLATE_TAIL = textwrap.dedent("""\
     intent_schema_versions: []
     authorized_construction_envelope_schema_versions: []
@@ -145,33 +117,7 @@ def venue_policy_yaml(
     admitting_phases_close: str | None = None,
     runtime_extra: str = "",
 ) -> str:
-    """The standard fixture ``venue_constraint_policy.yaml`` INSTANCE
-    document — a full VENUE-CONSTRAINT-POLICY-template.yaml key set plus
-    ``_model_view``/``_runtime``. Every numeric bound present EXCEPT
-    ``max_quantity`` (left ``null`` by default, the loader's "honestly
-    nullable" discipline), one ``NEW_LONG``/``NEW_SHORT`` admitting-phase
-    rule each (independently overridable via ``admitting_phases``/
-    ``admitting_phases_short``), no dependency edges.
-
-    Every scope/``_runtime`` coordinate is independently overridable (added for
-    ``tests.compose.conftest`` reuse, 2026-09-15 — the compose suite's own account/instrument/
-    environment/instrument-class fixture constants differ from this module's own defaults, and
-    the loader's scope cross-check requires an exact match).
-
-    ``admitting_phases_close`` adds a third, ``CLOSE`` admitting-phase rule (#960 — every
-    shipped tenant tree declares one, e.g.
-    ``config/tos_runtime/cp3-setup-d-long/venue_constraint_policy.yaml``; an unenumerated
-    action is INADMISSIBLE at step 3). It defaults to ``None``, which omits the rule and
-    leaves every pre-existing caller's document byte-identical; a caller that passes it must
-    also name ``CLOSE`` in ``action_classes`` (the loader cross-checks rules against scope).
-
-    ``runtime_extra`` is appended verbatim INSIDE the ``_runtime`` block (CP-3 band 원천
-    웨이브, 2026-10-09) — the band-source suites use it to add ``price_scale``/``band_source``.
-    It defaults to ``""``, so every pre-existing caller gets the SAME document it got before,
-    byte for byte: a ``_runtime`` with exactly ``instrument_class``/``quantity_unit``/
-    ``currency``, which is also the shape the real resident ``paper/`` tree ships
-    (:func:`tos_runtime.venue._venue_policy_loader._parse_band_source`'s "absent means null").
-    """
+    """The standard fixture ``venue_constraint_policy.yaml`` INSTANCE"""
     short_phases = (
         admitting_phases if admitting_phases_short is None else admitting_phases_short
     )
@@ -235,15 +181,9 @@ def venue_policy_yaml(
     )
 
 
-#: The 2026-10-08 모의 P-VL measurement for ``A05610``, in index points
-#: (``docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/P-VL-20261008T010822Z.json``
-#: ``measurements.l1_quote_fields.values``). Real numbers, not invented ones: every band
-#: fixture in these suites starts from a band the broker actually returned.
 PVL_A05610_BASIS = "1073.32"
 PVL_A05610_UPPER = "1159.18"
 PVL_A05610_LOWER = "987.46"
-#: The SAME measurement's neighbouring contract — the §4.4b "wrong contract" input. It passes
-#: every §4.2 validation clause, which is exactly why the contract bond must be a loader rule.
 PVL_A05611_UPPER = "1162.72"
 PVL_A05611_LOWER = "990.48"
 
@@ -263,13 +203,7 @@ def band_source_runtime_extra(
     read_on: str = '["boot", "phase_change"]',
     failure: str = '"unknown"',
 ) -> str:
-    """A ``_runtime`` tail declaring a band source (plan §4.1's YAML block), for
-    :func:`venue_policy_yaml`'s ``runtime_extra``.
-
-    Every leaf is independently overridable as a RAW YAML fragment so each loader-refusal test
-    can mutate exactly one of them; ``price_scale=None`` omits the ``_runtime.price_scale`` key
-    entirely (the §4.1 "척도 부재" refusal, which is a DIFFERENT input from a mismatching one).
-    """
+    """A ``_runtime`` tail declaring a band source (plan §4.1's YAML block), for"""
     block = textwrap.dedent(f"""\
         band_source:
           kind: {kind}
@@ -284,10 +218,6 @@ def band_source_runtime_extra(
           read_on: {read_on}
           failure: {failure}
         """)
-    # Prepended AFTER the dedent, never interpolated into the triple-quoted literal: a
-    # substituted multi-line value breaks `textwrap.dedent`'s common-prefix computation (its
-    # first line carries the literal's indent, the rest carry none), which silently produces
-    # unparseable YAML rather than an error.
     if price_scale is None:
         return block
     return f"price_scale: {price_scale}\n{block}"
@@ -306,16 +236,7 @@ def producer_journal_band_source_runtime_extra(
     failure: str = '"unknown"',
     extra_leaves: str = "",
 ) -> str:
-    """A ``_runtime`` tail declaring the ``producer_journal`` band source
-    (``docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md`` §3.3's key set), for
-    :func:`venue_policy_yaml`'s ``runtime_extra``.
-
-    Same conventions as :func:`band_source_runtime_extra`: every leaf is an independently
-    overridable RAW YAML fragment so a loader-refusal test can mutate exactly one of them, and
-    ``price_scale=None`` omits the ``_runtime.price_scale`` key entirely. ``extra_leaves`` is
-    appended INSIDE the block (already indented by the caller) — that is how a test declares a
-    leaf belonging to the OTHER kind.
-    """
+    """A ``_runtime`` tail declaring the ``producer_journal`` band source"""
     block = textwrap.dedent(f"""\
         band_source:
           kind: {kind}
@@ -356,29 +277,7 @@ def ocp_yaml(
     approval_identity: str = "null",
     evidence_package_ref: str = "null",
 ) -> str:
-    """The standard fixture ``order_construction_policy.yaml`` INSTANCE
-    document — a full ORDER-CONSTRUCTION-POLICY-template.yaml key set plus
-    ``_model_view``/``_runtime``.
-
-    ``order_types`` defaults to a single-entry list (``["LIMIT"]``), not the
-    template's own empty default: the (a′) wave's loader now DERIVES the
-    ``ORDER_TYPE`` authorized-axis binding from ``scope.order_types`` (a
-    single-live-scope singleton, like ``environments``/``accounts``), so an
-    empty list would refuse to load — same reason ``environment``/``account``
-    already default to non-empty singletons above.
-
-    ``construction`` is the raw YAML text for the ``_runtime.construction``
-    block (2-space-indented, as it appears directly under ``_runtime:``,
-    fixture data only — not the operator-adopted production values, see this
-    module's own docstring). Defaults to a well-formed block so every
-    existing ``ocp_yaml()`` caller keeps loading without having to know about
-    the (a′) wave; override wholesale (including ``""`` to omit the block
-    entirely) for tests that exercise ``_runtime.construction`` itself.
-
-    ``signer_identity``/``approval_identity``/``evidence_package_ref`` default to the raw YAML
-    literal ``"null"`` (kernel round #4 K-3 — these three keys are now required-present, value
-    optional, exactly like ``effective_from``/``review_due`` above); pass a quoted string
-    literal to exercise a filled value."""
+    """The standard fixture ``order_construction_policy.yaml`` INSTANCE"""
     version = (
         SCHEME.version if canonicalization_version is None else canonicalization_version
     )

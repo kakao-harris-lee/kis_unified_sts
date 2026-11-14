@@ -45,12 +45,7 @@ def build_risk_state_providers(
         Callable[[StageRequest], ActionFlowDecisionInputs | None] | None
     ),
 ) -> RiskStateProviders:
-    """Build caller-preserving providers over one late-bound service cell.
-
-    A missing pair of governed policy files is allowed only when both input
-    callbacks are supplied explicitly; otherwise boot must refuse rather than
-    run with permanently UNKNOWN step 6/7 decisions.
-    """
+    """Build caller-preserving providers over one late-bound service cell."""
     risk_state_files_exist = (
         config_dir / AGGREGATE_RISK_POLICY_CONFIG_NAME
     ).is_file() and (config_dir / ACTION_FLOW_POLICY_CONFIG_NAME).is_file()

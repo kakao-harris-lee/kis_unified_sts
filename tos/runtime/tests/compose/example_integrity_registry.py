@@ -1,44 +1,4 @@
-"""The registry :mod:`tests.compose.test_shipped_example_integrity` sweeps over —
-every ``tos/runtime/config/*.example.yaml`` this repo ships, the key paths its real reader(s)
-require to be EXPLICITLY present (value ``null`` is fine — key absence is not), and the set of
-``tos_runtime`` source files independently confirmed to reference its deployed filename literal.
-
-**How this was built (2026-09-18, A-0b, docs/plans/2026-09-18-tos-config-adoption-and-carryover-
-plan.md §0.1.4 / §4 W-A row A-0b):** every config listed here was checked by actually calling its
-real reader function(s) against the shipped example (not by reading the example's OWN keys and
-calling that "the schema" — that would be circular, since the one confirmed defect
-(``safety_activation``) is precisely an example that is missing a key its own text never hints
-at). ``EXAMPLE_TOUCHPOINTS`` was built by grepping ``tos_runtime`` for each config's exact
-deployed-filename literal and manually classifying every hit as either (a) a wiring call site
-that resolves the path and forwards to an already-covered canonical loader, or (b) a genuinely
-independent schema reader — every (b) is reflected in ``EXAMPLE_REQUIRED_PATHS``.
-
-Two configs turned out to have MORE THAN ONE independent reader (the shape of bug this whole
-module exists to catch):
-
-* ``safety_activation`` — ``tos_runtime.safety.profile._load_documents`` (``activation:`` block +
-  ``not_expired:``) AND ``tos_runtime.venue.activation.load_activation_members`` (``members:``,
-  a SEPARATE top-level key that document does not otherwise use). The shipped example satisfied
-  only the first before this wave — the confirmed A-0b defect.
-* ``risk`` — ``tos_runtime.risk.aggregate.load_adverse_scenario_set``/
-  ``load_required_scenario_kinds`` (the ``AdverseScenarioSet`` fields) AND
-  ``tos_runtime.compose._currentness_wiring._load_action_flow_envelope`` (the
-  ``ActionAmplificationEnvelope`` ``max_*`` axes — that function's own docstring: "``risk.yaml``
-  block ... constructed directly by the composition root"). Both were already satisfied.
-
-Every other config in this registry was confirmed to have exactly ONE real structural reader.
-
-Two loaders that exist and were checked (``tos_runtime.evidence.retention.RetentionPolicy.load``,
-``tos_runtime.recon.witness_kis_config.load_kis_witness_config``) are NOT yet reachable from any
-``tos_runtime.compose`` wiring path at all (grep confirms zero call sites in
-``tos_runtime/compose``) — neither loader's own module even spells its deployed filename as a
-literal (each takes an arbitrary ``Path`` from its caller; no wiring module has picked a fixed
-name for either yet), so their ``EXAMPLE_TOUCHPOINTS`` entry is the empty set, not a stand-in for
-"one known reader". There is no cross-schema risk to guard against until a second reader appears,
-at which point ``touchpoint_files`` (a plain grep) starts finding BOTH readers as soon as some
-future wiring module gives the file a fixed literal name — the same instant this drift guard
-would go red and demand an ``EXAMPLE_REQUIRED_PATHS`` entry.
-"""
+"""The registry :mod:`tests.compose.test_shipped_example_integrity` sweeps over —"""
 
 from __future__ import annotations
 
@@ -53,22 +13,16 @@ from tos_runtime.compose._egress_coordinates import load_egress_coordinates
 from tos_runtime.compose._engine_config import load_engine_config
 from tos_runtime.compose._engine_wiring import load_engine_driver_config
 from tos_runtime.compose._marketfeed_wiring import load_marketfeed_config
-from tos_runtime.compose._pending_dimensions import (
-    load_pending_currentness_dimensions,
-)
 from tos_runtime.compose._preconditions import load_coordinator_preconditions_config
 from tos_runtime.compose._risk_attestations import load_risk_attestations
 from tos_runtime.currentness.config import load_currentness_config
 from tos_runtime.custody.file_custody import CustodyManifest
 from tos_runtime.evidence.retention import RetentionPolicy
 from tos_runtime.marketfeed.policy import load_critical_input_policy
-from tos_runtime.nontrade.config import load_required_legs_config
 from tos_runtime.operations.cold_backup import load_cold_backup_config
 from tos_runtime.posttrade.config import load_finality_config
 from tos_runtime.recon.witness_kis_config import load_kis_witness_config
 from tos_runtime.release.config import load_release_config
-from tos_runtime.safety.deviation import _load_deviations
-from tos_runtime.safety.incident import _load_incidents
 from tos_runtime.safety.monitoring import _load_coverage
 from tos_runtime.strategy.bindings import load_strategy_bindings
 from tos_runtime.time.config import load_time_config
@@ -79,13 +33,7 @@ from .example_integrity import (
     KeyPath,
     LoaderSpec,
     assert_risk_refuses_on_both_readers,
-    assert_safety_activation_refuses_on_both_readers,
 )
-
-# ---------------------------------------------------------------------------
-# Required key paths — a copy of the shipped example missing any of these
-# would refuse to boot for a STRUCTURAL reason, not a named-TBD value.
-# ---------------------------------------------------------------------------
 
 EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
     "authority": [
@@ -146,16 +94,6 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
         ("B_capability_claim_to_send",),
         ("required_dimensions",),
     ],
-    "currentness_dimensions": [
-        (dim, field)
-        for dim in ("CONTEXT", "CRITICAL_INPUT", "EGRESS_IDENTITY")
-        for field in (
-            "bound_generation",
-            "bound_digest",
-            "restrictive_floor",
-            "positively_established",
-        )
-    ],
     "custody.manifest": [
         ("environment_label",),
         ("scopes",),
@@ -186,10 +124,6 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
     "engine_driver": [
         ("replay_window_events",),
     ],
-    # Every key tos_runtime.operations.cold_backup.load_cold_backup_config demands be
-    # PRESENT. `xz_preset` is deliberately absent from this list AND commented out in the
-    # example: it is the one optional key, and absent means the already-named
-    # backup_archive.DEFAULT_XZ_PRESET (that loader's own `_XZ_PRESET_KEY` comment).
     "evidence_cold_backup": [
         ("backup_root",),
         ("archive_dir",),
@@ -276,37 +210,10 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
     ],
     "monitor_coverage": [
         ("coverage",),
-        ("coverage", "manifest"),
-        ("coverage", "manifest", "coverage_manifest_id"),
-        ("coverage", "manifest", "coverage_generation"),
-        ("coverage", "manifest", "coverage_manifest_digest"),
-        ("coverage", "manifest", "policy_digest"),
-        ("coverage", "manifest", "is_complete"),
-        ("coverage", "items"),
-        *[
-            ("coverage", "items", item, field)
-            for item in (
-                "evidence-tip-currency",
-                "time-service-health",
-                "inbox-backlog",
-            )
-            for field in (
-                "restrictive_response_present",
-                "alert_path_present",
-                "evidence_path_present",
-                "currentness_rule_present",
-                "closure_1_to_12_complete",
-                "criticality",
-            )
-        ],
+        ("coverage", "coverage_generation"),
         ("coverage", "bounds"),
         ("coverage", "bounds", "max_evidence_tip_stall_ms"),
-        ("coverage", "bounds", "healthy_time_states"),
         ("coverage", "bounds", "max_inbox_unconsumed"),
-    ],
-    "nontrade": [
-        ("required_legs_by_class",),
-        ("required_legs_by_class", "CORPORATE_ACTION"),
     ],
     "release": [
         ("expected_code_digest",),
@@ -320,18 +227,12 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
         ("restriction", "trigger_class"),
     ],
     "risk": [
-        # tos_runtime.risk.aggregate.load_adverse_scenario_set /
-        # load_required_scenario_kinds (AdverseScenarioSet).
         ("scenario_set_id",),
         ("scenario_set_generation",),
         ("policy_binding_id",),
         ("covered_scenario_kinds",),
         ("required_scenario_kinds",),
         ("evidence_package_ref",),
-        # tos_runtime.compose._currentness_wiring._load_action_flow_envelope
-        # (ActionAmplificationEnvelope) — the SECOND independent reader of
-        # this same file (module docstring: "tos_runtime.risk has no
-        # dedicated loader for this").
         ("max_fan_out",),
         ("max_depth",),
         ("max_attempts",),
@@ -355,78 +256,7 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
             "flow_commitment_exclusive",
         )
     ],
-    "safety_activation": [
-        # tos_runtime.safety.profile._load_documents.
-        ("activation",),
-        ("activation", "activation_id"),
-        ("activation", "profile_generation"),
-        ("activation", "envelope_digest"),
-        ("activation", "profile_digest"),
-        ("activation", "bundle_digest"),
-        ("activation", "scope"),
-        ("activation", "approval_ids"),
-        ("activation", "compatibility_attestation_refs"),
-        ("activation", "predecessor_generation"),
-        ("activation", "restrictive_generation_effects"),
-        ("not_expired",),
-        # tos_runtime.venue.activation.load_activation_members — the SECOND
-        # independent reader of this same file (the A-0b defect: this key
-        # was entirely missing from the shipped example).
-        ("members",),
-    ],
-    "safety_deviations": [
-        ("deviations",),
-        ("deviations", "active_set"),
-        ("deviations", "active_set", "active_set_id"),
-        ("deviations", "active_set", "active_set_generation"),
-        ("deviations", "active_set", "deviation_generation"),
-        ("deviations", "active_set", "is_complete"),
-        ("deviations", "active_set", "combined_within_envelope"),
-        ("deviations", "applicable_decision_ids"),
-        ("deviations", "members"),
-    ],
-    "safety_envelope": [
-        ("envelope",),
-        ("envelope", "envelope_id"),
-        ("envelope", "envelope_generation"),
-        ("envelope", "envelope_version"),
-        ("envelope", "governed_dimensions"),
-        ("envelope", "permitted_scope"),
-        ("envelope", "prohibited_fallbacks"),
-        ("envelope", "residual_risk_ceiling"),
-        ("envelope", "evidence_package_ref"),
-    ],
-    "safety_incidents": [
-        ("incidents",),
-        ("incidents", "active_set"),
-        ("incidents", "active_set", "active_set_id"),
-        ("incidents", "active_set", "active_set_generation"),
-        ("incidents", "active_set", "incident_generation"),
-        ("incidents", "active_set", "safety_cell"),
-        ("incidents", "active_set", "shared_dependencies"),
-        ("incidents", "active_set", "is_complete"),
-        ("incidents", "active_set", "is_current"),
-        ("incidents", "applicable_incident_ids"),
-        ("incidents", "members"),
-    ],
-    "safety_profile": [
-        ("profile",),
-        ("profile", "profile_id"),
-        ("profile", "profile_generation"),
-        ("profile", "profile_version"),
-        ("profile", "target_envelope_id"),
-        ("profile", "target_envelope_generation"),
-        ("profile", "governed_dimensions"),
-        ("profile", "scope"),
-        ("profile", "permitted_behaviors"),
-        ("profile", "fallback_rules"),
-        ("profile", "evidence_package_ref"),
-    ],
     "strategy_bindings": [
-        # `strategies` keys are strategy-file stems (operator-defined, not a
-        # fixed set) — only the container key itself is a fixed structural
-        # requirement; `tos_runtime.strategy.resolve`'s own five refusal
-        # rules (this file's own module docstring) govern per-entry shape.
         ("strategies",),
     ],
     "time": [
@@ -441,6 +271,7 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
         ("MAX_send_result_wait_ms",),
         ("MAX_critical_input_consumer_receipt_age_ms",),
         ("MAX_time_source_sequence_gap_ms",),
+        ("time_health_snapshot_heartbeat_ms",),
         ("tz_db_version",),
         ("trading_calendar_version",),
         ("verification_profile_version",),
@@ -448,13 +279,6 @@ EXAMPLE_REQUIRED_PATHS: dict[str, list[KeyPath]] = {
     ],
 }
 
-# ---------------------------------------------------------------------------
-# Touch-point drift guard — the LIVE set of tos_runtime source files that
-# reference each config's exact deployed-filename literal (f'"{stem}.yaml"'),
-# as last confirmed by hand (2026-09-18, A-0b). A file appearing or
-# disappearing from this set fails test_touchpoints_have_not_drifted loudly
-# rather than silently — see example_integrity.assert_touchpoints_match.
-# ---------------------------------------------------------------------------
 
 EXAMPLE_TOUCHPOINTS: dict[str, frozenset[str]] = {
     "authority": frozenset(
@@ -480,48 +304,26 @@ EXAMPLE_TOUCHPOINTS: dict[str, frozenset[str]] = {
             "tos_runtime/compose/root.py",
         }
     ),
-    "currentness_dimensions": frozenset(
-        {
-            "tos_runtime/compose/_currentness_wiring.py",
-            "tos_runtime/compose/_wiring.py",
-        }
-    ),
     "custody.manifest": frozenset({"tos_runtime/custody/file_custody.py"}),
     "egress_coordinates": frozenset(
         {"tos_runtime/compose/_boot_integrity.py", "tos_runtime/compose/_wiring.py"}
     ),
     "engine": frozenset({"tos_runtime/compose/_finalize_wiring.py"}),
     "engine_driver": frozenset({"tos_runtime/compose/_engine_wiring.py"}),
-    # The defining module is the only file spelling the literal: compose/_backup_dispatch.py
-    # reaches the name through `COLD_BACKUP_CONFIG_NAME`, never as a second literal.
     "evidence_cold_backup": frozenset({"tos_runtime/operations/cold_backup.py"}),
-    # Not yet reachable from any tos_runtime.compose wiring path, and the
-    # defining module (tos_runtime/evidence/retention.py) itself never spells
-    # the literal "evidence_retention.yaml" either — RetentionPolicy.load
-    # takes an arbitrary Path from its caller, no fixed filename picked yet
-    # (module docstring above) — so the live grep is genuinely empty today.
     "evidence_retention": frozenset(),
     "finality": frozenset(
         {
             "tos_runtime/compose/_finalize_wiring.py",
             "tos_runtime/compose/_release_wiring.py",
-            # #1011 P2: a third wiring call site, NOT a second schema reader — it re-loads the
-            # file through the same canonical `load_finality_config` for its one optional
-            # `witness` key, exactly as the two above re-load it for their own keys. No
-            # EXAMPLE_REQUIRED_PATHS entry follows from it: `witness` is OPTIONAL and the
-            # shipped example carries it commented out on purpose (absent = today's behaviour).
             "tos_runtime/compose/_venue_ledger_wiring.py",
         }
     ),
     "kis_mock_transport": frozenset({"tos_runtime/compose/_transport_wiring.py"}),
     "kis_quote": frozenset({"tos_runtime/compose/_marketfeed_wiring.py"}),
-    # See the "evidence_retention" comment above — same situation:
-    # load_kis_witness_config takes an arbitrary Path, no wiring module has
-    # picked a fixed "kis_witness.yaml" filename yet, live grep is empty.
     "kis_witness": frozenset(),
     "marketfeed": frozenset({"tos_runtime/compose/_marketfeed_wiring.py"}),
-    "monitor_coverage": frozenset({"tos_runtime/compose/_safety_wiring.py"}),
-    "nontrade": frozenset({"tos_runtime/nontrade/config.py"}),
+    "monitor_coverage": frozenset({"tos_runtime/compose/_monitor_wiring.py"}),
     "release": frozenset(
         {
             "tos_runtime/compose/_types.py",
@@ -543,23 +345,7 @@ EXAMPLE_TOUCHPOINTS: dict[str, frozenset[str]] = {
             "tos_runtime/compose/_currentness_wiring.py",
         }
     ),
-    "safety_activation": frozenset(
-        {
-            "tos_runtime/compose/_riskstate_wiring.py",
-            "tos_runtime/compose/_safety_wiring.py",
-            "tos_runtime/compose/_venue_wiring.py",
-        }
-    ),
-    "safety_deviations": frozenset({"tos_runtime/compose/_safety_wiring.py"}),
-    "safety_envelope": frozenset({"tos_runtime/compose/_safety_wiring.py"}),
-    "safety_incidents": frozenset({"tos_runtime/compose/_safety_wiring.py"}),
-    "safety_profile": frozenset({"tos_runtime/compose/_safety_wiring.py"}),
-    "strategy_bindings": frozenset(
-        {
-            "tos_runtime/strategy/bindings.py",
-            "tos_runtime/strategy/resolve.py",
-        }
-    ),
+    "strategy_bindings": frozenset({"tos_runtime/strategy/bindings.py"}),
     "time": frozenset(
         {
             "tos_runtime/compose/_types.py",
@@ -570,50 +356,6 @@ EXAMPLE_TOUCHPOINTS: dict[str, frozenset[str]] = {
     ),
 }
 
-# ---------------------------------------------------------------------------
-# Single-argument loader call sites — absorbs (and generalizes across every
-# config with exactly one straightforward ``load_x(path)`` reader) the intent
-# of the three narrow ``test_shipped_example_file_is_all_null_and_therefore_
-# refuses`` tests this wave supersedes (``compose/test_construction_config.py``,
-# ``compose/test_marketfeed_intake_kind_wiring.py``,
-# ``transport/kis_quote/test_config.py``): every shipped example here is
-# confirmed to STILL refuse to load, on top of (never instead of) the
-# structural ``EXAMPLE_REQUIRED_PATHS`` check above — a template that started
-# passing outright would mean a real, filled-in value leaked into a file that
-# is supposed to ship all-``null``, a different bug this same sweep also
-# wants to catch.
-#
-# Readers needing extra construction context beyond ``path`` (an
-# ``environment_label``, a sibling INSTANCE document's REST bases, a
-# ``CanonicalizationScheme``) are given plausible dummy values here — those
-# extra args are never sourced from the example file itself, and every one of
-# these loaders is confirmed (by reading its source) to validate the
-# example's own null leaves BEFORE it ever touches them.
-#
-# Deliberately excluded, each covered by its OWN targeted assertion instead —
-# see test_shipped_example_integrity.py for exactly which test covers which:
-#
-# * ``safety_activation``, ``risk`` — multi-reader schemas (this module's own
-#   docstring above); both readers of each are exercised explicitly.
-# * ``safety_envelope``, ``safety_profile`` — the two OTHER paths
-#   ``tos_runtime.safety.profile._load_documents`` takes alongside
-#   ``safety_activation``. **NOT** "still refuses" (PR #737 review, HIGH
-#   finding): ``HardSafetyEnvelope``/``RuntimeSafetyProfile`` have every field
-#   ``X | None = None`` (``tos/src/tos/spg/records.py``), so
-#   ``model.model_validate`` accepts a filled-in mapping exactly as readily as
-#   an all-``null`` one — nothing on that path ever raises because of THEIR
-#   leaves (only ``activation``'s ``not_expired`` ever raises, which stays
-#   green regardless of what ``safety_envelope``/``safety_profile`` contain).
-#   Covered instead by ``example_integrity.assert_shipped_example_is_a_template``
-#   — asserts every leaf is ``null``/``[]`` directly, independent of whether
-#   the loader raises at all.
-#
-# ``strategy_bindings`` is a SIBLING file that is itself optional in
-# production (its own module docstring — a compose root with no
-# config-sourced strategy never needs it), but ``load_strategy_bindings``
-# still has a real per-field null check when called directly on the shipped
-# example (it raises on ``config_binding_version`` first), so it stays IN
-# ``EXAMPLE_LOADERS`` below like every other single-reader config.
 EXAMPLE_LOADERS: dict[str, LoaderSpec] = {
     "authority": (load_authority_config, {}),
     "backtest_calibration": (load_backtest_calibration_config, {}),
@@ -623,13 +365,9 @@ EXAMPLE_LOADERS: dict[str, LoaderSpec] = {
     "coordinator_preconditions": (load_coordinator_preconditions_config, {}),
     "critical_input_policy": (
         load_critical_input_policy,
-        # scheme.compute_digest is only reached AFTER every raw leaf is
-        # validated (tos_runtime.marketfeed.policy.load_critical_input_policy
-        # source) — None never gets called on this all-null example.
         {"scheme": None},
     ),
     "currentness": (load_currentness_config, {}),
-    "currentness_dimensions": (load_pending_currentness_dimensions, {}),
     "egress_coordinates": (
         load_egress_coordinates,
         {"environment_label": "BROKER_SIMULATION"},
@@ -661,81 +399,22 @@ EXAMPLE_LOADERS: dict[str, LoaderSpec] = {
     ),
     "marketfeed": (load_marketfeed_config, {}),
     "monitor_coverage": (_load_coverage, {}),
-    "nontrade": (load_required_legs_config, {}),
     "release": (load_release_config, {}),
     "risk_attestations": (load_risk_attestations, {}),
-    "safety_deviations": (_load_deviations, {}),
-    "safety_incidents": (_load_incidents, {}),
     "strategy_bindings": (load_strategy_bindings, {}),
     "time": (load_time_config, {}),
 }
 
-#: Two shipped examples confirmed to LOAD SUCCESSFULLY as-is — deliberately excluded from
-#: ``EXAMPLE_LOADERS`` (which asserts "still refuses"); each gets its own dedicated test in
-#: ``test_shipped_example_integrity.py`` asserting the opposite (found by
-#: ``test_every_registered_example_has_value_leak_coverage`` when this registry initially missed
-#: ``evidence_retention`` — the exact "silently uncovered" shape PR #737's review caught for
-#: ``safety_envelope``/``safety_profile``, now caught mechanically instead of by hand a second
-#: time):
-#:
-#: * ``custody.manifest`` — ``tos_runtime.custody.file_custody.CustodyManifest.load``: every leaf
-#:   ``load`` actually requires already carries a concrete illustrative value; only the optional
-#:   ``expected_sha256`` pins are ``null``.
-#: * ``evidence_retention`` — ``tos_runtime.evidence.retention.RetentionPolicy.load``: the
-#:   example's own header comment states a per-class retention floor is legitimately,
-#:   PERMANENTLY nullable (the kernel predicate treats ``null`` as "no configured minimum",
-#:   refusing rather than admitting vacuously) — unlike every named-TBD template elsewhere in
-#:   this repo, ``null`` here is never something an operator MUST eventually replace, so there is
-#:   no "still refuses" behavior to assert at all; the loader only requires the
-#:   ``minimum_days_by_class`` KEY to be present (already covered by
-#:   ``EXAMPLE_REQUIRED_PATHS``) and succeeds regardless of what its values are.
 CUSTODY_MANIFEST_LOADER: LoaderSpec = (CustodyManifest.load, {})
 EVIDENCE_RETENTION_LOADER: LoaderSpec = (RetentionPolicy.load, {})
 
-#: The two "loads successfully" specs above, keyed by stem — the SAME dict both the parametrized
-#: ``test_shipped_example_loads_successfully`` calls and
-#: ``test_every_registered_example_has_value_leak_coverage`` reads its coverage set from
-#: (``frozenset(LOADS_SUCCESSFULLY_LOADERS)``). PR #737 review round 2, first HIGH finding: the
-#: OLD coverage set was a hand-typed ``frozenset`` of stem names in
-#: ``test_shipped_example_integrity.py`` that nothing actually iterated — reproduced by removing
-#: ``backtest_calibration`` from ``EXAMPLE_LOADERS`` (deleting its real check) and adding its name
-#: to that set instead: the whole suite stayed green, since the set was pure bookkeeping. Making
-#: this dict the single source for BOTH the real test and the coverage ledger closes that gap
-#: structurally — see ``example_integrity.assert_safety_activation_refuses_on_both_readers``'s own
-#: docstring for the full explanation (applies identically here).
-#:
-#: KNOWN LIMITATION (PR #737 review round 3, MEDIUM — registered, deliberately NOT fixed).
-#: "Claiming coverage" and "being actually called" are now the same act, but NOTHING checks that
-#: the registered callable actually asserts anything: registering a no-op (``lambda: None``) for a
-#: stem, and deleting that stem's real check, still leaves the whole suite green — the reviewer
-#: reproduced exactly this. What changed versus the old hand-typed ledger is the COST of the
-#: mistake, not its possibility: it now takes writing a callable into this source file rather than
-#: adding one string to a frozenset, so a diff shows it. Closing it completely would need a
-#: meta-check on whether a registered function contains a meaningful assert — i.e. a new
-#: verification harness, which this repo's review convention §5 forbids on purpose. The defence
-#: here is code review, and this note is what tells the next reviewer to look.
 LOADS_SUCCESSFULLY_LOADERS: dict[str, LoaderSpec] = {
     "custody.manifest": CUSTODY_MANIFEST_LOADER,
     "evidence_retention": EVIDENCE_RETENTION_LOADER,
 }
 
-#: Configs whose loader can NEVER be relied on to refuse a filled-in example (PR #737 review,
-#: HIGH finding — see this module's own comment above ``EXAMPLE_LOADERS`` for why: both kernel
-#: records ``tos_runtime.safety.profile._load_documents`` validates them against have every field
-#: optional). Checked instead via ``example_integrity.assert_shipped_example_is_a_template`` —
-#: every leaf must be ``null``/``[]``, independent of whether the loader raises at all.
-EXAMPLE_TEMPLATE_ONLY: frozenset[str] = frozenset({"safety_envelope", "safety_profile"})
+EXAMPLE_TEMPLATE_ONLY: frozenset[str] = frozenset()
 
-#: ``safety_activation``/``risk`` each have TWO/THREE independent real readers (this module's own
-#: docstring above) that a single ``LoaderSpec`` cannot express (one takes THREE paths, not one).
-#: Keyed by stem, mapping to a standalone check function — the SAME dict both the parametrized
-#: ``test_multi_reader_example_still_refuses_on_both_readers`` calls and the coverage ledger reads
-#: from (``frozenset(MULTI_READER_CHECKS)``); see ``LOADS_SUCCESSFULLY_LOADERS``'s own comment for
-#: why this "ledger IS the callable registry" shape is what PR #737 review round 2 asked for —
-#: INCLUDING its KNOWN LIMITATION, which applies here identically and was in fact reproduced
-#: against THIS dict: a ``lambda: None`` entry here counts as coverage. Adding an entry below is
-#: therefore a code-review checkpoint, not a self-verifying act.
 MULTI_READER_CHECKS: dict[str, Callable[[], None]] = {
-    "safety_activation": assert_safety_activation_refuses_on_both_readers,
     "risk": assert_risk_refuses_on_both_readers,
 }

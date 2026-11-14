@@ -1,15 +1,4 @@
-"""Truthy-sentinel structural seal — __bool__ raises + is-gate regression (design #19 §4.7/§7).
-
-``OrderAdmissibilityResult`` (4-value) and ``TradabilityState`` are non-empty ``StrEnum``
-strings, so ``if result:`` / ``bool(result)`` would read a denial member as truthy — a
-catastrophic silent fail-open (the #14 M1 lesson, adopted from the start). The single largest
-risk this seal blocks is ``RESTRICTED_PROTECTIVE_ONLY`` reading as full permission (§0.4d). Each
-subclasses ``_NonTruthyStrEnum`` (``__bool__`` raises), so the misuse surfaces as a runtime
-error. ``SessionPhase`` is NOT an enum — it is an injected token judged by membership, never
-truthiness (§2.2(3)).
-
-Regime tag: predicate / model substrate only; VTG-EV substrate; EV-L1-complete claim forbidden.
-"""
+"""Truthy-sentinel structural seal — __bool__ raises + is-gate regression (design #19 §4.7/§7)."""
 
 from __future__ import annotations
 
@@ -31,7 +20,6 @@ def test_every_sealed_enum_member_raises_on_bool() -> None:
             with pytest.raises(TypeError):
                 bool(member)
             with pytest.raises(TypeError):
-                # a bare `if member:` also raises (the fail-open path is closed).
                 if member:  # pragma: no cover - the branch never executes
                     pass
 
@@ -61,7 +49,6 @@ def test_is_identity_gate_still_works() -> None:
         OrderAdmissibilityResult.INADMISSIBLE is OrderAdmissibilityResult.ADMISSIBLE
     ) is False
     assert (TradabilityState.TRADABLE is TradabilityState.TRADABLE) is True
-    # …and set membership / .value / hashing (none call __bool__).
     assert OrderAdmissibilityResult.UNKNOWN in {OrderAdmissibilityResult.UNKNOWN}
     assert OrderAdmissibilityResult.ADMISSIBLE.value == "ADMISSIBLE"
     assert hash(TradabilityState.NOT_TRADABLE) == hash(TradabilityState.NOT_TRADABLE)

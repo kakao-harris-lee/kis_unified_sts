@@ -1,21 +1,4 @@
-"""Standing session approval (operator decision 2026-10-24) — step 4 passes in the running loop
-for a KIS MOCK stock session from ONE operator artifact written before the open.
-
-Against the fake KIS server, no verify item patched (the only production patch is PR-3a's
-INSTANCE ``rest_base`` -> fake server, infrastructure). Pinned:
-
-* artifact present -> ONE pass (no approval file, no re-drive) -> step 4 ADMIT -> SEND -> ACK
-  -> fill -> release, with ``APPROVAL_STANDING_BOUND`` at boot and one
-  ``APPROVAL_STANDING_CONSUMED`` row naming the proposal digest and the RCL command;
-* every bound: wrong instrument / direction / quantity / date / tree -> step 4 UNKNOWN, 0 POSTs;
-* uses: the (max_uses+1)-th proposal is not approved; a use whose RCL append did not commit is
-  not counted; a crash after the use committed and before the send, then restart -> the use is
-  still counted, no second order;
-* MOCK only: a SYNTHETIC tree, a REAL / POSITION_OR_CASH scope, a REAL-host / relabelled /
-  unbound / absent profile never approve, artifact present or not;
-* no artifact, or a refused artifact (mode, unknown field, digest changed after bind) -> today's
-  behaviour (step 4 UNKNOWN).
-"""
+"""Standing session approval (operator decision 2026-10-24) — step 4 passes in the running loop"""
 
 from __future__ import annotations
 
@@ -77,7 +60,6 @@ from .test_kis_mock_fill_finality_e2e import (
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
 _ENV = "non-live-test"
-#: The fixture tree's sealed quantity (``1E+1`` on the command's QUANTITY axis).
 _FIXTURE_QTY = 10
 
 
@@ -89,11 +71,6 @@ def server() -> Iterator[FakeKisServer]:
         yield srv
     finally:
         srv.stop()
-
-
-# ===========================================================================
-# helpers
-# ===========================================================================
 
 
 def _strategy_id(config_dir: Path) -> str:
@@ -180,11 +157,6 @@ def _deployed(config_dir, custody_root, server, monkeypatch, **overrides):
     _write(custody_root, _document(config_dir, **overrides))
 
 
-# ===========================================================================
-# 1. the running loop: one pass, no approval file, no re-drive -> ACK -> fill -> release
-# ===========================================================================
-
-
 def test_one_pass_with_the_standing_artifact_sends_acks_fills_and_releases(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
@@ -220,11 +192,6 @@ def test_one_pass_with_the_standing_artifact_sends_acks_fills_and_releases(
     assert _rcl_releases(runtime) == 1
     assert len(server.requests_for(_ORDER_PATH)) == 1
     _close(runtime)
-
-
-# ===========================================================================
-# 2. bounds — each one alone keeps step 4 UNKNOWN and sends nothing
-# ===========================================================================
 
 
 @pytest.mark.parametrize(
@@ -306,11 +273,6 @@ def test_the_stock_calendar_has_no_trading_date_after_the_last_window() -> None:
     assert _at(16, 0) is None
 
 
-# ===========================================================================
-# 3. uses — counted from the committed RCL log, never reused
-# ===========================================================================
-
-
 def test_the_proposal_after_max_uses_is_not_approved(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
@@ -384,8 +346,6 @@ def test_a_crash_after_the_use_committed_still_counts_it_after_restart(
     assert server.requests_for(_ORDER_PATH) == []
     _close(runtime)
 
-    # The reboot is held by the recovery barrier (an unreconciled possibly-live attempt): it
-    # drives nothing at all. The committed use is still on the log and still counted.
     runtime2 = _compose(
         tmp_path,
         config_dir,
@@ -418,16 +378,10 @@ def test_a_crash_after_the_use_committed_still_counts_it_after_restart(
     _close(runtime2)
 
 
-# ===========================================================================
-# 4. MOCK only, by construction
-# ===========================================================================
-
-
 def test_a_synthetic_tree_never_uses_the_artifact(
     config_dir, data_dir, custody_root, tmp_path
 ) -> None:
-    """The futures trees are SYNTHETIC: the artifact is not even read there (pinned: stock MOCK
-    only)."""
+    """The futures trees are SYNTHETIC: the artifact is not even read there (pinned: stock MOCK"""
     _write(custody_root, _document(config_dir))
     runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
     _reach_trusted(runtime)
@@ -532,7 +486,6 @@ def test_no_non_mock_scope_or_profile_is_ever_approved(
         mock_class=lambda: is_mock_order_class(scope, instance),
         trading_date_reader=_date,
         construction_reader=_construction,
-        # never reached: the MOCK gate closes before the log is read
         rcl_log=cast(SqliteCommitLog, object()),
         writer_epoch=0,
         evidence=None,
@@ -540,11 +493,6 @@ def test_no_non_mock_scope_or_profile_is_ever_approved(
     source.bind_at_boot()
     assert source.provide(object()) is None  # type: ignore[arg-type]
     assert reads == []
-
-
-# ===========================================================================
-# 5. no artifact / refused artifact -> today's behaviour
-# ===========================================================================
 
 
 def test_no_artifact_keeps_step4_unknown(

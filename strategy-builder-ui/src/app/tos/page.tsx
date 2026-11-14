@@ -6,6 +6,7 @@ import { RefreshCcw } from 'lucide-react';
 import { isAxiosError } from 'axios';
 import config from '@/config/tos-control-plane.json';
 import { isAcceptedProjection, projectionAge, projectionState, tosApi, type ProjectionState } from '@/lib/dashboard/tos';
+import BarsPanel from './BarsPanel';
 
 const labels: Record<ProjectionState, string> = {
   loading: '상태를 불러오는 중', error: '상태 조회 연결 오류', missing: '아직 상태 파일이 없습니다',
@@ -82,22 +83,10 @@ export default function TosPage() {
           <Fact label="시간 신뢰 상태">{value(p.time?.health)}</Fact>
           <Fact label="복구 사유">{list(p.recovery?.reasons)}</Fact>
         </Card>
-        <Card title="릴리스와 보호 상태">
+        <Card title="릴리스 상태">
           <Fact label="릴리스 수용">{flag(p.release?.admitted, '수용', '거부')}</Fact>
           <Fact label="배포 검증">{flag(p.release?.software_deployment_ok, '통과', '미통과')}</Fact>
-          <Fact label="보호 분류">{value(p.protective?.last_verdict?.classification)}</Fact>
-          <Fact label="해제 허용">{flag(p.protective?.last_verdict?.derestriction_admissible, '허용', '불허')}</Fact>
-          <Fact label="용량 소진">{flag(p.protective?.last_verdict?.capacity_exhausted, '소진', '여유')}</Fact>
-          <Fact label="보호 미확인 사유">{list(p.protective?.last_verdict?.reasons)}</Fact>
-          <Fact label="보호 미평가 항목">{list(p.protective?.last_verdict?.unevaluated)}</Fact>
           <Fact label="의존성 수용">{flag(p.operations?.dependency_admission, '수용', '거부')}</Fact>
-        </Card>
-        <Card title="안전 서비스">
-          {p.safety_mesh?.services && Object.keys(p.safety_mesh.services).length
-            ? Object.entries(p.safety_mesh.services).map(([name, facts]) => <Fact key={name} label={name.toUpperCase()}>
-              {/* `list()` like every other list on this page: null is 알 수 없음, [] is 없음. */}
-              {flag(facts.clear, '해소', '미해소')}{` · ${list(facts.reasons)}`}
-            </Fact>) : <Fact label="서비스 상태">알 수 없음</Fact>}
         </Card>
         <Card title="입력 유효성과 처리 대기">
           <Fact label="유효성 조립">{flag(p.currentness?.last_assemble_complete, '완료', '미완료')}</Fact>
@@ -119,5 +108,10 @@ export default function TosPage() {
         </Card>
       </div>
     </>}
+    {/* Roadmap §P1 second item. Its own query and its own banner: the bar
+        document is a DIFFERENT read model with a different freshness story
+        (one export per session, not a 15 s poll), so folding it into the
+        projection's state above would make one absence look like the other. */}
+    <BarsPanel />
   </div>;
 }

@@ -1,35 +1,4 @@
-"""Engine ``Stage`` realizations for steps 13 (Attempt Bind Verification) and
-14 (Transmission Capability) — design #40 §5 order 6, lane R item 3
-(`docs/plans/2026-09-08-tos-phase2-runtime-slice3-authority-risk-currentness-
-compose-plan.md` §3 item 3). Replaces the ``tos.engine.standins.
-ProvisionalStandIn`` entries for these two steps with real,
-``AVAILABLE_PURE_PREDICATE`` stages that call kernel predicates over live
-RCL/afg/iap facts.
-
-Both stages read their comparison inputs from **injected callables**, never
-a caller-supplied claim carried on the request — the same "구조 파생 >
-자기신고" discipline ``tos.engine.sequencer._bindings_from`` already applies
-to step 12's own bindings, and the same discipline the slice plan's §0
-common rule states directly ("판정은 커널 술어만 한다").
-
-**Review fix (independent review of 39dd3993, LOW-D).**
-:class:`TransmissionCapabilityStage`'s durable RCL entry used to key
-``command_id`` on ``txcap-{capability_id}`` — and ``capability_id`` was
-itself derived from ``attempt.attempt_id``, not the nonce — so a genuine
-nonce collision across two different attempts would never be caught by the
-log's own UNIQUE constraint, even though the fault contract (mirroring
-``tos_runtime.currentness.proof``'s own "nonce reuse refused by the log")
-says nonce reuse is exactly what must be refused. The entry now keys on
-``txcap-{nonce}``. Nonce-level single-use and attempt-level single-issuance
-are two *different* invariants and are enforced two different ways: the
-RCL's own ``command_id`` UNIQUE constraint refuses a **reused nonce**
-(``__call__`` never reaches this stage's own memory for that check); this
-stage's own ``_nonces`` cache additionally refuses a **second capability
-request for an attempt that already has one** (checked first, in memory,
-before any RCL append is attempted) — an attempt is never issued two
-capabilities, and a nonce is never durably reused, and neither guard
-substitutes for the other.
-"""
+"""Engine ``Stage`` realizations for steps 13 (Attempt Bind Verification) and"""
 
 from __future__ import annotations
 
@@ -66,9 +35,7 @@ _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 def _prior_bound_digest(
     prior_verdicts: tuple[StageVerdict, ...], step: CommitmentStep
 ) -> str | None:
-    """Structurally read a prior step's ``bound_digest`` off recorded
-    verdicts (mirrors ``tos.engine.sequencer._bindings_from`` — never trust a
-    caller-supplied claim for what an earlier step bound)."""
+    """Structurally read a prior step's ``bound_digest`` off recorded"""
     for verdict in prior_verdicts:
         if verdict.step is step:
             return verdict.bound_digest
@@ -76,20 +43,7 @@ def _prior_bound_digest(
 
 
 class AttemptBindVerificationStage:
-    """Step 13 — binds the attempt's digest chain against reservation /
-    permit / approval digests read live (``tos.iap.exact_binding_holds``,
-    IAP-INV-004/IAP-AC-004).
-
-    Args:
-        reservation_digest_reader: Returns the reservation/order-conformance
-            digest **currently** bound to ``attempt``, or ``None`` if
-            unknown.
-        permit_digest_reader: Returns the Action Flow Permit digest
-            **currently** bound to ``attempt``, or ``None`` if unknown.
-        approval_digest_reader: Returns the Independent Approval consumption
-            digest **currently** bound to ``attempt``, or ``None`` if
-            unknown.
-    """
+    """Step 13 — binds the attempt's digest chain against reservation /"""
 
     def __init__(
         self,
@@ -147,10 +101,7 @@ class AttemptBindVerificationStage:
 
 @dataclass(frozen=True)
 class TransmissionCapabilityContext:
-    """Injected facts a :class:`~tos.rcl.TransmissionCapability` needs beyond
-    the attempt itself (design #40 §5 order 6, lane R item 3). Supplied by
-    the composition root; a missing field is a stop, never a fabricated
-    default (RFC-002 §10.8:761)."""
+    """Injected facts a :class:`~tos.rcl.TransmissionCapability` needs beyond"""
 
     reservation_identity: str | None
     account_scope: str | None
@@ -159,22 +110,7 @@ class TransmissionCapabilityContext:
 
 
 class TransmissionCapabilityStage:
-    """Step 14 — issues a single-use :class:`~tos.rcl.TransmissionCapability`
-    as a durable RCL entry (ADR-002-002 §12) and hands its nonce to the
-    gateway via :meth:`nonce_for`.
-
-    Args:
-        log: The injected RCL ``CommitLog`` port.
-        writer_epoch: The Writer Epoch this process holds.
-        context_reader: Returns the :class:`TransmissionCapabilityContext`
-            for ``request``, or ``None`` when unavailable.
-        scheme: The canonicalization scheme.
-        nonce_factory: Produces the per-issuance nonce — defaults to
-            ``secrets.token_hex(16)`` (a real random token). Overridable only
-            so a test can force a nonce collision and observe the RCL log's
-            own duplicate-command refusal (LOW-D); production callers should
-            never override this.
-    """
+    """Step 14 — issues a single-use :class:`~tos.rcl.TransmissionCapability`"""
 
     def __init__(
         self,
@@ -193,17 +129,14 @@ class TransmissionCapabilityStage:
         self._nonces: dict[str, str] = {}
 
     def nonce_for(self, attempt_id: str) -> str | None:
-        """The nonce this stage most recently issued + committed for
-        ``attempt_id``, if any — read by the composition root when it fills
-        ``SendBoundaryContext.capability_nonce`` (item 1)."""
+        """The nonce this stage most recently issued + committed for"""
         return self._nonces.get(attempt_id)
 
     @staticmethod
     def _context_incomplete(
         context: TransmissionCapabilityContext | None,
     ) -> bool:
-        """Whether ``context`` is absent or missing a required field — split
-        out of :meth:`__call__` to stay under the module size budget."""
+        """Whether ``context`` is absent or missing a required field — split"""
         return (
             context is None
             or context.reservation_identity is None
@@ -218,8 +151,7 @@ class TransmissionCapabilityStage:
         context: TransmissionCapabilityContext,
         view: LogView,
     ) -> StageVerdict:
-        """Issue + durably commit the capability — split out of
-        :meth:`__call__` to stay under the module size budget."""
+        """Issue + durably commit the capability — split out of"""
         nonce = self._nonce_factory()
         capability = TransmissionCapability.issue(
             scheme=self._scheme,
@@ -238,10 +170,6 @@ class TransmissionCapabilityStage:
 
         expected_seq = -1 if view.last_seq is None else view.last_seq
         entry = CommitEntry(
-            # LOW-D: the RCL idempotency key is the NONCE itself, not the
-            # capability/attempt id — single-use is enforced by the log's
-            # own command_id UNIQUE constraint, mirroring
-            # tos_runtime.currentness.proof's own convention.
             command_id=f"txcap-{nonce}",
             command_digest=capability.canonical_digest,
             kind=CommandType.AUTHORIZE_TRANSMISSION_CAPABILITY,
@@ -280,11 +208,6 @@ class TransmissionCapabilityStage:
                 reason="no attempt request is bound yet — UNKNOWN, never a pass",
             )
 
-        # LOW-D: an attempt is single-use for a TransmissionCapability too —
-        # a second request for an attempt that already has one is refused
-        # in memory, before any RCL append is even attempted (a distinct
-        # invariant from the nonce-reuse guard the RCL append enforces
-        # inside _commit_capability).
         if attempt.attempt_id in self._nonces:
             return StageVerdict(
                 step=CommitmentStep.TRANSMISSION_CAPABILITY,
@@ -308,12 +231,10 @@ class TransmissionCapabilityStage:
                     "(RFC-002 §10.8:761)"
                 ),
             )
-        assert context is not None  # narrowed by _context_incomplete
+        assert context is not None
 
         view = self._log.read_linearizable(writer_epoch=self._writer_epoch)
-        if (
-            not view.epoch
-        ):  # None or 0 (unacquired sentinel, tos_runtime.rcl.log.SqliteCommitLog.current_epoch)
+        if not view.epoch:
             return StageVerdict(
                 step=CommitmentStep.TRANSMISSION_CAPABILITY,
                 outcome=StageOutcome.UNKNOWN,

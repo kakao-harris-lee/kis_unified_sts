@@ -1,8 +1,4 @@
-"""Verbatim-transcription checks for the brokercap vocabulary (design #10 §2.2).
-
-Guards the erratum defect class (design #10 §0.1(e)): each StrEnum has exactly the ADR
-member count + token, so a silent transcription drift fails a test.
-"""
+"""Verbatim-transcription checks for the brokercap vocabulary (design #10 §2.2)."""
 
 from __future__ import annotations
 

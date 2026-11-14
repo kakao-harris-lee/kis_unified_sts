@@ -1,18 +1,4 @@
-"""The ``_runtime.band_source`` / ``_runtime.price_scale`` loader rules — CP-3 band 원천 웨이브
-plan §8 items 4b, 4d and 6 (``docs/plans/2026-10-08-tos-cp3-band-source-wave-plan.md``).
-
-**One test per CLAUSE, never one test per file.** #838's lesson is that a guard proved only in
-aggregate hides whichever clause contributes nothing: if deleting one clause leaves every test
-green, that clause was never judging anything. So each refusal below is reached by a document
-that differs from a LOADABLE one in exactly one leaf, and
-:class:`TestEveryRuleIsReachedAlone`'s baseline pins that the unmutated document really does
-load — without it, every refusal here could be firing for an unrelated reason.
-
-**Nothing in this file touches the network**, and no band is read: a loader refusal happens
-before any reader exists.
-
-Hermetic (``tos/runtime/tests/conftest.py`` D1.4): every write lands under ``tmp_path``.
-"""
+"""The ``_runtime.band_source`` / ``_runtime.price_scale`` loader rules — CP-3 band 원천 웨이브"""
 
 from __future__ import annotations
 
@@ -29,8 +15,6 @@ from ._documents import (
     venue_policy_yaml,
 )
 
-#: The band source's own instrument, equal to the fixture policy's ``scope.instruments`` sole
-#: element — a LOADABLE declaration, which every mutation below departs from in one leaf.
 _INSTRUMENT = "K200F"
 
 
@@ -41,17 +25,7 @@ def _write(
     price_min: str = "null",
     price_max: str = "null",
 ) -> Path:
-    """A fixture venue policy with ``runtime_extra`` in its ``_runtime`` block.
-
-    ``price_min``/``price_max`` default to ``null`` here — the opposite of
-    :func:`venue_policy_yaml`'s own defaults — because a DECLARED band source is the source of
-    those two bounds (plan §4.1 "원천 둘"). A test that wants the literals back passes them.
-
-    Spelled out rather than forwarded through ``**kwargs: str``: :func:`venue_policy_yaml` also
-    takes ``int`` parameters, so a ``str``-valued kwargs unpack is a type error waiting for the
-    first test that mistypes a name (mypy says so — ``arg-type`` on the unpack). These two are
-    the only overrides this suite has ever needed.
-    """
+    """A fixture venue policy with ``runtime_extra`` in its ``_runtime`` block."""
     path = tmp_path / "venue_constraint_policy.yaml"
     path.write_text(
         venue_policy_yaml(
@@ -65,9 +39,7 @@ def _write(
 
 
 def _load(path: Path, transport_instrument: str | None = _INSTRUMENT):
-    """The loader takes a THUNK, not a value (independent review L1) — wrapped here so the
-    tests below keep reading as plain values. ``TestLazyTransportRead`` is what pins that the
-    thunk is not called for a policy with no band source."""
+    """The loader takes a THUNK, not a value (independent review L1) — wrapped here so the"""
     return load_venue_constraint_policy(
         path,
         scheme=SCHEME,
@@ -76,11 +48,7 @@ def _load(path: Path, transport_instrument: str | None = _INSTRUMENT):
 
 
 class TestEveryRuleIsReachedAlone:
-    """The baseline: the unmutated declaration LOADS, and loads with the values it declared.
-
-    Without this, a refusal test proves only "this document does not load", which a typo in the
-    fixture would also satisfy.
-    """
+    """The baseline: the unmutated declaration LOADS, and loads with the values it declared."""
 
     def test_a_fully_declared_band_source_loads(self, tmp_path: Path) -> None:
         loaded = _load(_write(tmp_path, runtime_extra=band_source_runtime_extra()))
@@ -92,8 +60,6 @@ class TestEveryRuleIsReachedAlone:
         assert loaded.band_source.timeout_ms == 5000
         assert loaded.band_source.read_on == ("boot", "phase_change")
         assert loaded.price_scale == 100
-        # The digest is over the declaration, so it is stable across loads of the same bytes
-        # and is what VENUE_POLICY_BOUND records (plan §4.5 / §6 (B)).
         assert loaded.band_source_digest is not None
         assert (
             _load(_write(tmp_path, runtime_extra=band_source_runtime_extra()))
@@ -102,11 +68,7 @@ class TestEveryRuleIsReachedAlone:
     def test_no_declaration_at_all_loads_with_none_and_demands_no_price_scale(
         self, tmp_path: Path
     ) -> None:
-        """Plan §4.1's 재리뷰 MEDIUM: an ABSENT key is ``null``, and a tree that declares none
-        is NOT required to carry ``_runtime.price_scale``. Requiring it unconditionally would
-        ABORT the resident paper session at the first 08:45 after this merge — this assertion
-        is the unit-level half of that, ``tests/compose/test_venue_band_source_wiring.py``
-        asserts it against the REAL resident file."""
+        """Plan §4.1's 재리뷰 MEDIUM: an ABSENT key is ``null``, and a tree that declares none"""
         path = tmp_path / "venue_constraint_policy.yaml"
         path.write_text(venue_policy_yaml(), encoding="utf-8")
 
@@ -133,9 +95,7 @@ class TestEveryRuleIsReachedAlone:
     def test_a_price_scale_without_a_band_source_is_returned(
         self, tmp_path: Path
     ) -> None:
-        """PR #927 review M1: a kis-mock boot cross-checks its codec's ``price_scale`` against
-        this value, so a tree with no band source (the stock tree) still states it — and the
-        loader must hand it over rather than drop it."""
+        """PR #927 review M1: a kis-mock boot cross-checks its codec's ``price_scale`` against"""
         loaded = _load(_write(tmp_path, runtime_extra="price_scale: 100\n"))
 
         assert loaded.band_source is None
@@ -151,14 +111,7 @@ class TestEveryRuleIsReachedAlone:
 
 
 class TestLazyTransportRead:
-    """Independent review L1 — the ``kis_quote`` thunk is called ONLY for a policy that
-    declares a band source.
-
-    Called eagerly, a deployment running with ``band_source`` absent (every tree shipped
-    today, plan §5) would start refusing to boot the moment a broken or still-``TBD``
-    ``kis_quote.yaml`` appeared beside it — over a document nothing in its configuration
-    consults. ``tests/compose/test_venue_band_source_wiring.py`` carries the boot-level half.
-    """
+    """Independent review L1 — the ``kis_quote`` thunk is called ONLY for a policy that"""
 
     def test_no_declaration_never_calls_the_reader(self, tmp_path: Path) -> None:
         calls: list[int] = []
@@ -178,8 +131,7 @@ class TestLazyTransportRead:
         assert calls == []
 
     def test_a_declaration_does_call_the_reader(self, tmp_path: Path) -> None:
-        """The baseline: without it the test above would also pass against a loader that
-        never calls the thunk at all."""
+        """The baseline: without it the test above would also pass against a loader that"""
         calls: list[int] = []
 
         def _counted() -> str | None:
@@ -219,13 +171,7 @@ class TestTwoSourcesForOneBound:
 
 
 class TestContractBond:
-    """Plan §4.4b — the band must be read for the contract the policy scopes.
-
-    The input is the 2026-10-08 P-VL measurement's own neighbouring contract: ``A05611``'s band
-    passes every §4.2 validation clause, so nothing downstream of the loader can tell it apart
-    from ``A05610``'s. ``tests/venue/test_service_band.py`` carries the ADMISSIBLE-with-the-
-    wrong-band half of this red proof.
-    """
+    """Plan §4.4b — the band must be read for the contract the policy scopes."""
 
     def test_an_instrument_outside_scope_refuses(self, tmp_path: Path) -> None:
         with pytest.raises(VenuePolicyConfigError) as excinfo:
@@ -241,8 +187,7 @@ class TestContractBond:
 
 
 class TestTransportConsistency:
-    """Plan §4.4b's config-consistency rule (NOT a guard — it has no fail-open input today;
-    it becomes one when the same transport is also the order price's source)."""
+    """Plan §4.4b's config-consistency rule (NOT a guard — it has no fail-open input today;"""
 
     def test_an_absent_transport_document_refuses(self, tmp_path: Path) -> None:
         with pytest.raises(VenuePolicyConfigError) as excinfo:
@@ -291,10 +236,7 @@ class TestPriceScale:
 
 
 class TestTimeoutMs:
-    """Plan §4.1's ``timeout_ms`` paragraph — a named-TBD (``null``) template value the
-    ENABLING deployment's operator adopts. A tree that turns the source on without adopting one
-    must not boot; §8 4d's other half (a GET that exceeds it) lives in
-    ``test_band_source.py``."""
+    """Plan §4.1's ``timeout_ms`` paragraph — a named-TBD (``null``) template value the"""
 
     @pytest.mark.parametrize("value", ["null", "0", "-1", '"5000"', "true", "5000.0"])
     def test_a_non_positive_int_timeout_refuses(
@@ -311,13 +253,7 @@ class TestTimeoutMs:
 
 
 class TestDeclaredVocabulary:
-    """Plan §4.1 — ``kind``/``tr_id``/``bound``/``failure``/``read_on``.
-
-    Each of these refuses a declaration the runtime cannot honour. Without them a document
-    could declare, say, ``failure: "last_known"`` and still get the ``unknown`` behaviour —
-    the policy would say one thing and the runtime do another, which is exactly the
-    "guard that admits what it names" shape this repo keeps rediscovering.
-    """
+    """Plan §4.1 — ``kind``/``tr_id``/``bound``/``failure``/``read_on``."""
 
     def test_an_unreadable_kind_refuses(self, tmp_path: Path) -> None:
         with pytest.raises(VenuePolicyConfigError) as excinfo:
@@ -380,10 +316,7 @@ class TestDeclaredVocabulary:
         assert "must be a non-empty subset of" in str(excinfo.value)
 
     def test_a_read_on_subset_of_one_token_loads(self, tmp_path: Path) -> None:
-        """The rule is SUBSET, not equality — ``["boot"]`` is a legitimate declaration, and
-        the service honours it literally: read once, never again
-        (``test_service_band.py::TestReadOnIsHonoured``). Without this the ``read_on`` test
-        above would also pass against a wrongly-written equality check."""
+        """The rule is SUBSET, not equality — ``["boot"]`` is a legitimate declaration, and"""
         loaded = _load(
             _write(
                 tmp_path, runtime_extra=band_source_runtime_extra(read_on='["boot"]')
@@ -401,23 +334,10 @@ class TestDeclaredVocabulary:
 
 
 class TestPerKindRequiredKeys:
-    """2026-10-15 plan §3.3 — "로더는 kind 마다 필수 키를 따로 요구한다".
-
-    The ``kis_quote_get`` half is already covered clause by clause above
-    (:class:`TestTimeoutMs`, :class:`TestDeclaredVocabulary`, :class:`TestTransportConsistency`).
-    This class is the ``producer_journal`` half plus the rule that keeps the two from blurring:
-    a leaf belonging to the OTHER kind is REFUSED, not ignored.
-
-    **Why refused and not ignored.** A declared value that nothing reads is indistinguishable,
-    to the next person, from a value the code forgot to use — which is exactly what the four
-    unread ``kis_quote.yaml`` values turned out to be when the 2026-10-15 enabling attempt
-    measured them (plan §3.3). ``timeout_ms: 5000`` under ``producer_journal`` reads as "the
-    band read times out after five seconds"; that path opens a file and has no timeout at all.
-    """
+    """2026-10-15 plan §3.3 — "로더는 kind 마다 필수 키를 따로 요구한다"."""
 
     def test_the_producer_journal_baseline_loads(self, tmp_path: Path) -> None:
-        """The baseline every mutation below departs from in ONE leaf. Without it a refusal
-        test proves only "this document does not load"."""
+        """The baseline every mutation below departs from in ONE leaf. Without it a refusal"""
         loaded = _load(
             _write(
                 tmp_path,
@@ -425,7 +345,6 @@ class TestPerKindRequiredKeys:
                     instrument=_INSTRUMENT
                 ),
             ),
-            # Deliberately absent: this kind needs no transport document (see below).
             transport_instrument=None,
         )
 
@@ -438,11 +357,7 @@ class TestPerKindRequiredKeys:
     def test_a_producer_journal_source_needs_no_kis_quote_document(
         self, tmp_path: Path
     ) -> None:
-        """Plan §3.3. The ``kis_quote_get`` kind refuses without one (that rule has its own
-        test above), and NO tree ships a ``kis_quote.yaml``
-        (``tests/compose/test_venue_band_source_wiring.py``), so requiring it here would refuse
-        the very deployment this path exists to enable.
-        """
+        """Plan §3.3. The ``kis_quote_get`` kind refuses without one (that rule has its own"""
         loaded = _load(
             _write(
                 tmp_path,
@@ -501,8 +416,7 @@ class TestPerKindRequiredKeys:
     def test_a_producer_journal_leaf_under_kis_quote_get_refuses(
         self, tmp_path: Path
     ) -> None:
-        """The mirror direction — otherwise the rule would be "producer_journal is strict and
-        kis_quote_get is not", which is a rule about one kind, not about the split."""
+        """The mirror direction — otherwise the rule would be "producer_journal is strict and"""
         block = band_source_runtime_extra(instrument=_INSTRUMENT)
         mutated = block.replace(
             '  bound: "trading_date_kst"',
@@ -518,10 +432,7 @@ class TestPerKindRequiredKeys:
     def test_an_empty_approved_prefix_list_or_entry_refuses(
         self, tmp_path: Path, value: str
     ) -> None:
-        """``[]`` approves no writer, so the band would be permanently absent for a reason no
-        operator would look for; ``[""]`` approves EVERY writer, because every string starts
-        with the empty one. ``tools/tos_cp3/bootproof_guard.py`` refuses both on its own list
-        for the same two reasons."""
+        """``[]`` approves no writer, so the band would be permanently absent for a reason no"""
         with pytest.raises(VenuePolicyConfigError) as excinfo:
             _load(
                 _write(
@@ -536,11 +447,7 @@ class TestPerKindRequiredKeys:
         assert "approved_source_prefixes" in str(excinfo.value)
 
     def test_the_contract_bond_still_holds_for_this_kind(self, tmp_path: Path) -> None:
-        """Band plan 2026-10-08 §4.4b is kind-independent: the source's instrument must be
-        ``scope.instruments``' sole element whatever the source is. The READ-side half (the
-        line's own ``instrument``) is in ``test_band_journal.py``; together they are plan
-        §3.4's "강화".
-        """
+        """Band plan 2026-10-08 §4.4b is kind-independent: the source's instrument must be"""
         with pytest.raises(VenuePolicyConfigError) as excinfo:
             _load(
                 _write(

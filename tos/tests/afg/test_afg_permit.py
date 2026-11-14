@@ -1,16 +1,4 @@
-"""core §5.3 — exact binding, single-use permit, atomic economic+flow coverage, §12 trio.
-
-AFG-EV-007 substrate (ADR-002-022 §13 line 319-342; AFG-INV-003/004/005) plus the §12
-line 300-313 queue / merge / backlog rules (design #16 M8). Both-ways canaries throughout
-(design #16 §4.3/§4.7): permit replay, an economic-only or flow-only coverage, a merged
-permit, a queue-expired prerequisite, and a backlog-as-authority all fire the guard, while
-a single exact binding with both coverages proven passes.
-
-The **both, not either** rule (AFG-INV-005 line 173 / §13 line 330) is exercised in both
-asymmetric directions: economic present + flow absent, and flow present + economic absent.
-
-Closes **no** AFG-EV: predicate / coordinate substrate only (design #16 §1).
-"""
+"""core §5.3 — exact binding, single-use permit, atomic economic+flow coverage, §12 trio."""
 
 from __future__ import annotations
 
@@ -63,11 +51,6 @@ def _grant_kwargs(**overrides: object) -> dict[str, object]:
     return base
 
 
-# ---------------------------------------------------------------------------
-# permit_single_use (§13 line 342; AFG-INV-003)
-# ---------------------------------------------------------------------------
-
-
 def test_exact_unclaimed_single_use_permit_is_consumable() -> None:
     """(canary + §5.3) An exact, single-use, unclaimed permit => True."""
     assert permit_single_use(issue_permit(), unclaimed_consumption()) is True
@@ -114,11 +97,6 @@ def test_structurally_incomplete_permit_is_rejected() -> None:
     assert permit_single_use(incomplete, unclaimed_consumption()) is False
 
 
-# ---------------------------------------------------------------------------
-# permit_release_admissible (§13 line 342 — the "release" forbidden verb)
-# ---------------------------------------------------------------------------
-
-
 def test_release_requires_positive_never_claimed_and_unreachable_proof() -> None:
     """(canary + §13:342) Proven never-claimed + unreachable => release admissible."""
     assert (
@@ -155,11 +133,6 @@ def test_claimed_permit_cannot_be_released() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# headroom_within_limits (§13 item 6; the rcl arithmetic REUSE + §4.1 direction)
-# ---------------------------------------------------------------------------
-
-
 def test_usage_within_the_effective_limit_grants() -> None:
     """(canary + §4.1 item 3) usage <= effective_limit per dimension => GRANT."""
     assert (
@@ -186,7 +159,6 @@ def test_usage_above_the_effective_limit_denies() -> None:
 
 def test_runtime_profile_narrows_but_never_enlarges_the_limit() -> None:
     """(rcl ``effective_limit`` REUSE) min(hard, runtime) governs — a runtime cannot enlarge."""
-    # Runtime narrower than hard => the narrower value binds.
     assert (
         headroom_within_limits(
             [flow_vector(magnitude=Decimal("50"))],
@@ -195,7 +167,6 @@ def test_runtime_profile_narrows_but_never_enlarges_the_limit() -> None:
         )
         is ActionFlowResult.DENY
     )
-    # Runtime wider than hard => the hard value still binds (no enlargement).
     assert (
         headroom_within_limits(
             [flow_vector(magnitude=Decimal("50"))],
@@ -291,11 +262,6 @@ def test_headroom_direction_is_exactly_usage_le_limit(usage: int) -> None:
     assert verdict is expected
 
 
-# ---------------------------------------------------------------------------
-# atomic_economic_flow_coverage (AFG-INV-005 — both, not either)
-# ---------------------------------------------------------------------------
-
-
 def _coverage(**overrides: object) -> ActionFlowResult:
     base: dict[str, object] = {
         "economic_ref": "econ-commit-1",
@@ -345,11 +311,6 @@ def test_over_limit_coverage_denies() -> None:
         _coverage(flow_vector=flow_vector(magnitude=Decimal("101")))
         is ActionFlowResult.DENY
     )
-
-
-# ---------------------------------------------------------------------------
-# action_flow_decision (§5.4 / §13) — the composed verdict + forward-only ref
-# ---------------------------------------------------------------------------
 
 
 def test_fully_proven_inputs_produce_a_grant() -> None:
@@ -419,12 +380,7 @@ def test_decision_content_ref_is_forward_only() -> None:
     assert decision_id == decision.decision_id
     assert generation == decision.decision_generation
     assert digest == decision.canonical_digest
-    assert digest != decision_id  # id ⊥ digest
-
-
-# ---------------------------------------------------------------------------
-# §12 trio (M8) — queue / merge / backlog
-# ---------------------------------------------------------------------------
+    assert digest != decision_id
 
 
 def test_queue_does_not_extend_validity_positive_side() -> None:

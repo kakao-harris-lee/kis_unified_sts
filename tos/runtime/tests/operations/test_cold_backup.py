@@ -1,19 +1,4 @@
-"""Config-driven cold-backup tests (evidence growth plan §2 A3,
-``docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md``).
-
-Covers :func:`~tos_runtime.operations.cold_backup.cold_backup` and its loader against a real
-(but standalone, non-composed) durable set — the same ``_build_live_set`` fixture
-``tests/operations/test_backup_set.py`` owns and ``test_backup_archive.py`` already reuses, so
-the three suites cannot drift about what a durable set is.
-
-What this suite is NOT re-testing: the archive's own round-trip refusals (byte rot, a swapped
-member, a checkless container, trailing bytes) all belong to
-:mod:`~tos_runtime.operations.backup_archive` and are proven in ``test_backup_archive.py``.
-What IS tested here is that a cold copy stored by this module can be re-checked later and
-refuses when it has rotted — the operational reason the archive is kept at all — plus the four
-things this module adds on top: generation allocation, destination refusals, the capacity
-floor, and the report.
-"""
+"""Config-driven cold-backup tests (evidence growth plan §2 A3,"""
 
 from __future__ import annotations
 
@@ -51,7 +36,6 @@ from .test_backup_set import _build_live_set
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
-#: Small enough that a tmpfs/tmp_path filesystem always clears it.
 _FLOOR = 1024
 
 
@@ -61,7 +45,7 @@ def _config(tmp_path: Path, **overrides: object) -> ColdBackupConfig:
         "archive_dir": tmp_path / "cold",
         "verify_root": tmp_path / "verify",
         "minimum_free_bytes": _FLOOR,
-        "xz_preset": 1,  # fast: these fixtures are kilobytes, not gigabytes
+        "xz_preset": 1,
     }
     fields.update(overrides)
     return ColdBackupConfig(**fields)  # type: ignore[arg-type]
@@ -75,12 +59,7 @@ def _live(tmp_path: Path) -> Path:
 
 
 def _fingerprint(directory: Path) -> dict[str, tuple[str, int]]:
-    """``name -> (sha256, st_mtime_ns)`` for every file directly under ``directory``.
-
-    Digest AND mtime: a digest alone would pass a rewrite that happened to reproduce the same
-    bytes (e.g. a sqlite VACUUM into an identical file), which is still a write to a live store
-    this module promises never to open.
-    """
+    """``name -> (sha256, st_mtime_ns)`` for every file directly under ``directory``."""
     return {
         child.name: (
             hashlib.sha256(child.read_bytes()).hexdigest(),
@@ -95,9 +74,6 @@ def _run(tmp_path: Path, live_dir: Path, **overrides: object) -> ColdBackupRepor
     return cold_backup(
         live_dir, _config(tmp_path, **overrides), key_provider=FixedKeyProvider()
     )
-
-
-# -- the run ------------------------------------------------------------------
 
 
 def test_a_cold_backup_snapshots_archives_verifies_and_reports(tmp_path: Path) -> None:
@@ -119,20 +95,16 @@ def test_a_cold_backup_snapshots_archives_verifies_and_reports(tmp_path: Path) -
     assert archive.is_file()
     assert report.archive_bytes == archive.stat().st_size
     assert report.archive_bytes < report.source_bytes
-    # The uncompressed generation and its manifest are left exactly as backup_set wrote them.
     assert (tmp_path / "backups" / "gen1").is_dir()
     assert Path(report.manifest_path) == tmp_path / "backups" / "gen1.set.manifest.json"
     assert Path(report.manifest_path).is_file()
-    # The scratch directory is gone: verification passed.
     assert not (tmp_path / "verify" / "gen1.verify").exists()
 
 
 def test_the_report_is_written_next_to_the_archive_and_round_trips(
     tmp_path: Path,
 ) -> None:
-    """The run's record is a JSON file, not an evidence row — see the module docstring for
-    why (the live stores are closed and must stay byte-identical; the one existing
-    operations→evidence path is the BOOT-time ``BACKUP_SET_OBSERVED`` observer)."""
+    """The run's record is a JSON file, not an evidence row — see the module docstring for"""
     live_dir = _live(tmp_path)
 
     report = _run(tmp_path, live_dir)
@@ -149,18 +121,16 @@ def test_the_report_is_written_next_to_the_archive_and_round_trips(
 def test_the_live_set_is_byte_and_mtime_identical_afterwards(tmp_path: Path) -> None:
     live_dir = _live(tmp_path)
     before = _fingerprint(live_dir)
-    assert before  # the fixture really did create files
+    assert before
 
     _run(tmp_path, live_dir)
 
     assert _fingerprint(live_dir) == before
-    # Not even a WAL/SHM sidecar: this module opens no store in the live directory.
     assert {child.name for child in live_dir.iterdir()} == set(before)
 
 
 def test_consecutive_runs_take_consecutive_generations(tmp_path: Path) -> None:
-    """The generation is READ from the backup root, which is what lets an unattended cron line
-    spell its Nth run exactly like its first."""
+    """The generation is READ from the backup root, which is what lets an unattended cron line"""
     live_dir = _live(tmp_path)
 
     first = _run(tmp_path, live_dir)
@@ -169,7 +139,6 @@ def test_consecutive_runs_take_consecutive_generations(tmp_path: Path) -> None:
     assert (first.generation, second.generation) == (1, 2)
     assert (tmp_path / "cold" / "gen2.set.tar.xz").is_file()
     assert (tmp_path / "cold" / "gen2.cold-backup.report.json").is_file()
-    # Generation 1's archive and report are untouched additions, never overwritten.
     assert (tmp_path / "cold" / "gen1.set.tar.xz").is_file()
     assert next_generation(tmp_path / "backups") == 3
 
@@ -177,11 +146,7 @@ def test_consecutive_runs_take_consecutive_generations(tmp_path: Path) -> None:
 def test_a_stored_cold_copy_that_rotted_is_refused_when_re_verified(
     tmp_path: Path,
 ) -> None:
-    """The operational reason a cold copy is kept: it can be re-checked months later, without
-    writing a new one, and refuses if it has rotted (``verify_archive``, the public
-    re-check door added by #816 deviation 3). Same corruption shape as
-    ``test_backup_archive.py``'s own byte-rot case, applied to what THIS module stored.
-    """
+    """The operational reason a cold copy is kept: it can be re-checked months later, without"""
     live_dir = _live(tmp_path)
     report = _run(tmp_path, live_dir)
     archive = Path(report.archive_path)
@@ -204,8 +169,7 @@ def test_a_stored_cold_copy_that_rotted_is_refused_when_re_verified(
 def test_an_unverifiable_archive_leaves_no_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A report exists only for a run that fully verified — and the archive layer's refusal
-    keeps its own type rather than being flattened into :class:`ColdBackupRefused`."""
+    """A report exists only for a run that fully verified — and the archive layer's refusal"""
     live_dir = _live(tmp_path)
 
     def _refuse(*_args: object, **_kwargs: object) -> None:
@@ -218,12 +182,7 @@ def test_an_unverifiable_archive_leaves_no_report(
 
     assert not (tmp_path / "cold" / "gen1.cold-backup.report.json").exists()
     assert not (tmp_path / "cold" / "gen1.set.tar.xz").exists()
-    # The snapshot itself still happened and is complete — the same discipline
-    # `backup-set --archive-dir` already has: a refused archive never retracts a good snapshot.
     assert (tmp_path / "backups" / "gen1.set.manifest.json").is_file()
-
-
-# -- destinations -------------------------------------------------------------
 
 
 def test_an_archive_dir_inside_the_live_data_dir_is_refused(tmp_path: Path) -> None:
@@ -234,7 +193,6 @@ def test_an_archive_dir_inside_the_live_data_dir_is_refused(tmp_path: Path) -> N
         _run(tmp_path, live_dir, archive_dir=live_dir / "cold")
 
     assert "is inside the live data directory" in str(refusal.value)
-    # Refused BEFORE anything is written: no snapshot, no archive, no live-set change.
     assert not (tmp_path / "backups").exists()
     assert _fingerprint(live_dir) == before
 
@@ -242,9 +200,7 @@ def test_an_archive_dir_inside_the_live_data_dir_is_refused(tmp_path: Path) -> N
 def test_an_archive_dir_that_contains_the_live_data_dir_is_refused(
     tmp_path: Path,
 ) -> None:
-    """The reverse containment is refused too: cold storage grows without bound (there is no
-    retention), so sharing a subtree with the live runtime means filling it takes the runtime
-    down."""
+    """The reverse containment is refused too: cold storage grows without bound (there is no"""
     live_dir = _live(tmp_path)
 
     with pytest.raises(ColdBackupRefused) as refusal:
@@ -258,9 +214,7 @@ def test_an_archive_dir_that_contains_the_live_data_dir_is_refused(
 def test_a_destination_inside_a_git_worktree_is_refused(
     tmp_path: Path, key: str
 ) -> None:
-    """All three destinations, not just the archive: a multi-gigabyte uncompressed generation
-    inside a checkout is as much a commit away as the compressed one. ``.git`` is matched as a
-    FILE as well as a directory, which is what a linked worktree has."""
+    """All three destinations, not just the archive: a multi-gigabyte uncompressed generation"""
     live_dir = _live(tmp_path)
     worktree = tmp_path / "checkout"
     worktree.mkdir()
@@ -273,22 +227,10 @@ def test_a_destination_inside_a_git_worktree_is_refused(
     assert key in str(refusal.value)
 
 
-# -- the capacity floor (plan §5) ---------------------------------------------
-
-
 def _free_space_stub(
     free_by_root: Mapping[str, int],
 ) -> Callable[[Mapping[str, Path]], tuple[FilesystemFreeSpace, ...]]:
-    """A ``_free_space`` replacement that answers for **the roots it is actually given**.
-
-    Deliberately not a fixed reading: a stub that ignored its argument would return the same
-    low number however few roots the caller measured, so a regression narrowing the check
-    back to ``archive_dir`` alone would still see a refusal and the test would stay green —
-    a test that cannot fail for the reason it exists. Reading ``roots`` is what makes
-    ``test_the_floor_is_checked_on_backup_root_not_only_on_cold_storage`` real; a root the
-    caller asks about and this mapping does not model raises ``KeyError``, which is also a
-    signal worth having.
-    """
+    """A ``_free_space`` replacement that answers for **the roots it is actually given**."""
 
     def _stub(roots: Mapping[str, Path]) -> tuple[FilesystemFreeSpace, ...]:
         return tuple(
@@ -303,7 +245,6 @@ def _free_space_stub(
     return _stub
 
 
-#: Every root comfortably above any floor these tests use.
 _ROOMY: Mapping[str, int] = {
     "archive_dir": 10**12,
     "backup_root": 10**12,
@@ -326,7 +267,6 @@ def test_free_space_below_the_floor_refuses_before_anything_is_written(
 
     message = str(refusal.value)
     assert "below the configured floor" in message
-    # The refusal says what to do, and what NOT to do — deleting cold copies is Track B.
     assert "never deletes a cold copy" in message
     assert not (tmp_path / "backups").exists()
     assert not (tmp_path / "cold").exists()
@@ -335,10 +275,7 @@ def test_free_space_below_the_floor_refuses_before_anything_is_written(
 def test_the_floor_is_checked_on_backup_root_not_only_on_cold_storage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``backup_root`` holds the UNCOMPRESSED generations — the fastest-growing tree this
-    command writes, and on a different medium from ``archive_dir`` whenever the runbook's own
-    advice is followed. Measuring only cold storage would watch the wrong disk, and the
-    failure would arrive as a mid-copy error rather than as this refusal."""
+    """``backup_root`` holds the UNCOMPRESSED generations — the fastest-growing tree this"""
     live_dir = _live(tmp_path)
     monkeypatch.setattr(
         cold_backup_module,
@@ -352,7 +289,6 @@ def test_the_floor_is_checked_on_backup_root_not_only_on_cold_storage(
     message = str(refusal.value)
     assert "backup_root at /fake/backup_root has 10 bytes free" in message
     assert "below the configured floor" in message
-    # Cold storage is roomy, so narrowing the check back to it would see nothing.
     assert "archive_dir" not in message
     assert not (tmp_path / "backups").exists()
 
@@ -360,8 +296,7 @@ def test_the_floor_is_checked_on_backup_root_not_only_on_cold_storage(
 def test_free_space_reports_one_entry_per_filesystem_not_per_root(
     tmp_path: Path,
 ) -> None:
-    """Three roots on one disk are ONE headroom. Reporting it three times would read as
-    three numbers that could be spent independently."""
+    """Three roots on one disk are ONE headroom. Reporting it three times would read as"""
     measured = cold_backup_module._free_space(
         {
             "archive_dir": tmp_path / "cold",
@@ -372,7 +307,6 @@ def test_free_space_reports_one_entry_per_filesystem_not_per_root(
 
     assert len(measured) == 1
     assert measured[0].roots == ("archive_dir", "backup_root", "verify_root")
-    # None of the three exists yet — the nearest existing ancestor is what was measured.
     assert measured[0].measured_path == str(tmp_path)
     assert measured[0].free_bytes > 0
 
@@ -380,8 +314,7 @@ def test_free_space_reports_one_entry_per_filesystem_not_per_root(
 def test_a_run_that_ends_below_the_floor_completes_and_flags_the_alarm(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The alarm never retracts a verified backup. The run that CROSSES the floor finishes and
-    records that it did; the next one is the one that refuses."""
+    """The alarm never retracts a verified backup. The run that CROSSES the floor finishes and"""
     live_dir = _live(tmp_path)
     readings = iter(
         [
@@ -405,30 +338,18 @@ def test_a_run_that_ends_below_the_floor_completes_and_flags_the_alarm(
 def test_the_measured_ancestor_is_the_nearest_existing_directory(
     tmp_path: Path,
 ) -> None:
-    """A root does not exist before the first run, so the floor is checked against the
-    filesystem that will hold it rather than skipped."""
+    """A root does not exist before the first run, so the floor is checked against the"""
     deep = tmp_path / "a" / "b" / "c"
 
     assert cold_backup_module._measurable_ancestor(deep) == tmp_path
     assert not deep.exists()
 
 
-# -- a failed run must not wedge the next one (review F1) ---------------------
-
-
 def test_a_leftover_generation_directory_does_not_wedge_the_next_run(
     tmp_path: Path,
 ) -> None:
-    """The failure this guards is a permanent outage from one transient fault.
-
-    `backup_set` creates `gen{N}/` and writes the manifest LAST, so a run that dies in
-    between (the runtime still holding a handle, the disk full mid-copy) leaves a
-    manifest-less directory. If the allocator counted manifests only it would hand back the
-    same N every night and `backup_set` would refuse it every night — forever, unattended,
-    until someone deleted the directory by hand.
-    """
+    """The failure this guards is a permanent outage from one transient fault."""
     live_dir = _live(tmp_path)
-    # Exactly what a died-part-way run leaves behind.
     (tmp_path / "backups" / "gen1").mkdir(parents=True)
     (tmp_path / "backups" / "gen1" / "evidence.sqlite3").write_bytes(b"partial")
 
@@ -436,23 +357,16 @@ def test_a_leftover_generation_directory_does_not_wedge_the_next_run(
 
     assert report.generation == 2
     assert Path(report.archive_path).is_file()
-    # Nothing was deleted: the partial directory is still there, byte for byte.
     assert (
         tmp_path / "backups" / "gen1" / "evidence.sqlite3"
     ).read_bytes() == b"partial"
-    # And the run after that keeps stepping forward.
     assert _run(tmp_path, live_dir).generation == 3
-
-
-# -- unattended failures are reported, never raised (review F2) ---------------
 
 
 def test_a_held_sqlite_handle_surfaces_as_a_named_snapshot_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The precondition no code can check — the runtime still running — is the single most
-    likely cron-time fault, and it arrives from sqlite as an `OperationalError`. It must come
-    out tagged with the stage, not as a bare sqlite exception."""
+    """The precondition no code can check — the runtime still running — is the single most"""
     live_dir = _live(tmp_path)
 
     def _locked(*_args: object, **_kwargs: object) -> None:
@@ -484,7 +398,6 @@ def test_a_full_disk_during_the_archive_surfaces_as_a_named_archive_failure(
 
     assert failure.value.stage == "archive"
     assert "No space left on device" in str(failure.value)
-    # The snapshot itself still stands — a failed archive never retracts a good snapshot.
     assert (tmp_path / "backups" / "gen1.set.manifest.json").is_file()
     assert not (tmp_path / "cold" / "gen1.cold-backup.report.json").exists()
 
@@ -509,18 +422,7 @@ def test_a_full_disk_during_the_archive_surfaces_as_a_named_archive_failure(
 def test_a_verdict_is_never_rewrapped_as_an_environment_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, refusal: Exception
 ) -> None:
-    """ "Refused" and "failed" are different facts, and the most serious verdict this command
-    can reach is the chain failing to re-verify out of the archive — "**do not trust this
-    copy**". Wrapping that as a stage failure filed it under "the host broke, fix it and
-    re-run", the wrong instruction in the one case where re-running is not the answer.
-
-    :class:`~tos_runtime.operations.schema_ledger.SchemaVersionRefused` is the same criterion
-    applied a fourth time (plan §7.1.28): the archive's chain re-verification constructs
-    a store out of the decompressed copy, and an older on-disk schema is a judgement about
-    the TARGET, not about the host. Re-running cannot change it. BEHIND is fixed by
-    ``migrate``; AHEAD is not (``apply_migrations`` refuses that too), which is why the
-    dispatch splits the two by ``direction`` even though one type passes through here.
-    """
+    '"Refused" and "failed" are different facts, and the most serious verdict this command'
     live_dir = _live(tmp_path)
 
     def _raise(*_args: object, **_kwargs: object) -> None:
@@ -538,9 +440,7 @@ def test_a_verdict_is_never_rewrapped_as_an_environment_failure(
 def test_a_destination_that_is_a_file_is_refused_before_the_snapshot(
     tmp_path: Path,
 ) -> None:
-    """Free space resolves to the nearest existing ancestor, so a file where a directory
-    belongs sails through the preflight and is only discovered by the archive step's own
-    mkdir — after a whole durable set has been copied. Caught here instead."""
+    """Free space resolves to the nearest existing ancestor, so a file where a directory"""
     live_dir = _live(tmp_path)
     (tmp_path / "cold-file").write_text("not a directory")
 
@@ -549,9 +449,6 @@ def test_a_destination_that_is_a_file_is_refused_before_the_snapshot(
 
     assert "exists and is not a directory" in str(refusal.value)
     assert not (tmp_path / "backups").exists()
-
-
-# -- the three roots are kept apart (review F5) -------------------------------
 
 
 def test_two_roots_pointing_at_the_same_directory_are_refused(tmp_path: Path) -> None:
@@ -574,8 +471,7 @@ def test_two_roots_pointing_at_the_same_directory_are_refused(tmp_path: Path) ->
 def test_one_root_nested_inside_another_is_refused(
     tmp_path: Path, overrides: dict[str, str], inner: str, outer: str
 ) -> None:
-    """Merely sharing a parent is fine and ordinary; containment is not — it silently undoes
-    the separate-medium arrangement the example config asks for."""
+    """Merely sharing a parent is fine and ordinary; containment is not — it silently undoes"""
     live_dir = _live(tmp_path)
 
     with pytest.raises(ColdBackupRefused) as refusal:
@@ -590,30 +486,20 @@ def test_one_root_nested_inside_another_is_refused(
     assert f"is inside {outer} " in message
 
 
-# -- cold storage is part of the allocation (review round 2, F2) --------------
-
-
 def test_a_backup_root_that_was_emptied_does_not_collide_with_cold_storage(
     tmp_path: Path,
 ) -> None:
-    """Runbook §6 tells the operator to move OLD ARCHIVES elsewhere when the floor fires, and
-    `backup_root` is the tree that actually grows — so "backup_root emptied or recreated
-    while archive_dir still holds gen1..genK" is an ordinary consequence of following the
-    runbook. Allocating from `backup_root` alone picked 1, copied the whole durable set, and
-    only then refused on the existing archive — every night, for K nights."""
+    """Runbook §6 tells the operator to move OLD ARCHIVES elsewhere when the floor fires, and"""
     live_dir = _live(tmp_path)
     first = _run(tmp_path, live_dir)
     assert first.generation == 1
 
-    # The operator clears the warm tree (a new disk, a move, a cleanup) and leaves cold
-    # storage exactly as it is.
     shutil.rmtree(tmp_path / "backups")
 
     second = _run(tmp_path, live_dir)
 
     assert second.generation == 2
     assert Path(second.archive_path).is_file()
-    # gen1's cold copy and report are untouched.
     assert (tmp_path / "cold" / "gen1.set.tar.xz").is_file()
     assert (tmp_path / "cold" / "gen1.cold-backup.report.json").is_file()
 
@@ -625,12 +511,8 @@ def test_a_backup_root_that_was_emptied_does_not_collide_with_cold_storage(
 def test_an_existing_artifact_for_the_chosen_generation_is_refused_before_the_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing: str
 ) -> None:
-    """Belt and braces behind the allocator: if the chosen generation already has ANY of its
-    three artifacts on disk, refuse before copying rather than after. The report in
-    particular used to be written with a plain ``write_text`` that would have overwritten an
-    existing one without a word."""
+    """Belt and braces behind the allocator: if the chosen generation already has ANY of its"""
     live_dir = _live(tmp_path)
-    # Pin the allocator so the collision is actually reached (otherwise it steps past).
     monkeypatch.setattr(cold_backup_module, "_highest_cold_generation", lambda _c: None)
     path = tmp_path / existing
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -644,25 +526,14 @@ def test_an_existing_artifact_for_the_chosen_generation_is_refused_before_the_sn
 
     assert "already exists" in str(refusal.value)
     assert not (tmp_path / "backups").exists()
-    # Untouched.
     if not existing.endswith(".verify"):
         assert path.read_text() == "previous"
-
-
-# -- custody is exercised before anything is copied (review round 2, F3) ------
 
 
 def test_an_unusable_custody_root_is_refused_before_the_snapshot(
     tmp_path: Path,
 ) -> None:
-    """A REAL custody failure, not a monkeypatched constructor.
-
-    ``FileKeyProvider.__init__`` only stores fields, so the previous test for this named a
-    case the real constructor cannot produce. An empty custody root is the genuine article:
-    nothing raises until ``current()`` is called, which is exactly why the preflight now
-    calls it — otherwise the whole durable set is copied and compressed first and the
-    failure arrives labelled as an archive-stage fault.
-    """
+    """A REAL custody failure, not a monkeypatched constructor."""
     live_dir = _live(tmp_path)
     empty_custody = tmp_path / "no-keys"
     empty_custody.mkdir()
@@ -676,9 +547,6 @@ def test_an_unusable_custody_root_is_refused_before_the_snapshot(
 
     assert not (tmp_path / "backups").exists()
     assert not (tmp_path / "cold").exists()
-
-
-# -- the loader ---------------------------------------------------------------
 
 
 def _write_config(tmp_path: Path, body: str) -> Path:
@@ -702,7 +570,6 @@ def test_a_filled_config_loads(tmp_path: Path) -> None:
     assert config.archive_dir == Path("/srv/tos/cold")
     assert config.verify_root == Path("/srv/tos/verify")
     assert config.minimum_free_bytes == 53687091200
-    # Absent `xz_preset` means the already-named default, never an invented value.
     assert config.xz_preset == cold_backup_module.DEFAULT_XZ_PRESET
 
 
@@ -712,7 +579,6 @@ def test_a_missing_config_file_is_refused_by_name(tmp_path: Path) -> None:
 
     message = str(refusal.value)
     assert "does not exist" in message
-    # The message points at the template rather than leaving the operator to guess the shape.
     assert "evidence_cold_backup.example.yaml" in message
 
 
@@ -743,9 +609,7 @@ def test_a_missing_required_key_is_refused(tmp_path: Path, key: str) -> None:
 def test_a_null_value_is_refused_rather_than_defaulted(
     tmp_path: Path, key: str
 ) -> None:
-    """The committed ``config/tos_runtime/paper/evidence_cold_backup.yaml`` ships exactly this
-    way — every host coordinate ``null`` — so this is the state an un-filled deployment is in,
-    and it must refuse loudly rather than back up somewhere invented."""
+    """The committed ``config/tos_runtime/paper/evidence_cold_backup.yaml`` ships exactly this"""
     body = "\n".join(
         f"{key}: null" if line.startswith(f"{key}:") else line
         for line in _FILLED.strip().splitlines()
@@ -778,14 +642,7 @@ def test_a_relative_path_is_refused(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("value", ["~/cold", "~deploy/cold"])
 def test_a_tilde_path_is_refused_as_a_tilde_path(tmp_path: Path, value: str) -> None:
-    """And it says ``~``, not merely "not absolute".
-
-    This is the distinction worth a test of its own: a tilde path is ALREADY non-absolute, so
-    an ``is_absolute()`` check placed first would catch it and the tilde branch behind it
-    could never fire — a guard naming a case it cannot reach. Ordering it first is what makes
-    the specific message real, and this test is what holds the ordering (reverse the two
-    branches and it goes red).
-    """
+    """And it says ``~``, not merely "not absolute"."""
     body = _FILLED.replace("/srv/tos/cold", value)
 
     with pytest.raises(ColdBackupRefused) as refusal:
@@ -827,8 +684,7 @@ def test_a_malformed_free_space_floor_is_refused(
 def test_a_present_but_unusable_xz_preset_is_refused(
     tmp_path: Path, raw: str, fragment: str
 ) -> None:
-    """Optional means ABSENT, not empty: a key written and left null is a half-filled file, and
-    silently reading the default there would make it look complete."""
+    """Optional means ABSENT, not empty: a key written and left null is a half-filled file, and"""
     with pytest.raises(ColdBackupRefused) as refusal:
         load_cold_backup_config(_write_config(tmp_path, f"{_FILLED}{raw}\n"))
 
@@ -846,14 +702,7 @@ def test_a_present_xz_preset_is_honoured(tmp_path: Path) -> None:
 def test_the_shipped_example_config_is_the_shape_this_loader_reads(
     tmp_path: Path,
 ) -> None:
-    """The template and the loader are checked against each other, so the example cannot drift
-    into documenting keys nothing reads (the ``registry-with-unpinned-satellite`` shape).
-
-    It is read as TEXT and re-serialized under ``tmp_path`` rather than loaded in place: the
-    hermetic write guard allows no reads to matter outside ``tmp_path``'s tree for the write
-    side, and this keeps the test from depending on the repo path at run time beyond locating
-    the file.
-    """
+    """The template and the loader are checked against each other, so the example cannot drift"""
     example = (
         Path(__file__).resolve().parents[3]
         / "runtime"
@@ -862,12 +711,10 @@ def test_the_shipped_example_config_is_the_shape_this_loader_reads(
     )
     body = example.read_text()
 
-    # Every required key is present and null — the template is un-filled by construction.
     with pytest.raises(ColdBackupRefused) as refusal:
         load_cold_backup_config(_write_config(tmp_path, body))
     assert "still null (named-TBD)" in str(refusal.value)
 
-    # And filling the four required keys is sufficient: no hidden fifth requirement.
     filled = (
         body.replace("backup_root: null", "backup_root: /srv/b")
         .replace("archive_dir: null", "archive_dir: /srv/c")
@@ -878,26 +725,12 @@ def test_the_shipped_example_config_is_the_shape_this_loader_reads(
     assert config.archive_dir == Path("/srv/c")
 
 
-# -- ColdBackupFailed survives a process boundary -----------------------------
-
-
 class _NarrowerColdBackupFailure(ColdBackupFailed):
     """A subclass at MODULE level, because pickle stores a qualified name."""
 
 
 def test_a_wrapped_failure_survives_pickle_and_copy() -> None:
-    """The wrapper itself must serialize — the same two-positional defect, one class over.
-
-    ``__init__`` takes ``(stage, cause)`` while ``BaseException.__reduce__`` hands back only
-    the single formatted message, so ``pickle``, ``copy`` and ``deepcopy`` all raised
-    ``TypeError: missing 1 required positional argument: 'cause'`` (measured). This class is
-    the one that wraps whatever broke underneath a run, so the failure mode was: a stage
-    failure crosses a process boundary and arrives as an unrelated ``TypeError`` about the
-    reporter, losing the stage it existed to carry.
-
-    ``cause`` is deliberately not reconstructed — it was never stored, only folded into the
-    message — so the assertion is that the message and ``stage`` come back identical.
-    """
+    """The wrapper itself must serialize — the same two-positional defect, one class over."""
     original = ColdBackupFailed("archive", OSError("no space left on device"))
 
     for rebuilt in (
@@ -912,12 +745,7 @@ def test_a_wrapped_failure_survives_pickle_and_copy() -> None:
 
 
 def test_a_wrapped_failure_rebuilds_as_its_own_subclass_and_keeps_notes() -> None:
-    """Exact type and instance state, for the same reasons as the version refusal.
-
-    A rebuild that downgrades the type lets an ``except`` on the narrower class stop
-    matching while serialization still looks successful; a rebuild without state drops
-    ``add_note`` output that the traceback would have printed.
-    """
+    """Exact type and instance state, for the same reasons as the version refusal."""
     original = _NarrowerColdBackupFailure("snapshot", OSError("read-only file system"))
     original.add_note("ran under the 18:00 cron")
 

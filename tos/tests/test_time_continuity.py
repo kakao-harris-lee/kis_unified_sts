@@ -1,9 +1,4 @@
-"""Monotonic continuity — non-subtraction + anchor invalidation (time design §3).
-
-EV-L1 predicate substrate only; TIME-EV-004/-005 remain NOT_IMPLEMENTED pending
-EV-L2/L3 fault injection. No real clock is read; ``monotonic_continuity_id`` /
-``local_monotonic_value`` are opaque injected coordinates (time design §3).
-"""
+"""Monotonic continuity — non-subtraction + anchor invalidation (time design §3)."""
 
 from __future__ import annotations
 

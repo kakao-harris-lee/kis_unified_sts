@@ -1,26 +1,4 @@
-"""Structural (AST/grep) pins for the risk state service wave (plan §4.1/§5 deliverable E).
-
-These tests make three invariants MECHANICAL rather than merely documented — mirroring the
-``tests/engine/test_no_direct_latch_clear.py`` / ``tests/safety/test_ack.py`` "make the
-invariant mechanical, not conventional" convention already used elsewhere in this runtime:
-
-1. No ``tos_runtime`` transport exposes a query/balance/position READ method — the structural
-   fact :func:`tos_runtime.riskstate.flow_observation.to_observed_amplification` cites to
-   justify its ``queries=0`` constant (module docstring; DR-0003 §2.3). Adding such a method
-   in the future MUST fail this test, forcing that observation to be rebuilt.
-2. ``AggregateRiskPolicy.issue`` is called ONLY from
-   ``tos_runtime/riskstate/_aggregate_risk_policy_loader.py`` and ``ActionFlowPolicy.issue``
-   ONLY from ``tos_runtime/riskstate/_action_flow_policy_loader.py`` (team-lead disposition
-   2026-09-16, review of PR #704 item T1: ``policies.py`` itself is now a thin re-export
-   shim over these two loader modules, mirroring ``tos_runtime/venue/config.py``'s own split
-   — it calls ``.issue()`` nowhere itself) — no other module may mint one of these two policy
-   artifacts.
-3. No ``True``/``False`` literal is ever passed as a keyword argument to
-   ``ObservedAmplification(...)``/``ActionCause(...)``/``ScopeIndependenceEvidence(...)``
-   anywhere in ``tos_runtime/src`` — every field on those three types is either a real
-   observation or a governed declaration, never a hardcoded admission literal (the M1/M4-class
-   "phantom" regression this wave's mutation table names).
-"""
+"""Structural (AST/grep) pins for the risk state service wave (plan §4.1/§5 deliverable E)."""
 
 from __future__ import annotations
 
@@ -33,10 +11,6 @@ _TRANSPORT_ROOT = _RUNTIME_SRC / "transport"
 _FORBIDDEN_METHOD_SUBSTRINGS = ("query", "balance", "position")
 
 _PINNED_ARTIFACT_CALLS = ("AggregateRiskPolicy", "ActionFlowPolicy")
-#: One allowed call site per artifact (team-lead disposition 2026-09-16, review of PR #704
-#: item T1: ``policies.py`` split into per-policy loader modules, mirroring
-#: ``tos_runtime/venue/config.py``'s own split) — a TIGHTER pin than "either call anywhere in
-#: one shared file": each policy's own ``.issue()`` may be minted from its own loader only.
 _ALLOWED_ISSUE_CALL_SITES: dict[str, Path] = {
     "AggregateRiskPolicy": _RUNTIME_SRC
     / "riskstate"
@@ -83,8 +57,7 @@ def test_no_transport_method_name_contains_query_balance_or_position() -> None:
 def _issue_call_sites(
     tree: ast.Module, artifact_names: tuple[str, ...]
 ) -> dict[str, list[int]]:
-    """``{artifact_name: [lineno, ...]}`` — one entry per pinned artifact name that has at
-    least one ``<name>.issue(...)`` call site in ``tree``."""
+    """``{artifact_name: [lineno, ...]}`` — one entry per pinned artifact name that has at"""
     by_artifact: dict[str, list[int]] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -111,7 +84,6 @@ def test_are_afg_policy_issue_scoped_to_riskstate_policies_module() -> None:
         "_aggregate_risk_policy_loader.py, ActionFlowPolicy.issue() ONLY from "
         f"_action_flow_policy_loader.py — found elsewhere: {violations}"
     )
-    # Positive control: each allowed site really does call its own artifact's .issue().
     for artifact_name, allowed_path in _ALLOWED_ISSUE_CALL_SITES.items():
         allowed_tree = _parse(allowed_path)
         allowed_sites = _issue_call_sites(allowed_tree, (artifact_name,))
