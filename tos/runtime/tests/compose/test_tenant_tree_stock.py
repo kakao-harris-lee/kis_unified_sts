@@ -74,6 +74,7 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
     "coordinator_preconditions.yaml": frozenset({"nonlive_broker_consuming.admitted"}),
     "authority.yaml": frozenset({"containment_bound_ms"}),
     "egress_coordinates.yaml": frozenset({"endpoint.value", "route_identity.value"}),
+    "finality.yaml": frozenset({"witness"}),
     "construction.yaml": frozenset({"instrument_class"}),
     "marketfeed.yaml": frozenset({"instrument_class", "unit"}),
     "aggregate_risk_policy.yaml": frozenset(

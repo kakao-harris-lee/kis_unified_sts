@@ -232,12 +232,17 @@ def test_a_misspelled_witness_key_refuses_the_boot(
     assert not _ledger_path(data_dir).exists()
 
 
-@pytest.mark.parametrize(
-    "tree",
-    ["paper", "cp3-setup-d-long", "cp3-setup-d-short", "cp3-setup-d-stock-005930"],
-)
-def test_no_shipped_tree_carries_the_witness_key(tree: str) -> None:
-    """The deploy guard for this PR."""
+_SHIPPED_TREE_WITNESS: dict[str, str | None] = {
+    "paper": "synthetic_venue_ledger",
+    "cp3-setup-d-long": "synthetic_venue_ledger",
+    "cp3-setup-d-short": "synthetic_venue_ledger",
+    "cp3-setup-d-stock-005930": None,
+}
+
+
+@pytest.mark.parametrize("tree", sorted(_SHIPPED_TREE_WITNESS))
+def test_shipped_trees_carry_exactly_the_operator_chosen_witness_key(tree: str) -> None:
+    """The deploy guard: a two-sided pin, not a one-sided "stays off"."""
     path = (
         Path(__file__).resolve().parents[4]
         / "config"
@@ -246,7 +251,14 @@ def test_no_shipped_tree_carries_the_witness_key(tree: str) -> None:
         / FINALITY_CONFIG_NAME
     )
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert "witness" not in raw, (
-        f"{tree}/{FINALITY_CONFIG_NAME} carries the venue-ledger key — the switch-on day is "
-        "the operator's, in its own PR (plan §4 P2)"
+    expected = _SHIPPED_TREE_WITNESS[tree]
+    if expected is None:
+        assert "witness" not in raw, (
+            f"{tree}/{FINALITY_CONFIG_NAME} carries the venue-ledger key — this tree reaches "
+            "a real mock broker, so the key refuses its boot (plan 2026-10-31 §3.2)"
+        )
+        return
+    assert raw.get("witness") == expected, (
+        f"{tree}/{FINALITY_CONFIG_NAME} must carry witness: {expected} — removing it puts "
+        "the tree back on the store-derived witness, which holds every capacity release"
     )

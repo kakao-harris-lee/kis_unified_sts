@@ -345,7 +345,7 @@ def test_an_uncorroborated_entry_fill_refuses_the_flat_exit_and_sends_nothing(
     custody_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The venue-ledger-OFF tree — every shipped tree today — still refuses the exit."""
+    """The venue-ledger-OFF tree — the kis-mock stock tree since the #1053 switch-on, and any tree the key is removed from — still refuses the exit."""
     monkeypatch.setattr(
         fx, "band_reversion_strategy_mapping", _long_entry_flat_exit_mapping
     )

@@ -145,6 +145,7 @@ _VALUE_PINS: dict[str, Any] = {
     "finality.yaml::value_date": "T+1",
     "finality.yaml::source_revision": None,
     "finality.yaml::proof_recipe_id": "tos-paper-proof-recipe-bootproof-g1",
+    "finality.yaml::witness": "synthetic_venue_ledger",
     "monitor_coverage.yaml::coverage.coverage_generation": 1,
     "monitor_coverage.yaml::coverage.bounds.max_evidence_tip_stall_ms": 60000,
     "monitor_coverage.yaml::coverage.bounds.max_inbox_unconsumed": 100,
