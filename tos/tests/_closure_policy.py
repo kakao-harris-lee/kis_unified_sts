@@ -158,7 +158,11 @@ class ScanSpec:
                 ["rng import random", "rng import secrets", "rng import uuid"]
             )
         if NETWORK in self.categories:
-            markers.extend(["network import socket", "network import asyncio"])
+            markers.extend(
+                f"network import {name}"
+                for name in ("socket", "asyncio")
+                if name in self.network_modules
+            )
         if NONDET in self.categories:
             markers.extend(["uuid4()", "monotonic()", "now()", "token_hex()"])
         if BUILTIN in self.categories:

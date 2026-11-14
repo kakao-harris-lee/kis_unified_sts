@@ -96,6 +96,13 @@ _RICH_EGRESSGW = ScanSpec(
     dynamic_calls=_RICH.dynamic_calls,
     network_modules=NETWORK_MODULES | {"requests", "aiohttp", "httpx"},
 )
+_STDLIB_EGRESS = ScanSpec(
+    categories=frozenset({ESCAPE, ENV, NETWORK}),
+    network_modules=nameset(
+        "socket ssl http urllib ftplib smtplib poplib imaplib telnetlib "
+        "subprocess ctypes"
+    ),
+)
 
 
 def _policy(deny, **kwargs) -> ClosurePolicy:
@@ -704,6 +711,7 @@ POLICIES["staterestore"] = _policy(
     ),
     expected_present=names("tos.orthostate tos.rcl sqlite3"),
     src_dirs=names("staterestore"),
+    scan=_STDLIB_EGRESS,
 )
 
 POLICIES["time"] = _policy(
