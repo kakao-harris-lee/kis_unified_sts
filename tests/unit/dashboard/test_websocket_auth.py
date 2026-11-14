@@ -1,4 +1,5 @@
 """Test WebSocket authentication."""
+
 import os
 from unittest.mock import AsyncMock, MagicMock
 
@@ -20,7 +21,9 @@ def clean_env():
 
 def test_websocket_requires_auth():
     """Test that WebSocket connections require authentication when auth is enabled."""
-    pytest.skip("Flaky in CI: websocket auth middleware behavior can hang in TestClient")
+    pytest.skip(
+        "Flaky in CI: websocket auth middleware behavior can hang in TestClient"
+    )
     os.environ["DASHBOARD_DEV_MODE"] = "true"
 
     from services.dashboard.app import create_app
@@ -35,7 +38,9 @@ def test_websocket_requires_auth():
 
 def test_websocket_without_auth_middleware():
     """Test WebSocket works when auth is not required."""
-    pytest.skip("Flaky in CI: websocket auth middleware behavior can hang in TestClient")
+    pytest.skip(
+        "Flaky in CI: websocket auth middleware behavior can hang in TestClient"
+    )
     os.environ["DASHBOARD_DEV_MODE"] = "true"
 
     from services.dashboard.app import create_app

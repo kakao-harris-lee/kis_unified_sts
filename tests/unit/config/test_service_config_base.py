@@ -126,9 +126,7 @@ enabled: true
         monkeypatch.setenv("MY_SERVICE_ENABLED", "false")
 
         config = SimpleConfig.from_yaml(
-            str(yaml_file),
-            apply_env_overrides=True,
-            env_prefix="MY_SERVICE_"
+            str(yaml_file), apply_env_overrides=True, env_prefix="MY_SERVICE_"
         )
 
         assert config.name == "from_yaml"  # Not overridden
@@ -209,8 +207,7 @@ class TestServiceConfigBaseFromEnv:
         monkeypatch.setenv("MY_SERVICE_THRESHOLD", "0.7")
 
         config = SimpleConfig.from_env(
-            env_prefix="MY_SERVICE_",
-            enabled=False  # Override via kwarg
+            env_prefix="MY_SERVICE_", enabled=False  # Override via kwarg
         )
 
         assert config.name == "from_env"
@@ -317,6 +314,7 @@ class TestServiceConfigBaseFromEnv:
         # Pydantic will raise ValidationError during construction
         # because it can't convert the invalid values
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             SimpleConfig.from_env(env_prefix="TEST_")
 
@@ -351,7 +349,7 @@ class TestServiceConfigBaseDatabaseValidation:
             "db/name",  # Slash not allowed
             "db\\name",  # Backslash not allowed
             "db'name",  # Quote not allowed
-            "db\"name",  # Double quote not allowed
+            'db"name',  # Double quote not allowed
             "db;name",  # Semicolon not allowed
             "",  # Empty string
             "db(name)",  # Parentheses not allowed
@@ -421,7 +419,7 @@ service:
             str(yaml_file),
             section="service",
             apply_env_overrides=True,
-            env_prefix="TEST_"
+            env_prefix="TEST_",
         )
 
         assert config.name == "from_yaml"  # From YAML
@@ -431,10 +429,7 @@ service:
     def test_model_dump_yaml(self):
         """Test exporting config as YAML."""
         config = SimpleConfig(
-            name="export_test",
-            threshold=0.85,
-            enabled=False,
-            max_items=25
+            name="export_test", threshold=0.85, enabled=False, max_items=25
         )
 
         yaml_output = config.model_dump_yaml()
@@ -454,6 +449,7 @@ service:
 
         # Invalid type should raise ValidationError
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             config.threshold = "not_a_number"
 
@@ -662,9 +658,7 @@ class TestServiceConfigBaseFromYAMLSections:
                 "scalar_section": "just_a_string",
             },
         )
-        config = SimpleConfig.from_yaml(
-            "fake.yaml", sections=["env", "scalar_section"]
-        )
+        config = SimpleConfig.from_yaml("fake.yaml", sections=["env", "scalar_section"])
 
         assert config.name == "valid_section"
 

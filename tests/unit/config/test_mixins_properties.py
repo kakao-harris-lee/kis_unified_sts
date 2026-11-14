@@ -62,7 +62,9 @@ class TestConfigMixinFromDictProperties:
         assert config.enabled == enabled
 
     @given(
-        known_key=st.text(min_size=1, max_size=20, alphabet="abcdefghijklmnopqrstuvwxyz"),
+        known_key=st.text(
+            min_size=1, max_size=20, alphabet="abcdefghijklmnopqrstuvwxyz"
+        ),
         unknown_keys=st.dictionaries(
             keys=st.text(min_size=1, max_size=20, alphabet="xyz_123"),
             values=st.one_of(st.integers(), st.text(), st.booleans()),
@@ -71,7 +73,9 @@ class TestConfigMixinFromDictProperties:
         ),
     )
     @settings(max_examples=50)
-    def test_ignores_unknown_keys(self, known_key: str, unknown_keys: dict):  # noqa: ARG002
+    def test_ignores_unknown_keys(
+        self, known_key: str, unknown_keys: dict
+    ):  # noqa: ARG002
         """Property: Unknown keys should be ignored."""
         # Ensure unknown keys don't overlap with config fields
         config_fields = {"name", "count", "rate", "enabled"}
@@ -155,14 +159,14 @@ class TestConfigMixinValidationProperties:
         max_value=st.integers(min_value=0, max_value=1000000),
     )
     @settings(max_examples=50)
-    def test_valid_values_pass_validation(
-        self, threshold: float, max_value: int
-    ):
+    def test_valid_values_pass_validation(self, threshold: float, max_value: int):
         """Property: Valid values should pass validation."""
-        config = ValidatedConfig.from_dict({
-            "threshold": threshold,
-            "max_value": max_value,
-        })
+        config = ValidatedConfig.from_dict(
+            {
+                "threshold": threshold,
+                "max_value": max_value,
+            }
+        )
 
         # Should not raise
         config.validate()
@@ -204,10 +208,7 @@ class TestConfigMixinValidationProperties:
     def test_validation_can_be_skipped(self, threshold: float):
         """Property: Validation can be disabled."""
         # Should NOT raise when validation is disabled
-        config = ValidatedConfig.from_dict(
-            {"threshold": threshold},
-            validate=False
-        )
+        config = ValidatedConfig.from_dict({"threshold": threshold}, validate=False)
 
         assert config.threshold == threshold
 
@@ -215,12 +216,14 @@ class TestConfigMixinValidationProperties:
 class TestConfigMixinEdgeCases:
     """Property-based tests for edge cases."""
 
-    @given(data=st.dictionaries(
-        keys=st.text(min_size=1, max_size=20),
-        values=st.one_of(st.none(), st.integers(), st.text(), st.booleans()),
-        min_size=0,
-        max_size=5,
-    ))
+    @given(
+        data=st.dictionaries(
+            keys=st.text(min_size=1, max_size=20),
+            values=st.one_of(st.none(), st.integers(), st.text(), st.booleans()),
+            min_size=0,
+            max_size=5,
+        )
+    )
     @settings(max_examples=50)
     def test_handles_arbitrary_dicts(self, data: dict):
         """Property: Should handle arbitrary dicts without crashing."""

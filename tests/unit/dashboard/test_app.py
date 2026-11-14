@@ -1,4 +1,5 @@
 """Test dashboard FastAPI app."""
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 

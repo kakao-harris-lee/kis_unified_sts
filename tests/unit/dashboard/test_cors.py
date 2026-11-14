@@ -1,4 +1,5 @@
 """Test CORS configuration security for the dashboard app."""
+
 import os
 from unittest.mock import patch
 
@@ -88,7 +89,10 @@ async def test_cors_allows_localhost_origin_in_dev():
             },
         )
 
-        assert response.headers.get("access-control-allow-origin") == "http://localhost:5081"
+        assert (
+            response.headers.get("access-control-allow-origin")
+            == "http://localhost:5081"
+        )
 
 
 @pytest.mark.asyncio
@@ -112,7 +116,10 @@ async def test_cors_allows_vite_dev_server():
                 },
             )
 
-            assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
+            assert (
+                response.headers.get("access-control-allow-origin")
+                == "http://localhost:5173"
+            )
 
 
 @pytest.mark.asyncio
