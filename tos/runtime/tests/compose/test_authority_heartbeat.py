@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shutil
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -17,7 +16,6 @@ from tos_runtime.compose._authority_heartbeat import (
 )
 from tos_runtime.compose._transport_wiring import TransportKind
 
-from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
 from .test_compose_root import FakeMonotonicSource, _compose, _reach_trusted
 from .test_kis_mock_e2e_honesty import (
@@ -51,16 +49,6 @@ _CLOSED_CADENCE_MS = _tree_value(
     _STOCK, "marketfeed.yaml", "time_evaluate_closed_interval_ms"
 )
 _MINUTE_MS = 60_000
-
-
-@pytest.fixture()
-def server() -> Iterator[FakeKisServer]:
-    srv = FakeKisServer()
-    srv.start()
-    try:
-        yield srv
-    finally:
-        srv.stop()
 
 
 def _boot(tree, tmp_path, config_dir, data_dir, custody_root, server, monkeypatch):

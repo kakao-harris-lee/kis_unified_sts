@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -22,7 +22,6 @@ from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.recon.ports import WitnessScope, WitnessUnavailable
 from tos_runtime.recon.witness_kis import KisOrderRow
 
-from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
 from .test_compose_root import _compose, _reach_trusted
 from .test_kis_mock_e2e_honesty import _boot, _drive_crossing_tick
@@ -41,16 +40,6 @@ from .test_kis_mock_fill_finality_e2e import (
 )
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
-
-
-@pytest.fixture()
-def server() -> Iterator[FakeKisServer]:
-    srv = FakeKisServer()
-    srv.start()
-    try:
-        yield srv
-    finally:
-        srv.stop()
 
 
 _DAY_MS = 86_400_000

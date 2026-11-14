@@ -85,6 +85,24 @@ def _refusal_evidence_kinds(store: SqliteEvidenceStore) -> list[str]:
     return [row.kind for row in store.iter_entry_meta()]
 
 
+def _resolve(
+    config_dir: Path,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    identity: RuntimeIdentity,
+    **overrides: Any,
+) -> ResolvedStrategyRegistry:
+    """Resolve ``config_dir``'s registry onto this test's own evidence and emergency path."""
+    overrides.setdefault("injected_registry", None)
+    return resolve_strategy_registry(
+        config_dir,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        identity=identity,
+        **overrides,
+    )
+
+
 def test_neither_present_refuses_by_default(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
@@ -92,13 +110,7 @@ def test_neither_present_refuses_by_default(
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     with pytest.raises(StrategyRegistryResolutionRefused):
-        resolve_strategy_registry(
-            config_dir,
-            injected_registry=None,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
-        )
+        _resolve(config_dir, evidence_store, emergency_log, identity)
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
 
 
@@ -177,12 +189,12 @@ def test_both_present_refuses_with_evidence(
     )
     injected = StrategyRegistry()
     with pytest.raises(StrategyRegistryResolutionRefused, match="both supplied"):
-        resolve_strategy_registry(
+        _resolve(
             config_dir,
+            evidence_store,
+            emergency_log,
+            identity,
             injected_registry=injected,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
         )
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
     assert (tmp_path / "emergency.jsonl").exists()
@@ -194,13 +206,7 @@ def test_empty_strategies_directory_refuses_with_evidence(
     config_dir = tmp_path / "config"
     (config_dir / "strategies").mkdir(parents=True)
     with pytest.raises(StrategyRegistryResolutionRefused):
-        resolve_strategy_registry(
-            config_dir,
-            injected_registry=None,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
-        )
+        _resolve(config_dir, evidence_store, emergency_log, identity)
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
 
 
@@ -214,13 +220,7 @@ def test_malformed_strategy_file_refuses_with_evidence(
         "not: valid: yaml: [[[", encoding="utf-8"
     )
     with pytest.raises(StrategyRegistryResolutionRefused):
-        resolve_strategy_registry(
-            config_dir,
-            injected_registry=None,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
-        )
+        _resolve(config_dir, evidence_store, emergency_log, identity)
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
 
 
@@ -230,13 +230,7 @@ def test_load_strategies_error_is_the_underlying_cause(
     config_dir = tmp_path / "config"
     (config_dir / "strategies").mkdir(parents=True)
     with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
-        resolve_strategy_registry(
-            config_dir,
-            injected_registry=None,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
-        )
+        _resolve(config_dir, evidence_store, emergency_log, identity)
     assert isinstance(excinfo.value.__cause__, StrategyLoadError)
 
 
@@ -253,13 +247,7 @@ def test_config_sourced_ref_without_bindings_refuses_naming_the_ref(
     }
     path = write_strategy_yaml(strategies_dir, "config-ref.strategy.yaml", mapping)
     with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
-        resolve_strategy_registry(
-            config_dir,
-            injected_registry=None,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
-        )
+        _resolve(config_dir, evidence_store, emergency_log, identity)
     message = str(excinfo.value)
     assert str(path) in message
     assert "config.lower_band_threshold" in message
@@ -277,13 +265,7 @@ def test_escape_ref_source_is_refused_at_load(
     mapping["policy"]["rules"][0]["all_of"][0]["right"] = {"ref": ["ambient", "now"]}
     path = write_strategy_yaml(strategies_dir, "escape-ref.strategy.yaml", mapping)
     with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
-        resolve_strategy_registry(
-            config_dir,
-            injected_registry=None,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
-        )
+        _resolve(config_dir, evidence_store, emergency_log, identity)
     assert str(path) in str(excinfo.value)
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
 
@@ -309,13 +291,7 @@ def test_version_mismatch_refuses_naming_both_values(
         },
     )
     with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
-        resolve_strategy_registry(
-            config_dir,
-            injected_registry=None,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
-        )
+        _resolve(config_dir, evidence_store, emergency_log, identity)
     message = str(excinfo.value)
     assert "WRONG-VERSION" in message
     assert mapping["config_binding_version"] in message
@@ -346,13 +322,7 @@ def test_unresolvable_ref_path_refuses_naming_the_path(
         },
     )
     with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
-        resolve_strategy_registry(
-            config_dir,
-            injected_registry=None,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
-        )
+        _resolve(config_dir, evidence_store, emergency_log, identity)
     assert "config.lower_band_threshold.nested" in str(excinfo.value)
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
 
@@ -408,13 +378,7 @@ def test_unused_bindings_key_refuses_naming_the_key(
         },
     )
     with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
-        resolve_strategy_registry(
-            config_dir,
-            injected_registry=None,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
-        )
+        _resolve(config_dir, evidence_store, emergency_log, identity)
     assert "never_referenced" in str(excinfo.value)
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
 
@@ -440,13 +404,7 @@ def test_orphan_bindings_stem_refuses(
         },
     )
     with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
-        resolve_strategy_registry(
-            config_dir,
-            injected_registry=None,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
-        )
+        _resolve(config_dir, evidence_store, emergency_log, identity)
     assert "no-such-strategy" in str(excinfo.value)
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
 
@@ -578,13 +536,7 @@ def test_malformed_bindings_file_refuses_with_evidence(
         encoding="utf-8",
     )
     with pytest.raises(StrategyRegistryResolutionRefused):
-        resolve_strategy_registry(
-            config_dir,
-            injected_registry=None,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
-        )
+        _resolve(config_dir, evidence_store, emergency_log, identity)
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
     assert emergency_log.path.read_text().strip() != ""
 
@@ -603,13 +555,7 @@ def test_duplicate_stem_across_yaml_and_yml_refuses(
         strategies_dir, "band.strategy.yml", admissible_strategy_mapping()
     )
     with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
-        resolve_strategy_registry(
-            config_dir,
-            injected_registry=None,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
-        )
+        _resolve(config_dir, evidence_store, emergency_log, identity)
     message = str(excinfo.value)
     assert "band.strategy.yaml" in message
     assert "band.strategy.yml" in message
@@ -628,12 +574,12 @@ def test_bindings_file_present_with_injected_registry_refuses(
     )
     injected = StrategyRegistry()
     with pytest.raises(StrategyRegistryResolutionRefused, match="injected"):
-        resolve_strategy_registry(
+        _resolve(
             config_dir,
+            evidence_store,
+            emergency_log,
+            identity,
             injected_registry=injected,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
         )
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
 
@@ -649,12 +595,11 @@ def test_bindings_file_present_with_allow_no_strategies_refuses(
         {"strategies": {"whatever": {"config_binding_version": "v1", "bindings": {}}}},
     )
     with pytest.raises(StrategyRegistryResolutionRefused, match="orphan"):
-        resolve_strategy_registry(
+        _resolve(
             config_dir,
-            injected_registry=None,
-            evidence_store=evidence_store,
-            emergency_log=emergency_log,
-            identity=identity,
+            evidence_store,
+            emergency_log,
+            identity,
             allow_no_strategies=True,
         )
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]

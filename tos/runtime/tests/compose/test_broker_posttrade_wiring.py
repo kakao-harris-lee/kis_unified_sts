@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -31,7 +30,6 @@ from tos_runtime.recon.witness_kis_config import KisWitnessConfigError
 from tos_runtime.recon.witness_synthetic import SyntheticLedgerWitness
 from tos_runtime.recovery.reconciliation import _build_reconciliation_service
 
-from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from ._fixtures import SCHEME
 from .test_compose_root import _compose, _reach_trusted
 from .test_kis_mock_e2e_honesty import _boot, _sealed_mock_deployment
@@ -40,16 +38,6 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 _TREES = Path(__file__).resolve().parents[4] / "config/tos_runtime"
 _STOCK = _TREES / "cp3-setup-d-stock-005930"
-
-
-@pytest.fixture()
-def server() -> Iterator[FakeKisServer]:
-    srv = FakeKisServer()
-    srv.start()
-    try:
-        yield srv
-    finally:
-        srv.stop()
 
 
 @pytest.mark.parametrize(

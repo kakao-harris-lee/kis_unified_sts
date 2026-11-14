@@ -46,6 +46,37 @@ def _empty_facts() -> DeploymentFlowFacts:
     )
 
 
+def _seal(
+    store: SqliteEvidenceStore,
+    *,
+    event_id: str = _ROOT,
+    causal_predecessor_ids: tuple[str, ...] = (),
+) -> None:
+    """Seal this suite's one BUY attempt ``a1`` under ``event_id``."""
+    seed_send_sealed(
+        store,
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        side="BUY",
+        quantity="1",
+        event_id=event_id,
+        causal_predecessor_ids=causal_predecessor_ids,
+    )
+
+
+def _fill(store: SqliteEvidenceStore, *, filled: str | None) -> None:
+    """Consume a FULL_FILL egress result for attempt ``a1``."""
+    seed_egress_result(
+        store,
+        kind="EGRESS_RESULT_CONSUMED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=filled,
+    )
+
+
 def test_empty_ports_yield_all_zero_observation(
     inbox: SqliteEventInbox,
     evidence_store: SqliteEvidenceStore,
@@ -69,15 +100,7 @@ def test_attempt_traced_to_root_via_event_id(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side="BUY",
-        quantity="1",
-        event_id=_ROOT,
-    )
+    _seal(evidence_store)
     reader = InboxFlowReader(inbox, evidence_store, rcl_log)
     obs = reader.observe(root_event_id=_ROOT, attempt_id="a1")
     assert obs.lineage_found is True
@@ -90,16 +113,7 @@ def test_attempt_traced_to_root_via_causal_predecessor(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side="BUY",
-        quantity="1",
-        event_id="ev-child",
-        causal_predecessor_ids=(_ROOT,),
-    )
+    _seal(evidence_store, event_id="ev-child", causal_predecessor_ids=(_ROOT,))
     reader = InboxFlowReader(inbox, evidence_store, rcl_log)
     obs = reader.observe(root_event_id=_ROOT, attempt_id="a1")
     assert obs.lineage_found is True
@@ -111,15 +125,7 @@ def test_attempt_not_tracing_to_root_is_lineage_false(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side="BUY",
-        quantity="1",
-        event_id="unrelated-event",
-    )
+    _seal(evidence_store, event_id="unrelated-event")
     reader = InboxFlowReader(inbox, evidence_store, rcl_log)
     obs = reader.observe(root_event_id=_ROOT, attempt_id="a1")
     assert obs.lineage_found is False
@@ -142,23 +148,8 @@ def test_terminal_attempt_is_not_in_flight(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side="BUY",
-        quantity="1",
-        event_id=_ROOT,
-    )
-    seed_egress_result(
-        evidence_store,
-        kind="EGRESS_RESULT_CONSUMED",
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        filled_quantity="1",
-    )
+    _seal(evidence_store)
+    _fill(evidence_store, filled="1")
     reader = InboxFlowReader(inbox, evidence_store, rcl_log)
     obs = reader.observe(root_event_id=_ROOT, attempt_id="a1")
     assert obs.attempts_for_cause == 1
@@ -216,15 +207,7 @@ def test_observe_counts_duplicate_disposition_from_real_evidence_store(
     rcl_log: SqliteCommitLog,
 ) -> None:
     """Integration pin: a REAL ``RESULT_UNMATCHED`` row shaped exactly like"""
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side="BUY",
-        quantity="1",
-        event_id=_ROOT,
-    )
+    _seal(evidence_store)
     seed_egress_result(
         evidence_store,
         kind="RESULT_UNMATCHED",

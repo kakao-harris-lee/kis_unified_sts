@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from dataclasses import replace
 from decimal import Decimal
 from typing import Any
@@ -15,9 +14,8 @@ from tos.engine.vocabulary import CommitmentStep, StageOutcome
 from tos.rcl import CapacityState, CapacityVector
 from tos_runtime.risk.ledger_stages import CloseProofCommitFence
 
-from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
-from .conftest import write_approval_file
+from .conftest import approve_constructed_intent
 from .test_kis_mock_e2e_honesty import (
     _ENVIRONMENT_LABEL,
 )
@@ -42,16 +40,6 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 _EXIT_CLOSE = fx.UPPER_BAND + 1_000
 _ENTRY_ONLY_MAPPING = fx.band_reversion_strategy_mapping
 _ENTRY_DISCHARGE_PENDING = "ENTRY_DISCHARGE_PENDING"
-
-
-@pytest.fixture()
-def server() -> Iterator[FakeKisServer]:
-    srv = FakeKisServer()
-    srv.start()
-    try:
-        yield srv
-    finally:
-        srv.stop()
 
 
 def _boot(tmp_path, config_dir, data_dir, custody_root):
@@ -411,13 +399,11 @@ def test_a_per_proposal_approval_of_a_close_sends_a_sell_never_a_buy(
 
 def _approve(runtime, custody_root, result) -> None:
     """Write the operator approval file for ``result``'s own proposal + intent envelope."""
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=result.pipeline.proposal.canonical_digest,
         environment_label=_ENVIRONMENT_LABEL,
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
 
 

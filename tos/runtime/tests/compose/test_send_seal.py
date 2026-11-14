@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from . import _fixtures as fx
-from .conftest import write_approval_file
+from .conftest import approve_constructed_intent
 from .test_compose_root import _compose, _reach_trusted
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
@@ -52,13 +52,10 @@ def _run_to_send_boundary(
     event = fx.crossing_event()
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=proposal_digest,
-        environment_label="non-live-test",
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     runtime.run_once((event,))
     return runtime

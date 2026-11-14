@@ -17,7 +17,7 @@ from tos_runtime.compose._egress_coordinates import (
 from tos_runtime.compose._request_digest import CapsuleStandInDigest
 
 from . import _fixtures as fx
-from .conftest import write_approval_file
+from .conftest import approve_constructed_intent
 from .test_compose_root import _compose, _reach_trusted
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
@@ -202,13 +202,10 @@ def test_wired_coordinates_equal_the_configured_non_default_values(
     event = fx.crossing_event()
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=proposal_digest,
-        environment_label="non-live-test",
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     runtime.run_once((event,))
 

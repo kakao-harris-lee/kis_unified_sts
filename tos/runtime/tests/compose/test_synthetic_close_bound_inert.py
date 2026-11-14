@@ -22,7 +22,7 @@ from tos_runtime.riskstate.close_bound import (
 )
 
 from . import _fixtures as fx
-from .conftest import write_approval_file
+from .conftest import approve_constructed_intent
 from .test_compose_root import _compose, _reach_trusted
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
@@ -33,13 +33,10 @@ def _hand_off_a_filled_entry(runtime, custody_root: Path):
     event = fx.crossing_event()
     discovery = runtime.run_once((event,))[0]
     assert discovery.pipeline is not None and discovery.pipeline.proposal is not None
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=discovery.pipeline.proposal.canonical_digest,
-        environment_label="non-live-test",
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     result = runtime.run_once((event,))[0]
     assert result.flow is not None and result.flow.handed_off is True

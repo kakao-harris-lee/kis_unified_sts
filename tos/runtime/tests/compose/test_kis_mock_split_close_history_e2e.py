@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 
@@ -31,16 +30,6 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 _CLOSE_1_ODNO = "0000004491"
 _CLOSE_2_ODNO = "0000004492"
 _OCP_CONFIG_NAME = "order_construction_policy.yaml"
-
-
-@pytest.fixture()
-def server() -> Iterator[FakeKisServer]:
-    instance = FakeKisServer()
-    instance.start()
-    try:
-        yield instance
-    finally:
-        instance.stop()
 
 
 def _write_risk_budget(

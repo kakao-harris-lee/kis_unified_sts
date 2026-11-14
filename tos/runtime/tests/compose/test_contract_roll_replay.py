@@ -11,7 +11,10 @@ from tos_runtime.compose._boot_integrity import EngineReplayDiverged
 
 from . import _fixtures as fx
 from . import conftest as cf
-from .conftest import call_wrapped_fixture, write_approval_file
+from .conftest import (
+    approve_constructed_intent,
+    call_wrapped_fixture,
+)
 from .test_compose_root import _compose, _reach_trusted
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
@@ -38,13 +41,10 @@ def _drive_one_real_hand_off(
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
     assert proposal_digest is not None
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=proposal_digest,
-        environment_label="non-live-test",
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     results2 = runtime.run_once((event,))
     assert results2[0].flow is not None and results2[0].flow.handed_off is True

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import stat
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -16,6 +18,7 @@ from tos_runtime.operations.dependency_admission import (
 )
 
 from ..riskstate._documents import action_flow_policy_yaml, aggregate_risk_policy_yaml
+from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from ..venue._documents import ocp_yaml, venue_policy_yaml
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
@@ -37,6 +40,17 @@ EXPECTED_DEPENDENCY_SET_DIGEST = observe_dependency_set_digest()
 
 def _write_yaml(path: Path, content: dict) -> None:
     path.write_text(yaml.safe_dump(content, sort_keys=False), encoding="utf-8")
+
+
+@pytest.fixture()
+def server() -> Iterator[FakeKisServer]:
+    """The one loopback KIS double this suite seals a MOCK deployment against."""
+    instance = FakeKisServer()
+    instance.start()
+    try:
+        yield instance
+    finally:
+        instance.stop()
 
 
 def _chmod_600(path: Path) -> None:
@@ -399,3 +413,21 @@ def write_approval_file(
     )
     _chmod_600(path)
     return path
+
+
+def approve_constructed_intent(
+    runtime: Any,
+    custody_root: Path,
+    *,
+    proposal_digest: str,
+    environment_label: str = "non-live-test",
+) -> Path:
+    """Approve the intent envelope ``runtime``'s construction stage just produced."""
+    construction = runtime.construction_stage.construction
+    assert construction is not None and construction.intent is not None
+    return write_approval_file(
+        custody_root,
+        proposal_digest=proposal_digest,
+        environment_label=environment_label,
+        approved_intent_envelope_digest=construction.intent.canonical_digest,
+    )

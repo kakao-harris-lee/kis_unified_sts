@@ -24,6 +24,8 @@ from tos_runtime.rcl.projection import (
     outstanding_reservations,
 )
 
+from .conftest import bind_attempt
+
 DEFAULT_SCOPE = ReservationScope(account="acct-1", instrument="101S06")
 
 
@@ -50,14 +52,7 @@ def test_projection_reflects_committed_transition(
         to_state=CapacityState.ATTEMPT_BOUND,
         scope=DEFAULT_SCOPE,
     )
-    result = log.apply_reservation_transition(
-        transition,
-        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
-        command_type=CommandType.BIND_ATTEMPT,
-        command_id="cmd-1",
-        command_digest="dig-1",
-        expected_seq=-1,
-    )
+    result = bind_attempt(log, transition)
     assert isinstance(result, AppendReceipt)
 
     reader = SqliteReservationProjectionReader(log)
@@ -83,14 +78,7 @@ def test_reservation_committed_vector_reads_back_the_committed_value(
         scope=DEFAULT_SCOPE,
         committed_vector=_NON_EMPTY_VECTOR,
     )
-    result = log.apply_reservation_transition(
-        transition,
-        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
-        command_type=CommandType.BIND_ATTEMPT,
-        command_id="cmd-1",
-        command_digest="dig-1",
-        expected_seq=-1,
-    )
+    result = bind_attempt(log, transition)
     assert isinstance(result, AppendReceipt)
 
     reader = SqliteReservationProjectionReader(log)
@@ -114,14 +102,7 @@ def test_committed_vector_reads_as_none_when_never_committed(
         to_state=CapacityState.ATTEMPT_BOUND,
         scope=DEFAULT_SCOPE,
     )
-    result = log.apply_reservation_transition(
-        transition,
-        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
-        command_type=CommandType.BIND_ATTEMPT,
-        command_id="cmd-1",
-        command_digest="dig-1",
-        expected_seq=-1,
-    )
+    result = bind_attempt(log, transition)
     assert isinstance(result, AppendReceipt)
 
     reader = SqliteReservationProjectionReader(log)
@@ -146,14 +127,7 @@ def test_explicitly_empty_committed_vector_is_distinguishable_from_none(
         scope=DEFAULT_SCOPE,
         committed_vector=CapacityVector(),
     )
-    result = log.apply_reservation_transition(
-        transition,
-        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
-        command_type=CommandType.BIND_ATTEMPT,
-        command_id="cmd-1",
-        command_digest="dig-1",
-        expected_seq=-1,
-    )
+    result = bind_attempt(log, transition)
     assert isinstance(result, AppendReceipt)
 
     reader = SqliteReservationProjectionReader(log)
@@ -179,14 +153,7 @@ def test_projection_reads_by_instrument_key_after_a_transition(
         to_state=CapacityState.ATTEMPT_BOUND,
         scope=DEFAULT_SCOPE,
     )
-    result = log.apply_reservation_transition(
-        transition,
-        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
-        command_type=CommandType.BIND_ATTEMPT,
-        command_id="cmd-1",
-        command_digest="dig-1",
-        expected_seq=-1,
-    )
+    result = bind_attempt(log, transition)
     assert isinstance(result, AppendReceipt)
 
     reader = SqliteReservationProjectionReader(log)

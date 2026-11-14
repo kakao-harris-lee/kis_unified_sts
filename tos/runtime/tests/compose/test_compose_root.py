@@ -28,7 +28,7 @@ from tos_runtime.strategy.resolve import StrategyRegistryResolutionRefused
 from tos_runtime.time.sources import MonotonicSource
 
 from . import _fixtures as fx
-from .conftest import write_approval_file
+from .conftest import approve_constructed_intent
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -261,13 +261,10 @@ def _reach_new_risk_halt_via_cancel_crossing_fill(runtime, custody_root: Path) -
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
     assert proposal_digest is not None
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=proposal_digest,
-        environment_label="non-live-test",
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     results2 = runtime.run_once((event,))
     assert results2[0].flow is not None and results2[0].flow.handed_off is True
@@ -537,13 +534,10 @@ class TestSyntheticEventDrivesTheChain:
 
         proposal_digest = result.pipeline.proposal.canonical_digest
         assert proposal_digest is not None
-        construction = runtime.construction_stage.construction
-        assert construction is not None and construction.intent is not None
-        write_approval_file(
+        approve_constructed_intent(
+            runtime,
             custody_root,
             proposal_digest=proposal_digest,
-            environment_label="non-live-test",
-            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
 
         results2 = runtime.run_once((event,))
@@ -584,13 +578,10 @@ class TestSyntheticEventDrivesTheChain:
         results = runtime.run_once((event,))
         proposal_digest = results[0].pipeline.proposal.canonical_digest
         assert proposal_digest is not None
-        construction = runtime.construction_stage.construction
-        assert construction is not None and construction.intent is not None
-        write_approval_file(
+        approve_constructed_intent(
+            runtime,
             custody_root,
             proposal_digest=proposal_digest,
-            environment_label="non-live-test",
-            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
 
         results2 = runtime.run_once((event,))
@@ -619,13 +610,10 @@ class TestSyntheticEventDrivesTheChain:
         event = fx.crossing_event()
         results = runtime.run_once((event,))
         proposal_digest = results[0].pipeline.proposal.canonical_digest
-        construction = runtime.construction_stage.construction
-        assert construction is not None and construction.intent is not None
-        write_approval_file(
+        approve_constructed_intent(
+            runtime,
             custody_root,
             proposal_digest=proposal_digest,
-            environment_label="non-live-test",
-            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
         runtime.run_once((event,))
         assert len(runtime.transport.requests) == 1
@@ -699,13 +687,10 @@ class TestRecomposeReplay:
         results = runtime.run_once((event,))
         proposal_digest = results[0].pipeline.proposal.canonical_digest
         assert proposal_digest is not None
-        construction = runtime.construction_stage.construction
-        assert construction is not None and construction.intent is not None
-        write_approval_file(
+        approve_constructed_intent(
+            runtime,
             custody_root,
             proposal_digest=proposal_digest,
-            environment_label="non-live-test",
-            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
         results2 = runtime.run_once((event,))
         assert results2[0].flow is not None and results2[0].flow.handed_off is True
@@ -731,13 +716,10 @@ class TestRecomposeReplay:
         results = runtime.run_once((event,))
         proposal_digest = results[0].pipeline.proposal.canonical_digest
         assert proposal_digest is not None
-        construction = runtime.construction_stage.construction
-        assert construction is not None and construction.intent is not None
-        write_approval_file(
+        approve_constructed_intent(
+            runtime,
             custody_root,
             proposal_digest=proposal_digest,
-            environment_label="non-live-test",
-            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
         results2 = runtime.run_once((event,))
         assert results2[0].flow is not None and results2[0].flow.handed_off is True
@@ -831,13 +813,10 @@ class TestRecomposeReplay:
         results = runtime.run_once((event,))
         proposal_digest = results[0].pipeline.proposal.canonical_digest
         assert proposal_digest is not None
-        construction = runtime.construction_stage.construction
-        assert construction is not None and construction.intent is not None
-        write_approval_file(
+        approve_constructed_intent(
+            runtime,
             custody_root,
             proposal_digest=proposal_digest,
-            environment_label="non-live-test",
-            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
         results2 = runtime.run_once((event,))
         assert results2[0].flow is not None and results2[0].flow.handed_off is True
@@ -914,13 +893,10 @@ class TestNonTrustedTimeBlocksNewRisk:
         event = fx.crossing_event()
         first = runtime.run_once((event,))[0]
         assert first.pipeline is not None and first.pipeline.proposal is not None
-        construction = runtime.construction_stage.construction
-        assert construction is not None and construction.intent is not None
-        write_approval_file(
+        approve_constructed_intent(
+            runtime,
             custody_root,
             proposal_digest=first.pipeline.proposal.canonical_digest,
-            environment_label="non-live-test",
-            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
 
         clock.force_regression()
@@ -1012,13 +988,10 @@ class TestPermitPathStaleGenerationProviderYieldsUnknown:
         event = fx.crossing_event()
         first = runtime.run_once((event,))[0]
         assert first.pipeline is not None and first.pipeline.proposal is not None
-        construction = runtime.construction_stage.construction
-        assert construction is not None and construction.intent is not None
-        write_approval_file(
+        approve_constructed_intent(
+            runtime,
             custody_root,
             proposal_digest=first.pipeline.proposal.canonical_digest,
-            environment_label="non-live-test",
-            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
         runtime.run_once((event,))
         assert runtime.flow_governor.last_decision is not None
@@ -1186,13 +1159,10 @@ class TestProjectionAuthorityMismatchHalts:
         event = fx.crossing_event()
         first = runtime.run_once((event,))[0]
         assert first.pipeline is not None and first.pipeline.proposal is not None
-        construction = runtime.construction_stage.construction
-        assert construction is not None and construction.intent is not None
-        write_approval_file(
+        approve_constructed_intent(
+            runtime,
             custody_root,
             proposal_digest=first.pipeline.proposal.canonical_digest,
-            environment_label="non-live-test",
-            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
         second = runtime.run_once((event,))[0]
         assert second.flow is not None and second.flow.attempt is not None, (
@@ -1351,13 +1321,10 @@ class TestCapacityObligationRecording:
         results = runtime.run_once((event,))
         proposal_digest = results[0].pipeline.proposal.canonical_digest
         assert proposal_digest is not None
-        construction = runtime.construction_stage.construction
-        assert construction is not None and construction.intent is not None
-        write_approval_file(
+        approve_constructed_intent(
+            runtime,
             custody_root,
             proposal_digest=proposal_digest,
-            environment_label="non-live-test",
-            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
 
         results2 = runtime.run_once((event,))
@@ -1453,13 +1420,10 @@ class TestOrthostateAndFinalityProjectionWiring:
 
         first = runtime.run_once((event,))
         proposal_digest = first[0].pipeline.proposal.canonical_digest
-        construction = runtime.construction_stage.construction
-        assert construction is not None and construction.intent is not None
-        write_approval_file(
+        approve_constructed_intent(
+            runtime,
             custody_root,
             proposal_digest=proposal_digest,
-            environment_label="non-live-test",
-            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
 
         second = runtime.run_once((event,))
@@ -1508,13 +1472,10 @@ class TestOrthostateAndFinalityProjectionWiring:
 
         first = runtime.run_once((event,))
         proposal_digest = first[0].pipeline.proposal.canonical_digest
-        construction = runtime.construction_stage.construction
-        assert construction is not None and construction.intent is not None
-        write_approval_file(
+        approve_constructed_intent(
+            runtime,
             custody_root,
             proposal_digest=proposal_digest,
-            environment_label="non-live-test",
-            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
 
         second = runtime.run_once((event,))

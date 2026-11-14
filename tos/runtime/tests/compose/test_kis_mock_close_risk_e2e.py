@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import threading
 import time
-from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -29,7 +28,7 @@ from tos_runtime.riskstate.service import RiskStateService
 
 from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
-from .conftest import write_approval_file
+from .conftest import approve_constructed_intent, write_approval_file
 from .test_kis_mock_e2e_honesty import _ORDER_PATH, _sealed_mock_deployment
 from .test_kis_mock_fill_finality_e2e import (
     _ODNO,
@@ -63,16 +62,6 @@ class _PacedClock:
 
     def sleep(self, seconds: float) -> None:
         self.advance(round(seconds * 1000))
-
-
-@pytest.fixture
-def server() -> Iterator[FakeKisServer]:
-    instance = FakeKisServer()
-    instance.start()
-    try:
-        yield instance
-    finally:
-        instance.stop()
 
 
 def _write_close_strategy(config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -262,13 +251,11 @@ def _step_verdict(result, step: CommitmentStep):
 def _discover_and_approve(runtime, custody_root: Path, event):
     result = runtime.run_once((event,))[0]
     assert result.pipeline is not None and result.pipeline.proposal is not None
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=result.pipeline.proposal.canonical_digest,
         environment_label=_ENVIRONMENT_LABEL,
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     return result
 

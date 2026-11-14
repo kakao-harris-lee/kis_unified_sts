@@ -13,7 +13,10 @@ from tos_runtime.compose.root import compose_paper_runtime
 
 from . import _fixtures as fx
 from . import _symmetry_fixtures as sfx
-from .conftest import call_wrapped_fixture, write_approval_file
+from .conftest import (
+    approve_constructed_intent,
+    call_wrapped_fixture,
+)
 from .conftest import config_dir as _config_dir_fixture
 from .conftest import custody_root as _custody_root_fixture
 from .conftest import data_dir as _data_dir_fixture
@@ -97,13 +100,10 @@ def _drive_to_send_boundary(runtime, custody_root: Path) -> SymmetryObservation:
     event = fx.crossing_event()
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=proposal_digest,
-        environment_label="non-live-test",
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
 
     results2 = runtime.run_once((event,))

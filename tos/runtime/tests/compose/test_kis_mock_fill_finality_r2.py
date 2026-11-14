@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -25,7 +24,6 @@ from tos_runtime.engine.replay_transmit import RecordedTransmit, any_recorded_ha
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.reservation_identity import permit_reservation_id
 
-from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
 from ._fixtures import SCHEME
 from .test_kis_mock_e2e_honesty import _boot
@@ -41,16 +39,6 @@ from .test_kis_mock_fill_finality_e2e import (
 from .test_kis_mock_fill_finality_recovery import _acked
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
-
-
-@pytest.fixture()
-def server() -> Iterator[FakeKisServer]:
-    srv = FakeKisServer()
-    srv.start()
-    try:
-        yield srv
-    finally:
-        srv.stop()
 
 
 def _full(date: str, qty: Decimal, **kw: str) -> dict[str, str]:
