@@ -411,7 +411,9 @@ jobs:
       # shapes: 37 of the 55 were the same `mp.Queue.get()` result in the
       # `*_import_closure.py` helpers (one instance per package, not deduplicated —
       # see the registry-with-unpinned-satellite note above; this stage left the
-      # duplication in place on purpose, scoped to the error-code fix only), and 9
+      # duplication in place on purpose, scoped to the error-code fix only — that
+      # duplication is gone since 2026-11-15: the 24 per-package helpers are now one
+      # table in `tos/tests/_closure_{policy,table,children}.py`), and 9
       # were `connection.execute(...).fetchone()[0]` SQLite count helpers (against
       # `SqliteEvidenceStore.connection`), which also gained a `row is not None`
       # check the bare `[0]` indexing had been skipping silently.
@@ -540,7 +542,8 @@ jobs:
       #   correctly, but `node.lineno` was read AFTER the if/elif chain, where
       #   `node`'s type has widened back to the bare `ast.AST` `ast.walk()` yields.
       #   Fixed in all 22 files (20 near-identical `test_*_import_closure.py`
-      #   sibling-import scanners + `test_stm_truthy_sentinel.py` +
+      #   sibling-import scanners — merged into one shared scanner on 2026-11-15,
+      #   `tos/tests/_closure_policy.py::scan_offenders` — + `test_stm_truthy_sentinel.py` +
       #   `test_sir_void_canaries.py`) the same way: capture `node.lineno` (or
       #   `(name, node.lineno)` / `(target, node.lineno)` pairs) INSIDE each
       #   narrowed branch instead of reading it from the widened loop variable
