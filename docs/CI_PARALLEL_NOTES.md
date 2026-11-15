@@ -16,9 +16,9 @@ first pass would otherwise silently skip the next `serial` test anyone adds
 under `tests/tools/test_tos_*.py` or `tests/tos_l3`. The step accepts exit 5
 and **only** exit 5 — a real serial-pass failure still turns it red.
 
-The `test` workflow's serial pass is unaffected; `tests/tools/test_cp3_*.py`,
-`test_bcp_digest.py` and `test_broker_probes_ca.py` still carry `serial`
-markers and still run there.
+The `test` workflow's serial pass is unaffected; `tests/tools/test_cp3_*.py`
+and `test_broker_probes_ca.py` still carry `serial` markers and still run there
+(`test_bcp_digest.py` went with `tools/bcp_digest.py` on 2026-11-15).
 
 Everything below this section is the historical record of earlier changes and
 refers to the retired test by name.
