@@ -736,8 +736,8 @@ jobs:
       # (docs/plans/2026-11-12-phase0-retirement-plan.md) deleted most of that
       # remainder — `tools/spikes/phase0_contract/` and the three loose v222
       # scripts — so what is left uncovered is `tools/broker_probes/` (14
-      # files, 20 errors at 06051fc3 under these same flags) plus
-      # `tools/bcp_digest.py`. Widening to all of `tools/` is a follow-up, and
+      # files, 20 errors at 06051fc3 under these same flags); `tools/bcp_digest.py`
+      # was deleted on 2026-11-15, unused. Widening to all of `tools/` is a follow-up, and
       # the broker-probe part of it touches real-order paths.
       - name: mypy (tos tooling)
         run: >-
