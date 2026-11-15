@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterator
 from decimal import Decimal
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -23,7 +21,6 @@ from tos.rcl import (
 from tos.recon import FreshnessMarker
 from tos.time.domains import HealthState
 from tos.workload import RuntimeIdentity
-from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.config import FinalityConfig
 from tos_runtime.posttrade.finality import FinalityResult, SyntheticFinalityProducer
@@ -56,6 +53,8 @@ from tos_runtime.recon.service import ReconciliationClass, ReconciliationService
 from tos_runtime.risk.ledger_stages import verdict_for_scope
 
 from ..engine.conftest import FakeMonotonicSource, FixedKeyProvider  # noqa: F401
+from .conftest import MONOTONIC_BASE_MS as _MONOTONIC_BASE_MS
+from .conftest import Rig
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 _ACCOUNT = "acct-relc"
@@ -104,39 +103,6 @@ def _producer() -> SyntheticFinalityProducer:
     return SyntheticFinalityProducer(config=_finality_config(), scheme=SCHEME)
 
 
-@pytest.fixture
-def evidence_store(tmp_path: Path) -> Iterator[SqliteEvidenceStore]:
-    instance = SqliteEvidenceStore(
-        tmp_path / "evidence.sqlite3", key_provider=FixedKeyProvider()
-    )
-    yield instance
-    instance.close()
-
-
-@pytest.fixture
-def inbox(tmp_path: Path) -> Iterator[SqliteEventInbox]:
-    instance = SqliteEventInbox(tmp_path / "inbox.sqlite3", scheme=SCHEME)
-    yield instance
-    instance.close()
-
-
-@pytest.fixture
-def rcl_log(
-    tmp_path: Path, evidence_store: SqliteEvidenceStore
-) -> Iterator[SqliteCommitLog]:
-    instance = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=evidence_store)
-    yield instance
-    instance.close()
-
-
-_MONOTONIC_BASE_MS = 1_700_000_000_000
-
-
-@pytest.fixture
-def monotonic_source() -> FakeMonotonicSource:
-    return FakeMonotonicSource(start=_MONOTONIC_BASE_MS)
-
-
 @pytest.fixture(autouse=True)
 def _attempt_permit_join(evidence_store: SqliteEvidenceStore) -> None:
     """This attempt's durable ``event_id`` join, which every real flow writes."""
@@ -147,6 +113,8 @@ def _open_reservation(
     rcl_log: SqliteCommitLog,
     *,
     to_state: CapacityState = CapacityState.POTENTIALLY_LIVE,
+    scope: ReservationScope | None = None,
+    command: str = "relc-setup",
 ) -> None:
     """Commit a genuinely open RCL reservation under this module's own scope-level id."""
     identity = RuntimeIdentity(
@@ -159,12 +127,16 @@ def _open_reservation(
             writer_epoch=epoch,
             from_state=CapacityState.COMMITTED_UNBOUND,
             to_state=to_state,
-            scope=ReservationScope(account=_ACCOUNT, instrument=_INSTRUMENT),
+            scope=(
+                scope
+                if scope is not None
+                else ReservationScope(account=_ACCOUNT, instrument=_INSTRUMENT)
+            ),
         ),
         TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
         command_type=CommandType.BIND_ATTEMPT,
-        command_id="cmd-relc-setup",
-        command_digest="dig-relc-setup",
+        command_id=f"cmd-{command}",
+        command_digest=f"dig-{command}",
         expected_seq=-1,
     )
 
@@ -173,24 +145,7 @@ def _open_reservation_under_scope(
     rcl_log: SqliteCommitLog, *, scope: ReservationScope
 ) -> None:
     """Like :func:`_open_reservation`, but persists a caller-supplied"""
-    identity = RuntimeIdentity(
-        cell_id="relc-test-cell", process_nonce="relc-test-nonce"
-    )
-    epoch = rcl_log.acquire_epoch(identity)
-    rcl_log.apply_reservation_transition(
-        CapacityReservationTransition(
-            reservation_id=_RESERVATION_ID,
-            writer_epoch=epoch,
-            from_state=CapacityState.COMMITTED_UNBOUND,
-            to_state=CapacityState.POTENTIALLY_LIVE,
-            scope=scope,
-        ),
-        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
-        command_type=CommandType.BIND_ATTEMPT,
-        command_id="cmd-relc-setup-divergent",
-        command_digest="dig-relc-setup-divergent",
-        expected_seq=-1,
-    )
+    _open_reservation(rcl_log, scope=scope, command="relc-setup-divergent")
 
 
 def _commit_transition(
@@ -305,33 +260,31 @@ class _IndependentCancelledWitness:
 
 
 def _consumer(
+    rig: Rig,
     *,
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    witness: BrokerWitness,
-    monotonic_source: FakeMonotonicSource,
+    witness: BrokerWitness | None = None,
     release_proof_wait_ms: int = 60_000,
     time_service: FinalityConsumerTimeReader | None = None,
 ) -> FinalityReleaseConsumer:
+    """This suite's consumer; ``witness`` defaults to the independent FULL_FILL double."""
     recon_service = ReconciliationService(
-        rcl_reader=SqliteReservationProjectionReader(rcl_log),
-        evidence_reader=SqliteEvidenceReceiptReader(evidence_store),
-        witness=witness,
+        rcl_reader=SqliteReservationProjectionReader(rig.rcl_log),
+        evidence_reader=SqliteEvidenceReceiptReader(rig.evidence_store),
+        witness=witness if witness is not None else _IndependentFullFillWitness(),
         reservation_id_for_attempt=lambda _attempt_id: _RESERVATION_ID,
     )
     return FinalityReleaseConsumer(
-        rcl_log=rcl_log,
-        projection=SqliteReservationProjectionReader(rcl_log),
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rcl_log=rig.rcl_log,
+        projection=SqliteReservationProjectionReader(rig.rcl_log),
+        evidence_store=rig.evidence_store,
+        inbox=rig.inbox,
         recon_service=recon_service,
         time_service=(
             time_service if time_service is not None else _TrustedTimeService()
         ),
         finality_producer=_producer(),
         scheme=SCHEME,
-        monotonic_source=monotonic_source,
+        monotonic_source=rig.monotonic_source,
         account=_ACCOUNT,
         instrument=_INSTRUMENT,
         release_proof_wait_ms=release_proof_wait_ms,
@@ -364,6 +317,14 @@ def _reservation_state(rcl_log: SqliteCommitLog) -> CapacityState | None:
         if reservation_id == _RESERVATION_ID:
             return state
     return None
+
+
+def _count_kind(evidence_store: SqliteEvidenceStore, kind: str) -> int:
+    """How many durable rows of ``kind`` the store holds."""
+    (count,) = evidence_store.connection.execute(
+        "SELECT COUNT(*) FROM entries WHERE kind = ?", (kind,)
+    ).fetchone()
+    return int(count)
 
 
 def _kind_seq(evidence_store: SqliteEvidenceStore, kind: str) -> list[int]:
@@ -411,6 +372,20 @@ def _seed_full_fill_obligation(
     return payload, produced
 
 
+def _payload(kind: EgressResultKind) -> EgressResultPayload:
+    """This attempt's egress result of ``kind``, with no fill quantities attached."""
+    return EgressResultPayload(instrument_key=_KEY, attempt_id=_ATTEMPT_ID, kind=kind)
+
+
+def _arrange_full_fill(rig: Rig) -> tuple[EgressResultPayload, FinalityResult]:
+    """A durable FULL_FILL obligation, its witness and receipt, over an open reservation."""
+    payload, produced = _seed_full_fill_obligation(rig.evidence_store)
+    rig.inbox.record_finality_witness(_ATTEMPT_ID, True)
+    _record_full_fill_receipt(rig.evidence_store, finality_proof_recorded=False)
+    _open_reservation(rig.rcl_log)
+    return payload, produced
+
+
 def test_release_consumer_imports_cleanly_after_a_cold_cache_eviction() -> None:
     """TOS Phase 5 W2-R re-review finding NEW-1 (2026-09-10): ``import"""
     evicted_prefixes = ("tos_runtime.engine",)
@@ -435,29 +410,17 @@ def test_release_consumer_imports_cleanly_after_a_cold_cache_eviction() -> None:
 
 
 def test_full_fill_with_independent_witness_releases_to_position_consumed(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
-    payload, produced = _seed_full_fill_obligation(evidence_store)
-    inbox.record_finality_witness(_ATTEMPT_ID, True)
-    _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
-    _open_reservation(rcl_log)
+    payload, produced = _arrange_full_fill(rig)
 
-    consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=_IndependentFullFillWitness(),
-        monotonic_source=monotonic_source,
-    )
+    consumer = _consumer(rig)
     outcome = consumer.consume(payload)
 
-    assert _reservation_state(rcl_log) is CapacityState.POSITION_CONSUMED
-    assert _held_rows(evidence_store) == []
-    intent_seqs = _kind_seq(evidence_store, CAPACITY_RELEASE_INTENT_KIND)
-    rcl_seqs = _kind_seq(evidence_store, "RCL_RESERVATION_TRANSITION")
+    assert _reservation_state(rig.rcl_log) is CapacityState.POSITION_CONSUMED
+    assert _held_rows(rig.evidence_store) == []
+    intent_seqs = _kind_seq(rig.evidence_store, CAPACITY_RELEASE_INTENT_KIND)
+    rcl_seqs = _kind_seq(rig.evidence_store, "RCL_RESERVATION_TRANSITION")
     assert len(intent_seqs) == 1
     assert len(rcl_seqs) >= 1
     assert intent_seqs[0] < rcl_seqs[-1]
@@ -470,26 +433,14 @@ def test_full_fill_with_independent_witness_releases_to_position_consumed(
 
 
 def test_full_fill_release_outcome_feeds_a_real_kernel_ledger_release(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """The full kernel round #3 §2 decision 5 / W2-K chain, end to end at the unit level (the"""
     from tos.engine.state import FinalityProofRef, ProvisionalReservationLedger
 
-    payload, produced = _seed_full_fill_obligation(evidence_store)
-    inbox.record_finality_witness(_ATTEMPT_ID, True)
-    _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
-    _open_reservation(rcl_log)
+    payload, produced = _arrange_full_fill(rig)
 
-    consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=_IndependentFullFillWitness(),
-        monotonic_source=monotonic_source,
-    )
+    consumer = _consumer(rig)
     outcome = consumer.consume(payload)
     assert outcome.released is True
 
@@ -518,10 +469,7 @@ def test_full_fill_release_outcome_feeds_a_real_kernel_ledger_release(
 
 
 def test_full_fill_without_witness_holds(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """Gate 1: a durable witness that is not exactly ``True`` (e.g. never written, mirroring a"""
     payload = EgressResultPayload(
@@ -531,20 +479,14 @@ def test_full_fill_without_witness_holds(
         filled_quantity=Decimal("10"),
         remaining_quantity=Decimal("0"),
     )
-    _record_full_fill_receipt(evidence_store, finality_proof_recorded=True)
-    _open_reservation(rcl_log)
+    _record_full_fill_receipt(rig.evidence_store, finality_proof_recorded=True)
+    _open_reservation(rig.rcl_log)
 
-    consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=_IndependentFullFillWitness(),
-        monotonic_source=monotonic_source,
-    )
+    consumer = _consumer(rig)
     outcome = consumer.consume(payload)
 
-    assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
-    held = _held_rows(evidence_store)
+    assert _reservation_state(rig.rcl_log) is CapacityState.POTENTIALLY_LIVE
+    held = _held_rows(rig.evidence_store)
     assert len(held) == 1
     assert held[0]["reason"] == ReleaseHoldReason.NO_WITNESS.value
     assert outcome.released is False
@@ -554,56 +496,38 @@ def test_full_fill_without_witness_holds(
 
 
 def test_report_not_permitting_capacity_release_holds_even_with_witness_and_proof(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """A ``ReconciliationService`` whose report never permits capacity release (fake PORTS"""
-    payload, produced = _seed_full_fill_obligation(evidence_store)
-    inbox.record_finality_witness(_ATTEMPT_ID, True)
-    _open_reservation(rcl_log)
+    payload, produced = _seed_full_fill_obligation(rig.evidence_store)
+    rig.inbox.record_finality_witness(_ATTEMPT_ID, True)
+    _open_reservation(rig.rcl_log)
 
-    consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=_IndependentFullFillWitness(),
-        monotonic_source=monotonic_source,
-    )
+    consumer = _consumer(rig)
     consumer.consume(payload)
 
-    assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
-    held = _held_rows(evidence_store)
+    assert _reservation_state(rig.rcl_log) is CapacityState.POTENTIALLY_LIVE
+    held = _held_rows(rig.evidence_store)
     assert len(held) == 1
     assert held[0]["reason"] == ReleaseHoldReason.NOT_CORROBORATED.value
-    assert _kind_seq(evidence_store, CAPACITY_RELEASE_INTENT_KIND) == []
+    assert _kind_seq(rig.evidence_store, CAPACITY_RELEASE_INTENT_KIND) == []
 
 
 def test_full_fill_with_non_independent_witness_holds(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     from tos_runtime.recon.witness_synthetic import SyntheticLedgerWitness
 
-    payload, produced = _seed_full_fill_obligation(evidence_store)
-    inbox.record_finality_witness(_ATTEMPT_ID, True)
-    _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
-    _open_reservation(rcl_log)
+    payload, produced = _arrange_full_fill(rig)
 
     consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=SyntheticLedgerWitness(evidence_store),
-        monotonic_source=monotonic_source,
+        rig,
+        witness=SyntheticLedgerWitness(rig.evidence_store),
     )
     consumer.consume(payload)
 
-    assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
-    held = _held_rows(evidence_store)
+    assert _reservation_state(rig.rcl_log) is CapacityState.POTENTIALLY_LIVE
+    held = _held_rows(rig.evidence_store)
     assert len(held) == 1
     assert held[0]["reason"] == ReleaseHoldReason.WITNESS_NOT_INDEPENDENT.value
 
@@ -632,48 +556,51 @@ class _StubPermittingReconciliationService:
         )
 
 
-def test_cancel_ack_releases_when_reconciliation_permits_it(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
-) -> None:
-    """Pins the consumer's OWN release wiring for the non-execution path: given a permitting"""
-    payload = EgressResultPayload(
-        instrument_key=_KEY,
-        attempt_id=_ATTEMPT_ID,
-        kind=EgressResultKind.CANCEL_ACK,
+def _non_execution_consumer(
+    rig: Rig,
+    *,
+    recon_service: object | None = None,
+) -> FinalityReleaseConsumer:
+    """The consumer with gate 3 STUBBED to permit — the same isolation"""
+    stub = (
+        recon_service
+        if recon_service is not None
+        else _StubPermittingReconciliationService()
     )
-    _open_reservation(rcl_log)
-
-    consumer = FinalityReleaseConsumer(
-        rcl_log=rcl_log,
-        projection=SqliteReservationProjectionReader(rcl_log),
-        evidence_store=evidence_store,
-        inbox=inbox,
-        recon_service=_StubPermittingReconciliationService(),  # type: ignore[arg-type]
+    return FinalityReleaseConsumer(
+        rcl_log=rig.rcl_log,
+        projection=SqliteReservationProjectionReader(rig.rcl_log),
+        evidence_store=rig.evidence_store,
+        inbox=rig.inbox,
+        recon_service=stub,  # type: ignore[arg-type]
         time_service=_TrustedTimeService(),
         finality_producer=_producer(),
         scheme=SCHEME,
-        monotonic_source=monotonic_source,
+        monotonic_source=rig.monotonic_source,
         account=_ACCOUNT,
         instrument=_INSTRUMENT,
         release_proof_wait_ms=60_000,
     )
+
+
+def test_cancel_ack_releases_when_reconciliation_permits_it(
+    rig: Rig,
+) -> None:
+    """Pins the consumer's OWN release wiring for the non-execution path: given a permitting"""
+    payload = _payload(EgressResultKind.CANCEL_ACK)
+    _open_reservation(rig.rcl_log)
+
+    consumer = _non_execution_consumer(rig)
     outcome = consumer.consume(payload)
 
-    assert _reservation_state(rcl_log) is CapacityState.RELEASED
-    assert _held_rows(evidence_store) == []
-    proof_rows = evidence_store.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE kind = 'POSTTRADE_FINALITY_PROOF'"
-    ).fetchone()[0]
+    assert _reservation_state(rig.rcl_log) is CapacityState.RELEASED
+    assert _held_rows(rig.evidence_store) == []
+    proof_rows = _count_kind(rig.evidence_store, "POSTTRADE_FINALITY_PROOF")
     assert proof_rows == 1
-    obligation_rows = evidence_store.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE kind = 'ECONOMIC_OBLIGATION'"
-    ).fetchone()[0]
+    obligation_rows = _count_kind(rig.evidence_store, "ECONOMIC_OBLIGATION")
     assert obligation_rows == 1
-    intent_seqs = _kind_seq(evidence_store, CAPACITY_RELEASE_INTENT_KIND)
-    rcl_seqs = _kind_seq(evidence_store, "RCL_RESERVATION_TRANSITION")
+    intent_seqs = _kind_seq(rig.evidence_store, CAPACITY_RELEASE_INTENT_KIND)
+    rcl_seqs = _kind_seq(rig.evidence_store, "RCL_RESERVATION_TRANSITION")
     assert len(intent_seqs) == 1
     assert intent_seqs[0] < rcl_seqs[-1]
 
@@ -685,38 +612,26 @@ def test_cancel_ack_releases_when_reconciliation_permits_it(
 
 
 def test_cancel_ack_never_releases_under_the_current_reconciliation_model(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """The honest, undoctored path (module docstring): a fresh ``CANCEL_ACK``, a fully"""
-    payload = EgressResultPayload(
-        instrument_key=_KEY,
-        attempt_id=_ATTEMPT_ID,
-        kind=EgressResultKind.CANCEL_ACK,
-    )
+    payload = _payload(EgressResultKind.CANCEL_ACK)
     _record_non_execution_receipt(
-        evidence_store, kind="CANCEL_ACK", finality_proof_recorded=False
+        rig.evidence_store, kind="CANCEL_ACK", finality_proof_recorded=False
     )
-    _open_reservation(rcl_log)
+    _open_reservation(rig.rcl_log)
 
     consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=_IndependentCancelledWitness(),
-        monotonic_source=monotonic_source,
     )
     consumer.consume(payload)
 
-    assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
-    held = _held_rows(evidence_store)
+    assert _reservation_state(rig.rcl_log) is CapacityState.POTENTIALLY_LIVE
+    held = _held_rows(rig.evidence_store)
     assert len(held) == 1
     assert held[0]["reason"] == ReleaseHoldReason.NOT_CORROBORATED.value
-    proof_rows = evidence_store.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE kind = 'POSTTRADE_FINALITY_PROOF'"
-    ).fetchone()[0]
+    proof_rows = _count_kind(rig.evidence_store, "POSTTRADE_FINALITY_PROOF")
     assert proof_rows == 0
 
 
@@ -730,10 +645,7 @@ def test_cancel_ack_never_releases_under_the_current_reconciliation_model(
     ],
 )
 def test_non_release_eligible_kinds_record_nothing_release_related(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
     kind: EgressResultKind,
     filled: str | None,
     remaining: str | None,
@@ -745,172 +657,113 @@ def test_non_release_eligible_kinds_record_nothing_release_related(
         filled_quantity=None if filled is None else Decimal(filled),
         remaining_quantity=None if remaining is None else Decimal(remaining),
     )
-    _open_reservation(rcl_log)
+    _open_reservation(rig.rcl_log)
 
-    consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=_IndependentFullFillWitness(),
-        monotonic_source=monotonic_source,
-    )
+    consumer = _consumer(rig)
     consumer.consume(payload)
 
-    assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
-    assert _held_rows(evidence_store) == []
-    assert _kind_seq(evidence_store, CAPACITY_RELEASE_INTENT_KIND) == []
+    assert _reservation_state(rig.rcl_log) is CapacityState.POTENTIALLY_LIVE
+    assert _held_rows(rig.evidence_store) == []
+    assert _kind_seq(rig.evidence_store, CAPACITY_RELEASE_INTENT_KIND) == []
 
 
 def test_obligation_expiry_first_observation_only_records_wait_start(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
-    payload = EgressResultPayload(
-        instrument_key=_KEY, attempt_id=_ATTEMPT_ID, kind=EgressResultKind.ACK
-    )
-    _open_reservation(rcl_log, to_state=CapacityState.QUARANTINED_UNKNOWN)
+    payload = _payload(EgressResultKind.ACK)
+    _open_reservation(rig.rcl_log, to_state=CapacityState.QUARANTINED_UNKNOWN)
 
     consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=_IndependentFullFillWitness(),
-        monotonic_source=monotonic_source,
+        rig,
         release_proof_wait_ms=1_000,
     )
     consumer.consume(payload)
 
-    overdue = evidence_store.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE kind = ?", (RELEASE_PROOF_OVERDUE_KIND,)
-    ).fetchone()[0]
+    overdue = _count_kind(rig.evidence_store, RELEASE_PROOF_OVERDUE_KIND)
     assert overdue == 0
     assert len(consumer._wait_start_ms) == 1  # noqa: SLF001
     ((_stored_key, stored_first_observed_ms),) = (
         consumer._wait_start_ms.items()
     )  # noqa: SLF001
     assert stored_first_observed_ms == _MONOTONIC_BASE_MS
-    wait_start_rows = evidence_store.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE kind = 'RELEASE_PROOF_WAIT_START'"
-    ).fetchone()[0]
+    wait_start_rows = _count_kind(rig.evidence_store, "RELEASE_PROOF_WAIT_START")
     assert wait_start_rows == 0
 
 
 def test_obligation_expiry_records_overdue_once_past_the_bound(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
-    payload = EgressResultPayload(
-        instrument_key=_KEY, attempt_id=_ATTEMPT_ID, kind=EgressResultKind.ACK
-    )
-    _open_reservation(rcl_log, to_state=CapacityState.QUARANTINED_UNKNOWN)
+    payload = _payload(EgressResultKind.ACK)
+    _open_reservation(rig.rcl_log, to_state=CapacityState.QUARANTINED_UNKNOWN)
 
     consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=_IndependentFullFillWitness(),
-        monotonic_source=monotonic_source,
+        rig,
         release_proof_wait_ms=1_000,
     )
     consumer.consume(payload)
 
-    monotonic_source.advance(1_001)
+    rig.monotonic_source.advance(1_001)
     consumer.consume(payload)
 
-    overdue = evidence_store.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE kind = ?", (RELEASE_PROOF_OVERDUE_KIND,)
-    ).fetchone()[0]
+    overdue = _count_kind(rig.evidence_store, RELEASE_PROOF_OVERDUE_KIND)
     assert overdue == 1
 
     consumer.consume(payload)
-    overdue_again = evidence_store.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE kind = ?", (RELEASE_PROOF_OVERDUE_KIND,)
-    ).fetchone()[0]
+    overdue_again = _count_kind(rig.evidence_store, RELEASE_PROOF_OVERDUE_KIND)
     assert overdue_again == 1
 
 
 def test_obligation_expiry_never_fires_for_a_non_overdue_eligible_state(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
-    payload = EgressResultPayload(
-        instrument_key=_KEY, attempt_id=_ATTEMPT_ID, kind=EgressResultKind.ACK
-    )
-    _open_reservation(rcl_log, to_state=CapacityState.POTENTIALLY_LIVE)
+    payload = _payload(EgressResultKind.ACK)
+    _open_reservation(rig.rcl_log, to_state=CapacityState.POTENTIALLY_LIVE)
 
     consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=_IndependentFullFillWitness(),
-        monotonic_source=monotonic_source,
+        rig,
         release_proof_wait_ms=1_000,
     )
     consumer.consume(payload)
-    monotonic_source.advance(5_000)
+    rig.monotonic_source.advance(5_000)
     consumer.consume(payload)
 
     for kind in (RELEASE_PROOF_OVERDUE_KIND, "RELEASE_PROOF_WAIT_START"):
-        count = evidence_store.connection.execute(
-            "SELECT COUNT(*) FROM entries WHERE kind = ?", (kind,)
-        ).fetchone()[0]
+        count = _count_kind(rig.evidence_store, kind)
         assert count == 0
 
 
 def test_obligation_expiry_evaluates_nothing_when_time_is_not_trusted(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """Independent-review finding H2: with ``time_service.health_state`` not ``TRUSTED``,"""
-    payload = EgressResultPayload(
-        instrument_key=_KEY, attempt_id=_ATTEMPT_ID, kind=EgressResultKind.ACK
-    )
-    _open_reservation(rcl_log, to_state=CapacityState.QUARANTINED_UNKNOWN)
+    payload = _payload(EgressResultKind.ACK)
+    _open_reservation(rig.rcl_log, to_state=CapacityState.QUARANTINED_UNKNOWN)
 
     consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=_IndependentFullFillWitness(),
-        monotonic_source=monotonic_source,
+        rig,
         release_proof_wait_ms=1_000,
         time_service=_UntrustedTimeService(),
     )
     consumer.consume(payload)
-    monotonic_source.advance(5_000)
+    rig.monotonic_source.advance(5_000)
     consumer.consume(payload)
 
     assert consumer._wait_start_ms == {}  # noqa: SLF001
     for kind in (RELEASE_PROOF_OVERDUE_KIND, "RELEASE_PROOF_WAIT_START"):
-        count = evidence_store.connection.execute(
-            "SELECT COUNT(*) FROM entries WHERE kind = ?", (kind,)
-        ).fetchone()[0]
+        count = _count_kind(rig.evidence_store, kind)
         assert count == 0
 
 
 def test_obligation_expiry_records_overdue_again_for_a_new_occupancy(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """Independent-review finding M1: leaving the overdue-eligible state and re-entering it"""
-    payload = EgressResultPayload(
-        instrument_key=_KEY, attempt_id=_ATTEMPT_ID, kind=EgressResultKind.ACK
-    )
+    payload = _payload(EgressResultKind.ACK)
     identity = RuntimeIdentity(
         cell_id="relc-test-cell", process_nonce="relc-test-nonce"
     )
-    epoch = rcl_log.acquire_epoch(identity)
-    rcl_log.apply_reservation_transition(
+    epoch = rig.rcl_log.acquire_epoch(identity)
+    rig.rcl_log.apply_reservation_transition(
         CapacityReservationTransition(
             reservation_id=_RESERVATION_ID,
             writer_epoch=epoch,
@@ -926,31 +779,25 @@ def test_obligation_expiry_records_overdue_again_for_a_new_occupancy(
     )
 
     consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=_IndependentFullFillWitness(),
-        monotonic_source=monotonic_source,
+        rig,
         release_proof_wait_ms=1_000,
     )
     consumer.consume(payload)
-    monotonic_source.advance(1_001)
+    rig.monotonic_source.advance(1_001)
     consumer.consume(payload)
 
-    first_overdue = evidence_store.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE kind = ?", (RELEASE_PROOF_OVERDUE_KIND,)
-    ).fetchone()[0]
+    first_overdue = _count_kind(rig.evidence_store, RELEASE_PROOF_OVERDUE_KIND)
     assert first_overdue == 1
 
     _commit_transition(
-        rcl_log,
+        rig.rcl_log,
         epoch=epoch,
         from_state=CapacityState.QUARANTINED_UNKNOWN,
         to_state=CapacityState.POTENTIALLY_LIVE,
         command_id="cmd-relc-exit-occupancy-1",
     )
     _commit_transition(
-        rcl_log,
+        rig.rcl_log,
         epoch=epoch,
         from_state=CapacityState.POTENTIALLY_LIVE,
         to_state=CapacityState.QUARANTINED_UNKNOWN,
@@ -958,62 +805,43 @@ def test_obligation_expiry_records_overdue_again_for_a_new_occupancy(
     )
 
     consumer.consume(payload)
-    still_one = evidence_store.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE kind = ?", (RELEASE_PROOF_OVERDUE_KIND,)
-    ).fetchone()[0]
+    still_one = _count_kind(rig.evidence_store, RELEASE_PROOF_OVERDUE_KIND)
     assert still_one == 1
 
-    monotonic_source.advance(1_001)
+    rig.monotonic_source.advance(1_001)
     consumer.consume(payload)
 
-    second_overdue = evidence_store.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE kind = ?", (RELEASE_PROOF_OVERDUE_KIND,)
-    ).fetchone()[0]
+    second_overdue = _count_kind(rig.evidence_store, RELEASE_PROOF_OVERDUE_KIND)
     assert second_overdue == 2
 
 
 def test_gate4_holds_when_the_rcl_persisted_scope_diverges_from_the_proof(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """Independent-review finding H1: ``target_leg_scope``'s account now comes from the RCL"""
-    payload, produced = _seed_full_fill_obligation(evidence_store)
-    inbox.record_finality_witness(_ATTEMPT_ID, True)
-    _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
+    payload, produced = _seed_full_fill_obligation(rig.evidence_store)
+    rig.inbox.record_finality_witness(_ATTEMPT_ID, True)
+    _record_full_fill_receipt(rig.evidence_store, finality_proof_recorded=False)
     _open_reservation_under_scope(
-        rcl_log,
+        rig.rcl_log,
         scope=ReservationScope(account="divergent-account", instrument=_INSTRUMENT),
     )
 
-    consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=_IndependentFullFillWitness(),
-        monotonic_source=monotonic_source,
-    )
+    consumer = _consumer(rig)
     consumer.consume(payload)
 
-    assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
-    held = _held_rows(evidence_store)
+    assert _reservation_state(rig.rcl_log) is CapacityState.POTENTIALLY_LIVE
+    held = _held_rows(rig.evidence_store)
     assert len(held) == 1
     assert held[0]["reason"] == ReleaseHoldReason.PROOF_NOT_TRANSFERABLE.value
 
 
 def test_gate4_holds_when_a_newer_obligation_generation_supersedes_the_proof(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """Independent-review finding H1: ``active_generation`` now comes from the NEWEST"""
-    payload, produced = _seed_full_fill_obligation(evidence_store)
-    inbox.record_finality_witness(_ATTEMPT_ID, True)
-    _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
-    _open_reservation(rcl_log)
-    evidence_store.append(
+    payload, produced = _arrange_full_fill(rig)
+    rig.evidence_store.append(
         {
             "account_scope": _ACCOUNT,
             "instrument_identity": _INSTRUMENT,
@@ -1023,26 +851,17 @@ def test_gate4_holds_when_a_newer_obligation_generation_supersedes_the_proof(
         record_class="ECONOMIC_OBLIGATION",
     )
 
-    consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=_IndependentFullFillWitness(),
-        monotonic_source=monotonic_source,
-    )
+    consumer = _consumer(rig)
     consumer.consume(payload)
 
-    assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
-    held = _held_rows(evidence_store)
+    assert _reservation_state(rig.rcl_log) is CapacityState.POTENTIALLY_LIVE
+    held = _held_rows(rig.evidence_store)
     assert len(held) == 1
     assert held[0]["reason"] == ReleaseHoldReason.PROOF_NOT_CURRENT.value
 
 
 def test_non_execution_path_genuinely_reloads_rather_than_trusting_produced_proof(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Independent-review finding M3 (mutation (d), direct pin): forces"""
@@ -1051,87 +870,43 @@ def test_non_execution_path_genuinely_reloads_rather_than_trusting_produced_proo
         "_reload_proof",
         lambda *_args, **_kwargs: None,
     )
-    payload = EgressResultPayload(
-        instrument_key=_KEY,
-        attempt_id=_ATTEMPT_ID,
-        kind=EgressResultKind.CANCEL_ACK,
-    )
-    _open_reservation(rcl_log)
+    payload = _payload(EgressResultKind.CANCEL_ACK)
+    _open_reservation(rig.rcl_log)
 
-    consumer = FinalityReleaseConsumer(
-        rcl_log=rcl_log,
-        projection=SqliteReservationProjectionReader(rcl_log),
-        evidence_store=evidence_store,
-        inbox=inbox,
-        recon_service=_StubPermittingReconciliationService(),  # type: ignore[arg-type]
-        time_service=_TrustedTimeService(),
-        finality_producer=_producer(),
-        scheme=SCHEME,
-        monotonic_source=monotonic_source,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        release_proof_wait_ms=60_000,
-    )
+    consumer = _non_execution_consumer(rig)
     consumer.consume(payload)
 
-    assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
-    held = _held_rows(evidence_store)
+    assert _reservation_state(rig.rcl_log) is CapacityState.POTENTIALLY_LIVE
+    held = _held_rows(rig.evidence_store)
     assert len(held) == 1
     assert held[0]["reason"] == ReleaseHoldReason.PROOF_NOT_RELOADED.value
-    proof_rows = evidence_store.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE kind = 'POSTTRADE_FINALITY_PROOF'"
-    ).fetchone()[0]
+    proof_rows = _count_kind(rig.evidence_store, "POSTTRADE_FINALITY_PROOF")
     assert proof_rows == 1
 
 
 def test_non_execution_path_holds_when_gate4_diverges_too(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """Independent-review finding M3 (routing through gate 4): the non-execution destination now"""
-    payload = EgressResultPayload(
-        instrument_key=_KEY,
-        attempt_id=_ATTEMPT_ID,
-        kind=EgressResultKind.CANCEL_ACK,
-    )
+    payload = _payload(EgressResultKind.CANCEL_ACK)
     _open_reservation_under_scope(
-        rcl_log,
+        rig.rcl_log,
         scope=ReservationScope(account="divergent-account", instrument=_INSTRUMENT),
     )
 
-    consumer = FinalityReleaseConsumer(
-        rcl_log=rcl_log,
-        projection=SqliteReservationProjectionReader(rcl_log),
-        evidence_store=evidence_store,
-        inbox=inbox,
-        recon_service=_StubPermittingReconciliationService(),  # type: ignore[arg-type]
-        time_service=_TrustedTimeService(),
-        finality_producer=_producer(),
-        scheme=SCHEME,
-        monotonic_source=monotonic_source,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        release_proof_wait_ms=60_000,
-    )
+    consumer = _non_execution_consumer(rig)
     consumer.consume(payload)
 
-    assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
-    held = _held_rows(evidence_store)
+    assert _reservation_state(rig.rcl_log) is CapacityState.POTENTIALLY_LIVE
+    held = _held_rows(rig.evidence_store)
     assert len(held) == 1
     assert held[0]["reason"] == ReleaseHoldReason.PROOF_NOT_TRANSFERABLE.value
-    proof_rows = evidence_store.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE kind = 'POSTTRADE_FINALITY_PROOF'"
-    ).fetchone()[0]
+    proof_rows = _count_kind(rig.evidence_store, "POSTTRADE_FINALITY_PROOF")
     assert proof_rows == 1
 
 
 def test_non_execution_proof_never_shadows_an_earlier_full_fill_proof_for_the_same_attempt(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """Independent-review finding M4: a ``FULL_FILL`` proof recorded for an attempt, followed by"""
     fill_payload = EgressResultPayload(
@@ -1144,12 +919,12 @@ def test_non_execution_proof_never_shadows_an_earlier_full_fill_proof_for_the_sa
     producer = _producer()
     fill_result = producer.produce(fill_payload)
     assert fill_result is not None
-    evidence_store.append(
+    rig.evidence_store.append(
         fill_result.record.model_dump(mode="json"),
         kind="ECONOMIC_OBLIGATION",
         record_class="ECONOMIC_OBLIGATION",
     )
-    evidence_store.append(
+    rig.evidence_store.append(
         fill_result.proof.model_dump(mode="json"),
         kind="POSTTRADE_FINALITY_PROOF",
         record_class="POSTTRADE_FINALITY_PROOF",
@@ -1160,12 +935,12 @@ def test_non_execution_proof_never_shadows_an_earlier_full_fill_proof_for_the_sa
     )
     non_exec_result = producer.produce_non_execution(non_exec_payload)
     assert non_exec_result is not None
-    evidence_store.append(
+    rig.evidence_store.append(
         non_exec_result.record.model_dump(mode="json"),
         kind="ECONOMIC_OBLIGATION",
         record_class="ECONOMIC_OBLIGATION",
     )
-    evidence_store.append(
+    rig.evidence_store.append(
         non_exec_result.proof.model_dump(mode="json"),
         kind="POSTTRADE_FINALITY_PROOF",
         record_class="POSTTRADE_FINALITY_PROOF",
@@ -1178,14 +953,8 @@ def test_non_execution_proof_never_shadows_an_earlier_full_fill_proof_for_the_sa
         NON_EXECUTION_PROOF_ID_PREFIX,
     )
 
-    _open_reservation(rcl_log)
-    consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=_IndependentFullFillWitness(),
-        monotonic_source=monotonic_source,
-    )
+    _open_reservation(rig.rcl_log)
+    consumer = _consumer(rig)
 
     reloaded_fill_proof = consumer._reload_proof(  # noqa: SLF001
         _ATTEMPT_ID, id_prefix=FULL_FILL_PROOF_ID_PREFIX
@@ -1214,10 +983,7 @@ def test_non_execution_proof_never_shadows_an_earlier_full_fill_proof_for_the_sa
 
 
 def test_matched_conjunct_holds_when_no_classification_covers_the_attempt(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """Independent-review finding M7 (mutation (m)): a report that permits capacity release but"""
 
@@ -1236,51 +1002,32 @@ def test_matched_conjunct_holds_when_no_classification_covers_the_attempt(
                 reason=None,
             )
 
-    payload = EgressResultPayload(
-        instrument_key=_KEY,
-        attempt_id=_ATTEMPT_ID,
-        kind=EgressResultKind.CANCEL_ACK,
-    )
-    _open_reservation(rcl_log)
+    payload = _payload(EgressResultKind.CANCEL_ACK)
+    _open_reservation(rig.rcl_log)
 
-    consumer = FinalityReleaseConsumer(
-        rcl_log=rcl_log,
-        projection=SqliteReservationProjectionReader(rcl_log),
-        evidence_store=evidence_store,
-        inbox=inbox,
-        recon_service=_StubPermittingButUnclassifiedReport(),  # type: ignore[arg-type]
-        time_service=_TrustedTimeService(),
-        finality_producer=_producer(),
-        scheme=SCHEME,
-        monotonic_source=monotonic_source,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        release_proof_wait_ms=60_000,
+    consumer = _non_execution_consumer(
+        rig,
+        recon_service=_StubPermittingButUnclassifiedReport(),
     )
     consumer.consume(payload)
 
-    assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
-    held = _held_rows(evidence_store)
+    assert _reservation_state(rig.rcl_log) is CapacityState.POTENTIALLY_LIVE
+    held = _held_rows(rig.evidence_store)
     assert len(held) == 1
     assert held[0]["reason"] == ReleaseHoldReason.NOT_CORROBORATED.value
-    proof_rows = evidence_store.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE kind = 'POSTTRADE_FINALITY_PROOF'"
-    ).fetchone()[0]
+    proof_rows = _count_kind(rig.evidence_store, "POSTTRADE_FINALITY_PROOF")
     assert proof_rows == 0
 
 
 def test_release_reads_from_state_dynamically_not_a_hardcoded_constant(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """LOW L1: opens the reservation directly at ``ATTEMPT_BOUND`` (never touching"""
     identity = RuntimeIdentity(
         cell_id="relc-test-cell", process_nonce="relc-test-nonce"
     )
-    epoch = rcl_log.acquire_epoch(identity)
-    rcl_log.apply_reservation_transition(
+    epoch = rig.rcl_log.acquire_epoch(identity)
+    rig.rcl_log.apply_reservation_transition(
         CapacityReservationTransition(
             reservation_id=_RESERVATION_ID,
             writer_epoch=epoch,
@@ -1294,23 +1041,17 @@ def test_release_reads_from_state_dynamically_not_a_hardcoded_constant(
         command_digest="dig-relc-attempt-bound",
         expected_seq=-1,
     )
-    assert _reservation_state(rcl_log) is CapacityState.ATTEMPT_BOUND
+    assert _reservation_state(rig.rcl_log) is CapacityState.ATTEMPT_BOUND
 
-    payload, produced = _seed_full_fill_obligation(evidence_store)
-    inbox.record_finality_witness(_ATTEMPT_ID, True)
-    _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
+    payload, produced = _seed_full_fill_obligation(rig.evidence_store)
+    rig.inbox.record_finality_witness(_ATTEMPT_ID, True)
+    _record_full_fill_receipt(rig.evidence_store, finality_proof_recorded=False)
 
-    consumer = _consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        witness=_IndependentFullFillWitness(),
-        monotonic_source=monotonic_source,
-    )
+    consumer = _consumer(rig)
     consumer.consume(payload)
 
-    assert _reservation_state(rcl_log) is CapacityState.POSITION_CONSUMED
-    assert _held_rows(evidence_store) == []
+    assert _reservation_state(rig.rcl_log) is CapacityState.POSITION_CONSUMED
+    assert _held_rows(rig.evidence_store) == []
 
 
 _ENTRY_ATTEMPT = "attempt-relc-entry"
@@ -1457,21 +1198,16 @@ class _CycleWitness:
 
 
 def _cycle_consumer(
-    *,
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    witness: BrokerWitness,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig, *, witness: BrokerWitness | None = None
 ) -> FinalityReleaseConsumer:
     """Like :func:`_consumer`, but with the PRODUCTION reservation bridge (the durable permit"""
-    projection = SqliteReservationProjectionReader(rcl_log)
+    projection = SqliteReservationProjectionReader(rig.rcl_log)
     recon_service = ReconciliationService(
         rcl_reader=projection,
-        evidence_reader=SqliteEvidenceReceiptReader(evidence_store),
-        witness=witness,
+        evidence_reader=SqliteEvidenceReceiptReader(rig.evidence_store),
+        witness=witness if witness is not None else _CycleWitness(),
         reservation_id_for_attempt=lambda attempt_id: reservation_id_for_attempt(
-            evidence_store,
+            rig.evidence_store,
             projection,
             account=_ACCOUNT,
             instrument=_INSTRUMENT,
@@ -1479,15 +1215,15 @@ def _cycle_consumer(
         ),
     )
     return FinalityReleaseConsumer(
-        rcl_log=rcl_log,
+        rcl_log=rig.rcl_log,
         projection=projection,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        evidence_store=rig.evidence_store,
+        inbox=rig.inbox,
         recon_service=recon_service,
         time_service=_TrustedTimeService(),
         finality_producer=_producer(),
         scheme=SCHEME,
-        monotonic_source=monotonic_source,
+        monotonic_source=rig.monotonic_source,
         account=_ACCOUNT,
         instrument=_INSTRUMENT,
         release_proof_wait_ms=60_000,
@@ -1506,9 +1242,7 @@ def _close_payload(*, filled: Decimal = _ENTRY_QTY, remaining: Decimal = Decimal
 
 
 def _arrange_close(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
+    rig: Rig,
     *,
     close_filled: Decimal = _ENTRY_QTY,
     close_remaining: Decimal = Decimal("0"),
@@ -1516,20 +1250,20 @@ def _arrange_close(
 ):
     """A filled entry plus a close whose fill is being consumed — the #966 cycle's second half."""
     _record_join(
-        evidence_store, attempt_id=_ENTRY_ATTEMPT, permit_identity=_ENTRY_PERMIT
+        rig.evidence_store, attempt_id=_ENTRY_ATTEMPT, permit_identity=_ENTRY_PERMIT
     )
     _record_join(
-        evidence_store, attempt_id=_CLOSE_ATTEMPT, permit_identity=_CLOSE_PERMIT
+        rig.evidence_store, attempt_id=_CLOSE_ATTEMPT, permit_identity=_CLOSE_PERMIT
     )
     _commit_named_reservation(
-        rcl_log,
+        rig.rcl_log,
         reservation_id=_entry_reservation_id(),
         to_state=CapacityState.POSITION_CONSUMED,
         command_id="cmd-relc-entry",
     )
     if extra_consumed:
         _commit_named_reservation(
-            rcl_log,
+            rig.rcl_log,
             reservation_id=permit_reservation_id(
                 _ACCOUNT, _INSTRUMENT, "afg-permit-relc-second"
             ),
@@ -1537,25 +1271,25 @@ def _arrange_close(
             command_id="cmd-relc-second",
         )
     _commit_named_reservation(
-        rcl_log,
+        rig.rcl_log,
         reservation_id=_close_reservation_id(),
         to_state=CapacityState.POTENTIALLY_LIVE,
         command_id="cmd-relc-close",
     )
     _record_receipt(
-        evidence_store,
+        rig.evidence_store,
         attempt_id=_ENTRY_ATTEMPT,
         filled=_ENTRY_QTY,
         remaining=Decimal("0"),
         broker_execution_id="exec-relc-entry",
     )
-    evidence_store.append(
+    rig.evidence_store.append(
         {"idempotency_key": f"synthetic-fqp-proof:{_ENTRY_ATTEMPT}"},
         kind="POSTTRADE_FINALITY_PROOF",
         record_class="POSTTRADE_FINALITY_PROOF",
     )
     _record_receipt(
-        evidence_store,
+        rig.evidence_store,
         attempt_id=_CLOSE_ATTEMPT,
         filled=close_filled,
         remaining=close_remaining,
@@ -1564,8 +1298,8 @@ def _arrange_close(
     payload = _close_payload(filled=close_filled, remaining=close_remaining)
     produced = _producer().produce(payload)
     assert produced is not None
-    _append_obligation(evidence_store, produced)
-    inbox.record_finality_witness(_CLOSE_ATTEMPT, True)
+    _append_obligation(rig.evidence_store, produced)
+    rig.inbox.record_finality_witness(_CLOSE_ATTEMPT, True)
     return payload
 
 
@@ -1577,52 +1311,40 @@ def _states(rcl_log: SqliteCommitLog) -> dict[str, CapacityState]:
 
 
 def test_a_close_fill_releases_its_own_reservation_and_discharges_the_entry(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """Both reservations end ``RELEASED``: the close opened no position, and the entry's is"""
-    payload = _arrange_close(rcl_log, evidence_store, inbox)
+    payload = _arrange_close(rig)
     consumer = _cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=_CycleWitness(),
-        monotonic_source=monotonic_source,
     )
 
     outcome = consumer.consume(payload)
 
     assert outcome.released is True
-    states = _states(rcl_log)
+    states = _states(rig.rcl_log)
     assert states[_close_reservation_id()] is CapacityState.RELEASED
     assert states[_entry_reservation_id()] is CapacityState.RELEASED
-    assert _held_rows_after_entry_pending_link(evidence_store) == []
-    destinations = [row["destination"] for row in _intent_rows(evidence_store)]
+    assert _held_rows_after_entry_pending_link(rig.evidence_store) == []
+    destinations = [row["destination"] for row in _intent_rows(rig.evidence_store)]
     assert destinations == ["RELEASED", "RELEASED"]
 
 
 def test_the_entry_discharge_uses_its_own_command_id(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """Two release transitions from ONE close attempt need two command ids."""
-    payload = _arrange_close(rcl_log, evidence_store, inbox)
+    payload = _arrange_close(rig)
     consumer = _cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=_CycleWitness(),
-        monotonic_source=monotonic_source,
     )
     consumer.consume(payload)
 
     command_ids = [
         entry.command_id
-        for entry in rcl_log.replay()
+        for entry in rig.rcl_log.replay()
         if entry.kind == CommandType.RELEASE_RESERVATION.value
     ]
     assert release_command_id(_CLOSE_ATTEMPT) in command_ids
@@ -1631,108 +1353,82 @@ def test_the_entry_discharge_uses_its_own_command_id(
 
 
 def test_a_broker_still_reporting_the_position_holds_the_entry(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """The close filled, but the witness still holds the instrument -> the entry stays."""
-    payload = _arrange_close(rcl_log, evidence_store, inbox)
+    payload = _arrange_close(rig)
     consumer = _cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=_CycleWitness(positions=((_INSTRUMENT, _ENTRY_QTY),)),
-        monotonic_source=monotonic_source,
     )
 
     consumer.consume(payload)
 
-    states = _states(rcl_log)
+    states = _states(rig.rcl_log)
     assert states[_close_reservation_id()] is CapacityState.RELEASED
     assert states[_entry_reservation_id()] is CapacityState.POSITION_CONSUMED
-    (held,) = _held_rows_after_entry_pending_link(evidence_store)
+    (held,) = _held_rows_after_entry_pending_link(rig.evidence_store)
     assert held["reason"] == ReleaseHoldReason.BROKER_POSITION_NOT_FLAT.value
     assert held["reservation_id"] == _entry_reservation_id()
 
 
 def test_a_partial_close_holds_the_entry(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """A close that discharges 4 of the entry's 10 units leaves the entry reservation held."""
     payload = _arrange_close(
-        rcl_log,
-        evidence_store,
-        inbox,
+        rig,
         close_filled=Decimal("4"),
         close_remaining=Decimal("0"),
     )
     consumer = _cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=_CycleWitness(close_quantity=Decimal("4")),
-        monotonic_source=monotonic_source,
     )
 
     consumer.consume(payload)
 
-    states = _states(rcl_log)
+    states = _states(rig.rcl_log)
     assert states[_entry_reservation_id()] is CapacityState.POSITION_CONSUMED
-    (held,) = _held_rows_after_entry_pending_link(evidence_store)
+    (held,) = _held_rows_after_entry_pending_link(rig.evidence_store)
     assert held["reason"] == ReleaseHoldReason.ENTRY_QUANTITY_UNPROVEN.value
 
 
 def test_a_second_outstanding_reservation_holds_instead_of_guessing(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """A scope holding TWO consumed positions is not a shape this consumer acts on: it cannot"""
-    payload = _arrange_close(rcl_log, evidence_store, inbox, extra_consumed=True)
+    payload = _arrange_close(rig, extra_consumed=True)
     consumer = _cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=_CycleWitness(),
-        monotonic_source=monotonic_source,
     )
 
     outcome = consumer.consume(payload)
 
     assert outcome.released is False
-    states = _states(rcl_log)
+    states = _states(rig.rcl_log)
     assert states[_close_reservation_id()] is CapacityState.POTENTIALLY_LIVE
     assert states[_entry_reservation_id()] is CapacityState.POSITION_CONSUMED
-    (held,) = _held_rows(evidence_store)
+    (held,) = _held_rows(rig.evidence_store)
     assert held["reason"] == ReleaseHoldReason.AMBIGUOUS_SCOPE_RESERVATIONS.value
 
 
 def test_an_attempt_with_no_resolvable_reservation_holds(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """No join rows and no legacy row: the consumer records a hold and names no reservation."""
-    inbox.record_finality_witness(_CLOSE_ATTEMPT, True)
+    rig.inbox.record_finality_witness(_CLOSE_ATTEMPT, True)
     consumer = _cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=_CycleWitness(),
-        monotonic_source=monotonic_source,
     )
 
     outcome = consumer.consume(_close_payload())
 
     assert outcome.released is False
-    assert _states(rcl_log) == {}
-    (held,) = _held_rows(evidence_store)
+    assert _states(rig.rcl_log) == {}
+    (held,) = _held_rows(rig.evidence_store)
     assert held["reason"] == ReleaseHoldReason.NO_RESERVATION.value
     assert held["reservation_id"] is None
 
@@ -1748,171 +1444,114 @@ def _intent_rows(evidence_store: SqliteEvidenceStore) -> list[dict]:
 
 
 def test_an_incomplete_holdings_observation_holds_the_entry(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """#966 review round 1 (Codex HIGH): empty positions are NOT proof of flatness."""
-    payload = _arrange_close(rcl_log, evidence_store, inbox)
+    payload = _arrange_close(rig)
     consumer = _cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=_CycleWitness(positions=(), positions_complete=False),
-        monotonic_source=monotonic_source,
     )
 
     consumer.consume(payload)
 
-    states = _states(rcl_log)
+    states = _states(rig.rcl_log)
     assert states[_close_reservation_id()] is CapacityState.RELEASED
     assert states[_entry_reservation_id()] is CapacityState.POSITION_CONSUMED
-    (held,) = _held_rows_after_entry_pending_link(evidence_store)
+    (held,) = _held_rows_after_entry_pending_link(rig.evidence_store)
     assert held["reason"] == ReleaseHoldReason.BROKER_POSITION_NOT_FLAT.value
     assert held["reservation_id"] == _entry_reservation_id()
 
 
 def test_a_complete_empty_holdings_observation_releases_the_entry(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """The positive control for the test above: the SAME empty tuple, declared complete."""
-    payload = _arrange_close(rcl_log, evidence_store, inbox)
+    payload = _arrange_close(rig)
     consumer = _cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=_CycleWitness(positions=(), positions_complete=True),
-        monotonic_source=monotonic_source,
     )
 
     consumer.consume(payload)
 
-    assert _states(rcl_log)[_entry_reservation_id()] is CapacityState.RELEASED
-    assert _held_rows_after_entry_pending_link(evidence_store) == []
-
-
-def _non_execution_consumer(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
-) -> FinalityReleaseConsumer:
-    """The consumer with gate 3 STUBBED to permit — the same isolation"""
-    return FinalityReleaseConsumer(
-        rcl_log=rcl_log,
-        projection=SqliteReservationProjectionReader(rcl_log),
-        evidence_store=evidence_store,
-        inbox=inbox,
-        recon_service=_StubPermittingReconciliationService(),  # type: ignore[arg-type]
-        time_service=_TrustedTimeService(),
-        finality_producer=_producer(),
-        scheme=SCHEME,
-        monotonic_source=monotonic_source,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        release_proof_wait_ms=60_000,
-    )
+    assert _states(rig.rcl_log)[_entry_reservation_id()] is CapacityState.RELEASED
+    assert _held_rows_after_entry_pending_link(rig.evidence_store) == []
 
 
 def test_a_cancel_after_a_partial_fill_does_not_release_the_held_quantity(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """review-973 M3: the entry partially filled 4 of 6, then the remainder was cancelled."""
-    _open_reservation(rcl_log)
+    _open_reservation(rig.rcl_log)
     _record_receipt(
-        evidence_store,
+        rig.evidence_store,
         attempt_id=_ATTEMPT_ID,
         filled=Decimal("4"),
         remaining=Decimal("2"),
         broker_execution_id="exec-relc-partial",
     )
-    payload = EgressResultPayload(
-        instrument_key=_KEY, attempt_id=_ATTEMPT_ID, kind=EgressResultKind.CANCEL_ACK
-    )
+    payload = _payload(EgressResultKind.CANCEL_ACK)
 
-    outcome = _non_execution_consumer(
-        rcl_log, evidence_store, inbox, monotonic_source
-    ).consume(payload)
+    outcome = _non_execution_consumer(rig).consume(payload)
 
     assert outcome.released is False
-    assert _reservation_state(rcl_log) is not CapacityState.RELEASED
-    (held,) = _held_rows(evidence_store)
+    assert _reservation_state(rig.rcl_log) is not CapacityState.RELEASED
+    (held,) = _held_rows(rig.evidence_store)
     assert held["reason"] == ReleaseHoldReason.FILLED_QUANTITY_STILL_HELD.value
 
-    rows = SqliteReservationProjectionReader(rcl_log).scope_reservations(_KEY)
+    rows = SqliteReservationProjectionReader(rig.rcl_log).scope_reservations(_KEY)
     assert verdict_for_scope("OPEN", rows).outcome is StageOutcome.DENY
     assert verdict_for_scope("CLOSE", rows).outcome is StageOutcome.DENY
 
 
 def test_a_cancel_with_nothing_filled_still_releases(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """The positive control for M3: a receipt recording a zero fill releases as before."""
-    _open_reservation(rcl_log)
+    _open_reservation(rig.rcl_log)
     _record_receipt(
-        evidence_store,
+        rig.evidence_store,
         attempt_id=_ATTEMPT_ID,
         filled=Decimal("0"),
         remaining=Decimal("6"),
         broker_execution_id="exec-relc-nofill",
     )
-    payload = EgressResultPayload(
-        instrument_key=_KEY, attempt_id=_ATTEMPT_ID, kind=EgressResultKind.CANCEL_ACK
-    )
+    payload = _payload(EgressResultKind.CANCEL_ACK)
 
-    outcome = _non_execution_consumer(
-        rcl_log, evidence_store, inbox, monotonic_source
-    ).consume(payload)
+    outcome = _non_execution_consumer(rig).consume(payload)
 
     assert outcome.released is True
-    assert _reservation_state(rcl_log) is CapacityState.RELEASED
-    assert _held_rows(evidence_store) == []
+    assert _reservation_state(rig.rcl_log) is CapacityState.RELEASED
+    assert _held_rows(rig.evidence_store) == []
 
 
 def test_an_attempt_with_no_flow_evidence_resolves_to_no_reservation(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """review-973 L1: a failed join must not fall through to the scope row."""
-    _open_reservation(rcl_log)
+    _open_reservation(rig.rcl_log)
     payload = EgressResultPayload(
         instrument_key=_KEY,
         attempt_id="attempt-with-no-evidence",
         kind=EgressResultKind.CANCEL_ACK,
     )
 
-    outcome = _non_execution_consumer(
-        rcl_log, evidence_store, inbox, monotonic_source
-    ).consume(payload)
+    outcome = _non_execution_consumer(rig).consume(payload)
 
     assert outcome.released is False
-    assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
-    (held,) = _held_rows(evidence_store)
+    assert _reservation_state(rig.rcl_log) is CapacityState.POTENTIALLY_LIVE
+    (held,) = _held_rows(rig.evidence_store)
     assert held["reason"] == ReleaseHoldReason.NO_RESERVATION.value
     assert held["reservation_id"] is None
 
 
 def test_post_trade_currentness_ignores_a_sibling_scope(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """review-973 L3: ``resv-A-I`` must not match ``resv-A-I2-<permit>``."""
     sibling = permit_reservation_id(_ACCOUNT, f"{_INSTRUMENT}2", "afg-permit-sibling")
-    evidence_store.append(
+    rig.evidence_store.append(
         {
             "attempt_id": "attempt-sibling",
             "reservation_id": sibling,
@@ -1922,11 +1561,11 @@ def test_post_trade_currentness_ignores_a_sibling_scope(
         kind=CAPACITY_RELEASE_HELD_KIND,
         record_class=CAPACITY_RELEASE_HELD_KIND,
     )
-    consumer = _non_execution_consumer(rcl_log, evidence_store, inbox, monotonic_source)
+    consumer = _non_execution_consumer(rig)
 
     assert consumer.latest_release_is_conflict_free() is True
 
-    evidence_store.append(
+    rig.evidence_store.append(
         {
             "attempt_id": _ATTEMPT_ID,
             "reservation_id": _RESERVATION_ID,

@@ -3,17 +3,12 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from decimal import Decimal
-from pathlib import Path
 
-import pytest
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.engine.records import EgressResultPayload
 from tos.engine.vocabulary import EgressResultKind
 from tos.rcl import CapacityState
-from tos_runtime.engine.inbox import SqliteEventInbox
-from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.release_consumer import FinalityReleaseConsumer
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
@@ -26,8 +21,8 @@ from tos_runtime.recon.service import (
     ReconciliationReport,
 )
 
-from ..engine.conftest import FakeMonotonicSource, FixedKeyProvider
 from . import test_release_consumer as cycle
+from .conftest import Rig
 
 _SECOND_CLOSE_ATTEMPT = "attempt-relc-close-2"
 _SECOND_CLOSE_PERMIT = "afg-permit-relc-close-2"
@@ -35,36 +30,6 @@ _SECOND_CLOSE_RESERVATION = permit_reservation_id(
     cycle._ACCOUNT, cycle._INSTRUMENT, _SECOND_CLOSE_PERMIT
 )
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
-
-
-@pytest.fixture
-def evidence_store(tmp_path: Path) -> Iterator[SqliteEvidenceStore]:
-    store = SqliteEvidenceStore(
-        tmp_path / "evidence.sqlite3", key_provider=FixedKeyProvider()
-    )
-    yield store
-    store.close()
-
-
-@pytest.fixture
-def inbox(tmp_path: Path) -> Iterator[SqliteEventInbox]:
-    instance = SqliteEventInbox(tmp_path / "inbox.sqlite3", scheme=_SCHEME)
-    yield instance
-    instance.close()
-
-
-@pytest.fixture
-def rcl_log(
-    tmp_path: Path, evidence_store: SqliteEvidenceStore
-) -> Iterator[SqliteCommitLog]:
-    instance = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=evidence_store)
-    yield instance
-    instance.close()
-
-
-@pytest.fixture
-def monotonic_source() -> FakeMonotonicSource:
-    return FakeMonotonicSource(start=1_700_000_000_000)
 
 
 class _CloseHistoryWitness:
@@ -124,25 +89,21 @@ def _second_close_payload(quantity: Decimal = Decimal("6")) -> EgressResultPaylo
 
 
 def _record_second_close(
-    *,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    rcl_log: SqliteCommitLog,
-    quantity: Decimal = Decimal("6"),
+    rig: Rig, *, quantity: Decimal = Decimal("6")
 ) -> EgressResultPayload:
     cycle._record_join(
-        evidence_store,
+        rig.evidence_store,
         attempt_id=_SECOND_CLOSE_ATTEMPT,
         permit_identity=_SECOND_CLOSE_PERMIT,
     )
     cycle._commit_named_reservation(
-        rcl_log,
+        rig.rcl_log,
         reservation_id=_SECOND_CLOSE_RESERVATION,
         to_state=CapacityState.POTENTIALLY_LIVE,
         command_id="cmd-relc-close-2",
     )
     cycle._record_receipt(
-        evidence_store,
+        rig.evidence_store,
         attempt_id=_SECOND_CLOSE_ATTEMPT,
         filled=quantity,
         remaining=Decimal("0"),
@@ -151,17 +112,17 @@ def _record_second_close(
     payload = _second_close_payload(quantity)
     produced = cycle._producer().produce(payload)
     assert produced is not None
-    evidence_store.append(
+    rig.evidence_store.append(
         produced.record.model_dump(mode="json"),
         kind="ECONOMIC_OBLIGATION",
         record_class="ECONOMIC_OBLIGATION",
     )
-    evidence_store.append(
+    rig.evidence_store.append(
         produced.proof.model_dump(mode="json"),
         kind="POSTTRADE_FINALITY_PROOF",
         record_class="POSTTRADE_FINALITY_PROOF",
     )
-    inbox.record_finality_witness(_SECOND_CLOSE_ATTEMPT, True)
+    rig.inbox.record_finality_witness(_SECOND_CLOSE_ATTEMPT, True)
     return payload
 
 
@@ -209,22 +170,19 @@ class _PermittingFlatReconciliation:
 
 def _consumer_with_permitting_reconciliation(
     *,
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
     attempt_id: str,
 ) -> FinalityReleaseConsumer:
     return FinalityReleaseConsumer(
-        rcl_log=rcl_log,
-        projection=SqliteReservationProjectionReader(rcl_log),
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rcl_log=rig.rcl_log,
+        projection=SqliteReservationProjectionReader(rig.rcl_log),
+        evidence_store=rig.evidence_store,
+        inbox=rig.inbox,
         recon_service=_PermittingFlatReconciliation(attempt_id),  # type: ignore[arg-type]
         time_service=cycle._TrustedTimeService(),
         finality_producer=cycle._producer(),
         scheme=cycle.SCHEME,
-        monotonic_source=monotonic_source,
+        monotonic_source=rig.monotonic_source,
         account=cycle._ACCOUNT,
         instrument=cycle._INSTRUMENT,
         release_proof_wait_ms=60_000,
@@ -233,29 +191,21 @@ def _consumer_with_permitting_reconciliation(
 
 def _run_first_close(
     *,
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
     broker_position: Decimal = Decimal("6"),
 ) -> EgressResultPayload:
     payload = cycle._arrange_close(
-        rcl_log,
-        evidence_store,
-        inbox,
+        rig,
         close_filled=Decimal("4"),
         close_remaining=Decimal("0"),
     )
     assert isinstance(payload, EgressResultPayload)
     consumer = cycle._cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=cycle._CycleWitness(
             positions=((cycle._INSTRUMENT, broker_position),),
             close_quantity=Decimal("4"),
         ),
-        monotonic_source=monotonic_source,
     )
     consumer.consume(payload)
     return payload
@@ -263,54 +213,35 @@ def _run_first_close(
 
 def _run_second_close(
     *,
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
     quantity: Decimal = Decimal("6"),
     broker_positions: tuple[tuple[str, Decimal], ...] = (),
 ):
-    payload = _record_second_close(
-        evidence_store=evidence_store,
-        inbox=inbox,
-        rcl_log=rcl_log,
-        quantity=quantity,
-    )
+    payload = _record_second_close(rig, quantity=quantity)
     consumer = cycle._cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=_CloseHistoryWitness(
             second_close_quantity=quantity, positions=broker_positions
         ),
-        monotonic_source=monotonic_source,
     )
     return consumer.consume(payload)
 
 
 def test_two_fully_filled_closes_discharge_the_entry_when_the_broker_is_flat(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """Entry 10 -> close 4 (broker holds 6) -> close 6 (broker flat) releases entry."""
     first_close = cycle._arrange_close(
-        rcl_log,
-        evidence_store,
-        inbox,
+        rig,
         close_filled=Decimal("4"),
         close_remaining=Decimal("0"),
     )
     first_consumer = cycle._cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=cycle._CycleWitness(
             positions=((cycle._INSTRUMENT, Decimal("6")),),
             close_quantity=Decimal("4"),
         ),
-        monotonic_source=monotonic_source,
     )
     first_consumer.consume(first_close)
 
@@ -318,8 +249,8 @@ def test_two_fully_filled_closes_discharge_the_entry_when_the_broker_is_flat(
     first_close_reservation_id = cycle._close_reservation_id()
     assert (
         reservation_id_for_attempt(
-            evidence_store,
-            cycle.SqliteReservationProjectionReader(rcl_log),
+            rig.evidence_store,
+            cycle.SqliteReservationProjectionReader(rig.rcl_log),
             account=cycle._ACCOUNT,
             instrument=cycle._INSTRUMENT,
             attempt_id=cycle._ENTRY_ATTEMPT,
@@ -328,24 +259,22 @@ def test_two_fully_filled_closes_discharge_the_entry_when_the_broker_is_flat(
     )
     assert (
         reservation_id_for_attempt(
-            evidence_store,
-            cycle.SqliteReservationProjectionReader(rcl_log),
+            rig.evidence_store,
+            cycle.SqliteReservationProjectionReader(rig.rcl_log),
             account=cycle._ACCOUNT,
             instrument=cycle._INSTRUMENT,
             attempt_id=cycle._CLOSE_ATTEMPT,
         )
         == first_close_reservation_id
     )
-    assert _states(rcl_log)[entry_reservation_id] is CapacityState.POSITION_CONSUMED
-    assert _states(rcl_log)[first_close_reservation_id] is CapacityState.RELEASED
+    assert _states(rig.rcl_log)[entry_reservation_id] is CapacityState.POSITION_CONSUMED
+    assert _states(rig.rcl_log)[first_close_reservation_id] is CapacityState.RELEASED
 
-    second_close = _record_second_close(
-        evidence_store=evidence_store, inbox=inbox, rcl_log=rcl_log
-    )
+    second_close = _record_second_close(rig)
     assert (
         reservation_id_for_attempt(
-            evidence_store,
-            cycle.SqliteReservationProjectionReader(rcl_log),
+            rig.evidence_store,
+            cycle.SqliteReservationProjectionReader(rig.rcl_log),
             account=cycle._ACCOUNT,
             instrument=cycle._INSTRUMENT,
             attempt_id=_SECOND_CLOSE_ATTEMPT,
@@ -353,165 +282,123 @@ def test_two_fully_filled_closes_discharge_the_entry_when_the_broker_is_flat(
         == _SECOND_CLOSE_RESERVATION
     )
     second_consumer = cycle._cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=_CloseHistoryWitness(),
-        monotonic_source=monotonic_source,
     )
     second_consumer.consume(second_close)
 
-    states = _states(rcl_log)
+    states = _states(rig.rcl_log)
     assert states[first_close_reservation_id] is CapacityState.RELEASED
     assert states[_SECOND_CLOSE_RESERVATION] is CapacityState.RELEASED
     assert states[entry_reservation_id] is CapacityState.RELEASED
 
 
 def test_two_fully_filled_closes_keep_the_entry_when_the_broker_still_holds_four(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """The 4+6 order fills do not discharge the entry if the broker still shows 4."""
-    _run_first_close(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        monotonic_source=monotonic_source,
-    )
+    _run_first_close(rig=rig)
     _run_second_close(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        monotonic_source=monotonic_source,
+        rig=rig,
         quantity=Decimal("6"),
         broker_positions=((cycle._INSTRUMENT, Decimal("4")),),
     )
 
-    states = _states(rcl_log)
+    states = _states(rig.rcl_log)
     assert states[cycle._entry_reservation_id()] is CapacityState.POSITION_CONSUMED
     assert states[_SECOND_CLOSE_RESERVATION] is CapacityState.RELEASED
-    held = cycle._held_rows(evidence_store)
+    held = cycle._held_rows(rig.evidence_store)
     assert held[-1]["reason"] == cycle.ReleaseHoldReason.BROKER_POSITION_NOT_FLAT.value
     assert held[-1]["reservation_id"] == cycle._entry_reservation_id()
 
 
 def test_two_close_attempts_cannot_overclose_the_entry_by_three(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """Entry 10 followed by complete close fills 4+7 is over the entry quantity."""
-    _run_first_close(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        monotonic_source=monotonic_source,
-    )
+    _run_first_close(rig=rig)
     _run_second_close(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        monotonic_source=monotonic_source,
+        rig=rig,
         quantity=Decimal("7"),
         broker_positions=(),
     )
 
-    states = _states(rcl_log)
+    states = _states(rig.rcl_log)
     assert states[cycle._entry_reservation_id()] is CapacityState.POSITION_CONSUMED
     assert states[_SECOND_CLOSE_RESERVATION] is CapacityState.RELEASED
-    held = cycle._held_rows(evidence_store)
+    held = cycle._held_rows(rig.evidence_store)
     assert held[-1]["reason"] == cycle.ReleaseHoldReason.ENTRY_QUANTITY_UNPROVEN.value
     assert held[-1]["reservation_id"] == cycle._entry_reservation_id()
 
 
 def test_replayed_first_close_after_consumer_restart_is_counted_once(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """Replaying close 4 after restart must not turn the later 4+6 into a double count."""
-    first_close = _run_first_close(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        monotonic_source=monotonic_source,
-    )
+    first_close = _run_first_close(rig=rig)
     first_close_reservation_id = cycle._close_reservation_id()
     releases_before_replay = _released_transition_count(
-        rcl_log, first_close_reservation_id
+        rig.rcl_log, first_close_reservation_id
     )
 
     restarted_consumer = cycle._cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=cycle._CycleWitness(
             positions=((cycle._INSTRUMENT, Decimal("6")),),
             close_quantity=Decimal("4"),
         ),
-        monotonic_source=monotonic_source,
     )
     restarted_consumer.consume(first_close)
     assert (
-        _released_transition_count(rcl_log, first_close_reservation_id)
+        _released_transition_count(rig.rcl_log, first_close_reservation_id)
         == releases_before_replay
         == 1
     )
 
     _run_second_close(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        monotonic_source=monotonic_source,
+        rig=rig,
         quantity=Decimal("6"),
         broker_positions=(),
     )
-    states = _states(rcl_log)
+    states = _states(rig.rcl_log)
     assert states[cycle._entry_reservation_id()] is CapacityState.RELEASED
-    assert _released_transition_count(rcl_log, cycle._entry_reservation_id()) == 1
+    assert _released_transition_count(rig.rcl_log, cycle._entry_reservation_id()) == 1
 
 
 def test_missing_close_fill_evidence_holds_the_entry_after_flat_report(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """A payload and finality proof do not replace the missing durable close receipt."""
     cycle._record_join(
-        evidence_store,
+        rig.evidence_store,
         attempt_id=cycle._ENTRY_ATTEMPT,
         permit_identity=cycle._ENTRY_PERMIT,
     )
     cycle._record_join(
-        evidence_store,
+        rig.evidence_store,
         attempt_id=cycle._CLOSE_ATTEMPT,
         permit_identity=cycle._CLOSE_PERMIT,
     )
     cycle._commit_named_reservation(
-        rcl_log,
+        rig.rcl_log,
         reservation_id=cycle._entry_reservation_id(),
         to_state=CapacityState.POSITION_CONSUMED,
         command_id="cmd-relc-entry",
     )
     cycle._commit_named_reservation(
-        rcl_log,
+        rig.rcl_log,
         reservation_id=cycle._close_reservation_id(),
         to_state=CapacityState.POTENTIALLY_LIVE,
         command_id="cmd-relc-close",
     )
     cycle._record_receipt(
-        evidence_store,
+        rig.evidence_store,
         attempt_id=cycle._ENTRY_ATTEMPT,
         filled=Decimal("10"),
         remaining=Decimal("0"),
         broker_execution_id="exec-relc-entry",
     )
-    evidence_store.append(
+    rig.evidence_store.append(
         {"idempotency_key": f"synthetic-fqp-proof:{cycle._ENTRY_ATTEMPT}"},
         kind="POSTTRADE_FINALITY_PROOF",
         record_class="POSTTRADE_FINALITY_PROOF",
@@ -520,56 +407,40 @@ def test_missing_close_fill_evidence_holds_the_entry_after_flat_report(
     payload = cycle._close_payload()
     produced = cycle._producer().produce(payload)
     assert produced is not None
-    evidence_store.append(
+    rig.evidence_store.append(
         produced.record.model_dump(mode="json"),
         kind="ECONOMIC_OBLIGATION",
         record_class="ECONOMIC_OBLIGATION",
     )
-    evidence_store.append(
+    rig.evidence_store.append(
         produced.proof.model_dump(mode="json"),
         kind="POSTTRADE_FINALITY_PROOF",
         record_class="POSTTRADE_FINALITY_PROOF",
     )
-    inbox.record_finality_witness(cycle._CLOSE_ATTEMPT, True)
+    rig.inbox.record_finality_witness(cycle._CLOSE_ATTEMPT, True)
 
     consumer = _consumer_with_permitting_reconciliation(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        monotonic_source=monotonic_source,
+        rig=rig,
         attempt_id=cycle._CLOSE_ATTEMPT,
     )
     consumer.consume(payload)
 
-    states = _states(rcl_log)
+    states = _states(rig.rcl_log)
     assert states[cycle._close_reservation_id()] is CapacityState.RELEASED
     assert states[cycle._entry_reservation_id()] is CapacityState.POSITION_CONSUMED
-    held = cycle._held_rows(evidence_store)
+    held = cycle._held_rows(rig.evidence_store)
     assert held[-1]["reason"] == cycle.ReleaseHoldReason.ENTRY_QUANTITY_UNPROVEN.value
 
 
 def test_payload_fill_cannot_override_different_durable_current_full_fill(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    monotonic_source: FakeMonotonicSource,
+    rig: Rig,
 ) -> None:
     """Prior 4 plus payload 6 cannot discharge entry when durable current fill is 3."""
-    _run_first_close(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        monotonic_source=monotonic_source,
-    )
-    _record_second_close(
-        evidence_store=evidence_store,
-        inbox=inbox,
-        rcl_log=rcl_log,
-        quantity=Decimal("3"),
-    )
+    _run_first_close(rig=rig)
+    _record_second_close(rig, quantity=Decimal("3"))
     payload = _second_close_payload(Decimal("6"))
 
-    receipt_rows = evidence_store.connection.execute(
+    receipt_rows = rig.evidence_store.connection.execute(
         "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
         ("EGRESS_RESULT_CONSUMED",),
     ).fetchall()
@@ -582,16 +453,13 @@ def test_payload_fill_cannot_override_different_durable_current_full_fill(
     assert payload.filled_quantity == Decimal("6")
 
     consumer = _consumer_with_permitting_reconciliation(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
-        monotonic_source=monotonic_source,
+        rig=rig,
         attempt_id=_SECOND_CLOSE_ATTEMPT,
     )
     consumer.consume(payload)
 
-    states = _states(rcl_log)
+    states = _states(rig.rcl_log)
     assert states[cycle._entry_reservation_id()] is CapacityState.POSITION_CONSUMED
     assert states[_SECOND_CLOSE_RESERVATION] is CapacityState.RELEASED
-    held = cycle._held_rows(evidence_store)
+    held = cycle._held_rows(rig.evidence_store)
     assert held[-1]["reason"] == cycle.ReleaseHoldReason.ENTRY_QUANTITY_UNPROVEN.value
