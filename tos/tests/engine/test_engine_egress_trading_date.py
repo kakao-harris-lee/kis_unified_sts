@@ -15,22 +15,7 @@ from tos.engine import (
 )
 from tos.engine.records import event_identity
 
-from ._engine_fixtures import (
-    SCHEME,
-    RecordingTransmit,
-    build_core,
-    decision_tick,
-    instrument_key,
-    ordering,
-)
-
-
-def _sent_core():
-    transmit = RecordingTransmit()
-    core, sink = build_core(transmit=transmit)
-    result = core.handle(decision_tick(sequence=1))
-    assert result.flow is not None and result.flow.attempt is not None
-    return core, sink, result.flow.attempt.attempt_id
+from ._engine_fixtures import SCHEME, instrument_key, ordering, sent_core
 
 
 def _fill(attempt_id: str, *, sequence: int, trading_date: str | None) -> EngineEvent:
@@ -50,7 +35,7 @@ def _fill(attempt_id: str, *, sequence: int, trading_date: str | None) -> Engine
 
 
 def test_consumed_result_carries_the_trading_date_to_evidence() -> None:
-    core, sink, attempt_id = _sent_core()
+    core, sink, _, attempt_id = sent_core()
     core.handle(_fill(attempt_id, sequence=2, trading_date="20260805"))
     (record,) = [
         r for r in sink.records if r.kind is EvidenceKind.EGRESS_RESULT_CONSUMED
@@ -59,7 +44,7 @@ def test_consumed_result_carries_the_trading_date_to_evidence() -> None:
 
 
 def test_unmatched_result_carries_the_trading_date_to_evidence() -> None:
-    core, sink, attempt_id = _sent_core()
+    core, sink, _, attempt_id = sent_core()
     core.handle(
         EngineEvent(
             kind=EventKind.EGRESS_RESULT,
@@ -113,7 +98,7 @@ def test_malformed_trading_date_is_refused(token: str) -> None:
 
 def test_trading_date_is_not_part_of_the_duplicate_signature() -> None:
     """The same broker result re-delivered with and without a date is the same result: the second"""
-    core, sink, attempt_id = _sent_core()
+    core, sink, _, attempt_id = sent_core()
     core.handle(_fill(attempt_id, sequence=2, trading_date="20260805"))
     again = core.handle(_fill(attempt_id, sequence=3, trading_date=None))
     consumed = [

@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 from tos.canonical import DigestBoundArtifact
 from tos.evidence import (
     EvidenceCommitReceipt,
@@ -31,6 +31,11 @@ from ._evidence_strategies import (
     receipt_required_kwargs,
     replay_required_kwargs,
 )
+from ._required_covered import (
+    assert_required_covered_non_vacuous,
+    null_path,
+    required_covered_cases,
+)
 
 _ARTIFACTS: list[tuple[type[DigestBoundArtifact], Callable[..., dict[str, Any]]]] = [
     (SafetyEvidenceEnvelope, envelope_required_kwargs),
@@ -40,44 +45,19 @@ _ARTIFACTS: list[tuple[type[DigestBoundArtifact], Callable[..., dict[str, Any]]]
 ]
 
 
-def _null_path(kwargs: dict[str, Any], path: str) -> dict[str, Any]:
-    """Return ``kwargs`` with the (possibly one-level-nested) dotted ``path`` nulled."""
-    out = dict(kwargs)
-    if "." in path:
-        block, field = path.split(".", 1)
-        value = out[block]
-        assert isinstance(value, BaseModel), f"expected a model block at {block!r}"
-        out[block] = value.model_copy(update={field: None})
-    else:
-        out[path] = None
-    return out
-
-
-def _cases() -> list[Any]:
-    """Yield one param per (artifact, required covered path)."""
-    cases: list[Any] = []
-    for cls, kwargs_fn in _ARTIFACTS:
-        for path in cls._REQUIRED_COVERED:
-            cases.append(
-                pytest.param(cls, kwargs_fn, path, id=f"{cls.__name__}:{path}")
-            )
-    return cases
-
-
-@pytest.mark.parametrize("cls,kwargs_fn,path", _cases())
+@pytest.mark.parametrize("cls,kwargs_fn,path", required_covered_cases(_ARTIFACTS))
 def test_missing_required_covered_rejects_issuance(
     cls: type[DigestBoundArtifact], kwargs_fn: Callable[..., dict[str, Any]], path: str
 ) -> None:
     """Dropping any required covered path makes an ISSUED artifact unconstructable (§3.2)."""
-    kwargs = _null_path(kwargs_fn(), path)
+    kwargs = null_path(kwargs_fn(), path)
     with pytest.raises(ValidationError):
         cls.issue(scheme=SCHEME, **kwargs)
 
 
 def test_every_artifact_has_non_vacuous_required_covered() -> None:
     """No digest-bound evidence artifact has an empty _REQUIRED_COVERED (MAJOR-1 guard)."""
-    for cls, _ in _ARTIFACTS:
-        assert cls._REQUIRED_COVERED, f"{cls.__name__} has a vacuous _REQUIRED_COVERED"
+    assert_required_covered_non_vacuous(_ARTIFACTS)
 
 
 def test_degenerate_empty_replay_capsule_rejected() -> None:
