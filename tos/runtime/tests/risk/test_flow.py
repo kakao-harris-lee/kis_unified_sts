@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
-
 import pytest
 from tos.afg import ActionAmplificationEnvelope, ActionFlowResult
 from tos.rcl import AppendReceipt, AppendRefusal, AppendRefusalReason, CommandType
@@ -13,25 +11,20 @@ from tos_runtime.risk.flow import (
     permit_reservation_binding,
 )
 
-from .conftest import FakeEvidenceAppendPort, grant_shaped_afg_inputs
+from .conftest import (
+    FakeEvidenceAppendPort,
+    build_committed_permit,
+    grant_shaped_afg_inputs,
+)
 
 
 def test_governor_refuses_to_start_with_an_undeclared_axis(
-    log, evidence_port: FakeEvidenceAppendPort, writer_epoch: int
+    log,
+    evidence_port: FakeEvidenceAppendPort,
+    writer_epoch: int,
+    envelope: ActionAmplificationEnvelope,
 ) -> None:
-    incomplete_envelope = ActionAmplificationEnvelope(
-        max_fan_out=10,
-        max_depth=None,
-        max_attempts=5,
-        max_mutations=5,
-        max_queries=5,
-        max_queue_depth=100,
-        max_in_flight=10,
-        max_elapsed_monotonic=Decimal("1000"),
-        max_duplicate_redelivery_expansion=3,
-        max_failover_reconnect_replay_expansion=3,
-        max_amplification_per_cause=Decimal("100"),
-    )
+    incomplete_envelope = envelope.model_copy(update={"max_depth": None})
     with pytest.raises(ActionFlowConfigError):
         ActionFlowGovernor(
             log, evidence_port, incomplete_envelope, writer_epoch=writer_epoch
@@ -107,10 +100,7 @@ def test_build_permit_nonce_differs_for_a_different_command(
 def test_permit_reservation_binding_is_none_for_an_unbound_permit(
     afg_governor: ActionFlowGovernor,
 ) -> None:
-    decision = afg_governor.decide(grant_shaped_afg_inputs())
-    permit = afg_governor.build_permit(
-        decision, permit_generation=1, command_identity="cmd-1"
-    )
+    permit = build_committed_permit(afg_governor)
     unbound = permit.model_copy(update={"claim_nonce": None})
     assert permit_reservation_binding(unbound) is None
     assert permit_reservation_binding(permit) == (
@@ -122,10 +112,7 @@ def test_permit_reservation_binding_is_none_for_an_unbound_permit(
 def test_issue_permit_commits_once_and_returns_the_entrys_seq(
     afg_governor: ActionFlowGovernor, log
 ) -> None:
-    decision = afg_governor.decide(grant_shaped_afg_inputs())
-    permit = afg_governor.build_permit(
-        decision, permit_generation=1, command_identity="cmd-1"
-    )
+    permit = build_committed_permit(afg_governor)
     result = afg_governor.issue_permit(permit, expected_seq=-1)
     assert isinstance(result.log_result, AppendReceipt)
     assert result.rcl_commitment_ref == result.log_result.seq
@@ -135,10 +122,7 @@ def test_issue_permit_uses_the_new_issue_action_flow_permit_command_type(
     afg_governor: ActionFlowGovernor, log, writer_epoch: int
 ) -> None:
     """Kernel round #1 §1.1/§2.1: the STANDALONE permit-issuance path writes"""
-    decision = afg_governor.decide(grant_shaped_afg_inputs())
-    permit = afg_governor.build_permit(
-        decision, permit_generation=1, command_identity="cmd-1"
-    )
+    permit = build_committed_permit(afg_governor)
     afg_governor.issue_permit(permit, expected_seq=-1)
     view = log.read_linearizable(writer_epoch=writer_epoch)
     kinds = {entry.kind for entry in view.entries if entry.command_id is not None}
@@ -149,10 +133,7 @@ def test_issue_permit_uses_the_new_issue_action_flow_permit_command_type(
 def test_issue_permit_refuses_a_second_claim_of_the_same_nonce(
     afg_governor: ActionFlowGovernor, log
 ) -> None:
-    decision = afg_governor.decide(grant_shaped_afg_inputs())
-    permit = afg_governor.build_permit(
-        decision, permit_generation=1, command_identity="cmd-1"
-    )
+    permit = build_committed_permit(afg_governor)
     first = afg_governor.issue_permit(permit, expected_seq=-1)
     assert isinstance(first.log_result, AppendReceipt)
     assert first.log_result.seq is not None
@@ -173,10 +154,7 @@ def test_issue_permit_refuses_the_same_claim_even_after_a_simulated_restart(
     """Single-use enforcement is log-enforced, not memory-enforced: a fresh"""
     from tos_runtime.rcl.log import SqliteCommitLog
 
-    decision = afg_governor.decide(grant_shaped_afg_inputs())
-    permit = afg_governor.build_permit(
-        decision, permit_generation=1, command_identity="cmd-1"
-    )
+    permit = build_committed_permit(afg_governor)
     first = afg_governor.issue_permit(permit, expected_seq=-1)
     assert isinstance(first.log_result, AppendReceipt)
     assert first.log_result.seq is not None

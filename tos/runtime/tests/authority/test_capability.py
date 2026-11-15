@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from tos.authority import (
     AuthorityTransitionReason,
     CapabilityType,
@@ -56,32 +57,37 @@ def _admit_epoch(epoch_service: SafetyAuthorityEpochService) -> None:
     )
 
 
-def test_capability_valid_true_when_every_condition_holds(
-    epoch_service: SafetyAuthorityEpochService, time_service: TrustworthyTimeService
-) -> None:
-    make_trusted(time_service)
-    _admit_epoch(epoch_service)
-    capability = _issue_capability(epoch=1)
-
-    assert (
-        capability_valid(
-            capability,
-            epoch_service=epoch_service,
-            revocation_status="not_revoked",
-            superseded=False,
-            consumed=False,
-            issuer_key_status="valid",
-            environment_and_mode_matches=True,
-        )
-        is True
-    )
-
-
-def test_capability_valid_false_when_time_not_trusted(
+@pytest.mark.parametrize(
+    ("time_trusted", "epoch_admitted", "consumed", "issuer_key_status", "expected"),
+    [
+        (True, True, False, "valid", True),
+        (False, True, False, "valid", False),
+        (True, False, False, "valid", False),
+        (True, True, False, "revoked", False),
+        (True, True, True, "valid", False),
+    ],
+    ids=[
+        "every-condition-holds",
+        "time-not-trusted",
+        "epoch-stale",
+        "issuer-key-not-valid",
+        "consumed",
+    ],
+)
+def test_capability_valid_is_true_only_when_every_condition_holds(
     epoch_service: SafetyAuthorityEpochService,
+    time_service: TrustworthyTimeService,
+    time_trusted: bool,
+    epoch_admitted: bool,
+    consumed: bool,
+    issuer_key_status: str,
+    expected: bool,
 ) -> None:
-    """No witness (time service never evaluated to TRUSTED) => not admissible"""
-    _admit_epoch(epoch_service)
+    """``time-not-trusted``: no witness (never evaluated to TRUSTED) => not admissible."""
+    if time_trusted:
+        make_trusted(time_service)
+    if epoch_admitted:
+        _admit_epoch(epoch_service)
     capability = _issue_capability(epoch=1)
 
     assert (
@@ -90,71 +96,9 @@ def test_capability_valid_false_when_time_not_trusted(
             epoch_service=epoch_service,
             revocation_status="not_revoked",
             superseded=False,
-            consumed=False,
-            issuer_key_status="valid",
+            consumed=consumed,
+            issuer_key_status=issuer_key_status,
             environment_and_mode_matches=True,
         )
-        is False
-    )
-
-
-def test_capability_valid_false_when_epoch_stale(
-    epoch_service: SafetyAuthorityEpochService, time_service: TrustworthyTimeService
-) -> None:
-    make_trusted(time_service)
-    capability = _issue_capability(epoch=1)
-
-    assert (
-        capability_valid(
-            capability,
-            epoch_service=epoch_service,
-            revocation_status="not_revoked",
-            superseded=False,
-            consumed=False,
-            issuer_key_status="valid",
-            environment_and_mode_matches=True,
-        )
-        is False
-    )
-
-
-def test_capability_valid_false_when_issuer_key_not_valid(
-    epoch_service: SafetyAuthorityEpochService, time_service: TrustworthyTimeService
-) -> None:
-    make_trusted(time_service)
-    _admit_epoch(epoch_service)
-    capability = _issue_capability(epoch=1)
-
-    assert (
-        capability_valid(
-            capability,
-            epoch_service=epoch_service,
-            revocation_status="not_revoked",
-            superseded=False,
-            consumed=False,
-            issuer_key_status="revoked",
-            environment_and_mode_matches=True,
-        )
-        is False
-    )
-
-
-def test_capability_valid_false_when_consumed(
-    epoch_service: SafetyAuthorityEpochService, time_service: TrustworthyTimeService
-) -> None:
-    make_trusted(time_service)
-    _admit_epoch(epoch_service)
-    capability = _issue_capability(epoch=1)
-
-    assert (
-        capability_valid(
-            capability,
-            epoch_service=epoch_service,
-            revocation_status="not_revoked",
-            superseded=False,
-            consumed=True,
-            issuer_key_status="valid",
-            environment_and_mode_matches=True,
-        )
-        is False
+        is expected
     )
