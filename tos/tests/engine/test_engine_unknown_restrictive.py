@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from decimal import Decimal
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -33,18 +35,15 @@ from ._engine_fixtures import (
     sent_core,
 )
 
-_FULL_FILL: dict[str, Any] = {
-    "filled_quantity": Decimal("2"),
-    "remaining_quantity": Decimal("0"),
-}
-_FIRST_PARTIAL: dict[str, Any] = {
-    "filled_quantity": Decimal("4"),
-    "remaining_quantity": Decimal("6"),
-}
-_HALF_FILL: dict[str, Any] = {
-    "filled_quantity": Decimal("1"),
-    "remaining_quantity": Decimal("1"),
-}
+_FULL_FILL: Mapping[str, Any] = MappingProxyType(
+    {"filled_quantity": Decimal("2"), "remaining_quantity": Decimal("0")}
+)
+_FIRST_PARTIAL: Mapping[str, Any] = MappingProxyType(
+    {"filled_quantity": Decimal("4"), "remaining_quantity": Decimal("6")}
+)
+_HALF_FILL: Mapping[str, Any] = MappingProxyType(
+    {"filled_quantity": Decimal("1"), "remaining_quantity": Decimal("1")}
+)
 
 
 @pytest.mark.parametrize("kind", [EgressResultKind.UNKNOWN, EgressResultKind.TIMEOUT])
@@ -365,7 +364,7 @@ def test_a_late_partial_fill_after_full_fill_does_not_crash_and_is_recorded_non_
 def test_a_regressing_second_partial_fill_is_refused_not_applied(
     filled: Decimal, remaining: Decimal
 ) -> None:
-    """([K2-p3-#5] #5; [KW2b-#10] #10; Phase 3 wave 2 N2; CPL-2/CPL-4; ADR-002-002 §15.1:710) Filled may not go down, remaining may not grow or shrink for free, and the authorized total may not inflate."""
+    """([K2-p3-#5] #5; [KW2b-#10] #10; wave 2 N2; CPL-2/CPL-4; ADR-002-002 §15.1:710)"""
     core, _, _, attempt_id = sent_core()
     first = core.handle(
         egress_event(
@@ -712,7 +711,7 @@ def test_quarantine_resolution_edges_values_are_settled_states_below_quarantine(
     ],
 )
 def test_a_settled_projection_survives_a_timeout_then_ack_cycle(
-    kind: EgressResultKind, fills: dict[str, Decimal], settled_state: CapacityState
+    kind: EgressResultKind, fills: Mapping[str, Any], settled_state: CapacityState
 ) -> None:
     """([KW2c-R2]) Re-review probe cases A/B/C: a proven settlement must survive a TIMEOUT/ACK cycle — a bare ACK never revives it back to POTENTIALLY_LIVE."""
     core, _, _, attempt_id = sent_core()
