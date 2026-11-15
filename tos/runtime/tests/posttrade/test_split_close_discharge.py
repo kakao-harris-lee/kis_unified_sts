@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from decimal import Decimal
 
-from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.engine.records import EgressResultPayload
 from tos.engine.vocabulary import EgressResultKind
 from tos.rcl import CapacityState
@@ -29,7 +28,6 @@ _SECOND_CLOSE_PERMIT = "afg-permit-relc-close-2"
 _SECOND_CLOSE_RESERVATION = permit_reservation_id(
     cycle._ACCOUNT, cycle._INSTRUMENT, _SECOND_CLOSE_PERMIT
 )
-_SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 
 class _CloseHistoryWitness:

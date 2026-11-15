@@ -52,7 +52,6 @@ from tos_runtime.recon.ports import (
 from tos_runtime.recon.service import ReconciliationClass, ReconciliationService
 from tos_runtime.risk.ledger_stages import verdict_for_scope
 
-from ..engine.conftest import FakeMonotonicSource, FixedKeyProvider  # noqa: F401
 from .conftest import MONOTONIC_BASE_MS as _MONOTONIC_BASE_MS
 from .conftest import Rig
 
@@ -139,13 +138,6 @@ def _open_reservation(
         command_digest=f"dig-{command}",
         expected_seq=-1,
     )
-
-
-def _open_reservation_under_scope(
-    rcl_log: SqliteCommitLog, *, scope: ReservationScope
-) -> None:
-    """Like :func:`_open_reservation`, but persists a caller-supplied"""
-    _open_reservation(rcl_log, scope=scope, command="relc-setup-divergent")
 
 
 def _commit_transition(
@@ -822,9 +814,10 @@ def test_gate4_holds_when_the_rcl_persisted_scope_diverges_from_the_proof(
     payload, produced = _seed_full_fill_obligation(rig.evidence_store)
     rig.inbox.record_finality_witness(_ATTEMPT_ID, True)
     _record_full_fill_receipt(rig.evidence_store, finality_proof_recorded=False)
-    _open_reservation_under_scope(
+    _open_reservation(
         rig.rcl_log,
         scope=ReservationScope(account="divergent-account", instrument=_INSTRUMENT),
+        command="relc-setup-divergent",
     )
 
     consumer = _consumer(rig)
@@ -889,9 +882,10 @@ def test_non_execution_path_holds_when_gate4_diverges_too(
 ) -> None:
     """Independent-review finding M3 (routing through gate 4): the non-execution destination now"""
     payload = _payload(EgressResultKind.CANCEL_ACK)
-    _open_reservation_under_scope(
+    _open_reservation(
         rig.rcl_log,
         scope=ReservationScope(account="divergent-account", instrument=_INSTRUMENT),
+        command="relc-setup-divergent",
     )
 
     consumer = _non_execution_consumer(rig)

@@ -130,7 +130,7 @@ def rcl_log(
 
 @dataclass(frozen=True)
 class _Rig:
-    """The four stores every ``RiskStateService`` test here opens together."""
+    """The tmp dir and three stores every ``RiskStateService`` test here opens together."""
 
     tmp_path: Path
     evidence_store: SqliteEvidenceStore

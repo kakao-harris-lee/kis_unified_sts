@@ -28,10 +28,6 @@ from . import test_release_consumer as cycle
 from .conftest import Rig
 
 
-def _consumer(rig: Rig) -> FinalityReleaseConsumer:
-    return cycle._cycle_consumer(rig)
-
-
 def _count_history_reads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """Spy on the one expensive read: ``verify_replay`` plus a full row decode (#1008)."""
     reads = [0]
@@ -59,7 +55,7 @@ def _arrange_pending_row(
 
     monkeypatch.setattr(FinalityReleaseConsumer, "_discharge_entry", crash_before_entry)
     with pytest.raises(RuntimeError, match="simulated process stop"):
-        _consumer(rig).consume(payload)
+        cycle._cycle_consumer(rig).consume(payload)
     return payload
 
 
@@ -110,7 +106,7 @@ def test_pending_candidate_alone_does_not_authorize_entry_release(
     rig: Rig,
 ) -> None:
     payload = cycle._arrange_close(rig)
-    consumer = _consumer(rig)
+    consumer = cycle._cycle_consumer(rig)
     entry = next(
         row
         for row in consumer.projection.scope_reservations(
@@ -145,7 +141,7 @@ def test_restart_recovers_crash_after_close_own_release_before_entry_discharge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = cycle._arrange_close(rig)
-    consumer = _consumer(rig)
+    consumer = cycle._cycle_consumer(rig)
 
     def crash_before_entry(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("simulated process stop before entry discharge")
@@ -154,7 +150,7 @@ def test_restart_recovers_crash_after_close_own_release_before_entry_discharge(
     with pytest.raises(RuntimeError, match="simulated process stop"):
         consumer.consume(payload)
 
-    restarted = _consumer(rig)
+    restarted = cycle._cycle_consumer(rig)
     assert restarted.pending_recovery_attempt_ids() == (payload.attempt_id,)
     assert restarted.resume_entry_discharge(payload.attempt_id)
     assert restarted.projection.reservation_state(cycle._entry_reservation_id()) is (
@@ -185,9 +181,9 @@ def test_restart_after_entry_commit_is_idempotent(
 
     monkeypatch.setattr(FinalityReleaseConsumer, "_release", crash_after_entry_commit)
     with pytest.raises(RuntimeError, match="after entry RCL commit"):
-        _consumer(rig).consume(payload)
+        cycle._cycle_consumer(rig).consume(payload)
 
-    restarted = _consumer(rig)
+    restarted = cycle._cycle_consumer(rig)
     assert restarted.resume_entry_discharge(payload.attempt_id)
     assert restarted.pending_recovery_attempt_ids() == ()
     assert len(_entry_release_rows(rig.rcl_log, cycle._entry_reservation_id())) == 1
@@ -204,7 +200,7 @@ def test_entry_version_change_after_pending_fails_closed(
 
     monkeypatch.setattr(FinalityReleaseConsumer, "_discharge_entry", crash_before_entry)
     with pytest.raises(RuntimeError):
-        _consumer(rig).consume(payload)
+        cycle._cycle_consumer(rig).consume(payload)
 
     epoch = rig.rcl_log.current_epoch() or rig.rcl_log.acquire_epoch(
         RuntimeIdentity(cell_id="entry-recovery-test", process_nonce="version-change")
@@ -229,7 +225,7 @@ def test_entry_version_change_after_pending_fails_closed(
     )
     assert not isinstance(receipt, AppendRefusal)
 
-    restarted = _consumer(rig)
+    restarted = cycle._cycle_consumer(rig)
     assert restarted.pending_recovery_attempt_ids() == (payload.attempt_id,)
     assert not restarted.resume_entry_discharge(payload.attempt_id)
     assert restarted.projection.reservation_state(cycle._entry_reservation_id()) is (
@@ -244,7 +240,7 @@ def test_idle_pass_does_not_reread_the_rcl_history_until_the_tip_moves(
 ) -> None:
     """#1008 — a pass that committed nothing reuses the snapshot it already holds."""
     payload = _arrange_pending_row(rig, monkeypatch)
-    restarted = _consumer(rig)
+    restarted = cycle._cycle_consumer(rig)
     reads = _count_history_reads(monkeypatch)
 
     assert restarted.pending_recovery_attempt_ids() == (payload.attempt_id,)
@@ -269,7 +265,7 @@ def test_accumulated_pending_rows_do_not_cost_one_full_read_each(
 ) -> None:
     """#1008 — per-pass read count is independent of how many pending rows are recorded."""
     payload = _arrange_pending_row(rig, monkeypatch)
-    restarted = _consumer(rig)
+    restarted = cycle._cycle_consumer(rig)
     reads = _count_history_reads(monkeypatch)
 
     assert restarted.pending_recovery_attempt_ids() == (payload.attempt_id,)
