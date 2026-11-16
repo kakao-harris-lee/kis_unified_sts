@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tos.dsl import Proposal
-from tos.engine.records import InstrumentKey, StageRequest
+from tos.engine.records import InstrumentKey, StageRequest, StageVerdict
 from tos.engine.vocabulary import CommitmentStep, StageAuthorityClass, StageOutcome
 from tos.iap import (
     ApprovalConsumptionRecord,
@@ -54,6 +54,14 @@ def _stage(
     )
 
 
+def _assert_pure_predicate(verdict: StageVerdict) -> None:
+    """Every stage here answers as a pure predicate, never as a provisional."""
+    assert verdict.authority_class is StageAuthorityClass.AVAILABLE_PURE_PREDICATE
+    assert (
+        verdict.authority_class is not StageAuthorityClass.NON_AUTHORITATIVE_PROVISIONAL
+    )
+
+
 def test_admit_never_uses_non_authoritative_provisional(
     intent_registry: IntentRegistry, approvals_dir: Path, expected_owner_uid: int
 ) -> None:
@@ -63,10 +71,7 @@ def test_admit_never_uses_non_authoritative_provisional(
     verdict = stage(_bare_request())
 
     assert verdict.outcome is StageOutcome.ADMIT
-    assert verdict.authority_class is StageAuthorityClass.AVAILABLE_PURE_PREDICATE
-    assert (
-        verdict.authority_class is not StageAuthorityClass.NON_AUTHORITATIVE_PROVISIONAL
-    )
+    _assert_pure_predicate(verdict)
 
 
 def test_deny_never_uses_non_authoritative_provisional(
@@ -85,10 +90,7 @@ def test_deny_never_uses_non_authoritative_provisional(
     verdict = stage(_bare_request())
 
     assert verdict.outcome is StageOutcome.DENY
-    assert verdict.authority_class is StageAuthorityClass.AVAILABLE_PURE_PREDICATE
-    assert (
-        verdict.authority_class is not StageAuthorityClass.NON_AUTHORITATIVE_PROVISIONAL
-    )
+    _assert_pure_predicate(verdict)
 
 
 def test_unknown_never_uses_non_authoritative_provisional_when_no_decision(
@@ -99,10 +101,7 @@ def test_unknown_never_uses_non_authoritative_provisional_when_no_decision(
     verdict = stage(_bare_request())
 
     assert verdict.outcome is StageOutcome.UNKNOWN
-    assert verdict.authority_class is StageAuthorityClass.AVAILABLE_PURE_PREDICATE
-    assert (
-        verdict.authority_class is not StageAuthorityClass.NON_AUTHORITATIVE_PROVISIONAL
-    )
+    _assert_pure_predicate(verdict)
 
 
 def test_item14_fields_after_admission() -> None:

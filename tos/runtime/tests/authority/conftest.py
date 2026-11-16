@@ -6,7 +6,6 @@ import os
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict, Unpack
 
 import pytest
 import yaml
@@ -111,71 +110,26 @@ def writer_epoch(log: SqliteCommitLog, identity: RuntimeIdentity) -> int:
     return log.acquire_epoch(identity)
 
 
-class _TimeConfigKwargs(TypedDict):
-    """1:1 with :class:`TrustworthyTimeConfig`'s dataclass fields (plan §1.1 A-rt) — a runtime"""
-
-    max_time_source_precision_ms: int
-    max_time_transport_and_queue_uncertainty_ms: int
-    max_time_conservative_freshness_age_ms: int
-    max_future_timestamp_tolerance_ms: int
-    max_process_suspension_ms: int
-    max_time_source_disagreement_ms: int
-    min_time_independent_reference_count: int
-    max_clock_domain_conversion_uncertainty_ms: int
-    max_send_result_wait_ms: int
-    max_critical_input_consumer_receipt_age_ms: int
-    max_time_source_sequence_gap_ms: int
-    tz_db_version: str
-    trading_calendar_version: str
-    verification_profile_version: str
-    safety_profile_version: str
-    time_health_snapshot_heartbeat_ms: int
-
-
-class _TimeConfigKwargsPartial(TypedDict, total=False):
-    """Same fields as :class:`_TimeConfigKwargs`, all optional — the override-kwargs shape"""
-
-    max_time_source_precision_ms: int
-    max_time_transport_and_queue_uncertainty_ms: int
-    max_time_conservative_freshness_age_ms: int
-    max_future_timestamp_tolerance_ms: int
-    max_process_suspension_ms: int
-    max_time_source_disagreement_ms: int
-    min_time_independent_reference_count: int
-    max_clock_domain_conversion_uncertainty_ms: int
-    max_send_result_wait_ms: int
-    max_critical_input_consumer_receipt_age_ms: int
-    max_time_source_sequence_gap_ms: int
-    tz_db_version: str
-    trading_calendar_version: str
-    verification_profile_version: str
-    safety_profile_version: str
-    time_health_snapshot_heartbeat_ms: int
-
-
-def _time_config(
-    **overrides: Unpack[_TimeConfigKwargsPartial],
-) -> TrustworthyTimeConfig:
-    base: _TimeConfigKwargs = {
-        "max_time_source_precision_ms": 5,
-        "max_time_transport_and_queue_uncertainty_ms": 10,
-        "max_time_conservative_freshness_age_ms": 1000,
-        "max_future_timestamp_tolerance_ms": 200,
-        "max_process_suspension_ms": 0,
-        "max_time_source_disagreement_ms": 50,
-        "min_time_independent_reference_count": 1,
-        "max_clock_domain_conversion_uncertainty_ms": 50,
-        "max_send_result_wait_ms": 5000,
-        "max_critical_input_consumer_receipt_age_ms": 1000,
-        "max_time_source_sequence_gap_ms": 50,
-        "tz_db_version": "2026a",
-        "trading_calendar_version": "cal-1",
-        "verification_profile_version": "vp-0",
-        "safety_profile_version": "sp-0",
-        "time_health_snapshot_heartbeat_ms": 60_000,
-    }
-    base.update(overrides)
-    return TrustworthyTimeConfig(**base)
+def _time_config() -> TrustworthyTimeConfig:
+    """This suite's fully-valued :class:`TrustworthyTimeConfig` (plan §1.1 A-rt)."""
+    return TrustworthyTimeConfig(
+        max_time_source_precision_ms=5,
+        max_time_transport_and_queue_uncertainty_ms=10,
+        max_time_conservative_freshness_age_ms=1000,
+        max_future_timestamp_tolerance_ms=200,
+        max_process_suspension_ms=0,
+        max_time_source_disagreement_ms=50,
+        min_time_independent_reference_count=1,
+        max_clock_domain_conversion_uncertainty_ms=50,
+        max_send_result_wait_ms=5000,
+        max_critical_input_consumer_receipt_age_ms=1000,
+        max_time_source_sequence_gap_ms=50,
+        tz_db_version="2026a",
+        trading_calendar_version="cal-1",
+        verification_profile_version="vp-0",
+        safety_profile_version="sp-0",
+        time_health_snapshot_heartbeat_ms=60_000,
+    )
 
 
 @pytest.fixture

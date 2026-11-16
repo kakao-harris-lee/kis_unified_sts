@@ -5,9 +5,16 @@ from __future__ import annotations
 import sqlite3
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
-from tos.are import RiskDecisionResult, RiskScopeKind
+from tos.are import (
+    AdverseScenarioKind,
+    AggregateRiskDecision,
+    AggregateRiskStateSnapshot,
+    RiskDecisionResult,
+    RiskScopeKind,
+)
 from tos.engine.records import InstrumentKey
 from tos.rcl import (
     AppendReceipt,
@@ -23,6 +30,7 @@ from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.risk.aggregate import (
     AggregateRiskConfigError,
+    AggregateRiskDecisionInputs,
     AggregateRiskService,
     load_adverse_scenario_set,
     load_required_scenario_kinds,
@@ -31,18 +39,68 @@ from tos_runtime.risk.aggregate import (
 from .conftest import FakeEvidenceAppendPort, grant_shaped_are_inputs, write_risk_config
 
 
-def test_load_adverse_scenario_set_refuses_null_generation(tmp_path: Path) -> None:
-    path = write_risk_config(tmp_path / "risk.yaml", scenario_set_generation=None)
-    with pytest.raises(AggregateRiskConfigError):
-        load_adverse_scenario_set(path)
+def _account_snapshot(
+    ara_service: AggregateRiskService,
+    instrument_key: InstrumentKey,
+    *,
+    snapshot_generation: int = 1,
+) -> AggregateRiskStateSnapshot:
+    """This suite's one snapshot shape: the ACCOUNT scope, every field attributed."""
+    return ara_service.snapshot(
+        instrument_key,
+        snapshot_generation=snapshot_generation,
+        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
+        all_fields_attributed=True,
+    )
 
 
-def test_load_adverse_scenario_set_refuses_named_tbd_placeholder(
-    tmp_path: Path,
+def _decide(
+    ara_service: AggregateRiskService,
+    instrument_key: InstrumentKey,
+    inputs: AggregateRiskDecisionInputs,
+    *,
+    snapshot_generation: int = 1,
+) -> AggregateRiskDecision:
+    """Decision generation 1 over ``inputs``."""
+    return ara_service.decide(
+        instrument_key,
+        inputs,
+        snapshot_generation=snapshot_generation,
+        decision_generation=1,
+    )
+
+
+def _grant_shaped_decision(
+    ara_service: AggregateRiskService,
+    instrument_key: InstrumentKey,
+    required_scenario_kinds: frozenset[AdverseScenarioKind],
+    *,
+    snapshot_generation: int = 1,
+) -> AggregateRiskDecision:
+    """Decide over the grant-shaped input bundle."""
+    return _decide(
+        ara_service,
+        instrument_key,
+        grant_shaped_are_inputs(required_scenario_kinds),
+        snapshot_generation=snapshot_generation,
+    )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"scenario_set_generation": None}, None),
+        ({"scenario_set_id": "TBD"}, "template placeholder"),
+        ({"covered_scenario_kinds": ["NOT_A_REAL_KIND"]}, None),
+    ],
+    ids=["null-generation", "named-tbd-placeholder", "unrecognized-scenario-kind"],
+)
+def test_load_adverse_scenario_set_refuses_a_bad_config(
+    tmp_path: Path, overrides: dict[str, Any], match: str | None
 ) -> None:
-    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): scenario_set_id/policy_binding_id/"""
-    path = write_risk_config(tmp_path / "risk.yaml", scenario_set_id="TBD")
-    with pytest.raises(AggregateRiskConfigError, match="template placeholder"):
+    """``named-tbd-placeholder`` is W-A A-0 round 2 (kernel round #4 재심 BLOCKER)."""
+    path = write_risk_config(tmp_path / "risk.yaml", **overrides)
+    with pytest.raises(AggregateRiskConfigError, match=match):
         load_adverse_scenario_set(path)
 
 
@@ -58,16 +116,6 @@ def test_load_adverse_scenario_set_refuses_malformed_yaml(tmp_path: Path) -> Non
         load_adverse_scenario_set(path)
 
 
-def test_load_adverse_scenario_set_refuses_unrecognized_scenario_kind(
-    tmp_path: Path,
-) -> None:
-    path = write_risk_config(
-        tmp_path / "risk.yaml", covered_scenario_kinds=["NOT_A_REAL_KIND"]
-    )
-    with pytest.raises(AggregateRiskConfigError):
-        load_adverse_scenario_set(path)
-
-
 def test_load_adverse_scenario_set_succeeds_when_fully_filled(
     risk_config_path: Path,
 ) -> None:
@@ -76,17 +124,16 @@ def test_load_adverse_scenario_set_succeeds_when_fully_filled(
     assert scenario_set.canonical_digest is not None
 
 
-def test_load_required_scenario_kinds_refuses_empty_floor(tmp_path: Path) -> None:
-    path = write_risk_config(tmp_path / "risk.yaml", required_scenario_kinds=None)
-    with pytest.raises(AggregateRiskConfigError):
-        load_required_scenario_kinds(path)
-
-
-def test_load_required_scenario_kinds_refuses_unrecognized_member(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "required_scenario_kinds",
+    [None, ["NOT_A_REAL_KIND"]],
+    ids=["empty-floor", "unrecognized-member"],
+)
+def test_load_required_scenario_kinds_refuses_a_bad_floor(
+    tmp_path: Path, required_scenario_kinds: list[str] | None
 ) -> None:
     path = write_risk_config(
-        tmp_path / "risk.yaml", required_scenario_kinds=["NOT_A_REAL_KIND"]
+        tmp_path / "risk.yaml", required_scenario_kinds=required_scenario_kinds
     )
     with pytest.raises(AggregateRiskConfigError):
         load_required_scenario_kinds(path)
@@ -95,12 +142,7 @@ def test_load_required_scenario_kinds_refuses_unrecognized_member(
 def test_snapshot_covers_required_scopes_after_a_successful_read(
     ara_service: AggregateRiskService, instrument_key: InstrumentKey
 ) -> None:
-    snapshot = ara_service.snapshot(
-        instrument_key,
-        snapshot_generation=1,
-        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
-        all_fields_attributed=True,
-    )
+    snapshot = _account_snapshot(ara_service, instrument_key)
     assert snapshot.covered_scopes == (RiskScopeKind.ACCOUNT,)
     assert snapshot.snapshot_id is not None
     assert snapshot.canonical_digest is not None
@@ -110,12 +152,7 @@ def test_snapshot_is_content_addressed_not_a_bare_counter(
     ara_service: AggregateRiskService, instrument_key: InstrumentKey
 ) -> None:
     """Two snapshots for the SAME scope at the SAME ledger state carry the"""
-    first = ara_service.snapshot(
-        instrument_key,
-        snapshot_generation=1,
-        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
-        all_fields_attributed=True,
-    )
+    first = _account_snapshot(ara_service, instrument_key)
     assert first.consistency_cut_identity is not None
     assert first.consistency_cut_identity.startswith("are-cut-")
 
@@ -126,12 +163,7 @@ def test_snapshot_propagates_projection_read_failures(
     """An unreachable RCL log is never silently read as 'covers nothing' —"""
     log.close()
     with pytest.raises(sqlite3.Error):
-        ara_service.snapshot(
-            instrument_key,
-            snapshot_generation=1,
-            required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
-            all_fields_attributed=True,
-        )
+        _account_snapshot(ara_service, instrument_key)
 
 
 def test_snapshot_conservative_current_usage_reflects_the_committed_rcl_vector(
@@ -166,12 +198,7 @@ def test_snapshot_conservative_current_usage_reflects_the_committed_rcl_vector(
     )
     assert isinstance(result, AppendReceipt)
 
-    snapshot = ara_service.snapshot(
-        instrument_key,
-        snapshot_generation=1,
-        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
-        all_fields_attributed=True,
-    )
+    snapshot = _account_snapshot(ara_service, instrument_key)
     assert snapshot.conservative_current_usage == committed_vector
     assert snapshot.conservative_current_usage != CapacityVector()
 
@@ -180,12 +207,7 @@ def test_snapshot_conservative_current_usage_is_empty_vector_when_no_reservation
     ara_service: AggregateRiskService, instrument_key: InstrumentKey
 ) -> None:
     """The ``CapacityVector()`` fallback stays for the honest "no reservation on"""
-    snapshot = ara_service.snapshot(
-        instrument_key,
-        snapshot_generation=1,
-        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
-        all_fields_attributed=True,
-    )
+    snapshot = _account_snapshot(ara_service, instrument_key)
     assert snapshot.conservative_current_usage == CapacityVector()
 
 
@@ -194,9 +216,8 @@ def test_decide_grants_on_a_fully_proven_bundle(
     instrument_key: InstrumentKey,
     required_scenario_kinds,
 ) -> None:
-    inputs = grant_shaped_are_inputs(required_scenario_kinds)
-    decision = ara_service.decide(
-        instrument_key, inputs, snapshot_generation=1, decision_generation=1
+    decision = _grant_shaped_decision(
+        ara_service, instrument_key, required_scenario_kinds
     )
     assert decision.result is RiskDecisionResult.GRANT
     assert decision.decision_id is not None
@@ -211,9 +232,7 @@ def test_decide_is_unknown_when_all_fields_attributed_is_false(
 ) -> None:
     inputs = grant_shaped_are_inputs(required_scenario_kinds)
     inputs = type(inputs)(**{**inputs.__dict__, "all_fields_attributed": False})
-    decision = ara_service.decide(
-        instrument_key, inputs, snapshot_generation=1, decision_generation=1
-    )
+    decision = _decide(ara_service, instrument_key, inputs)
     assert decision.result is RiskDecisionResult.UNKNOWN
 
 
@@ -226,9 +245,7 @@ def test_decide_denies_when_the_effective_limit_enlarges_the_envelope(
     inputs = type(inputs)(
         **{**inputs.__dict__, "limit_source_is_injected_envelope": False}
     )
-    decision = ara_service.decide(
-        instrument_key, inputs, snapshot_generation=1, decision_generation=1
-    )
+    decision = _decide(ara_service, instrument_key, inputs)
     assert decision.result is RiskDecisionResult.DENY
 
 
@@ -238,9 +255,8 @@ def test_decide_appends_decision_evidence(
     required_scenario_kinds,
     evidence_port: FakeEvidenceAppendPort,
 ) -> None:
-    inputs = grant_shaped_are_inputs(required_scenario_kinds)
-    decision = ara_service.decide(
-        instrument_key, inputs, snapshot_generation=1, decision_generation=1
+    decision = _grant_shaped_decision(
+        ara_service, instrument_key, required_scenario_kinds
     )
     kinds = evidence_port.kinds()
     assert "ARE_SNAPSHOT" in kinds
@@ -324,12 +340,7 @@ def test_snapshot_sums_every_outstanding_reservation_of_the_scope(
         expected_seq=seq,
     )
 
-    snapshot = ara_service.snapshot(
-        instrument_key,
-        snapshot_generation=1,
-        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
-        all_fields_attributed=True,
-    )
+    snapshot = _account_snapshot(ara_service, instrument_key)
     assert snapshot.conservative_current_usage.magnitude("notional") == Decimal("350")
 
 
@@ -361,12 +372,7 @@ def test_snapshot_nets_a_signed_close_vector_against_the_position(
         expected_seq=seq,
     )
 
-    snapshot = ara_service.snapshot(
-        instrument_key,
-        snapshot_generation=1,
-        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
-        all_fields_attributed=True,
-    )
+    snapshot = _account_snapshot(ara_service, instrument_key)
     assert snapshot.conservative_current_usage.magnitude("notional") == Decimal("0")
 
 
@@ -399,12 +405,7 @@ def test_snapshot_excludes_released_reservations_from_usage(
         expected_seq=seq,
     )
 
-    snapshot = ara_service.snapshot(
-        instrument_key,
-        snapshot_generation=1,
-        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
-        all_fields_attributed=True,
-    )
+    snapshot = _account_snapshot(ara_service, instrument_key)
     assert snapshot.conservative_current_usage.magnitude("notional") == Decimal("100")
 
 
@@ -471,20 +472,15 @@ def test_an_outstanding_reservation_without_a_vector_makes_the_decision_unknown(
         expected_seq=seq,
     )
 
-    snapshot = ara_service.snapshot(
-        instrument_key,
-        snapshot_generation=1,
-        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
-        all_fields_attributed=True,
-    )
+    snapshot = _account_snapshot(ara_service, instrument_key)
     assert snapshot.conservative_current_usage.declares("notional")
     assert snapshot.conservative_current_usage.magnitude("notional") is None
 
-    decision = ara_service.decide(
+    decision = _grant_shaped_decision(
+        ara_service,
         instrument_key,
-        grant_shaped_are_inputs(required_scenario_kinds),
+        required_scenario_kinds,
         snapshot_generation=2,
-        decision_generation=1,
     )
     assert decision.result is RiskDecisionResult.UNKNOWN
 
@@ -512,11 +508,10 @@ def test_a_lone_outstanding_reservation_without_a_vector_is_unknown_too(
         to_state=CapacityState.COMMITTED_UNBOUND,
         expected_seq=-1,
     )
-    decision = ara_service.decide(
+    decision = _grant_shaped_decision(
+        ara_service,
         instrument_key,
-        grant_shaped_are_inputs(required_scenario_kinds),
-        snapshot_generation=1,
-        decision_generation=1,
+        required_scenario_kinds,
     )
     assert decision.result is RiskDecisionResult.UNKNOWN
 
@@ -550,19 +545,13 @@ def test_a_released_reservation_without_a_vector_does_not_make_usage_unknown(
         to_state=CapacityState.ATTEMPT_BOUND,
         expected_seq=seq,
     )
-    decision = ara_service.decide(
+    decision = _grant_shaped_decision(
+        ara_service,
         instrument_key,
-        grant_shaped_are_inputs(required_scenario_kinds),
-        snapshot_generation=1,
-        decision_generation=1,
+        required_scenario_kinds,
     )
     assert decision.result is RiskDecisionResult.GRANT
-    snapshot = ara_service.snapshot(
-        instrument_key,
-        snapshot_generation=2,
-        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
-        all_fields_attributed=True,
-    )
+    snapshot = _account_snapshot(ara_service, instrument_key, snapshot_generation=2)
     assert snapshot.conservative_current_usage.magnitude("notional") == Decimal("100")
 
 
@@ -593,18 +582,13 @@ def test_a_lifecycle_transition_without_a_vector_keeps_the_committed_usage(
         expected_seq=seq,
         command_type=CommandType.MARK_SEND_STARTED,
     )
-    snapshot = ara_service.snapshot(
-        instrument_key,
-        snapshot_generation=1,
-        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
-        all_fields_attributed=True,
-    )
+    snapshot = _account_snapshot(ara_service, instrument_key)
     assert snapshot.conservative_current_usage.magnitude("notional") == Decimal("250")
-    decision = ara_service.decide(
+    decision = _grant_shaped_decision(
+        ara_service,
         instrument_key,
-        grant_shaped_are_inputs(required_scenario_kinds),
+        required_scenario_kinds,
         snapshot_generation=2,
-        decision_generation=1,
     )
     assert decision.result is RiskDecisionResult.GRANT
 

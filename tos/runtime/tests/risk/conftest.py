@@ -12,6 +12,7 @@ import yaml
 from tos.afg import (
     ActionAmplificationEnvelope,
     ActionCause,
+    ActionFlowPermit,
     ActionFlowScopeKind,
     ActionFlowStateSnapshot,
     ObservedAmplification,
@@ -351,4 +352,14 @@ def grant_shaped_afg_inputs() -> ActionFlowDecisionInputs:
         cause_digest="cause-digest-1",
         command_identity="cmd-1",
         command_digest="cmd-digest-1",
+    )
+
+
+def build_committed_permit(
+    governor: ActionFlowGovernor, *, command_identity: str = "cmd-1"
+) -> ActionFlowPermit:
+    """Decide on a grant-shaped bundle and build generation-1 permit for it."""
+    decision = governor.decide(grant_shaped_afg_inputs())
+    return governor.build_permit(
+        decision, permit_generation=1, command_identity=command_identity
     )
