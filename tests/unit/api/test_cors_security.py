@@ -128,14 +128,16 @@ class TestCORSSecurity:
 
             # If credentials are enabled, origins must not be wildcard
             if dev_cors_config.get("allow_credentials"):
-                assert dev_cors_config["allow_origins"] != ["*"], \
-                    "Development mode combines allow_credentials=True with wildcard origins"
+                assert dev_cors_config["allow_origins"] != [
+                    "*"
+                ], "Development mode combines allow_credentials=True with wildcard origins"
                 # Should have explicit localhost origins
                 assert isinstance(dev_cors_config["allow_origins"], list)
                 assert len(dev_cors_config["allow_origins"]) > 0
                 for origin in dev_cors_config["allow_origins"]:
-                    assert "localhost" in origin or "127.0.0.1" in origin, \
-                        f"Development origin should be localhost, got: {origin}"
+                    assert (
+                        "localhost" in origin or "127.0.0.1" in origin
+                    ), f"Development origin should be localhost, got: {origin}"
 
         # Test production mode
         with patch.dict(os.environ, {"ENVIRONMENT": "production"}):

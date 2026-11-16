@@ -140,9 +140,9 @@ class TestMomentumIndicatorsCCI:
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         # Sanity check: CCI shouldn't be absurdly large for normal data
-        assert -1000 < indicators["cci"] < 1000, (
-            f"CCI {indicators['cci']} is outside normal bounds"
-        )
+        assert (
+            -1000 < indicators["cci"] < 1000
+        ), f"CCI {indicators['cci']} is outside normal bounds"
 
 
 class TestMomentumIndicatorsMACD:
@@ -188,9 +188,9 @@ class TestMomentumIndicatorsMACD:
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         # With steadily increasing prices, MACD line should be positive
-        assert indicators["macd_line"] > 0, (
-            f"MACD line should be positive in uptrend, got {indicators['macd_line']}"
-        )
+        assert (
+            indicators["macd_line"] > 0
+        ), f"MACD line should be positive in uptrend, got {indicators['macd_line']}"
 
 
 class TestMomentumIndicatorsStochastic:
@@ -209,12 +209,12 @@ class TestMomentumIndicatorsStochastic:
         engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
-        assert 0 <= indicators["sto_k"] <= 100, (
-            f"sto_k {indicators['sto_k']} out of range [0, 100]"
-        )
-        assert 0 <= indicators["sto_d"] <= 100, (
-            f"sto_d {indicators['sto_d']} out of range [0, 100]"
-        )
+        assert (
+            0 <= indicators["sto_k"] <= 100
+        ), f"sto_k {indicators['sto_k']} out of range [0, 100]"
+        assert (
+            0 <= indicators["sto_d"] <= 100
+        ), f"sto_d {indicators['sto_d']} out of range [0, 100]"
 
     def test_stochastic_high_in_uptrend(self):
         """Stochastic should be high (>50) for steadily rising prices.
@@ -226,9 +226,9 @@ class TestMomentumIndicatorsStochastic:
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         # For steadily rising prices, stochastic should be elevated
-        assert indicators["sto_k"] > 50, (
-            f"sto_k should be > 50 in uptrend, got {indicators['sto_k']}"
-        )
+        assert (
+            indicators["sto_k"] > 50
+        ), f"sto_k should be > 50 in uptrend, got {indicators['sto_k']}"
 
 
 class TestMomentumIndicatorsOtherIndicators:
@@ -248,9 +248,9 @@ class TestMomentumIndicatorsOtherIndicators:
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert "rsi" in indicators
-        assert 0 <= indicators["rsi"] <= 100, (
-            f"RSI {indicators['rsi']} out of range [0, 100]"
-        )
+        assert (
+            0 <= indicators["rsi"] <= 100
+        ), f"RSI {indicators['rsi']} out of range [0, 100]"
 
     def test_williams_r_present_and_in_range(self):
         """Williams %R should be present and in range [-100, 0]."""
@@ -258,9 +258,9 @@ class TestMomentumIndicatorsOtherIndicators:
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert "williams_r" in indicators
-        assert -100 <= indicators["williams_r"] <= 0, (
-            f"Williams %R {indicators['williams_r']} out of range [-100, 0]"
-        )
+        assert (
+            -100 <= indicators["williams_r"] <= 0
+        ), f"Williams %R {indicators['williams_r']} out of range [-100, 0]"
 
 
 class TestMomentumIndicatorsMetadata:
@@ -329,27 +329,31 @@ class TestMomentumIndicatorsWarmup:
         )
 
         indicators = engine.get_momentum_indicators(symbol, timeframe=5)
-        assert indicators == {}, (
-            "Should return empty dict when insufficient MTF candles"
-        )
+        assert (
+            indicators == {}
+        ), "Should return empty dict when insufficient MTF candles"
 
     def test_momentum_empty_on_insufficient_data(self):
         """Empty dict when candle count < min_candles threshold."""
         engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=100)
 
         # 100 1m candles → 20 5m candles, less than default min_candles=50
-        indicators = engine.get_momentum_indicators("005930", timeframe=5, min_candles=50)
-
-        assert indicators == {}, (
-            "Should return empty dict when candle count < min_candles"
+        indicators = engine.get_momentum_indicators(
+            "005930", timeframe=5, min_candles=50
         )
+
+        assert (
+            indicators == {}
+        ), "Should return empty dict when candle count < min_candles"
 
     def test_momentum_succeeds_with_sufficient_data(self):
         """Non-empty dict when candle count >= min_candles."""
         engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
         # 260 1m candles → 51 5m candles, exceeds default min_candles=50
-        indicators = engine.get_momentum_indicators("005930", timeframe=5, min_candles=50)
+        indicators = engine.get_momentum_indicators(
+            "005930", timeframe=5, min_candles=50
+        )
 
         assert indicators != {}, "Should return indicators when sufficient data"
         assert indicators["candle_count"] >= 50
@@ -401,7 +405,12 @@ class TestMomentumIndicatorsCaching:
             cumulative += 1000
             engine.on_tick(
                 "005930",
-                {"close": 72500.0, "high": 72550.0, "low": 72450.0, "volume": cumulative},
+                {
+                    "close": 72500.0,
+                    "high": 72550.0,
+                    "low": 72450.0,
+                    "volume": cumulative,
+                },
                 ts,
             )
 
@@ -436,9 +445,7 @@ class TestMomentumIndicatorsErrorHandling:
         # Request 15m timeframe, but only 5m is registered
         indicators = engine.get_momentum_indicators("005930", timeframe=15)
 
-        assert indicators == {}, (
-            "Should return empty dict for unregistered timeframe"
-        )
+        assert indicators == {}, "Should return empty dict for unregistered timeframe"
 
     def test_handles_calculation_errors_gracefully(self):
         """Should return empty dict on calculation errors (logged, not raised)."""
@@ -550,16 +557,24 @@ class TestMomentumIndicatorsMultipleTimeframes:
                 cumulative += 1000
                 engine.on_tick(
                     symbol,
-                    {"close": price + minute, "high": price + minute + 10,
-                     "low": price + minute - 10, "volume": cumulative},
+                    {
+                        "close": price + minute,
+                        "high": price + minute + 10,
+                        "low": price + minute - 10,
+                        "volume": cumulative,
+                    },
                     ts,
                 )
 
             cumulative += 1000
             engine.on_tick(
                 symbol,
-                {"close": price + 260, "high": price + 270, "low": price + 250,
-                 "volume": cumulative},
+                {
+                    "close": price + 260,
+                    "high": price + 270,
+                    "low": price + 250,
+                    "volume": cumulative,
+                },
                 datetime(2026, 2, 17, 9 + 260 // 60, 260 % 60, 31),
             )
 

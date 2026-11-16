@@ -1,4 +1,5 @@
 """Tests for math utilities."""
+
 import logging
 
 from shared.utils.math import safe_divide, safe_pct_change

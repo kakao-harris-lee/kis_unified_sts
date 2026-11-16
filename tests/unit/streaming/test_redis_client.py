@@ -26,7 +26,9 @@ class TestGetClientFirstCall:
         """First call to get_client() must create a new Redis instance and ping it."""
         mock_instance = MagicMock(spec=redis.Redis)
 
-        with patch("shared.streaming.client.redis.Redis", return_value=mock_instance) as mock_cls:
+        with patch(
+            "shared.streaming.client.redis.Redis", return_value=mock_instance
+        ) as mock_cls:
             client = RedisClient.get_client()
 
         # A Redis instance was constructed exactly once
@@ -43,7 +45,9 @@ class TestGetClientCaching:
         # ping always succeeds
         mock_instance.ping.return_value = True
 
-        with patch("shared.streaming.client.redis.Redis", return_value=mock_instance) as mock_cls:
+        with patch(
+            "shared.streaming.client.redis.Redis", return_value=mock_instance
+        ) as mock_cls:
             first = RedisClient.get_client()
             second = RedisClient.get_client()
 
@@ -148,7 +152,9 @@ class TestCreateClientParams:
         """_create_client() must pass socket timeouts to redis.Redis."""
         mock_instance = MagicMock(spec=redis.Redis)
 
-        with patch("shared.streaming.client.redis.Redis", return_value=mock_instance) as mock_cls:
+        with patch(
+            "shared.streaming.client.redis.Redis", return_value=mock_instance
+        ) as mock_cls:
             RedisClient.get_client()
 
         _, kwargs = mock_cls.call_args
@@ -165,7 +171,9 @@ class TestCreateClientParams:
 
         mock_instance = MagicMock(spec=redis.Redis)
 
-        with patch("shared.streaming.client.redis.Redis", return_value=mock_instance) as mock_cls:
+        with patch(
+            "shared.streaming.client.redis.Redis", return_value=mock_instance
+        ) as mock_cls:
             RedisClient.get_client()
 
         _, kwargs = mock_cls.call_args
@@ -180,7 +188,9 @@ class TestCreateClientParams:
 
         mock_instance = MagicMock(spec=redis.Redis)
 
-        with patch("shared.streaming.client.redis.Redis", return_value=mock_instance) as mock_cls:
+        with patch(
+            "shared.streaming.client.redis.Redis", return_value=mock_instance
+        ) as mock_cls:
             RedisClient.get_client()
 
         _, kwargs = mock_cls.call_args

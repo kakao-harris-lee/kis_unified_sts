@@ -33,7 +33,8 @@ def test_next_month_code_mini_is_month_after_front():
 def test_next_month_code_kospi200_is_next_quarterly():
     # 2026-07 → front quarterly is 09, next is 12.
     assert (
-        get_next_month_code(product="kospi200", target_date=date(2026, 7, 1)) == "A01612"
+        get_next_month_code(product="kospi200", target_date=date(2026, 7, 1))
+        == "A01612"
     )
 
 
