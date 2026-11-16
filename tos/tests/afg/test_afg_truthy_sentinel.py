@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import ast
 from decimal import Decimal
-from pathlib import Path
 
 from hypothesis import given
 from hypothesis import strategies as st
@@ -16,6 +14,7 @@ from tos.afg import (
     partition_lease_exclusive,
 )
 
+from .._truthiness_scan import package_truthiness_offenders
 from ._afg_strategies import (
     ACTION_FLOW_RESULT_OR_FORGERY,
     ACTION_FLOW_RESULTS,
@@ -26,7 +25,20 @@ from ._afg_strategies import (
     limit_vector,
 )
 
-_AFG_SRC = Path(__file__).resolve().parent.parent.parent / "src" / "tos" / "afg"
+_SUSPICIOUS = frozenset(
+    {
+        "result",
+        "coverage",
+        "verdict",
+        "lease_admissible",
+        "admissibility",
+        "scope_complete",
+        "lineage_complete",
+        "amplification_ok",
+        "envelope_ok",
+        "generation_current",
+    }
+)
 
 
 def test_every_action_flow_result_member_is_truthy() -> None:
@@ -151,48 +163,7 @@ def test_only_the_admissible_token_passes_the_lease_gate() -> None:
     assert _lease(None) is False
 
 
-def _bare_truthiness_offenders(path: Path) -> list[str]:
-    """Return ``if <name>:`` / ``if not <name>:`` uses of a result-shaped local (AST)."""
-    suspicious = {
-        "result",
-        "coverage",
-        "verdict",
-        "lease_admissible",
-        "admissibility",
-        "scope_complete",
-        "lineage_complete",
-        "amplification_ok",
-        "envelope_ok",
-        "generation_current",
-    }
-    offenders: list[str] = []
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
-            continue
-        test = node.test
-        if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-            test = test.operand
-        if isinstance(test, ast.Name) and test.id in suspicious:
-            offenders.append(f"{path.name}:{node.lineno} bare truthiness on {test.id}")
-    return offenders
-
-
 def test_no_afg_source_uses_bare_truthiness_on_a_result_value() -> None:
     """(source seal) No afg module tests a result-shaped value for bare truthiness."""
-    sources = sorted(_AFG_SRC.rglob("*.py"))
-    assert sources, f"no tos.afg source files found under {_AFG_SRC}"
-    offenders: list[str] = []
-    for path in sources:
-        offenders.extend(_bare_truthiness_offenders(path))
+    offenders = package_truthiness_offenders("afg", _SUSPICIOUS)
     assert offenders == [], f"truthy-sentinel trap reachable: {offenders}"
-
-
-def test_bare_truthiness_scan_detects_a_planted_offender(tmp_path: Path) -> None:
-    """(canary) The AST scan actually catches a planted ``if result:`` (not vacuous)."""
-    planted = tmp_path / "planted.py"
-    planted.write_text(
-        "def f(result):\n    if result:\n        return 1\n    return 0\n",
-        encoding="utf-8",
-    )
-    assert _bare_truthiness_offenders(planted) != []

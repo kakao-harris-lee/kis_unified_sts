@@ -191,6 +191,8 @@ docs/                architecture, plans, runbooks, broker profiles
 등재되지 않은 런북은 필요한 순간에 발견되지 않는다. 레거시 런타임 시절의 런북
 (stock/futures 파이프라인 · phase1–5 검증 · cutover)은 2026-11-13 에 지웠다
 (`docs/plans/2026-11-13-tos-code-halving-plan.md` §S3); 내용은 git 이력에 있다.
+2026-11-14 에는 아래 런북이 인용하는 **끝난 계획·측정 캠페인**을 지웠다(런북
+자체는 전부 남는다); 내용은 git 이력에 있다: `git log --diff-filter=D -- docs/`.
 
 ### tos kernel / runtime
 

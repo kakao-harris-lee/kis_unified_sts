@@ -37,7 +37,7 @@ from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessi
 
 from ..transport.kis_mock import _seal_fixtures as seal_fx
 from . import _fixtures as fx
-from .conftest import write_approval_file
+from .conftest import approve_constructed_intent
 from .test_compose_root import _compose, _reach_trusted
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
@@ -441,13 +441,10 @@ def test_synthetic_compose_never_wires_the_seal_registry_observer(
     event = fx.crossing_event()
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=proposal_digest,
-        environment_label="non-live-test",
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     runtime.run_once((event,))
     assert len(runtime.transport.requests) == 1
@@ -683,13 +680,11 @@ def test_crossing_event_coordinator_passes_gateway_denies_honestly(
     assert results[0].pipeline is not None
     proposal_digest = results[0].pipeline.proposal.canonical_digest
     assert proposal_digest is not None
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=proposal_digest,
         environment_label=_ENVIRONMENT_LABEL,
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
 
     results2 = runtime.run_once((event,))

@@ -19,6 +19,11 @@ from tos.rcl import (
     TransmissionCapability,
 )
 
+from .._required_covered import (
+    assert_required_covered_non_vacuous,
+    null_path,
+    required_covered_cases,
+)
 from ._rcl_strategies import (
     SCHEME,
     capability_required_kwargs,
@@ -42,31 +47,19 @@ _ARTIFACTS: list[tuple[type[DigestBoundArtifact], Callable[..., dict[str, Any]]]
 ]
 
 
-def _cases() -> list[Any]:
-    cases: list[Any] = []
-    for cls, kwargs_fn in _ARTIFACTS:
-        for path in cls._REQUIRED_COVERED:
-            cases.append(
-                pytest.param(cls, kwargs_fn, path, id=f"{cls.__name__}:{path}")
-            )
-    return cases
-
-
-@pytest.mark.parametrize("cls,kwargs_fn,path", _cases())
+@pytest.mark.parametrize("cls,kwargs_fn,path", required_covered_cases(_ARTIFACTS))
 def test_missing_required_covered_rejects_issuance(
     cls: type[DigestBoundArtifact], kwargs_fn: Callable[..., dict[str, Any]], path: str
 ) -> None:
     """Dropping any required covered path makes an ISSUED record unconstructable (§3.2)."""
-    kwargs = kwargs_fn()
-    kwargs[path] = None
+    kwargs = null_path(kwargs_fn(), path)
     with pytest.raises(ValidationError):
         cls.issue(scheme=SCHEME, **kwargs)
 
 
 def test_every_record_has_non_vacuous_required_covered() -> None:
     """No digest-bound RCL record has an empty _REQUIRED_COVERED (fail-open guard)."""
-    for cls, _ in _ARTIFACTS:
-        assert cls._REQUIRED_COVERED, f"{cls.__name__} has a vacuous _REQUIRED_COVERED"
+    assert_required_covered_non_vacuous(_ARTIFACTS)
 
 
 def test_reservation_issued_reachable_under_null_numeric_bounds() -> None:

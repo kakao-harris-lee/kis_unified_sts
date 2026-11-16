@@ -247,18 +247,6 @@ def test_a_synthetic_short_flat_exit_sends_a_buy_and_releases_both_reservations(
         _close_runtime(runtime)
 
 
-@pytest.fixture()
-def server():
-    from ..transport.kis_mock._fake_kis_server import FakeKisServer
-
-    instance = FakeKisServer()
-    instance.start()
-    try:
-        yield instance
-    finally:
-        instance.stop()
-
-
 def test_the_stock_transport_sends_the_flat_exit_through_the_standing_boundary(
     config_dir: Path,
     data_dir: Path,

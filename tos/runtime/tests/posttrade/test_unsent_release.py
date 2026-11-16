@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +50,7 @@ from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.rcl.reservation_identity import permit_reservation_id
 
 from ..engine import _fixtures as fx
-from ..engine.conftest import FakeMonotonicSource, FixedKeyProvider
+from ..engine.conftest import FakeMonotonicSource
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
@@ -72,33 +71,8 @@ _COMMITTED = CapacityState.COMMITTED_UNBOUND
 
 
 @pytest.fixture
-def evidence_store(tmp_path: Path) -> Iterator[SqliteEvidenceStore]:
-    instance = SqliteEvidenceStore(
-        tmp_path / "evidence.sqlite3", key_provider=FixedKeyProvider()
-    )
-    yield instance
-    instance.close()
-
-
-@pytest.fixture
-def inbox(tmp_path: Path) -> Iterator[SqliteEventInbox]:
-    instance = SqliteEventInbox(tmp_path / "inbox.sqlite3", scheme=SCHEME)
-    yield instance
-    instance.close()
-
-
-@pytest.fixture
 def emergency_log(tmp_path: Path) -> EmergencyAppendLog:
     return EmergencyAppendLog(tmp_path / "emergency.jsonl")
-
-
-@pytest.fixture
-def rcl_log(
-    tmp_path: Path, evidence_store: SqliteEvidenceStore
-) -> Iterator[SqliteCommitLog]:
-    instance = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=evidence_store)
-    yield instance
-    instance.close()
 
 
 def _write_halted_flow(
