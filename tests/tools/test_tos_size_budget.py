@@ -64,6 +64,21 @@ def _write_function_module(path: Path, func_name: str, n_lines: int) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _check_rc(config_path: Path, root: Path) -> int:
+    """``--check`` through the CLI at :data:`TODAY` — the nine-call duplicate."""
+    return sb.main(
+        [
+            "--check",
+            "--config",
+            str(config_path),
+            "--root",
+            str(root),
+            "--today",
+            TODAY.isoformat(),
+        ]
+    )
+
+
 def _exception_entry(target: str, measured: int, **overrides: object) -> dict:
     entry = {
         "target": target,
@@ -87,18 +102,7 @@ def test_control_group_under_budget_passes(tmp_path: Path) -> None:
     violations = sb.run_check(tmp_path, config, malformed, today=TODAY)
     assert violations == []
 
-    rc = sb.main(
-        [
-            "--check",
-            "--config",
-            str(config_path),
-            "--root",
-            str(tmp_path),
-            "--today",
-            TODAY.isoformat(),
-        ]
-    )
-    assert rc == 0
+    assert _check_rc(config_path, tmp_path) == 0
 
 
 def test_class_a_unregistered_over_budget_target(tmp_path: Path) -> None:
@@ -112,18 +116,7 @@ def test_class_a_unregistered_over_budget_target(tmp_path: Path) -> None:
     assert violations[0].startswith("[unregistered]")
     assert "pkg/big.py" in violations[0]
 
-    rc = sb.main(
-        [
-            "--check",
-            "--config",
-            str(config_path),
-            "--root",
-            str(tmp_path),
-            "--today",
-            TODAY.isoformat(),
-        ]
-    )
-    assert rc == 1
+    assert _check_rc(config_path, tmp_path) == 1
 
 
 def test_class_b_expired_exception(tmp_path: Path) -> None:
@@ -144,18 +137,7 @@ def test_class_b_expired_exception(tmp_path: Path) -> None:
     assert violations[0].startswith("[expired]")
     assert "pkg/big.py" in violations[0]
 
-    rc = sb.main(
-        [
-            "--check",
-            "--config",
-            str(config_path),
-            "--root",
-            str(tmp_path),
-            "--today",
-            TODAY.isoformat(),
-        ]
-    )
-    assert rc == 1
+    assert _check_rc(config_path, tmp_path) == 1
 
 
 def test_class_c_stale_exception(tmp_path: Path) -> None:
@@ -179,18 +161,7 @@ def test_class_c_stale_exception(tmp_path: Path) -> None:
     kinds = {v.split("]")[0] for v in violations}
     assert kinds == {"[stale-missing", "[stale-under-budget"}
 
-    rc = sb.main(
-        [
-            "--check",
-            "--config",
-            str(config_path),
-            "--root",
-            str(tmp_path),
-            "--today",
-            TODAY.isoformat(),
-        ]
-    )
-    assert rc == 1
+    assert _check_rc(config_path, tmp_path) == 1
 
 
 def test_class_d_malformed_entry(tmp_path: Path) -> None:
@@ -226,18 +197,7 @@ def test_class_d_duplicate_decomposition_order(tmp_path: Path) -> None:
     dup = [v for v in violations if v.startswith("[duplicate-order]")]
     assert len(dup) == 1
 
-    rc = sb.main(
-        [
-            "--check",
-            "--config",
-            str(config_path),
-            "--root",
-            str(tmp_path),
-            "--today",
-            TODAY.isoformat(),
-        ]
-    )
-    assert rc == 1
+    assert _check_rc(config_path, tmp_path) == 1
 
 
 def test_class_f_measured_drift(tmp_path: Path) -> None:
@@ -256,18 +216,7 @@ def test_class_f_measured_drift(tmp_path: Path) -> None:
     assert "registered 6" in violations[0]
     assert "actual 7" in violations[0]
 
-    rc = sb.main(
-        [
-            "--check",
-            "--config",
-            str(config_path),
-            "--root",
-            str(tmp_path),
-            "--today",
-            TODAY.isoformat(),
-        ]
-    )
-    assert rc == 1
+    assert _check_rc(config_path, tmp_path) == 1
 
     _write_config(
         config_path,
@@ -277,18 +226,7 @@ def test_class_f_measured_drift(tmp_path: Path) -> None:
     violations = sb.run_check(tmp_path, config, malformed, today=TODAY)
     assert violations == []
 
-    rc = sb.main(
-        [
-            "--check",
-            "--config",
-            str(config_path),
-            "--root",
-            str(tmp_path),
-            "--today",
-            TODAY.isoformat(),
-        ]
-    )
-    assert rc == 0
+    assert _check_rc(config_path, tmp_path) == 0
 
 
 def test_class_e_missing_config_file(tmp_path: Path) -> None:
@@ -388,18 +326,7 @@ def test_scope_directory_absent_raises_config_error(tmp_path: Path) -> None:
     with pytest.raises(sb.SizeBudgetConfigError, match="scope directory not found"):
         sb.run_check(tmp_path, config, malformed, today=TODAY)
 
-    rc = sb.main(
-        [
-            "--check",
-            "--config",
-            str(config_path),
-            "--root",
-            str(tmp_path),
-            "--today",
-            TODAY.isoformat(),
-        ]
-    )
-    assert rc == 1
+    assert _check_rc(config_path, tmp_path) == 1
 
 
 def test_unparseable_source_file_raises_config_error(tmp_path: Path) -> None:
@@ -413,18 +340,7 @@ def test_unparseable_source_file_raises_config_error(tmp_path: Path) -> None:
     with pytest.raises(sb.SizeBudgetConfigError, match="cannot parse"):
         sb.run_check(tmp_path, config, malformed, today=TODAY)
 
-    rc = sb.main(
-        [
-            "--check",
-            "--config",
-            str(config_path),
-            "--root",
-            str(tmp_path),
-            "--today",
-            TODAY.isoformat(),
-        ]
-    )
-    assert rc == 1
+    assert _check_rc(config_path, tmp_path) == 1
 
 
 def test_symlink_escaping_root_raises_config_error(tmp_path: Path) -> None:
@@ -444,18 +360,7 @@ def test_symlink_escaping_root_raises_config_error(tmp_path: Path) -> None:
     with pytest.raises(sb.SizeBudgetConfigError, match="outside"):
         sb.run_check(root, config, malformed, today=TODAY)
 
-    rc = sb.main(
-        [
-            "--check",
-            "--config",
-            str(config_path),
-            "--root",
-            str(root),
-            "--today",
-            TODAY.isoformat(),
-        ]
-    )
-    assert rc == 1
+    assert _check_rc(config_path, root) == 1
 
 
 def test_check_real_config_smoke() -> None:

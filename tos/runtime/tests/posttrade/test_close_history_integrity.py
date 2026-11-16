@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 from tos.rcl import (
@@ -22,66 +20,33 @@ from tos_runtime.posttrade.close_history import (
     durable_close_history,
 )
 from tos_runtime.posttrade.entry_discharge import entry_release_command_id
-from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.reservation_lookup import attempt_id_for_reservation
 
-from ..engine.conftest import FakeMonotonicSource
 from . import test_release_consumer as cycle
-
-
-@pytest.fixture
-def evidence_store(tmp_path: Path) -> Iterator[SqliteEvidenceStore]:
-    store = SqliteEvidenceStore(
-        tmp_path / "evidence.sqlite3", key_provider=cycle.FixedKeyProvider()
-    )
-    yield store
-    store.close()
-
-
-@pytest.fixture
-def inbox(tmp_path: Path):
-    store = cycle.SqliteEventInbox(tmp_path / "inbox.sqlite3", scheme=cycle.SCHEME)
-    yield store
-    store.close()
-
-
-@pytest.fixture
-def rcl_log(
-    tmp_path: Path, evidence_store: SqliteEvidenceStore
-) -> Iterator[SqliteCommitLog]:
-    log = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=evidence_store)
-    yield log
-    log.close()
+from .conftest import Rig
 
 
 def test_foreign_scope_receipt_for_same_attempt_refuses_close_history(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox,
+    rig: Rig,
 ) -> None:
     payload = cycle._arrange_close(
-        rcl_log,
-        evidence_store,
-        inbox,
+        rig,
         close_filled=Decimal("4"),
         close_remaining=Decimal("0"),
     )
     consumer = cycle._cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=cycle._CycleWitness(
             positions=((cycle._INSTRUMENT, Decimal("6")),),
             close_quantity=Decimal("4"),
         ),
-        monotonic_source=FakeMonotonicSource(start=1_700_000_000_000),
     )
     consumer.consume(payload)
 
     entry_reservation_id = cycle._entry_reservation_id()
     original = durable_close_history(
-        rcl_log,
-        evidence_store,
+        rig.rcl_log,
+        rig.evidence_store,
         account=cycle._ACCOUNT,
         instrument=cycle._INSTRUMENT,
         entry_reservation_id=entry_reservation_id,
@@ -89,7 +54,7 @@ def test_foreign_scope_receipt_for_same_attempt_refuses_close_history(
     assert original.proven
     assert original.prior_quantity == Decimal("4")
 
-    evidence_store.append(
+    rig.evidence_store.append(
         {
             "attempt_id": cycle._CLOSE_ATTEMPT,
             "instrument_key": {"account": "other-account", "instrument": "OTHER"},
@@ -102,8 +67,8 @@ def test_foreign_scope_receipt_for_same_attempt_refuses_close_history(
         record_class="EGRESS_RESULT_CONSUMED",
     )
     conflicted = durable_close_history(
-        rcl_log,
-        evidence_store,
+        rig.rcl_log,
+        rig.evidence_store,
         account=cycle._ACCOUNT,
         instrument=cycle._INSTRUMENT,
         entry_reservation_id=entry_reservation_id,
@@ -149,15 +114,11 @@ def test_inverse_reservation_join_requires_unambiguous_forward_permit(
 
 
 def test_concurrent_rcl_commit_after_history_snapshot_holds_entry_release(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    inbox,
+    rig: Rig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = cycle._arrange_close(
-        rcl_log,
-        evidence_store,
-        inbox,
+        rig,
         close_filled=cycle._ENTRY_QTY,
         close_remaining=Decimal("0"),
     )
@@ -169,9 +130,9 @@ def test_concurrent_rcl_commit_after_history_snapshot_holds_entry_release(
         assert history.rcl_writer_epoch is not None
         assert history.rcl_last_seq is not None
         epoch = history.rcl_writer_epoch
-        view = rcl_log.read_linearizable(writer_epoch=epoch)
+        view = rig.rcl_log.read_linearizable(writer_epoch=epoch)
         assert view.last_seq == history.rcl_last_seq
-        concurrent = rcl_log.apply_reservation_transition(
+        concurrent = rig.rcl_log.apply_reservation_transition(
             CapacityReservationTransition(
                 reservation_id="resv-concurrent-scope-OTHER-close-history-test",
                 writer_epoch=epoch,
@@ -194,19 +155,18 @@ def test_concurrent_rcl_commit_after_history_snapshot_holds_entry_release(
         reconstruct_then_commit,
     )
     consumer = cycle._cycle_consumer(
-        rcl_log=rcl_log,
-        evidence_store=evidence_store,
-        inbox=inbox,
+        rig,
         witness=cycle._CycleWitness(),
-        monotonic_source=FakeMonotonicSource(start=1_700_000_000_000),
     )
 
     consumer.consume(payload)
 
     entry_reservation_id = cycle._entry_reservation_id()
-    projection = cycle.SqliteReservationProjectionReader(rcl_log)
+    projection = cycle.SqliteReservationProjectionReader(rig.rcl_log)
     assert (
         projection.reservation_state(entry_reservation_id)
         is CapacityState.POSITION_CONSUMED
     )
-    assert not rcl_log.command_committed(entry_release_command_id(cycle._CLOSE_ATTEMPT))
+    assert not rig.rcl_log.command_committed(
+        entry_release_command_id(cycle._CLOSE_ATTEMPT)
+    )

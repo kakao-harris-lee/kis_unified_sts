@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +27,6 @@ from tos_runtime.venue import (
     load_venue_constraint_policy,
 )
 
-from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
 from .conftest import (
     _VENUE_POLICY_ACCOUNT,
@@ -507,16 +505,6 @@ def _boot(config_dir, data_dir, custody_root, *, hour: int, minute: int):
     )
     facts.runtime = runtime
     return runtime
-
-
-@pytest.fixture()
-def server() -> Iterator[FakeKisServer]:
-    srv = FakeKisServer()
-    srv.start()
-    try:
-        yield srv
-    finally:
-        srv.stop()
 
 
 def _mock_stock_deployment(config_dir, custody_root, server, monkeypatch) -> str:

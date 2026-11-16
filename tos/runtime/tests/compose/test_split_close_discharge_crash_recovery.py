@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 
@@ -28,16 +27,6 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 class _SimulatedProcessCrash(BaseException):
     """Escape after releasing the close reservation and before discharging its entry."""
-
-
-@pytest.fixture()
-def server() -> Iterator[FakeKisServer]:
-    instance = FakeKisServer()
-    instance.start()
-    try:
-        yield instance
-    finally:
-        instance.stop()
 
 
 def _reservation_state(runtime, reservation_id: str) -> CapacityState:

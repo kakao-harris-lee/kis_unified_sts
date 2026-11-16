@@ -17,12 +17,11 @@ from tos.rcl import (
     CommitEntry,
     CommitLog,
     ReservationScope,
-    TransitionCause,
 )
 from tos.workload import RuntimeIdentity
 from tos_runtime.rcl.log import CommitLogCorruption, InjectedCrash, SqliteCommitLog
 
-from .conftest import FakeEvidenceAppendPort, FakeMonotonicClock
+from .conftest import FakeEvidenceAppendPort, FakeMonotonicClock, bind_attempt
 
 DEFAULT_SCOPE = ReservationScope(account="acct-1", instrument="101S06")
 
@@ -308,14 +307,7 @@ def test_fault_5_replay_mismatch_raises_commit_log_corruption(
         to_state=CapacityState.ATTEMPT_BOUND,
         scope=DEFAULT_SCOPE,
     )
-    result = log.apply_reservation_transition(
-        transition,
-        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
-        command_type=CommandType.BIND_ATTEMPT,
-        command_id="cmd-1",
-        command_digest="dig-1",
-        expected_seq=-1,
-    )
+    result = bind_attempt(log, transition)
     assert isinstance(result, AppendReceipt)
 
     log.verify_replay()
@@ -345,14 +337,7 @@ def test_fault_5_scope_tamper_raises_commit_log_corruption(
         to_state=CapacityState.ATTEMPT_BOUND,
         scope=DEFAULT_SCOPE,
     )
-    result = log.apply_reservation_transition(
-        transition,
-        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
-        command_type=CommandType.BIND_ATTEMPT,
-        command_id="cmd-1",
-        command_digest="dig-1",
-        expected_seq=-1,
-    )
+    result = bind_attempt(log, transition)
     assert isinstance(result, AppendReceipt)
 
     log.verify_replay()
@@ -399,14 +384,7 @@ def test_genuine_reservations_row_tamper_still_raises_after_medium_4_fix(
         to_state=CapacityState.ATTEMPT_BOUND,
         scope=DEFAULT_SCOPE,
     )
-    result = log.apply_reservation_transition(
-        transition,
-        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
-        command_type=CommandType.BIND_ATTEMPT,
-        command_id="cmd-1",
-        command_digest="dig-1",
-        expected_seq=-1,
-    )
+    result = bind_attempt(log, transition)
     assert isinstance(result, AppendReceipt)
     log.verify_replay()
 

@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from pathlib import Path
-
 import pytest
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.release_consumer import (
@@ -21,19 +18,8 @@ from tos_runtime.recon.service import (
     witness_independence_collapsed,
 )
 
-from ..engine.conftest import FixedKeyProvider
-
 _ACCOUNT = "acct-wni"
 _INSTRUMENT = "101W12"
-
-
-@pytest.fixture
-def evidence_store(tmp_path: Path) -> Iterator[SqliteEvidenceStore]:
-    instance = SqliteEvidenceStore(
-        tmp_path / "evidence.sqlite3", key_provider=FixedKeyProvider()
-    )
-    yield instance
-    instance.close()
 
 
 def _report(reason: str | None) -> ReconciliationReport:

@@ -45,47 +45,18 @@ from ._egressgw_fixtures import (
     PRINCIPAL,
     REQUEST_DIGEST,
     SCHEME,
+    RaisingTransport,
+    WrongAttemptTransport,
     attempt_request,
     build_gateway,
     construction,
+    declared_transport,
     egress_request,
     full_fill_transport,
     happy_context,
     ordering,
     quorum_certificate,
 )
-
-
-class _RecordingRaisingTransport:
-    """A transport that records its calls and raises — the "no proof of not-sent" path."""
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def send_once(self, attempt: AttemptRequest, **_: Any) -> EgressResultPayload:
-        """Count the call and fail."""
-        del attempt
-        self.calls += 1
-        raise RuntimeError("synthetic transport unavailable")
-
-
-class _WrongAttemptTransport:
-    """A transport that answers about a *different* attempt."""
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def send_once(
-        self, attempt: AttemptRequest, *, instrument_key: InstrumentKey, **_: Any
-    ) -> EgressResultPayload:
-        """Return a result naming somebody else's attempt."""
-        del attempt
-        self.calls += 1
-        return EgressResultPayload(
-            instrument_key=instrument_key,
-            attempt_id="attempt-somebody-else",
-            kind=EgressResultKind.ACK,
-        )
 
 
 class _OrderWitnessTransport:
@@ -113,11 +84,6 @@ class _OrderWitnessTransport:
             kind=EgressResultKind.ACK,
             reference=reference,
         )
-
-
-def _declared(kind: EgressResultKind) -> SyntheticPaperTransport:
-    """A synthetic transport declaring one non-fill outcome."""
-    return SyntheticPaperTransport(SyntheticFillPolicy(declared_kind=kind))
 
 
 def test_the_baseline_send_is_accepted_and_records_every_step_in_order() -> None:
@@ -355,7 +321,7 @@ def test_each_failure_path_stamps_the_step_where_it_actually_failed() -> None:
     sink_h = RecordingGatewayEvidenceSink()
     gateway_h = BrokerEgressGateway(
         contexts={attempt_h.attempt_id: context_h},
-        transport=_RecordingRaisingTransport(),
+        transport=RaisingTransport(),
         sink=sink_h,
     )
     gateway_h(attempt_h)
@@ -366,7 +332,7 @@ def test_each_failure_path_stamps_the_step_where_it_actually_failed() -> None:
     sink_i = RecordingGatewayEvidenceSink()
     gateway_i = BrokerEgressGateway(
         contexts={attempt_i.attempt_id: context_i},
-        transport=_WrongAttemptTransport(),
+        transport=WrongAttemptTransport(),
         sink=sink_i,
     )
     gateway_i(attempt_i)
@@ -1020,7 +986,7 @@ def test_a_ledger_claim_without_a_bound_principal_fails_closed() -> None:
 def test_a_raised_transport_leaves_the_attempt_consumed_and_resubmits_nothing() -> None:
     """(RFC-005 §11:322-323) A missing acknowledgement is never read as "not accepted"."""
     attempt, context = happy_context()
-    transport = _RecordingRaisingTransport()
+    transport = RaisingTransport()
     sink = RecordingGatewayEvidenceSink()
     gateway = BrokerEgressGateway(
         contexts={attempt.attempt_id: context}, transport=transport, sink=sink
@@ -1036,7 +1002,7 @@ def test_a_raised_transport_leaves_the_attempt_consumed_and_resubmits_nothing() 
 def test_a_result_naming_another_attempt_is_refused() -> None:
     """(design #31 §2.1(ii)) A late or reordered result never transitions someone else."""
     attempt, context = happy_context()
-    transport = _WrongAttemptTransport()
+    transport = WrongAttemptTransport()
     sink = RecordingGatewayEvidenceSink()
     gateway = BrokerEgressGateway(
         contexts={attempt.attempt_id: context}, transport=transport, sink=sink
@@ -1055,7 +1021,7 @@ def test_an_uncertain_outcome_records_the_all_restrictive_ladder(
     """(ADR-002-004 §12.4:640-646) No retry, no capacity release, no assumed rejection."""
     attempt, context = happy_context()
     gateway, sink = build_gateway(
-        attempt=attempt, context=context, transport=_declared(kind)
+        attempt=attempt, context=context, transport=declared_transport(kind)
     )
     assert gateway(attempt).accepted_for_transmission is True
     uncertain = sink.records[-1]
@@ -1094,7 +1060,9 @@ def test_a_rejection_is_recorded_without_a_fill_magnitude() -> None:
     """(design #31 §2.2) Only fill kinds carry magnitudes."""
     attempt, context = happy_context()
     gateway, _ = build_gateway(
-        attempt=attempt, context=context, transport=_declared(EgressResultKind.REJECT)
+        attempt=attempt,
+        context=context,
+        transport=declared_transport(EgressResultKind.REJECT),
     )
     gateway(attempt)
     (result,) = gateway.results

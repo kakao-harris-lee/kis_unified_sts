@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
@@ -28,7 +29,11 @@ from tos_runtime.compose._riskstate_wiring import (
     build_risk_state_service,
 )
 from tos_runtime.compose._types import RiskStateConfigError
-from tos_runtime.compose.root import compose_paper_runtime
+from tos_runtime.compose.root import (
+    ComposedRuntime,
+    ConstructionConfig,
+    compose_paper_runtime,
+)
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
@@ -64,6 +69,7 @@ from . import _fixtures as fx
 from . import _symmetry_fixtures as sfx
 from .conftest import (
     _RISK_STATE_ENVELOPE_MAX,
+    approve_constructed_intent,
     call_wrapped_fixture,
     write_approval_file,
 )
@@ -120,6 +126,26 @@ def rcl_log(
     instance = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=evidence_store)
     yield instance
     instance.close()
+
+
+@dataclass(frozen=True)
+class _Rig:
+    """The tmp dir and three stores every ``RiskStateService`` test here opens together."""
+
+    tmp_path: Path
+    evidence_store: SqliteEvidenceStore
+    inbox: SqliteEventInbox
+    rcl_log: SqliteCommitLog
+
+
+@pytest.fixture
+def rig(
+    tmp_path: Path,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    rcl_log: SqliteCommitLog,
+) -> _Rig:
+    return _Rig(tmp_path, evidence_store, inbox, rcl_log)
 
 
 def _seed_send_sealed(
@@ -216,10 +242,7 @@ def _scenario_set() -> AdverseScenarioSet:
 
 
 def _service(
-    tmp_path: Path,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    rcl_log: SqliteCommitLog,
+    rig: _Rig,
     *,
     max_attempts: int | None = 4,
     action_class: ActionClass = ActionClass.NEW_LONG,
@@ -239,7 +262,7 @@ def _service(
     ) = None,
     entry_close_bound_reader: Callable[[], EntryCloseBound] | None = None,
 ) -> RiskStateService:
-    are_path = tmp_path / "aggregate_risk_policy.yaml"
+    are_path = rig.tmp_path / "aggregate_risk_policy.yaml"
     are_path.write_text(
         aggregate_risk_policy_yaml(
             instrument_scope=f'["{_INSTRUMENT}"]',
@@ -249,7 +272,7 @@ def _service(
         ),
         encoding="utf-8",
     )
-    afg_path = tmp_path / "action_flow_policy.yaml"
+    afg_path = rig.tmp_path / "action_flow_policy.yaml"
     afg_path.write_text(
         action_flow_policy_yaml(account_scope=f'["{_ACCOUNT}"]'), encoding="utf-8"
     )
@@ -257,13 +280,15 @@ def _service(
     afg_policy = load_action_flow_policy(afg_path, scheme=_SCHEME)
 
     position_reader = EvidencePositionReader(
-        evidence_store,
+        rig.evidence_store,
         account=_ACCOUNT,
         instrument=_INSTRUMENT,
         buy_side_token="BUY",
         sell_side_token="SELL",
     )
-    flow_reader = InboxFlowReader(inbox, evidence_store, rcl_log, scheme=_SCHEME)
+    flow_reader = InboxFlowReader(
+        rig.inbox, rig.evidence_store, rig.rcl_log, scheme=_SCHEME
+    )
     return RiskStateService(
         are_policy=are_policy,
         afg_policy=afg_policy,
@@ -272,7 +297,7 @@ def _service(
         required_scenario_kinds=are_policy.required_scenario_kinds,
         position_reader=position_reader,
         flow_reader=flow_reader,
-        rcl_log=rcl_log,
+        rcl_log=rig.rcl_log,
         construction_stage_reader=lambda: construction,
         effect_envelope_reader=lambda: None,
         rcl_tip_reader=(rcl_tip_reader if rcl_tip_reader is not None else (lambda: 1)),
@@ -283,7 +308,7 @@ def _service(
         current_seq_reader=(
             current_seq_reader if current_seq_reader is not None else (lambda: None)
         ),
-        evidence_store=evidence_store,
+        evidence_store=rig.evidence_store,
         environment_label="riskstate-wiring-test",
         action_class=action_class,
         action_class_reader=action_class_reader,
@@ -296,14 +321,8 @@ def _service(
 
 
 class TestAggregateInputsFor:
-    def test_empty_evidence_yields_zero_usage_cells(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
-        service = _service(tmp_path, evidence_store, inbox, rcl_log)
+    def test_empty_evidence_yields_zero_usage_cells(self, rig: _Rig) -> None:
+        service = _service(rig)
         request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
         inputs = service.aggregate_inputs_for(request)
         assert inputs is not None
@@ -323,81 +342,61 @@ class TestAggregateInputsFor:
         assert inputs.grant_identity == "prop-1"
         assert inputs.lineage_ref == "root-event-1"
 
-    def test_confirmed_fill_raises_conservative_usage(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
-        _seed_send_sealed(evidence_store, attempt_id="a1", side="BUY", quantity="3")
+    def test_confirmed_fill_raises_conservative_usage(self, rig: _Rig) -> None:
+        _seed_send_sealed(rig.evidence_store, attempt_id="a1", side="BUY", quantity="3")
         _seed_egress_result(
-            evidence_store,
+            rig.evidence_store,
             kind="EGRESS_RESULT_CONSUMED",
             attempt_id="a1",
             filled_quantity="3",
         )
-        service = _service(tmp_path, evidence_store, inbox, rcl_log)
+        service = _service(rig)
         request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
         inputs = service.aggregate_inputs_for(request)
         assert inputs is not None
         assert inputs.cells[0].conservative_current_usage == Decimal("3")
 
     def test_unmatched_result_counts_full_sealed_quantity_as_in_flight_overlap(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
+        self, rig: _Rig
     ) -> None:
         """Plan §5 실증 (3): a ``RESULT_UNMATCHED`` attempt's full sealed quantity counts in"""
-        _seed_send_sealed(evidence_store, attempt_id="a1", side="BUY", quantity="5")
+        _seed_send_sealed(rig.evidence_store, attempt_id="a1", side="BUY", quantity="5")
         _seed_egress_result(
-            evidence_store,
+            rig.evidence_store,
             kind="RESULT_UNMATCHED",
             attempt_id="a1",
             filled_quantity=None,
         )
-        service = _service(tmp_path, evidence_store, inbox, rcl_log)
+        service = _service(rig)
         request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
         inputs = service.aggregate_inputs_for(request)
         assert inputs is not None
         assert inputs.cells[0].conservative_current_usage == Decimal("0")
         assert inputs.cells[0].required_concurrent_overlap_effect == Decimal("5")
 
-    def test_new_short_mirrors_new_long_usage_magnitude(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
+    def test_new_short_mirrors_new_long_usage_magnitude(self, rig: _Rig) -> None:
         """Plan §5 실증 (7): NEW_SHORT mirror — position sign flips, usage magnitude equal."""
-        _seed_send_sealed(evidence_store, attempt_id="a1", side="SELL", quantity="4")
+        _seed_send_sealed(
+            rig.evidence_store, attempt_id="a1", side="SELL", quantity="4"
+        )
         _seed_egress_result(
-            evidence_store,
+            rig.evidence_store,
             kind="EGRESS_RESULT_CONSUMED",
             attempt_id="a1",
             filled_quantity="4",
         )
-        service = _service(
-            tmp_path, evidence_store, inbox, rcl_log, action_class=ActionClass.NEW_SHORT
-        )
+        service = _service(rig, action_class=ActionClass.NEW_SHORT)
         request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
         inputs = service.aggregate_inputs_for(request)
         assert inputs is not None
         assert inputs.cells[0].conservative_current_usage == Decimal("4")
 
     def test_in_flight_sealed_send_feeds_overlap_effect_not_current_usage(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
+        self, rig: _Rig
     ) -> None:
         """Plan §5 실증 (4)'s own position-side half: a sealed send with NO terminal result"""
-        _seed_send_sealed(evidence_store, attempt_id="a1", side="BUY", quantity="2")
-        service = _service(tmp_path, evidence_store, inbox, rcl_log)
+        _seed_send_sealed(rig.evidence_store, attempt_id="a1", side="BUY", quantity="2")
+        service = _service(rig)
         request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
         inputs = service.aggregate_inputs_for(request)
         assert inputs is not None
@@ -405,20 +404,13 @@ class TestAggregateInputsFor:
         assert inputs.cells[0].required_concurrent_overlap_effect == Decimal("2")
 
     def test_close_without_a_broker_holding_proof_has_unknown_effect(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
+        self, rig: _Rig
     ) -> None:
         construction = CandidateConstruction.model_construct(
             derivation=QuantityDerivation.model_construct(quantity=Decimal("60"))
         )
         service = _service(
-            tmp_path,
-            evidence_store,
-            inbox,
-            rcl_log,
+            rig,
             action_class_reader=lambda: ActionClass.CLOSE,
             construction=construction,
         )
@@ -431,11 +423,7 @@ class TestAggregateInputsFor:
         assert inputs.cells[0].max_credible_command_effect is None
 
     def test_cell_proof_bounds_close_effect_to_confirmed_holding(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
+        self, rig: _Rig
     ) -> None:
         """Only a fresh two-view broker proof lets step 6 credit a bounded CLOSE."""
 
@@ -507,10 +495,7 @@ class TestAggregateInputsFor:
             refusal=None,
         )
         service = _service(
-            tmp_path,
-            evidence_store,
-            inbox,
-            rcl_log,
+            rig,
             action_class_reader=lambda: ActionClass.CLOSE,
             construction=construction,
             attempt_arm_direction_reader=lambda: PositionSide.LONG.value,
@@ -531,17 +516,11 @@ class TestAggregateInputsFor:
         assert fence.rcl_last_seq == 9
         assert fence.verified_rcl_last_seq == 10
 
-    def test_records_risk_state_observed_evidence(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
-        service = _service(tmp_path, evidence_store, inbox, rcl_log)
+    def test_records_risk_state_observed_evidence(self, rig: _Rig) -> None:
+        service = _service(rig)
         request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
         service.aggregate_inputs_for(request)
-        cursor = evidence_store.connection.execute(
+        cursor = rig.evidence_store.connection.execute(
             "SELECT kind FROM entries ORDER BY seq ASC"
         )
         kinds = [row[0] for row in cursor.fetchall()]
@@ -550,18 +529,11 @@ class TestAggregateInputsFor:
         assert "ACTION_FLOW_POLICY_BOUND" in kinds
 
     def test_injected_envelope_max_is_hse_bound_not_policy_effective_limit(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
+        self, rig: _Rig
     ) -> None:
         """HIGH-3 (review of PR #704, 2026-09-16): every OTHER test in this suite sets the HSE"""
         service = _service(
-            tmp_path,
-            evidence_store,
-            inbox,
-            rcl_log,
+            rig,
             envelope_max_value="5",
             effective_limit_value="100",
         )
@@ -585,44 +557,23 @@ class TestAggregateInputsFor:
 
 
 class TestActionFlowInputsFor:
-    def test_none_rcl_tip_yields_none_inputs(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
-        service = _service(tmp_path, evidence_store, inbox, rcl_log)
+    def test_none_rcl_tip_yields_none_inputs(self, rig: _Rig) -> None:
+        service = _service(rig)
         service._rcl_tip_reader = lambda: None
         request = _stage_request(step=CommitmentStep.ACTION_FLOW_DECISION)
         assert service.action_flow_inputs_for(request) is None
 
-    def test_uncovered_action_class_yields_none_inputs(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
-        service = _service(
-            tmp_path, evidence_store, inbox, rcl_log, action_class=ActionClass.AMEND
-        )
+    def test_uncovered_action_class_yields_none_inputs(self, rig: _Rig) -> None:
+        service = _service(rig, action_class=ActionClass.AMEND)
         request = _stage_request(step=CommitmentStep.ACTION_FLOW_DECISION)
         assert service.action_flow_inputs_for(request) is None
 
     def test_a_close_attempt_is_judged_as_an_exit_not_as_the_boot_class(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
+        self, rig: _Rig
     ) -> None:
         """#960 — the attempt's own action class decides step 7's kind: a CLOSE is an"""
         service = _service(
-            tmp_path,
-            evidence_store,
-            inbox,
-            rcl_log,
+            rig,
             action_class=ActionClass.NEW_LONG,
             action_class_reader=lambda: ActionClass.CLOSE,
         )
@@ -631,33 +582,18 @@ class TestActionFlowInputsFor:
         assert inputs is not None
         assert inputs.action_class is ActionClassKind.ORDINARY_REDUCE_OR_EXIT
 
-    def test_an_uncovered_attempt_class_yields_none_inputs(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
+    def test_an_uncovered_attempt_class_yields_none_inputs(self, rig: _Rig) -> None:
         """#960 fail-closed: an attempt whose class the policy does not map is UNKNOWN, never"""
         service = _service(
-            tmp_path,
-            evidence_store,
-            inbox,
-            rcl_log,
+            rig,
             action_class=ActionClass.NEW_LONG,
             action_class_reader=lambda: ActionClass.AMEND,
         )
         request = _stage_request(step=CommitmentStep.ACTION_FLOW_DECISION)
         assert service.action_flow_inputs_for(request) is None
 
-    def test_happy_path_shape(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
-        service = _service(tmp_path, evidence_store, inbox, rcl_log)
+    def test_happy_path_shape(self, rig: _Rig) -> None:
+        service = _service(rig)
         request = _stage_request(step=CommitmentStep.ACTION_FLOW_DECISION)
         inputs = service.action_flow_inputs_for(request)
         assert inputs is not None
@@ -679,33 +615,20 @@ class TestActionFlowInputsFor:
         assert inputs.flow_commitment_exclusive is None
 
     def test_max_attempts_none_leaves_forked_beyond_bound_unknown(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
+        self, rig: _Rig
     ) -> None:
-        service = _service(tmp_path, evidence_store, inbox, rcl_log, max_attempts=None)
+        service = _service(rig, max_attempts=None)
         request = _stage_request(step=CommitmentStep.ACTION_FLOW_DECISION)
         inputs = service.action_flow_inputs_for(request)
         assert inputs is not None
         assert inputs.cause is not None
         assert inputs.cause.forked_beyond_bound is None
 
-    def test_decision_generation_tracks_rcl_tip_reader(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
+    def test_decision_generation_tracks_rcl_tip_reader(self, rig: _Rig) -> None:
         """HIGH-1 (review of PR #704, 2026-09-16): every OTHER test in this suite (and every"""
         tip_values = iter([7, 8])
         service = _service(
-            tmp_path,
-            evidence_store,
-            inbox,
-            rcl_log,
+            rig,
             rcl_tip_reader=lambda: next(tip_values),
         )
         request = _stage_request(step=CommitmentStep.ACTION_FLOW_DECISION)
@@ -722,11 +645,7 @@ class TestActionFlowInputsFor:
         assert second.decision_generation == 8
 
     def test_elapsed_monotonic_ms_consumes_real_handling_started_receipt(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
+        self, rig: _Rig
     ) -> None:
         """Re-review residual of HIGH-4 (review of PR #704, 2026-09-16): the earlier fix pinned"""
         payload = EgressResultPayload(
@@ -735,28 +654,25 @@ class TestActionFlowInputsFor:
             kind=EgressResultKind.ACK,
         )
         event = EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
-        receipt = inbox.enqueue(event)
-        marker = evidence_store.append(
+        receipt = rig.inbox.enqueue(event)
+        marker = rig.evidence_store.append(
             {"event_id": receipt.event_id},
             kind="EVENT_HANDLING_STARTED",
             record_class="EVENT_HANDLING_STARTED",
         )
         assert marker.seq is not None and marker.key_generation is not None
-        inbox.mark_handling_started(
+        rig.inbox.mark_handling_started(
             receipt.seq, evidence_seq=marker.seq, generation=marker.key_generation
         )
         started_ns = next(
             entry.appended_at_monotonic_ns
-            for entry in evidence_store.iter_entry_meta()
+            for entry in rig.evidence_store.iter_entry_meta()
             if entry.seq == marker.seq
         )
         started_ms = started_ns // 1_000_000
         expected_elapsed_ms = 5_000
         service = _service(
-            tmp_path,
-            evidence_store,
-            inbox,
-            rcl_log,
+            rig,
             current_seq_reader=lambda: receipt.seq,
             monotonic_reader=lambda: started_ms + expected_elapsed_ms,
         )
@@ -800,14 +716,10 @@ def _read_last_risk_state_observed(evidence_store: SqliteEvidenceStore) -> dict:
 
 class TestAbsentFieldsHonesty:
     def test_isolated_flow_absence_reports_exactly_the_one_remaining_structural_gap(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
+        self, rig: _Rig
     ) -> None:
         """HIGH-2, isolated form: calls the private ``_record_observation`` directly (module"""
-        service = _service(tmp_path, evidence_store, inbox, rcl_log)
+        service = _service(rig)
         flow_obs = FlowObservation(
             queue_depth=0,
             in_flight=0,
@@ -837,15 +749,11 @@ class TestAbsentFieldsHonesty:
             committed_vectors=(),
             extra_absent=(),
         )
-        absent = _read_last_observed_absent_fields(evidence_store)
+        absent = _read_last_observed_absent_fields(rig.evidence_store)
         assert absent == ["committed_flow_vectors"]
 
     def test_real_first_attempt_absent_fields_include_only_the_one_remaining_gap(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
+        self, rig: _Rig
     ) -> None:
         """HIGH-2, realistic form: drives the SAME real ``aggregate_inputs_for`` path a brand"""
         payload = EgressResultPayload(
@@ -854,28 +762,25 @@ class TestAbsentFieldsHonesty:
             kind=EgressResultKind.ACK,
         )
         event = EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
-        receipt = inbox.enqueue(event)
-        marker = evidence_store.append(
+        receipt = rig.inbox.enqueue(event)
+        marker = rig.evidence_store.append(
             {"event_id": receipt.event_id},
             kind="EVENT_HANDLING_STARTED",
             record_class="EVENT_HANDLING_STARTED",
         )
         assert marker.seq is not None and marker.key_generation is not None
-        inbox.mark_handling_started(
+        rig.inbox.mark_handling_started(
             receipt.seq, evidence_seq=marker.seq, generation=marker.key_generation
         )
         service = _service(
-            tmp_path,
-            evidence_store,
-            inbox,
-            rcl_log,
+            rig,
             current_seq_reader=lambda: receipt.seq,
         )
         request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
         inputs = service.aggregate_inputs_for(request)
         assert inputs is not None
 
-        absent = set(_read_last_observed_absent_fields(evidence_store))
+        absent = set(_read_last_observed_absent_fields(rig.evidence_store))
         assert "committed_flow_vectors" in absent
         assert "duplicates_rejected" not in absent
         assert "replays" not in absent
@@ -919,24 +824,20 @@ def _write_riskstate_wiring_config(
 
 def _build_service_from_wiring_config(
     directory: Path,
-    tmp_path: Path,
-    evidence_store: SqliteEvidenceStore,
-    inbox: SqliteEventInbox,
-    rcl_log: SqliteCommitLog,
+    rig: _Rig,
     *,
     venue_allowed_sides: frozenset[str] = frozenset({"BUY", "SELL"}),
     scenario_set: AdverseScenarioSet | None = None,
 ) -> RiskStateService:
-    del tmp_path
     construction = fx.construction_config()
     return build_risk_state_service(
         config_dir=directory,
         scheme=_SCHEME,
         construction=construction,
         environment_label="riskstate-wiring-test",
-        evidence_store=evidence_store,
-        inbox=inbox,
-        rcl_log=rcl_log,
+        evidence_store=rig.evidence_store,
+        inbox=rig.inbox,
+        rcl_log=rig.rcl_log,
         scenario_set=scenario_set if scenario_set is not None else _scenario_set(),
         required_scenario_kinds=frozenset(
             {AdverseScenarioKind.ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ}
@@ -951,56 +852,37 @@ def _build_service_from_wiring_config(
 
 
 class TestBuildRiskStateServiceCrossChecks:
-    def test_happy_path_builds(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
-        directory = _write_riskstate_wiring_config(tmp_path)
+    def test_happy_path_builds(self, rig: _Rig) -> None:
+        directory = _write_riskstate_wiring_config(rig.tmp_path)
         service = _build_service_from_wiring_config(
-            directory, tmp_path, evidence_store, inbox, rcl_log
+            directory,
+            rig,
         )
         assert isinstance(service, RiskStateService)
 
-    def test_account_mismatch_refuses(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
+    def test_account_mismatch_refuses(self, rig: _Rig) -> None:
         directory = _write_riskstate_wiring_config(
-            tmp_path, account="some-other-account"
+            rig.tmp_path, account="some-other-account"
         )
         with pytest.raises(RiskPolicyScopeMismatch, match="account_scope"):
             _build_service_from_wiring_config(
-                directory, tmp_path, evidence_store, inbox, rcl_log
+                directory,
+                rig,
             )
 
     def test_a_governed_dimension_with_no_declared_ceiling_refuses(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
+        self, rig: _Rig
     ) -> None:
         'Plan S2-a: the "every ARE-governed dimension has a real envelope ceiling"'
-        directory = _write_riskstate_wiring_config(tmp_path, omit_envelope_max=True)
+        directory = _write_riskstate_wiring_config(rig.tmp_path, omit_envelope_max=True)
         with pytest.raises(VenuePolicyConfigError, match="envelope_max"):
             _build_service_from_wiring_config(
-                directory, tmp_path, evidence_store, inbox, rcl_log
+                directory,
+                rig,
             )
 
-    def test_scenario_coverage_gap_refuses(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
-        directory = _write_riskstate_wiring_config(tmp_path)
+    def test_scenario_coverage_gap_refuses(self, rig: _Rig) -> None:
+        directory = _write_riskstate_wiring_config(rig.tmp_path)
         empty_scenario_set = AdverseScenarioSet.issue(
             scheme=_SCHEME,
             scenario_set_id="empty-scenario-set",
@@ -1013,43 +895,26 @@ class TestBuildRiskStateServiceCrossChecks:
         with pytest.raises(RiskPolicyScopeMismatch, match="covered_scenario_kinds"):
             _build_service_from_wiring_config(
                 directory,
-                tmp_path,
-                evidence_store,
-                inbox,
-                rcl_log,
+                rig,
                 scenario_set=empty_scenario_set,
             )
 
-    def test_action_class_not_covered_refuses(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
+    def test_action_class_not_covered_refuses(self, rig: _Rig) -> None:
         directory = _write_riskstate_wiring_config(
-            tmp_path, action_class_map='{"DECREASE": "ORDINARY_REDUCE_OR_EXIT"}'
+            rig.tmp_path, action_class_map='{"DECREASE": "ORDINARY_REDUCE_OR_EXIT"}'
         )
         with pytest.raises(RiskPolicyScopeMismatch, match="action_class_map"):
             _build_service_from_wiring_config(
-                directory, tmp_path, evidence_store, inbox, rcl_log
+                directory,
+                rig,
             )
 
-    def test_side_token_not_in_venue_allowed_sides_refuses(
-        self,
-        tmp_path: Path,
-        evidence_store: SqliteEvidenceStore,
-        inbox: SqliteEventInbox,
-        rcl_log: SqliteCommitLog,
-    ) -> None:
-        directory = _write_riskstate_wiring_config(tmp_path)
+    def test_side_token_not_in_venue_allowed_sides_refuses(self, rig: _Rig) -> None:
+        directory = _write_riskstate_wiring_config(rig.tmp_path)
         with pytest.raises(RiskPolicyScopeMismatch, match="side_tokens"):
             _build_service_from_wiring_config(
                 directory,
-                tmp_path,
-                evidence_store,
-                inbox,
-                rcl_log,
+                rig,
                 venue_allowed_sides=frozenset({"LONG", "SHORT"}),
             )
 
@@ -1109,17 +974,36 @@ def _fresh_risk_state_dirs(root: Path) -> tuple[Path, Path, Path]:
     return config_dir, data_dir, custody_root
 
 
+def _risk_state_runtime(
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    *,
+    construction: ConstructionConfig | None = None,
+) -> ComposedRuntime:
+    """The composed runtime every E2E test here drives: real providers, no stubs."""
+    return compose_paper_runtime(
+        config_dir,
+        data_dir,
+        custody_root,
+        "non-live-test",
+        construction=(
+            construction if construction is not None else fx.construction_config()
+        ),
+        aggregate_risk_inputs_provider=None,
+        action_flow_inputs_provider=None,
+        wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
+    )
+
+
 def _drive_two_calls(runtime, custody_root: Path, event):
     """The SAME two-``run_once``-call pattern ``test_compose_root.py``'s own ADMIT tests use"""
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=proposal_digest,
-        environment_label="non-live-test",
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     results2 = runtime.run_once((event,))
     flow = results2[0].flow
@@ -1141,22 +1025,12 @@ class TestComposeE2E:
     """The plan's own acceptance criterion, driven through the FULL compose stack with no"""
 
     def test_first_attempt_reaches_aggregate_risk_grant(
-        self,
-        config_dir_with_risk_state: Path,
-        data_dir: Path,
-        custody_root: Path,
+        self, config_dir_with_risk_state: Path, data_dir: Path, custody_root: Path
     ) -> None:
         """Plan §5 실증 (1) — no explicit providers, the production"""
         fx.write_band_strategy_file(config_dir_with_risk_state)
-        runtime = compose_paper_runtime(
-            config_dir_with_risk_state,
-            data_dir,
-            custody_root,
-            "non-live-test",
-            construction=fx.construction_config(),
-            aggregate_risk_inputs_provider=None,
-            action_flow_inputs_provider=None,
-            wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
+        runtime = _risk_state_runtime(
+            config_dir_with_risk_state, data_dir, custody_root
         )
         assert runtime.risk_state is not None
 
@@ -1215,22 +1089,12 @@ class TestComposeE2E:
         assert "replays" not in observed_row["absent_fields"]
 
     def test_seeded_prior_fill_flips_aggregate_risk_decision_to_deny(
-        self,
-        config_dir_with_risk_state: Path,
-        data_dir: Path,
-        custody_root: Path,
+        self, config_dir_with_risk_state: Path, data_dir: Path, custody_root: Path
     ) -> None:
         """Plan §5 실증 (2) — a durable prior fill large enough to exceed the policy's own"""
         fx.write_band_strategy_file(config_dir_with_risk_state)
-        runtime = compose_paper_runtime(
-            config_dir_with_risk_state,
-            data_dir,
-            custody_root,
-            "non-live-test",
-            construction=fx.construction_config(),
-            aggregate_risk_inputs_provider=None,
-            action_flow_inputs_provider=None,
-            wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
+        runtime = _risk_state_runtime(
+            config_dir_with_risk_state, data_dir, custody_root
         )
 
         event = fx.crossing_event()
@@ -1287,22 +1151,12 @@ class TestComposeE2E:
         assert are_verdict.native_verdict_value == "DENY"
 
     def test_duplicate_dispositions_beyond_envelope_flip_action_flow_decision_to_unknown(
-        self,
-        config_dir_with_risk_state: Path,
-        data_dir: Path,
-        custody_root: Path,
+        self, config_dir_with_risk_state: Path, data_dir: Path, custody_root: Path
     ) -> None:
         """Plan §5 실증 (2), CORRECTED against the real kernel composer (finding, reported —"""
         fx.write_band_strategy_file(config_dir_with_risk_state)
-        runtime = compose_paper_runtime(
-            config_dir_with_risk_state,
-            data_dir,
-            custody_root,
-            "non-live-test",
-            construction=fx.construction_config(),
-            aggregate_risk_inputs_provider=None,
-            action_flow_inputs_provider=None,
-            wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
+        runtime = _risk_state_runtime(
+            config_dir_with_risk_state, data_dir, custody_root
         )
         assert runtime.risk_state is not None
         reader = runtime.risk_state._flow_reader
@@ -1350,22 +1204,12 @@ class TestComposeE2E:
         assert observed_row["flow"]["duplicates_rejected"] == 3
 
     def test_recovery_markers_beyond_envelope_flip_action_flow_decision_to_unknown(
-        self,
-        config_dir_with_risk_state: Path,
-        data_dir: Path,
-        custody_root: Path,
+        self, config_dir_with_risk_state: Path, data_dir: Path, custody_root: Path
     ) -> None:
         """Plan §5 실증 (3), CORRECTED against the real kernel composer (same finding as the"""
         fx.write_band_strategy_file(config_dir_with_risk_state)
-        runtime = compose_paper_runtime(
-            config_dir_with_risk_state,
-            data_dir,
-            custody_root,
-            "non-live-test",
-            construction=fx.construction_config(),
-            aggregate_risk_inputs_provider=None,
-            action_flow_inputs_provider=None,
-            wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
+        runtime = _risk_state_runtime(
+            config_dir_with_risk_state, data_dir, custody_root
         )
         assert runtime.risk_state is not None
         reader = runtime.risk_state._flow_reader
@@ -1422,15 +1266,11 @@ class TestComposeE2E:
         """Plan §5 실증 (7) — the NEW_SHORT mirror (:mod:`tests.compose._symmetry_fixtures`,"""
         config_dir, data_dir, custody_root = _fresh_risk_state_dirs(tmp_path / "short")
         sfx.write_mirrored_strategy_file(config_dir)
-        runtime = compose_paper_runtime(
+        runtime = _risk_state_runtime(
             config_dir,
             data_dir,
             custody_root,
-            "non-live-test",
             construction=sfx.mirrored_construction_config(),
-            aggregate_risk_inputs_provider=None,
-            action_flow_inputs_provider=None,
-            wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
         )
         assert runtime.risk_state is not None
 

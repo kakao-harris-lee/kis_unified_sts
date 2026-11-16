@@ -139,11 +139,13 @@ def test_the_field_is_additive_and_defaults_to_none() -> None:
 
 def test_the_engine_import_closure_allowlist_is_unchanged() -> None:
     """(§15.2 ③ ★) The committed canary's own constant is read — fifteen packages, no marketfeed."""
-    from .test_engine_import_closure import _ALLOWED_TOS_PACKAGES
+    from .._closure_table import POLICIES
 
-    assert len(_ALLOWED_TOS_PACKAGES) == 15
-    assert "tos.marketfeed" not in _ALLOWED_TOS_PACKAGES
-    assert "tos.orthostate" in _ALLOWED_TOS_PACKAGES
+    declared = POLICIES["engine"].allowed_tos
+    assert declared is not None
+    assert len(declared) == 15
+    assert "tos.marketfeed" not in declared
+    assert "tos.orthostate" in declared
 
 
 def test_without_a_view_a_value_gated_guard_cannot_fire() -> None:
