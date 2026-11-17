@@ -175,6 +175,7 @@ class FileCustody:
         self._evidence = evidence
         self._getuid = getuid
         self._secret_field_names = secret_field_names
+        self._last_evidenced: dict[str, tuple[dict[str, object], tuple[str, ...]]] = {}
 
         manifest_path = self._root_dir / MANIFEST_FILENAME
         self._manifest = CustodyManifest.load(manifest_path)
@@ -207,12 +208,15 @@ class FileCustody:
         }
         if not digest_pinned:
             payload["digest_note"] = "digest 미고정"
-        scrubbed_payload, _masked_keys = scrub_secret_fields(
+        scrubbed_payload, masked_keys = scrub_secret_fields(
             payload, self._secret_field_names
         )
-        self._evidence.append(
-            scrubbed_payload, kind="CUSTODY_LOAD", record_class="CUSTODY_LOAD"
-        )
+        evidenced = (scrubbed_payload, masked_keys)
+        if self._last_evidenced.get(scope) != evidenced:
+            self._last_evidenced[scope] = evidenced
+            self._evidence.append(
+                scrubbed_payload, kind="CUSTODY_LOAD", record_class="CUSTODY_LOAD"
+            )
         return CredentialHandle(scope=scope, principal_id=entry.principal, data=data)
 
     def scope_principal(self, scope: str) -> str:
