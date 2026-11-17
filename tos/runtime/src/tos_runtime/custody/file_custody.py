@@ -213,10 +213,10 @@ class FileCustody:
         )
         evidenced = (scrubbed_payload, masked_keys)
         if self._last_evidenced.get(scope) != evidenced:
-            self._last_evidenced[scope] = evidenced
             self._evidence.append(
                 scrubbed_payload, kind="CUSTODY_LOAD", record_class="CUSTODY_LOAD"
             )
+            self._last_evidenced[scope] = evidenced
         return CredentialHandle(scope=scope, principal_id=entry.principal, data=data)
 
     def scope_principal(self, scope: str) -> str:
