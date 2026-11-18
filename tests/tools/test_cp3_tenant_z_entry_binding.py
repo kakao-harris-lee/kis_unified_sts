@@ -160,3 +160,44 @@ def test_the_strategy_rule_actually_reads_the_bound_key(
     compare = z_compares[0]
     assert compare["right"]["ref"] == ["config", key]
     assert compare["op"] == ("GE" if sign > 0 else "LE")
+
+
+@pytest.mark.parametrize("tree", _tree_ids())
+def test_fields_yaml_compares_each_side_with_the_matching_operator(tree: str) -> None:
+    """The threshold is only half the declaration -- the operator is the other half.
+
+    ``const: -1.8`` under ``ge`` instead of ``le`` selects the opposite tail and
+    still reads as a correct-looking number, so pinning the value without the
+    operator leaves the cheaper half of the mistake uncovered.
+    """
+    document = load_fields_file(CONFIG_ROOT / tree / "fields.yaml")
+    by_name = {spec.name: spec for spec in document.fields}
+
+    assert by_name["z_short_side"].op_name == "ge"
+    assert by_name["z_long_side"].op_name == "le"
+
+
+def test_every_shipped_tenant_tree_is_covered_by_this_module() -> None:
+    """A tree added later must not be silently skipped by this module's TREES.
+
+    Every assertion here is parametrized over TREES, so a fourth tenant would be
+    covered by nothing while the suite stayed green. Discovery is by the files
+    themselves rather than by a second hand-written list: searched recursively,
+    so a tree nested one level deeper is found too.
+    """
+    discovered_bindings = {
+        path.parent.relative_to(CONFIG_ROOT).as_posix()
+        for path in CONFIG_ROOT.rglob("strategy_bindings.yaml")
+    }
+    discovered_fields = {
+        path.parent.relative_to(CONFIG_ROOT).as_posix()
+        for path in CONFIG_ROOT.rglob("fields.yaml")
+    }
+
+    assert discovered_bindings == set(_tree_ids()), (
+        "a tenant tree with strategy_bindings.yaml is not in TREES (or vice "
+        f"versa): found {sorted(discovered_bindings)}"
+    )
+    assert discovered_fields == set(
+        _tree_ids()
+    ), f"a tenant tree with fields.yaml is not in TREES: {sorted(discovered_fields)}"
