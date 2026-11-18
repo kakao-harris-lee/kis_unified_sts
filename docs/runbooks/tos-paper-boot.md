@@ -378,6 +378,8 @@ bash <(git -C $MAIN show origin/main:tools/tos_cp3/runners/setup_stock_mock_once
 - **상시 승인(그날 · #955)** — 파일 `$ST/cp3-setup-d-stock-custody/approvals/standing-session.yaml`(0600). **cron 세션에서는 래퍼가 쓴다**(`render ok` 뒤 · 첫 진입 전 · 운영자 결정 2026-11-05 이 11-03 의 위임 절차를 매 거래일로 확장). 손으로 쓰는 때(재기동 `RUN=2` 등)는 아래 «볼 것» 의 `render ok` 줄 뒤 · 첫 진입 전(런타임이 이미 떠 있어도 된다 — 첫 사용 때 결속).
   승인 없이는 신호가 와도 4단계에서 멎는다(송신 0). MOCK 트리가 아니면 rc 1 로 아무것도 쓰지 않는다 · 덮어쓰기는 `--replace` 뿐.
   **재작성**(예: `max_uses` 를 올림)은 운영자 권한이고 **재기동 뒤에** 적용된다 — 슬롯이 거래일로 키잉돼 이미 쓴 횟수는 그대로 센다.
+  액션당 횟수는 트리의 `authority.yaml::standing_approval_max_uses_per_action` 이 정한다(주식 모의 트리 **390** = 정규장 1분봉 수 · 운영자 지시 2026-11-18 「하루 1회 승인은 모의계좌에서는 불필요해」).
+  `--max-uses-per-action` 을 명시하면 그 값이 이기고, 키가 없는 트리(paper · LONG · SHORT)는 1 이다.
   ⚠ **경로가 고정이므로 슬롯은 하루에 하나다.** 작성기는 파일이 있으면 `--replace` 없이 거부하고(→ rc 1), 런타임의 `bind_at_boot()` 은
   **부팅 시점에 그 경로에 있던 것**을 결속해 그 뒤에 쓰인 파일을 `digest_changed_since_bound` 로 거부한다 — 즉 `--replace` 로도 못 고친다.
   그래서 cron 래퍼는 **러너를 띄우기 전에** 다른 날짜 파일을 `$C/approvals-archive/standing-session.<그날짜>.yaml` 로 옮긴다

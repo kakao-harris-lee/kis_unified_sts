@@ -58,12 +58,15 @@ CANDIDATE_COMMAND_CONSTRUCTION 에서 거부된 것). 그래서 전략 파일에
 - 토글을 `config.<키> EQ 1` 같은 **config 단독 비교**로 쓸 수는 없다: 커널의 D1↔D4 규칙이
   비교마다 capsule 피연산자를 요구하므로(`tos.engine.admission.strategy_admissible` 검사 2)
   전략 전체가 INADMISSIBLE 이 되고 부팅이 `STRATEGY_REFUSED` 로 멈춘다(실측 2026-11-11).
-- **세션당 송신 한도는 R4 가 바꾸지 않는다** — 상시 승인(`write-standing-approval`)의
-  `--max-uses-per-action` 기본값 1 이라 거래일당 entry 1회 · exit 1회가 끝이고, 그 밖에
-  `aggregate_risk_policy` 1주(`unknown_disposition: DENY_NEW_RISK`) ·
-  `action_flow_policy` afg.ORDER 한도 1 · `engine.yaml::max_unresolved_send_per_scope: 1` ·
-  `risk.yaml::max_in_flight: 1` · OCP `min/max_quantity: 1` 이 겹쳐 있다. 청산 뒤 R4 가
-  같은 날 재진입하려 해도 entry 슬롯이 이미 소비돼 4단계에서 `UNKNOWN` 으로 선다.
+- **세션당 송신 한도는 R4 가 바꾸지 않는다** — 다만 **거래일당 횟수는 2026-11-18 부터 1 이
+  아니다**: 상시 승인(`write-standing-approval`)의 액션당 사용 횟수를
+  `authority.yaml::standing_approval_max_uses_per_action`(이 트리 390 = 정규장 1분봉 수)이
+  정한다(운영자 지시 2026-11-18 「필요한 만큼 승인이야」). 그래서 LEDGER_VERIFICATION 등에서
+  멎은 시도가 그날의 유일한 기회를 태우지 않고, 청산 뒤 R4 재진입도 승인 슬롯 때문에는 막히지
+  않는다. **동시** 한도는 그대로다 — `aggregate_risk_policy` 1주
+  (`unknown_disposition: DENY_NEW_RISK`) · `action_flow_policy` afg.ORDER 한도 1 ·
+  `engine.yaml::max_unresolved_send_per_scope: 1` · `risk.yaml::max_in_flight: 1` ·
+  OCP `min/max_quantity: 1` 이 겹쳐 있어 한 번에 1주 1건이다.
 - 장후 B3 대조는 `config/tos_cp3_b3.yaml::markets: ["futures"]` 라 주식 세션에서는
   `verdict: "skipped"` 다 — R4 는 B3 증인(`shared/decision/setups/vwap_reversion.py`)과
   만나지 않는다. 선물 세 트리(paper · LONG · SHORT)는 바이트 그대로다.

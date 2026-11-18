@@ -53,17 +53,25 @@ def _epoch_transition_command_id(authority_domain: str, new_epoch: int) -> str:
 class AuthorityRuntimeConfig:
     """The fully-valued Safety Authority runtime config (slice plan §1 item 1)."""
 
-    __slots__ = ("containment_bound_ms", "trading_approval_policy_generation")
+    __slots__ = (
+        "containment_bound_ms",
+        "trading_approval_policy_generation",
+        "standing_approval_max_uses_per_action",
+    )
 
     def __init__(
         self,
         *,
         containment_bound_ms: int | None,
         trading_approval_policy_generation: int | None = None,
+        standing_approval_max_uses_per_action: int | None = None,
     ) -> None:
         """Args:"""
         self.containment_bound_ms = containment_bound_ms
         self.trading_approval_policy_generation = trading_approval_policy_generation
+        self.standing_approval_max_uses_per_action = (
+            standing_approval_max_uses_per_action
+        )
 
 
 class AuthorityConfigError(RuntimeError):
@@ -115,9 +123,24 @@ def load_authority_config(path: Path) -> AuthorityRuntimeConfig:
         path,
         named_tbd_note="is the currently-loaded Trading Approval Policy generation",
     )
+    standing_uses_key = "standing_approval_max_uses_per_action"
+    standing_uses = (
+        _resolve_positive_int_key(
+            raw,
+            standing_uses_key,
+            path,
+            named_tbd_note=(
+                "is the optional per-action use count the standing session approval "
+                "writer reads (an absent key means one)"
+            ),
+        )
+        if standing_uses_key in raw
+        else None
+    )
     return AuthorityRuntimeConfig(
         containment_bound_ms=bound,
         trading_approval_policy_generation=policy_generation,
+        standing_approval_max_uses_per_action=standing_uses,
     )
 
 

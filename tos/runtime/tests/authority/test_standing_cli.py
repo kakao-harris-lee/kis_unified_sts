@@ -90,10 +90,56 @@ def test_writes_the_artifact_for_the_mock_stock_tree(tmp_path: Path, capsys) -> 
     )
     assert (exit_.position_effect, exit_.direction) == ("CLOSE", "SHORT")
     assert exit_.side != entry.side
-    assert [a.max_uses for a in approval.actions] == [1, 1]
+    authority = yaml.safe_load((tree / "authority.yaml").read_text(encoding="utf-8"))
+    configured = authority["standing_approval_max_uses_per_action"]
+    assert [a.max_uses for a in approval.actions] == [configured, configured]
     out = capsys.readouterr().out
     assert approval.digest in out
     assert "#960" not in out
+
+
+def test_the_stock_trees_use_count_is_one_per_regular_session_minute() -> None:
+    """Operator directive 2026-11-18 — 390 = the 09:00-15:30 one-minute bars (6.5h x 60)."""
+    authority = yaml.safe_load(
+        (_TREES / "cp3-setup-d-stock-005930" / "authority.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert authority["standing_approval_max_uses_per_action"] == 390
+
+
+def test_the_cli_flag_overrides_the_configured_use_count(tmp_path: Path) -> None:
+    tree = _rendered_copy("cp3-setup-d-stock-005930", tmp_path)
+    custody = tmp_path / "custody"
+    assert main(_argv(tree, custody, "--max-uses-per-action", "3")) == 0
+    approval = load_standing_approval(
+        custody / STANDING_APPROVAL_RELPATH, expected_owner_uid=os.getuid()
+    )
+    assert [a.max_uses for a in approval.actions] == [3, 3]
+
+
+def test_a_tree_without_the_key_keeps_the_single_use_default(tmp_path: Path) -> None:
+    tree = _rendered_copy("cp3-setup-d-stock-005930", tmp_path)
+    authority_path = tree / "authority.yaml"
+    authority_path.write_text(
+        "".join(
+            line
+            for line in authority_path.read_text(encoding="utf-8").splitlines(
+                keepends=True
+            )
+            if not line.startswith("standing_approval_max_uses_per_action:")
+        ),
+        encoding="utf-8",
+    )
+    raw = yaml.safe_load(authority_path.read_text(encoding="utf-8"))
+    assert "standing_approval_max_uses_per_action" not in raw
+
+    custody = tmp_path / "custody"
+    assert main(_argv(tree, custody)) == 0
+    approval = load_standing_approval(
+        custody / STANDING_APPROVAL_RELPATH, expected_owner_uid=os.getuid()
+    )
+    assert [a.max_uses for a in approval.actions] == [1, 1]
 
 
 @pytest.mark.parametrize("tree", ["cp3-setup-d-long", "cp3-setup-d-short"])
