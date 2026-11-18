@@ -350,7 +350,10 @@ def test_the_session_loop_keeps_observing_while_the_broker_shows_nothing_yet(
     assert runtime.marketfeed is not None
     orders_path = _script_broker(server, config_dir, date, [])
 
-    runtime.marketfeed.run_forever(sleep=_real_short_sleep, stop=_stop_after(4))
+    runtime.marketfeed.run_forever(
+        sleep=_real_short_sleep,
+        stop=_stop_when(lambda: len(server.requests_for(orders_path)) >= 2),
+    )
 
     assert len(server.requests_for(orders_path)) >= 2
     assert [
