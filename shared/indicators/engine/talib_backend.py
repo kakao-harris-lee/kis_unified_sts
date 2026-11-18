@@ -233,10 +233,27 @@ def _adxr(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndar
     return {"value": mod.ADXR(w.high, w.low, w.close, timeperiod=_int(p, "period", 14))}
 
 
+#: Moving-average type for APO/PPO, passed EXPLICITLY on purpose (#695).
+#:
+#: TA-Lib's own default for these two moved between releases — ta-lib-python
+#: 0.7.0 (C 0.6.4) defaults to 0/SMA, 0.8.0 (C 0.8.1) to 1/EMA — so omitting the
+#: argument makes the VALUE depend on the installed wheel. Measured on one input
+#: series: APO last 0.8842 under SMA vs 0.5922 under EMA. `pyproject.toml` caps
+#: TA-Lib at <0.8 today, but a cap is not what should be holding a number still;
+#: naming the type here is. 0 keeps the behaviour every existing backtest and
+#: strategy was computed with.
+#:
+#: BBANDS/STOCH/STOCHRSI below already name their MA type for the same reason.
+_APO_PPO_MATYPE = 0
+
+
 def _apo(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
     return {
         "value": mod.APO(
-            w.close, fastperiod=_int(p, "fast", 12), slowperiod=_int(p, "slow", 26)
+            w.close,
+            fastperiod=_int(p, "fast", 12),
+            slowperiod=_int(p, "slow", 26),
+            matype=_APO_PPO_MATYPE,
         )
     }
 
@@ -244,7 +261,10 @@ def _apo(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarr
 def _ppo(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
     return {
         "value": mod.PPO(
-            w.close, fastperiod=_int(p, "fast", 12), slowperiod=_int(p, "slow", 26)
+            w.close,
+            fastperiod=_int(p, "fast", 12),
+            slowperiod=_int(p, "slow", 26),
+            matype=_APO_PPO_MATYPE,
         )
     }
 

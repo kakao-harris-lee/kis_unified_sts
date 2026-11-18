@@ -170,3 +170,90 @@ def test_default_engine_uses_talib(window) -> None:
     )
     assert "rsi" in panel
     assert {"bb_upper", "bb_middle", "bb_lower"} <= set(panel)
+
+
+# ---------------------------------------------------------------------------
+# APO/PPO do not inherit TA-Lib's default matype (#695)
+# ---------------------------------------------------------------------------
+#
+# These two took their moving-average type from TA-Lib's own default, and that
+# default MOVED between releases: ta-lib-python 0.7.0 (C 0.6.4) uses 0/SMA,
+# 0.8.0 (C 0.8.1) uses 1/EMA. So the published VALUE depended on which wheel was
+# installed, with nothing in the repo pinning it -- `grep -rniE '\b(apo|ppo)\b'
+# tests` found zero hits when #695 was written. `pyproject.toml` caps TA-Lib at
+# <0.8, but a dependency cap is not a value contract: lifting it (the point of
+# #695) would have changed every APO/PPO number with CI still green.
+#
+# The backend now passes matype=0 explicitly. These tests are what makes that
+# load-bearing instead of decorative.
+
+
+@pytest.mark.parametrize("indicator_id", ["apo", "ppo"])
+def test_apo_ppo_match_the_sma_variant_not_the_talib_default(
+    backend: TALibBackend, window, indicator_id: str
+) -> None:
+    """Parity is asserted against matype=0 NAMED, never against the bare call."""
+    func = getattr(talib, indicator_id.upper())
+    got = backend.compute(
+        IndicatorSpec.create(indicator_id, {"fast": 12, "slow": 26}), window
+    ).flat_latest()[indicator_id]
+
+    reference = func(window.close, fastperiod=12, slowperiod=26, matype=0)
+    expected = float(reference[np.isfinite(reference)][-1])
+
+    assert got == pytest.approx(expected, rel=1e-12)
+
+
+@pytest.mark.parametrize("indicator_id", ["apo", "ppo"])
+def test_apo_ppo_would_differ_under_the_other_matype(
+    backend: TALibBackend, window, indicator_id: str
+) -> None:
+    """The concrete input that makes the pin above matter.
+
+    If SMA and EMA happened to agree on this window, the parity test would pass
+    for the wrong reason and a silent default flip would still slip through.
+    They do not agree, and this is the test that says so.
+    """
+    func = getattr(talib, indicator_id.upper())
+    got = backend.compute(
+        IndicatorSpec.create(indicator_id, {"fast": 12, "slow": 26}), window
+    ).flat_latest()[indicator_id]
+
+    ema_variant = func(window.close, fastperiod=12, slowperiod=26, matype=1)
+    ema_latest = float(ema_variant[np.isfinite(ema_variant)][-1])
+
+    assert got != pytest.approx(ema_latest, rel=1e-6)
+
+
+def test_apo_ppo_pass_matype_explicitly_whatever_talib_defaults_to() -> None:
+    """Catches the regression directly: the argument must be SENT, not inherited.
+
+    A spy module stands in for `talib`, so this holds on a wheel whose default is
+    EMA as well -- which is exactly the version this repo is capped away from and
+    will eventually move to.
+    """
+    from shared.indicators.engine import talib_backend as tb
+
+    seen: dict[str, dict[str, object]] = {}
+
+    class _Spy:
+        @staticmethod
+        def APO(close, **kwargs):  # noqa: N802 - mirrors TA-Lib's name
+            seen["apo"] = kwargs
+            return np.zeros_like(close)
+
+        @staticmethod
+        def PPO(close, **kwargs):  # noqa: N802 - mirrors TA-Lib's name
+            seen["ppo"] = kwargs
+            return np.zeros_like(close)
+
+    close = np.linspace(100.0, 120.0, 60)
+    spy_window = OHLCVWindow.from_sequences(
+        open=close, high=close, low=close, close=close, volume=np.ones_like(close)
+    )
+
+    tb._apo(_Spy, spy_window, {"fast": 12.0, "slow": 26.0})
+    tb._ppo(_Spy, spy_window, {"fast": 12.0, "slow": 26.0})
+
+    assert seen["apo"]["matype"] == 0
+    assert seen["ppo"]["matype"] == 0
