@@ -409,6 +409,43 @@ def test_load_authority_config_accepts_a_positive_bound(tmp_path: Path) -> None:
     assert config.trading_approval_policy_generation == 3
 
 
+def test_load_authority_config_leaves_the_optional_use_count_absent(
+    tmp_path: Path,
+) -> None:
+    """An absent ``standing_approval_max_uses_per_action`` is ``None``, never a value."""
+    path = _authority_config_file(
+        tmp_path, containment_bound_ms=250, policy_generation=1
+    )
+    assert load_authority_config(path).standing_approval_max_uses_per_action is None
+
+
+def test_load_authority_config_reads_the_optional_use_count(tmp_path: Path) -> None:
+    path = _authority_config_file(
+        tmp_path, containment_bound_ms=250, policy_generation=1
+    )
+    path.write_text(
+        path.read_text() + "standing_approval_max_uses_per_action: 390\n",
+        encoding="utf-8",
+    )
+    assert load_authority_config(path).standing_approval_max_uses_per_action == 390
+
+
+@pytest.mark.parametrize("value", ["null", "0", "-1", "'390'", "true"])
+def test_load_authority_config_refuses_a_present_but_unusable_use_count(
+    tmp_path: Path, value: str
+) -> None:
+    """Present-and-invalid is fail-closed, so a typo never silently becomes one use."""
+    path = _authority_config_file(
+        tmp_path, containment_bound_ms=250, policy_generation=1
+    )
+    path.write_text(
+        path.read_text() + f"standing_approval_max_uses_per_action: {value}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AuthorityConfigError, match="standing_approval_max_uses"):
+        load_authority_config(path)
+
+
 def test_load_authority_config_rejects_missing_file(tmp_path: Path) -> None:
     with pytest.raises(AuthorityConfigError):
         load_authority_config(tmp_path / "does-not-exist.yaml")

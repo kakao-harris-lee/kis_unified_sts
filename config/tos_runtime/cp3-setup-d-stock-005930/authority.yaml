@@ -47,3 +47,13 @@ containment_bound_ms: 90000
 # (tos_runtime.authority.iap) — 승인 파일(custody_root/approvals/)이 다른 세대를
 # 들고 오면 그 결정은 current 가 아니게 되며, 그것이 의도된 fail-closed 다.
 trading_approval_policy_generation: 1
+
+# ⚠ **이 트리만 — operator directive 2026-11-18: 「하루 1회 승인은 모의계좌에서는 불필요해.
+#   필요한 만큼 승인이야.」** 390 = 정규장 09:00–15:30 의 1분봉 수(6.5h × 60) = 세션이 쓸 수
+#   있는 봉 하나당 한 번. 종전 기본값 1 에서는 2026-11-18 의 단 한 번의 OPEN 사용이
+#   LEDGER_VERIFICATION 에서 멎은 시도에 타버려 그날 더 진입할 수 없었다.
+#   읽는 곳: tos_runtime.authority.standing_cli.write-standing-approval (`--max-uses-per-action`
+#   을 명시하면 그 값이 이긴다). 키가 없는 트리(paper · LONG · SHORT)는 기본값 1 그대로다.
+#   MOCK 전용 제약(standing_cli 의 is_mock_order_class) · `max_quantity: 1` ·
+#   no-pyramiding · 집계 리스크 한도는 그대로 — 바뀌는 것은 액션당 횟수뿐이다.
+standing_approval_max_uses_per_action: 390
