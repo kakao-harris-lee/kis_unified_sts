@@ -31,6 +31,7 @@ import yaml
 from shared.indicators.fields import load_fields_file, parse_fields_document
 from shared.instruments.contract_spec import ContractSpec
 from tools.tos_cp3 import fields_equivalence as fe
+from tools.tos_cp3 import produce_fields as pf
 from tools.tos_cp3.produce_fields import (
     FIELD_ORDER,
     OpenAnchor,
@@ -613,4 +614,348 @@ class TestAnchorGuard:
             load_fields_file(_fields_yaml("cp3-setup-d-long")),
             anchor=OpenAnchor(8, 45, "config"),
             fields_yaml=_fields_yaml("cp3-setup-d-long"),
+        )
+
+
+# ---------------------------------------------------------------------------
+# 4. P2-c — the declarative producer and the publish-coverage refusal
+# ---------------------------------------------------------------------------
+
+
+class TestDeclarativeProducer:
+    """``produce_bars_declarative`` emits what the legacy loop emitted.
+
+    The byte-identity claim itself lives in the equivalence harness above; what
+    is pinned here is the PRODUCER's half — the record shape, the emit-day
+    filter, and the omission gate staying with the producer.
+    """
+
+    def test_it_emits_the_same_records_the_legacy_loop_does(
+        self, strategy: Any
+    ) -> None:
+        """Same join keys, same stamps, same fifteen values, same order."""
+        document = load_fields_file(_fields_yaml("cp3-setup-d-long"))
+        inputs = _inputs(document, _frame(), strategy)
+        legacy = pf.produce_bars(
+            inputs.df,
+            symbol=inputs.symbol,
+            strategy=strategy,
+            contract_spec=inputs.contract_spec,
+            anchor=inputs.anchor,
+            emit_days=inputs.emit_days,
+        )
+        declared = pf.produce_bars_declarative(
+            inputs.df,
+            symbol=inputs.symbol,
+            document=document,
+            emit_days=inputs.emit_days,
+        )
+        assert [r.raw_event_id for r in declared.records] == [
+            r.raw_event_id for r in legacy.records
+        ]
+        assert [r.as_of_ms for r in declared.records] == [
+            r.as_of_ms for r in legacy.records
+        ]
+        assert [r.fields for r in declared.records] == [
+            r.fields for r in legacy.records
+        ]
+        # Key ORDER too: the journal's byte stability depends on it.
+        for record in declared.records:
+            assert tuple(record.fields) == FIELD_ORDER
+        assert declared.omitted == legacy.omitted
+
+    def test_a_bar_outside_the_emit_days_advances_the_windows_without_a_key(
+        self, strategy: Any
+    ) -> None:
+        """Plan §3.2a: replayed, then dropped BEFORE a join key is derived.
+
+        The emitted set must be the emit days only, and the dropped bars must
+        be COUNTED rather than listed — naming a previous month's bar after
+        this symbol is the label error the plan forbids.
+        """
+        document = load_fields_file(_fields_yaml("cp3-setup-d-long"))
+        inputs = _inputs(document, _frame(), strategy)
+        declared = pf.produce_bars_declarative(
+            inputs.df,
+            symbol=inputs.symbol,
+            document=document,
+            emit_days=inputs.emit_days,
+        )
+        legacy = pf.produce_bars(
+            inputs.df,
+            symbol=inputs.symbol,
+            strategy=strategy,
+            contract_spec=inputs.contract_spec,
+            anchor=inputs.anchor,
+            emit_days=inputs.emit_days,
+        )
+        assert declared.non_target_segment_bars > 0
+        # The counters are the legacy's, not the frame's: the witness yields
+        # from the 60th bar onward and skips the frame's first session, and a
+        # `bars_replayed` of `len(df)` would make `build_lineage`'s
+        # `after_gate - dropped_before_replay == replayed` cross-check raise.
+        assert declared.bars_replayed == legacy.bars_replayed
+        assert declared.non_target_segment_bars == legacy.non_target_segment_bars
+        assert declared.bars_replayed < len(inputs.df)
+        warmup, first_session = pf._bar_accounting(inputs.df)
+        assert declared.bars_replayed == len(inputs.df) - warmup - first_session
+        emitted_days = {
+            r.bar_kst.date() for r in declared.records  # type: ignore[union-attr]
+        }
+        assert emitted_days <= inputs.emit_days
+
+    def test_the_omission_gate_is_still_the_producer_s(self, strategy: Any) -> None:
+        """A flat run makes ATR 0, and the bar is OMITTED, not published.
+
+        The gate is ``_inputs_unusable`` itself — the same function the legacy
+        loop called — so the two omitted lists are answers to one question
+        rather than two restatements of it, **reasons included**: the lineage
+        writes ``sorted({reason})``, so one differing word is a differing file.
+
+        The flat run sits on an EMIT day (bars 1900-1959, session 6 of 7, mid
+        entry window). On a non-emit day both sides omit nothing and the
+        assertion would pass on two empty lists without testing the gate
+        (review of PR #1067, M3).
+        """
+        document = load_fields_file(_fields_yaml("cp3-setup-d-long"))
+        flat = _frame()
+        for index in range(1900, 1960):
+            flat.loc[index, ["open", "high", "low", "close"]] = 350.0
+        inputs = _inputs(document, flat, strategy)
+        assert min(inputs.emit_days) <= flat["timestamp"].iloc[1900].date()
+        declared = pf.produce_bars_declarative(
+            inputs.df,
+            symbol=inputs.symbol,
+            document=document,
+            emit_days=inputs.emit_days,
+        )
+        legacy = pf.produce_bars(
+            inputs.df,
+            symbol=inputs.symbol,
+            strategy=strategy,
+            contract_spec=inputs.contract_spec,
+            anchor=inputs.anchor,
+            emit_days=inputs.emit_days,
+        )
+        # Not a vacuous `[] == []`: the flat run really did drive ATR to 0 on
+        # bars both sides reached and both sides omitted.
+        assert declared.omitted
+        assert legacy.omitted
+        assert declared.omitted == legacy.omitted
+        assert declared.omitted[0][1] == "atr_14 <= 0 (z is undefined)"
+        published = {r.raw_event_id for r in declared.records}
+        assert not published & {bar for bar, _ in declared.omitted}
+
+    def test_emit_days_none_also_matches_the_legacy_loop(self, strategy: Any) -> None:
+        """``emit_days=None`` is the live producer's call — it must agree too.
+
+        ``tools/tos_cp3/live_producer/line.py`` passes no ``emit_days``, so this
+        is the production shape. Before the admission skip was made explicit
+        this emitted 360 first-session records the legacy never emitted and
+        differed on 88 ``hi_vol`` cells of bars both sides DID emit, because the
+        declarative ``gated_*`` windows had sampled bars the witness's
+        ``check()`` never saw (review of PR #1067, M2).
+        """
+        document = load_fields_file(_fields_yaml("cp3-setup-d-long"))
+        inputs = _inputs(document, _frame(), strategy)
+        legacy = pf.produce_bars(
+            inputs.df,
+            symbol=inputs.symbol,
+            strategy=strategy,
+            contract_spec=inputs.contract_spec,
+            anchor=inputs.anchor,
+        )
+        declared = pf.produce_bars_declarative(
+            inputs.df, symbol=inputs.symbol, document=document
+        )
+        assert [r.raw_event_id for r in declared.records] == [
+            r.raw_event_id for r in legacy.records
+        ]
+        assert [r.as_of_ms for r in declared.records] == [
+            r.as_of_ms for r in legacy.records
+        ]
+        assert [r.fields for r in declared.records] == [
+            r.fields for r in legacy.records
+        ]
+        assert declared.omitted == legacy.omitted
+        assert declared.bars_replayed == legacy.bars_replayed
+        assert declared.non_target_segment_bars == legacy.non_target_segment_bars == 0
+
+    def test_a_non_finite_bar_is_a_corrupt_frame_not_an_omission(
+        self, strategy: Any
+    ) -> None:
+        """NaN raises ``ProduceFieldsError``, on an emit day or not.
+
+        ``FieldBar.create`` refuses a non-finite bar with a ``FieldEvalError``,
+        which is the field layer's error class and not the one this tool's
+        callers catch; and the refusal must not be swallowed by the
+        per-bar omission path either, because
+        :func:`produce_fields._inputs_unusable` already says why — NaN is a
+        defect in the Parquet tree, and omitting the bar would hide it.
+        """
+        document = load_fields_file(_fields_yaml("cp3-setup-d-long"))
+        for row in (10, 500, 1900):  # warmup, non-emit day, emit day
+            frame = _frame()
+            frame.loc[row, "close"] = float("nan")
+            inputs = _inputs(document, frame, strategy)
+            with pytest.raises(pf.ProduceFieldsError, match="non-finite"):
+                pf.produce_bars_declarative(
+                    inputs.df,
+                    symbol=inputs.symbol,
+                    document=document,
+                    emit_days=inputs.emit_days,
+                )
+
+    def test_a_refusal_the_gate_cannot_name_aborts_the_run(self, strategy: Any) -> None:
+        """A declaration defect must surface, not be counted as a quiet bar.
+
+        The concrete input: the ``one`` constant that makes ``z_improvement``
+        express a plain difference is declared as ``0.0`` instead of ``1.0``,
+        so ``ratio_z`` divides by zero on every bar that has a ``prev_close``.
+        The evaluator refuses the bar; the omission gate finds
+        ``close``/``vwap``/``atr`` perfectly usable — so the bar is not an
+        omission at all. Counted as one it would publish a quietly shorter
+        file, and on a non-emit day it would not even be listed.
+        """
+        document = load_fields_file(_fields_yaml("cp3-setup-d-long"))
+        raw = yaml.safe_load(_fields_yaml("cp3-setup-d-long").read_text("utf-8"))
+        divisors = [spec for spec in raw["fields"] if spec["name"] == "one"]
+        assert len(divisors) == 1
+        divisors[0]["params"]["value"] = 0.0
+        broken = parse_fields_document(raw)
+        inputs = _inputs(document, _frame(), strategy)
+        with pytest.raises(pf.ProduceFieldsError, match="omission gate does not name"):
+            pf.produce_bars_declarative(
+                inputs.df,
+                symbol=inputs.symbol,
+                document=broken,
+                emit_days=inputs.emit_days,
+            )
+
+
+class TestPublishCoverageRefusal:
+    """Plan §2.2 — a DSL ref the declaration does not publish is refused."""
+
+    def test_the_three_shipped_trees_pass(self) -> None:
+        """The check starts green: it is a guard, not a migration step."""
+        for tree in TREES:
+            pf.assert_dsl_refs_are_published(
+                load_fields_file(_fields_yaml(tree)),
+                strategies_dir=REPO_ROOT
+                / "config"
+                / "tos_runtime"
+                / tree
+                / "strategies",
+            )
+
+    def test_a_ref_that_is_not_published_is_refused_by_name(
+        self, tmp_path: Path
+    ) -> None:
+        """The concrete input: a tenant reading ``rsi14`` from a Setup D
+        declaration that publishes only the fifteen."""
+        strategies = tmp_path / "strategies"
+        strategies.mkdir()
+        (strategies / "x.strategy.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "policy": {
+                        "rules": [
+                            {
+                                "all_of": [
+                                    {
+                                        "left": {
+                                            "ref": [
+                                                "capsule",
+                                                "resolved_values",
+                                                "rsi14",
+                                            ]
+                                        },
+                                        "op": "GE",
+                                        "right": {"const": 1},
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(pf.ProduceFieldsError, match="rsi14"):
+            pf.assert_dsl_refs_are_published(
+                load_fields_file(_fields_yaml("cp3-setup-d-long")),
+                strategies_dir=strategies,
+            )
+
+    def test_a_directory_with_no_strategy_is_refused(self, tmp_path: Path) -> None:
+        """Agreement with nothing is not agreement."""
+        empty = tmp_path / "strategies"
+        empty.mkdir()
+        with pytest.raises(pf.ProduceFieldsError, match="no \\*.yaml strategy"):
+            pf.assert_dsl_refs_are_published(
+                load_fields_file(_fields_yaml("cp3-setup-d-long")),
+                strategies_dir=empty,
+            )
+
+    def test_a_missing_directory_is_refused_by_name(self, tmp_path: Path) -> None:
+        """A tree with no ``strategies/`` must not raise ``FileNotFoundError``.
+
+        ``iterdir()`` on a path that is not there raises an ``OSError`` the
+        producer's caller does not catch, so a mis-rendered tenant tree would
+        surface as a traceback instead of as this tool's own refusal.
+        """
+        with pytest.raises(pf.ProduceFieldsError, match="not a directory"):
+            pf.assert_dsl_refs_are_published(
+                load_fields_file(_fields_yaml("cp3-setup-d-long")),
+                strategies_dir=tmp_path / "strategies",
+            )
+
+    @pytest.mark.parametrize(
+        ("name", "text", "match"),
+        [
+            ("malformed", "policy: [unclosed\n", "not loadable"),
+            (
+                "multi_doc",
+                "policy:\n  rules: []\n---\npolicy:\n  rules: []\n",
+                "not loadable",
+            ),
+            ("empty", "\n", "not a mapping"),
+            ("scalar", "just a string\n", "not a mapping"),
+        ],
+    )
+    def test_an_unreadable_strategy_is_refused(
+        self, tmp_path: Path, name: str, text: str, match: str
+    ) -> None:
+        """A DSL that cannot be read is not a DSL that agrees.
+
+        ``yaml.safe_load`` raises on a malformed file and on a multi-document
+        stream, and returns ``None`` for an empty one — which would have walked
+        to zero refs and reported agreement it never checked.
+        """
+        strategies = tmp_path / name
+        strategies.mkdir()
+        (strategies / "x.strategy.yaml").write_text(text, encoding="utf-8")
+        with pytest.raises(pf.ProduceFieldsError, match=match):
+            pf.assert_dsl_refs_are_published(
+                load_fields_file(_fields_yaml("cp3-setup-d-long")),
+                strategies_dir=strategies,
+            )
+
+    def test_a_commented_out_ref_is_not_a_ref(self, tmp_path: Path) -> None:
+        """Walked over the PARSED document, so a comment cannot trip it."""
+        strategies = tmp_path / "strategies"
+        strategies.mkdir()
+        (strategies / "x.strategy.yaml").write_text(
+            "policy:\n"
+            "  rules:\n"
+            "    - all_of:\n"
+            "        # - left: {ref: [capsule, resolved_values, rsi14]}\n"
+            "        - left: {ref: [capsule, resolved_values, hi_vol]}\n"
+            "          op: EQ\n"
+            "          right: {const: true}\n",
+            encoding="utf-8",
+        )
+        pf.assert_dsl_refs_are_published(
+            load_fields_file(_fields_yaml("cp3-setup-d-long")),
+            strategies_dir=strategies,
         )

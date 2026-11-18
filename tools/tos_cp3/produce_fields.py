@@ -33,6 +33,12 @@ from shared.decision.setups.vwap_reversion import (  # noqa: E402
     SetupDVWAPReversion,
 )
 from shared.determinism.replay import DEFAULT_WARMUP_BARS  # noqa: E402
+from shared.indicators.fields import (  # noqa: E402
+    FieldBar,
+    FieldEvalError,
+    FieldEvaluator,
+    FieldsDocument,
+)
 from shared.indicators.fields.scaling import (  # noqa: E402
     scaled_int_half_up,
     scaled_int_toward_zero,
@@ -721,6 +727,201 @@ def produce_bars(
         omitted=omitted,
         non_target_segment_bars=non_target,
     )
+
+
+def assert_dsl_refs_are_published(
+    document: FieldsDocument, *, strategies_dir: Path
+) -> None:
+    """Refuse a tenant whose DSL reads a field the declaration does not publish."""
+    published = {entry.name for entry in document.publish}
+    if not strategies_dir.is_dir():
+        raise ProduceFieldsError(
+            f"{strategies_dir}: not a directory — the publish set cannot be "
+            "checked against a strategy that is not there"
+        )
+    strategy_files = sorted(
+        path
+        for path in strategies_dir.iterdir()
+        if path.is_file() and path.suffix in {".yaml", ".yml"}
+    )
+    if not strategy_files:
+        raise ProduceFieldsError(
+            f"{strategies_dir}: no *.yaml strategy to check the publish set "
+            "against — refusing rather than reporting agreement with nothing"
+        )
+    missing: list[tuple[str, str]] = []
+    for path in strategy_files:
+        for name in sorted(_dsl_resolved_value_refs(path)):
+            if name not in published:
+                missing.append((path.name, name))
+    if missing:
+        detail = ", ".join(f"{file}: {name!r}" for file, name in missing)
+        raise ProduceFieldsError(
+            f"the strategy DSL reads resolved values this fields.yaml does not "
+            f"publish ({detail}). Published: {sorted(published)}. A kernel poll "
+            "is refused whole on a missing journal key, so this would surface "
+            "as a refused poll every minute rather than as a missing field."
+        )
+
+
+def _dsl_resolved_value_refs(path: Path) -> set[str]:
+    """Every ``capsule.resolved_values.<name>`` a strategy document reads."""
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ProduceFieldsError(
+            f"{path}: not loadable as a single YAML document ({exc}) — the "
+            "publish set cannot be checked against a DSL that cannot be read"
+        ) from exc
+    if not isinstance(document, dict):
+        raise ProduceFieldsError(
+            f"{path}: parsed as {type(document).__name__}, not a mapping — a "
+            "strategy document that declares no rules cannot be checked, and "
+            "reporting agreement with it would be agreement with nothing"
+        )
+
+    found: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            ref = node.get("ref")
+            if (
+                isinstance(ref, list)
+                and len(ref) == 3
+                and ref[0] == "capsule"
+                and ref[1] == "resolved_values"
+                and isinstance(ref[2], str)
+            ):
+                found.add(ref[2])
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(document)
+    return found
+
+
+def produce_bars_declarative(
+    df: Any,
+    *,
+    symbol: str,
+    document: FieldsDocument,
+    emit_days: frozenset[date] | None = None,
+) -> ProducedBars:
+    """Produce the published fields from a tenant's ``fields.yaml`` (P2-c)."""
+    evaluator = FieldEvaluator(document)
+    records: list[FieldRecord] = []
+    omitted: list[tuple[str, str]] = []
+    bars_replayed = 0
+    non_target = 0
+    admitted_from = replay_admission_offset(df)
+    for index, row in enumerate(df.itertuples(index=False)):
+        try:
+            bar = FieldBar.create(
+                row.timestamp,
+                open=float(row.open),
+                high=float(row.high),
+                low=float(row.low),
+                close=float(row.close),
+                volume=float(row.volume),
+            )
+        except FieldEvalError as exc:
+            raise ProduceFieldsError(
+                f"{exc} — the Parquet window is corrupt; omitting the bar "
+                "would hide that"
+            ) from exc
+        if index < admitted_from:
+            evaluator.warm(bar)
+            continue
+        bars_replayed += 1
+        now = bar.ts_kst
+        on_an_emit_day = emit_days is None or now.date() in emit_days
+        raw_event_id = derive_raw_event_id(symbol, now)
+        try:
+            evaluated = evaluator.step(bar)
+        except FieldEvalError as exc:
+            unusable = _gate_verdict(exc.values)
+            if unusable is None:
+                raise ProduceFieldsError(
+                    f"{raw_event_id}: the declaration refused this bar for a "
+                    f"reason the omission gate does not name ({exc}) — that is "
+                    "a defect in fields.yaml, not an unpublishable bar, and "
+                    "counting it as one would publish a shorter file quietly"
+                ) from exc
+            if on_an_emit_day:
+                omitted.append((raw_event_id, unusable))
+            else:
+                non_target += 1
+            continue
+        if not on_an_emit_day:
+            non_target += 1
+            continue
+        values = evaluated.values
+        numbers = _gate_numbers(values)
+        if numbers is None:
+            raise ProduceFieldsError(
+                "the declaration does not carry close/vwap/atr as numbers, so "
+                "the omission gate cannot be evaluated and the run would "
+                f"publish bars whose z may be undefined ({raw_event_id})"
+            )
+        unusable = _inputs_unusable(*numbers)
+        if unusable is not None:
+            omitted.append((raw_event_id, unusable))
+            continue
+        ordered = {name: evaluated.published[name] for name in FIELD_ORDER}
+        _assert_scalar_fields(ordered, raw_event_id)
+        records.append(
+            FieldRecord(
+                raw_event_id=raw_event_id,
+                instrument=symbol,
+                as_of_ms=derive_as_of_ms(now),
+                fields=ordered,
+                bar_kst=now,
+            )
+        )
+    if not records:
+        raise ProduceFieldsError(
+            "the declaration yielded no publishable bars: a window no longer "
+            f"than the {admitted_from} bars dropped before replay (the "
+            "warmup and the frame's first session), a window shorter than the "
+            f"declaration's longest warmup, {len(omitted)} unusable-input "
+            f"bars, or {non_target} bars outside the stitch manifest's target "
+            "segment"
+        )
+    return ProducedBars(
+        records=records,
+        bars_replayed=bars_replayed,
+        omitted=omitted,
+        non_target_segment_bars=non_target,
+    )
+
+
+def replay_admission_offset(df: Any) -> int:
+    """How many leading frame bars the witness reads but never decides on."""
+    warmup_skipped, first_session_dropped = _bar_accounting(df)
+    return warmup_skipped + first_session_dropped
+
+
+def _gate_numbers(values: Mapping[str, Any]) -> tuple[float, float, float] | None:
+    """The three omission-gate inputs, or ``None`` if they are not all there."""
+    numbers: list[float] = []
+    for name in ("close", "vwap", "atr"):
+        value = values.get(name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        numbers.append(float(value))
+    close, vwap, atr = numbers
+    return close, vwap, atr
+
+
+def _gate_verdict(values: Mapping[str, Any]) -> str | None:
+    """Ask the omission gate to name a REFUSED bar, else ``None``."""
+    numbers = _gate_numbers(values)
+    if numbers is None:
+        return None
+    return _inputs_unusable(*numbers)
 
 
 def produce_records(
