@@ -463,6 +463,25 @@ def _build(tmp_path: Path, market: Market, **overrides: Any):
     return producer, clock, quotes
 
 
+def _declaration_inputs() -> tuple[Any, Any]:
+    """What ``load_declaration`` binds :data:`TENANT_TREE` against in a session.
+
+    The shipped futures Setup D YAML (the producer config's own
+    ``strategy_yaml``) and the 08:45 anchor that tree's declaration counts
+    from — the pair the bind accepts, so a test can exercise everything around
+    it without a boot.
+    """
+    strategy = load_strategy_inputs(
+        _REPO_ROOT / "config" / "strategies" / "futures" / "setup_d_vwap_reversion.yaml"
+    )
+    anchor = resolve_open_anchor(
+        cli_value=f"{OPEN_HM[0]:02d}:{OPEN_HM[1]:02d}",
+        first_session=TARGET,
+        last_session=TARGET,
+    )
+    return strategy, anchor
+
+
 def _minute_of(raw_event_id: str) -> datetime:
     """The bar's naive-KST minute, back out of B1a's own join key.
 
@@ -1677,15 +1696,20 @@ def test_a_declaration_bound_to_another_open_refuses_to_start(
 
 
 @pytest.mark.serial
-def test_a_declaration_missing_the_open_hour_param_refuses_to_start(
+def test_a_declaration_missing_a_required_param_is_refused_by_the_loader(
     tmp_path: Path, market: Market
 ) -> None:
-    """#1068 review LOW 1. A declaration the bind cannot READ ends as a
-    refusal, not as a traceback.
+    """A tree whose ``session.minutes_since_open`` lost ``open_hour`` refuses.
 
-    The bind reads ``params["open_hour"]`` straight off the declared spec and
-    coerces it, so a tree that lost that key must still end in the one
-    exception the runner reads as "the producer did not start".
+    **This pins the LOADER's refusal, not the bind's fallback clause**
+    (#1101 re-review LOW 3). ``open_hour`` is a required param in the catalog,
+    so ``parse_fields_document`` refuses the file with a ``FieldSpecError``
+    before the bind ever reads ``params["open_hour"]`` — the refusal here
+    predates #1068 and would hold with the fallback clause removed. What it is
+    worth: the shape the runner sees for this input is a refusal naming the
+    key, not a traceback.
+    ``test_a_bind_that_ends_in_a_bare_lookup_error_is_still_a_refusal`` is the
+    one that pins the clause itself.
     """
     import shutil
 
@@ -1712,23 +1736,57 @@ def test_a_bind_that_ends_in_a_bare_lookup_error_is_still_a_refusal(
 ) -> None:
     """#1068 review LOW 1, the fallback clause itself.
 
-    ``load_fields_file`` refuses a declaration that is missing a required
+    ``parse_fields_document`` refuses a declaration that is missing a required
     param, so on a loader-accepted file the bind's own ``params[...]`` lookups
     and ``int()``/``float()`` coercions cannot raise today — which is why the
     test above goes through the loader's refusal. This pins the fallback: an
     exception the bind did not dress up still reaches the caller as the
-    ``LiveProducerRefused`` the runner knows, naming the declaration.
+    ``LiveProducerRefused`` the runner knows, and the message names BOTH files
+    whose values the bind compares (#1101 re-review LOW 2).
     """
-    nothing: Any = None
+    strategy, anchor = _declaration_inputs()
 
     def _raise(*_args: Any, **_kwargs: Any) -> None:
         raise KeyError("open_hour")
 
     monkeypatch.setattr(declaration_mod, "assert_declaration_binds_to_the_run", _raise)
     with pytest.raises(LiveProducerRefused, match="open_hour") as excinfo:
-        declaration_mod.load_declaration(TENANT_TREE, strategy=nothing, anchor=nothing)
-    assert str(TENANT_TREE / "fields.yaml") in str(excinfo.value)
+        declaration_mod.load_declaration(TENANT_TREE, strategy=strategy, anchor=anchor)
+    message = str(excinfo.value)
+    assert str(TENANT_TREE / "fields.yaml") in message
+    assert str(strategy.path) in message
     assert isinstance(excinfo.value.__cause__, KeyError)
+
+
+def test_the_declaration_is_read_once_and_the_digest_is_those_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1101 re-review LOW 1. The parse and the digest see the SAME read.
+
+    Two reads cannot be told apart by their result on a file nobody is editing
+    — so this counts them. A second read is also a second answer to "which
+    declaration is this session's", and the lineage carries only one.
+    """
+    strategy, anchor = _declaration_inputs()
+    real_read_bytes = Path.read_bytes
+    reads: list[str] = []
+
+    def _counting(self: Path) -> bytes:
+        if self.name == "fields.yaml":
+            reads.append(str(self))
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", _counting)
+    _document, record = declaration_mod.load_declaration(
+        TENANT_TREE, strategy=strategy, anchor=anchor
+    )
+
+    assert reads == [str(TENANT_TREE / "fields.yaml")]
+    monkeypatch.undo()
+    assert (
+        record["fields_yaml_sha256"]
+        == hashlib.sha256((TENANT_TREE / "fields.yaml").read_bytes()).hexdigest()
+    )
 
 
 @pytest.mark.serial

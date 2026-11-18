@@ -249,9 +249,9 @@ class LiveProducer:
             self.tenant_tree, strategy=self.strategy, anchor=self.anchor
         )
         # #1068 review LOW 2: the lineage digest is the one THIS read computed.
-        # A second `fields_yaml_digest(self.fields_yaml)` at lineage time would
-        # hash the file as it is THEN, which is not necessarily the bytes the
-        # bind above accepted — and it read the declaration twice to say so.
+        # Re-hashing the file at lineage time would hash it as it is THEN,
+        # which is not necessarily the bytes the bind above accepted — and it
+        # would read the declaration a second time to say so.
         self.fields_yaml_sha256 = str(record["fields_yaml_sha256"])
         self.log.event(record)
         return document
