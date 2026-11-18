@@ -8,15 +8,13 @@ import hashlib
 import json
 import math
 import platform
-import statistics
 import subprocess
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from types import MappingProxyType
-from typing import Any
+from typing import Any, Final
 
 import yaml
 
@@ -24,14 +22,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from shared.backtest.market_context_replay import (  # noqa: E402
-    MarketContextReplay,
-)
 from shared.decision.context import load_futures_open_from_config  # noqa: E402
-from shared.decision.setups.vwap_reversion import (  # noqa: E402
-    SetupDConfig,
-    SetupDVWAPReversion,
-)
+from shared.decision.setups.vwap_reversion import SetupDConfig  # noqa: E402
 from shared.determinism.replay import DEFAULT_WARMUP_BARS  # noqa: E402
 from shared.indicators.fields import (  # noqa: E402
     FieldBar,
@@ -39,7 +31,7 @@ from shared.indicators.fields import (  # noqa: E402
     FieldEvaluator,
     FieldsDocument,
 )
-from shared.indicators.fields.scaling import (  # noqa: E402
+from shared.indicators.fields.scaling import (  # noqa: E402, F401
     scaled_int_half_up,
     scaled_int_toward_zero,
 )
@@ -82,6 +74,8 @@ JOURNAL_REQUIRED_KEYS = (
 
 FIELDS_FILENAME = "fields.jsonl"
 LINEAGE_FILENAME = "lineage.json"
+
+SETUP_D_REGISTRY_NAME: Final[str] = "setup_d_vwap_reversion"
 
 PRICE_SCALE = 100
 Z_SCALE = 1000
@@ -155,10 +149,10 @@ def load_strategy_inputs(path: Path) -> StrategyInputs:
     entry = strategy.get("entry") or {}
     exit_ = strategy.get("exit") or {}
     entry_type = entry.get("type")
-    if entry_type != SetupDVWAPReversion.REGISTRY_NAME:
+    if entry_type != SETUP_D_REGISTRY_NAME:
         raise ProduceFieldsError(
             f"{path}: strategy.entry.type is {entry_type!r}; this producer "
-            f"only knows {SetupDVWAPReversion.REGISTRY_NAME!r}"
+            f"only knows {SETUP_D_REGISTRY_NAME!r}"
         )
 
     entry_params = dict(entry.get("params") or {})
@@ -592,143 +586,6 @@ class ProducedBars:
     non_target_segment_bars: int = 0
 
 
-def _bar_lookup(df: Any) -> dict[Any, tuple[float, float, float, float]]:
-    """Map each bar timestamp to its ``(open, high, low, volume)``."""
-    import pandas as pd
-
-    stamps = df["timestamp"]
-    if stamps.duplicated().any():
-        dupes = stamps[stamps.duplicated()].head(3).tolist()
-        raise ProduceFieldsError(
-            f"duplicate bar timestamps in the loaded window (e.g. {dupes}); the "
-            "OHLCV lookup would be ambiguous — re-run the minute dedup"
-        )
-    return {
-        pd.Timestamp(stamp): (float(bar_open), float(high), float(low), float(volume))
-        for stamp, bar_open, high, low, volume in zip(
-            stamps, df["open"], df["high"], df["low"], df["volume"]
-        )
-    }
-
-
-def produce_bars(
-    df: Any,
-    *,
-    symbol: str,
-    strategy: StrategyInputs,
-    contract_spec: ContractSpec,
-    anchor: OpenAnchor,
-    emit_days: frozenset[date] | None = None,
-    observer: Callable[[datetime, Mapping[str, Any]], None] | None = None,
-) -> ProducedBars:
-    """Drive the legacy Setup D bar by bar and project its state into fields."""
-    import pandas as pd
-
-    setup = SetupDVWAPReversion(config=strategy.entry_config)
-    replay = MarketContextReplay(
-        df=df,
-        symbol=symbol,
-        macro_snapshot=None,
-        scheduled_events=[],
-        contract_spec=contract_spec,
-        market_open_hour=anchor.hour,
-        market_open_minute=anchor.minute,
-        min_volume=0,
-    )
-    ohlcv = _bar_lookup(df)
-    revert_band = strategy.vwap_revert_band
-    eod_enabled = strategy.exit_config.eod_close_enabled
-    eod_cutoff = strategy.exit_config.eod_close_time
-
-    records: list[FieldRecord] = []
-    omitted: list[tuple[str, str]] = []
-    bars_replayed = 0
-    non_target = 0
-    for ctx in replay.iter_contexts():
-        setup.check(ctx)  # type: ignore[arg-type]
-        ev = setup.last_eval
-        if observer is not None:
-            observer(ctx.now, MappingProxyType(ev))
-        bars_replayed += 1
-
-        now: datetime = ctx.now
-        if emit_days is not None and now.date() not in emit_days:
-            non_target += 1
-            continue
-        as_of_ms = derive_as_of_ms(now)
-        raw_event_id = derive_raw_event_id(symbol, now)
-
-        close = float(ctx.current_price)
-        vwap = float(ctx.vwap)
-        atr = float(ctx.atr_14)
-        unusable = _inputs_unusable(close, vwap, atr)
-        if unusable is not None:
-            omitted.append((raw_event_id, unusable))
-            continue
-
-        stamp = pd.Timestamp(now).tz_localize(None)
-        if stamp not in ohlcv:
-            raise ProduceFieldsError(
-                f"{raw_event_id}: the replay yielded a bar with no row in the "
-                "loaded frame — the OHLCV half cannot be published"
-            )
-        bar_open, bar_high, bar_low, bar_volume = ohlcv[stamp]
-        for name, value in (
-            ("open", bar_open),
-            ("high", bar_high),
-            ("low", bar_low),
-            ("volume", bar_volume),
-        ):
-            if not math.isfinite(value):
-                raise ProduceFieldsError(
-                    f"{raw_event_id}: non-finite bar {name}={value!r}"
-                )
-
-        z = SetupDVWAPReversion.vwap_extension_z(close, vwap, atr)
-
-        fields: dict[str, int | bool | str] = {
-            "open_x100": scaled_int_half_up(bar_open, PRICE_SCALE),
-            "high_x100": scaled_int_half_up(bar_high, PRICE_SCALE),
-            "low_x100": scaled_int_half_up(bar_low, PRICE_SCALE),
-            "close_x100": scaled_int_half_up(close, PRICE_SCALE),
-            "volume": int(bar_volume),
-            "session_token": now.date().isoformat(),
-            "vwap_x100": scaled_int_half_up(vwap, PRICE_SCALE),
-            "atr14_x100": scaled_int_half_up(atr, PRICE_SCALE),
-            "z_x1000": scaled_int_toward_zero(z, Z_SCALE),
-            "hi_vol": ev.get("hi_vol") is True,
-            "stall_ok": ev.get("stall_ok") is True,
-            "reversal_ok": ev.get("reversal_ok") is True,
-            "entry_window": ev.get("entry_window") is True,
-            "vwap_reverted": abs(z) <= revert_band,
-            "eod": eod_enabled and now.time() >= eod_cutoff,
-        }
-        ordered = {name: fields[name] for name in FIELD_ORDER}
-        _assert_scalar_fields(ordered, raw_event_id)
-        records.append(
-            FieldRecord(
-                raw_event_id=raw_event_id,
-                instrument=symbol,
-                as_of_ms=as_of_ms,
-                fields=ordered,
-                bar_kst=now,
-            )
-        )
-    if not records:
-        raise ProduceFieldsError(
-            "replay yielded no publishable bars: a window shorter than the "
-            f"{DEFAULT_WARMUP_BARS}-bar replay warmup, a first session with "
-            f"no prior-session close, {len(omitted)} unusable-input bars, or "
-            f"{non_target} bars outside the stitch manifest's target segment"
-        )
-    return ProducedBars(
-        records=records,
-        bars_replayed=bars_replayed,
-        omitted=omitted,
-        non_target_segment_bars=non_target,
-    )
-
-
 def assert_dsl_refs_are_published(
     document: FieldsDocument, *, strategies_dir: Path
 ) -> None:
@@ -762,6 +619,101 @@ def assert_dsl_refs_are_published(
             "is refused whole on a missing journal key, so this would surface "
             "as a refused poll every minute rather than as a missing field."
         )
+
+
+def assert_publish_matches_critical_inputs(
+    document: FieldsDocument, *, policy_path: Path
+) -> None:
+    """Refuse a declaration that publishes a different set than the tenant declares."""
+    try:
+        raw = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ProduceFieldsError(
+            f"{policy_path}: the tenant's critical-input policy cannot be read, "
+            "so the publish set cannot be checked against the freshness bounds "
+            f"its consumers apply ({exc})"
+        ) from exc
+    except yaml.YAMLError as exc:
+        raise ProduceFieldsError(
+            f"{policy_path}: not parseable as YAML ({exc})"
+        ) from exc
+    entries = (raw or {}).get("fields") if isinstance(raw, dict) else None
+    if not isinstance(entries, list) or not entries:
+        raise ProduceFieldsError(
+            f"{policy_path}: no 'fields' list — refusing rather than reporting "
+            "the publish set agrees with nothing"
+        )
+    declared: set[str] = set()
+    for entry in entries:
+        key = entry.get("field_key") if isinstance(entry, Mapping) else None
+        if not isinstance(key, str) or not key.strip():
+            raise ProduceFieldsError(
+                f"{policy_path}: a 'fields' entry has no 'field_key' string "
+                f"({entry!r}); the publish set cannot be compared to it"
+            )
+        declared.add(key)
+    published = {entry.name for entry in document.publish}
+    extra = sorted(published - declared)
+    missing = sorted(declared - published)
+    if extra or missing:
+        raise ProduceFieldsError(
+            f"the declaration publishes {sorted(published)} but "
+            f"{policy_path} declares {sorted(declared)} — "
+            f"published-but-undeclared {extra}, declared-but-unpublished "
+            f"{missing}. An undeclared field reaches the snapshot with no "
+            "freshness bound; an unpublished one makes the kernel refuse the "
+            "whole poll on a missing journal key, every minute from the open"
+        )
+
+
+def assert_declaration_binds_to_the_run(
+    document: FieldsDocument,
+    *,
+    strategy: StrategyInputs,
+    anchor: OpenAnchor,
+) -> None:
+    """Refuse a declaration that is not the one this session is set up for."""
+    opens = [
+        spec for spec in document.fields if spec.op_name == "session.minutes_since_open"
+    ]
+    if len(opens) != 1:
+        raise ProduceFieldsError(
+            f"the declaration has {len(opens)} 'session.minutes_since_open' "
+            "fields; the producer can bind the session open to exactly one"
+        )
+    declared_open = (
+        int(opens[0].params["open_hour"]),
+        int(opens[0].params["open_minute"]),
+    )
+    if declared_open != (anchor.hour, anchor.minute):
+        raise ProduceFieldsError(
+            "fields.yaml counts minutes from "
+            f"{declared_open[0]:02d}:{declared_open[1]:02d} but this session's "
+            f"open anchor is {anchor.kst} (source {anchor.source}) — the entry "
+            "window would be shifted on every bar, and the published field is "
+            "a bare bool that cannot say so"
+        )
+
+    vol = next((spec for spec in document.fields if spec.name == "vol_ref"), None)
+    if vol is None or vol.op_name != "gated_percentile":
+        raise ProduceFieldsError(
+            "the declaration has no 'vol_ref' gated_percentile field, so the "
+            "seed the producer builds cannot be checked against the window "
+            "that consumes it"
+        )
+    config = strategy.entry_config
+    for key, expected, named in (
+        ("window", int(config.vol_window_bars), "vol_window_bars"),
+        ("warmup", int(config.vol_warmup_bars), "vol_warmup_bars"),
+        ("q", float(config.vol_percentile), "vol_percentile"),
+    ):
+        declared = vol.params[key]
+        if declared != expected:
+            raise ProduceFieldsError(
+                f"fields.yaml's vol_ref {key}={declared!r} but the strategy "
+                f"YAML the seed is sized from declares {named}={expected!r} — "
+                "the seed would be built for one window and consumed by another"
+            )
 
 
 def _dsl_resolved_value_refs(path: Path) -> set[str]:
@@ -870,7 +822,7 @@ def produce_bars_declarative(
         if unusable is not None:
             omitted.append((raw_event_id, unusable))
             continue
-        ordered = {name: evaluated.published[name] for name in FIELD_ORDER}
+        ordered = dict(evaluated.published)
         _assert_scalar_fields(ordered, raw_event_id)
         records.append(
             FieldRecord(
@@ -922,24 +874,6 @@ def _gate_verdict(values: Mapping[str, Any]) -> str | None:
     if numbers is None:
         return None
     return _inputs_unusable(*numbers)
-
-
-def produce_records(
-    df: Any,
-    *,
-    symbol: str,
-    strategy: StrategyInputs,
-    contract_spec: ContractSpec,
-    anchor: OpenAnchor,
-) -> list[FieldRecord]:
-    """:func:`produce_bars` when only the emitted records are wanted."""
-    return produce_bars(
-        df,
-        symbol=symbol,
-        strategy=strategy,
-        contract_spec=contract_spec,
-        anchor=anchor,
-    ).records
 
 
 def render_jsonl(records: list[FieldRecord]) -> bytes:
@@ -1513,7 +1447,7 @@ def build_lineage(
         "strategy": {
             "path": str(strategy.path),
             "sha256": strategy.sha256,
-            "entry_type": SetupDVWAPReversion.REGISTRY_NAME,
+            "entry_type": SETUP_D_REGISTRY_NAME,
             "entry_params_yaml": strategy.entry_params,
             "exit_params_yaml": strategy.exit_params,
             "entry_params_used": strategy.entry_config.model_dump(mode="json"),
@@ -1564,99 +1498,6 @@ def render_lineage(lineage: dict[str, Any]) -> bytes:
     return (
         json.dumps(lineage, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
     ).encode("utf-8")
-
-
-def measure_moving_vs_frozen_exit(
-    df: Any,
-    *,
-    symbol: str,
-    strategy: StrategyInputs,
-    contract_spec: ContractSpec,
-    anchor: OpenAnchor,
-) -> dict[str, Any]:
-    """Measure D7: when does a moving-VWAP exit differ from the legacy target?"""
-    setup = SetupDVWAPReversion(config=strategy.entry_config)
-    replay = MarketContextReplay(
-        df=df,
-        symbol=symbol,
-        macro_snapshot=None,
-        scheduled_events=[],
-        contract_spec=contract_spec,
-        market_open_hour=anchor.hour,
-        market_open_minute=anchor.minute,
-        min_volume=0,
-    )
-
-    contexts: list[Any] = []
-    entries: list[tuple[int, str, float]] = []
-    for ctx in replay.iter_contexts():
-        signal = setup.check(ctx)  # type: ignore[arg-type]
-        contexts.append(ctx)
-        if signal is not None:
-            entries.append((len(contexts) - 1, signal.direction, signal.take_profit))
-
-    earlier = identical = later = never_either = 0
-    earlier_frozen_never = later_moving_never = 0
-    leads: list[int] = []
-    for index, direction, take_profit in entries:
-        session = contexts[index].now.date()
-        frozen_at: int | None = None
-        moving_at: int | None = None
-        for offset in range(index + 1, len(contexts)):
-            later_ctx = contexts[offset]
-            if later_ctx.now.date() != session:
-                break
-            price = float(later_ctx.current_price)
-            atr = float(later_ctx.atr_14)
-            if frozen_at is None:
-                reached = (
-                    price >= take_profit
-                    if direction == "long"
-                    else price <= take_profit
-                )
-                if reached:
-                    frozen_at = offset
-            if moving_at is None and atr > 0:
-                z_now = SetupDVWAPReversion.vwap_extension_z(
-                    price, float(later_ctx.vwap), atr
-                )
-                reverted = z_now >= 0 if direction == "long" else z_now <= 0
-                if reverted:
-                    moving_at = offset
-            if frozen_at is not None and moving_at is not None:
-                break
-        if frozen_at is None and moving_at is None:
-            never_either += 1
-        elif moving_at is None:
-            later += 1
-            later_moving_never += 1
-        elif frozen_at is None:
-            earlier += 1
-            earlier_frozen_never += 1
-        elif moving_at < frozen_at:
-            earlier += 1
-            leads.append(frozen_at - moving_at)
-        elif moving_at == frozen_at:
-            identical += 1
-        else:
-            later += 1
-
-    return {
-        "window": f"{symbol} {df['timestamp'].dt.date.iloc[0]}"
-        f"..{df['timestamp'].dt.date.iloc[-1]}",
-        "market_open_kst": anchor.kst,
-        "min_bars_per_day": DEFAULT_MIN_BARS_PER_DAY,
-        "entries": len(entries),
-        "earlier": earlier,
-        "earlier_frozen_never_reached_in_session": earlier_frozen_never,
-        "identical": identical,
-        "later": later,
-        "later_moving_never_reached_in_session": later_moving_never,
-        "never_either": never_either,
-        "median_lead_bars": int(statistics.median(leads)) if leads else 0,
-        "max_lead_bars": max(leads) if leads else 0,
-        "lead_bars_measured_over": len(leads),
-    }
 
 
 @dataclass(frozen=True)
@@ -1813,6 +1654,8 @@ def run(
     stitch_manifest: Path | None = None,
 ) -> RunResult:
     """Produce the field JSONL and lineage sidecar for one dataset window."""
+    from tools.tos_cp3.legacy_setup_d_driver import produce_bars
+
     window = load_window(
         data_root=data_root,
         symbol=symbol,
@@ -1969,6 +1812,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.measure_d7:
+        from tools.tos_cp3.legacy_setup_d_driver import (
+            measure_moving_vs_frozen_exit,
+        )
+
         try:
             window = load_window(
                 data_root=args.data_root,

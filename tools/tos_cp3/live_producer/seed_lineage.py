@@ -29,10 +29,18 @@ def seed_lineage(
     assembler: StitchedSeed,
     market_root: Path,
     source_id: str,
+    fields_yaml: Path,
+    fields_yaml_sha256: str,
+    fields_schema: str,
+    fields_catalog: str,
 ) -> dict[str, Any]:
     """The ``seed`` log record: where this session's frame came from."""
     return {
         "instrument": instrument,
+        "fields_yaml": str(fields_yaml),
+        "fields_yaml_sha256": fields_yaml_sha256,
+        "fields_schema": fields_schema,
+        "fields_catalog": fields_catalog,
         "calendar_version": calendar.calendar_version,
         "session_window": f"{window.start}..{window.end}",
         "days_used": [str(day) for day in seed.days_used],

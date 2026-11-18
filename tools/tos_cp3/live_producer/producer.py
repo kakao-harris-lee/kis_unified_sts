@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import argparse
 import json
-import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -16,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from shared.config.dotenv_guard import read_explicit_dotenv  # noqa: E402
+from shared.indicators.fields import FieldsDocument  # noqa: E402
 from tools.broker_probes.common import SafetyViolation  # noqa: E402
 from tools.tos_cp3.live_producer.calendar import (  # noqa: E402
     RuntimeCalendar,
@@ -26,9 +24,11 @@ from tools.tos_cp3.live_producer.calendar import (  # noqa: E402
 from tools.tos_cp3.live_producer.config import (  # noqa: E402
     LiveProducerConfig,
     LiveProducerRefused,
-    assert_env_pins,
-    load_config,
-    read_query_credentials,
+)
+from tools.tos_cp3.live_producer.declaration import (  # noqa: E402
+    fields_yaml_digest,
+    fields_yaml_of,
+    load_declaration,
 )
 from tools.tos_cp3.live_producer.frame import (  # noqa: E402
     Bar,
@@ -47,7 +47,6 @@ from tools.tos_cp3.live_producer.line import (  # noqa: E402
     SOURCE_ID,
     build_line,
 )
-from tools.tos_cp3.live_producer.real_quotes import real_quotes  # noqa: E402
 from tools.tos_cp3.live_producer.seed_lineage import seed_lineage  # noqa: E402
 from tools.tos_cp3.live_producer.session_log import (  # noqa: E402
     STAGE_ALREADY_FROZEN,
@@ -61,6 +60,7 @@ from tools.tos_cp3.live_producer.sinks import (  # noqa: E402
     market_digest,
     refuse_if_journal_exists,
     refuse_if_partitions_exist,
+    store_unadjusted_seed,
 )
 from tools.tos_cp3.live_producer.stitch_seed import StitchedSeed  # noqa: E402
 from tools.tos_cp3.minute_probe import frame as bars_to_frame  # noqa: E402
@@ -74,7 +74,7 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
     resolve_contract_spec,
     resolve_open_anchor,
 )
-from tools.tos_cp3.quote_client import KST, QUOTE_ROUTES  # noqa: E402
+from tools.tos_cp3.quote_client import KST  # noqa: E402
 from tools.tos_cp3.stitch import (  # noqa: E402
     STITCH_FILENAME,
     StitchManifest,
@@ -100,12 +100,14 @@ class LiveProducer:
     target: date
     session_dir: Path
     journal_path: Path
+    tenant_tree: Path
     clock: Clock
     quotes_factory: Callable[[LiveProducerConfig, EventLog], Any]
 
     calendar: RuntimeCalendar = field(init=False)
     window: SessionWindow = field(init=False)
     strategy: StrategyInputs = field(init=False)
+    document: FieldsDocument = field(init=False)
     anchor: OpenAnchor = field(init=False)
     contract_spec: Any = field(init=False)
     seed: Seed = field(init=False)
@@ -174,6 +176,7 @@ class LiveProducer:
                 f"open_anchor {self.anchor.kst} != the calendar's "
                 f"{self.config.calendar_session_id} start {regular.start}"
             )
+        self.document = self._load_declaration()
         registry = ContractSpecRegistry.from_yaml(
             str(self.config.execution_yaml), block=self.config.contract_spec_block
         )
@@ -213,21 +216,14 @@ class LiveProducer:
         return rows
 
     def _store_unadjusted_seed(self) -> None:
-        """Write every seed day under ITS OWN contract's partition, unadjusted."""
-        for entry in self.seed.kept:
-            append_bar_part(
-                self.market_root,
-                asset_class=self.config.asset_class,
-                symbol=entry.contract,
-                bars=entry.bars,
-            )
-        if self.assembler.junction_new_bars:
-            append_bar_part(
-                self.market_root,
-                asset_class=self.config.asset_class,
-                symbol=self.instrument,
-                bars=self.assembler.junction_new_bars,
-            )
+        """Plan §3.2a 「라벨은 진실하게」 — see :func:`sinks.store_unadjusted_seed`."""
+        store_unadjusted_seed(
+            self.market_root,
+            asset_class=self.config.asset_class,
+            instrument=self.instrument,
+            kept=self.seed.kept,
+            junction_new_bars=self.assembler.junction_new_bars,
+        )
 
     def _write_manifest(self) -> StitchManifest:
         """``<session dir>/market/stitch.json`` — written on EVERY session."""
@@ -239,6 +235,24 @@ class LiveProducer:
     @property
     def market_root(self) -> Path:
         return self.session_dir / "market"
+
+    @property
+    def fields_yaml(self) -> Path:
+        """The declaration this session publishes from."""
+        return fields_yaml_of(self.tenant_tree)
+
+    def _load_declaration(self) -> FieldsDocument:
+        """Load and bind the tenant's declaration, or refuse to start."""
+        document, record = load_declaration(
+            self.tenant_tree, strategy=self.strategy, anchor=self.anchor
+        )
+        self.log.event(record)
+        return document
+
+    @property
+    def fields_yaml_sha256(self) -> str:
+        """Digest of the declaration's BYTES, as the lineage records it."""
+        return fields_yaml_digest(self.fields_yaml)
 
     def _assert_one_anchor(self) -> None:
         """One anchor for the whole frame, or refuse."""
@@ -266,6 +280,10 @@ class LiveProducer:
             assembler=self.assembler,
             market_root=self.market_root,
             source_id=SOURCE_ID,
+            fields_yaml=self.fields_yaml,
+            fields_yaml_sha256=self.fields_yaml_sha256,
+            fields_schema=self.document.schema,
+            fields_catalog=self.document.catalog,
         )
 
     def _boot_today(self) -> None:
@@ -523,9 +541,7 @@ class LiveProducer:
             outcome = build_line(
                 frame,
                 symbol=self.instrument,
-                strategy=self.strategy,
-                contract_spec=self.contract_spec,
-                anchor=self.anchor,
+                document=self.document,
                 bar_minute=bar[1],
                 received_ms=(
                     self._received_ms() if received_ms is None else received_ms
@@ -636,93 +652,10 @@ class LiveProducer:
         return summary
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="tools/tos_cp3/live_producer",
-        description=(
-            "CP-3 ③ real-time fifteen-field producer: one journal line per "
-            "completed minute bar, GET-only quotation TR, no order path."
-        ),
-    )
-    parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument(
-        "--instrument",
-        required=True,
-        help=(
-            "the contract code, as an ARGUMENT only (plan §3.5): the runner "
-            "computes the roll once and gives render, data dir and producer the "
-            "same value"
-        ),
-    )
-    parser.add_argument("--session-dir", type=Path, required=True)
-    parser.add_argument("--journal", type=Path, required=True)
-    parser.add_argument(
-        "--date",
-        type=date.fromisoformat,
-        default=None,
-        help="target session (default: today in KST)",
-    )
-    parser.add_argument("--confirm", action="store_true")
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    """CLI. Exit codes: ``0`` ok, ``1`` refusal, ``2`` bad arguments."""
-    args = build_parser().parse_args(argv)
-    config = load_config(args.config, repo_root=REPO_ROOT)
-    target = args.date or datetime.now(KST).date()
-    if not args.confirm:
-        print(
-            json.dumps(
-                {
-                    "mode": "DRY_RUN",
-                    "date": str(target),
-                    "instrument": args.instrument,
-                    "method": "GET",
-                    "market": config.market,
-                    "tr_id": QUOTE_ROUTES[config.market][0],
-                    "path": QUOTE_ROUTES[config.market][1],
-                    "source_id": SOURCE_ID,
-                    "journal": str(args.journal),
-                    "session_dir": str(args.session_dir),
-                    "first_poll_delay_s": config.first_poll_delay_s,
-                    "missing_no_successor_timeout_s": (
-                        config.missing_no_successor_timeout_s
-                    ),
-                    "orders": 0,
-                }
-            )
-        )
-        return 0
-
-    os.umask(0o077)
-    producer = LiveProducer(
-        config=config,
-        instrument=args.instrument,
-        target=target,
-        session_dir=args.session_dir,
-        journal_path=args.journal,
-        clock=Clock(now=lambda: datetime.now(KST), sleep=_sleep),
-        quotes_factory=real_quotes,
-    )
-    try:
-        assert_env_pins(config, os.environ)
-        read_query_credentials(config, reader=read_explicit_dotenv, environ=os.environ)
-        producer.boot()
-        producer.run_session()
-    except LiveProducerRefused as exc:
-        print(f"live_producer: REFUSED — {exc}", file=sys.stderr)
-        return 1
-    finally:
-        producer.finish()
-    return 0
-
-
-def _sleep(seconds: float) -> None:
-    import time
-
-    time.sleep(seconds)
-
+from tools.tos_cp3.live_producer.cli import (  # noqa: E402, F401
+    build_parser,
+    main,
+)
 
 if __name__ == "__main__":  # pragma: no cover - exercised through the CLI tests
     raise SystemExit(main())

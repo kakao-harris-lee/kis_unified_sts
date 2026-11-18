@@ -1280,6 +1280,20 @@ def _runner_repo(
         'instrument:\n  pattern: "005930"\n',
         encoding="utf-8",
     )
+    # Step 5b also reads each tree's `fields.yaml` since P2-c: the producer
+    # publishes from the declaration, so a tree without one is refused before
+    # step 8 starts. Only the field that check looks at is stubbed — the
+    # declaration's own content is exercised in
+    # tests/tools/test_cp3_fields_equivalence.py.
+    for _tree, _open in (
+        ("cp3-setup-d-long", "8, open_minute: 45"),
+        (_STOCK_TREE, "9, open_minute: 0"),
+    ):
+        (repo / "config/tos_runtime" / _tree / "fields.yaml").write_text(
+            "schema: tos-fields/1\ncatalog: tos-field-catalog/1\nfields:\n"
+            f"  - {{name: mso, op: session.minutes_since_open, params: {{open_hour: {_open}}}}}\n",
+            encoding="utf-8",
+        )
 
     # The stub ③. It stands in for tools/tos_cp3/live_producer/producer.py: it
     # writes the journal rows its environment asks for and then runs until it is
