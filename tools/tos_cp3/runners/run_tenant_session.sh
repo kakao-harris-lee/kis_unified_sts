@@ -699,6 +699,21 @@ trap 'on_signal HUP 129' HUP
 # check, so a second one refuses itself with a message naming the first. A
 # second copy of that rule in this template would be a lock whose two owners
 # disagree about what it covers.
+#
+# `--tenant-tree` is the SOURCE tree, NOT the rendered copy the runtime boots
+# from (#1101 item 3 asked for the rendered one). It cannot be the rendered
+# copy here: the render is step 10 and it refuses a journal path that is not a
+# file yet ("journal file not found", scripts/tos/render_paper_config.py), and
+# that journal is THIS producer's own output — so the render cannot precede the
+# producer, which is why the boot order is producer → wait → guard → render →
+# boot (plan §3.5, pinned by
+# tests/tools/test_cp3_bootproof.py::test_runner_gives_the_producer_a_ceiling_and_the_guards_order).
+# The two copies are the same bytes by construction rather than by luck: the
+# render byte-copies $TREE_DIR and fills only the coordinate slots the tree's
+# own RENDER.yaml registers, and no tenant tree registers a slot in
+# fields.yaml. What that leaves is an edit to the checkout between this launch
+# and step 10, which is what guard 1 (clean, DETACHED, an ancestor of
+# origin/main) is the control for.
 PRODUCER_CEILING_S=$((RUN_S + PRODUCER_SIGKILL_AFTER_S))
 log "=== PRODUCER instrument=$INSTRUMENT config=$TENANT_PRODUCER_CONFIG session-dir=$TENANT_PRODUCER_SESSION_DIR journal=$TENANT_JOURNAL tenant-tree=$TREE_DIR ceiling ${PRODUCER_CEILING_S}s"
 PYTHONPATH="$REPO" \

@@ -56,6 +56,19 @@ def load_declaration(
             f"{fields_yaml}: the tenant declaration is not usable for this "
             f"session — {exc}"
         ) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        # #1068 review LOW 1. The bind reads declared params by key and coerces
+        # them (`params["open_hour"]`, `int(...)`, the vol_ref window/warmup/q),
+        # so a declaration that omits one or spells it as a non-number ends the
+        # bind with a raw lookup/coercion error. Fail-closed either way, but a
+        # traceback is not the one exception the runner reads as "the producer
+        # did not start" — so it refuses here like every other declaration
+        # fault, naming the file and the key.
+        raise LiveProducerRefused(
+            f"{fields_yaml}: the tenant declaration is not usable for this "
+            f"session — a declared field's params are missing or not the "
+            f"expected type ({type(exc).__name__}: {exc})"
+        ) from exc
     record = {
         "stage": "declaration",
         "fields_yaml": str(fields_yaml),
