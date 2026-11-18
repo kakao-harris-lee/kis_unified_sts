@@ -145,12 +145,10 @@ class FetchPlan:
     held_position_token: int | None = None
     recovery_attempt_ids: tuple[str, ...] = ()
     evidence_seq_at_plan: int | None = None
-    #: Issue #1096: the trading dates to scan for a dateless ACK's ODNO, and the
-    #: ``(attempt_id, broker_execution_id)`` pairs being looked up, under their own deadline
-    #: (the scan is many paced GETs, so it cannot share the per-poll one).
-    ack_date_reads: tuple[tuple[str, WitnessScope], ...] = ()
-    ack_date_targets: tuple[tuple[str, str], ...] = ()
-    ack_date_deadline_ms: int | None = None
+    #: Issue #1096: ONE trading date of a dateless ACK's ODNO scan, read under this plan's own
+    #: ``deadline_ms`` like every other read here. One date per FETCH, never the whole window
+    #: (review-1105 M1/M2), and only in a FETCH that has no other work to delay.
+    ack_date_read: tuple[str, WitnessScope] | None = None
 
     @property
     def risk_only(self) -> bool:
@@ -160,7 +158,7 @@ class FetchPlan:
             and not self.reads
             and not self.reproject_ids
             and not self.recovery_attempt_ids
-            and not self.ack_date_reads
+            and self.ack_date_read is None
         )
 
 
@@ -172,9 +170,9 @@ class FetchResult:
     reads: tuple[tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable], ...]
     snapshot: PrefetchedSnapshot | None
     held_position_snapshot: HeldPositionSnapshot | None = None
-    ack_date_reads: tuple[
-        tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable], ...
-    ] = ()
+    ack_date_read: tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable] | None = (
+        None
+    )
 
 
 class OrderRowsReader(Protocol):
@@ -303,32 +301,23 @@ def _held_position_snapshot(
     )
 
 
-def _ack_date_reads(
+def _ack_date_read(
     plan: FetchPlan,
     *,
     orders: OrderRowsReader,
-    monotonic: MonotonicSource,
-    stop: Callable[[], bool],
-) -> tuple[tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable], ...]:
-    """Issue #1096's ODNO scan: one order read per candidate trading date, under the scan's own"""
-    if not plan.ack_date_reads:
-        return ()
-    deadline = plan.ack_date_deadline_ms
-
-    def _expired() -> bool:
-        return stop() or (deadline is not None and monotonic.now_ms() >= deadline)
-
-    reads: list[tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable]] = []
-    for date, scope in plan.ack_date_reads:
-        try:
-            _date, rows = orders.order_rows(
-                scope, inquiry_date=date, deadline_expired=_expired
-            )
-        except WitnessUnavailable as exc:
-            reads.append((date, exc))
-            continue
-        reads.append((date, rows))
-    return tuple(reads)
+    expired: Callable[[], bool],
+) -> tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable] | None:
+    """Issue #1096's ODNO scan: ONE candidate trading date's order rows, on this plan's deadline."""
+    if plan.ack_date_read is None:
+        return None
+    date, scope = plan.ack_date_read
+    try:
+        _date, rows = orders.order_rows(
+            scope, inquiry_date=date, deadline_expired=expired
+        )
+    except WitnessUnavailable as exc:
+        return date, exc
+    return date, rows
 
 
 def run_fetch(
@@ -356,6 +345,10 @@ def run_fetch(
             continue
         reads.append((date, rows))
         releasing = releasing or may_release(plan, rows)
+    # BEFORE both snapshots (review-1105 M1): each snapshot's age runs from its own read start,
+    # so work placed after one ages it — a scan read here cannot. A scan is planned only into an
+    # otherwise-idle FETCH, so in practice neither snapshot is read in the same pass at all.
+    ack_date_read = _ack_date_read(plan, orders=orders, expired=_expired)
     held_position_snapshot = _held_position_snapshot(
         plan, snapshots=snapshots, monotonic=monotonic, stop=stop
     )
@@ -371,11 +364,7 @@ def run_fetch(
         reads=tuple(reads),
         snapshot=snapshot,
         held_position_snapshot=held_position_snapshot,
-        # Last: the ODNO scan is the only read here with a deadline of its own, so it must not
-        # delay the fill reads or the snapshot it would otherwise age.
-        ack_date_reads=_ack_date_reads(
-            plan, orders=orders, monotonic=monotonic, stop=stop
-        ),
+        ack_date_read=ack_date_read,
     )
 
 

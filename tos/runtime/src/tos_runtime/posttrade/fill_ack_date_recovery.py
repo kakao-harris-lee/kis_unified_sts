@@ -4,32 +4,42 @@ Issue #1096 (incident 2026-11-13): one ``EGRESS_RESULT_CONSUMED`` ACK row was wr
 ``trading_date`` key, so :meth:`KisMockFillObserver._trackable` dropped it from the tracked set on
 every boot, its entry reservation stayed ``COMMITTED_UNBOUND`` forever, and the ARE limit stayed
 saturated. #1074 stamps the date on NEW ACKs; evidence is append-only, so the row already written
-can only be repaired by asking the broker. This module does that, GET-only: it scans a bounded,
-configured window of the tenant's own trading dates in 주식일별주문체결조회 for the ACK's ODNO and,
-when EXACTLY ONE date carries it, records the date so the next pass tracks the attempt normally.
-Zero matches or more than one keep the existing fail-closed refusal.
+can only be repaired by asking the broker. This module does that, GET-only.
+
+The scan reads ONE trading date per FETCH (review-1105 M1/M2: a whole-window FETCH ran ~8.2 s,
+which aged the release snapshot past its 6 s bound and blocked the held-position refresh past its
+20 s one), accumulating each date's rows here until the configured window is complete. Only then
+is a verdict reached, and only an EXACTLY-ONE-date match recovers the ACK; zero, more than one,
+or any failed read inside the window keeps the existing fail-closed refusal.
+
+A match is more than "same ODNO": a KIS mock ODNO is a daily counter, so the same digits recur on
+other days. A candidate row must also name this instrument, carry the attempt's own sealed
+outbound quantity, and fall on a day NOT already claimed by a dated receipt — otherwise the scan
+could bind this reservation to another attempt's order and orphan that attempt (review-1105 M3).
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.fill_fetch import odno_key
-from tos_runtime.recon.ports import WitnessUnavailable
 from tos_runtime.recon.witness_kis import KisOrderRow
 
 __all__ = [
     "AMBIGUOUS",
+    "AckDateScan",
     "FILL_OBSERVER_ACK_DATE_RECOVERY_KIND",
     "NO_MATCH",
     "RECOVERED",
     "UndatedAck",
-    "apply_ack_date_scan",
     "recorded_outcomes",
     "recovered_trading_dates",
+    "resolve_ack_dates",
 ]
 
 FILL_OBSERVER_ACK_DATE_RECOVERY_KIND = "FILL_OBSERVER_ACK_DATE_RECOVERY"
@@ -41,8 +51,47 @@ AMBIGUOUS = "ambiguous"
 #: One dateless ACK the scan looks for: ``(attempt_id, broker_execution_id)``.
 UndatedAck = tuple[str, str]
 
-AckDateRead = tuple[str, "tuple[KisOrderRow, ...] | WitnessUnavailable"]
+#: ``(odno_key, trading_date, attempt_id)`` for every DATED receipt. A day one of these claims is
+#: not a recovery candidate for a DIFFERENT attempt — the attempt's own rows never veto it.
+ClaimedOrderDays = frozenset[tuple[str, str, str]]
+
 Recorder = Callable[[str, dict[str, Any]], None]
+
+
+@dataclass
+class AckDateScan:
+    """One in-progress window scan: the dates to read, who is being looked up, what came back."""
+
+    window: tuple[str, ...] = ()
+    targets: tuple[UndatedAck, ...] = ()
+    rows: dict[str, tuple[KisOrderRow, ...]] = field(default_factory=dict)
+
+    @property
+    def active(self) -> bool:
+        """Whether a window is open — one date per FETCH until every date has answered."""
+        return bool(self.window)
+
+    def start(self, window: tuple[str, ...], targets: tuple[UndatedAck, ...]) -> None:
+        """Anchor a window so later passes read the same dates even as ``today`` advances."""
+        self.window, self.targets, self.rows = window, targets, {}
+
+    def clear(self) -> None:
+        """Abandon the scan — a failed read leaves no verdict; the cadence retries the whole set."""
+        self.window, self.targets, self.rows = (), (), {}
+
+    def next_date(self) -> str | None:
+        """The next window date with no rows yet, or ``None`` when the window is complete."""
+        for date in self.window:
+            if date not in self.rows:
+                return date
+        return None
+
+    def record(self, date: str, rows: tuple[KisOrderRow, ...]) -> bool:
+        """Keep one date's rows; ``True`` once every window date has answered."""
+        if date not in self.window:
+            return False
+        self.rows[date] = rows
+        return self.next_date() is None
 
 
 def _payloads(store: SqliteEvidenceStore) -> list[dict[str, Any]]:
@@ -73,9 +122,7 @@ def recovered_trading_dates(store: SqliteEvidenceStore) -> dict[str, str]:
     return recovered
 
 
-def recorded_outcomes(
-    store: SqliteEvidenceStore,
-) -> set[tuple[str, str, str | None]]:
+def recorded_outcomes(store: SqliteEvidenceStore) -> set[tuple[str, str, str | None]]:
     """The ``(attempt_id, outcome, trading_date)`` signatures already on durable record."""
     signatures: set[tuple[str, str, str | None]] = set()
     for payload in _payloads(store):
@@ -93,53 +140,61 @@ def recorded_outcomes(
     return signatures
 
 
-def _rows_by_date(
-    reads: tuple[AckDateRead, ...],
-) -> dict[str, tuple[KisOrderRow, ...]] | None:
-    """Every scanned date's rows, or ``None`` if ANY date failed to read (fail-closed: a window
-    with a hole cannot tell "this ODNO is on no other date" from "we did not look")."""
-    rows_by_date: dict[str, tuple[KisOrderRow, ...]] = {}
-    for date, outcome in reads:
-        if isinstance(outcome, WitnessUnavailable):
-            return None
-        rows_by_date[date] = outcome
-    return rows_by_date or None
-
-
 def _matched_dates(
-    rows_by_date: dict[str, tuple[KisOrderRow, ...]], odno: str, instrument: str
+    scan: AckDateScan,
+    *,
+    attempt_id: str,
+    odno: str,
+    instrument: str,
+    sealed_quantity: Decimal | None,
+    claimed: ClaimedOrderDays,
 ) -> list[str]:
+    """Window dates whose rows carry an order this attempt could own (module docstring's four"""
     key = odno_key(odno)
-    return sorted(
-        {
-            date
-            for date, rows in rows_by_date.items()
-            for row in rows
-            if row.pdno == instrument and odno_key(row.odno) == key
-        }
-    )
+    if key is None or sealed_quantity is None:
+        return []
+    taken = {
+        (claimed_key, date)
+        for claimed_key, date, owner in claimed
+        if owner != attempt_id
+    }
+    dates = {
+        date
+        for date, rows in scan.rows.items()
+        if (key, date) not in taken
+        for row in rows
+        if row.pdno == instrument
+        and odno_key(row.odno) == key
+        and row.ord_qty == sealed_quantity
+    }
+    return sorted(dates)
 
 
-def apply_ack_date_scan(
-    reads: tuple[AckDateRead, ...],
-    targets: tuple[UndatedAck, ...],
+def resolve_ack_dates(
+    scan: AckDateScan,
     *,
     instrument: str,
+    sealed: Mapping[str, Decimal | None],
+    claimed: ClaimedOrderDays,
     evidence_store: SqliteEvidenceStore,
     record: Recorder,
-) -> None:
-    """Decide each scanned ACK's trading date and record the verdict once per distinct outcome."""
-    if not targets:
-        return
-    rows_by_date = _rows_by_date(reads)
-    if rows_by_date is None:
-        return
-    scanned = sorted(rows_by_date)
+) -> bool:
+    """Judge a COMPLETE window and record one verdict per target; ``True`` if any was recovered."""
+    scanned = sorted(scan.rows)
     already = recorded_outcomes(evidence_store)
-    for attempt_id, odno in targets:
-        dates = _matched_dates(rows_by_date, odno, instrument)
+    recovered_any = False
+    for attempt_id, odno in scan.targets:
+        dates = _matched_dates(
+            scan,
+            attempt_id=attempt_id,
+            odno=odno,
+            instrument=instrument,
+            sealed_quantity=sealed.get(attempt_id),
+            claimed=claimed,
+        )
         if len(dates) == 1:
             outcome, trading_date = RECOVERED, dates[0]
+            recovered_any = True
         elif not dates:
             outcome, trading_date = NO_MATCH, None
         else:
@@ -159,3 +214,4 @@ def apply_ack_date_scan(
             },
         )
         already.add(signature)
+    return recovered_any
