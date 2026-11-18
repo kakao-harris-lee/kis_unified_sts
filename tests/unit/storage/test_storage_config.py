@@ -75,9 +75,55 @@ def test_storage_config_rejects_clickhouse_market_data_source(monkeypatch):
 # they had already drifted: `services/stock_strategy/daemon.py` additionally
 # accepted "y", and `tests/support/live_infra.py` did NOT accept "on", so
 # `KIS_RUN_LIVE_INFRA_TESTS=on` lifted hermeticity while leaving the live_infra
-# tests skipped. Three of those four went with the legacy runtime (L1-L7); the
-# two below are what survives, and the only thing that could still split them
-# was the duplicated literal set. These pin that it stays shared.
+# tests skipped. Three of those four went with the legacy runtime (L1-L7), but
+# a repo-wide scan for the literal found two the issue never listed:
+# `shared/config/base.py` (same set) and `tests/integration/test_redis_tls.py`
+# (a second reading of KIS_RUN_LIVE_INFRA_TESTS that dropped "on" -- the very
+# failure live_infra.py's docstring warns about, re-created one directory over).
+# All of them now read one set. These pin that it stays that way.
+#
+# `shared/models/stream_models.py::_parse_bool` keeps its own, wider set on
+# purpose and is NOT unified here: it parses broker STREAM payloads, not env
+# vars, where "Y"/"N" is the KIS field convention, and it is tri-state with a
+# matching falsy set. Folding it into the env set would narrow what the feed
+# parses -- the "동작이 좁아진다" risk #847 itself flagged.
+
+
+def test_service_config_base_env_bool_reads_the_shared_truthy_set():
+    """`ServiceConfigBase._parse_env_value` coerces bools by the shared set."""
+    from shared.config import TRUTHY_VALUES
+    from shared.config import base as config_base
+
+    assert config_base.TRUTHY_VALUES is TRUTHY_VALUES
+
+    for value in ["1", "true", "TRUE", "yes", "on", "ON"]:
+        assert config_base.ServiceConfigBase._parse_env_value(value, bool) is True
+    for value in ["0", "false", "no", "off", "y", "nonsense"]:
+        assert config_base.ServiceConfigBase._parse_env_value(value, bool) is False
+
+
+def test_redis_tls_module_shares_the_one_live_infra_reading():
+    """The two readings of KIS_RUN_LIVE_INFRA_TESTS are now the same function.
+
+    The input that used to split them is "on": `tests/conftest.py` dropped the
+    hermetic session and loaded real credentials, while the TLS module's own
+    copy skipped every test in it.
+    """
+    from tests.integration import test_redis_tls
+    from tests.support import live_infra
+
+    assert test_redis_tls.live_infra_enabled is live_infra.live_infra_enabled
+
+
+@pytest.mark.parametrize("value", ["on", "ON", "1", "true", "yes"])
+def test_live_infra_reading_accepts_on_like_the_hermetic_gate(monkeypatch, value):
+    """Pins the concrete failing input from #847 for every truthy token."""
+    from tests.integration import test_redis_tls
+    from tests.support.live_infra import LIVE_INFRA_ENV
+
+    monkeypatch.setenv(LIVE_INFRA_ENV, value)
+
+    assert test_redis_tls.live_infra_enabled() is True
 
 
 def test_storage_env_bool_reads_the_shared_truthy_set():
