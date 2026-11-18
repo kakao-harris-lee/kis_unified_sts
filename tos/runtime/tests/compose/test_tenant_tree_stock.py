@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +27,6 @@ from tos_runtime.venue import (
     load_venue_constraint_policy,
 )
 
-from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
 from .conftest import (
     _VENUE_POLICY_ACCOUNT,
@@ -72,8 +70,11 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
     ),
     "broker_scopes.yaml": frozenset({"active_scope", "scopes.2.profile_evidence_ok"}),
     "coordinator_preconditions.yaml": frozenset({"nonlive_broker_consuming.admitted"}),
-    "authority.yaml": frozenset({"containment_bound_ms"}),
+    "authority.yaml": frozenset(
+        {"containment_bound_ms", "standing_approval_max_uses_per_action"}
+    ),
     "egress_coordinates.yaml": frozenset({"endpoint.value", "route_identity.value"}),
+    "finality.yaml": frozenset({"witness"}),
     "construction.yaml": frozenset({"instrument_class"}),
     "marketfeed.yaml": frozenset({"instrument_class", "unit"}),
     "aggregate_risk_policy.yaml": frozenset(
@@ -507,16 +508,6 @@ def _boot(config_dir, data_dir, custody_root, *, hour: int, minute: int):
     )
     facts.runtime = runtime
     return runtime
-
-
-@pytest.fixture()
-def server() -> Iterator[FakeKisServer]:
-    srv = FakeKisServer()
-    srv.start()
-    try:
-        yield srv
-    finally:
-        srv.stop()
 
 
 def _mock_stock_deployment(config_dir, custody_root, server, monkeypatch) -> str:

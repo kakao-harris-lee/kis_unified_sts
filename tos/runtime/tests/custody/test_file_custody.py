@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TypedDict
 
 import pytest
+from tos.evidence import EvidenceAppendReceipt
 from tos_runtime.custody.file_custody import PROVISIONED_SCOPES, FileCustody
 from tos_runtime.custody.ports import (
     CredentialHandle,
@@ -623,3 +624,126 @@ def test_load_succeeds_with_honest_relative_nested_path(
 
     assert handle.value() == b"nested-honest-bytes"
     assert len(evidence_double.records) == 1
+
+
+def test_repeated_unchanged_load_evidences_one_row(
+    custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
+) -> None:
+    """An unchanged reload is not news: the KIS mock transport loads its app"""
+    custody = _make_custody(
+        custody_root, evidence_double, expected_owner_uid=expected_owner_uid
+    )
+    write_scope_file(custody_root / "read.principal", b"unchanged-bytes", mode=0o600)
+
+    for _ in range(5):
+        assert custody.load("read.principal").value() == b"unchanged-bytes"
+
+    assert len(evidence_double.records) == 1
+    assert evidence_double.records[0]["kind"] == "CUSTODY_LOAD"
+    assert (
+        _payload(evidence_double.records[0])["file_sha256"]
+        == hashlib.sha256(b"unchanged-bytes").hexdigest()
+    )
+
+
+def test_changed_file_contents_evidence_a_second_row(
+    custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
+) -> None:
+    """The dedupe is content-addressed, not once-per-scope: a rotated credential"""
+    custody = _make_custody(
+        custody_root, evidence_double, expected_owner_uid=expected_owner_uid
+    )
+    write_scope_file(custody_root / "read.principal", b"first-bytes", mode=0o600)
+    custody.load("read.principal")
+    custody.load("read.principal")
+
+    write_scope_file(custody_root / "read.principal", b"rotated-bytes", mode=0o600)
+    assert custody.load("read.principal").value() == b"rotated-bytes"
+    custody.load("read.principal")
+
+    assert len(evidence_double.records) == 2
+    assert [_payload(record)["file_sha256"] for record in evidence_double.records] == [
+        hashlib.sha256(b"first-bytes").hexdigest(),
+        hashlib.sha256(b"rotated-bytes").hexdigest(),
+    ]
+
+
+def test_each_scope_is_evidenced_on_its_own_first_load(
+    custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
+) -> None:
+    """The dedupe key is the scope: one scope's row must not suppress another's"""
+    custody = _make_custody(
+        custody_root, evidence_double, expected_owner_uid=expected_owner_uid
+    )
+    write_scope_file(custody_root / "read.principal", b"principal-bytes", mode=0o600)
+    write_scope_file(custody_root / "evidence.key", b"evidence-key-bytes", mode=0o600)
+
+    custody.load("read.principal")
+    custody.load("evidence.key")
+    custody.load("read.principal")
+    custody.load("evidence.key")
+
+    assert [_payload(record)["scope"] for record in evidence_double.records] == [
+        "read.principal",
+        "evidence.key",
+    ]
+
+
+def test_a_fresh_custody_instance_evidences_its_own_first_load(
+    custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
+) -> None:
+    """The skip memory is in-process only: a restart re-evidences each scope's"""
+    write_scope_file(custody_root / "read.principal", b"boot-bytes", mode=0o600)
+    before_restart = _make_custody(
+        custody_root, evidence_double, expected_owner_uid=expected_owner_uid
+    )
+    before_restart.load("read.principal")
+    before_restart.load("read.principal")
+
+    after_restart = _make_custody(
+        custody_root, evidence_double, expected_owner_uid=expected_owner_uid
+    )
+    after_restart.load("read.principal")
+    after_restart.load("read.principal")
+
+    assert len(evidence_double.records) == 2
+    assert [_payload(record)["scope"] for record in evidence_double.records] == [
+        "read.principal",
+        "read.principal",
+    ]
+
+
+def test_a_failed_append_does_not_suppress_the_retrys_row(
+    custody_root: Path,
+    evidence_double: FakeEvidenceDouble,
+    expected_owner_uid: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A raising append must not be remembered: the retry still writes its row."""
+    custody = _make_custody(
+        custody_root, evidence_double, expected_owner_uid=expected_owner_uid
+    )
+    write_scope_file(custody_root / "read.principal", b"retry-bytes", mode=0o600)
+    real_append = evidence_double.append
+    attempts = {"count": 0}
+
+    def _raise_on_the_first_append(
+        payload: Mapping[str, object], *, kind: str, record_class: str
+    ) -> EvidenceAppendReceipt:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("evidence append failed")
+        return real_append(payload, kind=kind, record_class=record_class)
+
+    monkeypatch.setattr(evidence_double, "append", _raise_on_the_first_append)
+
+    with pytest.raises(RuntimeError, match="evidence append failed"):
+        custody.load("read.principal")
+
+    assert evidence_double.records == []
+
+    assert custody.load("read.principal").value() == b"retry-bytes"
+
+    assert attempts["count"] == 2
+    assert len(evidence_double.records) == 1
+    assert evidence_double.records[0]["kind"] == "CUSTODY_LOAD"

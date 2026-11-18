@@ -51,30 +51,20 @@ def _rules(violations) -> set[str]:
     return {v.rule for v in violations}
 
 
-def test_rule_a_disallowed_third_party(tmp_path):
-    path = _make_tos_src(tmp_path, "m.py", "import requests\n")
-    violations = fw.check_tos_file(path, "tos/src/tos/m.py")
-    assert "TOS-FW-A" in _rules(violations)
-
-
-def test_rule_a_disallowed_operational_shared(tmp_path):
-    path = _make_tos_src(tmp_path, "m.py", "from shared.execution import Foo\n")
-    violations = fw.check_tos_file(path, "tos/src/tos/m.py")
-    assert "TOS-FW-A" in _rules(violations)
-
-
-def test_rule_a_bare_shared_denied(tmp_path):
-    path = _make_tos_src(tmp_path, "m.py", "import shared\n")
-    assert "TOS-FW-A" in _rules(fw.check_tos_file(path, "m.py"))
-
-
-def test_rule_a_shared_config_denied_entirely(tmp_path):
-    for stmt in (
-        "from shared.config import secrets\n",
-        "from shared.config import ConfigLoader\n",
-    ):
-        path = _make_tos_src(tmp_path, "m.py", stmt)
-        assert "TOS-FW-A" in _rules(fw.check_tos_file(path, "m.py"))
+@pytest.mark.parametrize(
+    ("body", "display"),
+    [
+        ("import requests\n", "tos/src/tos/m.py"),
+        ("from shared.execution import Foo\n", "tos/src/tos/m.py"),
+        ("import shared\n", "m.py"),
+        ("from shared.config import secrets\n", "m.py"),
+        ("from shared.config import ConfigLoader\n", "m.py"),
+    ],
+)
+def test_rule_a_denied_import(tmp_path, body, display):
+    """Third-party, operational `shared`, bare `shared`, and all of `shared.config`."""
+    path = _make_tos_src(tmp_path, "m.py", body)
+    assert "TOS-FW-A" in _rules(fw.check_tos_file(path, display))
 
 
 def test_rule_a_nested_import_is_caught(tmp_path):
@@ -108,20 +98,15 @@ def test_rule_b_nested_forbidden_stdlib(tmp_path):
     assert "TOS-FW-B" in _rules(fw.check_tos_file(path, "m.py"))
 
 
-def test_rule_c_os_getenv_call(tmp_path):
-    body = "import os\n\n\ndef f():\n    return os.getenv('X')\n"
-    path = _make_tos_src(tmp_path, "m.py", body)
-    assert "TOS-FW-C" in _rules(fw.check_tos_file(path, "m.py"))
-
-
-def test_rule_c_os_environ_subscript(tmp_path):
-    body = "import os\n\n\ndef f():\n    return os.environ['X']\n"
-    path = _make_tos_src(tmp_path, "m.py", body)
-    assert "TOS-FW-C" in _rules(fw.check_tos_file(path, "m.py"))
-
-
-def test_rule_c_from_os_import_getenv(tmp_path):
-    body = "from os import getenv\n"
+@pytest.mark.parametrize(
+    "body",
+    [
+        "import os\n\n\ndef f():\n    return os.getenv('X')\n",
+        "import os\n\n\ndef f():\n    return os.environ['X']\n",
+        "from os import getenv\n",
+    ],
+)
+def test_rule_c_env_access(tmp_path, body):
     path = _make_tos_src(tmp_path, "m.py", body)
     assert "TOS-FW-C" in _rules(fw.check_tos_file(path, "m.py"))
 
@@ -178,33 +163,18 @@ def test_rule_r_nested_dir_named_tos_is_scanned(tmp_path):
     assert any(v.path.endswith("services/tos/x.py") for v in violations)
 
 
-def test_rule_r_node_modules_dir_is_scanned(tmp_path):
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ("shared", "node_modules", "x.py"),
+        ("shared", "__pycache__", "x.py"),
+        ("docs", "reviews", "phase0-completion-contract", "probe.py"),
+        ("strategy-builder-ui", "tooling", "gen.py"),
+    ],
+)
+def test_rule_r_directory_a_generic_walker_would_prune_is_scanned(tmp_path, rel):
     _make_tos_src(tmp_path, "__init__.py", '__version__ = "0.0.1"\n')
-    _write(tmp_path / "shared" / "node_modules" / "x.py", "import tos\n")
-    violations = fw.check_reverse_imports(tmp_path, tmp_path / "tos")
-    assert "TOS-FW-R" in _rules(violations)
-
-
-def test_rule_r_pycache_dir_is_scanned(tmp_path):
-    _make_tos_src(tmp_path, "__init__.py", '__version__ = "0.0.1"\n')
-    _write(tmp_path / "shared" / "__pycache__" / "x.py", "import tos\n")
-    violations = fw.check_reverse_imports(tmp_path, tmp_path / "tos")
-    assert "TOS-FW-R" in _rules(violations)
-
-
-def test_rule_r_docs_dir_is_scanned(tmp_path):
-    _make_tos_src(tmp_path, "__init__.py", '__version__ = "0.0.1"\n')
-    _write(
-        tmp_path / "docs" / "reviews" / "phase0-completion-contract" / "probe.py",
-        "import tos\n",
-    )
-    violations = fw.check_reverse_imports(tmp_path, tmp_path / "tos")
-    assert "TOS-FW-R" in _rules(violations)
-
-
-def test_rule_r_hyphenated_dir_is_scanned(tmp_path):
-    _make_tos_src(tmp_path, "__init__.py", '__version__ = "0.0.1"\n')
-    _write(tmp_path / "strategy-builder-ui" / "tooling" / "gen.py", "import tos\n")
+    _write(tmp_path.joinpath(*rel), "import tos\n")
     violations = fw.check_reverse_imports(tmp_path, tmp_path / "tos")
     assert "TOS-FW-R" in _rules(violations)
 

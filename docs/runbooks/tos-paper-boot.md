@@ -378,6 +378,8 @@ bash <(git -C $MAIN show origin/main:tools/tos_cp3/runners/setup_stock_mock_once
 - **상시 승인(그날 · #955)** — 파일 `$ST/cp3-setup-d-stock-custody/approvals/standing-session.yaml`(0600). **cron 세션에서는 래퍼가 쓴다**(`render ok` 뒤 · 첫 진입 전 · 운영자 결정 2026-11-05 이 11-03 의 위임 절차를 매 거래일로 확장). 손으로 쓰는 때(재기동 `RUN=2` 등)는 아래 «볼 것» 의 `render ok` 줄 뒤 · 첫 진입 전(런타임이 이미 떠 있어도 된다 — 첫 사용 때 결속).
   승인 없이는 신호가 와도 4단계에서 멎는다(송신 0). MOCK 트리가 아니면 rc 1 로 아무것도 쓰지 않는다 · 덮어쓰기는 `--replace` 뿐.
   **재작성**(예: `max_uses` 를 올림)은 운영자 권한이고 **재기동 뒤에** 적용된다 — 슬롯이 거래일로 키잉돼 이미 쓴 횟수는 그대로 센다.
+  액션당 횟수는 트리의 `authority.yaml::standing_approval_max_uses_per_action` 이 정한다(주식 모의 트리 **390** = 정규장 1분봉 수 · 운영자 지시 2026-11-18 「하루 1회 승인은 모의계좌에서는 불필요해」).
+  `--max-uses-per-action` 을 명시하면 그 값이 이기고, 키가 없는 트리(paper · LONG · SHORT)는 1 이다.
   ⚠ **경로가 고정이므로 슬롯은 하루에 하나다.** 작성기는 파일이 있으면 `--replace` 없이 거부하고(→ rc 1), 런타임의 `bind_at_boot()` 은
   **부팅 시점에 그 경로에 있던 것**을 결속해 그 뒤에 쓰인 파일을 `digest_changed_since_bound` 로 거부한다 — 즉 `--replace` 로도 못 고친다.
   그래서 cron 래퍼는 **러너를 띄우기 전에** 다른 날짜 파일을 `$C/approvals-archive/standing-session.<그날짜>.yaml` 로 옮긴다
@@ -539,12 +541,12 @@ override 를 읽으므로** 그날 09:45 개장도, 15:45 까지의 창도 올�
 
 #### 7.2-h synthetic venue 원장 (#1011) — 켜기 · 볼 것 · 되돌림
 
-계획 `docs/plans/2026-10-31-tos-synthetic-venue-ledger-plan.md`(운영자 승인 10-31) · 코드 #1017·#1018. **기본 OFF** — 켜기는 **11-13 이후 첫 거래일**(운영자 결정), 별도 PR 한 줄.
+계획 `docs/plans/2026-10-31-tos-synthetic-venue-ledger-plan.md`(운영자 승인 10-31) · 코드 #1017·#1018. **켜짐** — synthetic 트리 셋(paper · cp3-setup-d-long/short)에 #1053 으로 켰다(**11-13 이후 첫 거래일**, 운영자 결정 10-31). 그 전 기본은 OFF 였고, 주식 트리는 계속 키가 없다.
 - **왜**: 키가 없으면 synthetic 트리(paper · cp3-setup-d-long/short)의 증인이 증거 저장소를 다시 읽어(`WITNESS_NOT_INDEPENDENT`) 체결이 `POSITION_CONSUMED` 에 가지 못하고, **첫 진입 뒤 scope 가 월물까지 봉인**된다(CLOSE·OPEN 모두 DENY).
-- **켜기**: 트리의 `config/tos_runtime/<tree>/finality.yaml` 에 `witness: synthetic_venue_ledger` 한 줄(synthetic 트리 셋만). 아침 러너가 origin/main 새 워크트리로 부팅하므로 **머지한 다음 세션부터 적용**되고, digest 재도출이 필요하다. 주식 트리(kis-mock)에 넣으면 부팅이 거부된다(의도된 동작).
+- **켜기**: 트리의 `config/tos_runtime/<tree>/finality.yaml` 에 `witness: synthetic_venue_ledger` 한 줄(synthetic 트리 셋만). 아침 러너가 origin/main 새 워크트리로 부팅하므로 **머지한 다음 세션부터 적용**된다. digest 재도출은 필요 없다 — `release.yaml::expected_code_digest` 는 `tos/src`·`tos/runtime/src` 의 `*.py` 만 접고, 부팅 무결성 해시도 `finality.yaml` 을 담지 않는다(#1053 에서 `tos_redigest.py --check` 무변경 확인). 주식 트리(kis-mock)에 넣으면 부팅이 거부된다(의도된 동작).
 - **파일**: 잎 안 `venue_ledger.sqlite3`(0600 · append-only). `evidence.sqlite3`·`rcl.sqlite3` 와 다른 파일이다. 콜드 백업은 이 파일을 **선택 멤버**로 담는다(코드 `operations/backup_set.py`). 옛 manifest 는 이 파일 없이 복원된다.
 - **볼 것**(켠 뒤 첫 체결): `sqlite3 -readonly $L/venue_ledger.sqlite3 "SELECT result_kind,COUNT(*) FROM venue_results GROUP BY 1"`(행은 체결 결과당 하나 · 같은 `broker_execution_id` 재송신은 행을 늘리지 않는다). 진입 체결 뒤 RCL 에 `POSITION_CONSUMED` 가 있어야 하고, 청산 체결 뒤 두 예약이 모두 `RELEASED` 여야 한다. HOLD 사유가 `WITNESS_NOT_INDEPENDENT` 이면 키가 안 먹은 것(옛 증인)이고, `NOT_CORROBORATED` 이면 진짜 불일치(orphan 또는 수량 충돌)다 — 손으로 풀지 말고 보고한다.
-- **되돌림**: 키 줄을 지우는 PR(+ digest 재도출). 다음 부팅부터 옛 증인으로 돌아가 다시 봉인 쪽(fail-closed)이 된다. 원장 파일은 지우지 않는다(증거다).
+- **되돌림**: 키 줄을 지우는 PR. 배포 가드 `test_venue_ledger_wiring.py::_SHIPPED_TREE_WITNESS` 와 `test_deploy_approved_values.py` 의 고정값도 같이 고친다. 다음 부팅부터 옛 증인으로 돌아가 다시 봉인 쪽(fail-closed)이 된다. 원장 파일은 지우지 않는다(증거다).
 - **세션일 금지**: 같은 잎에서 키를 켠 채 원장 파일을 지우거나 옮기지 않는다 — 원장 없는 체결 증거는 증인 부재로 HOLD 된다(fail-closed지만 그 scope 는 다시 봉인된다).
 
 ### 7.4 cron 두 줄 — ✅ **설치됐다 (운영자 2026-10-03 15:43 KST)**

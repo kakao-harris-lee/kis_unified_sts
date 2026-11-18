@@ -3,7 +3,8 @@
 - 계획: `docs/plans/2026-10-15-tos-cp3-band-via-producer-plan.md` §4 「켜기와 첫 세션 수용」.
 - 절차·명령: `docs/runbooks/tos-paper-boot.md` §7.2-d (band 수용 명령 · §3.6 대조 · 실전 주문 TR 검사).
 - 선행 증거: `docs/broker-profiles/evidence/2026-10-08-cp3-venue-limits/README.md` (P-VL — band 가
-  미니 틱 0.02 격자에만 떨어진다) · `docs/broker-profiles/evidence/2026-10-12-cp3-pr1-minute-probe/README.md`.
+  미니 틱 0.02 격자에만 떨어진다) · `docs/broker-profiles/evidence/2026-10-12-cp3-pr1-minute-probe/README.md`
+  (그 캠페인 증거는 2026-11-14 은퇴 — git 이력에 있다: `git log --diff-filter=D -- docs/`).
 - 세션: `CP3-BAND-FS.json:session.date=2026-10-22` · 트리
   `CP3-BAND-FS.json:session.tenant_tree=cp3-setup-d-long` · 월물
   `CP3-BAND-FS.json:session.instrument=A05611` · 라벨

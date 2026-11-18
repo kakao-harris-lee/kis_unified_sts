@@ -21,7 +21,7 @@ from tos.workload import RuntimeIdentity
 from tos_runtime.rcl.gates import UNRECORDED_VECTOR, fold_reservations_from_entries
 from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
 
-from .conftest import FakeEvidenceAppendPort
+from .conftest import FakeEvidenceAppendPort, bind_attempt
 
 _SCOPE = ReservationScope(account="acct-1", instrument="101S06")
 _ONE_CONTRACT = CapacityVector(
@@ -40,14 +40,7 @@ def _commit(
         scope=_SCOPE,
         committed_vector=vector,
     )
-    result = log.apply_reservation_transition(
-        transition,
-        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
-        command_type=CommandType.BIND_ATTEMPT,
-        command_id="cmd-1",
-        command_digest="dig-1",
-        expected_seq=-1,
-    )
+    result = bind_attempt(log, transition)
     assert isinstance(result, AppendReceipt)
 
 

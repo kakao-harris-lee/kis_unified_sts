@@ -19,13 +19,14 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 _NO_TIMEOUT_WITHIN_TEST = 10**12
 
 
-def _make_driver(
-    *,
+@pytest.fixture
+def driver(
     inbox: SqliteEventInbox,
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
     monotonic_source: FakeMonotonicSource,
 ) -> EngineDriver:
+    """The one driver under test, on this test's own durable stores."""
     core = fx.build_core()
     return EngineDriver(
         core=core,
@@ -50,17 +51,9 @@ def _admit(driver: EngineDriver, inbox: SqliteEventInbox, *, seq: int) -> None:
 
 
 def test_run_once_fires_after_turn_exactly_once_when_a_turn_was_processed(
+    driver: EngineDriver,
     inbox: SqliteEventInbox,
-    evidence_store: SqliteEvidenceStore,
-    emergency_log: EmergencyAppendLog,
-    monotonic_source: FakeMonotonicSource,
 ) -> None:
-    driver = _make_driver(
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        monotonic_source=monotonic_source,
-    )
     calls: list[int] = []
     driver.bind_after_turn(lambda: calls.append(1))
     _admit(driver, inbox, seq=1)
@@ -71,18 +64,7 @@ def test_run_once_fires_after_turn_exactly_once_when_a_turn_was_processed(
     assert calls == [1]
 
 
-def test_run_once_does_not_fire_after_turn_when_idle(
-    inbox: SqliteEventInbox,
-    evidence_store: SqliteEvidenceStore,
-    emergency_log: EmergencyAppendLog,
-    monotonic_source: FakeMonotonicSource,
-) -> None:
-    driver = _make_driver(
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        monotonic_source=monotonic_source,
-    )
+def test_run_once_does_not_fire_after_turn_when_idle(driver: EngineDriver) -> None:
     calls: list[int] = []
     driver.bind_after_turn(lambda: calls.append(1))
 
@@ -93,17 +75,9 @@ def test_run_once_does_not_fire_after_turn_when_idle(
 
 
 def test_run_once_with_no_bound_callback_costs_nothing(
+    driver: EngineDriver,
     inbox: SqliteEventInbox,
-    evidence_store: SqliteEvidenceStore,
-    emergency_log: EmergencyAppendLog,
-    monotonic_source: FakeMonotonicSource,
 ) -> None:
-    driver = _make_driver(
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        monotonic_source=monotonic_source,
-    )
     _admit(driver, inbox, seq=1)
 
     result = driver.run_once()
@@ -114,17 +88,9 @@ def test_run_once_with_no_bound_callback_costs_nothing(
 
 
 def test_run_until_idle_fires_after_turn_once_per_processed_event(
+    driver: EngineDriver,
     inbox: SqliteEventInbox,
-    evidence_store: SqliteEvidenceStore,
-    emergency_log: EmergencyAppendLog,
-    monotonic_source: FakeMonotonicSource,
 ) -> None:
-    driver = _make_driver(
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        monotonic_source=monotonic_source,
-    )
     calls: list[int] = []
     driver.bind_after_turn(lambda: calls.append(1))
     _admit(driver, inbox, seq=1)
@@ -137,18 +103,7 @@ def test_run_until_idle_fires_after_turn_once_per_processed_event(
     assert calls == [1, 1, 1]
 
 
-def test_run_until_idle_on_an_empty_inbox_never_fires(
-    inbox: SqliteEventInbox,
-    evidence_store: SqliteEvidenceStore,
-    emergency_log: EmergencyAppendLog,
-    monotonic_source: FakeMonotonicSource,
-) -> None:
-    driver = _make_driver(
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        monotonic_source=monotonic_source,
-    )
+def test_run_until_idle_on_an_empty_inbox_never_fires(driver: EngineDriver) -> None:
     calls: list[int] = []
     driver.bind_after_turn(lambda: calls.append(1))
 
@@ -158,18 +113,7 @@ def test_run_until_idle_on_an_empty_inbox_never_fires(
     assert calls == []
 
 
-def test_enqueue_and_run_fires_after_turn_exactly_once(
-    inbox: SqliteEventInbox,
-    evidence_store: SqliteEvidenceStore,
-    emergency_log: EmergencyAppendLog,
-    monotonic_source: FakeMonotonicSource,
-) -> None:
-    driver = _make_driver(
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        monotonic_source=monotonic_source,
-    )
+def test_enqueue_and_run_fires_after_turn_exactly_once(driver: EngineDriver) -> None:
     calls: list[int] = []
     driver.bind_after_turn(lambda: calls.append(1))
 
@@ -180,17 +124,8 @@ def test_enqueue_and_run_fires_after_turn_exactly_once(
 
 
 def test_enqueue_and_run_called_twice_fires_after_turn_twice(
-    inbox: SqliteEventInbox,
-    evidence_store: SqliteEvidenceStore,
-    emergency_log: EmergencyAppendLog,
-    monotonic_source: FakeMonotonicSource,
+    driver: EngineDriver,
 ) -> None:
-    driver = _make_driver(
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        monotonic_source=monotonic_source,
-    )
     calls: list[int] = []
     driver.bind_after_turn(lambda: calls.append(1))
 
@@ -201,18 +136,9 @@ def test_enqueue_and_run_called_twice_fires_after_turn_twice(
 
 
 def test_a_raising_after_turn_callback_does_not_stop_run_until_idle_and_is_counted(
+    driver: EngineDriver,
     inbox: SqliteEventInbox,
-    evidence_store: SqliteEvidenceStore,
-    emergency_log: EmergencyAppendLog,
-    monotonic_source: FakeMonotonicSource,
 ) -> None:
-    driver = _make_driver(
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        monotonic_source=monotonic_source,
-    )
-
     def _boom() -> None:
         raise RuntimeError("exporter broke")
 
@@ -229,18 +155,9 @@ def test_a_raising_after_turn_callback_does_not_stop_run_until_idle_and_is_count
 
 
 def test_a_raising_after_turn_callback_does_not_stop_run_once(
+    driver: EngineDriver,
     inbox: SqliteEventInbox,
-    evidence_store: SqliteEvidenceStore,
-    emergency_log: EmergencyAppendLog,
-    monotonic_source: FakeMonotonicSource,
 ) -> None:
-    driver = _make_driver(
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        monotonic_source=monotonic_source,
-    )
-
     def _boom() -> None:
         raise ValueError("nope")
 
@@ -256,17 +173,9 @@ def test_a_raising_after_turn_callback_does_not_stop_run_once(
 
 
 def test_after_turn_last_error_reflects_the_most_recent_failure_only(
+    driver: EngineDriver,
     inbox: SqliteEventInbox,
-    evidence_store: SqliteEvidenceStore,
-    emergency_log: EmergencyAppendLog,
-    monotonic_source: FakeMonotonicSource,
 ) -> None:
-    driver = _make_driver(
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        monotonic_source=monotonic_source,
-    )
     attempt = {"n": 0}
 
     def _boom() -> None:

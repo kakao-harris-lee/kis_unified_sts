@@ -1,6 +1,7 @@
 # 증거 README 인용 규율 (C-3 / F-4)
 
 - 도입: 2026-09-26 · 상위 계획 `docs/plans/2026-09-18-tos-config-adoption-and-carryover-plan.md` W-C C-3
+  (그 계획은 2026-11-14 은퇴 — git 이력에 있다: `git log --diff-filter=D -- docs/plans/`)
   (원 처분 F-4 — `docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md` §F 표).
 - 검사기: `tools/tos_evidence_citation_check.py` · 테스트 `tests/tools/test_tos_evidence_citation_check.py`
   (tos-firewall 의 governance 배터리가 `tests/tools/test_tos_*.py` 로 자동 수집한다).

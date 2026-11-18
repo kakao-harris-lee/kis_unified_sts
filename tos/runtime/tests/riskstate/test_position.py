@@ -35,16 +35,46 @@ def _empty_observation() -> PositionObservation:
     )
 
 
-def test_empty_store_yields_all_zero_observation(
-    evidence_store: SqliteEvidenceStore,
-) -> None:
-    reader = EvidencePositionReader(
-        evidence_store,
+def _seal(store: SqliteEvidenceStore, *, side: str, quantity: str) -> None:
+    """Seal this suite's one attempt ``a1`` on ``side`` for ``quantity``."""
+    seed_send_sealed(
+        store,
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        side=side,
+        quantity=quantity,
+        event_id="ev-1",
+    )
+
+
+def _fill(store: SqliteEvidenceStore, *, filled: str | None) -> None:
+    """Consume a FULL_FILL egress result for attempt ``a1``."""
+    seed_egress_result(
+        store,
+        kind="EGRESS_RESULT_CONSUMED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=filled,
+    )
+
+
+def _reader(store: SqliteEvidenceStore) -> EvidencePositionReader:
+    """This suite's one in-scope position reader over ``store``."""
+    return EvidencePositionReader(
+        store,
         account=_ACCOUNT,
         instrument=_INSTRUMENT,
         buy_side_token="BUY",
         sell_side_token="SELL",
     )
+
+
+def test_empty_store_yields_all_zero_observation(
+    evidence_store: SqliteEvidenceStore,
+) -> None:
+    reader = _reader(evidence_store)
     obs = reader.observe()
     assert obs == _empty_observation()
     assert worst_credible_directional_usage(obs) == Decimal(0)
@@ -55,30 +85,9 @@ def test_empty_store_yields_all_zero_observation(
 def test_confirmed_fill_signed_by_sealed_side(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side="BUY",
-        quantity="3",
-        event_id="ev-1",
-    )
-    seed_egress_result(
-        evidence_store,
-        kind="EGRESS_RESULT_CONSUMED",
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        filled_quantity="3",
-    )
-    reader = EvidencePositionReader(
-        evidence_store,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        buy_side_token="BUY",
-        sell_side_token="SELL",
-    )
+    _seal(evidence_store, side="BUY", quantity="3")
+    _fill(evidence_store, filled="3")
+    reader = _reader(evidence_store)
     obs = reader.observe()
     assert obs.confirmed_net == Decimal(3)
     assert obs.unknown_buy == Decimal(0) and obs.unknown_sell == Decimal(0)
@@ -90,30 +99,9 @@ def test_confirmed_fill_signed_by_sealed_side(
 
 
 def test_sell_side_fill_is_negative_net(evidence_store: SqliteEvidenceStore) -> None:
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side="SELL",
-        quantity="5",
-        event_id="ev-1",
-    )
-    seed_egress_result(
-        evidence_store,
-        kind="EGRESS_RESULT_CONSUMED",
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        filled_quantity="5",
-    )
-    reader = EvidencePositionReader(
-        evidence_store,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        buy_side_token="BUY",
-        sell_side_token="SELL",
-    )
+    _seal(evidence_store, side="SELL", quantity="5")
+    _fill(evidence_store, filled="5")
+    reader = _reader(evidence_store)
     obs = reader.observe()
     assert obs.confirmed_net == Decimal(-5)
     assert worst_credible_directional_usage(obs) == Decimal(5)
@@ -122,15 +110,7 @@ def test_sell_side_fill_is_negative_net(evidence_store: SqliteEvidenceStore) -> 
 def test_unmatched_result_is_in_flight_in_full_sealed_quantity(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side="BUY",
-        quantity="4",
-        event_id="ev-1",
-    )
+    _seal(evidence_store, side="BUY", quantity="4")
     seed_egress_result(
         evidence_store,
         kind="RESULT_UNMATCHED",
@@ -139,13 +119,7 @@ def test_unmatched_result_is_in_flight_in_full_sealed_quantity(
         instrument=_INSTRUMENT,
         filled_quantity="4",
     )
-    reader = EvidencePositionReader(
-        evidence_store,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        buy_side_token="BUY",
-        sell_side_token="SELL",
-    )
+    reader = _reader(evidence_store)
     obs = reader.observe()
     assert obs.confirmed_net == Decimal(0)
     assert obs.unknown_buy == Decimal(0)
@@ -158,22 +132,8 @@ def test_unmatched_result_is_in_flight_in_full_sealed_quantity(
 def test_sealed_with_no_terminal_result_is_in_flight(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side="BUY",
-        quantity="2",
-        event_id="ev-1",
-    )
-    reader = EvidencePositionReader(
-        evidence_store,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        buy_side_token="BUY",
-        sell_side_token="SELL",
-    )
+    _seal(evidence_store, side="BUY", quantity="2")
+    reader = _reader(evidence_store)
     obs = reader.observe()
     assert obs.confirmed_net == Decimal(0)
     assert obs.unknown_buy == Decimal(0)
@@ -187,15 +147,7 @@ def test_sealed_with_no_terminal_result_is_in_flight(
 def test_consumed_row_governs_over_a_prior_unmatched_row(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side="BUY",
-        quantity="6",
-        event_id="ev-1",
-    )
+    _seal(evidence_store, side="BUY", quantity="6")
     seed_egress_result(
         evidence_store,
         kind="RESULT_UNMATCHED",
@@ -204,21 +156,8 @@ def test_consumed_row_governs_over_a_prior_unmatched_row(
         instrument=_INSTRUMENT,
         filled_quantity="6",
     )
-    seed_egress_result(
-        evidence_store,
-        kind="EGRESS_RESULT_CONSUMED",
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        filled_quantity="6",
-    )
-    reader = EvidencePositionReader(
-        evidence_store,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        buy_side_token="BUY",
-        sell_side_token="SELL",
-    )
+    _fill(evidence_store, filled="6")
+    reader = _reader(evidence_store)
     obs = reader.observe()
     assert obs.confirmed_net == Decimal(6)
     assert obs.unknown_buy == Decimal(0)
@@ -228,15 +167,7 @@ def test_zero_fill_terminal_outcome_is_confirmed_not_unknown(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
     """A TERMINAL zero-fill result (here ``REJECT``; ``tos.engine.TERMINAL_RESULT_KINDS``) is a"""
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side="BUY",
-        quantity="9",
-        event_id="ev-1",
-    )
+    _seal(evidence_store, side="BUY", quantity="9")
     seed_egress_result(
         evidence_store,
         kind="EGRESS_RESULT_CONSUMED",
@@ -246,13 +177,7 @@ def test_zero_fill_terminal_outcome_is_confirmed_not_unknown(
         filled_quantity=None,
         egress_result_kind="REJECT",
     )
-    reader = EvidencePositionReader(
-        evidence_store,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        buy_side_token="BUY",
-        sell_side_token="SELL",
-    )
+    reader = _reader(evidence_store)
     obs = reader.observe()
     assert obs.confirmed_net == Decimal(0)
     assert obs.unknown_buy == Decimal(0)
@@ -262,26 +187,8 @@ def test_zero_fill_terminal_outcome_is_confirmed_not_unknown(
 _SIDE_SIGNS = (("BUY", 1), ("SELL", -1))
 
 
-def _reader(store: SqliteEvidenceStore) -> EvidencePositionReader:
-    return EvidencePositionReader(
-        store,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        buy_side_token="BUY",
-        sell_side_token="SELL",
-    )
-
-
 def _seal_ten(store: SqliteEvidenceStore, side: str) -> None:
-    seed_send_sealed(
-        store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side=side,
-        quantity="10",
-        event_id="ev-1",
-    )
+    _seal(store, side=side, quantity="10")
 
 
 def _consume(
@@ -458,13 +365,7 @@ def test_out_of_scope_attempt_is_excluded(evidence_store: SqliteEvidenceStore) -
         quantity="10",
         event_id="ev-1",
     )
-    reader = EvidencePositionReader(
-        evidence_store,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        buy_side_token="BUY",
-        sell_side_token="SELL",
-    )
+    reader = _reader(evidence_store)
     obs = reader.observe()
     assert obs == _empty_observation()
 
@@ -472,22 +373,8 @@ def test_out_of_scope_attempt_is_excluded(evidence_store: SqliteEvidenceStore) -
 def test_unrecognized_side_is_unknown_in_both_directions(
     evidence_store: SqliteEvidenceStore,
 ) -> None:
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side="SIDEWAYS",
-        quantity="7",
-        event_id="ev-1",
-    )
-    reader = EvidencePositionReader(
-        evidence_store,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        buy_side_token="BUY",
-        sell_side_token="SELL",
-    )
+    _seal(evidence_store, side="SIDEWAYS", quantity="7")
+    reader = _reader(evidence_store)
     obs = reader.observe()
     assert obs.in_flight_buy == Decimal(7)
     assert obs.in_flight_sell == Decimal(7)
@@ -495,30 +382,9 @@ def test_unrecognized_side_is_unknown_in_both_directions(
 
 def test_long_short_mirror_symmetry(evidence_store: SqliteEvidenceStore) -> None:
     """NEW_SHORT mirror: negating the side and swapping evidence carriers reproduces the"""
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side="SELL",
-        quantity="3",
-        event_id="ev-1",
-    )
-    seed_egress_result(
-        evidence_store,
-        kind="EGRESS_RESULT_CONSUMED",
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        filled_quantity="3",
-    )
-    reader = EvidencePositionReader(
-        evidence_store,
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        buy_side_token="BUY",
-        sell_side_token="SELL",
-    )
+    _seal(evidence_store, side="SELL", quantity="3")
+    _fill(evidence_store, filled="3")
+    reader = _reader(evidence_store)
     short_obs = reader.observe()
 
     long_store = SqliteEvidenceStore(
@@ -526,30 +392,9 @@ def test_long_short_mirror_symmetry(evidence_store: SqliteEvidenceStore) -> None
         key_provider=FixedKeyProvider(),
     )
     try:
-        seed_send_sealed(
-            long_store,
-            attempt_id="a1",
-            account=_ACCOUNT,
-            instrument=_INSTRUMENT,
-            side="BUY",
-            quantity="3",
-            event_id="ev-1",
-        )
-        seed_egress_result(
-            long_store,
-            kind="EGRESS_RESULT_CONSUMED",
-            attempt_id="a1",
-            account=_ACCOUNT,
-            instrument=_INSTRUMENT,
-            filled_quantity="3",
-        )
-        long_reader = EvidencePositionReader(
-            long_store,
-            account=_ACCOUNT,
-            instrument=_INSTRUMENT,
-            buy_side_token="BUY",
-            sell_side_token="SELL",
-        )
+        _seal(long_store, side="BUY", quantity="3")
+        _fill(long_store, filled="3")
+        long_reader = _reader(long_store)
         long_obs = long_reader.observe()
     finally:
         long_store.close()
@@ -701,15 +546,7 @@ def test_unmatched_result_after_terminal_consumed_reopens_the_attempt(
     confirmed: int,
     outstanding: int,
 ) -> None:
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side=side,
-        quantity="10",
-        event_id="ev-1",
-    )
+    _seal(evidence_store, side=side, quantity="10")
     seed_egress_result(
         evidence_store,
         kind="EGRESS_RESULT_CONSUMED",
@@ -746,15 +583,7 @@ def test_unmatched_result_after_terminal_consumed_reopens_the_attempt(
 def test_duplicate_unmatched_after_terminal_consumed_does_not_reopen(
     evidence_store: SqliteEvidenceStore, side: str, consumed_kind: str
 ) -> None:
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side=side,
-        quantity="10",
-        event_id="ev-1",
-    )
+    _seal(evidence_store, side=side, quantity="10")
     seed_egress_result(
         evidence_store,
         kind="EGRESS_RESULT_CONSUMED",
@@ -784,15 +613,7 @@ def test_duplicate_unmatched_after_terminal_consumed_does_not_reopen(
 def test_unmatched_before_terminal_consumed_is_superseded(
     evidence_store: SqliteEvidenceStore, side: str
 ) -> None:
-    seed_send_sealed(
-        evidence_store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side=side,
-        quantity="10",
-        event_id="ev-1",
-    )
+    _seal(evidence_store, side=side, quantity="10")
     seed_egress_result(
         evidence_store,
         kind="RESULT_UNMATCHED",
@@ -818,15 +639,7 @@ def test_unmatched_before_terminal_consumed_is_superseded(
 
 
 def _seed_attempt(store: SqliteEvidenceStore, side: str) -> None:
-    seed_send_sealed(
-        store,
-        attempt_id="a1",
-        account=_ACCOUNT,
-        instrument=_INSTRUMENT,
-        side=side,
-        quantity="10",
-        event_id="ev-1",
-    )
+    _seal(store, side=side, quantity="10")
 
 
 def _seed_result(

@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from tos.brokeradapter import SyntheticFillPolicy, SyntheticPaperTransport
 from tos.egressgw import (
     BrokerEgressGateway,
     GatewayEvidenceRecord,
@@ -18,10 +17,16 @@ from tos.engine import (
     CommitmentStep,
     EgressResultKind,
     EgressResultPayload,
-    InstrumentKey,
 )
 
-from ._egressgw_fixtures import build_gateway, full_fill_transport, happy_context
+from ._egressgw_fixtures import (
+    RaisingTransport,
+    WrongAttemptTransport,
+    build_gateway,
+    declared_transport,
+    full_fill_transport,
+    happy_context,
+)
 
 
 class _UnreachableTransport:
@@ -39,19 +44,6 @@ class _UnreachableTransport:
         )
 
 
-class _RaisingTransport:
-    """A transport that records its calls and raises (the established TRANSPORT_RAISED path)."""
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def send_once(self, attempt: AttemptRequest, **_: Any) -> EgressResultPayload:
-        """Count the call and fail."""
-        del attempt
-        self.calls += 1
-        raise RuntimeError("synthetic transport unavailable")
-
-
 class _FixedResultTransport:
     """A transport that hands back one pre-built (possibly malformed) result object."""
 
@@ -64,25 +56,6 @@ class _FixedResultTransport:
         del attempt
         self.calls += 1
         return self._result
-
-
-class _WrongAttemptResultTransport:
-    """A transport that answers about a *different* attempt (legitimate mismatch, not a fault)."""
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def send_once(
-        self, attempt: AttemptRequest, *, instrument_key: InstrumentKey, **_: Any
-    ) -> EgressResultPayload:
-        """Return a well-formed result naming somebody else's attempt."""
-        del attempt
-        self.calls += 1
-        return EgressResultPayload(
-            instrument_key=instrument_key,
-            attempt_id="attempt-somebody-else",
-            kind=EgressResultKind.ACK,
-        )
 
 
 class _RaisingAttemptIdResult:
@@ -148,11 +121,6 @@ class _RaisingOnKindSink:
         return self._delegate.kinds
 
 
-def _declared(kind: EgressResultKind) -> SyntheticPaperTransport:
-    """A synthetic transport declaring one non-fill outcome (UNKNOWN / TIMEOUT / ACK / REJECT)."""
-    return SyntheticPaperTransport(SyntheticFillPolicy(declared_kind=kind))
-
-
 def test_the_happy_path_still_records_the_exact_step_order() -> None:
     """(§1.3/§4.6, hypothesis-free control) verify -> SEALED -> STARTED -> LIVE -> result."""
     attempt, context = happy_context()
@@ -180,10 +148,7 @@ def test_a_coordinate_derivation_fault_halts_under_its_own_reason_before_any_sen
     """(Phase 4 작업 6) Absorbed into SEND_SEAL_UNCONSTRUCTABLE — this now runs before any claim."""
     attempt, context = happy_context()
     transport = _UnreachableTransport()
-    sink = RecordingGatewayEvidenceSink()
-    gateway = BrokerEgressGateway(
-        contexts={attempt.attempt_id: context}, transport=transport, sink=sink
-    )
+    gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
 
     def _raising_outbound_coordinates(_: Any) -> tuple[tuple[str, str | None], ...]:
         raise RuntimeError("synthetic coordinate derivation failure")
@@ -209,11 +174,8 @@ def test_a_raised_transport_after_projection_leaves_the_attempt_consumed_and_res
 ):
     """(RFC-005 §11:322-323) A missing acknowledgement is never read as "not accepted"."""
     attempt, context = happy_context()
-    transport = _RaisingTransport()
-    sink = RecordingGatewayEvidenceSink()
-    gateway = BrokerEgressGateway(
-        contexts={attempt.attempt_id: context}, transport=transport, sink=sink
-    )
+    transport = RaisingTransport()
+    gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
 
     handoff = gateway(attempt)
 
@@ -230,10 +192,7 @@ def test_a_result_whose_attempt_id_is_unreadable_halts_as_result_unreadable() ->
     """The send already happened (send_once returned) — this is UNKNOWN-restrictive, not a lie."""
     attempt, context = happy_context()
     transport = _FixedResultTransport(_RaisingAttemptIdResult())
-    sink = RecordingGatewayEvidenceSink()
-    gateway = BrokerEgressGateway(
-        contexts={attempt.attempt_id: context}, transport=transport, sink=sink
-    )
+    gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
 
     handoff = gateway(attempt)
 
@@ -252,10 +211,7 @@ def test_a_result_whose_kind_is_unreadable_halts_as_result_unreadable() -> None:
     """Identity checked out, but the outcome itself cannot be read — still fail-closed, not lied."""
     attempt, context = happy_context()
     transport = _FixedResultTransport(_RaisingKindResult(attempt.attempt_id))
-    sink = RecordingGatewayEvidenceSink()
-    gateway = BrokerEgressGateway(
-        contexts={attempt.attempt_id: context}, transport=transport, sink=sink
-    )
+    gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
 
     handoff = gateway(attempt)
 
@@ -274,10 +230,7 @@ def test_a_result_whose_filled_quantity_is_unreadable_halts_as_result_unreadable
     """A single unreadable magnitude field is enough to refuse building the evidence detail."""
     attempt, context = happy_context()
     transport = _FixedResultTransport(_RaisingFilledQuantityResult(attempt.attempt_id))
-    sink = RecordingGatewayEvidenceSink()
-    gateway = BrokerEgressGateway(
-        contexts={attempt.attempt_id: context}, transport=transport, sink=sink
-    )
+    gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
 
     handoff = gateway(attempt)
 
@@ -295,11 +248,8 @@ def test_a_result_naming_another_attempt_is_refused_without_transitioning_this_o
 ):
     """(design #31 §2.1(ii)) A legitimate mismatch — not an exception — is still an I1/I2/I3 case."""
     attempt, context = happy_context()
-    transport = _WrongAttemptResultTransport()
-    sink = RecordingGatewayEvidenceSink()
-    gateway = BrokerEgressGateway(
-        contexts={attempt.attempt_id: context}, transport=transport, sink=sink
-    )
+    transport = WrongAttemptTransport()
+    gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
 
     handoff = gateway(attempt)
 
@@ -339,7 +289,7 @@ def test_a_sink_failure_recording_the_uncertain_ladder_propagates_after_the_resu
 ):
     """The disposition-bearing record already landed; only the supplementary ladder write failed."""
     attempt, context = happy_context()
-    transport = _declared(EgressResultKind.UNKNOWN)
+    transport = declared_transport(EgressResultKind.UNKNOWN)
     sink = _RaisingOnKindSink(raise_on=frozenset({"UNCERTAIN_SEND"}))
     gateway = BrokerEgressGateway(
         contexts={attempt.attempt_id: context}, transport=transport, sink=sink
@@ -360,7 +310,7 @@ def test_a_sink_failure_recording_the_uncertain_ladder_propagates_after_the_resu
 def test_halt_propagates_when_the_sink_cannot_even_record_the_halt_itself() -> None:
     """No retry is attempted (design #34 §5.4) — a halt that cannot be recorded is not silent."""
     attempt, context = happy_context()
-    transport = _RaisingTransport()
+    transport = RaisingTransport()
     sink = _RaisingOnKindSink(raise_on=frozenset({"SEND_REFUSED"}))
     gateway = BrokerEgressGateway(
         contexts={attempt.attempt_id: context}, transport=transport, sink=sink

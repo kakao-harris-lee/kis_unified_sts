@@ -38,6 +38,7 @@ from typing import Any
 import pytest
 import yaml
 
+from tests.support.probe_auth import StubAuth, install_stub_auth
 from tools.broker_probes import probes_order
 from tools.broker_probes.common import ProbeCredentials, ProbeError, ProbeRun
 from tools.broker_probes.probes_order import (
@@ -77,15 +78,10 @@ def stock_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("KIS_TOKEN_CACHE_DIR", raising=False)
 
 
-class _StubAuth:
-    def get_auth_headers(self) -> dict[str, str]:
-        return {"authorization": "Bearer stub"}
-
-
 def _client(creds: ProbeCredentials) -> MockTradingClient:
     """A client with pacing disabled — these tests assert prices, not intervals."""
     run = ProbeRun(probe_id="P-11", title="t", mode="live", environment="MOCK_VTS")
-    return MockTradingClient(creds, _StubAuth(), run, pace_s=0.0)
+    return MockTradingClient(creds, StubAuth(), run, pace_s=0.0)
 
 
 def _args(**overrides: object) -> argparse.Namespace:
@@ -492,9 +488,7 @@ def test_p11_submits_a_tick_valid_marketable_price(
 ) -> None:
     """The limit order P-11 sends is above the touch AND on a valid tick."""
     calls = _install_stock_recorder(monkeypatch, aspr_unit="100", with_trading=True)
-    monkeypatch.setattr(
-        "shared.kis.auth.KISAuthManager", lambda *a, **k: _StubAuth(), raising=True
-    )
+    install_stub_auth(monkeypatch)
 
     run = probe_p11(_args(stock_order_type="limit"))
 
@@ -509,9 +503,7 @@ def test_p11_records_the_tick_and_its_source_in_the_artifact(
 ) -> None:
     """A reviewer must see the price was tick-valid by construction."""
     _install_stock_recorder(monkeypatch, aspr_unit="100", with_trading=True)
-    monkeypatch.setattr(
-        "shared.kis.auth.KISAuthManager", lambda *a, **k: _StubAuth(), raising=True
-    )
+    install_stub_auth(monkeypatch)
 
     record = probe_p11(_args(stock_order_type="limit")).measurements["limit_price_tick"]
 
@@ -532,9 +524,7 @@ def test_p11_reports_a_blocked_precondition_without_a_quote_unit(
     ``test_broker_probes_p11_fill.py``, which is the payoff of that default.
     """
     calls = _install_stock_recorder(monkeypatch, aspr_unit=None, with_trading=True)
-    monkeypatch.setattr(
-        "shared.kis.auth.KISAuthManager", lambda *a, **k: _StubAuth(), raising=True
-    )
+    install_stub_auth(monkeypatch)
 
     with pytest.raises(ProbeError, match="호가단위"):
         probe_p11(_args(stock_order_type="limit"))

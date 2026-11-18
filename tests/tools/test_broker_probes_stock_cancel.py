@@ -40,6 +40,7 @@ from typing import Any
 import pytest
 import yaml
 
+from tests.support.probe_auth import StubAuth, install_stub_auth
 from tools.broker_probes import probes_order, probes_stock_cancel
 from tools.broker_probes.common import (
     MOCK_HOST,
@@ -379,15 +380,10 @@ def _client(run: ProbeRun) -> Any:
             is_real=False,
             asset="stock",
         ),
-        _StubAuth(),
+        StubAuth(),
         run,
         pace_s=0.0,
     )
-
-
-class _StubAuth:
-    def get_auth_headers(self) -> dict[str, str]:
-        return {"authorization": "Bearer stub"}
 
 
 # ---------------------------------------------------------------------------
@@ -482,9 +478,7 @@ def install(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
 
     def _install(broker: _Broker, *, now: datetime = _IN_WINDOW) -> _Broker:
         monkeypatch.setattr(probes_order, "http_json", broker)
-        monkeypatch.setattr(
-            "shared.kis.auth.KISAuthManager", lambda *a, **k: _StubAuth(), raising=True
-        )
+        install_stub_auth(monkeypatch)
         monkeypatch.setattr(probes_stock_cancel, "_now", lambda: now)
         monkeypatch.setattr(time, "sleep", lambda _s: None)
         return broker
@@ -793,7 +787,7 @@ def test_the_cleanup_never_sells_a_holding_this_run_did_not_buy(
             is_real=False,
             asset="stock",
         ),
-        _StubAuth(),
+        StubAuth(),
         run,
         pace_s=0.0,
     )
@@ -1067,21 +1061,19 @@ def test_a_missing_limit_is_refused_not_defaulted(tmp_path: Path, key: str) -> N
         load_config(path)
 
 
-def test_a_pace_below_its_own_floor_is_refused(tmp_path: Path) -> None:
-    path = _config_file(tmp_path, **{"limits.pace_s": 0.0005})
-    with pytest.raises(ProbeError, match="below limits.pace_s_floor"):
-        load_config(path)
-
-
-def test_a_quantity_above_the_cap_is_refused(tmp_path: Path) -> None:
-    path = _config_file(tmp_path, **{"trials.b.quantity": 99})
-    with pytest.raises(ProbeError, match="exceeds"):
-        load_config(path)
-
-
-def test_a_window_that_does_not_advance_is_refused(tmp_path: Path) -> None:
-    path = _config_file(tmp_path, **{"session.window.end": "09:00"})
-    with pytest.raises(ProbeError, match="not before end"):
+@pytest.mark.parametrize(
+    ("override", "match"),
+    [
+        ({"limits.pace_s": 0.0005}, "below limits.pace_s_floor"),
+        ({"trials.b.quantity": 99}, "exceeds"),
+        ({"session.window.end": "09:00"}, "not before end"),
+    ],
+)
+def test_an_out_of_bound_value_is_refused(
+    tmp_path: Path, override: dict[str, object], match: str
+) -> None:
+    path = _config_file(tmp_path, **override)
+    with pytest.raises(ProbeError, match=match):
         load_config(path)
 
 

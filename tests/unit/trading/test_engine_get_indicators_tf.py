@@ -19,8 +19,14 @@ def test_get_indicators_tf_uses_closed_15m_candles_only():
         hh = 9 + (i // 60)
         mm = i % 60
         minute = hh * 100 + mm
-        c = Candle(open=400.0 + i, high=401.0 + i, low=399.0 + i,
-                   close=400.5 + i, volume=1.0, minute=minute)
+        c = Candle(
+            open=400.0 + i,
+            high=401.0 + i,
+            low=399.0 + i,
+            close=400.5 + i,
+            volume=1.0,
+            minute=minute,
+        )
         eng._feed_mtf_candle(sym, c)
     res = eng.get_indicators_tf(sym, 15)
     assert set(res) >= {"bb_lower", "bb_middle", "bb_upper", "rsi"}
@@ -38,8 +44,7 @@ def test_get_indicators_tf_empty_when_insufficient_closed():
     sym = "X"
     for i in range(10):  # < 1 closed 15m candle
         eng._feed_mtf_candle(
-            sym, Candle(open=1, high=1, low=1, close=1, volume=1,
-                        minute=900 + i)
+            sym, Candle(open=1, high=1, low=1, close=1, volume=1, minute=900 + i)
         )
     assert eng.get_indicators_tf(sym, 15) == {}
 
@@ -53,8 +58,14 @@ def test_get_indicators_tf_cache_hit_returns_copy_and_tracks_stats():
         hh = 9 + (i // 60)
         mm = i % 60
         minute = hh * 100 + mm
-        c = Candle(open=400.0 + i, high=401.0 + i, low=399.0 + i,
-                   close=400.5 + i, volume=1.0, minute=minute)
+        c = Candle(
+            open=400.0 + i,
+            high=401.0 + i,
+            low=399.0 + i,
+            close=400.5 + i,
+            volume=1.0,
+            minute=minute,
+        )
         eng._feed_mtf_candle(sym, c)
 
     # First call: cache miss
@@ -84,8 +95,12 @@ def test_mtf_total_appended_accessor():
     assert eng.mtf_total_appended("missing", 15) == 0
     for i in range(40):
         hh, mm = 9 + i // 60, i % 60
-        eng._feed_mtf_candle(sym, Candle(open=1.0, high=1.0, low=1.0,
-                              close=1.0, volume=1.0, minute=hh * 100 + mm))
+        eng._feed_mtf_candle(
+            sym,
+            Candle(
+                open=1.0, high=1.0, low=1.0, close=1.0, volume=1.0, minute=hh * 100 + mm
+            ),
+        )
     n = eng.mtf_total_appended(sym, 15)
     mtf = eng._mtf_accumulators[sym][15]
     assert n == mtf.total_appended and n >= 2

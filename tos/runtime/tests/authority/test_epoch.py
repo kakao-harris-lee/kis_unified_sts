@@ -8,7 +8,11 @@ from typing import Any
 
 import pytest
 import yaml
-from tos.authority import AuthorityEpochState, AuthorityTransitionReason
+from tos.authority import (
+    AuthorityEpochState,
+    AuthorityEpochTransitionRecord,
+    AuthorityTransitionReason,
+)
 from tos.rcl import CommandType, CommitEntry
 from tos.workload import RuntimeIdentity
 from tos_runtime.authority.epoch import (
@@ -19,11 +23,45 @@ from tos_runtime.authority.epoch import (
     load_authority_config,
 )
 from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
-from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.service import TrustworthyTimeService
 from tos_runtime.time.sources import ReferenceObservation
 
-from .conftest import FakeEvidenceAppendPort, FakeMonotonicSource, make_trusted
+from .conftest import (
+    FakeEvidenceAppendPort,
+    FakeMonotonicSource,
+    _time_config,
+    make_trusted,
+)
+
+
+def _epoch_service(
+    log: SqliteCommitLog,
+    time_service: TrustworthyTimeService,
+    evidence_port: FakeEvidenceAppendPort,
+    writer_epoch: int,
+    config: AuthorityRuntimeConfig,
+    *,
+    authority_domain: str = "acct-main",
+) -> SafetyAuthorityEpochService:
+    """This suite's standard service construction — only the varying parts are arguments."""
+    return SafetyAuthorityEpochService(
+        log,
+        time_service,
+        evidence_port,
+        authority_domain=authority_domain,
+        writer_epoch=writer_epoch,
+        config=config,
+    )
+
+
+def _failover(
+    service: SafetyAuthorityEpochService, *, leader_identity: str = "leader-1"
+) -> AuthorityEpochTransitionRecord:
+    """Commit one ``SAFETY_AUTHORITY_FAILOVER`` transition."""
+    return service.transition(
+        leader_identity=leader_identity,
+        transition_reason=AuthorityTransitionReason.SAFETY_AUTHORITY_FAILOVER,
+    )
 
 
 def test_current_state_is_all_none_before_any_transition(
@@ -37,10 +75,7 @@ def test_current_state_is_all_none_before_any_transition(
 def test_transition_commits_and_current_state_reflects_it(
     epoch_service: SafetyAuthorityEpochService,
 ) -> None:
-    record = epoch_service.transition(
-        leader_identity="leader-1",
-        transition_reason=AuthorityTransitionReason.SAFETY_AUTHORITY_FAILOVER,
-    )
+    record = _failover(epoch_service)
     assert record.old_epoch == 0
     assert record.new_epoch == 1
 
@@ -52,10 +87,7 @@ def test_transition_commits_and_current_state_reflects_it(
 def test_second_transition_strictly_advances_the_epoch_floor(
     epoch_service: SafetyAuthorityEpochService,
 ) -> None:
-    epoch_service.transition(
-        leader_identity="leader-1",
-        transition_reason=AuthorityTransitionReason.SAFETY_AUTHORITY_FAILOVER,
-    )
+    _failover(epoch_service)
     second = epoch_service.transition(
         leader_identity="leader-2",
         transition_reason=AuthorityTransitionReason.LOSS_OF_LEADER_OWNERSHIP,
@@ -73,26 +105,23 @@ def test_current_state_is_domain_scoped(
     authority_config: AuthorityRuntimeConfig,
 ) -> None:
     """A transition committed for one domain is invisible to another domain's service."""
-    service_a = SafetyAuthorityEpochService(
+    service_a = _epoch_service(
         log,
         time_service,
         evidence_port,
+        writer_epoch,
+        authority_config,
         authority_domain="acct-a",
-        writer_epoch=writer_epoch,
-        config=authority_config,
     )
-    service_b = SafetyAuthorityEpochService(
+    service_b = _epoch_service(
         log,
         time_service,
         evidence_port,
+        writer_epoch,
+        authority_config,
         authority_domain="acct-b",
-        writer_epoch=writer_epoch,
-        config=authority_config,
     )
-    service_a.transition(
-        leader_identity="leader-a",
-        transition_reason=AuthorityTransitionReason.SAFETY_AUTHORITY_FAILOVER,
-    )
+    _failover(service_a, leader_identity="leader-a")
     assert service_a.current_epoch() == 1
     assert service_b.current_epoch() is None
 
@@ -101,10 +130,7 @@ def test_epoch_current_helper_reads_through_current_state(
     epoch_service: SafetyAuthorityEpochService,
 ) -> None:
     assert epoch_service.epoch_current(1) is False
-    epoch_service.transition(
-        leader_identity="leader-1",
-        transition_reason=AuthorityTransitionReason.SAFETY_AUTHORITY_FAILOVER,
-    )
+    _failover(epoch_service)
     assert epoch_service.epoch_current(1) is True
     assert epoch_service.epoch_current(0) is False
 
@@ -118,13 +144,8 @@ def test_stale_epoch_read_yields_fenced_state_not_a_raised_exception(
     identity: RuntimeIdentity,
     authority_config: AuthorityRuntimeConfig,
 ) -> None:
-    service = SafetyAuthorityEpochService(
-        log,
-        time_service,
-        evidence_port,
-        authority_domain="acct-main",
-        writer_epoch=writer_epoch,
-        config=authority_config,
+    service = _epoch_service(
+        log, time_service, evidence_port, writer_epoch, authority_config
     )
     make_trusted(time_service)
     second = SqliteCommitLog(log_path, evidence_port=FakeEvidenceAppendPort())
@@ -149,22 +170,14 @@ def test_transition_raises_on_stale_writer_epoch(
     identity: RuntimeIdentity,
     authority_config: AuthorityRuntimeConfig,
 ) -> None:
-    service = SafetyAuthorityEpochService(
-        log,
-        time_service,
-        evidence_port,
-        authority_domain="acct-main",
-        writer_epoch=writer_epoch,
-        config=authority_config,
+    service = _epoch_service(
+        log, time_service, evidence_port, writer_epoch, authority_config
     )
     second = SqliteCommitLog(log_path, evidence_port=FakeEvidenceAppendPort())
     try:
         second.acquire_epoch(identity)
         with pytest.raises(AuthorityEpochTransitionRefused):
-            service.transition(
-                leader_identity="leader-1",
-                transition_reason=AuthorityTransitionReason.SAFETY_AUTHORITY_FAILOVER,
-            )
+            _failover(service)
     finally:
         second.close()
 
@@ -183,34 +196,12 @@ def test_witness_present_false_before_time_service_started(
     unstarted_time = TrustworthyTimeService(
         monotonic=FakeMonotonicSource(1_000),
         references=[_Reader()],
-        config=TrustworthyTimeConfig(
-            max_time_source_precision_ms=5,
-            max_time_transport_and_queue_uncertainty_ms=10,
-            max_time_conservative_freshness_age_ms=1000,
-            max_future_timestamp_tolerance_ms=200,
-            max_process_suspension_ms=0,
-            max_time_source_disagreement_ms=50,
-            min_time_independent_reference_count=1,
-            max_clock_domain_conversion_uncertainty_ms=50,
-            max_send_result_wait_ms=5000,
-            max_critical_input_consumer_receipt_age_ms=1000,
-            max_time_source_sequence_gap_ms=50,
-            tz_db_version="2026a",
-            trading_calendar_version="cal-1",
-            verification_profile_version="vp-0",
-            safety_profile_version="sp-0",
-            time_health_snapshot_heartbeat_ms=60_000,
-        ),
+        config=_time_config(),
         identity=identity,
         evidence=evidence_port,
     )
-    service = SafetyAuthorityEpochService(
-        log,
-        unstarted_time,
-        evidence_port,
-        authority_domain="acct-main",
-        writer_epoch=writer_epoch,
-        config=authority_config,
+    service = _epoch_service(
+        log, unstarted_time, evidence_port, writer_epoch, authority_config
     )
     witness = service.witness()
     assert witness.present is False
@@ -224,13 +215,8 @@ def test_witness_present_false_when_time_not_yet_trusted(
     writer_epoch: int,
     authority_config: AuthorityRuntimeConfig,
 ) -> None:
-    service = SafetyAuthorityEpochService(
-        log,
-        time_service,
-        evidence_port,
-        authority_domain="acct-main",
-        writer_epoch=writer_epoch,
-        config=authority_config,
+    service = _epoch_service(
+        log, time_service, evidence_port, writer_epoch, authority_config
     )
     time_service.evaluate()
     witness = service.witness()
@@ -255,13 +241,8 @@ def test_witness_present_false_when_containment_bound_unconfigured(
 ) -> None:
     make_trusted(time_service)
     unconfigured = AuthorityRuntimeConfig(containment_bound_ms=None)
-    service = SafetyAuthorityEpochService(
-        log,
-        time_service,
-        evidence_port,
-        authority_domain="acct-main",
-        writer_epoch=writer_epoch,
-        config=unconfigured,
+    service = _epoch_service(
+        log, time_service, evidence_port, writer_epoch, unconfigured
     )
     witness = service.witness()
     assert witness.present is False
@@ -381,52 +362,88 @@ def test_witness_zero_bound_is_true_only_at_the_exact_read_instant(
     """``containment_bound_ms=0`` (never returned by"""
     make_trusted(time_service)
     zero_bound = AuthorityRuntimeConfig(containment_bound_ms=0)
-    service = SafetyAuthorityEpochService(
-        log,
-        time_service,
-        evidence_port,
-        authority_domain="acct-main",
-        writer_epoch=writer_epoch,
-        config=zero_bound,
-    )
+    service = _epoch_service(log, time_service, evidence_port, writer_epoch, zero_bound)
     assert service.witness().present is True
     assert service.witness().present is True
 
 
-def test_load_authority_config_null_bound_refuses_to_start(tmp_path: Path) -> None:
+def _authority_config_file(
+    tmp_path: Path, *, containment_bound_ms: int | None, policy_generation: int | None
+) -> Path:
+    """Write one ``authority.yaml`` carrying exactly these two fields."""
     path = tmp_path / "authority.yaml"
     path.write_text(
         yaml.safe_dump(
-            {"containment_bound_ms": None, "trading_approval_policy_generation": 1}
+            {
+                "containment_bound_ms": containment_bound_ms,
+                "trading_approval_policy_generation": policy_generation,
+            }
         )
     )
-    with pytest.raises(AuthorityConfigError):
-        load_authority_config(path)
+    return path
 
 
-def test_load_authority_config_null_policy_generation_refuses_to_start(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("containment_bound_ms", "policy_generation"),
+    [(None, 1), (250, None)],
+    ids=["null-bound", "null-policy-generation"],
+)
+def test_load_authority_config_refuses_to_start_on_a_null_field(
+    tmp_path: Path, containment_bound_ms: int | None, policy_generation: int | None
 ) -> None:
-    path = tmp_path / "authority.yaml"
-    path.write_text(
-        yaml.safe_dump(
-            {"containment_bound_ms": 250, "trading_approval_policy_generation": None}
-        )
+    path = _authority_config_file(
+        tmp_path,
+        containment_bound_ms=containment_bound_ms,
+        policy_generation=policy_generation,
     )
     with pytest.raises(AuthorityConfigError):
         load_authority_config(path)
 
 
 def test_load_authority_config_accepts_a_positive_bound(tmp_path: Path) -> None:
-    path = tmp_path / "authority.yaml"
-    path.write_text(
-        yaml.safe_dump(
-            {"containment_bound_ms": 250, "trading_approval_policy_generation": 3}
-        )
+    path = _authority_config_file(
+        tmp_path, containment_bound_ms=250, policy_generation=3
     )
     config = load_authority_config(path)
     assert config.containment_bound_ms == 250
     assert config.trading_approval_policy_generation == 3
+
+
+def test_load_authority_config_leaves_the_optional_use_count_absent(
+    tmp_path: Path,
+) -> None:
+    """An absent ``standing_approval_max_uses_per_action`` is ``None``, never a value."""
+    path = _authority_config_file(
+        tmp_path, containment_bound_ms=250, policy_generation=1
+    )
+    assert load_authority_config(path).standing_approval_max_uses_per_action is None
+
+
+def test_load_authority_config_reads_the_optional_use_count(tmp_path: Path) -> None:
+    path = _authority_config_file(
+        tmp_path, containment_bound_ms=250, policy_generation=1
+    )
+    path.write_text(
+        path.read_text() + "standing_approval_max_uses_per_action: 390\n",
+        encoding="utf-8",
+    )
+    assert load_authority_config(path).standing_approval_max_uses_per_action == 390
+
+
+@pytest.mark.parametrize("value", ["null", "0", "-1", "'390'", "true"])
+def test_load_authority_config_refuses_a_present_but_unusable_use_count(
+    tmp_path: Path, value: str
+) -> None:
+    """Present-and-invalid is fail-closed, so a typo never silently becomes one use."""
+    path = _authority_config_file(
+        tmp_path, containment_bound_ms=250, policy_generation=1
+    )
+    path.write_text(
+        path.read_text() + f"standing_approval_max_uses_per_action: {value}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AuthorityConfigError, match="standing_approval_max_uses"):
+        load_authority_config(path)
 
 
 def test_load_authority_config_rejects_missing_file(tmp_path: Path) -> None:
@@ -445,10 +462,7 @@ def test_current_state_uses_the_new_advance_authority_epoch_command_type(
     epoch_service: SafetyAuthorityEpochService,
 ) -> None:
     """A freshly-committed transition is written under the new, dedicated"""
-    epoch_service.transition(
-        leader_identity="leader-1",
-        transition_reason=AuthorityTransitionReason.SAFETY_AUTHORITY_FAILOVER,
-    )
+    _failover(epoch_service)
     view = epoch_service._log.read_linearizable(  # noqa: SLF001 - test-internal check
         writer_epoch=epoch_service._writer_epoch  # noqa: SLF001
     )
@@ -475,13 +489,8 @@ def test_current_state_raises_on_a_legacy_kind_entry_under_the_epoch_prefix(
 
     assert isinstance(receipt, AppendReceipt)
 
-    service = SafetyAuthorityEpochService(
-        log,
-        time_service,
-        evidence_port,
-        authority_domain="acct-main",
-        writer_epoch=writer_epoch,
-        config=authority_config,
+    service = _epoch_service(
+        log, time_service, evidence_port, writer_epoch, authority_config
     )
     with pytest.raises(CommitLogCorruption):
         service.current_state()

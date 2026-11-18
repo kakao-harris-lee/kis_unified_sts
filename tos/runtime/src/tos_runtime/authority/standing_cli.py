@@ -16,7 +16,7 @@ from tos.dsl.serialization import parse_strategy
 from tos.engine.admission import strategy_admissible
 from tos.venue.vocabulary import ActionClass
 
-from tos_runtime.authority.epoch import load_authority_config
+from tos_runtime.authority.epoch import AuthorityRuntimeConfig, load_authority_config
 from tos_runtime.authority.standing import (
     STANDING_APPROVAL_RELPATH,
     STANDING_APPROVAL_SCHEMA,
@@ -60,6 +60,7 @@ __all__ = [
 COMMAND = "write-standing-approval"
 _ACTION_CHOICES = ("entry", "exit")
 _DEFAULT_POLICY_ID = "standing-session-approval"
+_DEFAULT_MAX_USES_PER_ACTION = 1
 
 
 class StandingApprovalRefused(RuntimeError):
@@ -74,7 +75,7 @@ class StandingApprovalArgs:
     trading_date: str
     max_quantity: int
     actions: tuple[str, ...]
-    max_uses_per_action: int
+    max_uses_per_action: int | None
     replace: bool
 
 
@@ -161,6 +162,16 @@ def _action(
     }
 
 
+def _max_uses_per_action(
+    explicit: int | None, authority: AuthorityRuntimeConfig
+) -> int:
+    """The explicit flag, else ``authority.yaml``'s key, else one (operator 2026-11-18)."""
+    if explicit is not None:
+        return explicit
+    configured = authority.standing_approval_max_uses_per_action
+    return _DEFAULT_MAX_USES_PER_ACTION if configured is None else configured
+
+
 def derive_standing_document(args: StandingApprovalArgs) -> dict[str, Any]:
     """Build the artifact mapping for ``args`` (module docstring)."""
     config_dir = args.config_dir
@@ -177,11 +188,14 @@ def derive_standing_document(args: StandingApprovalArgs) -> dict[str, Any]:
     if not args.actions or set(args.actions) - set(_ACTION_CHOICES):
         raise StandingApprovalRefused(f"actions must be a subset of {_ACTION_CHOICES}")
     strategy = _strategy(config_dir)
+    authority = load_authority_config(config_dir / _AUTHORITY_CONFIG_NAME)
     instrument, actions = _actions(
-        config_dir, strategy, args.actions, args.max_uses_per_action
+        config_dir,
+        strategy,
+        args.actions,
+        _max_uses_per_action(args.max_uses_per_action, authority),
     )
     release = load_release_config(config_dir / _RELEASE_CONFIG_NAME)
-    authority = load_authority_config(config_dir / _AUTHORITY_CONFIG_NAME)
     document = {
         "schema": STANDING_APPROVAL_SCHEMA,
         "environment_label": args.environment_label,
@@ -253,7 +267,16 @@ def add_standing_approval_subparser(subparsers: argparse._SubParsersAction) -> N
     parser.add_argument("--trading-date", required=True, type=_trading_date)
     parser.add_argument("--max-quantity", type=int, default=1)
     parser.add_argument("--actions", type=_actions_arg, default=("entry", "exit"))
-    parser.add_argument("--max-uses-per-action", type=int, default=1)
+    parser.add_argument(
+        "--max-uses-per-action",
+        type=int,
+        default=None,
+        help=(
+            "Per-action use count. Omitted, it comes from the tree's "
+            "authority.yaml::standing_approval_max_uses_per_action, and from "
+            f"{_DEFAULT_MAX_USES_PER_ACTION} when that key is absent."
+        ),
+    )
     parser.add_argument("--replace", action="store_true")
 
 

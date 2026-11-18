@@ -40,6 +40,8 @@ from tos.egressgw import (
 from tos.engine import (
     CAPSULE_CONTEXT_SOURCE,
     AttemptRequest,
+    EgressResultKind,
+    EgressResultPayload,
     InstrumentKey,
     build_attempt_request,
 )
@@ -512,6 +514,45 @@ def full_fill_transport() -> SyntheticPaperTransport:
     return SyntheticPaperTransport(
         SyntheticFillPolicy(fill_numerator=1, fill_denominator=1, lot_size=LOT_SIZE)
     )
+
+
+def declared_transport(kind: EgressResultKind) -> SyntheticPaperTransport:
+    """A synthetic transport declaring one non-fill outcome (UNKNOWN / TIMEOUT / ACK / REJECT)."""
+    return SyntheticPaperTransport(SyntheticFillPolicy(declared_kind=kind))
+
+
+class RaisingTransport:
+    """A transport that records its calls and raises — the established TRANSPORT_RAISED path."""
+
+    def __init__(self) -> None:
+        """Start with no recorded calls."""
+        self.calls = 0
+
+    def send_once(self, attempt: AttemptRequest, **_: Any) -> EgressResultPayload:
+        """Count the call and fail."""
+        del attempt
+        self.calls += 1
+        raise RuntimeError("synthetic transport unavailable")
+
+
+class WrongAttemptTransport:
+    """A transport that answers about a *different* attempt (a mismatch, not a fault)."""
+
+    def __init__(self) -> None:
+        """Start with no recorded calls."""
+        self.calls = 0
+
+    def send_once(
+        self, attempt: AttemptRequest, *, instrument_key: InstrumentKey, **_: Any
+    ) -> EgressResultPayload:
+        """Return a well-formed result naming somebody else's attempt."""
+        del attempt
+        self.calls += 1
+        return EgressResultPayload(
+            instrument_key=instrument_key,
+            attempt_id="attempt-somebody-else",
+            kind=EgressResultKind.ACK,
+        )
 
 
 def build_gateway(

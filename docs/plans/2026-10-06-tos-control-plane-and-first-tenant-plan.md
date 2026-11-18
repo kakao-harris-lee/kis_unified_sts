@@ -16,7 +16,8 @@
 - [공개/내부 인터페이스 목록](../architecture/tos-public-interfaces.md)
 - [Legacy disposition](../migration/legacy-disposition.md)
 - `기존 migration 정본`
-- [기존 runtime 운영 배선 계획](2026-09-13-tos-runtime-operations-wiring-plan.md)
+- `기존 runtime 운영 배선 계획` — 2026-11-14 은퇴, git 이력에 있다
+  (`git log --diff-filter=D -- docs/plans/`)
 - [paper 부팅 런북](../runbooks/tos-paper-boot.md), [cold backup 런북](../runbooks/tos-evidence-cold-backup.md)
 
 기각 대안: 새 `app/` 프레임워크는 runtime 중복, legacy executor 래핑은 방화벽 위반,
