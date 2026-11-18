@@ -38,6 +38,8 @@ class FillObserverConfig:
     release_snapshot_max_age_ms: int
     held_position_poll_interval_ms: int | None = None
     held_position_max_age_ms: int | None = None
+    ack_date_recovery_lookback_trading_days: int | None = None
+    ack_date_recovery_deadline_ms: int | None = None
 
 
 _WITNESS_KEYS = (
@@ -85,6 +87,16 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         raise FillObserverConfigError(
             f"{path}: held position bounds must be supplied together"
         )
+    recovery_keys = (
+        "ack_date_recovery_lookback_trading_days",
+        "ack_date_recovery_deadline_ms",
+    )
+    if any(key in raw for key in recovery_keys) and not all(
+        key in raw for key in recovery_keys
+    ):
+        raise FillObserverConfigError(
+            f"{path}: ACK date recovery bounds must be supplied together"
+        )
     missing = [key for key in _WITNESS_KEYS if key not in raw]
     if missing:
         raise FillObserverConfigError(f"{path}: missing {missing}")
@@ -117,6 +129,16 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         held_position_max_age_ms=(
             _positive_int(raw, "held_position_max_age_ms", path)
             if "held_position_max_age_ms" in raw
+            else None
+        ),
+        ack_date_recovery_lookback_trading_days=(
+            _positive_int(raw, "ack_date_recovery_lookback_trading_days", path)
+            if "ack_date_recovery_lookback_trading_days" in raw
+            else None
+        ),
+        ack_date_recovery_deadline_ms=(
+            _positive_int(raw, "ack_date_recovery_deadline_ms", path)
+            if "ack_date_recovery_deadline_ms" in raw
             else None
         ),
     )

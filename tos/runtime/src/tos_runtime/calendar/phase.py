@@ -13,10 +13,17 @@ __all__ = [
     "session_phase_at",
     "maturity_at",
     "effective_phase_at",
+    "recent_trading_dates",
     "trading_date_at",
 ]
 
 _BOUNDARY_SEARCH_HORIZON_DAYS = 8
+
+# Calendar days searched per trading date asked for by `recent_trading_dates`. It is a SEARCH
+# bound, not a policy threshold: how far back to look is the caller's configured count. Seven
+# gives every requested date a whole week of closures to survive (KRX's longest run of
+# consecutive non-trading days is five), so the walk ends on the count, not on this.
+_TRADING_DAY_SEARCH_SPAN_DAYS = 7
 
 _SOURCE = "calendar"
 
@@ -97,6 +104,37 @@ def trading_date_at(
     if window.crosses_midnight:
         return None
     return start_dt.strftime("%Y%m%d")
+
+
+def _is_trading_day(
+    day: datetime.date, instrument_class: str, cfg: CalendarConfig
+) -> bool:
+    """Whether ``instrument_class`` has any session occurrence on ``day``."""
+    if day in cfg.holidays:
+        return False
+    return any(
+        day.weekday() in window.days for window in cfg.windows_on(day, instrument_class)
+    )
+
+
+def recent_trading_dates(
+    today: str, instrument_class: str, cfg: CalendarConfig, count: int
+) -> tuple[str, ...]:
+    """The ``count`` most recent dates ``instrument_class`` trades on, ending at ``today``"""
+    if count <= 0 or instrument_class not in cfg.sessions:
+        return ()
+    try:
+        anchor = datetime.datetime.strptime(today, "%Y%m%d").date()
+    except ValueError:
+        return ()
+    found: list[str] = []
+    for offset in range(count * _TRADING_DAY_SEARCH_SPAN_DAYS):
+        day = anchor - datetime.timedelta(days=offset)
+        if _is_trading_day(day, instrument_class, cfg):
+            found.append(day.strftime("%Y%m%d"))
+            if len(found) == count:
+                break
+    return tuple(reversed(found))
 
 
 def session_phase_at(

@@ -21,6 +21,7 @@ from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
     "build_fetch_plan",
+    "due_ack_date_scan",
     "due_recovery_attempts",
     "preempt_risk_only_fetch",
     "release_scope",
@@ -45,10 +46,13 @@ class _PlanSource(Protocol):
     publish_held_position_snapshot: Callable[[HeldPositionSnapshot], None] | None
     pending_recovery_attempt_ids: Callable[[], tuple[str, ...]] | None
     resume_entry_discharge: Callable[[str], object] | None
+    trading_dates_back: Callable[[int], tuple[str, ...]] | None
     _last_poll_ms: int | None
     _last_held_position_poll_ms: int | None
     _last_prior_day_read_ms: dict[str, int]
     _last_recovery_resume_ms: dict[str, int]
+    _last_ack_date_scan_ms: dict[str, int]
+    _undated_acks: tuple[tuple[str, str], ...]
 
     def _tracked_attempts(self) -> dict[str, Any]: ...
 
@@ -88,6 +92,44 @@ def due_recovery_attempts(source: _PlanSource, now: int) -> tuple[str, ...]:
         source._last_recovery_resume_ms[attempt_id] = now
         due.append(attempt_id)
     return tuple(due)
+
+
+def due_ack_date_scan(
+    source: _PlanSource, now: int
+) -> tuple[tuple[tuple[str, WitnessScope], ...], tuple[tuple[str, str], ...]]:
+    """Issue #1096: the per-date reads to scan and the dateless ACKs due a scan, or two empties."""
+    lookback = source.config.ack_date_recovery_lookback_trading_days
+    if lookback is None or source.trading_dates_back is None:
+        return (), ()
+    due = []
+    for target in source._undated_acks:
+        last = source._last_ack_date_scan_ms.get(target[0])
+        if last is not None and now - last < source.config.prior_day_poll_interval_ms:
+            continue
+        due.append(target)
+    if not due:
+        return (), ()
+    try:
+        dates = source.trading_dates_back(lookback)
+    except Exception:  # noqa: BLE001 -- an unreadable calendar is not a scan window
+        return (), ()
+    if not dates:
+        return (), ()
+    for target in due:
+        source._last_ack_date_scan_ms[target[0]] = now
+    instrument_key = InstrumentKey(account=source.account, instrument=source.instrument)
+    reads = tuple(
+        (
+            date,
+            WitnessScope(
+                account=source.account,
+                instrument_keys=(instrument_key,),
+                order_dates=(date,),
+            ),
+        )
+        for date in dates
+    )
+    return reads, tuple(due)
 
 
 def due_attempt_read(source: _PlanSource, attempt: Any, now: int) -> bool:
@@ -231,7 +273,8 @@ def build_fetch_plan(source: _PlanSource) -> FetchPlan | None:
         if not attempt.terminal and due_attempt_read(source, attempt, now)
     ]
     recovery_ids = due_recovery_attempts(source, now)
-    fill_work_due = bool(pending or reproject_ids or recovery_ids)
+    ack_date_reads, ack_date_targets = due_ack_date_scan(source, now)
+    fill_work_due = bool(pending or reproject_ids or recovery_ids or ack_date_targets)
     held_interval = source.config.held_position_poll_interval_ms
     held_position_due = (
         not fill_work_due
@@ -244,7 +287,13 @@ def build_fetch_plan(source: _PlanSource) -> FetchPlan | None:
         )
         and _held_position_is_eligible(source)
     )
-    if not pending and not reproject_ids and not held_position_due and not recovery_ids:
+    if (
+        not pending
+        and not reproject_ids
+        and not held_position_due
+        and not recovery_ids
+        and not ack_date_targets
+    ):
         return None
     if pending:
         source._last_poll_ms = now
@@ -297,4 +346,11 @@ def build_fetch_plan(source: _PlanSource) -> FetchPlan | None:
         held_position_token=position_token,
         recovery_attempt_ids=recovery_ids,
         evidence_seq_at_plan=evidence_seq_at_plan,
+        ack_date_reads=ack_date_reads,
+        ack_date_targets=ack_date_targets,
+        ack_date_deadline_ms=(
+            None
+            if source.config.ack_date_recovery_deadline_ms is None
+            else now + source.config.ack_date_recovery_deadline_ms
+        ),
     )

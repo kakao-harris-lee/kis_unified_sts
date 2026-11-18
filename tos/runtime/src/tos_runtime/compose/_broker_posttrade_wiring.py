@@ -12,6 +12,8 @@ from tos.engine.records import EgressResultPayload, EngineEvent
 from tos.engine.vocabulary import EventKind, ResultDisposition
 
 from tos_runtime.brokercap import BrokerScopesConfig
+from tos_runtime.calendar.config import CalendarConfig
+from tos_runtime.calendar.phase import recent_trading_dates
 from tos_runtime.compose._held_position_wiring import HeldPositionBridge
 from tos_runtime.compose._kis_credential_wiring import (
     KisCredentialSessionsCell,
@@ -57,9 +59,27 @@ __all__ = [
     "DeferredKisWitness",
     "attach_fill_observer",
     "build_broker_posttrade",
+    "build_trading_dates_back",
     "close_fill_observer",
     "fill_observer_pass",
 ]
+
+
+def build_trading_dates_back(
+    trading_date_now: Callable[[], str | None],
+    *,
+    instrument_class: str,
+    calendar: CalendarConfig,
+) -> Callable[[int], tuple[str, ...]]:
+    """Issue #1096's scan window: the N most recent trading dates ending at the trusted trading"""
+
+    def _dates(count: int) -> tuple[str, ...]:
+        today = trading_date_now()
+        if today is None:
+            return ()
+        return recent_trading_dates(today, instrument_class, calendar, count)
+
+    return _dates
 
 
 class _TrustedTradingDate:
@@ -353,6 +373,7 @@ def attach_fill_observer(
     posttrade: BrokerPosttrade,
     *,
     monotonic: MonotonicSource,
+    trading_dates_back: Callable[[int], tuple[str, ...]] | None = None,
 ) -> ComposedRuntime:
     """Attach the observer (stock MOCK boots with a wired driver only) and record the witness"""
     if not posttrade.enabled:
@@ -425,6 +446,7 @@ def attach_fill_observer(
         resume_entry_discharge=(
             None if recovery is None else recovery.resume_entry_discharge
         ),
+        trading_dates_back=trading_dates_back,
     )
     return runtime
 

@@ -22,6 +22,7 @@ from tos_runtime.compose._broker_facts_wiring import build_broker_facts
 from tos_runtime.compose._broker_posttrade_wiring import (
     attach_fill_observer,
     build_broker_posttrade,
+    build_trading_dates_back,
     fill_observer_pass,
 )
 from tos_runtime.compose._finalize_wiring import _finalize
@@ -422,7 +423,14 @@ def compose_paper_runtime(
         ),
     )
     composed = attach_fill_observer(
-        composed, posttrade, monotonic=boot.infra.monotonic_source
+        composed,
+        posttrade,
+        monotonic=boot.infra.monotonic_source,
+        trading_dates_back=build_trading_dates_back(
+            trading_date_reader,
+            instrument_class=construction.instrument_class,
+            calendar=calendar_config,
+        ),
     )
     boot.risk.recovery_dimension_state.verdict = composed.recovery
     composed.marketfeed = build_tick_scheduler(

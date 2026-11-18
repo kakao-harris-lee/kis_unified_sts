@@ -145,6 +145,12 @@ class FetchPlan:
     held_position_token: int | None = None
     recovery_attempt_ids: tuple[str, ...] = ()
     evidence_seq_at_plan: int | None = None
+    #: Issue #1096: the trading dates to scan for a dateless ACK's ODNO, and the
+    #: ``(attempt_id, broker_execution_id)`` pairs being looked up, under their own deadline
+    #: (the scan is many paced GETs, so it cannot share the per-poll one).
+    ack_date_reads: tuple[tuple[str, WitnessScope], ...] = ()
+    ack_date_targets: tuple[tuple[str, str], ...] = ()
+    ack_date_deadline_ms: int | None = None
 
     @property
     def risk_only(self) -> bool:
@@ -154,6 +160,7 @@ class FetchPlan:
             and not self.reads
             and not self.reproject_ids
             and not self.recovery_attempt_ids
+            and not self.ack_date_reads
         )
 
 
@@ -165,6 +172,9 @@ class FetchResult:
     reads: tuple[tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable], ...]
     snapshot: PrefetchedSnapshot | None
     held_position_snapshot: HeldPositionSnapshot | None = None
+    ack_date_reads: tuple[
+        tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable], ...
+    ] = ()
 
 
 class OrderRowsReader(Protocol):
@@ -293,6 +303,34 @@ def _held_position_snapshot(
     )
 
 
+def _ack_date_reads(
+    plan: FetchPlan,
+    *,
+    orders: OrderRowsReader,
+    monotonic: MonotonicSource,
+    stop: Callable[[], bool],
+) -> tuple[tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable], ...]:
+    """Issue #1096's ODNO scan: one order read per candidate trading date, under the scan's own"""
+    if not plan.ack_date_reads:
+        return ()
+    deadline = plan.ack_date_deadline_ms
+
+    def _expired() -> bool:
+        return stop() or (deadline is not None and monotonic.now_ms() >= deadline)
+
+    reads: list[tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable]] = []
+    for date, scope in plan.ack_date_reads:
+        try:
+            _date, rows = orders.order_rows(
+                scope, inquiry_date=date, deadline_expired=_expired
+            )
+        except WitnessUnavailable as exc:
+            reads.append((date, exc))
+            continue
+        reads.append((date, rows))
+    return tuple(reads)
+
+
 def run_fetch(
     plan: FetchPlan,
     *,
@@ -333,6 +371,11 @@ def run_fetch(
         reads=tuple(reads),
         snapshot=snapshot,
         held_position_snapshot=held_position_snapshot,
+        # Last: the ODNO scan is the only read here with a deadline of its own, so it must not
+        # delay the fill reads or the snapshot it would otherwise age.
+        ack_date_reads=_ack_date_reads(
+            plan, orders=orders, monotonic=monotonic, stop=stop
+        ),
     )
 
 
