@@ -27,6 +27,9 @@ on:
       - 'Makefile'
       - 'pyproject.toml'
       - '.github/workflows/devcontainer.yml'
+      # The two-pass run itself: it is what both jobs below execute, so a change
+      # to it is a change to this workflow and must re-run both jobs.
+      - 'scripts/ci/unit_smoke.sh'
   pull_request:
     branches: [main]
     paths: *paths
