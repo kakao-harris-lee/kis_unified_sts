@@ -108,22 +108,61 @@ def test_redis_tls_module_shares_the_one_live_infra_reading():
     The input that used to split them is "on": `tests/conftest.py` dropped the
     hermetic session and loaded real credentials, while the TLS module's own
     copy skipped every test in it.
+
+    Read as SOURCE, never imported. `tests/integration/test_redis_tls.py` carries
+    five module-level `@pytest.mark.skipif(not redis_available(), ...)`, and a
+    skipif argument is evaluated at import time -- so importing that module from
+    this unit test would make up to five real Redis connections (1s socket
+    timeout each) whenever KIS_RUN_LIVE_INFRA_TESTS is set and Redis is down.
+    A unit test must not reach for the network to check a fact about a file.
     """
-    from tests.integration import test_redis_tls
-    from tests.support import live_infra
+    import ast
+    from pathlib import Path
 
-    assert test_redis_tls.live_infra_enabled is live_infra.live_infra_enabled
+    source = (
+        Path(__file__).resolve().parents[3]
+        / "tests"
+        / "integration"
+        / "test_redis_tls.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    imported_from = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and any(alias.name == "live_infra_enabled" for alias in node.names)
+    }
+    assert imported_from == {"tests.support.live_infra"}, (
+        "test_redis_tls.py must take live_infra_enabled from the shared helper; "
+        f"found {imported_from or 'no import of it'}"
+    )
+
+    local_definitions = [
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "live_infra_enabled"
+    ]
+    assert not local_definitions, (
+        "test_redis_tls.py defines its own live_infra_enabled again -- that is "
+        "the second truthy set #847 removed"
+    )
 
 
-@pytest.mark.parametrize("value", ["on", "ON", "1", "true", "yes"])
+@pytest.mark.parametrize("value", ["on", "ON", "1", "true", "yes", " 1 "])
 def test_live_infra_reading_accepts_on_like_the_hermetic_gate(monkeypatch, value):
-    """Pins the concrete failing input from #847 for every truthy token."""
-    from tests.integration import test_redis_tls
-    from tests.support.live_infra import LIVE_INFRA_ENV
+    """Pins the concrete failing input from #847 for every truthy token.
+
+    Exercises the shared helper itself, which the test above proves is the one
+    `test_redis_tls.py` now calls -- so this stays a unit test and makes no
+    Redis connection. `" 1 "` is here because routing the TLS module through
+    `env_flag` also gained it `.strip()`: the old local copy read it as False.
+    """
+    from tests.support.live_infra import LIVE_INFRA_ENV, live_infra_enabled
 
     monkeypatch.setenv(LIVE_INFRA_ENV, value)
 
-    assert test_redis_tls.live_infra_enabled() is True
+    assert live_infra_enabled() is True
 
 
 def test_storage_env_bool_reads_the_shared_truthy_set():
