@@ -1,4 +1,5 @@
 """Shared utilities."""
+
 from .calc import (
     calc_drop_from_high,
     calc_order_quantity,

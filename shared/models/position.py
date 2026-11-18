@@ -110,7 +110,9 @@ class Position:
         if self.entry_price <= 0:
             return 0.0
 
-        reference = self.exit_price if self.exit_price is not None else self.current_price
+        reference = (
+            self.exit_price if self.exit_price is not None else self.current_price
+        )
 
         if self.side == PositionSide.LONG:
             return (reference - self.entry_price) / self.entry_price

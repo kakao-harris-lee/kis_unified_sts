@@ -133,9 +133,7 @@ class CircuitBreakerMetrics:
         if self.successes_total:
             self.successes_total.labels(name=name).inc()
 
-    def record_state_change(
-        self, name: str, from_state: str, to_state: str
-    ) -> None:
+    def record_state_change(self, name: str, from_state: str, to_state: str) -> None:
         """Record a state transition.
 
         Args:

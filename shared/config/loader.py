@@ -368,9 +368,7 @@ class ConfigLoader:
         else:
             strategies_dir = config_dir / "strategies"
             if strategies_dir.exists():
-                search_dirs.extend(
-                    d for d in strategies_dir.iterdir() if d.is_dir()
-                )
+                search_dirs.extend(d for d in strategies_dir.iterdir() if d.is_dir())
 
         # 각 디렉토리에서 YAML 파일 로드
         for dir_path in search_dirs:
@@ -389,7 +387,10 @@ class ConfigLoader:
                     # asset_class 필터 — built/ 디렉토리는 stock/futures를 섞을
                     # 수 있으므로 호출자가 자산을 지정한 경우 yaml 내용으로
                     # 다시 거른다.
-                    if asset_class and strategy_config.get("asset_class") != asset_class:
+                    if (
+                        asset_class
+                        and strategy_config.get("asset_class") != asset_class
+                    ):
                         continue
 
                     # enabled 필터
@@ -421,9 +422,7 @@ class ConfigLoader:
         else:
             strategies_dir = config_dir / "strategies"
             if strategies_dir.exists():
-                search_dirs.extend(
-                    d for d in strategies_dir.iterdir() if d.is_dir()
-                )
+                search_dirs.extend(d for d in strategies_dir.iterdir() if d.is_dir())
 
         for dir_path in search_dirs:
             if not dir_path.exists():
@@ -477,7 +476,9 @@ class ConfigLoader:
         with cls._cache_lock:
             # Create new dict without matching keys (atomic replacement)
             cls._cache = {
-                k: v for k, v in cls._cache.items() if not k.startswith(cache_key_prefix)
+                k: v
+                for k, v in cls._cache.items()
+                if not k.startswith(cache_key_prefix)
             }
 
         # Load will acquire lock again if needed

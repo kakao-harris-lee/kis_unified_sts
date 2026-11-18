@@ -1,4 +1,5 @@
 """API Key authentication middleware."""
+
 import asyncio
 import hmac
 import logging
@@ -71,7 +72,9 @@ class APIKeyMiddleware:
 
         await self.app(scope, receive, send)
 
-    async def _handle_websocket(self, scope: Scope, receive: Receive, send: Send) -> None:
+    async def _handle_websocket(
+        self, scope: Scope, receive: Receive, send: Send
+    ) -> None:
         """Handle WebSocket connections with API key validation.
 
         WebSocket auth is done via query parameter since headers
@@ -91,7 +94,9 @@ class APIKeyMiddleware:
                 # Timeout or connection errors are expected during WebSocket close
                 pass
 
-            await send({"type": "websocket.close", "code": 4001, "reason": "Unauthorized"})
+            await send(
+                {"type": "websocket.close", "code": 4001, "reason": "Unauthorized"}
+            )
             return
 
         await self.app(scope, receive, send)
@@ -99,6 +104,7 @@ class APIKeyMiddleware:
     def _parse_query_param(self, query_string: str, param_name: str) -> str | None:
         """Parse a specific query parameter from query string."""
         from urllib.parse import parse_qs
+
         params = parse_qs(query_string)
         values = params.get(param_name)
         return values[0] if values else None

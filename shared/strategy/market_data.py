@@ -40,7 +40,9 @@ def get_price_from_snapshot(snapshot: dict[str, Any]) -> float | None:
     return None
 
 
-def get_numeric_field(snapshot: dict[str, Any], key: str, default: float = 0.0) -> float:
+def get_numeric_field(
+    snapshot: dict[str, Any], key: str, default: float = 0.0
+) -> float:
     """Extract numeric field from snapshot."""
     value = snapshot.get(key, default)
     if isinstance(value, (int, float)):

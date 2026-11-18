@@ -18,9 +18,7 @@ class KISAuthSchema(BaseModel):
     app_key: str = Field(default="", description="KIS API 앱 키")
     app_secret: str = Field(default="", description="KIS API 앱 시크릿")
     is_real: bool = Field(default=True, description="실전투자 여부")
-    token_cache_dir: str | None = Field(
-        default=None, description="토큰 캐시 디렉토리"
-    )
+    token_cache_dir: str | None = Field(default=None, description="토큰 캐시 디렉토리")
     token_expiry_buffer_seconds: int = Field(
         default=600, description="토큰 만료 전 갱신 버퍼 (초)"
     )
@@ -43,9 +41,7 @@ class CircuitBreakerSchema(BaseModel):
 
     enabled: bool = Field(default=False, description="Circuit Breaker 활성화")
     failure_threshold: int = Field(default=5, description="연속 실패 임계값")
-    recovery_timeout_seconds: int = Field(
-        default=60, description="복구 대기 시간 (초)"
-    )
+    recovery_timeout_seconds: int = Field(default=60, description="복구 대기 시간 (초)")
     half_open_max_calls: int = Field(
         default=3, description="Half-open 상태 허용 호출 수"
     )
@@ -68,9 +64,7 @@ class KISConfig(BaseModel):
     """
 
     auth: KISAuthSchema = Field(default_factory=KISAuthSchema)
-    circuit_breaker: CircuitBreakerSchema = Field(
-        default_factory=CircuitBreakerSchema
-    )
+    circuit_breaker: CircuitBreakerSchema = Field(default_factory=CircuitBreakerSchema)
 
 
 class AssetClass(BaseModel):
@@ -187,7 +181,9 @@ class MarketScheduleConfig(BaseModel):
 class HolidaysConfig(BaseModel):
     """공휴일 설정"""
 
-    holidays: list[str] = Field(default_factory=list, description="휴장일 목록 (YYYY-MM-DD)")
+    holidays: list[str] = Field(
+        default_factory=list, description="휴장일 목록 (YYYY-MM-DD)"
+    )
 
     def to_date_set(self) -> set:
         """date 객체 set으로 변환"""
@@ -281,7 +277,9 @@ class NotificationsConfig(BaseModel):
         default_factory=TelegramNotificationConfig
     )
     levels: NotificationLevelsConfig = Field(default_factory=NotificationLevelsConfig)
-    filters: NotificationFiltersConfig = Field(default_factory=NotificationFiltersConfig)
+    filters: NotificationFiltersConfig = Field(
+        default_factory=NotificationFiltersConfig
+    )
     events: NotificationEventsConfig = Field(default_factory=NotificationEventsConfig)
 
 

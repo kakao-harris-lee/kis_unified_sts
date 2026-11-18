@@ -245,9 +245,7 @@ class ExitSignalGenerator(ABC, Generic[TConfig]):
         return "1.0"
 
     @abstractmethod
-    async def should_exit(
-        self, context: ExitContext
-    ) -> tuple[bool, ExitSignal | None]:
+    async def should_exit(self, context: ExitContext) -> tuple[bool, ExitSignal | None]:
         """청산 여부 판단
 
         Returns:
@@ -336,9 +334,7 @@ class TradingStrategy:
         """진입 조건 확인"""
         return await self.entry.generate(context)
 
-    async def check_exit(
-        self, context: ExitContext
-    ) -> tuple[bool, ExitSignal | None]:
+    async def check_exit(self, context: ExitContext) -> tuple[bool, ExitSignal | None]:
         """청산 조건 확인"""
         return await self.exit.should_exit(context)
 
