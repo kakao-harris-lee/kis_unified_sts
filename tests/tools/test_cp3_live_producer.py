@@ -41,6 +41,7 @@ from tools.tos_cp3.live_producer import band_line as band_line_mod
 from tools.tos_cp3.live_producer import band_probe
 from tools.tos_cp3.live_producer import calendar as calendar_mod
 from tools.tos_cp3.live_producer import config as config_mod
+from tools.tos_cp3.live_producer import declaration as declaration_mod
 from tools.tos_cp3.live_producer import frame as frame_mod
 from tools.tos_cp3.live_producer import line as line_mod
 from tools.tos_cp3.live_producer import producer as producer_mod
@@ -460,6 +461,25 @@ def _build(tmp_path: Path, market: Market, **overrides: Any):
         quotes_factory=lambda _config, _log: quotes,
     )
     return producer, clock, quotes
+
+
+def _declaration_inputs() -> tuple[Any, Any]:
+    """What ``load_declaration`` binds :data:`TENANT_TREE` against in a session.
+
+    The shipped futures Setup D YAML (the producer config's own
+    ``strategy_yaml``) and the 08:45 anchor that tree's declaration counts
+    from — the pair the bind accepts, so a test can exercise everything around
+    it without a boot.
+    """
+    strategy = load_strategy_inputs(
+        _REPO_ROOT / "config" / "strategies" / "futures" / "setup_d_vwap_reversion.yaml"
+    )
+    anchor = resolve_open_anchor(
+        cli_value=f"{OPEN_HM[0]:02d}:{OPEN_HM[1]:02d}",
+        first_session=TARGET,
+        last_session=TARGET,
+    )
+    return strategy, anchor
 
 
 def _minute_of(raw_event_id: str) -> datetime:
@@ -1673,6 +1693,139 @@ def test_a_declaration_bound_to_another_open_refuses_to_start(
         producer.boot()
     assert not producer.journal_path.exists()
     producer.finish()
+
+
+@pytest.mark.serial
+def test_a_declaration_missing_a_required_param_is_refused_by_the_loader(
+    tmp_path: Path, market: Market
+) -> None:
+    """A tree whose ``session.minutes_since_open`` lost ``open_hour`` refuses.
+
+    **This pins the LOADER's refusal, not the bind's fallback clause**
+    (#1101 re-review LOW 3). ``open_hour`` is a required param in the catalog,
+    so ``parse_fields_document`` refuses the file with a ``FieldSpecError``
+    before the bind ever reads ``params["open_hour"]`` — the refusal here
+    predates #1068 and would hold with the fallback clause removed. What it is
+    worth: the shape the runner sees for this input is a refusal naming the
+    key, not a traceback.
+    ``test_a_bind_that_ends_in_a_bare_lookup_error_is_still_a_refusal`` is the
+    one that pins the clause itself.
+    """
+    import shutil
+
+    tree = tmp_path / "tree"
+    shutil.copytree(TENANT_TREE, tree)
+    fields_yaml = tree / "fields.yaml"
+    raw = yaml.safe_load(fields_yaml.read_text(encoding="utf-8"))
+    spec = next(
+        entry for entry in raw["fields"] if entry["op"] == "session.minutes_since_open"
+    )
+    del spec["params"]["open_hour"]
+    fields_yaml.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    producer, _clock, _quotes = _build(tmp_path, market)
+    producer.tenant_tree = tree
+    with pytest.raises(LiveProducerRefused, match="open_hour"):
+        producer.boot()
+    assert not producer.journal_path.exists()
+    producer.finish()
+
+
+def test_a_bind_that_ends_in_a_bare_lookup_error_is_still_a_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1068 review LOW 1, the fallback clause itself.
+
+    ``parse_fields_document`` refuses a declaration that is missing a required
+    param, so on a loader-accepted file the bind's own ``params[...]`` lookups
+    and ``int()``/``float()`` coercions cannot raise today — which is why the
+    test above goes through the loader's refusal. This pins the fallback: an
+    exception the bind did not dress up still reaches the caller as the
+    ``LiveProducerRefused`` the runner knows, and the message names BOTH files
+    whose values the bind compares (#1101 re-review LOW 2).
+    """
+    strategy, anchor = _declaration_inputs()
+
+    def _raise(*_args: Any, **_kwargs: Any) -> None:
+        raise KeyError("open_hour")
+
+    monkeypatch.setattr(declaration_mod, "assert_declaration_binds_to_the_run", _raise)
+    with pytest.raises(LiveProducerRefused, match="open_hour") as excinfo:
+        declaration_mod.load_declaration(TENANT_TREE, strategy=strategy, anchor=anchor)
+    message = str(excinfo.value)
+    assert str(TENANT_TREE / "fields.yaml") in message
+    assert str(strategy.path) in message
+    assert isinstance(excinfo.value.__cause__, KeyError)
+
+
+def test_the_declaration_is_read_once_and_the_digest_is_those_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1101 re-review LOW 1. The parse and the digest see the SAME read.
+
+    Two reads cannot be told apart by their result on a file nobody is editing
+    — so this counts them. A second read is also a second answer to "which
+    declaration is this session's", and the lineage carries only one.
+    """
+    strategy, anchor = _declaration_inputs()
+    real_read_bytes = Path.read_bytes
+    reads: list[str] = []
+
+    def _counting(self: Path) -> bytes:
+        if self.name == "fields.yaml":
+            reads.append(str(self))
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", _counting)
+    _document, record = declaration_mod.load_declaration(
+        TENANT_TREE, strategy=strategy, anchor=anchor
+    )
+
+    assert reads == [str(TENANT_TREE / "fields.yaml")]
+    monkeypatch.undo()
+    assert (
+        record["fields_yaml_sha256"]
+        == hashlib.sha256((TENANT_TREE / "fields.yaml").read_bytes()).hexdigest()
+    )
+
+
+@pytest.mark.serial
+def test_the_lineage_digest_is_the_declaration_the_bind_accepted(
+    tmp_path: Path, market: Market, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1068 review LOW 2. One read of ``fields.yaml``, one digest.
+
+    The concrete wrong output a second read gives: the file edited after the
+    bind accepted it (here, between the declaration and the seed) is the one
+    the lineage names — a digest that no field in this session was computed
+    from, recorded as the provenance of every published row.
+    """
+    import shutil
+
+    tree = tmp_path / "tree"
+    shutil.copytree(TENANT_TREE, tree)
+    fields_yaml = tree / "fields.yaml"
+    accepted = hashlib.sha256(fields_yaml.read_bytes()).hexdigest()
+
+    real_build_seed = producer_mod.build_seed
+
+    def _touch_then_build(*args: Any, **kwargs: Any):
+        # The declaration is loaded and bound by now; a re-read at lineage
+        # time would hash THESE bytes instead.
+        fields_yaml.write_text(
+            fields_yaml.read_text(encoding="utf-8") + "\n# edited mid-boot\n",
+            encoding="utf-8",
+        )
+        return real_build_seed(*args, **kwargs)
+
+    monkeypatch.setattr(producer_mod, "build_seed", _touch_then_build)
+    producer, _clock, _quotes = _build(tmp_path, market)
+    producer.tenant_tree = tree
+    producer.boot()
+    producer.finish()
+
+    assert hashlib.sha256(fields_yaml.read_bytes()).hexdigest() != accepted
+    assert producer.fields_yaml_sha256 == accepted
 
 
 @pytest.mark.serial
