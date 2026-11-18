@@ -7,6 +7,13 @@
 # tests/unit only. Full parity is test.yml's job, not this one's.
 set -euo pipefail
 
+# Repo root = grandparent of this script's directory. The `tests/unit` paths
+# below are relative, so without this the run depends on the caller's cwd --
+# it happens to be right for both jobs today (/app, and the dev container's
+# workspace folder), which is exactly the kind of thing that breaks quietly.
+# Same form as .devcontainer/post-create.sh.
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
 PYTEST_FLAGS=(--timeout=180 --timeout-method=thread -q)
 
 # Pass 1: everything NOT marked `serial`, under pytest-xdist.
