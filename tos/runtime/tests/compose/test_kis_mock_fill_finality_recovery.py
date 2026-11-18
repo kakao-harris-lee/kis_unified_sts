@@ -523,3 +523,70 @@ def test_a_replay_onto_a_ledger_that_already_holds_a_reservation_refuses_the_boo
         _boot(tmp_path, config_dir, data_dir, custody_root)
     (halt,) = _evidence_kinds(data_dir, "ENGINE_LEDGER_NOT_PRISTINE")
     assert halt["instrument"] == fx.instrument_key().instrument
+
+
+def test_a_dateless_ack_is_recovered_from_the_broker_and_releases_once(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """Issue #1096 end to end: the 2026-11-13 shape, from the dateless ACK to the release.
+
+    The incident's mechanism is reproduced, not simulated: the egress trading-date reader answers
+    ``None`` (a stale date clock), so the ACK row the transport records genuinely has no
+    ``trading_date`` key — the attempt is untrackable and its reservation would stay
+    ``COMMITTED_UNBOUND`` for ever. One bounded ODNO scan of the broker's own order rows recovers
+    the date, the fill is then observed normally, and the release commits exactly once.
+    """
+    _deploy(config_dir, custody_root, server, monkeypatch)
+    _set_observer_config(config_dir, ack_date_recovery_lookback_trading_days=1)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "tos_runtime.compose.root.build_egress_trading_date_reader",
+            lambda *_a, **_k: (lambda: None),
+        )
+        runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    result = _drive_crossing_tick(runtime, custody_root)
+    assert result.flow is not None and result.flow.handed_off is True
+
+    ack = _ack(runtime)
+    assert "trading_date" not in ack, "the incident's ACK carried no trading date"
+    attempt_id = ack["attempt_id"]
+    qty = _sealed_quantity(runtime)
+    observer = runtime.fill_observer
+    assert observer is not None
+    date = observer.today()
+    assert isinstance(date, str)
+    _script_broker(
+        server,
+        config_dir,
+        date,
+        [_row(date=date, ord_qty=qty, filled=qty, remaining=Decimal(0))],
+    )
+    assert _rcl_releases(runtime) == 0
+
+    assert observer.poll_once().polled is False
+    (untrackable,) = _rows(runtime, "FILL_OBSERVER_ACK_UNTRACKABLE")
+    assert (untrackable["attempt_id"], untrackable["reason"]) == (
+        attempt_id,
+        "no_trading_date",
+    )
+    (verdict,) = _rows(runtime, "FILL_OBSERVER_ACK_DATE_RECOVERY")
+    assert verdict["outcome"] == "recovered"
+    assert (verdict["attempt_id"], verdict["trading_date"]) == (attempt_id, date)
+    assert _rows(runtime, "FILL_OBSERVED") == []
+
+    report = observer.poll_once()
+    assert [(k, d) for _a, k, d in report.emitted] == [
+        (EgressResultKind.FULL_FILL, ResultDisposition.APPLIED)
+    ]
+    (observed,) = _rows(runtime, "FILL_OBSERVED")
+    assert observed["trading_date"] == date
+    assert _rcl_state(runtime) is CapacityState.POSITION_CONSUMED
+    assert _rcl_releases(runtime, attempt_id=attempt_id) == 1
+    assert len(_rows(runtime, "POSTTRADE_FINALITY_PROOF")) == 1
+    assert _rows(runtime, "CAPACITY_RELEASE_HELD") == []
+
+    repeat = observer.poll_once()
+    assert repeat.emitted == () and repeat.reprojected == ()
+    assert _rcl_releases(runtime, attempt_id=attempt_id) == 1
+    assert len(_rows(runtime, "FILL_OBSERVER_ACK_DATE_RECOVERY")) == 1
+    _close(runtime)

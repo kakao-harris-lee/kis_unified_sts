@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from tos.engine.records import InstrumentKey
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.fill_ack_date_recovery import AckDateScan
 from tos_runtime.posttrade.fill_fetch import (
     FetchPlan,
     HeldPositionSnapshot,
@@ -21,6 +22,7 @@ from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
     "build_fetch_plan",
+    "due_ack_date_scan",
     "due_recovery_attempts",
     "preempt_risk_only_fetch",
     "release_scope",
@@ -45,10 +47,14 @@ class _PlanSource(Protocol):
     publish_held_position_snapshot: Callable[[HeldPositionSnapshot], None] | None
     pending_recovery_attempt_ids: Callable[[], tuple[str, ...]] | None
     resume_entry_discharge: Callable[[str], object] | None
+    trading_dates_back: Callable[[int], tuple[str, ...]] | None
     _last_poll_ms: int | None
     _last_held_position_poll_ms: int | None
     _last_prior_day_read_ms: dict[str, int]
     _last_recovery_resume_ms: dict[str, int]
+    _last_ack_date_scan_ms: dict[str, int]
+    _undated_acks: tuple[tuple[str, str], ...]
+    _ack_scan: AckDateScan
 
     def _tracked_attempts(self) -> dict[str, Any]: ...
 
@@ -88,6 +94,56 @@ def due_recovery_attempts(source: _PlanSource, now: int) -> tuple[str, ...]:
         source._last_recovery_resume_ms[attempt_id] = now
         due.append(attempt_id)
     return tuple(due)
+
+
+def _ack_date_scope(source: _PlanSource, date: str) -> tuple[str, WitnessScope]:
+    instrument_key = InstrumentKey(account=source.account, instrument=source.instrument)
+    return date, WitnessScope(
+        account=source.account,
+        instrument_keys=(instrument_key,),
+        order_dates=(date,),
+    )
+
+
+def due_ack_date_scan(
+    source: _PlanSource, now: int, *, idle: bool
+) -> tuple[str, WitnessScope] | None:
+    """Issue #1096: the ONE scan date this FETCH may read, or ``None``.
+
+    ``idle`` is the whole of M1/M2's fix: the scan never shares a FETCH with fill, recovery, or
+    held-position work, so it can neither age a release snapshot nor defer a holdings refresh. A
+    window already open is continued one date at a time; a new one starts at the configured
+    cadence and is anchored so ``today`` advancing mid-scan cannot change the dates being judged.
+    """
+    if (
+        source.config.ack_date_recovery_lookback_trading_days is None
+        or source.trading_dates_back is None
+        or not idle
+    ):
+        return None
+    if source._ack_scan.active:
+        date = source._ack_scan.next_date()
+        return None if date is None else _ack_date_scope(source, date)
+    due = []
+    for target in source._undated_acks:
+        last = source._last_ack_date_scan_ms.get(target[0])
+        if last is not None and now - last < source.config.prior_day_poll_interval_ms:
+            continue
+        due.append(target)
+    if not due:
+        return None
+    try:
+        dates = source.trading_dates_back(
+            source.config.ack_date_recovery_lookback_trading_days
+        )
+    except Exception:  # noqa: BLE001 -- an unreadable calendar is not a scan window
+        return None
+    if not dates:
+        return None
+    for target in due:
+        source._last_ack_date_scan_ms[target[0]] = now
+    source._ack_scan.start(dates, tuple(due))
+    return _ack_date_scope(source, dates[0])
 
 
 def due_attempt_read(source: _PlanSource, attempt: Any, now: int) -> bool:
@@ -244,7 +300,16 @@ def build_fetch_plan(source: _PlanSource) -> FetchPlan | None:
         )
         and _held_position_is_eligible(source)
     )
-    if not pending and not reproject_ids and not held_position_due and not recovery_ids:
+    ack_date_read = due_ack_date_scan(
+        source, now, idle=not fill_work_due and not held_position_due
+    )
+    if (
+        not pending
+        and not reproject_ids
+        and not held_position_due
+        and not recovery_ids
+        and ack_date_read is None
+    ):
         return None
     if pending:
         source._last_poll_ms = now
@@ -297,4 +362,5 @@ def build_fetch_plan(source: _PlanSource) -> FetchPlan | None:
         held_position_token=position_token,
         recovery_attempt_ids=recovery_ids,
         evidence_seq_at_plan=evidence_seq_at_plan,
+        ack_date_read=ack_date_read,
     )

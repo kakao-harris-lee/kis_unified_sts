@@ -132,3 +132,46 @@ release_snapshot_max_age_ms: 6000
 # pacing; the guard's first draft admitted it, review-1014 r1 M1).
 held_position_poll_interval_ms: 12000
 held_position_max_age_ms: 20000
+
+# Dateless-ACK date recovery (issue #1096, incident 2026-11-13). One stock MOCK ACK row
+# (EGRESS_RESULT_CONSUMED, evidence seq 2364) was written with no `trading_date` key, so the
+# observer dropped it from the tracked set on EVERY boot (FILL_OBSERVER_ACK_UNTRACKABLE
+# no_trading_date), its entry reservation stayed COMMITTED_UNBOUND, and the ARE limit of 1 stayed
+# saturated — every later entry DENYed. #1074 stamps the date on new ACKs; evidence is
+# append-only, so the row already written can only be repaired by asking the broker. When an ACK
+# has no date, the observer reads 주식일별주문체결조회 for each of the trading dates below and
+# looks for its ODNO. EXACTLY ONE matching date is recorded (FILL_OBSERVER_ACK_DATE_RECOVERY,
+# outcome `recovered`) and the attempt is tracked from the next pass; zero or more than one
+# matching dates keep the existing fail-closed refusal (outcome `no_match` / `ambiguous`, the
+# attempt stays untracked). GET only — this path never sends an order.
+#
+# The bound is optional; omit it and no scan is ever planned (the pre-#1096 behaviour).
+#
+# How far back to look, in the TENANT CALENDAR's own trading dates (calendar.yaml holidays and
+# session_overrides included), ending at today inclusive. 5: the incident's ACK was two trading
+# days old when the saturation was found (11-13 order, 11-16 diagnosis) and the operator
+# workaround (leaf archive + genesis) was applied the next session, so one trading week covers
+# the realistic "the runtime was down over a weekend and a holiday" case without widening the
+# window enough to meet an unrelated order that reuses the ODNO. It does NOT loosen the match
+# rule — a second matching date is `ambiguous`, which stays fail-closed.
+#
+# ⚠ Recovery only works while the ACK's own date is still inside this window. Measured on this
+# tenant's calendar: a scan on 20261116 reads 20261110..20261116 (so the 11-13 incident row is
+# in), and a scan on 20261120 no longer reaches 11-13. A dateless ACK older than this still
+# needs the leaf archive + genesis workaround, or this number raised.
+#
+# COST (review-1105 M1/M2). The scan reads ONE date per FETCH, and only in a FETCH that has no
+# fill, recovery, or held-position work to delay — so its cost is one paced GET
+# (kis_mock_transport.yaml::min_send_interval_ms 2000 + ~0.2 s, P-11 2026-08-05) in an otherwise
+# idle pass, bounded by poll_deadline_ms like every other read. It therefore cannot age the
+# release snapshot (release_snapshot_max_age_ms 6000, measured from that snapshot's own read
+# start — the scan read is issued BEFORE it) and cannot defer the holdings refresh
+# (held_position_poll_interval_ms 12000 / held_position_max_age_ms 20000), whose plan wins the
+# pass outright. Raising this number costs one more such pass, not a longer one.
+#
+# Each date's rows are held until the whole window has answered; only then is a verdict reached.
+# A failed read anywhere in the window abandons the scan with NO verdict (a window with a hole
+# cannot tell "this ODNO is on no other date" from "we did not look"), and the whole window is
+# retried one attempt-cadence later — prior_day_poll_interval_ms (10 min), the same cadence an
+# unresolved earlier-day ACK gets.
+ack_date_recovery_lookback_trading_days: 5

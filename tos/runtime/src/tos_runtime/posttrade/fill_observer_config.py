@@ -38,6 +38,7 @@ class FillObserverConfig:
     release_snapshot_max_age_ms: int
     held_position_poll_interval_ms: int | None = None
     held_position_max_age_ms: int | None = None
+    ack_date_recovery_lookback_trading_days: int | None = None
 
 
 _WITNESS_KEYS = (
@@ -117,6 +118,11 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         held_position_max_age_ms=(
             _positive_int(raw, "held_position_max_age_ms", path)
             if "held_position_max_age_ms" in raw
+            else None
+        ),
+        ack_date_recovery_lookback_trading_days=(
+            _positive_int(raw, "ack_date_recovery_lookback_trading_days", path)
+            if "ack_date_recovery_lookback_trading_days" in raw
             else None
         ),
     )

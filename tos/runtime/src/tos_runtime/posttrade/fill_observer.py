@@ -13,6 +13,12 @@ from tos.engine.records import EgressResultPayload, InstrumentKey
 from tos.engine.vocabulary import EgressResultKind, ResultDisposition
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.fill_ack_date_recovery import (
+    FILL_OBSERVER_ACK_DATE_RECOVERY_KIND,
+    AckDateScan,
+    recovered_trading_dates,
+    resolve_ack_dates,
+)
 from tos_runtime.posttrade.fill_fetch import (
     FetchPlan,
     FetchResult,
@@ -41,6 +47,7 @@ from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
     "FILL_OBSERVED_KIND",
+    "FILL_OBSERVER_ACK_DATE_RECOVERY_KIND",
     "FILL_OBSERVER_CANCEL_UNSUPPORTED_KIND",
     "FILL_OBSERVER_CONFIG_NAME",
     "FILL_OBSERVER_ACK_UNTRACKABLE_KIND",
@@ -168,6 +175,7 @@ class KisMockFillObserver:
     publish_held_position_snapshot: Callable[[HeldPositionSnapshot], None] | None = None
     pending_recovery_attempt_ids: Callable[[], tuple[str, ...]] | None = None
     resume_entry_discharge: Callable[[str], object] | None = None
+    trading_dates_back: Callable[[int], tuple[str, ...]] | None = None
     _last_poll_ms: int | None = field(default=None, init=False)
     _last_reproject_ms: dict[str, int] = field(default_factory=dict, init=False)
     _untrackable_recorded: set[str] = field(default_factory=set, init=False)
@@ -183,6 +191,16 @@ class KisMockFillObserver:
     _last_held_position_poll_ms: int | None = field(default=None, init=False)
     _last_recovery_resume_ms: dict[str, int] = field(default_factory=dict, init=False)
     _preempted_for_fill: bool = field(default=False, init=False)
+    _last_ack_date_scan_ms: dict[str, int] = field(default_factory=dict, init=False)
+    _undated_acks: tuple[tuple[str, str], ...] = field(default=(), init=False)
+    _ack_scan: AckDateScan = field(default_factory=AckDateScan, init=False)
+    _claimed_order_days: frozenset[tuple[str, str, str]] = field(
+        default=frozenset(), init=False
+    )
+    # ``None`` until the first pass that actually meets a dateless ACK (review-1105 L2): a leaf
+    # with nothing to recover never runs the query. Recording a verdict resets it to ``None`` so
+    # the next pass re-reads the durable rows rather than trusting this cache.
+    _recovered_dates: dict[str, str] | None = field(default=None, init=False)
 
     def poll_if_due(self) -> FillPollReport:
         """The session loop's call (issue #950): never waits on the broker."""
@@ -300,6 +318,7 @@ class KisMockFillObserver:
                 unattributed.extend(self._flag_unattributed(outcome, tracked))
                 emitted.extend(self._emit(on_date, outcome, held))
         self._record_snapshot_uses(uses)
+        self._apply_ack_date_read(result.ack_date_read)
         if result.reads and not read_failed:
             self._last_read_failed = False
         return FillPollReport(
@@ -510,6 +529,8 @@ class KisMockFillObserver:
             _RESULT_KINDS,
         ).fetchall()
         tracked: dict[str, _Tracked] = {}
+        undated: list[tuple[str, str]] = []
+        claimed: set[tuple[str, str, str]] = set()
         for evidence_kind, payload_json in rows:
             row = json.loads(payload_json).get("payload", {})
             key = row.get("instrument_key") or {}
@@ -524,23 +545,38 @@ class KisMockFillObserver:
                 continue
             if not isinstance(attempt_id, str):
                 continue
+            stamped = row.get("trading_date")
+            raw_odno = row.get("broker_execution_id")
+            if isinstance(stamped, str) and isinstance(raw_odno, str):
+                stamped_key = odno_key(raw_odno)
+                if stamped_key is not None:
+                    claimed.add((stamped_key, stamped, attempt_id))
             if attempt_id not in tracked:
+                odno = row.get("broker_execution_id")
                 if (
                     evidence_kind == "EGRESS_RESULT_CONSUMED"
                     and kind is EgressResultKind.ACK
-                    and isinstance(row.get("broker_execution_id"), str)
-                    and self._trackable(
-                        attempt_id, row["broker_execution_id"], row.get("trading_date")
-                    )
+                    and isinstance(odno, str)
                 ):
-                    tracked[attempt_id] = _Tracked(
-                        attempt_id=attempt_id,
-                        instrument_key=InstrumentKey(
-                            account=self.account, instrument=self.instrument
-                        ),
-                        odno=row["broker_execution_id"],
-                        trading_date=row["trading_date"],
+                    # Issue #1096: an ACK written before #1074 carries no date; a completed
+                    # broker scan that found its ODNO on exactly one trading date supplies one.
+                    date = (
+                        stamped
+                        if isinstance(stamped, str)
+                        else self._recovered_date(attempt_id)
                     )
+                    trackable = self._trackable(attempt_id, odno, date)
+                    if trackable is not None:
+                        tracked[attempt_id] = _Tracked(
+                            attempt_id=attempt_id,
+                            instrument_key=InstrumentKey(
+                                account=self.account, instrument=self.instrument
+                            ),
+                            odno=odno,
+                            trading_date=trackable,
+                        )
+                    elif date is None and odno_key(odno) is not None:
+                        undated.append((attempt_id, odno))
                 continue
             attempt = tracked[attempt_id]
             filled = _decimal(row.get("filled_quantity"))
@@ -566,13 +602,51 @@ class KisMockFillObserver:
             attempt.stuck = attempt.attempt_id in stuck
             if attempt.terminal:
                 attempt.released = self.release_committed(attempt.attempt_id)
+        self._undated_acks = tuple(undated)
+        self._claimed_order_days = frozenset(claimed)
         return tracked
 
-    def _trackable(self, attempt_id: str, odno: str, trading_date: Any) -> bool:
+    def _apply_ack_date_read(
+        self, read: tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable] | None
+    ) -> None:
+        """Keep one scan date's rows; judge the window only once every date in it has answered."""
+        if read is None or not self._ack_scan.active:
+            return
+        date, outcome = read
+        if isinstance(outcome, WitnessUnavailable):
+            self._ack_scan.clear()
+            return
+        if not self._ack_scan.record(date, outcome):
+            return
+        recovered = resolve_ack_dates(
+            self._ack_scan,
+            instrument=self.instrument,
+            sealed=self._sealed_quantities(),
+            claimed=self._claimed_order_days,
+            evidence_store=self.evidence_store,
+            record=self._record,
+        )
+        self._ack_scan.clear()
+        if recovered:
+            self._recovered_dates = None
+
+    def _recovered_date(self, attempt_id: str) -> str | None:
+        """The date a completed scan gave this ACK — the durable rows are read at most once."""
+        if self.trading_dates_back is None or (
+            self.config.ack_date_recovery_lookback_trading_days is None
+        ):
+            return None
+        if self._recovered_dates is None:
+            self._recovered_dates = recovered_trading_dates(self.evidence_store)
+        return self._recovered_dates.get(attempt_id)
+
+    def _trackable(
+        self, attempt_id: str, odno: str, trading_date: str | None
+    ) -> str | None:
         """An ACK that cannot be joined to a broker row by ODNO is never tracked; one"""
-        dated = isinstance(trading_date, str)
+        dated = trading_date is not None
         if dated and odno_key(odno) is not None:
-            return True
+            return trading_date
         if attempt_id not in self._untrackable_recorded:
             already = self.evidence_store.connection.execute(
                 "SELECT COUNT(*) FROM entries WHERE kind = ? AND payload_json LIKE ?",
@@ -583,7 +657,7 @@ class KisMockFillObserver:
                 fields["reason"] = "odno_no_digits" if dated else "no_trading_date"
                 self._record(FILL_OBSERVER_ACK_UNTRACKABLE_KIND, fields)
             self._untrackable_recorded.add(attempt_id)
-        return False
+        return None
 
     def _apply_absent_rows(self, tracked: dict[str, _Tracked]) -> None:
         """An ``ENGINE_RESERVATION_ABSENT`` row holds only while the engine lacks the attempt"""

@@ -145,6 +145,10 @@ class FetchPlan:
     held_position_token: int | None = None
     recovery_attempt_ids: tuple[str, ...] = ()
     evidence_seq_at_plan: int | None = None
+    #: Issue #1096: ONE trading date of a dateless ACK's ODNO scan, read under this plan's own
+    #: ``deadline_ms`` like every other read here. One date per FETCH, never the whole window
+    #: (review-1105 M1/M2), and only in a FETCH that has no other work to delay.
+    ack_date_read: tuple[str, WitnessScope] | None = None
 
     @property
     def risk_only(self) -> bool:
@@ -154,6 +158,7 @@ class FetchPlan:
             and not self.reads
             and not self.reproject_ids
             and not self.recovery_attempt_ids
+            and self.ack_date_read is None
         )
 
 
@@ -165,6 +170,9 @@ class FetchResult:
     reads: tuple[tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable], ...]
     snapshot: PrefetchedSnapshot | None
     held_position_snapshot: HeldPositionSnapshot | None = None
+    ack_date_read: tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable] | None = (
+        None
+    )
 
 
 class OrderRowsReader(Protocol):
@@ -293,6 +301,25 @@ def _held_position_snapshot(
     )
 
 
+def _ack_date_read(
+    plan: FetchPlan,
+    *,
+    orders: OrderRowsReader,
+    expired: Callable[[], bool],
+) -> tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable] | None:
+    """Issue #1096's ODNO scan: ONE candidate trading date's order rows, on this plan's deadline."""
+    if plan.ack_date_read is None:
+        return None
+    date, scope = plan.ack_date_read
+    try:
+        _date, rows = orders.order_rows(
+            scope, inquiry_date=date, deadline_expired=expired
+        )
+    except WitnessUnavailable as exc:
+        return date, exc
+    return date, rows
+
+
 def run_fetch(
     plan: FetchPlan,
     *,
@@ -318,6 +345,10 @@ def run_fetch(
             continue
         reads.append((date, rows))
         releasing = releasing or may_release(plan, rows)
+    # BEFORE both snapshots (review-1105 M1): each snapshot's age runs from its own read start,
+    # so work placed after one ages it — a scan read here cannot. A scan is planned only into an
+    # otherwise-idle FETCH, so in practice neither snapshot is read in the same pass at all.
+    ack_date_read = _ack_date_read(plan, orders=orders, expired=_expired)
     held_position_snapshot = _held_position_snapshot(
         plan, snapshots=snapshots, monotonic=monotonic, stop=stop
     )
@@ -333,6 +364,7 @@ def run_fetch(
         reads=tuple(reads),
         snapshot=snapshot,
         held_position_snapshot=held_position_snapshot,
+        ack_date_read=ack_date_read,
     )
 
 
