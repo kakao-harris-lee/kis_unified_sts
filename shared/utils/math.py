@@ -1,4 +1,5 @@
 """Math utilities with safety checks."""
+
 import logging
 
 logger = logging.getLogger(__name__)

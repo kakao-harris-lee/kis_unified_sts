@@ -127,7 +127,10 @@ class MarketContext:
         Returns:
             True if overall_signal is BULLISH or STRONG_BULLISH.
         """
-        return self.overall_signal in (MarketSignal.BULLISH, MarketSignal.STRONG_BULLISH)
+        return self.overall_signal in (
+            MarketSignal.BULLISH,
+            MarketSignal.STRONG_BULLISH,
+        )
 
     def is_bearish(self) -> bool:
         """Check if overall market signal is bearish.
@@ -135,7 +138,10 @@ class MarketContext:
         Returns:
             True if overall_signal is BEARISH or STRONG_BEARISH.
         """
-        return self.overall_signal in (MarketSignal.BEARISH, MarketSignal.STRONG_BEARISH)
+        return self.overall_signal in (
+            MarketSignal.BEARISH,
+            MarketSignal.STRONG_BEARISH,
+        )
 
     def is_high_risk(self, threshold: float = 70.0) -> bool:
         """Check if risk score exceeds a threshold.

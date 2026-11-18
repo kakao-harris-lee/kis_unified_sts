@@ -439,7 +439,9 @@ class FuturesTradingPlan:
 
     def to_telegram_message(self) -> str:
         """텔레그램 메시지 변환"""
-        emoji = "📈" if self.direction == "롱" else "📉" if self.direction == "숏" else "⏸️"
+        emoji = (
+            "📈" if self.direction == "롱" else "📉" if self.direction == "숏" else "⏸️"
+        )
         catalysts_text = "\n".join(f"  • {c}" for c in self.catalysts[:3])
         risks_text = "\n".join(f"  ⚠️ {r}" for r in self.risk_factors[:3])
 
@@ -524,7 +526,9 @@ class StockDetailedBriefing:
         else:
             conf_emoji = "🔴"
 
-        trend_emoji = "📈" if self.trend == "상승" else "📉" if self.trend == "하락" else "➡️"
+        trend_emoji = (
+            "📈" if self.trend == "상승" else "📉" if self.trend == "하락" else "➡️"
+        )
         reasons_text = "\n".join(f"  • {r}" for r in self.selection_reasons[:4])
         risks_text = "\n".join(f"  ⚠️ {r}" for r in self.risk_factors[:2])
 
