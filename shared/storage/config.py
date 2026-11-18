@@ -15,6 +15,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from shared.config.base import ServiceConfigBase
+from shared.config.dotenv_guard import TRUTHY_VALUES
 from shared.config.loader import ConfigNotFoundError
 
 RuntimeStorageBackend = Literal["sqlite", "null"]
@@ -23,10 +24,23 @@ DashboardTradeStatsSource = Literal["runtime_ledger"]
 
 
 def _env_bool(name: str) -> bool | None:
+    """Tri-state env flag: ``None`` when unset or empty, else the truthy test.
+
+    This is NOT :func:`shared.config.env_flag` and cannot become it: the
+    ``${VAR}`` substitution path below has to tell "unset" apart from "false",
+    and ``env_flag`` folds both to ``False``. What IS shared is the truthy
+    SET — the duplicated literal that let the repo's env-flag helpers drift
+    apart is what #847 was opened about, so the set lives in exactly one place
+    (:data:`shared.config.TRUTHY_VALUES`) and this reads it.
+
+    The value is deliberately not stripped, unlike ``env_flag``: changing that
+    here would widen what counts as true for the runtime-storage flags, which
+    is a behaviour change, not a de-duplication.
+    """
     value = os.environ.get(name)
     if value is None or value == "":
         return None
-    return value.lower() in ("true", "1", "yes", "on")
+    return value.lower() in TRUTHY_VALUES
 
 
 _EMBEDDED_ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")

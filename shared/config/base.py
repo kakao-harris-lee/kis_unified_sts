@@ -48,6 +48,7 @@ except ImportError:
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from shared.config.dotenv_guard import TRUTHY_VALUES
 from shared.config.loader import ConfigError, ConfigLoader, ConfigNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -406,7 +407,8 @@ class ServiceConfigBase(BaseModel):
 
         # Type-specific parsing
         if actual_type is bool or str(actual_type) == "<class 'bool'>":
-            return value.lower() in ("true", "1", "yes", "on")
+            # The shared truthy set, not a fourth copy of it (#847).
+            return value.lower() in TRUTHY_VALUES
         elif actual_type is int or str(actual_type) == "<class 'int'>":
             return int(value)
         elif actual_type is float or str(actual_type) == "<class 'float'>":

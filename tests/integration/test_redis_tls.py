@@ -13,18 +13,23 @@ import os
 
 import pytest
 
+# This module used to carry its OWN copy of `live_infra_enabled`, reading the
+# same variable with the truthy set {"1", "true", "yes"} -- no "on" (#847).
+#
+# The concrete failing input is KIS_RUN_LIVE_INFRA_TESTS=on: tests/conftest.py
+# and tests/support/live_infra.py accept it, so the hermetic session is dropped
+# and real credentials load, while this module's own copy returned False and
+# skipped every TLS test here. Credentials loaded, nothing gained -- exactly the
+# failure tests/support/live_infra.py's docstring was written about, re-created
+# one directory over. Importing the shared helper is what keeps the two
+# readings of one variable from disagreeing again.
+from tests.support.live_infra import live_infra_enabled
+
 # Skip all tests in this module if Redis is not available.
 # serial: connects to a real Redis with short socket timeouts; under the
 # parallel pass, Redis contention from other xdist workers times the connection
 # out (run in the serial pass instead — see pyproject `serial` marker).
 pytestmark = [pytest.mark.integration, pytest.mark.serial]
-
-_LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
-
-
-def live_infra_enabled():
-    """Return whether live Redis tests may touch infrastructure."""
-    return os.getenv(_LIVE_INFRA_ENV, "").lower() in {"1", "true", "yes"}
 
 
 def redis_available():
