@@ -13,18 +13,7 @@ import os
 
 import pytest
 
-# Skip all tests in this module if Redis is not available.
-# serial: connects to a real Redis with short socket timeouts; under the
-# parallel pass, Redis contention from other xdist workers times the connection
-# out (run in the serial pass instead — see pyproject `serial` marker).
-pytestmark = [pytest.mark.integration, pytest.mark.serial]
-
-from tests.support.live_infra import LIVE_INFRA_ENV as _LIVE_INFRA_ENV
-from tests.support.live_infra import live_infra_enabled
-
-__all__ = ["live_infra_enabled", "_LIVE_INFRA_ENV"]
-
-# This module used to carry its own copy of `live_infra_enabled`, reading the
+# This module used to carry its OWN copy of `live_infra_enabled`, reading the
 # same variable with the truthy set {"1", "true", "yes"} -- no "on" (#847).
 #
 # The concrete failing input is KIS_RUN_LIVE_INFRA_TESTS=on: tests/conftest.py
@@ -34,6 +23,13 @@ __all__ = ["live_infra_enabled", "_LIVE_INFRA_ENV"]
 # failure tests/support/live_infra.py's docstring was written about, re-created
 # one directory over. Importing the shared helper is what keeps the two
 # readings of one variable from disagreeing again.
+from tests.support.live_infra import live_infra_enabled
+
+# Skip all tests in this module if Redis is not available.
+# serial: connects to a real Redis with short socket timeouts; under the
+# parallel pass, Redis contention from other xdist workers times the connection
+# out (run in the serial pass instead — see pyproject `serial` marker).
+pytestmark = [pytest.mark.integration, pytest.mark.serial]
 
 
 def redis_available():
