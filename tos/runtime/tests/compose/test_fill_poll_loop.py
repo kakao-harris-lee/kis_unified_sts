@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -69,16 +69,6 @@ def _short_app_key_interval(monkeypatch: pytest.MonkeyPatch) -> None:
         return original(config_dir, **kwargs)
 
     monkeypatch.setattr(fx, "write_kis_mock_transport_config", _write)
-
-
-@pytest.fixture()
-def server() -> Iterator[FakeKisServer]:
-    srv = FakeKisServer()
-    srv.start()
-    try:
-        yield srv
-    finally:
-        srv.stop()
 
 
 def _as_of_ms() -> int:

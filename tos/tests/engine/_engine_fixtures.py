@@ -29,11 +29,15 @@ from tos.engine import (
     AttemptRequest,
     CommitmentStep,
     DecisionTickPayload,
+    EgressResultKind,
+    EgressResultPayload,
     EngineConfiguration,
     EngineCore,
     EngineEvent,
     EventKind,
     InstrumentKey,
+    ProvisionalReservation,
+    ProvisionalReservationLedger,
     RecordingEvidenceSink,
     SendHandoff,
     Stage,
@@ -266,6 +270,31 @@ def decision_tick(
     )
 
 
+def egress_event(
+    kind: EgressResultKind, attempt_id: str, *, sequence: int = 2, **fills: Any
+) -> EngineEvent:
+    """Build an ``EGRESS_RESULT`` event for the projected attempt."""
+    return EngineEvent(
+        kind=EventKind.EGRESS_RESULT,
+        egress_result=EgressResultPayload(
+            instrument_key=instrument_key(),
+            attempt_id=attempt_id,
+            kind=kind,
+            reference=ordering(sequence),
+            **fills,
+        ),
+    )
+
+
+def outstanding(
+    ledger: ProvisionalReservationLedger, key: InstrumentKey
+) -> ProvisionalReservation:
+    """``ledger.outstanding(key)``, asserted present (absent is a real, reachable case)."""
+    reservation = ledger.outstanding(key)
+    assert reservation is not None
+    return reservation
+
+
 def registry_with(strategy: AuthoredStrategy | None = None) -> StrategyRegistry:
     """A registry holding exactly one admitted strategy."""
     registry = StrategyRegistry()
@@ -350,3 +379,13 @@ def build_core(
         ledger=ledger,
     )
     return core, recording_sink
+
+
+def sent_core() -> tuple[EngineCore, RecordingEvidenceSink, RecordingTransmit, str]:
+    """A core that has completed one flow, so a reservation is projected POTENTIALLY_LIVE."""
+    transmit = RecordingTransmit()
+    core, sink = build_core(transmit=transmit)
+    result = core.handle(decision_tick(sequence=1))
+    assert result.flow is not None and result.flow.handed_off is True
+    assert result.flow.attempt is not None
+    return core, sink, transmit, result.flow.attempt.attempt_id

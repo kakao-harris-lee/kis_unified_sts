@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import ast
-from pathlib import Path
-
 import pytest
 from tos.egress import CommitProofValidity, EgressAdmission, RestrictiveLatchState
 
-_EGRESS_SRC = Path(__file__).resolve().parent.parent.parent / "src" / "tos" / "egress"
+from .._truthiness_scan import package_truthiness_offenders
+
+_SUSPICIOUS = frozenset(
+    {"admission", "validity", "state", "latch_state", "verdict", "result"}
+)
 
 _SEALED_ENUMS = (EgressAdmission, CommitProofValidity, RestrictiveLatchState)
 
@@ -56,37 +57,7 @@ def test_denial_values_would_have_failed_open_under_bare_truthiness() -> None:
     assert bool(str(RestrictiveLatchState.DENY_LATCHED.value)) is True
 
 
-def _bare_truthiness_offenders(path: Path) -> list[str]:
-    """Return ``if <name>:`` / ``if not <name>:`` uses of a verdict-shaped local (AST)."""
-    suspicious = {"admission", "validity", "state", "latch_state", "verdict", "result"}
-    offenders: list[str] = []
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
-            continue
-        test = node.test
-        if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-            test = test.operand
-        if isinstance(test, ast.Name) and test.id in suspicious:
-            offenders.append(f"{path.name}:{node.lineno} bare truthiness on {test.id}")
-    return offenders
-
-
 def test_no_egress_source_uses_bare_truthiness_on_a_verdict() -> None:
     """(source seal) No egress module tests a verdict-shaped value for bare truthiness."""
-    sources = sorted(_EGRESS_SRC.rglob("*.py"))
-    assert sources, f"no tos.egress source files found under {_EGRESS_SRC}"
-    offenders: list[str] = []
-    for path in sources:
-        offenders.extend(_bare_truthiness_offenders(path))
+    offenders = package_truthiness_offenders("egress", _SUSPICIOUS)
     assert offenders == [], f"truthy-sentinel trap reachable: {offenders}"
-
-
-def test_bare_truthiness_scan_detects_a_planted_offender(tmp_path: Path) -> None:
-    """(canary) The AST scan actually catches a planted ``if state:`` (not vacuous)."""
-    planted = tmp_path / "planted.py"
-    planted.write_text(
-        "def f(state):\n    if state:\n        return 1\n    return 0\n",
-        encoding="utf-8",
-    )
-    assert _bare_truthiness_offenders(planted) != []

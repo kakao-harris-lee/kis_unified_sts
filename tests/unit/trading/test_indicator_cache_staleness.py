@@ -10,6 +10,7 @@ Bug (found 2026-05-15 via williams_r_15m backtest producing 0 trades):
 
 Fix: monotonic `total_appended` counters drive cache invalidation instead.
 """
+
 from __future__ import annotations
 
 import pytest

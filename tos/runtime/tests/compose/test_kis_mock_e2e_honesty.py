@@ -5,7 +5,6 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -30,7 +29,7 @@ from ..transport.kis_mock.test_adapter import (
     _retry_primitive_offenders_excluding_pacing,
 )
 from . import _fixtures as fx
-from .conftest import write_approval_file
+from .conftest import approve_constructed_intent
 from .test_compose_root import _compose, _reach_trusted
 from .test_transport_wiring import _activate_mock_stock_order
 
@@ -152,13 +151,11 @@ def _drive_crossing_tick(runtime, custody_root: Path):
     results = runtime.run_once((event,))
     proposal_digest = results[0].pipeline.proposal.canonical_digest
     assert proposal_digest is not None
-    construction = runtime.construction_stage.construction
-    assert construction is not None and construction.intent is not None
-    write_approval_file(
+    approve_constructed_intent(
+        runtime,
         custody_root,
         proposal_digest=proposal_digest,
         environment_label=_ENVIRONMENT_LABEL,
-        approved_intent_envelope_digest=construction.intent.canonical_digest,
     )
     results2 = runtime.run_once((event,))
     return results2[0]
@@ -322,16 +319,6 @@ def _patch_instance_documents_to_host(
     monkeypatch.setattr(
         "tos_runtime.compose._transport_wiring.load_instance_documents", _patched
     )
-
-
-@pytest.fixture()
-def server() -> Iterator[FakeKisServer]:
-    srv = FakeKisServer()
-    srv.start()
-    try:
-        yield srv
-    finally:
-        srv.stop()
 
 
 def test_dry_run_reaches_the_adapter_with_every_verify_item_satisfied(

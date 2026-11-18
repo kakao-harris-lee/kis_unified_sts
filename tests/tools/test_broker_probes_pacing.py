@@ -36,6 +36,7 @@ from typing import Any
 
 import pytest
 
+from tests.support.probe_auth import StubAuth, install_stub_auth
 from tools.broker_probes import common, probes_order
 from tools.broker_probes.common import ProbeCredentials, ProbeError, ProbeRun
 from tools.broker_probes.probes_order import (
@@ -110,13 +111,6 @@ def futures_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("KIS_TOKEN_CACHE_DIR", raising=False)
 
 
-class _StubAuth:
-    """Auth manager that yields headers without a token round-trip."""
-
-    def get_auth_headers(self) -> dict[str, str]:
-        return {"authorization": "Bearer stub"}
-
-
 def _args(**overrides: object) -> argparse.Namespace:
     base: dict[str, object] = {
         "symbol": "101S6000",
@@ -147,7 +141,7 @@ def _client(
     creds: ProbeCredentials, pace_s: float = DEFAULT_PACE_S
 ) -> MockTradingClient:
     run = ProbeRun(probe_id="P-5", title="t", mode="live", environment="MOCK_VTS")
-    return MockTradingClient(creds, _StubAuth(), run, pace_s=pace_s)
+    return MockTradingClient(creds, StubAuth(), run, pace_s=pace_s)
 
 
 def _tick_price(price: float) -> probes_order.TickPrice:
@@ -404,9 +398,7 @@ def test_p5_reports_the_effective_poll_granularity_and_an_uninflated_latency(
     """
     visible: set[str] = set()
     _install_recorder(monkeypatch, faketime, visible_odnos=visible)
-    monkeypatch.setattr(
-        "shared.kis.auth.KISAuthManager", lambda *a, **k: _StubAuth(), raising=True
-    )
+    install_stub_auth(monkeypatch)
 
     # The submit is call #2, so the recorder zero-pads it to 0000000002. Make it
     # visible so the first poll converges and the sample is a single poll interval.
@@ -535,9 +527,7 @@ def test_setup_passes_pace_s_to_the_client(
             captured["pace_s"] = pace_s
 
     monkeypatch.setattr(probes_order, "MockTradingClient", _Recorder)
-    monkeypatch.setattr(
-        "shared.kis.auth.KISAuthManager", lambda *a, **k: _StubAuth(), raising=True
-    )
+    install_stub_auth(monkeypatch)
 
     probes_order._setup(probes_order.get("P-5"), _args(confirm=True, pace_s=2.5))
 

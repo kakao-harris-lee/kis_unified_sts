@@ -164,7 +164,12 @@ def assert_no_live_futures_config() -> None:
         return
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.split("#", 1)[0].strip()
-        if re.fullmatch(r"enabled:\s*(true|True|yes|1)", line):
+        # Case-insensitive, and `on` as well as `true`/`yes`: PyYAML's bool
+        # resolver reads TRUE/True/YES/Yes/ON/On all as boolean true, so a guard
+        # that matched only `true|True|yes|1` would stay silent while
+        # `enabled: ON` armed the live futures path. Refusing on more spellings
+        # than the loader accepts is the safe direction for this interlock.
+        if re.fullmatch(r"enabled:\s*(true|yes|on|1)", line, re.IGNORECASE):
             raise SafetyViolation(
                 "config/futures_live.yaml::enabled is true — refusing to run an "
                 "order-capable probe while the live futures path is armed."

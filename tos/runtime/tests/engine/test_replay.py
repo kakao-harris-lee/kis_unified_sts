@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.engine import EngineCore
 from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.orthostate_projection import (
@@ -33,9 +34,12 @@ def _driver(
     inbox: SqliteEventInbox,
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
+    *,
+    core: EngineCore | None = None,
 ) -> EngineDriver:
-    driver = EngineDriver(
-        core=fx.build_core(transmit=None),
+    """This suite's one driver wiring; ``core`` overrides the default engine core."""
+    return EngineDriver(
+        core=fx.build_core(transmit=None) if core is None else core,
         inbox=inbox,
         evidence_store=evidence_store,
         emergency_log=emergency_log,
@@ -48,7 +52,6 @@ def _driver(
         ),
         finality_producer=fx.finality_producer(),
     )
-    return driver
 
 
 def test_identical_replay_matches_for_every_event(
@@ -81,19 +84,11 @@ def test_window_events_limits_the_replay_to_the_most_recent_n(
 ) -> None:
     """A windowed replay is only sound when the events outside the window carry no ledger state"""
     registry = fx.registry_with(fx.never_fires_policy())
-    driver = EngineDriver(
+    driver = _driver(
+        inbox,
+        evidence_store,
+        emergency_log,
         core=fx.build_core(registry=registry, transmit=None),
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        scheme=SCHEME,
-        continuity_id="replay-tests",
-        monotonic_source=FakeMonotonicSource(),
-        max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
-        orthostate_projector=fx.orthostate_projector(
-            inbox, evidence_store, emergency_log
-        ),
-        finality_producer=fx.finality_producer(),
     )
     driver.enqueue_and_run(fx.decision_tick_event(seq=1))
     driver.enqueue_and_run(fx.decision_tick_event(seq=2))
@@ -167,21 +162,13 @@ def test_mutated_recorded_egress_result_outcome_digest_is_detected_as_a_divergen
 ) -> None:
     """CR5 (2026-09-09), companion to the DECISION_TICK mutation test above, extended to an"""
     gateway = fx.FakeGateway()
-    driver = EngineDriver(
+    driver = _driver(
+        inbox,
+        evidence_store,
+        emergency_log,
         core=fx.build_core(
             transmit=gateway, sink=EngineEvidenceSinkAdapter(evidence_store)
         ),
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        scheme=SCHEME,
-        continuity_id="replay-tests",
-        monotonic_source=FakeMonotonicSource(),
-        max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
-        orthostate_projector=fx.orthostate_projector(
-            inbox, evidence_store, emergency_log
-        ),
-        finality_producer=fx.finality_producer(),
     )
     driver.bind_gateway(gateway)
     tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
@@ -221,21 +208,13 @@ def test_replay_never_calls_the_live_runs_transport(
 ) -> None:
     """CR5 (2026-09-09) — behavioral companion to"""
     gateway = fx.FakeGateway()
-    driver = EngineDriver(
+    driver = _driver(
+        inbox,
+        evidence_store,
+        emergency_log,
         core=fx.build_core(
             transmit=gateway, sink=EngineEvidenceSinkAdapter(evidence_store)
         ),
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        scheme=SCHEME,
-        continuity_id="replay-tests",
-        monotonic_source=FakeMonotonicSource(),
-        max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
-        orthostate_projector=fx.orthostate_projector(
-            inbox, evidence_store, emergency_log
-        ),
-        finality_producer=fx.finality_producer(),
     )
     driver.bind_gateway(gateway)
     tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
@@ -298,21 +277,13 @@ def test_egress_result_outcome_digest_is_compared_and_matches(
 ) -> None:
     """CR5 (2026-09-09), RED before the fix — renamed from ``test_egress_result_none_outcome_"""
     gateway = fx.FakeGateway()
-    driver = EngineDriver(
+    driver = _driver(
+        inbox,
+        evidence_store,
+        emergency_log,
         core=fx.build_core(
             transmit=gateway, sink=EngineEvidenceSinkAdapter(evidence_store)
         ),
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        scheme=SCHEME,
-        continuity_id="replay-tests",
-        monotonic_source=FakeMonotonicSource(),
-        max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
-        orthostate_projector=fx.orthostate_projector(
-            inbox, evidence_store, emergency_log
-        ),
-        finality_producer=fx.finality_producer(),
     )
     driver.bind_gateway(gateway)
     tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
@@ -343,21 +314,13 @@ def test_installing_the_standin_when_the_live_run_never_had_a_send_boundary_dive
     from tos.engine.records import EgressResultPayload, EngineEvent
     from tos.engine.vocabulary import EgressResultKind, EventKind
 
-    driver = EngineDriver(
+    driver = _driver(
+        inbox,
+        evidence_store,
+        emergency_log,
         core=fx.build_core(
             transmit=None, sink=EngineEvidenceSinkAdapter(evidence_store)
         ),
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        scheme=SCHEME,
-        continuity_id="replay-tests",
-        monotonic_source=FakeMonotonicSource(),
-        max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
-        orthostate_projector=fx.orthostate_projector(
-            inbox, evidence_store, emergency_log
-        ),
-        finality_producer=fx.finality_producer(),
     )
     tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
     assert tick_result.halt_reason is not None
@@ -406,19 +369,11 @@ def test_coordinator_gate_refusal_receipt_is_uncompared_not_diverged(
     emergency_log: EmergencyAppendLog,
 ) -> None:
     """Independent review finding #1, wave 2 (2026-09-09), RED before the fix."""
-    driver = EngineDriver(
+    driver = _driver(
+        inbox,
+        evidence_store,
+        emergency_log,
         core=fx.build_core(transmit=None, preconditions=_AlwaysRefusedPreconditions()),
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        scheme=SCHEME,
-        continuity_id="replay-tests",
-        monotonic_source=FakeMonotonicSource(),
-        max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
-        orthostate_projector=fx.orthostate_projector(
-            inbox, evidence_store, emergency_log
-        ),
-        finality_producer=fx.finality_producer(),
     )
     tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
     assert tick_result.halt_reason is not None
@@ -448,19 +403,11 @@ def test_new_risk_halt_latch_receipt_is_uncompared_not_diverged(
     emergency_log: EmergencyAppendLog,
 ) -> None:
     """Re-review finding R1 (2026-09-09), RED before the fix."""
-    driver = EngineDriver(
+    driver = _driver(
+        inbox,
+        evidence_store,
+        emergency_log,
         core=fx.build_core(transmit=None),
-        inbox=inbox,
-        evidence_store=evidence_store,
-        emergency_log=emergency_log,
-        scheme=SCHEME,
-        continuity_id="replay-tests",
-        monotonic_source=FakeMonotonicSource(),
-        max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
-        orthostate_projector=fx.orthostate_projector(
-            inbox, evidence_store, emergency_log
-        ),
-        finality_producer=fx.finality_producer(),
     )
     inbox.record_new_risk_halt(
         reason=NEW_RISK_HALTED_BY_COUPLING_VIOLATION,

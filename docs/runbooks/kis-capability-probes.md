@@ -1,5 +1,10 @@
 # 런북 — KIS Broker Capability 측정 프로브 (Phase-0 P0-2 / T2)
 
+> **2026-11-14 은퇴 안내**: 이 런북이 인용하는 끝난 기록 — T2 캠페인 증거
+> (`docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/`) · N-19 명세 대조
+> (`docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md`) — 는 지웠다. 내용은 git
+> 이력에 있다 (`git log --diff-filter=D -- docs/`). 절차 자체는 그대로 유효하다.
+
 > **문서 성격**: 운영 런북(비규범). 이 문서도, 프로브 실행도 **어떤 게이트도 닫지
 > 않는다.** 프로브는 *측정*하고, 승인은 *사람*이 한다. bound 값 기입은
 > **Bounds-Approver**, capability status 승격은 P0-2 승인 사슬의 소관이다

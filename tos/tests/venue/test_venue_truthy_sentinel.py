@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import ast
-from pathlib import Path
-
 import pytest
 from tos.venue import OrderAdmissibilityResult, TradabilityState
 
-_VENUE_SRC = Path(__file__).resolve().parent.parent.parent / "src" / "tos" / "venue"
+from .._truthiness_scan import package_truthiness_offenders
+
+_SUSPICIOUS = frozenset({"result", "admissibility", "tradability", "state", "verdict"})
 
 _SEALED_ENUMS = (OrderAdmissibilityResult, TradabilityState)
 
@@ -61,37 +60,7 @@ def test_denial_values_would_have_failed_open_under_bare_truthiness() -> None:
     assert bool(str(TradabilityState.NOT_TRADABLE.value)) is True
 
 
-def _bare_truthiness_offenders(path: Path) -> list[str]:
-    """Return ``if <name>:`` / ``if not <name>:`` uses of a result-shaped local (AST)."""
-    suspicious = {"result", "admissibility", "tradability", "state", "verdict"}
-    offenders: list[str] = []
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
-            continue
-        test = node.test
-        if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-            test = test.operand
-        if isinstance(test, ast.Name) and test.id in suspicious:
-            offenders.append(f"{path.name}:{node.lineno} bare truthiness on {test.id}")
-    return offenders
-
-
 def test_no_venue_source_uses_bare_truthiness_on_a_result() -> None:
     """(source seal) No venue module tests a result-shaped value for bare truthiness."""
-    sources = sorted(_VENUE_SRC.rglob("*.py"))
-    assert sources, f"no tos.venue source files found under {_VENUE_SRC}"
-    offenders: list[str] = []
-    for path in sources:
-        offenders.extend(_bare_truthiness_offenders(path))
+    offenders = package_truthiness_offenders("venue", _SUSPICIOUS)
     assert offenders == [], f"truthy-sentinel trap reachable: {offenders}"
-
-
-def test_bare_truthiness_scan_detects_a_planted_offender(tmp_path: Path) -> None:
-    """(canary) The AST scan actually catches a planted ``if result:`` (not vacuous)."""
-    planted = tmp_path / "planted.py"
-    planted.write_text(
-        "def f(result):\n    if result:\n        return 1\n    return 0\n",
-        encoding="utf-8",
-    )
-    assert _bare_truthiness_offenders(planted) != []

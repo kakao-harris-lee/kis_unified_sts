@@ -12,15 +12,25 @@ def _feed_candles(engine: StreamingIndicatorEngine, symbol: str, prices: list[fl
         tick_time = base + timedelta(minutes=i)
         engine.on_tick(
             symbol,
-            {"close": price, "high": price * 1.005, "low": price * 0.995,
-             "open": price, "volume": 10000 + i},
+            {
+                "close": price,
+                "high": price * 1.005,
+                "low": price * 0.995,
+                "open": price,
+                "volume": 10000 + i,
+            },
             tick_time,
         )
         # Advance to next minute to finalize candle
         engine.on_tick(
             symbol,
-            {"close": price, "high": price * 1.005, "low": price * 0.995,
-             "open": price, "volume": 10000 + i},
+            {
+                "close": price,
+                "high": price * 1.005,
+                "low": price * 0.995,
+                "open": price,
+                "volume": 10000 + i,
+            },
             tick_time + timedelta(seconds=61),
         )
 

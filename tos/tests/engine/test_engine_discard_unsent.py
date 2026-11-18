@@ -17,7 +17,7 @@ from tos.engine import (
     UnsentDiscardRef,
     run_commitment_flow,
 )
-from tos.engine.records import InstrumentKey, ProvisionalReservation
+from tos.engine.records import InstrumentKey
 from tos.engine.state import FinalityProofRef
 from tos.engine.vocabulary import EgressKnowledge, ResultDisposition
 from tos.rcl import CapacityState
@@ -31,6 +31,7 @@ from ._engine_fixtures import (
     decision_tick,
     instrument_key,
     ordering,
+    outstanding,
 )
 
 _PROPOSAL = "proposal-unsent-1"
@@ -54,18 +55,10 @@ def _committed_ledger() -> tuple[ProvisionalReservationLedger, InstrumentKey]:
     return ledger, key
 
 
-def _outstanding(
-    ledger: ProvisionalReservationLedger, key: InstrumentKey
-) -> ProvisionalReservation:
-    reservation = ledger.outstanding(key)
-    assert reservation is not None
-    return reservation
-
-
 def test_not_sent_committed_unbound_is_discarded_and_the_scope_reopens() -> None:
     """§5 ① row 1: the exact state a step-9 commit + pre-send halt leaves behind."""
     ledger, key = _committed_ledger()
-    held = _outstanding(ledger, key)
+    held = outstanding(ledger, key)
     assert held.capacity_state is CapacityState.COMMITTED_UNBOUND
     assert held.knowledge is EgressKnowledge.NOT_SENT
     assert ledger.admits_new_exposure(key) is False
@@ -76,14 +69,14 @@ def test_not_sent_committed_unbound_is_discarded_and_the_scope_reopens() -> None
     assert ledger.outstanding_count(key) == 0
     assert ledger.admits_new_exposure(key) is True
     ledger.commit_unbound(key, proposal_id="proposal-unsent-2")
-    assert _outstanding(ledger, key).proposal_id == "proposal-unsent-2"
+    assert outstanding(ledger, key).proposal_id == "proposal-unsent-2"
 
 
 def test_not_sent_attempt_bound_is_discarded() -> None:
     """§5 ① row 2: steps 12-14 bound an attempt, but the flow still halted before the send."""
     ledger, key = _committed_ledger()
     ledger.bind_attempt(key, attempt_id=_ATTEMPT)
-    held = _outstanding(ledger, key)
+    held = outstanding(ledger, key)
     assert held.capacity_state is CapacityState.ATTEMPT_BOUND
     assert held.knowledge is EgressKnowledge.NOT_SENT
 
@@ -97,11 +90,11 @@ def test_potentially_live_is_refused_and_the_projection_is_unchanged() -> None:
     ledger, key = _committed_ledger()
     ledger.bind_attempt(key, attempt_id=_ATTEMPT)
     ledger.mark_potentially_live(key)
-    before = _outstanding(ledger, key)
+    before = outstanding(ledger, key)
 
     assert ledger.discard_unsent(_ref()) is False
 
-    after = _outstanding(ledger, key)
+    after = outstanding(ledger, key)
     assert after == before
     assert after.capacity_state is CapacityState.POTENTIALLY_LIVE
     assert after.knowledge is EgressKnowledge.SENT_UNCONFIRMED
@@ -134,11 +127,11 @@ def test_an_attempt_with_an_applied_egress_result_is_refused(
         )
     )
     assert applied.disposition is ResultDisposition.APPLIED
-    before = _outstanding(ledger, key)
+    before = outstanding(ledger, key)
     assert before.capacity_state is expected_capacity
 
     assert ledger.discard_unsent(_ref()) is False
-    assert _outstanding(ledger, key) == before
+    assert outstanding(ledger, key) == before
 
 
 def test_an_applied_result_refuses_the_discard_even_at_an_unadvanced_capacity_state() -> (
@@ -153,18 +146,18 @@ def test_an_applied_result_refuses_the_discard_even_at_an_unadvanced_capacity_st
         )
     )
     assert applied.disposition is ResultDisposition.APPLIED
-    before = _outstanding(ledger, key)
+    before = outstanding(ledger, key)
     assert before.capacity_state is CapacityState.ATTEMPT_BOUND
 
     assert ledger.discard_unsent(_ref()) is False
-    assert _outstanding(ledger, key) == before
+    assert outstanding(ledger, key) == before
 
 
 def test_an_unknown_proposal_is_false() -> None:
     """§5 ① row 5: nothing matches — a recorded ``False``, never a raise."""
     ledger, key = _committed_ledger()
     assert ledger.discard_unsent(_ref("no-such-proposal")) is False
-    assert _outstanding(ledger, key).proposal_id == _PROPOSAL
+    assert outstanding(ledger, key).proposal_id == _PROPOSAL
 
 
 def test_a_double_discard_is_false_the_second_time() -> None:
@@ -183,7 +176,7 @@ def test_a_discarded_attempt_may_be_committed_and_bound_again() -> None:
 
     ledger.commit_unbound(key, proposal_id=_PROPOSAL)
     ledger.bind_attempt(key, attempt_id=_ATTEMPT)
-    assert _outstanding(ledger, key).attempt_id == _ATTEMPT
+    assert outstanding(ledger, key).attempt_id == _ATTEMPT
 
 
 @pytest.mark.parametrize(
@@ -248,7 +241,7 @@ def test_the_974_block_clears_after_the_discard() -> None:
     assert first.halt_step is halt_step
     assert first.halt_reason is HaltReason.STAGE_UNKNOWN
     assert transmit.attempts == []
-    held = _outstanding(ledger, key)
+    held = outstanding(ledger, key)
     assert (held.capacity_state, held.knowledge, held.attempt_id) == (
         CapacityState.COMMITTED_UNBOUND,
         EgressKnowledge.NOT_SENT,
@@ -296,4 +289,4 @@ def test_the_974_block_clears_after_the_discard() -> None:
     assert admitted.handed_off is True
     assert CommitmentStep.LEDGER_VERIFICATION in consulted_after
     assert len(transmit.attempts) == 1
-    assert _outstanding(ledger, key).capacity_state is CapacityState.POTENTIALLY_LIVE
+    assert outstanding(ledger, key).capacity_state is CapacityState.POTENTIALLY_LIVE

@@ -3,6 +3,8 @@
 - 대상: 증거 저장소를 포함한 durable set 다섯 파일의 **검증된 압축 콜드 사본**을 장 마감 뒤 쌓는다.
 - 계획: `docs/plans/2026-09-29-tos-evidence-growth-and-purge-plan.md` §2 A3 ·
   운영자 처분 §6.1-1(2026-09-29 「트랙 A = A1 · A2 · A3 모두 착수」) · 착지 §7.1.18.
+  그 계획은 2026-11-14 에 은퇴했다 — git 이력에 있다
+  (`git log --diff-filter=D -- docs/plans/`). 이 런북이 현행 절차 정본이다.
 - 진입점: `tos_runtime` compose CLI 의 `cold-backup` 하위 명령.
 - 관련 런북: `docs/runbooks/tos-paper-boot.md`(운영) · `docs/runbooks/tos-paper-boot-history.md` §4-B(수동 1회성
   `backup-set --archive-dir`) · 같은 파일 §4-A(증거 스키마 v1 → v2 마이그레이션).

@@ -32,6 +32,7 @@ from tos.dsl import (
     TargetSpec,
     VectorInterdependence,
     analyze,
+    build_proposal,
 )
 from tos.dsl.candidate import AMBIENT_SYMBOLS, ESCAPE_KINDS, WILDCARD_TOKENS
 from tos.dsl.vocabulary import ADMISSIBLE_KINDS, KIND_CONTEXT_REF
@@ -460,3 +461,22 @@ def programs_with_buried_escape(draw: st.DrawFn) -> CandidateProgram:
     for _ in range(depth):
         node = CandidateNode(kind="const", children=(node,))
     return CandidateProgram(nodes=(node,))
+
+
+def real_proposal() -> Proposal:
+    """Build a real content-addressed dsl Proposal through ``build_proposal`` (proposal.py:68)."""
+    return build_proposal(
+        scheme=SCHEME,
+        proposer=Proposer(strategy_id="strat-1", strategy_version="v1"),
+        account="ACCT-1",
+        instrument="INSTR-1",
+        direction="LONG",
+        position_effect="OPEN",
+        quantity_basis="SHARES:100",
+        rationale="seam binding fixture",
+        decision_context_capsule=DecisionContextCapsuleRef(
+            capsule_id="cap-1", canonical_digest="cap-digest-1"
+        ),
+        dsl_version="1.0",
+        config_version="1.0",
+    )

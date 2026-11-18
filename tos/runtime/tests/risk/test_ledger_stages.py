@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
-from tos.afg import ActionAmplificationEnvelope
+from tos.afg import ActionAmplificationEnvelope, ActionFlowPermit
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.dsl import DecisionContextCapsuleRef, Proposal, Proposer, build_proposal
 from tos.engine.records import InstrumentKey, StageRequest
@@ -30,11 +32,15 @@ from tos_runtime.risk.aggregate import AggregateRiskService
 from tos_runtime.risk.flow import ActionFlowGovernor
 from tos_runtime.risk.ledger_stages import (
     ActionFlowDecisionStage,
+    AggregateInputsProvider,
     AggregateRiskDecisionStage,
+    AtomicCommitLogPort,
     AtomicCommitStage,
     CloseProofCommitFence,
     CommitmentUnavailabilityStage,
+    EffectEnvelopeReader,
     LedgerVerificationStage,
+    ReservationIdProvider,
     item15_fields,
     verdict_for_scope,
 )
@@ -42,6 +48,7 @@ from tos_runtime.risk.ledger_stages import (
 from .conftest import (
     CountingCommitLog,
     FakeEvidenceAppendPort,
+    build_committed_permit,
     grant_shaped_afg_inputs,
     grant_shaped_are_inputs,
 )
@@ -76,10 +83,57 @@ def _step5_envelope() -> CapacityVector:
     return _STEP5_ENVELOPE
 
 
-def _committed_permit(afg_governor: ActionFlowGovernor):
-    decision = afg_governor.decide(grant_shaped_afg_inputs())
-    return afg_governor.build_permit(
-        decision, permit_generation=1, command_identity="cmd-1"
+def _are_stage(
+    ara_service: AggregateRiskService,
+    *,
+    inputs_provider: AggregateInputsProvider,
+    time_permits_new_risk: bool = True,
+) -> AggregateRiskDecisionStage:
+    """Step 6 over generation 1, varying only the inputs and the time gate."""
+    return AggregateRiskDecisionStage(
+        ara_service,
+        inputs_provider=inputs_provider,
+        snapshot_generation_provider=lambda _r: 1,
+        decision_generation_provider=lambda _r: 1,
+        time_permits_new_risk=lambda: time_permits_new_risk,
+    )
+
+
+def _ledger_stage(
+    log: SqliteCommitLog,
+    projection_reader: SqliteReservationProjectionReader,
+    writer_epoch: int,
+    *,
+    position_effect_reader: Callable[[], str | None] = lambda: "OPEN",
+) -> LedgerVerificationStage:
+    """Step 8 against this suite's log/projection pair."""
+    return LedgerVerificationStage(
+        log,
+        projection_reader,
+        writer_epoch=writer_epoch,
+        position_effect_reader=position_effect_reader,
+    )
+
+
+def _commit_stage(
+    log: AtomicCommitLogPort,
+    writer_epoch: int,
+    permit: ActionFlowPermit | None,
+    *,
+    reservation_id_provider: ReservationIdProvider = _permit_scoped_id,
+    time_permits_new_risk: bool = True,
+    effect_envelope_reader: EffectEnvelopeReader = _step5_envelope,
+    **extra: Any,
+) -> AtomicCommitStage:
+    """Step 9 over ``permit``, varying only what each test actually varies."""
+    return AtomicCommitStage(
+        log,
+        writer_epoch=writer_epoch,
+        permit_provider=lambda _r: permit,
+        reservation_id_provider=reservation_id_provider,
+        time_permits_new_risk=lambda: time_permits_new_risk,
+        effect_envelope_reader=effect_envelope_reader,
+        **extra,
     )
 
 
@@ -88,12 +142,9 @@ def test_step6_admits_on_a_granted_decision(
     instrument_key: InstrumentKey,
     required_scenario_kinds,
 ) -> None:
-    stage = AggregateRiskDecisionStage(
+    stage = _are_stage(
         ara_service,
         inputs_provider=lambda _r: grant_shaped_are_inputs(required_scenario_kinds),
-        snapshot_generation_provider=lambda _r: 1,
-        decision_generation_provider=lambda _r: 1,
-        time_permits_new_risk=lambda: True,
     )
     verdict = stage(_request(CommitmentStep.AGGREGATE_RISK_DECISION, instrument_key))
     assert verdict.outcome is StageOutcome.ADMIT
@@ -103,12 +154,9 @@ def test_step6_admits_on_a_granted_decision(
 def test_step6_is_unknown_when_no_inputs_are_available(
     ara_service: AggregateRiskService, instrument_key: InstrumentKey
 ) -> None:
-    stage = AggregateRiskDecisionStage(
+    stage = _are_stage(
         ara_service,
         inputs_provider=lambda _r: None,
-        snapshot_generation_provider=lambda _r: 1,
-        decision_generation_provider=lambda _r: 1,
-        time_permits_new_risk=lambda: True,
     )
     verdict = stage(_request(CommitmentStep.AGGREGATE_RISK_DECISION, instrument_key))
     assert verdict.outcome is StageOutcome.UNKNOWN
@@ -120,12 +168,10 @@ def test_step6_is_unknown_when_time_does_not_permit_new_risk(
     instrument_key: InstrumentKey,
     required_scenario_kinds,
 ) -> None:
-    stage = AggregateRiskDecisionStage(
+    stage = _are_stage(
         ara_service,
         inputs_provider=lambda _r: grant_shaped_are_inputs(required_scenario_kinds),
-        snapshot_generation_provider=lambda _r: 1,
-        decision_generation_provider=lambda _r: 1,
-        time_permits_new_risk=lambda: False,
+        time_permits_new_risk=False,
     )
     verdict = stage(_request(CommitmentStep.AGGREGATE_RISK_DECISION, instrument_key))
     assert verdict.outcome is StageOutcome.UNKNOWN
@@ -138,12 +184,9 @@ def test_step6_is_unknown_when_the_rcl_projection_is_unreachable(
     log: SqliteCommitLog,
 ) -> None:
     log.close()
-    stage = AggregateRiskDecisionStage(
+    stage = _are_stage(
         ara_service,
         inputs_provider=lambda _r: grant_shaped_are_inputs(required_scenario_kinds),
-        snapshot_generation_provider=lambda _r: 1,
-        decision_generation_provider=lambda _r: 1,
-        time_permits_new_risk=lambda: True,
     )
     verdict = stage(_request(CommitmentStep.AGGREGATE_RISK_DECISION, instrument_key))
     assert verdict.outcome is StageOutcome.UNKNOWN
@@ -157,12 +200,9 @@ def test_step6_never_admits_when_evidence_append_fails(
 ) -> None:
     """Evidence is appended (inside ``decide()``) before ``risk_decision``'s"""
     evidence_port.fail_next_append(RuntimeError("evidence store down"))
-    stage = AggregateRiskDecisionStage(
+    stage = _are_stage(
         ara_service,
         inputs_provider=lambda _r: grant_shaped_are_inputs(required_scenario_kinds),
-        snapshot_generation_provider=lambda _r: 1,
-        decision_generation_provider=lambda _r: 1,
-        time_permits_new_risk=lambda: True,
     )
     verdict = stage(_request(CommitmentStep.AGGREGATE_RISK_DECISION, instrument_key))
     assert verdict.outcome is StageOutcome.UNKNOWN
@@ -199,12 +239,7 @@ def test_step8_admits_a_fresh_scope(
     writer_epoch: int,
     instrument_key: InstrumentKey,
 ) -> None:
-    stage = LedgerVerificationStage(
-        log,
-        projection_reader,
-        writer_epoch=writer_epoch,
-        position_effect_reader=lambda: "OPEN",
-    )
+    stage = _ledger_stage(log, projection_reader, writer_epoch)
     verdict = stage(_request(CommitmentStep.LEDGER_VERIFICATION, instrument_key))
     assert verdict.outcome is StageOutcome.ADMIT
     assert verdict.authority_class is StageAuthorityClass.AVAILABLE_PURE_PREDICATE
@@ -217,26 +252,14 @@ def test_step8_denies_an_already_occupied_scope(
     instrument_key: InstrumentKey,
     afg_governor: ActionFlowGovernor,
 ) -> None:
-    permit = _committed_permit(afg_governor)
-    commit_stage = AtomicCommitStage(
-        log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
-    )
+    permit = build_committed_permit(afg_governor)
+    commit_stage = _commit_stage(log, writer_epoch, permit)
     commit_verdict = commit_stage(
         _request(CommitmentStep.ATOMIC_COMMIT, instrument_key)
     )
     assert commit_verdict.outcome is StageOutcome.ADMIT
 
-    stage = LedgerVerificationStage(
-        log,
-        projection_reader,
-        writer_epoch=writer_epoch,
-        position_effect_reader=lambda: "OPEN",
-    )
+    stage = _ledger_stage(log, projection_reader, writer_epoch)
     verdict = stage(_request(CommitmentStep.LEDGER_VERIFICATION, instrument_key))
     assert verdict.outcome is StageOutcome.DENY
     assert verdict.authority_class is StageAuthorityClass.AVAILABLE_PURE_PREDICATE
@@ -249,12 +272,7 @@ def test_step8_is_unknown_when_the_log_file_is_inaccessible(
     instrument_key: InstrumentKey,
 ) -> None:
     log.close()
-    stage = LedgerVerificationStage(
-        log,
-        projection_reader,
-        writer_epoch=writer_epoch,
-        position_effect_reader=lambda: "OPEN",
-    )
+    stage = _ledger_stage(log, projection_reader, writer_epoch)
     verdict = stage(_request(CommitmentStep.LEDGER_VERIFICATION, instrument_key))
     assert verdict.outcome is StageOutcome.UNKNOWN
 
@@ -271,12 +289,7 @@ def test_step8_is_unknown_on_a_stale_writer_epoch(
         stale_epoch = first.acquire_epoch(identity)
         second.acquire_epoch(identity)
         reader = SqliteReservationProjectionReader(first)
-        stage = LedgerVerificationStage(
-            first,
-            reader,
-            writer_epoch=stale_epoch,
-            position_effect_reader=lambda: "OPEN",
-        )
+        stage = _ledger_stage(first, reader, stale_epoch)
         verdict = stage(_request(CommitmentStep.LEDGER_VERIFICATION, instrument_key))
         assert verdict.outcome is StageOutcome.UNKNOWN
     finally:
@@ -291,15 +304,8 @@ def test_step9_commits_reservation_and_permit_in_one_transaction(
     afg_governor: ActionFlowGovernor,
     projection_reader: SqliteReservationProjectionReader,
 ) -> None:
-    permit = _committed_permit(afg_governor)
-    stage = AtomicCommitStage(
-        log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
-    )
+    permit = build_committed_permit(afg_governor)
+    stage = _commit_stage(log, writer_epoch, permit)
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert verdict.outcome is StageOutcome.ADMIT
     assert verdict.authority_class is StageAuthorityClass.AVAILABLE_PURE_PREDICATE
@@ -324,15 +330,8 @@ def test_step9_records_the_step5_envelope_as_the_committed_vector(
     projection_reader: SqliteReservationProjectionReader,
 ) -> None:
     """#972: before this, step 9 committed every reservation with ``committed_vector=None``,"""
-    permit = _committed_permit(afg_governor)
-    stage = AtomicCommitStage(
-        log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
-    )
+    permit = build_committed_permit(afg_governor)
+    stage = _commit_stage(log, writer_epoch, permit)
     request = _request(CommitmentStep.ATOMIC_COMMIT, instrument_key)
     verdict = stage(request)
     assert verdict.outcome is StageOutcome.ADMIT
@@ -350,7 +349,7 @@ def test_step9_records_a_close_as_negative_exposure(
     afg_governor: ActionFlowGovernor,
     projection_reader: SqliteReservationProjectionReader,
 ) -> None:
-    permit = _committed_permit(afg_governor)
+    permit = build_committed_permit(afg_governor)
     proposal = build_proposal(
         scheme=get_scheme(EV_L1_PROVISIONAL_VERSION),
         proposer=Proposer(strategy_id="close-fence-test", strategy_version="v1"),
@@ -399,13 +398,10 @@ def test_step9_records_a_close_as_negative_exposure(
         current_trading_date="20261029",
         max_age_ms=300,
     )
-    stage = AtomicCommitStage(
+    stage = _commit_stage(
         log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
+        writer_epoch,
+        permit,
         position_effect_reader=lambda: "CLOSE",
         close_proof_fence_reader=lambda _request: close_fence,
     )
@@ -430,13 +426,11 @@ def test_step9_is_unknown_and_commits_nothing_without_a_step5_envelope(
     step5_envelope: CapacityVector | None,
 ) -> None:
     """A reservation with no vector would count as UNKNOWN usage for as long as it is"""
-    permit = _committed_permit(afg_governor)
-    stage = AtomicCommitStage(
+    permit = build_committed_permit(afg_governor)
+    stage = _commit_stage(
         log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
+        writer_epoch,
+        permit,
         effect_envelope_reader=lambda: step5_envelope,
     )
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
@@ -453,16 +447,9 @@ def test_step9_commits_via_exactly_one_commit_entry_call(
     afg_governor: ActionFlowGovernor,
 ) -> None:
     """Pins the module docstring's "ONE apply_reservation_transition call,"""
-    permit = _committed_permit(afg_governor)
+    permit = build_committed_permit(afg_governor)
     counting_log = CountingCommitLog(log)
-    stage = AtomicCommitStage(
-        counting_log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
-    )
+    stage = _commit_stage(counting_log, writer_epoch, permit)
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert verdict.outcome is StageOutcome.ADMIT
     assert counting_log.total_commit_calls == 1
@@ -477,15 +464,8 @@ def test_step9_single_entry_carries_both_the_reservation_and_the_permit_binding(
     afg_governor: ActionFlowGovernor,
 ) -> None:
     """Independent content check (not the call-count wrapper above): exactly"""
-    permit = _committed_permit(afg_governor)
-    stage = AtomicCommitStage(
-        log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
-    )
+    permit = build_committed_permit(afg_governor)
+    stage = _commit_stage(log, writer_epoch, permit)
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert verdict.outcome is StageOutcome.ADMIT
 
@@ -527,14 +507,7 @@ def test_step9_single_entry_carries_both_the_reservation_and_the_permit_binding(
 def test_step9_is_unknown_when_no_permit_is_available(
     log: SqliteCommitLog, writer_epoch: int, instrument_key: InstrumentKey
 ) -> None:
-    stage = AtomicCommitStage(
-        log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: None,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
-    )
+    stage = _commit_stage(log, writer_epoch, None)
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert verdict.outcome is StageOutcome.UNKNOWN
 
@@ -545,15 +518,8 @@ def test_step9_is_unknown_when_time_does_not_permit_new_risk(
     instrument_key: InstrumentKey,
     afg_governor: ActionFlowGovernor,
 ) -> None:
-    permit = _committed_permit(afg_governor)
-    stage = AtomicCommitStage(
-        log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: False,
-        effect_envelope_reader=_step5_envelope,
-    )
+    permit = build_committed_permit(afg_governor)
+    stage = _commit_stage(log, writer_epoch, permit, time_permits_new_risk=False)
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert verdict.outcome is StageOutcome.UNKNOWN
 
@@ -564,28 +530,19 @@ def test_step9_denies_a_permit_claimed_twice(
     instrument_key: InstrumentKey,
     afg_governor: ActionFlowGovernor,
 ) -> None:
-    permit = _committed_permit(afg_governor)
-    stage_a = AtomicCommitStage(
-        log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
-    )
+    permit = build_committed_permit(afg_governor)
+    stage_a = _commit_stage(log, writer_epoch, permit)
     first = stage_a(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert first.outcome is StageOutcome.ADMIT
 
     other_key = InstrumentKey(account="acct-2", instrument="202S07")
-    stage_b = AtomicCommitStage(
+    stage_b = _commit_stage(
         log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
+        writer_epoch,
+        permit,
         reservation_id_provider=lambda request, permit: (
             _permit_scoped_id(request, permit) + "-b"
         ),
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
     )
     second = stage_b(_request(CommitmentStep.ATOMIC_COMMIT, other_key))
     assert second.outcome is StageOutcome.DENY
@@ -599,15 +556,8 @@ def test_step9_denies_a_permit_claimed_twice_even_after_a_simulated_restart(
     instrument_key: InstrumentKey,
     afg_governor: ActionFlowGovernor,
 ) -> None:
-    permit = _committed_permit(afg_governor)
-    stage_a = AtomicCommitStage(
-        log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
-    )
+    permit = build_committed_permit(afg_governor)
+    stage_a = _commit_stage(log, writer_epoch, permit)
     first = stage_a(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert first.outcome is StageOutcome.ADMIT
     log.close()
@@ -615,15 +565,13 @@ def test_step9_denies_a_permit_claimed_twice_even_after_a_simulated_restart(
     reopened = SqliteCommitLog(log_path, evidence_port=evidence_port)
     try:
         other_key = InstrumentKey(account="acct-2", instrument="202S07")
-        stage_b = AtomicCommitStage(
+        stage_b = _commit_stage(
             reopened,
-            writer_epoch=writer_epoch,
-            permit_provider=lambda _r: permit,
+            writer_epoch,
+            permit,
             reservation_id_provider=lambda request, permit: (
                 _permit_scoped_id(request, permit) + "-b"
             ),
-            time_permits_new_risk=lambda: True,
-            effect_envelope_reader=_step5_envelope,
         )
         second = stage_b(_request(CommitmentStep.ATOMIC_COMMIT, other_key))
         assert second.outcome is StageOutcome.DENY
@@ -637,16 +585,9 @@ def test_step9_is_unknown_when_the_log_file_is_inaccessible(
     instrument_key: InstrumentKey,
     afg_governor: ActionFlowGovernor,
 ) -> None:
-    permit = _committed_permit(afg_governor)
+    permit = build_committed_permit(afg_governor)
     log.close()
-    stage = AtomicCommitStage(
-        log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
-    )
+    stage = _commit_stage(log, writer_epoch, permit)
     verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     assert verdict.outcome is StageOutcome.UNKNOWN
 
@@ -656,6 +597,7 @@ def test_step9_atomic_commit_leaves_neither_reservation_nor_permit_on_a_crash_be
     evidence_port: FakeEvidenceAppendPort,
     identity: RuntimeIdentity,
     instrument_key: InstrumentKey,
+    envelope: ActionAmplificationEnvelope,
 ) -> None:
     """Crash injection immediately before COMMIT: the whole attempt leaves"""
 
@@ -668,32 +610,12 @@ def test_step9_atomic_commit_leaves_neither_reservation_nor_permit_on_a_crash_be
     )
     epoch = crashing_log.acquire_epoch(identity)
     envelope_evidence = FakeEvidenceAppendPort()
-    envelope = ActionAmplificationEnvelope(
-        max_fan_out=10,
-        max_depth=10,
-        max_attempts=5,
-        max_mutations=5,
-        max_queries=5,
-        max_queue_depth=100,
-        max_in_flight=10,
-        max_elapsed_monotonic=Decimal("1000"),
-        max_duplicate_redelivery_expansion=3,
-        max_failover_reconnect_replay_expansion=3,
-        max_amplification_per_cause=Decimal("100"),
-    )
     governor = ActionFlowGovernor(
         crashing_log, envelope_evidence, envelope, writer_epoch=epoch
     )
-    permit = _committed_permit(governor)
+    permit = build_committed_permit(governor)
 
-    stage = AtomicCommitStage(
-        crashing_log,
-        writer_epoch=epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
-    )
+    stage = _commit_stage(crashing_log, epoch, permit)
     with pytest.raises(InjectedCrash):
         stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
     crashing_log.close()
@@ -705,14 +627,7 @@ def test_step9_atomic_commit_leaves_neither_reservation_nor_permit_on_a_crash_be
         assert reader.scope_reservations(instrument_key) == ()
         assert dict(reader.all_reservations()) == {}
 
-        retry_stage = AtomicCommitStage(
-            reopened,
-            writer_epoch=epoch,
-            permit_provider=lambda _r: permit,
-            reservation_id_provider=_permit_scoped_id,
-            time_permits_new_risk=lambda: True,
-            effect_envelope_reader=_step5_envelope,
-        )
+        retry_stage = _commit_stage(reopened, epoch, permit)
         retry_verdict = retry_stage(
             _request(CommitmentStep.ATOMIC_COMMIT, instrument_key)
         )
@@ -728,15 +643,8 @@ def test_step10_confirms_a_durable_commit(
     afg_governor: ActionFlowGovernor,
     projection_reader: SqliteReservationProjectionReader,
 ) -> None:
-    permit = _committed_permit(afg_governor)
-    commit_stage = AtomicCommitStage(
-        log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
-    )
+    permit = build_committed_permit(afg_governor)
+    commit_stage = _commit_stage(log, writer_epoch, permit)
     commit_verdict = commit_stage(
         _request(CommitmentStep.ATOMIC_COMMIT, instrument_key)
     )
@@ -769,15 +677,8 @@ def test_step10_is_unknown_when_the_projection_is_unreachable(
     afg_governor: ActionFlowGovernor,
     projection_reader: SqliteReservationProjectionReader,
 ) -> None:
-    permit = _committed_permit(afg_governor)
-    commit_stage = AtomicCommitStage(
-        log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
-    )
+    permit = build_committed_permit(afg_governor)
+    commit_stage = _commit_stage(log, writer_epoch, permit)
     commit_verdict = commit_stage(
         _request(CommitmentStep.ATOMIC_COMMIT, instrument_key)
     )
@@ -797,7 +698,7 @@ def test_step10_is_unknown_when_the_projection_is_unreachable(
 def test_item15_fields_carries_permit_identity_and_commitment_current(
     afg_governor: ActionFlowGovernor,
 ) -> None:
-    permit = _committed_permit(afg_governor)
+    permit = build_committed_permit(afg_governor)
     fields = item15_fields(permit, commitment_current=True)
     assert fields == {
         "action_flow_permit_identity": permit.permit_id,
@@ -822,33 +723,18 @@ def test_no_stage_here_ever_emits_non_authoritative_provisional(
     instrument_key: InstrumentKey,
     required_scenario_kinds,
 ) -> None:
-    are_stage = AggregateRiskDecisionStage(
+    are_stage = _are_stage(
         ara_service,
         inputs_provider=lambda _r: grant_shaped_are_inputs(required_scenario_kinds),
-        snapshot_generation_provider=lambda _r: 1,
-        decision_generation_provider=lambda _r: 1,
-        time_permits_new_risk=lambda: True,
     )
     afg_stage = ActionFlowDecisionStage(
         afg_governor,
         inputs_provider=lambda _r: grant_shaped_afg_inputs(),
         time_permits_new_risk=lambda: True,
     )
-    ledger_stage = LedgerVerificationStage(
-        log,
-        projection_reader,
-        writer_epoch=writer_epoch,
-        position_effect_reader=lambda: "OPEN",
-    )
-    permit = _committed_permit(afg_governor)
-    commit_stage = AtomicCommitStage(
-        log,
-        writer_epoch=writer_epoch,
-        permit_provider=lambda _r: permit,
-        reservation_id_provider=_permit_scoped_id,
-        time_permits_new_risk=lambda: True,
-        effect_envelope_reader=_step5_envelope,
-    )
+    ledger_stage = _ledger_stage(log, projection_reader, writer_epoch)
+    permit = build_committed_permit(afg_governor)
+    commit_stage = _commit_stage(log, writer_epoch, permit)
     unavailability_stage = CommitmentUnavailabilityStage(projection_reader)
 
     v6 = are_stage(_request(CommitmentStep.AGGREGATE_RISK_DECISION, instrument_key))
@@ -953,10 +839,10 @@ def test_step8_reads_the_live_arm_not_a_captured_one(
 ) -> None:
     """The reader is consulted per call, so the same stage judges each attempt's own effect."""
     effects = iter(["OPEN", "CLOSE"])
-    stage = LedgerVerificationStage(
+    stage = _ledger_stage(
         log,
         projection_reader,
-        writer_epoch=writer_epoch,
+        writer_epoch,
         position_effect_reader=lambda: next(effects),
     )
     first = stage(_request(CommitmentStep.LEDGER_VERIFICATION, instrument_key))
