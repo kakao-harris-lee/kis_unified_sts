@@ -11,6 +11,9 @@
 * ``export-bars`` → ``tools/tos_cp3/export_bars.py``. 같은 점검을 ``--json`` 으로
   받아 대시보드가 이미 읽기 전용으로 bind-mount 한 디렉터리에 원자적으로 쓴다
   (§P1 둘째 항목의 호스트 측). 컨테이너는 그 파일을 **경로로만** 연다.
+* ``perf`` → ``tools/tos_cp3/perf.py`` (활용 계획
+  ``docs/plans/2026-11-19-tos-usage-plan.md`` §5 «`sts tos perf` 최소판»).
+  tenant 잎 evidence 만 읽어 종목·날짜별 체결 수 · 손익 · 승 · 보유 수량을 센다.
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ def tos_cmd() -> None:
         sts tos status --date 2026-10-22
         sts tos status --json
         sts tos inspect stock-r1-20261110 --from 09:00 --to 10:00
+        sts tos perf
     """
 
 
@@ -144,6 +148,59 @@ def tos_inspect(
     click.echo(outcome.stdout, nl=False)
     click.echo(outcome.stderr, nl=False, err=True)
     sys.exit(outcome.exit_code)
+
+
+@tos_cmd.command("perf")
+@click.option(
+    "--leaf",
+    "leaves",
+    multiple=True,
+    help="읽을 tenant durable-set 잎(반복 가능) — 보관된 잎은 이 방법으로만 읽는다",
+)
+@click.option(
+    "--state-dir",
+    default=None,
+    help="상태 루트 (기본: config/tos_status_board.yaml 의 state_dir)",
+)
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="상태판 설정 YAML (기본: config/tos_status_board.yaml)",
+)
+@click.option("--json", "as_json", is_flag=True, help="JSON 으로 출력")
+def tos_perf(
+    leaves: tuple[str, ...],
+    state_dir: str | None,
+    config_path: Path | None,
+    as_json: bool,
+) -> None:
+    """종목·날짜별 체결과 손익 — tenant 잎 evidence 만 읽는다.
+
+    종목(= tenant)마다, 거래일마다 체결된 진입·청산 수 · 왕복 수 · 승 수 · 남은
+    보유 수량 · 손익을 센다. **증거에 체결가가 없다** — FILL_OBSERVED 는 체결
+    수량만 적는다. 유일한 가격은 SEND_SEALED 가 봉인한 주문 지정가이므로 손익은
+    그 기준이며, 출력이 그 사실을 먼저 말한다. 체결가는 지어내지 않는다.
+
+    \b
+    Examples:
+        sts tos perf
+        sts tos perf --json
+        sts tos perf --leaf ~/.local/state/tos/cp3-setup-d-stock-005930-data/archive/005930.stuck-close-20261119
+    """
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    from tools.tos_cp3 import perf, status_board
+
+    text, code = perf.run(
+        config_path=config_path or status_board.DEFAULT_CONFIG_PATH,
+        state_dir=state_dir,
+        leaf_paths=tuple(leaves),
+        as_json=as_json,
+    )
+    click.echo(text, nl=False)
+    sys.exit(code)
 
 
 @tos_cmd.command("export-bars")
