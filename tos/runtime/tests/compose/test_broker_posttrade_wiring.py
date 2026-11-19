@@ -130,7 +130,8 @@ def test_the_committed_fill_observer_config_loads() -> None:
     config = load_fill_observer_config(_STOCK / "fill_observer.yaml")
     assert config.witness_fields["order_inquiry_tr_id"] == "VTTC0081R"
     assert config.poll_interval_ms > 0 and config.overdue_after_ms > 0
-    assert 0 < config.witness_request_timeout_s <= 3.0
+    # 2026-11-19: 5.0 (fresh TLS per GET); still well under the order path's 10 s.
+    assert 0 < config.witness_request_timeout_s <= 5.0
 
 
 @pytest.mark.parametrize(

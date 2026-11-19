@@ -39,6 +39,7 @@ class FillObserverConfig:
     held_position_poll_interval_ms: int | None = None
     held_position_max_age_ms: int | None = None
     ack_date_recovery_lookback_trading_days: int | None = None
+    broker_flat_release: bool = False
 
 
 _WITNESS_KEYS = (
@@ -86,6 +87,16 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         raise FillObserverConfigError(
             f"{path}: held position bounds must be supplied together"
         )
+    broker_flat_release = raw.get("broker_flat_release", False)
+    if not isinstance(broker_flat_release, bool):
+        raise FillObserverConfigError(
+            f"{path}: 'broker_flat_release' must be true or false, got {broker_flat_release!r}"
+        )
+    if broker_flat_release and not all(key in raw for key in held_keys):
+        raise FillObserverConfigError(
+            f"{path}: broker_flat_release rides the held-position double read and needs "
+            "its bounds"
+        )
     missing = [key for key in _WITNESS_KEYS if key not in raw]
     if missing:
         raise FillObserverConfigError(f"{path}: missing {missing}")
@@ -125,4 +136,5 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
             if "ack_date_recovery_lookback_trading_days" in raw
             else None
         ),
+        broker_flat_release=broker_flat_release,
     )

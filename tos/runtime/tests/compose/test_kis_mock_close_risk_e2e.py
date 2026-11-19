@@ -111,6 +111,9 @@ def _speed_observer_polls(config_dir: Path) -> int:
     raw["held_position_poll_interval_ms"] = 1
     raw["release_snapshot_max_age_ms"] = 60_000
     raw["held_position_max_age_ms"] = 30_000
+    # These cases judge the CLOSE proof; a flat read must stay a refused proof here, not a
+    # broker-flat entry release (that path: test_broker_flat_release_e2e.py).
+    raw["broker_flat_release"] = False
     path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     max_age_ms = raw["held_position_max_age_ms"]
     assert isinstance(max_age_ms, int)

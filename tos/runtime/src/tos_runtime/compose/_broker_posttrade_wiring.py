@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.engine.records import EgressResultPayload, EngineEvent
 from tos.engine.vocabulary import EventKind, ResultDisposition
 
@@ -25,6 +26,7 @@ from tos_runtime.compose._transport_wiring import instance_rest_bases
 from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.engine.finality_projection import project_recovered_finality
 from tos_runtime.posttrade.broker_finality import BrokerFinalityProducer
+from tos_runtime.posttrade.broker_flat_release import BrokerFlatRelease
 from tos_runtime.posttrade.fill_fetch import (
     PrefetchedSnapshot,
     SnapshotRead,
@@ -53,6 +55,8 @@ from tos_runtime.transport.kis_mock.client import build_client
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
 from tos_runtime.transport.kis_mock.pacer import first_grant_on_this_thread
+
+_FLAT_RELEASE_SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 __all__ = [
     "BrokerPosttrade",
@@ -446,9 +450,45 @@ def attach_fill_observer(
         resume_entry_discharge=(
             None if recovery is None else recovery.resume_entry_discharge
         ),
+        broker_flat_release=_broker_flat_release(runtime, posttrade, monotonic),
         trading_dates_back=trading_dates_back,
     )
     return runtime
+
+
+def _broker_flat_release(
+    runtime: ComposedRuntime, posttrade: BrokerPosttrade, monotonic: MonotonicSource
+) -> BrokerFlatRelease | None:
+    """The opt-in broker-flat entry release (``fill_observer.yaml::broker_flat_release``)."""
+    config = posttrade.observer_config
+    bridge = posttrade.held_position_bridge
+    risk_state = runtime.risk_state
+    if (
+        config is None
+        or not config.broker_flat_release
+        or config.held_position_max_age_ms is None
+        or bridge is None
+        or risk_state is None
+    ):
+        return None
+
+    def _in_flight() -> bool:
+        observation = risk_state.position_observation()
+        return bool(observation.in_flight_buy or observation.in_flight_sell)
+
+    instrument_key = runtime.context_resolver.instrument_key
+    return BrokerFlatRelease(
+        rcl_log=runtime.rcl_log,
+        evidence_store=runtime.evidence_store,
+        scheme=_FLAT_RELEASE_SCHEME,
+        account=instrument_key.account,
+        instrument=instrument_key.instrument,
+        today=posttrade.trading_date_now,
+        now_ms=monotonic.now_ms,
+        max_age_ms=config.held_position_max_age_ms,
+        in_flight=_in_flight,
+        tip_compatible=bridge.tip_compatible,
+    )
 
 
 def close_fill_observer(runtime: ComposedRuntime) -> None:

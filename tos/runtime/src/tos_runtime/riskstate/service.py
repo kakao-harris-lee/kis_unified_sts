@@ -416,6 +416,10 @@ class RiskStateService:
                 self._close_fence_proof = proof
         return effect, close_effect_audit(direction, status, proof, effect, bound=bound)
 
+    def position_observation(self) -> PositionObservation:
+        """The scope's current evidence-derived position, including its in-flight sends."""
+        return self._position_reader.observe()
+
     def take_close_fence(
         self, request: StageRequest
     ) -> CloseProofCommitFence | SyntheticCloseEntryFence | None:

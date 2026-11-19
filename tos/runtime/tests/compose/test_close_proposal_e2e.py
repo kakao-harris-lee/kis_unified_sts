@@ -152,6 +152,20 @@ def _verdict(result, step: CommitmentStep):
     return verdict
 
 
+def _assert_reentry_denied_before_a_use(runtime, again) -> None:
+    """The held entry denies a re-entry OPEN; since 2026-11-19 at step 4, spending no use."""
+    assert again.flow is not None and again.flow.handed_off is False
+    assert _verdict(again, CommitmentStep.INDEPENDENT_APPROVAL).outcome is not (
+        StageOutcome.ADMIT
+    )
+    assert not [
+        v for v in again.flow.verdicts if v.step is CommitmentStep.LEDGER_VERIFICATION
+    ]
+    assert "open_over_outstanding_reservation" in [
+        r["reason"] for r in _rows(runtime, "APPROVAL_STANDING_NOT_COVERED")
+    ]
+
+
 def _sealed(runtime) -> list[dict[str, Any]]:
     return [r["send_seal"] for r in _rows(runtime, "SEND_SEALED")]
 
@@ -440,10 +454,7 @@ def test_an_unreadable_holding_quantity_keeps_the_entry_and_denies_a_re_entry(
 
     _order_response(server, "0000000503")
     (again,) = runtime.run_once((_entry_tick(seq=2),))
-    step8 = _verdict(again, CommitmentStep.LEDGER_VERIFICATION)
-    assert step8.outcome is StageOutcome.DENY, step8.reason
-    assert "no pyramiding" in (step8.reason or "")
-    assert again.flow.handed_off is False
+    _assert_reentry_denied_before_a_use(runtime, again)
     _close(runtime)
 
 
@@ -519,9 +530,7 @@ def test_a_malformed_holdings_container_keeps_the_entry_and_denies_a_re_entry(
 
     _order_response(server, "0000000703")
     (again,) = runtime.run_once((_entry_tick(seq=2),))
-    step8 = _verdict(again, CommitmentStep.LEDGER_VERIFICATION)
-    assert step8.outcome is StageOutcome.DENY, step8.reason
-    assert again.flow.handed_off is False
+    _assert_reentry_denied_before_a_use(runtime, again)
     _close(runtime)
 
 
@@ -556,9 +565,7 @@ def test_a_holdings_pdno_that_is_not_a_string_keeps_the_entry_and_denies_a_re_en
 
     _order_response(server, "0000000903")
     (again,) = runtime.run_once((_entry_tick(seq=2),))
-    step8 = _verdict(again, CommitmentStep.LEDGER_VERIFICATION)
-    assert step8.outcome is StageOutcome.DENY, step8.reason
-    assert again.flow.handed_off is False
+    _assert_reentry_denied_before_a_use(runtime, again)
     _close(runtime)
 
 

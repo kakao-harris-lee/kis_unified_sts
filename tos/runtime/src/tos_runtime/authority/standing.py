@@ -15,7 +15,7 @@ from tos.engine.records import StageRequest, StageVerdict
 from tos.engine.vocabulary import StageOutcome
 from tos.iap import ApprovalResult, IndependentApprovalDecision
 from tos.ioc.vocabulary import ConformanceAxis
-from tos.rcl import CommandType
+from tos.rcl import CapacityState, CommandType
 
 from tos_runtime._named_tbd import reject_named_tbd
 from tos_runtime.authority.iap import LoadedApproval, _consumption_command_id
@@ -62,6 +62,7 @@ _TOP_KEYS = frozenset(
 _ACTION_KEYS = frozenset({"position_effect", "direction", "side", "max_uses"})
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
+_OPEN_EFFECT = "OPEN"
 
 
 class StandingApprovalError(RuntimeError):
@@ -362,7 +363,25 @@ class StandingApprovalSource:
         if slot is None:
             self._not_covered(f"uses_exhausted:{action.key}")
             return None
+        if action.position_effect == _OPEN_EFFECT and self._scope_held(request):
+            self._not_covered("open_over_outstanding_reservation")
+            return None
         return _Covered(action=action, slot=slot, command_digest=command_digest)
+
+    def _scope_held(self, request: StageRequest) -> bool:
+        """Step 8 will deny this OPEN (no pyramiding): spend no use on it. Unreadable = held."""
+        key = request.instrument_key
+        try:
+            return any(
+                scope.account == key.account
+                and scope.instrument == key.instrument
+                and state is not CapacityState.RELEASED
+                for _reservation_id, state, _seq, scope in self._rcl_log.reservation_rows()
+            )
+        except (
+            Exception
+        ):  # noqa: BLE001 - an unreadable ledger grants no use (fail closed)
+            return True
 
     def free_slot(self, trading_date: str, action: StandingAction) -> int | None:
         """The lowest uncommitted slot for ``action`` today, read from the committed log;"""
