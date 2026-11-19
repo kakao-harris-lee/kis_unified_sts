@@ -63,10 +63,18 @@ CANDIDATE_COMMAND_CONSTRUCTION 에서 거부된 것). 그래서 전략 파일에
   `authority.yaml::standing_approval_max_uses_per_action`(이 트리 390 = 정규장 1분봉 수)이
   정한다(운영자 지시 2026-11-18 「필요한 만큼 승인이야」). 그래서 LEDGER_VERIFICATION 등에서
   멎은 시도가 그날의 유일한 기회를 태우지 않고, 청산 뒤 R4 재진입도 승인 슬롯 때문에는 막히지
-  않는다. **동시** 한도는 그대로다 — `aggregate_risk_policy` 1주
-  (`unknown_disposition: DENY_NEW_RISK`) · `action_flow_policy` afg.ORDER 한도 1 ·
+  않는다. **동시** 한도는 그대로다 — `action_flow_policy` afg.ORDER 한도 1 ·
   `engine.yaml::max_unresolved_send_per_scope: 1` · `risk.yaml::max_in_flight: 1` ·
-  OCP `min/max_quantity: 1` 이 겹쳐 있어 한 번에 1주 1건이다.
+  OCP `min/max_quantity: 1` 이 겹쳐 있어 한 번에 1주 1건이고, 커널의 no-pyramiding
+  (step 8 `verdict_for_scope`)이 미해소 예약이 있는 동안 OPEN 을 거부한다.
+- **거래일당 누적 한도는 2026-11-19 부터 1 이 아니다**: `aggregate_risk_policy.yaml::`
+  `_runtime.effective_limits`/`envelope_max` 의
+  `INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL` 이 **50주**다(generation 2 · 운영자 지시
+  2026-11-19 「슬롯 수를 하루 동안의 거래를 차단하지 않는 수로」). 이 한도는 in-flight 가
+  아니라 **이 잎이 쌓은 순델타**(체결 합)에 걸리므로, 1 이던 동안에는 청산되지 않은 체결
+  1건이 그날 남은 진입을 전부 DENY 시켰다. 50 의 도출(진입 창 330봉 상한 vs 모의계좌
+  현금 상한 floor(9,905,880 / 194,700))은 그 파일의 주석에 있다. `unknown_disposition:
+  DENY_NEW_RISK` 는 그대로다.
 - 장후 B3 대조는 `config/tos_cp3_b3.yaml::markets: ["futures"]` 라 주식 세션에서는
   `verdict: "skipped"` 다 — R4 는 B3 증인(`shared/decision/setups/vwap_reversion.py`)과
   만나지 않는다. 선물 세 트리(paper · LONG · SHORT)는 바이트 그대로다.

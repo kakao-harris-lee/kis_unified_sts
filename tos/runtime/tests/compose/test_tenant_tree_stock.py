@@ -78,7 +78,23 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
     "construction.yaml": frozenset({"instrument_class"}),
     "marketfeed.yaml": frozenset({"instrument_class", "unit"}),
     "aggregate_risk_policy.yaml": frozenset(
-        {"policy_id", "_runtime.unit", "risk_dimensions.0"}
+        {
+            "policy_id",
+            "_runtime.unit",
+            "risk_dimensions.0",
+            # generation 2 (operator directive 2026-11-19): the per-day net-delta
+            # limit moves 1 -> 50 for this MOCK stock tree only. The limit change
+            # is what this document's own invalidation_conditions call a new
+            # generation, so the two generation leaves and the approved_by row
+            # move with it.
+            "aggregate_risk_generation",
+            "_model_view.policy_generation",
+            "_runtime.effective_limits.INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL",
+            "_runtime.envelope_max.INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL",
+            "compatibility_requirements.0",
+            "approved_by.0",
+            "approved_by.1",
+        }
     ),
     "action_flow_policy.yaml": frozenset({"policy_id"}),
     "critical_input_policy.yaml": frozenset({"policy_id", "issuer_principal_id"}),
@@ -213,6 +229,18 @@ def test_the_stock_tree_carries_the_operator_decisions() -> None:
         "live_authorization_state": "NOT_AUTHORIZED",
         "nonlive_broker_consuming": {"admitted": True},
     }
+    # Operator directive 2026-11-19: the per-day net-delta capacity may not block a
+    # whole session of 1-share entries. The ARE limit and its own ceiling move
+    # together -- the kernel's `envelope_bound_not_enlarged` DENIES when effective
+    # exceeds the ceiling, so a half-applied raise would seal the tenant instead of
+    # opening it. Per-order size (1 share) and in-flight concurrency (1) are NOT part
+    # of this: they stay 1, pinned above and in
+    # test_the_in_flight_concurrency_caps_stay_one.
+    are = yaml.safe_load((_STOCK / "aggregate_risk_policy.yaml").read_text("utf-8"))
+    dimension = "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"
+    assert are["_runtime"]["effective_limits"][dimension] == 50
+    assert are["_runtime"]["envelope_max"][dimension] == 50
+    assert are["aggregate_risk_generation"] == are["_model_view"]["policy_generation"]
     for tree in ("cp3-setup-d-long", "cp3-setup-d-short"):
         other = _REPO_ROOT / "config" / "tos_runtime" / tree
         assert (
@@ -221,6 +249,7 @@ def test_the_stock_tree_carries_the_operator_decisions() -> None:
             ]
             == "SYNTHETIC_FUTURES_ORDER"
         )
+
     render = yaml.safe_load((_STOCK / "RENDER.yaml").read_text("utf-8"))
     assert render["account"] == {"env_key": "KIS_STOCK_ACCOUNT_NO"}
     assert render["direction"] == {"mode": "declared", "value": "LONG"}
@@ -239,6 +268,36 @@ def test_the_stock_tree_carries_the_operator_decisions() -> None:
     assert stock_policy["policy"]["rules"][:3] == long_policy["policy"]["rules"]
     (probe,) = stock_policy["policy"]["rules"][3:]
     assert probe["decision"]["rationale"].startswith("R4-M2-PROBE-ENTRY-LONG:")
+
+
+def test_the_in_flight_concurrency_caps_stay_one() -> None:
+    """The three caps that bound ONE UNRESOLVED order, not a day's worth of them.
+
+    Each is released when the order resolves, so raising the per-day net-delta
+    capacity (test_the_stock_tree_carries_the_operator_decisions) must not drag
+    them along:
+      * engine.yaml max_unresolved_send_per_scope -> ProvisionalReservationLedger
+        .admits_new_exposure (outstanding_count < bound; a RELEASED reservation is
+        not outstanding, tos/src/tos/engine/state.py);
+      * risk.yaml max_in_flight -> the afg `in_flight` amplification axis, counted
+        off SEND_SEALED rows MINUS the attempts with a terminal result
+        (EGRESS_RESULT_CONSUMED / RESULT_UNMATCHED), flow_observation.py;
+      * action_flow_policy.yaml _runtime.limits -> the afg.ORDER vector, which this
+        deployment raises exactly 1 of per attempt and never accumulates (the
+        composed pipeline commits COMMIT_RESERVATION, never
+        ISSUE_ACTION_FLOW_PERMIT, so committed_flow_vectors stays empty).
+    """
+    assert (
+        yaml.safe_load((_STOCK / "engine.yaml").read_text("utf-8"))[
+            "max_unresolved_send_per_scope"
+        ]
+        == 1
+    )
+    assert (
+        yaml.safe_load((_STOCK / "risk.yaml").read_text("utf-8"))["max_in_flight"] == 1
+    )
+    afg = yaml.safe_load((_STOCK / "action_flow_policy.yaml").read_text("utf-8"))
+    assert set(afg["_runtime"]["limits"].values()) == {1}
 
 
 def _stock_strategy_and_config() -> tuple[Any, dict[str, Any]]:

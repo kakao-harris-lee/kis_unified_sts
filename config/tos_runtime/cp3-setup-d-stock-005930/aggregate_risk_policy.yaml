@@ -7,8 +7,9 @@
 #
 # APPROVAL PROVENANCE: docs/plans/2026-09-16-tos-risk-state-service-plan.md
 # §6 ②, adopted by the operator on 2026-09-16 (「1. 채택」).
-#   * ONE governed dimension, INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL in
-#     CONTRACTS, effective limit 1 — paper trades one contract; this is the
+#   * ONE governed dimension, INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL — in this
+#     tree the unit is SHARES and the limit is generation 2's 50, not generation
+#     1's 1 (see the generation-2 block below); this is the
 #     only dimension the runtime can source today (a single-source fill sum
 #     from its own durable evidence, DR-0003 §2.2). No notional / margin
 #     dimension: no mark source exists, and a dimension with no source would
@@ -17,8 +18,9 @@
 #     (2026-11-13, docs/plans/2026-11-13-tos-code-halving-plan.md). Before that it
 #     was the Hard Safety Envelope's `governed_dimensions[].envelope_max`, checked
 #     against this policy at boot by the compose root; `safety_envelope.yaml`, its
-#     example and that cross-check are all gone. The VALUE is unchanged (measured
-#     before the cut: "1" in all four shipped trees) and so is the refusal —
+#     example and that cross-check are all gone. The VALUE was unchanged by that cut
+#     (measured before it: "1" in all four shipped trees; this tree moved to 50 in
+#     generation 2, 2026-11-19, below) and so is the refusal —
 #     `load_aggregate_risk_policy` requires a ceiling for every id in
 #     `dimension_ids`, so an ARE-governed dimension with no declared bound is
 #     refused at load instead of at wiring. The kernel's
@@ -28,6 +30,28 @@
 #   * The position observation is single-source (no broker witness);
 #     all_fields_attributed stays the operator attestation in
 #     risk_attestations.yaml (DR-0003 §2.2) — this file never asserts it.
+#
+# APPROVAL PROVENANCE (generation 2 — 이 트리만, 운영자 지시 2026-11-19:
+# 「슬롯 수를 하루 동안의 거래를 차단하지 않는 수로 지정해. 3이나 그 이상.」):
+# `_runtime.effective_limits` / `_runtime.envelope_max` 의 한 칸을 1 → 50 으로 올린다
+# (도출은 그 두 칸 옆 주석). **한도 값의 변경**이므로 이 문서 자신의
+# `invalidation_conditions`(「new policy generation on any change of dimension, limit,
+# scenario coverage or scope」)에 따라 새 generation 이고, `aggregate_risk_generation`
+# 과 `_model_view.policy_generation` 을 함께 올렸다(로더가 두 값의 동등을 요구한다 —
+# `_aggregate_risk_policy_loader._parse_are_model_view`).
+#   * 왜 1 이 하루를 막았나: 이 한도는 **in-flight 상한이 아니라 누적 순델타 상한**이다.
+#     step 6 의 cell 은 `conservative_current_usage`(= 이 잎의 durable evidence 를 접은
+#     `confirmed_net + unknown_*`, tos.position.conservative_current_usage) 에 이번
+#     명령의 효과(1주)를 더해 `effective_limit` 과 비교한다
+#     (tos.are.records.ProjectedCell.requested_increment/headroom). 체결된 진입 1건이
+#     청산되지 않으면 confirmed_net 이 1 이라 그 뒤 모든 진입이 1 + 1 > 1 로 DENY 된다 —
+#     그 세션은 거기서 끝난다. 50 이면 미청산 체결 50건까지 열린다.
+#   * 바꾸지 않은 것: 주문 1건의 수량(1주 고정, `order_construction_policy.yaml` ·
+#     `venue_constraint_policy.yaml` 의 max_quantity 1), 동시 미결제 송신 1건
+#     (`engine.yaml::max_unresolved_send_per_scope`, `risk.yaml::max_in_flight`,
+#     `action_flow_policy.yaml::_runtime.limits`), 그리고 커널의 no-pyramiding
+#     (step 8 `verdict_for_scope` — outstanding reservation 이 있으면 OPEN 거부).
+#     한도는 여전히 강제되고, 바뀐 것은 하루 누적 상한 하나뿐이다.
 #
 # OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"): account_scope,
 # instrument_scope (same values as venue_constraint_policy.yaml). The
@@ -40,7 +64,7 @@ artifact_type: AGGREGATE_RISK_POLICY
 schema_version: "1.0-DRAFT"
 policy_id: "arp-paper-krx-stock"
 policy_version: TBD
-aggregate_risk_generation: 1
+aggregate_risk_generation: 2
 canonical_digest: TBD
 status: ISSUED
 environment_scope: ["paper"]
@@ -77,10 +101,12 @@ dependency_closure_rules: []
 materiality_default: MATERIAL
 unknown_disposition: DENY_NEW_RISK
 compatibility_requirements:
-  - "HSE must govern INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL with envelope_max ≥ 1"
+  - "HSE must govern INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL with envelope_max ≥ 50"
 invalidation_conditions:
   - "new policy generation on any change of dimension, limit, scenario coverage or scope"
-approved_by: ["operator (System Owner) — 2026-09-16, plan §6 ② 채택"]
+approved_by:
+  - "operator (System Owner) — 2026-09-16, plan §6 ② 채택 (generation 1)"
+  - "operator (System Owner) — 2026-11-19 지시 「슬롯 수를 하루 동안의 거래를 차단하지 않는 수로 지정해. 3이나 그 이상.」 (generation 2: INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL effective_limit/envelope_max 1 → 50, 이 MOCK 주식 트리만)"
 effective_from: "2026-09-16"
 review_due: null
 authority:
@@ -100,7 +126,7 @@ evidence:
   independent_review_id: "PR #703 / #704 independent review (sonnet) — see plan §7"
   evidence_location: "evidence store rows AGGREGATE_RISK_POLICY_BOUND / RISK_STATE_OBSERVED"
 _model_view:
-  policy_generation: 1
+  policy_generation: 2
   policy_version: "1.0.0"
   governed_dimensions: ["LONG_SHORT_DELTA_DIRECTIONAL"]
   governed_scopes: ["INSTRUMENT"]
@@ -113,14 +139,40 @@ _runtime:
     "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL":
       scope: "INSTRUMENT"
       dimension: "LONG_SHORT_DELTA_DIRECTIONAL"
+  # ── 50 의 도출 (운영자 지시 2026-11-19 · generation 2) ──────────────────────
+  # 단위는 SHARES(`_runtime.unit`), 뜻은 「이 잎이 하루 동안 쌓을 수 있는 순 LONG 델타」다.
+  #
+  # (가) 하루가 낼 수 있는 진입 수의 상한 — 330.
+  #      `fields.yaml::entry_window` = between(mso, lo 15, hi 345) 이므로 진입이 가능한
+  #      1분봉은 345 − 15 = 330 개다. 전략 파일의 R4 프로브 규칙
+  #      `R4-M2-PROBE-ENTRY-LONG` 은 그 창의 **봉마다** OPEN LONG 을 1건 제안하고 수량은
+  #      1주 고정(`order_construction_policy.yaml::_runtime.construction.sizing.max_quantity`
+  #      = `venue_constraint_policy.yaml::_model_view.shape_constraints.max_quantity` = 1,
+  #      운영자 결정 2026-10-22)이다 → 하루 진입 ≤ 330건 → 순 LONG 델타 ≤ 330주.
+  #      (같은 셈이 `authority.yaml::standing_approval_max_uses_per_action: 390` = 정규장
+  #       09:00–15:30 의 1분봉 수, #1099.)
+  #
+  # (나) 계좌가 낼 수 있는 진입 수의 상한 — 50. **이쪽이 더 좁아서 이 값이 된다.**
+  #      2026-11-19 모의계좌(fingerprint ee1bdb5f1ca2) GET 실측:
+  #        inquire-psbl-order(VTTC8908R) `ord_psbl_cash` = 9,905,880 KRW
+  #        inquire-balance(VTTC8434R)   `dnca_tot_amt`  = 9,762,041 KRW
+  #        005930 현재가(FHKST01010100 `stck_prpr`)      =   194,700 KRW
+  #      floor(9,905,880 / 194,700) = floor(50.87…) = **50**.
+  #      브로커 자신의 미수 없는 매수가능수량 `nrcvb_buy_qty` 도 같은 50 이다(교차 확인).
+  #      현금이 330주(= 64,251,000 KRW)를 대지 못하므로 min(330, 50) = 50 을 쓴다.
+  #      50 ≥ 3(지시의 하한)이고, 그 위의 진입은 TOS 가 아니라 계좌 잔고가 막는다.
+  #
+  # ⚠ 이 값은 **입금되면 다시 도출해야 한다** — (나)가 넓어지면 상한은 (가)의 330 이다.
   effective_limits:
-    "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL": 1
+    "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL": 50
   # `envelope_max` — 6단계 `injected_envelope_max` 상한. 2026-11-13 S2-a 이전까지는
-  # `safety_envelope.yaml::envelope.governed_dimensions[].envelope_max` 에 있었고
-  # 값은 그대로다(안전망 제거 전 실측: 네 트리 모두 "1"). 로더는 `dimension_ids` 의
-  # 모든 id 에 대해 이 값을 요구한다 — 상한 없는 차원은 부팅 거부.
+  # `safety_envelope.yaml::envelope.governed_dimensions[].envelope_max` 에 있었다(안전망
+  # 제거 전 실측: 네 트리 모두 "1"). 로더는 `dimension_ids` 의 모든 id 에 대해 이 값을
+  # 요구한다 — 상한 없는 차원은 부팅 거부. 커널의 `envelope_bound_not_enlarged` 는
+  # effective > envelope 일 때 DENY 하므로, 위 effective_limit 과 **같은 값**이어야 한다
+  # (도출은 바로 위 블록; 이 트리만 50, 나머지 세 트리는 1 그대로).
   envelope_max:
-    "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL": 1
+    "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL": 50
   required_scenario_kinds: ["ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ"]
   required_scopes: ["INSTRUMENT"]
   applicable_risk_scopes: ["INSTRUMENT"]
