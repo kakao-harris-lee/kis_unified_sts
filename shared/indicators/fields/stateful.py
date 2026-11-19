@@ -212,7 +212,6 @@ class WilderRsi:
     def __init__(self, *, period: int, field: str) -> None:
         if period < 1:
             raise FieldEvalError(f"{field}: rsi period must be >= 1, got {period}")
-        self._field = field
         self._period = period
         self._changes = 0
         self._prev_close: float | None = None
@@ -285,7 +284,6 @@ class WilliamsR:
             raise FieldEvalError(
                 f"{field}: williams_r period must be >= 1, got {period}"
             )
-        self._field = field
         self._period = period
         self._highs: deque[float] = deque(maxlen=period)
         self._lows: deque[float] = deque(maxlen=period)
