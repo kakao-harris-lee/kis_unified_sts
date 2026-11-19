@@ -259,6 +259,13 @@ BAND_LINE_EXTRA_WAIT_S=${CP3_BAND_LINE_EXTRA_WAIT_S:-20}
 # close + 5 min = 8h12m) is still one trading day, so the ceiling is 9 h, not 8.
 MAX_SESSION_S=32400
 
+# The same kind of typo ceiling for the stock boot stagger (step 11, `TENANT_BOOT_DELAY_S`).
+# Several stock tenants share ONE KIS 모의투자 app key and each runtime issues its own token
+# at boot, and KIS issues at most one token per minute per app key — so the tenants' boots
+# are spread apart. 600 s is the widest spread that is still a stagger: beyond it the
+# later tenant is not late to the open, it has missed a tenth of the session.
+MAX_BOOT_DELAY_S=600
+
 # --- 3. instance values (no defaults) --------------------------------------
 
 require_env \
@@ -490,14 +497,22 @@ esac
 case "$_MARKET" in
 futures)
   TRANSPORT=synthetic
-  for _stock_only in TENANT_INSTRUMENT TENANT_KIS_MOCK_TRANSPORT_CONFIG; do
+  for _stock_only in TENANT_INSTRUMENT TENANT_KIS_MOCK_TRANSPORT_CONFIG TENANT_BOOT_DELAY_S; do
     [ -z "${!_stock_only+x}" ] ||
       die "$_stock_only is set for a futures session — the futures instrument is derived (step 6) and a futures tenant sends nothing, so nothing would read it"
   done
   ;;
 stock)
   TRANSPORT=kis-mock
-  require_env TENANT_INSTRUMENT TENANT_KIS_MOCK_TRANSPORT_CONFIG
+  require_env TENANT_INSTRUMENT TENANT_KIS_MOCK_TRANSPORT_CONFIG TENANT_BOOT_DELAY_S
+  # Seconds to wait between the render and the boot (step 11). Whole seconds, 0 allowed,
+  # bounded well under the stop window: this is a stagger, never a session shortener.
+  case "$TENANT_BOOT_DELAY_S" in
+  '' | *[!0-9]*)
+    die "TENANT_BOOT_DELAY_S='$TENANT_BOOT_DELAY_S' is not a whole number of seconds" ;;
+  esac
+  [ "$TENANT_BOOT_DELAY_S" -le "$MAX_BOOT_DELAY_S" ] ||
+    die "TENANT_BOOT_DELAY_S=$TENANT_BOOT_DELAY_S exceeds the ${MAX_BOOT_DELAY_S}s ceiling — a boot stagger that large is a typo, and it would spend the session's opening minutes"
   [ "$INSTRUMENT_MATCH" = match ] ||
     die "TENANT_INSTRUMENT='$TENANT_INSTRUMENT' does not fully match $TENANT_TREE/RENDER.yaml instrument.pattern ($INSTRUMENT_MATCH) — this tree is single-symbol; a new symbol is a new tree generation"
   [ -f "$TENANT_KIS_MOCK_TRANSPORT_CONFIG" ] ||
@@ -1271,6 +1286,33 @@ TREE_ENV=$("$PY" -c \
 [ "$TREE_ENV" = "$TENANT_ENVIRONMENT_LABEL" ] ||
   die "TENANT_ENVIRONMENT_LABEL='$TENANT_ENVIRONMENT_LABEL' but the rendered tree declares environment '$TREE_ENV' ($CIP). The loader does not compare these, so booting would issue capsules whose covered content names the wrong environment"
 log "environment label $TENANT_ENVIRONMENT_LABEL matches the rendered tree"
+
+# --- 10c. the stock boot stagger (one app key, one token a minute) ---------
+#
+# Several stock tenants share ONE KIS 모의투자 app key. Each runtime holds its token in
+# memory (tos_runtime/transport/kis_mock/token.py) and issues its own at first use, and KIS
+# issues at most one token per minute per app key — so two boots inside one minute leave the
+# later one with a TokenResponseError and then a `token_reissue_min_interval_s` (60 s) wait
+# before it may try again, which is a minute of that tenant's session spent refusing to send.
+#
+# The cron lines being minutes apart does NOT prevent this: every stock producer's first row
+# arrives at the OPEN, so three sessions started at 08:53 / 08:55 / 08:57 all render and boot
+# within seconds of 09:01. The stagger therefore has to be HERE, between the render and the
+# boot, and it is a deployment value the caller computes (cp3_tenant_daily.sh derives it from
+# the tenant's position in its own STOCK_SYMBOLS list).
+#
+# AFTER the render on purpose: the wrapper writes this day's standing approval when it sees
+# `render ok`, so the wait is time that write already has, and the approval is in place
+# before this tenant binds it. The stop is ABSOLUTE (step 12), so a later boot ends the
+# session at the same TENANT_STOP_AT — this spends opening minutes, never closing ones.
+# Gated on the MARKET, never on a `:-` default: TENANT_BOOT_DELAY_S is required for a stock
+# session (step 5b) and refused for a futures one, so a default here would be the very thing
+# `test_runner_template_carries_no_instance_defaults` exists to stop — a value this script
+# invents for itself. `&&` short-circuits, so the futures path never expands it under set -u.
+if [ "$_MARKET" = stock ] && [ "$TENANT_BOOT_DELAY_S" -gt 0 ]; then
+  log "boot stagger: waiting ${TENANT_BOOT_DELAY_S}s before the boot (one KIS app key, one token a minute — step 10c)"
+  sleep "$TENANT_BOOT_DELAY_S"
+fi
 
 # --- 11. boot --------------------------------------------------------------
 #

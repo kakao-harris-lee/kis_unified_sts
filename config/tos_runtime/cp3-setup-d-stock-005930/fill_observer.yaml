@@ -30,8 +30,15 @@ max_pages: 10
 # 실측(2026-11): 모의 REST 는 2.0 req/s 에서 조여지고(HTTP 500 · EGW00201) 1.0 req/s 에서
 # 깨끗했다. 미결 ACK 를 쥔 한 tenant 의 FETCH 는 주문 1페이지 + 해제 스냅숏 2건 ≈ 3 GET
 # 이므로 3 s 주기면 ~60 GET/min(1 req/s) 이고, 세 tenant 가 동시에 그러면 3 req/s —
-# 전부 조여진다. 9 s 로 늘리면 tenant 마다 ~20 GET/min, 셋이 합쳐 1.0 req/s 로 실측
-# 깨끗 지점에 들어온다. 보유만 하는 tenant 는 4 GET / 36 s ≈ 7 GET/min 이다.
+# 전부 조여진다. 9 s / 36 s 로 늘린 뒤의 수:
+#   * **하드 상한 1.5 req/s** — `min_send_interval_ms` 2000 이 프로세스마다 0.5 req/s 를
+#     넘지 못하게 하므로 3 × 0.5 = 1.5. 어떤 조합으로도 이 위로는 못 간다.
+#   * **셋 다 바쁠 때 ~1.33 req/s** — tenant 마다 미결 폴 3 GET / 9 s (0.333) + 보유 증명
+#     4 GET / 36 s (0.111) = 0.444 req/s, × 3 = 1.33.
+#   * 보유만 하고 미결이 없으면 tenant 마다 ~7 GET/min, 셋이 합쳐 0.33 req/s.
+# 즉 실측 깨끗 지점 1.0 을 **상시로는 넘지 않고**, 셋이 동시에 미결을 쥔 구간에서만
+# 1.33 으로 올라가 2.0 조이기 지점 아래에 머문다. 전 판(3 s / 12 s)은 같은 구간에서
+# 3 req/s 였다.
 # **`min_send_interval_ms` 는 그대로 2000** 이다 — 그 값은 한 프로세스의 **연속 요청
 # 간격**이고, 아래 `release_snapshot_max_age_ms` · `held_position_max_age_ms` 의 부팅
 # 하한(2 배 · 3 배)이 그 값에서 나온다. 조이기를 피하는 쪽은 **수요를 줄이는 것**이지
@@ -241,4 +248,14 @@ broker_flat_release: true
 # buy a second lot and the first would become an untracked orphan — the 11-19 deadlock again.
 # 30000: five times the ~6 s the held double read itself spans (comment above), and short
 # against a session in which a stuck reservation otherwise blocks every OPEN until the close.
+#
+# ⚠ What the confirmation COSTS, at this tree's poll interval. The first flat poll that
+# counts is the first whose read starts at least this long after the runtime saw the entry
+# consumed, and the second must be at least one `held_position_poll_interval_ms` after that.
+# With the three-tenant interval 36000 the first lands somewhere in 30-66 s (wherever the
+# 36 s cadence next falls past 30 s) and the second 36 s later, so a broker-flat release
+# commits **~66-102 s after the consumption** — against ~42-54 s at the single-tenant 12000.
+# That is the price of the shared app key, and it is paid only on this recovery path: a
+# normal TOS close releases through finality, not through this. Both halves move together —
+# raising the poll interval raises this window by the same amount.
 broker_flat_release_settle_ms: 30000

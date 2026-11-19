@@ -89,6 +89,18 @@ _STOCK_SYMBOLS: tuple[str, ...] = tuple(
 #: The one stock tenant whose HOST paths carry no symbol (its leaf was born 2026-11-06).
 _STOCK_LEGACY_SYMBOL = "005930"
 
+#: What `TENANT_INSTRUMENT=` must say in the tracked env example — read from the runner, which
+#: is where `--preflight` reads it too, so this test cannot drift from the thing it checks.
+_SYMBOL_REF = re.search(
+    r"^STOCK_ENV_INSTRUMENT_REF='([^']+)'",
+    (_REPO_ROOT / "tools/tos_cp3/runners/cp3_tenant_daily.sh").read_text(
+        encoding="utf-8"
+    ),
+    flags=re.MULTILINE,
+).group(
+    1
+)  # type: ignore[union-attr]
+
 
 def _stock_host_suffix(symbol: str) -> str:
     return "" if symbol == _STOCK_LEGACY_SYMBOL else f"-{symbol}"
@@ -1126,6 +1138,50 @@ def test_stock_symbol_runs_with_its_own_tree_producer_leaf_and_custody(
     assert not _stock_session(env, _OPEN_DAY).exists()
 
 
+def test_each_stock_tenant_gets_its_own_boot_stagger(env: Env) -> None:
+    """One app key, one token a minute — so the BOOTS are spread, not the cron minutes.
+
+    Every stock producer's first row arrives at the open, so sessions started at 08:53 /
+    08:55 / 08:57 all render and boot within seconds of 09:01. Without a stagger the second
+    and third runtimes get a TokenResponseError and then wait out
+    `token_reissue_min_interval_s` (60 s) before they may try again. The delay is derived
+    from the tenant's POSITION in STOCK_SYMBOLS, so the first listed symbol boots at once
+    and a fourth tenant needs no new constant.
+    """
+    _data_parents(env)
+    offsets: dict[str, int] = {}
+    for index, symbol in enumerate(_STOCK_SYMBOLS):
+        argument = "STOCK" if symbol == _STOCK_LEGACY_SYMBOL else f"STOCK:{symbol}"
+        r = env.daily(argument, CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_BOOT_OFFSET_S="7")
+        assert r.returncode == 0, r.stdout
+        out = (_stock_session(env, _OPEN_DAY, symbol=symbol) / "runner.out").read_text(
+            encoding="utf-8"
+        )
+        (line,) = [
+            ln for ln in out.splitlines() if ln.startswith("TENANT_BOOT_DELAY_S=")
+        ]
+        offsets[symbol] = int(line.split("=", 1)[1])
+        assert f"boot_delay={offsets[symbol]}s" in r.stdout, r.stdout
+        assert offsets[symbol] == index * 7, (symbol, index, offsets)
+    # The tenant that was already deployed boots at once; the rest are spread apart.
+    assert offsets[_STOCK_SYMBOLS[0]] == 0, offsets
+    assert len(set(offsets.values())) == len(offsets), offsets
+
+
+def test_the_default_boot_offset_clears_the_kis_token_minute() -> None:
+    """70 s = KIS's own one-token-per-minute window plus room to reach the first token use.
+
+    A value below 60 would put two boots back inside the same minute, which is the whole
+    failure this stagger exists for.
+    """
+    text = (_REPO_ROOT / "tools/tos_cp3/runners/cp3_tenant_daily.sh").read_text("utf-8")
+    match = re.search(
+        r"^\s*BOOT_OFFSET_S=\$\{CP3_DAILY_BOOT_OFFSET_S:-([0-9]+)\}", text, re.M
+    )
+    assert match is not None, "BOOT_OFFSET_S default not found — did the runner move?"
+    assert int(match.group(1)) >= 60, match.group(1)
+
+
 def test_bare_stock_and_the_legacy_symbol_are_ONE_tenant(env: Env) -> None:
     """Two spellings may never become two sessions on one trading day."""
     _data_parents(env)
@@ -1199,18 +1255,20 @@ def test_preflight_refuses_an_env_example_that_hardcodes_a_symbol(env: Env) -> N
     _data_parents(env)
     rel = "tools/tos_cp3/runners/stock-mock-session.env.example"
     path = env.main / rel
-    path.write_text(
-        path.read_text(encoding="utf-8").replace(
-            "TENANT_INSTRUMENT=${TOS_STOCK_SYMBOL}", "TENANT_INSTRUMENT=005930"
-        ),
-        encoding="utf-8",
+    before = path.read_text(encoding="utf-8")
+    after = before.replace(
+        f"TENANT_INSTRUMENT={_SYMBOL_REF}", "TENANT_INSTRUMENT=005930"
     )
+    assert (
+        after != before
+    ), "the env example no longer sets TENANT_INSTRUMENT to the reference"
+    path.write_text(after, encoding="utf-8")
     _git("commit", "-q", "-am", "pin a symbol", cwd=env.main)
     _git("push", "-q", "origin", "main", cwd=env.main)
     _git("fetch", "-q", "origin", cwd=env.main)
     r = env.daily("STOCK:000660", "--preflight", _OPEN_DAY)
     assert r.returncode == 2, r.stdout
-    assert "not ${TOS_STOCK_SYMBOL}" in r.stdout
+    assert f"not {_SYMBOL_REF}" in r.stdout, r.stdout
 
 
 def test_stock_preflight_reports_the_window_leaf_and_transport_keys(env: Env) -> None:

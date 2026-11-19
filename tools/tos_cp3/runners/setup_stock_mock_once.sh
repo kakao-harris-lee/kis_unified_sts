@@ -3,8 +3,9 @@
 # 시험: tests/tools/test_setup_stock_mock_once.py (스크래치 · 가짜 값). TOS_STATE_ROOT / TOS_ENV_MOCK 로 자리를 바꾼다.
 # 사용법:  bash setup_stock_mock_once.sh [종목]            # 점검만(dry-run): 무엇을 만들지 보여 주고 아무것도 쓰지 않는다
 #          bash setup_stock_mock_once.sh [종목] --apply    # 실제로 만든다
-# 종목을 생략하면 005930 — cp3_tenant_daily.sh 의 `STOCK` 과 같은 기본값이고, 그 tenant 의
-# 호스트 경로에는 종목이 붙지 않는다(2026-11-06 에 태어난 배포 그대로). 다른 종목은
+# 종목을 생략하면 러너의 STOCK_LEGACY_SYMBOL — cp3_tenant_daily.sh 의 `STOCK` 과 같은
+# 기본값이고, 그 tenant 의 호스트 경로에는 종목이 붙지 않는다(2026-11-06 에 태어난 배포
+# 그대로). 종목 집합과 그 예외는 러너에서 읽는다(아래). 다른 종목은
 # `…-<종목>-data` · `…-<종목>-ops` · `…-<종목>-custody` 로 자기 자리를 갖는다 —
 # **custody 는 절대 공유하지 않는다**: 상시 승인 산출물 경로가 custody 루트 기준 고정이고
 # 승인 문서는 그 tenant 의 «렌더된» 설정에 묶이므로, 공유하면 한 tenant 의 부팅이 다른
@@ -14,18 +15,35 @@
 set -euo pipefail
 umask 077
 
-SYMBOL=005930
+# 종목 집합과 예외 종목은 **러너가 정본**이다 — 두 벌로 적으면 한쪽만 고쳐진다.
+# 러너에 없는 종목으로 준비해 봐야 그 tenant 는 돌지 않고, 디렉터리만 남는다.
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 2
+RUNNER="$SCRIPT_DIR/cp3_tenant_daily.sh"
+[[ -f "$RUNNER" ]] || { echo "ERROR: $RUNNER 가 없다 — 종목 집합을 읽을 수 없다" >&2; exit 2; }
+read_runner() { sed -n "s/^$1=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$RUNNER" | head -1; }
+STOCK_SYMBOLS=$(read_runner STOCK_SYMBOLS)
+STOCK_LEGACY_SYMBOL=$(read_runner STOCK_LEGACY_SYMBOL)
+[[ -n "$STOCK_SYMBOLS" && -n "$STOCK_LEGACY_SYMBOL" ]] ||
+  { echo "ERROR: $RUNNER 에서 STOCK_SYMBOLS / STOCK_LEGACY_SYMBOL 을 읽지 못했다" >&2; exit 2; }
+
+SYMBOL="$STOCK_LEGACY_SYMBOL"
 APPLY=0
 for a in "$@"; do
   case "$a" in
   --apply) APPLY=1 ;;
   [0-9][0-9][0-9][0-9][0-9][0-9]) SYMBOL=$a ;;
-  *) echo "사용법: $0 [6자리 종목코드] [--apply]" >&2; exit 2 ;;
+  *) echo "사용법: $0 [6자리 종목코드] [--apply]   (종목: $STOCK_SYMBOLS)" >&2; exit 2 ;;
   esac
 done
-# 005930 만 호스트 경로에 종목이 없다 (위 주석 · cp3_tenant_daily.sh STOCK_LEGACY_SYMBOL).
+case " $STOCK_SYMBOLS " in
+*" $SYMBOL "*) ;;
+*) echo "ERROR: $SYMBOL 은 러너의 tenant 가 아니다 — $RUNNER 의 STOCK_SYMBOLS 는 '$STOCK_SYMBOLS' 다." >&2
+   echo "       트리·생산자 설정·cron 줄을 먼저 올린 뒤에 준비한다 (그 전에는 돌 tenant 가 없다)." >&2
+   exit 2 ;;
+esac
+# 예외 종목만 호스트 경로에 종목이 없다 (위 주석 · 러너의 STOCK_LEGACY_SYMBOL).
 HOST_SUFFIX=""
-[[ "$SYMBOL" == "005930" ]] || HOST_SUFFIX="-$SYMBOL"
+[[ "$SYMBOL" == "$STOCK_LEGACY_SYMBOL" ]] || HOST_SUFFIX="-$SYMBOL"
 ST="${TOS_STATE_ROOT:-$HOME/.local/state/tos}"
 MAIN="/home/deploy/project/kis_unified_sts"
 ENV_MOCK="${TOS_ENV_MOCK:-$MAIN/.env.mock}"

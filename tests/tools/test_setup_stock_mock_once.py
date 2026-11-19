@@ -129,6 +129,20 @@ def test_a_named_symbol_gets_its_own_data_ops_and_custody(
     assert (state / "cp3-setup-d-stock-005380-custody/kis_mock.app_key").is_file()
 
 
+def test_a_symbol_the_runner_does_not_know_is_refused(host: tuple[Path, Path]) -> None:
+    """The tenant set lives in `cp3_tenant_daily.sh`, and this script reads it from there.
+
+    Preparing host state for a symbol the runner will never start leaves custody keys and a
+    durable-set parent that nothing owns — and, worse, makes it look like the tenant is
+    ready. Two copies of the set would be the same defect one edit later, so there is one.
+    """
+    state, env_mock = host
+    result = _run(state, env_mock, "999999", "--apply")
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "STOCK_SYMBOLS" in result.stderr, result.stderr
+    assert list(state.iterdir()) == []
+
+
 def test_a_symbol_that_is_not_six_digits_is_refused(host: tuple[Path, Path]) -> None:
     state, env_mock = host
     result = _run(state, env_mock, "00066", "--apply")

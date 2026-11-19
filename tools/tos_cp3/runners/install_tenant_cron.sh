@@ -62,11 +62,18 @@ SELF_REL=tools/tos_cp3/runners/install_tenant_cron.sh
 #
 # The other two stock tenants (operator directive 2026-11-19 — one tenant per symbol)
 # follow at two-minute gaps, 08:55 and 08:57, both still inside that window. Two
-# minutes is the same reason LONG and SHORT keep it: the three stock producers DO
-# share one REAL stock app key, and KIS issues at most one token per minute per key.
-# (They also share a `token_cache_dir` on purpose, so the second and third producer
-# normally reuse the first's token rather than issuing one — the gap is what makes
-# that true even when the cache is cold, e.g. the first session of a day.)
+# minutes is the same reason LONG and SHORT keep it, and it protects exactly ONE
+# thing: the ③ PRODUCERS' token. The three stock producers share one REAL stock app
+# key and KIS issues at most one token per minute per key; they also share a
+# `token_cache_dir` on purpose, so the second and third normally reuse the first's
+# token — the gap is what makes that true when the cache is cold (a day's first
+# session), because each producer starts at its own cron minute.
+#
+# ⚠ It does NOT stagger the RUNTIMES' mock-key tokens. Every stock producer's first
+# row arrives at the OPEN, so all three sessions render and boot within seconds of
+# 09:01 no matter which minute they started. That stagger lives where it can work —
+# between each session's render and its boot (`TENANT_BOOT_DELAY_S`, derived by
+# cp3_tenant_daily.sh from the tenant's position in STOCK_SYMBOLS).
 LONG_AT="38 8"
 SHORT_AT="40 8"
 STOCK_AT="53 8"
@@ -92,8 +99,8 @@ STOCK_005380_AT="57 8"
 LONG_SLEEP=90
 SHORT_SLEEP=240
 STOCK_SLEEP=390
-# The two later stock tenants keep the same 150 s spacing. Unlike the futures pair they
-# DO need it: all three stock producers share one REAL app key (schedule note above).
+# The two later stock tenants keep the same 150 s spacing, for the producers' shared
+# REAL app key (schedule note above — the runtimes' own stagger is TENANT_BOOT_DELAY_S).
 STOCK_000660_SLEEP=540
 STOCK_005380_SLEEP=690
 BEGIN_MARK="# BEGIN CP3_TENANT_DAILY"

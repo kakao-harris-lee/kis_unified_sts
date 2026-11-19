@@ -157,6 +157,10 @@ STOCK_SYMBOLS="005930 000660 005380"
 # symbol in them. Renaming them would orphan a live deployment's state, so they are kept and
 # every OTHER symbol carries itself in those names.
 STOCK_LEGACY_SYMBOL=005930
+# What `TENANT_INSTRUMENT=` must say in the tracked env example: the symbol reaches a session
+# ONLY as this reference, so one template can serve every tenant. `--preflight` compares the
+# committed line against this literal (including the `:?` guard).
+STOCK_ENV_INSTRUMENT_REF='${TOS_STOCK_SYMBOL:?TOS_STOCK_SYMBOL unset}'
 
 USAGE="usage: $0 LONG|SHORT|STOCK|STOCK:<symbol> [--preflight [YYYY-MM-DD] | --catch-up HH:MM]
        stock symbols: $STOCK_SYMBOLS (STOCK = $STOCK_LEGACY_SYMBOL)"
@@ -248,6 +252,27 @@ STOCK | STOCK:*)
   TRANSPORT_CONFIG=$STATE/cp3-setup-d-stock${STOCK_HOST_SUFFIX}-ops/kis_mock_transport.yaml
   SETUP_REL=tools/tos_cp3/runners/setup_stock_mock_once.sh
   STOCK_ENV_REL=tools/tos_cp3/runners/stock-mock-session.env.example
+  # Seconds this tenant waits between its render and its boot (run_tenant_session.sh step
+  # 10c). Derived from the tenant's POSITION in STOCK_SYMBOLS, so the first listed symbol
+  # boots at once and adding a fourth needs no new constant:
+  #
+  #   why at all — every stock producer's first row arrives at the OPEN, so sessions started
+  #   at 08:53 / 08:55 / 08:57 all render and boot within seconds of 09:01. They share ONE
+  #   모의투자 app key and each runtime issues its own token at first use; KIS issues at most
+  #   one token per minute per app key, so without a stagger the second and third boots get
+  #   a TokenResponseError and then wait out `token_reissue_min_interval_s` (60 s) before
+  #   they may try again — a minute of that tenant's session spent refusing to send.
+  #   The cron minutes cannot fix it (they are before the open); only the boot can.
+  #
+  #   why 70 — one minute of KIS's own window plus 10 s for the boot itself to reach its
+  #   first token use. Raise it if the token issue is ever measured slower than that.
+  BOOT_OFFSET_S=${CP3_DAILY_BOOT_OFFSET_S:-70}
+  STOCK_INDEX=0
+  for _s in $STOCK_SYMBOLS; do
+    [ "$_s" = "$SYMBOL" ] && break
+    STOCK_INDEX=$((STOCK_INDEX + 1))
+  done
+  BOOT_DELAY_S=$((STOCK_INDEX * BOOT_OFFSET_S))
   # 15:30 close + 10 = 15:40, the stop the 11-03 operator-approved sequence used
   # (TOS_STOCK_STOP_AT=15:40, runbook §7.2-f start block). Wider than the futures
   # 5 because 15:20-15:30 is the closing auction: the day's last minute bars and
@@ -567,8 +592,10 @@ if [ "$MODE" = preflight ]; then
       sed -n 's/^TENANT_INSTRUMENT=//p' | tail -1)
     [ -n "$env_inst" ] || {
       log "PREFLIGHT TENANT_INSTRUMENT not found in origin/main:$STOCK_ENV_REL"; exit 2; }
-    [ "$env_inst" = '${TOS_STOCK_SYMBOL}' ] || {
-      log "PREFLIGHT origin/main:$STOCK_ENV_REL sets TENANT_INSTRUMENT=$env_inst, not \${TOS_STOCK_SYMBOL} — a run would send every stock tenant at one symbol; refusing"
+    # The `:?` guard is part of the value: without it a session whose TOS_STOCK_SYMBOL was
+    # never exported would quietly render `cp3-setup-d-stock-` and fail later and vaguer.
+    [ "$env_inst" = "$STOCK_ENV_INSTRUMENT_REF" ] || {
+      log "PREFLIGHT origin/main:$STOCK_ENV_REL sets TENANT_INSTRUMENT=$env_inst, not $STOCK_ENV_INSTRUMENT_REF — a run would send every stock tenant at one symbol; refusing"
       exit 2; }
     kd=$(stock_transport_keydiff)
     case $? in
@@ -796,6 +823,7 @@ if [ "$MARKET" = stock ]; then
     cd "$WT" || exit 70
     export TOS_REPO=$WT TOS_PYTHON=$PY \
       TOS_STOCK_SYMBOL=$SYMBOL \
+      TOS_STOCK_BOOT_DELAY_S=$BOOT_DELAY_S \
       TOS_STOCK_SESSION_ROOT=$SESSION \
       TOS_STOCK_DATA_PARENT=$DATA_PARENT \
       TOS_STOCK_ENV_MOCK=$MAIN/.env.mock \
@@ -810,7 +838,7 @@ if [ "$MARKET" = stock ]; then
   ) >"$SESSION/runner.out" 2>&1 &
   runner_pid=$!
   echo "$runner_pid" >"$SESSION/runner.pid"
-  log "runner pid=$runner_pid session=$SESSION — waiting for 'render ok' to write today's standing approval"
+  log "runner pid=$runner_pid session=$SESSION boot_delay=${BOOT_DELAY_S}s (STOCK_SYMBOLS position $STOCK_INDEX) — waiting for 'render ok' to write today's standing approval"
   write_standing_approval
   wait "$runner_pid"
   rc=$?

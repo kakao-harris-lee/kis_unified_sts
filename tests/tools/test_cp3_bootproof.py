@@ -2985,6 +2985,9 @@ def _stock_overrides(tmp_path: Path, **extra: str) -> dict[str, str]:
         _STUB_MARKET_ENV: "stock",
         "TENANT_INSTRUMENT": "005930",
         "TENANT_KIS_MOCK_TRANSPORT_CONFIG": str(transport),
+        # The boot stagger (step 10c). 0 here: these runs are about everything else, and a
+        # real wait would add its seconds to every one of them.
+        "TENANT_BOOT_DELAY_S": "0",
         **extra,
     }
 
@@ -3057,10 +3060,15 @@ def test_a_futures_session_still_boots_synthetic(
         ),
         # a stock session missing or misnaming them
         (
+            {"TENANT_BOOT_DELAY_S": "70"},
+            "TENANT_BOOT_DELAY_S is set for a futures session",
+        ),
+        (
             {
                 "TENANT_TREE": _STOCK_TREE,
                 _STUB_MARKET_ENV: "stock",
                 "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+                "TENANT_BOOT_DELAY_S": "0",
             },
             "required env TENANT_INSTRUMENT is unset",
         ),
@@ -3069,6 +3077,7 @@ def test_a_futures_session_still_boots_synthetic(
                 "TENANT_TREE": _STOCK_TREE,
                 _STUB_MARKET_ENV: "stock",
                 "TENANT_INSTRUMENT": "005930",
+                "TENANT_BOOT_DELAY_S": "0",
             },
             "required env TENANT_KIS_MOCK_TRANSPORT_CONFIG is unset",
         ),
@@ -3076,8 +3085,40 @@ def test_a_futures_session_still_boots_synthetic(
             {
                 "TENANT_TREE": _STOCK_TREE,
                 _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "005930",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+            },
+            "required env TENANT_BOOT_DELAY_S is unset",
+        ),
+        # The stagger is a count of seconds, and a typo is a session that boots far too
+        # late or not at all: "70s" is not 70, and an hour is not a stagger.
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "005930",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+                "TENANT_BOOT_DELAY_S": "70s",
+            },
+            "is not a whole number of seconds",
+        ),
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "005930",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+                "TENANT_BOOT_DELAY_S": "3600",
+            },
+            "exceeds the 600s ceiling",
+        ),
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
                 "TENANT_INSTRUMENT": "A05612",
                 "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+                "TENANT_BOOT_DELAY_S": "0",
             },
             "does not fully match",
         ),
@@ -3088,6 +3129,7 @@ def test_a_futures_session_still_boots_synthetic(
                 _STUB_MARKET_ENV: "stock",
                 "TENANT_INSTRUMENT": "000660",
                 "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+                "TENANT_BOOT_DELAY_S": "0",
             },
             "does not fully match",
         ),
@@ -3097,6 +3139,7 @@ def test_a_futures_session_still_boots_synthetic(
                 _STUB_MARKET_ENV: "stock",
                 "TENANT_INSTRUMENT": "005930",
                 "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/nonexistent/kis_mock_transport.yaml",
+                "TENANT_BOOT_DELAY_S": "0",
             },
             "TENANT_KIS_MOCK_TRANSPORT_CONFIG names no file",
         ),
@@ -3127,11 +3170,14 @@ _TEMPLATE_LITERALS = {
 #: here would hand EVERY stock tenant's session that symbol while its tree stayed its own —
 #: `run_tenant_session.sh` only catches that mid-start (its instrument.pattern check), and
 #: `cp3_tenant_daily.sh --preflight` says it earlier because of this same rule.
+#: The `:?` guard is part of each value: without it a session that never exported
+#: TOS_STOCK_SYMBOL would quietly render `cp3-setup-d-stock-` and fail later and vaguer.
+_SYMBOL_REF = "${TOS_STOCK_SYMBOL:?TOS_STOCK_SYMBOL unset}"
 _TEMPLATE_SYMBOL_DERIVED = {
-    "TENANT_TREE": "cp3-setup-d-stock-${TOS_STOCK_SYMBOL}",
-    "TENANT_INSTRUMENT": "${TOS_STOCK_SYMBOL}",
+    "TENANT_TREE": f"cp3-setup-d-stock-{_SYMBOL_REF}",
+    "TENANT_INSTRUMENT": _SYMBOL_REF,
     "TENANT_PRODUCER_CONFIG": (
-        "${TOS_REPO}/config/tos_probes/cp3-live-producer-stock-${TOS_STOCK_SYMBOL}.yaml"
+        f"${{TOS_REPO}}/config/tos_probes/cp3-live-producer-stock-{_SYMBOL_REF}.yaml"
     ),
 }
 
@@ -3149,8 +3195,11 @@ def test_the_stock_env_template_names_every_value_the_runner_requires() -> None:
     text = _RUNNER.read_text("utf-8")
     block = text[text.index("require_env \\\n") : text.index("ensure_log_file")]
     required = set(re.findall(r"TENANT_[A-Z_]+", block)) | {
+        # Stock-only, required in the runner's `case "$_MARKET"` branch rather than its
+        # shared require_env block — a futures session is refused if any of them is set.
         "TENANT_INSTRUMENT",
         "TENANT_KIS_MOCK_TRANSPORT_CONFIG",
+        "TENANT_BOOT_DELAY_S",
     }
     assert set(_template_values()) == required
 
@@ -3166,7 +3215,10 @@ def test_the_stock_env_template_carries_no_secret_and_no_host_path() -> None:
         if key in _TEMPLATE_SYMBOL_DERIVED:
             assert value == _TEMPLATE_SYMBOL_DERIVED[key], key
             continue
-        assert re.fullmatch(r"\$\{[A-Z_]+\}(/[A-Za-z0-9_./-]+)?", value), (key, value)
+        assert re.fullmatch(r"\$\{[A-Z_]+(:\?[^}]+)?\}(/[A-Za-z0-9_./-]+)?", value), (
+            key,
+            value,
+        )
     text = _ENV_TEMPLATE.read_text("utf-8")
     for forbidden in ("APP_KEY=", "APP_SECRET=", "ACCOUNT_NO=", "/home/"):
         assert forbidden not in text

@@ -380,7 +380,16 @@ for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
   **종목이 겹치면 그 보장이 깨진다**: 한 종목에 두 tenant 를 두지 말 것.
 - **요청률은 더해진다.** `KisAppKeyPacer` 는 프로세스마다 하나다. 그래서 세 트리의
   `fill_observer.yaml` 관찰 주기가 단일 tenant 값의 3 배다(그 파일 머리 «TENANT COUNT»).
-  조여진 응답(HTTP 500 · EGW00201)은 fail-closed — `WitnessUnavailable` 로 기록되고 다시 읽는다.
+  하드 상한은 1.5 req/s(3 × `min_send_interval_ms` 2000), 셋 다 미결을 쥔 구간이 ~1.33 req/s,
+  보유만 하면 0.33 req/s 다 — 실측 조이기 지점 2.0 아래. 조여진 응답(HTTP 500 · EGW00201)은
+  fail-closed — `WitnessUnavailable` 로 기록되고 다시 읽는다.
+- **부팅은 서로 엇갈려야 한다.** cron 줄을 2분 벌린 것은 **생산자**의 REAL 키 토큰만 지킨다:
+  생산자의 첫 행은 어느 분에 시작했든 **개장**에 오므로 세 세션이 09:01 근처에서 같이 렌더하고
+  같이 부팅한다. 런타임은 저마다 모의 앱 키로 토큰을 발급하는데 KIS 는 앱 키당 분당 1회만
+  내주므로, 엇갈리지 않으면 둘째·셋째가 `TokenResponseError` 뒤 60 s(`token_reissue_min_interval_s`)를
+  기다린다. 그래서 렌더와 부팅 사이에 `TENANT_BOOT_DELAY_S` 가 있다 —
+  `cp3_tenant_daily.sh` 가 `STOCK_SYMBOLS` 안 **순번 × 70 s** 로 정한다(005930 은 0).
+  손으로 시작할 때는 위 블록의 `SYM_BOOT_DELAY` 가 같은 자리다.
 - **상태판.** `sts tos status` 는 세션 디렉터리를 글롭하므로 새 tenant 가 자동으로 나온다.
   깨끗한 날 누적(`config/tos_status_board.yaml::clean_streak.trees`)은 LONG 만 센다 — 바뀌지 않았다.
 
@@ -421,15 +430,26 @@ bash <(git -C $MAIN show origin/main:tools/tos_cp3/runners/setup_stock_mock_once
   1주 롱이 남는다 — 평탄하게 하려면 모의투자 HTS 에서 손으로 판다. ⛔ 청산을 제안별 승인 파일로 **절대** 승인하지 않는다(두 번째 1주를 **산다**).
 - **genesis** = 빈 잎 `$ST/cp3-setup-d-stock-005930-data/005930` 에 대한 첫 `run`(러너가 잎을 만든다 · 되돌릴 수 없다 · 승인 행위는 없다). 다음 날부터는 같은 잎을 잇는다.
 
-**08:55 시작 — 손으로(재기동 `RUN=2`, 또는 cron 줄을 끈 날).** 창 08:52–09:05: 첫 행은 09:01:0x 에 오고 첫 행 대기 상한이 600 s. cron 의 `r1` 은 08:53 에 이 블록과 같은 일을 한다. LONG 08:38·SHORT 08:40 는 **선물** REAL 키, 이 세션은 **주식** REAL 키(생산자·band)와 모의 키(런타임) — 지문이 서로 달라 분당 1회 토큰 발급이 겹치지 않는다.
+**손으로 시작 — 재기동(`RUN=2`), 또는 cron 줄을 끈 날.** 창 08:52–09:05: 첫 행은 09:01:0x 에 오고 첫 행 대기 상한이 600 s. cron 의 `r1` 이 08:53/08:55/08:57 에 이 블록과 같은 일을 한다. LONG 08:38·SHORT 08:40 는 **선물** REAL 키, 주식 세션은 **주식** REAL 키(생산자·band)와 모의 키(런타임) — 지문이 서로 달라 선물과는 분당 1회 토큰 발급이 겹치지 않는다. 주식끼리는 겹치므로 `SYM_BOOT_DELAY` 를 둔다(아래).
+
+블록은 **종목 인자 하나**로 움직인다. 맨 앞 세 줄만 고치면 어느 주식 tenant 든 시작한다 —
+`SYM` 은 `STOCK_SYMBOLS` 안의 종목, `SYM_SUFFIX` 는 005930 만 빈 문자열(그 배포의 호스트
+경로에는 종목이 없다), `SYM_BOOT_DELAY` 는 지금 다른 주식 tenant 가 같이 부팅 중일 때만 ≥70.
+
 ```bash
-D=$(TZ=Asia/Seoul date +%Y%m%d) RUN=${RUN:-1}; WT=$ST/measure/wt-cp3-stock-r$RUN-$D   # 같은 날 재기동은 RUN=2 로 이 블록을 다시
+SYM=005930; case $SYM in 005930) SYM_SUFFIX= ;; *) SYM_SUFFIX=-$SYM ;; esac; SYM_BOOT_DELAY=${SYM_BOOT_DELAY:-0}
+D=$(TZ=Asia/Seoul date +%Y%m%d) RUN=${RUN:-1}; LC=stock$SYM_SUFFIX; WT=$ST/measure/wt-cp3-$LC-r$RUN-$D   # 같은 날 재기동은 RUN=2 로 이 블록을 다시
 git -C $MAIN fetch -q origin && git -C $MAIN worktree add -q --detach $WT origin/main && export TOS_REPO=$WT TOS_PYTHON=$MAIN/.venv/bin/python \
-  TOS_STOCK_SESSION_ROOT=$ST/cp3-sessions/stock-r$RUN-$D TOS_STOCK_DATA_PARENT=$ST/cp3-setup-d-stock-005930-data TOS_STOCK_ENV_MOCK=$MAIN/.env.mock \
-  TOS_STOCK_CUSTODY_ROOT=$ST/cp3-setup-d-stock-custody TOS_STOCK_KIS_MOCK_TRANSPORT_CONFIG=$ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml TOS_STOCK_STOP_AT=15:40 \
+  TOS_STOCK_SYMBOL=$SYM TOS_STOCK_BOOT_DELAY_S=$SYM_BOOT_DELAY \
+  TOS_STOCK_SESSION_ROOT=$ST/cp3-sessions/$LC-r$RUN-$D TOS_STOCK_DATA_PARENT=$ST/cp3-setup-d-stock-$SYM-data TOS_STOCK_ENV_MOCK=$MAIN/.env.mock \
+  TOS_STOCK_CUSTODY_ROOT=$ST/cp3-setup-d-stock$SYM_SUFFIX-custody TOS_STOCK_KIS_MOCK_TRANSPORT_CONFIG=$ST/cp3-setup-d-stock$SYM_SUFFIX-ops/kis_mock_transport.yaml TOS_STOCK_STOP_AT=15:40 \
   && mkdir -m 700 $TOS_STOCK_SESSION_ROOT && cd $WT && set -a && . tools/tos_cp3/runners/stock-mock-session.env.example && set +a \
   && { nohup bash tools/tos_cp3/runners/run_tenant_session.sh >$TOS_STOCK_SESSION_ROOT/runner.out 2>&1 & echo $! >$TOS_STOCK_SESSION_ROOT/runner.pid; }   # 한 고리가 실패하면 아무것도 뜨지 않는다
 ```
+
+> 더 간단한 길: `bash $MAIN/tools/tos_cp3/runners/cp3_tenant_daily.sh STOCK:<종목>` 이 위를 전부
+> 한다(워크트리 · 승인 · 전송 키 대조 · 텔레그램 포함). 다만 **그날 세션 디렉터리가 이미 있으면
+> 거부한다** — 같은 날 두 번째 세션(`RUN=2`)은 그래서 위 블록이다.
 ```bash
 cd $WT && PYTHONPATH=tos/runtime/src:tos/src $MAIN/.venv/bin/python -c "import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))" \
   write-standing-approval --config-dir "$TOS_STOCK_SESSION_ROOT/render" --custody-root "$TOS_STOCK_CUSTODY_ROOT" --environment-label paper --trading-date $(TZ=Asia/Seoul date +%F)
@@ -444,8 +464,8 @@ sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payl
 sqlite3 -readonly $L/evidence.sqlite3 "SELECT json_extract(payload_json,'\$.payload.reason'),COUNT(*) FROM entries WHERE kind='APPROVAL_STANDING_NOT_COVERED' GROUP BY 1"   # 승인 범위 밖인 이유
 sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,json_extract(payload_json,'\$.payload.halt_reason'),COUNT(*) FROM entries WHERE kind IN ('EVENT_CONSUMED','COORDINATOR_MESH_HELD','SEND_REFUSED') GROUP BY 1,2"   # B4: LIVE_SCOPE_NOT_AUTHORIZED · mesh activation_atomic(FLOW_HALTED 없음) · B5: SEND_REFUSED
 ```
-**정지 · 킬스위치.** 새 셸이면 먼저 `ST=~/.local/state/tos D=<YYYYMMDD> RUN=<n>; TOS_STOCK_SESSION_ROOT=$ST/cp3-sessions/stock-r$RUN-$D`. 정상: `TENANT_STOP_AT` 에 러너가 스스로 멎는다(rc 0/143). 손 정지 = `kill -TERM $(cat $TOS_STOCK_SESSION_ROOT/runner.pid)`(러너가 런타임 → 생산자 순으로 멈춘다).
-러너가 죽었는데 런타임이 남았으면 `pkill -TERM -f "stock-r$RUN-$D/render"`. `AUTHORITY_WITNESS_LOST` 는 그 프로세스에서 영구다 — 회복은 재기동(시작 블록을 `RUN=2` 로)뿐. ⛔ **이미 나간 모의 주문의 취소는 런타임에 없다(#948) — KIS 모의투자 HTS 에서 손으로.**
+**정지 · 킬스위치.** 새 셸이면 먼저 `ST=~/.local/state/tos D=<YYYYMMDD> RUN=<n> SYM=<종목>; case $SYM in 005930) LC=stock ;; *) LC=stock-$SYM ;; esac; TOS_STOCK_SESSION_ROOT=$ST/cp3-sessions/$LC-r$RUN-$D`. 정상: `TENANT_STOP_AT` 에 러너가 스스로 멎는다(rc 0/143). 손 정지 = `kill -TERM $(cat $TOS_STOCK_SESSION_ROOT/runner.pid)`(러너가 런타임 → 생산자 순으로 멈춘다).
+러너가 죽었는데 런타임이 남았으면 `pkill -TERM -f "$LC-r$RUN-$D/render"`. `AUTHORITY_WITNESS_LOST` 는 그 프로세스에서 영구다 — 회복은 재기동(시작 블록을 `RUN=2` 로)뿐. ⛔ **이미 나간 모의 주문의 취소는 런타임에 없다(#948) — KIS 모의투자 HTS 에서 손으로.**
 
 **장 마감 뒤 수용.** 같은 attempt 하나에 아래가 모두 있으면 M2 수용 — 승인(`APPROVAL_STANDING_CONSUMED` 의 `rcl_command_id` = RCL `ConsumeApprovalDecision` `iap-consumption:standing-approval:<YYYYMMDD>:…`) · `CommitReservation` · VERIFY_ITEM 17 · `SEND_SEALED`/`TRANSPORT_SEND` · `ACK` · `FILL_OBSERVED` + `FULL_FILL|PARTIAL_FILL` · `POSTTRADE_FINALITY_PROOF`(`broker-fqp-proof:<attempt>`) · RCL `release-<attempt>` · `ENGINE_PROJECTION_RELEASED`. 질의는 종류·개수·id 접두만 찍는다(예약 id·payload 에는 계좌가 있다 — 옮겨 적지 않는다).
 ```bash
