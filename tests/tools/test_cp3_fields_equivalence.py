@@ -581,8 +581,40 @@ class TestSessionAnchorIsDerivedFromTheProducerConfig:
         assert fe.producer_open_anchor("futures") == "auto"
 
     def test_an_unknown_market_is_refused_rather_than_guessed(self) -> None:
-        with pytest.raises(fe.EquivalenceError, match="exactly one"):
+        with pytest.raises(fe.EquivalenceError, match="no config/tos_probes"):
             fe.producer_open_anchor("bonds")  # type: ignore[arg-type]
+
+    def test_several_configs_of_one_market_are_fine_while_they_agree(self) -> None:
+        """One tenant per stock symbol (operator directive 2026-11-19).
+
+        The stock market now has three producer configs. They are three TENANTS of one
+        session, not three sessions, so the harness may derive the anchor from them —
+        the thing it may not do is pick one when they disagree (next test).
+        """
+        stock = [
+            path
+            for path in sorted(fe.REPO_ROOT.glob(fe.PRODUCER_CONFIG_GLOB))
+            if (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("market")
+            == "stock"
+        ]
+        assert len(stock) >= 3, [str(path) for path in stock]
+        assert fe.producer_open_anchor("stock") == "09:00"
+
+    def test_a_disagreement_between_two_configs_of_one_market_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two anchors for one market leave none to pick, so neither is picked."""
+        probes = tmp_path / "config" / "tos_probes"
+        probes.mkdir(parents=True)
+        (probes / "cp3-live-producer-stock-aaaaaa.yaml").write_text(
+            'market: stock\nopen_anchor: "09:00"\n', encoding="utf-8"
+        )
+        (probes / "cp3-live-producer-stock-bbbbbb.yaml").write_text(
+            'market: stock\nopen_anchor: "10:00"\n', encoding="utf-8"
+        )
+        monkeypatch.setattr(fe, "REPO_ROOT", tmp_path)
+        with pytest.raises(fe.EquivalenceError, match="do not agree on open_anchor"):
+            fe.producer_open_anchor("stock")
 
     def test_the_stock_anchor_agrees_with_the_stock_tree_s_declaration(self) -> None:
         """The derivation and the declaration must name the same minute.

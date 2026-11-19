@@ -52,6 +52,10 @@ TREES: tuple[tuple[str, str, str, int], ...] = (
     ("cp3-setup-d-long", "setup_d_long.strategy", "z_entry_max_x1000", -1),
     ("cp3-setup-d-short", "setup_d_short.strategy", "z_entry_min_x1000", +1),
     ("cp3-setup-d-stock-005930", "setup_d_long.strategy", "z_entry_max_x1000", -1),
+    # One stock tenant per symbol (operator directive 2026-11-19). Their decision contract
+    # is byte-identical to 005930's, so they carry the same stem, key and sign.
+    ("cp3-setup-d-stock-000660", "setup_d_long.strategy", "z_entry_max_x1000", -1),
+    ("cp3-setup-d-stock-005380", "setup_d_long.strategy", "z_entry_max_x1000", -1),
 )
 
 #: The value under test, written out. ``extreme_atr_mult: 1.8`` x 1000, truncated

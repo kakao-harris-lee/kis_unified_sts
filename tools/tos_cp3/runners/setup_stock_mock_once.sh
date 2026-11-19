@@ -1,19 +1,55 @@
 #!/usr/bin/env bash
-# CP-3 주식 MOCK 세션(005930) 1회 준비 — 런북 docs/runbooks/tos-paper-boot.md §7.2-f «1회 준비» 의 정본.
+# CP-3 주식 MOCK 세션 1회 준비 (종목 하나) — 런북 docs/runbooks/tos-paper-boot.md §7.2-f «1회 준비» 의 정본.
 # 시험: tests/tools/test_setup_stock_mock_once.py (스크래치 · 가짜 값). TOS_STATE_ROOT / TOS_ENV_MOCK 로 자리를 바꾼다.
-# 사용법:  bash setup_stock_mock_once.sh            # 점검만(dry-run): 무엇을 만들지 보여 주고 아무것도 쓰지 않는다
-#          bash setup_stock_mock_once.sh --apply    # 실제로 만든다
+# 사용법:  bash setup_stock_mock_once.sh [종목]            # 점검만(dry-run): 무엇을 만들지 보여 주고 아무것도 쓰지 않는다
+#          bash setup_stock_mock_once.sh [종목] --apply    # 실제로 만든다
+# 종목을 생략하면 러너의 STOCK_LEGACY_SYMBOL — cp3_tenant_daily.sh 의 `STOCK` 과 같은
+# 기본값이고, 그 tenant 의 호스트 경로에는 종목이 붙지 않는다(2026-11-06 에 태어난 배포
+# 그대로). 종목 집합과 그 예외는 러너에서 읽는다(아래). 다른 종목은
+# `…-<종목>-data` · `…-<종목>-ops` · `…-<종목>-custody` 로 자기 자리를 갖는다 —
+# **custody 는 절대 공유하지 않는다**: 상시 승인 산출물 경로가 custody 루트 기준 고정이고
+# 승인 문서는 그 tenant 의 «렌더된» 설정에 묶이므로, 공유하면 한 tenant 의 부팅이 다른
+# tenant 의 승인을 바인드한다.
+# 종목마다 한 번씩 돌린다 (운영자 지시 2026-11-19 — 종목당 tenant 하나).
 # 비밀값(키·시크릿·계좌번호)은 화면에 찍지 않는다. 이미 있는 파일은 덮어쓰지 않고 멈춘다.
 set -euo pipefail
 umask 077
 
-APPLY=0; [[ "${1:-}" == "--apply" ]] && APPLY=1
+# 종목 집합과 예외 종목은 **러너가 정본**이다 — 두 벌로 적으면 한쪽만 고쳐진다.
+# 러너에 없는 종목으로 준비해 봐야 그 tenant 는 돌지 않고, 디렉터리만 남는다.
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 2
+RUNNER="$SCRIPT_DIR/cp3_tenant_daily.sh"
+[[ -f "$RUNNER" ]] || { echo "ERROR: $RUNNER 가 없다 — 종목 집합을 읽을 수 없다" >&2; exit 2; }
+read_runner() { sed -n "s/^$1=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$RUNNER" | head -1; }
+STOCK_SYMBOLS=$(read_runner STOCK_SYMBOLS)
+STOCK_LEGACY_SYMBOL=$(read_runner STOCK_LEGACY_SYMBOL)
+[[ -n "$STOCK_SYMBOLS" && -n "$STOCK_LEGACY_SYMBOL" ]] ||
+  { echo "ERROR: $RUNNER 에서 STOCK_SYMBOLS / STOCK_LEGACY_SYMBOL 을 읽지 못했다" >&2; exit 2; }
+
+SYMBOL="$STOCK_LEGACY_SYMBOL"
+APPLY=0
+for a in "$@"; do
+  case "$a" in
+  --apply) APPLY=1 ;;
+  [0-9][0-9][0-9][0-9][0-9][0-9]) SYMBOL=$a ;;
+  *) echo "사용법: $0 [6자리 종목코드] [--apply]   (종목: $STOCK_SYMBOLS)" >&2; exit 2 ;;
+  esac
+done
+case " $STOCK_SYMBOLS " in
+*" $SYMBOL "*) ;;
+*) echo "ERROR: $SYMBOL 은 러너의 tenant 가 아니다 — $RUNNER 의 STOCK_SYMBOLS 는 '$STOCK_SYMBOLS' 다." >&2
+   echo "       트리·생산자 설정·cron 줄을 먼저 올린 뒤에 준비한다 (그 전에는 돌 tenant 가 없다)." >&2
+   exit 2 ;;
+esac
+# 예외 종목만 호스트 경로에 종목이 없다 (위 주석 · 러너의 STOCK_LEGACY_SYMBOL).
+HOST_SUFFIX=""
+[[ "$SYMBOL" == "$STOCK_LEGACY_SYMBOL" ]] || HOST_SUFFIX="-$SYMBOL"
 ST="${TOS_STATE_ROOT:-$HOME/.local/state/tos}"
 MAIN="/home/deploy/project/kis_unified_sts"
 ENV_MOCK="${TOS_ENV_MOCK:-$MAIN/.env.mock}"
-DATA="$ST/cp3-setup-d-stock-005930-data"
-OPS="$ST/cp3-setup-d-stock-ops"
-C="$ST/cp3-setup-d-stock-custody"
+DATA="$ST/cp3-setup-d-stock-$SYMBOL-data"
+OPS="$ST/cp3-setup-d-stock${HOST_SUFFIX}-ops"
+C="$ST/cp3-setup-d-stock${HOST_SUFFIX}-custody"
 TRANSPORT="$OPS/kis_mock_transport.yaml"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -41,7 +77,7 @@ say "custody 파일 (600): read.principal evidence.key evidence.key.1 replay.par
 say "custody 파일 (600): kis_mock.app_key kis_mock.app_secret (.env.mock 의 모의 주식 키에서)"
 say "custody.manifest.yaml (600): 위 5개 scope"
 say "$TRANSPORT (600): mode: live · VTS 호스트 · price_scale 100 · ACNT_PRDT_CD=계좌 뒤 2자리"
-say "데이터 잎 $DATA/005930 은 만들지 않는다 — 월요일 첫 run(genesis)이 만든다"
+say "데이터 잎 $DATA/$SYMBOL 은 만들지 않는다 — 첫 거래일 run(genesis)이 만든다"
 
 if [[ $APPLY -eq 0 ]]; then echo; echo "DRY-RUN — 아무것도 쓰지 않았다. 실행하려면 --apply"; exit 0; fi
 
@@ -98,4 +134,5 @@ stat -c '  %a %n' "$DATA" "$OPS" "$C" "$C/approvals" "$TRANSPORT" "$C"/kis_mock.
 for f in kis_mock.app_key kis_mock.app_secret; do
   [[ -s "$C/$f" ]] && ! grep -q '"' "$C/$f" && say "$f: 비어 있지 않음 · 따옴표 없음" || die "$f 이상"
 done
-echo "다음: 월요일 장전 상시 승인 작성 → 08:55 런북 §7.2-f 시작 블록 (첫 run = genesis, 되돌릴 수 없음)"
+echo "다음: 첫 거래일 장전 상시 승인 작성 → 런북 §7.2-f 시작 블록 (첫 run = genesis, 되돌릴 수 없음)."
+echo "      cron 이 이미 이 tenant 를 걸고 있으면 그 줄이 상시 승인까지 쓴다 — 손으로 쓸 필요 없다."

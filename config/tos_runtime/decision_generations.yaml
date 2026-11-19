@@ -84,3 +84,22 @@ tenants:
   cp3-setup-d-stock-005930:
     generation: 2
     decision_digest: "sha256:1b6efb2efc044b969822ea7fd627c3754b1bf286ed666561394f82bc263eee39"
+
+  # The two stock tenants added for 운영자 지시 2026-11-19 (「유동성이 큰 대형주들로 최종
+  # 모의투자에서 매수/매도가 잘 동작하게 완료해」 — 종목당 1 포지션, 슬롯은 종목 수로 늘린다).
+  # Their `strategies/`, `strategy_bindings.yaml` and `engine.yaml` are BYTE-IDENTICAL to
+  # 005930's, and this file's payload is the PARSED decision contract of exactly those three
+  # inputs — so all three stock tenants measure the SAME digest. That is not a copy-paste
+  # error: a different digest here would mean one of those three files had drifted.
+  #   generation 1: these leaves are born under R1-R3 + R4-M2-PROBE-ENTRY-LONG, the contract
+  #                 005930 reached only at its generation 2. A new leaf starts at 1 — the
+  #                 number counts re-genesis events of THAT leaf, not of the contract.
+  # ⚠ Turning `m2_probe_entry_enabled` back to `false` after M2 succeeds bumps all three
+  # tenants (one binding change, three leaves to re-genesis).
+  cp3-setup-d-stock-000660:
+    generation: 1
+    decision_digest: "sha256:1b6efb2efc044b969822ea7fd627c3754b1bf286ed666561394f82bc263eee39"
+
+  cp3-setup-d-stock-005380:
+    generation: 1
+    decision_digest: "sha256:1b6efb2efc044b969822ea7fd627c3754b1bf286ed666561394f82bc263eee39"

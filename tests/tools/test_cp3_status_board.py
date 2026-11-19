@@ -1195,6 +1195,59 @@ def test_history_label_column_fits_a_two_digit_stock_run():
     assert lines[0].index("ENDED") == lines[1].index("ENDED")
 
 
+def test_history_label_column_fits_a_per_symbol_stock_label():
+    """종목별 주식 tenant(운영자 지시 2026-11-19)의 라벨은 고정 10칸을 넘는다.
+
+    `stock-000660-r10` 은 16자다. 폭이 10 으로 고정돼 있으면 그 줄의 상태·rc·틱 칸이
+    모두 오른쪽으로 밀려 짧은 라벨 줄과 열이 어긋나고, 표를 눈으로 읽을 수 없게 된다.
+    """
+    base = {
+        "day": "20261124",
+        "status": "ENDED",
+        "run_rc": 0,
+        "ticks": 1,
+        "stale": 0,
+        "other_withheld": 0,
+        "band": 0,
+        "overrun": 0,
+        "witness_lost": 0,
+        "witness_lost_mid_session": 0,
+        "store_error": None,
+        "blocks": 0,
+    }
+    rows = [
+        base | {"label": label}
+        for label in ("long", "stock-r1", "stock-000660-r1", "stock-005380-r10")
+    ]
+    board = {
+        "date": "2026-11-24",
+        "state_dir": "/x",
+        "generated_kst": "t",
+        "issues": [],
+        "tenant_sessions": [],
+        "cron": {},
+        "paper": {"live_check": False, "session": None},
+        "history": rows,
+    }
+    text = sb.render_text(board)
+    lines = [ln for ln in text.splitlines() if ln.startswith("  20261124")]
+    assert len(lines) == len(rows)
+    columns = {ln.index("ENDED") for ln in lines}
+    assert len(columns) == 1, lines
+
+    # 머리글의 세션 칸도 같이 늘어난다 — 머리글은 데이터 줄과 글자 단위로 맞춰진 적이
+    # 없고(한글 칸 폭) 여기서 맞추지도 않는다. 보는 것은 «같이 움직인다» 뿐이다.
+    def header_of(labels: tuple[str, ...]) -> str:
+        rendered = sb.render_text(
+            board | {"history": [base | {"label": label} for label in labels]}
+        )
+        return next(ln for ln in rendered.splitlines() if "stale 기타" in ln)
+
+    assert header_of(("long",)).index("상태") < header_of(("stock-005380-r10",)).index(
+        "상태"
+    )
+
+
 def test_a_mid_session_loss_turns_the_exit_code_to_1(tmp_path: Path, state: Path):
     # 픽스처 10-22 는 stale 비율로 이미 막힘이다 — 그 판정만 풀어 상실 하나의 효과를 본다.
     config = tmp_path / "board.yaml"

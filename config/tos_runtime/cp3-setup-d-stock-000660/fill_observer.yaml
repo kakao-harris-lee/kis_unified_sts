@@ -1,0 +1,261 @@
+# =============================================================================
+# Post-ACK fill observer + stock broker witness — CP-3 stock tenant / KIS 모의투자 (VTS), GET only
+# =============================================================================
+# Read by tos_runtime.compose._broker_posttrade_wiring (PR-3b). Only a stock MOCK order boot
+# (kis-mock transport + MOCK_STOCK_ORDER) reads it; a stock MOCK boot without it refuses to boot.
+# No host here: the witness is sealed to kis_mock_transport.yaml::endpoint_rest_base (already
+# proven equal to the INSTANCE MOCK_VTS rest_base and different from REAL_PROD). Its request
+# timeout is NOT that file's: it is witness_request_timeout_s below (#949 review HIGH). TR ids
+# must be mock ('V'-prefixed) — the witness config loader refuses anything else.
+#
+# 주식일별주문체결조회 — open-trading-api examples_llm/domestic_stock/inquire_daily_ccld
+# (demo/inner → VTTC0081R; 모의 15 rows per call, continuation via tr_cont M/F + CTX_AREA_*100).
+# 주식잔고조회 — VTTC8434R (the witness's position/cash read; used by release/recovery
+# reconciliation, never by the observer's own poll).
+order_inquiry_tr_id: "VTTC0081R"
+order_inquiry_path: "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+balance_tr_id: "VTTC8434R"
+balance_path: "/uapi/domestic-stock/v1/trading/inquire-balance"
+# Our cap on the continuation walk (15 rows/page on 모의 → 150 orders/day for one symbol). A walk
+# that hits it while the broker still says "more" is WitnessUnavailable, never a partial list.
+max_pages: 10
+# Minimum spacing between two VTTC0081R polls. 모의 is rate-limited per app key and the same key
+# also serves the order POST, the band probe and item 12's two GETs; 3 s kept the observer to
+# one call in that budget when ONE stock tenant ran. It is now 9 s = 3 x that — see below.
+#
+# ⚠ **TENANT COUNT (운영자 지시 2026-11-19 — 주식 tenant 3종목).** 아래 세 주기는 단일
+# tenant 값의 **3 배**다. 하나의 KIS 모의투자 앱 키가 세 tenant 를 모두 섬기고
+# `KisAppKeyPacer`(tos_runtime/transport/kis_mock/pacer.py)는 **프로세스마다 하나**라
+# — 세 프로세스는 간격을 공유하지 않는다 — 계좌가 받는 요청률은 세 tenant 의 합이다.
+# 실측(2026-11): 모의 REST 는 2.0 req/s 에서 조여지고(HTTP 500 · EGW00201) 1.0 req/s 에서
+# 깨끗했다. 미결 ACK 를 쥔 한 tenant 의 FETCH 는 주문 1페이지 + 해제 스냅숏 2건 ≈ 3 GET
+# 이므로 3 s 주기면 ~60 GET/min(1 req/s) 이고, 세 tenant 가 동시에 그러면 3 req/s —
+# 전부 조여진다. 9 s / 36 s 로 늘린 뒤의 수:
+#   * **하드 상한 1.5 req/s** — `min_send_interval_ms` 2000 이 프로세스마다 0.5 req/s 를
+#     넘지 못하게 하므로 3 × 0.5 = 1.5. 어떤 조합으로도 이 위로는 못 간다.
+#   * **셋 다 바쁠 때 ~1.33 req/s** — tenant 마다 미결 폴 3 GET / 9 s (0.333) + 보유 증명
+#     4 GET / 36 s (0.111) = 0.444 req/s, × 3 = 1.33.
+#   * 보유만 하고 미결이 없으면 tenant 마다 ~7 GET/min, 셋이 합쳐 0.33 req/s.
+# 즉 실측 깨끗 지점 1.0 을 **상시로는 넘지 않고**, 셋이 동시에 미결을 쥔 구간에서만
+# 1.33 으로 올라가 2.0 조이기 지점 아래에 머문다. 전 판(3 s / 12 s)은 같은 구간에서
+# 3 req/s 였다.
+# **`min_send_interval_ms` 는 그대로 2000** 이다 — 그 값은 한 프로세스의 **연속 요청
+# 간격**이고, 아래 `release_snapshot_max_age_ms` · `held_position_max_age_ms` 의 부팅
+# 하한(2 배 · 3 배)이 그 값에서 나온다. 조이기를 피하는 쪽은 **수요를 줄이는 것**이지
+# 간격을 늘려 대기열을 만드는 것이 아니다: 공유 간격을 늘리면 `KisPacingRefused`
+# (wait_budget 4000 ms)로 **송신 자체가 거부**된다.
+# 조여진 응답은 fail-closed 다 — WitnessUnavailable 로 기록되고 다음 주기에 다시 읽는다.
+# tenant 수가 바뀌면 이 세 값을 함께 다시 나눌 것.
+poll_interval_ms: 9000
+# Per-GET timeout for THIS witness, in seconds — the observer's own bound, not the order path's
+# kis_mock_transport.yaml::request_timeout_s (10 s). #949 review HIGH: the observer's read runs
+# inside the session loop's tick-to-tick window (marketfeed.yaml poll_interval_ms 400 +
+# journal_pass_allowance_ms 100 of an 800 ms field bound), so its worst case must be a number
+# stated here rather than inherited from a path nobody is waiting on. 2 s: a 모의 single-page
+# VTTC0081R measured ~0.2 s (P-11 2026-08-05), so 2 s is ten times the measured call and still
+# bounds one page at a quarter of the order path's value. Worst case per inquiry date is this
+# value x max_pages. It bounds every GET this witness makes — the observer's order inquiry and
+# the release/recovery reconciliation's balance read alike.
+# 2026-11-19: 2.0 -> 5.0. The witness client opens a fresh HTTPS connection per GET, so the TLS
+# handshake is inside this bound; 374 of 646 release holds on the 11-17..11-19 leaf were
+# witness-unavailable (KisWitnessTimeoutError on inquire-balance / inquire-daily-ccld). Since
+# #950 the observer's reads run on its FETCH worker thread, not the session loop; the loop-side
+# fallback read (a reconciliation no prefetched snapshot serves) still costs up to this per GET.
+witness_request_timeout_s: 5.0
+# The SESSION-LOOP fallback read (a reconciliation no prefetched snapshot serves) keeps the old
+# 2 s per GET on its own witness client, plus a whole-walk deadline: once 3000 ms have passed no
+# further page starts (WitnessUnavailable, fail-closed). 3000 lets the balance page and the
+# order page — paced kis_mock_transport.yaml::min_send_interval_ms (2000) apart — both start.
+# Worst-case loop stall ≈ 3000 + one pacer wait (≤ min_send_interval_ms) + one GET in flight
+# (2 s per socket operation) ≈ 7 s, against ~28 s unbounded with 5 s GETs (review-1114 M2).
+loop_witness_request_timeout_s: 2.0
+loop_witness_deadline_ms: 3000
+# The WHOLE poll's bound, in ms, across every trading date and every continuation page it
+# reads (#949 review HIGH). Once it is past, no further read starts and no further page is
+# fetched: that read is WitnessUnavailable — recorded, fail-closed, retried at the next due
+# poll — and never a partial row list. 1500: three measured single-page reads' worth of
+# headroom (~0.2 s each) against a 400 ms loop interval, so a healthy poll never approaches it
+# while a sick one cannot spend 2 s x max_pages 10 x dates inside one pass. A poll therefore
+# costs at most this deadline plus the one request already in flight
+# (witness_request_timeout_s), i.e. ~3.5 s worst case, at most once per poll_interval_ms
+# (with the 2026-11-19 values below and above: 4000 + 5 s = ~9 s, on the FETCH worker).
+# ⚠ It does not interrupt a request in flight — that is the timeout's job. Removing the wait
+# from the session-loop thread altogether is issue #950 (thread-safety of the shared KIS
+# credential session and the single-thread sqlite evidence store).
+# ⚠ What this value trades away (#949 r2 MEDIUM-2): a broker that WORKS but is slow enough that
+# the walk cannot finish inside the deadline — say three or more pages at ~0.8 s each — is cut
+# off on every poll and its fill is never observed, visible as repeated
+# FILL_OBSERVER_READ_FAILED rows and then one FILL_OBSERVER_OVERDUE after overdue_after_ms
+# (10 min). That is the intended fail-closed direction (a held reservation, never a guessed
+# fill), but it IS an operator matter: raise this value for a slow venue rather than wait for
+# the overdue row to explain itself.
+# 2026-11-19: 1500 -> 4000. Every GET on the app key is paced kis_mock_transport.yaml::
+# min_send_interval_ms (2000) apart, so a second paced GET (another date or page) could never
+# start inside 1500. 4000 admits two paced GETs. It bounds only the FETCH worker's order-row
+# reads (fill_fetch.run_fetch; the session loop never waits on it since #950) and not the
+# held-position or release snapshot reads, so held_position_max_age_ms 20000 /
+# held_position_poll_interval_ms 12000 are unaffected.
+poll_deadline_ms: 4000
+# An ACKed order with no terminal row after this long records one FILL_OBSERVER_OVERDUE row
+# (record only — no result is guessed). 10 minutes: a 1-share limit order on 000660 that has not
+# filled by then is worth an operator look.
+overdue_after_ms: 600000
+# A terminal result is recorded but its release has not committed (the process died before
+# finality ran, or reconciliation / the RCL CAS held it): finality is re-run from the recorded
+# result at most this often, until the RCL holds the release. 60 s: each re-run is one witness
+# read (two GETs) plus evidence rows, and a hold that persists is usually an operator matter
+# (e.g. an unattributed order in the same symbol).
+# It is also the re-read backoff for expired release snapshots (issue #971; see
+# release_snapshot_max_age_ms below): only the FIRST expiry of a run is re-read at once; while
+# snapshots keep expiring, the next read waits this interval instead of coming every pass. Only
+# a fresh read that SUCCEEDED ends the run (a fast failed read still holds); a new trading date
+# starts one. Each FILL_OBSERVER_RELEASE_SNAPSHOT row carries read_ok and consecutive_expired
+# (the run so far).
+finality_retry_interval_ms: 60000
+# An unresolved ACK from an EARLIER trading day (the runtime was down across the KST date
+# boundary, or the read failed at the time) is re-read under its own date at this cadence until a
+# terminal broker result shows — slower than today's poll_interval_ms, never abandoned. 10 minutes.
+prior_day_poll_interval_ms: 600000
+# The oldest a prefetched release-reconciliation snapshot may be when the session loop applies
+# it, in ms from the instant its read STARTED — its first GET's app-key pacer grant (issue #970)
+# (#969 review r1 HIGH). Since issue #950 the
+# observer's worker thread reads that snapshot ahead of time; the loop serves it to the release
+# reconciliation on a later pass. A snapshot proves only the broker as it was — an order that
+# appeared since (an unattributed order B, which must block the release as an orphan) can be
+# missing from it. Older than this, it is not served: the release HOLDS (never a live read on
+# the loop), one FILL_OBSERVER_RELEASE_SNAPSHOT row records its read instants and age, and a
+# fresh worker read is scheduled at once. 6000 (issue #970): a healthy snapshot read is the
+# balance page plus one order page, and every request on the app key is now paced
+# kis_mock_transport.yaml::min_send_interval_ms (2000) apart, so the second GET starts one
+# interval after the first; each answers in ~0.2 s (P-11 2026-08-05) and the loop applies the
+# result within one pass (marketfeed.yaml poll_interval_ms 400 + journal_pass_allowance_ms 100)
+# — ~2.7 s in the ordinary case, so 6 s leaves one more interval of slack. A multi-page
+# snapshot or a broker slow enough to exceed it holds and re-reads: the fail-closed direction,
+# visible as "expired" rows. Compose refuses the boot below 2 x min_send_interval_ms — the
+# 2000 this replaced was exactly that "always expired" combination once #970 paced the GETs.
+release_snapshot_max_age_ms: 6000
+
+# Separate bounds for the one-use pretrade holdings proof. Both account for paced balance and
+# order inquiries; a stale or missing proof blocks CLOSE.
+#
+# The proof is a DOUBLE read — balance + today's order walk, twice — and every request on the
+# app key is kis_mock_transport.yaml::min_send_interval_ms (2000) apart, so its four GETs are
+# granted at 0 / 2000 / 4000 / 6000 ms from the age origin (the FIRST balance grant) and the
+# last answers in ~0.2 s (P-11 2026-08-05): one read window ≈ 6.2 s, published one loop pass
+# later (marketfeed.yaml poll_interval_ms 400 + journal_pass_allowance_ms 100) at ≈ 6.7 s.
+#
+# max_age must therefore OUTLIVE one poll period plus that window, or the two validity windows
+# do not overlap and the cache is empty for the rest of the cycle. 12000 = 12000 was exactly
+# that (issue #1010): a proof existed ~45% of the time, and a CLOSE proposed in the hole spent
+# its one standing-approval use at step 4 before step 6 could read PROOF_UNAVAILABLE, leaving
+# the position open overnight. The poll period is now 36000 (3 x 12000, the tenant-count note
+# above), so 36000 (poll) + 500 (a plan is only due on a loop pass) + 6700 (read window to
+# publish) = 43200, and 44000 leaves the same ~800 ms of jitter the 20000/12000 pair left —
+# each proof's validity overlaps its successor's by ~1.3 s. Compose's own floor is lower
+# (poll + 3 x min_send_interval_ms = 42000, `_refuse_unreachable_held_position_age`); the
+# ~800 ms is this file's margin on top of it. Raising the poll interval means raising this
+# with it.
+#
+# ⚠ What that ~800 ms does NOT cover (review-1014 r1 L1): one more paced GET is 2000 ms. A
+# second order page (max_pages 10 allows ten), a second balance page, or any other app-key
+# request landing between these four grants pushes the publish past the expiry and reopens a
+# ~1.2 s hole per cycle. That is fail-closed (the CLOSE reads PROOF_UNAVAILABLE and the
+# position stays open) and far smaller than the ~6.7 s of every 12 s before this change, but
+# it is the operator's number to raise if the walk is ever more than one page.
+#
+# ⚠ This is also the bound on broker-side changes the RCL cannot see (review-1014 r1 L2). A
+# manual HTS sell after the confirming read leaves the proof usable for up to this long —
+# ~44 s now (3 tenants on one app key, the note above), ~20 s at one tenant, ~12 s before
+# #1010, since the next plan no longer burns it — until the refresh answers
+# and either replaces it or clears it (a flat account and a non-FILLED order are both refused
+# by the publish validation). Worst case is a 1-share CLOSE against a flat MOCK cash account,
+# which the broker rejects; no short can result. It is this file's staleness tolerance, not a
+# new class of risk — a TOS-originated fill or close commits to the RCL first, and the tip CAS
+# refuses the proof at consume and again at step 9.
+#
+# A proof is still refused once it is past this age — the one bound every freshness check on
+# it reads — and a FAILED refresh still burns it; only the next plan no longer does (#1010).
+# Compose refuses the boot below 3 x min_send_interval_ms (the double read's own span, the
+# #970 pacing trap its release sibling fell into) or below the poll interval PLUS that read
+# (max_age == poll — the 12000/12000 this file carried before #1010 — is refused at every
+# pacing; the guard's first draft admitted it, review-1014 r1 M1).
+held_position_poll_interval_ms: 36000
+held_position_max_age_ms: 44000
+
+# Dateless-ACK date recovery (issue #1096, incident 2026-11-13). One stock MOCK ACK row
+# (EGRESS_RESULT_CONSUMED, evidence seq 2364) was written with no `trading_date` key, so the
+# observer dropped it from the tracked set on EVERY boot (FILL_OBSERVER_ACK_UNTRACKABLE
+# no_trading_date), its entry reservation stayed COMMITTED_UNBOUND, and the ARE limit of 1 stayed
+# saturated — every later entry DENYed. #1074 stamps the date on new ACKs; evidence is
+# append-only, so the row already written can only be repaired by asking the broker. When an ACK
+# has no date, the observer reads 주식일별주문체결조회 for each of the trading dates below and
+# looks for its ODNO. EXACTLY ONE matching date is recorded (FILL_OBSERVER_ACK_DATE_RECOVERY,
+# outcome `recovered`) and the attempt is tracked from the next pass; zero or more than one
+# matching dates keep the existing fail-closed refusal (outcome `no_match` / `ambiguous`, the
+# attempt stays untracked). GET only — this path never sends an order.
+#
+# The bound is optional; omit it and no scan is ever planned (the pre-#1096 behaviour).
+#
+# How far back to look, in the TENANT CALENDAR's own trading dates (calendar.yaml holidays and
+# session_overrides included), ending at today inclusive. 5: the incident's ACK was two trading
+# days old when the saturation was found (11-13 order, 11-16 diagnosis) and the operator
+# workaround (leaf archive + genesis) was applied the next session, so one trading week covers
+# the realistic "the runtime was down over a weekend and a holiday" case without widening the
+# window enough to meet an unrelated order that reuses the ODNO. It does NOT loosen the match
+# rule — a second matching date is `ambiguous`, which stays fail-closed.
+#
+# ⚠ Recovery only works while the ACK's own date is still inside this window. Measured on this
+# tenant's calendar: a scan on 20261116 reads 20261110..20261116 (so the 11-13 incident row is
+# in), and a scan on 20261120 no longer reaches 11-13. A dateless ACK older than this still
+# needs the leaf archive + genesis workaround, or this number raised.
+#
+# COST (review-1105 M1/M2). The scan reads ONE date per FETCH, and only in a FETCH that has no
+# fill, recovery, or held-position work to delay — so its cost is one paced GET
+# (kis_mock_transport.yaml::min_send_interval_ms 2000 + ~0.2 s, P-11 2026-08-05) in an otherwise
+# idle pass, bounded by poll_deadline_ms like every other read. It therefore cannot age the
+# release snapshot (release_snapshot_max_age_ms 6000, measured from that snapshot's own read
+# start — the scan read is issued BEFORE it) and cannot defer the holdings refresh
+# (held_position_poll_interval_ms 12000 / held_position_max_age_ms 20000), whose plan wins the
+# pass outright. Raising this number costs one more such pass, not a longer one.
+#
+# Each date's rows are held until the whole window has answered; only then is a verdict reached.
+# A failed read anywhere in the window abandons the scan with NO verdict (a window with a hole
+# cannot tell "this ODNO is on no other date" from "we did not look"), and the whole window is
+# retried one attempt-cadence later — prior_day_poll_interval_ms (10 min), the same cadence an
+# unresolved earlier-day ACK gets.
+ack_date_recovery_lookback_trading_days: 5
+
+# Broker-flat entry release (operator decision 2026-11-19, option B). An entry reservation in
+# POSITION_CONSUMED is released when the held-position double read above (both reads
+# succeeded and complete) shows this instrument at zero, the scope holds no other outstanding
+# reservation, no TOS send is in flight, and the RCL moved only by approval consumption since
+# the read was planned. Close-proof transferability and order-inquiry corroboration are NOT
+# required on this path. Incident it would have stopped: 2026-11-19, the 11-17 entry's
+# reservation stayed POSITION_CONSUMED after the account was flat (manual mock sell 11-18,
+# not a TOS attempt) and step 8 denied every OPEN of the session. A failed or timed-out read
+# releases nothing and the next held_position_poll_interval_ms read retries. Absent = false.
+# A flat result counts only when CONFIRMED: a first flat poll whose read started at least
+# broker_flat_release_settle_ms after the runtime first saw the entry consumed, then a second
+# flat poll at least held_position_poll_interval_ms later; any other result in between resets
+# it. ⚠ A share held at the broker that TOS did not buy (an orphan, e.g. the 11-13 dateless-ACK
+# buy 0000007012) reads as NOT flat and still blocks this release: flatten it manually before
+# the session (GET balance, then a mock sell).
+broker_flat_release: true
+# The fill-to-balance reflection lag this waits out, in ms. KIS 모의 publishes no bound on how
+# soon inquire-balance (VTTC8434R) reflects a fill the order inquiry already shows
+# (docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml has none), and a balance read
+# that has not yet reflected the entry's buy reads flat. Released on that, the next OPEN would
+# buy a second lot and the first would become an untracked orphan — the 11-19 deadlock again.
+# 30000: five times the ~6 s the held double read itself spans (comment above), and short
+# against a session in which a stuck reservation otherwise blocks every OPEN until the close.
+#
+# ⚠ What the confirmation COSTS, at this tree's poll interval. The first flat poll that
+# counts is the first whose read starts at least this long after the runtime saw the entry
+# consumed, and the second must be at least one `held_position_poll_interval_ms` after that.
+# With the three-tenant interval 36000 the first lands somewhere in 30-66 s (wherever the
+# 36 s cadence next falls past 30 s) and the second 36 s later, so a broker-flat release
+# commits **~66-102 s after the consumption** — against ~42-54 s at the single-tenant 12000.
+# That is the price of the shared app key, and it is paid only on this recovery path: a
+# normal TOS close releases through finality, not through this. Both halves move together —
+# raising the poll interval raises this window by the same amount.
+broker_flat_release_settle_ms: 30000

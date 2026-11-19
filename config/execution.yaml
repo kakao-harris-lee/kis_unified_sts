@@ -310,6 +310,24 @@ stock_contract_spec:
     tick_value_krw: 1
     commission_rate: 0.00015             # 0.015% per side (KIS 주식 온라인 위탁 기준, 필드 산출에는 쓰이지 않음)
     symbol_prefix: "005930"              # 종목코드 정확 일치(6자리)
+  # 운영자 지시 2026-11-19 「유동성이 큰 대형주들로 최종 모의투자에서 매수/매도가 잘 동작하게
+  # 완료해」 — 주식 tenant 를 세 종목으로 늘렸다. 값은 005930 블록과 **같다**: 주식 1주는
+  # 가격(원) × 1 이고, 호가단위는 종목이 아니라 가격대가 고르므로(그 사다리는 각 tenant 트리의
+  # venue_constraint_policy.yaml::price_band_ticks 가 맡는다) 여기 `tick_size_points` 는 그
+  # 사다리의 공통 약수 1원 그대로다. `resolve_contract_spec` 은 symbol_prefix 접두 일치로
+  # 고르므로 종목마다 한 블록이 필요하다 — 없으면 생산자가 기동하지 않는다.
+  krx_stock_000660:
+    multiplier_krw_per_point: 1          # 1주 = 가격(원) × 1
+    tick_size_points: 1
+    tick_value_krw: 1
+    commission_rate: 0.00015
+    symbol_prefix: "000660"              # SK하이닉스 — 종목코드 정확 일치(6자리)
+  krx_stock_005380:
+    multiplier_krw_per_point: 1          # 1주 = 가격(원) × 1
+    tick_size_points: 1
+    tick_value_krw: 1
+    commission_rate: 0.00015
+    symbol_prefix: "005380"              # 현대차 — 종목코드 정확 일치(6자리)
 
 # Phase 4 — passive maker + force-close timings (spec §3.2 / §4.3).
 # Loaded by services.order_router._build_and_run via Phase4ExecutionConfig.
