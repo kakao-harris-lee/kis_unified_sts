@@ -23,6 +23,8 @@ from shared.indicators.fields import (
     GatedMax,
     GatedMin,
     GatedPercentile,
+    WilderRsi,
+    WilliamsR,
     parse_fields_document,
 )
 
@@ -126,6 +128,69 @@ class TestPercentileMatchesTheLegacyCall:
         gate.step(2.0, sample=True)
         gate.step(3.0, sample=True)
         assert gate.step(0.0, sample=False) == pytest.approx(2.8)
+
+
+class TestMomentumWarmupAndState:
+    """``rsi`` / ``williams_r``: warmup, window cap, and no look-back rewrite.
+
+    The reference values live in ``test_talib_reference.py`` (skipped without
+    TA-Lib); these are the structural properties, which must hold regardless.
+    """
+
+    @staticmethod
+    def _walk(op: WilliamsR, count: int, *, base: float = 100.0) -> list[float | None]:
+        return [
+            op.update(high=base + index + 1, low=base + index, close=base + index + 0.5)
+            for index in range(count)
+        ]
+
+    def test_rsi_is_none_for_the_first_period_bars(self) -> None:
+        op = WilderRsi(period=3, field="probe")
+        values = [op.update(100.0 + index) for index in range(6)]
+        assert values[:3] == [None, None, None]
+        assert values[3] is not None
+        assert op.change_count == 5
+
+    def test_williams_r_is_none_for_the_first_period_minus_one_bars(self) -> None:
+        op = WilliamsR(period=3, field="probe")
+        values = self._walk(op, 5)
+        assert values[:2] == [None, None]
+        assert values[2] is not None
+        assert op.sample_count == 3  # capped at `period`
+
+    def test_a_later_bar_never_changes_an_earlier_value(self) -> None:
+        """Look-ahead, at the class level: the prefix of a longer run matches."""
+        closes = [100.0, 101.5, 99.25, 103.0, 102.5, 98.75, 104.25, 101.0]
+        short = WilderRsi(period=3, field="probe")
+        long = WilderRsi(period=3, field="probe")
+        prefix = [short.update(value) for value in closes[:5]]
+        whole = [long.update(value) for value in closes]
+        assert prefix == whole[:5]
+
+        short_wr = WilliamsR(period=3, field="probe")
+        long_wr = WilliamsR(period=3, field="probe")
+        assert self._walk(short_wr, 5) == self._walk(long_wr, 8)[:5]
+
+    def test_same_input_same_output(self) -> None:
+        closes = [100.0, 101.5, 99.25, 103.0, 102.5, 98.75]
+        first = WilderRsi(period=4, field="probe")
+        second = WilderRsi(period=4, field="probe")
+        assert [first.update(v) for v in closes] == [second.update(v) for v in closes]
+
+    def test_williams_r_window_drops_the_oldest_bar(self) -> None:
+        """Bar 0's extreme low leaves the 2-bar window and stops counting."""
+        op = WilliamsR(period=2, field="probe")
+        assert op.update(high=200.0, low=0.0, close=150.0) is None
+        # Bars 0..1: hh 200, ll 0 -> (200-150) / (200/-100) = -25.0
+        assert op.update(high=200.0, low=100.0, close=150.0) == -25.0
+        # Bars 1..2: bar 0's low of 0 is gone -> ll 100 -> -50.0
+        assert op.update(high=200.0, low=100.0, close=150.0) == -50.0
+
+    def test_construction_refuses_a_period_below_one(self) -> None:
+        with pytest.raises(FieldEvalError, match="rsi period must be >= 1"):
+            WilderRsi(period=0, field="probe")
+        with pytest.raises(FieldEvalError, match="williams_r period must be >= 1"):
+            WilliamsR(period=0, field="probe")
 
 
 class TestConstructionRefusals:

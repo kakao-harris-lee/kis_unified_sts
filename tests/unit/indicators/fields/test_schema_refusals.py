@@ -244,6 +244,58 @@ class TestParams:
             "must be >= 1",
         )
 
+    @pytest.mark.parametrize("op", ["rsi", "williams_r"])
+    def test_momentum_period_is_required(self, op: str) -> None:
+        """No default period: a declaration that omits it is refused, not 14."""
+        message = _refuse(document([{"name": "probe", "op": op}]), "missing required")
+        assert "'period'" in message
+
+    @pytest.mark.parametrize("op", ["rsi", "williams_r"])
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (14.5, "must be an integer"),
+            ("14", "must be an integer"),
+            (True, "must be an integer"),
+            (0, "must be >= 1"),
+            (-3, "must be >= 1"),
+        ],
+    )
+    def test_momentum_period_must_be_a_positive_integer(
+        self, op: str, value: object, expected: str
+    ) -> None:
+        _refuse(
+            document([{"name": "probe", "op": op, "params": {"period": value}}]),
+            expected,
+        )
+
+    @pytest.mark.parametrize("op", ["rsi", "williams_r"])
+    def test_momentum_takes_no_other_parameter(self, op: str) -> None:
+        _refuse(
+            document(
+                [{"name": "probe", "op": op, "params": {"period": 14, "window": 30}}]
+            ),
+            "unknown parameter",
+        )
+
+    @pytest.mark.parametrize("op", ["rsi", "williams_r"])
+    def test_momentum_takes_no_inputs(self, op: str) -> None:
+        """They read the bar, not an earlier field — an input is a typo."""
+        _refuse(
+            document(
+                [
+                    {"name": "close", "op": "bar.close"},
+                    {
+                        "name": "probe",
+                        "op": op,
+                        "inputs": ["close"],
+                        "params": {"period": 14},
+                    },
+                ]
+            ),
+            "arity",
+        )
+
     def test_percentile_out_of_range(self) -> None:
         _refuse(
             document(
@@ -570,6 +622,98 @@ class TestMayBeMissing:
             )
         )
         assert [spec.name for spec in loaded.fields][-1] == "good"
+
+    @pytest.mark.parametrize(
+        ("op", "params"),
+        [("rsi", {"period": 14}), ("williams_r", {"period": 14})],
+    )
+    def test_a_momentum_indicator_may_be_missing(
+        self, op: str, params: dict[str, Any]
+    ) -> None:
+        """Their warmup is a hole in the field, so the same rule applies.
+
+        Not an "``atr`` is stateful too, why not that one" distinction by hand:
+        the set is ``catalog.WARMUP_MISSING_OPS`` and ``atr`` reports a partial
+        window from its first bar, so it is definite and not in it.
+        """
+        message = _refuse(
+            document(
+                [
+                    _CLOSE,
+                    _POSITIVE,
+                    {"name": "ind", "op": op, "params": params},
+                    {
+                        "name": "low",
+                        "op": "lt",
+                        "inputs": ["ind"],
+                        "params": {"const": 30},
+                    },
+                    {"name": "bad", "op": "all", "inputs": ["positive", "low"]},
+                ]
+            ),
+            "may be missing",
+        )
+        assert "'low'" in message
+
+    @pytest.mark.parametrize("op", ["rsi", "williams_r"])
+    def test_a_momentum_indicator_cannot_be_published_raw(self, op: str) -> None:
+        """A published field must be definite on every emitted bar."""
+        _refuse(
+            document(
+                [
+                    _CLOSE,
+                    {"name": "ind", "op": op, "params": {"period": 14}},
+                ],
+                [{"field": "ind", "scale": {"mult": 100, "round": "half_up"}}],
+            ),
+            "no value during warmup",
+        )
+
+    @pytest.mark.parametrize("op", ["rsi", "williams_r"])
+    def test_permissive_is_how_a_momentum_gate_is_published(self, op: str) -> None:
+        """The shape a tenant actually writes: compare, resolve, publish."""
+        loaded = parse_fields_document(
+            document(
+                [
+                    _CLOSE,
+                    {"name": "ind", "op": op, "params": {"period": 14}},
+                    {
+                        "name": "low_raw",
+                        "op": "lt",
+                        "inputs": ["ind"],
+                        "params": {"const": 30},
+                    },
+                    {
+                        "name": "low",
+                        "op": "permissive",
+                        "inputs": ["low_raw"],
+                        "params": {"when_missing": False},
+                    },
+                ],
+                [{"field": "low"}],
+            )
+        )
+        assert loaded.publish[0].name == "low"
+        assert loaded.publish[0].scale is None
+
+    def test_an_atr_is_definite_and_still_loads(self) -> None:
+        """The other side of the set: ``atr`` has a partial window, not a hole."""
+        loaded = parse_fields_document(
+            document(
+                [
+                    _CLOSE,
+                    {"name": "atr", "op": "atr", "params": {"period": 14}},
+                    {
+                        "name": "good",
+                        "op": "gt",
+                        "inputs": ["atr"],
+                        "params": {"const": 0},
+                    },
+                ],
+                [{"field": "good"}],
+            )
+        )
+        assert loaded.fields[-1].name == "good"
 
     def test_a_definite_operand_still_loads(self) -> None:
         loaded = parse_fields_document(

@@ -1,4 +1,6 @@
-"""The gated (stateful) catalog ops — ONE base class, three invariants.
+"""The stateful catalog ops: the gated windows, and the momentum indicators.
+
+Part 1 — the gated ops: ONE base class, three invariants.
 
 ``gated_percentile``, ``gated_max``, ``gated_min`` and ``gated_lag`` differ only
 in how they reduce their window. Everything that can go subtly wrong about them
@@ -24,6 +26,43 @@ The reduction itself is deliberately the legacy's own call: ``np.percentile`` wi
 its default (linear) interpolation on the sample window, and the builtins ``max``
 / ``min`` — not their numpy counterparts — so no float-order difference can enter
 through the reduction (plan §6, risk 2).
+
+Part 2 — ``rsi`` and ``williams_r``: general indicators, TA-Lib's arithmetic.
+----------------------------------------------------------------------------
+These two share none of the above: they take no ``sample_when`` (every bar is a
+sample, which is what the textbook definition says), and the current bar IS part
+of their value. What they do share with the gated ops is the warmup rule — no
+value until the lookback is covered, ``None`` and never a neutral 50 or 0.
+
+Two decisions a reader will want the reason for:
+
+1. **The reference is TA-Lib, reproduced operation by operation** — including
+   ``williams_r``'s odd-looking ``(highest - close) / ((highest - lowest) /
+   -100.0)``, which is ``ta_WILLR.c``'s own order. "Simplifying" it to
+   ``-100 * (highest - close) / (highest - lowest)`` changes the last bit on
+   roughly a third of bars (measured: 1329 of 3987 at ``period=14`` on 4000
+   random bars), and a threshold written on the published integer can flip on
+   exactly those. The parity is pinned to the last bit by
+   ``tests/unit/indicators/fields/test_talib_reference.py``.
+2. **A degenerate window has no value, where TA-Lib returns 0.0.** TA-Lib's RSI
+   on a flat series is ``0.0`` and its %R on a flat window is ``0.0`` — read as
+   indicator values those are "maximally oversold" and "at the top of the
+   range", i.e. two entry triggers manufactured out of a window that contains no
+   information. A Korean stock sitting on its daily limit (상한가/하한가)
+   produces exactly that window, so this is a real input, not a hypothetical
+   one. Both ops return ``None`` there: the field has no value, and the tenant's
+   own ``permissive`` decides what that means for its gate. The divergence is
+   declared, and pinned against TA-Lib by the same test.
+
+These are not imported from ``shared.indicators.engine`` for the reason
+:mod:`shared.indicators.fields.bar` gives for ``atr``: those backends are
+whole-window pandas/numpy functions and this evaluator is a bar-by-bar stream,
+so calling one per bar is quadratic. They also compute a different thing —
+``momentum_backend._rsi`` seeds Wilder's average with an ``ewm`` rather than the
+mean of the first ``period`` changes, and ``momentum_backend._williams_r`` uses
+``min_periods=1`` (a partial window instead of a warmup) and returns ``-50.0``
+on a flat one. Those conventions are the legacy strategy path's and are frozen
+there; the catalog's are the reference ones.
 """
 
 from __future__ import annotations
@@ -147,10 +186,135 @@ class GatedLag(GatedWindowOp):
         return self._samples[-1]
 
 
+class WilderRsi:
+    """``rsi`` — Wilder's RSI of the close, in TA-Lib's arithmetic.
+
+    The definition, in the order ``ta_RSI.c`` performs it:
+
+    * the first ``period`` changes seed the averages as plain sums divided by
+      ``period`` (NOT an ``ewm``);
+    * every later bar smooths: ``avg = (avg * (period - 1) + change) / period``,
+      with the multiply, the add and the divide in that order;
+    * the value is ``100 * avg_gain / (avg_gain + avg_loss)``, which is Wilder's
+      ``100 - 100 / (1 + RS)`` without forming ``RS`` — so a zero ``avg_loss``
+      gives exactly ``100.0`` instead of dividing by zero.
+
+    ``period`` changes need ``period + 1`` closes, so the value is ``None`` on
+    the first ``period`` bars (TA-Lib's ``TA_RSI_Lookback``). TA-Lib refuses
+    ``period < 2``; this op accepts ``period = 1`` (the loader's floor for every
+    count), where the formula degenerates to 0 or 100 on each bar.
+
+    Args:
+        period: Wilder lookback, in bars.
+        field: Declared field name, for refusal messages.
+    """
+
+    def __init__(self, *, period: int, field: str) -> None:
+        if period < 1:
+            raise FieldEvalError(f"{field}: rsi period must be >= 1, got {period}")
+        self._field = field
+        self._period = period
+        self._changes = 0
+        self._prev_close: float | None = None
+        self._avg_gain = 0.0
+        self._avg_loss = 0.0
+
+    @property
+    def change_count(self) -> int:
+        """Number of close-to-close changes seen (for tests and diagnostics)."""
+        return self._changes
+
+    def update(self, close: float) -> float | None:
+        """Advance by one bar and return the RSI at it, or ``None`` in warmup."""
+        previous = self._prev_close
+        self._prev_close = close
+        if previous is None:
+            return None
+
+        change = close - previous
+        self._changes += 1
+        if self._changes <= self._period:
+            # Seed: the sum of the first `period` changes, divided once.
+            if change < 0:
+                self._avg_loss -= change
+            else:
+                self._avg_gain += change
+            if self._changes < self._period:
+                return None
+            self._avg_gain /= self._period
+            self._avg_loss /= self._period
+        else:
+            self._avg_gain *= self._period - 1
+            self._avg_loss *= self._period - 1
+            if change < 0:
+                self._avg_loss -= change
+            else:
+                self._avg_gain += change
+            self._avg_gain /= self._period
+            self._avg_loss /= self._period
+
+        total = self._avg_gain + self._avg_loss
+        if total == 0.0:
+            # No movement at all in the smoothed history: RSI is undefined, and
+            # TA-Lib's 0.0 would read as "maximally oversold". See the module
+            # docstring, decision 2.
+            return None
+        return 100.0 * (self._avg_gain / total)
+
+
+class WilliamsR:
+    """``williams_r`` — Williams %R over the trailing ``period`` bars.
+
+    ``(highest_high - close) / ((highest_high - lowest_low) / -100)`` over the
+    last ``period`` bars INCLUDING this one — ``ta_WILLR.c``'s own arithmetic
+    order, which is not interchangeable with the algebraically equal
+    ``-100 * (hh - close) / (hh - ll)`` (module docstring, decision 1). The
+    range is ``-100`` (close at the window low) to ``0`` (close at its high).
+
+    The value is ``None`` on the first ``period - 1`` bars (TA-Lib's
+    ``TA_WILLR_Lookback``), and on a bar whose window is flat — see the module
+    docstring, decision 2.
+
+    Args:
+        period: Window length, in bars.
+        field: Declared field name, for refusal messages.
+    """
+
+    def __init__(self, *, period: int, field: str) -> None:
+        if period < 1:
+            raise FieldEvalError(
+                f"{field}: williams_r period must be >= 1, got {period}"
+            )
+        self._field = field
+        self._period = period
+        self._highs: deque[float] = deque(maxlen=period)
+        self._lows: deque[float] = deque(maxlen=period)
+
+    @property
+    def sample_count(self) -> int:
+        """Number of bars currently in the window (for tests and diagnostics)."""
+        return len(self._highs)
+
+    def update(self, *, high: float, low: float, close: float) -> float | None:
+        """Advance by one bar and return %R at it, or ``None`` in warmup."""
+        self._highs.append(high)
+        self._lows.append(low)
+        if len(self._highs) < self._period:
+            return None
+        highest = max(self._highs)
+        lowest = min(self._lows)
+        divisor = (highest - lowest) / -100.0
+        if divisor == 0.0:  # a flat window — also true of `-0.0`, as in TA-Lib
+            return None
+        return (highest - close) / divisor
+
+
 __all__ = [
     "GatedLag",
     "GatedMax",
     "GatedMin",
     "GatedPercentile",
     "GatedWindowOp",
+    "WilderRsi",
+    "WilliamsR",
 ]

@@ -72,7 +72,9 @@ from typing import Final
 #: * **Adding** an op does NOT bump it. Every document that loaded against the
 #:   previous op set still loads and still evaluates identically: the set only
 #:   grew, and a declaration cannot use an op it does not name. ``const`` was
-#:   added this way (P2-b).
+#:   added this way (P2-b), and ``rsi``/``williams_r`` the same way — the five
+#:   shipped tenant declarations name none of the three, so their every bar ×
+#:   field value is unchanged.
 #: * **Removing** an op, or changing what an existing one COMPUTES or accepts,
 #:   DOES bump it — those are the changes that would make an unchanged
 #:   declaration mean something else, which is the whole point of the pin.
@@ -218,6 +220,31 @@ _CATALOG: Final[tuple[OpSpec, ...]] = (
         required_params=("open_hour", "open_minute"),
         summary="elapsed minutes from the configured KST session open to this bar",
     ),
+    # --- momentum indicators (bar-driven, their own warmup) -----------------
+    # General indicators, parameterized by `period` only: no default, because a
+    # period is the whole content of the declaration and a silent 14 would make
+    # two tenants that look the same compute different things. Both are the
+    # TA-Lib reference definition, bit for bit
+    # (``tests/unit/indicators/fields/test_talib_reference.py``), and both are
+    # ``None`` until their lookback is covered — which is why they are listed in
+    # :data:`WARMUP_MISSING_OPS`.
+    _op(
+        "rsi",
+        returns=_NUM,
+        required_params=("period",),
+        stateful=True,
+        summary="Wilder RSI of the close, 0..100 (None for the first `period` bars)",
+    ),
+    _op(
+        "williams_r",
+        returns=_NUM,
+        required_params=("period",),
+        stateful=True,
+        summary=(
+            "Williams %R over the trailing `period` bars, -100..0 "
+            "(None for the first `period` - 1 bars)"
+        ),
+    ),
     # --- literal ------------------------------------------------------------
     _op(
         "const",
@@ -344,6 +371,15 @@ GATED_OPS: Final[frozenset[str]] = frozenset(
     {"gated_percentile", "gated_max", "gated_min", "gated_lag"}
 )
 
+#: Ops that carry NO VALUE until their window has warmed up, and so may hand a
+#: ``None`` to whatever reads them. The loader walks this set to refuse, at
+#: boot, a declaration that reads one where a definite value is required —
+#: an ``all``/``any``/``not`` operand, a ``sample_when`` gate, or a published
+#: field (``schema.py::_may_be_missing``). An op that is stateful but always
+#: definite (``atr``, ``session.vwap_typical``: both report a partial window
+#: from their first bar) is deliberately NOT here.
+WARMUP_MISSING_OPS: Final[frozenset[str]] = GATED_OPS | frozenset({"rsi", "williams_r"})
+
 
 def op_spec(name: str) -> OpSpec:
     """Return the :class:`OpSpec` named *name*.
@@ -365,6 +401,7 @@ __all__ = [
     "CATALOG_VERSION",
     "GATED_OPS",
     "UNBOUNDED",
+    "WARMUP_MISSING_OPS",
     "NonePolicy",
     "OpSpec",
     "ValueKind",

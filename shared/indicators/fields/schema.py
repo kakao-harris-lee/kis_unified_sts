@@ -61,7 +61,7 @@ import yaml
 from shared.indicators.fields.catalog import (
     CATALOG,
     CATALOG_VERSION,
-    GATED_OPS,
+    WARMUP_MISSING_OPS,
     NonePolicy,
     OpSpec,
     ValueKind,
@@ -660,14 +660,16 @@ def parse_fields_document(raw: Any) -> FieldsDocument:
 def _may_be_missing(spec: FieldSpec, declared: Mapping[str, FieldSpec]) -> bool:
     """Return whether *spec* can evaluate to ``None`` on some bar.
 
-    ``permissive`` resolves a missing value, so it never can. A ``gated_*`` field
-    is ``None`` until its warmup, so it always can. Everything else inherits the
-    answer from its inputs — which terminates because an input is always an
-    EARLIER field (a forward reference is refused), so the graph is acyclic.
+    ``permissive`` resolves a missing value, so it never can. A field whose op
+    has a warmup (:data:`~shared.indicators.fields.catalog.WARMUP_MISSING_OPS`:
+    the ``gated_*`` windows, ``rsi``, ``williams_r``) is ``None`` until that
+    warmup completes, so it always can. Everything else inherits the answer from
+    its inputs — which terminates because an input is always an EARLIER field (a
+    forward reference is refused), so the graph is acyclic.
     """
     if spec.op.none_policy is NonePolicy.RESOLVE:
         return False
-    if spec.op_name in GATED_OPS:
+    if spec.op_name in WARMUP_MISSING_OPS:
         return True
     if spec.op.none_policy is NonePolicy.REFUSE:
         # all / any / not are themselves refused a missing operand, so their

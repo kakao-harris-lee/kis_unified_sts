@@ -44,13 +44,16 @@ class TestCatalogShape:
         assert CATALOG_VERSION == "tos-field-catalog/1"
 
     def test_is_exactly_the_plan_table(self) -> None:
-        """§2.3's table, op for op, plus `const`.
+        """§2.3's table, op for op, plus `const`, `rsi` and `williams_r`.
 
-        `const` is the one op added after the first catalog PR (P2-b): the
+        `const` is the first op added after the first catalog PR (P2-b): the
         legacy's `abs(prev_z) - abs(z) >= 0.2` needs a difference compared to a
         constant, and `ratio_z`'s divisor must be a FIELD, so a literal-valued
-        field is what makes that shape expressible. Adding an op does not bump
-        `CATALOG_VERSION` — see the rule next to that constant.
+        field is what makes that shape expressible. `rsi` and `williams_r` are
+        the second addition — general indicators for the first tenant strategy
+        written as YAML rather than as Python
+        (`docs/plans/2026-11-13-tos-utility-and-usage.md` §5.2). Adding an op
+        does not bump `CATALOG_VERSION` — see the rule next to that constant.
 
         A new op is a reviewed catalog change; this test is the review's record.
         """
@@ -77,10 +80,12 @@ class TestCatalogShape:
             "not",
             "permissive",
             "ratio_z",
+            "rsi",
             "session.minutes_since_open",
             "session.token",
             "session.vwap_typical",
             "time_ge",
+            "williams_r",
         }
 
     def test_no_op_carries_a_strategy_name(self) -> None:
@@ -89,15 +94,21 @@ class TestCatalogShape:
         The three Setup D gates are ``gated_percentile``/``gated_max``/
         ``gated_min`` plus comparisons — nothing in the catalog is named after
         the setup, the registry name, or any of its field names.
+
+        The bare token ``williams`` was on this list while Williams %R existed
+        in this repo only as the NAME OF A PLANNED STRATEGY. It is off it now
+        that the indicator itself is a catalog op: ``williams_r`` is what
+        TA-Lib calls ``WILLR``, parameterized by ``period`` and nothing else.
+        What stays banned is the strategy shape — ``reversion`` covers both
+        ``vwap_reversion`` and the ``rsi_williams_reversion`` tenant that will
+        USE these two ops, which is exactly the name an op must never take.
         """
         banned = (
             "setup",
-            "vwap_reversion",
+            "reversion",
+            "reversal",
             "hi_vol",
             "stall",
-            "reversal",
-            "williams",
-            "rsi_reversion",
             "_d_",
         )
         for name in known_op_names():
@@ -226,6 +237,145 @@ class TestAtr:
 
     def test_period_is_required(self) -> None:
         assert CATALOG["atr"].required_params == frozenset({"period"})
+
+
+class TestRsi:
+    """Hand goldens, exact in binary. TA-Lib parity is ``test_talib_reference``."""
+
+    FIELDS = [
+        {"name": "rsi", "op": "rsi", "params": {"period": 2}},
+        {"name": "raw", "op": "gt", "inputs": ["rsi"], "params": {"const": 0}},
+        {"name": "probe", "op": "permissive", "inputs": ["raw"]},
+    ]
+
+    #: close 10 -> 13 -> 12 -> 14, so the changes are +3, -1, +2.
+    #:
+    #: ===  ======  ==================================  =====
+    #: bar  change  averages (period 2)                 rsi
+    #: ===  ======  ==================================  =====
+    #: 0    --      no change yet                       None
+    #: 1    +3      1 of 2 seed changes                 None
+    #: 2    -1      seed: gain 3/2=1.5, loss 1/2=0.5    75.0
+    #: 3    +2      gain (1.5+2)/2=1.75, loss 0.5/2     87.5
+    #: ===  ======  ==================================  =====
+    #:
+    #: 100*1.5/2.0 = 75.0 and 100*1.75/2.0 = 87.5 — both exact.
+    CLOSES = (10.0, 13.0, 12.0, 14.0)
+
+    def _bars(self) -> list[FieldBar]:
+        return [
+            bar(index, open=close, high=close + 1.0, low=close - 1.0, close=close)
+            for index, close in enumerate(self.CLOSES)
+        ]
+
+    def test_golden(self) -> None:
+        series = [values["rsi"] for values in _values(self.FIELDS, self._bars())]
+        assert series == [None, None, 75.0, 87.5]
+
+    def test_the_first_period_bars_have_no_value(self) -> None:
+        """``period`` changes need ``period + 1`` closes — never a neutral 50."""
+        fields = [
+            {"name": "rsi", "op": "rsi", "params": {"period": 5}},
+            {"name": "raw", "op": "gt", "inputs": ["rsi"], "params": {"const": 0}},
+            {"name": "probe", "op": "permissive", "inputs": ["raw"]},
+        ]
+        bars = [
+            bar(
+                index,
+                open=100.0 + index,
+                high=101.0 + index,
+                low=99.0 + index,
+                close=100.0 + index,
+            )
+            for index in range(8)
+        ]
+        series = [values["rsi"] for values in _values(fields, bars)]
+        assert series[:5] == [None] * 5
+        assert series[5] == 100.0  # every change a gain: avg_loss is 0
+
+    def test_only_the_close_moves_it(self) -> None:
+        """RSI reads closes; a wild high or low on the same bar changes nothing."""
+        narrow = _values(self.FIELDS, self._bars())
+        wide = _values(
+            self.FIELDS,
+            [
+                bar(index, open=close, high=close + 99.0, low=close - 99.0, close=close)
+                for index, close in enumerate(self.CLOSES)
+            ],
+        )
+        assert [v["rsi"] for v in narrow] == [v["rsi"] for v in wide]
+
+    def test_period_is_required(self) -> None:
+        assert CATALOG["rsi"].required_params == frozenset({"period"})
+
+
+class TestWilliamsR:
+    """Hand goldens on a window exactly 100 wide, where %R is exact in binary.
+
+    ``(hh - close) / ((hh - ll) / -100)`` with ``hh - ll == 100`` divides by
+    ``-1.0``, so each value below is just ``-(hh - close)``.
+    """
+
+    FIELDS = [
+        {"name": "wr", "op": "williams_r", "params": {"period": 2}},
+        {"name": "raw", "op": "lt", "inputs": ["wr"], "params": {"const": 0}},
+        {"name": "probe", "op": "permissive", "inputs": ["raw"]},
+    ]
+
+    #: ===  ====  ===  =====  ==================  ======
+    #: bar  high  low  close  window (2 bars)     %R
+    #: ===  ====  ===  =====  ==================  ======
+    #: 0    200   150  180    only 1 bar          None
+    #: 1    190   100  175    hh 200, ll 100      -25.0
+    #: 2    200   160  170    hh 200, ll 100      -30.0
+    #: 3    260   160  200    hh 260, ll 160      -60.0
+    #: ===  ====  ===  =====  ==================  ======
+    #:
+    #: Bar 3 is the window cap: bar 1's low of 100 has left, so ``ll`` is 160.
+    #: Had it still been in the window the value would be -37.5 instead.
+    BARS = (
+        (200.0, 150.0, 180.0),
+        (190.0, 100.0, 175.0),
+        (200.0, 160.0, 170.0),
+        (260.0, 160.0, 200.0),
+    )
+
+    def _bars(self) -> list[FieldBar]:
+        return [
+            bar(index, open=close, high=high, low=low, close=close)
+            for index, (high, low, close) in enumerate(self.BARS)
+        ]
+
+    def test_golden(self) -> None:
+        series = [values["wr"] for values in _values(self.FIELDS, self._bars())]
+        assert series == [None, -25.0, -30.0, -60.0]
+
+    def test_the_current_bar_is_in_its_own_window(self) -> None:
+        """Unlike ``gated_*``: %R is a position within a window that includes now."""
+        fields = [
+            {"name": "wr", "op": "williams_r", "params": {"period": 1}},
+            {"name": "raw", "op": "le", "inputs": ["wr"], "params": {"const": 0}},
+            {"name": "probe", "op": "permissive", "inputs": ["raw"]},
+        ]
+        # One bar, range exactly 100: the close sits a quarter below the high.
+        bars = [bar(0, open=150.0, high=200.0, low=100.0, close=175.0)]
+        assert _last(fields, bars)["wr"] == -25.0
+
+    def test_at_the_window_extremes(self) -> None:
+        """Close at the window high is 0, at its low is -100."""
+        at_high = [
+            bar(0, open=150.0, high=200.0, low=100.0, close=200.0),
+            bar(1, open=150.0, high=200.0, low=100.0, close=200.0),
+        ]
+        at_low = [
+            bar(0, open=150.0, high=200.0, low=100.0, close=100.0),
+            bar(1, open=150.0, high=200.0, low=100.0, close=100.0),
+        ]
+        assert _last(self.FIELDS, at_high)["wr"] == 0.0
+        assert _last(self.FIELDS, at_low)["wr"] == -100.0
+
+    def test_period_is_required(self) -> None:
+        assert CATALOG["williams_r"].required_params == frozenset({"period"})
 
 
 class TestSessionVwapTypical:

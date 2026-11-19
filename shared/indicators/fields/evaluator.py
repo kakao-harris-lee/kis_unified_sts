@@ -58,6 +58,8 @@ from shared.indicators.fields.stateful import (
     GatedMin,
     GatedPercentile,
     GatedWindowOp,
+    WilderRsi,
+    WilliamsR,
 )
 
 #: Value a declared field can carry. ``None`` means "no value yet".
@@ -100,12 +102,22 @@ class FieldEvaluator:
         self._gated: dict[str, GatedWindowOp] = {}
         self._atr: dict[str, AtrWindow] = {}
         self._vwap: dict[str, SessionVwapTypical] = {}
+        self._rsi: dict[str, WilderRsi] = {}
+        self._williams: dict[str, WilliamsR] = {}
         for spec in document.fields:
             name = spec.op_name
             if name == "atr":
                 self._atr[spec.name] = AtrWindow(int(spec.params["period"]))
             elif name == "session.vwap_typical":
                 self._vwap[spec.name] = SessionVwapTypical()
+            elif name == "rsi":
+                self._rsi[spec.name] = WilderRsi(
+                    period=int(spec.params["period"]), field=spec.name
+                )
+            elif name == "williams_r":
+                self._williams[spec.name] = WilliamsR(
+                    period=int(spec.params["period"]), field=spec.name
+                )
             elif name in {"gated_percentile", "gated_max", "gated_min", "gated_lag"}:
                 self._gated[spec.name] = _build_gated(spec)
 
@@ -168,13 +180,21 @@ class FieldEvaluator:
         7-session frame — and a bar whose ATR window is not yet full would
         refuse outright, since ``usable`` combines a ``None``.
 
-        Only the frame-wide ops advance here. The ``gated_*`` ops deliberately
-        do not: not sampling them IS the behaviour being reproduced.
+        Only the frame-wide ops advance here — the ones whose value a whole-frame
+        indicator pass would have computed over the warmup too: ``atr``,
+        ``session.vwap_typical``, and the bar-driven ``rsi``/``williams_r``,
+        which take every bar as a sample by definition. The ``gated_*`` ops
+        deliberately do not: not sampling them IS the behaviour being
+        reproduced.
         """
         for vwap in self._vwap.values():
             vwap.update(bar)
         for atr in self._atr.values():
             atr.update(bar)
+        for rsi in self._rsi.values():
+            rsi.update(bar.close)
+        for williams in self._williams.values():
+            williams.update(high=bar.high, low=bar.low, close=bar.close)
 
     # -- per-field dispatch -------------------------------------------------
 
@@ -219,6 +239,12 @@ class FieldEvaluator:
             return self._vwap[spec.name].update(bar)
         if op == "atr":
             return self._atr[spec.name].update(bar)
+        if op == "rsi":
+            return self._rsi[spec.name].update(bar.close)
+        if op == "williams_r":
+            return self._williams[spec.name].update(
+                high=bar.high, low=bar.low, close=bar.close
+            )
         if spec.name in self._gated:
             gate = params["sample_when"]
             sample = _require_bool(values[gate], field=spec.name, what="sample_when")

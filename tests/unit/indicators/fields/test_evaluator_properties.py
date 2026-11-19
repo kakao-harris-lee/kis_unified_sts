@@ -94,6 +94,24 @@ _FIELDS: list[dict[str, Any]] = [
     {"name": "eod", "op": "time_ge", "params": {"at": "15:40"}},
     {"name": "not_eod", "op": "not", "inputs": ["eod"]},
     {"name": "armed", "op": "any", "inputs": ["hi_vol", "turned"]},
+    # The momentum indicators carry their own warmup, so a tenant reaches them
+    # the way it reaches a `gated_*` field: compare, then `permissive`.
+    {"name": "rsi", "op": "rsi", "params": {"period": 5}},
+    {"name": "wr", "op": "williams_r", "params": {"period": 5}},
+    {"name": "rsi_low_raw", "op": "lt", "inputs": ["rsi"], "params": {"const": 30.0}},
+    {
+        "name": "rsi_low",
+        "op": "permissive",
+        "inputs": ["rsi_low_raw"],
+        "params": {"when_missing": False},
+    },
+    {"name": "wr_low_raw", "op": "le", "inputs": ["wr"], "params": {"const": -80.0}},
+    {
+        "name": "wr_low",
+        "op": "permissive",
+        "inputs": ["wr_low_raw"],
+        "params": {"when_missing": False},
+    },
 ]
 
 _PUBLISH: list[dict[str, Any]] = [
@@ -110,6 +128,8 @@ _PUBLISH: list[dict[str, Any]] = [
     {"field": "stall_ok"},
     {"field": "armed"},
     {"field": "not_eod"},
+    {"field": "rsi_low"},
+    {"field": "wr_low"},
 ]
 
 
@@ -355,7 +375,14 @@ class TestWarm:
     """
 
     def test_it_advances_the_frame_wide_indicators(self) -> None:
-        """``atr``/``vwap`` after a warmed prefix equal the all-stepped ones."""
+        """The bar-driven ops after a warmed prefix equal the all-stepped ones.
+
+        ``atr`` and ``vwap`` because the witness precomputes them over the whole
+        frame; ``rsi`` and ``williams_r`` because every bar is a sample of them
+        by definition, so a warmed bar is one of their bars too. A reader who
+        later adds a bar-driven op has to add it here, or its value jumps at the
+        first stepped bar.
+        """
         bars = _bars(80)
         stepped = evaluate_bars(parsed(_FIELDS, _PUBLISH), bars)
         warmed = FieldEvaluator(parsed(_FIELDS, _PUBLISH))
@@ -365,8 +392,9 @@ class TestWarm:
         assert tail
         for index, record in enumerate(tail):
             reference = stepped[60 + index]
-            assert record.values["atr"] == reference.values["atr"]
-            assert record.values["vwap"] == reference.values["vwap"]
+            for field in ("atr", "vwap", "rsi", "wr"):
+                assert record.values[field] == reference.values[field], field
+            assert record.values["rsi"] is not None  # the prefix warmed it
 
     def test_it_does_not_sample_the_causal_windows(self) -> None:
         """A warmed bar must not enter a ``gated_*`` window.
