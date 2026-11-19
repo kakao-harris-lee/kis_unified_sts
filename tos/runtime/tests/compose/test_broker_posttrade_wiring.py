@@ -130,7 +130,8 @@ def test_the_committed_fill_observer_config_loads() -> None:
     config = load_fill_observer_config(_STOCK / "fill_observer.yaml")
     assert config.witness_fields["order_inquiry_tr_id"] == "VTTC0081R"
     assert config.poll_interval_ms > 0 and config.overdue_after_ms > 0
-    assert 0 < config.witness_request_timeout_s <= 3.0
+    # 2026-11-19: 5.0 (fresh TLS per GET); still well under the order path's 10 s.
+    assert 0 < config.witness_request_timeout_s <= 5.0
 
 
 @pytest.mark.parametrize(
@@ -264,3 +265,40 @@ def test_an_expired_prefetched_snapshot_is_refused_without_a_live_read() -> None
         witness.observe(scope)
     assert live.live_reads == 0
     assert [(u.verdict, u.age_ms) for u in uses] == [("served", 1_000)]
+
+
+class _DeadlineWitness:
+    """Records the deadline a loop-side live read was given."""
+
+    def __init__(self) -> None:
+        self.deadlines: list[Any] = []
+
+    def observe(self, scope: Any, **kwargs: Any) -> Any:
+        del scope
+        self.deadlines.append(kwargs.get("deadline_expired"))
+        return WitnessSnapshot(observed_at_generation=None, orders=())
+
+
+def test_a_loop_side_live_read_uses_its_own_witness_and_deadline() -> None:
+    """review-1114 M2: an unserved observe on the loop is bounded by the loop's own terms."""
+    scope = WitnessScope(account=_ACCOUNT)
+    witness = DeferredKisWitness(lambda: "20260914", loop_deadline_ms=0)
+    worker, loop = _DeadlineWitness(), _DeadlineWitness()
+    witness.inner = worker  # type: ignore[assignment]
+    witness.loop_inner = loop  # type: ignore[assignment]
+    witness.observe(scope)
+    assert worker.deadlines == []
+    (deadline,) = loop.deadlines
+    assert deadline is not None and deadline() is True
+
+    unbounded = DeferredKisWitness(lambda: "20260914")
+    unbounded.inner = worker  # type: ignore[assignment]
+    unbounded.observe(scope)
+    assert worker.deadlines == [None]
+
+
+def test_the_committed_loop_side_bounds_are_tighter_than_the_worker_ones() -> None:
+    config = load_fill_observer_config(_STOCK / "fill_observer.yaml")
+    assert config.loop_witness_request_timeout_s is not None
+    assert config.loop_witness_deadline_ms is not None
+    assert config.loop_witness_request_timeout_s < config.witness_request_timeout_s

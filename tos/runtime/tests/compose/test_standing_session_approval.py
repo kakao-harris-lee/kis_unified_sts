@@ -276,6 +276,31 @@ def test_the_proposal_after_max_uses_is_not_approved(
     _close(runtime)
 
 
+def test_an_open_step8_would_deny_spends_no_use(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """2026-11-19: 205 uses were spent on OPENs step 8 then denied for no pyramiding."""
+    actions = [
+        {"position_effect": "OPEN", "direction": "LONG", "side": fx.SIDE, "max_uses": 3}
+    ]
+    _deployed(config_dir, custody_root, server, monkeypatch, actions=actions)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    assert _step4(_one_pass(runtime)).outcome is StageOutcome.ADMIT
+    assert any(
+        state is not CapacityState.RELEASED
+        for _rid, state, _seq, _scope in runtime.rcl_log.reservation_rows()
+    )
+    for _ in range(2):
+        held = _one_pass(runtime)
+        assert _step4(held).outcome is StageOutcome.UNKNOWN
+        assert held.flow is not None and held.flow.handed_off is False
+    assert len(_standing_uses(runtime)) == 1
+    assert len(server.requests_for(_ORDER_PATH)) == 1
+    reasons = [r["reason"] for r in _rows(runtime, "APPROVAL_STANDING_NOT_COVERED")]
+    assert reasons == ["open_over_outstanding_reservation"]
+    _close(runtime)
+
+
 def test_a_use_whose_append_did_not_commit_is_not_counted(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:

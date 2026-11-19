@@ -175,6 +175,7 @@ class KisMockFillObserver:
     publish_held_position_snapshot: Callable[[HeldPositionSnapshot], None] | None = None
     pending_recovery_attempt_ids: Callable[[], tuple[str, ...]] | None = None
     resume_entry_discharge: Callable[[str], object] | None = None
+    broker_flat_release: Callable[[HeldPositionSnapshot], object] | None = None
     trading_dates_back: Callable[[int], tuple[str, ...]] | None = None
     _last_poll_ms: int | None = field(default=None, init=False)
     _last_reproject_ms: dict[str, int] = field(default_factory=dict, init=False)
@@ -264,6 +265,11 @@ class KisMockFillObserver:
             and self.publish_held_position_snapshot is not None
         ):
             self.publish_held_position_snapshot(result.held_position_snapshot)
+        if (
+            result.held_position_snapshot is not None
+            and self.broker_flat_release is not None
+        ):
+            self.broker_flat_release(result.held_position_snapshot)
         tracked = self._tracked_attempts()
         emitted: list[tuple[str, EgressResultKind, ResultDisposition | None]] = []
         held: list[tuple[str, EgressResultKind]] = []

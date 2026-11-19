@@ -39,6 +39,15 @@ README 가 정본이다. 여기에는 **다른 것만** 적는다.
 `tos/runtime/tests/compose/test_tenant_tree_stock.py` 가 파일·키 경로 단위로 고정한다
 (전략 파일은 LONG 의 세 규칙과 default 가 그대로인지 + R4 하나가 뒤에 붙었는지로 고정).
 
+## 브로커 평탄 시 진입 예약 해제 (운영자 결정 2026-11-19, 옵션 B)
+
+`fill_observer.yaml::broker_flat_release` 가 켜져 있다. POSITION_CONSUMED 진입 예약은 보유
+포지션 이중 조회가 이 종목 0 을 **확인**하면(정착 `broker_flat_release_settle_ms` 뒤 첫 평탄
+폴 + `held_position_poll_interval_ms` 이상 뒤 두 번째 평탄 폴, in-flight 전송 없음) 해제된다.
+
+⚠ TOS 가 사지 않은 브로커 보유분(고아, 예: 11-13 dateless-ACK 매수 0000007012)은 «평탄 아님»
+으로 읽혀 이 해제도 막는다. 세션 전에 수동으로 정리한다 — GET 잔고 조회 후 모의 매도.
+
 ## M2 경계 관통 프로브 R4 (운영자 지시 2026-11-11)
 
 운영자: 「정확한 시그널을 기다리지 말라; 시그널이 완벽하다는 보장도 없다 — 되게 해라」.

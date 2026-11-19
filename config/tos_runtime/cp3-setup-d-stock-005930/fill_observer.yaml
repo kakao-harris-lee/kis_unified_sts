@@ -32,7 +32,20 @@ poll_interval_ms: 3000
 # bounds one page at a quarter of the order path's value. Worst case per inquiry date is this
 # value x max_pages. It bounds every GET this witness makes — the observer's order inquiry and
 # the release/recovery reconciliation's balance read alike.
-witness_request_timeout_s: 2.0
+# 2026-11-19: 2.0 -> 5.0. The witness client opens a fresh HTTPS connection per GET, so the TLS
+# handshake is inside this bound; 374 of 646 release holds on the 11-17..11-19 leaf were
+# witness-unavailable (KisWitnessTimeoutError on inquire-balance / inquire-daily-ccld). Since
+# #950 the observer's reads run on its FETCH worker thread, not the session loop; the loop-side
+# fallback read (a reconciliation no prefetched snapshot serves) still costs up to this per GET.
+witness_request_timeout_s: 5.0
+# The SESSION-LOOP fallback read (a reconciliation no prefetched snapshot serves) keeps the old
+# 2 s per GET on its own witness client, plus a whole-walk deadline: once 3000 ms have passed no
+# further page starts (WitnessUnavailable, fail-closed). 3000 lets the balance page and the
+# order page — paced kis_mock_transport.yaml::min_send_interval_ms (2000) apart — both start.
+# Worst-case loop stall ≈ 3000 + one pacer wait (≤ min_send_interval_ms) + one GET in flight
+# (2 s per socket operation) ≈ 7 s, against ~28 s unbounded with 5 s GETs (review-1114 M2).
+loop_witness_request_timeout_s: 2.0
+loop_witness_deadline_ms: 3000
 # The WHOLE poll's bound, in ms, across every trading date and every continuation page it
 # reads (#949 review HIGH). Once it is past, no further read starts and no further page is
 # fetched: that read is WitnessUnavailable — recorded, fail-closed, retried at the next due
@@ -40,7 +53,8 @@ witness_request_timeout_s: 2.0
 # headroom (~0.2 s each) against a 400 ms loop interval, so a healthy poll never approaches it
 # while a sick one cannot spend 2 s x max_pages 10 x dates inside one pass. A poll therefore
 # costs at most this deadline plus the one request already in flight
-# (witness_request_timeout_s), i.e. ~3.5 s worst case, at most once per poll_interval_ms.
+# (witness_request_timeout_s), i.e. ~3.5 s worst case, at most once per poll_interval_ms
+# (with the 2026-11-19 values below and above: 4000 + 5 s = ~9 s, on the FETCH worker).
 # ⚠ It does not interrupt a request in flight — that is the timeout's job. Removing the wait
 # from the session-loop thread altogether is issue #950 (thread-safety of the shared KIS
 # credential session and the single-thread sqlite evidence store).
@@ -51,7 +65,13 @@ witness_request_timeout_s: 2.0
 # (10 min). That is the intended fail-closed direction (a held reservation, never a guessed
 # fill), but it IS an operator matter: raise this value for a slow venue rather than wait for
 # the overdue row to explain itself.
-poll_deadline_ms: 1500
+# 2026-11-19: 1500 -> 4000. Every GET on the app key is paced kis_mock_transport.yaml::
+# min_send_interval_ms (2000) apart, so a second paced GET (another date or page) could never
+# start inside 1500. 4000 admits two paced GETs. It bounds only the FETCH worker's order-row
+# reads (fill_fetch.run_fetch; the session loop never waits on it since #950) and not the
+# held-position or release snapshot reads, so held_position_max_age_ms 20000 /
+# held_position_poll_interval_ms 12000 are unaffected.
+poll_deadline_ms: 4000
 # An ACKed order with no terminal row after this long records one FILL_OBSERVER_OVERDUE row
 # (record only — no result is guessed). 10 minutes: a 1-share limit order on 005930 that has not
 # filled by then is worth an operator look.
@@ -175,3 +195,28 @@ held_position_max_age_ms: 20000
 # retried one attempt-cadence later — prior_day_poll_interval_ms (10 min), the same cadence an
 # unresolved earlier-day ACK gets.
 ack_date_recovery_lookback_trading_days: 5
+
+# Broker-flat entry release (operator decision 2026-11-19, option B). An entry reservation in
+# POSITION_CONSUMED is released when the held-position double read above (both reads
+# succeeded and complete) shows this instrument at zero, the scope holds no other outstanding
+# reservation, no TOS send is in flight, and the RCL moved only by approval consumption since
+# the read was planned. Close-proof transferability and order-inquiry corroboration are NOT
+# required on this path. Incident it would have stopped: 2026-11-19, the 11-17 entry's
+# reservation stayed POSITION_CONSUMED after the account was flat (manual mock sell 11-18,
+# not a TOS attempt) and step 8 denied every OPEN of the session. A failed or timed-out read
+# releases nothing and the next held_position_poll_interval_ms read retries. Absent = false.
+# A flat result counts only when CONFIRMED: a first flat poll whose read started at least
+# broker_flat_release_settle_ms after the runtime first saw the entry consumed, then a second
+# flat poll at least held_position_poll_interval_ms later; any other result in between resets
+# it. ⚠ A share held at the broker that TOS did not buy (an orphan, e.g. the 11-13 dateless-ACK
+# buy 0000007012) reads as NOT flat and still blocks this release: flatten it manually before
+# the session (GET balance, then a mock sell).
+broker_flat_release: true
+# The fill-to-balance reflection lag this waits out, in ms. KIS 모의 publishes no bound on how
+# soon inquire-balance (VTTC8434R) reflects a fill the order inquiry already shows
+# (docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml has none), and a balance read
+# that has not yet reflected the entry's buy reads flat. Released on that, the next OPEN would
+# buy a second lot and the first would become an untracked orphan — the 11-19 deadlock again.
+# 30000: five times the ~6 s the held double read itself spans (comment above), and short
+# against a session in which a stuck reservation otherwise blocks every OPEN until the close.
+broker_flat_release_settle_ms: 30000

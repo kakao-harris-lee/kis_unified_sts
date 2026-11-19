@@ -398,6 +398,12 @@ def test_the_observer_get_is_bounded_by_its_own_timeout_not_the_order_paths(
 ) -> None:
     """#949 review HIGH (a). The witness the hook reads through is sealed with"""
     _deploy(config_dir, custody_root, server, monkeypatch)
+    # A value no other timeout here carries, so the seal below can only have come from it (the
+    # fixture transport's request_timeout_s is 5.0, the shipped witness value since 2026-11-19).
+    path = config_dir / FILL_OBSERVER_CONFIG_NAME
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw["witness_request_timeout_s"] = 2.5
+    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
     observer = runtime.fill_observer
     assert observer is not None
@@ -408,6 +414,11 @@ def test_the_observer_get_is_bounded_by_its_own_timeout_not_the_order_paths(
     assert isinstance(witness, DeferredKisWitness) and witness.inner is not None
     sealed = witness.inner._config.request_timeout_s  # noqa: SLF001
     assert sealed == expected
+    loop_expected = load_fill_observer_config(
+        config_dir / FILL_OBSERVER_CONFIG_NAME
+    ).loop_witness_request_timeout_s
+    assert witness.loop_inner is not None and loop_expected is not None
+    assert witness.loop_inner._config.request_timeout_s == loop_expected  # noqa: SLF001
     assert (
         sealed
         != yaml.safe_load(

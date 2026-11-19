@@ -21,6 +21,7 @@ from tos.posttrade import (
 from tos.rcl import CapacityState, CommandType, TransitionCause
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.broker_flat_release import broker_flat_release_command_id
 from tos_runtime.posttrade.close_history import (
     CloseHistoryResult,
     durable_close_history,
@@ -159,6 +160,8 @@ def _entry_already_released(
         is not CapacityState.RELEASED
     ):
         return False
+    if _broker_flat_released(consumer, item):
+        return True
     pending = _pending_items(
         consumer.evidence_store,
         account=item.account,
@@ -171,6 +174,29 @@ def _entry_already_released(
         and _valid_close_commit(consumer, candidate) is not None
         and _valid_entry_commit(consumer, candidate) is not None
         for candidate in pending
+    )
+
+
+def _broker_flat_released(
+    consumer: FinalityReleaseConsumer, item: EntryDischargePending
+) -> bool:
+    """The entry left ``POSITION_CONSUMED`` through the broker-flat release (2026-11-19)."""
+    try:
+        history = consumer.reservation_history()
+    except Exception:  # noqa: BLE001 - unavailable RCL history proves nothing
+        return False
+    command_id = broker_flat_release_command_id(item.entry_reservation_id)
+    return any(
+        row.command_id == command_id
+        and row.kind is CommandType.RELEASE_RESERVATION
+        and row.reservation_id == item.entry_reservation_id
+        and row.from_state is CapacityState.POSITION_CONSUMED
+        and row.to_state is CapacityState.RELEASED
+        and row.cause is TransitionCause.FINAL_QUANTITY_PROOF
+        and row.finality_witness is True
+        and row.scope.account == item.account
+        and row.scope.instrument == item.instrument
+        for row in history.transitions
     )
 
 

@@ -51,7 +51,11 @@ from tos_runtime.posttrade.release_hold import (
     uncorroborated_hold_reason,
 )
 from tos_runtime.rcl.finality_witness import release_reservation
-from tos_runtime.rcl.log import ReservationTransitionRefusal, SqliteCommitLog
+from tos_runtime.rcl.log import (
+    ReservationTransitionHistory,
+    ReservationTransitionRefusal,
+    SqliteCommitLog,
+)
 from tos_runtime.rcl.projection import (
     ScopeReservation,
     SqliteReservationProjectionReader,
@@ -212,6 +216,10 @@ class FinalityReleaseConsumer:
             attempt_id,
             hold_reasons=_DISCHARGE_HOLD_REASONS,
         )
+
+    def reservation_history(self) -> ReservationTransitionHistory:
+        """The RCL's committed transition history, read through this pass's cache (#1008)."""
+        return self._history_cache.history(self.rcl_log, self.evidence_store)
 
     def release_hold_reason(self, reason: str) -> ReleaseHoldReason:
         """Turn a bounded recovery reason code into the consumer's evidence vocabulary."""
