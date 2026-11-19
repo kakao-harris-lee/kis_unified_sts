@@ -18,6 +18,7 @@ from shared.indicators.fields import (
     FieldSpec,
     PublishSpec,
     ScaleSpec,
+    WilderRsi,
     evaluate_bars,
     op_spec,
     parse_fields_document,
@@ -417,6 +418,126 @@ class TestWarm:
         # The all-stepped driver, by contrast, filled them long ago.
         stepped = evaluate_bars(parsed(_FIELDS, _PUBLISH), bars)
         assert stepped[60].values["vol_ref"] is not None
+
+
+class TestARefusingFieldDoesNotStarveTheBarDrivenWindows:
+    """A field refusing mid-list must not change a LATER momentum field's value.
+
+    The defect this pins (review of PR #1119, HIGH): ``step`` evaluates fields
+    in declaration order and stops at the first ``FieldEvalError``, while the
+    producer catches it, omits the bar and KEEPS the evaluator
+    (``produce_fields.py::produce_bars_declarative``). An ``rsi`` declared after
+    a ``ratio_z`` that refuses on ``atr == 0`` therefore never saw those bars,
+    and its state was wrong from then on — permanently, because Wilder
+    smoothing never forgets.
+
+    The input below is a limit lock: four moving bars, six bars pinned at
+    110/110/110 (so ATR(3) reaches 0 and ``z`` refuses), then three moving ones.
+    Before the fix the last three ``rsi`` values were 52.11 / 82.91 / 28.30 when
+    the field was declared after ``z``, against the correct 12.54 / 80.44 /
+    24.16 it has when declared before it.
+    """
+
+    LOCKED_BARS: list[tuple[float, float, float]] = [
+        (102.0, 98.0, 100.0),
+        (103.0, 99.0, 101.0),
+        (101.0, 97.0, 99.0),
+        (104.0, 100.0, 103.0),
+        *[(110.0, 110.0, 110.0)] * 6,
+        (111.0, 108.0, 109.0),
+        (112.0, 109.0, 111.0),
+        (110.0, 107.0, 108.0),
+    ]
+
+    _BASE: list[dict[str, Any]] = [
+        {"name": "close", "op": "bar.close"},
+        {"name": "vwap", "op": "session.vwap_typical"},
+        {"name": "atr", "op": "atr", "params": {"period": 3}},
+    ]
+    _Z: dict[str, Any] = {
+        "name": "z",
+        "op": "ratio_z",
+        "inputs": ["close", "vwap", "atr"],
+    }
+    _MOMENTUM: list[dict[str, Any]] = [
+        {"name": "rsi", "op": "rsi", "params": {"period": 2}},
+        {"name": "wr", "op": "williams_r", "params": {"period": 3}},
+    ]
+    _TAIL: list[dict[str, Any]] = [
+        {"name": "raw", "op": "gt", "inputs": ["close"], "params": {"const": 0}},
+        {"name": "probe", "op": "permissive", "inputs": ["raw"]},
+    ]
+
+    def _bars(self) -> list[FieldBar]:
+        return [
+            bar(index, open=close, high=high, low=low, close=close, volume=1000.0)
+            for index, (high, low, close) in enumerate(self.LOCKED_BARS)
+        ]
+
+    #: Distinguishes a REFUSED bar from a bar whose fields are legitimately
+    #: ``None`` (the warmup, and the flat window inside the lock).
+    REFUSED = "refused"
+
+    def _series(self, fields: list[dict[str, Any]]) -> list[Any]:
+        """Every bar's (rsi, wr), or :data:`REFUSED` where the bar was."""
+        evaluator = FieldEvaluator(parsed(fields, [{"field": "probe"}]))
+        out: list[Any] = []
+        for one in self._bars():
+            try:
+                record = evaluator.step(one)
+            except FieldEvalError:
+                out.append(self.REFUSED)
+                continue
+            out.append((record.values["rsi"], record.values["wr"]))
+        return out
+
+    def test_the_lock_really_does_refuse_those_bars(self) -> None:
+        """Without the refusal in the middle the test would prove nothing."""
+        before = self._series([*self._BASE, *self._MOMENTUM, self._Z, *self._TAIL])
+        refused = [index for index, entry in enumerate(before) if entry == self.REFUSED]
+        assert refused == [7, 8, 9], refused
+
+    def test_declaration_order_does_not_change_the_value(self) -> None:
+        before = self._series([*self._BASE, *self._MOMENTUM, self._Z, *self._TAIL])
+        after = self._series([*self._BASE, self._Z, *self._MOMENTUM, *self._TAIL])
+        assert after == before
+
+    def test_the_values_are_the_full_stream_ones(self) -> None:
+        """Pinned absolutely, so "both orders agree" cannot agree on garbage."""
+        after = self._series([*self._BASE, self._Z, *self._MOMENTUM, *self._TAIL])
+        tail = after[-3:]
+        assert self.REFUSED not in tail
+        assert [pair[0] for pair in tail] == [
+            12.54237288135593,
+            80.43972706595906,
+            24.16306080619449,
+        ]
+        assert [pair[1] for pair in tail] == [
+            -66.66666666666667,
+            -25.0,
+            -80.0,
+        ]
+
+    def test_a_refused_bar_still_advances_them(self) -> None:
+        """The mechanism, against the class fed every bar including the refused.
+
+        Not "the two orderings agree" (they could agree on garbage) but "the
+        declared field equals the indicator computed over the UNBROKEN bar
+        stream", which is the property a refusal must not break.
+        """
+        fields = [*self._BASE, self._Z, *self._MOMENTUM, *self._TAIL]
+        evaluator = FieldEvaluator(parsed(fields, [{"field": "probe"}]))
+        reference = WilderRsi(period=2, field="rsi")
+        compared = 0
+        for one in self._bars():
+            expected = reference.update(one.close)
+            try:
+                observed = evaluator.step(one).values["rsi"]
+            except FieldEvalError:
+                continue  # the bar is omitted, but its close still counted
+            assert observed == expected
+            compared += 1
+        assert compared == len(self.LOCKED_BARS) - 3  # three bars were refused
 
 
 class TestRefusalCarriesWhatWasEvaluated:

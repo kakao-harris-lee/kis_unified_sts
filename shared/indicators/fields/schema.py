@@ -61,6 +61,8 @@ import yaml
 from shared.indicators.fields.catalog import (
     CATALOG,
     CATALOG_VERSION,
+    MOMENTUM_MIN_PERIOD,
+    RSI_MAX_PERIOD,
     WARMUP_MISSING_OPS,
     NonePolicy,
     OpSpec,
@@ -84,6 +86,10 @@ _SCALE_KEYS: Final[frozenset[str]] = frozenset({"mult", "round"})
 
 #: Ops whose right-hand side is either a second input or a ``const``.
 _BINARY_COMPARISONS: Final[frozenset[str]] = frozenset({"gt", "ge", "lt", "le"})
+
+#: Ops whose ``period`` is bounded by their TA-Lib reference (and, for ``rsi``,
+#: by the live seed length). See ``catalog.py`` beside the two ops.
+_MOMENTUM_OPS: Final[frozenset[str]] = frozenset({"rsi", "williams_r"})
 
 
 @dataclass(frozen=True)
@@ -402,6 +408,29 @@ def _validate_params(
             f"window={out['window']}, so the window can never reach warmup and "
             "the field would be permanently None (a silently dead gate)"
         )
+    if op.name in _MOMENTUM_OPS:
+        period = out["period"]
+        if period < MOMENTUM_MIN_PERIOD:
+            raise FieldSpecError(
+                f"bad params: {where} has period={period}, but TA-Lib — the "
+                f"reference these ops reproduce bit for bit — refuses anything "
+                f"below {MOMENTUM_MIN_PERIOD} (TA_BAD_PARAM), so a value it "
+                "will not compute must not reach a published field"
+            )
+        if op.name == "rsi" and period > RSI_MAX_PERIOD:
+            raise FieldSpecError(
+                f"bad params: {where} has period={period}, above the catalog's "
+                f"limit of {RSI_MAX_PERIOD}. Wilder smoothing never forgets, so "
+                "an rsi value depends on where the bar stream started: the live "
+                "producer boots from a ~780-bar seed and the replay starts "
+                "elsewhere, and two starts agree to the last bit only after "
+                "about 35 x period bars (measured: period 14 -> 470, 50 -> "
+                "1758, 200 -> never within 7000). Above 780 / 35 ~= 22 the live "
+                "and replayed value of the SAME bar would differ while both "
+                "looked correct. Use williams_r, whose window forgets, for a "
+                "longer lookback"
+            )
+
     if op.name == "between" and out["lo"] > out["hi"]:
         raise FieldSpecError(
             f"bad params: {where} has lo={out['lo']} > hi={out['hi']}, so the "

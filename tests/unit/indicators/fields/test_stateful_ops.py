@@ -186,11 +186,35 @@ class TestMomentumWarmupAndState:
         # Bars 1..2: bar 0's low of 0 is gone -> ll 100 -> -50.0
         assert op.update(high=200.0, low=100.0, close=150.0) == -50.0
 
-    def test_construction_refuses_a_period_below_one(self) -> None:
-        with pytest.raises(FieldEvalError, match="rsi period must be >= 1"):
-            WilderRsi(period=0, field="probe")
-        with pytest.raises(FieldEvalError, match="williams_r period must be >= 1"):
-            WilliamsR(period=0, field="probe")
+    @pytest.mark.parametrize("period", [0, 1, -3])
+    def test_construction_refuses_a_period_below_two(self, period: int) -> None:
+        """TA-Lib refuses `period < 2` (TA_BAD_PARAM), so these do too."""
+        with pytest.raises(FieldEvalError, match="rsi period must be >= 2"):
+            WilderRsi(period=period, field="probe")
+        with pytest.raises(FieldEvalError, match="williams_r period must be >= 2"):
+            WilliamsR(period=period, field="probe")
+
+    def test_rsi_value_depends_on_where_the_stream_started(self) -> None:
+        """Wilder smoothing never forgets — the reason for the catalog's bound.
+
+        Two runs over the same bars from different starts are NOT equal while
+        the late one is still inside roughly ``35 * period`` bars. This is the
+        measurement `catalog.RSI_MAX_PERIOD` rests on, in miniature: at
+        ``period=14`` a 40-bar head start still shows at bar 300.
+        """
+        closes = [100.0 + ((index * 37) % 23 - 11) * 0.25 for index in range(400)]
+        early = WilderRsi(period=14, field="probe")
+        late = WilderRsi(period=14, field="probe")
+        early_values = [early.update(value) for value in closes]
+        late_values = [late.update(value) for value in closes[40:]]
+        assert early_values[100] != late_values[100 - 40]
+        # williams_r forgets after `period` bars, so the same comparison agrees.
+        early_wr = WilliamsR(period=14, field="probe")
+        late_wr = WilliamsR(period=14, field="probe")
+        bars = [(value + 1.0, value - 1.0, value) for value in closes]
+        early_w = [early_wr.update(high=h, low=low, close=c) for h, low, c in bars]
+        late_w = [late_wr.update(high=h, low=low, close=c) for h, low, c in bars[40:]]
+        assert early_w[100] == late_w[100 - 40]
 
 
 class TestConstructionRefusals:

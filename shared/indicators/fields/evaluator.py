@@ -104,6 +104,9 @@ class FieldEvaluator:
         self._vwap: dict[str, SessionVwapTypical] = {}
         self._rsi: dict[str, WilderRsi] = {}
         self._williams: dict[str, WilliamsR] = {}
+        #: This bar's cached momentum values, filled by `_advance_bar_driven`.
+        self._rsi_values: dict[str, float | None] = {}
+        self._williams_values: dict[str, float | None] = {}
         for spec in document.fields:
             name = spec.op_name
             if name == "atr":
@@ -152,7 +155,19 @@ class FieldEvaluator:
                 already evaluated in :attr:`FieldEvalError.values`, so a caller
                 can ask its own gate about them instead of matching on the
                 message.
+
+        A refusal leaves the fields AFTER the refusing one unevaluated on this
+        bar, and the caller keeps the evaluator and feeds it the next bar
+        (``tools/tos_cp3/produce_fields.py::produce_bars_declarative`` omits the
+        bar and continues). So a window that must see every bar cannot be
+        advanced from inside that loop: declaring ``rsi`` after a ``ratio_z``
+        that refuses on ``atr == 0`` — which is what a limit-locked stock
+        produces — would starve it of exactly the locked bars, permanently, and
+        the field's values after the lock would depend on where in the list it
+        was written. :meth:`_advance_bar_driven` therefore runs FIRST, outside
+        the try, and the field loop only reads what it cached.
         """
+        self._advance_bar_driven(bar)
         values: dict[str, FieldValue] = {}
         try:
             for spec in self._document.fields:
@@ -186,15 +201,39 @@ class FieldEvaluator:
         which take every bar as a sample by definition. The ``gated_*`` ops
         deliberately do not: not sampling them IS the behaviour being
         reproduced.
+
+        The bar-driven ops advance through the same
+        :meth:`_advance_bar_driven` :meth:`step` uses, so a warmed bar and a
+        stepped bar move them identically — pinned by
+        ``TestWarm.test_it_advances_the_frame_wide_indicators``.
         """
         for vwap in self._vwap.values():
             vwap.update(bar)
         for atr in self._atr.values():
             atr.update(bar)
-        for rsi in self._rsi.values():
-            rsi.update(bar.close)
-        for williams in self._williams.values():
-            williams.update(high=bar.high, low=bar.low, close=bar.close)
+        self._advance_bar_driven(bar)
+
+    def _advance_bar_driven(self, bar: FieldBar) -> None:
+        """Advance every bar-driven momentum window and cache this bar's value.
+
+        Called once per bar, before any field is evaluated, so that a field
+        refusing mid-list cannot starve one of them (see :meth:`step`). The
+        cached values are what :meth:`_evaluate` returns for an ``rsi`` or
+        ``williams_r`` field; they are overwritten on the next bar and never
+        read across bars.
+
+        ``atr`` and ``session.vwap_typical`` are deliberately NOT moved here:
+        they are evaluated in the field loop as before, because their values are
+        byte-frozen against the witness and this PR does not touch them. They
+        carry the same latent starvation, which is recorded as a known issue
+        rather than fixed in a catalog-addition PR.
+        """
+        for name, rsi in self._rsi.items():
+            self._rsi_values[name] = rsi.update(bar.close)
+        for name, williams in self._williams.items():
+            self._williams_values[name] = williams.update(
+                high=bar.high, low=bar.low, close=bar.close
+            )
 
     # -- per-field dispatch -------------------------------------------------
 
@@ -240,11 +279,12 @@ class FieldEvaluator:
         if op == "atr":
             return self._atr[spec.name].update(bar)
         if op == "rsi":
-            return self._rsi[spec.name].update(bar.close)
+            # Already advanced for this bar by `_advance_bar_driven`; reading
+            # the cache is what keeps the value independent of WHERE in the
+            # field list the declaration put it.
+            return self._rsi_values[spec.name]
         if op == "williams_r":
-            return self._williams[spec.name].update(
-                high=bar.high, low=bar.low, close=bar.close
-            )
+            return self._williams_values[spec.name]
         if spec.name in self._gated:
             gate = params["sample_when"]
             sample = _require_bool(values[gate], field=spec.name, what="sample_when")

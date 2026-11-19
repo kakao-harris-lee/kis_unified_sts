@@ -52,8 +52,8 @@ class TestCatalogShape:
         field is what makes that shape expressible. `rsi` and `williams_r` are
         the second addition — general indicators for the first tenant strategy
         written as YAML rather than as Python
-        (`docs/plans/2026-11-13-tos-utility-and-usage.md` §5.2). Adding an op
-        does not bump `CATALOG_VERSION` — see the rule next to that constant.
+        (`docs/plans/2026-11-19-tos-usage-plan.md` §4.1 step 1, §5). Adding an
+        op does not bump `CATALOG_VERSION` — see the rule next to that constant.
 
         A new op is a reviewed catalog change; this test is the review's record.
         """
@@ -351,15 +351,17 @@ class TestWilliamsR:
         assert series == [None, -25.0, -30.0, -60.0]
 
     def test_the_current_bar_is_in_its_own_window(self) -> None:
-        """Unlike ``gated_*``: %R is a position within a window that includes now."""
-        fields = [
-            {"name": "wr", "op": "williams_r", "params": {"period": 1}},
-            {"name": "raw", "op": "le", "inputs": ["wr"], "params": {"const": 0}},
-            {"name": "probe", "op": "permissive", "inputs": ["raw"]},
+        """Unlike ``gated_*``: %R is a position within a window that includes now.
+
+        Two identical bars of range 100, so the window is this bar's own range
+        and the close sits a quarter below the high. A ``gated_max`` reading
+        the same window would exclude the current bar and have no value yet.
+        """
+        bars = [
+            bar(0, open=150.0, high=200.0, low=100.0, close=175.0),
+            bar(1, open=150.0, high=200.0, low=100.0, close=175.0),
         ]
-        # One bar, range exactly 100: the close sits a quarter below the high.
-        bars = [bar(0, open=150.0, high=200.0, low=100.0, close=175.0)]
-        assert _last(fields, bars)["wr"] == -25.0
+        assert _last(self.FIELDS, bars)["wr"] == -25.0
 
     def test_at_the_window_extremes(self) -> None:
         """Close at the window high is 0, at its low is -100."""

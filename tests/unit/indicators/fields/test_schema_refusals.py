@@ -270,6 +270,65 @@ class TestParams:
         )
 
     @pytest.mark.parametrize("op", ["rsi", "williams_r"])
+    def test_momentum_period_of_one_is_refused(self, op: str) -> None:
+        """TA-Lib returns TA_BAD_PARAM below 2, so a value it will not compute
+        must not reach a published field. (0 and below are already refused by
+        the generic count floor, above.)"""
+        message = _refuse(
+            document([{"name": "probe", "op": op, "params": {"period": 1}}]),
+            "TA-Lib",
+        )
+        assert "period=1" in message
+
+    def test_rsi_period_above_the_catalog_bound_is_refused(self) -> None:
+        """Wilder memory outlives the live seed above ~780/35 bars.
+
+        The failure it prevents is not a crash: the live and the replayed value
+        of the SAME bar would differ while both looked correct.
+        """
+        message = _refuse(
+            document([{"name": "probe", "op": "rsi", "params": {"period": 21}}]),
+            "above the catalog's limit",
+        )
+        assert "35 x period" in message
+        assert "williams_r" in message  # the refusal names the way out
+
+    def test_rsi_at_the_bound_still_loads(self) -> None:
+        loaded = parse_fields_document(
+            document(
+                [
+                    {"name": "ind", "op": "rsi", "params": {"period": 20}},
+                    {
+                        "name": "raw",
+                        "op": "gt",
+                        "inputs": ["ind"],
+                        "params": {"const": 0},
+                    },
+                    {"name": "probe", "op": "permissive", "inputs": ["raw"]},
+                ]
+            )
+        )
+        assert loaded.fields[0].params["period"] == 20
+
+    def test_williams_r_has_no_upper_bound(self) -> None:
+        """Its window forgets, so a long lookback has no seed dependence."""
+        loaded = parse_fields_document(
+            document(
+                [
+                    {"name": "ind", "op": "williams_r", "params": {"period": 780}},
+                    {
+                        "name": "raw",
+                        "op": "lt",
+                        "inputs": ["ind"],
+                        "params": {"const": 0},
+                    },
+                    {"name": "probe", "op": "permissive", "inputs": ["raw"]},
+                ]
+            )
+        )
+        assert loaded.fields[0].params["period"] == 780
+
+    @pytest.mark.parametrize("op", ["rsi", "williams_r"])
     def test_momentum_takes_no_other_parameter(self, op: str) -> None:
         _refuse(
             document(

@@ -44,15 +44,43 @@ Two decisions a reader will want the reason for:
    random bars), and a threshold written on the published integer can flip on
    exactly those. The parity is pinned to the last bit by
    ``tests/unit/indicators/fields/test_talib_reference.py``.
-2. **A degenerate window has no value, where TA-Lib returns 0.0.** TA-Lib's RSI
-   on a flat series is ``0.0`` and its %R on a flat window is ``0.0`` — read as
-   indicator values those are "maximally oversold" and "at the top of the
-   range", i.e. two entry triggers manufactured out of a window that contains no
-   information. A Korean stock sitting on its daily limit (상한가/하한가)
-   produces exactly that window, so this is a real input, not a hypothetical
-   one. Both ops return ``None`` there: the field has no value, and the tenant's
-   own ``permissive`` decides what that means for its gate. The divergence is
-   declared, and pinned against TA-Lib by the same test.
+2. **A degenerate window has no value — but "degenerate" means different things
+   to the two ops, and only one of them meets it on a lock.** The two cases,
+   measured rather than assumed:
+
+   * ``williams_r`` has a FINITE window, so ``period`` bars of a Korean stock
+     sitting on its daily limit (상한가/하한가) make ``highest == lowest``
+     exactly. TA-Lib returns ``0.0`` there, which reads as "the close is at the
+     top of the range" — an entry trigger manufactured out of a window with no
+     information. This op returns ``None`` instead, and the tenant's own
+     ``permissive`` decides what that means for its gate.
+   * ``rsi`` has an INFINITE one (Wilder smoothing never forgets), so its
+     ``None`` is rarer than it looks: ``avg_gain + avg_loss`` is exactly ``0``
+     only when the series has not moved AT ALL since the first bar. After any
+     earlier movement a lock decays both averages toward zero without ever
+     reaching it, so this op keeps returning the PRE-LOCK ratio for as long as
+     the lock lasts (measured: ``period=2``, 30 moving bars then 400 locked
+     ones — 99.0196 on every one of the 400). TA-Lib diverges in the opposite
+     direction: it prints exactly ``0.0`` once the sum falls under its
+     ``TA_IS_ZERO`` epsilon (1e-8, a C-level constant, so the crossing bar is
+     build-dependent) — bar 81 of that same series.
+
+   Neither value is informative during a lock. A tenant that must not act
+   through one gates on something that notices it (a range or volume field),
+   not on RSI. All four behaviours above are pinned in
+   ``test_talib_reference.py``, and the parity tests exclude the degenerate
+   tail rather than pretending the two agree there.
+
+Part 3 — what their state does NOT do: reset on a session boundary.
+-------------------------------------------------------------------
+Neither op is session-aware. ``rsi`` carries its averages and ``williams_r`` its
+window across the overnight gap, so the first bar of a session is one more
+change / one more bar, and an opening gap enters RSI as a single large one. That
+is ``atr``'s behaviour (``bar.py``: "the window is NOT reset per session"), not
+``session.vwap_typical``'s. It is also what a whole-frame TA-Lib pass over a
+stitched series computes, which is the point: the reference and this stream have
+to agree bar for bar. A tenant that wants a session-local reading cannot get it
+by declaring these ops — that would be a new op.
 
 These are not imported from ``shared.indicators.engine`` for the reason
 :mod:`shared.indicators.fields.bar` gives for ``atr``: those backends are
@@ -200,9 +228,17 @@ class WilderRsi:
       gives exactly ``100.0`` instead of dividing by zero.
 
     ``period`` changes need ``period + 1`` closes, so the value is ``None`` on
-    the first ``period`` bars (TA-Lib's ``TA_RSI_Lookback``). TA-Lib refuses
-    ``period < 2``; this op accepts ``period = 1`` (the loader's floor for every
-    count), where the formula degenerates to 0 or 100 on each bar.
+    the first ``period`` bars (TA-Lib's ``TA_RSI_Lookback``). ``period < 2`` is
+    refused, as TA-Lib refuses it (``TA_BAD_PARAM``): accepting it would put a
+    value outside the reference's own domain into a published field.
+
+    **This op has unbounded memory.** Wilder smoothing weights every past bar,
+    so the value on a given bar depends on where the stream STARTED, and two
+    runs over the same bars from different starts converge only slowly —
+    measured on 7000 bars, to the last bit after roughly ``35 * period`` bars
+    (period 2: 55; 14: 470; 50: 1758; period 200 had not converged within
+    7000). The catalog bounds ``period`` for that reason; see the note beside
+    the op in :mod:`shared.indicators.fields.catalog`.
 
     Args:
         period: Wilder lookback, in bars.
@@ -210,8 +246,11 @@ class WilderRsi:
     """
 
     def __init__(self, *, period: int, field: str) -> None:
-        if period < 1:
-            raise FieldEvalError(f"{field}: rsi period must be >= 1, got {period}")
+        if period < 2:
+            raise FieldEvalError(
+                f"{field}: rsi period must be >= 2, got {period} "
+                "(TA-Lib refuses a shorter one)"
+            )
         self._period = period
         self._changes = 0
         self._prev_close: float | None = None
@@ -272,7 +311,10 @@ class WilliamsR:
 
     The value is ``None`` on the first ``period - 1`` bars (TA-Lib's
     ``TA_WILLR_Lookback``), and on a bar whose window is flat — see the module
-    docstring, decision 2.
+    docstring, decision 2. ``period < 2`` is refused because TA-Lib refuses it.
+
+    Unlike :class:`WilderRsi` this op forgets: the window holds exactly
+    ``period`` bars, so its value never depends on where the stream started.
 
     Args:
         period: Window length, in bars.
@@ -280,9 +322,10 @@ class WilliamsR:
     """
 
     def __init__(self, *, period: int, field: str) -> None:
-        if period < 1:
+        if period < 2:
             raise FieldEvalError(
-                f"{field}: williams_r period must be >= 1, got {period}"
+                f"{field}: williams_r period must be >= 2, got {period} "
+                "(TA-Lib refuses a shorter one)"
             )
         self._period = period
         self._highs: deque[float] = deque(maxlen=period)

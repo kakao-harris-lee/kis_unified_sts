@@ -105,6 +105,16 @@ class NonePolicy(Enum):
 #: Sentinel for a variadic op's maximum input count.
 UNBOUNDED: Final[int] = -1
 
+#: Shortest ``period`` ``rsi``/``williams_r`` accept — TA-Lib's own floor
+#: (``TA_BAD_PARAM`` below it), so the ops stay inside the domain their
+#: reference will compute.
+MOMENTUM_MIN_PERIOD: Final[int] = 2
+
+#: Longest ``period`` ``rsi`` accepts. The live producer's ~780-bar seed carries
+#: about ``780 / 35`` periods' worth of Wilder memory; see the note beside the
+#: op below for the measurement and for why ``williams_r`` has no such bound.
+RSI_MAX_PERIOD: Final[int] = 20
+
 
 @dataclass(frozen=True)
 class OpSpec:
@@ -224,10 +234,29 @@ _CATALOG: Final[tuple[OpSpec, ...]] = (
     # General indicators, parameterized by `period` only: no default, because a
     # period is the whole content of the declaration and a silent 14 would make
     # two tenants that look the same compute different things. Both are the
-    # TA-Lib reference definition, bit for bit
-    # (``tests/unit/indicators/fields/test_talib_reference.py``), and both are
-    # ``None`` until their lookback is covered — which is why they are listed in
-    # :data:`WARMUP_MISSING_OPS`.
+    # TA-Lib reference definition, bit for bit, over the whole domain the loader
+    # accepts (``tests/unit/indicators/fields/test_talib_reference.py``) except
+    # a degenerate window, where they differ in a declared and tested way
+    # (``stateful.py``, decision 2). Both are ``None`` until their lookback is
+    # covered — which is why they are listed in :data:`WARMUP_MISSING_OPS` —
+    # and neither resets on the session boundary (``stateful.py``, part 3).
+    #
+    # `period` bounds, enforced by the loader (`schema.py::_validate_params`):
+    #
+    # * Both refuse `period < 2`, because TA-Lib does (`TA_BAD_PARAM`). A value
+    #   the reference will not compute must not reach a published field.
+    # * `rsi` additionally refuses `period > RSI_MAX_PERIOD` (20). Wilder
+    #   smoothing never forgets, so an `rsi` value depends on where the bar
+    #   stream STARTED, and the live producer's start is not the backtest's:
+    #   it boots from a seed of about 780 sampled bars
+    #   (`tools/tos_cp3`'s `build_seed`). Two starts converge to the last bit
+    #   after roughly `35 * period` bars (measured on 7000 bars: period 2 -> 55,
+    #   14 -> 470, 50 -> 1758, and period 200 had not converged at all), so
+    #   780 / 35 ~= 22 is the longest period that seed can carry. Above the
+    #   bound the live and replayed values of the SAME bar would differ while
+    #   both looked correct, which is the one failure this catalog cannot let a
+    #   tenant declare by accident. `williams_r` needs no such bound: its window
+    #   holds exactly `period` bars and forgets everything older.
     _op(
         "rsi",
         returns=_NUM,
@@ -400,6 +429,8 @@ __all__ = [
     "CATALOG",
     "CATALOG_VERSION",
     "GATED_OPS",
+    "MOMENTUM_MIN_PERIOD",
+    "RSI_MAX_PERIOD",
     "UNBOUNDED",
     "WARMUP_MISSING_OPS",
     "NonePolicy",
