@@ -3113,11 +3113,26 @@ def test_red_the_market_settings_refuse_before_anything_is_launched(
 
 _ENV_TEMPLATE = _REPO_ROOT / "tools/tos_cp3/runners/stock-mock-session.env.example"
 #: The literal values the template may carry: the session's own definition, never a secret.
+#:
+#: `TENANT_TREE`, `TENANT_INSTRUMENT` and `TENANT_PRODUCER_CONFIG` are NOT literals any
+#: more — one stock tenant per symbol (operator directive 2026-11-19) means the symbol
+#: arrives as `${TOS_STOCK_SYMBOL}` and all three are derived from it, so one template
+#: serves every tenant. Their exact shapes are pinned below instead.
 _TEMPLATE_LITERALS = {
-    "TENANT_TREE": "cp3-setup-d-stock-005930",
     "TENANT_DIRECTION": "LONG",
-    "TENANT_INSTRUMENT": "005930",
     "TENANT_ENVIRONMENT_LABEL": "paper",
+}
+
+#: The three values the symbol decides, pinned by shape. A hand-edit that put one symbol
+#: here would hand EVERY stock tenant's session that symbol while its tree stayed its own —
+#: `run_tenant_session.sh` only catches that mid-start (its instrument.pattern check), and
+#: `cp3_tenant_daily.sh --preflight` says it earlier because of this same rule.
+_TEMPLATE_SYMBOL_DERIVED = {
+    "TENANT_TREE": "cp3-setup-d-stock-${TOS_STOCK_SYMBOL}",
+    "TENANT_INSTRUMENT": "${TOS_STOCK_SYMBOL}",
+    "TENANT_PRODUCER_CONFIG": (
+        "${TOS_REPO}/config/tos_probes/cp3-live-producer-stock-${TOS_STOCK_SYMBOL}.yaml"
+    ),
 }
 
 
@@ -3141,17 +3156,31 @@ def test_the_stock_env_template_names_every_value_the_runner_requires() -> None:
 
 
 def test_the_stock_env_template_carries_no_secret_and_no_host_path() -> None:
-    """Every value is a ``${VAR}`` reference (optionally with a relative suffix) or one of the
-    four identifiers that define the session — so no key, secret, account number or host path
-    can be committed through it."""
+    """Every value is a ``${VAR}`` reference (optionally with a relative suffix), one of the
+    two identifiers that define the session, or one of the three the symbol decides — so no
+    key, secret, account number or host path can be committed through it."""
     for key, value in _template_values().items():
         if key in _TEMPLATE_LITERALS:
             assert value == _TEMPLATE_LITERALS[key], key
+            continue
+        if key in _TEMPLATE_SYMBOL_DERIVED:
+            assert value == _TEMPLATE_SYMBOL_DERIVED[key], key
             continue
         assert re.fullmatch(r"\$\{[A-Z_]+\}(/[A-Za-z0-9_./-]+)?", value), (key, value)
     text = _ENV_TEMPLATE.read_text("utf-8")
     for forbidden in ("APP_KEY=", "APP_SECRET=", "ACCOUNT_NO=", "/home/"):
         assert forbidden not in text
+
+
+def test_the_stock_env_template_names_no_symbol_anywhere() -> None:
+    """One template, every stock tenant: no six-digit KRX symbol in it at all.
+
+    The three symbol-derived values above are pinned by shape, but a symbol could also
+    reach a session through a stray line or a copied block, so this reads the whole file —
+    comments included, since a comment naming one symbol is how a later edit would start.
+    """
+    text = _ENV_TEMPLATE.read_text("utf-8")
+    assert re.search(r"(?<![0-9])[0-9]{6}(?![0-9])", text) is None, text
 
 
 def test_a_die_after_the_producer_starts_does_not_leave_it_running(

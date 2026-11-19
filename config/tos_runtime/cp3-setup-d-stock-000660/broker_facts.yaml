@@ -1,0 +1,40 @@
+# =============================================================================
+# Broker facts (item 12) — CP-3 stock tenant / KIS 모의투자 (VTS), GET only
+# =============================================================================
+# Read by tos_runtime.transport.kis_mock.broker_facts (PR-3a, operator decision 2026-10-23
+# option (a) "K"): for a kis-mock boot whose active scope is a mock order class with no
+# position/cash effect, item 12's account / tradability / broker-constraint-generation facts
+# come from these two GETs on the order transport's own sealed mock host. No other tree reads
+# this file; a mock-class kis-mock boot without it refuses to boot.
+#
+# Sources (KIS open-trading-api, examples_llm/domestic_stock, re-read 2026-10-23):
+#   * inquire_balance/inquire_balance.py — API_URL /uapi/domestic-stock/v1/trading/
+#     inquire-balance, tr_id demo VTTC8434R, the nine query params below (+ CANO /
+#     ACNT_PRDT_CD, which come from the sealed account, never from this file).
+#   * inquire_price/inquire_price.py — API_URL /uapi/domestic-stock/v1/quotations/
+#     inquire-price, tr_id FHKST01010100 (real and demo alike), FID_COND_MRKT_DIV_CODE J (KRX);
+#     chk_inquire_price COLUMN_MAPPING temp_stop_yn = 임시 정지 여부.
+balance_tr_id: "VTTC8434R"
+balance_path: "/uapi/domestic-stock/v1/trading/inquire-balance"
+balance_params:
+  AFHR_FLPR_YN: "N"          # 기본값 (시간외단일가·NXT 아님)
+  OFL_YN: ""
+  INQR_DVSN: "02"            # 종목별
+  UNPR_DVSN: "01"
+  FUND_STTL_ICLD_YN: "N"
+  FNCG_AMT_AUTO_RDPT_YN: "N"
+  PRCS_DVSN: "00"            # 전일매매포함
+  CTX_AREA_FK100: ""
+  CTX_AREA_NK100: ""
+quote_tr_id: "FHKST01010100"
+quote_path: "/uapi/domestic-stock/v1/quotations/inquire-price"
+quote_market_div_code: "J"
+# How long one pair of GETs stays current. One attempt asks for item 12's three facts in one
+# resolution, so they share one refresh; a later attempt older than this refreshes first. 30 s
+# is far inside a 1-minute-bar strategy's decision cadence and keeps the mock host at two GETs
+# per attempt at most — it is a freshness bound, not a polling interval (nothing polls).
+# ⚠ A FAILED observation is held for the same window (#932 review LOW 4): after a failed read
+# (account rt_cd != 0, a halted instrument, a token or transport error) the facts stay
+# not-current — every send refused — until 30 s have passed and the next attempt re-reads.
+# Fail closed by design; a recovered broker is noticed at most 30 s late.
+max_age_ms: 30000

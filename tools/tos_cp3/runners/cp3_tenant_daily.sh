@@ -1,9 +1,11 @@
 #!/bin/bash
 # CP-3 tenant — one unattended trading-day session per call, one direction each.
 #
-#   cp3_tenant_daily.sh LONG|SHORT|STOCK                      # the cron call (runs the session)
-#   cp3_tenant_daily.sh LONG|SHORT|STOCK --preflight [DATE]   # read-only check for DATE (KST, default today)
-#   cp3_tenant_daily.sh LONG|SHORT|STOCK --catch-up HH:MM     # @reboot: run the day's session if the HH:MM line was missed
+#   cp3_tenant_daily.sh <TENANT>                      # the cron call (runs the session)
+#   cp3_tenant_daily.sh <TENANT> --preflight [DATE]   # read-only check for DATE (KST, default today)
+#   cp3_tenant_daily.sh <TENANT> --catch-up HH:MM     # @reboot: run the day's session if the HH:MM line was missed
+#
+# <TENANT> is LONG | SHORT | STOCK | STOCK:<6-digit symbol>.
 #
 # Rescope plan docs/plans/2026-10-22-tos-rescope-plan.md M1 (operator 2026-10-22:
 # 「tenant 세션 cron 상시화 진행해」「SHORT도 같은 방식으로 상시화해」) and M2
@@ -11,10 +13,42 @@
 # one-off sequence, every trading day).
 # Runbook: docs/runbooks/tos-paper-boot.md §7.2-e (cron) · §7.2-f (the stock tenant).
 #
-# LONG and SHORT are the two synthetic FUTURES tenants: they send nothing. STOCK is
-# the kis-mock tenant (005930, 1 share, Setup D LONG) and it DOES send — to the KIS
-# 모의투자 order endpoint, with the mock account's keys from custody. Everything the
-# stock direction needs beyond the futures path is marked «STOCK» below.
+# LONG and SHORT are the two synthetic FUTURES tenants: they send nothing. The STOCK
+# tenants are kis-mock (1 share, Setup D LONG) and they DO send — to the KIS 모의투자
+# order endpoint, with the mock account's keys from custody. Everything a stock
+# tenant needs beyond the futures path is marked «STOCK» below.
+#
+# ONE STOCK TENANT PER SYMBOL (operator directive 2026-11-19: 「유동성이 큰 대형주들로
+# 최종 모의투자에서 매수/매도가 잘 동작하게 완료해」 — one open position per symbol, so
+# three concurrent slots come from three symbols). `STOCK_SYMBOLS` below is the set, and
+# every coordinate a stock tenant owns alone is derived from the symbol: its config tree,
+# producer config, durable-set parent, custody root (the standing approval binds to ONE
+# tenant's rendered config, so this may never be shared), operation transport config,
+# session directory, worktree, lock and cron log. What the three DO share is the KIS
+# 모의투자 stock account and its app key — see «SHARED ACCOUNT» below.
+#
+#   STOCK            = the first stock tenant (005930), the spelling the 2026-11-05 cron
+#                      line and runbook §7.2-f's start blocks use. `STOCK:005930` is the
+#                      same tenant: same lock, same session directory, same custody — two
+#                      spellings can never become two sessions.
+#   STOCK:<symbol>   = any tenant in `STOCK_SYMBOLS`.
+#
+# SHARED ACCOUNT — what three concurrent stock tenants share, and why it is safe:
+#   * the account and its order history. The witness reads 주식일별주문체결조회 with
+#     `PDNO = <this tenant's symbol>` and filters 잔고 rows by the same symbol
+#     (`tos_runtime/recon/witness_kis.py`), and every `WitnessScope` built on the release,
+#     recovery and fill-observer paths carries exactly this tenant's one instrument. So
+#     another tenant's orders never enter this tenant's read and can never be classified
+#     ORPHAN_BROKER_ORDER. **That holds only while no two tenants share a symbol**, which
+#     is what `STOCK_SYMBOLS` being a set of distinct symbols buys.
+#   * the app key's request budget. `KisAppKeyPacer` is per PROCESS, so three tenants' rates
+#     ADD at the broker. Each tree's `fill_observer.yaml` carries observer poll intervals
+#     already divided by the tenant count — see the «TENANT COUNT» note in that file.
+#   * the REAL quote key's token. The three ③ producers share one `token_cache_dir` on
+#     purpose so they reuse one cached token instead of each issuing one (KIS issues at most
+#     one token per minute per app key).
+#   * cash and 미수금. One share of each symbol is far inside the mock account's orderable
+#     cash; a shortfall is a broker rejection, which is fail-closed.
 #
 # This is the tracked source of ~/.config/kis-probes/run-cp3-tenant-daily.sh.
 # tools/tos_cp3/runners/install_tenant_cron.sh copies it there FROM origin/main
@@ -111,12 +145,45 @@
 set -u
 umask 077
 
+# The stock tenants, one per symbol (header «ONE STOCK TENANT PER SYMBOL»). This line is the
+# set: `tos/runtime/tests/compose/test_tenant_decision_generation.py` reads it together with
+# the `TREE=` assignments below, so a symbol added here without a
+# `config/tos_runtime/decision_generations.yaml` entry (and the data-leaf re-genesis that
+# entry forces an author to say out loud) goes red in CI.
+STOCK_SYMBOLS="005930 000660 005380"
+# The one stock tenant whose HOST coordinates predate the multi-symbol runner: its leaf was
+# born 2026-11-06 and its lock, cron log, session directories (`stock-r1-YYYYMMDD`, the name
+# the status board's history carries), custody root and operation directory all have no
+# symbol in them. Renaming them would orphan a live deployment's state, so they are kept and
+# every OTHER symbol carries itself in those names.
+STOCK_LEGACY_SYMBOL=005930
+
+USAGE="usage: $0 LONG|SHORT|STOCK|STOCK:<symbol> [--preflight [YYYY-MM-DD] | --catch-up HH:MM]
+       stock symbols: $STOCK_SYMBOLS (STOCK = $STOCK_LEGACY_SYMBOL)"
+
 DIR=${1:-}
+SYMBOL=
 case "$DIR" in
 LONG) lc=long ;;
 SHORT) lc=short ;;
-STOCK) lc=stock ;;
-*) echo "usage: $0 LONG|SHORT|STOCK [--preflight [YYYY-MM-DD] | --catch-up HH:MM]" >&2; exit 2 ;;
+STOCK)
+  # The bare alias, and ONLY the bare word: a `STOCK:` whose symbol is missing is a typo
+  # in a cron line, and quietly reading it as the legacy tenant would start that tenant's
+  # session from a line nobody meant to aim at it.
+  SYMBOL=$STOCK_LEGACY_SYMBOL
+  lc=stock
+  ;;
+STOCK:*)
+  SYMBOL=${DIR#STOCK:}
+  case " $STOCK_SYMBOLS " in
+  *" $SYMBOL "*) ;;
+  *) echo "unknown stock symbol '$SYMBOL' — this runner's stock tenants are: $STOCK_SYMBOLS" >&2
+     echo "$USAGE" >&2; exit 2 ;;
+  esac
+  # `$lc` names the lock, the cron log and the session directory (above).
+  if [ "$SYMBOL" = "$STOCK_LEGACY_SYMBOL" ]; then lc=stock; else lc=stock-$SYMBOL; fi
+  ;;
+*) echo "$USAGE" >&2; exit 2 ;;
 esac
 MODE=run
 CATCH_UP_AT=
@@ -137,10 +204,10 @@ case "${2:-}" in
   # session nobody asked for.
   [ -z "${4:-}" ] ||
     { echo "unexpected argument '$4' after --catch-up $CATCH_UP_AT" >&2
-      echo "usage: $0 LONG|SHORT|STOCK [--preflight [YYYY-MM-DD] | --catch-up HH:MM]" >&2
+      echo "$USAGE" >&2
       exit 2; }
   ;;
-*) echo "usage: $0 LONG|SHORT|STOCK [--preflight [YYYY-MM-DD] | --catch-up HH:MM]" >&2; exit 2 ;;
+*) echo "$USAGE" >&2; exit 2 ;;
 esac
 
 MAIN=${CP3_DAILY_MAIN:-/home/deploy/project/kis_unified_sts}
@@ -150,9 +217,10 @@ STOP_AT=${CP3_DAILY_STOP_AT:-}
 EXTRA_CLOSED=${CP3_DAILY_EXTRA_CLOSED-}
 PY=$MAIN/.venv/bin/python
 
-# Per-direction coordinates. The two futures tenants differ only in `$lc`; the
-# STOCK tenant is a different tree, producer config, custody root and durable set
-# (§7.2-b/§7.2-f) and carries two settings a futures session refuses.
+# Per-tenant coordinates. The two futures tenants differ only in `$lc`; a STOCK tenant is a
+# different tree, producer config, custody root and durable set (§7.2-b/§7.2-f) and carries
+# two settings a futures session refuses. Every stock coordinate is derived from `$SYMBOL`
+# except the legacy tenant's host paths (`$STOCK_LEGACY_SUFFIX`, see $STOCK_LEGACY_SYMBOL).
 case "$DIR" in
 LONG | SHORT)
   MARKET=futures
@@ -162,13 +230,22 @@ LONG | SHORT)
   CUSTODY_ROOT=$STATE/paper-custody
   DEFAULT_AFTER_CLOSE_MIN=5
   ;;
-STOCK)
+STOCK | STOCK:*)
   MARKET=stock
-  TREE=cp3-setup-d-stock-005930
-  PRODUCER_REL=config/tos_probes/cp3-live-producer-stock-005930.yaml
-  DATA_PARENT=$STATE/cp3-setup-d-stock-005930-data
-  CUSTODY_ROOT=$STATE/cp3-setup-d-stock-custody
-  TRANSPORT_CONFIG=$STATE/cp3-setup-d-stock-ops/kis_mock_transport.yaml
+  TREE=cp3-setup-d-stock-$SYMBOL
+  PRODUCER_REL=config/tos_probes/cp3-live-producer-stock-$SYMBOL.yaml
+  DATA_PARENT=$STATE/cp3-setup-d-stock-$SYMBOL-data
+  # ⚠ Custody is NEVER shared between stock tenants. The standing approval artifact's path
+  # is fixed relative to the custody root and the document binds to ONE tenant's RENDERED
+  # config, so a shared root would make each tenant's write collide with — and its boot bind
+  # — another tenant's approval. The legacy tenant's root has no symbol in it (above).
+  if [ "$SYMBOL" = "$STOCK_LEGACY_SYMBOL" ]; then
+    STOCK_HOST_SUFFIX=
+  else
+    STOCK_HOST_SUFFIX=-$SYMBOL
+  fi
+  CUSTODY_ROOT=$STATE/cp3-setup-d-stock${STOCK_HOST_SUFFIX}-custody
+  TRANSPORT_CONFIG=$STATE/cp3-setup-d-stock${STOCK_HOST_SUFFIX}-ops/kis_mock_transport.yaml
   SETUP_REL=tools/tos_cp3/runners/setup_stock_mock_once.sh
   STOCK_ENV_REL=tools/tos_cp3/runners/stock-mock-session.env.example
   # 15:30 close + 10 = 15:40, the stop the 11-03 operator-approved sequence used
@@ -204,11 +281,14 @@ if [ "$MODE" = catchup ]; then
 fi
 STAMP=${TODAY//-/}
 if [ "$MARKET" = stock ]; then
-  # `stock-r<RUN>-<날짜>` — the name the status board parses (_SESSION_DIR_RE) and
-  # the runbook's own start/stop blocks use. Cron is r1; a manual restart is r2.
-  SESSION=$STATE/cp3-sessions/stock-r$RUN-$STAMP
-  WT=$STATE/measure/wt-cp3-stock-r$RUN-$STAMP
-  WT_OLD_GLOB="wt-cp3-stock-r*-2*"
+  # `<lc>-r<RUN>-<날짜>` — the name the status board parses (_SESSION_DIR_RE) and the
+  # runbook's own start/stop blocks use. Cron is r1; a manual restart is r2. `$lc` is
+  # `stock` for the legacy tenant and `stock-<symbol>` for every other, so the old
+  # directories keep their names and the old glob below cannot reach a new tenant's
+  # worktree (`wt-cp3-stock-r…` needs a literal `-r` where `stock-000660-r1` has a digit).
+  SESSION=$STATE/cp3-sessions/$lc-r$RUN-$STAMP
+  WT=$STATE/measure/wt-cp3-$lc-r$RUN-$STAMP
+  WT_OLD_GLOB="wt-cp3-$lc-r*-2*"
 else
   SESSION=$STATE/cp3-sessions/$lc-$STAMP
   WT=$STATE/measure/wt-cp3-$lc-$STAMP
@@ -476,13 +556,20 @@ if [ "$MODE" = preflight ]; then
     log "PREFLIGHT session $win · stop_at=$stop$([ -n "$STOP_AT" ] && echo ' (CP3_DAILY_STOP_AT)')"
   fi
   if [ "$MARKET" = stock ]; then
-    # A stock symbol does not roll, and it is named in ONE place — the env example
-    # the runner is handed (TENANT_INSTRUMENT). Read from origin/main, like the
-    # files above, so the preflight never reports $MAIN's working tree.
-    inst=$(git -C "$MAIN" show "origin/main:$STOCK_ENV_REL" 2>/dev/null |
+    # A stock symbol does not roll: it comes from this call's own argument, and the runner
+    # checks it against the tree's `RENDER.yaml` instrument.pattern before the producer
+    # starts. The env example must therefore REFER to it rather than name one — a hand-edit
+    # that hardcoded a symbol there would send every tenant's session at that one symbol's
+    # tree, which the pattern check would refuse mid-session rather than here. Read from
+    # origin/main, like the files above, so the preflight never reports $MAIN's working tree.
+    inst=$SYMBOL
+    env_inst=$(git -C "$MAIN" show "origin/main:$STOCK_ENV_REL" 2>/dev/null |
       sed -n 's/^TENANT_INSTRUMENT=//p' | tail -1)
-    [ -n "$inst" ] || {
+    [ -n "$env_inst" ] || {
       log "PREFLIGHT TENANT_INSTRUMENT not found in origin/main:$STOCK_ENV_REL"; exit 2; }
+    [ "$env_inst" = '${TOS_STOCK_SYMBOL}' ] || {
+      log "PREFLIGHT origin/main:$STOCK_ENV_REL sets TENANT_INSTRUMENT=$env_inst, not \${TOS_STOCK_SYMBOL} — a run would send every stock tenant at one symbol; refusing"
+      exit 2; }
     kd=$(stock_transport_keydiff)
     case $? in
     0) log "PREFLIGHT transport config keys = 정본 ($TRANSPORT_CONFIG)" ;;
@@ -708,6 +795,7 @@ if [ "$MARKET" = stock ]; then
   (
     cd "$WT" || exit 70
     export TOS_REPO=$WT TOS_PYTHON=$PY \
+      TOS_STOCK_SYMBOL=$SYMBOL \
       TOS_STOCK_SESSION_ROOT=$SESSION \
       TOS_STOCK_DATA_PARENT=$DATA_PARENT \
       TOS_STOCK_ENV_MOCK=$MAIN/.env.mock \

@@ -40,6 +40,22 @@ committed content.) Nothing in it has booted yet.
 `README.md`; `tos/runtime/tests/compose/test_tenant_tree_stock.py` pins every
 difference from the LONG tree by file and key path.
 
+`cp3-setup-d-stock-000660/` and `cp3-setup-d-stock-005380/` are **two more stock
+tenants**, one per symbol (operator directive 2026-11-19: 「유동성이 큰 대형주들로
+최종 모의투자에서 매수/매도가 잘 동작하게 완료해」 — one open position per symbol, so
+three concurrent slots come from three symbols; 1 share stays). Each is a derivation of
+the 005930 tree in which **only the symbol moves**: the file set is identical and every
+file is a byte copy except `README.md`, `RENDER.yaml` (`tree_id` ·
+`instrument.pattern`), the two `policy_id`-carrying policies, and two files whose
+comments name the symbol. `strategies/`, `strategy_bindings.yaml` and `engine.yaml` are
+byte copies in particular, which is why all three stock tenants measure ONE decision
+digest in `decision_generations.yaml`; the KRX 호가가격단위 ladder is chosen by price,
+not by symbol, so `venue_constraint_policy.yaml`'s table is byte-identical too.
+`tos/runtime/tests/compose/test_tenant_tree_stock_siblings.py` pins the step from the
+005930 tree to a sibling and boots each sibling. The three tenants share the KIS
+모의투자 stock account and its app key but never a custody root — read the siblings'
+`README.md` for what that sharing does and does not cost.
+
 `decision_generations.yaml` sits beside the trees rather than inside one. It is not an
 approved value file: it pins each persistent-leaf tenant's **parsed** decision contract
 (rules, decision bindings, and `engine.yaml`'s two bounds) to a committed generation token,

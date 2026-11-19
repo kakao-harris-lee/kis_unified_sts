@@ -20,9 +20,26 @@ balance_path: "/uapi/domestic-stock/v1/trading/inquire-balance"
 # that hits it while the broker still says "more" is WitnessUnavailable, never a partial list.
 max_pages: 10
 # Minimum spacing between two VTTC0081R polls. 모의 is rate-limited per app key and the same key
-# also serves the order POST, the band probe and item 12's two GETs; 3 s keeps the observer to
-# one call in that budget.
-poll_interval_ms: 3000
+# also serves the order POST, the band probe and item 12's two GETs; 3 s kept the observer to
+# one call in that budget when ONE stock tenant ran. It is now 9 s = 3 x that — see below.
+#
+# ⚠ **TENANT COUNT (운영자 지시 2026-11-19 — 주식 tenant 3종목).** 아래 세 주기는 단일
+# tenant 값의 **3 배**다. 하나의 KIS 모의투자 앱 키가 세 tenant 를 모두 섬기고
+# `KisAppKeyPacer`(tos_runtime/transport/kis_mock/pacer.py)는 **프로세스마다 하나**라
+# — 세 프로세스는 간격을 공유하지 않는다 — 계좌가 받는 요청률은 세 tenant 의 합이다.
+# 실측(2026-11): 모의 REST 는 2.0 req/s 에서 조여지고(HTTP 500 · EGW00201) 1.0 req/s 에서
+# 깨끗했다. 미결 ACK 를 쥔 한 tenant 의 FETCH 는 주문 1페이지 + 해제 스냅숏 2건 ≈ 3 GET
+# 이므로 3 s 주기면 ~60 GET/min(1 req/s) 이고, 세 tenant 가 동시에 그러면 3 req/s —
+# 전부 조여진다. 9 s 로 늘리면 tenant 마다 ~20 GET/min, 셋이 합쳐 1.0 req/s 로 실측
+# 깨끗 지점에 들어온다. 보유만 하는 tenant 는 4 GET / 36 s ≈ 7 GET/min 이다.
+# **`min_send_interval_ms` 는 그대로 2000** 이다 — 그 값은 한 프로세스의 **연속 요청
+# 간격**이고, 아래 `release_snapshot_max_age_ms` · `held_position_max_age_ms` 의 부팅
+# 하한(2 배 · 3 배)이 그 값에서 나온다. 조이기를 피하는 쪽은 **수요를 줄이는 것**이지
+# 간격을 늘려 대기열을 만드는 것이 아니다: 공유 간격을 늘리면 `KisPacingRefused`
+# (wait_budget 4000 ms)로 **송신 자체가 거부**된다.
+# 조여진 응답은 fail-closed 다 — WitnessUnavailable 로 기록되고 다음 주기에 다시 읽는다.
+# tenant 수가 바뀌면 이 세 값을 함께 다시 나눌 것.
+poll_interval_ms: 9000
 # Per-GET timeout for THIS witness, in seconds — the observer's own bound, not the order path's
 # kis_mock_transport.yaml::request_timeout_s (10 s). #949 review HIGH: the observer's read runs
 # inside the session loop's tick-to-tick window (marketfeed.yaml poll_interval_ms 400 +
@@ -124,9 +141,13 @@ release_snapshot_max_age_ms: 6000
 # do not overlap and the cache is empty for the rest of the cycle. 12000 = 12000 was exactly
 # that (issue #1010): a proof existed ~45% of the time, and a CLOSE proposed in the hole spent
 # its one standing-approval use at step 4 before step 6 could read PROOF_UNAVAILABLE, leaving
-# the position open overnight. 12000 (poll) + 500 (a plan is only due on a loop pass) + 6700
-# (read window to publish) = 19200, so 20000 leaves ~800 ms of jitter and each proof's validity
-# overlaps its successor's by ~1.3 s. Raising the poll interval means raising this with it.
+# the position open overnight. The poll period is now 36000 (3 x 12000, the tenant-count note
+# above), so 36000 (poll) + 500 (a plan is only due on a loop pass) + 6700 (read window to
+# publish) = 43200, and 44000 leaves the same ~800 ms of jitter the 20000/12000 pair left —
+# each proof's validity overlaps its successor's by ~1.3 s. Compose's own floor is lower
+# (poll + 3 x min_send_interval_ms = 42000, `_refuse_unreachable_held_position_age`); the
+# ~800 ms is this file's margin on top of it. Raising the poll interval means raising this
+# with it.
 #
 # ⚠ What that ~800 ms does NOT cover (review-1014 r1 L1): one more paced GET is 2000 ms. A
 # second order page (max_pages 10 allows ten), a second balance page, or any other app-key
@@ -137,7 +158,8 @@ release_snapshot_max_age_ms: 6000
 #
 # ⚠ This is also the bound on broker-side changes the RCL cannot see (review-1014 r1 L2). A
 # manual HTS sell after the confirming read leaves the proof usable for up to this long —
-# ~20 s now, ~12 s before, since the next plan no longer burns it — until the refresh answers
+# ~44 s now (3 tenants on one app key, the note above), ~20 s at one tenant, ~12 s before
+# #1010, since the next plan no longer burns it — until the refresh answers
 # and either replaces it or clears it (a flat account and a non-FILLED order are both refused
 # by the publish validation). Worst case is a 1-share CLOSE against a flat MOCK cash account,
 # which the broker rejects; no short can result. It is this file's staleness tolerance, not a
@@ -150,8 +172,8 @@ release_snapshot_max_age_ms: 6000
 # #970 pacing trap its release sibling fell into) or below the poll interval PLUS that read
 # (max_age == poll — the 12000/12000 this file carried before #1010 — is refused at every
 # pacing; the guard's first draft admitted it, review-1014 r1 M1).
-held_position_poll_interval_ms: 12000
-held_position_max_age_ms: 20000
+held_position_poll_interval_ms: 36000
+held_position_max_age_ms: 44000
 
 # Dateless-ACK date recovery (issue #1096, incident 2026-11-13). One stock MOCK ACK row
 # (EGRESS_RESULT_CONSUMED, evidence seq 2364) was written with no `trading_date` key, so the

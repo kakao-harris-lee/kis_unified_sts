@@ -1722,9 +1722,15 @@ def render_text(board: Mapping[str, Any]) -> str:
             add(f"    {_fmt_authority(pa)}")
     add("")
     if board["history"]:
+        # 세션 칸 폭은 **그 표에 실제로 있는** 가장 긴 라벨에 맞춘다. 고정 10 이었을 때
+        # `stock-r10` 까지는 맞았지만 종목별 주식 tenant(운영자 지시 2026-11-19)의
+        # `stock-000660-r1`(15자)·`stock-000660-r10`(16자)이 뒤 칸을 모두 밀어
+        # 열이 어긋났다. 머리글도 같은 폭으로 늘린다.
+        label_w = max(10, *(len(h["label"]) for h in board["history"]))
         add("■ 최근 세션(날짜별)")
         add(
-            "  날짜      세션        상태        rc   틱   stale 기타 band 초과 상실/장중 막힘"
+            "  날짜      세션" + " " * (label_w - 2) + "상태        rc   틱"
+            "   stale 기타 band 초과 상실/장중 막힘"
         )
         for h in board["history"]:
             err = " 저장소모름" if h["store_error"] else ""
@@ -1734,7 +1740,8 @@ def render_text(board: Mapping[str, Any]) -> str:
                 else f"{h['witness_lost']}/{h['witness_lost_mid_session']}"
             )
             add(
-                f"  {h['day']}  {h['label']:<10}  {h['status']:<10}  {str(h['run_rc']):>3}"
+                f"  {h['day']}  {h['label']:<{label_w}}  {h['status']:<10}"
+                f"  {str(h['run_rc']):>3}"
                 f"  {str(h['ticks']):>4}  {str(h['stale']):>4}  {h['other_withheld']:>3}  {str(h['band']):>3}  {str(h['overrun']):>3}  {lost:>9}"
                 f"  {h['blocks']:>3}{err}"
             )

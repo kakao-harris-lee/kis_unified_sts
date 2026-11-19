@@ -8,9 +8,9 @@
 #
 # Runbook docs/runbooks/tos-paper-boot.md §7.2-e. Idempotent: the block is
 # delimited by BEGIN/END markers and replaced whole; lines tagged
-# `# cp3-{long,short,stock}-tenant-{daily,catchup}` outside the block (the
-# hand-installed 2026-10-22 lines) are dropped so a direction is never scheduled
-# twice — and `--remove` takes the block, both kinds of line with it. Every
+# `# cp3-{long,short,stock,stock-<6 digits>}-tenant-{daily,catchup}` outside the
+# block (the hand-installed 2026-10-22 lines) are dropped so a tenant is never
+# scheduled twice — and `--remove` takes the block, both kinds of line with it. Every
 # other crontab line is kept byte for byte — including a one-off stock line like
 # `# run-stock-mock-<date>`, whose tag is different: if such a line has not fired
 # yet on install day, remove it by hand first or the day gets two sessions
@@ -59,9 +59,19 @@ SELF_REL=tools/tos_cp3/runners/install_tenant_cron.sh
 # does not need a gap from the two futures lines: the stock producer uses the
 # stock REAL key and the runtime the mock key, different app-key fingerprints, so
 # their once-a-minute token issues never collide with the futures one.
+#
+# The other two stock tenants (operator directive 2026-11-19 — one tenant per symbol)
+# follow at two-minute gaps, 08:55 and 08:57, both still inside that window. Two
+# minutes is the same reason LONG and SHORT keep it: the three stock producers DO
+# share one REAL stock app key, and KIS issues at most one token per minute per key.
+# (They also share a `token_cache_dir` on purpose, so the second and third producer
+# normally reuse the first's token rather than issuing one — the gap is what makes
+# that true even when the cache is cold, e.g. the first session of a day.)
 LONG_AT="38 8"
 SHORT_AT="40 8"
 STOCK_AT="53 8"
+STOCK_000660_AT="55 8"
+STOCK_005380_AT="57 8"
 
 # @reboot catch-up (#1038 · the 2026-11-06 reboot at 09:00:53): this cron does not
 # replay a missed line, so a boot after the minute above means that direction never
@@ -82,6 +92,10 @@ STOCK_AT="53 8"
 LONG_SLEEP=90
 SHORT_SLEEP=240
 STOCK_SLEEP=390
+# The two later stock tenants keep the same 150 s spacing. Unlike the futures pair they
+# DO need it: all three stock producers share one REAL app key (schedule note above).
+STOCK_000660_SLEEP=540
+STOCK_005380_SLEEP=690
 BEGIN_MARK="# BEGIN CP3_TENANT_DAILY"
 END_MARK="# END CP3_TENANT_DAILY"
 
@@ -131,7 +145,7 @@ awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
   index($0, b) == 1 { if (skip) bad = 1; skip = 1; next }
   skip && index($0, e) == 1 { skip = 0; next }
   skip { next }
-  /# cp3-(long|short|stock)-tenant-(daily|catchup)[[:space:]]*$/ { next }
+  /# cp3-(long|short|stock(-[0-9][0-9][0-9][0-9][0-9][0-9])?)-tenant-(daily|catchup)[[:space:]]*$/ { next }
   { print }
   END { exit (skip || bad) ? 3 : 0 }
 ' "$CUR" >"$NEW" ||
@@ -143,10 +157,17 @@ if [ "$REMOVE" = 0 ]; then
     echo "CRON_TZ=Asia/Seoul"
     line LONG long "$LONG_AT"
     line SHORT short "$SHORT_AT"
+    # `STOCK` (not `STOCK:005930`) for the first stock tenant: the wrapper treats the two
+    # spellings as the same tenant, and keeping the bare one leaves this line byte-identical
+    # to the one installed on 2026-11-05.
     line STOCK stock "$STOCK_AT"
+    line STOCK:000660 stock-000660 "$STOCK_000660_AT"
+    line STOCK:005380 stock-005380 "$STOCK_005380_AT"
     reboot_line LONG long "$LONG_AT" "$LONG_SLEEP"
     reboot_line SHORT short "$SHORT_AT" "$SHORT_SLEEP"
     reboot_line STOCK stock "$STOCK_AT" "$STOCK_SLEEP"
+    reboot_line STOCK:000660 stock-000660 "$STOCK_000660_AT" "$STOCK_000660_SLEEP"
+    reboot_line STOCK:005380 stock-005380 "$STOCK_005380_AT" "$STOCK_005380_SLEEP"
     echo "$END_MARK"
   } >>"$NEW"
 fi

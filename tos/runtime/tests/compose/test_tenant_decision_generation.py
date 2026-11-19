@@ -31,6 +31,10 @@ _PERSISTENT_LEAF_TENANTS = (
     "cp3-setup-d-long",
     "cp3-setup-d-short",
     "cp3-setup-d-stock-005930",
+    # One stock tenant per symbol — operator directive 2026-11-19. Each keeps its OWN
+    # durable leaf, so each needs its own generation token.
+    "cp3-setup-d-stock-000660",
+    "cp3-setup-d-stock-005380",
 )
 
 _PROBE_RULE_PREFIX = "R4-M2-PROBE-ENTRY-LONG:"
@@ -127,13 +131,33 @@ def test_every_persistent_leaf_tenant_pins_a_well_formed_token(tenant: str) -> N
     ]
 
 
+def _runner_stock_symbols(text: str) -> tuple[str, ...]:
+    """The runner's own ``STOCK_SYMBOLS`` line — the set of stock tenants it will run."""
+    match = re.search(r'^STOCK_SYMBOLS="([^"]+)"', text, flags=re.MULTILINE)
+    assert (
+        match is not None
+    ), f"{_RUNNER}: no STOCK_SYMBOLS= line — did the runner move?"
+    symbols = tuple(match.group(1).split())
+    assert symbols, f"{_RUNNER}: STOCK_SYMBOLS is empty"
+    assert len(set(symbols)) == len(symbols), symbols
+    # Two tenants on one symbol would make each one's broker witness read the other's
+    # orders on the shared mock account (witness_kis.py queries by PDNO), and the
+    # unmatched rows would hold every release as an orphan.
+    for symbol in symbols:
+        assert re.fullmatch(r"[0-9]{6}", symbol), symbol
+    return symbols
+
+
 def test_the_registry_covers_exactly_the_runners_persistent_leaf_tenants() -> None:
-    """The tenant list is the runner's, so a fourth tenant cannot land uncovered."""
+    """The tenant list is the runner's, so a further tenant cannot land uncovered."""
     text = _RUNNER.read_text(encoding="utf-8")
+    symbols = _runner_stock_symbols(text)
     declared: set[str] = set()
     for value in re.findall(r"^\s*TREE=(\S+)", text, flags=re.MULTILINE):
         if "$lc" in value:
             declared |= {value.replace("$lc", lc) for lc in ("long", "short")}
+        elif "$SYMBOL" in value:
+            declared |= {value.replace("$SYMBOL", symbol) for symbol in symbols}
         else:
             declared.add(value)
     assert declared, f"{_RUNNER}: no TREE= assignment found — did the runner move?"

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import fcntl
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -64,11 +65,38 @@ calendar_session_id: krx-index-futures
 calendar_session_phase: CONTINUOUS
 """
 
-_STOCK_PRODUCER_CONFIG = """calendar_yaml: config/tos_runtime/cp3-setup-d-stock-005930/calendar.yaml
+_STOCK_PRODUCER_CONFIG = """calendar_yaml: config/tos_runtime/cp3-setup-d-stock-{symbol}/calendar.yaml
 calendar_session_id: krx-stock
 calendar_session_phase: CONTINUOUS
 market: stock
 """
+
+#: The runner's own stock-tenant set, read from the shipped script rather than retyped —
+#: one tenant per symbol (operator directive 2026-11-19). A symbol added to the runner
+#: without a tree, a producer config or the host state below makes these tests red.
+_STOCK_SYMBOLS: tuple[str, ...] = tuple(
+    re.search(
+        r'^STOCK_SYMBOLS="([^"]+)"',
+        (_REPO_ROOT / "tools/tos_cp3/runners/cp3_tenant_daily.sh").read_text(
+            encoding="utf-8"
+        ),
+        flags=re.MULTILINE,
+    )
+    .group(1)  # type: ignore[union-attr]
+    .split()
+)
+
+#: The one stock tenant whose HOST paths carry no symbol (its leaf was born 2026-11-06).
+_STOCK_LEGACY_SYMBOL = "005930"
+
+
+def _stock_host_suffix(symbol: str) -> str:
+    return "" if symbol == _STOCK_LEGACY_SYMBOL else f"-{symbol}"
+
+
+def _stock_lc(symbol: str) -> str:
+    return "stock" if symbol == _STOCK_LEGACY_SYMBOL else f"stock-{symbol}"
+
 
 _STUB_RUNNER = """#!/bin/bash
 # Test stub: record what the wrapper handed over, exit with the requested rc.
@@ -204,14 +232,15 @@ class Env:
         for tree in (
             "cp3-setup-d-long",
             "cp3-setup-d-short",
-            "cp3-setup-d-stock-005930",
+            *(f"cp3-setup-d-stock-{symbol}" for symbol in _STOCK_SYMBOLS),
         ):
             _write(seed / f"config/tos_runtime/{tree}/calendar.yaml", _CALENDAR)
         _write(seed / "config/tos_probes/cp3-live-producer.yaml", _PRODUCER_CONFIG)
-        _write(
-            seed / "config/tos_probes/cp3-live-producer-stock-005930.yaml",
-            _STOCK_PRODUCER_CONFIG,
-        )
+        for symbol in _STOCK_SYMBOLS:
+            _write(
+                seed / f"config/tos_probes/cp3-live-producer-stock-{symbol}.yaml",
+                _STOCK_PRODUCER_CONFIG.format(symbol=symbol),
+            )
         # The stock session's TENANT_* set and the canonical transport keys are the
         # SHIPPED files, not copies: the wrapper sources one and diffs against the
         # other, so a drifting copy here would hide the drift it is meant to catch.
@@ -302,19 +331,28 @@ def env(tmp_path: Path) -> Env:
 def _data_parents(env: Env) -> None:
     for lc in ("long", "short"):
         (env.state / f"cp3-setup-d-{lc}-data").mkdir(mode=0o700)
-    _stock_host_state(env)
+    for symbol in _STOCK_SYMBOLS:
+        _stock_host_state(env, symbol=symbol)
 
 
-def _stock_host_state(env: Env, *, transport: str | None = None) -> Path:
-    """The STOCK tenant's one-time host state (§7.2-f): durable parent, custody,
-    and the operation transport config. Returns the transport config's path."""
+def _stock_host_state(
+    env: Env, *, symbol: str = _STOCK_LEGACY_SYMBOL, transport: str | None = None
+) -> Path:
+    """One STOCK tenant's one-time host state (§7.2-f): durable parent, custody,
+    and the operation transport config. Returns the transport config's path.
+
+    Every stock tenant has its OWN custody root — the standing approval binds to one
+    tenant's rendered config — and its own operation directory, so each tenant's
+    transport keys can be checked (and if ever needed, tuned) on its own.
+    """
+    suffix = _stock_host_suffix(symbol)
     for name in (
-        "cp3-setup-d-stock-005930-data",
-        "cp3-setup-d-stock-custody",
-        "cp3-setup-d-stock-ops",
+        f"cp3-setup-d-stock-{symbol}-data",
+        f"cp3-setup-d-stock{suffix}-custody",
+        f"cp3-setup-d-stock{suffix}-ops",
     ):
         (env.state / name).mkdir(mode=0o700, exist_ok=True)
-    path = env.state / "cp3-setup-d-stock-ops/kis_mock_transport.yaml"
+    path = env.state / f"cp3-setup-d-stock{suffix}-ops/kis_mock_transport.yaml"
     path.write_text(
         _canonical_transport_block() if transport is None else transport,
         encoding="utf-8",
@@ -365,11 +403,15 @@ def test_dry_run_is_the_default_and_writes_nothing(env: Env) -> None:
         f"+40 8 * * 1-5 /bin/bash {dest} SHORT >> {env.state}/cp3-short-tenant-daily.cron.log 2>&1 # cp3-short-tenant-daily"
         in r.stdout
     )
-    # STOCK: 08:53, inside §7.2-f's 08:52-09:05 start window.
-    assert (
-        f"+53 8 * * 1-5 /bin/bash {dest} STOCK >> {env.state}/cp3-stock-tenant-daily.cron.log 2>&1 # cp3-stock-tenant-daily"
-        in r.stdout
-    )
+    # STOCK: 08:53, inside §7.2-f's 08:52-09:05 start window; the other two stock
+    # tenants (operator directive 2026-11-19) follow at 08:55 and 08:57, still inside it.
+    for direction, lc, _sleep_s, at in _CATCHUP:
+        hhmm = f"{int(at[3:])} {int(at[:2])}"
+        assert (
+            f"+{hhmm} * * 1-5 /bin/bash {dest} {direction} >>"
+            f" {env.state}/cp3-{lc}-tenant-daily.cron.log 2>&1 # cp3-{lc}-tenant-daily"
+            in r.stdout
+        ), r.stdout
     assert "+CRON_TZ=Asia/Seoul" in r.stdout
 
 
@@ -779,12 +821,18 @@ def test_n6_no_crontab_at_all_is_an_empty_crontab(env: Env) -> None:
 # approval the session cannot send without.
 
 
-def _stock_session(env: Env, day: str, run: int = 1) -> Path:
-    return env.state / "cp3-sessions" / f"stock-r{run}-{day.replace('-', '')}"
+def _stock_session(
+    env: Env, day: str, run: int = 1, *, symbol: str = _STOCK_LEGACY_SYMBOL
+) -> Path:
+    name = f"{_stock_lc(symbol)}-r{run}-{day.replace('-', '')}"
+    return env.state / "cp3-sessions" / name
 
 
-def _stock_wt(env: Env, day: str, run: int = 1) -> Path:
-    return env.state / "measure" / f"wt-cp3-stock-r{run}-{day.replace('-', '')}"
+def _stock_wt(
+    env: Env, day: str, run: int = 1, *, symbol: str = _STOCK_LEGACY_SYMBOL
+) -> Path:
+    name = f"wt-cp3-{_stock_lc(symbol)}-r{run}-{day.replace('-', '')}"
+    return env.state / "measure" / name
 
 
 def test_stock_open_day_hands_the_runner_the_env_examples_tenant_values(
@@ -1017,6 +1065,154 @@ def test_stock_holds_its_own_lock(env: Env) -> None:
     assert not _stock_session(env, _OPEN_DAY).exists()
 
 
+# ------------------------------- one stock tenant per symbol (operator 2026-11-19)
+#
+# 「유동성이 큰 대형주들로 최종 모의투자에서 매수/매도가 잘 동작하게 완료해」 — one open
+# position per symbol, so three concurrent slots come from three symbols. Every host
+# coordinate a stock tenant owns alone follows the symbol; the account and its app key
+# are what the three share.
+
+_EXTRA_STOCK_SYMBOLS = tuple(
+    symbol for symbol in _STOCK_SYMBOLS if symbol != _STOCK_LEGACY_SYMBOL
+)
+
+
+def test_the_runner_declares_more_than_one_stock_symbol() -> None:
+    """The directive's own shape: three slots need three symbols, all distinct."""
+    assert len(_STOCK_SYMBOLS) >= 3, _STOCK_SYMBOLS
+    assert len(set(_STOCK_SYMBOLS)) == len(_STOCK_SYMBOLS), _STOCK_SYMBOLS
+    assert _STOCK_LEGACY_SYMBOL in _STOCK_SYMBOLS, _STOCK_SYMBOLS
+    assert all(re.fullmatch(r"[0-9]{6}", s) for s in _STOCK_SYMBOLS), _STOCK_SYMBOLS
+
+
+@pytest.mark.parametrize("symbol", _EXTRA_STOCK_SYMBOLS)
+def test_stock_symbol_runs_with_its_own_tree_producer_leaf_and_custody(
+    env: Env, symbol: str
+) -> None:
+    """`STOCK:<symbol>` is a tenant of its own, down to the custody root.
+
+    Custody is the one that would be silently wrong if shared: the standing approval
+    artifact's path is fixed relative to the custody root and the document binds to ONE
+    tenant's rendered config, so a shared root would have each tenant's boot bind another
+    tenant's approval.
+    """
+    _data_parents(env)
+    r = env.daily(f"STOCK:{symbol}", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    session = _stock_session(env, _OPEN_DAY, symbol=symbol)
+    out = (session / "runner.out").read_text(encoding="utf-8")
+    suffix = _stock_host_suffix(symbol)
+    for expected in (
+        f"TENANT_TREE=cp3-setup-d-stock-{symbol}",
+        f"TENANT_INSTRUMENT={symbol}",
+        "TENANT_DIRECTION=LONG",
+        "TENANT_STOP_AT=15:40",
+        f"TENANT_DATA_PARENT={env.state}/cp3-setup-d-stock-{symbol}-data",
+        f"TENANT_CUSTODY_ROOT={env.state}/cp3-setup-d-stock{suffix}-custody",
+        f"TENANT_KIS_MOCK_TRANSPORT_CONFIG={env.state}"
+        f"/cp3-setup-d-stock{suffix}-ops/kis_mock_transport.yaml",
+        f"TENANT_LOG={session}/session.log",
+        f"TENANT_PRODUCER_CONFIG={_stock_wt(env, _OPEN_DAY, symbol=symbol)}"
+        f"/config/tos_probes/cp3-live-producer-stock-{symbol}.yaml",
+    ):
+        assert expected in out, out
+    # Its standing approval went to its OWN custody root, not the legacy tenant's.
+    argv = env.approval_argv.read_text(encoding="utf-8").split("\n")
+    assert (
+        argv[argv.index("--custody-root") + 1]
+        == f"{env.state}/cp3-setup-d-stock{suffix}-custody"
+    ), argv
+    assert argv[argv.index("--config-dir") + 1] == f"{session}/render", argv
+    assert not _stock_session(env, _OPEN_DAY).exists()
+
+
+def test_bare_stock_and_the_legacy_symbol_are_ONE_tenant(env: Env) -> None:
+    """Two spellings may never become two sessions on one trading day."""
+    _data_parents(env)
+    assert env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY).returncode == 0
+    again = env.daily(f"STOCK:{_STOCK_LEGACY_SYMBOL}", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert again.returncode == 2, again.stdout
+    assert "already exists — refusing (one session per day)" in again.stdout
+
+
+@pytest.mark.parametrize("symbol", _EXTRA_STOCK_SYMBOLS)
+def test_each_stock_tenant_holds_its_own_lock(env: Env, symbol: str) -> None:
+    """One tenant's running session must not stop another symbol's from starting."""
+    _data_parents(env)
+    env.locks.mkdir(exist_ok=True)
+    lock = env.locks / f"cp3-{_stock_lc(symbol)}-tenant-daily.wrapper.lock"
+    with open(lock, "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held = env.daily(f"STOCK:{symbol}", CP3_DAILY_TODAY=_OPEN_DAY)
+        assert env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY).returncode == 0
+    assert held.returncode == 75
+    assert "lock busy" in held.stdout
+    assert not _stock_session(env, _OPEN_DAY, symbol=symbol).exists()
+
+
+@pytest.mark.parametrize(
+    ("argument", "needle"),
+    [
+        ("STOCK:999999", "unknown stock symbol '999999'"),
+        # A `STOCK:` with the symbol missing is a typo in a cron line. Reading it as the
+        # legacy tenant would start that tenant's session from a line nobody aimed at it.
+        ("STOCK:", "unknown stock symbol ''"),
+        ("STOCKfoo", "usage:"),
+    ],
+)
+def test_a_stock_argument_that_names_no_tenant_is_refused_and_writes_nothing(
+    env: Env, argument: str, needle: str
+) -> None:
+    _data_parents(env)
+    before = sorted(
+        p.relative_to(env.tmp) for p in env.tmp.rglob("*") if ".git" not in p.parts
+    )
+    r = env.daily(argument, CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 2, r.stdout
+    assert needle in r.stderr, r.stderr
+    after = sorted(
+        p.relative_to(env.tmp) for p in env.tmp.rglob("*") if ".git" not in p.parts
+    )
+    assert after == before
+
+
+@pytest.mark.parametrize("symbol", _EXTRA_STOCK_SYMBOLS)
+def test_stock_symbol_preflight_names_its_own_leaf_and_transport(
+    env: Env, symbol: str
+) -> None:
+    _data_parents(env)
+    r = env.daily(f"STOCK:{symbol}", "--preflight", _OPEN_DAY)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"instrument={symbol}" in r.stdout
+    assert f"{env.state}/cp3-setup-d-stock-{symbol}-data/{symbol}" in r.stdout
+    suffix = _stock_host_suffix(symbol)
+    assert f"cp3-setup-d-stock{suffix}-ops/kis_mock_transport.yaml" in r.stdout
+
+
+def test_preflight_refuses_an_env_example_that_hardcodes_a_symbol(env: Env) -> None:
+    """The symbol flows argument -> TOS_STOCK_SYMBOL -> TENANT_INSTRUMENT, once.
+
+    A hand-edit that pinned one symbol in the env example would hand EVERY stock
+    tenant's session that symbol while the tree stayed its own, which `run_tenant_session`
+    only catches mid-start (its instrument.pattern check). The preflight says it here.
+    """
+    _data_parents(env)
+    rel = "tools/tos_cp3/runners/stock-mock-session.env.example"
+    path = env.main / rel
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "TENANT_INSTRUMENT=${TOS_STOCK_SYMBOL}", "TENANT_INSTRUMENT=005930"
+        ),
+        encoding="utf-8",
+    )
+    _git("commit", "-q", "-am", "pin a symbol", cwd=env.main)
+    _git("push", "-q", "origin", "main", cwd=env.main)
+    _git("fetch", "-q", "origin", cwd=env.main)
+    r = env.daily("STOCK:000660", "--preflight", _OPEN_DAY)
+    assert r.returncode == 2, r.stdout
+    assert "not ${TOS_STOCK_SYMBOL}" in r.stdout
+
+
 def test_stock_preflight_reports_the_window_leaf_and_transport_keys(env: Env) -> None:
     _data_parents(env)
     before = sorted(
@@ -1213,6 +1409,11 @@ _CATCHUP = (
     ("LONG", "long", 90, "08:38"),
     ("SHORT", "short", 240, "08:40"),
     ("STOCK", "stock", 390, "08:53"),
+    # One stock tenant per symbol (operator directive 2026-11-19). Both later stock lines
+    # stay inside §7.2-f's 08:52-09:05 start window, and all three stock tenants keep the
+    # two-minute / 150 s gaps: unlike the futures pair they DO share one REAL app key.
+    ("STOCK:000660", "stock-000660", 540, "08:55"),
+    ("STOCK:005380", "stock-005380", 690, "08:57"),
 )
 
 
@@ -1238,15 +1439,15 @@ def test_1038_apply_writes_them_in_the_block_and_remove_takes_them_with_it(
     tab = env.crontab.read_text(encoding="utf-8")
     body = tab.split("# BEGIN CP3_TENANT_DAILY", 1)[1].split("# END", 1)[0]
     reboot = [ln for ln in body.splitlines() if ln.startswith("@reboot")]
-    assert len(reboot) == 3, tab
+    assert len(reboot) == len(_CATCHUP), tab
     assert [ln.split("--catch-up ", 1)[1].split()[0] for ln in reboot] == [
         at for _, _, _, at in _CATCHUP
     ]
     sleeps = [int(ln.split("sleep ", 1)[1].split(";", 1)[0]) for ln in reboot]
-    # LONG and SHORT share the REAL read key and KIS issues one token a minute —
-    # the same reason their regular lines are two minutes apart.
-    assert sleeps[1] - sleeps[0] >= 120, sleeps
-    assert sleeps[2] - sleeps[1] >= 120, sleeps
+    # Every neighbouring pair keeps 150 s: LONG and SHORT share the REAL read key, and so
+    # do the three stock producers — KIS issues one token a minute per app key, the same
+    # reason the regular lines are two minutes apart.
+    assert all(b - a >= 120 for a, b in zip(sleeps, sleeps[1:], strict=False)), sleeps
     # Ubuntu cron 3.0pl1 reads an unescaped `%` in the command field as a newline.
     assert all("%" not in ln for ln in reboot), reboot
 
@@ -1272,6 +1473,30 @@ def test_1038_a_hand_installed_catchup_line_outside_the_block_is_dropped(
     tab = env.crontab.read_text(encoding="utf-8")
     assert "/x/l.log" not in tab
     assert tab.count("# cp3-long-tenant-catchup") == 1
+    assert tab.startswith(_OTHER_LINES)
+
+
+def test_a_hand_installed_per_symbol_stock_line_outside_the_block_is_dropped(
+    env: Env,
+) -> None:
+    """The tag filter has to reach `cp3-stock-<6 digits>-tenant-*` too.
+
+    Otherwise a hand-installed line for one of the per-symbol stock tenants would survive
+    beside the block's own and that tenant would get TWO calls a day — the second refused
+    as `lock busy` or `session dir already exists`, i.e. a daily failure alert.
+    """
+    env.crontab.write_text(
+        _OTHER_LINES + "55 8 * * 1-5 /bin/bash /x/run-cp3-tenant-daily.sh STOCK:000660"
+        " >> /x/hand.log 2>&1 # cp3-stock-000660-tenant-daily\n"
+        "@reboot sleep 60; /bin/bash /x/run-cp3-tenant-daily.sh STOCK:005380"
+        " --catch-up 08:57 >> /x/hand2.log 2>&1 # cp3-stock-005380-tenant-catchup\n",
+        encoding="utf-8",
+    )
+    assert env.install("--apply").returncode == 0
+    tab = env.crontab.read_text(encoding="utf-8")
+    assert "/x/hand.log" not in tab and "/x/hand2.log" not in tab
+    assert tab.count("# cp3-stock-000660-tenant-daily") == 1
+    assert tab.count("# cp3-stock-005380-tenant-catchup") == 1
     assert tab.startswith(_OTHER_LINES)
 
 

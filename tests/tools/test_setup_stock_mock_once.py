@@ -100,6 +100,42 @@ def test_apply_writes_unquoted_custody_with_narrow_modes(
     assert "FAKESECRET" not in result.stdout + result.stderr
 
 
+def test_a_named_symbol_gets_its_own_data_ops_and_custody(
+    host: tuple[Path, Path],
+) -> None:
+    """One stock tenant per symbol (operator directive 2026-11-19).
+
+    Custody is the one that may NEVER be shared: the standing approval artifact's path is
+    fixed relative to the custody root and the document binds to one tenant's rendered
+    config, so a shared root would have each tenant's boot bind another tenant's approval.
+    Only 005930 keeps the symbol-less host paths its 2026-11-06 deployment was born with.
+    """
+    state, env_mock = host
+    assert _run(state, env_mock, "000660", "--apply").returncode == 0
+    for directory in (
+        state / "cp3-setup-d-stock-000660-data",
+        state / "cp3-setup-d-stock-000660-ops",
+        state / "cp3-setup-d-stock-000660-custody",
+        state / "cp3-setup-d-stock-000660-custody/approvals",
+    ):
+        assert directory.is_dir() and _mode(directory) == 0o700, directory
+    assert (state / "cp3-setup-d-stock-000660-ops/kis_mock_transport.yaml").is_file()
+    # The legacy tenant's places are untouched, so this is additive on a live host.
+    assert not (state / "cp3-setup-d-stock-custody").exists()
+    assert not (state / "cp3-setup-d-stock-ops").exists()
+    assert not (state / "cp3-setup-d-stock-005930-data").exists()
+    # And a second symbol lands beside the first rather than refusing it.
+    assert _run(state, env_mock, "005380", "--apply").returncode == 0
+    assert (state / "cp3-setup-d-stock-005380-custody/kis_mock.app_key").is_file()
+
+
+def test_a_symbol_that_is_not_six_digits_is_refused(host: tuple[Path, Path]) -> None:
+    state, env_mock = host
+    result = _run(state, env_mock, "00066", "--apply")
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert list(state.iterdir()) == []
+
+
 def test_rerun_refuses_to_overwrite(host: tuple[Path, Path]) -> None:
     state, env_mock = host
     assert _run(state, env_mock, "--apply").returncode == 0
