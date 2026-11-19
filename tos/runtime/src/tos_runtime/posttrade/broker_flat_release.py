@@ -19,13 +19,25 @@ It releases only when ALL hold, judged on the session-loop thread:
 * (c) no TOS attempt for the scope is in flight: every sealed send has a terminal, matched result
   (``EvidencePositionReader``'s ``in_flight_*`` are zero);
 * the RCL has not moved since the read was planned except by approval consumption, and the RCL
-  append is CAS-fenced on the tip read here.
+  append is CAS-fenced on the tip read here;
+* (d) the flat result is CONFIRMED: a first qualifying flat poll whose read started at least
+  ``settle_ms`` after this process first saw the entry consumed, then a second qualifying flat
+  poll whose read started at least ``confirm_interval_ms`` later, with only approval consumption
+  between their RCL tips. Any other verdict in between resets the first. This covers the mock
+  account's fill-to-balance reflection lag (no published bound in the broker profile): a balance
+  that has not yet reflected the entry's buy reads flat right after the FULL_FILL, and releasing
+  on it would let the next OPEN buy a second lot while the first becomes an untracked orphan.
+
+Only an RCL refusal or an RCL error ends a release attempt quietly (``BROKER_FLAT_RELEASE_HELD``);
+an evidence-store append failure propagates, as it does from every other release writer here.
+Every verdict other than ``RELEASED`` is recorded once per process as a
+``BROKER_FLAT_RELEASE_HELD`` row so an operator can see why nothing released.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from tos.canonical import CanonicalizationScheme
@@ -74,6 +86,15 @@ class BrokerFlatVerdict(StrEnum):
     IN_FLIGHT = "IN_FLIGHT"
     RCL_MOVED = "RCL_MOVED"
     RCL_REFUSED = "RCL_REFUSED"
+    SETTLING = "SETTLING"
+    AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
+
+
+@dataclass(frozen=True)
+class _FirstFlat:
+    reservation_id: str
+    tip: RclTip
+    started_ms: int
 
 
 def _flat(observation: object, instrument: str) -> bool | None:
@@ -90,7 +111,7 @@ def _flat(observation: object, instrument: str) -> bool | None:
     )
 
 
-@dataclass(frozen=True)
+@dataclass
 class BrokerFlatRelease:
     """Evaluate one published held-position double read (module docstring)."""
 
@@ -104,8 +125,38 @@ class BrokerFlatRelease:
     max_age_ms: int
     in_flight: Callable[[], bool]
     tip_compatible: Callable[[RclTip, RclTip], bool]
+    settle_ms: int
+    confirm_interval_ms: int
+    _consumed_seen_ms: dict[str, int] = field(default_factory=dict, init=False)
+    _first_flat: _FirstFlat | None = field(default=None, init=False)
+    _noted: set[str] = field(default_factory=set, init=False)
 
     def __call__(self, snapshot: HeldPositionSnapshot) -> BrokerFlatVerdict:
+        verdict = self._evaluate(snapshot)
+        if verdict is not BrokerFlatVerdict.AWAITING_CONFIRMATION:
+            self._first_flat = None
+        if verdict not in (BrokerFlatVerdict.RELEASED, BrokerFlatVerdict.RCL_REFUSED):
+            self._note(verdict)
+        return verdict
+
+    def _note(self, verdict: BrokerFlatVerdict) -> None:
+        """One ``BROKER_FLAT_RELEASE_HELD`` row per verdict per process (an operator's why)."""
+        if verdict.value in self._noted:
+            return
+        self._noted.add(verdict.value)
+        self.evidence_store.append(
+            {
+                "account": self.account,
+                "instrument": self.instrument,
+                "verdict": verdict.value,
+                "settle_ms": self.settle_ms,
+                "confirm_interval_ms": self.confirm_interval_ms,
+            },
+            kind=BROKER_FLAT_RELEASE_HELD_KIND,
+            record_class=BROKER_FLAT_RELEASE_HELD_KIND,
+        )
+
+    def _evaluate(self, snapshot: HeldPositionSnapshot) -> BrokerFlatVerdict:
         verdict = self._read_verdict(snapshot)
         if verdict is not None:
             return verdict
@@ -133,7 +184,34 @@ class BrokerFlatRelease:
             in_flight = True
         if in_flight is not False:
             return BrokerFlatVerdict.IN_FLIGHT
-        return self._release(rows[0][0], snapshot, epoch=epoch, last_seq=view.last_seq)
+        reservation_id = rows[0][0]
+        if not self._confirmed(reservation_id, snapshot, RclTip(epoch, view.last_seq)):
+            if self._first_flat is None:
+                return BrokerFlatVerdict.SETTLING
+            return BrokerFlatVerdict.AWAITING_CONFIRMATION
+        return self._release(
+            reservation_id, snapshot, epoch=epoch, last_seq=view.last_seq
+        )
+
+    def _confirmed(
+        self, reservation_id: str, snapshot: HeldPositionSnapshot, current: RclTip
+    ) -> bool:
+        """(d): settle after the entry was first seen consumed, then a second flat poll."""
+        started = snapshot.first_balance_read_started_ms
+        assert started is not None  # _read_verdict refused a read without one
+        seen = self._consumed_seen_ms.setdefault(reservation_id, self.now_ms())
+        if started < seen + self.settle_ms:
+            self._first_flat = None
+            return False
+        first = self._first_flat
+        if (
+            first is None
+            or first.reservation_id != reservation_id
+            or not self._compatible(first.tip, current)
+        ):
+            self._first_flat = _FirstFlat(reservation_id, current, started)
+            return False
+        return started - first.started_ms >= self.confirm_interval_ms
 
     def _read_verdict(self, snapshot: HeldPositionSnapshot) -> BrokerFlatVerdict | None:
         """(b): ``None`` when both reads prove this scope flat today and fresh enough."""
@@ -171,6 +249,9 @@ class BrokerFlatRelease:
             original = RclTip(*snapshot.tip)
         except (TypeError, ValueError):
             return False
+        return self._compatible(original, current)
+
+    def _compatible(self, original: RclTip, current: RclTip) -> bool:
         if original == current:
             return True
         try:
@@ -230,12 +311,19 @@ class BrokerFlatRelease:
             )
         except ReservationTransitionRefusal as exc:
             detail = str(exc)
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - an RCL error releases nothing; next poll retries
+            detail = f"RCL append failed: {type(exc).__name__}: {exc}"
         else:
             if not isinstance(receipt, AppendRefusal):
                 return BrokerFlatVerdict.RELEASED
             detail = f"{receipt.reason}: {receipt.detail}"
         self.evidence_store.append(
             {
+                "account": self.account,
+                "instrument": self.instrument,
+                "verdict": BrokerFlatVerdict.RCL_REFUSED.value,
                 "reservation_id": reservation_id,
                 "command_id": command_id,
                 "detail": detail,

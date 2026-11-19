@@ -414,6 +414,11 @@ def test_the_observer_get_is_bounded_by_its_own_timeout_not_the_order_paths(
     assert isinstance(witness, DeferredKisWitness) and witness.inner is not None
     sealed = witness.inner._config.request_timeout_s  # noqa: SLF001
     assert sealed == expected
+    loop_expected = load_fill_observer_config(
+        config_dir / FILL_OBSERVER_CONFIG_NAME
+    ).loop_witness_request_timeout_s
+    assert witness.loop_inner is not None and loop_expected is not None
+    assert witness.loop_inner._config.request_timeout_s == loop_expected  # noqa: SLF001
     assert (
         sealed
         != yaml.safe_load(

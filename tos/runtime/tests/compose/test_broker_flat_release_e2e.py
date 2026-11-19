@@ -13,6 +13,7 @@ from tos_runtime.calendar.ports import FixedWallClockReference
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.posttrade.broker_flat_release import (
+    BROKER_FLAT_RELEASE_HELD_KIND,
     BROKER_FLAT_RELEASE_KIND,
     broker_flat_release_command_id,
 )
@@ -37,20 +38,38 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 _ENVIRONMENT_LABEL = "non-live-test"
 
 
-def _set_flag(config_dir: Path, enabled: bool | None) -> None:
+def _set_flag(config_dir: Path, enabled: bool | None, settle_ms: int) -> None:
     path = config_dir / FILL_OBSERVER_CONFIG_NAME
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     raw.pop("broker_flat_release", None)
+    raw["broker_flat_release_settle_ms"] = settle_ms
     if enabled is not None:
         raw["broker_flat_release"] = enabled
     path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+
+def _poll_until_released(runtime, observer, published, max_polls: int = 8) -> int:
+    """Publish held double reads until the entry is released; return how many it took."""
+    for count in range(1, max_polls + 1):
+        _wait_for_publish(observer, published, len(published))
+        if _entry_states(runtime) == [CapacityState.RELEASED]:
+            return count
+    raise AssertionError(f"not released after {max_polls} flat polls")
+
+
+def _poll_flat(observer, published, polls: int) -> None:
+    """``polls`` more published held double reads (settle, first flat, confirming flat, ...)."""
+    for _ in range(polls):
+        _wait_for_publish(observer, published, len(published))
 
 
 def _entry_states(runtime) -> list[CapacityState]:
     return [state for _rid, state, _seq, _scope in runtime.rcl_log.reservation_rows()]
 
 
-def _filled_entry(config_dir, data_dir, custody_root, monkeypatch, server, flag):
+def _filled_entry(
+    config_dir, data_dir, custody_root, monkeypatch, server, flag, settle_ms=1
+):
     """Boot, OPEN, fill: the scope holds one POSITION_CONSUMED entry and the broker 1 lot."""
     clock = _PacedClock()
     monkeypatch.setattr(pacer_module, "sleep", clock.sleep)
@@ -58,7 +77,7 @@ def _filled_entry(config_dir, data_dir, custody_root, monkeypatch, server, flag)
     _script_order_ack(server, _ODNO)
     fx.write_band_strategy_file(config_dir)
     _speed_observer_polls(config_dir)
-    _set_flag(config_dir, flag)
+    _set_flag(config_dir, flag, settle_ms)
     runtime = compose_paper_runtime(
         config_dir,
         data_dir,
@@ -128,8 +147,8 @@ def test_a_flat_broker_releases_the_entry_only_when_enabled(
         _script_witness(
             server, config_dir_with_risk_state, date=date, rows=[open_row], holdings=()
         )
-        _wait_for_publish(observer, published, len(published))
         if flag:
+            assert _poll_until_released(runtime, observer, published) >= 3
             assert _entry_states(runtime) == [CapacityState.RELEASED]
             (row,) = _rows(runtime, BROKER_FLAT_RELEASE_KIND)
             (reservation_id,) = [
@@ -142,6 +161,7 @@ def test_a_flat_broker_releases_the_entry_only_when_enabled(
             _wait_for_publish_or_idle(observer)
             assert len(_rows(runtime, BROKER_FLAT_RELEASE_KIND)) == 1
         else:
+            _poll_flat(observer, published, 4)
             assert observer.broker_flat_release is None
             assert _entry_states(runtime) == [CapacityState.POSITION_CONSUMED]
             assert _rows(runtime, BROKER_FLAT_RELEASE_KIND) == []
@@ -176,7 +196,7 @@ def test_a_failed_balance_read_holds_and_the_next_flat_read_releases(
         _script_witness(
             server, config_dir_with_risk_state, date=date, rows=[open_row], holdings=()
         )
-        _wait_for_publish(observer, published, len(published))
+        assert _poll_until_released(runtime, observer, published) >= 3
         assert _entry_states(runtime) == [CapacityState.RELEASED]
         assert len(_rows(runtime, BROKER_FLAT_RELEASE_KIND)) == 1
     finally:
@@ -198,5 +218,38 @@ def test_a_broker_still_holding_the_lot_releases_nothing(
             _wait_for_publish(observer, published, len(published))
         assert _entry_states(runtime) == [CapacityState.POSITION_CONSUMED]
         assert _rows(runtime, BROKER_FLAT_RELEASE_KIND) == []
+    finally:
+        _close(runtime)
+
+
+def test_flat_reads_inside_the_settle_window_release_nothing(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server: FakeKisServer,
+) -> None:
+    """review-1114 M1: right after the entry's FULL_FILL the balance may not show the buy yet."""
+    runtime, observer, published, date, open_row = _filled_entry(
+        config_dir_with_risk_state,
+        data_dir,
+        custody_root,
+        monkeypatch,
+        server,
+        True,
+        settle_ms=600_000,
+    )
+    try:
+        _script_witness(
+            server, config_dir_with_risk_state, date=date, rows=[open_row], holdings=()
+        )
+        _poll_flat(observer, published, 4)
+        assert _entry_states(runtime) == [CapacityState.POSITION_CONSUMED]
+        assert _rows(runtime, BROKER_FLAT_RELEASE_KIND) == []
+        verdicts = [
+            row["verdict"] for row in _rows(runtime, BROKER_FLAT_RELEASE_HELD_KIND)
+        ]
+        # NOT_FLAT: the post-fill read that still showed the lot; then only SETTLING.
+        assert verdicts == ["NOT_FLAT", "SETTLING"]
     finally:
         _close(runtime)

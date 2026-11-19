@@ -182,9 +182,7 @@ def _broker_flat_released(
 ) -> bool:
     """The entry left ``POSITION_CONSUMED`` through the broker-flat release (2026-11-19)."""
     try:
-        history = consumer._history_cache.history(
-            consumer.rcl_log, consumer.evidence_store
-        )
+        history = consumer.reservation_history()
     except Exception:  # noqa: BLE001 - unavailable RCL history proves nothing
         return False
     command_id = broker_flat_release_command_id(item.entry_reservation_id)

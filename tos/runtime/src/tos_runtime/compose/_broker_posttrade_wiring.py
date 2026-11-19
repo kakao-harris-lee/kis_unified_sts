@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -105,9 +107,16 @@ class DeferredKisWitness:
     """The stock KIS witness, built once the credential registry is dispatched; until then every"""
 
     def __init__(
-        self, trading_date_now: Callable[[], str | None] = lambda: None
+        self,
+        trading_date_now: Callable[[], str | None] = lambda: None,
+        *,
+        loop_deadline_ms: int | None = None,
     ) -> None:
         self.inner: KisStockBrokerWitness | None = None
+        #: The session-loop fallback read's own witness (``loop_witness_request_timeout_s``) and
+        #: walk deadline (``loop_witness_deadline_ms``); ``None`` keeps ``inner`` / no deadline.
+        self.loop_inner: KisStockBrokerWitness | None = None
+        self._loop_deadline_ms = loop_deadline_ms
         self._trading_date_now = trading_date_now
         self._served: PrefetchedSnapshot | None = None
         self._served_thread: int | None = None
@@ -154,7 +163,17 @@ class DeferredKisWitness:
             return served.outcome
         if self._strict_thread == threading.get_ident():
             raise WitnessUnavailable("required prefetched snapshot does not match")
-        return self._ready().observe(scope)
+        return self._loop_observe(scope)
+
+    def _loop_observe(self, scope: WitnessScope) -> WitnessSnapshot:
+        """A live read no prefetched snapshot served — on the caller's (loop) thread, bounded."""
+        witness = self._ready() if self.loop_inner is None else self.loop_inner
+        if self._loop_deadline_ms is None:
+            return witness.observe(scope)
+        deadline_ns = time.monotonic_ns() + self._loop_deadline_ms * 1_000_000
+        return witness.observe(
+            scope, deadline_expired=lambda: time.monotonic_ns() >= deadline_ns
+        )
 
     def prefetch(
         self, scope: WitnessScope, *, today: str, abort: Callable[[], bool]
@@ -345,23 +364,42 @@ def build_broker_posttrade(
         instance_mock_rest_base=mock_rest_base,
         instance_real_rest_base=real_rest_base,
     )
-    witness = DeferredKisWitness(trading_date_now)
+    loop_witness_config = (
+        None
+        if observer_config.loop_witness_request_timeout_s is None
+        else dataclasses.replace(
+            witness_config,
+            request_timeout_s=observer_config.loop_witness_request_timeout_s,
+        )
+    )
+    witness = DeferredKisWitness(
+        trading_date_now, loop_deadline_ms=observer_config.loop_witness_deadline_ms
+    )
     token_client = build_client(transport_config)
 
     def _build(sessions: KisCredentialSessions) -> None:
+        credential_session = kis_mock_credential_session(
+            sessions,
+            client=token_client,
+            token_endpoint_base=transport_config.endpoint_rest_base,
+            token_path=transport_config.token_path,
+            token_reissue_min_interval_s=transport_config.token_reissue_min_interval_s,
+            pacing=kis_transport_pacing(transport_config),
+        )
+        date_source = _TrustedTradingDate(trading_date_now)
         witness.inner = KisStockBrokerWitness(
             config=witness_config,
             client=build_witness_client(witness_config),
-            credential_session=kis_mock_credential_session(
-                sessions,
-                client=token_client,
-                token_endpoint_base=transport_config.endpoint_rest_base,
-                token_path=transport_config.token_path,
-                token_reissue_min_interval_s=transport_config.token_reissue_min_interval_s,
-                pacing=kis_transport_pacing(transport_config),
-            ),
-            date_source=_TrustedTradingDate(trading_date_now),
+            credential_session=credential_session,
+            date_source=date_source,
         )
+        if loop_witness_config is not None:
+            witness.loop_inner = KisStockBrokerWitness(
+                config=loop_witness_config,
+                client=build_witness_client(loop_witness_config),
+                credential_session=credential_session,
+                date_source=date_source,
+            )
 
     credential_sessions_cell.on_ready(_build)
     return BrokerPosttrade(
@@ -467,6 +505,8 @@ def _broker_flat_release(
         config is None
         or not config.broker_flat_release
         or config.held_position_max_age_ms is None
+        or config.held_position_poll_interval_ms is None
+        or config.broker_flat_release_settle_ms is None
         or bridge is None
         or risk_state is None
     ):
@@ -488,6 +528,8 @@ def _broker_flat_release(
         max_age_ms=config.held_position_max_age_ms,
         in_flight=_in_flight,
         tip_compatible=bridge.tip_compatible,
+        settle_ms=config.broker_flat_release_settle_ms,
+        confirm_interval_ms=config.held_position_poll_interval_ms,
     )
 
 

@@ -40,6 +40,9 @@ class FillObserverConfig:
     held_position_max_age_ms: int | None = None
     ack_date_recovery_lookback_trading_days: int | None = None
     broker_flat_release: bool = False
+    broker_flat_release_settle_ms: int | None = None
+    loop_witness_request_timeout_s: float | None = None
+    loop_witness_deadline_ms: int | None = None
 
 
 _WITNESS_KEYS = (
@@ -97,6 +100,11 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
             f"{path}: broker_flat_release rides the held-position double read and needs "
             "its bounds"
         )
+    if broker_flat_release and "broker_flat_release_settle_ms" not in raw:
+        raise FillObserverConfigError(
+            f"{path}: broker_flat_release needs broker_flat_release_settle_ms (the "
+            "fill-to-balance reflection lag it waits out)"
+        )
     missing = [key for key in _WITNESS_KEYS if key not in raw]
     if missing:
         raise FillObserverConfigError(f"{path}: missing {missing}")
@@ -137,4 +145,19 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
             else None
         ),
         broker_flat_release=broker_flat_release,
+        broker_flat_release_settle_ms=_optional_positive_int(
+            raw, "broker_flat_release_settle_ms", path
+        ),
+        loop_witness_request_timeout_s=(
+            _positive_number(raw, "loop_witness_request_timeout_s", path)
+            if "loop_witness_request_timeout_s" in raw
+            else None
+        ),
+        loop_witness_deadline_ms=_optional_positive_int(
+            raw, "loop_witness_deadline_ms", path
+        ),
     )
+
+
+def _optional_positive_int(raw: dict[str, Any], key: str, path: Path) -> int | None:
+    return _positive_int(raw, key, path) if key in raw else None

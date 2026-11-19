@@ -38,6 +38,14 @@ poll_interval_ms: 3000
 # #950 the observer's reads run on its FETCH worker thread, not the session loop; the loop-side
 # fallback read (a reconciliation no prefetched snapshot serves) still costs up to this per GET.
 witness_request_timeout_s: 5.0
+# The SESSION-LOOP fallback read (a reconciliation no prefetched snapshot serves) keeps the old
+# 2 s per GET on its own witness client, plus a whole-walk deadline: once 3000 ms have passed no
+# further page starts (WitnessUnavailable, fail-closed). 3000 lets the balance page and the
+# order page — paced kis_mock_transport.yaml::min_send_interval_ms (2000) apart — both start.
+# Worst-case loop stall ≈ 3000 + one pacer wait (≤ min_send_interval_ms) + one GET in flight
+# (2 s per socket operation) ≈ 7 s, against ~28 s unbounded with 5 s GETs (review-1114 M2).
+loop_witness_request_timeout_s: 2.0
+loop_witness_deadline_ms: 3000
 # The WHOLE poll's bound, in ms, across every trading date and every continuation page it
 # reads (#949 review HIGH). Once it is past, no further read starts and no further page is
 # fetched: that read is WitnessUnavailable — recorded, fail-closed, retried at the next due
@@ -197,4 +205,18 @@ ack_date_recovery_lookback_trading_days: 5
 # reservation stayed POSITION_CONSUMED after the account was flat (manual mock sell 11-18,
 # not a TOS attempt) and step 8 denied every OPEN of the session. A failed or timed-out read
 # releases nothing and the next held_position_poll_interval_ms read retries. Absent = false.
+# A flat result counts only when CONFIRMED: a first flat poll whose read started at least
+# broker_flat_release_settle_ms after the runtime first saw the entry consumed, then a second
+# flat poll at least held_position_poll_interval_ms later; any other result in between resets
+# it. ⚠ A share held at the broker that TOS did not buy (an orphan, e.g. the 11-13 dateless-ACK
+# buy 0000007012) reads as NOT flat and still blocks this release: flatten it manually before
+# the session (GET balance, then a mock sell).
 broker_flat_release: true
+# The fill-to-balance reflection lag this waits out, in ms. KIS 모의 publishes no bound on how
+# soon inquire-balance (VTTC8434R) reflects a fill the order inquiry already shows
+# (docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml has none), and a balance read
+# that has not yet reflected the entry's buy reads flat. Released on that, the next OPEN would
+# buy a second lot and the first would become an untracked orphan — the 11-19 deadlock again.
+# 30000: five times the ~6 s the held double read itself spans (comment above), and short
+# against a session in which a stuck reservation otherwise blocks every OPEN until the close.
+broker_flat_release_settle_ms: 30000
