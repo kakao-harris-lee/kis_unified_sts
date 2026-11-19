@@ -4,11 +4,12 @@
 
 이 묶음이 쥐어야 하는 것은 산술보다 «정직함» 쪽이다.
 
-* 증거에 **체결가가 없다**. 런타임의 ``FILL_OBSERVED`` 는 체결 수량만 적고
-  (``posttrade/fill_observer.py``), 브로커 주문 행 파서도 가격 필드를 읽지 않는다
-  (``recon/witness_kis.py::KisOrderRow``). 유일한 가격은 ``SEND_SEALED`` 의
-  주문 지정가다. 그래서 손익 칸은 «지정가 기준» 으로 이름이 붙고, 출력이 그
-  사실을 먼저 말한다 — 이 테스트가 그 문장을 고정한다.
+* **가격 기준을 숨기지 않는다.** 런타임의 ``FILL_OBSERVED`` 는 브로커의 평균
+  체결가를 ``avg_execution_price`` 로 적는다(``posttrade/fill_observer.py``;
+  파서는 ``recon/witness_kis.py::KisOrderRow.avg_prvs``). 그 키가 있으면 손익은
+  체결가 기준이고, 없는 체결(그 필드가 생기기 전에 기록된 잎)은 ``SEND_SEALED``
+  의 주문 지정가로 떨어진다. 어느 쪽이 쓰였는지는 JSON 의 ``pnl_basis`` 와 표의
+  «*» 표시로 드러난다 — 이 테스트가 그 두 길을 모두 고정한다.
 * ACK 만 받고 체결 관측이 없는 attempt(2026-11-13 의 미추적 주문)는 **집계에
   들어가지 않고** 사유·odno 와 함께 따로 나온다. 조용히 0 으로 세거나 체결로
   세면 숫자가 거짓이 된다.
@@ -68,8 +69,16 @@ def _ack(attempt: str, odno: str, date: str | None) -> dict[str, Any]:
     }
 
 
-def _fill(attempt: str, odno: str, date: str, quantity: int = 1) -> dict[str, Any]:
-    return {
+def _fill(
+    attempt: str,
+    odno: str,
+    date: str,
+    quantity: int = 1,
+    *,
+    executed_krw: int | None = None,
+) -> dict[str, Any]:
+    """하나의 ``FILL_OBSERVED``. ``executed_krw`` 를 빼면 그 필드가 생기기 전의 행 모양."""
+    row = {
         "attempt_id": attempt,
         "broker_execution_id": odno,
         "trading_date": date,
@@ -78,6 +87,11 @@ def _fill(attempt: str, odno: str, date: str, quantity: int = 1) -> dict[str, An
         "remaining_quantity": "0",
         "reason": "filled",
     }
+    if executed_krw is not None:
+        # 브로커가 찍는 원 단위 — price_scale 을 곱하지 않는다(지정가와 다른 점).
+        row["avg_execution_price"] = str(executed_krw)
+        row["executed_amount"] = str(executed_krw * quantity)
+    return row
 
 
 def _write_leaf(leaf: Path, rows: list[tuple[str, dict[str, Any]]]) -> Path:
@@ -111,16 +125,28 @@ def _policy() -> tuple[str, dict[str, Any]]:
     return ("VENUE_POLICY_BOUND", {"price_scale": PRICE_SCALE})
 
 
-def _round_trip_rows() -> list[tuple[str, dict[str, Any]]]:
-    """2026-11-17 왕복 한 번 — 193,400 에 사서 192,200 에 팔았다(지정가)."""
+def _round_trip_rows(*, executed: bool = True) -> list[tuple[str, dict[str, Any]]]:
+    """2026-11-17 왕복 한 번 — 지정가 193,400 에 내서 **193,300 에 체결**, 192,200 에 매도.
+
+    체결가 기준 손익은 −1,100 이다. ``executed=False`` 는 그 필드가 생기기 전의 잎
+    모양 — 같은 왕복이 지정가 기준 −1,200 으로 읽힌다.
+    """
+    buy_fill = 193_300 if executed else None
+    sell_fill = 192_200 if executed else None
     return [
         _policy(),
         ("SEND_SEALED", _seal("attempt-buy", "BUY", 193_400)),
         ("EGRESS_RESULT_CONSUMED", _ack("attempt-buy", "0000008082", "20261117")),
-        ("FILL_OBSERVED", _fill("attempt-buy", "0000008082", "20261117")),
+        (
+            "FILL_OBSERVED",
+            _fill("attempt-buy", "0000008082", "20261117", executed_krw=buy_fill),
+        ),
         ("SEND_SEALED", _seal("attempt-sell", "SELL", 192_200)),
         ("EGRESS_RESULT_CONSUMED", _ack("attempt-sell", "0000010650", "20261117")),
-        ("FILL_OBSERVED", _fill("attempt-sell", "0000010650", "20261117")),
+        (
+            "FILL_OBSERVED",
+            _fill("attempt-sell", "0000010650", "20261117", executed_krw=sell_fill),
+        ),
     ]
 
 
@@ -132,21 +158,20 @@ def round_trip_leaf(tmp_path: Path) -> Path:
 GOLDEN_ROUND_TRIP = """\
 sts tos perf — 종목·날짜별 체결·손익 (읽기 전용)
 
-가격 기준: SEALED_ORDER_PRICE_ORD_UNPR
-  증거에 체결가가 없다 — FILL_OBSERVED 는 체결 «수량» 만 적는다
+가격 기준: EXECUTION_PRICE_WITH_SEALED_FALLBACK
+  체결가는 FILL_OBSERVED 의 avg_execution_price — 브로커의 평균 체결가다
     (tos/runtime/src/tos_runtime/posttrade/fill_observer.py::_emit).
-  브로커 주문 행 파서도 가격 필드를 읽지 않는다
-    (tos/runtime/src/tos_runtime/recon/witness_kis.py::KisOrderRow).
-  증거 안의 유일한 가격은 SEND_SEALED 의 send_seal.outbound_price —
-    보낸 주문의 지정가(ORD_UNPR × price_scale)다.
-  따라서 아래 손익은 «지정가 기준» 이며 체결가 기준 실현 손익이 아니다.
+  그 값은 브로커가 찍은 원 단위 정수다 — price_scale 로 나누지 않는다.
+  그 키가 없는 체결은 SEND_SEALED 의 send_seal.outbound_price —
+    보낸 주문의 지정가(ORD_UNPR × price_scale) — 로 떨어진다.
+  손익에 «*» 가 붙은 줄은 그 지정가가 섞여 있다는 뜻이다.
 
 읽은 잎:
   005930   {leaf}  (price_scale=100, 체결 2건)
 
-종목      날짜         매수   매도   매수량   매도량   보유   왕복    승     손익@지정가
-005930    20261117        1      1        1        1      0      1     0          -1,200
-005930    합계            1      1        1        1      0      1     0          -1,200
+종목      날짜         매수   매도   매수량   매도량   보유   왕복    승            손익
+005930    20261117        1      1        1        1      0      1     0          -1,100
+005930    합계            1      1        1        1      0      1     0          -1,100
 """
 
 
@@ -158,15 +183,15 @@ def test_round_trip_renders_the_golden_table(round_trip_leaf: Path) -> None:
     assert code == 0
 
 
-def test_round_trip_json_counts_the_loss_at_the_sealed_order_price(
+def test_round_trip_json_counts_the_loss_at_the_execution_price(
     round_trip_leaf: Path,
 ) -> None:
-    """손익은 지정가 기준이고, JSON 이 그 기준을 이름으로 말한다."""
+    """손익은 체결가 기준(−1,100)이고, JSON 이 그 기준을 이름으로 말한다."""
     text, _ = perf.run(leaf_paths=(str(round_trip_leaf),), as_json=True)
     document = json.loads(text)
 
     assert document["price_basis"]["basis"] == perf.PRICE_BASIS
-    assert document["price_basis"]["execution_price_in_evidence"] is False
+    assert document["price_basis"]["execution_price_in_evidence"] is True
     (symbol,) = document["symbols"]
     assert symbol["days"] == [
         {
@@ -177,13 +202,56 @@ def test_round_trip_json_counts_the_loss_at_the_sealed_order_price(
             "quantity_sold": "1",
             "closed_round_trips": 1,
             "wins": 0,
-            "pnl_at_order_price_krw": "-1200",
+            "pnl_krw": "-1100",
+            "pnl_basis": perf.BASIS_EXECUTION,
             "open_quantity_end": "0",
         }
     ]
+    assert symbol["totals"]["pnl_krw"] == "-1100"
+    assert symbol["totals"]["pnl_basis"] == perf.BASIS_EXECUTION
     assert symbol["totals"]["open_quantity"] == "0"
     assert symbol["open_lots"] == []
     assert symbol["unresolved_attempts"] == []
+
+
+def test_a_leaf_without_the_price_keys_falls_back_to_the_sealed_order_price(
+    tmp_path: Path,
+) -> None:
+    """체결가가 생기기 전에 기록된 잎 — 같은 왕복이 지정가 기준 −1,200 이고, 그렇다고 말한다."""
+    leaf = _write_leaf(tmp_path / "leaf" / SYMBOL, _round_trip_rows(executed=False))
+
+    text, _ = perf.run(leaf_paths=(str(leaf),))
+    document = json.loads(perf.run(leaf_paths=(str(leaf),), as_json=True)[0])
+
+    assert document["price_basis"]["execution_price_in_evidence"] is False
+    (symbol,) = document["symbols"]
+    assert symbol["days"][0]["pnl_krw"] == "-1200"
+    assert symbol["days"][0]["pnl_basis"] == perf.BASIS_ORDER_PRICE
+    assert symbol["totals"]["pnl_basis"] == perf.BASIS_ORDER_PRICE
+    assert f"-1,200{perf.FALLBACK_MARK}" in text
+
+
+def test_a_round_trip_that_mixes_both_prices_says_mixed(tmp_path: Path) -> None:
+    """한 다리만 체결가가 있으면 그 날의 기준은 «섞임» 이고 표에 표시가 붙는다."""
+    rows = [
+        _policy(),
+        ("SEND_SEALED", _seal("attempt-buy", "BUY", 193_400)),
+        (
+            "FILL_OBSERVED",
+            _fill("attempt-buy", "0000008082", "20261117", executed_krw=193_300),
+        ),
+        ("SEND_SEALED", _seal("attempt-sell", "SELL", 192_200)),
+        ("FILL_OBSERVED", _fill("attempt-sell", "0000010650", "20261117")),
+    ]
+    leaf = _write_leaf(tmp_path / "leaf" / SYMBOL, rows)
+
+    text, _ = perf.run(leaf_paths=(str(leaf),))
+    document = json.loads(perf.run(leaf_paths=(str(leaf),), as_json=True)[0])
+
+    (symbol,) = document["symbols"]
+    assert symbol["days"][0]["pnl_krw"] == "-1100"
+    assert symbol["days"][0]["pnl_basis"] == perf.BASIS_MIXED
+    assert f"-1,100{perf.FALLBACK_MARK}" in text
 
 
 def test_a_profitable_round_trip_counts_a_win(tmp_path: Path) -> None:
@@ -201,7 +269,8 @@ def test_a_profitable_round_trip_counts_a_win(tmp_path: Path) -> None:
 
     (symbol,) = json.loads(text)["symbols"]
     assert symbol["totals"]["wins"] == 1
-    assert symbol["totals"]["pnl_at_order_price_krw"] == "1500"
+    assert symbol["totals"]["pnl_krw"] == "1500"
+    assert symbol["totals"]["pnl_basis"] == perf.BASIS_ORDER_PRICE
 
 
 def test_an_acked_order_with_no_fill_observation_is_reported_unresolved(
@@ -284,6 +353,8 @@ def test_an_unclosed_buy_is_left_as_open_quantity(tmp_path: Path) -> None:
             "side": "BUY",
             "quantity": "1",
             "order_price_krw": "193400",
+            "execution_price_krw": None,
+            "price_basis": perf.BASIS_ORDER_PRICE,
             "broker_execution_id": "0000008082",
             "attempt_id": "attempt-buy",
         }
@@ -315,6 +386,8 @@ def test_a_sell_with_no_open_lot_is_reported_unmatched(tmp_path: Path) -> None:
             "side": "SELL",
             "quantity": "1",
             "order_price_krw": "192200",
+            "execution_price_krw": None,
+            "price_basis": perf.BASIS_ORDER_PRICE,
             "broker_execution_id": "0000010650",
             "attempt_id": "attempt-sell",
         }
@@ -366,7 +439,7 @@ def test_fills_from_two_leaves_fold_into_one_symbol(tmp_path: Path) -> None:
 
     (symbol,) = document["symbols"]
     assert [day["date"] for day in symbol["days"]] == ["20261117", "20261118"]
-    assert symbol["days"][1]["pnl_at_order_price_krw"] == "-1200"
+    assert symbol["days"][1]["pnl_krw"] == "-1200"
     assert symbol["totals"]["open_quantity"] == "0"
 
 

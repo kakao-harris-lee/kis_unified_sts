@@ -395,6 +395,8 @@ class KisMockFillObserver:
                 self._hold_absent(attempt, payload, reason)
                 held.append((attempt.attempt_id, payload.kind))
                 continue
+            mine = _attributed_rows(attempt, rows)
+            priced = mine[0] if len(mine) == 1 else None
             self._record(
                 FILL_OBSERVED_KIND,
                 {
@@ -405,6 +407,18 @@ class KisMockFillObserver:
                     "filled_quantity": _text(payload.filled_quantity),
                     "remaining_quantity": _text(payload.remaining_quantity),
                     "reason": reason,
+                    # The broker's own 평균 체결가 / 총 체결금액 for the ONE attributed row,
+                    # in WHOLE KRW as it printed them — never the tree's
+                    # ``_runtime.price_scale`` (×100) representation. ``None`` whenever the
+                    # rows are ambiguous or the broker printed no usable value. Observation
+                    # only: nothing downstream of this record reads them, so a row written
+                    # before these keys existed is read exactly as it always was.
+                    "avg_execution_price": (
+                        None if priced is None else _text(priced.avg_prvs)
+                    ),
+                    "executed_amount": (
+                        None if priced is None else _text(priced.tot_ccld_amt)
+                    ),
                 },
             )
             if payload.kind in _TERMINAL_KINDS:
@@ -752,11 +766,7 @@ class KisMockFillObserver:
     ) -> tuple[EgressResultPayload | None, str]:
         """The result to emit for ``attempt``, or ``None`` (nothing new / not visible yet)."""
         key = odno_key(attempt.odno)
-        mine = [
-            r
-            for r in rows
-            if odno_key(r.odno) == key and r.ord_dt == attempt.trading_date
-        ]
+        mine = _attributed_rows(attempt, rows)
         derived = [
             r
             for r in rows
@@ -866,6 +876,16 @@ class KisMockFillObserver:
 
     def _record(self, kind: str, fields: dict[str, Any]) -> None:
         self.evidence_store.append(fields, kind=kind, record_class=kind)
+
+
+def _attributed_rows(
+    attempt: _Tracked, rows: tuple[KisOrderRow, ...]
+) -> list[KisOrderRow]:
+    """The rows this attempt's own ODNO owns on its trading date (derived rows excluded)."""
+    key = odno_key(attempt.odno)
+    return [
+        r for r in rows if odno_key(r.odno) == key and r.ord_dt == attempt.trading_date
+    ]
 
 
 def _reprojectable(attempt: _Tracked) -> bool:

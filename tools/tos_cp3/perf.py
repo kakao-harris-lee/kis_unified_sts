@@ -7,14 +7,15 @@ tenant 잎의 durable evidence 만 읽는다 — sqlite 는 ``file:...?mode=ro``
 import 하지 않는다. 읽는 종류 이름은 런타임이 적는 상수와 같고, 그 출처를 아래
 상수 옆에 적어 둔다.
 
-**가격 기준 — 증거에 체결가가 없다.** 런타임이 적는 ``FILL_OBSERVED`` 는 체결
-«수량» 만 적는다(``tos/runtime/src/tos_runtime/posttrade/fill_observer.py``
-``KisMockFillObserver._emit``). 브로커 주문 행 파서도 가격 필드를 읽지 않는다
-(``tos/runtime/src/tos_runtime/recon/witness_kis.py`` ``KisOrderRow``: 수량 ·
-거부 수량 · 취소 여부뿐). 증거 안의 유일한 가격은 ``SEND_SEALED`` 의
-``send_seal.outbound_price`` — **보낸 주문의 지정가**(ORD_UNPR × price_scale)다.
-그래서 이 도구의 손익은 그 지정가 기준이며, 체결가 기준 실현 손익이 아니다.
-도구는 그 사실을 표와 JSON 양쪽에 적고, 체결가를 지어내지 않는다.
+**가격 기준 — 체결가가 있으면 체결가로.** 런타임이 적는 ``FILL_OBSERVED`` 는
+브로커의 평균 체결가를 ``avg_execution_price`` 로 적는다
+(``tos/runtime/src/tos_runtime/posttrade/fill_observer.py`` ``_emit``; 파서는
+``tos/runtime/src/tos_runtime/recon/witness_kis.py`` ``KisOrderRow.avg_prvs``).
+그 값은 브로커가 찍은 **원 단위 정수**다 — 트리의 ``price_scale`` 로 나누지
+않는다. 그 키가 없거나 비어 있는 체결(그 필드가 생기기 전에 기록된 잎, 또는
+브로커 행이 모호했던 체결)은 ``SEND_SEALED`` 의 ``send_seal.outbound_price``
+— **보낸 주문의 지정가**(ORD_UNPR × price_scale) — 로 떨어진다. 도구는 어느
+기준이 쓰였는지를 표와 JSON 양쪽에 적고, 가격을 지어내지 않는다.
 """
 
 from __future__ import annotations
@@ -66,16 +67,23 @@ TENANT_TREE_GLOB = "cp3-setup-d-stock-*"
 TENANT_DATA_PARENT_SUFFIX = "-data"  # tools/tos_cp3/inspect_session.py 와 같은 규약
 ARCHIVE_DIRNAME = "archive"
 
-PRICE_BASIS = "SEALED_ORDER_PRICE_ORD_UNPR"
+PRICE_BASIS = "EXECUTION_PRICE_WITH_SEALED_FALLBACK"
+
+#: 한 체결(또는 한 날)의 가격이 어디서 왔는지.
+BASIS_EXECUTION = "EXECUTION"
+BASIS_ORDER_PRICE = "ORDER_PRICE"
+BASIS_MIXED = "MIXED"
+
+#: 지정가로 떨어진 체결이 섞인 줄에 붙는 표시.
+FALLBACK_MARK = "*"
 
 PRICE_BASIS_NOTE_LINES: tuple[str, ...] = (
-    "증거에 체결가가 없다 — FILL_OBSERVED 는 체결 «수량» 만 적는다",
+    "체결가는 FILL_OBSERVED 의 avg_execution_price — 브로커의 평균 체결가다",
     "  (tos/runtime/src/tos_runtime/posttrade/fill_observer.py::_emit).",
-    "브로커 주문 행 파서도 가격 필드를 읽지 않는다",
-    "  (tos/runtime/src/tos_runtime/recon/witness_kis.py::KisOrderRow).",
-    "증거 안의 유일한 가격은 SEND_SEALED 의 send_seal.outbound_price —",
-    "  보낸 주문의 지정가(ORD_UNPR × price_scale)다.",
-    "따라서 아래 손익은 «지정가 기준» 이며 체결가 기준 실현 손익이 아니다.",
+    "그 값은 브로커가 찍은 원 단위 정수다 — price_scale 로 나누지 않는다.",
+    "그 키가 없는 체결은 SEND_SEALED 의 send_seal.outbound_price —",
+    "  보낸 주문의 지정가(ORD_UNPR × price_scale) — 로 떨어진다.",
+    f"손익에 «{FALLBACK_MARK}» 가 붙은 줄은 그 지정가가 섞여 있다는 뜻이다.",
 )
 
 PRICE_BASIS_NOTE = " ".join(line.strip() for line in PRICE_BASIS_NOTE_LINES)
@@ -100,7 +108,7 @@ class _Order:
 
 @dataclass(frozen=True)
 class Fill:
-    """관측된 전량 체결 하나. 가격은 그 주문의 지정가다(체결가가 아니다)."""
+    """관측된 전량 체결 하나. 브로커의 체결가가 있으면 그것, 없으면 주문의 지정가."""
 
     leaf_order: int
     seq: int
@@ -110,6 +118,19 @@ class Fill:
     side: str
     quantity: Decimal
     order_price: Decimal | None
+    execution_price: Decimal | None = None
+
+    @property
+    def price(self) -> Decimal | None:
+        """손익에 쓰이는 가격 — 체결가가 있으면 체결가, 없으면 지정가."""
+        return (
+            self.order_price if self.execution_price is None else self.execution_price
+        )
+
+    @property
+    def basis(self) -> str:
+        """:attr:`price` 가 어디서 왔는지."""
+        return BASIS_ORDER_PRICE if self.execution_price is None else BASIS_EXECUTION
 
 
 @dataclass
@@ -137,6 +158,14 @@ class _DayRow:
     pnl: Decimal = Decimal(0)
     open_quantity_end: Decimal = Decimal(0)
     pnl_known: bool = True
+    #: 그 날 손익에 실제로 쓰인 가격의 출처들 — 둘 다 있으면 «섞임».
+    bases: set[str] = field(default_factory=set)
+
+    @property
+    def pnl_basis(self) -> str | None:
+        if not self.pnl_known or not self.bases:
+            return None
+        return BASIS_MIXED if len(self.bases) > 1 else next(iter(self.bases))
 
 
 @dataclass
@@ -163,6 +192,11 @@ def _decimal(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except (InvalidOperation, ValueError):
         return None
+
+
+def _positive(value: Decimal | None) -> Decimal | None:
+    """0 이나 음수인 «가격» 은 가격이 아니다 — 브로커가 아직 못 찍은 것으로 본다."""
+    return value if value is not None and value > 0 else None
 
 
 def _dig(record: Any, *path: str) -> Any:
@@ -352,6 +386,8 @@ def _fold_leaf(
                 side=str(side),
                 quantity=quantity,
                 order_price=order.order_price if order is not None else None,
+                # 이미 원 단위다 — price_scale 로 나누지 않는다(지정가와 다른 점).
+                execution_price=_positive(_decimal(record.get("avg_execution_price"))),
             )
 
     report.fills = sorted(fills.values(), key=lambda f: f.seq)
@@ -437,7 +473,11 @@ def build_report(leaves: list[LeafReport]) -> dict[str, Any]:
     return {
         "price_basis": {
             "basis": PRICE_BASIS,
-            "execution_price_in_evidence": False,
+            "execution_price_in_evidence": any(
+                fill.execution_price is not None
+                for leaf in leaves
+                for fill in leaf.fills
+            ),
             "note": PRICE_BASIS_NOTE,
         },
         "leaves": [
@@ -465,8 +505,8 @@ def _fifo(report: SymbolReport, fills: list[Fill]) -> None:
         if fill.side == BUY:
             row.buy_fills += 1
             row.qty_bought += fill.quantity
-            lots.append([fill.quantity, fill.order_price, fill])
-            if fill.order_price is None:
+            lots.append([fill.quantity, fill.price, fill])
+            if fill.price is None:
                 row.pnl_known = False
         else:
             row.sell_fills += 1
@@ -478,11 +518,12 @@ def _fifo(report: SymbolReport, fills: list[Fill]) -> None:
                 lot[0] -= take
                 remaining -= take
                 row.closed_round_trips += 1
-                if fill.order_price is None or lot[1] is None:
+                if fill.price is None or lot[1] is None:
                     row.pnl_known = False
                 else:
-                    pnl = (fill.order_price - lot[1]) * take
+                    pnl = (fill.price - lot[1]) * take
                     row.pnl += pnl
+                    row.bases |= {fill.basis, lot[2].basis}
                     if pnl > 0:
                         row.wins += 1
                 if lot[0] == 0:
@@ -503,6 +544,10 @@ def _fill_document(fill: Fill, quantity: Decimal) -> dict[str, Any]:
         "order_price_krw": (
             None if fill.order_price is None else _num(fill.order_price)
         ),
+        "execution_price_krw": (
+            None if fill.execution_price is None else _num(fill.execution_price)
+        ),
+        "price_basis": fill.basis,
         "broker_execution_id": fill.broker_execution_id,
         "attempt_id": fill.attempt_id,
     }
@@ -518,13 +563,15 @@ def _symbol_document(report: SymbolReport) -> dict[str, Any]:
             "quantity_sold": _num(row.qty_sold),
             "closed_round_trips": row.closed_round_trips,
             "wins": row.wins,
-            "pnl_at_order_price_krw": None if not row.pnl_known else _num(row.pnl),
+            "pnl_krw": None if not row.pnl_known else _num(row.pnl),
+            "pnl_basis": row.pnl_basis,
             "open_quantity_end": _num(row.open_quantity_end),
         }
         for date, row in sorted(report.days.items())
     ]
     rows = list(report.days.values())
     total_known = all(row.pnl_known for row in rows)
+    total_bases = {basis for row in rows for basis in row.bases}
     return {
         "symbol": report.symbol,
         "days": days,
@@ -535,10 +582,15 @@ def _symbol_document(report: SymbolReport) -> dict[str, Any]:
             "quantity_sold": _num(sum((row.qty_sold for row in rows), Decimal(0))),
             "closed_round_trips": sum(row.closed_round_trips for row in rows),
             "wins": sum(row.wins for row in rows),
-            "pnl_at_order_price_krw": (
+            "pnl_krw": (
                 _num(sum((row.pnl for row in rows), Decimal(0)))
                 if total_known
                 else None
+            ),
+            "pnl_basis": (
+                None
+                if not total_known or not total_bases
+                else (BASIS_MIXED if len(total_bases) > 1 else next(iter(total_bases)))
             ),
             "open_quantity": _num(
                 sum((Decimal(lot["quantity"]) for lot in report.open_lots), Decimal(0))
@@ -561,7 +613,7 @@ _HEADERS: tuple[tuple[str, int], ...] = (
     ("보유", 5),
     ("왕복", 5),
     ("승", 4),
-    ("손익@지정가", 14),
+    ("손익", 14),
 )
 
 
@@ -570,6 +622,12 @@ def _money(value: str | None) -> str:
         return "모름"
     whole = Decimal(value)
     return f"{whole:,.0f}" if whole == whole.to_integral_value() else f"{whole:,}"
+
+
+def _pnl_cell(value: str | None, basis: str | None) -> str:
+    """지정가가 섞인 손익에는 표시를 붙인다 — 어느 기준인지 표에서 보이게."""
+    mark = FALLBACK_MARK if basis in (BASIS_ORDER_PRICE, BASIS_MIXED) else ""
+    return _money(value) + mark
 
 
 def _width(text: str) -> int:
@@ -617,7 +675,7 @@ def render_text(document: dict[str, Any]) -> str:
                         day["open_quantity_end"],
                         str(day["closed_round_trips"]),
                         str(day["wins"]),
-                        _money(day["pnl_at_order_price_krw"]),
+                        _pnl_cell(day["pnl_krw"], day["pnl_basis"]),
                     ]
                 )
             )
@@ -634,7 +692,7 @@ def render_text(document: dict[str, Any]) -> str:
                     total["open_quantity"],
                     str(total["closed_round_trips"]),
                     str(total["wins"]),
-                    _money(total["pnl_at_order_price_krw"]),
+                    _pnl_cell(total["pnl_krw"], total["pnl_basis"]),
                 ]
             )
         )
@@ -642,6 +700,13 @@ def render_text(document: dict[str, Any]) -> str:
         lines.append("  (관측된 체결 없음)")
     lines.extend(_render_leftovers(document))
     return "\n".join(lines) + "\n"
+
+
+def _price_label(fill_document: dict[str, Any]) -> str:
+    """체결 한 건의 가격을 쓰인 기준과 함께 — «@체결가 193,300» / «@지정가 193,400»."""
+    if fill_document.get("execution_price_krw") is not None:
+        return f"@체결가 {_money(fill_document['execution_price_krw'])}"
+    return f"@지정가 {_money(fill_document['order_price_krw'])}"
 
 
 def _render_leftovers(document: dict[str, Any]) -> list[str]:
@@ -652,8 +717,8 @@ def _render_leftovers(document: dict[str, Any]) -> list[str]:
         for lot in symbol["open_lots"]:
             lines.append(
                 f"  {name} 보유 {lot['quantity']}주 — {lot['trading_date']} 매수 "
-                f"odno={lot['broker_execution_id']} @지정가 "
-                f"{_money(lot['order_price_krw'])} (아직 TOS 가 닫지 않았다)"
+                f"odno={lot['broker_execution_id']} {_price_label(lot)} "
+                "(아직 TOS 가 닫지 않았다)"
             )
         for sell in symbol["unmatched_sell_fills"]:
             lines.append(

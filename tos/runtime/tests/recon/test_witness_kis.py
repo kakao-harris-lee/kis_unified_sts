@@ -641,6 +641,78 @@ def test_order_identifiers_keep_their_measured_string_form() -> None:
     )
 
 
+def _priced_wire_row(**overrides: object) -> dict[str, object]:
+    """One ``VTTC0081R`` ``output1`` row in the measured wire shape (all strings)."""
+    row: dict[str, object] = {
+        "ord_dt": "20261117",
+        "odno": "0000004470",
+        "orgn_odno": "0000000000",
+        "pdno": "005930",
+        "ord_qty": "1",
+        "tot_ccld_qty": "1",
+        "rmn_qty": "0",
+        "rjct_qty": "0",
+        "cncl_yn": "N",
+        "avg_prvs": "193300",
+        "tot_ccld_amt": "193300",
+    }
+    row.update(overrides)
+    return row
+
+
+def test_the_execution_price_fields_are_read_as_exact_decimals() -> None:
+    """``avg_prvs``/``tot_ccld_amt`` are whole KRW as the broker printed them — the tree's"""
+    parsed = witness_kis.KisOrderRow.from_wire(_priced_wire_row())
+
+    assert (parsed.avg_prvs, parsed.tot_ccld_amt) == (
+        Decimal("193300"),
+        Decimal("193300"),
+    )
+    assert (parsed.ord_qty, parsed.tot_ccld_qty, parsed.rmn_qty) == (
+        Decimal("1"),
+        Decimal("1"),
+        Decimal("0"),
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "   ", "-", None, ["193300"], {"price": "193300"}, True],
+    ids=["blank", "whitespace", "dash", "null", "array", "object", "bool"],
+)
+def test_an_unusable_execution_price_leaves_the_rest_of_the_row_readable(
+    value: object,
+) -> None:
+    """A blank/absent/unparseable price is ``None`` — never a refused row and never a changed"""
+    parsed = witness_kis.KisOrderRow.from_wire(
+        _priced_wire_row(avg_prvs=value, tot_ccld_amt=value)
+    )
+
+    assert (parsed.avg_prvs, parsed.tot_ccld_amt) == (None, None)
+    assert (parsed.odno, parsed.ord_dt, parsed.cancelled) == (
+        "0000004470",
+        "20261117",
+        False,
+    )
+    assert (parsed.ord_qty, parsed.tot_ccld_qty, parsed.rmn_qty) == (
+        Decimal("1"),
+        Decimal("1"),
+        Decimal("0"),
+    )
+
+
+def test_a_row_without_the_price_fields_parses_as_it_always_did() -> None:
+    """Every ``output1`` row the observer met before these fields existed had neither key."""
+    row = _priced_wire_row()
+    row.pop("avg_prvs")
+    row.pop("tot_ccld_amt")
+
+    parsed = witness_kis.KisOrderRow.from_wire(row)
+
+    assert (parsed.avg_prvs, parsed.tot_ccld_amt) == (None, None)
+    assert parsed.tot_ccld_qty == Decimal("1")
+
+
 def test_a_callers_deadline_stops_the_walk_and_returns_no_partial_list(
     server: FakeKisGetServer,
 ) -> None:

@@ -208,6 +208,13 @@ class KisOrderRow:
     rmn_qty: Decimal | None
     rjct_qty: Decimal | None
     cancelled: bool
+    #: 평균 체결가 ``avg_prvs`` and 총 체결금액 ``tot_ccld_amt``, exactly as the broker
+    #: printed them: WHOLE KRW on the wire, NOT the tenant tree's ``_runtime.price_scale``
+    #: representation (the seal scales the other way — ORD_UNPR = price / price_scale).
+    #: Observation only: no witness/fill/release decision reads either, and an absent,
+    #: blank, or unparseable value is ``None`` rather than a refused row.
+    avg_prvs: Decimal | None = None
+    tot_ccld_amt: Decimal | None = None
 
     @classmethod
     def from_wire(cls, row: Mapping[str, Any]) -> KisOrderRow:
@@ -228,6 +235,8 @@ class KisOrderRow:
             rmn_qty=_decimal_or_none(row.get("rmn_qty")),
             rjct_qty=_decimal_or_none(row.get("rjct_qty")),
             cancelled=str(row.get("cncl_yn") or "").strip() == _CANCELLED,
+            avg_prvs=_decimal_or_none(row.get("avg_prvs")),
+            tot_ccld_amt=_decimal_or_none(row.get("tot_ccld_amt")),
         )
 
 
