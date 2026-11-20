@@ -259,3 +259,40 @@ broker_flat_release: true
 # normal TOS close releases through finality, not through this. Both halves move together —
 # raising the poll interval raises this window by the same amount.
 broker_flat_release_settle_ms: 30000
+
+# Uncertain-send reconciliation (incident 2026-11-20 shapes d/e). An order POST that timed out
+# or answered HTTP 500 comes back with no ODNO: the engine quarantines the reservation
+# (QUARANTINED_UNKNOWN / UNKNOWN), the RCL reservation stays COMMITTED_UNBOUND, and every later
+# OPEN halts at step 8 over MAX_unresolved_send_per_scope for the rest of the session. The
+# gateway's own UNCERTAIN_SEND row records start_reconciliation=True; this switch is what
+# performs it. GET only — this path never sends an order, and it is the broker's own
+# 주식일별주문체결조회 for the send's trading date that decides:
+#   * exactly one unclaimed row this send could own (this instrument, the sealed outbound
+#     quantity, not the opposite sll_buy_dvsn_cd side, on an (ODNO, date) pair no other
+#     attempt's dated receipt claims) -> bound. The observer tracks the attempt from the next
+#     pass and the ordinary fill/finality path resolves the quarantine.
+#   * no such row, twice in a row, uncertain_send_settle_ms apart -> never_accepted, and the
+#     reservation is given back through the existing never-sent release pass under the cause
+#     UNCERTAIN_SEND_NEVER_ACCEPTED.
+#   * more than one candidate, or a failed read -> held, fail-closed, retried next poll.
+# Absent = false (the pre-11-20 behaviour: the tenant stays stuck until an operator clears it).
+uncertain_send_reconcile: true
+# How long an EMPTY order history must stay empty before it proves a non-send, in ms: the first
+# qualifying empty read starts at least this long after this process first saw the uncertain
+# send, and the second at least this long after the first. 30000 — the same number and the same
+# reason as broker_flat_release_settle_ms above: KIS 모의 publishes no bound on how soon an
+# accepted order appears in its own inquiry (docs/broker-profiles/
+# KIS-BROKER-CAPABILITY-PROFILE-draft.yaml has none), and releasing on a history that has not
+# caught up yet would let the next OPEN send a SECOND order for the same position. Two reads
+# this far apart cost two paced GETs in otherwise idle FETCHes.
+uncertain_send_settle_ms: 30000
+# 주식일별주문체결조회 가 찍는 매도매수구분코드(``sll_buy_dvsn_cd``)를 seal 의 매매방향
+# 토큰에 맞춘다. 반대 방향 행은 이 전송의 후보가 아니다 — 같은 날 같은 수량의 수동 매도
+# (2026-11-19 사고의 그 주문)를 OPEN 의 미확정 전송에 잘못 묶지 않게 한다. 코드가 없는
+# 행은 «모름» 이고 거부 사유가 되지 않는다.
+# 여기 설정으로 둔 이유: 매매방향은 이 런타임이 짓는 상수가 아니라 정책이 실어 나르는
+# 토큰이다(tos/runtime/tests/test_no_side_literals.py). 코드값은 브로커의 철자이고,
+# ``01=매도 / 02=매수`` 는 VTTC0081R·주식주문(정정취소) 양쪽에서 실측된 것이다.
+uncertain_send_side_codes:
+  BUY: "02"
+  SELL: "01"

@@ -361,3 +361,79 @@ def test_the_unsent_reason_still_refuses_potentially_live() -> None:
     ledger, key = _handed_off_ledger()
     assert ledger.discard_unsent(_ref()) is False
     assert ledger.outstanding(key) is not None
+
+
+def _never_accepted_ref(attempt_id: str | None = _ATTEMPT) -> UnsentDiscardRef:
+    return UnsentDiscardRef(
+        proposal_id=_PROPOSAL,
+        reason=UnsentDiscardReason.UNCERTAIN_SEND_NEVER_ACCEPTED,
+        attempt_id=attempt_id,
+    )
+
+
+def _quarantined_ledger(
+    *kinds: EgressResultKind,
+) -> tuple[ProvisionalReservationLedger, InstrumentKey]:
+    """A hand-off whose answers named no order — the 2026-11-20 (d)/(e) shape."""
+    ledger, key = _handed_off_ledger()
+    for kind in kinds or (EgressResultKind.TIMEOUT,):
+        applied = ledger.apply_egress_result(
+            EgressResultPayload(instrument_key=key, attempt_id=_ATTEMPT, kind=kind)
+        )
+        assert applied.disposition is ResultDisposition.APPLIED
+    return ledger, key
+
+
+@pytest.mark.parametrize("kind", [EgressResultKind.TIMEOUT, EgressResultKind.UNKNOWN])
+def test_a_never_accepted_discard_takes_the_quarantined_projection(
+    kind: EgressResultKind,
+) -> None:
+    """2026-11-20 (e): the broker's own order history proved no such order exists. This is the
+    ONE discard whose attempt already consumed a result — every one of them said UNKNOWN.
+    """
+    ledger, key = _quarantined_ledger(kind)
+    held = outstanding(ledger, key)
+    assert held.capacity_state is CapacityState.QUARANTINED_UNKNOWN
+    assert held.knowledge is EgressKnowledge.UNKNOWN
+
+    assert ledger.discard_unsent(_never_accepted_ref()) is True
+
+    assert ledger.outstanding(key) is None
+    assert ledger.admits_new_exposure(key) is True
+
+
+@pytest.mark.parametrize("attempt_id", [None, "attempt-other"])
+def test_a_never_accepted_discard_must_name_the_held_attempt(
+    attempt_id: str | None,
+) -> None:
+    ledger, key = _quarantined_ledger()
+    before = outstanding(ledger, key)
+    assert ledger.discard_unsent(_never_accepted_ref(attempt_id)) is False
+    assert outstanding(ledger, key) == before
+
+
+def test_a_never_accepted_discard_is_refused_before_the_quarantine() -> None:
+    """A send still projected POTENTIALLY_LIVE has no broker verdict yet: #1122's reason owns it."""
+    ledger, key = _handed_off_ledger()
+    assert ledger.discard_unsent(_never_accepted_ref()) is False
+    assert outstanding(ledger, key).capacity_state is CapacityState.POTENTIALLY_LIVE
+
+
+def test_an_acknowledged_order_that_went_blind_is_never_discarded() -> None:
+    """The broker NAMED this order once. A later blind answer does not unsay it, so the
+    never-accepted discard must refuse even though the projection now reads UNKNOWN."""
+    ledger, key = _quarantined_ledger(EgressResultKind.ACK, EgressResultKind.TIMEOUT)
+    before = outstanding(ledger, key)
+    assert before.capacity_state is CapacityState.QUARANTINED_UNKNOWN
+
+    assert ledger.discard_unsent(_never_accepted_ref()) is False
+    assert outstanding(ledger, key) == before
+
+
+@pytest.mark.parametrize("ref", [_ref(), _refused_ref()])
+def test_the_older_reasons_do_not_widen_to_the_quarantined_shape(
+    ref: UnsentDiscardRef,
+) -> None:
+    ledger, key = _quarantined_ledger()
+    assert ledger.discard_unsent(ref) is False
+    assert ledger.outstanding(key) is not None

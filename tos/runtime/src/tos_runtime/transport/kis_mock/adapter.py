@@ -337,6 +337,11 @@ class KisMockTransport:
                 "kind": kind.value,
                 "status": status,
                 "latency_ms": latency_ms,
+                # Observation only, and recorded for EVERY kind — unlike the receipt's own
+                # ``trading_date``, which an unnumbered result may not carry. It is what the
+                # uncertain-send reconciliation asks the broker's daily order history about:
+                # without it, a send whose answer named no ODNO names no date either.
+                "trading_date": trading_date,
                 **extra,
             },
         )

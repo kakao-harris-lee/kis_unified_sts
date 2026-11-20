@@ -25,6 +25,8 @@ _FINALITY_PROOF_IDEMPOTENCY_PREFIXES: tuple[str, ...] = (
     "synthetic-fqp-proof:",
     "broker-fqp-proof:",
 )
+_DISCARDED_UNSENT_KIND = "RESERVATION_DISCARDED_UNSENT"
+_NEVER_ACCEPTED_REASON = "UNCERTAIN_SEND_NEVER_ACCEPTED"
 
 
 def _to_decimal(value: object) -> Decimal | None:
@@ -107,12 +109,32 @@ class SqliteEvidenceReceiptReader:
                     attempts.add(key[len(prefix) :])
         return frozenset(attempts)
 
+    def _never_accepted_attempts(self) -> frozenset[str]:
+        """Attempts a completed uncertain-send reconciliation proved were never accepted.
+
+        Their receipt is a blind one — a timeout or a 500, naming no order — and the broker's
+        own history has since shown there is no order for it to join. Leaving it in scope would
+        classify the attempt ``STALE_RESERVATION`` on every later pass and block every other
+        release in the same scope forever (2026-11-20 (e)).
+        """
+        attempts: set[str] = set()
+        for row in self._read_kind(frozenset({_DISCARDED_UNSENT_KIND})):
+            attempt_id = row.get("attempt_id")
+            if row.get("reason") == _NEVER_ACCEPTED_REASON and isinstance(
+                attempt_id, str
+            ):
+                attempts.add(attempt_id)
+        return frozenset(attempts)
+
     def receipts(self, scope: WitnessScope) -> tuple[EgressReceiptObservation, ...]:
         """Return every recorded ``EGRESS_RESULT`` receipt observation within ``scope``"""
         proven = self._attempts_with_finality_proof()
+        never_accepted = self._never_accepted_attempts()
         observations: list[EgressReceiptObservation] = []
         for row in self._read_kind(_EGRESS_RESULT_KINDS):
             if not _in_scope(row, scope):
+                continue
+            if row.get("attempt_id") in never_accepted:
                 continue
             instrument_key = row.get("instrument_key")
             account = (

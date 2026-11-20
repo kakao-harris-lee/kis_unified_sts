@@ -16,6 +16,10 @@ from tos_runtime.posttrade.fill_fetch import (
     odno_key,
 )
 from tos_runtime.posttrade.fill_observer_config import FillObserverConfig
+from tos_runtime.posttrade.uncertain_send import (
+    UncertainSend,
+    UncertainSendReconciler,
+)
 from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
 from tos_runtime.recon.ports import WitnessScope, WitnessUnavailable
 from tos_runtime.time.sources import MonotonicSource
@@ -24,6 +28,7 @@ __all__ = [
     "build_fetch_plan",
     "due_ack_date_scan",
     "due_recovery_attempts",
+    "due_uncertain_send_read",
     "preempt_risk_only_fetch",
     "release_scope",
 ]
@@ -48,6 +53,8 @@ class _PlanSource(Protocol):
     pending_recovery_attempt_ids: Callable[[], tuple[str, ...]] | None
     resume_entry_discharge: Callable[[str], object] | None
     trading_dates_back: Callable[[int], tuple[str, ...]] | None
+    uncertain_send: UncertainSendReconciler | None
+    _uncertain_send_due: UncertainSend | None
     _last_poll_ms: int | None
     _last_held_position_poll_ms: int | None
     _last_prior_day_read_ms: dict[str, int]
@@ -144,6 +151,32 @@ def due_ack_date_scan(
         source._last_ack_date_scan_ms[target[0]] = now
     source._ack_scan.start(dates, tuple(due))
     return _ack_date_scope(source, dates[0])
+
+
+def due_uncertain_send_read(
+    source: _PlanSource, now: int, *, idle: bool
+) -> tuple[str, WitnessScope] | None:
+    """The uncertain send's own trading date to read this FETCH, or ``None`` (11-20 d/e).
+
+    ``idle`` is the same discipline issue #1096's scan follows: the read never shares a FETCH
+    with fill, recovery or held-position work, so it can neither age a release snapshot nor
+    defer a holdings refresh. An ack-date window already open finishes first — one scan at a
+    time keeps either read's cadence its own.
+    """
+    source._uncertain_send_due = None
+    if source.uncertain_send is None or not idle or source._ack_scan.active:
+        return None
+    send = source.uncertain_send.due(now)
+    if send is None:
+        return None
+    source._uncertain_send_due = send
+    return send.trading_date, WitnessScope(
+        account=source.account,
+        instrument_keys=(
+            InstrumentKey(account=source.account, instrument=source.instrument),
+        ),
+        order_dates=(send.trading_date,),
+    )
 
 
 def due_attempt_read(source: _PlanSource, attempt: Any, now: int) -> bool:
@@ -300,15 +333,16 @@ def build_fetch_plan(source: _PlanSource) -> FetchPlan | None:
         )
         and _held_position_is_eligible(source)
     )
-    ack_date_read = due_ack_date_scan(
-        source, now, idle=not fill_work_due and not held_position_due
-    )
+    idle = not fill_work_due and not held_position_due
+    uncertain_read = due_uncertain_send_read(source, now, idle=idle)
+    ack_date_read = due_ack_date_scan(source, now, idle=idle and uncertain_read is None)
     if (
         not pending
         and not reproject_ids
         and not held_position_due
         and not recovery_ids
         and ack_date_read is None
+        and uncertain_read is None
     ):
         return None
     if pending:
@@ -363,4 +397,5 @@ def build_fetch_plan(source: _PlanSource) -> FetchPlan | None:
         recovery_attempt_ids=recovery_ids,
         evidence_seq_at_plan=evidence_seq_at_plan,
         ack_date_read=ack_date_read,
+        uncertain_send_read=uncertain_read,
     )
